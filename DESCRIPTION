@@ -35,5 +35,5 @@ Suggests:
 Config/testthat/edition: 3
 VignetteBuilder: knitr
 URL: https://gitlab.com/dickoa/samplyr
-BugReports: https://gitlab.com/dickoa/samplyr/issues
+BugReports: https://gitlab.com/dickoa/samplyr/-/issues
 Remotes: gitlab::dickoa/sondage

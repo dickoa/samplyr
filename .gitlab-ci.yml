@@ -20,12 +20,13 @@ check-release:
         libssl-dev
         libxml2-dev
         pandoc
+        qpdf
     - mkdir -p $R_LIBS_USER
     # Install package dependencies including vignette builders
     - Rscript -e "install.packages(c('remotes', 'rcmdcheck'), repos='https://cloud.r-project.org')"
     - Rscript -e "remotes::install_deps(dependencies = TRUE)"
   script:
-    - Rscript -e "rcmdcheck::rcmdcheck(args = c('--no-manual', '--as-cran'), error_on = 'warning')"
+    - Rscript -e "rcmdcheck::rcmdcheck(args = c('--no-manual', '--as-cran'), error_on = 'error')"
 
 check-devel:
   stage: check
@@ -36,6 +37,7 @@ check-devel:
         libssl-dev
         libxml2-dev
         pandoc
+        qpdf
     - mkdir -p $R_LIBS_USER
     - Rscript -e "install.packages(c('remotes', 'rcmdcheck'), repos='https://cloud.r-project.org')"
     - Rscript -e "remotes::install_deps(dependencies = TRUE)"
@@ -49,6 +51,7 @@ pages:
   before_script:
     - apt-get update && apt-get install -y
         pandoc
+        qpdf
         libcurl4-openssl-dev
         libssl-dev
         libxml2-dev

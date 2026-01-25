@@ -9,6 +9,7 @@ A tidy grammar for survey sampling in R. **samplyr** provides a minimal set of c
 remotes::install_gitlab("dickoa/sondage")
 
 remotes::install_gitlab("dickoa/samplyr")
+pak::pkg_install("dickoa/samplyr") # github mirror
 ```
 
 ## Overview
