@@ -22,4 +22,4 @@
 ^doc$
 ^Meta$
 ^air\.toml$
-*.html$
+.*\.html$
