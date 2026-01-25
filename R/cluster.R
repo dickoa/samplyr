@@ -1,0 +1,108 @@
+#' Define Sampling Units (Clusters)
+#'
+#' `cluster_by()` specifies the sampling units (PSUs/clusters) for cluster
+#' or multi-stage sampling designs. Unlike [stratify_by()], which defines
+#' subgroups to sample *within*, `cluster_by()` defines units to sample
+#' *as a whole*.
+#'
+#' @param .data A `sampling_design` object (piped from [sampling_design()],
+#'   [stratify_by()], or [stage()]).
+#' @param ... <[`tidy-select`][dplyr::dplyr_tidy_select]> Clustering variable(s)
+#'   that identify the sampling units. In most cases this is a single variable
+#'   (e.g., school_id, household_id).
+#'
+#' @return A modified `sampling_design` object with clustering specified.
+#'
+#' @details
+#' `cluster_by()` is purely structural—it defines *what* to sample, not *how*.
+#' The selection method and sample size are specified in [draw()].
+#'
+#' ## Cluster vs. Stratification
+#'
+#' - **Stratification** ([stratify_by()]): Sample *within* each group; all
+#'   groups represented in the sample
+#' - **Clustering** (`cluster_by()`): Sample *groups as units*; only selected
+#'   groups appear in sample
+#'
+#' ## Multi-Stage Designs
+#'
+#' In multi-stage designs, each stage typically has its own clustering variable:
+#' - Stage 1: Select schools (`cluster_by(school_id)`)
+#' - Stage 2: Select classrooms within schools (`cluster_by(classroom_id)`)
+#' - Stage 3: Select students within classrooms (no clustering, sample individuals)
+#'
+#' The nesting structure (classrooms within schools) is validated at execution time.
+#'
+#' @section Order of Operations:
+#' In a single stage, the typical order is:
+#' 1. `stratify_by()` (optional) - define strata
+#' 2. `cluster_by()` (optional) - define sampling units
+#' 3. `draw()` (required) - specify selection parameters
+#'
+#' Both `stratify_by()` and `cluster_by()` are optional but `draw()` is required.
+#'
+#' @examples
+#' \dontrun{
+#' # Simple cluster sample
+#' sampling_design() |>
+#'   cluster_by(school_id) |>
+#'   draw(n = 30) |>
+#'   execute(school_frame, seed = 42)
+#'
+#' # Stratified cluster sample
+#' sampling_design() |>
+#'   stratify_by(region) |>
+#'   cluster_by(school_id) |>
+#'   draw(n = 10) |>
+#'   execute(school_frame, seed = 42)
+#'
+#' # PPS cluster sample
+#' sampling_design() |>
+#'   cluster_by(district_id) |>
+#'   draw(n = 20, method = "pps_brewer", mos = population) |>
+#'   execute(district_frame, seed = 42)
+#'
+#' # Two-stage cluster sample
+#' sampling_design() |>
+#'   stage(label = "Schools") |>
+#'     cluster_by(school_id) |>
+#'     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
+#'   stage(label = "Students") |>
+#'     draw(n = 20) |>
+#'   execute(frame, seed = 42)
+#' }
+#'
+#' @seealso
+#' [sampling_design()] for creating designs,
+#' [stratify_by()] for stratification,
+#' [draw()] for specifying selection,
+#' [stage()] for multi-stage designs
+#'
+#' @export
+cluster_by <- function(.data, ...) {
+  if (!is_sampling_design(.data)) {
+    cli_abort("{.arg .data} must be a {.cls sampling_design} object")
+  }
+
+  vars_quo <- enquos(...)
+  if (length(vars_quo) == 0) {
+    cli_abort("At least one clustering variable must be specified")
+  }
+
+  vars <- unname(vapply(vars_quo, as_label, character(1)))
+  cluster_spec <- new_cluster_spec(vars = vars)
+
+  current <- .data$current_stage
+  if (current < 1 || current > length(.data$stages)) {
+    cli_abort("Invalid design state: no current stage")
+  }
+
+  if (!is_null(.data$stages[[current]]$clusters)) {
+    cli_abort("Clustering already defined for this stage. Use {.fn stage} to start a new stage.")
+  }
+
+  .data$stages[[current]]$clusters <- cluster_spec
+  .data$validated <- FALSE
+
+  .data
+}

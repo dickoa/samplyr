@@ -1,0 +1,43 @@
+stages:
+  - check
+  - pkgdown
+
+variables:
+  R_LIBS_USER: "$CI_PROJECT_DIR/ci/lib"
+
+check-release:
+  stage: check
+  image: rocker/r-ver:4.5.0
+  before_script:
+    - apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev libxml2-dev
+    - mkdir -p $R_LIBS_USER
+    - Rscript -e "install.packages(c('testthat', 'rcmdcheck'), repos='https://cloud.r-project.org')"
+  script:
+    - Rscript -e "rcmdcheck::rcmdcheck(args = c('--no-manual', '--as-cran'), error_on = 'warning')"
+
+check-devel:
+  stage: check
+  image: rocker/r-devel:latest
+  before_script:
+    - apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev libxml2-dev
+    - mkdir -p $R_LIBS_USER
+    - Rscript -e "install.packages(c('testthat', 'rcmdcheck'), repos='https://cloud.r-project.org')"
+  script:
+    - Rscript -e "rcmdcheck::rcmdcheck(args = c('--no-manual', '--as-cran'), error_on = 'error')"
+  allow_failure: true
+
+pages:
+  stage: pkgdown
+  image: rocker/r-ver:4.5.0
+  before_script:
+    - apt-get update && apt-get install -y pandoc libcurl4-openssl-dev libssl-dev libxml2-dev libfontconfig1-dev libharfbuzz-dev libfribidi-dev libfreetype6-dev libpng-dev libtiff5-dev libjpeg-dev
+    - mkdir -p $R_LIBS_USER
+    - Rscript -e "install.packages(c('pkgdown', 'testthat'), repos='https://cloud.r-project.org')"
+  script:
+    - Rscript -e "pkgdown::build_site()"
+    - mv docs public
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

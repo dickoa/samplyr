@@ -1,0 +1,39 @@
+Package: samplyr
+Title: A Tidy Grammar for Survey Sampling
+Version: 0.1.0
+Authors@R:
+    person("Ahmadou", "Dicko", , "mail@ahmadoudicko.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-9654-7582"))
+Description: Provides a tidy, composable grammar for specifying and executing
+    complex survey sampling designs. Supports stratified, clustered, multi-stage,
+    and multi-phase sampling with a minimal set of verbs that compose naturally.
+    Designed to bridge the gap between verbal descriptions of sampling plans
+    and executable R code, following tidyverse design principles. Includes
+    synthetic survey datasets from African countries (Niger, Uganda, Kenya,
+    Tanzania, Nigeria) for learning and testing.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Depends: R (>= 4.1.0)
+Imports:
+    rlang (>= 1.0.0),
+    vctrs,
+    cli,
+    glue,
+    tibble,
+    dplyr,
+    pillar,
+    sondage
+Suggests:
+   testthat (>= 3.0.0),
+   knitr,
+   rmarkdown,
+   roxygen2,
+   withr
+Config/testthat/edition: 3
+VignetteBuilder: knitr
+URL: https://gitlab.com/dickoa/samplyr
+BugReports: https://gitlab.com/dickoa/samplyr/issues
+Remotes: gitlab::dickoa/sondage

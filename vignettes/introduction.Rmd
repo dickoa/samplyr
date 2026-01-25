@@ -1,0 +1,538 @@
+---
+title: "Introduction to samplyr"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction to samplyr}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup, message = FALSE}
+library(samplyr)
+library(dplyr)
+```
+
+## Overview
+
+**samplyr** provides a tidy grammar for specifying and executing survey sampling designs. The package is built around a minimal set of composable verbs that handle stratified, clustered, and multi-stage sampling.
+
+The core idea is that sampling code should read like its English description:
+
+```{r, eval = FALSE}
+# "Stratify by region, proportionally allocate 500 samples, execute"
+sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 500) |>
+  execute(frame, seed = 42)
+```
+
+## The Grammar
+
+samplyr uses 5 verbs and 1 modifier:
+
+| Function | Purpose |
+|----------|---------|
+| `sampling_design()` | Create a new sampling design |
+| `stratify_by()` | Define stratification variables and allocation |
+| `cluster_by()` | Define cluster/PSU variable |
+| `draw()` | Specify sample size, method, and measure of size |
+| `execute()` | Run the design on a frame |
+| `stage()` | Delimit stages in multi-stage designs |
+
+## Example Data
+
+We'll use the `niger_eas` dataset throughout this vignette. It's a synthetic enumeration area frame inspired by DHS household surveys, with ~1,500 EAs across 8 regions.
+
+```{r}
+data(niger_eas)
+
+niger_eas |>
+  glimpse()
+```
+
+---
+
+## Simple Random Sampling
+
+The most basic design selects n units at random from the frame.
+
+```{r}
+sample <- sampling_design() |>
+  draw(n = 100) |>
+  execute(niger_eas, seed = 42)
+
+nrow(sample)
+```
+
+The result includes the original columns plus sampling metadata: `.weight` (sampling weight) and `.prob` (inclusion probability).
+
+```{r}
+sample |>
+  select(ea_id, region, strata, .weight, .prob) |>
+  head()
+```
+
+### Selection Methods
+
+The `method` argument controls how units are selected. By default, samplyr uses simple random sampling without replacement (`srswor`).
+
+Systematic sampling selects units at fixed intervals, which can improve precision when the frame is ordered.
+
+```{r}
+sample_sys <- sampling_design() |>
+  draw(n = 100, method = "systematic") |>
+  execute(niger_eas, seed = 42)
+```
+
+Sampling with replacement allows the same unit to be selected multiple times, useful for bootstrap procedures.
+
+```{r}
+sample_wr <- sampling_design() |>
+  draw(n = 100, method = "srswr") |>
+  execute(niger_eas, seed = 42)
+```
+
+### Using Sampling Fractions
+
+Instead of a fixed sample size, you can specify a sampling fraction with `frac`.
+
+```{r}
+sample <- sampling_design() |>
+  draw(frac = 0.05) |>
+  execute(niger_eas, seed = 42)
+
+nrow(sample)
+```
+
+Bernoulli sampling selects each unit independently with the specified probability. This gives a random sample size, which can simplify field protocols.
+
+```{r}
+sample <- sampling_design() |>
+  draw(frac = 0.05, method = "bernoulli") |>
+  execute(niger_eas, seed = 42)
+
+nrow(sample)
+```
+
+---
+
+## Stratified Sampling
+
+Stratification partitions the frame into non-overlapping groups (strata) and samples from each. This ensures representation from all subgroups and often improves precision.
+
+### Per-Stratum Sample Size
+
+Without an allocation method, `n` specifies the sample size within each stratum.
+
+```{r}
+sample <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 20) |>
+  execute(niger_eas, seed = 42)
+
+sample |>
+  count(region)
+```
+
+### Allocation Methods
+
+With an allocation method, `n` becomes the total sample size to distribute across strata.
+
+**Proportional allocation** distributes the sample proportionally to stratum sizes, ensuring the sample mirrors the population structure.
+
+```{r}
+sample <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300) |>
+  execute(niger_eas, seed = 42)
+
+sample |>
+  count(region) |>
+  mutate(pct = n / sum(n))
+```
+
+**Equal allocation** assigns the same sample size to each stratum, regardless of population size. This maximizes precision for comparisons between strata.
+
+```{r}
+sample <- sampling_design() |>
+  stratify_by(region, alloc = "equal") |>
+  draw(n = 160) |>
+  execute(niger_eas, seed = 42)
+
+sample |>
+  count(region)
+```
+
+**Neyman allocation** minimizes the variance of the overall estimate by allocating more sample to strata with higher variability. It requires prior information about stratum variances.
+
+```{r}
+data(niger_eas_variance)
+
+niger_eas_variance
+
+sample <- sampling_design() |>
+  stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
+  draw(n = 300) |>
+  execute(niger_eas, seed = 42)
+
+sample |>
+  count(region)
+```
+
+**Optimal allocation** extends Neyman allocation by also accounting for differential costs across strata. It minimizes variance for a fixed budget (or cost for fixed precision).
+
+```{r}
+data(niger_eas_cost)
+
+niger_eas_cost
+
+sample <- sampling_design() |>
+  stratify_by(region, alloc = "optimal",
+              variance = niger_eas_variance,
+              cost = niger_eas_cost) |>
+  draw(n = 300) |>
+  execute(niger_eas, seed = 42)
+
+sample |>
+  count(region)
+```
+
+### Sample Size Bounds
+
+When using allocation methods, you can constrain stratum sample sizes with `min_n` and `max_n` in `draw()`.
+
+**Minimum sample size** ensures every stratum gets at least the specified number of units. This is essential for variance estimation (requires n ≥ 2 per stratum) or when you need reliable subgroup estimates.
+
+```{r}
+# Neyman allocation with minimum 5 per stratum
+sample <- sampling_design() |>
+  stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
+  draw(n = 300, min_n = 20) |>
+  execute(niger_eas, seed = 42)
+
+sample |>
+  count(region)
+```
+
+**Maximum sample size** caps large strata to prevent them from dominating the sample. This is useful when operational constraints limit how many units you can handle in any one stratum.
+
+```{r}
+# Proportional allocation but cap at 60 per stratum
+sample <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300, max_n = 55) |>
+  execute(niger_eas, seed = 42)
+
+sample |>
+  count(region)
+```
+
+**Both bounds together** create a feasible range for each stratum:
+
+```{r}
+sample <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300, min_n = 20, max_n = 55) |>
+  execute(niger_eas, seed = 42)
+
+sample |>
+  count(region)
+```
+
+When a stratum's population is smaller than `min_n`, the entire stratum is selected (capped at population size).
+
+**Custom allocation** lets you specify exact sample sizes or rates per stratum by passing a data frame to `draw()`.
+
+```{r}
+sizes_df <- data.frame(
+  region = levels(niger_eas$region),
+  n = c(15, 25, 50, 60, 55, 45, 70, 30)
+)
+
+sample <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = sizes_df) |>
+  execute(niger_eas, seed = 42)
+
+sample |>
+  count(region)
+```
+
+### Multiple Stratification Variables
+
+You can stratify by multiple variables to create crossed strata. Here we stratify by both region and urban/rural status.
+
+```{r}
+sample <- sampling_design() |>
+  stratify_by(region, strata, alloc = "proportional") |>
+  draw(n = 300) |>
+  execute(niger_eas, seed = 42)
+
+sample |>
+  count(region, strata) |>
+  head(10)
+```
+
+---
+
+## Cluster Sampling
+
+Cluster sampling selects groups (clusters) rather than individual units. This is practical when a complete list of individuals isn't available or when travel costs make dispersed sampling expensive.
+
+Use `cluster_by()` to specify the cluster identifier. All units within selected clusters are included.
+
+```{r}
+sample <- sampling_design() |>
+  cluster_by(ea_id) |>
+  draw(n = 50) |>
+  execute(niger_eas, seed = 42)
+
+sample |>
+  summarise(
+    n_clusters = n_distinct(ea_id),
+    n_units = n()
+  )
+```
+
+---
+
+## PPS Sampling
+
+Probability Proportional to Size (PPS) sampling selects units with probability proportional to a size measure. This is standard for cluster sampling where clusters vary in size.
+
+Use the `mos` argument to specify the measure of size variable. Here we select EAs with probability proportional to their household count.
+
+```{r}
+sample <- sampling_design() |>
+  cluster_by(ea_id) |>
+  draw(n = 50, method = "pps_brewer", mos = hh_count) |>
+  execute(niger_eas, seed = 42)
+
+sample |>
+  summarise(
+    mean_hh = mean(hh_count),
+    median_hh = median(hh_count)
+  )
+```
+
+Compared to simple random sampling, PPS tends to select larger clusters:
+
+```{r}
+sample_srs <- sampling_design() |>
+  cluster_by(ea_id) |>
+  draw(n = 50) |>
+  execute(niger_eas, seed = 42)
+
+bind_rows(
+  sample |> summarise(method = "PPS", mean_hh = mean(hh_count)),
+  sample_srs |> summarise(method = "SRS", mean_hh = mean(hh_count))
+)
+```
+
+### PPS Methods
+
+samplyr supports several PPS methods:
+
+| Method            | Description                                                |
+|-------------------|------------------------------------------------------------|
+| `pps_brewer`      | Brewer's method - fast with good properties (recommended)  |
+| `pps_systematic`  | PPS systematic - simple but can have periodicity issues    |
+| `pps_maxent`      | Maximum entropy - highest entropy among fixed-size methods |
+| `pps_poisson`     | PPS Poisson - random sample size (requires `frac`)         |
+| `pps_multinomial` | PPS with replacement                                       |
+
+---
+
+## Multi-Stage Sampling
+
+Multi-stage designs sample in stages: first select primary sampling units (PSUs), then sample within them. This is the standard approach for large-scale surveys when a complete frame of ultimate units isn't available upfront.
+
+Use `stage()` to delimit each stage of the design.
+
+### Two-Stage Design
+
+For this example, we'll use `tanzania_schools` to demonstrate a two-stage design: first select districts as PSUs, then sample schools within selected districts.
+
+```{r}
+data(tanzania_schools)
+
+# First, let's see the structure: schools nested within districts
+tanzania_schools |>
+  count(region, district) |>
+  head(10)
+```
+
+We need to create a measure of size for districts. Here we'll use total enrollment per district.
+
+```{r}
+# Add district-level enrollment as MOS
+schools_frame <- tanzania_schools |>
+  group_by(district) |>
+  mutate(district_enrollment = sum(enrollment)) |>
+  ungroup()
+```
+
+Now we can run a two-stage design: select 10 districts with PPS, then sample 5 schools within each.
+
+```{r}
+sample <- sampling_design() |>
+  stage(label = "Districts") |>
+    cluster_by(district) |>
+    draw(n = 10, method = "pps_brewer", mos = district_enrollment) |>
+  stage(label = "Schools") |>
+    draw(n = 5) |>
+  execute(schools_frame, seed = 42)
+
+sample |>
+  summarise(
+    n_districts = n_distinct(district),
+    n_schools = n()
+  )
+```
+
+### Stratified Multi-Stage Design
+
+Combining stratification with multi-stage sampling is standard for national surveys. Here we stratify by school level, then select districts and schools within each stratum.
+
+```{r}
+sample <- sampling_design() |>
+  stage(label = "Districts") |>
+    stratify_by(school_level) |>
+    cluster_by(district) |>
+    draw(n = 5, method = "pps_brewer", mos = district_enrollment) |>
+  stage(label = "Schools") |>
+    draw(n = 3) |>
+  execute(schools_frame, seed = 42)
+
+sample |>
+  count(school_level, district)
+```
+
+---
+
+## Operational Multi-Stage Sampling
+
+In practice, multi-stage surveys often execute stages at different times. After selecting PSUs, field teams may need to conduct listing or other operations before the second stage can proceed.
+
+The `stages` argument lets you execute only specific stages.
+
+```{r}
+design <- sampling_design() |>
+  stage(label = "Districts") |>
+    stratify_by(region) |>
+    cluster_by(district) |>
+    draw(n = 2, method = "pps_brewer", mos = district_enrollment) |>
+  stage(label = "Schools") |>
+    draw(n = 4)
+
+# Execute stage 1 only
+selected_districts <- execute(design, schools_frame, stages = 1, seed = 42)
+
+selected_districts |>
+  distinct(region, district)
+```
+
+After fieldwork or preparation is complete, execute the remaining stages.
+
+```{r}
+final_sample <- selected_districts |>
+  execute(schools_frame, seed = 43)
+
+final_sample |>
+  count(region, district)
+```
+
+---
+
+## Working with Results
+
+### Accessing the Design
+
+The sampling design is attached to the result and can be retrieved with `get_design()`.
+
+```{r}
+sample <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 200) |>
+  execute(niger_eas, seed = 42)
+
+design <- get_design(sample)
+design$stages[[1]]$strata$vars
+```
+
+### Weight Diagnostics
+
+Unequal weights reduce effective sample size. Use `effective_n()` to compute the effective sample size and `design_effect()` for the design effect (ratio of actual variance to variance under SRS).
+
+```{r}
+effective_n(sample$.weight)
+
+design_effect(sample$.weight)
+```
+
+---
+
+## Method Reference
+
+### Selection Methods
+
+| Method | Sample Size | Replacement | Notes |
+|--------|-------------|-------------|-------|
+| `srswor` | Fixed | No | Default, general purpose |
+| `srswr` | Fixed | Yes | Bootstrap, rare populations |
+| `systematic` | Fixed | No | Ordered frames |
+| `bernoulli` | Random | No | Simple field protocols |
+| `pps_brewer` | Fixed | No | Recommended PPS method |
+| `pps_systematic` | Fixed | No | Simple PPS |
+| `pps_maxent` | Fixed | No | Joint inclusion probs available |
+| `pps_poisson` | Random | No | PPS with random size |
+| `pps_multinomial` | Fixed | Yes | PPS with replacement |
+
+### Allocation Methods
+
+| Method | Description | Requirements |
+|--------|-------------|--------------|
+| (none) | n per stratum | — |
+| `equal` | Same n per stratum | — |
+| `proportional` | n ∝ stratum size | — |
+| `neyman` | Minimize variance | `variance` data frame |
+| `optimal` | Minimize variance/cost | `variance` + `cost` data frames |
+
+For custom stratum-specific sizes or rates, pass a data frame directly to `n` or `frac` in `draw()`.
+
+### Sample Size Bounds
+
+| Argument | Description |
+|----------|-------------|
+| `min_n` | Minimum sample size per stratum (for variance estimation, set ≥ 2) |
+| `max_n` | Maximum sample size per stratum (to cap dominant strata) |
+
+These only apply when using allocation methods (`equal`, `proportional`, `neyman`, `optimal`).
+
+---
+
+## Best Practices
+
+1. **Always set a seed** for reproducibility
+2. **Use meaningful stage labels** for documentation
+3. **Validate designs** with `validate_frame()` before execution
+4. **Check weight distributions** with `effective_n()` and `design_effect()`
+
+```{r}
+design <- sampling_design(title = "National Health Survey 2024") |>
+  stage(label = "Enumeration Areas") |>
+    stratify_by(region, strata) |>
+    cluster_by(ea_id) |>
+    draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+  stage(label = "Households") |>
+    draw(n = 20)
+
+print(design)
+```
