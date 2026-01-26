@@ -22,7 +22,6 @@
 ^doc$
 ^Meta$
 ^air\.toml$
-.*\.html$
 .*~$
 .*~undo-tree~$
 \.Rhistory$

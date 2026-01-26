@@ -36,6 +36,7 @@
 #'   - `"systematic"`: Systematic (fixed interval) sampling
 #'   - `"bernoulli"`: Independent Bernoulli trials (random sample size)
 #'
+#'
 #'   **PPS methods (require `mos`):**
 #'   - `"pps_systematic"`: PPS systematic sampling
 #'   - `"pps_brewer"`: Generalized Brewer (Tillé) method
@@ -45,6 +46,14 @@
 #'
 #' @param mos <[`data-masking`][dplyr::dplyr_data_masking]> Measure of size
 #'   variable for PPS methods. Required for all `pps_*` methods.
+#' @param round Rounding method when converting `frac` to sample sizes.
+#'   One of:
+#'   - `"up"` (default): Round up (ceiling). Matches SAS SURVEYSELECT default.
+#'   - `"down"`: Round down (floor).
+#'   - `"nearest"`: Round to nearest integer (standard rounding).
+#'
+#'   This parameter only affects designs using `frac` to specify the sampling
+#'   rate. When `n` is specified directly, no rounding occurs.
 #'
 #' @return A modified `sampling_design` object with selection parameters specified.
 #'
@@ -88,7 +97,7 @@
 #'
 #' Methods with **fixed sample size** (`srswor`, `srswr`, `systematic`, `pps_systematic`,
 #' `pps_brewer`, `pps_maxent`, `pps_multinomial`) accept either `n` or `frac`. When `frac`
-#' is provided, the sample size is computed as `ceiling(N * frac)`.
+#' is provided, the sample size is computed based on the `round` parameter (default: ceiling).
 #'
 #' Methods with **random sample size** (`bernoulli`, `pps_poisson`) require `frac` only.
 #' These methods perform independent selection trials for each unit, so the final sample
@@ -163,7 +172,7 @@
 #'
 #' @export
 draw <- function(.data, n = NULL, frac = NULL, min_n = NULL, max_n = NULL,
-                 method = "srswor", mos = NULL) {
+                 method = "srswor", mos = NULL, round = "up") {
   if (!is_sampling_design(.data)) {
     cli_abort("{.arg .data} must be a {.cls sampling_design} object")
   }
@@ -179,7 +188,14 @@ draw <- function(.data, n = NULL, frac = NULL, min_n = NULL, max_n = NULL,
   if (!is_character(method) || length(method) != 1) {
     cli_abort("{.arg method} must be a single character string")
   }
+
   method <- match.arg(method, valid_methods)
+
+  valid_round <- c("up", "down", "nearest")
+  if (!is_character(round) || length(round) != 1) {
+    cli_abort("{.arg round} must be a single character string")
+  }
+  round <- match.arg(round, valid_round)
 
   current <- .data$current_stage
   if (current < 1 || current > length(.data$stages)) {
@@ -214,7 +230,8 @@ draw <- function(.data, n = NULL, frac = NULL, min_n = NULL, max_n = NULL,
     method = method,
     mos = mos_name,
     min_n = min_n,
-    max_n = max_n
+    max_n = max_n,
+    round = round
   )
 
   .data$stages[[current]]$draw_spec <- draw_spec

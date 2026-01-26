@@ -221,3 +221,99 @@ test_that("sample can continue to next stage", {
   # Should have 20 schools * 5 students = 100
   expect_equal(nrow(stage2_result), 100)
 })
+
+test_that("execute() with round='up' uses ceiling", {
+  # Create a frame where 0.1 * N is not an integer
+  frame <- data.frame(id = 1:105, x = rnorm(105))
+  
+  result <- sampling_design() |>
+    draw(frac = 0.1, round = "up") |>
+    execute(frame, seed = 42)
+  
+  # 105 * 0.1 = 10.5, ceiling = 11
+  expect_equal(nrow(result), 11)
+})
+
+test_that("execute() with round='down' uses floor", {
+  # Create a frame where 0.1 * N is not an integer
+  frame <- data.frame(id = 1:105, x = rnorm(105))
+  
+  result <- sampling_design() |>
+    draw(frac = 0.1, round = "down") |>
+    execute(frame, seed = 42)
+  
+  # 105 * 0.1 = 10.5, floor = 10
+  expect_equal(nrow(result), 10)
+})
+
+test_that("execute() with round='nearest' uses standard rounding", {
+  # Test case where fractional part < 0.5
+  frame1 <- data.frame(id = 1:102, x = rnorm(102))
+  
+  result1 <- sampling_design() |>
+    draw(frac = 0.1, round = "nearest") |>
+    execute(frame1, seed = 42)
+  
+  # 102 * 0.1 = 10.2, round = 10
+  expect_equal(nrow(result1), 10)
+  
+  # Test case where fractional part > 0.5
+  frame2 <- data.frame(id = 1:108, x = rnorm(108))
+  
+  result2 <- sampling_design() |>
+    draw(frac = 0.1, round = "nearest") |>
+    execute(frame2, seed = 42)
+  
+  # 108 * 0.1 = 10.8, round = 11
+  expect_equal(nrow(result2), 11)
+})
+
+test_that("execute() with stratified sampling respects round parameter", {
+  frame <- data.frame(
+    id = 1:100,
+    region = c(rep("A", 33), rep("B", 67))
+  )
+  
+  # With round = "up" (ceiling)
+  result_up <- sampling_design() |>
+    stratify_by(region) |>
+    draw(frac = 0.1, round = "up") |>
+    execute(frame, seed = 42)
+  
+  # A: 33 * 0.1 = 3.3, ceiling = 4
+  # B: 67 * 0.1 = 6.7, ceiling = 7
+  # Total = 11
+  expect_equal(nrow(result_up), 11)
+  
+  # With round = "nearest"
+  result_nearest <- sampling_design() |>
+    stratify_by(region) |>
+    draw(frac = 0.1, round = "nearest") |>
+    execute(frame, seed = 42)
+  
+  # A: 33 * 0.1 = 3.3, round = 3
+  # B: 67 * 0.1 = 6.7, round = 7
+  # Total = 10
+  expect_equal(nrow(result_nearest), 10)
+})
+
+test_that("execute() with round='down' ensures minimum of 1 per stratum", {
+  # Create frame with tiny stratum
+  frame <- data.frame(
+    id = 1:110,
+    region = c(rep("A", 5), rep("B", 105))  # A is tiny
+  )
+  
+  result <- sampling_design() |>
+    stratify_by(region) |>
+    draw(frac = 0.1, round = "down") |>
+    execute(frame, seed = 42)
+  
+  counts <- table(result$region)
+  
+  # A: 5 * 0.1 = 0.5, floor would be 0, but minimum is 1
+  expect_true(counts["A"] >= 1)
+  
+  # B: 105 * 0.1 = 10.5, floor = 10
+  expect_equal(as.integer(counts["B"]), 10)
+})

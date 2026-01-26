@@ -204,3 +204,35 @@ test_that("draw() validates data frame has required columns", {
     "n"
   )
 })
+
+test_that("draw() accepts round parameter", {
+  d_up <- sampling_design() |>
+    draw(frac = 0.1, round = "up")
+  expect_equal(d_up$stages[[1]]$draw_spec$round, "up")
+  
+  d_down <- sampling_design() |>
+    draw(frac = 0.1, round = "down")
+  expect_equal(d_down$stages[[1]]$draw_spec$round, "down")
+  
+  d_nearest <- sampling_design() |>
+    draw(frac = 0.1, round = "nearest")
+  expect_equal(d_nearest$stages[[1]]$draw_spec$round, "nearest")
+})
+
+test_that("draw() defaults round to 'up'", {
+  d <- sampling_design() |>
+    draw(frac = 0.1)
+  expect_equal(d$stages[[1]]$draw_spec$round, "up")
+})
+
+test_that("draw() validates round parameter", {
+  expect_error(
+    sampling_design() |> draw(frac = 0.1, round = "invalid"),
+    "arg"
+  )
+  
+  expect_error(
+    sampling_design() |> draw(frac = 0.1, round = 123),
+    "character"
+  )
+})

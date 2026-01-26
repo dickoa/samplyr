@@ -6,13 +6,13 @@
 \alias{samplyr-package}
 \title{samplyr: A Tidy Grammar for Survey Sampling}
 \description{
-Provides a tidy, composable grammar for specifying and executing complex survey sampling designs. Supports stratified, clustered, multi-stage, and multi-phase sampling with a minimal set of verbs that compose naturally. Designed to bridge the gap between English descriptions of sampling plans and executable R code, following tidyverse design principles. Includes synthetic survey datasets from African countries (Niger, Uganda, Kenya, Tanzania, Nigeria) for learning and testing.
+Provides a tidy, composable grammar for specifying and executing complex survey sampling designs. Supports stratified, clustered, multi-stage, and multi-phase sampling with a minimal set of verbs that compose naturally. Designed to bridge the gap between verbal descriptions of sampling plans and executable R code, following tidyverse design principles. Includes synthetic survey datasets from African countries (Niger, Uganda, Kenya, Tanzania, Nigeria) for learning and testing.
 }
 \seealso{
 Useful links:
 \itemize{
   \item \url{https://gitlab.com/dickoa/samplyr}
-  \item Report bugs at \url{https://gitlab.com/dickoa/samplyr/issues}
+  \item Report bugs at \url{https://gitlab.com/dickoa/samplyr/-/issues}
 }
 
 }

@@ -121,6 +121,28 @@ sample <- sampling_design() |>
 nrow(sample)
 ```
 
+### Rounding Behavior
+
+When using `frac`, the computed sample size (N × frac) must be rounded to an integer. By default, samplyr rounds up (ceiling), which matches SAS SURVEYSELECT's default behavior. Use the `round` argument to control this:
+
+- `"up"` (default): Round up — ensures adequate sample size
+- `"down"`: Round down — minimum sample size
+- `"nearest"`: Standard mathematical rounding
+
+```{r}
+# Frame of 105 units, frac = 0.1 → 10.5
+frame_105 <- niger_eas[1:105, ]
+
+# Default: rounds up to 11
+nrow(sampling_design() |> draw(frac = 0.1) |> execute(frame_105, seed = 42))
+
+# Round down to 10
+nrow(sampling_design() |> draw(frac = 0.1, round = "down") |> execute(frame_105, seed = 42))
+
+# Round to nearest (10)
+nrow(sampling_design() |> draw(frac = 0.1, round = "nearest") |> execute(frame_105, seed = 42))
+```
+
 ---
 
 ## Stratified Sampling
@@ -515,6 +537,16 @@ For custom stratum-specific sizes or rates, pass a data frame directly to `n` or
 | `max_n` | Maximum sample size per stratum (to cap dominant strata) |
 
 These only apply when using allocation methods (`equal`, `proportional`, `neyman`, `optimal`).
+
+### Rounding Methods
+
+| Value | Description |
+|-------|-------------|
+| `"up"` | Round up (ceiling) — default, matches SAS |
+| `"down"` | Round down (floor) |
+| `"nearest"` | Standard mathematical rounding |
+
+These apply when using `frac` to specify sampling rates. When computed sample size < 1, it is always rounded up to 1.
 
 ---
 

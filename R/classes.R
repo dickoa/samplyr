@@ -152,7 +152,8 @@ new_draw_spec <- function(n = NULL,
                            method = "srswor",
                            mos = NULL,
                            min_n = NULL,
-                           max_n = NULL) {
+                           max_n = NULL,
+                           round = "up") {
   structure(
     list(
       n = n,
@@ -160,7 +161,8 @@ new_draw_spec <- function(n = NULL,
       method = method,
       mos = mos,
       min_n = min_n,
-      max_n = max_n
+      max_n = max_n,
+      round = round
     ),
     class = "draw_spec"
   )

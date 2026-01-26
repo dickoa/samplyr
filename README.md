@@ -232,6 +232,21 @@ sampling_design() |>
   execute(frame, seed = 42)
 ```
 
+### SAS Rounding Control
+
+```sas
+proc surveyselect data=frame method=sys samprate=0.02 seed=42 round=nearest;
+  strata State;
+run;
+```
+
+```r
+sampling_design() |>
+  stratify_by(State) |>
+  draw(frac = 0.02, method = "systematic", round = "nearest") |>
+  execute(frame, seed = 42)
+```
+
 ### SPSS CSPLAN
 
 ```spss

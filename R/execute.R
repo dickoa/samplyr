@@ -361,6 +361,7 @@ sample_within_clusters <- function(
 ) {
   n <- draw_spec$n
   frac <- draw_spec$frac
+  round_method <- draw_spec$round %||% "up"
 
   split_var <- if (length(cluster_vars) == 1) {
     droplevels(as.factor(frame[[cluster_vars]]))
@@ -376,7 +377,7 @@ sample_within_clusters <- function(
     n_draw <- if (!is_null(n)) {
       min(n, N_cluster)
     } else if (!is_null(frac)) {
-      ceiling(N_cluster * frac)
+      round_sample_size(N_cluster * frac, round_method)
     } else {
       cli_abort("Cannot determine sample size within cluster")
     }
@@ -450,11 +451,12 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
 #' @noRd
 sample_unstratified <- function(frame, draw_spec) {
   N <- nrow(frame)
+  round_method <- draw_spec$round %||% "up"
 
   n <- if (!is_null(draw_spec$n)) {
     draw_spec$n
   } else if (!is_null(draw_spec$frac)) {
-    ceiling(N * draw_spec$frac)
+    round_sample_size(N * draw_spec$frac, round_method)
   } else {
     cli_abort("Cannot determine sample size")
   }
@@ -580,6 +582,18 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
 }
 
 #' @noRd
+round_sample_size <- function(x, round_method = "up") {
+  result <- switch(
+    round_method,
+    up = ceiling(x),
+    down = floor(x),
+    nearest = round(x)
+  )
+  # Ensure minimum of 1 for all strata
+  pmax(as.integer(result), 1L)
+}
+
+#' @noRd
 round_preserve_total <- function(x, n) {
   floored <- floor(x)
   remainders <- x - floored
@@ -599,6 +613,7 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
   frac <- draw_spec$frac
   min_n <- draw_spec$min_n
   max_n <- draw_spec$max_n
+  round_method <- draw_spec$round %||% "up"
 
   N <- sum(stratum_info$.N_h)
   H <- nrow(stratum_info)
@@ -627,7 +642,7 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
   } else if (frac_is_df) {
     stratum_info <- stratum_info |>
       left_join(frac, by = strata_spec$vars)
-    ceiling(stratum_info$.N_h * stratum_info$frac)
+    round_sample_size(stratum_info$.N_h * stratum_info$frac, round_method)
   } else if (is_null(alloc)) {
     if (!is_null(n_total)) {
       if (!is_null(names(n_total)) && !is_null(strata_ids)) {
@@ -638,9 +653,9 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
     } else if (!is_null(frac)) {
       if (!is_null(names(frac)) && !is_null(strata_ids)) {
         frac_matched <- frac[as.character(strata_ids)]
-        ceiling(stratum_info$.N_h * frac_matched)
+        round_sample_size(stratum_info$.N_h * frac_matched, round_method)
       } else {
-        ceiling(stratum_info$.N_h * frac)
+        round_sample_size(stratum_info$.N_h * frac, round_method)
       }
     } else {
       cli_abort("Cannot determine stratum sample sizes")

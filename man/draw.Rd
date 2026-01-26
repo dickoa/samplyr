@@ -11,7 +11,8 @@ draw(
   min_n = NULL,
   max_n = NULL,
   method = "srswor",
-  mos = NULL
+  mos = NULL,
+  round = "up"
 )
 }
 \arguments{
@@ -69,6 +70,17 @@ with an allocation method is used. Default is \code{NULL} (no maximum).}
 
 \item{mos}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Measure of size
 variable for PPS methods. Required for all \verb{pps_*} methods.}
+
+\item{round}{Rounding method when converting \code{frac} to sample sizes.
+One of:
+\itemize{
+\item \code{"up"} (default): Round up (ceiling). Matches SAS SURVEYSELECT default.
+\item \code{"down"}: Round down (floor).
+\item \code{"nearest"}: Round to nearest integer (standard rounding).
+}
+
+This parameter only affects designs using \code{frac} to specify the sampling
+rate. When \code{n} is specified directly, no rounding occurs.}
 }
 \value{
 A modified \code{sampling_design} object with selection parameters specified.
@@ -122,7 +134,7 @@ sampling design must end with \code{draw()}.
 
 Methods with \strong{fixed sample size} (\code{srswor}, \code{srswr}, \code{systematic}, \code{pps_systematic},
 \code{pps_brewer}, \code{pps_maxent}, \code{pps_multinomial}) accept either \code{n} or \code{frac}. When \code{frac}
-is provided, the sample size is computed as \code{ceiling(N * frac)}.
+is provided, the sample size is computed based on the \code{round} parameter (default: ceiling).
 
 Methods with \strong{random sample size} (\code{bernoulli}, \code{pps_poisson}) require \code{frac} only.
 These methods perform independent selection trials for each unit, so the final sample
