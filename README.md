@@ -66,13 +66,13 @@ sample <- sampling_design() |>
 Use `stage()` to define multi-stage designs. This example selects districts with PPS, then samples schools within each:
 
 ```r
+library(dplyr)
 data(tanzania_schools)
 
 # Add district-level measure of size
 schools_frame <- tanzania_schools |>
-  dplyr::group_by(district) |>
-  dplyr::mutate(district_enrollment = sum(enrollment)) |>
-  dplyr::ungroup()
+  mutate(district_enrollment = sum(enrollment),
+         .by = district)
 
 # Two-stage design: 10 districts, 5 schools per district
 sample <- sampling_design() |>
