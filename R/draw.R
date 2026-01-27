@@ -268,7 +268,6 @@ validate_draw_df <- function(df, strata_vars, value_col,
       call = call
     )
   }
-
   invisible(NULL)
 }
 

@@ -113,12 +113,7 @@ niger_eas <- local({
     n_eas <- max(10, round(region_eas / n_depts_in_region * runif(1, 0.7, 1.3)))
 
     tibble(
-      ea_id = sprintf(
-        "%s_%s_%04d",
-        substr(reg, 1, 3),
-        substr(dept, 1, 3),
-        seq_len(n_eas)
-      ),
+      ea_id = sprintf("%s_%02d_%04d", substr(reg, 1, 3), i, seq_len(n_eas)),
       region = reg,
       department = dept,
       strata = factor(
@@ -158,6 +153,46 @@ niger_eas_cost <- tibble(
 )
 
 usethis::use_data(niger_eas_cost, overwrite = TRUE)
+
+
+# ============================================================================
+# 1b. NIGER_HOUSEHOLDS: Household-level data for two-stage sampling
+# ============================================================================
+# Individual household records nested within niger_eas. Enables true two-stage
+# cluster sampling demonstrations (select EAs, then select households).
+
+niger_households <- local({
+  # Generate households for each EA based on hh_count
+  hh_list <- lapply(seq_len(nrow(niger_eas)), function(i) {
+    ea <- niger_eas[i, ]
+    n_hh <- ea$hh_count
+
+    tibble(
+      hh_id = sprintf("%s_HH%04d", ea$ea_id, seq_len(n_hh)),
+      ea_id = ea$ea_id,
+      region = ea$region,
+      department = ea$department,
+      strata = ea$strata,
+      hh_size = pmax(1, round(rnorm(n_hh, mean = 6, sd = 2.5))),
+      head_age = pmin(85, pmax(18, round(rnorm(n_hh, mean = 42, sd = 12)))),
+      head_sex = factor(
+        sample(c("Male", "Female"), n_hh, replace = TRUE, prob = c(0.75, 0.25)),
+        levels = c("Male", "Female")
+      ),
+      n_children_u5 = rpois(n_hh, lambda = 1.2)
+    )
+  })
+
+  bind_rows(hh_list) %>%
+    mutate(
+      region = factor(region, levels = levels(niger_eas$region)),
+      department = factor(department, levels = levels(niger_eas$department)),
+      strata = factor(strata, levels = levels(niger_eas$strata))
+    ) %>%
+    arrange(region, department, ea_id, hh_id)
+})
+
+usethis::use_data(niger_households, overwrite = TRUE)
 
 
 # ============================================================================
@@ -220,12 +255,7 @@ uganda_farms <- local({
     n_eas <- max(8, round(region_eas / n_dists_in_region * runif(1, 0.8, 1.2)))
 
     tibble(
-      ea_id = sprintf(
-        "UG_%s_%s_%03d",
-        substr(reg, 1, 3),
-        substr(dist, 1, 3),
-        seq_len(n_eas)
-      ),
+      ea_id = sprintf("UG_%02d_%03d", i, seq_len(n_eas)),
       region = reg,
       district = dist,
       urban_rural = factor(
@@ -365,12 +395,7 @@ kenya_health <- local({
     )
 
     tibble(
-      facility_id = sprintf(
-        "KE_%s_%s_%04d",
-        substr(reg, 1, 3),
-        substr(county, 1, 3),
-        seq_len(n_fac)
-      ),
+      facility_id = sprintf("KE_%02d_%04d", i, seq_len(n_fac)),
       region = reg,
       county = county,
       urban_rural = factor(
@@ -491,12 +516,7 @@ tanzania_schools <- local({
     )
 
     tibble(
-      school_id = sprintf(
-        "TZ_%s_%s_%04d",
-        substr(reg, 1, 3),
-        substr(dist, 1, 3),
-        seq_len(n_schools)
-      ),
+      school_id = sprintf("TZ_%02d_%04d", i, seq_len(n_schools)),
       region = reg,
       district = dist,
       school_level = school_levels,
@@ -654,12 +674,7 @@ nigeria_business <- local({
     )
 
     tibble(
-      enterprise_id = sprintf(
-        "NG_%s_%s_%05d",
-        substr(zone, 1, 2),
-        substr(state, 1, 3),
-        seq_len(n_biz)
-      ),
+      enterprise_id = sprintf("NG_%02d_%05d", i, seq_len(n_biz)),
       zone = zone,
       state = state,
       sector = biz_sectors,

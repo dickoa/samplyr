@@ -8,7 +8,8 @@
 #'
 #' @section Datasets:
 #' \itemize{
-#'   \item [niger_eas]: DHS-style household survey frame (Niger)
+#'   \item [niger_eas]: DHS-style EA frame (Niger)
+#'   \item [niger_households]: Household-level data nested within niger_eas
 #'   \item [uganda_farms]: LSMS-style agricultural survey frame (Uganda)
 #'   \item [kenya_health]: SPA-style health facility frame (Kenya)
 #'   \item [tanzania_schools]: Education survey frame (Tanzania)
@@ -137,6 +138,62 @@ NULL
 #'   execute(niger_eas, seed = 42)
 #'
 "niger_eas_cost"
+
+
+#' Niger Households (DHS-style)
+#'
+#' @description
+#' A synthetic household-level dataset nested within [niger_eas]. Each row
+#' represents one household, enabling true two-stage cluster sampling
+#' demonstrations where EAs are selected first, then households within
+#' selected EAs.
+#'
+#' @format A tibble with approximately 150,000 rows and 9 columns:
+#' \describe{
+#'   \item{hh_id}{Character. Unique household identifier}
+#'   \item{ea_id}{Character. Parent enumeration area identifier (links to [niger_eas])}
+#'   \item{region}{Factor. Region name}
+#'   \item{department}{Factor. Department name}
+#'   \item{strata}{Factor. Urban/Rural stratification}
+#'   \item{hh_size}{Integer. Number of persons in household}
+#'   \item{head_age}{Integer. Age of household head (18-85)}
+#'   \item{head_sex}{Factor. Sex of household head (Male/Female)}
+#'   \item{n_children_u5}{Integer. Number of children under 5 years}
+#' }
+#'
+#' @details
+#' This dataset is designed for demonstrating:
+#' \itemize{
+#'   \item True two-stage cluster sampling (EAs then households)
+#'   \item Joining cluster-level and unit-level data
+#'   \item Within-cluster subsampling
+#' }
+#'
+#' The number of households per EA matches the `hh_count` variable in
+#' [niger_eas], ensuring consistency between the EA frame and household
+#' listing.
+#'
+#' @note
+#' This is a synthetic dataset. All values are fictional.
+#'
+#' @seealso [niger_eas] for the EA-level frame
+#'
+#' @examples
+#' # Explore the data
+#' head(niger_households)
+#' length(unique(niger_households$ea_id))
+#'
+#' # True two-stage sample: select EAs, then households within selected EAs
+#' sampling_design() |>
+#'   stage(label = "EAs") |>
+#'     stratify_by(strata) |>
+#'     cluster_by(ea_id) |>
+#'     draw(n = 5, method = "pps_brewer", mos = hh_size) |>
+#'   stage(label = "Households") |>
+#'     draw(n = 10) |>
+#'   execute(niger_households, seed = 42)
+#'
+"niger_households"
 
 
 #' Uganda Agricultural Survey Frame (LSMS-style)

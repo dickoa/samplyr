@@ -12,7 +12,8 @@ designed to illustrate common survey sampling scenarios.
 \section{Datasets}{
 
 \itemize{
-\item \link{niger_eas}: DHS-style household survey frame (Niger)
+\item \link{niger_eas}: DHS-style EA frame (Niger)
+\item \link{niger_households}: Household-level data nested within niger_eas
 \item \link{uganda_farms}: LSMS-style agricultural survey frame (Uganda)
 \item \link{kenya_health}: SPA-style health facility frame (Kenya)
 \item \link{tanzania_schools}: Education survey frame (Tanzania)
