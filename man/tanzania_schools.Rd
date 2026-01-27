@@ -43,21 +43,19 @@ This is a synthetic dataset. Regions and districts are real but all
 data values are fictional.
 }
 \examples{
-data(tanzania_schools)
+# Explore the data
 head(tanzania_schools)
 table(tanzania_schools$school_level, tanzania_schools$ownership)
 
-# Two-stage cluster sample
-\dontrun{
+# Two-stage cluster sample: schools then students
 sampling_design() |>
   stage(label = "Schools") |>
     stratify_by(school_level) |>
     cluster_by(school_id) |>
-    draw(n = 30, method = "pps_brewer", mos = enrollment) |>
+    draw(n = 25, method = "pps_brewer", mos = enrollment) |>
   stage(label = "Students") |>
-    draw(n = 25) |>
+    draw(n = 20) |>
   execute(tanzania_schools, seed = 42)
-}
 
 }
 \keyword{datasets}

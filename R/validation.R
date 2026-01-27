@@ -26,17 +26,29 @@ NULL
 #' - Positive values for MOS variables
 #'
 #' @examples
+#' # Create a design requiring region stratification and PPS by household count
 #' design <- sampling_design() |>
 #'   stratify_by(region) |>
-#'   draw(n = 100)
+#'   cluster_by(ea_id) |>
+#'   draw(n = 10, method = "pps_brewer", mos = hh_count)
 #'
-#' # This will pass
-#' frame <- data.frame(id = 1:1000, region = sample(c("A", "B"), 1000, TRUE))
-#' validate_frame(design, frame)
+#' # Validate against niger_eas (should pass)
+#' validate_frame(design, niger_eas)
 #'
-#' # This will fail (missing region)
-#' # bad_frame <- data.frame(id = 1:1000)
-#' # validate_frame(design, bad_frame)
+#' # Create a frame missing required variables (will fail)
+#' bad_frame <- data.frame(id = 1:100, value = rnorm(100))
+#' try(validate_frame(design, bad_frame))
+#'
+#' # Validate only specific stages of a multi-stage design
+#' multi_design <- sampling_design() |>
+#'   stage(label = "Schools") |>
+#'     cluster_by(school_id) |>
+#'     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
+#'   stage(label = "Students") |>
+#'     draw(n = 15)
+#'
+#' # Validate stage 1 only
+#' validate_frame(multi_design, tanzania_schools, stage = 1)
 #'
 #' @export
 validate_frame <- function(design, frame, stage = NULL) {
@@ -158,6 +170,5 @@ report_validation_issues <- function(issues) {
     )
     msgs <- c(msgs, msg)
   }
-
   cli_abort(msgs, call = NULL)
 }

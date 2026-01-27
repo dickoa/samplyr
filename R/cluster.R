@@ -42,25 +42,24 @@
 #' Both `stratify_by()` and `cluster_by()` are optional but `draw()` is required.
 #'
 #' @examples
-#' \dontrun{
-#' # Simple cluster sample
+#' # Simple cluster sample: select 30 schools
 #' sampling_design() |>
 #'   cluster_by(school_id) |>
 #'   draw(n = 30) |>
-#'   execute(school_frame, seed = 42)
+#'   execute(tanzania_schools, seed = 123)
 #'
-#' # Stratified cluster sample
+#' # Stratified cluster sample: 10 schools per education level
 #' sampling_design() |>
-#'   stratify_by(region) |>
+#'   stratify_by(school_level) |>
 #'   cluster_by(school_id) |>
 #'   draw(n = 10) |>
-#'   execute(school_frame, seed = 42)
+#'   execute(tanzania_schools, seed = 1)
 #'
-#' # PPS cluster sample
+#' # PPS cluster sample using enrollment as measure of size
 #' sampling_design() |>
-#'   cluster_by(district_id) |>
-#'   draw(n = 20, method = "pps_brewer", mos = population) |>
-#'   execute(district_frame, seed = 42)
+#'   cluster_by(school_id) |>
+#'   draw(n = 50, method = "pps_brewer", mos = enrollment) |>
+#'   execute(tanzania_schools, seed = 2026)
 #'
 #' # Two-stage cluster sample
 #' sampling_design() |>
@@ -68,9 +67,8 @@
 #'     cluster_by(school_id) |>
 #'     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
 #'   stage(label = "Students") |>
-#'     draw(n = 20) |>
-#'   execute(frame, seed = 42)
-#' }
+#'     draw(n = 15) |>
+#'   execute(tanzania_schools, seed = 1234)
 #'
 #' @seealso
 #' [sampling_design()] for creating designs,
@@ -103,6 +101,5 @@ cluster_by <- function(.data, ...) {
 
   .data$stages[[current]]$clusters <- cluster_spec
   .data$validated <- FALSE
-
   .data
 }

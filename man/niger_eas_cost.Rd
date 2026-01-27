@@ -19,18 +19,16 @@ Per-interview cost by region for \link{niger_eas}. Remote regions (Agadez, Diffa
 have higher costs. Used for demonstrating optimal (cost-variance) allocation.
 }
 \examples{
-data(niger_eas_cost)
+# View the cost data
 niger_eas_cost
 
-# Optimal allocation (minimizing variance for fixed cost)
-\dontrun{
+# Optimal allocation minimizes variance for fixed total cost
 sampling_design() |>
   stratify_by(region, alloc = "optimal",
               variance = niger_eas_variance,
               cost = niger_eas_cost) |>
-  draw(n = 500) |>
+  draw(n = 200) |>
   execute(niger_eas, seed = 42)
-}
 
 }
 \seealso{

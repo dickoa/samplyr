@@ -41,17 +41,22 @@ This is a synthetic dataset. States and zones are real but all
 data values are fictional.
 }
 \examples{
-data(nigeria_business)
+# Explore the data
 head(nigeria_business)
 table(nigeria_business$size_class)
+table(nigeria_business$sector)
 
-# Stratified sample by sector and size
-\dontrun{
+# Stratified sample by sector and size class
 sampling_design() |>
   stratify_by(sector, size_class) |>
-  draw(n = 5, method = "pps_brewer", mos = employees) |>
+  draw(n = 3) |>
   execute(nigeria_business, seed = 42)
-}
+
+# Disproportionate sampling: oversample large enterprises
+sampling_design() |>
+  stratify_by(size_class) |>
+  draw(frac = c(Micro = 0.005, Small = 0.02, Medium = 0.10, Large = 0.50)) |>
+  execute(nigeria_business, seed = 42)
 
 }
 \keyword{datasets}

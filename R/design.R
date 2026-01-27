@@ -34,27 +34,25 @@
 #' }
 #'
 #' @examples
-#' \dontrun{
-#' # Simple random sample
+#' # Simple random sample of 100 health facilities
 #' sampling_design() |>
 #'   draw(n = 100) |>
-#'   execute(my_frame, seed = 42)
+#'   execute(kenya_health, seed = 1)
 #'
 #' # Stratified sample with proportional allocation
-#' sampling_design(title = "Regional Survey 2024") |>
-#'   stratify_by(region, alloc = "proportional") |>
-#'   draw(n = 1000) |>
-#'   execute(population_frame, seed = 42)
+#' sampling_design(title = "Kenya Health Facility Survey") |>
+#'   stratify_by(facility_type, alloc = "proportional") |>
+#'   draw(n = 400) |>
+#'   execute(kenya_health, seed = 2)
 #'
-#' # Multi-stage cluster sample
-#' sampling_design() |>
+#' # Two-stage cluster sample of schools and students
+#' sampling_design(title = "Tanzania Education Survey") |>
 #'   stage(label = "Schools") |>
 #'     cluster_by(school_id) |>
 #'     draw(n = 50, method = "pps_brewer", mos = enrollment) |>
 #'   stage(label = "Students") |>
 #'     draw(n = 20) |>
-#'   execute(school_frame, seed = 42)
-#' }
+#'   execute(tanzania_schools, seed = 3)
 #'
 #' @seealso
 #' [stratify_by()] for defining strata,
@@ -80,7 +78,6 @@ sampling_design <- function(title = NULL) {
     validated = FALSE
   )
 
-  # Initialize with default stage (replaced when stage() is explicitly called)
   design$stages <- list(new_sampling_stage())
   design$current_stage <- 1L
 

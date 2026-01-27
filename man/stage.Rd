@@ -82,7 +82,6 @@ See \code{\link[=execute]{execute()}} for details on execution patterns.
 }
 
 \examples{
-\dontrun{
 # Two-stage design: schools then students
 sampling_design() |>
   stage(label = "Schools") |>
@@ -90,35 +89,40 @@ sampling_design() |>
     draw(n = 50, method = "pps_brewer", mos = enrollment) |>
   stage(label = "Students") |>
     draw(n = 20) |>
-  execute(frame, seed = 42)
+  execute(tanzania_schools, seed = 123)
 
-# Three-stage with stratification at stage 1
+# Two-stage with stratification at stage 1
 sampling_design() |>
-  stage(label = "Districts") |>
-    stratify_by(region) |>
-    cluster_by(district_id) |>
-    draw(n = 5, method = "pps_brewer", mos = population) |>
   stage(label = "Schools") |>
+    stratify_by(school_level) |>
     cluster_by(school_id) |>
-    draw(n = 4) |>
+    draw(n = 20, method = "pps_brewer", mos = enrollment) |>
   stage(label = "Students") |>
     draw(n = 15) |>
-  execute(frame, seed = 42)
+  execute(tanzania_schools, seed = 1234)
 
-# Gambia bednet survey pattern
-sampling_design() |>
-  stage(label = "Districts") |>
+# DHS-style two-stage stratified cluster sample
+sampling_design(title = "DHS-style Household Survey") |>
+  stage(label = "Enumeration Areas") |>
+    stratify_by(region, strata) |>
+    cluster_by(ea_id) |>
+    draw(n = 3, method = "pps_brewer", mos = hh_count) |>
+  stage(label = "Households") |>
+    draw(n = 20) |>
+  execute(niger_eas, seed = 2026)
+
+# Partial execution: select only stage 1
+design <- sampling_design() |>
+  stage(label = "EAs") |>
     stratify_by(region) |>
-    cluster_by(district) |>
-    draw(n = 5, method = "pps_brewer", mos = census_pop) |>
-  stage(label = "Villages") |>
-    stratify_by(phc_status) |>
-    cluster_by(village) |>
-    draw(n = 2, method = "pps_brewer", mos = census_pop) |>
-  stage(label = "Compounds") |>
-    draw(n = 6) |>
-  execute(frame, seed = 42)
-}
+    cluster_by(ea_id) |>
+    draw(n = 10, method = "pps_brewer", mos = hh_count) |>
+  stage(label = "Households") |>
+    draw(n = 12)
+
+# Execute stage 1 only
+selected_eas <- execute(design, niger_eas, stages = 1, seed = 1)
+nrow(selected_eas)
 
 }
 \seealso{

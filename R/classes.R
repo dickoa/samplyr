@@ -1,7 +1,3 @@
-# S3 Class Definitions for samplyr
-
-# sampling_design class -------------------------------------------------
-
 #' Create a new sampling_design object
 #'
 #' Low-level constructor for sampling_design objects. Users should use
@@ -35,15 +31,15 @@ validate_sampling_design <- function(x) {
   if (!inherits(x, "sampling_design")) {
     cli_abort("Object must be a {.cls sampling_design}")
   }
-  
+
   if (!is_null(x$title) && !is_character(x$title)) {
     cli_abort("{.arg title} must be a character string")
   }
-  
+
   if (!is.list(x$stages)) {
     cli_abort("{.arg stages} must be a list")
   }
-  
+
   x
 }
 
@@ -93,8 +89,6 @@ is_sampling_stage <- function(x) {
   inherits(x, "sampling_stage")
 }
 
-# Stratum specification -------------------------------------------------
-
 #' Create a stratum specification
 #'
 #' @param vars Character vector of stratification variable names
@@ -119,8 +113,6 @@ new_stratum_spec <- function(vars,
   )
 }
 
-# Cluster specification -------------------------------------------------
-
 #' Create a cluster specification
 #'
 #' @param vars Character vector of clustering variable names
@@ -133,8 +125,6 @@ new_cluster_spec <- function(vars) {
     class = "cluster_spec"
   )
 }
-
-# Draw specification ----------------------------------------------------
 
 #' Create a draw specification
 #'
@@ -167,8 +157,6 @@ new_draw_spec <- function(n = NULL,
     class = "draw_spec"
   )
 }
-
-# tbl_sample class -------------------------------------------------
 
 #' Create a new tbl_sample object
 #'
@@ -246,14 +234,11 @@ get_stages_executed <- function(x) {
 #' @export
 #' @keywords internal
 dplyr_reconstruct.tbl_sample <- function(data, template) {
-  # Essential columns that define a valid sample
   essential_cols <- c(".weight", ".prob")
- 
-  # Check if all essential columns are present
+
   has_essential <- all(essential_cols %in% names(data))
- 
+
   if (has_essential) {
-    # Preserve tbl_sample class and attributes
     new_tbl_sample(
       data = data,
       design = attr(template, "design"),
@@ -262,7 +247,6 @@ dplyr_reconstruct.tbl_sample <- function(data, template) {
       metadata = attr(template, "metadata")
     )
   } else {
-    # Drop to tibble - no longer a valid sample
     tibble::as_tibble(data)
   }
 }

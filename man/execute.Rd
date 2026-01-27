@@ -96,41 +96,41 @@ Weights are calculated as the inverse of inclusion probabilities:
 }
 }
 \examples{
-\dontrun{
-# Basic execution
+# Basic SRS execution
 sample <- sampling_design() |>
   draw(n = 100) |>
-  execute(my_frame, seed = 42)
+  execute(kenya_health, seed = 42)
+sample
 
-# Stratified execution
+# Stratified execution with proportional allocation
 sample <- sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 1000) |>
-  execute(population_frame, seed = 42)
+  stratify_by(facility_type, alloc = "proportional") |>
+  draw(n = 300) |>
+  execute(kenya_health, seed = 42)
+table(sample$facility_type)
 
-# Two-stage execution
+# Two-stage cluster sample execution
 sample <- sampling_design() |>
   stage(label = "Schools") |>
     cluster_by(school_id) |>
-    draw(n = 50, method = "pps_brewer", mos = enrollment) |>
+    draw(n = 30, method = "pps_brewer", mos = enrollment) |>
   stage(label = "Students") |>
-    draw(n = 20) |>
-  execute(school_data, seed = 42)
+    draw(n = 15) |>
+  execute(tanzania_schools, seed = 42)
+length(unique(sample$school_id))  # 30 schools selected
 
-# Operational multi-stage (separate frames, different times)
+# Partial execution: stage 1 only
 design <- sampling_design() |>
   stage(label = "EAs") |>
+    stratify_by(region) |>
     cluster_by(ea_id) |>
-    draw(n = 30, method = "pps_brewer", mos = hh_count) |>
+    draw(n = 5, method = "pps_brewer", mos = hh_count) |>
   stage(label = "Households") |>
     draw(n = 12)
 
-# Execute stage 1
-selected_eas <- execute(design, ea_frame, stages = 1, seed = 42)
-
-# Later, after listing...
-final_sample <- selected_eas |> execute(listing_frame, seed = 43)
-}
+# Execute only stage 1 to get selected EAs
+selected_eas <- execute(design, niger_eas, stages = 1, seed = 42)
+nrow(selected_eas)  # Number of selected EAs
 
 }
 \seealso{

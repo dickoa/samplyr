@@ -43,17 +43,20 @@ This is a synthetic dataset. Counties and regions are real but all
 data values are fictional.
 }
 \examples{
-data(kenya_health)
+# Explore the data
 head(kenya_health)
 table(kenya_health$facility_type)
 
-# Stratified sample by facility type
-\dontrun{
+# Stratified sample by facility type with proportional allocation
 sampling_design() |>
   stratify_by(facility_type, alloc = "proportional") |>
-  draw(n = 400) |>
+  draw(n = 300) |>
   execute(kenya_health, seed = 42)
-}
+
+# PPS sample using outpatient visits as measure of size
+sampling_design() |>
+  draw(n = 100, method = "pps_brewer", mos = outpatient_visits) |>
+  execute(kenya_health, seed = 42)
 
 }
 \keyword{datasets}

@@ -19,16 +19,14 @@ Variance of household counts by region, calculated from \link{niger_eas}.
 Used for demonstrating Neyman optimal allocation in stratified sampling.
 }
 \examples{
-data(niger_eas_variance)
+# View the variance data
 niger_eas_variance
 
-# Neyman allocation
-\dontrun{
+# Neyman allocation minimizes variance for fixed sample size
 sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
-  draw(n = 500) |>
+  draw(n = 200) |>
   execute(niger_eas, seed = 42)
-}
 
 }
 \seealso{

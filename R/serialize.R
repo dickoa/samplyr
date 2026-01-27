@@ -35,7 +35,6 @@ as.list.sampling_design <- function(x, ...) {
         vars = stage$strata$vars,
         alloc = stage$strata$alloc
       )
-      # Include auxiliary data frame info (but not the data itself)
       if (!is_null(stage$strata$variance)) {
         stage_list$strata$variance_columns <- names(stage$strata$variance)
       }
@@ -53,7 +52,6 @@ as.list.sampling_design <- function(x, ...) {
     if (!is_null(stage$draw_spec)) {
       stage_list$draw <- list()
       if (!is_null(stage$draw_spec$n)) {
-        # Handle data frame n (custom allocation)
         if (is.data.frame(stage$draw_spec$n)) {
           stage_list$draw$n <- "custom (data frame)"
           stage_list$draw$n_columns <- names(stage$draw_spec$n)
@@ -62,7 +60,6 @@ as.list.sampling_design <- function(x, ...) {
         }
       }
       if (!is_null(stage$draw_spec$frac)) {
-        # Handle data frame frac (custom allocation)
         if (is.data.frame(stage$draw_spec$frac)) {
           stage_list$draw$frac <- "custom (data frame)"
           stage_list$draw$frac_columns <- names(stage$draw_spec$frac)
@@ -75,9 +72,7 @@ as.list.sampling_design <- function(x, ...) {
         stage_list$draw$mos <- stage$draw_spec$mos
       }
     }
-
     stage_list
   })
-
   result
 }

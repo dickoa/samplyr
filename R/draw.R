@@ -112,57 +112,56 @@
 #' - An `n` column (for sizes) or `frac` column (for rates)
 #'
 #' @examples
-#' \dontrun{
-#' # Simple random sample
+#' # Simple random sample of 100 facilities
 #' sampling_design() |>
 #'   draw(n = 100) |>
-#'   execute(frame, seed = 42)
+#'   execute(kenya_health, seed = 1)
 #'
 #' # Systematic sample of 10%
 #' sampling_design() |>
 #'   draw(frac = 0.10, method = "systematic") |>
-#'   execute(frame, seed = 42)
+#'   execute(kenya_health, seed = 123)
 #'
-#' # PPS sample
+#' # PPS sample of schools using enrollment
 #' sampling_design() |>
 #'   cluster_by(school_id) |>
 #'   draw(n = 50, method = "pps_brewer", mos = enrollment) |>
-#'   execute(school_frame, seed = 42)
+#'   execute(tanzania_schools, seed = 42)
 #'
-#' # Bernoulli sampling (random sample size)
+#' # Bernoulli sampling (random sample size, expected ~5%)
 #' sampling_design() |>
 #'   draw(frac = 0.05, method = "bernoulli") |>
-#'   execute(frame, seed = 42)
+#'   execute(nigeria_business, seed = 1234)
 #'
 #' # Stratified with different sizes per stratum (data frame)
-#' sizes_df <- data.frame(
-#'   region = c("North", "South", "East", "West"),
-#'   n = c(100, 200, 150, 100)
+#' facility_sizes <- data.frame(
+#'   facility_type = c("Clinic", "Dispensary", "Health Centre",
+#'                     "Sub-County Hospital", "County Hospital",
+#'                     "Referral Hospital", "Maternity Home"),
+#'   n = c(30, 40, 35, 25, 20, 10, 15)
 #' )
 #' sampling_design() |>
-#'   stratify_by(region) |>
-#'   draw(n = sizes_df) |>
-#'   execute(frame, seed = 42)
+#'   stratify_by(facility_type) |>
+#'   draw(n = facility_sizes) |>
+#'   execute(kenya_health, seed = 123)
 #'
 #' # Stratified with different rates per stratum (named vector)
 #' sampling_design() |>
-#'   stratify_by(region) |>
-#'   draw(frac = c(North = 0.1, South = 0.2, East = 0.15, West = 0.1)) |>
-#'   execute(frame, seed = 42)
+#'   stratify_by(size_class) |>
+#'   draw(frac = c(Micro = 0.01, Small = 0.05, Medium = 0.20, Large = 0.50)) |>
+#'   execute(nigeria_business, seed = 42)
 #'
 #' # Neyman allocation with minimum 2 per stratum (for variance estimation)
 #' sampling_design() |>
-#'   stratify_by(region, alloc = "neyman", variance = var_df) |>
-#'   draw(n = 500, min_n = 2) |>
-#'   execute(frame, seed = 42)
+#'   stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
+#'   draw(n = 150, min_n = 2) |>
+#'   execute(niger_eas, seed = 2026)
 #'
 #' # Proportional allocation with min and max bounds
 #' sampling_design() |>
 #'   stratify_by(region, alloc = "proportional") |>
-#'
-#'   draw(n = 1000, min_n = 20, max_n = 300) |>
-#'   execute(frame, seed = 42)
-#' }
+#'   draw(n = 200, min_n = 10, max_n = 50) |>
+#'   execute(niger_eas, seed = 42)
 #'
 #' @seealso
 #' [sampling_design()] for creating designs,
@@ -236,7 +235,6 @@ draw <- function(.data, n = NULL, frac = NULL, min_n = NULL, max_n = NULL,
 
   .data$stages[[current]]$draw_spec <- draw_spec
   .data$validated <- FALSE
-
   .data
 }
 
@@ -354,7 +352,6 @@ validate_draw_args <- function(n, frac, method, mos, has_alloc, n_is_df, frac_is
       cli_abort("{.arg frac} cannot exceed 1 for without-replacement methods", call = call)
     }
   }
-
   invisible(NULL)
 }
 
@@ -388,6 +385,5 @@ validate_bounds <- function(min_n, max_n, has_alloc,
   if (!is_null(min_n) && !is_null(max_n) && min_n > max_n) {
     cli_abort("{.arg min_n} ({min_n}) cannot be greater than {.arg max_n} ({max_n})", call = call)
   }
-
   invisible(NULL)
 }

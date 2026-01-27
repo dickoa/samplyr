@@ -68,41 +68,41 @@
 #' - **Multi-phase**: Weights compound across phases
 #'
 #' @examples
-#' \dontrun{
-#' # Basic execution
+#' # Basic SRS execution
 #' sample <- sampling_design() |>
 #'   draw(n = 100) |>
-#'   execute(my_frame, seed = 42)
+#'   execute(kenya_health, seed = 42)
+#' sample
 #'
-#' # Stratified execution
+#' # Stratified execution with proportional allocation
 #' sample <- sampling_design() |>
-#'   stratify_by(region, alloc = "proportional") |>
-#'   draw(n = 1000) |>
-#'   execute(population_frame, seed = 42)
+#'   stratify_by(facility_type, alloc = "proportional") |>
+#'   draw(n = 300) |>
+#'   execute(kenya_health, seed = 42)
+#' table(sample$facility_type)
 #'
-#' # Two-stage execution
+#' # Two-stage cluster sample execution
 #' sample <- sampling_design() |>
 #'   stage(label = "Schools") |>
 #'     cluster_by(school_id) |>
-#'     draw(n = 50, method = "pps_brewer", mos = enrollment) |>
+#'     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
 #'   stage(label = "Students") |>
-#'     draw(n = 20) |>
-#'   execute(school_data, seed = 42)
+#'     draw(n = 15) |>
+#'   execute(tanzania_schools, seed = 42)
+#' length(unique(sample$school_id))  # 30 schools selected
 #'
-#' # Operational multi-stage (separate frames, different times)
+#' # Partial execution: stage 1 only
 #' design <- sampling_design() |>
 #'   stage(label = "EAs") |>
+#'     stratify_by(region) |>
 #'     cluster_by(ea_id) |>
-#'     draw(n = 30, method = "pps_brewer", mos = hh_count) |>
+#'     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
 #'   stage(label = "Households") |>
 #'     draw(n = 12)
 #'
-#' # Execute stage 1
-#' selected_eas <- execute(design, ea_frame, stages = 1, seed = 42)
-#'
-#' # Later, after listing...
-#' final_sample <- selected_eas |> execute(listing_frame, seed = 43)
-#' }
+#' # Execute only stage 1 to get selected EAs
+#' selected_eas <- execute(design, niger_eas, stages = 1, seed = 42)
+#' nrow(selected_eas)  # Number of selected EAs
 #'
 #' @seealso
 #' [sampling_design()] for creating designs,
@@ -323,7 +323,6 @@ execute_single_stage <- function(
 
   result$.stage <- stage_num
 
-  # Compound weights for multi-stage designs
   if (!is_null(previous_sample) && ".weight" %in% names(previous_sample)) {
     if (
       !is_null(previous_stage_spec) && !is_null(previous_stage_spec$clusters)
@@ -386,7 +385,6 @@ sample_within_clusters <- function(
     selected$.weight <- 1 / selected$.pik
     selected$.prob <- selected$.pik
     selected$.pik <- NULL
-
     selected
   })
 
@@ -466,7 +464,6 @@ sample_unstratified <- function(frame, draw_spec) {
   result$.prob <- result$.pik
   result$.pik <- NULL
   result$.sample_id <- seq_len(nrow(result))
-
   result
 }
 
@@ -534,10 +531,8 @@ apply_bounds <- function(target, n_total, min_n, max_n, N_h) {
       }
       changed <- TRUE
     }
-
     if (!changed) break
   }
-
   adjusted <- pmin(adjusted, N_h)
   round_preserve_total_bounded(adjusted, n_total, effective_min, effective_max)
 }
@@ -589,7 +584,6 @@ round_sample_size <- function(x, round_method = "up") {
     down = floor(x),
     nearest = round(x)
   )
-  # Ensure minimum of 1 for all strata
   pmax(as.integer(result), 1L)
 }
 
@@ -795,7 +789,6 @@ validate_design_complete <- function(design, call = rlang::caller_env()) {
       cli_abort("{.val {label}} is incomplete: missing {.fn draw}", call = call)
     }
   }
-
   invisible(TRUE)
 }
 

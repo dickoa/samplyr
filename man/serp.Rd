@@ -59,27 +59,39 @@ is adjacent to the last district of region 2.
 \examples{
 library(dplyr)
 
-# Use inside arrange() like desc()
+# Basic serpentine sorting with mtcars
 mtcars |>
   arrange(serp(cyl, gear, carb)) |>
   select(cyl, gear, carb) |>
   head(15)
 
-# Compare nested vs serpentine sorting:
-# Nested (gear always ascending within cyl)
-mtcars |> arrange(cyl, gear) |> select(cyl, gear) |> head(12)
+# Compare nested vs serpentine sorting
+# Nested: gear always ascending within cyl
+mtcars |>
+  arrange(cyl, gear) |>
+  select(cyl, gear) |>
+  head(12)
 
-# Serpentine (gear descends in even-numbered cyl groups)
-mtcars |> arrange(serp(cyl, gear)) |> select(cyl, gear) |> head(12)
+# Serpentine: gear direction alternates by cyl group
+mtcars |>
+  arrange(serp(cyl, gear)) |>
+  select(cyl, gear) |>
+  head(12)
 
-# With systematic sampling for implicit stratification
-\dontrun{
-niger_eas |>
-  arrange(serp(region, department, commune)) |>
-  sampling_design() |>
+# Implicit stratification with systematic sampling
+# Sort Niger EAs in serpentine order, then draw systematic sample
+sampling_design() |>
   draw(n = 100, method = "systematic") |>
-  execute()
-}
+  execute(arrange(niger_eas, serp(region, department)),
+                  seed = 42)
+
+# Combine explicit stratification with serpentine sorting
+# Stratify by urban/rural, use serpentine within strata
+sampling_design() |>
+  stratify_by(strata) |>
+  draw(n = 100, method = "systematic") |>
+  execute(arrange(niger_eas, strata, serp(region, department)),
+                  seed = 1234)
 
 }
 \references{

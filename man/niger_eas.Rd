@@ -41,20 +41,20 @@ This is a synthetic dataset created for demonstration purposes. While it uses
 real Niger administrative divisions, all data values are fictional.
 }
 \examples{
-data(niger_eas)
+# Explore the data
 head(niger_eas)
+table(niger_eas$region)
+table(niger_eas$strata)
 
 # DHS-style two-stage stratified cluster sample
-\dontrun{
 sampling_design() |>
   stage(label = "EAs") |>
     stratify_by(region, strata) |>
     cluster_by(ea_id) |>
-    draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+    draw(n = 3, method = "pps_brewer", mos = hh_count) |>
   stage(label = "Households") |>
-    draw(n = 25) |>
+    draw(n = 20) |>
   execute(niger_eas, seed = 42)
-}
 
 }
 \seealso{

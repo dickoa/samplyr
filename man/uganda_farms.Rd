@@ -42,18 +42,16 @@ This is a synthetic dataset. Administrative divisions are real but all
 data values are fictional.
 }
 \examples{
-data(uganda_farms)
+# Explore the data
 head(uganda_farms)
 table(uganda_farms$region, uganda_farms$main_crop)
 
-# Stratified sample by region
-\dontrun{
+# Stratified cluster sample by region
 sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   cluster_by(ea_id) |>
-  draw(n = 30) |>
+  draw(n = 15) |>
   execute(uganda_farms, seed = 42)
-}
 
 }
 \keyword{datasets}

@@ -60,45 +60,48 @@
 #' - The appropriate value column (`var` or `cost`)
 #'
 #' @examples
-#' \dontrun{
-#' # Simple stratification (n per stratum)
+#' # Simple stratification: 20 EAs per region
 #' sampling_design() |>
 #'   stratify_by(region) |>
-#'   draw(n = 100) |>
-#'   execute(frame, seed = 42)
+#'   draw(n = 20) |>
+#'   execute(niger_eas, seed = 1234)
 #'
-#' # Proportional allocation
+#' # Proportional allocation across regions
 #' sampling_design() |>
 #'   stratify_by(region, alloc = "proportional") |>
-#'   draw(n = 1000) |>
-#'   execute(frame, seed = 42)
+#'   draw(n = 200) |>
+#'   execute(niger_eas, seed = 123)
 #'
-#' # Neyman allocation
-#' var_df <- data.frame(
-#'   region = c("North", "South", "East", "West"),
-#'   var = c(15.2, 22.1, 18.5, 20.3)
-#' )
+#' # Neyman allocation using pre-computed variances
 #' sampling_design() |>
-#'   stratify_by(region, alloc = "neyman", variance = var_df) |>
-#'   draw(n = 1000) |>
-#'   execute(frame, seed = 42)
+#'   stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
+#'   draw(n = 200) |>
+#'   execute(niger_eas, seed = 12)
 #'
-#' # Custom sizes (pass data frame to draw)
-#' sizes_df <- data.frame(
-#'   region = c("North", "South", "East", "West"),
-#'   n = c(200, 350, 250, 200)
+#' # Optimal allocation considering both variance and cost
+#' sampling_design() |>
+#'   stratify_by(region, alloc = "optimal",
+#'               variance = niger_eas_variance,
+#'               cost = niger_eas_cost) |>
+#'   draw(n = 200) |>
+#'   execute(niger_eas, seed = 1)
+#'
+#' # Custom sample sizes per stratum using a data frame
+#' custom_sizes <- data.frame(
+#'   region = c("Agadez", "Diffa", "Dosso", "Maradi",
+#'              "Niamey", "Tahoua", "Tillabéri", "Zinder"),
+#'   n = c(15, 20, 30, 35, 25, 30, 25, 20)
 #' )
 #' sampling_design() |>
 #'   stratify_by(region) |>
-#'   draw(n = sizes_df) |>
-#'   execute(frame, seed = 42)
+#'   draw(n = custom_sizes) |>
+#'   execute(niger_eas, seed = 2026)
 #'
 #' # Multiple stratification variables
 #' sampling_design() |>
-#'   stratify_by(region, urban_rural, alloc = "proportional") |>
-#'   draw(n = 2000) |>
-#'   execute(frame, seed = 42)
-#' }
+#'   stratify_by(region, strata, alloc = "proportional") |>
+#'   draw(n = 300) |>
+#'   execute(niger_eas, seed = 2025)
 #'
 #' @seealso
 #' [sampling_design()] for creating designs,
@@ -149,7 +152,6 @@ stratify_by <- function(.data, ...,
 
   .data$stages[[current]]$strata <- strata_spec
   .data$validated <- FALSE
-
   .data
 }
 
@@ -176,7 +178,6 @@ validate_stratify_args <- function(alloc, variance, cost, vars,
   if (!is_null(cost)) {
     validate_aux_df(cost, vars, "cost", "cost", call = call)
   }
-
   invisible(NULL)
 }
 
@@ -199,6 +200,5 @@ validate_aux_df <- function(df, vars, value_col, arg_name,
   if (!value_col %in% names(df)) {
     cli_abort("{.arg {arg_name}} must contain a {.val {value_col}} column", call = call)
   }
-
   invisible(NULL)
 }

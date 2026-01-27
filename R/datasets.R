@@ -65,20 +65,20 @@ NULL
 #' [niger_eas_cost] for optimal allocation
 #'
 #' @examples
-#' data(niger_eas)
+#' # Explore the data
 #' head(niger_eas)
+#' table(niger_eas$region)
+#' table(niger_eas$strata)
 #'
 #' # DHS-style two-stage stratified cluster sample
-#' \dontrun{
 #' sampling_design() |>
 #'   stage(label = "EAs") |>
 #'     stratify_by(region, strata) |>
 #'     cluster_by(ea_id) |>
-#'     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+#'     draw(n = 3, method = "pps_brewer", mos = hh_count) |>
 #'   stage(label = "Households") |>
-#'     draw(n = 25) |>
+#'     draw(n = 20) |>
 #'   execute(niger_eas, seed = 42)
-#' }
 #'
 "niger_eas"
 
@@ -98,16 +98,14 @@ NULL
 #' @seealso [niger_eas], [stratify_by()]
 #'
 #' @examples
-#' data(niger_eas_variance)
+#' # View the variance data
 #' niger_eas_variance
 #'
-#' # Neyman allocation
-#' \dontrun{
+#' # Neyman allocation minimizes variance for fixed sample size
 #' sampling_design() |>
 #'   stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
-#'   draw(n = 500) |>
+#'   draw(n = 200) |>
 #'   execute(niger_eas, seed = 42)
-#' }
 #'
 "niger_eas_variance"
 
@@ -127,18 +125,16 @@ NULL
 #' @seealso [niger_eas], [niger_eas_variance], [stratify_by()]
 #'
 #' @examples
-#' data(niger_eas_cost)
+#' # View the cost data
 #' niger_eas_cost
 #'
-#' # Optimal allocation (minimizing variance for fixed cost)
-#' \dontrun{
+#' # Optimal allocation minimizes variance for fixed total cost
 #' sampling_design() |>
 #'   stratify_by(region, alloc = "optimal",
 #'               variance = niger_eas_variance,
 #'               cost = niger_eas_cost) |>
-#'   draw(n = 500) |>
+#'   draw(n = 200) |>
 #'   execute(niger_eas, seed = 42)
-#' }
 #'
 "niger_eas_cost"
 
@@ -179,18 +175,16 @@ NULL
 #' data values are fictional.
 #'
 #' @examples
-#' data(uganda_farms)
+#' # Explore the data
 #' head(uganda_farms)
 #' table(uganda_farms$region, uganda_farms$main_crop)
 #'
-#' # Stratified sample by region
-#' \dontrun{
+#' # Stratified cluster sample by region
 #' sampling_design() |>
 #'   stratify_by(region, alloc = "proportional") |>
 #'   cluster_by(ea_id) |>
-#'   draw(n = 30) |>
+#'   draw(n = 15) |>
 #'   execute(uganda_farms, seed = 42)
-#' }
 #'
 "uganda_farms"
 
@@ -232,17 +226,20 @@ NULL
 #' data values are fictional.
 #'
 #' @examples
-#' data(kenya_health)
+#' # Explore the data
 #' head(kenya_health)
 #' table(kenya_health$facility_type)
 #'
-#' # Stratified sample by facility type
-#' \dontrun{
+#' # Stratified sample by facility type with proportional allocation
 #' sampling_design() |>
 #'   stratify_by(facility_type, alloc = "proportional") |>
-#'   draw(n = 400) |>
+#'   draw(n = 300) |>
 #'   execute(kenya_health, seed = 42)
-#' }
+#'
+#' # PPS sample using outpatient visits as measure of size
+#' sampling_design() |>
+#'   draw(n = 100, method = "pps_brewer", mos = outpatient_visits) |>
+#'   execute(kenya_health, seed = 42)
 #'
 "kenya_health"
 
@@ -284,21 +281,19 @@ NULL
 #' data values are fictional.
 #'
 #' @examples
-#' data(tanzania_schools)
+#' # Explore the data
 #' head(tanzania_schools)
 #' table(tanzania_schools$school_level, tanzania_schools$ownership)
 #'
-#' # Two-stage cluster sample
-#' \dontrun{
+#' # Two-stage cluster sample: schools then students
 #' sampling_design() |>
 #'   stage(label = "Schools") |>
 #'     stratify_by(school_level) |>
 #'     cluster_by(school_id) |>
-#'     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
+#'     draw(n = 25, method = "pps_brewer", mos = enrollment) |>
 #'   stage(label = "Students") |>
-#'     draw(n = 25) |>
+#'     draw(n = 20) |>
 #'   execute(tanzania_schools, seed = 42)
-#' }
 #'
 "tanzania_schools"
 
@@ -338,16 +333,21 @@ NULL
 #' data values are fictional.
 #'
 #' @examples
-#' data(nigeria_business)
+#' # Explore the data
 #' head(nigeria_business)
 #' table(nigeria_business$size_class)
+#' table(nigeria_business$sector)
 #'
-#' # Stratified sample by sector and size
-#' \dontrun{
+#' # Stratified sample by sector and size class
 #' sampling_design() |>
 #'   stratify_by(sector, size_class) |>
-#'   draw(n = 5, method = "pps_brewer", mos = employees) |>
+#'   draw(n = 3) |>
 #'   execute(nigeria_business, seed = 42)
-#' }
+#'
+#' # Disproportionate sampling: oversample large enterprises
+#' sampling_design() |>
+#'   stratify_by(size_class) |>
+#'   draw(frac = c(Micro = 0.005, Small = 0.02, Medium = 0.10, Large = 0.50)) |>
+#'   execute(nigeria_business, seed = 42)
 #'
 "nigeria_business"
