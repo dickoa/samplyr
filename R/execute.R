@@ -127,17 +127,24 @@ execute <- function(.data, ..., stages = NULL, seed = NULL) {
     if (!is.numeric(seed) || length(seed) != 1) {
       cli_abort("{.arg seed} must be a single integer")
     }
-    set.seed(seed)
   }
 
-  if (is_sampling_design(.data)) {
-    execute_design(.data, frames, stages, seed)
-  } else if (is_tbl_sample(.data)) {
-    execute_continuation(.data, frames, stages, seed)
+  run_execution <- function() {
+    if (is_sampling_design(.data)) {
+      execute_design(.data, frames, stages, seed)
+    } else if (is_tbl_sample(.data)) {
+      execute_continuation(.data, frames, stages, seed)
+    } else {
+      cli_abort(
+        "{.arg .data} must be a {.cls sampling_design} or {.cls tbl_sample}"
+      )
+    }
+  }
+
+  if (!is_null(seed)) {
+    withr::with_seed(seed, run_execution())
   } else {
-    cli_abort(
-      "{.arg .data} must be a {.cls sampling_design} or {.cls tbl_sample}"
-    )
+    run_execution()
   }
 }
 
@@ -351,6 +358,7 @@ sample_clusters <- function(frame, strata_spec, cluster_spec, draw_spec) {
   sample_units(cluster_frame, strata_spec, draw_spec)
 }
 
+
 #' @noRd
 sample_within_clusters <- function(
   frame,
@@ -362,16 +370,17 @@ sample_within_clusters <- function(
   frac <- draw_spec$frac
   round_method <- draw_spec$round %||% "up"
 
-  split_var <- if (length(cluster_vars) == 1) {
-    droplevels(as.factor(frame[[cluster_vars]]))
+  if (length(cluster_vars) == 1) {
+    split_key <- frame[[cluster_vars]]
   } else {
-    interaction(frame[, cluster_vars, drop = FALSE], drop = TRUE)
+    split_key <- interaction(frame[cluster_vars], drop = TRUE)
   }
 
-  frame_split <- split(frame, split_var)
+  indices_list <- split(seq_len(nrow(frame)), split_key, drop = TRUE)
 
-  results <- lapply(frame_split, function(data) {
-    N_cluster <- nrow(data)
+  results_list <- lapply(indices_list, function(idxs) {
+    data <- frame[idxs, , drop = FALSE]
+    N_cluster <- length(idxs)
 
     n_draw <- if (!is_null(n)) {
       min(n, N_cluster)
@@ -382,14 +391,17 @@ sample_within_clusters <- function(
     }
 
     selected <- draw_sample(data, n_draw, draw_spec)
+
     selected$.weight <- 1 / selected$.pik
     selected$.prob <- selected$.pik
     selected$.pik <- NULL
     selected
   })
 
-  result <- bind_rows(results)
-  result$.sample_id <- seq_len(nrow(result))
+  result <- bind_rows(results_list)
+  if (nrow(result) > 0) {
+    result$.sample_id <- seq_len(nrow(result))
+  }
   result
 }
 
@@ -491,8 +503,10 @@ apply_bounds <- function(target, n_total, min_n, max_n, N_h) {
     ))
   }
 
-  max_iterations <- 20
-  for (iter in seq_len(max_iterations)) {
+  max_iter <- 50L
+  converged <- FALSE
+
+  for (iter in seq_len(max_iter)) {
     changed <- FALSE
 
     below <- adjusted < effective_min
@@ -531,8 +545,23 @@ apply_bounds <- function(target, n_total, min_n, max_n, N_h) {
       }
       changed <- TRUE
     }
-    if (!changed) break
+
+    if (!changed) {
+      converged <- TRUE
+      break
+    }
   }
+
+  if (!converged) {
+    final_sum <- sum(round(adjusted))
+    cli_warn(c(
+      "Bounds adjustment did not converge in {max_iter} iterations",
+      "!" = "Stratum allocations may not sum exactly to {n_total}",
+      "i" = "Current rounded sum: {final_sum}",
+      "i" = "Consider relaxing {.arg min_n} or {.arg max_n} constraints"
+    ))
+  }
+
   adjusted <- pmin(adjusted, N_h)
   round_preserve_total_bounded(adjusted, n_total, effective_min, effective_max)
 }

@@ -20,14 +20,28 @@
 #' @importFrom dplyr dplyr_reconstruct
 #' @importFrom vctrs vec_size vec_slice new_data_frame
 #' @importFrom pillar pillar_shaft type_sum
+#' @importFrom withr with_seed
 #' @importFrom stats rlnorm rnorm sd setNames
 ## usethis namespace: end
 NULL
 
 # Global variables to avoid R CMD check notes
 utils::globalVariables(c(
-  ".sample_id", ".stratum_id", ".cluster_id", ".stage",
-  ".weight", ".prob", ".mos_value", ".prev_weight", ".pik",
-  ".n_h", ".n_strata", "n", "frac", "var", "cost",
-  "district", "hh_count"
+  ".sample_id",
+  ".stratum_id",
+  ".cluster_id",
+  ".stage",
+  ".weight",
+  ".prob",
+  ".mos_value",
+  ".prev_weight",
+  ".pik",
+  ".n_h",
+  ".n_strata",
+  "n",
+  "frac",
+  "var",
+  "cost",
+  "district",
+  "hh_count"
 ))

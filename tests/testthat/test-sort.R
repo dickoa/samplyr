@@ -1,9 +1,4 @@
-# test-sort.R
-# Tests for serpentine sorting algorithm
-
 test_that("serp returns correct order for 2 variables", {
-
-
   df <- data.frame(
     region = c(1, 1, 1, 2, 2, 2, 3, 3, 3),
     district = c(1, 2, 3, 1, 2, 3, 1, 2, 3),
@@ -11,7 +6,6 @@ test_that("serp returns correct order for 2 variables", {
   )
 
   result <- df[order(serp(df$region, df$district)), ]
-
 
   # Region 1 (odd):  district ascending  -> 1, 2, 3
   # Region 2 (even): district descending -> 3, 2, 1
@@ -23,7 +17,6 @@ test_that("serp returns correct order for 2 variables", {
 
 
 test_that("serp returns correct order for 3 variables", {
-
   df <- expand.grid(A = 1:2, B = 1:3, C = 1:2)
   df$id <- 1:nrow(df)
 
@@ -44,7 +37,6 @@ test_that("serp returns correct order for 3 variables", {
 
 
 test_that("serp works with character variables", {
-
   df <- data.frame(
     region = c("North", "North", "South", "South", "West", "West"),
     district = c("A", "B", "A", "B", "A", "B"),
@@ -63,7 +55,6 @@ test_that("serp works with character variables", {
 
 
 test_that("serp works with single variable (just ascending)", {
-
   df <- data.frame(x = c(3, 1, 4, 1, 5), id = 1:5)
 
   result <- df[order(serp(df$x)), ]
@@ -76,7 +67,6 @@ test_that("serp works with single variable (just ascending)", {
 
 
 test_that("serp handles NA values", {
-
   df <- data.frame(
     region = c(1, 1, 1, 2, 2, 2),
     district = c(1, NA, 2, 1, NA, 2),
@@ -95,7 +85,6 @@ test_that("serp handles NA values", {
 
 
 test_that("serp returns empty numeric for empty input", {
-
   result <- serp(integer(0), integer(0))
 
   expect_equal(result, numeric(0))
@@ -103,7 +92,6 @@ test_that("serp returns empty numeric for empty input", {
 
 
 test_that("serp returns 1 for single row", {
-
   result <- serp(1, 2, 3)
 
   expect_equal(result, 1)
@@ -111,13 +99,11 @@ test_that("serp returns 1 for single row", {
 
 
 test_that("serp errors with no variables", {
-
   expect_error(serp(), "At least one variable")
 })
 
 
 test_that("serp errors with mismatched lengths", {
-
   expect_error(
     serp(1:3, 1:5),
     "same length"
@@ -126,7 +112,6 @@ test_that("serp errors with mismatched lengths", {
 
 
 test_that("serp composes with other arrange arguments", {
-
   df <- data.frame(
     group = rep(c("A", "B"), each = 6),
     x = rep(1:2, times = 6),
@@ -168,7 +153,6 @@ test_that("serp composes with other arrange arguments", {
 
 
 test_that("serp produces correct pattern for 4 variables", {
-
   df <- expand.grid(A = 1:2, B = 1:2, C = 1:2, D = 1:2)
   df$id <- 1:nrow(df)
 
@@ -193,13 +177,11 @@ test_that("serp produces correct pattern for 4 variables", {
   expect_equal(result$A[1:2], c(1, 1))
   expect_equal(result$B[1:2], c(1, 1))
   expect_equal(result$C[1:2], c(1, 1))
-  expect_equal(result$D[1:2], c(1, 2))  # D ascending in group 1
+  expect_equal(result$D[1:2], c(1, 2)) # D ascending in group 1
 })
 
 
 test_that("serp matches SAS SURVEYSELECT SORT=SERP behavior", {
-
-
   # This test verifies the algorithm matches the SAS documentation description:
   # "In hierarchic serpentine sorting, PROC SURVEYSELECT sorts by the first
   # CONTROL variable in ascending order. Then within the first level of the
@@ -226,7 +208,6 @@ test_that("serp matches SAS SURVEYSELECT SORT=SERP behavior", {
 
 
 test_that("serp is fast for large datasets", {
-
   skip_on_cran()
 
   set.seed(42)

@@ -27,7 +27,7 @@
 #' 1. Converting each variable to integer ranks
 #' 2. For variable i, determining group membership from variables 1..(i-1)
 #' 3. If the cumulative group number is even, flipping ranks (descending)
-#' 4. Combining all adjusted ranks into a single numeric key
+#' 4. Using multi-column ordering to produce final sort positions
 #'
 #' ## Use with Systematic Sampling
 #'
@@ -123,32 +123,25 @@ serp <- function(...) {
   sort_keys <- vector("list", nvars)
   sort_keys[[1]] <- ranks[[1]]
 
-  group_id <- ranks[[1]]
+  cum_pos_change <- ranks[[1]] - 1L
 
   for (i in 2:nvars) {
-    # Parity: odd = ascending, even = descending
-    parity <- group_id %% 2L
-
     r <- ranks[[i]]
     max_r <- max(r)
 
-    # Flip ranks for even groups (descending)
-    adjusted_r <- ifelse(parity == 1L, r, max_r + 1L - r)
+    parity <- cum_pos_change %% 2L
+
+    adjusted_r <- ifelse(parity == 0L, r, max_r + 1L - r)
     sort_keys[[i]] <- adjusted_r
 
     if (i < nvars) {
-      group_id <- (group_id - 1L) * max_r + adjusted_r
+      cum_pos_change <- cum_pos_change + (adjusted_r - 1L)
     }
   }
 
-  # Combine into single numeric key using base conversion
-  # key = r1 * M^(n-1) + r2 * M^(n-2) + ... + rn
-  max_ranks <- vapply(sort_keys, max, integer(1))
-  M <- max(max_ranks) + 1
+  ord <- do.call(order, sort_keys)
 
-  key <- as.numeric(sort_keys[[1]])
-  for (i in 2:nvars) {
-    key <- key * M + sort_keys[[i]]
-  }
-  key
+  rank_vec <- integer(n)
+  rank_vec[ord] <- seq_len(n)
+  rank_vec
 }

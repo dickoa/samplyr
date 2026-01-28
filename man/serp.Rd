@@ -38,7 +38,7 @@ The algorithm builds a composite sort key by:
 \item Converting each variable to integer ranks
 \item For variable i, determining group membership from variables 1..(i-1)
 \item If the cumulative group number is even, flipping ranks (descending)
-\item Combining all adjusted ranks into a single numeric key
+\item Using multi-column ordering to produce final sort positions
 }
 }
 
