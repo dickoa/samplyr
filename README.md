@@ -18,12 +18,13 @@ samplyr is built around a simple idea: sampling code should read like its Englis
 
 ```r
 library(samplyr)
+data(kenya_health)
 
 # "Stratify by region, proportionally allocate 500 samples, execute"
 sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 500) |>
-  execute(frame, seed = 42)
+  execute(kenya_health, seed = 1)
 ```
 
 The package uses 5 verbs and 1 modifier:
@@ -44,18 +45,18 @@ library(samplyr)
 data(niger_eas)
 
 # Simple random sample
-sample <- sampling_design() |>
+srs_smpl <- sampling_design() |>
   draw(n = 100) |>
   execute(niger_eas, seed = 42)
 
 # Stratified proportional allocation
-sample <- sampling_design() |>
+strata_smpl <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
   execute(niger_eas, seed = 42)
 
 # PPS cluster sampling
-sample <- sampling_design() |>
+cluster_smpl <- sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 50, method = "pps_brewer", mos = hh_count) |>
   execute(niger_eas, seed = 42)
@@ -81,7 +82,7 @@ sample <- sampling_design() |>
     draw(n = 10, method = "pps_brewer", mos = district_enrollment) |>
   stage(label = "Schools") |>
     draw(n = 5) |>
-  execute(schools_frame, seed = 42)
+  execute(schools_frame, seed = 123)
 ```
 
 ### Operational Sampling
@@ -96,13 +97,24 @@ design <- sampling_design() |>
   stage(label = "Schools") |>
     draw(n = 5)
 
+# Add district-level measure of size
+schools_frame_agg <- tanzania_schools |>
+  summarize(district_enrollment = sum(enrollment),
+            m = n(),
+            .by = district)
+
 # Execute stage 1 only
-selected_districts <- execute(design, schools_frame, stages = 1, seed = 42)
+selected_districts <- execute(design, schools_frame_agg, stages = 1, seed = 1)
 
 # ... fieldwork ...
 
+schools_frame <- tanzania_schools |>
+  mutate(district_enrollment = sum(enrollment),
+         m = n(),
+         .by = district)
+
 # Execute stage 2
-final_sample <- selected_districts |> execute(schools_frame, seed = 43)
+final_sample <- selected_districts |> execute(schools_frame, seed = 2)
 ```
 
 ## Selection Methods
@@ -125,6 +137,7 @@ final_sample <- selected_districts |> execute(schools_frame, seed = 43)
 | `pps_maxent`      | Fixed       | Maximum entropy               |
 | `pps_poisson`     | Random      | PPS Poisson (requires `frac`) |
 | `pps_multinomial` | Fixed       | PPS with replacement          |
+| `pps_chromy`      | Fixed       | PPS with minimum replacement  |
 
 ## Allocation Methods
 
@@ -214,7 +227,7 @@ sampling_design() |>
   stratify_by(region) |>
   cluster_by(school) |>
   draw(n = 50, method = "pps_brewer", mos = enrollment) |>
-  execute(frame, seed = 42)
+  execute(frame, seed = 1)
 ```
 
 ### SAS Allocation with Bounds
@@ -229,7 +242,7 @@ run;
 sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = variance_data) |>
   draw(n = 500, min_n = 2, max_n = 100) |>
-  execute(frame, seed = 42)
+  execute(frame, seed = 2)
 ```
 
 ### SAS Rounding Control
@@ -244,7 +257,7 @@ run;
 sampling_design() |>
   stratify_by(State) |>
   draw(frac = 0.02, method = "systematic", round = "nearest") |>
-  execute(frame, seed = 42)
+  execute(frame, seed = 3)
 ```
 
 ### SPSS CSPLAN
@@ -263,9 +276,5 @@ sampling_design() |>
   stratify_by(region) |>
   cluster_by(school) |>
   draw(n = 50, method = "pps_brewer", mos = enrollment) |>
-  execute(frame, seed = 42)
+  execute(frame, seed = 4)
 ```
-
-## License
-
-MIT © Ahmadou Dicko

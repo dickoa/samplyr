@@ -115,7 +115,6 @@ validate_nesting <- function(data, strata_vars, cluster_vars) {
     return(invisible(TRUE))
   }
 
-  # Check each cluster appears in only one stratum
   check_df <- data |>
     select(all_of(c(strata_vars, cluster_vars))) |>
     distinct()
@@ -123,12 +122,12 @@ validate_nesting <- function(data, strata_vars, cluster_vars) {
   cluster_counts <- check_df |>
     group_by(across(all_of(cluster_vars))) |>
     summarise(
-      .n_strata = n_distinct(across(all_of(strata_vars))),
+      ".n_strata" = n_distinct(across(all_of(strata_vars))),
       .groups = "drop"
     )
 
   non_nested <- cluster_counts |>
-    filter(.n_strata > 1)
+    filter(.data$`.n_strata` > 1)
 
   if (nrow(non_nested) > 0) {
     example <- non_nested |> slice(1)

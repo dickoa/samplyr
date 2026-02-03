@@ -317,3 +317,107 @@ test_that("execute() with round='down' ensures minimum of 1 per stratum", {
   # B: 105 * 0.1 = 10.5, floor = 10
   expect_equal(as.integer(counts["B"]), 10)
 })
+
+# ============================================================================
+# Weight and Probability Invariant Tests
+# ============================================================================
+
+test_that("single-stage maintains weight = 1/prob invariant", {
+  frame <- test_frame()
+  
+  result <- sampling_design() |>
+    draw(n = 100) |>
+    execute(frame, seed = 42)
+  
+ # weight * prob = 1 for all observations
+  expect_equal(result$.weight * result$.prob, rep(1, nrow(result)))
+  
+  # Stagewise prob column should exist
+  expect_true(".prob_1" %in% names(result))
+  
+  # For single stage, .prob_1 should equal .prob
+  expect_equal(result$.prob_1, result$.prob)
+})
+
+test_that("multi-stage maintains weight = 1/prob invariant", {
+  frame <- test_frame()
+  
+  result <- sampling_design() |>
+    stage(label = "Schools") |>
+      cluster_by(school_id) |>
+      draw(n = 20) |>
+    stage(label = "Students") |>
+      draw(n = 5) |>
+    execute(frame, seed = 42)
+  
+  # CRITICAL: weight * prob = 1 for all observations
+  expect_equal(result$.weight * result$.prob, rep(1, nrow(result)))
+  
+  # Stagewise prob columns should exist
+  expect_true(".prob_1" %in% names(result))
+  expect_true(".prob_2" %in% names(result))
+  
+  # Joint prob = product of stagewise probs
+  expect_equal(result$.prob, result$.prob_1 * result$.prob_2)
+})
+
+test_that("multi-stage with separate execution maintains weight = 1/prob", {
+  frame <- test_frame()
+  
+  design <- sampling_design() |>
+    stage(label = "Schools") |>
+      cluster_by(school_id) |>
+      draw(n = 20) |>
+    stage(label = "Students") |>
+      draw(n = 5)
+  
+  # Execute stage 1 only
+  stage1_result <- execute(design, frame, stages = 1, seed = 42)
+  
+  # Stage 1 should have .prob_1 and maintain invariant
+  expect_true(".prob_1" %in% names(stage1_result))
+  expect_equal(stage1_result$.weight * stage1_result$.prob, rep(1, nrow(stage1_result)))
+  
+  # Continue to stage 2
+  final_result <- stage1_result |> execute(frame, seed = 43)
+  
+  # Final result should maintain invariant
+  expect_equal(final_result$.weight * final_result$.prob, rep(1, nrow(final_result)))
+  
+  # Should have both stagewise prob columns
+  expect_true(".prob_1" %in% names(final_result))
+  expect_true(".prob_2" %in% names(final_result))
+  
+  # Joint prob = product of stagewise probs
+  expect_equal(final_result$.prob, final_result$.prob_1 * final_result$.prob_2)
+})
+
+test_that("stratified sampling maintains weight = 1/prob invariant", {
+  frame <- test_frame()
+  
+  result <- sampling_design() |>
+    stratify_by(region, alloc = "proportional") |>
+    draw(n = 200) |>
+    execute(frame, seed = 42)
+  
+  # weight * prob = 1 for all observations
+  expect_equal(result$.weight * result$.prob, rep(1, nrow(result)))
+  
+  # Stagewise prob column should exist
+  expect_true(".prob_1" %in% names(result))
+})
+
+test_that("cluster sampling maintains weight = 1/prob invariant", {
+  frame <- test_frame()
+  
+  result <- sampling_design() |>
+    cluster_by(school_id) |>
+    draw(n = 20) |>
+    execute(frame, seed = 42)
+  
+  # weight * prob = 1 for all observations
+  expect_equal(result$.weight * result$.prob, rep(1, nrow(result)))
+  
+  # Stagewise prob column should exist
+  expect_true(".prob_1" %in% names(result))
+})

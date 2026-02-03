@@ -311,7 +311,8 @@ execute_single_stage <- function(
       cluster_vars <- cluster_spec$vars
       result <- frame |>
         inner_join(
-          result |> select(all_of(cluster_vars), .weight, .prob, .sample_id),
+          result |>
+            select(all_of(cluster_vars), ".weight", ".prob", ".sample_id"),
           by = cluster_vars
         )
     }
@@ -330,21 +331,47 @@ execute_single_stage <- function(
 
   result$.stage <- stage_num
 
+  # Store stagewise probability before compounding
+
+  stage_prob_col <- paste0(".prob_", stage_num)
+  result[[stage_prob_col]] <- result$.prob
+
+  # Compound weights AND probabilities from previous stages
   if (!is_null(previous_sample) && ".weight" %in% names(previous_sample)) {
+    # Identify previous stagewise prob columns to carry forward
+    prev_prob_cols <- grep(
+      "^\\.prob_\\d+$",
+      names(previous_sample),
+      value = TRUE
+    )
+
     if (
       !is_null(previous_stage_spec) && !is_null(previous_stage_spec$clusters)
     ) {
       cluster_vars <- previous_stage_spec$clusters$vars
-      prev_weights <- previous_sample |>
+      prev_data <- previous_sample |>
         distinct(across(all_of(cluster_vars)), .keep_all = TRUE) |>
-        select(all_of(cluster_vars), .prev_weight = .weight)
+        select(
+          all_of(cluster_vars),
+          all_of(prev_prob_cols),
+          ".prev_weight" = ".weight",
+          ".prev_prob" = ".prob"
+        )
 
       result <- result |>
-        left_join(prev_weights, by = cluster_vars) |>
-        mutate(.weight = .weight * .prev_weight) |>
-        select(-".prev_weight")
+        left_join(prev_data, by = cluster_vars) |>
+        mutate(
+          ".weight" = .data$`.weight` * .data$`.prev_weight`,
+          ".prob" = .data$`.prob` * .data$`.prev_prob`
+        ) |>
+        select(-".prev_weight", -".prev_prob")
     } else {
+      # Non-clustered continuation
+      for (col in prev_prob_cols) {
+        result[[col]] <- previous_sample[[col]][1]
+      }
       result$.weight <- result$.weight * previous_sample$.weight[1]
+      result$.prob <- result$.prob * previous_sample$.prob[1]
     }
   }
   result
@@ -429,7 +456,7 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
     group_modify(function(data, keys) {
       n_h <- stratum_info |>
         inner_join(keys, by = strata_vars) |>
-        pull(.n_h)
+        pull(".n_h")
 
       if (length(n_h) == 0 || is.na(n_h)) {
         cli_abort("Could not determine sample size for stratum")
@@ -789,7 +816,7 @@ subset_frame_to_sample <- function(
   if (!is_null(previous_stage_spec) && !is_null(previous_stage_spec$clusters)) {
     cluster_vars <- previous_stage_spec$clusters$vars
     selected_clusters <- unique(sample[, cluster_vars, drop = FALSE])
-    return(frame |> semi_join(selected_clusters, by = cluster_vars))
+    return(semi_join(frame, selected_clusters, by = cluster_vars))
   }
 
   common_cols <- intersect(names(frame), names(sample))
@@ -802,7 +829,7 @@ subset_frame_to_sample <- function(
     cli_warn("No common columns for linking frames across stages")
     return(frame)
   }
-  frame |> semi_join(sample, by = common_cols)
+  semi_join(frame, sample, by = common_cols)
 }
 
 #' @noRd

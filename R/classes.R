@@ -10,10 +10,12 @@
 #'
 #' @return A sampling_design object
 #' @noRd
-new_sampling_design <- function(title = NULL,
-                                 stages = list(),
-                                 current_stage = 0L,
-                                 validated = FALSE) {
+new_sampling_design <- function(
+  title = NULL,
+  stages = list(),
+  current_stage = 0L,
+  validated = FALSE
+) {
   structure(
     list(
       title = title,
@@ -52,8 +54,6 @@ is_sampling_design <- function(x) {
   inherits(x, "sampling_design")
 }
 
-# sampling_stage class --------------------------------------------------
-
 #' Create a new sampling_stage object
 #'
 #' Low-level constructor for sampling_stage objects.
@@ -65,10 +65,12 @@ is_sampling_design <- function(x) {
 #'
 #' @return A sampling_stage object
 #' @noRd
-new_sampling_stage <- function(label = NULL,
-                                strata = NULL,
-                                clusters = NULL,
-                                draw_spec = NULL) {
+new_sampling_stage <- function(
+  label = NULL,
+  strata = NULL,
+  clusters = NULL,
+  draw_spec = NULL
+) {
   structure(
     list(
       label = label,
@@ -98,10 +100,7 @@ is_sampling_stage <- function(x) {
 #'
 #' @return A stratum_spec object
 #' @noRd
-new_stratum_spec <- function(vars,
-                              alloc = NULL,
-                              variance = NULL,
-                              cost = NULL) {
+new_stratum_spec <- function(vars, alloc = NULL, variance = NULL, cost = NULL) {
   structure(
     list(
       vars = vars,
@@ -137,13 +136,15 @@ new_cluster_spec <- function(vars) {
 #'
 #' @return A draw_spec object
 #' @noRd
-new_draw_spec <- function(n = NULL,
-                           frac = NULL,
-                           method = "srswor",
-                           mos = NULL,
-                           min_n = NULL,
-                           max_n = NULL,
-                           round = "up") {
+new_draw_spec <- function(
+  n = NULL,
+  frac = NULL,
+  method = "srswor",
+  mos = NULL,
+  min_n = NULL,
+  max_n = NULL,
+  round = "up"
+) {
   structure(
     list(
       n = n,
@@ -171,11 +172,13 @@ new_draw_spec <- function(n = NULL,
 #'
 #' @return A tbl_sample object
 #' @noRd
-new_tbl_sample <- function(data,
-                           design,
-                           stages_executed,
-                           seed = NULL,
-                           metadata = list()) {
+new_tbl_sample <- function(
+  data,
+  design,
+  stages_executed,
+  seed = NULL,
+  metadata = list()
+) {
   structure(
     data,
     design = design,
@@ -218,8 +221,6 @@ get_stages_executed <- function(x) {
   }
   attr(x, "stages_executed")
 }
-
-# dplyr compatibility -----------------------------------------------------
 
 #' Reconstruct a tbl_sample after dplyr operations
 #'

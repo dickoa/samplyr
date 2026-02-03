@@ -7,7 +7,7 @@
 #' @importFrom rlang caller_env current_env global_env
 #' @importFrom rlang is_null is_character is_list is_formula
 #' @importFrom rlang is_named is_empty abort warn inform
-#' @importFrom rlang as_label as_name as_string
+#' @importFrom rlang as_label as_name as_string .data
 #' @importFrom glue glue glue_collapse
 #' @importFrom cli cli_abort cli_warn cli_inform
 #' @importFrom cli cli_h1 cli_h2 cli_bullets cli_text
@@ -24,24 +24,3 @@
 #' @importFrom stats rlnorm rnorm sd setNames
 ## usethis namespace: end
 NULL
-
-# Global variables to avoid R CMD check notes
-utils::globalVariables(c(
-  ".sample_id",
-  ".stratum_id",
-  ".cluster_id",
-  ".stage",
-  ".weight",
-  ".prob",
-  ".mos_value",
-  ".prev_weight",
-  ".pik",
-  ".n_h",
-  ".n_strata",
-  "n",
-  "frac",
-  "var",
-  "cost",
-  "district",
-  "hh_count"
-))
