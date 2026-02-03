@@ -65,7 +65,8 @@ with an allocation method is used. Default is \code{NULL} (no maximum).}
 \item \code{"pps_brewer"}: Generalized Brewer (Tillé) method
 \item \code{"pps_maxent"}: Maximum entropy / conditional Poisson
 \item \code{"pps_poisson"}: PPS Poisson sampling (random sample size)
-\item \code{"pps_multinomial"}: PPS multinomial (with replacement)
+\item \code{"pps_multinomial"}: PPS multinomial (with replacement, any hit count)
+\item \code{"pps_chromy"}: Chromy's sequential PPS (minimum replacement)
 }}
 
 \item{mos}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Measure of size
@@ -108,7 +109,8 @@ sampling design must end with \code{draw()}.
    \code{pps_brewer} \tab Without \tab Fixed \tab Fast, π_ij > 0 \cr
    \code{pps_maxent} \tab Without \tab Fixed \tab Highest entropy, π_ij available \cr
    \code{pps_poisson} \tab Without \tab Random \tab PPS analog of Bernoulli \cr
-   \code{pps_multinomial} \tab With \tab Fixed \tab Allows duplicates \cr
+   \code{pps_multinomial} \tab With \tab Fixed \tab Any hit count, Hansen-Hurwitz \cr
+   \code{pps_chromy} \tab Min. repl. \tab Fixed \tab SAS default PPS_SEQ \cr
 }
 
 }
@@ -126,6 +128,7 @@ sampling design must end with \code{draw()}.
    \code{pps_maxent} \tab ✓ \tab — \tab ✓ \cr
    \code{pps_poisson} \tab — \tab ✓ \tab ✓ \cr
    \code{pps_multinomial} \tab ✓ \tab or ✓ \tab ✓ \cr
+   \code{pps_chromy} \tab ✓ \tab or ✓ \tab ✓ \cr
 }
 
 }

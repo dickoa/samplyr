@@ -42,7 +42,8 @@
 #'   - `"pps_brewer"`: Generalized Brewer (Tillé) method
 #'   - `"pps_maxent"`: Maximum entropy / conditional Poisson
 #'   - `"pps_poisson"`: PPS Poisson sampling (random sample size)
-#'   - `"pps_multinomial"`: PPS multinomial (with replacement)
+#'   - `"pps_multinomial"`: PPS multinomial (with replacement, any hit count)
+#'   - `"pps_chromy"`: Chromy's sequential PPS (minimum replacement)
 #'
 #' @param mos <[`data-masking`][dplyr::dplyr_data_masking]> Measure of size
 #'   variable for PPS methods. Required for all `pps_*` methods.
@@ -77,7 +78,8 @@
 #' | `pps_brewer` | Without | Fixed | Fast, π_ij > 0 |
 #' | `pps_maxent` | Without | Fixed | Highest entropy, π_ij available |
 #' | `pps_poisson` | Without | Random | PPS analog of Bernoulli |
-#' | `pps_multinomial` | With | Fixed | Allows duplicates |
+#' | `pps_multinomial` | With | Fixed | Any hit count, Hansen-Hurwitz |
+#' | `pps_chromy` | Min. repl. | Fixed | SAS default PPS_SEQ |
 #'
 #' ## Parameter Requirements
 #'
@@ -92,6 +94,7 @@
 #' | `pps_maxent` | ✓ | — | ✓ |
 #' | `pps_poisson` | — | ✓ | ✓ |
 #' | `pps_multinomial` | ✓ | or ✓ | ✓ |
+#' | `pps_chromy` | ✓ | or ✓ | ✓ |
 #'
 #' ## Fixed vs Random Sample Size Methods
 #'
@@ -181,7 +184,8 @@ draw <- function(.data, n = NULL, frac = NULL, min_n = NULL, max_n = NULL,
 
   valid_methods <- c(
     "srswor", "srswr", "systematic", "bernoulli",
-    "pps_systematic", "pps_brewer", "pps_maxent", "pps_poisson", "pps_multinomial"
+    "pps_systematic", "pps_brewer", "pps_maxent", "pps_poisson",
+    "pps_multinomial", "pps_chromy"
   )
 
   if (!is_character(method) || length(method) != 1) {
@@ -275,7 +279,8 @@ validate_draw_df <- function(df, strata_vars, value_col,
 validate_draw_args <- function(n, frac, method, mos, has_alloc, n_is_df, frac_is_df,
                                call = rlang::caller_env()) {
   pps_methods <- c(
-    "pps_systematic", "pps_brewer", "pps_maxent", "pps_poisson", "pps_multinomial"
+    "pps_systematic", "pps_brewer", "pps_maxent", "pps_poisson",
+    "pps_multinomial", "pps_chromy"
   )
   is_pps <- method %in% pps_methods
 

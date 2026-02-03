@@ -747,7 +747,12 @@ draw_sample <- function(data, n, draw_spec) {
   method <- draw_spec$method
   mos <- draw_spec$mos
   N <- nrow(data)
-  n <- min(n, N)
+  
+  # Only cap n at N for without-replacement methods
+  wr_methods <- c("srswr", "pps_multinomial", "pps_chromy")
+  if (!method %in% wr_methods) {
+    n <- min(n, N)
+  }
 
   pik <- NULL
 
@@ -795,8 +800,14 @@ draw_sample <- function(data, n, draw_spec) {
     }
   } else if (method == "pps_multinomial") {
     mos_vals <- data[[mos]]
-    pik <- sondage::inclusion_prob(mos_vals, n)
-    idx <- sondage::up_multinomial(pik)
+    # Expected hits: can exceed 1 for with-replacement
+    pik <- n * mos_vals / sum(mos_vals)
+    idx <- sondage::up_multinomial(mos_vals, n)
+  } else if (method == "pps_chromy") {
+    mos_vals <- data[[mos]]
+    # Expected hits: minimum replacement (floor or ceiling)
+    pik <- n * mos_vals / sum(mos_vals)
+    idx <- sondage::up_chromy(mos_vals, n)
   } else {
     cli_abort("Unknown sampling method: {.val {method}}")
   }
