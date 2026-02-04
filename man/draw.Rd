@@ -12,7 +12,10 @@ draw(
   max_n = NULL,
   method = "srswor",
   mos = NULL,
-  round = "up"
+  round = "up",
+  control = NULL,
+  certainty_size = NULL,
+  certainty_prop = NULL
 )
 }
 \arguments{
@@ -82,6 +85,51 @@ One of:
 
 This parameter only affects designs using \code{frac} to specify the sampling
 rate. When \code{n} is specified directly, no rounding occurs.}
+
+\item{control}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Variables for
+sorting the frame before selection. Control sorting provides implicit
+stratification, which is particularly effective with systematic and
+sequential sampling methods. Can be:
+\itemize{
+\item A single variable: \code{control = region}
+\item Multiple variables: \code{control = c(region, district)}
+\item With \code{\link[=serp]{serp()}} for serpentine sorting: \code{control = serp(region, district)}
+\item With \code{\link[dplyr:desc]{dplyr::desc()}} for descending: \code{control = c(region, desc(population))}
+\item Mixed: \code{control = c(region, serp(district, commune), desc(size))}
+}
+
+When stratification is also specified, control sorting is applied within
+each stratum. See the section "Control Sorting" below for details.}
+
+\item{certainty_size}{For PPS methods, units with MOS >= this value
+are selected with certainty (probability = 1). Can be:
+\itemize{
+\item A scalar: same threshold for all strata
+\item A data frame: stratum-specific thresholds with stratification columns
+\itemize{
+\item \code{certainty_size} column
+}
+}
+
+Certainty units are removed from the frame before probability sampling,
+and the remaining sample size is reduced accordingly.
+Mutually exclusive with \code{certainty_prop}.
+Equivalent to SAS SURVEYSELECT \verb{CERTSIZE=} option.}
+
+\item{certainty_prop}{For PPS methods, units whose MOS proportion
+(MOS_i / sum(MOS)) >= this value are selected with certainty. Can be:
+\itemize{
+\item A scalar between 0 and 1 (exclusive): same threshold for all strata
+\item A data frame: stratum-specific thresholds with stratification columns
+\itemize{
+\item \code{certainty_prop} column
+}
+}
+
+Uses iterative selection: after removing certainty units, proportions are
+recomputed and the check is repeated until no new units qualify.
+Mutually exclusive with \code{certainty_size}.
+Equivalent to SAS SURVEYSELECT \verb{CERTSIZE=P=} option.}
 }
 \value{
 A modified \code{sampling_design} object with selection parameters specified.
@@ -154,6 +202,45 @@ The data frame must contain:
 \item An \code{n} column (for sizes) or \code{frac} column (for rates)
 }
 }
+
+\subsection{Certainty Selection}{
+
+In PPS sampling, very large units can have theoretical inclusion probabilities
+exceeding 1. Certainty selection handles this by selecting such units with
+probability 1 before sampling the remainder. The output includes a \code{.certainty}
+column indicating which units were certainty selections.
+
+For stratum-specific thresholds, pass a data frame containing:
+\itemize{
+\item All stratification variable columns
+\item A \code{certainty_size} or \code{certainty_prop} column
+}
+}
+
+\subsection{Control Sorting}{
+
+Control sorting orders the sampling frame before selection, providing implicit
+stratification. This is particularly effective with systematic and sequential
+methods (\code{systematic}, \code{pps_systematic}, \code{pps_chromy}), where it ensures the
+sample spreads evenly across the sorted variables.
+
+\strong{Serpentine vs Nested Sorting:}
+\itemize{
+\item \strong{Nested} (default): Standard ascending sort by each variable in order.
+Use \code{control = c(var1, var2, var3)}.
+\item \strong{Serpentine}: Alternating direction that minimizes "jumps" between
+adjacent units. Use \code{control = serp(var1, var2, var3)}.
+}
+
+Serpentine sorting makes nearby observations more similar by reversing
+direction at each hierarchy level. For geographic hierarchies, this means
+the last district of region 1 is adjacent to the last district of region 2.
+
+\strong{Combining with Explicit Stratification:}
+When both \code{stratify_by()} and \code{control} are used, sorting is applied within
+each stratum. This allows explicit stratification for variance control
+combined with implicit stratification for sample spread.
+}
 }
 \examples{
 # Simple random sample of 100 facilities
@@ -207,10 +294,58 @@ sampling_design() |>
   draw(n = 200, min_n = 10, max_n = 50) |>
   execute(niger_eas, seed = 42)
 
+# Control sorting with serpentine ordering (implicit stratification)
+sampling_design() |>
+  draw(n = 100, method = "systematic",
+       control = serp(region, department)) |>
+  execute(niger_eas, seed = 42)
+
+# Control sorting with nested (standard) ordering
+sampling_design() |>
+  draw(n = 100, method = "systematic",
+       control = c(region, department)) |>
+  execute(niger_eas, seed = 42)
+
+# Combined explicit stratification with control sorting within strata
+sampling_design() |>
+  stratify_by(strata) |>
+  draw(n = 50, method = "systematic",
+       control = serp(region, department)) |>
+  execute(niger_eas, seed = 42)
+
+# PPS with certainty selection (absolute threshold)
+# Large EAs selected with certainty, rest sampled with PPS
+sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 100, method = "pps_brewer", mos = hh_count,
+       certainty_size = 500) |>
+  execute(niger_eas, seed = 42)
+
+# PPS with certainty selection (proportional threshold)
+# EAs with >= 10\% of stratum total selected with certainty
+sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 100, method = "pps_systematic", mos = hh_count,
+       certainty_prop = 0.10) |>
+  execute(niger_eas, seed = 42)
+
+# Stratum-specific certainty thresholds (data frame)
+cert_thresholds <- data.frame(
+  region = c("Agadez", "Diffa", "Dosso", "Maradi",
+             "Niamey", "Tahoua", "Tillaberi", "Zinder"),
+  certainty_size = c(1000, 500, 600, 700, 300, 800, 650, 750)
+)
+sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 100, method = "pps_brewer", mos = hh_count,
+       certainty_size = cert_thresholds) |>
+  execute(niger_eas, seed = 42)
+
 }
 \seealso{
 \code{\link[=sampling_design]{sampling_design()}} for creating designs,
 \code{\link[=stratify_by]{stratify_by()}} for stratification,
 \code{\link[=cluster_by]{cluster_by()}} for clustering,
-\code{\link[=execute]{execute()}} for running designs
+\code{\link[=execute]{execute()}} for running designs,
+\code{\link[=serp]{serp()}} for serpentine sorting
 }

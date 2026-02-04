@@ -24,20 +24,20 @@
 #'
 #' ### Single-Stage Execution
 #' \preformatted{
-#' design |> execute(frame, seed = 42)
+#' design |> execute(frame, seed = 1)
 #' }
 #'
 #' ### Multi-Stage with Single Frame
 #' For hierarchical data where all stages are in one frame:
 #' \preformatted{
-#' design |> execute(frame, seed = 42)
+#' design |> execute(frame, seed = 2025)
 #' }
 #' The frame must contain all clustering variables and respect nesting.
 #'
 #' ### Multi-Stage with Multiple Frames
 #' When each stage has its own frame:
 #' \preformatted{
-#' design |> execute(frame1, frame2, frame3, seed = 42)
+#' design |> execute(frame1, frame2, frame3, seed = 424)
 #' }
 #' Frames are matched to stages by position.
 #'
@@ -54,7 +54,7 @@
 #' \preformatted{
 #' phase1 <- design1 |> execute(frame, seed = 42)
 #' # ... add screening data to phase1 ...
-#' phase2 <- design2 |> execute(phase1_updated, seed = 43)
+#' phase2 <- design2 |> execute(phase1_updated, seed = 123)
 #' }
 #' Weights compound automatically in multi-phase designs.
 #'
@@ -71,14 +71,14 @@
 #' # Basic SRS execution
 #' sample <- sampling_design() |>
 #'   draw(n = 100) |>
-#'   execute(kenya_health, seed = 42)
+#'   execute(kenya_health, seed = 1234)
 #' sample
 #'
 #' # Stratified execution with proportional allocation
 #' sample <- sampling_design() |>
 #'   stratify_by(facility_type, alloc = "proportional") |>
 #'   draw(n = 300) |>
-#'   execute(kenya_health, seed = 42)
+#'   execute(kenya_health, seed = 5789)
 #' table(sample$facility_type)
 #'
 #' # Two-stage cluster sample execution
@@ -88,7 +88,7 @@
 #'     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
 #'   stage(label = "Students") |>
 #'     draw(n = 15) |>
-#'   execute(tanzania_schools, seed = 42)
+#'   execute(tanzania_schools, seed = 3)
 #' length(unique(sample$school_id))  # 30 schools selected
 #'
 #' # Partial execution: stage 1 only
@@ -101,7 +101,7 @@
 #'     draw(n = 12)
 #'
 #' # Execute only stage 1 to get selected EAs
-#' selected_eas <- execute(design, niger_eas, stages = 1, seed = 42)
+#' selected_eas <- execute(design, niger_eas, stages = 1, seed = 2)
 #' nrow(selected_eas)  # Number of selected EAs
 #'
 #' @seealso
@@ -331,14 +331,10 @@ execute_single_stage <- function(
 
   result$.stage <- stage_num
 
-  # Store stagewise probability before compounding
-
   stage_prob_col <- paste0(".prob_", stage_num)
   result[[stage_prob_col]] <- result$.prob
 
-  # Compound weights AND probabilities from previous stages
   if (!is_null(previous_sample) && ".weight" %in% names(previous_sample)) {
-    # Identify previous stagewise prob columns to carry forward
     prev_prob_cols <- grep(
       "^\\.prob_\\d+$",
       names(previous_sample),
@@ -366,7 +362,6 @@ execute_single_stage <- function(
         ) |>
         select(-".prev_weight", -".prev_prob")
     } else {
-      # Non-clustered continuation
       for (col in prev_prob_cols) {
         result[[col]] <- previous_sample[[col]][1]
       }
@@ -464,13 +459,11 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
 
       N_h <- nrow(data)
 
-      stratum_draw_spec <- draw_spec
-      if (!is.null(draw_spec$frac) && length(draw_spec$frac) > 1) {
-        stratum_id <- as.character(keys[[1]])
-        if (stratum_id %in% names(draw_spec$frac)) {
-          stratum_draw_spec$frac <- draw_spec$frac[[stratum_id]]
-        }
-      }
+      stratum_draw_spec <- resolve_stratum_draw_spec(
+        draw_spec,
+        keys,
+        strata_vars
+      )
 
       selected <- draw_sample(data, n_h, stratum_draw_spec)
       selected$.weight <- 1 / selected$.pik
@@ -483,6 +476,38 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
 
   result$.sample_id <- seq_len(nrow(result))
   result
+}
+
+#' @noRd
+resolve_stratum_draw_spec <- function(draw_spec, keys, strata_vars) {
+  stratum_draw_spec <- draw_spec
+
+  if (!is.null(draw_spec$frac) && length(draw_spec$frac) > 1) {
+    stratum_id <- as.character(keys[[1]])
+    if (stratum_id %in% names(draw_spec$frac)) {
+      stratum_draw_spec$frac <- draw_spec$frac[[stratum_id]]
+    }
+  }
+
+  if (is.data.frame(draw_spec$certainty_size)) {
+    matched <- inner_join(keys, draw_spec$certainty_size, by = strata_vars)
+    if (nrow(matched) > 0) {
+      stratum_draw_spec$certainty_size <- matched$certainty_size[1]
+    } else {
+      stratum_draw_spec$certainty_size <- NULL
+    }
+  }
+
+  if (is.data.frame(draw_spec$certainty_prop)) {
+    matched <- inner_join(keys, draw_spec$certainty_prop, by = strata_vars)
+    if (nrow(matched) > 0) {
+      stratum_draw_spec$certainty_prop <- matched$certainty_prop[1]
+    } else {
+      stratum_draw_spec$certainty_prop <- NULL
+    }
+  }
+
+  stratum_draw_spec
 }
 
 #' @noRd
@@ -747,11 +772,25 @@ draw_sample <- function(data, n, draw_spec) {
   method <- draw_spec$method
   mos <- draw_spec$mos
   N <- nrow(data)
-  
-  # Only cap n at N for without-replacement methods
+
   wr_methods <- c("srswr", "pps_multinomial", "pps_chromy")
   if (!method %in% wr_methods) {
     n <- min(n, N)
+  }
+
+  pps_methods <- c(
+    "pps_systematic",
+    "pps_brewer",
+    "pps_maxent",
+    "pps_poisson",
+    "pps_multinomial",
+    "pps_chromy"
+  )
+  has_certainty <- !is_null(draw_spec$certainty_size) ||
+    !is_null(draw_spec$certainty_prop)
+
+  if (method %in% pps_methods && has_certainty) {
+    return(draw_sample_pps_certainty(data, n, draw_spec))
   }
 
   pik <- NULL
@@ -800,12 +839,10 @@ draw_sample <- function(data, n, draw_spec) {
     }
   } else if (method == "pps_multinomial") {
     mos_vals <- data[[mos]]
-    # Expected hits: can exceed 1 for with-replacement
     pik <- n * mos_vals / sum(mos_vals)
     idx <- sondage::up_multinomial(mos_vals, n)
   } else if (method == "pps_chromy") {
     mos_vals <- data[[mos]]
-    # Expected hits: minimum replacement (floor or ceiling)
     pik <- n * mos_vals / sum(mos_vals)
     idx <- sondage::up_chromy(mos_vals, n)
   } else {
@@ -814,7 +851,161 @@ draw_sample <- function(data, n, draw_spec) {
 
   result <- data[idx, , drop = FALSE]
   result$.pik <- pik[idx]
+
+  if (method %in% pps_methods) {
+    result$.certainty <- FALSE
+  }
+
   result
+}
+
+#' @noRd
+draw_sample_pps_certainty <- function(data, n, draw_spec) {
+  method <- draw_spec$method
+  mos <- draw_spec$mos
+  mos_vals <- data[[mos]]
+  N <- nrow(data)
+
+  cert <- identify_certainty(
+    mos_vals = mos_vals,
+    n = n,
+    certainty_size = draw_spec$certainty_size,
+    certainty_prop = draw_spec$certainty_prop
+  )
+
+  if (cert$n_remaining < 0) {
+    threshold_msg <- if (!is_null(draw_spec$certainty_prop)) {
+      c(
+        "i" = "With {.arg certainty_prop}, units are selected iteratively until",
+        " " = "no remaining unit's proportion exceeds the threshold.",
+        "i" = "This can cascade when removing large units pushes others above threshold."
+      )
+    } else {
+      NULL
+    }
+
+    cli_abort(
+      c(
+        "Certainty selection exceeds target sample size.",
+        "x" = "Found {cert$n_certain} certainty unit{?s}, but {.arg n} = {n}.",
+        threshold_msg,
+        "i" = "Options: increase {.arg n}, raise the threshold, or use {.arg certainty_size} for absolute thresholds."
+      )
+    )
+  }
+
+  certainty_result <- NULL
+  if (cert$n_certain > 0) {
+    certainty_result <- data[cert$certainty_idx, , drop = FALSE]
+    certainty_result$.pik <- rep(1, cert$n_certain)
+    certainty_result$.certainty <- TRUE
+  }
+
+  prob_result <- NULL
+  if (cert$n_remaining > 0 && length(cert$remaining_idx) > 0) {
+    remaining_data <- data[cert$remaining_idx, , drop = FALSE]
+    remaining_mos <- mos_vals[cert$remaining_idx]
+    n_prob <- min(cert$n_remaining, length(cert$remaining_idx))
+
+    prob_result <- draw_pps_method(
+      data = remaining_data,
+      n = n_prob,
+      method = method,
+      mos_vals = remaining_mos
+    )
+    prob_result$.certainty <- FALSE
+  }
+
+  if (is_null(certainty_result) && is_null(prob_result)) {
+    result <- data[integer(0), , drop = FALSE]
+    result$.pik <- numeric(0)
+    result$.certainty <- logical(0)
+    return(result)
+  }
+
+  result <- dplyr::bind_rows(certainty_result, prob_result)
+  result
+}
+
+#' @noRd
+draw_pps_method <- function(data, n, method, mos_vals) {
+  N <- nrow(data)
+
+  if (method == "pps_systematic") {
+    pik <- sondage::inclusion_prob(mos_vals, n)
+    idx <- sondage::up_systematic(pik)
+  } else if (method == "pps_brewer") {
+    pik <- sondage::inclusion_prob(mos_vals, n)
+    idx <- sondage::up_brewer(pik)
+  } else if (method == "pps_maxent") {
+    pik <- sondage::inclusion_prob(mos_vals, n)
+    idx <- sondage::up_maxent(pik)
+  } else if (method == "pps_poisson") {
+    pik <- sondage::inclusion_prob(mos_vals, n)
+    idx <- sondage::up_poisson(pik)
+    if (length(idx) == 0) {
+      idx <- sondage::srs(1, N)
+      pik <- rep(1 / N, N)
+    }
+  } else if (method == "pps_multinomial") {
+    pik <- n * mos_vals / sum(mos_vals)
+    idx <- sondage::up_multinomial(mos_vals, n)
+  } else if (method == "pps_chromy") {
+    pik <- n * mos_vals / sum(mos_vals)
+    idx <- sondage::up_chromy(mos_vals, n)
+  }
+
+  result <- data[idx, , drop = FALSE]
+  result$.pik <- pik[idx]
+  result
+}
+
+#' @noRd
+identify_certainty <- function(
+  mos_vals,
+  n,
+  certainty_size = NULL,
+  certainty_prop = NULL
+) {
+  N <- length(mos_vals)
+  certainty_idx <- integer(0)
+
+  if (!is_null(certainty_size)) {
+    certainty_idx <- which(mos_vals >= certainty_size)
+  } else if (!is_null(certainty_prop)) {
+    remaining <- seq_len(N)
+    repeat {
+      if (length(remaining) == 0) {
+        break
+      }
+      mos_remaining <- mos_vals[remaining]
+      total_mos <- sum(mos_remaining)
+      if (total_mos <= 0) {
+        break
+      }
+
+      props <- mos_remaining / total_mos
+      above_threshold <- props >= certainty_prop
+      if (!any(above_threshold)) {
+        break
+      }
+
+      new_certain <- remaining[above_threshold]
+      certainty_idx <- c(certainty_idx, new_certain)
+      remaining <- setdiff(remaining, new_certain)
+    }
+  }
+
+  n_certain <- length(certainty_idx)
+  n_remaining <- n - n_certain
+  remaining_idx <- setdiff(seq_len(N), certainty_idx)
+
+  list(
+    certainty_idx = certainty_idx,
+    remaining_idx = remaining_idx,
+    n_certain = n_certain,
+    n_remaining = n_remaining
+  )
 }
 
 #' @noRd
@@ -887,6 +1078,3 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
   }
   invisible(TRUE)
 }
-
-#' @importFrom dplyr semi_join
-NULL

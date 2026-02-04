@@ -38,7 +38,7 @@ producing a sampled dataset with appropriate weights and metadata.
 \subsection{Single-Stage Execution}{
 
 \preformatted{
-design |> execute(frame, seed = 42)
+design |> execute(frame, seed = 1)
 }
 }
 
@@ -46,7 +46,7 @@ design |> execute(frame, seed = 42)
 
 For hierarchical data where all stages are in one frame:
 \preformatted{
-design |> execute(frame, seed = 42)
+design |> execute(frame, seed = 2025)
 }
 The frame must contain all clustering variables and respect nesting.
 }
@@ -55,7 +55,7 @@ The frame must contain all clustering variables and respect nesting.
 
 When each stage has its own frame:
 \preformatted{
-design |> execute(frame1, frame2, frame3, seed = 42)
+design |> execute(frame1, frame2, frame3, seed = 424)
 }
 Frames are matched to stages by position.
 }
@@ -76,7 +76,7 @@ When \code{.data} is a \code{tbl_sample}, sampling continues from that sample:
 \preformatted{
 phase1 <- design1 |> execute(frame, seed = 42)
 # ... add screening data to phase1 ...
-phase2 <- design2 |> execute(phase1_updated, seed = 43)
+phase2 <- design2 |> execute(phase1_updated, seed = 123)
 }
 Weights compound automatically in multi-phase designs.
 }
@@ -99,14 +99,14 @@ Weights are calculated as the inverse of inclusion probabilities:
 # Basic SRS execution
 sample <- sampling_design() |>
   draw(n = 100) |>
-  execute(kenya_health, seed = 42)
+  execute(kenya_health, seed = 1234)
 sample
 
 # Stratified execution with proportional allocation
 sample <- sampling_design() |>
   stratify_by(facility_type, alloc = "proportional") |>
   draw(n = 300) |>
-  execute(kenya_health, seed = 42)
+  execute(kenya_health, seed = 5789)
 table(sample$facility_type)
 
 # Two-stage cluster sample execution
@@ -116,7 +116,7 @@ sample <- sampling_design() |>
     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
   stage(label = "Students") |>
     draw(n = 15) |>
-  execute(tanzania_schools, seed = 42)
+  execute(tanzania_schools, seed = 3)
 length(unique(sample$school_id))  # 30 schools selected
 
 # Partial execution: stage 1 only
@@ -129,7 +129,7 @@ design <- sampling_design() |>
     draw(n = 12)
 
 # Execute only stage 1 to get selected EAs
-selected_eas <- execute(design, niger_eas, stages = 1, seed = 42)
+selected_eas <- execute(design, niger_eas, stages = 1, seed = 2)
 nrow(selected_eas)  # Number of selected EAs
 
 }

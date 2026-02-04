@@ -71,6 +71,13 @@ as.list.sampling_design <- function(x, ...) {
       if (!is_null(stage$draw_spec$mos)) {
         stage_list$draw$mos <- stage$draw_spec$mos
       }
+      if (!is_null(stage$draw_spec$control)) {
+        stage_list$draw$control <- vapply(
+          stage$draw_spec$control,
+          rlang::as_label,
+          character(1)
+        )
+      }
     }
     stage_list
   })

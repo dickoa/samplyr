@@ -72,7 +72,30 @@ format_draw_spec <- function(draw) {
   if (!is_null(draw$mos)) {
     parts <- c(parts, glue("mos = {draw$mos}"))
   }
+
+  if (!is_null(draw$control)) {
+    control_str <- format_control_quos(draw$control)
+    parts <- c(parts, glue("control = {control_str}"))
+  }
+
   paste(parts, collapse = ", ")
+}
+
+#' @noRd
+format_control_quos <- function(control_quos) {
+  if (is_null(control_quos) || length(control_quos) == 0) {
+    return(NULL)
+  }
+
+  labels <- vapply(control_quos, function(q) {
+    rlang::as_label(q)
+  }, character(1))
+
+  if (length(labels) == 1) {
+    labels
+  } else {
+    paste0("c(", paste(labels, collapse = ", "), ")")
+  }
 }
 
 #' @rdname print.samplyr

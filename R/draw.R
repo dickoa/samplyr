@@ -56,6 +56,40 @@
 #'   This parameter only affects designs using `frac` to specify the sampling
 #'   rate. When `n` is specified directly, no rounding occurs.
 #'
+#' @param control <[`data-masking`][dplyr::dplyr_data_masking]> Variables for
+#'   sorting the frame before selection. Control sorting provides implicit
+#'   stratification, which is particularly effective with systematic and
+#'   sequential sampling methods. Can be:
+#'   - A single variable: `control = region`
+#'   - Multiple variables: `control = c(region, district)`
+#'   - With [serp()] for serpentine sorting: `control = serp(region, district)`
+#'   - With [dplyr::desc()] for descending: `control = c(region, desc(population))`
+#'   - Mixed: `control = c(region, serp(district, commune), desc(size))`
+#'
+#'   When stratification is also specified, control sorting is applied within
+#'   each stratum. See the section "Control Sorting" below for details.
+#'
+#' @param certainty_size For PPS methods, units with MOS >= this value
+#'   are selected with certainty (probability = 1). Can be:
+#'   - A scalar: same threshold for all strata
+#'   - A data frame: stratum-specific thresholds with stratification columns
+#'     + `certainty_size` column
+#'
+#'   Certainty units are removed from the frame before probability sampling,
+#'   and the remaining sample size is reduced accordingly.
+#'   Mutually exclusive with `certainty_prop`.
+#'   Equivalent to SAS SURVEYSELECT `CERTSIZE=` option.
+#' @param certainty_prop For PPS methods, units whose MOS proportion
+#'   (MOS_i / sum(MOS)) >= this value are selected with certainty. Can be:
+#'   - A scalar between 0 and 1 (exclusive): same threshold for all strata
+#'   - A data frame: stratum-specific thresholds with stratification columns
+#'     + `certainty_prop` column
+#'
+#'   Uses iterative selection: after removing certainty units, proportions are
+#'   recomputed and the check is repeated until no new units qualify.
+#'   Mutually exclusive with `certainty_size`.
+#'   Equivalent to SAS SURVEYSELECT `CERTSIZE=P=` option.
+#'
 #' @return A modified `sampling_design` object with selection parameters specified.
 #'
 #' @details
@@ -114,6 +148,39 @@
 #' - All stratification variable columns (matching those in `stratify_by()`)
 #' - An `n` column (for sizes) or `frac` column (for rates)
 #'
+#' ## Certainty Selection
+#'
+#' In PPS sampling, very large units can have theoretical inclusion probabilities
+#' exceeding 1. Certainty selection handles this by selecting such units with
+#' probability 1 before sampling the remainder. The output includes a `.certainty`
+#' column indicating which units were certainty selections.
+#'
+#' For stratum-specific thresholds, pass a data frame containing:
+#' - All stratification variable columns
+#' - A `certainty_size` or `certainty_prop` column
+#'
+#' ## Control Sorting
+#'
+#' Control sorting orders the sampling frame before selection, providing implicit
+#' stratification. This is particularly effective with systematic and sequential
+#' methods (`systematic`, `pps_systematic`, `pps_chromy`), where it ensures the
+#' sample spreads evenly across the sorted variables.
+#'
+#' **Serpentine vs Nested Sorting:**
+#' - **Nested** (default): Standard ascending sort by each variable in order.
+#'   Use `control = c(var1, var2, var3)`.
+#' - **Serpentine**: Alternating direction that minimizes "jumps" between
+#'   adjacent units. Use `control = serp(var1, var2, var3)`.
+#'
+#' Serpentine sorting makes nearby observations more similar by reversing
+#' direction at each hierarchy level. For geographic hierarchies, this means
+#' the last district of region 1 is adjacent to the last district of region 2.
+#'
+#' **Combining with Explicit Stratification:**
+#' When both `stratify_by()` and `control` are used, sorting is applied within
+#' each stratum. This allows explicit stratification for variance control
+#' combined with implicit stratification for sample spread.
+#'
 #' @examples
 #' # Simple random sample of 100 facilities
 #' sampling_design() |>
@@ -166,15 +233,74 @@
 #'   draw(n = 200, min_n = 10, max_n = 50) |>
 #'   execute(niger_eas, seed = 42)
 #'
+#' # Control sorting with serpentine ordering (implicit stratification)
+#' sampling_design() |>
+#'   draw(n = 100, method = "systematic",
+#'        control = serp(region, department)) |>
+#'   execute(niger_eas, seed = 42)
+#'
+#' # Control sorting with nested (standard) ordering
+#' sampling_design() |>
+#'   draw(n = 100, method = "systematic",
+#'        control = c(region, department)) |>
+#'   execute(niger_eas, seed = 42)
+#'
+#' # Combined explicit stratification with control sorting within strata
+#' sampling_design() |>
+#'   stratify_by(strata) |>
+#'   draw(n = 50, method = "systematic",
+#'        control = serp(region, department)) |>
+#'   execute(niger_eas, seed = 42)
+#'
+#' # PPS with certainty selection (absolute threshold)
+#' # Large EAs selected with certainty, rest sampled with PPS
+#' sampling_design() |>
+#'   stratify_by(region) |>
+#'   draw(n = 100, method = "pps_brewer", mos = hh_count,
+#'        certainty_size = 500) |>
+#'   execute(niger_eas, seed = 42)
+#'
+#' # PPS with certainty selection (proportional threshold)
+#' # EAs with >= 10% of stratum total selected with certainty
+#' sampling_design() |>
+#'   stratify_by(region) |>
+#'   draw(n = 100, method = "pps_systematic", mos = hh_count,
+#'        certainty_prop = 0.10) |>
+#'   execute(niger_eas, seed = 42)
+#'
+#' # Stratum-specific certainty thresholds (data frame)
+#' cert_thresholds <- data.frame(
+#'   region = c("Agadez", "Diffa", "Dosso", "Maradi",
+#'              "Niamey", "Tahoua", "Tillaberi", "Zinder"),
+#'   certainty_size = c(1000, 500, 600, 700, 300, 800, 650, 750)
+#' )
+#' sampling_design() |>
+#'   stratify_by(region) |>
+#'   draw(n = 100, method = "pps_brewer", mos = hh_count,
+#'        certainty_size = cert_thresholds) |>
+#'   execute(niger_eas, seed = 42)
+#'
 #' @seealso
 #' [sampling_design()] for creating designs,
 #' [stratify_by()] for stratification,
 #' [cluster_by()] for clustering,
-#' [execute()] for running designs
+#' [execute()] for running designs,
+#' [serp()] for serpentine sorting
 #'
 #' @export
-draw <- function(.data, n = NULL, frac = NULL, min_n = NULL, max_n = NULL,
-                 method = "srswor", mos = NULL, round = "up") {
+draw <- function(
+  .data,
+  n = NULL,
+  frac = NULL,
+  min_n = NULL,
+  max_n = NULL,
+  method = "srswor",
+  mos = NULL,
+  round = "up",
+  control = NULL,
+  certainty_size = NULL,
+  certainty_prop = NULL
+) {
   if (!is_sampling_design(.data)) {
     cli_abort("{.arg .data} must be a {.cls sampling_design} object")
   }
@@ -182,10 +308,33 @@ draw <- function(.data, n = NULL, frac = NULL, min_n = NULL, max_n = NULL,
   mos_quo <- enquo(mos)
   mos_name <- if (quo_is_null(mos_quo)) NULL else as_label(mos_quo)
 
+  control_quo <- enquo(control)
+  control_quos <- if (quo_is_null(control_quo)) {
+    NULL
+  } else {
+    control_expr <- quo_get_expr(control_quo)
+    control_env <- quo_get_env(control_quo)
+
+    if (is_call(control_expr, "c")) {
+      lapply(as.list(control_expr)[-1], function(expr) {
+        new_quosure(expr, control_env)
+      })
+    } else {
+      list(control_quo)
+    }
+  }
+
   valid_methods <- c(
-    "srswor", "srswr", "systematic", "bernoulli",
-    "pps_systematic", "pps_brewer", "pps_maxent", "pps_poisson",
-    "pps_multinomial", "pps_chromy"
+    "srswor",
+    "srswr",
+    "systematic",
+    "bernoulli",
+    "pps_systematic",
+    "pps_brewer",
+    "pps_maxent",
+    "pps_poisson",
+    "pps_multinomial",
+    "pps_chromy"
   )
 
   if (!is_character(method) || length(method) != 1) {
@@ -206,25 +355,39 @@ draw <- function(.data, n = NULL, frac = NULL, min_n = NULL, max_n = NULL,
   }
 
   current_stage <- .data$stages[[current]]
-  has_alloc <- !is_null(current_stage$strata) && !is_null(current_stage$strata$alloc)
+  has_alloc <- !is_null(current_stage$strata) &&
+    !is_null(current_stage$strata$alloc)
+
+  strata_vars <- current_stage$strata$vars
 
   n_is_df <- is.data.frame(n)
   frac_is_df <- is.data.frame(frac)
+  certainty_size_is_df <- is.data.frame(certainty_size)
+  certainty_prop_is_df <- is.data.frame(certainty_prop)
 
   if (n_is_df || frac_is_df) {
-    strata_vars <- current_stage$strata$vars
     if (is_null(strata_vars)) {
-      cli_abort("Data frame for {.arg n} or {.arg frac} requires stratification. Use {.fn stratify_by} first.")
+      cli_abort(
+        "Data frame for {.arg n} or {.arg frac} requires stratification. Use {.fn stratify_by} first."
+      )
     }
-    if (n_is_df) validate_draw_df(n, strata_vars, "n")
+    if (n_is_df) {
+      validate_draw_df(n, strata_vars, "n")
+    }
     if (frac_is_df) validate_draw_df(frac, strata_vars, "frac")
   }
 
   validate_draw_args(n, frac, method, mos_name, has_alloc, n_is_df, frac_is_df)
   validate_bounds(min_n, max_n, has_alloc)
+  validate_certainty(
+    certainty_size, certainty_prop, mos_name, method, strata_vars,
+    certainty_size_is_df, certainty_prop_is_df
+  )
 
   if (!is_null(current_stage$draw_spec)) {
-    cli_abort("{.fn draw} already called for this stage. Use {.fn stage} to start a new stage.")
+    cli_abort(
+      "{.fn draw} already called for this stage. Use {.fn stage} to start a new stage."
+    )
   }
 
   draw_spec <- new_draw_spec(
@@ -234,7 +397,10 @@ draw <- function(.data, n = NULL, frac = NULL, min_n = NULL, max_n = NULL,
     mos = mos_name,
     min_n = min_n,
     max_n = max_n,
-    round = round
+    round = round,
+    control = control_quos,
+    certainty_size = certainty_size,
+    certainty_prop = certainty_prop
   )
 
   .data$stages[[current]]$draw_spec <- draw_spec
@@ -248,8 +414,12 @@ quo_is_null <- function(quo) {
 }
 
 #' @noRd
-validate_draw_df <- function(df, strata_vars, value_col,
-                             call = rlang::caller_env()) {
+validate_draw_df <- function(
+  df,
+  strata_vars,
+  value_col,
+  call = rlang::caller_env()
+) {
   if (!is.data.frame(df)) {
     cli_abort(
       "{.arg {value_col}} must be a data frame when providing stratum-specific values",
@@ -260,8 +430,10 @@ validate_draw_df <- function(df, strata_vars, value_col,
   missing_vars <- setdiff(strata_vars, names(df))
   if (length(missing_vars) > 0) {
     cli_abort(
-      c("Data frame for {.arg {value_col}} is missing stratification variable{?s}:",
-        "x" = "{.val {missing_vars}}"),
+      c(
+        "Data frame for {.arg {value_col}} is missing stratification variable{?s}:",
+        "x" = "{.val {missing_vars}}"
+      ),
       call = call
     )
   }
@@ -276,11 +448,23 @@ validate_draw_df <- function(df, strata_vars, value_col,
 }
 
 #' @noRd
-validate_draw_args <- function(n, frac, method, mos, has_alloc, n_is_df, frac_is_df,
-                               call = rlang::caller_env()) {
+validate_draw_args <- function(
+  n,
+  frac,
+  method,
+  mos,
+  has_alloc,
+  n_is_df,
+  frac_is_df,
+  call = rlang::caller_env()
+) {
   pps_methods <- c(
-    "pps_systematic", "pps_brewer", "pps_maxent", "pps_poisson",
-    "pps_multinomial", "pps_chromy"
+    "pps_systematic",
+    "pps_brewer",
+    "pps_maxent",
+    "pps_poisson",
+    "pps_multinomial",
+    "pps_chromy"
   )
   is_pps <- method %in% pps_methods
 
@@ -294,7 +478,10 @@ validate_draw_args <- function(n, frac, method, mos, has_alloc, n_is_df, frac_is
 
   if (method == "bernoulli") {
     if (!is_null(n)) {
-      cli_abort("{.val bernoulli} sampling requires {.arg frac}, not {.arg n}", call = call)
+      cli_abort(
+        "{.val bernoulli} sampling requires {.arg frac}, not {.arg n}",
+        call = call
+      )
     }
     if (is_null(frac)) {
       cli_abort("{.val bernoulli} sampling requires {.arg frac}", call = call)
@@ -303,7 +490,10 @@ validate_draw_args <- function(n, frac, method, mos, has_alloc, n_is_df, frac_is
 
   if (method == "pps_poisson") {
     if (!is_null(n)) {
-      cli_abort("{.val pps_poisson} sampling requires {.arg frac}, not {.arg n}", call = call)
+      cli_abort(
+        "{.val pps_poisson} sampling requires {.arg frac}, not {.arg n}",
+        call = call
+      )
     }
     if (is_null(frac)) {
       cli_abort("{.val pps_poisson} sampling requires {.arg frac}", call = call)
@@ -312,7 +502,10 @@ validate_draw_args <- function(n, frac, method, mos, has_alloc, n_is_df, frac_is
 
   if (method == "pps_maxent") {
     if (!is_null(frac)) {
-      cli_abort("{.val pps_maxent} sampling requires {.arg n}, not {.arg frac}", call = call)
+      cli_abort(
+        "{.val pps_maxent} sampling requires {.arg n}, not {.arg frac}",
+        call = call
+      )
     }
     if (is_null(n)) {
       cli_abort("{.val pps_maxent} sampling requires {.arg n}", call = call)
@@ -349,19 +542,31 @@ validate_draw_args <- function(n, frac, method, mos, has_alloc, n_is_df, frac_is
       cli_abort("{.arg frac} must be positive", call = call)
     }
     wor_methods <- c(
-      "srswor", "systematic", "bernoulli",
-      "pps_systematic", "pps_brewer", "pps_maxent", "pps_poisson"
+      "srswor",
+      "systematic",
+      "bernoulli",
+      "pps_systematic",
+      "pps_brewer",
+      "pps_maxent",
+      "pps_poisson"
     )
     if (method %in% wor_methods && any(frac > 1)) {
-      cli_abort("{.arg frac} cannot exceed 1 for without-replacement methods", call = call)
+      cli_abort(
+        "{.arg frac} cannot exceed 1 for without-replacement methods",
+        call = call
+      )
     }
   }
   invisible(NULL)
 }
 
 #' @noRd
-validate_bounds <- function(min_n, max_n, has_alloc,
-                            call = rlang::caller_env()) {
+validate_bounds <- function(
+  min_n,
+  max_n,
+  has_alloc,
+  call = rlang::caller_env()
+) {
   if (!is_null(min_n)) {
     if (!is.numeric(min_n) || length(min_n) != 1) {
       cli_abort("{.arg min_n} must be a single positive integer", call = call)
@@ -370,7 +575,9 @@ validate_bounds <- function(min_n, max_n, has_alloc,
       cli_abort("{.arg min_n} must be a positive integer", call = call)
     }
     if (!has_alloc) {
-      cli_warn("{.arg min_n} only applies when an allocation method is specified in {.fn stratify_by}")
+      cli_warn(
+        "{.arg min_n} only applies when an allocation method is specified in {.fn stratify_by}"
+      )
     }
   }
 
@@ -382,12 +589,112 @@ validate_bounds <- function(min_n, max_n, has_alloc,
       cli_abort("{.arg max_n} must be a positive integer", call = call)
     }
     if (!has_alloc) {
-      cli_warn("{.arg max_n} only applies when an allocation method is specified in {.fn stratify_by}")
+      cli_warn(
+        "{.arg max_n} only applies when an allocation method is specified in {.fn stratify_by}"
+      )
     }
   }
 
   if (!is_null(min_n) && !is_null(max_n) && min_n > max_n) {
-    cli_abort("{.arg min_n} ({min_n}) cannot be greater than {.arg max_n} ({max_n})", call = call)
+    cli_abort(
+      "{.arg min_n} ({min_n}) cannot be greater than {.arg max_n} ({max_n})",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' @noRd
+validate_certainty <- function(
+  certainty_size,
+  certainty_prop,
+  mos,
+  method,
+  strata_vars,
+  certainty_size_is_df,
+  certainty_prop_is_df,
+  call = rlang::caller_env()
+) {
+  if (!is_null(certainty_size) && !is_null(certainty_prop)) {
+    cli_abort(
+      "Specify only one of {.arg certainty_size} or {.arg certainty_prop}, not both.",
+      call = call
+    )
+  }
+
+  has_certainty <- !is_null(certainty_size) || !is_null(certainty_prop)
+  if (!has_certainty) return(invisible(NULL))
+
+  if (is_null(mos)) {
+    cli_abort(
+      "Certainty selection requires {.arg mos} to be specified.",
+      call = call
+    )
+  }
+
+  pps_methods <- c(
+    "pps_systematic", "pps_brewer", "pps_maxent",
+    "pps_poisson", "pps_multinomial", "pps_chromy"
+  )
+  if (!method %in% pps_methods) {
+    cli_abort(
+      c(
+        "Certainty selection is only available for PPS methods.",
+        "i" = "Valid methods: {.val {pps_methods}}",
+        "x" = "Current method: {.val {method}}"
+      ),
+      call = call
+    )
+  }
+
+  if (certainty_size_is_df) {
+    if (is_null(strata_vars)) {
+      cli_abort(
+        "Data frame for {.arg certainty_size} requires stratification. Use {.fn stratify_by} first.",
+        call = call
+      )
+    }
+    validate_draw_df(certainty_size, strata_vars, "certainty_size", call = call)
+    vals <- certainty_size$certainty_size
+    if (!is.numeric(vals) || any(is.na(vals)) || any(vals <= 0)) {
+      cli_abort(
+        "{.arg certainty_size} values must be positive numbers.",
+        call = call
+      )
+    }
+  } else if (!is_null(certainty_size)) {
+    if (!is.numeric(certainty_size) || length(certainty_size) != 1 ||
+        is.na(certainty_size) || certainty_size <= 0) {
+      cli_abort(
+        "{.arg certainty_size} must be a single positive number or a data frame.",
+        call = call
+      )
+    }
+  }
+
+  if (certainty_prop_is_df) {
+    if (is_null(strata_vars)) {
+      cli_abort(
+        "Data frame for {.arg certainty_prop} requires stratification. Use {.fn stratify_by} first.",
+        call = call
+      )
+    }
+    validate_draw_df(certainty_prop, strata_vars, "certainty_prop", call = call)
+    vals <- certainty_prop$certainty_prop
+    if (!is.numeric(vals) || any(is.na(vals)) || any(vals <= 0) || any(vals >= 1)) {
+      cli_abort(
+        "{.arg certainty_prop} values must be between 0 and 1 (exclusive).",
+        call = call
+      )
+    }
+  } else if (!is_null(certainty_prop)) {
+    if (!is.numeric(certainty_prop) || length(certainty_prop) != 1 ||
+        is.na(certainty_prop) || certainty_prop <= 0 || certainty_prop >= 1) {
+      cli_abort(
+        "{.arg certainty_prop} must be a single number between 0 and 1 (exclusive) or a data frame.",
+        call = call
+      )
+    }
   }
   invisible(NULL)
 }

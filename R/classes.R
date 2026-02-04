@@ -133,6 +133,10 @@ new_cluster_spec <- function(vars) {
 #' @param mos Measure of size variable name
 #' @param min_n Minimum sample size per stratum
 #' @param max_n Maximum sample size per stratum
+#' @param round Rounding method
+#' @param control List of quosures for control sorting
+#' @param certainty_size Absolute MOS threshold for certainty selection
+#' @param certainty_prop Proportional MOS threshold for certainty selection
 #'
 #' @return A draw_spec object
 #' @noRd
@@ -143,7 +147,10 @@ new_draw_spec <- function(
   mos = NULL,
   min_n = NULL,
   max_n = NULL,
-  round = "up"
+  round = "up",
+  control = NULL,
+  certainty_size = NULL,
+  certainty_prop = NULL
 ) {
   structure(
     list(
@@ -153,7 +160,10 @@ new_draw_spec <- function(
       mos = mos,
       min_n = min_n,
       max_n = max_n,
-      round = round
+      round = round,
+      control = control,
+      certainty_size = certainty_size,
+      certainty_prop = certainty_prop
     ),
     class = "draw_spec"
   )
