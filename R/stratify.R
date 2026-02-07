@@ -134,6 +134,16 @@ stratify_by <- function(.data, ...,
 
   validate_stratify_args(alloc, variance, cost, vars)
 
+  # Subset auxiliary data frames to required columns only to avoid
+  # column conflicts during left_join (e.g. when both variance and cost
+  # are passed as the same multi-column data frame)
+  if (!is_null(variance)) {
+    variance <- variance[, c(vars, "var"), drop = FALSE]
+  }
+  if (!is_null(cost)) {
+    cost <- cost[, c(vars, "cost"), drop = FALSE]
+  }
+
   strata_spec <- new_stratum_spec(
     vars = vars,
     alloc = alloc,

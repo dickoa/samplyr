@@ -100,6 +100,25 @@ test_that("Stratified Neyman allocation workflow", {
   expect_true(all(levels(factor(frame$region)) %in% result$region))
 })
 
+test_that("Optimal allocation with combined variance/cost data frame", {
+  frame <- make_population_frame()
+
+  # Combined data frame with both var and cost columns
+  aux_df <- aggregate(income ~ region, data = frame, FUN = var)
+  names(aux_df)[2] <- "var"
+  aux_df$cost <- c(500, 500, 750, 500)
+
+  # Passing the same multi-column df for both variance and cost should work
+  result <- sampling_design() |>
+    stratify_by(region, alloc = "optimal",
+                variance = aux_df, cost = aux_df) |>
+    draw(n = 1000) |>
+    execute(frame, seed = 42)
+
+  expect_true(nrow(result) >= 950)
+  expect_true(all(levels(factor(frame$region)) %in% result$region))
+})
+
 test_that("Cluster sample workflow", {
   frame <- make_school_frame()
   n_schools <- length(unique(frame$school_id))
