@@ -22,13 +22,15 @@ variables. These should be categorical variables that define the strata.}
 \item \code{"optimal"}: Cost-variance optimal allocation (requires \code{variance} and \code{cost})
 }}
 
-\item{variance}{A data frame with stratum variances for Neyman or optimal
-allocation. Must contain columns for all stratification variables plus
-a \code{var} column with variance estimates.}
+\item{variance}{Stratum variances for Neyman or optimal allocation.
+Either a data frame with columns for all stratification variables plus
+a \code{var} column, or a named numeric vector (when using a single
+stratification variable) where names correspond to stratum levels.}
 
-\item{cost}{A data frame with stratum costs for optimal allocation.
-Must contain columns for all stratification variables plus a \code{cost}
-column with per-unit costs.}
+\item{cost}{Stratum costs for optimal allocation.
+Either a data frame with columns for all stratification variables plus
+a \code{cost} column, or a named numeric vector (when using a single
+stratification variable) where names correspond to stratum levels.}
 }
 \value{
 A modified \code{sampling_design} object with stratification specified.

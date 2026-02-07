@@ -14,12 +14,14 @@
 #'   - `"proportional"`: Proportional to stratum size
 #'   - `"neyman"`: Neyman optimal allocation (requires `variance`)
 #'   - `"optimal"`: Cost-variance optimal allocation (requires `variance` and `cost`)
-#' @param variance A data frame with stratum variances for Neyman or optimal
-#'   allocation. Must contain columns for all stratification variables plus
-#'   a `var` column with variance estimates.
-#' @param cost A data frame with stratum costs for optimal allocation.
-#'   Must contain columns for all stratification variables plus a `cost`
-#'   column with per-unit costs.
+#' @param variance Stratum variances for Neyman or optimal allocation.
+#'   Either a data frame with columns for all stratification variables plus
+#'   a `var` column, or a named numeric vector (when using a single
+#'   stratification variable) where names correspond to stratum levels.
+#' @param cost Stratum costs for optimal allocation.
+#'   Either a data frame with columns for all stratification variables plus
+#'   a `cost` column, or a named numeric vector (when using a single
+#'   stratification variable) where names correspond to stratum levels.
 #'
 #' @return A modified `sampling_design` object with stratification specified.
 #'
@@ -132,6 +134,14 @@ stratify_by <- function(.data, ...,
     alloc <- match.arg(alloc, valid_alloc)
   }
 
+  # Coerce named vectors to data frames
+  if (!is_null(variance)) {
+    variance <- coerce_aux_input(variance, vars, "var", "variance")
+  }
+  if (!is_null(cost)) {
+    cost <- coerce_aux_input(cost, vars, "cost", "cost")
+  }
+
   validate_stratify_args(alloc, variance, cost, vars)
 
   # Subset auxiliary data frames to required columns only to avoid
@@ -195,7 +205,8 @@ validate_stratify_args <- function(alloc, variance, cost, vars,
 validate_aux_df <- function(df, vars, value_col, arg_name,
                             call = rlang::caller_env()) {
   if (!is.data.frame(df)) {
-    cli_abort("{.arg {arg_name}} must be a data frame", call = call)
+    cli_abort("{.arg {arg_name}} must be a data frame or a named numeric vector",
+              call = call)
   }
 
   missing_vars <- setdiff(vars, names(df))
@@ -211,4 +222,35 @@ validate_aux_df <- function(df, vars, value_col, arg_name,
     cli_abort("{.arg {arg_name}} must contain a {.val {value_col}} column", call = call)
   }
   invisible(NULL)
+}
+
+#' Coerce auxiliary input to a data frame
+#'
+#' Accepts either a data frame (returned as-is) or a named numeric vector
+#' which is converted to a two-column data frame. Named vectors are only
+#' supported when there is a single stratification variable.
+#' @noRd
+coerce_aux_input <- function(x, vars, value_col, arg_name,
+                             call = rlang::caller_env()) {
+  if (is.data.frame(x)) {
+    return(x)
+  }
+
+  if (is.numeric(x) && !is_null(names(x))) {
+    if (length(vars) != 1) {
+      cli_abort(
+        c("{.arg {arg_name}} as a named vector is only supported with a single stratification variable.",
+          "i" = "Use a data frame instead."),
+        call = call
+      )
+    }
+    df <- data.frame(names(x), unname(x), stringsAsFactors = FALSE)
+    names(df) <- c(vars, value_col)
+    return(df)
+  }
+
+  cli_abort(
+    "{.arg {arg_name}} must be a data frame or a named numeric vector",
+    call = call
+  )
 }

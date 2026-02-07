@@ -82,6 +82,61 @@ test_that("stratify_by() validates auxiliary data frames", {
   )
 })
 
+test_that("stratify_by() trims extra columns from variance and cost data frames", {
+  # A combined data frame with both var and cost columns
+  combined_df <- data.frame(
+    region = c("A", "B"),
+    var = c(1, 2),
+    cost = c(10, 20)
+  )
+
+  d <- sampling_design() |>
+    stratify_by(region, alloc = "optimal",
+                variance = combined_df, cost = combined_df)
+
+  # Stored variance df should only have region + var
+
+  expect_equal(names(d$stages[[1]]$strata$variance), c("region", "var"))
+  # Stored cost df should only have region + cost
+  expect_equal(names(d$stages[[1]]$strata$cost), c("region", "cost"))
+})
+
+test_that("stratify_by() accepts named vectors for variance and cost", {
+  d <- sampling_design() |>
+    stratify_by(region, alloc = "optimal",
+                variance = c(A = 1, B = 2),
+                cost = c(A = 10, B = 20))
+
+  var_df <- d$stages[[1]]$strata$variance
+  cost_df <- d$stages[[1]]$strata$cost
+
+  expect_s3_class(var_df, "data.frame")
+  expect_equal(names(var_df), c("region", "var"))
+  expect_equal(var_df$region, c("A", "B"))
+  expect_equal(var_df$var, c(1, 2))
+
+  expect_s3_class(cost_df, "data.frame")
+  expect_equal(names(cost_df), c("region", "cost"))
+  expect_equal(cost_df$cost, c(10, 20))
+})
+
+test_that("stratify_by() rejects named vectors with multiple strat vars", {
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, urban_rural, alloc = "neyman",
+                  variance = c(A = 1, B = 2)),
+    "single stratification variable"
+  )
+})
+
+test_that("stratify_by() rejects unnamed vectors", {
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "neyman", variance = c(1, 2)),
+    "named numeric vector"
+  )
+})
+
 test_that("stratify_by() errors on double stratification", {
   expect_error(
     sampling_design() |> 

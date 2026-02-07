@@ -119,6 +119,24 @@ test_that("Optimal allocation with combined variance/cost data frame", {
   expect_true(all(levels(factor(frame$region)) %in% result$region))
 })
 
+test_that("Optimal allocation with named vectors", {
+  frame <- make_population_frame()
+  regions <- levels(factor(frame$region))
+
+  # Compute variances as a named vector
+  vars_by_region <- tapply(frame$income, frame$region, var)
+  costs <- setNames(c(500, 500, 750, 500), regions)
+
+  result <- sampling_design() |>
+    stratify_by(region, alloc = "optimal",
+                variance = vars_by_region, cost = costs) |>
+    draw(n = 1000) |>
+    execute(frame, seed = 42)
+
+  expect_true(nrow(result) >= 950)
+  expect_true(all(regions %in% result$region))
+})
+
 test_that("Cluster sample workflow", {
   frame <- make_school_frame()
   n_schools <- length(unique(frame$school_id))
