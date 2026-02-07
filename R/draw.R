@@ -152,8 +152,8 @@
 #'
 #' In PPS sampling, very large units can have theoretical inclusion probabilities
 #' exceeding 1. Certainty selection handles this by selecting such units with
-#' probability 1 before sampling the remainder. The output includes a `.certainty`
-#' column indicating which units were certainty selections.
+#' probability 1 before sampling the remainder. The output includes a `.certainty_k`
+#' column (where `k` is the stage number) indicating which units were certainty selections.
 #'
 #' For stratum-specific thresholds, pass a data frame containing:
 #' - All stratification variable columns
@@ -380,8 +380,13 @@ draw <- function(
   validate_draw_args(n, frac, method, mos_name, has_alloc, n_is_df, frac_is_df)
   validate_bounds(min_n, max_n, has_alloc)
   validate_certainty(
-    certainty_size, certainty_prop, mos_name, method, strata_vars,
-    certainty_size_is_df, certainty_prop_is_df
+    certainty_size,
+    certainty_prop,
+    mos_name,
+    method,
+    strata_vars,
+    certainty_size_is_df,
+    certainty_prop_is_df
   )
 
   if (!is_null(current_stage$draw_spec)) {
@@ -529,7 +534,7 @@ validate_draw_args <- function(
     if (any(n <= 0)) {
       cli_abort("{.arg n} must be positive", call = call)
     }
-    if (any(n != round(n))) {
+    if (any(abs(n - round(n)) > sqrt(.Machine$double.eps))) {
       cli_abort("{.arg n} must be integer-valued", call = call)
     }
   }
@@ -571,7 +576,7 @@ validate_bounds <- function(
     if (!is.numeric(min_n) || length(min_n) != 1) {
       cli_abort("{.arg min_n} must be a single positive integer", call = call)
     }
-    if (min_n < 1 || min_n != round(min_n)) {
+    if (min_n < 1 || abs(min_n - round(min_n)) > sqrt(.Machine$double.eps)) {
       cli_abort("{.arg min_n} must be a positive integer", call = call)
     }
     if (!has_alloc) {
@@ -585,7 +590,7 @@ validate_bounds <- function(
     if (!is.numeric(max_n) || length(max_n) != 1) {
       cli_abort("{.arg max_n} must be a single positive integer", call = call)
     }
-    if (max_n < 1 || max_n != round(max_n)) {
+    if (max_n < 1 || abs(max_n - round(max_n)) > sqrt(.Machine$double.eps)) {
       cli_abort("{.arg max_n} must be a positive integer", call = call)
     }
     if (!has_alloc) {
@@ -623,7 +628,9 @@ validate_certainty <- function(
   }
 
   has_certainty <- !is_null(certainty_size) || !is_null(certainty_prop)
-  if (!has_certainty) return(invisible(NULL))
+  if (!has_certainty) {
+    return(invisible(NULL))
+  }
 
   if (is_null(mos)) {
     cli_abort(
@@ -633,8 +640,12 @@ validate_certainty <- function(
   }
 
   pps_methods <- c(
-    "pps_systematic", "pps_brewer", "pps_maxent",
-    "pps_poisson", "pps_multinomial", "pps_chromy"
+    "pps_systematic",
+    "pps_brewer",
+    "pps_maxent",
+    "pps_poisson",
+    "pps_multinomial",
+    "pps_chromy"
   )
   if (!method %in% pps_methods) {
     cli_abort(
@@ -663,8 +674,12 @@ validate_certainty <- function(
       )
     }
   } else if (!is_null(certainty_size)) {
-    if (!is.numeric(certainty_size) || length(certainty_size) != 1 ||
-        is.na(certainty_size) || certainty_size <= 0) {
+    if (
+      !is.numeric(certainty_size) ||
+        length(certainty_size) != 1 ||
+        is.na(certainty_size) ||
+        certainty_size <= 0
+    ) {
       cli_abort(
         "{.arg certainty_size} must be a single positive number or a data frame.",
         call = call
@@ -681,15 +696,22 @@ validate_certainty <- function(
     }
     validate_draw_df(certainty_prop, strata_vars, "certainty_prop", call = call)
     vals <- certainty_prop$certainty_prop
-    if (!is.numeric(vals) || any(is.na(vals)) || any(vals <= 0) || any(vals >= 1)) {
+    if (
+      !is.numeric(vals) || any(is.na(vals)) || any(vals <= 0) || any(vals >= 1)
+    ) {
       cli_abort(
         "{.arg certainty_prop} values must be between 0 and 1 (exclusive).",
         call = call
       )
     }
   } else if (!is_null(certainty_prop)) {
-    if (!is.numeric(certainty_prop) || length(certainty_prop) != 1 ||
-        is.na(certainty_prop) || certainty_prop <= 0 || certainty_prop >= 1) {
+    if (
+      !is.numeric(certainty_prop) ||
+        length(certainty_prop) != 1 ||
+        is.na(certainty_prop) ||
+        certainty_prop <= 0 ||
+        certainty_prop >= 1
+    ) {
       cli_abort(
         "{.arg certainty_prop} must be a single number between 0 and 1 (exclusive) or a data frame.",
         call = call

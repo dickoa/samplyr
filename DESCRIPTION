@@ -19,19 +19,18 @@ RoxygenNote: 7.3.3
 Depends: R (>= 4.1.0)
 Imports:
     rlang (>= 1.0.0),
-    vctrs,
     cli,
     glue,
     tibble,
     dplyr,
-    pillar,
     sondage,
     withr
 Suggests:
    testthat (>= 3.0.0),
    knitr,
    rmarkdown,
-   roxygen2
+   roxygen2,
+   survey
 Config/testthat/edition: 3
 VignetteBuilder: knitr
 URL: https://gitlab.com/dickoa/samplyr

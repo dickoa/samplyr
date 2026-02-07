@@ -25,7 +25,15 @@ metadata). Contains the selected units plus:
 \itemize{
 \item \code{.sample_id}: Unique identifier for each sampled unit
 \item \code{.weight}: Sampling weight (1/probability)
-\item \code{.prob}: Inclusion probability
+\item \code{.weight_1}, \code{.weight_2}, ...: Per-stage sampling weights
+\item \code{.fpc_1}, \code{.fpc_2}, ...: Per-stage population sizes (finite
+population correction). For stratified stages, this is the stratum
+population size N_h; for clustered stages, the number of clusters.
+\item \code{.draw_1}, \code{.draw_2}, ...: Draw index per stage (WR/PMR methods only).
+Each row represents one independent draw; the draw index identifies
+which with-replacement selection the row came from.
+\item \code{.certainty_1}, \code{.certainty_2}, ...: Whether each unit was a certainty
+selection (PPS methods with certainty thresholds only)
 \item Stage and stratum identifiers as appropriate
 }
 }

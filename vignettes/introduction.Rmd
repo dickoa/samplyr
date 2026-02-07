@@ -71,11 +71,11 @@ sample <- sampling_design() |>
 nrow(sample)
 ```
 
-The result includes the original columns plus sampling metadata: `.weight` (sampling weight) and `.prob` (inclusion probability).
+The result includes the original columns plus sampling metadata: `.weight` (sampling weight), `.weight_1`, `.weight_2`, etc. (per-stage weights), and for with-replacement methods, `.draw_1`, `.draw_2`, etc. (draw index per stage — each row is one independent draw).
 
 ```{r}
 sample |>
-  select(ea_id, region, strata, .weight, .prob) |>
+  select(ea_id, region, strata, .weight, .weight_1) |>
   head()
 ```
 
@@ -421,20 +421,20 @@ sample |>
 
 ### Stratified Multi-Stage Design
 
-Combining stratification with multi-stage sampling is standard for national surveys. Here we stratify by school level, then select districts and schools within each stratum.
+Combining stratification with multi-stage sampling is standard for national surveys. Here we stratify by region (which is constant within districts), then select districts and schools within each stratum.
 
 ```{r}
 sample <- sampling_design() |>
   stage(label = "Districts") |>
-    stratify_by(school_level) |>
+    stratify_by(region) |>
     cluster_by(district) |>
-    draw(n = 5, method = "pps_brewer", mos = district_enrollment) |>
+    draw(n = 2, method = "pps_brewer", mos = district_enrollment) |>
   stage(label = "Schools") |>
     draw(n = 3) |>
   execute(schools_frame, seed = 42)
 
 sample |>
-  count(school_level, district)
+  count(region, district)
 ```
 
 ---

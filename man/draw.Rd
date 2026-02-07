@@ -207,8 +207,8 @@ The data frame must contain:
 
 In PPS sampling, very large units can have theoretical inclusion probabilities
 exceeding 1. Certainty selection handles this by selecting such units with
-probability 1 before sampling the remainder. The output includes a \code{.certainty}
-column indicating which units were certainty selections.
+probability 1 before sampling the remainder. The output includes a \code{.certainty_k}
+column (where \code{k} is the stage number) indicating which units were certainty selections.
 
 For stratum-specific thresholds, pass a data frame containing:
 \itemize{

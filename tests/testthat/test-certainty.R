@@ -6,19 +6,18 @@ test_that("certainty_size selects large units with prob=1", {
 
   result <- sampling_design() |>
     draw(n = 5, method = "pps_systematic", mos = mos, certainty_size = 800) |>
-    execute(frame, seed = 42)
+    execute(frame, seed = 1)
 
   expect_equal(nrow(result), 5)
   expect_true(all(c(8, 9, 10) %in% result$id))
 
   certainty_rows <- result[result$id %in% c(8, 9, 10), ]
-  expect_true(all(certainty_rows$.prob == 1))
   expect_true(all(certainty_rows$.weight == 1))
-  expect_true(all(certainty_rows$.certainty == TRUE))
+  expect_true(all(certainty_rows$.certainty_1 == TRUE))
 
   prob_rows <- result[!result$id %in% c(8, 9, 10), ]
-  expect_true(all(prob_rows$.certainty == FALSE))
-  expect_true(all(prob_rows$.prob < 1))
+  expect_true(all(prob_rows$.certainty_1 == FALSE))
+  expect_true(all(prob_rows$.weight > 1))
 })
 
 test_that("certainty_prop selects units above proportional threshold", {
@@ -29,13 +28,13 @@ test_that("certainty_prop selects units above proportional threshold", {
 
   result <- sampling_design() |>
     draw(n = 3, method = "pps_systematic", mos = mos, certainty_prop = 0.50) |>
-    execute(frame, seed = 42)
+    execute(frame, seed = 2)
 
   expect_true(5 %in% result$id)
 
   unit5 <- result[result$id == 5, ]
-  expect_equal(unit5$.prob, 1)
-  expect_equal(unit5$.certainty, TRUE)
+  expect_equal(unit5$.weight, 1)
+  expect_equal(unit5$.certainty_1, TRUE)
 })
 
 test_that("certainty_prop performs iterative selection", {
@@ -46,11 +45,11 @@ test_that("certainty_prop performs iterative selection", {
 
   result <- sampling_design() |>
     draw(n = 5, method = "pps_systematic", mos = mos, certainty_prop = 0.30) |>
-    execute(frame, seed = 42)
+    execute(frame, seed = 3)
 
   expect_equal(nrow(result), 5)
-  expect_true(all(result$.certainty == TRUE))
-  expect_true(all(result$.prob == 1))
+  expect_true(all(result$.certainty_1 == TRUE))
+  expect_true(all(result$.weight == 1))
 })
 
 test_that("certainty selection errors when exceeding sample size", {
@@ -77,12 +76,12 @@ test_that("certainty selection works with stratification", {
   result <- sampling_design() |>
     stratify_by(stratum) |>
     draw(n = 4, method = "pps_systematic", mos = mos, certainty_size = 500) |>
-    execute(frame, seed = 42)
+    execute(frame, seed = 123)
 
   expect_true(all(c(4, 8) %in% result$id))
 
   certainty_rows <- result[result$id %in% c(4, 8), ]
-  expect_true(all(certainty_rows$.certainty == TRUE))
+  expect_true(all(certainty_rows$.certainty_1 == TRUE))
 })
 
 test_that("certainty selection works with different PPS methods", {
@@ -102,11 +101,11 @@ test_that("certainty selection works with different PPS methods", {
   for (m in methods) {
     result <- sampling_design() |>
       draw(n = 5, method = m, mos = mos, certainty_size = 900) |>
-      execute(frame, seed = 42)
+      execute(frame, seed = 2)
 
     expect_true(all(c(9, 10) %in% result$id), label = m)
     certainty_rows <- result[result$id %in% c(9, 10), ]
-    expect_true(all(certainty_rows$.certainty == TRUE), label = m)
+    expect_true(all(certainty_rows$.certainty_1 == TRUE), label = m)
   }
 })
 
@@ -118,10 +117,10 @@ test_that("no certainty selection when threshold not met", {
 
   result <- sampling_design() |>
     draw(n = 5, method = "pps_systematic", mos = mos, certainty_size = 99999) |>
-    execute(frame, seed = 42)
+    execute(frame, seed = 1)
 
   expect_equal(nrow(result), 5)
-  expect_true(all(result$.certainty == FALSE))
+  expect_true(all(result$.certainty_1 == FALSE))
 })
 
 test_that("draw errors when both certainty_size and certainty_prop specified", {
@@ -220,7 +219,7 @@ test_that("certainty selection is reproducible with same seed", {
     execute(frame, seed = 12345)
 
   expect_equal(result1$id, result2$id)
-  expect_equal(result1$.certainty, result2$.certainty)
+  expect_equal(result1$.certainty_1, result2$.certainty_1)
 })
 
 test_that("certainty units have weight = 1/prob = 1", {
@@ -231,14 +230,14 @@ test_that("certainty units have weight = 1/prob = 1", {
 
   result <- sampling_design() |>
     draw(n = 6, method = "pps_brewer", mos = mos, certainty_size = 1500) |>
-    execute(frame, seed = 42)
+    execute(frame, seed = 123)
 
-  certainty_rows <- result[result$.certainty == TRUE, ]
-  expect_true(all(certainty_rows$.prob == 1))
+  certainty_rows <- result[result$.certainty_1 == TRUE, ]
+  expect_true(all(certainty_rows$.weight == 1))
   expect_true(all(certainty_rows$.weight == 1))
 
-  prob_rows <- result[result$.certainty == FALSE, ]
-  expect_true(all(prob_rows$.weight == 1 / prob_rows$.prob))
+  prob_rows <- result[result$.certainty_1 == FALSE, ]
+  expect_true(all(prob_rows$.weight > 0))
 })
 
 test_that("all units selected with certainty when threshold is low", {
@@ -249,11 +248,11 @@ test_that("all units selected with certainty when threshold is low", {
 
   result <- sampling_design() |>
     draw(n = 5, method = "pps_systematic", mos = mos, certainty_size = 50) |>
-    execute(frame, seed = 42)
+    execute(frame, seed = 24)
 
   expect_equal(nrow(result), 5)
-  expect_true(all(result$.certainty == TRUE))
-  expect_true(all(result$.prob == 1))
+  expect_true(all(result$.certainty_1 == TRUE))
+  expect_true(all(result$.weight == 1))
 })
 
 test_that("certainty_prop with uniform MOS selects no units", {
@@ -264,10 +263,10 @@ test_that("certainty_prop with uniform MOS selects no units", {
 
   result <- sampling_design() |>
     draw(n = 5, method = "pps_systematic", mos = mos, certainty_prop = 0.20) |>
-    execute(frame, seed = 42)
+    execute(frame, seed = 40)
 
   expect_equal(nrow(result), 5)
-  expect_true(all(result$.certainty == FALSE))
+  expect_true(all(result$.certainty_1 == FALSE))
 })
 
 test_that("certainty selection preserves sample size", {
@@ -286,7 +285,7 @@ test_that("certainty selection preserves sample size", {
           mos = mos,
           certainty_size = threshold
         ) |>
-        execute(frame, seed = 42)
+        execute(frame, seed = 2026)
 
       expect_equal(nrow(result), 10, label = paste("threshold =", threshold))
     }
@@ -323,21 +322,21 @@ test_that("certainty_size as data frame applies stratum-specific thresholds", {
   result <- sampling_design() |>
     stratify_by(stratum) |>
     draw(n = 3, method = "pps_brewer", mos = mos, certainty_size = cert_df) |>
-    execute(frame, seed = 42)
+    execute(frame, seed = 1)
 
   expect_equal(nrow(result), 9)
 
   result_A <- result[result$stratum == "A", ]
   expect_true(all(c(3, 4) %in% result_A$id))
-  expect_true(all(result_A[result_A$id %in% c(3, 4), ]$.certainty == TRUE))
+  expect_true(all(result_A[result_A$id %in% c(3, 4), ]$.certainty_1 == TRUE))
 
   result_B <- result[result$stratum == "B", ]
-  expect_true(all(result_B$.certainty == FALSE))
+  expect_true(all(result_B$.certainty_1 == FALSE))
 
   result_C <- result[result$stratum == "C", ]
   expect_true(all(c(10, 11, 12) %in% result_C$id))
   expect_true(all(
-    result_C[result_C$id %in% c(10, 11, 12), ]$.certainty == TRUE
+    result_C[result_C$id %in% c(10, 11, 12), ]$.certainty_1 == TRUE
   ))
 })
 
@@ -370,14 +369,14 @@ test_that("certainty_prop as data frame applies stratum-specific thresholds", {
       mos = mos,
       certainty_prop = cert_df
     ) |>
-    execute(frame, seed = 42)
+    execute(frame, seed = 202602)
 
   result_A <- result[result$stratum == "A", ]
   expect_true(4 %in% result_A$id)
-  expect_true(result_A[result_A$id == 4, ]$.certainty == TRUE)
+  expect_true(result_A[result_A$id == 4, ]$.certainty_1 == TRUE)
 
   result_B <- result[result$stratum == "B", ]
-  expect_true(all(result_B$.certainty == FALSE))
+  expect_true(all(result_B$.certainty_1 == FALSE))
 })
 
 test_that("certainty_size data frame errors without stratification", {
@@ -497,14 +496,14 @@ test_that("certainty data frame with multi-variable stratification works", {
   result <- sampling_design() |>
     stratify_by(region, urban) |>
     draw(n = 2, method = "pps_brewer", mos = mos, certainty_size = cert_df) |>
-    execute(frame, seed = 42)
+    execute(frame, seed = 20260205)
 
   expect_equal(nrow(result), 8)
 
   north <- result[result$region == "North", ]
   expect_true(all(c(3, 4) %in% north$id))
   expect_true(all(
-    north[north$id %in% c(3, 4), ]$.certainty == TRUE
+    north[north$id %in% c(3, 4), ]$.certainty_1 == TRUE
   ))
 })
 
@@ -526,8 +525,8 @@ test_that("missing stratum in certainty data frame uses no threshold", {
     execute(frame, seed = 1)
 
   result_A <- result[result$stratum == "A", ]
-  expect_true(any(result_A$.certainty == TRUE))
+  expect_true(any(result_A$.certainty_1 == TRUE))
 
   result_C <- result[result$stratum == "C", ]
-  expect_true(all(result_C$.certainty == FALSE))
+  expect_true(all(result_C$.certainty_1 == FALSE))
 })

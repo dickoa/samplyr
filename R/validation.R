@@ -124,10 +124,10 @@ validate_frame <- function(design, frame, stage = NULL) {
             vars = mos_var
           )))
         }
-        if (any(mos_vals <= 0, na.rm = TRUE)) {
+        if (any(mos_vals < 0, na.rm = TRUE)) {
           issues <- c(issues, list(list(
             stage = label,
-            type = "mos_nonpositive",
+            type = "mos_negative",
             vars = mos_var
           )))
         }
@@ -163,9 +163,9 @@ report_validation_issues <- function(issues) {
       "mos_na" = paste0(
         "x ", issue$stage, ": MOS variable '", issue$vars, "' contains NA values"
       ),
-      "mos_nonpositive" = paste0(
+      "mos_negative" = paste0(
         "x ", issue$stage, ": MOS variable '", issue$vars,
-        "' contains non-positive values"
+        "' contains negative values"
       )
     )
     msgs <- c(msgs, msg)

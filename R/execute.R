@@ -16,7 +16,15 @@
 #'   metadata). Contains the selected units plus:
 #'   - `.sample_id`: Unique identifier for each sampled unit
 #'   - `.weight`: Sampling weight (1/probability)
-#'   - `.prob`: Inclusion probability
+#'   - `.weight_1`, `.weight_2`, ...: Per-stage sampling weights
+#'   - `.fpc_1`, `.fpc_2`, ...: Per-stage population sizes (finite
+#'     population correction). For stratified stages, this is the stratum
+#'     population size N_h; for clustered stages, the number of clusters.
+#'   - `.draw_1`, `.draw_2`, ...: Draw index per stage (WR/PMR methods only).
+#'     Each row represents one independent draw; the draw index identifies
+#'     which with-replacement selection the row came from.
+#'   - `.certainty_1`, `.certainty_2`, ...: Whether each unit was a certainty
+#'     selection (PPS methods with certainty thresholds only)
 #'   - Stage and stratum identifiers as appropriate
 #'
 #' @details
@@ -309,21 +317,68 @@ execute_single_stage <- function(
 
     if (is_final_stage) {
       cluster_vars <- cluster_spec$vars
-      result <- frame |>
-        inner_join(
-          result |>
-            select(all_of(cluster_vars), ".weight", ".prob", ".sample_id"),
-          by = cluster_vars
-        )
+      join_cols <- c(cluster_vars, ".weight", ".fpc", ".sample_id")
+      if (".draw" %in% names(result)) {
+        join_cols <- c(join_cols, ".draw")
+      }
+      if (".certainty" %in% names(result)) {
+        join_cols <- c(join_cols, ".certainty")
+      }
+      cluster_data <- result[, join_cols, drop = FALSE]
+      # For WR/PMR draws, the same cluster may appear multiple times.
+      # Use a row-by-row expansion to preserve order and avoid
+      # many-to-many join warnings.
+      if (".draw" %in% names(result)) {
+        expanded <- lapply(seq_len(nrow(cluster_data)), function(i) {
+          row_i <- cluster_data[i, , drop = FALSE]
+          key_i <- row_i[, cluster_vars, drop = FALSE]
+          matched <- semi_join(frame, key_i, by = cluster_vars)
+          for (col in setdiff(join_cols, cluster_vars)) {
+            matched[[col]] <- row_i[[col]]
+          }
+          matched
+        })
+        result <- bind_rows(expanded)
+      } else {
+        result <- frame |>
+          inner_join(cluster_data, by = cluster_vars)
+      }
     }
   } else if (
     !is_null(previous_stage_spec) && !is_null(previous_stage_spec$clusters)
   ) {
+    cluster_vars_prev <- previous_stage_spec$clusters$vars
+    split_vars <- cluster_vars_prev
+
+    # For WR/PMR draws at the previous stage, expand the frame so each draw
+    # gets an independent copy of units for sub-sampling
+    prev_draw_cols <- character(0)
+    if (!is_null(previous_sample)) {
+      prev_draw_cols <- grep(
+        "^\\.draw_\\d+$",
+        names(previous_sample),
+        value = TRUE
+      )
+    }
+    if (length(prev_draw_cols) > 0) {
+      draw_assignments <- unique(
+        previous_sample[, c(cluster_vars_prev, prev_draw_cols), drop = FALSE]
+      )
+      frame <- merge(
+        frame,
+        draw_assignments,
+        by = cluster_vars_prev,
+        all = FALSE,
+        sort = FALSE
+      )
+      split_vars <- c(cluster_vars_prev, prev_draw_cols)
+    }
+
     result <- sample_within_clusters(
       frame,
       strata_spec,
       draw_spec,
-      previous_stage_spec$clusters$vars
+      split_vars
     )
   } else {
     result <- sample_units(frame, strata_spec, draw_spec)
@@ -331,42 +386,124 @@ execute_single_stage <- function(
 
   result$.stage <- stage_num
 
-  stage_prob_col <- paste0(".prob_", stage_num)
-  result[[stage_prob_col]] <- result$.prob
+  stage_weight_col <- paste0(".weight_", stage_num)
+  result[[stage_weight_col]] <- result$.weight
+
+  stage_fpc_col <- paste0(".fpc_", stage_num)
+  result[[stage_fpc_col]] <- result$.fpc
+  result$.fpc <- NULL
+
+  # Store per-stage draw index for WR/PMR methods
+  if (".draw" %in% names(result)) {
+    stage_draw_col <- paste0(".draw_", stage_num)
+    result[[stage_draw_col]] <- result$.draw
+    result$.draw <- NULL
+  }
+
+  # Store per-stage certainty for PPS certainty selection
+  if (".certainty" %in% names(result)) {
+    stage_cert_col <- paste0(".certainty_", stage_num)
+    result[[stage_cert_col]] <- result$.certainty
+    result$.certainty <- NULL
+  }
 
   if (!is_null(previous_sample) && ".weight" %in% names(previous_sample)) {
-    prev_prob_cols <- grep(
-      "^\\.prob_\\d+$",
+    prev_weight_cols <- grep(
+      "^\\.weight_\\d+$",
       names(previous_sample),
       value = TRUE
+    )
+    prev_draw_cols <- grep(
+      "^\\.draw_\\d+$",
+      names(previous_sample),
+      value = TRUE
+    )
+    prev_fpc_cols <- grep(
+      "^\\.fpc_\\d+$",
+      names(previous_sample),
+      value = TRUE
+    )
+    prev_cert_cols <- grep(
+      "^\\.certainty_\\d+$",
+      names(previous_sample),
+      value = TRUE
+    )
+    prev_carry_cols <- c(
+      prev_weight_cols,
+      prev_draw_cols,
+      prev_fpc_cols,
+      prev_cert_cols
     )
 
     if (
       !is_null(previous_stage_spec) && !is_null(previous_stage_spec$clusters)
     ) {
       cluster_vars <- previous_stage_spec$clusters$vars
+      join_vars <- cluster_vars
+
+      # Include draw columns as join keys for WR/PMR stages
+      # (different draws of the same cluster need independent treatment)
+      if (
+        length(prev_draw_cols) > 0 &&
+          all(prev_draw_cols %in% names(result))
+      ) {
+        join_vars <- c(join_vars, prev_draw_cols)
+      }
+
+      # Draw cols used as join keys should not be carried separately
+      carry_cols_to_select <- setdiff(prev_carry_cols, join_vars)
+
       prev_data <- previous_sample |>
-        distinct(across(all_of(cluster_vars)), .keep_all = TRUE) |>
+        distinct(across(all_of(join_vars)), .keep_all = TRUE) |>
         select(
-          all_of(cluster_vars),
-          all_of(prev_prob_cols),
-          ".prev_weight" = ".weight",
-          ".prev_prob" = ".prob"
+          all_of(join_vars),
+          all_of(carry_cols_to_select),
+          ".prev_weight" = ".weight"
         )
 
       result <- result |>
-        left_join(prev_data, by = cluster_vars) |>
+        left_join(prev_data, by = join_vars) |>
         mutate(
-          ".weight" = .data$`.weight` * .data$`.prev_weight`,
-          ".prob" = .data$`.prob` * .data$`.prev_prob`
+          ".weight" = .data$`.weight` * .data$`.prev_weight`
         ) |>
-        select(-".prev_weight", -".prev_prob")
+        select(-".prev_weight")
     } else {
-      for (col in prev_prob_cols) {
-        result[[col]] <- previous_sample[[col]][1]
+      # Non-cluster path: join on stratum variables if previous stage was stratified,
+      # otherwise use scalar weight (all identical for unstratified stages)
+      if (
+        !is_null(previous_stage_spec) && !is_null(previous_stage_spec$strata)
+      ) {
+        strata_vars <- previous_stage_spec$strata$vars
+        join_vars <- intersect(
+          strata_vars,
+          intersect(names(result), names(previous_sample))
+        )
+        if (length(join_vars) > 0) {
+          prev_data <- previous_sample |>
+            distinct(across(all_of(join_vars)), .keep_all = TRUE) |>
+            select(
+              all_of(join_vars),
+              all_of(prev_carry_cols),
+              ".prev_weight" = ".weight"
+            )
+          result <- result |>
+            left_join(prev_data, by = join_vars) |>
+            mutate(
+              ".weight" = .data$`.weight` * .data$`.prev_weight`
+            ) |>
+            select(-".prev_weight")
+        } else {
+          for (col in prev_carry_cols) {
+            result[[col]] <- previous_sample[[col]][1]
+          }
+          result$.weight <- result$.weight * previous_sample$.weight[1]
+        }
+      } else {
+        for (col in prev_carry_cols) {
+          result[[col]] <- previous_sample[[col]][1]
+        }
+        result$.weight <- result$.weight * previous_sample$.weight[1]
       }
-      result$.weight <- result$.weight * previous_sample$.weight[1]
-      result$.prob <- result$.prob * previous_sample$.prob[1]
     }
   }
   result
@@ -375,6 +512,45 @@ execute_single_stage <- function(
 #' @noRd
 sample_clusters <- function(frame, strata_spec, cluster_spec, draw_spec) {
   cluster_vars <- cluster_spec$vars
+
+  # Columns that must be constant within each cluster:
+  # MOS (used for inclusion probabilities) and strata vars (used for allocation)
+  invariant_vars <- character(0)
+  if (!is_null(draw_spec$mos)) {
+    invariant_vars <- c(invariant_vars, draw_spec$mos)
+  }
+  if (!is_null(strata_spec)) {
+    invariant_vars <- c(invariant_vars, strata_spec$vars)
+  }
+  invariant_vars <- intersect(invariant_vars, names(frame))
+
+  if (length(invariant_vars) > 0) {
+    check_vars <- c(cluster_vars, invariant_vars)
+    n_combos <- frame |>
+      distinct(across(all_of(check_vars))) |>
+      nrow()
+    n_clusters <- frame |>
+      distinct(across(all_of(cluster_vars))) |>
+      nrow()
+
+    if (n_combos != n_clusters) {
+      varying <- character(0)
+      for (v in invariant_vars) {
+        n_v <- frame |>
+          distinct(across(all_of(c(cluster_vars, v)))) |>
+          nrow()
+        if (n_v != n_clusters) {
+          varying <- c(varying, v)
+        }
+      }
+      cli_abort(c(
+        "{.val {varying}} must be constant within each cluster defined by {.val {cluster_vars}}.",
+        "i" = "Found clusters where {.val {varying}} varies across rows.",
+        "i" = "Ensure the frame has one consistent value per cluster for these columns."
+      ))
+    }
+  }
+
   cluster_frame <- frame |>
     distinct(across(all_of(cluster_vars)), .keep_all = TRUE)
   sample_units(cluster_frame, strata_spec, draw_spec)
@@ -388,36 +564,18 @@ sample_within_clusters <- function(
   draw_spec,
   cluster_vars
 ) {
-  n <- draw_spec$n
-  frac <- draw_spec$frac
-  round_method <- draw_spec$round %||% "up"
-
   if (length(cluster_vars) == 1) {
     split_key <- frame[[cluster_vars]]
   } else {
-    split_key <- interaction(frame[cluster_vars], drop = TRUE)
+    split_key <- do.call(paste, c(frame[cluster_vars], list(sep = "\x01")))
   }
 
   indices_list <- split(seq_len(nrow(frame)), split_key, drop = TRUE)
 
   results_list <- lapply(indices_list, function(idxs) {
     data <- frame[idxs, , drop = FALSE]
-    N_cluster <- length(idxs)
-
-    n_draw <- if (!is_null(n)) {
-      min(n, N_cluster)
-    } else if (!is_null(frac)) {
-      round_sample_size(N_cluster * frac, round_method)
-    } else {
-      cli_abort("Cannot determine sample size within cluster")
-    }
-
-    selected <- draw_sample(data, n_draw, draw_spec)
-
-    selected$.weight <- 1 / selected$.pik
-    selected$.prob <- selected$.pik
-    selected$.pik <- NULL
-    selected
+    # Delegate to sample_units which handles stratification when present
+    sample_units(data, strata_spec, draw_spec)
   })
 
   result <- bind_rows(results_list)
@@ -467,8 +625,8 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
 
       selected <- draw_sample(data, n_h, stratum_draw_spec)
       selected$.weight <- 1 / selected$.pik
-      selected$.prob <- selected$.pik
       selected$.pik <- NULL
+      selected$.fpc <- N_h
 
       selected
     }) |>
@@ -482,7 +640,12 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
 resolve_stratum_draw_spec <- function(draw_spec, keys, strata_vars) {
   stratum_draw_spec <- draw_spec
 
-  if (!is.null(draw_spec$frac) && length(draw_spec$frac) > 1) {
+  if (is.data.frame(draw_spec$frac)) {
+    matched <- inner_join(keys, draw_spec$frac, by = strata_vars)
+    if (nrow(matched) > 0) {
+      stratum_draw_spec$frac <- matched$frac[1]
+    }
+  } else if (!is.null(draw_spec$frac) && length(draw_spec$frac) > 1) {
     stratum_id <- as.character(keys[[1]])
     if (stratum_id %in% names(draw_spec$frac)) {
       stratum_draw_spec$frac <- draw_spec$frac[[stratum_id]]
@@ -525,8 +688,8 @@ sample_unstratified <- function(frame, draw_spec) {
 
   result <- draw_sample(frame, n, draw_spec)
   result$.weight <- 1 / result$.pik
-  result$.prob <- result$.pik
   result$.pik <- NULL
+  result$.fpc <- N
   result$.sample_id <- seq_len(nrow(result))
   result
 }
@@ -713,21 +876,72 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
   stratum_info$.n_h <- if (n_is_df) {
     stratum_info <- stratum_info |>
       left_join(n_total, by = strata_spec$vars)
+    if (any(is.na(stratum_info$n))) {
+      unmatched <- stratum_info |>
+        dplyr::filter(is.na(.data$n))
+      unmatched_labels <- do.call(
+        paste,
+        c(unmatched[strata_spec$vars], list(sep = "/"))
+      )
+      cli_abort(c(
+        "Custom {.arg n} data frame does not cover all strata in the frame.",
+        "x" = "Missing allocation for: {.val {unmatched_labels}}"
+      ))
+    }
     stratum_info$n
   } else if (frac_is_df) {
     stratum_info <- stratum_info |>
       left_join(frac, by = strata_spec$vars)
+    if (any(is.na(stratum_info$frac))) {
+      unmatched <- stratum_info |>
+        dplyr::filter(is.na(.data$frac))
+      unmatched_labels <- do.call(
+        paste,
+        c(unmatched[strata_spec$vars], list(sep = "/"))
+      )
+      cli_abort(c(
+        "Custom {.arg frac} data frame does not cover all strata in the frame.",
+        "x" = "Missing allocation for: {.val {unmatched_labels}}"
+      ))
+    }
     round_sample_size(stratum_info$.N_h * stratum_info$frac, round_method)
   } else if (is_null(alloc)) {
     if (!is_null(n_total)) {
-      if (!is_null(names(n_total)) && !is_null(strata_ids)) {
-        as.integer(n_total[as.character(strata_ids)])
+      if (!is_null(names(n_total))) {
+        if (is_null(strata_ids)) {
+          cli_abort(c(
+            "Named {.arg n} vectors are only supported for single stratification variables.",
+            "i" = "Use a data frame for multi-variable stratification: {.val {strata_spec$vars}}"
+          ))
+        }
+        matched <- n_total[as.character(strata_ids)]
+        if (anyNA(matched)) {
+          missing <- strata_ids[is.na(matched)]
+          cli_abort(c(
+            "Named {.arg n} does not cover all strata in the frame.",
+            "x" = "Missing allocation for: {.val {missing}}"
+          ))
+        }
+        as.integer(matched)
       } else {
         rep(n_total, H)
       }
     } else if (!is_null(frac)) {
-      if (!is_null(names(frac)) && !is_null(strata_ids)) {
+      if (!is_null(names(frac))) {
+        if (is_null(strata_ids)) {
+          cli_abort(c(
+            "Named {.arg frac} vectors are only supported for single stratification variables.",
+            "i" = "Use a data frame for multi-variable stratification: {.val {strata_spec$vars}}"
+          ))
+        }
         frac_matched <- frac[as.character(strata_ids)]
+        if (anyNA(frac_matched)) {
+          missing <- strata_ids[is.na(frac_matched)]
+          cli_abort(c(
+            "Named {.arg frac} does not cover all strata in the frame.",
+            "x" = "Missing allocation for: {.val {missing}}"
+          ))
+        }
         round_sample_size(stratum_info$.N_h * frac_matched, round_method)
       } else {
         round_sample_size(stratum_info$.N_h * frac, round_method)
@@ -773,8 +987,12 @@ draw_sample <- function(data, n, draw_spec) {
   mos <- draw_spec$mos
   N <- nrow(data)
 
-  wr_methods <- c("srswr", "pps_multinomial", "pps_chromy")
-  if (!method %in% wr_methods) {
+  # Apply control sorting before sampling
+  if (!is_null(draw_spec$control)) {
+    data <- arrange(data, !!!draw_spec$control)
+  }
+
+  if (!method %in% multi_hit_methods) {
     n <- min(n, N)
   }
 
@@ -788,6 +1006,17 @@ draw_sample <- function(data, n, draw_spec) {
   )
   has_certainty <- !is_null(draw_spec$certainty_size) ||
     !is_null(draw_spec$certainty_prop)
+
+  # Guard against all-zero MOS (division by zero in pik computation)
+  if (method %in% pps_methods) {
+    mos_check <- data[[mos]]
+    if (sum(mos_check) <= 0) {
+      cli_abort(c(
+        "Cannot use PPS sampling: sum of MOS variable {.var {mos}} is zero.",
+        "i" = "At least one unit must have a positive measure of size."
+      ))
+    }
+  }
 
   if (method %in% pps_methods && has_certainty) {
     return(draw_sample_pps_certainty(data, n, draw_spec))
@@ -812,6 +1041,11 @@ draw_sample <- function(data, n, draw_spec) {
     pik <- rep(frac, N)
     idx <- sondage::bernoulli(frac, N)
     if (length(idx) == 0) {
+      cli_warn(c(
+        "Bernoulli sampling produced zero selections.",
+        "i" = "Falling back to SRS of 1 unit.",
+        "i" = "Consider increasing {.arg frac} or using a fixed-size method."
+      ))
       idx <- sondage::srs(1, N)
       pik <- rep(1 / N, N)
     }
@@ -834,6 +1068,11 @@ draw_sample <- function(data, n, draw_spec) {
     pik <- pmin(pik, 1)
     idx <- sondage::up_poisson(pik)
     if (length(idx) == 0) {
+      cli_warn(c(
+        "PPS Poisson sampling produced zero selections.",
+        "i" = "Falling back to SRS of 1 unit.",
+        "i" = "Consider increasing {.arg frac} or using a fixed-size method."
+      ))
       idx <- sondage::srs(1, N)
       pik <- rep(1 / N, N)
     }
@@ -849,8 +1088,17 @@ draw_sample <- function(data, n, draw_spec) {
     cli_abort("Unknown sampling method: {.val {method}}")
   }
 
-  result <- data[idx, , drop = FALSE]
-  result$.pik <- pik[idx]
+  # For WR/PMR methods, replicate rows (one per draw) with draw index.
+  # This is critical for correct HH variance estimation: survey::svydesign
+  # needs m draws (not m* distinct PSUs) to compute V = 1/(m(m-1)) * sum(Z-Zbar)^2.
+  if (method %in% multi_hit_methods) {
+    result <- data[idx, , drop = FALSE]
+    result$.pik <- pik[idx]
+    result$.draw <- seq_along(idx)
+  } else {
+    result <- data[idx, , drop = FALSE]
+    result$.pik <- pik[idx]
+  }
 
   if (method %in% pps_methods) {
     result$.certainty <- FALSE
@@ -899,6 +1147,9 @@ draw_sample_pps_certainty <- function(data, n, draw_spec) {
     certainty_result <- data[cert$certainty_idx, , drop = FALSE]
     certainty_result$.pik <- rep(1, cert$n_certain)
     certainty_result$.certainty <- TRUE
+    if (method %in% multi_hit_methods) {
+      certainty_result$.draw <- seq_len(cert$n_certain)
+    }
   }
 
   prob_result <- NULL
@@ -911,7 +1162,8 @@ draw_sample_pps_certainty <- function(data, n, draw_spec) {
       data = remaining_data,
       n = n_prob,
       method = method,
-      mos_vals = remaining_mos
+      mos_vals = remaining_mos,
+      draw_spec = draw_spec
     )
     prob_result$.certainty <- FALSE
   }
@@ -924,12 +1176,25 @@ draw_sample_pps_certainty <- function(data, n, draw_spec) {
   }
 
   result <- dplyr::bind_rows(certainty_result, prob_result)
+  # Renumber draws sequentially across certainty + probability results
+  if (".draw" %in% names(result)) {
+    result$.draw <- seq_len(nrow(result))
+  }
   result
 }
 
 #' @noRd
-draw_pps_method <- function(data, n, method, mos_vals) {
+draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
   N <- nrow(data)
+
+  # Guard against all-zero MOS after certainty removal
+  if (sum(mos_vals) <= 0) {
+    cli_abort(c(
+      "Cannot use PPS sampling: sum of MOS values is zero.",
+      "i" = "At least one remaining unit must have a positive measure of size.",
+      "i" = "This can happen when certainty selection removes all units with positive MOS."
+    ))
+  }
 
   if (method == "pps_systematic") {
     pik <- sondage::inclusion_prob(mos_vals, n)
@@ -941,9 +1206,16 @@ draw_pps_method <- function(data, n, method, mos_vals) {
     pik <- sondage::inclusion_prob(mos_vals, n)
     idx <- sondage::up_maxent(pik)
   } else if (method == "pps_poisson") {
-    pik <- sondage::inclusion_prob(mos_vals, n)
+    frac <- draw_spec$frac %||% (n / N)
+    pik <- frac * mos_vals / sum(mos_vals) * N
+    pik <- pmin(pik, 1)
     idx <- sondage::up_poisson(pik)
     if (length(idx) == 0) {
+      cli_warn(c(
+        "PPS Poisson sampling produced zero selections.",
+        "i" = "Falling back to SRS of 1 unit.",
+        "i" = "Consider increasing {.arg frac} or using a fixed-size method."
+      ))
       idx <- sondage::srs(1, N)
       pik <- rep(1 / N, N)
     }
@@ -955,8 +1227,17 @@ draw_pps_method <- function(data, n, method, mos_vals) {
     idx <- sondage::up_chromy(mos_vals, n)
   }
 
-  result <- data[idx, , drop = FALSE]
-  result$.pik <- pik[idx]
+  # For WR/PMR methods, replicate rows (one per draw) with draw index.
+  # This is critical for correct HH variance estimation: survey::svydesign
+  # needs m draws (not m* distinct PSUs) to compute V = 1/(m(m-1)) * sum(Z-Zbar)^2.
+  if (method %in% multi_hit_methods) {
+    result <- data[idx, , drop = FALSE]
+    result$.pik <- pik[idx]
+    result$.draw <- seq_along(idx)
+  } else {
+    result <- data[idx, , drop = FALSE]
+    result$.pik <- pik[idx]
+  }
   result
 }
 
@@ -1021,17 +1302,31 @@ subset_frame_to_sample <- function(
     return(semi_join(frame, selected_clusters, by = cluster_vars))
   }
 
-  common_cols <- intersect(names(frame), names(sample))
-  common_cols <- setdiff(
-    common_cols,
-    c(".sample_id", ".weight", ".prob", ".stage")
-  )
+  # Use design-driven join keys: strata + cluster vars from current and
+  # previous stages. Avoids heuristic "all shared columns" which can
+  # produce wrong results when frames share non-key columns (e.g. "value").
+  join_cols <- character(0)
+  if (!is_null(stage_spec$strata)) {
+    join_cols <- c(join_cols, stage_spec$strata$vars)
+  }
+  if (!is_null(stage_spec$clusters)) {
+    join_cols <- c(join_cols, stage_spec$clusters$vars)
+  }
+  # Also try previous stage's strata if current stage provides no keys
+  if (length(join_cols) == 0 && !is_null(previous_stage_spec$strata)) {
+    join_cols <- c(join_cols, previous_stage_spec$strata$vars)
+  }
+  join_cols <- intersect(join_cols, intersect(names(frame), names(sample)))
 
-  if (length(common_cols) == 0) {
-    cli_warn("No common columns for linking frames across stages")
+  if (length(join_cols) == 0) {
+    cli_warn(c(
+      "No design-driven columns for linking frames across stages.",
+      "i" = "Neither strata nor cluster variables are available as join keys.",
+      "i" = "Returning full frame; results may be incorrect if the frame should be subsetted."
+    ))
     return(frame)
   }
-  semi_join(frame, sample, by = common_cols)
+  semi_join(frame, sample, by = join_cols)
 }
 
 #' @noRd
@@ -1052,6 +1347,10 @@ validate_design_complete <- function(design, call = rlang::caller_env()) {
 
 #' @noRd
 validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
+  if (nrow(frame) == 0) {
+    cli_abort("Frame has 0 rows", call = call)
+  }
+
   required_vars <- c()
 
   if (!is_null(stage_spec$strata)) {
@@ -1062,8 +1361,9 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
     required_vars <- c(required_vars, stage_spec$clusters$vars)
   }
 
-  if (!is_null(stage_spec$draw_spec$mos)) {
-    required_vars <- c(required_vars, stage_spec$draw_spec$mos)
+  mos_var <- stage_spec$draw_spec$mos
+  if (!is_null(mos_var)) {
+    required_vars <- c(required_vars, mos_var)
   }
 
   missing <- setdiff(required_vars, names(frame))
@@ -1076,5 +1376,23 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
       call = call
     )
   }
+
+  # MOS value checks (column is confirmed present above)
+  if (!is_null(mos_var)) {
+    mos_vals <- frame[[mos_var]]
+    if (anyNA(mos_vals)) {
+      cli_abort(
+        "MOS variable {.var {mos_var}} contains NA values",
+        call = call
+      )
+    }
+    if (any(mos_vals < 0)) {
+      cli_abort(
+        "MOS variable {.var {mos_var}} contains negative values",
+        call = call
+      )
+    }
+  }
+
   invisible(TRUE)
 }

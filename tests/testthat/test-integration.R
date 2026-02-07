@@ -280,11 +280,4 @@ test_that("Weights are mathematically correct", {
   # For SRS: weight = N/n
   expected_weight <- N / n
   expect_equal(unique(result$.weight), expected_weight)
-
-  # Probability = n/N
-  expected_prob <- n / N
-  expect_equal(unique(result$.prob), expected_prob)
-
-  # Weight * prob = 1
-  expect_equal(unique(result$.weight * result$.prob), 1)
 })

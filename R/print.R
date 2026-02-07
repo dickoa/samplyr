@@ -16,7 +16,7 @@ print.sampling_design <- function(x, ...) {
   }
 
   n_stages <- length(x$stages)
-  cat("Stages:", n_stages, "\n\n")
+  cat("Number of stages:", n_stages, "\n\n")
 
   for (i in seq_along(x$stages)) {
     print_stage(x$stages[[i]], i)
@@ -61,10 +61,18 @@ format_draw_spec <- function(draw) {
   parts <- c()
 
   if (!is_null(draw$n)) {
-    parts <- c(parts, glue("n = {draw$n}"))
+    if (is.data.frame(draw$n)) {
+      parts <- c(parts, "n = <custom data frame>")
+    } else {
+      parts <- c(parts, glue("n = {draw$n}"))
+    }
   }
   if (!is_null(draw$frac)) {
-    parts <- c(parts, glue("frac = {draw$frac}"))
+    if (is.data.frame(draw$frac)) {
+      parts <- c(parts, "frac = <custom data frame>")
+    } else {
+      parts <- c(parts, glue("frac = {draw$frac}"))
+    }
   }
 
   parts <- c(parts, glue("method = {draw$method}"))
@@ -87,9 +95,13 @@ format_control_quos <- function(control_quos) {
     return(NULL)
   }
 
-  labels <- vapply(control_quos, function(q) {
-    rlang::as_label(q)
-  }, character(1))
+  labels <- vapply(
+    control_quos,
+    function(q) {
+      rlang::as_label(q)
+    },
+    character(1)
+  )
 
   if (length(labels) == 1) {
     labels
@@ -111,13 +123,26 @@ print.tbl_sample <- function(x, ...) {
   stages_exec <- get_stages_executed(x)
   n_total_stages <- length(design$stages)
   if (length(stages_exec) < n_total_stages) {
-    cat("Stages executed:", paste(stages_exec, collapse = ", "), "of", n_total_stages, "\n")
+    cat(
+      "Stages executed:",
+      paste(stages_exec, collapse = ", "),
+      "of",
+      n_total_stages,
+      "\n"
+    )
   }
 
   if (".weight" %in% names(x)) {
     w <- x$.weight
-    cat("Weights:", round(min(w), 2), "-", round(max(w), 2),
-        "(mean:", round(mean(w), 2), ")\n")
+    cat(
+      "Weights:",
+      round(min(w), 2),
+      "-",
+      round(max(w), 2),
+      "(mean:",
+      round(mean(w), 2),
+      ")\n"
+    )
   }
 
   cat("\n")

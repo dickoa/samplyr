@@ -78,6 +78,21 @@ as.list.sampling_design <- function(x, ...) {
           character(1)
         )
       }
+      if (!is_null(stage$draw_spec$min_n)) {
+        stage_list$draw$min_n <- stage$draw_spec$min_n
+      }
+      if (!is_null(stage$draw_spec$max_n)) {
+        stage_list$draw$max_n <- stage$draw_spec$max_n
+      }
+      if (!is_null(stage$draw_spec$certainty_size)) {
+        stage_list$draw$certainty_size <- stage$draw_spec$certainty_size
+      }
+      if (!is_null(stage$draw_spec$certainty_prop)) {
+        stage_list$draw$certainty_prop <- stage$draw_spec$certainty_prop
+      }
+      if (!is_null(stage$draw_spec$round)) {
+        stage_list$draw$round <- stage$draw_spec$round
+      }
     }
     stage_list
   })

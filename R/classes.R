@@ -235,8 +235,8 @@ get_stages_executed <- function(x) {
 #' Reconstruct a tbl_sample after dplyr operations
 #'
 #' This method ensures that the tbl_sample class is only preserved
-#' when the essential columns (.weight and .prob) are still present.
-#' Operations like summarise() or count() that remove these columns
+#' when the essential column (.weight) is still present.
+#' Operations like summarise() or count() that remove this column
 #' will return a regular tibble instead.
 #'
 #' @param data The modified data
@@ -245,7 +245,7 @@ get_stages_executed <- function(x) {
 #' @export
 #' @keywords internal
 dplyr_reconstruct.tbl_sample <- function(data, template) {
-  essential_cols <- c(".weight", ".prob")
+  essential_cols <- c(".weight")
 
   has_essential <- all(essential_cols %in% names(data))
 
@@ -260,4 +260,41 @@ dplyr_reconstruct.tbl_sample <- function(data, template) {
   } else {
     tibble::as_tibble(data)
   }
+}
+
+#' Subset a tbl_sample preserving class
+#'
+#' Subsetting a tbl_sample with `[` preserves the tbl_sample class
+#' and its sampling metadata when the essential column (.weight)
+#' remains.
+#'
+#' @param x A tbl_sample object
+#' @param i Row index
+#' @param j Column index
+#' @param ... Additional arguments passed to the default method
+#' @param drop Coerce to lowest possible dimension
+#' @return A tbl_sample if essential columns remain, otherwise a data.frame
+#' @method [ tbl_sample
+#' @export
+`[.tbl_sample` <- function(x, i, j, ..., drop = FALSE) {
+  result <- NextMethod()
+  if (is.data.frame(result)) {
+    essential_cols <- c(".weight")
+    if (all(essential_cols %in% names(result))) {
+      return(new_tbl_sample(
+        data = result,
+        design = attr(x, "design"),
+        stages_executed = attr(x, "stages_executed"),
+        seed = attr(x, "seed"),
+        metadata = attr(x, "metadata")
+      ))
+    }
+    # Strip tbl_sample class and attributes when essential columns are missing
+    class(result) <- setdiff(class(result), "tbl_sample")
+    attr(result, "design") <- NULL
+    attr(result, "stages_executed") <- NULL
+    attr(result, "seed") <- NULL
+    attr(result, "metadata") <- NULL
+  }
+  result
 }
