@@ -493,10 +493,17 @@ match_sampled_units <- function(
     by = match_vars
   )
 
-  sort(matched$.frame_row)
+  matched$.frame_row[order(matched$.sample_row)]
 }
 
-#' Assemble block-diagonal matrix from per-group matrices
+#' Assemble joint probability matrix from per-group matrices
+#'
+#' Initializes the full matrix with `outer(pi, pi)` (the product of all
+#' marginal inclusion probabilities), then overwrites each diagonal block
+#' with the actual within-group joint probabilities. Cross-group entries
+#' remain at `pi_i * pi_j`, which is correct because sampling in
+#' independent strata implies `pi_kl = pi_k * pi_l` for units in
+#' different groups.
 #' @noRd
 assemble_block_diagonal <- function(matrices) {
   matrices <- Filter(Negate(is.null), matrices)
@@ -507,8 +514,8 @@ assemble_block_diagonal <- function(matrices) {
     return(matrices[[1]])
   }
 
-  total_n <- sum(vapply(matrices, nrow, integer(1)))
-  result <- matrix(0, nrow = total_n, ncol = total_n)
+  pi_vec <- unlist(lapply(matrices, diag))
+  result <- outer(pi_vec, pi_vec)
 
   offset <- 0L
   for (mat in matrices) {
