@@ -1,8 +1,8 @@
 # samplyr 0.1.0
 
-## Core Grammar
-
 Initial CRAN release.
+
+## Core Grammar
 
 * Five verbs + one modifier for composable survey sampling designs:
   `sampling_design()`, `stratify_by()`, `cluster_by()`, `draw()`,
