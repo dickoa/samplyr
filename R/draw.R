@@ -391,15 +391,26 @@ draw <- function(
   }
 
   valid_on_empty <- c("warn", "error", "silent")
-  if (!is_character(on_empty) || length(on_empty) != 1 ||
-      !on_empty %in% valid_on_empty) {
+  if (
+    !is_character(on_empty) ||
+      length(on_empty) != 1 ||
+      !on_empty %in% valid_on_empty
+  ) {
     cli_abort(
       "{.arg on_empty} must be one of {.val {valid_on_empty}}"
     )
   }
 
-  validate_draw_args(n, frac, method, mos_name, has_alloc, n_is_df, frac_is_df,
-                     strata_vars = strata_vars)
+  validate_draw_args(
+    n,
+    frac,
+    method,
+    mos_name,
+    has_alloc,
+    n_is_df,
+    frac_is_df,
+    strata_vars = strata_vars
+  )
   validate_bounds(min_n, max_n, has_alloc)
   validate_certainty(
     certainty_size,
@@ -676,7 +687,10 @@ validate_certainty <- function(
   }
 
   pps_wor_methods <- c(
-    "pps_systematic", "pps_brewer", "pps_maxent", "pps_poisson"
+    "pps_systematic",
+    "pps_brewer",
+    "pps_maxent",
+    "pps_poisson"
   )
   if (!method %in% pps_wor_methods) {
     cli_abort(

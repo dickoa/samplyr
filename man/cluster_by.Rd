@@ -8,7 +8,7 @@ cluster_by(.data, ...)
 }
 \arguments{
 \item{.data}{A \code{sampling_design} object (piped from \code{\link[=sampling_design]{sampling_design()}},
-\code{\link[=stratify_by]{stratify_by()}}, or \code{\link[=stage]{stage()}}).}
+\code{\link[=stratify_by]{stratify_by()}}, or \code{\link[=add_stage]{add_stage()}}).}
 
 \item{...}{<\code{\link[dplyr:dplyr_tidy_select]{tidy-select}}> Clustering variable(s)
 that identify the sampling units. In most cases this is a single variable
@@ -81,10 +81,10 @@ sampling_design() |>
 
 # Two-stage cluster sample
 sampling_design() |>
-  stage(label = "Schools") |>
+  add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
-  stage(label = "Students") |>
+  add_stage(label = "Students") |>
     draw(n = 15) |>
   execute(tanzania_schools, seed = 1234)
 
@@ -93,5 +93,5 @@ sampling_design() |>
 \code{\link[=sampling_design]{sampling_design()}} for creating designs,
 \code{\link[=stratify_by]{stratify_by()}} for stratification,
 \code{\link[=draw]{draw()}} for specifying selection,
-\code{\link[=stage]{stage()}} for multi-stage designs
+\code{\link[=add_stage]{add_stage()}} for multi-stage designs
 }

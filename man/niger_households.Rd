@@ -49,22 +49,22 @@ length(unique(niger_households$ea_id))
 
 # True two-stage sample: select EAs, then households within selected EAs
 sampling_design() |>
-  stage(label = "EAs") |>
+  add_stage(label = "EAs") |>
     stratify_by(strata) |>
     cluster_by(ea_id) |>
     draw(n = 5) |>
-  stage(label = "Households") |>
+  add_stage(label = "Households") |>
     draw(n = 10) |>
   execute(niger_households, seed = 42)
 
 # For PPS selection of EAs, use the EA-level frame which has
 # cluster-level variables (hh_count) suitable as measure of size:
 # selected_eas <- sampling_design() |>
-#   stage(label = "EAs") |>
+#   add_stage(label = "EAs") |>
 #     stratify_by(strata) |>
 #     cluster_by(ea_id) |>
 #     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-#   stage(label = "Households") |>
+#   add_stage(label = "Households") |>
 #     draw(n = 10) |>
 #   execute(niger_eas, stages = 1, seed = 42)
 # selected_eas |> execute(niger_households, seed = 43)

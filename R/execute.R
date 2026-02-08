@@ -91,21 +91,21 @@
 #'
 #' # Two-stage cluster sample execution
 #' sample <- sampling_design() |>
-#'   stage(label = "Schools") |>
+#'   add_stage(label = "Schools") |>
 #'     cluster_by(school_id) |>
 #'     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
-#'   stage(label = "Students") |>
+#'   add_stage(label = "Students") |>
 #'     draw(n = 15) |>
 #'   execute(tanzania_schools, seed = 3)
 #' length(unique(sample$school_id))  # 30 schools selected
 #'
 #' # Partial execution: stage 1 only
 #' design <- sampling_design() |>
-#'   stage(label = "EAs") |>
+#'   add_stage(label = "EAs") |>
 #'     stratify_by(region) |>
 #'     cluster_by(ea_id) |>
 #'     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-#'   stage(label = "Households") |>
+#'   add_stage(label = "Households") |>
 #'     draw(n = 12)
 #'
 #' # Execute only stage 1 to get selected EAs
@@ -376,15 +376,22 @@ execute_single_stage <- function(
     prev_draw_cols <- character(0)
     if (!is_null(previous_sample)) {
       prev_draw_cols <- grep(
-        "^\\.draw_\\d+$", names(previous_sample), value = TRUE
+        "^\\.draw_\\d+$",
+        names(previous_sample),
+        value = TRUE
       )
     }
     if (length(prev_draw_cols) > 0) {
       draw_assignments <- unique(
         previous_sample[, c(cluster_vars_prev, prev_draw_cols), drop = FALSE]
       )
-      frame <- merge(frame, draw_assignments, by = cluster_vars_prev,
-        all = FALSE, sort = FALSE)
+      frame <- merge(
+        frame,
+        draw_assignments,
+        by = cluster_vars_prev,
+        all = FALSE,
+        sort = FALSE
+      )
       split_vars <- c(cluster_vars_prev, prev_draw_cols)
     }
 
@@ -440,7 +447,12 @@ execute_single_stage <- function(
       names(previous_sample),
       value = TRUE
     )
-    prev_carry_cols <- c(prev_weight_cols, prev_draw_cols, prev_fpc_cols, prev_cert_cols)
+    prev_carry_cols <- c(
+      prev_weight_cols,
+      prev_draw_cols,
+      prev_fpc_cols,
+      prev_cert_cols
+    )
 
     if (
       !is_null(previous_stage_spec) && !is_null(previous_stage_spec$clusters)
@@ -448,8 +460,10 @@ execute_single_stage <- function(
       cluster_vars <- previous_stage_spec$clusters$vars
       join_vars <- cluster_vars
 
-      if (length(prev_draw_cols) > 0 &&
-        all(prev_draw_cols %in% names(result))) {
+      if (
+        length(prev_draw_cols) > 0 &&
+          all(prev_draw_cols %in% names(result))
+      ) {
         join_vars <- c(join_vars, prev_draw_cols)
       }
 
@@ -470,9 +484,14 @@ execute_single_stage <- function(
         ) |>
         select(-".prev_weight")
     } else {
-      if (!is_null(previous_stage_spec) && !is_null(previous_stage_spec$strata)) {
+      if (
+        !is_null(previous_stage_spec) && !is_null(previous_stage_spec$strata)
+      ) {
         strata_vars <- previous_stage_spec$strata$vars
-        join_vars <- intersect(strata_vars, intersect(names(result), names(previous_sample)))
+        join_vars <- intersect(
+          strata_vars,
+          intersect(names(result), names(previous_sample))
+        )
         if (length(join_vars) > 0) {
           prev_data <- previous_sample |>
             distinct(across(all_of(join_vars)), .keep_all = TRUE) |>
@@ -871,7 +890,10 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
     if (any(is.na(stratum_info$n))) {
       unmatched <- stratum_info |>
         dplyr::filter(is.na(.data$n))
-      unmatched_labels <- do.call(paste, c(unmatched[strata_spec$vars], list(sep = "/")))
+      unmatched_labels <- do.call(
+        paste,
+        c(unmatched[strata_spec$vars], list(sep = "/"))
+      )
       cli_abort(c(
         "Custom {.arg n} data frame does not cover all strata in the frame.",
         "x" = "Missing allocation for: {.val {unmatched_labels}}"
@@ -884,7 +906,10 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
     if (any(is.na(stratum_info$frac))) {
       unmatched <- stratum_info |>
         dplyr::filter(is.na(.data$frac))
-      unmatched_labels <- do.call(paste, c(unmatched[strata_spec$vars], list(sep = "/")))
+      unmatched_labels <- do.call(
+        paste,
+        c(unmatched[strata_spec$vars], list(sep = "/"))
+      )
       cli_abort(c(
         "Custom {.arg frac} data frame does not cover all strata in the frame.",
         "x" = "Missing allocation for: {.val {unmatched_labels}}"
@@ -948,7 +973,10 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
 
     if (any(is.na(stratum_info$var))) {
       unmatched <- stratum_info |> dplyr::filter(is.na(.data$var))
-      unmatched_labels <- do.call(paste, c(unmatched[strata_spec$vars], list(sep = "/")))
+      unmatched_labels <- do.call(
+        paste,
+        c(unmatched[strata_spec$vars], list(sep = "/"))
+      )
       cli_abort(c(
         "{.arg variance} does not cover all strata in the frame.",
         "x" = "Missing variance for: {.val {unmatched_labels}}"
@@ -971,7 +999,10 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
 
     if (any(is.na(stratum_info$var))) {
       unmatched <- stratum_info |> dplyr::filter(is.na(.data$var))
-      unmatched_labels <- do.call(paste, c(unmatched[strata_spec$vars], list(sep = "/")))
+      unmatched_labels <- do.call(
+        paste,
+        c(unmatched[strata_spec$vars], list(sep = "/"))
+      )
       cli_abort(c(
         "{.arg variance} does not cover all strata in the frame.",
         "x" = "Missing variance for: {.val {unmatched_labels}}"
@@ -979,7 +1010,10 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
     }
     if (any(is.na(stratum_info$cost))) {
       unmatched <- stratum_info |> dplyr::filter(is.na(.data$cost))
-      unmatched_labels <- do.call(paste, c(unmatched[strata_spec$vars], list(sep = "/")))
+      unmatched_labels <- do.call(
+        paste,
+        c(unmatched[strata_spec$vars], list(sep = "/"))
+      )
       cli_abort(c(
         "{.arg cost} does not cover all strata in the frame.",
         "x" = "Missing cost for: {.val {unmatched_labels}}"

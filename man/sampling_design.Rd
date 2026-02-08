@@ -18,7 +18,7 @@ functions.
 \code{sampling_design()} is the entry point for creating survey sampling
 specifications. It creates an empty design object that can be built
 up using pipe-able verbs like \code{\link[=stratify_by]{stratify_by()}}, \code{\link[=cluster_by]{cluster_by()}},
-\code{\link[=draw]{draw()}}, and \code{\link[=stage]{stage()}}.
+\code{\link[=draw]{draw()}}, and \code{\link[=add_stage]{add_stage()}}.
 }
 \details{
 The sampling design paradigm separates the specification of a sampling
@@ -59,10 +59,10 @@ sampling_design(title = "Kenya Health Facility Survey") |>
 
 # Two-stage cluster sample of schools and students
 sampling_design(title = "Tanzania Education Survey") |>
-  stage(label = "Schools") |>
+  add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 50, method = "pps_brewer", mos = enrollment) |>
-  stage(label = "Students") |>
+  add_stage(label = "Students") |>
     draw(n = 20) |>
   execute(tanzania_schools, seed = 3)
 
@@ -71,6 +71,6 @@ sampling_design(title = "Tanzania Education Survey") |>
 \code{\link[=stratify_by]{stratify_by()}} for defining strata,
 \code{\link[=cluster_by]{cluster_by()}} for defining clusters,
 \code{\link[=draw]{draw()}} for specifying selection parameters,
-\code{\link[=stage]{stage()}} for multi-stage designs,
+\code{\link[=add_stage]{add_stage()}} for multi-stage designs,
 \code{\link[=execute]{execute()}} for running designs
 }

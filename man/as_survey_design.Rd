@@ -129,11 +129,11 @@ survey::svymean(~score, svy)
 
 # Two-stage cluster sample with PPS first stage
 sample <- sampling_design() |>
-  stage() |>
+  add_stage() |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-  stage() |>
+  add_stage() |>
     draw(n = 12) |>
   execute(niger_eas, seed = 2025)
 

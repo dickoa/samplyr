@@ -1,8 +1,8 @@
 #' Define a New Stage in Multi-Stage Designs
 #'
-#' `stage()` opens a new stage context in multi-stage sampling designs.
+#' `add_stage()` opens a new stage context in multi-stage sampling designs.
 #' It acts as a delimiter between stages, not a wrapper -- each stage's
-#' specification follows `stage()` using the same verbs.
+#' specification follows `add_stage()` using the same verbs.
 #'
 #' @param .data A `sampling_design` object.
 #' @param label Optional character string labeling the stage (e.g., "Schools",
@@ -25,7 +25,7 @@
 #'
 #' ## Design Patterns
 #'
-#' **Pattern 1: Single-stage (no explicit `stage()`):**
+#' **Pattern 1: Single-stage (no explicit `add_stage()`):**
 #' \preformatted{
 #' sampling_design() |>
 #'   stratify_by(...) |>
@@ -35,19 +35,19 @@
 #' **Pattern 2: Multi-stage (explicit stages):**
 #' \preformatted{
 #' sampling_design() |>
-#'   stage(label = "Stage 1") |>
+#'   add_stage(label = "Stage 1") |>
 #'     cluster_by(...) |>
 #'     draw(...) |>
-#'   stage(label = "Stage 2") |>
+#'   add_stage(label = "Stage 2") |>
 #'     cluster_by(...) |>
 #'     draw(...) |>
-#'   stage(label = "Stage 3") |>
+#'   add_stage(label = "Stage 3") |>
 #'     draw(...)
 #' }
 #'
 #' ## Validation Rules
 #'
-#' - Each stage must end with [draw()] before the next `stage()` or [execute()]
+#' - Each stage must end with [draw()] before the next `add_stage()` or [execute()]
 #' - Empty stages (stage followed immediately by stage) are not allowed
 #' - The final stage doesn't need `cluster_by()` (samples individuals)
 #'
@@ -62,40 +62,40 @@
 #' @examples
 #' # Two-stage design: schools then students
 #' sampling_design() |>
-#'   stage(label = "Schools") |>
+#'   add_stage(label = "Schools") |>
 #'     cluster_by(school_id) |>
 #'     draw(n = 50, method = "pps_brewer", mos = enrollment) |>
-#'   stage(label = "Students") |>
+#'   add_stage(label = "Students") |>
 #'     draw(n = 20) |>
 #'   execute(tanzania_schools, seed = 123)
 #'
 #' # Two-stage with stratification at stage 1
 #' sampling_design() |>
-#'   stage(label = "Schools") |>
+#'   add_stage(label = "Schools") |>
 #'     stratify_by(school_level) |>
 #'     cluster_by(school_id) |>
 #'     draw(n = 20, method = "pps_brewer", mos = enrollment) |>
-#'   stage(label = "Students") |>
+#'   add_stage(label = "Students") |>
 #'     draw(n = 15) |>
 #'   execute(tanzania_schools, seed = 1234)
 #'
 #' # DHS-style two-stage stratified cluster sample
 #' sampling_design(title = "DHS-style Household Survey") |>
-#'   stage(label = "Enumeration Areas") |>
+#'   add_stage(label = "Enumeration Areas") |>
 #'     stratify_by(region, strata) |>
 #'     cluster_by(ea_id) |>
 #'     draw(n = 3, method = "pps_brewer", mos = hh_count) |>
-#'   stage(label = "Households") |>
+#'   add_stage(label = "Households") |>
 #'     draw(n = 20) |>
 #'   execute(niger_eas, seed = 2026)
 #'
 #' # Partial execution: select only stage 1
 #' design <- sampling_design() |>
-#'   stage(label = "EAs") |>
+#'   add_stage(label = "EAs") |>
 #'     stratify_by(region) |>
 #'     cluster_by(ea_id) |>
 #'     draw(n = 10, method = "pps_brewer", mos = hh_count) |>
-#'   stage(label = "Households") |>
+#'   add_stage(label = "Households") |>
 #'     draw(n = 12)
 #'
 #' # Execute stage 1 only
@@ -108,7 +108,7 @@
 #' [execute()] for running multi-stage designs
 #'
 #' @export
-stage <- function(.data, label = NULL) {
+add_stage <- function(.data, label = NULL) {
   if (!is_sampling_design(.data)) {
     cli_abort("{.arg .data} must be a {.cls sampling_design} object")
   }
@@ -125,9 +125,9 @@ stage <- function(.data, label = NULL) {
     current_stage <- .data$stages[[current]]
 
     stage_is_empty <- is_null(current_stage$strata) &&
-                      is_null(current_stage$clusters) &&
-                      is_null(current_stage$draw_spec) &&
-                      is_null(current_stage$label)
+      is_null(current_stage$clusters) &&
+      is_null(current_stage$draw_spec) &&
+      is_null(current_stage$label)
 
     if (stage_is_empty) {
       .data$stages[[current]] <- new_sampling_stage(label = label)

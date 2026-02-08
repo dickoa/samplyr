@@ -44,7 +44,7 @@ samplyr uses 5 verbs and 1 modifier:
 | `cluster_by()` | Define cluster/PSU variable |
 | `draw()` | Specify sample size, method, and measure of size |
 | `execute()` | Run the design on a frame |
-| `stage()` | Delimit stages in multi-stage designs |
+| `add_stage()` | Delimit stages in multi-stage designs |
 
 ## Example Data
 
@@ -369,6 +369,69 @@ samplyr supports several PPS methods:
 | `pps_maxent`      | Maximum entropy - highest entropy among fixed-size methods |
 | `pps_poisson`     | PPS Poisson - random sample size (requires `frac`)         |
 | `pps_multinomial` | PPS with replacement                                       |
+| `pps_chromy`      | Chromy's sequential PPS / minimum replacement (SAS default) |
+
+### Certainty Selection
+
+In PPS sampling, very large units can have expected inclusion probabilities above 1. Certainty selection handles this by selecting those units with probability 1 and sampling the rest normally.
+
+Use `certainty_size` for an absolute threshold or `certainty_prop` for a proportional one.
+
+```{r}
+sample <- sampling_design() |>
+  cluster_by(ea_id) |>
+  draw(n = 50, method = "pps_brewer", mos = hh_count,
+       certainty_size = 500) |>
+  execute(niger_eas, seed = 42)
+
+# Check which units were selected with certainty
+table(sample$.certainty_1)
+```
+
+With `certainty_prop`, units whose MOS proportion exceeds the threshold are taken with certainty. The process is iterative: after removing certainty units, proportions are recomputed.
+
+```{r}
+sample <- sampling_design() |>
+  stratify_by(region) |>
+  cluster_by(ea_id) |>
+  draw(n = 50, method = "pps_systematic", mos = hh_count,
+       certainty_prop = 0.10) |>
+  execute(niger_eas, seed = 42)
+```
+
+---
+
+## Control Sorting and Serpentine Ordering
+
+Control sorting orders the frame before selection, providing implicit stratification. This is effective with systematic and sequential methods, where it ensures the sample spreads evenly across the sorted variables.
+
+```{r}
+# Nested sorting: standard ascending order
+sample <- sampling_design() |>
+  draw(n = 100, method = "systematic",
+       control = c(region, department)) |>
+  execute(niger_eas, seed = 42)
+```
+
+`serp()` implements serpentine (snake) sorting, which alternates direction at each level of the hierarchy. This minimizes jumps at boundaries, matching SAS PROC SURVEYSELECT's `SORT=SERP`.
+
+```{r}
+# Serpentine sorting
+sample <- sampling_design() |>
+  draw(n = 100, method = "systematic",
+       control = serp(region, department)) |>
+  execute(niger_eas, seed = 42)
+```
+
+Control sorting can be combined with explicit stratification. The sorting is then applied within each stratum.
+
+```{r}
+sample <- sampling_design() |>
+  stratify_by(strata) |>
+  draw(n = 100, method = "systematic",
+       control = serp(region, department)) |>
+  execute(niger_eas, seed = 42)
+```
 
 ---
 
@@ -376,7 +439,7 @@ samplyr supports several PPS methods:
 
 Multi-stage designs sample in stages: first select primary sampling units (PSUs), then sample within them. This is the standard approach for large-scale surveys when a complete frame of ultimate units isn't available upfront.
 
-Use `stage()` to delimit each stage of the design.
+Use `add_stage()` to delimit each stage of the design.
 
 ### Two-Stage Design
 
@@ -405,10 +468,10 @@ Now we can run a two-stage design: select 10 districts with PPS, then sample 5 s
 
 ```{r}
 sample <- sampling_design() |>
-  stage(label = "Districts") |>
+  add_stage(label = "Districts") |>
     cluster_by(district) |>
     draw(n = 10, method = "pps_brewer", mos = district_enrollment) |>
-  stage(label = "Schools") |>
+  add_stage(label = "Schools") |>
     draw(n = 5) |>
   execute(schools_frame, seed = 42)
 
@@ -425,11 +488,11 @@ Combining stratification with multi-stage sampling is standard for national surv
 
 ```{r}
 sample <- sampling_design() |>
-  stage(label = "Districts") |>
+  add_stage(label = "Districts") |>
     stratify_by(region) |>
     cluster_by(district) |>
     draw(n = 2, method = "pps_brewer", mos = district_enrollment) |>
-  stage(label = "Schools") |>
+  add_stage(label = "Schools") |>
     draw(n = 3) |>
   execute(schools_frame, seed = 42)
 
@@ -447,11 +510,11 @@ The `stages` argument lets you execute only specific stages.
 
 ```{r}
 design <- sampling_design() |>
-  stage(label = "Districts") |>
+  add_stage(label = "Districts") |>
     stratify_by(region) |>
     cluster_by(district) |>
     draw(n = 2, method = "pps_brewer", mos = district_enrollment) |>
-  stage(label = "Schools") |>
+  add_stage(label = "Schools") |>
     draw(n = 4)
 
 # Execute stage 1 only
@@ -516,6 +579,7 @@ design_effect(sample$.weight)
 | `pps_maxent` | Fixed | No | Joint inclusion probs available |
 | `pps_poisson` | Random | No | PPS with random size |
 | `pps_multinomial` | Fixed | Yes | PPS with replacement |
+| `pps_chromy` | Fixed | PMR | Chromy's sequential PPS (SAS default) |
 
 ### Allocation Methods
 
@@ -559,12 +623,25 @@ These apply when using `frac` to specify sampling rates. When computed sample si
 
 ```{r}
 design <- sampling_design(title = "National Health Survey 2024") |>
-  stage(label = "Enumeration Areas") |>
+  add_stage(label = "Enumeration Areas") |>
     stratify_by(region, strata) |>
     cluster_by(ea_id) |>
     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-  stage(label = "Households") |>
+  add_stage(label = "Households") |>
     draw(n = 20)
 
 print(design)
+```
+
+### Frame Validation
+
+Use `validate_frame()` to check that a frame has all the variables a design requires before executing.
+
+```{r, error = TRUE}
+# This passes
+validate_frame(design, niger_eas)
+
+# This fails with a clear message
+bad_frame <- data.frame(id = 1:100, value = rnorm(100))
+validate_frame(design, bad_frame)
 ```

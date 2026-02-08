@@ -40,11 +40,11 @@ test_that("execute() produces .fpc_k columns for clustered design", {
 
 test_that("execute() produces .fpc_k for each stage in multi-stage design", {
   sample <- sampling_design() |>
-    stage(label = "EAs") |>
+    add_stage(label = "EAs") |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-    stage(label = "Households") |>
+    add_stage(label = "Households") |>
     draw(n = 12) |>
     execute(niger_eas, seed = 2025)
 
@@ -56,11 +56,11 @@ test_that("execute() produces .fpc_k for each stage in multi-stage design", {
 
 test_that(".fpc_k columns carry forward in partial execution", {
   design <- sampling_design() |>
-    stage(label = "EAs") |>
+    add_stage(label = "EAs") |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-    stage(label = "Households") |>
+    add_stage(label = "Households") |>
     draw(n = 12)
 
   # Execute stage 1 only
@@ -166,11 +166,11 @@ test_that("as_survey_design works for multi-stage design", {
   skip_if_not_installed("survey")
 
   sample <- sampling_design() |>
-    stage(label = "EAs") |>
+    add_stage(label = "EAs") |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-    stage(label = "Households") |>
+    add_stage(label = "Households") |>
     draw(n = 12) |>
     execute(niger_eas, seed = 2025)
 
@@ -200,7 +200,10 @@ test_that("as_survey_design handles mixed WR/WOR with Inf FPC for WR stages", {
   n_schools_per <- 8
   n_students_per <- 5
   frame <- data.frame(
-    district_id = rep(seq_len(n_districts), each = n_schools_per * n_students_per),
+    district_id = rep(
+      seq_len(n_districts),
+      each = n_schools_per * n_students_per
+    ),
     school_id = rep(
       seq_len(n_districts * n_schools_per),
       each = n_students_per
@@ -209,13 +212,13 @@ test_that("as_survey_design handles mixed WR/WOR with Inf FPC for WR stages", {
   )
 
   sample <- sampling_design() |>
-    stage(label = "Districts (WR)") |>
+    add_stage(label = "Districts (WR)") |>
     cluster_by(district_id) |>
     draw(n = 4, method = "srswr") |>
-    stage(label = "Schools (WOR)") |>
+    add_stage(label = "Schools (WOR)") |>
     cluster_by(school_id) |>
     draw(n = 3) |>
-    stage(label = "Students") |>
+    add_stage(label = "Students") |>
     draw(n = 2) |>
     execute(frame, seed = 42)
 
@@ -234,7 +237,10 @@ test_that("as_survey_design preserves FPC when all clustered stages are WOR", {
   n_schools_per <- 8
   n_students_per <- 5
   frame <- data.frame(
-    district_id = rep(seq_len(n_districts), each = n_schools_per * n_students_per),
+    district_id = rep(
+      seq_len(n_districts),
+      each = n_schools_per * n_students_per
+    ),
     school_id = rep(
       seq_len(n_districts * n_schools_per),
       each = n_students_per
@@ -243,13 +249,13 @@ test_that("as_survey_design preserves FPC when all clustered stages are WOR", {
   )
 
   sample <- sampling_design() |>
-    stage(label = "Districts (WOR)") |>
+    add_stage(label = "Districts (WOR)") |>
     cluster_by(district_id) |>
     draw(n = 4) |>
-    stage(label = "Schools (WOR)") |>
+    add_stage(label = "Schools (WOR)") |>
     cluster_by(school_id) |>
     draw(n = 3) |>
-    stage(label = "Students") |>
+    add_stage(label = "Students") |>
     draw(n = 2) |>
     execute(frame, seed = 42)
 
@@ -271,11 +277,11 @@ test_that("as_survey_design errors without survey package", {
 
 test_that("joint_inclusion_prob returns list of correct length", {
   sample <- sampling_design() |>
-    stage() |>
+    add_stage() |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-    stage() |>
+    add_stage() |>
     draw(n = 12) |>
     execute(niger_eas, seed = 2025)
 
@@ -289,11 +295,11 @@ test_that("joint_inclusion_prob returns list of correct length", {
 
 test_that("joint_inclusion_prob stage argument filters correctly", {
   sample <- sampling_design() |>
-    stage() |>
+    add_stage() |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-    stage() |>
+    add_stage() |>
     draw(n = 12) |>
     execute(niger_eas, seed = 2025)
 
@@ -386,14 +392,14 @@ test_that("joint_inclusion_prob works with proportional allocation", {
 
 test_that("joint_inclusion_prob works with stage vector", {
   sample <- sampling_design() |>
-    stage() |>
+    add_stage() |>
     cluster_by(ea_id) |>
     draw(
       n = 10,
       method = "pps_brewer",
       mos = hh_count
     ) |>
-    stage() |>
+    add_stage() |>
     draw(n = 5) |>
     execute(niger_eas, seed = 2025)
 
@@ -434,8 +440,7 @@ test_that("joint_inclusion_prob decomposes certainty units correctly", {
   )
 
   sample <- sampling_design() |>
-    draw(n = 5, method = "pps_brewer", mos = size,
-         certainty_size = 1000) |>
+    draw(n = 5, method = "pps_brewer", mos = size, certainty_size = 1000) |>
     execute(frame, seed = 42)
 
   jip <- joint_inclusion_prob(sample, frame)
@@ -453,15 +458,20 @@ test_that("joint_inclusion_prob decomposes certainty units correctly", {
   # Certainty unit (weight = 1, π = 1) should have diagonal = 1
   cert_rows <- which(sample$.certainty_1)
   if (length(cert_rows) > 0) {
-    expect_equal(diag(mat)[cert_rows], rep(1, length(cert_rows)),
-                 tolerance = 1e-10)
+    expect_equal(
+      diag(mat)[cert_rows],
+      rep(1, length(cert_rows)),
+      tolerance = 1e-10
+    )
     # Off-diagonal: certainty × non-certainty = π_j
     non_cert_rows <- setdiff(seq_len(nrow(mat)), cert_rows)
     if (length(non_cert_rows) > 0) {
       for (ci in cert_rows) {
-        expect_equal(mat[ci, non_cert_rows],
-                     pik_from_weights[non_cert_rows],
-                     tolerance = 1e-6)
+        expect_equal(
+          mat[ci, non_cert_rows],
+          pik_from_weights[non_cert_rows],
+          tolerance = 1e-6
+        )
       }
     }
   }
@@ -471,8 +481,7 @@ test_that("joint_inclusion_prob with certainty works in stratified design", {
   sample <- sampling_design() |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
-    draw(n = 10, method = "pps_brewer", mos = hh_count,
-         certainty_size = 800) |>
+    draw(n = 10, method = "pps_brewer", mos = hh_count, certainty_size = 800) |>
     execute(niger_eas, seed = 42)
 
   jip <- joint_inclusion_prob(sample, niger_eas)
@@ -543,11 +552,11 @@ test_that("two-stage WR cluster design with independent sub-samples", {
   )
 
   result <- sampling_design() |>
-    stage() |>
-      cluster_by(cluster) |>
-      draw(n = 6, method = "pps_multinomial", mos = size) |>
-    stage() |>
-      draw(n = 3) |>
+    add_stage() |>
+    cluster_by(cluster) |>
+    draw(n = 6, method = "pps_multinomial", mos = size) |>
+    add_stage() |>
+    draw(n = 3) |>
     execute(frame, seed = 42)
 
   # Stage 1: 6 draws, Stage 2: 3 units per draw = 18 rows
@@ -575,11 +584,11 @@ test_that("two-stage WR cluster design produces valid survey design", {
   )
 
   result <- sampling_design() |>
-    stage() |>
-      cluster_by(cluster) |>
-      draw(n = 6, method = "pps_multinomial", mos = size) |>
-    stage() |>
-      draw(n = 3) |>
+    add_stage() |>
+    cluster_by(cluster) |>
+    draw(n = 6, method = "pps_multinomial", mos = size) |>
+    add_stage() |>
+    draw(n = 3) |>
     execute(frame, seed = 42)
 
   svy <- as_survey_design(result)
@@ -604,8 +613,7 @@ test_that("PPS WOR with certainty creates separate take-all stratum", {
   )
 
   result <- sampling_design() |>
-    draw(n = 5, method = "pps_brewer", mos = size,
-         certainty_size = 1000) |>
+    draw(n = 5, method = "pps_brewer", mos = size, certainty_size = 1000) |>
     execute(frame, seed = 42)
 
   svy <- as_survey_design(result)
@@ -635,8 +643,7 @@ test_that("PPS WOR with certainty + user strata creates interaction strata", {
 
   result <- sampling_design() |>
     stratify_by(group) |>
-    draw(n = 5, method = "pps_brewer", mos = size,
-         certainty_size = 1000) |>
+    draw(n = 5, method = "pps_brewer", mos = size, certainty_size = 1000) |>
     execute(frame, seed = 42)
 
   svy <- as_survey_design(result)
@@ -676,8 +683,7 @@ test_that("certainty stratum gives lower df than without separation", {
   )
 
   result <- sampling_design() |>
-    draw(n = 5, method = "pps_brewer", mos = size,
-         certainty_size = 1000) |>
+    draw(n = 5, method = "pps_brewer", mos = size, certainty_size = 1000) |>
     execute(frame, seed = 42)
 
   svy_with_cert <- as_survey_design(result)
@@ -692,4 +698,3 @@ test_that("certainty stratum gives lower df than without separation", {
   expect_equal(df_with, (n_cert - 1) + (n_prob - 1))
   expect_true(df_with < nrow(result) - 1)
 })
-

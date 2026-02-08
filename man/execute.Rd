@@ -119,21 +119,21 @@ table(sample$facility_type)
 
 # Two-stage cluster sample execution
 sample <- sampling_design() |>
-  stage(label = "Schools") |>
+  add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
-  stage(label = "Students") |>
+  add_stage(label = "Students") |>
     draw(n = 15) |>
   execute(tanzania_schools, seed = 3)
 length(unique(sample$school_id))  # 30 schools selected
 
 # Partial execution: stage 1 only
 design <- sampling_design() |>
-  stage(label = "EAs") |>
+  add_stage(label = "EAs") |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-  stage(label = "Households") |>
+  add_stage(label = "Households") |>
     draw(n = 12)
 
 # Execute only stage 1 to get selected EAs

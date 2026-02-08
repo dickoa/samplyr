@@ -9,10 +9,15 @@ wr_methods <- c("srswr", "pps_multinomial")
 pmr_methods <- c("pps_chromy")
 multi_hit_methods <- c(wr_methods, pmr_methods)
 pps_wor_methods <- c(
-  "pps_brewer", "pps_systematic", "pps_maxent", "pps_poisson"
+  "pps_brewer",
+  "pps_systematic",
+  "pps_maxent",
+  "pps_poisson"
 )
 pps_methods <- c(
-  pps_wor_methods, "pps_multinomial", "pps_chromy"
+  pps_wor_methods,
+  "pps_multinomial",
+  "pps_chromy"
 )
 
 #' Compute effective sample size

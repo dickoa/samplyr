@@ -245,10 +245,10 @@ test_that("two-stage sampling handles small second-stage populations", {
   )
 
   result <- sampling_design() |>
-    stage(label = "Schools") |>
+    add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 2) |>
-    stage(label = "Students") |>
+    add_stage(label = "Students") |>
     draw(n = 2) |>
     execute(frame, seed = 123)
 
@@ -268,10 +268,10 @@ test_that("multi-stage with all clusters selected in stage 1", {
   )
 
   result <- sampling_design() |>
-    stage(label = "Clusters") |>
+    add_stage(label = "Clusters") |>
     cluster_by(cluster_id) |>
     draw(n = 3) |>
-    stage(label = "Units") |>
+    add_stage(label = "Units") |>
     draw(n = 2) |>
     execute(frame, seed = 42)
 
@@ -286,10 +286,10 @@ test_that("partial execution returns correct stages", {
   )
 
   design <- sampling_design() |>
-    stage(label = "Clusters") |>
+    add_stage(label = "Clusters") |>
     cluster_by(cluster_id) |>
     draw(n = 3) |>
-    stage(label = "Units") |>
+    add_stage(label = "Units") |>
     draw(n = 2)
 
   stage1_result <- execute(design, frame, stages = 1, seed = 42)
@@ -668,12 +668,12 @@ test_that("within-cluster sampling respects stratification", {
   )
 
   result <- sampling_design() |>
-    stage(label = "Clusters") |>
-      cluster_by(cluster) |>
-      draw(n = 2) |>
-    stage(label = "Within") |>
-      stratify_by(stratum) |>
-      draw(n = 1) |>
+    add_stage(label = "Clusters") |>
+    cluster_by(cluster) |>
+    draw(n = 2) |>
+    add_stage(label = "Within") |>
+    stratify_by(stratum) |>
+    draw(n = 1) |>
     execute(frame, seed = 123)
 
   # 2 clusters × 2 strata × 1 unit = 4 rows
@@ -695,12 +695,12 @@ test_that("within-cluster stratified proportional allocation works", {
   )
 
   result <- sampling_design() |>
-    stage(label = "Clusters") |>
-      cluster_by(cluster) |>
-      draw(n = 2) |>
-    stage(label = "Within") |>
-      stratify_by(stratum, alloc = "proportional") |>
-      draw(n = 6) |>
+    add_stage(label = "Clusters") |>
+    cluster_by(cluster) |>
+    draw(n = 2) |>
+    add_stage(label = "Within") |>
+    stratify_by(stratum, alloc = "proportional") |>
+    draw(n = 6) |>
     execute(frame, seed = 42)
 
   # 2 clusters × 6 units each = 12
@@ -728,10 +728,10 @@ test_that("within-cluster sampling handles dots in cluster variable values", {
   )
 
   result <- sampling_design() |>
-    stage(label = "Clusters") |>
+    add_stage(label = "Clusters") |>
     cluster_by(region, district) |>
     draw(n = 2) |>
-    stage(label = "Units") |>
+    add_stage(label = "Units") |>
     draw(n = 1) |>
     execute(frame, seed = 42)
 
@@ -914,8 +914,10 @@ test_that("pps_poisson with certainty uses frac-based pik, not inclusion_prob", 
   # not sondage::inclusion_prob(mos, n) which rescales iteratively
   result <- sampling_design() |>
     draw(
-      method = "pps_poisson", mos = size,
-      frac = 0.3, certainty_prop = 0.5
+      method = "pps_poisson",
+      mos = size,
+      frac = 0.3,
+      certainty_prop = 0.5
     ) |>
     execute(frame, seed = 42)
 
@@ -1197,7 +1199,7 @@ test_that("PPS errors when all MOS are zero within a stratum", {
   frame <- data.frame(
     id = 1:20,
     group = rep(c("A", "B"), each = 10),
-    size = c(rep(0L, 10), 1:10)  # group A has all zeros
+    size = c(rep(0L, 10), 1:10) # group A has all zeros
   )
 
   expect_error(
@@ -1218,8 +1220,7 @@ test_that("PPS with zero MOS after certainty removal errors", {
 
   expect_error(
     sampling_design() |>
-      draw(n = 3, method = "pps_brewer", mos = size,
-           certainty_size = 500) |>
+      draw(n = 3, method = "pps_brewer", mos = size, certainty_size = 500) |>
       execute(frame, seed = 1),
     "sum of MOS"
   )
@@ -1373,14 +1374,12 @@ test_that("as_survey_design uses .draw_k as id for WR methods", {
 test_that("certainty selection is rejected for WR/PMR methods", {
   expect_error(
     sampling_design() |>
-      draw(n = 4, method = "pps_multinomial", mos = size,
-           certainty_size = 400),
+      draw(n = 4, method = "pps_multinomial", mos = size, certainty_size = 400),
     "without.replacement"
   )
   expect_error(
     sampling_design() |>
-      draw(n = 4, method = "pps_chromy", mos = size,
-           certainty_size = 400),
+      draw(n = 4, method = "pps_chromy", mos = size, certainty_size = 400),
     "without.replacement"
   )
 })
@@ -1421,7 +1420,10 @@ test_that("on_empty = 'error' causes bernoulli to abort on zero selection", {
       break
     }
   }
-  expect_true(got_error, info = "Expected at least one zero-selection error across 200 seeds")
+  expect_true(
+    got_error,
+    info = "Expected at least one zero-selection error across 200 seeds"
+  )
 })
 
 test_that("on_empty = 'silent' falls back without warning or error", {
@@ -1446,8 +1448,10 @@ test_that("on_empty = 'silent' falls back without warning or error", {
       break
     }
   }
-  expect_true(got_silent_fallback,
-    info = "Expected at least one silent fallback (1 row, no warning) across 200 seeds")
+  expect_true(
+    got_silent_fallback,
+    info = "Expected at least one silent fallback (1 row, no warning) across 200 seeds"
+  )
 })
 
 test_that("on_empty = 'warn' produces a warning on zero selection for pps_poisson", {
@@ -1458,7 +1462,12 @@ test_that("on_empty = 'warn' produces a warning on zero selection for pps_poisso
     warns <- NULL
     result <- withCallingHandlers(
       sampling_design() |>
-        draw(frac = 0.001, method = "pps_poisson", mos = size, on_empty = "warn") |>
+        draw(
+          frac = 0.001,
+          method = "pps_poisson",
+          mos = size,
+          on_empty = "warn"
+        ) |>
         execute(frame, seed = seed),
       warning = function(w) {
         warns <<- c(warns, conditionMessage(w))
@@ -1470,13 +1479,16 @@ test_that("on_empty = 'warn' produces a warning on zero selection for pps_poisso
       break
     }
   }
-  expect_true(got_warning,
-    info = "Expected at least one zero-selection warning across 200 seeds")
+  expect_true(
+    got_warning,
+    info = "Expected at least one zero-selection warning across 200 seeds"
+  )
 })
 
 test_that("on_empty validation rejects invalid values", {
   expect_error(
-    sampling_design() |> draw(frac = 0.1, method = "bernoulli", on_empty = "ignore"),
+    sampling_design() |>
+      draw(frac = 0.1, method = "bernoulli", on_empty = "ignore"),
     "on_empty"
   )
   expect_error(
@@ -1484,7 +1496,8 @@ test_that("on_empty validation rejects invalid values", {
     "on_empty"
   )
   expect_error(
-    sampling_design() |> draw(frac = 0.1, method = "bernoulli", on_empty = c("warn", "error")),
+    sampling_design() |>
+      draw(frac = 0.1, method = "bernoulli", on_empty = c("warn", "error")),
     "on_empty"
   )
 })
@@ -1584,7 +1597,12 @@ test_that("optimal allocation errors when variance doesn't cover all strata", {
 
   expect_error(
     sampling_design() |>
-      stratify_by(region, alloc = "optimal", variance = var_df, cost = cost_df) |>
+      stratify_by(
+        region,
+        alloc = "optimal",
+        variance = var_df,
+        cost = cost_df
+      ) |>
       draw(n = 30) |>
       execute(frame, seed = 1),
     "does not cover all strata"
@@ -1602,7 +1620,12 @@ test_that("optimal allocation errors when cost doesn't cover all strata", {
 
   expect_error(
     sampling_design() |>
-      stratify_by(region, alloc = "optimal", variance = var_df, cost = cost_df) |>
+      stratify_by(
+        region,
+        alloc = "optimal",
+        variance = var_df,
+        cost = cost_df
+      ) |>
       draw(n = 30) |>
       execute(frame, seed = 1),
     "does not cover all strata"
@@ -1620,7 +1643,12 @@ test_that("optimal allocation errors on negative variance", {
 
   expect_error(
     sampling_design() |>
-      stratify_by(region, alloc = "optimal", variance = var_df, cost = cost_df) |>
+      stratify_by(
+        region,
+        alloc = "optimal",
+        variance = var_df,
+        cost = cost_df
+      ) |>
       draw(n = 30) |>
       execute(frame, seed = 1),
     "non-negative"
@@ -1638,7 +1666,12 @@ test_that("optimal allocation errors on non-positive cost", {
 
   expect_error(
     sampling_design() |>
-      stratify_by(region, alloc = "optimal", variance = var_df, cost = cost_df) |>
+      stratify_by(
+        region,
+        alloc = "optimal",
+        variance = var_df,
+        cost = cost_df
+      ) |>
       draw(n = 30) |>
       execute(frame, seed = 1),
     "positive"
@@ -1696,7 +1729,12 @@ test_that("duplicate keys in cost data frame are rejected", {
 
   expect_error(
     sampling_design() |>
-      stratify_by(region, alloc = "optimal", variance = var_df, cost = cost_df) |>
+      stratify_by(
+        region,
+        alloc = "optimal",
+        variance = var_df,
+        cost = cost_df
+      ) |>
       draw(n = 30),
     "duplicate"
   )

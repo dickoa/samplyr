@@ -1,0 +1,155 @@
+---
+title: "Survey Analysis with samplyr"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Survey Analysis with samplyr}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup, message = FALSE}
+library(samplyr)
+library(dplyr)
+library(survey)
+```
+
+## Overview
+
+After drawing a sample with samplyr, you typically need to analyze it. This vignette covers the tools samplyr provides for inspecting samples and integrating with the `survey` package for design-based inference.
+
+## Sample Summary
+
+`summary()` gives a concise overview of a sample: the design specification, execution details, stratum allocation table, and weight diagnostics.
+
+```{r}
+data(kenya_health)
+
+sample <- sampling_design() |>
+  stratify_by(facility_type, alloc = "proportional") |>
+  draw(n = 300) |>
+  execute(kenya_health, seed = 42)
+
+summary(sample)
+```
+
+The allocation table shows the population size (N_h), sample size (n_h), and sampling fraction (f_h) per stratum. The weight diagnostics report the Kish design effect and effective sample size.
+
+## Exporting to the survey Package
+
+`as_survey_design()` converts a `tbl_sample` into a `survey::svydesign()` object. It automatically maps strata, clusters, weights, and finite population corrections from the sampling metadata.
+
+### Stratified design
+
+```{r}
+svy <- as_survey_design(sample)
+svy
+
+svymean(~staff_count, svy)
+svytotal(~outpatient_visits, svy)
+```
+
+### Cluster design with PPS
+
+For PPS without-replacement designs, `as_survey_design()` uses Brewer's variance approximation by default.
+
+```{r}
+data(niger_eas)
+
+cluster_sample <- sampling_design() |>
+  cluster_by(ea_id) |>
+  draw(n = 50, method = "pps_brewer", mos = hh_count) |>
+  execute(niger_eas, seed = 42)
+
+svy_cluster <- as_survey_design(cluster_sample)
+svymean(~hh_count, svy_cluster)
+```
+
+### Multi-stage design
+
+For multi-stage designs, each stage's cluster variable maps to a level of the `id` formula. Strata are exported from the first stage, consistent with the standard with-replacement variance approximation (Cochran 1977, ch. 11).
+
+```{r}
+data(tanzania_schools)
+
+schools_frame <- tanzania_schools |>
+  mutate(district_enrollment = sum(enrollment), .by = district)
+
+ms_sample <- sampling_design() |>
+  add_stage(label = "Districts") |>
+    stratify_by(region) |>
+    cluster_by(district) |>
+    draw(n = 2, method = "pps_brewer", mos = district_enrollment) |>
+  add_stage(label = "Schools") |>
+    draw(n = 3) |>
+  execute(schools_frame, seed = 42)
+
+svy_ms <- as_survey_design(ms_sample)
+svymean(~enrollment, svy_ms)
+```
+
+## Exact Variance with Joint Inclusion Probabilities
+
+The Brewer approximation works well in practice, but if you need exact variance estimates, `joint_inclusion_prob()` computes the joint inclusion probabilities (pi_kl) for PPS without-replacement stages.
+
+It replays the design specification against the original frame, computing probabilities per stratum and assembling a block-diagonal matrix.
+
+```{r}
+pps_sample <- sampling_design() |>
+  add_stage() |>
+    stratify_by(region) |>
+    cluster_by(ea_id) |>
+    draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+  add_stage() |>
+    draw(n = 12) |>
+  execute(niger_eas, seed = 2025)
+
+# Compute joint probabilities for stage 1
+jip <- joint_inclusion_prob(pps_sample, niger_eas, stage = 1)
+
+# Use with survey for exact variance
+svy_exact <- as_survey_design(pps_sample, pps = ppsmat(jip[[1]]))
+svymean(~hh_count, svy_exact)
+```
+
+The supported methods and their corresponding sondage functions:
+
+| samplyr method     | sondage function           |
+|--------------------|----------------------------|
+| `pps_brewer`       | `up_brewer_jip(pik)`       |
+| `pps_systematic`   | `up_systematic_jip(pik)`   |
+| `pps_maxent`       | `up_maxent_jip(pik)`       |
+| `pps_poisson`      | `up_poisson_jip(pik)`      |
+
+`pps_chromy` and `pps_multinomial` are excluded. Chromy's PMR method uses the Hansen-Hurwitz (with-replacement) approximation for variance, which is the default in `as_survey_design()`.
+
+## End-to-End Workflow
+
+A complete workflow from design to estimates:
+
+```{r}
+# 1. Define the design
+design <- sampling_design(title = "Kenya Health Facility Survey") |>
+  stratify_by(facility_type, alloc = "proportional") |>
+  draw(n = 300)
+
+# 2. Validate the frame
+validate_frame(design, kenya_health)
+
+# 3. Draw the sample
+sample <- execute(design, kenya_health, seed = 2025)
+
+# 4. Inspect
+summary(sample)
+
+# 5. Export and analyze
+svy <- as_survey_design(sample)
+svymean(~staff_count, svy)
+confint(svymean(~staff_count, svy))
+```

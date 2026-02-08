@@ -93,8 +93,10 @@ as.list.sampling_design <- function(x, ...) {
       if (!is_null(stage$draw_spec$round)) {
         stage_list$draw$round <- stage$draw_spec$round
       }
-      if (!is_null(stage$draw_spec$on_empty) &&
-          stage$draw_spec$on_empty != "warn") {
+      if (
+        !is_null(stage$draw_spec$on_empty) &&
+          stage$draw_spec$on_empty != "warn"
+      ) {
         stage_list$draw$on_empty <- stage$draw_spec$on_empty
       }
     }

@@ -1,17 +1,19 @@
-# samplyr (development version)
+# samplyr 0.1.0
 
 ## Core Grammar
 
+Initial CRAN release.
+
 * Five verbs + one modifier for composable survey sampling designs:
   `sampling_design()`, `stratify_by()`, `cluster_by()`, `draw()`,
-  `execute()`, and `stage()`.
+  `execute()`, and `add_stage()`.
 * Frame-independent design pattern separating specification from execution.
 
 ## Sampling Methods
 
 * Equal probability: SRS (with/without replacement), systematic, Bernoulli.
 * PPS methods: systematic, Brewer, maximum entropy, Poisson, multinomial,
-  Chromy (PMR).
+  Chromy (Probability Minimum Replacement).
 
 ## Allocation Methods
 

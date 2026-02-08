@@ -182,10 +182,10 @@ test_that("execute() with stages parameter", {
   frame <- test_frame()
 
   design <- sampling_design() |>
-    stage(label = "Schools") |>
+    add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 20) |>
-    stage(label = "Students") |>
+    add_stage(label = "Students") |>
     draw(n = 5)
 
   # Execute only stage 1
@@ -199,10 +199,10 @@ test_that("sample can continue to next stage", {
   frame <- test_frame()
 
   design <- sampling_design() |>
-    stage(label = "Schools") |>
+    add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 20) |>
-    stage(label = "Students") |>
+    add_stage(label = "Students") |>
     draw(n = 5)
 
   # Execute stage 1
@@ -336,10 +336,10 @@ test_that("multi-stage compound weight = product of stage weights", {
   frame <- test_frame()
 
   result <- sampling_design() |>
-    stage(label = "Schools") |>
+    add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 20) |>
-    stage(label = "Students") |>
+    add_stage(label = "Students") |>
     draw(n = 5) |>
     execute(frame, seed = 42)
 
@@ -355,10 +355,10 @@ test_that("multi-stage with separate execution maintains weight compounding", {
   frame <- test_frame()
 
   design <- sampling_design() |>
-    stage(label = "Schools") |>
+    add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 20) |>
-    stage(label = "Students") |>
+    add_stage(label = "Students") |>
     draw(n = 5)
 
   # Execute stage 1 only
@@ -419,12 +419,12 @@ test_that("cluster sampling tracks stage weight", {
 # --- Helper: 3-stage clustered design for contiguity tests ---
 three_stage_design <- function() {
   sampling_design() |>
-    stage(label = "Schools") |>
+    add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 5) |>
-    stage(label = "Classes") |>
+    add_stage(label = "Classes") |>
     draw(n = 3) |>
-    stage(label = "Students") |>
+    add_stage(label = "Students") |>
     draw(n = 2)
 }
 

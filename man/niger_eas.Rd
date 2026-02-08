@@ -48,11 +48,11 @@ table(niger_eas$strata)
 
 # DHS-style two-stage stratified cluster sample
 sampling_design() |>
-  stage(label = "EAs") |>
+  add_stage(label = "EAs") |>
     stratify_by(region, strata) |>
     cluster_by(ea_id) |>
     draw(n = 3, method = "pps_brewer", mos = hh_count) |>
-  stage(label = "Households") |>
+  add_stage(label = "Households") |>
     draw(n = 20) |>
   execute(niger_eas, seed = 42)
 

@@ -6,7 +6,7 @@
 #' *as a whole*.
 #'
 #' @param .data A `sampling_design` object (piped from [sampling_design()],
-#'   [stratify_by()], or [stage()]).
+#'   [stratify_by()], or [add_stage()]).
 #' @param ... <[`tidy-select`][dplyr::dplyr_tidy_select]> Clustering variable(s)
 #'   that identify the sampling units. In most cases this is a single variable
 #'   (e.g., school_id, household_id).
@@ -63,10 +63,10 @@
 #'
 #' # Two-stage cluster sample
 #' sampling_design() |>
-#'   stage(label = "Schools") |>
+#'   add_stage(label = "Schools") |>
 #'     cluster_by(school_id) |>
 #'     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
-#'   stage(label = "Students") |>
+#'   add_stage(label = "Students") |>
 #'     draw(n = 15) |>
 #'   execute(tanzania_schools, seed = 1234)
 #'
@@ -74,7 +74,7 @@
 #' [sampling_design()] for creating designs,
 #' [stratify_by()] for stratification,
 #' [draw()] for specifying selection,
-#' [stage()] for multi-stage designs
+#' [add_stage()] for multi-stage designs
 #'
 #' @export
 cluster_by <- function(.data, ...) {
@@ -96,7 +96,9 @@ cluster_by <- function(.data, ...) {
   }
 
   if (!is_null(.data$stages[[current]]$clusters)) {
-    cli_abort("Clustering already defined for this stage. Use {.fn stage} to start a new stage.")
+    cli_abort(
+      "Clustering already defined for this stage. Use {.fn add_stage} to start a new stage."
+    )
   }
 
   .data$stages[[current]]$clusters <- cluster_spec

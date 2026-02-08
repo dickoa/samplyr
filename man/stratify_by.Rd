@@ -8,7 +8,7 @@ stratify_by(.data, ..., alloc = NULL, variance = NULL, cost = NULL)
 }
 \arguments{
 \item{.data}{A \code{sampling_design} object (piped from \code{\link[=sampling_design]{sampling_design()}} or
-\code{\link[=stage]{stage()}}).}
+\code{\link[=add_stage]{add_stage()}}).}
 
 \item{...}{<\code{\link[dplyr:dplyr_tidy_select]{tidy-select}}> Stratification
 variables. These should be categorical variables that define the strata.}

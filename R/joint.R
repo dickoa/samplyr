@@ -81,11 +81,11 @@
 #' @examples
 #' \dontrun{
 #' sample <- sampling_design() |>
-#'   stage() |>
+#'   add_stage() |>
 #'     stratify_by(region) |>
 #'     cluster_by(ea_id) |>
 #'     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-#'   stage() |>
+#'   add_stage() |>
 #'     draw(n = 12) |>
 #'   execute(niger_eas, seed = 2025)
 #'
@@ -139,7 +139,11 @@ joint_inclusion_prob <- function(x, frame, stage = NULL) {
     }
 
     result[[stage_idx]] <- compute_stage_jip(
-      x, frame, design, stage_idx, stages_executed
+      x,
+      frame,
+      design,
+      stage_idx,
+      stages_executed
     )
   }
 
@@ -155,7 +159,11 @@ compute_stage_jip <- function(x, frame, design, stage_idx, stages_executed) {
   cluster_spec <- stage_spec$clusters
 
   effective_frame <- prepare_stage_frame(
-    x, frame, design, stage_idx, stages_executed
+    x,
+    frame,
+    design,
+    stage_idx,
+    stages_executed
   )
 
   if (!is_null(cluster_spec)) {
@@ -172,13 +180,21 @@ compute_stage_jip <- function(x, frame, design, stage_idx, stages_executed) {
 
   if (!is_null(strata_spec)) {
     compute_stratified_jip(
-      effective_frame, sample_df, strata_spec, draw_spec, cluster_spec
+      effective_frame,
+      sample_df,
+      strata_spec,
+      draw_spec,
+      cluster_spec
     )
   } else {
     n_target <- resolve_unstratified_n(effective_frame, draw_spec)
     compute_group_jip(
-      effective_frame, sample_df, draw_spec, n_target,
-      strata_vars = NULL, cluster_spec = cluster_spec
+      effective_frame,
+      sample_df,
+      draw_spec,
+      n_target,
+      strata_vars = NULL,
+      cluster_spec = cluster_spec
     )
   }
 }
@@ -217,8 +233,12 @@ compute_stratified_jip <- function(
     stratum_draw_spec <- resolve_jip_frac(draw_spec, keys, strata_vars)
 
     compute_group_jip(
-      group_frame, sample_df, stratum_draw_spec, n_h,
-      strata_vars, cluster_spec
+      group_frame,
+      sample_df,
+      stratum_draw_spec,
+      n_h,
+      strata_vars,
+      cluster_spec
     )
   })
 
@@ -233,8 +253,11 @@ resolve_jip_frac <- function(draw_spec, keys, strata_vars) {
     if (nrow(matched) > 0) {
       draw_spec$frac <- matched$frac[1]
     }
-  } else if (!is.null(draw_spec$frac) && length(draw_spec$frac) > 1 &&
-    !is.null(names(draw_spec$frac))) {
+  } else if (
+    !is.null(draw_spec$frac) &&
+      length(draw_spec$frac) > 1 &&
+      !is.null(names(draw_spec$frac))
+  ) {
     strata_id <- as.character(keys[[strata_vars[1]]])
     if (strata_id %in% names(draw_spec$frac)) {
       draw_spec$frac <- draw_spec$frac[[strata_id]]
@@ -305,7 +328,10 @@ compute_group_jip <- function(
   method <- draw_spec$method
 
   sampled_idx <- match_sampled_units(
-    group_frame, sample_df, strata_vars, cluster_spec
+    group_frame,
+    sample_df,
+    strata_vars,
+    cluster_spec
   )
 
   if (length(sampled_idx) == 0) {
@@ -336,8 +362,11 @@ compute_joint_matrix <- function(frame, n, draw_spec) {
     ))
   }
 
-  pik <- switch(method,
-    pps_brewer =, pps_systematic =, pps_maxent = {
+  pik <- switch(
+    method,
+    pps_brewer = ,
+    pps_systematic = ,
+    pps_maxent = {
       sondage::inclusion_prob(mos_vals, n)
     },
     pps_poisson = {
@@ -362,7 +391,8 @@ compute_joint_matrix <- function(frame, n, draw_spec) {
 #' Dispatch to the appropriate sondage joint probability function
 #' @noRd
 compute_jip_by_method <- function(pik, method) {
-  switch(method,
+  switch(
+    method,
     pps_brewer = sondage::up_brewer_jip(pik),
     pps_systematic = sondage::up_systematic_jip(pik),
     pps_maxent = sondage::up_maxent_jip(pik),
@@ -389,10 +419,12 @@ assemble_jip_with_certainty <- function(pik, cert_idx, method) {
 
   if (length(non_cert_idx) > 0) {
     result[cert_idx, non_cert_idx] <- rep(
-      pik[non_cert_idx], each = length(cert_idx)
+      pik[non_cert_idx],
+      each = length(cert_idx)
     )
     result[non_cert_idx, cert_idx] <- rep(
-      pik[non_cert_idx], times = length(cert_idx)
+      pik[non_cert_idx],
+      times = length(cert_idx)
     )
   }
 
@@ -468,8 +500,12 @@ match_sampled_units <- function(
 #' @noRd
 assemble_block_diagonal <- function(matrices) {
   matrices <- Filter(Negate(is.null), matrices)
-  if (length(matrices) == 0) return(NULL)
-  if (length(matrices) == 1) return(matrices[[1]])
+  if (length(matrices) == 0) {
+    return(NULL)
+  }
+  if (length(matrices) == 1) {
+    return(matrices[[1]])
+  }
 
   total_n <- sum(vapply(matrices, nrow, integer(1)))
   result <- matrix(0, nrow = total_n, ncol = total_n)

@@ -130,11 +130,11 @@
 #'
 #' # Two-stage cluster sample with PPS first stage
 #' sample <- sampling_design() |>
-#'   stage() |>
+#'   add_stage() |>
 #'     stratify_by(region) |>
 #'     cluster_by(ea_id) |>
 #'     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-#'   stage() |>
+#'   add_stage() |>
 #'     draw(n = 12) |>
 #'   execute(niger_eas, seed = 2025)
 #'
@@ -192,12 +192,17 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
   first_method <- design$stages[[first_stage_idx]]$draw_spec$method
   cert_col <- paste0(".certainty_", first_stage_idx)
 
-  if (first_method %in% pps_wor_methods &&
+  if (
+    first_method %in%
+      pps_wor_methods &&
       cert_col %in% names(df) &&
-      any(df[[cert_col]])) {
+      any(df[[cert_col]])
+  ) {
     cert_stratum_col <- ".cert_stratum"
     df[[cert_stratum_col]] <- ifelse(
-      df[[cert_col]], "certainty", "probability"
+      df[[cert_col]],
+      "certainty",
+      "probability"
     )
   }
 

@@ -119,10 +119,10 @@ test_that("multi-stage non-cluster stratified weights are correct", {
   # North: 20/50 = 0.4, South: 20/150 = 0.133
   # Stage 2: SRS within selected units
   result <- sampling_design() |>
-    stage() |>
+    add_stage() |>
     stratify_by(region, alloc = "equal") |>
     draw(n = 40) |>
-    stage() |>
+    add_stage() |>
     draw(n = 5) |>
     execute(frame, seed = 42)
 
@@ -150,10 +150,10 @@ test_that("non-cluster path with equal strata still works", {
   )
 
   result <- sampling_design() |>
-    stage() |>
+    add_stage() |>
     stratify_by(region, alloc = "proportional") |>
     draw(n = 40) |>
-    stage() |>
+    add_stage() |>
     draw(n = 5) |>
     execute(frame, seed = 42)
 
@@ -398,10 +398,10 @@ test_that("sample_within_clusters (split+lapply) gives correct results", {
   frame <- test_frame()
 
   result <- sampling_design() |>
-    stage(label = "Schools") |>
+    add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 20) |>
-    stage(label = "Students") |>
+    add_stage(label = "Students") |>
     draw(n = 5) |>
     execute(frame, seed = 42)
 
@@ -433,10 +433,10 @@ test_that("stratified and within-clusters both produce correct weights", {
 
   # Two-stage with clusters
   twostage_result <- sampling_design() |>
-    stage() |>
+    add_stage() |>
     cluster_by(school_id) |>
     draw(n = 20) |>
-    stage() |>
+    add_stage() |>
     draw(n = 5) |>
     execute(frame, seed = 42)
 
@@ -490,10 +490,10 @@ test_that("multi-stage stratified then unstratified compounding works", {
   )
 
   result <- sampling_design() |>
-    stage() |>
+    add_stage() |>
     stratify_by(region, alloc = "proportional") |>
     draw(n = 60) |>
-    stage() |>
+    add_stage() |>
     draw(n = 5) |>
     execute(frame, seed = 42)
 

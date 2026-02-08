@@ -47,10 +47,10 @@ try(validate_frame(design, bad_frame))
 
 # Validate only specific stages of a multi-stage design
 multi_design <- sampling_design() |>
-  stage(label = "Schools") |>
+  add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
-  stage(label = "Students") |>
+  add_stage(label = "Students") |>
     draw(n = 15)
 
 # Validate stage 1 only

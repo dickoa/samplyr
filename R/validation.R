@@ -41,10 +41,10 @@ NULL
 #'
 #' # Validate only specific stages of a multi-stage design
 #' multi_design <- sampling_design() |>
-#'   stage(label = "Schools") |>
+#'   add_stage(label = "Schools") |>
 #'     cluster_by(school_id) |>
 #'     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
-#'   stage(label = "Students") |>
+#'   add_stage(label = "Students") |>
 #'     draw(n = 15)
 #'
 #' # Validate stage 1 only
@@ -83,11 +83,14 @@ validate_frame <- function(design, frame, stage = NULL) {
       strata_vars <- stage_spec$strata$vars
       missing_strata <- setdiff(strata_vars, names(frame))
       if (length(missing_strata) > 0) {
-        issues <- c(issues, list(list(
-          stage = label,
-          type = "stratification",
-          vars = missing_strata
-        )))
+        issues <- c(
+          issues,
+          list(list(
+            stage = label,
+            type = "stratification",
+            vars = missing_strata
+          ))
+        )
       }
     }
 
@@ -95,37 +98,49 @@ validate_frame <- function(design, frame, stage = NULL) {
       cluster_vars <- stage_spec$clusters$vars
       missing_clusters <- setdiff(cluster_vars, names(frame))
       if (length(missing_clusters) > 0) {
-        issues <- c(issues, list(list(
-          stage = label,
-          type = "cluster",
-          vars = missing_clusters
-        )))
+        issues <- c(
+          issues,
+          list(list(
+            stage = label,
+            type = "cluster",
+            vars = missing_clusters
+          ))
+        )
       }
     }
 
     if (!is_null(stage_spec$draw_spec) && !is_null(stage_spec$draw_spec$mos)) {
       mos_var <- stage_spec$draw_spec$mos
       if (!mos_var %in% names(frame)) {
-        issues <- c(issues, list(list(
-          stage = label,
-          type = "mos",
-          vars = mos_var
-        )))
+        issues <- c(
+          issues,
+          list(list(
+            stage = label,
+            type = "mos",
+            vars = mos_var
+          ))
+        )
       } else {
         mos_vals <- frame[[mos_var]]
         if (any(is.na(mos_vals))) {
-          issues <- c(issues, list(list(
-            stage = label,
-            type = "mos_na",
-            vars = mos_var
-          )))
+          issues <- c(
+            issues,
+            list(list(
+              stage = label,
+              type = "mos_na",
+              vars = mos_var
+            ))
+          )
         }
         if (any(mos_vals < 0, na.rm = TRUE)) {
-          issues <- c(issues, list(list(
-            stage = label,
-            type = "mos_negative",
-            vars = mos_var
-          )))
+          issues <- c(
+            issues,
+            list(list(
+              stage = label,
+              type = "mos_negative",
+              vars = mos_var
+            ))
+          )
         }
       }
     }
@@ -146,21 +161,35 @@ report_validation_issues <- function(issues) {
     msg <- switch(
       issue$type,
       "stratification" = paste0(
-        "x ", issue$stage, ": missing stratification variable(s): ",
+        "x ",
+        issue$stage,
+        ": missing stratification variable(s): ",
         paste(issue$vars, collapse = ", ")
       ),
       "cluster" = paste0(
-        "x ", issue$stage, ": missing cluster variable(s): ",
+        "x ",
+        issue$stage,
+        ": missing cluster variable(s): ",
         paste(issue$vars, collapse = ", ")
       ),
       "mos" = paste0(
-        "x ", issue$stage, ": missing MOS variable: ", issue$vars
+        "x ",
+        issue$stage,
+        ": missing MOS variable: ",
+        issue$vars
       ),
       "mos_na" = paste0(
-        "x ", issue$stage, ": MOS variable '", issue$vars, "' contains NA values"
+        "x ",
+        issue$stage,
+        ": MOS variable '",
+        issue$vars,
+        "' contains NA values"
       ),
       "mos_negative" = paste0(
-        "x ", issue$stage, ": MOS variable '", issue$vars,
+        "x ",
+        issue$stage,
+        ": MOS variable '",
+        issue$vars,
         "' contains negative values"
       )
     )

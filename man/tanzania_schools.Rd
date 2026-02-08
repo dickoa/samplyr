@@ -49,11 +49,11 @@ table(tanzania_schools$school_level, tanzania_schools$ownership)
 
 # Two-stage cluster sample: schools then students
 sampling_design() |>
-  stage(label = "Schools") |>
+  add_stage(label = "Schools") |>
     stratify_by(school_level) |>
     cluster_by(school_id) |>
     draw(n = 25, method = "pps_brewer", mos = enrollment) |>
-  stage(label = "Students") |>
+  add_stage(label = "Students") |>
     draw(n = 20) |>
   execute(tanzania_schools, seed = 42)
 

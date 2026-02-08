@@ -36,7 +36,7 @@ The package uses 5 verbs and 1 modifier:
 | `cluster_by()`      | Define cluster/PSU variable           |
 | `draw()`            | Specify sample size and method        |
 | `execute()`         | Run the design on a frame             |
-| `stage()`           | Delimit stages in multi-stage designs |
+| `add_stage()`       | Delimit stages in multi-stage designs |
 
 ## Quick Start
 
@@ -64,7 +64,7 @@ cluster_smpl <- sampling_design() |>
 
 ## Multi-Stage Sampling
 
-Use `stage()` to define multi-stage designs. This example selects districts with PPS, then samples schools within each:
+Use `add_stage()` to define multi-stage designs. This example selects districts with PPS, then samples schools within each:
 
 ```r
 library(dplyr)
@@ -77,10 +77,10 @@ schools_frame <- tanzania_schools |>
 
 # Two-stage design: 10 districts, 5 schools per district
 sample <- sampling_design() |>
-  stage(label = "Districts") |>
+  add_stage(label = "Districts") |>
     cluster_by(district) |>
     draw(n = 10, method = "pps_brewer", mos = district_enrollment) |>
-  stage(label = "Schools") |>
+  add_stage(label = "Schools") |>
     draw(n = 5) |>
   execute(schools_frame, seed = 123)
 ```
@@ -91,10 +91,10 @@ Execute stages separately when fieldwork happens between stages:
 
 ```r
 design <- sampling_design() |>
-  stage(label = "Districts") |>
+  add_stage(label = "Districts") |>
     cluster_by(district) |>
     draw(n = 10, method = "pps_brewer", mos = district_enrollment) |>
-  stage(label = "Schools") |>
+  add_stage(label = "Schools") |>
     draw(n = 5)
 
 # Add district-level measure of size

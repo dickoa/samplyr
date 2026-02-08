@@ -5,7 +5,7 @@
 #' all subgroups defined by the stratification variables.
 #'
 #' @param .data A `sampling_design` object (piped from [sampling_design()] or
-#'   [stage()]).
+#'   [add_stage()]).
 #' @param ... <[`tidy-select`][dplyr::dplyr_tidy_select]> Stratification
 #'   variables. These should be categorical variables that define the strata.
 #' @param alloc Character string specifying the allocation method. One of:
@@ -111,10 +111,13 @@
 #' [cluster_by()] for cluster sampling
 #'
 #' @export
-stratify_by <- function(.data, ...,
-                        alloc = NULL,
-                        variance = NULL,
-                        cost = NULL) {
+stratify_by <- function(
+  .data,
+  ...,
+  alloc = NULL,
+  variance = NULL,
+  cost = NULL
+) {
   if (!is_sampling_design(.data)) {
     cli_abort("{.arg .data} must be a {.cls sampling_design} object")
   }
@@ -163,7 +166,9 @@ stratify_by <- function(.data, ...,
   }
 
   if (!is_null(.data$stages[[current]]$strata)) {
-    cli_abort("Stratification already defined for this stage. Use {.fn stage} to start a new stage.")
+    cli_abort(
+      "Stratification already defined for this stage. Use {.fn add_stage} to start a new stage."
+    )
   }
 
   .data$stages[[current]]$strata <- strata_spec
@@ -172,18 +177,32 @@ stratify_by <- function(.data, ...,
 }
 
 #' @noRd
-validate_stratify_args <- function(alloc, variance, cost, vars,
-                                   call = rlang::caller_env()) {
+validate_stratify_args <- function(
+  alloc,
+  variance,
+  cost,
+  vars,
+  call = rlang::caller_env()
+) {
   if (identical(alloc, "neyman") && is_null(variance)) {
-    cli_abort("Neyman allocation requires {.arg variance} data frame", call = call)
+    cli_abort(
+      "Neyman allocation requires {.arg variance} data frame",
+      call = call
+    )
   }
 
   if (identical(alloc, "optimal")) {
     if (is_null(variance)) {
-      cli_abort("Optimal allocation requires {.arg variance} data frame", call = call)
+      cli_abort(
+        "Optimal allocation requires {.arg variance} data frame",
+        call = call
+      )
     }
     if (is_null(cost)) {
-      cli_abort("Optimal allocation requires {.arg cost} data frame", call = call)
+      cli_abort(
+        "Optimal allocation requires {.arg cost} data frame",
+        call = call
+      )
     }
   }
 
@@ -198,24 +217,36 @@ validate_stratify_args <- function(alloc, variance, cost, vars,
 }
 
 #' @noRd
-validate_aux_df <- function(df, vars, value_col, arg_name,
-                            call = rlang::caller_env()) {
+validate_aux_df <- function(
+  df,
+  vars,
+  value_col,
+  arg_name,
+  call = rlang::caller_env()
+) {
   if (!is.data.frame(df)) {
-    cli_abort("{.arg {arg_name}} must be a data frame or a named numeric vector",
-              call = call)
+    cli_abort(
+      "{.arg {arg_name}} must be a data frame or a named numeric vector",
+      call = call
+    )
   }
 
   missing_vars <- setdiff(vars, names(df))
   if (length(missing_vars) > 0) {
     cli_abort(
-      c("{.arg {arg_name}} is missing stratification variable{?s}:",
-        "x" = "{.val {missing_vars}}"),
+      c(
+        "{.arg {arg_name}} is missing stratification variable{?s}:",
+        "x" = "{.val {missing_vars}}"
+      ),
       call = call
     )
   }
 
   if (!value_col %in% names(df)) {
-    cli_abort("{.arg {arg_name}} must contain a {.val {value_col}} column", call = call)
+    cli_abort(
+      "{.arg {arg_name}} must contain a {.val {value_col}} column",
+      call = call
+    )
   }
 
   key_df <- df[, vars, drop = FALSE]
@@ -234,8 +265,13 @@ validate_aux_df <- function(df, vars, value_col, arg_name,
 #' which is converted to a two-column data frame. Named vectors are only
 #' supported when there is a single stratification variable.
 #' @noRd
-coerce_aux_input <- function(x, vars, value_col, arg_name,
-                             call = rlang::caller_env()) {
+coerce_aux_input <- function(
+  x,
+  vars,
+  value_col,
+  arg_name,
+  call = rlang::caller_env()
+) {
   if (is.data.frame(x)) {
     return(x)
   }
@@ -243,8 +279,10 @@ coerce_aux_input <- function(x, vars, value_col, arg_name,
   if (is.numeric(x) && !is_null(names(x))) {
     if (length(vars) != 1) {
       cli_abort(
-        c("{.arg {arg_name}} as a named vector is only supported with a single stratification variable.",
-          "i" = "Use a data frame instead."),
+        c(
+          "{.arg {arg_name}} as a named vector is only supported with a single stratification variable.",
+          "i" = "Use a data frame instead."
+        ),
         call = call
       )
     }

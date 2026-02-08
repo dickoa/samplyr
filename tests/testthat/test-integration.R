@@ -110,8 +110,7 @@ test_that("Optimal allocation with combined variance/cost data frame", {
 
   # Passing the same multi-column df for both variance and cost should work
   result <- sampling_design() |>
-    stratify_by(region, alloc = "optimal",
-                variance = aux_df, cost = aux_df) |>
+    stratify_by(region, alloc = "optimal", variance = aux_df, cost = aux_df) |>
     draw(n = 1000) |>
     execute(frame, seed = 42)
 
@@ -128,8 +127,12 @@ test_that("Optimal allocation with named vectors", {
   costs <- setNames(c(500, 500, 750, 500), regions)
 
   result <- sampling_design() |>
-    stratify_by(region, alloc = "optimal",
-                variance = vars_by_region, cost = costs) |>
+    stratify_by(
+      region,
+      alloc = "optimal",
+      variance = vars_by_region,
+      cost = costs
+    ) |>
     draw(n = 1000) |>
     execute(frame, seed = 42)
 
@@ -181,10 +184,10 @@ test_that("Two-stage cluster sample workflow", {
   frame <- make_school_frame()
 
   result <- sampling_design() |>
-    stage(label = "Schools") |>
+    add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 40) |>
-    stage(label = "Students") |>
+    add_stage(label = "Students") |>
     draw(n = 25) |>
     execute(frame, seed = 42)
 
@@ -275,10 +278,10 @@ test_that("Multi-stage with separate execution workflow", {
 
   # Define design
   design <- sampling_design() |>
-    stage(label = "Schools") |>
+    add_stage(label = "Schools") |>
     cluster_by(school_id) |>
     draw(n = 30) |>
-    stage(label = "Students") |>
+    add_stage(label = "Students") |>
     draw(n = 20)
 
   # Execute stage 1 only
