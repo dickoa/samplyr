@@ -34,12 +34,12 @@ data(kenya_health)
 sample <- sampling_design() |>
   stratify_by(facility_type, alloc = "proportional") |>
   draw(n = 300) |>
-  execute(kenya_health, seed = 42)
+  execute(kenya_health, seed = 1)
 
 summary(sample)
 ```
 
-The allocation table shows the population size (N_h), sample size (n_h), and sampling fraction (f_h) per stratum. The weight diagnostics report the Kish design effect and effective sample size.
+The allocation table shows the population size ($N_h$), sample size ($n_h$), and sampling fraction ($f_h$) per stratum. The weight diagnostics report the Kish design effect and effective sample size.
 
 ## Exporting to the survey Package
 
@@ -65,7 +65,7 @@ data(niger_eas)
 cluster_sample <- sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 50, method = "pps_brewer", mos = hh_count) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 2)
 
 svy_cluster <- as_survey_design(cluster_sample)
 svymean(~hh_count, svy_cluster)
@@ -88,7 +88,7 @@ ms_sample <- sampling_design() |>
     draw(n = 2, method = "pps_brewer", mos = district_enrollment) |>
   add_stage(label = "Schools") |>
     draw(n = 3) |>
-  execute(schools_frame, seed = 42)
+  execute(schools_frame, seed = 3)
 
 svy_ms <- as_survey_design(ms_sample)
 svymean(~enrollment, svy_ms)
@@ -143,7 +143,7 @@ design <- sampling_design(title = "Kenya Health Facility Survey") |>
 validate_frame(design, kenya_health)
 
 # 3. Draw the sample
-sample <- execute(design, kenya_health, seed = 2025)
+sample <- execute(design, kenya_health, seed = 2026)
 
 # 4. Inspect
 summary(sample)

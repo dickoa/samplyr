@@ -30,7 +30,7 @@ The core idea is that sampling code should read like its English description:
 sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 500) |>
-  execute(frame, seed = 42)
+  execute(frame, seed = 1)
 ```
 
 ## The Grammar
@@ -66,7 +66,7 @@ The most basic design selects n units at random from the frame.
 ```{r}
 sample <- sampling_design() |>
   draw(n = 100) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 24)
 
 nrow(sample)
 ```
@@ -88,7 +88,7 @@ Systematic sampling selects units at fixed intervals, which can improve precisio
 ```{r}
 sample_sys <- sampling_design() |>
   draw(n = 100, method = "systematic") |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 2021)
 ```
 
 Sampling with replacement allows the same unit to be selected multiple times, useful for bootstrap procedures.
@@ -96,7 +96,7 @@ Sampling with replacement allows the same unit to be selected multiple times, us
 ```{r}
 sample_wr <- sampling_design() |>
   draw(n = 100, method = "srswr") |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 123)
 ```
 
 ### Using Sampling Fractions
@@ -106,7 +106,7 @@ Instead of a fixed sample size, you can specify a sampling fraction with `frac`.
 ```{r}
 sample <- sampling_design() |>
   draw(frac = 0.05) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 1789)
 
 nrow(sample)
 ```
@@ -116,7 +116,7 @@ Bernoulli sampling selects each unit independently with the specified probabilit
 ```{r}
 sample <- sampling_design() |>
   draw(frac = 0.05, method = "bernoulli") |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 1960)
 
 nrow(sample)
 ```
@@ -134,13 +134,13 @@ When using `frac`, the computed sample size (N × frac) must be rounded to an in
 frame_105 <- niger_eas[1:105, ]
 
 # Default: rounds up to 11
-nrow(sampling_design() |> draw(frac = 0.1) |> execute(frame_105, seed = 42))
+nrow(sampling_design() |> draw(frac = 0.1) |> execute(frame_105, seed = 3))
 
 # Round down to 10
-nrow(sampling_design() |> draw(frac = 0.1, round = "down") |> execute(frame_105, seed = 42))
+nrow(sampling_design() |> draw(frac = 0.1, round = "down") |> execute(frame_105, seed = 3))
 
 # Round to nearest (10)
-nrow(sampling_design() |> draw(frac = 0.1, round = "nearest") |> execute(frame_105, seed = 42))
+nrow(sampling_design() |> draw(frac = 0.1, round = "nearest") |> execute(frame_105, seed = 3))
 ```
 
 ---
@@ -157,7 +157,7 @@ Without an allocation method, `n` specifies the sample size within each stratum.
 sample <- sampling_design() |>
   stratify_by(region) |>
   draw(n = 20) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 123)
 
 sample |>
   count(region)
@@ -186,7 +186,7 @@ sample |>
 sample <- sampling_design() |>
   stratify_by(region, alloc = "equal") |>
   draw(n = 160) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 2026)
 
 sample |>
   count(region)
@@ -202,7 +202,7 @@ niger_eas_variance
 sample <- sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
   draw(n = 300) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 12345)
 
 sample |>
   count(region)
@@ -220,7 +220,7 @@ sample <- sampling_design() |>
               variance = niger_eas_variance,
               cost = niger_eas_cost) |>
   draw(n = 300) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 9876)
 
 sample |>
   count(region)
@@ -237,7 +237,7 @@ When using allocation methods, you can constrain stratum sample sizes with `min_
 sample <- sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
   draw(n = 300, min_n = 20) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 1)
 
 sample |>
   count(region)
@@ -250,7 +250,7 @@ sample |>
 sample <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300, max_n = 55) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 40)
 
 sample |>
   count(region)
@@ -262,7 +262,7 @@ sample |>
 sample <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300, min_n = 20, max_n = 55) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 2003)
 
 sample |>
   count(region)
@@ -281,7 +281,7 @@ sizes_df <- data.frame(
 sample <- sampling_design() |>
   stratify_by(region) |>
   draw(n = sizes_df) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 101)
 
 sample |>
   count(region)
@@ -314,7 +314,7 @@ Use `cluster_by()` to specify the cluster identifier. All units within selected 
 sample <- sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 50) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 120)
 
 sample |>
   summarise(
@@ -335,7 +335,7 @@ Use the `mos` argument to specify the measure of size variable. Here we select E
 sample <- sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 50, method = "pps_brewer", mos = hh_count) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 365)
 
 sample |>
   summarise(
@@ -382,7 +382,7 @@ sample <- sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 50, method = "pps_brewer", mos = hh_count,
        certainty_size = 500) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 123)
 
 # Check which units were selected with certainty
 table(sample$.certainty_1)
@@ -396,7 +396,7 @@ sample <- sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 50, method = "pps_systematic", mos = hh_count,
        certainty_prop = 0.10) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 12345)
 ```
 
 ---
@@ -410,7 +410,7 @@ Control sorting orders the frame before selection, providing implicit stratifica
 sample <- sampling_design() |>
   draw(n = 100, method = "systematic",
        control = c(region, department)) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 98765)
 ```
 
 `serp()` implements serpentine (snake) sorting, which alternates direction at each level of the hierarchy. This minimizes jumps at boundaries, matching SAS PROC SURVEYSELECT's `SORT=SERP`.
@@ -420,7 +420,7 @@ sample <- sampling_design() |>
 sample <- sampling_design() |>
   draw(n = 100, method = "systematic",
        control = serp(region, department)) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 1)
 ```
 
 Control sorting can be combined with explicit stratification. The sorting is then applied within each stratum.
@@ -430,7 +430,7 @@ sample <- sampling_design() |>
   stratify_by(strata) |>
   draw(n = 100, method = "systematic",
        control = serp(region, department)) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 2)
 ```
 
 ---
@@ -473,7 +473,7 @@ sample <- sampling_design() |>
     draw(n = 10, method = "pps_brewer", mos = district_enrollment) |>
   add_stage(label = "Schools") |>
     draw(n = 5) |>
-  execute(schools_frame, seed = 42)
+  execute(schools_frame, seed = 3)
 
 sample |>
   summarise(
@@ -494,7 +494,7 @@ sample <- sampling_design() |>
     draw(n = 2, method = "pps_brewer", mos = district_enrollment) |>
   add_stage(label = "Schools") |>
     draw(n = 3) |>
-  execute(schools_frame, seed = 42)
+  execute(schools_frame, seed = 4)
 
 sample |>
   count(region, district)
@@ -546,7 +546,7 @@ The sampling design is attached to the result and can be retrieved with `get_des
 sample <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 200) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 2024)
 
 design <- get_design(sample)
 design$stages[[1]]$strata$vars

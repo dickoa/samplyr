@@ -286,7 +286,7 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
 
   dots$pps <- NULL
 
-  do.call(
+  result <- do.call(
     survey::svydesign,
     c(
       list(
@@ -301,4 +301,18 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
       dots
     )
   )
+
+  # Replace the stored call to avoid inlining the entire data frame,
+  # which causes massive output when printing the survey.design object
+  result$call <- call(
+    "svydesign",
+    ids = ids_formula,
+    strata = strata_formula,
+    weights = stats::as.formula("~.weight"),
+    fpc = fpc_formula,
+    data = quote(data),
+    nest = nest
+  )
+
+  result
 }
