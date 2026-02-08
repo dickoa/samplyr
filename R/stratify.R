@@ -37,18 +37,18 @@
 #' Each stratum receives n/H units, where H is the number of strata.
 #'
 #' ### Proportional Allocation
-#' Each stratum receives n × (N_h/N) units, where N_h is the stratum
+#' Each stratum receives \eqn{n \times N_h/N}{n * N_h/N} units, where \eqn{N_h} is the stratum
 #' population size and N is the total population size.
 #'
 #' ### Neyman Allocation
 #' Minimizes variance for fixed sample size. Each stratum receives:
-#' n × (N_h × S_h) / Σ(N_h × S_h)
+#' \eqn{n \times (N_h \times S_h) / \sum(N_h \times S_h)}{n * (N_h * S_h) / sum(N_h * S_h)}
 #' where S_h is the stratum standard deviation.
 #'
 #' ### Optimal Allocation
 #' Minimizes variance for fixed cost (or cost for fixed variance).
 #' Each stratum receives:
-#' n × (N_h × S_h / √C_h) / Σ(N_h × S_h / √C_h)
+#' \eqn{n \times (N_h \times S_h / \sqrt{C_h}) / \sum(N_h \times S_h / \sqrt{C_h})}{n * (N_h * S_h / sqrt(C_h)) / sum(N_h * S_h / sqrt(C_h))}
 #' where C_h is the per-unit cost in stratum h.
 #'
 #' ### Custom Allocation
@@ -91,7 +91,7 @@
 #' # Custom sample sizes per stratum using a data frame
 #' custom_sizes <- data.frame(
 #'   region = c("Agadez", "Diffa", "Dosso", "Maradi",
-#'              "Niamey", "Tahoua", "Tillabéri", "Zinder"),
+#'              "Niamey", "Tahoua", "Tillab\u00e9ri", "Zinder"),
 #'   n = c(15, 20, 30, 35, 25, 30, 25, 20)
 #' )
 #' sampling_design() |>
@@ -134,7 +134,6 @@ stratify_by <- function(.data, ...,
     alloc <- match.arg(alloc, valid_alloc)
   }
 
-  # Coerce named vectors to data frames
   if (!is_null(variance)) {
     variance <- coerce_aux_input(variance, vars, "var", "variance")
   }
@@ -144,9 +143,6 @@ stratify_by <- function(.data, ...,
 
   validate_stratify_args(alloc, variance, cost, vars)
 
-  # Subset auxiliary data frames to required columns only to avoid
-  # column conflicts during left_join (e.g. when both variance and cost
-  # are passed as the same multi-column data frame)
   if (!is_null(variance)) {
     variance <- variance[, c(vars, "var"), drop = FALSE]
   }
@@ -220,6 +216,14 @@ validate_aux_df <- function(df, vars, value_col, arg_name,
 
   if (!value_col %in% names(df)) {
     cli_abort("{.arg {arg_name}} must contain a {.val {value_col}} column", call = call)
+  }
+
+  key_df <- df[, vars, drop = FALSE]
+  if (anyDuplicated(key_df) > 0) {
+    cli_abort(
+      "{.arg {arg_name}} has duplicate rows for the same stratum",
+      call = call
+    )
   }
   invisible(NULL)
 }

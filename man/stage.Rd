@@ -17,7 +17,7 @@ A modified \code{sampling_design} object with a new stage context.
 }
 \description{
 \code{stage()} opens a new stage context in multi-stage sampling designs.
-It acts as a delimiter between stages, not a wrapper—each stage's
+It acts as a delimiter between stages, not a wrapper -- each stage's
 specification follows \code{stage()} using the same verbs.
 }
 \details{

@@ -24,7 +24,7 @@ subgroups to sample \emph{within}, \code{cluster_by()} defines units to sample
 \emph{as a whole}.
 }
 \details{
-\code{cluster_by()} is purely structural—it defines \emph{what} to sample, not \emph{how}.
+\code{cluster_by()} is purely structural -- it defines \emph{what} to sample, not \emph{how}.
 The selection method and sample size are specified in \code{\link[=draw]{draw()}}.
 \subsection{Cluster vs. Stratification}{
 \itemize{

@@ -14,7 +14,7 @@
 #' @return A modified `sampling_design` object with clustering specified.
 #'
 #' @details
-#' `cluster_by()` is purely structural—it defines *what* to sample, not *how*.
+#' `cluster_by()` is purely structural -- it defines *what* to sample, not *how*.
 #' The selection method and sample size are specified in [draw()].
 #'
 #' ## Cluster vs. Stratification

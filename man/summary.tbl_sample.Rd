@@ -23,17 +23,17 @@ diagnostics.
 \details{
 The summary has four sections:
 
-\strong{Design} — the sampling specification (method, strata, clusters,
+\strong{Design} -- the sampling specification (method, strata, clusters,
 allocation) for each stage.
 
-\strong{Execution} — seed, stages executed, timestamp, and total sample
+\strong{Execution} -- seed, stages executed, timestamp, and total sample
 size.
 
-\strong{Allocation} — per-stage stratum tables showing population size
+\strong{Allocation} -- per-stage stratum tables showing population size
 (N_h), sample size (n_h), and sampling fraction (f_h). Requires
 \code{.fpc_k} columns to be present (produced by samplyr >= 0.2.0).
 
-\strong{Weights} — range, mean, coefficient of variation, Kish design
+\strong{Weights} -- range, mean, coefficient of variation, Kish design
 effect, and effective sample size.
 }
 \examples{

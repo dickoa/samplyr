@@ -1,7 +1,7 @@
 #' Define a New Stage in Multi-Stage Designs
 #'
 #' `stage()` opens a new stage context in multi-stage sampling designs.
-#' It acts as a delimiter between stages, not a wrapper—each stage's
+#' It acts as a delimiter between stages, not a wrapper -- each stage's
 #' specification follows `stage()` using the same verbs.
 #'
 #' @param .data A `sampling_design` object.

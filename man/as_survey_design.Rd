@@ -40,6 +40,21 @@ expected by \code{\link[survey:svydesign]{survey::svydesign()}}:
 for PPS without replacement stages, the per-unit inclusion
 probability (1/\code{.weight_k})
 }
+\subsection{Multi-stage designs}{
+
+For multi-stage designs, \code{as_survey_design()} maps each stage's
+cluster variable to a level of the \code{ids} formula and provides
+per-stage finite population corrections. Strata are exported from
+the first stage only, which is consistent with the standard
+"with-replacement at stage 1" variance approximation used by
+\code{\link[survey:svydesign]{survey::svydesign()}} (Cochran 1977, ch. 11). Under this
+approximation, second-stage and deeper stratification affects
+weights (which are correctly compounded) but does not need to
+appear in the design object for variance estimation -- the
+contribution of later stages is captured through the variability
+of first-stage unit totals.
+}
+
 \subsection{Variance estimation for PPS designs}{
 
 For stages using PPS without replacement methods (\code{pps_brewer},
@@ -58,7 +73,7 @@ probabilities using \code{\link[=joint_inclusion_prob]{joint_inclusion_prob()}} 
 \subsection{Chromy's sequential PPS method (PMR)}{
 
 \code{pps_chromy} is classified as a \emph{Probability Minimum Replacement}
-(PMR) method — neither with-replacement nor without-replacement.
+(PMR) method -- neither with-replacement nor without-replacement.
 Each unit receives exactly \eqn{\lfloor E(n_i) \rfloor} or
 \eqn{\lfloor E(n_i) \rfloor + 1} hits, where
 \eqn{E(n_i) = n \cdot \textrm{mos}_i / \sum \textrm{mos}}.
@@ -79,13 +94,25 @@ of the joint matrix, but for PMR the diagonal contains
 receive multiple hits. The generalized Sen-Yates-Grundy variance
 requires \eqn{E(n_i) E(n_j) - E(n_i n_j)} as the pairwise
 weight (Chromy 2009, eq. 5), not \eqn{E(n_i^2) E(n_j^2) - E(n_i n_j)}.
+}
+
+\subsection{Certainty stratum (take-all units)}{
+
+For PPS without-replacement stages that use certainty selection
+(\code{certainty_size} or \code{certainty_prop}), units with inclusion
+probability \eqn{\pi_i = 1}{pi_i = 1} are placed in a separate
+take-all stratum. This follows the standard practice from
+Cochran (1977, ch. 11) and Sarndal et al. (1992, ch. 3.5):
+the take-all stratum contributes zero variance (it is a census)
+and does not inflate the degrees of freedom for the probability
+stratum.
 
 For stages using with-replacement methods (\code{srswr},
 \code{pps_multinomial}), the finite population correction is omitted
 and the \code{.draw_k} column (sequential draw index) is used as the
 sampling unit identifier for Hansen-Hurwitz variance estimation.
 
-The \code{survey} package is required but not imported — it must be
+The \code{survey} package is required but not imported -- it must be
 installed to use this function.
 }
 }
@@ -133,6 +160,11 @@ Chauvet, G. (2019). Properties of Chromy's sampling procedure.
 
 Chromy, J.R. (2009). Some Generalizations of the Horvitz-Thompson
 Estimator. \emph{JSM Proceedings, Survey Research Methods Section}.
+
+Cochran, W.G. (1977). \emph{Sampling Techniques}. 3rd edition. Wiley.
+
+Sarndal, C.-E., Swensson, B. and Wretman, J. (1992). \emph{Model
+Assisted Survey Sampling}. Springer.
 }
 \seealso{
 \code{\link[=execute]{execute()}} for producing tbl_sample objects,

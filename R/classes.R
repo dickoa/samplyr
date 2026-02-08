@@ -150,7 +150,8 @@ new_draw_spec <- function(
   round = "up",
   control = NULL,
   certainty_size = NULL,
-  certainty_prop = NULL
+  certainty_prop = NULL,
+  on_empty = "warn"
 ) {
   structure(
     list(
@@ -163,7 +164,8 @@ new_draw_spec <- function(
       round = round,
       control = control,
       certainty_size = certainty_size,
-      certainty_prop = certainty_prop
+      certainty_prop = certainty_prop,
+      on_empty = on_empty
     ),
     class = "draw_spec"
   )
@@ -289,7 +291,6 @@ dplyr_reconstruct.tbl_sample <- function(data, template) {
         metadata = attr(x, "metadata")
       ))
     }
-    # Strip tbl_sample class and attributes when essential columns are missing
     class(result) <- setdiff(class(result), "tbl_sample")
     attr(result, "design") <- NULL
     attr(result, "stages_executed") <- NULL

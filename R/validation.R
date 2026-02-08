@@ -79,7 +79,6 @@ validate_frame <- function(design, frame, stage = NULL) {
     stage_spec <- design$stages[[s]]
     label <- stage_spec$label %||% paste("Stage", s)
 
-    # Check stratification variables
     if (!is_null(stage_spec$strata)) {
       strata_vars <- stage_spec$strata$vars
       missing_strata <- setdiff(strata_vars, names(frame))
@@ -92,7 +91,6 @@ validate_frame <- function(design, frame, stage = NULL) {
       }
     }
 
-    # Check cluster variables
     if (!is_null(stage_spec$clusters)) {
       cluster_vars <- stage_spec$clusters$vars
       missing_clusters <- setdiff(cluster_vars, names(frame))
@@ -105,7 +103,6 @@ validate_frame <- function(design, frame, stage = NULL) {
       }
     }
 
-    # Check MOS variable
     if (!is_null(stage_spec$draw_spec) && !is_null(stage_spec$draw_spec$mos)) {
       mos_var <- stage_spec$draw_spec$mos
       if (!mos_var %in% names(frame)) {
@@ -115,7 +112,6 @@ validate_frame <- function(design, frame, stage = NULL) {
           vars = mos_var
         )))
       } else {
-        # Check MOS is positive
         mos_vals <- frame[[mos_var]]
         if (any(is.na(mos_vals))) {
           issues <- c(issues, list(list(

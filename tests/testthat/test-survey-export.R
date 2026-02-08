@@ -590,3 +590,106 @@ test_that("two-stage WR cluster design produces valid survey design", {
   expect_true(is.numeric(coef(est)))
   expect_true(all(survey::SE(est) > 0))
 })
+
+# =============================================================================
+# Certainty Stratum (Take-All) Tests
+# =============================================================================
+
+test_that("PPS WOR with certainty creates separate take-all stratum", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = 1:10,
+    size = c(5000, rep(20, 9)),
+    y = c(100, rnorm(9, 10, 2))
+  )
+
+  result <- sampling_design() |>
+    draw(n = 5, method = "pps_brewer", mos = size,
+         certainty_size = 1000) |>
+    execute(frame, seed = 42)
+
+  svy <- as_survey_design(result)
+  expect_s3_class(svy, "survey.design")
+
+  # Should have .cert_stratum in the data
+  expect_true(".cert_stratum" %in% names(svy$variables))
+
+  # Should have 2 strata: certainty and probability
+  strata_levels <- unique(svy$strata[, 1])
+  expect_equal(length(strata_levels), 2L)
+
+  # svymean should work
+  est <- survey::svymean(~y, svy)
+  expect_true(is.numeric(coef(est)))
+  expect_true(all(survey::SE(est) > 0))
+})
+
+test_that("PPS WOR with certainty + user strata creates interaction strata", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = 1:20,
+    group = rep(c("A", "B"), each = 10),
+    size = c(5000, rep(20, 9), 4000, rep(30, 9)),
+    y = rnorm(20)
+  )
+
+  result <- sampling_design() |>
+    stratify_by(group) |>
+    draw(n = 5, method = "pps_brewer", mos = size,
+         certainty_size = 1000) |>
+    execute(frame, seed = 42)
+
+  svy <- as_survey_design(result)
+  expect_s3_class(svy, "survey.design")
+
+  # Should have both group and .cert_stratum
+  expect_true(".cert_stratum" %in% names(svy$variables))
+
+  # svymean should work
+  est <- survey::svymean(~y, svy)
+  expect_true(is.numeric(coef(est)))
+  expect_true(all(survey::SE(est) > 0))
+})
+
+test_that("PPS WOR without certainty does not add .cert_stratum", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = 1:10,
+    size = c(50, 100, 150, 200, 250, 300, 350, 400, 450, 500),
+    y = 1:10
+  )
+
+  result <- sampling_design() |>
+    draw(n = 5, method = "pps_brewer", mos = size) |>
+    execute(frame, seed = 42)
+
+  svy <- as_survey_design(result)
+  expect_false(".cert_stratum" %in% names(svy$variables))
+})
+
+test_that("certainty stratum gives lower df than without separation", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = 1:10,
+    size = c(5000, rep(20, 9)),
+    y = c(100, rnorm(9, 10, 2))
+  )
+
+  result <- sampling_design() |>
+    draw(n = 5, method = "pps_brewer", mos = size,
+         certainty_size = 1000) |>
+    execute(frame, seed = 42)
+
+  svy_with_cert <- as_survey_design(result)
+  df_with <- survey::degf(svy_with_cert)
+
+  n_cert <- sum(result$.certainty_1)
+  n_prob <- sum(!result$.certainty_1)
+
+  # df with separation = (n_cert - 1) + (n_prob - 1)
+  # df without = n_total - 1
+  # Difference = 1 (one fewer df due to stratum split)
+  expect_equal(df_with, (n_cert - 1) + (n_prob - 1))
+  expect_true(df_with < nrow(result) - 1)
+})
+

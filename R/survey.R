@@ -26,6 +26,20 @@
 #'   for PPS without replacement stages, the per-unit inclusion
 #'   probability (1/`.weight_k`)
 #'
+#' ## Multi-stage designs
+#'
+#' For multi-stage designs, `as_survey_design()` maps each stage's
+#' cluster variable to a level of the `ids` formula and provides
+#' per-stage finite population corrections. Strata are exported from
+#' the first stage only, which is consistent with the standard
+#' "with-replacement at stage 1" variance approximation used by
+#' [survey::svydesign()] (Cochran 1977, ch. 11). Under this
+#' approximation, second-stage and deeper stratification affects
+#' weights (which are correctly compounded) but does not need to
+#' appear in the design object for variance estimation -- the
+#' contribution of later stages is captured through the variability
+#' of first-stage unit totals.
+#'
 #' ## Variance estimation for PPS designs
 #'
 #' For stages using PPS without replacement methods (`pps_brewer`,
@@ -43,7 +57,7 @@
 #' ## Chromy's sequential PPS method (PMR)
 #'
 #' `pps_chromy` is classified as a *Probability Minimum Replacement*
-#' (PMR) method — neither with-replacement nor without-replacement.
+#' (PMR) method -- neither with-replacement nor without-replacement.
 #' Each unit receives exactly \eqn{\lfloor E(n_i) \rfloor} or
 #' \eqn{\lfloor E(n_i) \rfloor + 1} hits, where
 #' \eqn{E(n_i) = n \cdot \textrm{mos}_i / \sum \textrm{mos}}.
@@ -65,12 +79,23 @@
 #' requires \eqn{E(n_i) E(n_j) - E(n_i n_j)} as the pairwise
 #' weight (Chromy 2009, eq. 5), not \eqn{E(n_i^2) E(n_j^2) - E(n_i n_j)}.
 #'
+#' ## Certainty stratum (take-all units)
+#'
+#' For PPS without-replacement stages that use certainty selection
+#' (`certainty_size` or `certainty_prop`), units with inclusion
+#' probability \eqn{\pi_i = 1}{pi_i = 1} are placed in a separate
+#' take-all stratum. This follows the standard practice from
+#' Cochran (1977, ch. 11) and Sarndal et al. (1992, ch. 3.5):
+#' the take-all stratum contributes zero variance (it is a census)
+#' and does not inflate the degrees of freedom for the probability
+#' stratum.
+#'
 #' For stages using with-replacement methods (`srswr`,
 #' `pps_multinomial`), the finite population correction is omitted
 #' and the `.draw_k` column (sequential draw index) is used as the
 #' sampling unit identifier for Hansen-Hurwitz variance estimation.
 #'
-#' The `survey` package is required but not imported — it must be
+#' The `survey` package is required but not imported -- it must be
 #' installed to use this function.
 #'
 #' @references
@@ -86,6 +111,11 @@
 #'
 #' Chromy, J.R. (2009). Some Generalizations of the Horvitz-Thompson
 #' Estimator. *JSM Proceedings, Survey Research Methods Section*.
+#'
+#' Cochran, W.G. (1977). *Sampling Techniques*. 3rd edition. Wiley.
+#'
+#' Sarndal, C.-E., Swensson, B. and Wretman, J. (1992). *Model
+#' Assisted Survey Sampling*. Springer.
 #'
 #' @examples
 #' \dontrun{
@@ -136,13 +166,8 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
   design <- get_design(x)
   stages_executed <- get_stages_executed(x)
 
-  # Work on a plain data frame (avoids tbl_sample method dispatch issues)
   df <- as.data.frame(x)
 
-  # --- Cluster ids ---
-  # For WR/PMR stages, use the draw index (.draw_k) as the sampling unit
-  # identifier instead of cluster variables. Each draw is an independent
-  # "PSU" for Hansen-Hurwitz variance estimation.
   id_vars <- character(0)
   for (stage_idx in stages_executed) {
     stage_spec <- design$stages[[stage_idx]]
@@ -162,36 +187,37 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
     stats::as.formula(paste("~", paste(id_vars, collapse = " + ")))
   }
 
-  # --- Strata (first stage only) ---
-  first_stage <- design$stages[[stages_executed[1]]]
-  strata_formula <- if (!is_null(first_stage$strata)) {
-    stats::as.formula(
-      paste("~", paste(first_stage$strata$vars, collapse = " + "))
+  cert_stratum_col <- NULL
+  first_stage_idx <- stages_executed[1]
+  first_method <- design$stages[[first_stage_idx]]$draw_spec$method
+  cert_col <- paste0(".certainty_", first_stage_idx)
+
+  if (first_method %in% pps_wor_methods &&
+      cert_col %in% names(df) &&
+      any(df[[cert_col]])) {
+    cert_stratum_col <- ".cert_stratum"
+    df[[cert_stratum_col]] <- ifelse(
+      df[[cert_col]], "certainty", "probability"
     )
-  } else {
-    NULL
   }
 
-  # --- FPC and PPS ---
-  # survey::svydesign requires the number of FPC columns to match
-  # the number of id levels. Only stages that contribute a cluster
-  # variable to `ids` produce an FPC column. If no stage has
-  # clustering (ids = ~1), the first stage provides element-level FPC.
-  #
-  # FPC values depend on stage method:
-  # - Equal-probability WOR: population size (N_h) from .fpc_k
-  # - PPS WOR: inclusion probability (pi_i = 1/.weight_k)
-  # - WR/PMR methods: Inf (infinite population = no FPC correction)
-  #
-  # survey::svydesign requires one FPC column per id level. WR/PMR
-  # stages use Inf as population size, which gives a correction factor
-  # of (1 - n/Inf) = 1, effectively disabling FPC for those stages
-  # while preserving real FPC for WOR stages.
+  first_stage <- design$stages[[stages_executed[1]]]
+  user_strata_vars <- if (!is_null(first_stage$strata)) {
+    first_stage$strata$vars
+  } else {
+    character(0)
+  }
+
+  strata_vars <- c(user_strata_vars, cert_stratum_col)
+  strata_formula <- if (length(strata_vars) == 0) {
+    NULL
+  } else {
+    stats::as.formula(paste("~", paste(strata_vars, collapse = " + ")))
+  }
+
   has_pps_wor <- FALSE
   fpc_vars <- character(0)
 
-  # Determine which stages should contribute FPC columns
-  # (stages that contribute an id variable: clusters or WR draws)
   id_stage_indices <- integer(0)
   for (stage_idx in stages_executed) {
     stage_spec <- design$stages[[stage_idx]]
@@ -205,7 +231,6 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
     }
   }
 
-  # If no clustering at any stage, the first stage provides FPC
   fpc_stage_indices <- if (length(id_stage_indices) == 0) {
     stages_executed[1]
   } else {
@@ -219,9 +244,6 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
     fpc_col <- paste0(".fpc_", stage_idx)
 
     if (method %in% c(wr_methods, pmr_methods)) {
-      # WR and PMR methods: Inf population size = no finite population
-      # correction, while keeping the FPC column count aligned with
-      # the number of id levels (required by survey::svydesign).
       inf_col <- paste0(".fpc_inf_", stage_idx)
       df[[inf_col]] <- Inf
       fpc_vars <- c(fpc_vars, inf_col)
@@ -233,13 +255,11 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
     }
 
     if (method %in% pps_wor_methods) {
-      # PPS WOR: survey requires sampling fractions, not population sizes
       has_pps_wor <- TRUE
       fpc_pi_col <- paste0(".fpc_pi_", stage_idx)
       df[[fpc_pi_col]] <- 1 / df[[weight_col]]
       fpc_vars <- c(fpc_vars, fpc_pi_col)
     } else {
-      # Equal-probability WOR (srs, systematic, bernoulli): population size
       fpc_vars <- c(fpc_vars, fpc_col)
     }
   }
@@ -250,9 +270,6 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
     stats::as.formula(paste("~", paste(fpc_vars, collapse = " + ")))
   }
 
-  # Use Brewer's variance approximation for PPS WOR designs,
-  # unless the user explicitly supplies their own pps argument
-  # (e.g. pps = survey::ppsmat(joint_matrix) for exact variance)
   dots <- list(...)
   pps_arg <- if (!is.null(dots$pps)) {
     dots$pps
@@ -262,7 +279,6 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
     FALSE
   }
 
-  # Remove pps from dots if present (we pass it explicitly)
   dots$pps <- NULL
 
   do.call(

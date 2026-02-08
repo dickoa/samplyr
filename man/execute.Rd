@@ -97,7 +97,7 @@ Weights are calculated as the inverse of inclusion probabilities:
 \itemize{
 \item \strong{SRS}: w = N/n (population size / sample size)
 \item \strong{Stratified}: w_h = N_h/n_h within each stratum
-\item \strong{PPS}: w_i = 1/π_i where π_i is the inclusion probability
+\item \strong{PPS}: \eqn{w_i = 1/\pi_i}{w_i = 1/pi_i} where \eqn{\pi_i}{pi_i} is the inclusion probability
 \item \strong{Multi-stage}: Weights compound across stages
 \item \strong{Multi-phase}: Weights compound across phases
 }

@@ -39,7 +39,7 @@
 #'
 #'   **PPS methods (require `mos`):**
 #'   - `"pps_systematic"`: PPS systematic sampling
-#'   - `"pps_brewer"`: Generalized Brewer (Tillé) method
+#'   - `"pps_brewer"`: Generalized Brewer (\enc{Tillé}{Tille}) method
 #'   - `"pps_maxent"`: Maximum entropy / conditional Poisson
 #'   - `"pps_poisson"`: PPS Poisson sampling (random sample size)
 #'   - `"pps_multinomial"`: PPS multinomial (with replacement, any hit count)
@@ -69,7 +69,7 @@
 #'   When stratification is also specified, control sorting is applied within
 #'   each stratum. See the section "Control Sorting" below for details.
 #'
-#' @param certainty_size For PPS methods, units with MOS >= this value
+#' @param certainty_size For PPS without-replacement methods, units with MOS >= this value
 #'   are selected with certainty (probability = 1). Can be:
 #'   - A scalar: same threshold for all strata
 #'   - A data frame: stratum-specific thresholds with stratification columns
@@ -79,7 +79,7 @@
 #'   and the remaining sample size is reduced accordingly.
 #'   Mutually exclusive with `certainty_prop`.
 #'   Equivalent to SAS SURVEYSELECT `CERTSIZE=` option.
-#' @param certainty_prop For PPS methods, units whose MOS proportion
+#' @param certainty_prop For PPS without-replacement methods, units whose MOS proportion
 #'   (MOS_i / sum(MOS)) >= this value are selected with certainty. Can be:
 #'   - A scalar between 0 and 1 (exclusive): same threshold for all strata
 #'   - A data frame: stratum-specific thresholds with stratification columns
@@ -89,6 +89,12 @@
 #'   recomputed and the check is repeated until no new units qualify.
 #'   Mutually exclusive with `certainty_size`.
 #'   Equivalent to SAS SURVEYSELECT `CERTSIZE=P=` option.
+#'
+#' @param on_empty Behaviour when a random-size method (`bernoulli`,
+#'   `pps_poisson`) selects zero units. One of:
+#'   - `"warn"` (default): Issue a warning and fall back to SRS of 1 unit.
+#'   - `"error"`: Stop with an error.
+#'   - `"silent"`: Fall back to SRS of 1 unit without a message.
 #'
 #' @return A modified `sampling_design` object with selection parameters specified.
 #'
@@ -109,8 +115,8 @@
 #' | Method | Replacement | Sample Size | Notes |
 #' |--------|-------------|-------------|-------|
 #' | `pps_systematic` | Without | Fixed | Simple, some bias |
-#' | `pps_brewer` | Without | Fixed | Fast, π_ij > 0 |
-#' | `pps_maxent` | Without | Fixed | Highest entropy, π_ij available |
+#' | `pps_brewer` | Without | Fixed | Fast, joint prob > 0 |
+#' | `pps_maxent` | Without | Fixed | Highest entropy, joint prob available |
 #' | `pps_poisson` | Without | Random | PPS analog of Bernoulli |
 #' | `pps_multinomial` | With | Fixed | Any hit count, Hansen-Hurwitz |
 #' | `pps_chromy` | Min. repl. | Fixed | SAS default PPS_SEQ |
@@ -119,16 +125,16 @@
 #'
 #' | Method | `n` | `frac` | `mos` |
 #' |--------|-----|--------|-------|
-#' | `srswor` | ✓ | or ✓ | — |
-#' | `srswr` | ✓ | or ✓ | — |
-#' | `systematic` | ✓ | or ✓ | — |
-#' | `bernoulli` | — | ✓ | — |
-#' | `pps_systematic` | ✓ | or ✓ | ✓ |
-#' | `pps_brewer` | ✓ | or ✓ | ✓ |
-#' | `pps_maxent` | ✓ | — | ✓ |
-#' | `pps_poisson` | — | ✓ | ✓ |
-#' | `pps_multinomial` | ✓ | or ✓ | ✓ |
-#' | `pps_chromy` | ✓ | or ✓ | ✓ |
+#' | `srswor` | Yes | or Yes | -- |
+#' | `srswr` | Yes | or Yes | -- |
+#' | `systematic` | Yes | or Yes | -- |
+#' | `bernoulli` | -- | Yes | -- |
+#' | `pps_systematic` | Yes | or Yes | Yes |
+#' | `pps_brewer` | Yes | or Yes | Yes |
+#' | `pps_maxent` | Yes | -- | Yes |
+#' | `pps_poisson` | -- | Yes | Yes |
+#' | `pps_multinomial` | Yes | or Yes | Yes |
+#' | `pps_chromy` | Yes | or Yes | Yes |
 #'
 #' ## Fixed vs Random Sample Size Methods
 #'
@@ -138,7 +144,7 @@
 #'
 #' Methods with **random sample size** (`bernoulli`, `pps_poisson`) require `frac` only.
 #' These methods perform independent selection trials for each unit, so the final sample
-#' size is a random variable—not a fixed count. Specifying `n` would be misleading since
+#' size is a random variable, not a fixed count. Specifying `n` would be misleading since
 #' the method cannot guarantee exactly `n` selections.
 #'
 #' ## Custom Allocation with Data Frames
@@ -150,10 +156,16 @@
 #'
 #' ## Certainty Selection
 #'
-#' In PPS sampling, very large units can have theoretical inclusion probabilities
-#' exceeding 1. Certainty selection handles this by selecting such units with
-#' probability 1 before sampling the remainder. The output includes a `.certainty_k`
-#' column (where `k` is the stage number) indicating which units were certainty selections.
+#' In PPS without-replacement sampling, very large units can have theoretical
+#' inclusion probabilities exceeding 1. Certainty selection handles this by
+#' selecting such units with probability 1 before sampling the remainder.
+#' The output includes a `.certainty_k` column (where `k` is the stage number)
+#' indicating which units were certainty selections.
+#'
+#' Certainty selection is only available for WOR PPS methods (`pps_systematic`,
+#' `pps_brewer`, `pps_maxent`, `pps_poisson`). With-replacement methods
+#' (`pps_multinomial`) and PMR methods (`pps_chromy`) handle large units
+#' natively through their hit mechanism.
 #'
 #' For stratum-specific thresholds, pass a data frame containing:
 #' - All stratification variable columns
@@ -299,7 +311,8 @@ draw <- function(
   round = "up",
   control = NULL,
   certainty_size = NULL,
-  certainty_prop = NULL
+  certainty_prop = NULL,
+  on_empty = "warn"
 ) {
   if (!is_sampling_design(.data)) {
     cli_abort("{.arg .data} must be a {.cls sampling_design} object")
@@ -377,7 +390,16 @@ draw <- function(
     if (frac_is_df) validate_draw_df(frac, strata_vars, "frac")
   }
 
-  validate_draw_args(n, frac, method, mos_name, has_alloc, n_is_df, frac_is_df)
+  valid_on_empty <- c("warn", "error", "silent")
+  if (!is_character(on_empty) || length(on_empty) != 1 ||
+      !on_empty %in% valid_on_empty) {
+    cli_abort(
+      "{.arg on_empty} must be one of {.val {valid_on_empty}}"
+    )
+  }
+
+  validate_draw_args(n, frac, method, mos_name, has_alloc, n_is_df, frac_is_df,
+                     strata_vars = strata_vars)
   validate_bounds(min_n, max_n, has_alloc)
   validate_certainty(
     certainty_size,
@@ -405,7 +427,8 @@ draw <- function(
     round = round,
     control = control_quos,
     certainty_size = certainty_size,
-    certainty_prop = certainty_prop
+    certainty_prop = certainty_prop,
+    on_empty = on_empty
   )
 
   .data$stages[[current]]$draw_spec <- draw_spec
@@ -449,6 +472,14 @@ validate_draw_df <- function(
       call = call
     )
   }
+
+  key_df <- df[, strata_vars, drop = FALSE]
+  if (anyDuplicated(key_df) > 0) {
+    cli_abort(
+      "Data frame for {.arg {value_col}} has duplicate rows for the same stratum",
+      call = call
+    )
+  }
   invisible(NULL)
 }
 
@@ -461,16 +492,9 @@ validate_draw_args <- function(
   has_alloc,
   n_is_df,
   frac_is_df,
+  strata_vars = NULL,
   call = rlang::caller_env()
 ) {
-  pps_methods <- c(
-    "pps_systematic",
-    "pps_brewer",
-    "pps_maxent",
-    "pps_poisson",
-    "pps_multinomial",
-    "pps_chromy"
-  )
   is_pps <- method %in% pps_methods
 
   if (is_pps && is_null(mos)) {
@@ -531,6 +555,12 @@ validate_draw_args <- function(
     if (!is.numeric(n)) {
       cli_abort("{.arg n} must be numeric or a data frame", call = call)
     }
+    if (length(n) > 1 && (is_null(names(n)) || is_null(strata_vars))) {
+      cli_abort(
+        "{.arg n} must be a scalar, a named vector, or a data frame",
+        call = call
+      )
+    }
     if (any(n <= 0)) {
       cli_abort("{.arg n} must be positive", call = call)
     }
@@ -542,6 +572,12 @@ validate_draw_args <- function(
   if (!is_null(frac) && !frac_is_df) {
     if (!is.numeric(frac)) {
       cli_abort("{.arg frac} must be numeric or a data frame", call = call)
+    }
+    if (length(frac) > 1 && (is_null(names(frac)) || is_null(strata_vars))) {
+      cli_abort(
+        "{.arg frac} must be a scalar, a named vector, or a data frame",
+        call = call
+      )
     }
     if (any(frac <= 0)) {
       cli_abort("{.arg frac} must be positive", call = call)
@@ -639,19 +675,15 @@ validate_certainty <- function(
     )
   }
 
-  pps_methods <- c(
-    "pps_systematic",
-    "pps_brewer",
-    "pps_maxent",
-    "pps_poisson",
-    "pps_multinomial",
-    "pps_chromy"
+  pps_wor_methods <- c(
+    "pps_systematic", "pps_brewer", "pps_maxent", "pps_poisson"
   )
-  if (!method %in% pps_methods) {
+  if (!method %in% pps_wor_methods) {
     cli_abort(
       c(
-        "Certainty selection is only available for PPS methods.",
-        "i" = "Valid methods: {.val {pps_methods}}",
+        "Certainty selection is only available for PPS without-replacement methods.",
+        "i" = "Valid methods: {.val {pps_wor_methods}}",
+        "i" = "WR ({.val pps_multinomial}) and PMR ({.val pps_chromy}) methods handle large units natively.",
         "x" = "Current method: {.val {method}}"
       ),
       call = call

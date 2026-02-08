@@ -1,6 +1,6 @@
 #' Compute joint inclusion probabilities from a sample and its frame
 #'
-#' Reconstructs the joint inclusion probabilities (π_kl) for PPS
+#' Reconstructs the joint inclusion probabilities \eqn{\pi_{kl}}{pi_kl} for PPS
 #' without replacement stages by replaying the design specification
 #' against the original sampling frame. This allows exact variance
 #' estimation via [survey::ppsmat()] instead of the default Brewer
@@ -25,7 +25,7 @@
 #'
 #' @details
 #' For each PPS without replacement stage, the function:
-#' 1. Reconstructs the full-population inclusion probabilities (π_i)
+#' 1. Reconstructs the full-population inclusion probabilities \eqn{\pi_i}{pi_i}
 #'    from the frame using the stage's method and measure of size
 #' 2. Dispatches to the appropriate sondage joint probability function
 #' 3. Extracts the submatrix corresponding to sampled units
@@ -33,7 +33,7 @@
 #' For stratified stages, the target sample size per stratum (n_h) is
 #' reconstructed by replaying the same allocation logic used during
 #' [execute()] (proportional, Neyman, optimal, etc.) against the
-#' frame. This ensures π_i values match what was computed at sampling
+#' frame. This ensures \eqn{\pi_i}{pi_i} values match what was computed at sampling
 #' time, regardless of allocation method.
 #'
 #' For stratified or conditional (within-cluster) stages, joint
@@ -55,12 +55,12 @@
 #' Chromy's method is a *Probability Minimum Replacement* (PMR)
 #' method, not a standard WOR method. Units can receive multiple
 #' hits, so the relevant pairwise quantities are expected sample
-#' size products E(n_i · n_j), not inclusion probabilities π_ij.
+#' size products \eqn{E(n_i \cdot n_j)}{E(n_i * n_j)}, not inclusion probabilities \eqn{\pi_{ij}}{pi_ij}.
 #'
-#' While sondage provides `up_chromy_pairexp()` to estimate E(n_i · n_j)
+#' While sondage provides `up_chromy_pairexp()` to estimate \eqn{E(n_i \cdot n_j)}{E(n_i * n_j)}
 #' via Monte Carlo, the result cannot be passed to `survey::ppsmat()`
-#' because the survey package assumes the diagonal contains π_i, but
-#' for PMR it contains E(n_i²) ≠ E(n_i) when units receive multiple
+#' because the survey package assumes the diagonal contains \eqn{\pi_i}{pi_i}, but
+#' for PMR it contains \eqn{E(n_i^2) \neq E(n_i)}{E(n_i^2) != E(n_i)} when units receive multiple
 #' hits. Chromy (2009) recommends the Hansen-Hurwitz approximation
 #' for variance estimation, which is the default used by
 #' [as_survey_design()].
@@ -71,12 +71,12 @@
 #'   from what was passed to [execute()].
 #' - Units in the frame must be uniquely identifiable within each
 #'   stratum/cluster group by their column values.
-#' - For designs with certainty selections (π_i = 1), the joint
+#' - For designs with certainty selections (\eqn{\pi_i = 1}{pi_i = 1}), the joint
 #'   matrix is decomposed: certainty units are separated from the
 #'   stochastic part, the joint probabilities for non-certainty units
-#'   are computed from the reduced π vector, and the full matrix is
-#'   reassembled with π_ij = 1 for certainty pairs and π_ij = π_j
-#'   for certainty × non-certainty pairs.
+#'   are computed from the reduced \eqn{\pi}{pi} vector, and the full matrix is
+#'   reassembled with \eqn{\pi_{ij} = 1}{pi_ij = 1} for certainty pairs and
+#'   \eqn{\pi_{ij} = \pi_j}{pi_ij = pi_j} for certainty x non-certainty pairs.
 #'
 #' @examples
 #' \dontrun{
@@ -112,7 +112,6 @@ joint_inclusion_prob <- function(x, frame, stage = NULL) {
   stages_executed <- get_stages_executed(x)
   n_stages <- length(stages_executed)
 
-  # Validate stage argument
   if (is_null(stage)) {
     stages_requested <- stages_executed
   } else {
@@ -128,7 +127,6 @@ joint_inclusion_prob <- function(x, frame, stage = NULL) {
     stages_requested <- stage
   }
 
-  # Initialize result list with NULL for all stages
   result <- vector("list", max(stages_executed))
   names(result) <- paste0("stage_", seq_along(result))
 
@@ -136,7 +134,6 @@ joint_inclusion_prob <- function(x, frame, stage = NULL) {
     stage_spec <- design$stages[[stage_idx]]
     method <- stage_spec$draw_spec$method
 
-    # Skip non-PPS WOR stages (SRS, WR, and PMR methods)
     if (!(method %in% pps_wor_methods)) {
       next
     }
@@ -157,20 +154,16 @@ compute_stage_jip <- function(x, frame, design, stage_idx, stages_executed) {
   strata_spec <- stage_spec$strata
   cluster_spec <- stage_spec$clusters
 
-  # Determine effective frame for this stage
   effective_frame <- prepare_stage_frame(
     x, frame, design, stage_idx, stages_executed
   )
 
-  # For clustered stages, deduplicate to cluster-level
-  # (mirrors sample_clusters() in execute.R)
   if (!is_null(cluster_spec)) {
     cluster_vars <- cluster_spec$vars
     effective_frame <- effective_frame |>
       distinct(across(all_of(cluster_vars)), .keep_all = TRUE)
   }
 
-  # Build sample_df for matching (deduplicated to sampling unit level)
   sample_df <- as.data.frame(x)
   if (!is_null(cluster_spec)) {
     sample_df <- sample_df |>
@@ -205,27 +198,22 @@ compute_stratified_jip <- function(
 ) {
   strata_vars <- strata_spec$vars
 
-  # Rebuild stratum_info exactly as sample_stratified() does
   stratum_info <- effective_frame |>
     group_by(across(all_of(strata_vars))) |>
     summarise(.N_h = n(), .groups = "drop")
 
-  # Replay allocation to get target n_h per stratum
   stratum_info <- calculate_stratum_sizes(stratum_info, strata_spec, draw_spec)
 
-  # Split frame by strata (group_split preserves group order)
   groups <- effective_frame |>
     group_by(across(all_of(strata_vars))) |>
     group_split(.keep = TRUE)
 
   block_matrices <- lapply(groups, function(group_frame) {
-    # Look up target n_h for this stratum
     keys <- group_frame |>
       distinct(across(all_of(strata_vars)))
     matched <- inner_join(keys, stratum_info, by = strata_vars)
     n_h <- matched$.n_h[1]
 
-    # Resolve per-stratum frac for methods that use it (pps_poisson)
     stratum_draw_spec <- resolve_jip_frac(draw_spec, keys, strata_vars)
 
     compute_group_jip(
@@ -247,7 +235,6 @@ resolve_jip_frac <- function(draw_spec, keys, strata_vars) {
     }
   } else if (!is.null(draw_spec$frac) && length(draw_spec$frac) > 1 &&
     !is.null(names(draw_spec$frac))) {
-    # Named vector: look up by first strata variable
     strata_id <- as.character(keys[[strata_vars[1]]])
     if (strata_id %in% names(draw_spec$frac)) {
       draw_spec$frac <- draw_spec$frac[[strata_id]]
@@ -287,8 +274,6 @@ prepare_stage_frame <- function(x, frame, design, stage_idx, stages_executed) {
     return(frame)
   }
 
-  # For subsequent stages, subset frame to selected clusters
-  # from the previous stage
   prev_stage_idx <- stages_executed[pos - 1L]
   prev_stage_spec <- design$stages[[prev_stage_idx]]
 
@@ -319,7 +304,6 @@ compute_group_jip <- function(
 ) {
   method <- draw_spec$method
 
-  # Identify which frame rows were sampled
   sampled_idx <- match_sampled_units(
     group_frame, sample_df, strata_vars, cluster_spec
   )
@@ -328,18 +312,15 @@ compute_group_jip <- function(
     return(NULL)
   }
 
-  # Compute full-population joint matrix using target n
   jip_full <- compute_joint_matrix(group_frame, n_target, draw_spec)
-
-  # Extract submatrix for sampled units
   jip_full[sampled_idx, sampled_idx, drop = FALSE]
 }
 
 #' Compute the full population joint inclusion probability matrix
 #'
 #' For fixed-size methods (brewer, systematic, maxent), computes
-#' π_i via `sondage::inclusion_prob(mos, n)`.
-#' For Poisson, reconstructs π_i from frac and mos to match
+#' pi_i via `sondage::inclusion_prob(mos, n)`.
+#' For Poisson, reconstructs pi_i from frac and mos to match
 #' the formula used in `draw_sample()`.
 #' @noRd
 compute_joint_matrix <- function(frame, n, draw_spec) {
@@ -355,13 +336,11 @@ compute_joint_matrix <- function(frame, n, draw_spec) {
     ))
   }
 
-  # Compute marginal inclusion probabilities
   pik <- switch(method,
     pps_brewer =, pps_systematic =, pps_maxent = {
       sondage::inclusion_prob(mos_vals, n)
     },
     pps_poisson = {
-      # Replicate draw_sample()'s Poisson pik formula exactly
       frac <- draw_spec$frac %||% (n / N)
       pik_raw <- frac * mos_vals / sum(mos_vals) * N
       pmin(pik_raw, 1)
@@ -369,14 +348,7 @@ compute_joint_matrix <- function(frame, n, draw_spec) {
     cli_abort("No joint probability function for method {.val {method}}")
   )
 
-  # Separate certainty units (π_i = 1) from the stochastic part.
-  # Joint probability functions (up_brewer_jip, etc.) assume all π_i < 1;
-
-  # passing π_i = 1 can cause division by zero in formulas involving
-  # 1/(1 - π_i). Instead, decompose:
-  #   certainty × certainty:       π_ij = 1
-  #   certainty × non-certainty:   π_ij = π_j
-  #   non-certainty × non-certainty: from _jip function on reduced vector
+  # NOTE: pik = 1 causes division by zero in _jip functions; decompose
   cert_tol <- 1 - sqrt(.Machine$double.eps)
   cert_idx <- which(pik >= cert_tol)
 
@@ -401,11 +373,11 @@ compute_jip_by_method <- function(pik, method) {
 
 #' Assemble joint matrix separating certainty from stochastic units
 #'
-#' Certainty units (π_i = 1) are always in the sample, so their
+#' Certainty units (pi_i = 1) are always in the sample, so their
 #' joint probabilities are known without approximation:
-#'   π_ij = 1        if both i and j are certainty
-#'   π_ij = π_j      if only i is certainty
-#' The stochastic part is computed from the reduced π vector.
+#'   pi_ij = 1        if both i and j are certainty
+#'   pi_ij = pi_j     if only i is certainty
+#' The stochastic part is computed from the reduced pi vector.
 #' @noRd
 assemble_jip_with_certainty <- function(pik, cert_idx, method) {
   N <- length(pik)
@@ -413,12 +385,9 @@ assemble_jip_with_certainty <- function(pik, cert_idx, method) {
 
   result <- matrix(0, nrow = N, ncol = N)
 
-  # Certainty × Certainty: π_ij = 1
   result[cert_idx, cert_idx] <- 1
 
-  # Certainty × Non-certainty: π_ij = π_j
   if (length(non_cert_idx) > 0) {
-    # Fill each certainty row with the marginal π of each non-certainty unit
     result[cert_idx, non_cert_idx] <- rep(
       pik[non_cert_idx], each = length(cert_idx)
     )
@@ -427,7 +396,6 @@ assemble_jip_with_certainty <- function(pik, cert_idx, method) {
     )
   }
 
-  # Non-certainty × Non-certainty: from _jip on reduced vector
   if (length(non_cert_idx) > 1) {
     jip_reduced <- compute_jip_by_method(pik[non_cert_idx], method)
     result[non_cert_idx, non_cert_idx] <- jip_reduced
@@ -446,11 +414,9 @@ match_sampled_units <- function(
   strata_vars,
   cluster_spec
 ) {
-  # Determine matching columns
   if (!is_null(cluster_spec)) {
     match_vars <- cluster_spec$vars
   } else {
-    # Use all shared non-dot columns as composite key
     frame_vars <- setdiff(
       names(group_frame),
       grep("^\\.", names(group_frame), value = TRUE)
@@ -466,8 +432,6 @@ match_sampled_units <- function(
     cli_abort("No shared columns to match sampled units to frame.")
   }
 
-  # Validate that match_vars uniquely identify rows in the frame.
-  # Non-unique keys produce ambiguous matches and incorrect joint matrices.
   n_unique <- nrow(distinct(group_frame, across(all_of(match_vars))))
   if (n_unique != nrow(group_frame)) {
     cli_abort(c(
@@ -477,7 +441,6 @@ match_sampled_units <- function(
     ))
   }
 
-  # Subset sample to this group (by strata vars if stratified)
   group_sample <- sample_df
   if (!is_null(strata_vars)) {
     strata_keys <- group_frame |>
@@ -486,7 +449,6 @@ match_sampled_units <- function(
       semi_join(strata_keys, by = strata_vars)
   }
 
-  # Match: for each sampled unit, find its row index in the frame
   frame_keys <- group_frame |>
     select(all_of(match_vars))
   sample_keys <- group_sample |>

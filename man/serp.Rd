@@ -52,7 +52,7 @@ automatically spreads across all regions and sub-regions.
 \subsection{Comparison with Nested Sorting}{
 
 Standard sorting creates large "jumps" at hierarchy boundaries. Serpentine
-sorting minimizes these by reversing direction—the last district of region 1
+sorting minimizes these by reversing direction -- the last district of region 1
 is adjacent to the last district of region 2.
 }
 }

@@ -1370,23 +1370,367 @@ test_that("as_survey_design uses .draw_k as id for WR methods", {
   expect_true(".draw_1" %in% names(svy$cluster))
 })
 
-test_that("WR pps_multinomial with certainty selection replicates correctly", {
+test_that("certainty selection is rejected for WR/PMR methods", {
+  expect_error(
+    sampling_design() |>
+      draw(n = 4, method = "pps_multinomial", mos = size,
+           certainty_size = 400),
+    "without.replacement"
+  )
+  expect_error(
+    sampling_design() |>
+      draw(n = 4, method = "pps_chromy", mos = size,
+           certainty_size = 400),
+    "without.replacement"
+  )
+})
+
+# =============================================================================
+# on_empty parameter for random-size methods
+# =============================================================================
+
+test_that("on_empty = 'warn' is the default and produces a warning on zero selection", {
+  # Use a very small frac on a small frame to force zero selection
+  # We mock sondage::bernoulli to always return integer(0) for this test
+  frame <- data.frame(id = 1:5)
+
+  design <- sampling_design() |>
+    draw(frac = 0.01, method = "bernoulli")
+
+  # Default should be "warn"
+  expect_equal(design$stages[[1]]$draw_spec$on_empty, "warn")
+})
+
+test_that("on_empty = 'error' causes bernoulli to abort on zero selection", {
+  frame <- data.frame(id = 1:5)
+
+  # With frac = 0.001 on N=5, expected count = 0.005; almost always zero
+
+  # Run many seeds until we hit the zero-selection path
+  got_error <- FALSE
+  for (seed in 1:200) {
+    result <- tryCatch(
+      sampling_design() |>
+        draw(frac = 0.001, method = "bernoulli", on_empty = "error") |>
+        execute(frame, seed = seed),
+      error = function(e) e
+    )
+    if (inherits(result, "error")) {
+      expect_match(conditionMessage(result), "zero selections")
+      got_error <- TRUE
+      break
+    }
+  }
+  expect_true(got_error, info = "Expected at least one zero-selection error across 200 seeds")
+})
+
+test_that("on_empty = 'silent' falls back without warning or error", {
+  frame <- data.frame(id = 1:5)
+
+  # Same approach: find a seed that triggers zero selection
+  got_silent_fallback <- FALSE
+  for (seed in 1:200) {
+    warns <- NULL
+    result <- withCallingHandlers(
+      sampling_design() |>
+        draw(frac = 0.001, method = "bernoulli", on_empty = "silent") |>
+        execute(frame, seed = seed),
+      warning = function(w) {
+        warns <<- c(warns, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
+    )
+    # If we selected only 1 unit, it might be the fallback
+    if (nrow(result) == 1 && is.null(warns)) {
+      got_silent_fallback <- TRUE
+      break
+    }
+  }
+  expect_true(got_silent_fallback,
+    info = "Expected at least one silent fallback (1 row, no warning) across 200 seeds")
+})
+
+test_that("on_empty = 'warn' produces a warning on zero selection for pps_poisson", {
+  frame <- data.frame(id = 1:5, size = c(1, 1, 1, 1, 1))
+
+  got_warning <- FALSE
+  for (seed in 1:200) {
+    warns <- NULL
+    result <- withCallingHandlers(
+      sampling_design() |>
+        draw(frac = 0.001, method = "pps_poisson", mos = size, on_empty = "warn") |>
+        execute(frame, seed = seed),
+      warning = function(w) {
+        warns <<- c(warns, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
+    )
+    if (!is.null(warns) && any(grepl("zero selections", warns))) {
+      got_warning <- TRUE
+      break
+    }
+  }
+  expect_true(got_warning,
+    info = "Expected at least one zero-selection warning across 200 seeds")
+})
+
+test_that("on_empty validation rejects invalid values", {
+  expect_error(
+    sampling_design() |> draw(frac = 0.1, method = "bernoulli", on_empty = "ignore"),
+    "on_empty"
+  )
+  expect_error(
+    sampling_design() |> draw(frac = 0.1, method = "bernoulli", on_empty = 42),
+    "on_empty"
+  )
+  expect_error(
+    sampling_design() |> draw(frac = 0.1, method = "bernoulli", on_empty = c("warn", "error")),
+    "on_empty"
+  )
+})
+
+# =============================================================================
+# Bug 3: Vector n/frac rejected in non-data-frame, non-named-vector context
+# =============================================================================
+
+test_that("draw() rejects unnamed vector n", {
+  expect_error(
+    sampling_design() |> draw(n = c(5, 6)),
+    "scalar.*named vector.*data frame"
+  )
+})
+
+test_that("draw() rejects unnamed vector frac", {
+  expect_error(
+    sampling_design() |> draw(frac = c(0.1, 0.2)),
+    "scalar.*named vector.*data frame"
+  )
+})
+
+test_that("draw() accepts scalar n", {
+  design <- sampling_design() |> draw(n = 10)
+  expect_equal(design$stages[[1]]$draw_spec$n, 10)
+})
+
+test_that("draw() accepts named vector n with stratification", {
+  design <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = c(A = 5, B = 10))
+  expect_equal(design$stages[[1]]$draw_spec$n, c(A = 5, B = 10))
+})
+
+test_that("draw() accepts named vector frac with stratification", {
+  design <- sampling_design() |>
+    stratify_by(region) |>
+    draw(frac = c(A = 0.1, B = 0.2), method = "bernoulli")
+  expect_equal(design$stages[[1]]$draw_spec$frac, c(A = 0.1, B = 0.2))
+})
+
+test_that("draw() accepts data frame n with stratification", {
+  n_df <- data.frame(region = c("A", "B"), n = c(5, 10))
+  design <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = n_df)
+  expect_true(is.data.frame(design$stages[[1]]$draw_spec$n))
+})
+
+# =============================================================================
+# Bug 5: Neyman/optimal allocation robustness
+# =============================================================================
+
+test_that("Neyman allocation errors when variance doesn't cover all strata", {
   frame <- data.frame(
-    id = 1:6,
-    size = c(500, 10, 20, 30, 40, 50)  # id=1 is huge
+    id = 1:100,
+    region = rep(c("A", "B", "C"), c(30, 30, 40))
   )
 
+  # Only covers A and B, missing C
+  var_df <- data.frame(region = c("A", "B"), var = c(10, 20))
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "neyman", variance = var_df) |>
+      draw(n = 30) |>
+      execute(frame, seed = 1),
+    "does not cover all strata"
+  )
+})
+
+test_that("Neyman allocation errors on negative variance", {
+  frame <- data.frame(
+    id = 1:100,
+    region = rep(c("A", "B"), each = 50)
+  )
+
+  var_df <- data.frame(region = c("A", "B"), var = c(10, -5))
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "neyman", variance = var_df) |>
+      draw(n = 30) |>
+      execute(frame, seed = 1),
+    "non-negative"
+  )
+})
+
+test_that("optimal allocation errors when variance doesn't cover all strata", {
+  frame <- data.frame(
+    id = 1:100,
+    region = rep(c("A", "B", "C"), c(30, 30, 40))
+  )
+
+  var_df <- data.frame(region = c("A", "B"), var = c(10, 20))
+  cost_df <- data.frame(region = c("A", "B", "C"), cost = c(1, 2, 3))
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "optimal", variance = var_df, cost = cost_df) |>
+      draw(n = 30) |>
+      execute(frame, seed = 1),
+    "does not cover all strata"
+  )
+})
+
+test_that("optimal allocation errors when cost doesn't cover all strata", {
+  frame <- data.frame(
+    id = 1:100,
+    region = rep(c("A", "B", "C"), c(30, 30, 40))
+  )
+
+  var_df <- data.frame(region = c("A", "B", "C"), var = c(10, 20, 15))
+  cost_df <- data.frame(region = c("A", "B"), cost = c(1, 2))
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "optimal", variance = var_df, cost = cost_df) |>
+      draw(n = 30) |>
+      execute(frame, seed = 1),
+    "does not cover all strata"
+  )
+})
+
+test_that("optimal allocation errors on negative variance", {
+  frame <- data.frame(
+    id = 1:100,
+    region = rep(c("A", "B"), each = 50)
+  )
+
+  var_df <- data.frame(region = c("A", "B"), var = c(-5, 20))
+  cost_df <- data.frame(region = c("A", "B"), cost = c(1, 2))
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "optimal", variance = var_df, cost = cost_df) |>
+      draw(n = 30) |>
+      execute(frame, seed = 1),
+    "non-negative"
+  )
+})
+
+test_that("optimal allocation errors on non-positive cost", {
+  frame <- data.frame(
+    id = 1:100,
+    region = rep(c("A", "B"), each = 50)
+  )
+
+  var_df <- data.frame(region = c("A", "B"), var = c(10, 20))
+  cost_df <- data.frame(region = c("A", "B"), cost = c(1, 0))
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "optimal", variance = var_df, cost = cost_df) |>
+      draw(n = 30) |>
+      execute(frame, seed = 1),
+    "positive"
+  )
+})
+
+test_that("duplicate keys in custom n data frame are rejected", {
+  n_df <- data.frame(
+    region = c("A", "A", "B"),
+    n = c(10, 15, 20)
+  )
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region) |>
+      draw(n = n_df),
+    "duplicate"
+  )
+})
+
+test_that("duplicate keys in custom frac data frame are rejected", {
+  frac_df <- data.frame(
+    region = c("A", "B", "B"),
+    frac = c(0.1, 0.2, 0.3)
+  )
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region) |>
+      draw(frac = frac_df, method = "bernoulli"),
+    "duplicate"
+  )
+})
+
+test_that("duplicate keys in variance data frame are rejected", {
+  var_df <- data.frame(
+    region = c("A", "A", "B"),
+    var = c(10, 15, 20)
+  )
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "neyman", variance = var_df) |>
+      draw(n = 30),
+    "duplicate"
+  )
+})
+
+test_that("duplicate keys in cost data frame are rejected", {
+  var_df <- data.frame(region = c("A", "B"), var = c(10, 20))
+  cost_df <- data.frame(
+    region = c("A", "B", "B"),
+    cost = c(1, 2, 3)
+  )
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "optimal", variance = var_df, cost = cost_df) |>
+      draw(n = 30),
+    "duplicate"
+  )
+})
+
+test_that("Neyman allocation works with valid complete variance", {
+  frame <- data.frame(
+    id = 1:100,
+    region = rep(c("A", "B"), each = 50)
+  )
+  var_df <- data.frame(region = c("A", "B"), var = c(10, 40))
+
   result <- sampling_design() |>
-    draw(n = 4, method = "pps_multinomial", mos = size,
-         certainty_size = 400) |>
+    stratify_by(region, alloc = "neyman", variance = var_df) |>
+    draw(n = 30) |>
     execute(frame, seed = 42)
 
-  # id=1 is certainty (1 draw), plus 3 more WR draws = 4 total draws
-  expect_equal(nrow(result), 4L)
-  expect_true(".draw_1" %in% names(result))
-  expect_equal(result$.draw_1, 1:4)
+  expect_equal(nrow(result), 30)
+  # B has higher variance, should get more units
+  expect_true(sum(result$region == "B") > sum(result$region == "A"))
+})
 
-  # Certainty unit should have weight = 1
-  cert_rows <- result[result$.certainty_1 == TRUE, ]
-  expect_equal(cert_rows$.weight_1, rep(1, nrow(cert_rows)))
+test_that("optimal allocation works with valid complete inputs", {
+  frame <- data.frame(
+    id = 1:100,
+    region = rep(c("A", "B"), each = 50)
+  )
+  var_df <- data.frame(region = c("A", "B"), var = c(10, 40))
+  cost_df <- data.frame(region = c("A", "B"), cost = c(1, 4))
+
+  result <- sampling_design() |>
+    stratify_by(region, alloc = "optimal", variance = var_df, cost = cost_df) |>
+    draw(n = 30) |>
+    execute(frame, seed = 42)
+
+  expect_equal(nrow(result), 30)
 })

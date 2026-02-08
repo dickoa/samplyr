@@ -84,7 +84,7 @@ test_that("certainty selection works with stratification", {
   expect_true(all(certainty_rows$.certainty_1 == TRUE))
 })
 
-test_that("certainty selection works with different PPS methods", {
+test_that("certainty selection works with different PPS WOR methods", {
   frame <- data.frame(
     id = 1:10,
     mos = c(100, 200, 300, 400, 500, 600, 700, 800, 900, 1000)
@@ -93,9 +93,7 @@ test_that("certainty selection works with different PPS methods", {
   methods <- c(
     "pps_systematic",
     "pps_brewer",
-    "pps_maxent",
-    "pps_multinomial",
-    "pps_chromy"
+    "pps_maxent"
   )
 
   for (m in methods) {

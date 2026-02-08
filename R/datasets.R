@@ -37,7 +37,7 @@ NULL
 #' @format A tibble with approximately 1,500 rows and 6 columns:
 #' \describe{
 #'   \item{ea_id}{Character. Unique enumeration area identifier}
-#'   \item{region}{Factor. Region name (8 regions: Agadez, Diffa, Dosso, Maradi, Niamey, Tahoua, Tillabéri, Zinder)}
+#'   \item{region}{Factor. Region name (8 regions: Agadez, Diffa, Dosso, Maradi, Niamey, Tahoua, \enc{Tillabéri}{Tillaberi}, Zinder)}
 #'   \item{department}{Factor. Department name within region}
 #'   \item{strata}{Factor. Urban/Rural stratification}
 #'   \item{hh_count}{Integer. Number of households in the EA (measure of size for PPS)}

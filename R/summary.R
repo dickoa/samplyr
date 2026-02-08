@@ -13,17 +13,17 @@
 #' @details
 #' The summary has four sections:
 #'
-#' **Design** — the sampling specification (method, strata, clusters,
+#' **Design** -- the sampling specification (method, strata, clusters,
 #' allocation) for each stage.
 #'
-#' **Execution** — seed, stages executed, timestamp, and total sample
+#' **Execution** -- seed, stages executed, timestamp, and total sample
 #' size.
 #'
-#' **Allocation** — per-stage stratum tables showing population size
+#' **Allocation** -- per-stage stratum tables showing population size
 #' (N_h), sample size (n_h), and sampling fraction (f_h). Requires
 #' `.fpc_k` columns to be present (produced by samplyr >= 0.2.0).
 #'
-#' **Weights** — range, mean, coefficient of variation, Kish design
+#' **Weights** -- range, mean, coefficient of variation, Kish design
 #' effect, and effective sample size.
 #'
 #' @examples
@@ -122,7 +122,6 @@ summary.tbl_sample <- function(object, ...) {
       cat("\n  ", label, ":\n", sep = "")
       print_allocation_table(alloc_tbl, strata_vars)
     } else if (has_fpc) {
-      # Unstratified
       N <- object[[fpc_col]][1]
       n_sel <- nrow(object)
       cat(
@@ -142,7 +141,6 @@ summary.tbl_sample <- function(object, ...) {
     }
   }
 
-  # --- Weights section ---
   if (".weight" %in% names(object)) {
     cat("\n--- Weights ---\n")
     w <- object$.weight

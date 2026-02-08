@@ -15,7 +15,8 @@ draw(
   round = "up",
   control = NULL,
   certainty_size = NULL,
-  certainty_prop = NULL
+  certainty_prop = NULL,
+  on_empty = "warn"
 )
 }
 \arguments{
@@ -65,7 +66,7 @@ with an allocation method is used. Default is \code{NULL} (no maximum).}
 \strong{PPS methods (require \code{mos}):}
 \itemize{
 \item \code{"pps_systematic"}: PPS systematic sampling
-\item \code{"pps_brewer"}: Generalized Brewer (Tillé) method
+\item \code{"pps_brewer"}: Generalized Brewer (\enc{Tillé}{Tille}) method
 \item \code{"pps_maxent"}: Maximum entropy / conditional Poisson
 \item \code{"pps_poisson"}: PPS Poisson sampling (random sample size)
 \item \code{"pps_multinomial"}: PPS multinomial (with replacement, any hit count)
@@ -101,7 +102,7 @@ sequential sampling methods. Can be:
 When stratification is also specified, control sorting is applied within
 each stratum. See the section "Control Sorting" below for details.}
 
-\item{certainty_size}{For PPS methods, units with MOS >= this value
+\item{certainty_size}{For PPS without-replacement methods, units with MOS >= this value
 are selected with certainty (probability = 1). Can be:
 \itemize{
 \item A scalar: same threshold for all strata
@@ -116,7 +117,7 @@ and the remaining sample size is reduced accordingly.
 Mutually exclusive with \code{certainty_prop}.
 Equivalent to SAS SURVEYSELECT \verb{CERTSIZE=} option.}
 
-\item{certainty_prop}{For PPS methods, units whose MOS proportion
+\item{certainty_prop}{For PPS without-replacement methods, units whose MOS proportion
 (MOS_i / sum(MOS)) >= this value are selected with certainty. Can be:
 \itemize{
 \item A scalar between 0 and 1 (exclusive): same threshold for all strata
@@ -130,6 +131,14 @@ Uses iterative selection: after removing certainty units, proportions are
 recomputed and the check is repeated until no new units qualify.
 Mutually exclusive with \code{certainty_size}.
 Equivalent to SAS SURVEYSELECT \verb{CERTSIZE=P=} option.}
+
+\item{on_empty}{Behaviour when a random-size method (\code{bernoulli},
+\code{pps_poisson}) selects zero units. One of:
+\itemize{
+\item \code{"warn"} (default): Issue a warning and fall back to SRS of 1 unit.
+\item \code{"error"}: Stop with an error.
+\item \code{"silent"}: Fall back to SRS of 1 unit without a message.
+}}
 }
 \value{
 A modified \code{sampling_design} object with selection parameters specified.
@@ -154,8 +163,8 @@ sampling design must end with \code{draw()}.
 \subsection{PPS Methods}{\tabular{llll}{
    Method \tab Replacement \tab Sample Size \tab Notes \cr
    \code{pps_systematic} \tab Without \tab Fixed \tab Simple, some bias \cr
-   \code{pps_brewer} \tab Without \tab Fixed \tab Fast, π_ij > 0 \cr
-   \code{pps_maxent} \tab Without \tab Fixed \tab Highest entropy, π_ij available \cr
+   \code{pps_brewer} \tab Without \tab Fixed \tab Fast, joint prob > 0 \cr
+   \code{pps_maxent} \tab Without \tab Fixed \tab Highest entropy, joint prob available \cr
    \code{pps_poisson} \tab Without \tab Random \tab PPS analog of Bernoulli \cr
    \code{pps_multinomial} \tab With \tab Fixed \tab Any hit count, Hansen-Hurwitz \cr
    \code{pps_chromy} \tab Min. repl. \tab Fixed \tab SAS default PPS_SEQ \cr
@@ -167,16 +176,16 @@ sampling design must end with \code{draw()}.
 
 \subsection{Parameter Requirements}{\tabular{llll}{
    Method \tab \code{n} \tab \code{frac} \tab \code{mos} \cr
-   \code{srswor} \tab ✓ \tab or ✓ \tab — \cr
-   \code{srswr} \tab ✓ \tab or ✓ \tab — \cr
-   \code{systematic} \tab ✓ \tab or ✓ \tab — \cr
-   \code{bernoulli} \tab — \tab ✓ \tab — \cr
-   \code{pps_systematic} \tab ✓ \tab or ✓ \tab ✓ \cr
-   \code{pps_brewer} \tab ✓ \tab or ✓ \tab ✓ \cr
-   \code{pps_maxent} \tab ✓ \tab — \tab ✓ \cr
-   \code{pps_poisson} \tab — \tab ✓ \tab ✓ \cr
-   \code{pps_multinomial} \tab ✓ \tab or ✓ \tab ✓ \cr
-   \code{pps_chromy} \tab ✓ \tab or ✓ \tab ✓ \cr
+   \code{srswor} \tab Yes \tab or Yes \tab -- \cr
+   \code{srswr} \tab Yes \tab or Yes \tab -- \cr
+   \code{systematic} \tab Yes \tab or Yes \tab -- \cr
+   \code{bernoulli} \tab -- \tab Yes \tab -- \cr
+   \code{pps_systematic} \tab Yes \tab or Yes \tab Yes \cr
+   \code{pps_brewer} \tab Yes \tab or Yes \tab Yes \cr
+   \code{pps_maxent} \tab Yes \tab -- \tab Yes \cr
+   \code{pps_poisson} \tab -- \tab Yes \tab Yes \cr
+   \code{pps_multinomial} \tab Yes \tab or Yes \tab Yes \cr
+   \code{pps_chromy} \tab Yes \tab or Yes \tab Yes \cr
 }
 
 }
@@ -189,7 +198,7 @@ is provided, the sample size is computed based on the \code{round} parameter (de
 
 Methods with \strong{random sample size} (\code{bernoulli}, \code{pps_poisson}) require \code{frac} only.
 These methods perform independent selection trials for each unit, so the final sample
-size is a random variable—not a fixed count. Specifying \code{n} would be misleading since
+size is a random variable, not a fixed count. Specifying \code{n} would be misleading since
 the method cannot guarantee exactly \code{n} selections.
 }
 
@@ -205,10 +214,16 @@ The data frame must contain:
 
 \subsection{Certainty Selection}{
 
-In PPS sampling, very large units can have theoretical inclusion probabilities
-exceeding 1. Certainty selection handles this by selecting such units with
-probability 1 before sampling the remainder. The output includes a \code{.certainty_k}
-column (where \code{k} is the stage number) indicating which units were certainty selections.
+In PPS without-replacement sampling, very large units can have theoretical
+inclusion probabilities exceeding 1. Certainty selection handles this by
+selecting such units with probability 1 before sampling the remainder.
+The output includes a \code{.certainty_k} column (where \code{k} is the stage number)
+indicating which units were certainty selections.
+
+Certainty selection is only available for WOR PPS methods (\code{pps_systematic},
+\code{pps_brewer}, \code{pps_maxent}, \code{pps_poisson}). With-replacement methods
+(\code{pps_multinomial}) and PMR methods (\code{pps_chromy}) handle large units
+natively through their hit mechanism.
 
 For stratum-specific thresholds, pass a data frame containing:
 \itemize{

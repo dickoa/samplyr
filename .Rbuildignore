@@ -9,6 +9,7 @@
 ^\.gitlab-ci\.yml$
 ^\.codecov\.yml$
 ^\.lintr$
+^\.github$
 ^revdep$
 ^docs$
 ^public$

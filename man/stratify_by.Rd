@@ -54,14 +54,14 @@ Each stratum receives n/H units, where H is the number of strata.
 
 \subsection{Proportional Allocation}{
 
-Each stratum receives n × (N_h/N) units, where N_h is the stratum
+Each stratum receives \eqn{n \times N_h/N}{n * N_h/N} units, where \eqn{N_h} is the stratum
 population size and N is the total population size.
 }
 
 \subsection{Neyman Allocation}{
 
 Minimizes variance for fixed sample size. Each stratum receives:
-n × (N_h × S_h) / Σ(N_h × S_h)
+\eqn{n \times (N_h \times S_h) / \sum(N_h \times S_h)}{n * (N_h * S_h) / sum(N_h * S_h)}
 where S_h is the stratum standard deviation.
 }
 
@@ -69,7 +69,7 @@ where S_h is the stratum standard deviation.
 
 Minimizes variance for fixed cost (or cost for fixed variance).
 Each stratum receives:
-n × (N_h × S_h / √C_h) / Σ(N_h × S_h / √C_h)
+\eqn{n \times (N_h \times S_h / \sqrt{C_h}) / \sum(N_h \times S_h / \sqrt{C_h})}{n * (N_h * S_h / sqrt(C_h)) / sum(N_h * S_h / sqrt(C_h))}
 where C_h is the per-unit cost in stratum h.
 }
 
@@ -121,7 +121,7 @@ sampling_design() |>
 # Custom sample sizes per stratum using a data frame
 custom_sizes <- data.frame(
   region = c("Agadez", "Diffa", "Dosso", "Maradi",
-             "Niamey", "Tahoua", "Tillabéri", "Zinder"),
+             "Niamey", "Tahoua", "Tillab\u00e9ri", "Zinder"),
   n = c(15, 20, 30, 35, 25, 30, 25, 20)
 )
 sampling_design() |>

@@ -411,3 +411,233 @@ test_that("cluster sampling tracks stage weight", {
   # Stagewise weight column should exist
   expect_true(".weight_1" %in% names(result))
 })
+
+# =============================================================================
+# Stage contiguity validation
+# =============================================================================
+
+# --- Helper: 3-stage clustered design for contiguity tests ---
+three_stage_design <- function() {
+  sampling_design() |>
+    stage(label = "Schools") |>
+    cluster_by(school_id) |>
+    draw(n = 5) |>
+    stage(label = "Classes") |>
+    draw(n = 3) |>
+    stage(label = "Students") |>
+    draw(n = 2)
+}
+
+three_stage_frame <- function() {
+  data.frame(
+    school_id = rep(1:10, each = 20),
+    class_id = rep(1:40, each = 5),
+    student_id = 1:200,
+    score = rnorm(200)
+  )
+}
+
+# --- execute_design: must start at 1 ---
+
+test_that("execute(design) with stages = 2 errors (must start at 1)", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  expect_error(
+    execute(design, frame, stages = 2, seed = 1),
+    "must start at stage 1"
+  )
+})
+
+test_that("execute(design) with stages = c(2, 3) errors (must start at 1)", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  expect_error(
+    execute(design, frame, stages = c(2, 3), seed = 1),
+    "must start at stage 1"
+  )
+})
+
+test_that("execute(design) with stages = 3 errors (must start at 1)", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  expect_error(
+    execute(design, frame, stages = 3, seed = 1),
+    "must start at stage 1"
+  )
+})
+
+# --- execute_design: no gaps ---
+
+test_that("execute(design) with stages = c(1, 3) errors (gap)", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  expect_error(
+    execute(design, frame, stages = c(1, 3), seed = 1),
+    "contiguous"
+  )
+})
+
+# --- execute_design: valid partial execution still works ---
+
+test_that("execute(design) with stages = 1 works (partial)", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  result <- execute(design, frame, stages = 1, seed = 42)
+  expect_s3_class(result, "tbl_sample")
+  expect_equal(get_stages_executed(result), 1L)
+})
+
+test_that("execute(design) with stages = c(1, 2) works (partial contiguous)", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  result <- execute(design, frame, stages = c(1, 2), seed = 42)
+  expect_s3_class(result, "tbl_sample")
+  expect_equal(get_stages_executed(result), c(1L, 2L))
+})
+
+test_that("execute(design) with stages = NULL runs all stages", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  expect_warning(
+    result <- execute(design, frame, seed = 42),
+    "No design-driven columns"
+  )
+  expect_s3_class(result, "tbl_sample")
+  expect_equal(get_stages_executed(result), 1:3)
+})
+
+# --- execute_design: out of bounds ---
+
+test_that("execute(design) with stages = 0 errors", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  expect_error(
+    execute(design, frame, stages = 0, seed = 1),
+    "stages"
+  )
+})
+
+test_that("execute(design) with stages = 4 errors (exceeds n_stages)", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  expect_error(
+    execute(design, frame, stages = 4, seed = 1),
+    "stages"
+  )
+})
+
+# --- execute_continuation: must continue from next stage ---
+
+test_that("continuation with stages = 3 after stage 1 errors (skips stage 2)", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  s1 <- execute(design, frame, stages = 1, seed = 42)
+
+  expect_error(
+    execute(s1, frame, stages = 3, seed = 2),
+    "must continue from stage 2"
+  )
+})
+
+test_that("continuation with stages = c(2, 3) after stages c(1, 2) errors (already done)", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  s12 <- execute(design, frame, stages = c(1, 2), seed = 42)
+
+  expect_error(
+    execute(s12, frame, stages = c(2, 3), seed = 2),
+    "already executed"
+  )
+})
+
+# --- execute_continuation: out-of-bounds ---
+
+test_that("continuation with stages = c(2, 4) errors on out-of-bounds", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  s1 <- execute(design, frame, stages = 1, seed = 42)
+
+  expect_error(
+    execute(s1, frame, stages = c(2, 4), seed = 2),
+    "stages"
+  )
+})
+
+# --- execute_continuation: valid paths ---
+
+test_that("continuation with stages = 2 after stage 1 works", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  s1 <- execute(design, frame, stages = 1, seed = 42)
+  s2 <- execute(s1, frame, stages = 2, seed = 2)
+
+  expect_s3_class(s2, "tbl_sample")
+  expect_equal(get_stages_executed(s2), c(1L, 2L))
+})
+
+test_that("continuation with stages = c(2, 3) after stage 1 works", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  s1 <- execute(design, frame, stages = 1, seed = 42)
+  expect_warning(
+    s23 <- execute(s1, frame, stages = c(2, 3), seed = 2),
+    "No design-driven columns"
+  )
+
+  expect_s3_class(s23, "tbl_sample")
+  expect_equal(get_stages_executed(s23), 1:3)
+})
+
+test_that("continuation with stages = NULL picks up remaining stages", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  s1 <- execute(design, frame, stages = 1, seed = 42)
+  expect_warning(
+    s_rest <- execute(s1, frame, seed = 2),
+    "No design-driven columns"
+  )
+
+  expect_s3_class(s_rest, "tbl_sample")
+  expect_equal(get_stages_executed(s_rest), 1:3)
+})
+
+test_that("chained continuation 1 -> 2 -> 3 works", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  s1 <- execute(design, frame, stages = 1, seed = 42)
+  s2 <- execute(s1, frame, stages = 2, seed = 2)
+  expect_warning(
+    s3 <- execute(s2, frame, stages = 3, seed = 3),
+    "No design-driven columns"
+  )
+
+  expect_s3_class(s3, "tbl_sample")
+  expect_equal(get_stages_executed(s3), 1:3)
+})
+
+# --- execute_design: unsorted stages are sorted and validated ---
+
+test_that("execute(design) with stages = c(2, 1) is sorted to c(1, 2) and works", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  result <- execute(design, frame, stages = c(2, 1), seed = 42)
+  expect_s3_class(result, "tbl_sample")
+  expect_equal(get_stages_executed(result), c(1L, 2L))
+})

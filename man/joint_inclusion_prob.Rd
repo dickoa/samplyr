@@ -30,7 +30,7 @@ methods) or stages not requested via the \code{stage} argument.
 }
 }
 \description{
-Reconstructs the joint inclusion probabilities (π_kl) for PPS
+Reconstructs the joint inclusion probabilities \eqn{\pi_{kl}}{pi_kl} for PPS
 without replacement stages by replaying the design specification
 against the original sampling frame. This allows exact variance
 estimation via \code{\link[survey:HR]{survey::ppsmat()}} instead of the default Brewer
@@ -39,7 +39,7 @@ approximation used by \code{\link[=as_survey_design]{as_survey_design()}}.
 \details{
 For each PPS without replacement stage, the function:
 \enumerate{
-\item Reconstructs the full-population inclusion probabilities (π_i)
+\item Reconstructs the full-population inclusion probabilities \eqn{\pi_i}{pi_i}
 from the frame using the stage's method and measure of size
 \item Dispatches to the appropriate sondage joint probability function
 \item Extracts the submatrix corresponding to sampled units
@@ -48,7 +48,7 @@ from the frame using the stage's method and measure of size
 For stratified stages, the target sample size per stratum (n_h) is
 reconstructed by replaying the same allocation logic used during
 \code{\link[=execute]{execute()}} (proportional, Neyman, optimal, etc.) against the
-frame. This ensures π_i values match what was computed at sampling
+frame. This ensures \eqn{\pi_i}{pi_i} values match what was computed at sampling
 time, regardless of allocation method.
 
 For stratified or conditional (within-cluster) stages, joint
@@ -70,12 +70,12 @@ assembled into a block-diagonal matrix.
 Chromy's method is a \emph{Probability Minimum Replacement} (PMR)
 method, not a standard WOR method. Units can receive multiple
 hits, so the relevant pairwise quantities are expected sample
-size products E(n_i · n_j), not inclusion probabilities π_ij.
+size products \eqn{E(n_i \cdot n_j)}{E(n_i * n_j)}, not inclusion probabilities \eqn{\pi_{ij}}{pi_ij}.
 
-While sondage provides \code{up_chromy_pairexp()} to estimate E(n_i · n_j)
+While sondage provides \code{up_chromy_pairexp()} to estimate \eqn{E(n_i \cdot n_j)}{E(n_i * n_j)}
 via Monte Carlo, the result cannot be passed to \code{survey::ppsmat()}
-because the survey package assumes the diagonal contains π_i, but
-for PMR it contains E(n_i²) ≠ E(n_i) when units receive multiple
+because the survey package assumes the diagonal contains \eqn{\pi_i}{pi_i}, but
+for PMR it contains \eqn{E(n_i^2) \neq E(n_i)}{E(n_i^2) != E(n_i)} when units receive multiple
 hits. Chromy (2009) recommends the Hansen-Hurwitz approximation
 for variance estimation, which is the default used by
 \code{\link[=as_survey_design]{as_survey_design()}}.
@@ -87,12 +87,12 @@ for variance estimation, which is the default used by
 from what was passed to \code{\link[=execute]{execute()}}.
 \item Units in the frame must be uniquely identifiable within each
 stratum/cluster group by their column values.
-\item For designs with certainty selections (π_i = 1), the joint
+\item For designs with certainty selections (\eqn{\pi_i = 1}{pi_i = 1}), the joint
 matrix is decomposed: certainty units are separated from the
 stochastic part, the joint probabilities for non-certainty units
-are computed from the reduced π vector, and the full matrix is
-reassembled with π_ij = 1 for certainty pairs and π_ij = π_j
-for certainty × non-certainty pairs.
+are computed from the reduced \eqn{\pi}{pi} vector, and the full matrix is
+reassembled with \eqn{\pi_{ij} = 1}{pi_ij = 1} for certainty pairs and
+\eqn{\pi_{ij} = \pi_j}{pi_ij = pi_j} for certainty x non-certainty pairs.
 }
 }
 }

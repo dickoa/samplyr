@@ -225,6 +225,34 @@ test_that("draw() defaults round to 'up'", {
   expect_equal(d$stages[[1]]$draw_spec$round, "up")
 })
 
+test_that("draw() rejects named vector n without stratification", {
+  expect_error(
+    sampling_design() |> draw(n = c(A = 5, B = 6)),
+    "scalar"
+  )
+})
+
+test_that("draw() rejects named vector frac without stratification", {
+  expect_error(
+    sampling_design() |> draw(frac = c(A = 0.1, B = 0.2)),
+    "scalar"
+  )
+})
+
+test_that("draw() accepts named vector n with stratification", {
+  d <- sampling_design() |>
+    stratify_by(group) |>
+    draw(n = c(A = 5, B = 6))
+  expect_equal(d$stages[[1]]$draw_spec$n, c(A = 5, B = 6))
+})
+
+test_that("draw() accepts named vector frac with stratification", {
+  d <- sampling_design() |>
+    stratify_by(group) |>
+    draw(frac = c(A = 0.1, B = 0.2))
+  expect_equal(d$stages[[1]]$draw_spec$frac, c(A = 0.1, B = 0.2))
+})
+
 test_that("draw() validates round parameter", {
   expect_error(
     sampling_design() |> draw(frac = 0.1, round = "invalid"),
