@@ -369,7 +369,7 @@ samplyr supports several PPS methods:
 | `pps_maxent`      | Maximum entropy - highest entropy among fixed-size methods |
 | `pps_poisson`     | PPS Poisson - random sample size (requires `frac`)         |
 | `pps_multinomial` | PPS with replacement                                       |
-| `pps_chromy`      | Chromy's sequential PPS / minimum replacement (SAS default) |
+| `pps_chromy`      | Chromy's sequential PPS / minimum replacement  |
 
 ### Certainty Selection
 
@@ -459,9 +459,8 @@ We need to create a measure of size for districts. Here we'll use total enrollme
 ```{r}
 # Add district-level enrollment as MOS
 schools_frame <- tanzania_schools |>
-  group_by(district) |>
-  mutate(district_enrollment = sum(enrollment)) |>
-  ungroup()
+  mutate(district_enrollment = sum(enrollment),
+         .by = district)
 ```
 
 Now we can run a two-stage design: select 10 districts with PPS, then sample 5 schools within each.
@@ -476,10 +475,8 @@ sample <- sampling_design() |>
   execute(schools_frame, seed = 3)
 
 sample |>
-  summarise(
-    n_districts = n_distinct(district),
-    n_schools = n()
-  )
+  summarise(n_districts = n_distinct(district),
+            n_schools = n())
 ```
 
 ### Stratified Multi-Stage Design
@@ -579,7 +576,7 @@ design_effect(sample$.weight)
 | `pps_maxent` | Fixed | No | Joint inclusion probs available |
 | `pps_poisson` | Random | No | PPS with random size |
 | `pps_multinomial` | Fixed | Yes | PPS with replacement |
-| `pps_chromy` | Fixed | PMR | Chromy's sequential PPS (SAS default) |
+| `pps_chromy` | Fixed | PMR | Chromy's sequential PPS |
 
 ### Allocation Methods
 
