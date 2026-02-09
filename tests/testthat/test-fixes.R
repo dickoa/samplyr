@@ -481,6 +481,164 @@ test_that("control sorting with desc() works", {
   expect_equal(nrow(result), 50)
 })
 
+# =============================================================================
+# tbl_sum.tbl_sample tests (pillar-style printing)
+# =============================================================================
+
+test_that("tbl_sum.tbl_sample prints header exactly once", {
+  frame <- test_frame()
+
+  sample <- sampling_design() |>
+    draw(n = 100) |>
+    execute(frame, seed = 42)
+
+  output <- capture.output(print(sample))
+  header_lines <- grep("A tbl_sample", output)
+  expect_length(header_lines, 1)
+})
+
+test_that("tbl_sum.tbl_sample shows dimensions", {
+  frame <- test_frame()
+
+  sample <- sampling_design() |>
+    draw(n = 100) |>
+    execute(frame, seed = 42)
+
+  output <- capture.output(print(sample))
+  expect_true(any(grepl("100", output)))
+})
+
+test_that("tbl_sum.tbl_sample shows weight summary", {
+  frame <- test_frame()
+
+  sample <- sampling_design() |>
+    draw(n = 100) |>
+    execute(frame, seed = 42)
+
+  output <- capture.output(print(sample))
+  expect_true(any(grepl("Weights", output)))
+})
+
+test_that("tbl_sum.tbl_sample returns correct named vector", {
+  frame <- test_frame()
+
+  sample <- sampling_design() |>
+    draw(n = 100) |>
+    execute(frame, seed = 42)
+
+  s <- pillar::tbl_sum(sample)
+  expect_named(s[1], "A tbl_sample")
+  expect_true("Weights" %in% names(s))
+  expect_true(grepl("100", s[["A tbl_sample"]]))
+})
+
+test_that("tbl_sum header appears once after select", {
+  frame <- test_frame()
+
+  sample <- sampling_design() |>
+    draw(n = 100) |>
+    execute(frame, seed = 42)
+
+  result <- dplyr::select(sample, id, region, .weight)
+  output <- capture.output(print(result))
+  header_lines <- grep("A tbl_sample", output)
+  expect_length(header_lines, 1)
+})
+
+test_that("tbl_sum header appears once after select and head", {
+  frame <- test_frame()
+
+  sample <- sampling_design() |>
+    draw(n = 100) |>
+    execute(frame, seed = 42)
+
+  result <- sample |>
+    dplyr::select(id, region, .weight) |>
+    head()
+  output <- capture.output(print(result))
+  header_lines <- grep("A tbl_sample", output)
+  expect_length(header_lines, 1)
+})
+
+test_that("tbl_sum header appears once after filter", {
+  frame <- test_frame()
+
+  sample <- sampling_design() |>
+    draw(n = 100) |>
+    execute(frame, seed = 42)
+
+  result <- dplyr::filter(sample, region == "North")
+  output <- capture.output(print(result))
+  header_lines <- grep("A tbl_sample", output)
+  expect_length(header_lines, 1)
+})
+
+test_that("tbl_sum header appears once after mutate", {
+  frame <- test_frame()
+
+  sample <- sampling_design() |>
+    draw(n = 100) |>
+    execute(frame, seed = 42)
+
+  result <- dplyr::mutate(sample, double_w = .weight * 2)
+  output <- capture.output(print(result))
+  header_lines <- grep("A tbl_sample", output)
+  expect_length(header_lines, 1)
+})
+
+test_that("tbl_sample class is never duplicated after dplyr operations", {
+  frame <- test_frame()
+
+  sample <- sampling_design() |>
+    draw(n = 100) |>
+    execute(frame, seed = 42)
+
+  after_select <- dplyr::select(sample, id, region, .weight)
+  expect_equal(sum(class(after_select) == "tbl_sample"), 1)
+
+  after_head <- head(sample, 10)
+  expect_equal(sum(class(after_head) == "tbl_sample"), 1)
+
+  after_chain <- sample |>
+    dplyr::select(id, region, .weight) |>
+    head()
+  expect_equal(sum(class(after_chain) == "tbl_sample"), 1)
+
+  after_filter <- dplyr::filter(sample, region == "North")
+  expect_equal(sum(class(after_filter) == "tbl_sample"), 1)
+})
+
+test_that("tbl_sum.tbl_sample shows title when present", {
+  frame <- test_frame()
+
+  sample <- sampling_design(title = "My Survey") |>
+    draw(n = 100) |>
+    execute(frame, seed = 42)
+
+  output <- capture.output(print(sample))
+  expect_true(any(grepl("My Survey", output)))
+
+  s <- pillar::tbl_sum(sample)
+  expect_true(grepl("My Survey", s[["A tbl_sample"]]))
+})
+
+test_that("tbl_sum.tbl_sample shows partial stages", {
+  frame <- test_frame()
+
+  design <- sampling_design() |>
+    add_stage() |>
+    cluster_by(school_id) |>
+    draw(n = 20) |>
+    add_stage() |>
+    draw(n = 5)
+
+  sample <- execute(design, frame, stages = 1, seed = 42)
+
+  s <- pillar::tbl_sum(sample)
+  expect_true("Stages" %in% names(s))
+  expect_true(grepl("1/2", s[["Stages"]]))
+})
+
 test_that("multi-stage stratified then unstratified compounding works", {
   # Regression test for Fix 2
   frame <- data.frame(

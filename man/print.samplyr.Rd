@@ -3,12 +3,12 @@
 \name{print.samplyr}
 \alias{print.samplyr}
 \alias{print.sampling_design}
-\alias{print.tbl_sample}
+\alias{tbl_sum.tbl_sample}
 \title{Print Methods for samplyr Objects}
 \usage{
 \method{print}{sampling_design}(x, ...)
 
-\method{print}{tbl_sample}(x, ...)
+\method{tbl_sum}{tbl_sample}(x, ...)
 }
 \arguments{
 \item{x}{Object to print}

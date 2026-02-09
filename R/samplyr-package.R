@@ -16,5 +16,6 @@
 #' @importFrom dplyr bind_rows pull distinct
 #' @importFrom dplyr dplyr_reconstruct
 #' @importFrom withr with_seed
+#' @importFrom pillar tbl_sum
 ## usethis namespace: end
 NULL

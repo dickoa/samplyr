@@ -21,6 +21,7 @@ Imports:
     rlang (>= 1.0.0),
     cli,
     glue,
+    pillar,
     tibble,
     dplyr,
     sondage,

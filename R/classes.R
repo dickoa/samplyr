@@ -191,13 +191,16 @@ new_tbl_sample <- function(
   seed = NULL,
   metadata = list()
 ) {
+  if (!inherits(data, "tbl_df")) {
+    data <- tibble::as_tibble(data)
+  }
   structure(
     data,
     design = design,
     stages_executed = stages_executed,
     seed = seed,
     metadata = metadata,
-    class = c("tbl_sample", class(data))
+    class = unique(c("tbl_sample", class(data)))
   )
 }
 

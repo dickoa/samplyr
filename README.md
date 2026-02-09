@@ -36,7 +36,7 @@ The package uses 5 verbs and 1 modifier:
 | `cluster_by()`      | Define cluster/PSU variable           |
 | `draw()`            | Specify sample size and method        |
 | `execute()`         | Run the design on a frame             |
-| `add_stage()`       | Delimit stages in multi-stage designs |
+| `add_stage()`           | Delimit stages in multi-stage designs |
 
 ## Quick Start
 

@@ -125,40 +125,44 @@ format_control_quos <- function(control_quos) {
 
 #' @rdname print.samplyr
 #' @export
-print.tbl_sample <- function(x, ...) {
+tbl_sum.tbl_sample <- function(x, ...) {
   design <- get_design(x)
+  dims <- paste(nrow(x), "\u00d7", ncol(x))
   if (!is_null(design$title)) {
-    cli::cat_rule(paste0("tbl_sample: ", design$title))
+    first <- c("A tbl_sample" = paste0(dims, " | ", design$title))
   } else {
-    cli::cat_rule("tbl_sample")
+    first <- c("A tbl_sample" = dims)
   }
+
+  result <- first
 
   stages_exec <- get_stages_executed(x)
   n_total_stages <- length(design$stages)
-  info_parts <- character(0)
-
   if (length(stages_exec) < n_total_stages) {
-    info_parts <- c(info_parts, paste0(
-      "stages: ", paste(stages_exec, collapse = ", "), "/", n_total_stages
-    ))
+    result <- c(
+      result,
+      "Stages" = paste0(
+        paste(stages_exec, collapse = ", "),
+        "/",
+        n_total_stages
+      )
+    )
   }
 
   if (".weight" %in% names(x)) {
     w <- x$.weight
-    info_parts <- c(info_parts, paste0(
-      "weights: ", round(mean(w), 2),
-      " [", round(min(w), 2), ", ", round(max(w), 2), "]"
-    ))
-  }
-
-  if (length(info_parts) > 0) {
-    cli::cat_bullet(
-      paste(info_parts, collapse = " | "),
-      bullet = "info"
+    result <- c(
+      result,
+      "Weights" = paste0(
+        round(mean(w), 2),
+        " [",
+        round(min(w), 2),
+        ", ",
+        round(max(w), 2),
+        "]"
+      )
     )
   }
 
-  cat("\n")
-  NextMethod()
-  invisible(x)
+  result
 }

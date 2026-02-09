@@ -34,7 +34,7 @@
 #'
 #' summary(sample)
 #'
-#' @seealso [print.tbl_sample()] for the compact print method,
+#' @seealso [tbl_sum.tbl_sample()] for the compact print method,
 #'   [as_survey_design()] for exporting to the survey package
 #'
 #' @export
@@ -192,9 +192,15 @@ print_allocation_table <- function(alloc_tbl, strata_vars) {
     col_names,
     function(col) {
       vals <- as.character(display[[col]])
-      if (col == "N_h") vals <- c(vals, as.character(total_N))
-      if (col == "n_h") vals <- c(vals, as.character(total_n))
-      if (col == "f_h") vals <- c(vals, total_f)
+      if (col == "N_h") {
+        vals <- c(vals, as.character(total_N))
+      }
+      if (col == "n_h") {
+        vals <- c(vals, as.character(total_n))
+      }
+      if (col == "f_h") {
+        vals <- c(vals, total_f)
+      }
       max(nchar(col), max(nchar(vals)))
     },
     integer(1)
