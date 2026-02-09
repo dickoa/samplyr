@@ -96,7 +96,7 @@ test_that("summary.tbl_sample runs without error", {
 
   expect_output(summary(sample), "Sample Summary")
   expect_output(summary(sample), "Design")
-  expect_output(summary(sample), "Execution")
+  expect_output(summary(sample), "stages =")
   expect_output(summary(sample), "Allocation")
   expect_output(summary(sample), "Weights")
 })
@@ -134,7 +134,7 @@ test_that("summary.tbl_sample shows weight diagnostics", {
 
   output <- capture.output(summary(sample))
   expect_true(any(grepl("DEFF", output)))
-  expect_true(any(grepl("Effective n", output)))
+  expect_true(any(grepl("n_eff", output)))
   expect_true(any(grepl("CV", output)))
 })
 
@@ -475,6 +475,87 @@ test_that("joint_inclusion_prob decomposes certainty units correctly", {
       }
     }
   }
+})
+
+test_that("joint_inclusion_prob cross-stratum entries equal pi_i * pi_j", {
+  sample <- sampling_design() |>
+    stratify_by(region) |>
+    cluster_by(ea_id) |>
+    draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+    execute(niger_eas, seed = 2025)
+
+  jip <- joint_inclusion_prob(sample, niger_eas)
+  mat <- jip[[1]]
+
+  # No zeros: cross-stratum entries should be pi_i * pi_j, not 0
+  expect_true(all(mat > 0))
+
+  # Verify cross-stratum entries explicitly
+  pi_vec <- diag(mat)
+  expected_cross <- outer(pi_vec, pi_vec)
+  # Within-stratum entries differ from pi_i * pi_j (joint != product)
+  # but cross-stratum entries should be exactly pi_i * pi_j
+  sample_clusters <- as.data.frame(sample) |>
+    dplyr::distinct(ea_id, region)
+  regions <- sample_clusters$region
+  for (i in seq_along(regions)) {
+    for (j in seq_along(regions)) {
+      if (regions[i] != regions[j]) {
+        expect_equal(
+          mat[i, j],
+          expected_cross[i, j],
+          tolerance = 1e-12,
+          info = paste("Cross-stratum entry [", i, ",", j, "]")
+        )
+      }
+    }
+  }
+})
+
+test_that("joint_inclusion_prob matrix matches sample PSU ordering", {
+  sample <- sampling_design() |>
+    stratify_by(region) |>
+    cluster_by(ea_id) |>
+    draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+    execute(niger_eas, seed = 2025)
+
+  jip <- joint_inclusion_prob(sample, niger_eas)
+  mat <- jip[[1]]
+
+  # Diagonal should equal 1/weight in the same order as the sample
+  sample_clusters <- as.data.frame(sample) |>
+    dplyr::distinct(ea_id, .keep_all = TRUE)
+  pik_from_weights <- 1 / sample_clusters$.weight_1
+  expect_equal(diag(mat), pik_from_weights, tolerance = 1e-6)
+})
+
+test_that("joint_inclusion_prob with ppsmat gives valid SE for stratified PPS", {
+  skip_if_not_installed("survey")
+
+  sample <- sampling_design() |>
+    stratify_by(region) |>
+    cluster_by(ea_id) |>
+    draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+    execute(niger_eas, seed = 2025)
+
+  jip <- joint_inclusion_prob(sample, niger_eas)
+
+  svy_exact <- as_survey_design(sample, pps = survey::ppsmat(jip[[1]]))
+  svy_brewer <- as_survey_design(sample)
+
+  est_exact <- survey::svymean(~hh_count, svy_exact)
+  est_brewer <- survey::svymean(~hh_count, svy_brewer)
+
+  # SE should not be NaN
+  expect_false(any(is.nan(survey::SE(est_exact))))
+  # Point estimates should match
+  expect_equal(coef(est_exact), coef(est_brewer), tolerance = 1e-6)
+  # SEs should be close (exact vs approximation)
+  expect_equal(
+    survey::SE(est_exact)[[1]],
+    survey::SE(est_brewer)[[1]],
+    tolerance = 1
+  )
 })
 
 test_that("joint_inclusion_prob with certainty works in stratified design", {

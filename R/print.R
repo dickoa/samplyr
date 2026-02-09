@@ -9,51 +9,64 @@ NULL
 #' @rdname print.samplyr
 #' @export
 print.sampling_design <- function(x, ...) {
-  cat("== Sampling Design ==\n")
-
   if (!is_null(x$title)) {
-    cat("Title:", x$title, "\n")
+    cli::cat_rule(paste0("Sampling Design: ", x$title))
+  } else {
+    cli::cat_rule("Sampling Design")
   }
 
   n_stages <- length(x$stages)
-  cat("Number of stages:", n_stages, "\n\n")
+  stage_label <- if (n_stages == 1) "stage" else "stages"
+  cat("\n")
+  cli::cat_bullet(
+    paste(n_stages, stage_label),
+    bullet = "info"
+  )
 
   for (i in seq_along(x$stages)) {
     print_stage(x$stages[[i]], i)
   }
+  cat("\n")
   invisible(x)
 }
 
 #' @noRd
 print_stage <- function(stage, num) {
+  cat("\n")
   if (!is_null(stage$label)) {
-    cat("-- Stage", num, ":", stage$label, "--\n")
+    cli::cat_rule(left = paste0("Stage ", num, ": ", stage$label))
   } else {
-    cat("-- Stage", num, "--\n")
+    cli::cat_rule(left = paste("Stage", num))
   }
 
   if (!is_null(stage$strata)) {
     strata <- stage$strata
     vars_str <- paste(strata$vars, collapse = ", ")
-    cat("* Stratify by:", vars_str, "\n")
-    if (!is_null(strata$alloc)) {
-      cat("  Allocation:", strata$alloc, "\n")
+    alloc_str <- if (!is_null(strata$alloc)) {
+      paste0(" (", strata$alloc, ")")
+    } else {
+      ""
     }
+    cli::cat_bullet(
+      paste0("Strata: ", vars_str, alloc_str),
+      bullet = "bullet"
+    )
   }
 
   if (!is_null(stage$clusters)) {
     vars_str <- paste(stage$clusters$vars, collapse = ", ")
-    cat("* Cluster by:", vars_str, "\n")
+    cli::cat_bullet(paste0("Cluster: ", vars_str), bullet = "bullet")
   }
 
   if (!is_null(stage$draw_spec)) {
-    draw <- stage$draw_spec
-    draw_desc <- format_draw_spec(draw)
-    cat("* Draw:", draw_desc, "\n")
+    draw_desc <- format_draw_spec(stage$draw_spec)
+    cli::cat_bullet(paste0("Draw: ", draw_desc), bullet = "bullet")
   } else {
-    cat("! (incomplete - no draw specification)\n")
+    cli::cat_bullet(
+      paste0("(incomplete ", "\u2014", " no draw specification)"),
+      bullet = "warning"
+    )
   }
-  cat("\n")
 }
 
 #' @noRd
@@ -64,26 +77,26 @@ format_draw_spec <- function(draw) {
     if (is.data.frame(draw$n)) {
       parts <- c(parts, "n = <custom data frame>")
     } else {
-      parts <- c(parts, glue("n = {draw$n}"))
+      parts <- c(parts, paste0("n = ", draw$n))
     }
   }
   if (!is_null(draw$frac)) {
     if (is.data.frame(draw$frac)) {
       parts <- c(parts, "frac = <custom data frame>")
     } else {
-      parts <- c(parts, glue("frac = {draw$frac}"))
+      parts <- c(parts, paste0("frac = ", draw$frac))
     }
   }
 
-  parts <- c(parts, glue("method = {draw$method}"))
+  parts <- c(parts, paste0("method = ", draw$method))
 
   if (!is_null(draw$mos)) {
-    parts <- c(parts, glue("mos = {draw$mos}"))
+    parts <- c(parts, paste0("mos = ", draw$mos))
   }
 
   if (!is_null(draw$control)) {
     control_str <- format_control_quos(draw$control)
-    parts <- c(parts, glue("control = {control_str}"))
+    parts <- c(parts, paste0("control = ", control_str))
   }
 
   paste(parts, collapse = ", ")
@@ -115,33 +128,33 @@ format_control_quos <- function(control_quos) {
 print.tbl_sample <- function(x, ...) {
   design <- get_design(x)
   if (!is_null(design$title)) {
-    cat("== tbl_sample:", design$title, "==\n")
+    cli::cat_rule(paste0("tbl_sample: ", design$title))
   } else {
-    cat("== tbl_sample ==\n")
+    cli::cat_rule("tbl_sample")
   }
 
   stages_exec <- get_stages_executed(x)
   n_total_stages <- length(design$stages)
+  info_parts <- character(0)
+
   if (length(stages_exec) < n_total_stages) {
-    cat(
-      "Stages executed:",
-      paste(stages_exec, collapse = ", "),
-      "of",
-      n_total_stages,
-      "\n"
-    )
+    info_parts <- c(info_parts, paste0(
+      "stages: ", paste(stages_exec, collapse = ", "), "/", n_total_stages
+    ))
   }
 
   if (".weight" %in% names(x)) {
     w <- x$.weight
-    cat(
-      "Weights:",
-      round(min(w), 2),
-      "-",
-      round(max(w), 2),
-      "(mean:",
-      round(mean(w), 2),
-      ")\n"
+    info_parts <- c(info_parts, paste0(
+      "weights: ", round(mean(w), 2),
+      " [", round(min(w), 2), ", ", round(max(w), 2), "]"
+    ))
+  }
+
+  if (length(info_parts) > 0) {
+    cli::cat_bullet(
+      paste(info_parts, collapse = " | "),
+      bullet = "info"
     )
   }
 
