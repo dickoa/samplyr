@@ -38,6 +38,22 @@ The package uses 5 verbs and 1 modifier:
 | `execute()`         | Run the design on a frame             |
 | `add_stage()`           | Delimit stages in multi-stage designs |
 
+### Frame-Independent Design
+
+`stratify_by()` and `cluster_by()` take bare column names. The design is
+stored as a specification and resolved only when a frame is available
+(`validate_frame()`, `execute()`, `as_svydesign()`), so design specification
+stays separate from execution.
+
+```r
+design <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  cluster_by(ea_id) |>
+  draw(n = 300)
+
+sample <- execute(design, niger_eas, seed = 42)
+```
+
 ## Quick Start
 
 ```r
@@ -134,8 +150,10 @@ final_sample <- selected_districts |> execute(schools_frame, seed = 2)
 |-------------------|-------------|-------------------------------|
 | `pps_brewer`      | Fixed       | Brewer's method (recommended) |
 | `pps_systematic`  | Fixed       | PPS systematic                |
-| `pps_maxent`      | Fixed       | Maximum entropy               |
+| `pps_cps`         | Fixed       | Conditional Poisson sampling  |
 | `pps_poisson`     | Random      | PPS Poisson (requires `frac`) |
+| `pps_sps`         | Fixed       | Sequential Poisson sampling (PRN) |
+| `pps_pareto`      | Fixed       | Pareto πPS sampling (PRN)         |
 | `pps_multinomial` | Fixed       | PPS with replacement          |
 | `pps_chromy`      | Fixed       | PPS with minimum replacement  |
 
@@ -194,6 +212,39 @@ sample <- sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
   draw(n = 300) |>
   execute(niger_eas, seed = 42)
+```
+
+## Sample Coordination (PRN)
+
+Permanent random numbers enable coordinated sampling across survey waves. Assign a stable uniform random number to each frame unit, then pass it via `prn`:
+
+```r
+frame$prn <- runif(nrow(frame))
+
+# Wave 1: sequential Poisson sampling with PRN
+wave1 <- sampling_design() |>
+  draw(n = 500, method = "pps_sps", mos = size, prn = prn) |>
+  execute(frame, seed = 1)
+
+# Wave 2: same PRN → high overlap (positive coordination)
+wave2 <- sampling_design() |>
+  draw(n = 500, method = "pps_sps", mos = size, prn = prn) |>
+  execute(frame, seed = 2)
+```
+
+PRN is supported for `bernoulli`, `pps_poisson`, `pps_sps`, and `pps_pareto`.
+
+## Survey Export
+
+Convert samples to `survey` or `srvyr` objects for analysis:
+
+```r
+svy <- as_svydesign(sample)
+survey::svymean(~y, svy)
+
+# Exact variance with joint inclusion probabilities
+jip <- joint_expectation(sample, frame, stage = 1)
+svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 ```
 
 ## Included Datasets

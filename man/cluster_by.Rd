@@ -10,8 +10,8 @@ cluster_by(.data, ...)
 \item{.data}{A \code{sampling_design} object (piped from \code{\link[=sampling_design]{sampling_design()}},
 \code{\link[=stratify_by]{stratify_by()}}, or \code{\link[=add_stage]{add_stage()}}).}
 
-\item{...}{<\code{\link[dplyr:dplyr_tidy_select]{tidy-select}}> Clustering variable(s)
-that identify the sampling units. In most cases this is a single variable
+\item{...}{Clustering variable(s) specified as bare column names that
+identify the sampling units. In most cases this is a single variable
 (e.g., school_id, household_id).}
 }
 \value{

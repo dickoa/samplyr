@@ -68,9 +68,14 @@ validate_frame <- function(design, frame, stage = NULL) {
   if (is_null(stage)) {
     stage <- seq_len(n_stages)
   } else {
-    if (any(stage < 1) || any(stage > n_stages)) {
+    if (
+      !is_integerish_numeric(stage) ||
+        any(stage < 1) ||
+        any(stage > n_stages)
+    ) {
       cli_abort("{.arg stage} must be between 1 and {n_stages}")
     }
+    stage <- as.integer(stage)
   }
 
   issues <- list()
@@ -122,25 +127,85 @@ validate_frame <- function(design, frame, stage = NULL) {
         )
       } else {
         mos_vals <- frame[[mos_var]]
-        if (any(is.na(mos_vals))) {
+        if (!is.numeric(mos_vals)) {
           issues <- c(
             issues,
             list(list(
               stage = label,
-              type = "mos_na",
-              vars = mos_var
+              type = "mos_type",
+              vars = mos_var,
+              actual_class = class(mos_vals)[[1]]
             ))
           )
+        } else {
+          if (any(is.na(mos_vals))) {
+            issues <- c(
+              issues,
+              list(list(
+                stage = label,
+                type = "mos_na",
+                vars = mos_var
+              ))
+            )
+          }
+          if (any(mos_vals < 0, na.rm = TRUE)) {
+            issues <- c(
+              issues,
+              list(list(
+                stage = label,
+                type = "mos_negative",
+                vars = mos_var
+              ))
+            )
+          }
         }
-        if (any(mos_vals < 0, na.rm = TRUE)) {
+      }
+    }
+
+    if (!is_null(stage_spec$draw_spec) && !is_null(stage_spec$draw_spec$prn)) {
+      prn_var <- stage_spec$draw_spec$prn
+      if (!prn_var %in% names(frame)) {
+        issues <- c(
+          issues,
+          list(list(
+            stage = label,
+            type = "prn",
+            vars = prn_var
+          ))
+        )
+      } else {
+        prn_vals <- frame[[prn_var]]
+        if (!is.numeric(prn_vals)) {
           issues <- c(
             issues,
             list(list(
               stage = label,
-              type = "mos_negative",
-              vars = mos_var
+              type = "prn_type",
+              vars = prn_var,
+              actual_class = class(prn_vals)[[1]]
             ))
           )
+        } else {
+          if (any(is.na(prn_vals))) {
+            issues <- c(
+              issues,
+              list(list(
+                stage = label,
+                type = "prn_na",
+                vars = prn_var
+              ))
+            )
+          }
+          if (any(prn_vals <= 0, na.rm = TRUE) || any(prn_vals >= 1, na.rm = TRUE)) {
+            issues <- c(
+              issues,
+              list(list(
+                stage = label,
+                type = "prn_range",
+                vars = prn_var
+              ))
+            )
+          }
         }
       }
     }
@@ -155,42 +220,42 @@ validate_frame <- function(design, frame, stage = NULL) {
 #' Report validation issues
 #' @noRd
 report_validation_issues <- function(issues) {
-  msgs <- c("Frame validation failed:")
+  msgs <- "Frame validation failed:"
 
   for (issue in issues) {
+    stage <- issue$stage
+    vars <- issue$vars
     msg <- switch(
       issue$type,
-      "stratification" = paste0(
-        "x ",
-        issue$stage,
-        ": missing stratification variable(s): ",
-        paste(issue$vars, collapse = ", ")
+      "stratification" = c(
+        "x" = "{stage}: missing stratification variable{?s}: {.val {vars}}"
       ),
-      "cluster" = paste0(
-        "x ",
-        issue$stage,
-        ": missing cluster variable(s): ",
-        paste(issue$vars, collapse = ", ")
+      "cluster" = c(
+        "x" = "{stage}: missing cluster variable{?s}: {.val {vars}}"
       ),
-      "mos" = paste0(
-        "x ",
-        issue$stage,
-        ": missing MOS variable: ",
-        issue$vars
+      "mos" = c(
+        "x" = "{stage}: missing MOS variable: {.var {vars}}"
       ),
-      "mos_na" = paste0(
-        "x ",
-        issue$stage,
-        ": MOS variable '",
-        issue$vars,
-        "' contains NA values"
+      "mos_type" = c(
+        "x" = "{stage}: MOS variable {.var {vars}} must be numeric, not {.cls {issue$actual_class}}"
       ),
-      "mos_negative" = paste0(
-        "x ",
-        issue$stage,
-        ": MOS variable '",
-        issue$vars,
-        "' contains negative values"
+      "mos_na" = c(
+        "x" = "{stage}: MOS variable {.var {vars}} contains NA values"
+      ),
+      "mos_negative" = c(
+        "x" = "{stage}: MOS variable {.var {vars}} contains negative values"
+      ),
+      "prn" = c(
+        "x" = "{stage}: missing PRN variable: {.var {vars}}"
+      ),
+      "prn_type" = c(
+        "x" = "{stage}: PRN variable {.var {vars}} must be numeric, not {.cls {issue$actual_class}}"
+      ),
+      "prn_na" = c(
+        "x" = "{stage}: PRN variable {.var {vars}} contains NA values"
+      ),
+      "prn_range" = c(
+        "x" = "{stage}: PRN variable {.var {vars}} must have values in (0, 1)"
       )
     )
     msgs <- c(msgs, msg)

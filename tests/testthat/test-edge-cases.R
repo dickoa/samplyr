@@ -980,9 +980,9 @@ test_that("srswr weights produce correct HH estimation with replicated rows", {
   expect_equal(hh_total, manual_total, tolerance = 1e-10)
 })
 
-# --- joint_inclusion_prob uniqueness validation ---
+# --- joint_expectation uniqueness validation ---
 
-test_that("joint_inclusion_prob errors when frame rows are not uniquely identified", {
+test_that("joint_expectation errors when frame rows are not uniquely identified", {
   # Frame with duplicate rows on non-dot columns (no cluster vars)
   frame <- data.frame(
     id = c(1, 1, 2, 3, 4, 5, 6, 7, 8, 9),
@@ -994,7 +994,7 @@ test_that("joint_inclusion_prob errors when frame rows are not uniquely identifi
     execute(frame, seed = 42)
 
   expect_error(
-    joint_inclusion_prob(result, frame),
+    joint_expectation(result, frame),
     "not uniquely identified"
   )
 })
@@ -1351,7 +1351,7 @@ test_that("WR cluster sampling replicates cluster rows", {
   }
 })
 
-test_that("as_survey_design uses .draw_k as id for WR methods", {
+test_that("as_svydesign uses .draw_k as id for WR methods", {
   skip_if_not_installed("survey")
   frame <- data.frame(
     id = 1:10,
@@ -1363,12 +1363,23 @@ test_that("as_survey_design uses .draw_k as id for WR methods", {
     draw(n = 8, method = "pps_multinomial", mos = size) |>
     execute(frame, seed = 42)
 
-  svy <- as_survey_design(result)
+  svy <- as_svydesign(result)
   expect_s3_class(svy, "survey.design")
 
   # The design should use .draw_1 as id
   # (survey package stores this internally)
   expect_true(".draw_1" %in% names(svy$cluster))
+})
+
+test_that("validate_frame() requires integer stage values", {
+  design <- sampling_design() |>
+    draw(n = 1)
+  frame <- data.frame(id = 1:10)
+
+  expect_error(
+    validate_frame(design, frame, stage = 1.5),
+    "stage"
+  )
 })
 
 test_that("certainty selection is rejected for WR/PMR methods", {
@@ -1586,6 +1597,23 @@ test_that("Neyman allocation errors on negative variance", {
   )
 })
 
+test_that("Neyman allocation errors clearly when allocation denominator is zero", {
+  frame <- data.frame(
+    id = 1:100,
+    region = rep(c("A", "B"), each = 50)
+  )
+
+  var_df <- data.frame(region = c("A", "B"), var = c(0, 0))
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "neyman", variance = var_df) |>
+      draw(n = 30) |>
+      execute(frame, seed = 1),
+    "sum\\(N_h \\* sqrt\\(variance\\)\\) must be greater than 0"
+  )
+})
+
 test_that("optimal allocation errors when variance doesn't cover all strata", {
   frame <- data.frame(
     id = 1:100,
@@ -1675,6 +1703,29 @@ test_that("optimal allocation errors on non-positive cost", {
       draw(n = 30) |>
       execute(frame, seed = 1),
     "positive"
+  )
+})
+
+test_that("optimal allocation errors clearly when allocation denominator is zero", {
+  frame <- data.frame(
+    id = 1:100,
+    region = rep(c("A", "B"), each = 50)
+  )
+
+  var_df <- data.frame(region = c("A", "B"), var = c(0, 0))
+  cost_df <- data.frame(region = c("A", "B"), cost = c(1, 2))
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(
+        region,
+        alloc = "optimal",
+        variance = var_df,
+        cost = cost_df
+      ) |>
+      draw(n = 30) |>
+      execute(frame, seed = 1),
+    "sum\\(N_h \\* sqrt\\(variance\\) / sqrt\\(cost\\)\\) must be greater than 0"
   )
 })
 
@@ -1771,4 +1822,27 @@ test_that("optimal allocation works with valid complete inputs", {
     execute(frame, seed = 42)
 
   expect_equal(nrow(result), 30)
+})
+
+test_that("power allocation follows cv * importance^power weights", {
+  frame <- data.frame(
+    id = 1:120,
+    region = rep(c("A", "B", "C"), each = 40)
+  )
+
+  design <- sampling_design() |>
+    stratify_by(
+      region,
+      alloc = "power",
+      cv = data.frame(region = c("A", "B", "C"), cv = c(1, 2, 3)),
+      importance = data.frame(region = c("A", "B", "C"), importance = c(1, 1, 1)),
+      power = 0.5
+    ) |>
+    draw(n = 12)
+
+  result <- execute(design, frame, seed = 1)
+  counts <- as.integer(table(result$region)[c("A", "B", "C")])
+
+  expect_equal(sum(counts), 12)
+  expect_equal(counts, c(2, 4, 6))
 })

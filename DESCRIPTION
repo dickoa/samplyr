@@ -4,6 +4,8 @@ Version: 0.1.0
 Authors@R:
     person("Ahmadou", "Dicko", , "mail@ahmadoudicko.com", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-9654-7582"))
+Author: Ahmadou Dicko [aut, cre]
+Maintainer: Ahmadou Dicko <mail@ahmadoudicko.com>
 Description: Provides a tidy, composable grammar for specifying and executing
     complex survey sampling designs. Supports stratified, clustered, multi-stage,
     and multi-phase sampling with a minimal set of verbs that compose naturally.
@@ -11,7 +13,7 @@ Description: Provides a tidy, composable grammar for specifying and executing
     and executable R code, following tidyverse design principles. Includes
     synthetic survey datasets from African countries (Niger, Uganda, Kenya,
     Tanzania, Nigeria) for learning and testing.
-License: GPL (>= 2)
+License: GPL-2 | GPL-3
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
@@ -20,18 +22,18 @@ Depends: R (>= 4.1.0)
 Imports:
     rlang (>= 1.0.0),
     cli,
-    glue,
     pillar,
     tibble,
-    dplyr,
-    sondage,
+    dplyr (>= 1.1.0),
+    sondage (> 0.1.0),
     withr
 Suggests:
    testthat (>= 3.0.0),
    knitr,
    rmarkdown,
    roxygen2,
-   survey
+   survey,
+   srvyr
 Config/testthat/edition: 3
 VignetteBuilder: knitr
 URL: https://gitlab.com/dickoa/samplyr

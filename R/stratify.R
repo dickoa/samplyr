@@ -6,22 +6,36 @@
 #'
 #' @param .data A `sampling_design` object (piped from [sampling_design()] or
 #'   [add_stage()]).
-#' @param ... <[`tidy-select`][dplyr::dplyr_tidy_select]> Stratification
-#'   variables. These should be categorical variables that define the strata.
+#' @param ... Stratification variables specified as bare column names.
 #' @param alloc Character string specifying the allocation method. One of:
 #'   - `NULL` (default): No allocation; `n` in [draw()] is per stratum
 #'   - `"equal"`: Equal allocation across strata
 #'   - `"proportional"`: Proportional to stratum size
 #'   - `"neyman"`: Neyman optimal allocation (requires `variance`)
 #'   - `"optimal"`: Cost-variance optimal allocation (requires `variance` and `cost`)
+#'   - `"power"`: Power allocation (requires `cv` and `importance`)
 #' @param variance Stratum variances for Neyman or optimal allocation.
 #'   Either a data frame with columns for all stratification variables plus
 #'   a `var` column, or a named numeric vector (when using a single
 #'   stratification variable) where names correspond to stratum levels.
+#'   For named vectors, names must match the values in the stratification
+#'   column (for example `c(A = 1.2, B = 0.8)`).
 #' @param cost Stratum costs for optimal allocation.
 #'   Either a data frame with columns for all stratification variables plus
 #'   a `cost` column, or a named numeric vector (when using a single
 #'   stratification variable) where names correspond to stratum levels.
+#'   For named vectors, names must match the values in the stratification
+#'   column.
+#' @param cv Stratum coefficients of variation (\eqn{C_h}) for power allocation.
+#'   Either a data frame with stratification columns plus a `cv` column, or
+#'   a named numeric vector for a single stratification variable (names are
+#'   stratum levels).
+#' @param importance Stratum importance measure (\eqn{X_h}) for power allocation.
+#'   Either a data frame with stratification columns plus an `importance`
+#'   column, or a named numeric vector for a single stratification variable
+#'   (names are stratum levels).
+#' @param power Power exponent \eqn{q} for power allocation.
+#'   Must satisfy \eqn{0 \le q \le 1}. Defaults to `0.5`.
 #'
 #' @return A modified `sampling_design` object with stratification specified.
 #'
@@ -51,10 +65,21 @@
 #' \eqn{n \times (N_h \times S_h / \sqrt{C_h}) / \sum(N_h \times S_h / \sqrt{C_h})}{n * (N_h * S_h / sqrt(C_h)) / sum(N_h * S_h / sqrt(C_h))}
 #' where C_h is the per-unit cost in stratum h.
 #'
+#' ### Power Allocation
+#' Power allocation (Bankier, 1988) is a compromise allocation:
+#' \eqn{n_h \propto C_h \times X_h^q}, where \eqn{C_h} is stratum CV, \eqn{X_h}
+#' is a stratum importance measure, and \eqn{q \in [0, 1]}.
+#'
 #' ### Custom Allocation
 #' For custom stratum-specific sample sizes or rates, pass a data frame
 #' directly to the `n` or `frac` argument in [draw()]. The data frame must
 #' contain columns for all stratification variables plus an `n` or `frac` column.
+#'
+#' ### Auxiliary Input Formats (`variance`, `cost`, `cv`, `importance`)
+#' - With **one** stratification variable, you may use a named vector
+#'   (e.g., `variance = c(A = 1.2, B = 0.8)`).
+#' - With **multiple** stratification variables, you must use a data frame
+#'   containing all stratification columns plus the value column.
 #'
 #' @section Data Frame Requirements:
 #' Auxiliary data frames (`variance`, `cost`) must contain:
@@ -88,10 +113,27 @@
 #'   draw(n = 200) |>
 #'   execute(niger_eas, seed = 1)
 #'
+#' # Power allocation (Bankier, 1988)
+#' sampling_design() |>
+#'   stratify_by(
+#'     region,
+#'     alloc = "power",
+#'     cv = data.frame(
+#'       region = levels(niger_eas$region),
+#'       cv = c(0.40, 0.35, 0.20, 0.18, 0.10, 0.22, 0.25, 0.30)
+#'     ),
+#'     importance = data.frame(
+#'       region = levels(niger_eas$region),
+#'       importance = c(20, 25, 60, 80, 120, 70, 65, 90)
+#'     ),
+#'     power = 0.5
+#'   ) |>
+#'   draw(n = 200) |>
+#'   execute(niger_eas, seed = 7)
+#'
 #' # Custom sample sizes per stratum using a data frame
 #' custom_sizes <- data.frame(
-#'   region = c("Agadez", "Diffa", "Dosso", "Maradi",
-#'              "Niamey", "Tahoua", "Tillab\u00e9ri", "Zinder"),
+#'   region = levels(niger_eas$region),
 #'   n = c(15, 20, 30, 35, 25, 30, 25, 20)
 #' )
 #' sampling_design() |>
@@ -116,7 +158,10 @@ stratify_by <- function(
   ...,
   alloc = NULL,
   variance = NULL,
-  cost = NULL
+  cost = NULL,
+  cv = NULL,
+  importance = NULL,
+  power = NULL
 ) {
   if (!is_sampling_design(.data)) {
     cli_abort("{.arg .data} must be a {.cls sampling_design} object")
@@ -127,9 +172,22 @@ stratify_by <- function(
     cli_abort("At least one stratification variable must be specified")
   }
 
+  is_bare_name <- vapply(
+    vars_quo,
+    function(q) is.symbol(quo_get_expr(q)),
+    logical(1)
+  )
+  if (any(!is_bare_name)) {
+    cli_abort(c(
+      "{.fn stratify_by} variables must be bare column names.",
+      "x" = "Tidy-select helpers and expressions are not supported.",
+      "i" = "Example: {.code stratify_by(region, strata)}"
+    ))
+  }
+
   vars <- unname(vapply(vars_quo, as_label, character(1)))
 
-  valid_alloc <- c("equal", "proportional", "neyman", "optimal")
+  valid_alloc <- c("equal", "proportional", "neyman", "optimal", "power")
   if (!is_null(alloc)) {
     if (!is_character(alloc) || length(alloc) != 1) {
       cli_abort("{.arg alloc} must be a single character string")
@@ -143,8 +201,25 @@ stratify_by <- function(
   if (!is_null(cost)) {
     cost <- coerce_aux_input(cost, vars, "cost", "cost")
   }
+  if (!is_null(cv)) {
+    cv <- coerce_aux_input(cv, vars, "cv", "cv")
+  }
+  if (!is_null(importance)) {
+    importance <- coerce_aux_input(importance, vars, "importance", "importance")
+  }
+  if (identical(alloc, "power") && is_null(power)) {
+    power <- 0.5
+  }
 
-  validate_stratify_args(alloc, variance, cost, vars)
+  validate_stratify_args(
+    alloc = alloc,
+    variance = variance,
+    cost = cost,
+    cv = cv,
+    importance = importance,
+    power = power,
+    vars = vars
+  )
 
   if (!is_null(variance)) {
     variance <- variance[, c(vars, "var"), drop = FALSE]
@@ -152,12 +227,21 @@ stratify_by <- function(
   if (!is_null(cost)) {
     cost <- cost[, c(vars, "cost"), drop = FALSE]
   }
+  if (!is_null(cv)) {
+    cv <- cv[, c(vars, "cv"), drop = FALSE]
+  }
+  if (!is_null(importance)) {
+    importance <- importance[, c(vars, "importance"), drop = FALSE]
+  }
 
   strata_spec <- new_stratum_spec(
     vars = vars,
     alloc = alloc,
     variance = variance,
-    cost = cost
+    cost = cost,
+    cv = cv,
+    importance = importance,
+    power = power
   )
 
   current <- .data$current_stage
@@ -181,29 +265,63 @@ validate_stratify_args <- function(
   alloc,
   variance,
   cost,
+  cv,
+  importance,
+  power,
   vars,
   call = rlang::caller_env()
 ) {
-  if (identical(alloc, "neyman") && is_null(variance)) {
-    cli_abort(
-      "Neyman allocation requires {.arg variance} data frame",
-      call = call
+  if (!is_null(alloc)) {
+    switch(alloc,
+      neyman = {
+        if (is_null(variance)) {
+          cli_abort(
+            "Neyman allocation requires {.arg variance} data frame",
+            call = call
+          )
+        }
+      },
+      optimal = {
+        if (is_null(variance)) {
+          cli_abort(
+            "Optimal allocation requires {.arg variance} data frame",
+            call = call
+          )
+        }
+        if (is_null(cost)) {
+          cli_abort(
+            "Optimal allocation requires {.arg cost} data frame",
+            call = call
+          )
+        }
+      },
+      power = {
+        if (is_null(cv)) {
+          cli_abort(
+            "Power allocation requires {.arg cv} data frame or named vector",
+            call = call
+          )
+        }
+        if (is_null(importance)) {
+          cli_abort(
+            "Power allocation requires {.arg importance} data frame or named vector",
+            call = call
+          )
+        }
+        if (!is.numeric(power) || length(power) != 1 || !is_finite_numeric(power)) {
+          cli_abort(
+            "{.arg power} must be a single finite number in [0, 1]",
+            call = call
+          )
+        }
+        if (power < 0 || power > 1) {
+          cli_abort(
+            "{.arg power} must be between 0 and 1",
+            call = call
+          )
+        }
+      }
     )
-  }
-
-  if (identical(alloc, "optimal")) {
-    if (is_null(variance)) {
-      cli_abort(
-        "Optimal allocation requires {.arg variance} data frame",
-        call = call
-      )
-    }
-    if (is_null(cost)) {
-      cli_abort(
-        "Optimal allocation requires {.arg cost} data frame",
-        call = call
-      )
-    }
   }
 
   if (!is_null(variance)) {
@@ -212,6 +330,12 @@ validate_stratify_args <- function(
 
   if (!is_null(cost)) {
     validate_aux_df(cost, vars, "cost", "cost", call = call)
+  }
+  if (!is_null(cv)) {
+    validate_aux_df(cv, vars, "cv", "cv", call = call)
+  }
+  if (!is_null(importance)) {
+    validate_aux_df(importance, vars, "importance", "importance", call = call)
   }
   invisible(NULL)
 }
@@ -225,37 +349,106 @@ validate_aux_df <- function(
   call = rlang::caller_env()
 ) {
   if (!is.data.frame(df)) {
-    cli_abort(
+    abort_samplyr(
       "{.arg {arg_name}} must be a data frame or a named numeric vector",
+      class = "samplyr_error_aux_invalid_input_type",
       call = call
     )
   }
 
   missing_vars <- setdiff(vars, names(df))
   if (length(missing_vars) > 0) {
-    cli_abort(
+    abort_samplyr(
       c(
         "{.arg {arg_name}} is missing stratification variable{?s}:",
         "x" = "{.val {missing_vars}}"
       ),
+      class = "samplyr_error_aux_missing_columns",
       call = call
     )
   }
 
   if (!value_col %in% names(df)) {
-    cli_abort(
+    abort_samplyr(
       "{.arg {arg_name}} must contain a {.val {value_col}} column",
+      class = "samplyr_error_aux_missing_value_column",
       call = call
     )
   }
 
   key_df <- df[, vars, drop = FALSE]
-  if (anyDuplicated(key_df) > 0) {
-    cli_abort(
-      "{.arg {arg_name}} has duplicate rows for the same stratum",
+  if (anyNA(key_df)) {
+    missing_key_cols <- vars[vapply(key_df, anyNA, logical(1))]
+    abort_samplyr(
+      c(
+        "{.arg {arg_name}} has missing values in stratification keys.",
+        "x" = "Columns with missing values: {.val {missing_key_cols}}"
+      ),
+      class = "samplyr_error_aux_missing_key_values",
       call = call
     )
   }
+
+  dup_keys <- find_duplicate_key_rows(df, vars)
+  if (nrow(dup_keys) > 0) {
+    dup_labels <- format_key_labels(dup_keys, vars)
+    abort_samplyr(
+      c(
+        "{.arg {arg_name}} has duplicate rows for the same stratum.",
+        "x" = "Duplicate keys: {.val {dup_labels}}"
+      ),
+      class = "samplyr_error_aux_duplicate_keys",
+      call = call
+    )
+  }
+
+  values <- df[[value_col]]
+  if (!is_finite_numeric(values)) {
+    abort_samplyr(
+      "{.arg {arg_name}} column {.val {value_col}} must be finite numeric values (no NA/NaN/Inf).",
+      class = "samplyr_error_aux_non_finite_values",
+      call = call
+    )
+  }
+
+  switch(arg_name,
+    variance = {
+      if (any(values < 0)) {
+        abort_samplyr(
+          "{.arg variance} values must be non-negative",
+          class = "samplyr_error_aux_variance_bounds",
+          call = call
+        )
+      }
+    },
+    cost = {
+      if (any(values <= 0)) {
+        abort_samplyr(
+          "{.arg cost} values must be positive",
+          class = "samplyr_error_aux_cost_bounds",
+          call = call
+        )
+      }
+    },
+    cv = {
+      if (any(values <= 0)) {
+        abort_samplyr(
+          "{.arg cv} values must be positive",
+          class = "samplyr_error_aux_cv_bounds",
+          call = call
+        )
+      }
+    },
+    importance = {
+      if (any(values <= 0)) {
+        abort_samplyr(
+          "{.arg importance} values must be positive",
+          class = "samplyr_error_aux_importance_bounds",
+          call = call
+        )
+      }
+    }
+  )
   invisible(NULL)
 }
 
@@ -281,7 +474,8 @@ coerce_aux_input <- function(
       cli_abort(
         c(
           "{.arg {arg_name}} as a named vector is only supported with a single stratification variable.",
-          "i" = "Use a data frame instead."
+          "i" = "Current stratification variables: {.val {vars}}.",
+          "i" = "Use a data frame with columns {.val {c(vars, value_col)}}."
         ),
         call = call
       )
@@ -291,8 +485,22 @@ coerce_aux_input <- function(
     return(df)
   }
 
+  if (is.numeric(x) && is_null(names(x))) {
+    cli_abort(
+      c(
+        "{.arg {arg_name}} must be a data frame or a named numeric vector.",
+        "i" = "For one stratification variable, use names as stratum levels (e.g., {.code c(A = 1, B = 2)}).",
+        "i" = "For multiple stratification variables, use a data frame."
+      ),
+      call = call
+    )
+  }
+
   cli_abort(
-    "{.arg {arg_name}} must be a data frame or a named numeric vector",
+    c(
+      "{.arg {arg_name}} must be a data frame or a named numeric vector.",
+      "i" = "Named vectors are only supported with one stratification variable."
+    ),
     call = call
   )
 }

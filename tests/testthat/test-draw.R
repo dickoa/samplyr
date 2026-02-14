@@ -37,6 +37,29 @@ test_that("draw() rejects both n and frac", {
   )
 })
 
+test_that("draw() rejects frac when allocation method is specified", {
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "proportional") |>
+      draw(frac = 0.1),
+    "cannot be combined"
+  )
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "equal") |>
+      draw(frac = c(A = 0.1, B = 0.2)),
+    "cannot be combined"
+  )
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "proportional") |>
+      draw(frac = data.frame(region = c("A", "B"), frac = c(0.1, 0.2))),
+    "cannot be combined"
+  )
+})
+
 test_that("draw() validates method", {
   # Valid methods
   expect_no_error(sampling_design() |> draw(n = 100, method = "srswor"))
@@ -70,7 +93,9 @@ test_that("draw() with PPS methods requires mos", {
   pps_methods <- c(
     "pps_systematic",
     "pps_brewer",
-    "pps_maxent",
+    "pps_cps",
+    "pps_sps",
+    "pps_pareto",
     "pps_multinomial"
   )
 
@@ -93,14 +118,14 @@ test_that("draw() with pps_poisson requires frac", {
   )
 })
 
-test_that("draw() with pps_maxent requires n", {
+test_that("draw() with pps_cps requires n", {
   expect_error(
-    sampling_design() |> draw(frac = 0.1, method = "pps_maxent", mos = size),
+    sampling_design() |> draw(frac = 0.1, method = "pps_cps", mos = size),
     "n.*not.*frac"
   )
 
   expect_no_error(
-    sampling_design() |> draw(n = 50, method = "pps_maxent", mos = size)
+    sampling_design() |> draw(n = 50, method = "pps_cps", mos = size)
   )
 })
 
@@ -123,6 +148,18 @@ test_that("draw() validates n is integer", {
   )
 })
 
+test_that("draw() rejects non-finite n values", {
+  expect_error(
+    sampling_design() |> draw(n = NA_real_),
+    "NA, NaN, or Inf"
+  )
+
+  expect_error(
+    sampling_design() |> draw(n = Inf),
+    "NA, NaN, or Inf"
+  )
+})
+
 test_that("draw() validates frac is positive", {
   expect_error(
     sampling_design() |> draw(frac = 0),
@@ -139,6 +176,18 @@ test_that("draw() validates frac <= 1 for WOR methods", {
   expect_error(
     sampling_design() |> draw(frac = 1.5, method = "srswor"),
     "cannot exceed 1"
+  )
+})
+
+test_that("draw() rejects non-finite frac values", {
+  expect_error(
+    sampling_design() |> draw(frac = NA_real_),
+    "NA, NaN, or Inf"
+  )
+
+  expect_error(
+    sampling_design() |> draw(frac = Inf),
+    "NA, NaN, or Inf"
   )
 })
 
@@ -207,6 +256,38 @@ test_that("draw() validates data frame has required columns", {
       stratify_by(region) |>
       draw(n = sizes_df),
     "n"
+  )
+})
+
+test_that("draw() validates custom n data frame values", {
+  expect_error(
+    sampling_design() |>
+      stratify_by(region) |>
+      draw(n = data.frame(region = c("A", "B"), n = c(1, NA_real_))),
+    "finite numbers"
+  )
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region) |>
+      draw(n = data.frame(region = c("A", "B"), n = c(1.5, 2))),
+    "integer-valued"
+  )
+})
+
+test_that("draw() validates custom frac data frame values", {
+  expect_error(
+    sampling_design() |>
+      stratify_by(region) |>
+      draw(frac = data.frame(region = c("A", "B"), frac = c(NA_real_, 0.3))),
+    "finite numbers"
+  )
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region) |>
+      draw(frac = data.frame(region = c("A", "B"), frac = c(1.2, 0.3))),
+    "cannot exceed 1"
   )
 })
 

@@ -4,14 +4,22 @@
 \alias{stratify_by}
 \title{Define Stratification}
 \usage{
-stratify_by(.data, ..., alloc = NULL, variance = NULL, cost = NULL)
+stratify_by(
+  .data,
+  ...,
+  alloc = NULL,
+  variance = NULL,
+  cost = NULL,
+  cv = NULL,
+  importance = NULL,
+  power = NULL
+)
 }
 \arguments{
 \item{.data}{A \code{sampling_design} object (piped from \code{\link[=sampling_design]{sampling_design()}} or
 \code{\link[=add_stage]{add_stage()}}).}
 
-\item{...}{<\code{\link[dplyr:dplyr_tidy_select]{tidy-select}}> Stratification
-variables. These should be categorical variables that define the strata.}
+\item{...}{Stratification variables specified as bare column names.}
 
 \item{alloc}{Character string specifying the allocation method. One of:
 \itemize{
@@ -20,17 +28,35 @@ variables. These should be categorical variables that define the strata.}
 \item \code{"proportional"}: Proportional to stratum size
 \item \code{"neyman"}: Neyman optimal allocation (requires \code{variance})
 \item \code{"optimal"}: Cost-variance optimal allocation (requires \code{variance} and \code{cost})
+\item \code{"power"}: Power allocation (requires \code{cv} and \code{importance})
 }}
 
 \item{variance}{Stratum variances for Neyman or optimal allocation.
 Either a data frame with columns for all stratification variables plus
 a \code{var} column, or a named numeric vector (when using a single
-stratification variable) where names correspond to stratum levels.}
+stratification variable) where names correspond to stratum levels.
+For named vectors, names must match the values in the stratification
+column (for example \code{c(A = 1.2, B = 0.8)}).}
 
 \item{cost}{Stratum costs for optimal allocation.
 Either a data frame with columns for all stratification variables plus
 a \code{cost} column, or a named numeric vector (when using a single
-stratification variable) where names correspond to stratum levels.}
+stratification variable) where names correspond to stratum levels.
+For named vectors, names must match the values in the stratification
+column.}
+
+\item{cv}{Stratum coefficients of variation (\eqn{C_h}) for power allocation.
+Either a data frame with stratification columns plus a \code{cv} column, or
+a named numeric vector for a single stratification variable (names are
+stratum levels).}
+
+\item{importance}{Stratum importance measure (\eqn{X_h}) for power allocation.
+Either a data frame with stratification columns plus an \code{importance}
+column, or a named numeric vector for a single stratification variable
+(names are stratum levels).}
+
+\item{power}{Power exponent \eqn{q} for power allocation.
+Must satisfy \eqn{0 \le q \le 1}. Defaults to \code{0.5}.}
 }
 \value{
 A modified \code{sampling_design} object with stratification specified.
@@ -73,11 +99,27 @@ Each stratum receives:
 where C_h is the per-unit cost in stratum h.
 }
 
+\subsection{Power Allocation}{
+
+Power allocation (Bankier, 1988) is a compromise allocation:
+\eqn{n_h \propto C_h \times X_h^q}, where \eqn{C_h} is stratum CV, \eqn{X_h}
+is a stratum importance measure, and \eqn{q \in [0, 1]}.
+}
+
 \subsection{Custom Allocation}{
 
 For custom stratum-specific sample sizes or rates, pass a data frame
 directly to the \code{n} or \code{frac} argument in \code{\link[=draw]{draw()}}. The data frame must
 contain columns for all stratification variables plus an \code{n} or \code{frac} column.
+}
+
+\subsection{Auxiliary Input Formats (\code{variance}, \code{cost}, \code{cv}, \code{importance})}{
+\itemize{
+\item With \strong{one} stratification variable, you may use a named vector
+(e.g., \code{variance = c(A = 1.2, B = 0.8)}).
+\item With \strong{multiple} stratification variables, you must use a data frame
+containing all stratification columns plus the value column.
+}
 }
 
 }
@@ -118,10 +160,27 @@ sampling_design() |>
   draw(n = 200) |>
   execute(niger_eas, seed = 1)
 
+# Power allocation (Bankier, 1988)
+sampling_design() |>
+  stratify_by(
+    region,
+    alloc = "power",
+    cv = data.frame(
+      region = levels(niger_eas$region),
+      cv = c(0.40, 0.35, 0.20, 0.18, 0.10, 0.22, 0.25, 0.30)
+    ),
+    importance = data.frame(
+      region = levels(niger_eas$region),
+      importance = c(20, 25, 60, 80, 120, 70, 65, 90)
+    ),
+    power = 0.5
+  ) |>
+  draw(n = 200) |>
+  execute(niger_eas, seed = 7)
+
 # Custom sample sizes per stratum using a data frame
 custom_sizes <- data.frame(
-  region = c("Agadez", "Diffa", "Dosso", "Maradi",
-             "Niamey", "Tahoua", "Tillab\u00e9ri", "Zinder"),
+  region = levels(niger_eas$region),
   n = c(15, 20, 30, 35, 25, 30, 25, 20)
 )
 sampling_design() |>

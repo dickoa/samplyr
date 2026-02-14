@@ -14,7 +14,7 @@ knitr::opts_chunk$set(
 )
 ```
 
-```{r setup, message = FALSE}
+```{r setup, message = FALSE, echo = FALSE}
 library(samplyr)
 library(dplyr)
 library(survey)
@@ -24,11 +24,19 @@ library(survey)
 
 After drawing a sample with samplyr, you typically need to analyze it. This vignette covers the tools samplyr provides for inspecting samples and integrating with the `survey` package for design-based inference.
 
+Design objects store deferred column references (bare column names in
+`stratify_by()` / `cluster_by()`), which are resolved against the frame when
+you validate or execute the design.
+
 ## Sample Summary
 
 `summary()` gives a concise overview of a sample: the design specification, execution details, stratum allocation table, and weight diagnostics.
 
 ```{r}
+library(samplyr)
+library(dplyr)
+library(survey)
+
 data(kenya_health)
 
 sample <- sampling_design() |>
@@ -43,12 +51,12 @@ The allocation table shows the population size ($N_h$), sample size ($n_h$), and
 
 ## Exporting to the survey Package
 
-`as_survey_design()` converts a `tbl_sample` into a `survey::svydesign()` object. It automatically maps strata, clusters, weights, and finite population corrections from the sampling metadata.
+`as_svydesign()` converts a `tbl_sample` into a `survey::svydesign()` object. It automatically maps strata, clusters, weights, and finite population corrections from the sampling metadata.
 
 ### Stratified design
 
 ```{r}
-svy <- as_survey_design(sample)
+svy <- as_svydesign(sample)
 svy
 
 svymean(~staff_count, svy)
@@ -57,7 +65,7 @@ svytotal(~outpatient_visits, svy)
 
 ### Cluster design with PPS
 
-For PPS without-replacement designs, `as_survey_design()` uses Brewer's variance approximation by default.
+For PPS without-replacement designs, `as_svydesign()` uses Brewer's variance approximation by default.
 
 ```{r}
 data(niger_eas)
@@ -67,7 +75,7 @@ cluster_sample <- sampling_design() |>
   draw(n = 50, method = "pps_brewer", mos = hh_count) |>
   execute(niger_eas, seed = 2)
 
-svy_cluster <- as_survey_design(cluster_sample)
+svy_cluster <- as_svydesign(cluster_sample)
 svymean(~hh_count, svy_cluster)
 ```
 
@@ -90,15 +98,39 @@ ms_sample <- sampling_design() |>
     draw(n = 3) |>
   execute(schools_frame, seed = 3)
 
-svy_ms <- as_survey_design(ms_sample)
+svy_ms <- as_svydesign(ms_sample)
 svymean(~enrollment, svy_ms)
 ```
 
-## Exact Variance with Joint Inclusion Probabilities
+## Replicate-Weight Export
 
-The Brewer approximation works well in practice, but if you need exact variance estimates, `joint_inclusion_prob()` computes the joint inclusion probabilities (pi_kl) for PPS without-replacement stages.
+For replicate-based variance estimation (jackknife/BRR/bootstrap), use
+`as_svrepdesign()`. This converts a `tbl_sample` to `svydesign`, then to
+`svyrep.design` using `survey::as.svrepdesign()`.
 
-It replays the design specification against the original frame, computing probabilities per stratum and assembling a block-diagonal matrix.
+```{r}
+rep_svy <- as_svrepdesign(sample, type = "auto")
+svymean(~staff_count, rep_svy)
+```
+
+You can also export directly to a srvyr replicate design:
+
+```{r}
+library(srvyr)
+
+rep_tbl <- as_survey_rep(sample, type = "auto")
+rep_tbl |>
+  summarise(mean_staff = survey_mean(staff_count, vartype = "se"))
+```
+
+Current scope: replicate export supports single-phase non-PPS designs.
+Two-phase and PPS designs should use `as_svydesign()` (linearization).
+
+## Exact Variance with Joint Expectations
+
+The Brewer approximation works well in practice, but if you need exact second-order quantities, `joint_expectation()` computes them for all PPS stages. For WOR stages, this produces joint inclusion probabilities (pi_kl). For WR/PMR stages (`pps_multinomial`, `pps_chromy`), it produces joint expected hits E(n_k * n_l).
+
+It replays the design specification against the original frame, computing quantities per stratum and assembling a block-diagonal matrix.
 
 ```{r}
 pps_sample <- sampling_design() |>
@@ -111,23 +143,25 @@ pps_sample <- sampling_design() |>
   execute(niger_eas, seed = 2025)
 
 # Compute joint probabilities for stage 1
-jip <- joint_inclusion_prob(pps_sample, niger_eas, stage = 1)
+jip <- joint_expectation(pps_sample, niger_eas, stage = 1)
 
-# Use with survey for exact variance
-svy_exact <- as_survey_design(pps_sample, pps = ppsmat(jip[[1]]))
+# Use with survey for exact variance (WOR stages)
+svy_exact <- as_svydesign(pps_sample, pps = ppsmat(jip[[1]]))
 svymean(~hh_count, svy_exact)
 ```
 
-The supported methods and their corresponding sondage functions:
+The supported methods and their corresponding sondage dispatch:
 
-| samplyr method     | sondage function           |
-|--------------------|----------------------------|
-| `pps_brewer`       | `up_brewer_jip(pik)`       |
-| `pps_systematic`   | `up_systematic_jip(pik)`   |
-| `pps_maxent`       | `up_maxent_jip(pik)`       |
-| `pps_poisson`      | `up_poisson_jip(pik)`      |
-
-`pps_chromy` and `pps_multinomial` are excluded. Chromy's PMR method uses the Hansen-Hurwitz (with-replacement) approximation for variance, which is the default in `as_survey_design()`.
+| samplyr method     | sondage function               | Returns                |
+|--------------------|--------------------------------|------------------------|
+| `pps_brewer`       | `joint_inclusion_prob(design)` | pi_kl                  |
+| `pps_systematic`   | `joint_inclusion_prob(design)` | pi_kl                  |
+| `pps_cps`          | `joint_inclusion_prob(design)` | pi_kl                  |
+| `pps_poisson`      | `joint_inclusion_prob(design)` | pi_kl                  |
+| `pps_sps`          | `joint_inclusion_prob(design)` | pi_kl                  |
+| `pps_pareto`       | `joint_inclusion_prob(design)` | pi_kl                  |
+| `pps_multinomial`  | `joint_expected_hits(design)`  | E(n_k * n_l)           |
+| `pps_chromy`       | `joint_expected_hits(design)`  | E(n_k * n_l)           |
 
 ## End-to-End Workflow
 
@@ -149,7 +183,7 @@ sample <- execute(design, kenya_health, seed = 2026)
 summary(sample)
 
 # 5. Export and analyze
-svy <- as_survey_design(sample)
+svy <- as_svydesign(sample)
 svymean(~staff_count, svy)
 confint(svymean(~staff_count, svy))
 ```

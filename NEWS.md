@@ -2,6 +2,12 @@
 
 Initial CRAN release.
 
+## Fixes
+
+* `draw()` now rejects `frac` when `stratify_by()` uses an allocation method
+  (`equal`, `proportional`, `neyman`, `optimal`), with a classed error
+  (`samplyr_error_alloc_frac_with_alloc`).
+
 ## Core Grammar
 
 * Five verbs + one modifier for composable survey sampling designs:
@@ -31,8 +37,15 @@ Initial CRAN release.
 
 ## Survey Integration
 
-* `as_survey_design()` converts `tbl_sample` objects to
+* `as_svydesign()` converts `tbl_sample` objects to
   `survey::svydesign()` for variance estimation and analysis.
+* `as_svrepdesign()` converts `tbl_sample` objects to
+  `survey::svyrep.design` via `survey::as.svrepdesign()` for
+  replicate-weight variance estimation (single-phase non-PPS designs).
+* `as_survey_design()` method registered on `srvyr::as_survey_design()`
+  converts `tbl_sample` objects directly to srvyr `tbl_svy` objects.
+* `as_survey_rep()` method registered on `srvyr::as_survey_rep()`
+  converts `tbl_sample` objects directly to srvyr replicate `tbl_svy`.
 * `joint_inclusion_prob()` computes exact joint inclusion probabilities
   (π_kl) for PPS WOR stages via `sondage::up_*_jip()`.
 * `summary.tbl_sample()` provides per-stage stratum allocation tables

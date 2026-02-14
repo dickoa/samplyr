@@ -116,6 +116,18 @@ test_that("summary.tbl_sample shows stratum allocation table", {
   expect_true(any(grepl("Total", output)))
 })
 
+test_that("summary.tbl_sample works for niger_eas regional stratification", {
+  sample <- sampling_design() |>
+    stratify_by(region, alloc = "proportional") |>
+    draw(n = 200) |>
+    execute(niger_eas, seed = 11)
+
+  output <- capture.output(summary(sample))
+  expect_true(any(grepl("Allocation", output)))
+  expect_true(any(grepl("region", output)))
+  expect_true(any(grepl("Total", output)))
+})
+
 test_that("summary.tbl_sample works for unstratified design", {
   sample <- sampling_design() |>
     draw(n = 100) |>
@@ -138,7 +150,7 @@ test_that("summary.tbl_sample shows weight diagnostics", {
   expect_true(any(grepl("CV", output)))
 })
 
-test_that("as_survey_design produces valid survey object", {
+test_that("as_svydesign produces valid survey object", {
   skip_if_not_installed("survey")
 
   sample <- sampling_design() |>
@@ -146,11 +158,11 @@ test_that("as_survey_design produces valid survey object", {
     draw(n = 300) |>
     execute(kenya_health, seed = 42)
 
-  svy <- as_survey_design(sample)
+  svy <- as_svydesign(sample)
   expect_s3_class(svy, "survey.design2")
 })
 
-test_that("as_survey_design works for clustered design", {
+test_that("as_svydesign works for clustered design", {
   skip_if_not_installed("survey")
 
   sample <- sampling_design() |>
@@ -158,11 +170,11 @@ test_that("as_survey_design works for clustered design", {
     draw(n = 20) |>
     execute(tanzania_schools, seed = 5)
 
-  svy <- as_survey_design(sample)
+  svy <- as_svydesign(sample)
   expect_s3_class(svy, "survey.design2")
 })
 
-test_that("as_survey_design works for multi-stage design", {
+test_that("as_svydesign works for multi-stage design", {
   skip_if_not_installed("survey")
 
   sample <- sampling_design() |>
@@ -174,24 +186,203 @@ test_that("as_survey_design works for multi-stage design", {
     draw(n = 12) |>
     execute(niger_eas, seed = 2025)
 
-  svy <- as_survey_design(sample)
+  svy <- as_svydesign(sample)
   expect_s3_class(svy, "survey.design2")
 })
 
-test_that("as_survey_design uses Inf FPC for WR methods (no correction)", {
+test_that("as_svrepdesign produces valid replicate survey object", {
+  skip_if_not_installed("survey")
+
+  sample <- sampling_design() |>
+    stratify_by(facility_type, alloc = "proportional") |>
+    draw(n = 300) |>
+    execute(kenya_health, seed = 42)
+
+  rep_svy <- as_svrepdesign(sample, type = "auto")
+  expect_s3_class(rep_svy, "svyrep.design")
+
+  est <- survey::svymean(~staff_count, rep_svy)
+  expect_true(all(is.finite(coef(est))))
+  expect_true(all(is.finite(survey::SE(est))))
+})
+
+test_that("as_svrepdesign works for multi-stage non-PPS design", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    district_id = rep(seq_len(12), each = 40),
+    school_id = rep(seq_len(120), each = 4),
+    student_id = seq_len(480),
+    y = rnorm(480)
+  )
+
+  sample <- sampling_design() |>
+    add_stage(label = "Districts") |>
+    cluster_by(district_id) |>
+    draw(n = 6) |>
+    add_stage(label = "Schools") |>
+    cluster_by(school_id) |>
+    draw(n = 3) |>
+    add_stage(label = "Students") |>
+    draw(n = 2) |>
+    execute(frame, seed = 42)
+
+  expect_warning(
+    rep_svy <- as_svrepdesign(sample, type = "auto"),
+    "Finite population corrections after first stage have been dropped"
+  )
+  expect_s3_class(rep_svy, "svyrep.design")
+})
+
+test_that("as_svrepdesign rejects two-phase samples", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    id = 1:200,
+    region = rep(letters[1:4], each = 50),
+    x = rnorm(200)
+  )
+
+  design <- sampling_design() |>
+    cluster_by(id) |>
+    draw(n = 80)
+
+  phase1 <- execute(design, frame, seed = 1)
+  phase2 <- execute(design, phase1, seed = 2)
+
+  expect_error(
+    as_svrepdesign(phase2),
+    class = "samplyr_error_svrep_twophase_unsupported"
+  )
+})
+
+test_that("as_svrepdesign rejects PPS designs", {
+  skip_if_not_installed("survey")
+
+  sample <- sampling_design() |>
+    draw(n = 20, method = "pps_brewer", mos = hh_count) |>
+    execute(niger_eas, seed = 1)
+
+  expect_error(
+    as_svrepdesign(sample, type = "auto"),
+    class = "samplyr_error_svrep_pps_unsupported"
+  )
+})
+
+test_that("as_survey_rep.tbl_sample returns srvyr replicate object", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("srvyr")
+
+  sample <- sampling_design() |>
+    stratify_by(facility_type, alloc = "proportional") |>
+    draw(n = 300) |>
+    execute(kenya_health, seed = 42)
+
+  rep_tbl <- srvyr::as_survey_rep(sample, type = "auto")
+  expect_s3_class(rep_tbl, "tbl_svy")
+})
+
+test_that("as_svydesign auto-detects twophase and honors method", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    id = 1:200,
+    region = rep(letters[1:4], each = 50),
+    x = rnorm(200)
+  )
+
+  design <- sampling_design() |>
+    cluster_by(id) |>
+    draw(n = 80)
+
+  phase1 <- execute(design, frame, seed = 1)
+  phase1$y <- phase1$x + rnorm(nrow(phase1))
+
+  phase2 <- execute(design, phase1, seed = 2)
+
+  svy_auto <- as_svydesign(phase2)
+  expect_s3_class(svy_auto, c("twophase", "twophase2"))
+
+  svy_simple <- as_svydesign(phase2, method = "simple")
+  expect_s3_class(svy_simple, "twophase")
+})
+
+test_that("as_svydesign twophase default uses full method", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    id = 1:120,
+    region = rep(letters[1:3], each = 40),
+    x = rnorm(120)
+  )
+
+  design <- sampling_design() |>
+    cluster_by(id) |>
+    draw(n = 60)
+
+  phase1 <- execute(design, frame, seed = 1)
+  phase1$y <- phase1$x + rnorm(nrow(phase1))
+
+  phase2 <- execute(design, phase1, seed = 2)
+
+  svy_default <- as_svydesign(phase2)
+  expect_s3_class(svy_default, "twophase2")
+})
+
+test_that("as_svydesign errors for three-phase samples", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    id = 1:150,
+    region = rep(letters[1:3], each = 50),
+    x = rnorm(150)
+  )
+
+  design <- sampling_design() |>
+    cluster_by(id) |>
+    draw(n = 60)
+
+  phase1 <- execute(design, frame, seed = 1)
+  phase1$y <- phase1$x + rnorm(nrow(phase1))
+
+  phase2 <- execute(design, phase1, seed = 2)
+  phase2$z <- phase2$y + rnorm(nrow(phase2))
+
+  phase3 <- execute(design, phase2, seed = 3)
+
+  expect_error(
+    as_svydesign(phase3),
+    "two-phase"
+  )
+})
+
+test_that("as_svydesign rejects method for single-phase samples", {
+  skip_if_not_installed("survey")
+
+  sample <- sampling_design() |>
+    draw(n = 50) |>
+    execute(kenya_health, seed = 1)
+
+  expect_error(
+    as_svydesign(sample, method = "simple"),
+    "only valid when converting a two-phase sample"
+  )
+})
+
+test_that("as_svydesign uses Inf FPC for WR methods (no correction)", {
   skip_if_not_installed("survey")
 
   sample <- sampling_design() |>
     draw(n = 50, method = "srswr") |>
     execute(kenya_health, seed = 1)
 
-  svy <- as_survey_design(sample)
+  svy <- as_svydesign(sample)
   expect_s3_class(svy, "survey.design2")
   # WR design: Inf population size = no finite population correction
   expect_true(all(svy$fpc$popsize == Inf))
 })
 
-test_that("as_survey_design handles mixed WR/WOR with Inf FPC for WR stages", {
+test_that("as_svydesign handles mixed WR/WOR with Inf FPC for WR stages", {
   skip_if_not_installed("survey")
 
   # Two clustered stages: stage 1 WR, stage 2 WOR.
@@ -222,14 +413,14 @@ test_that("as_survey_design handles mixed WR/WOR with Inf FPC for WR stages", {
     draw(n = 2) |>
     execute(frame, seed = 42)
 
-  svy <- as_survey_design(sample)
+  svy <- as_svydesign(sample)
   expect_s3_class(svy, "survey.design2")
 
   # FPC should be present — WR stage uses Inf, WOR stage uses real FPC
   expect_false(is.null(svy$fpc$popsize))
 })
 
-test_that("as_survey_design preserves FPC when all clustered stages are WOR", {
+test_that("as_svydesign preserves FPC when all clustered stages are WOR", {
   skip_if_not_installed("survey")
 
   # Two clustered stages, both WOR. FPC should be present for both.
@@ -259,23 +450,23 @@ test_that("as_survey_design preserves FPC when all clustered stages are WOR", {
     draw(n = 2) |>
     execute(frame, seed = 42)
 
-  svy <- as_survey_design(sample)
+  svy <- as_svydesign(sample)
   expect_s3_class(svy, "survey.design2")
 
   # FPC should be present — both clustered stages are WOR
   expect_false(is.null(svy$fpc$popsize))
 })
 
-test_that("as_survey_design errors without survey package", {
+test_that("as_svydesign errors without survey package", {
   # This test validates the check_installed mechanism
   # It would only fail if survey is not installed, which is the point
   # In practice, the skip_if_not_installed tests above cover the happy path
   expect_true(TRUE) # placeholder
 })
 
-# --- joint_inclusion_prob tests ---
+# --- joint_expectation tests ---
 
-test_that("joint_inclusion_prob returns list of correct length", {
+test_that("joint_expectation returns list of correct length", {
   sample <- sampling_design() |>
     add_stage() |>
     stratify_by(region) |>
@@ -285,7 +476,7 @@ test_that("joint_inclusion_prob returns list of correct length", {
     draw(n = 12) |>
     execute(niger_eas, seed = 2025)
 
-  jip <- joint_inclusion_prob(sample, niger_eas)
+  jip <- joint_expectation(sample, niger_eas)
   expect_type(jip, "list")
   expect_length(jip, 2)
   # Stage 1 is PPS -> matrix; Stage 2 is SRS -> NULL
@@ -293,7 +484,7 @@ test_that("joint_inclusion_prob returns list of correct length", {
   expect_null(jip[[2]])
 })
 
-test_that("joint_inclusion_prob stage argument filters correctly", {
+test_that("joint_expectation stage argument filters correctly", {
   sample <- sampling_design() |>
     add_stage() |>
     stratify_by(region) |>
@@ -303,19 +494,19 @@ test_that("joint_inclusion_prob stage argument filters correctly", {
     draw(n = 12) |>
     execute(niger_eas, seed = 2025)
 
-  jip <- joint_inclusion_prob(sample, niger_eas, stage = 1)
+  jip <- joint_expectation(sample, niger_eas, stage = 1)
   expect_length(jip, 2)
   expect_true(is.matrix(jip[[1]]))
   expect_null(jip[[2]])
 })
 
-test_that("joint_inclusion_prob matrix is square and symmetric", {
+test_that("joint_expectation matrix is square and symmetric", {
   sample <- sampling_design() |>
     cluster_by(ea_id) |>
     draw(n = 10, method = "pps_brewer", mos = hh_count) |>
     execute(niger_eas, seed = 42)
 
-  jip <- joint_inclusion_prob(sample, niger_eas)
+  jip <- joint_expectation(sample, niger_eas)
   mat <- jip[[1]]
 
   expect_true(is.matrix(mat))
@@ -324,12 +515,12 @@ test_that("joint_inclusion_prob matrix is square and symmetric", {
   expect_equal(mat, t(mat), tolerance = 1e-10)
 })
 
-test_that("joint_inclusion_prob diagonal equals marginal pik", {
+test_that("joint_expectation diagonal equals marginal pik", {
   sample <- sampling_design() |>
     draw(n = 20, method = "pps_systematic", mos = hh_count) |>
     execute(niger_eas, seed = 7)
 
-  jip <- joint_inclusion_prob(sample, niger_eas)
+  jip <- joint_expectation(sample, niger_eas)
   mat <- jip[[1]]
 
   # Diagonal should equal 1/weight (marginal inclusion probabilities)
@@ -337,47 +528,58 @@ test_that("joint_inclusion_prob diagonal equals marginal pik", {
   expect_equal(diag(mat), pik_from_weights, tolerance = 1e-6)
 })
 
-test_that("joint_inclusion_prob errors on invalid stage", {
+test_that("joint_expectation errors on invalid stage", {
   sample <- sampling_design() |>
     draw(n = 50) |>
     execute(kenya_health, seed = 1)
 
   expect_error(
-    joint_inclusion_prob(sample, kenya_health, stage = 2),
+    joint_expectation(sample, kenya_health, stage = 2),
     "not executed"
   )
 })
 
-test_that("joint_inclusion_prob returns NULL for non-PPS stages", {
+test_that("joint_expectation requires integer stage values", {
+  sample <- sampling_design() |>
+    draw(n = 20, method = "pps_systematic", mos = hh_count) |>
+    execute(niger_eas, seed = 1)
+
+  expect_error(
+    joint_expectation(sample, niger_eas, stage = 1.5),
+    "integer stage"
+  )
+})
+
+test_that("joint_expectation returns NULL for non-PPS stages", {
   sample <- sampling_design() |>
     draw(n = 50) |>
     execute(kenya_health, seed = 1)
 
-  jip <- joint_inclusion_prob(sample, kenya_health)
+  jip <- joint_expectation(sample, kenya_health)
   expect_null(jip[[1]])
 })
 
-test_that("joint_inclusion_prob works with ppsmat for survey export", {
+test_that("joint_expectation works with ppsmat for survey export", {
   skip_if_not_installed("survey")
 
   sample <- sampling_design() |>
     draw(n = 20, method = "pps_brewer", mos = hh_count) |>
     execute(niger_eas, seed = 42)
 
-  jip <- joint_inclusion_prob(sample, niger_eas)
-  svy <- as_survey_design(sample, pps = survey::ppsmat(jip[[1]]))
+  jip <- joint_expectation(sample, niger_eas)
+  svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
   # ppsmat designs return "pps"/"survey.design", not "survey.design2"
   expect_s3_class(svy, "survey.design")
 })
 
-test_that("joint_inclusion_prob works with proportional allocation", {
+test_that("joint_expectation works with proportional allocation", {
   sample <- sampling_design() |>
     stratify_by(region, alloc = "proportional") |>
     cluster_by(ea_id) |>
     draw(n = 30, method = "pps_brewer", mos = hh_count) |>
     execute(niger_eas, seed = 99)
 
-  jip <- joint_inclusion_prob(sample, niger_eas, stage = 1)
+  jip <- joint_expectation(sample, niger_eas, stage = 1)
   mat <- jip[[1]]
 
   expect_true(is.matrix(mat))
@@ -390,7 +592,7 @@ test_that("joint_inclusion_prob works with proportional allocation", {
   expect_equal(diag(mat), pik_from_weights, tolerance = 1e-6)
 })
 
-test_that("joint_inclusion_prob works with stage vector", {
+test_that("joint_expectation works with stage vector", {
   sample <- sampling_design() |>
     add_stage() |>
     cluster_by(ea_id) |>
@@ -404,14 +606,14 @@ test_that("joint_inclusion_prob works with stage vector", {
     execute(niger_eas, seed = 2025)
 
   # Request both stages via vector
-  jip <- joint_inclusion_prob(sample, niger_eas, stage = c(1, 2))
+  jip <- joint_expectation(sample, niger_eas, stage = c(1, 2))
   expect_length(jip, 2)
   expect_true(is.matrix(jip[[1]]))
   # Stage 2 is SRS — should be NULL
   expect_null(jip[[2]])
 })
 
-test_that("joint_inclusion_prob works with stratified pps_poisson and named frac", {
+test_that("joint_expectation works with stratified pps_poisson and named frac", {
   levels_r <- levels(niger_eas$region)
   frac_vec <- setNames(rep(0.15, length(levels_r)), levels_r)
 
@@ -420,7 +622,7 @@ test_that("joint_inclusion_prob works with stratified pps_poisson and named frac
     draw(frac = frac_vec, method = "pps_poisson", mos = hh_count) |>
     execute(niger_eas, seed = 42)
 
-  jip <- joint_inclusion_prob(sample, niger_eas)
+  jip <- joint_expectation(sample, niger_eas)
   mat <- jip[[1]]
 
   expect_true(is.matrix(mat))
@@ -432,7 +634,30 @@ test_that("joint_inclusion_prob works with stratified pps_poisson and named frac
   expect_equal(diag(mat), pik_from_weights, tolerance = 1e-6)
 })
 
-test_that("joint_inclusion_prob decomposes certainty units correctly", {
+test_that("joint_expectation works with multi-key stratum frac data frame", {
+  frac_df <- niger_eas |>
+    dplyr::distinct(region, strata) |>
+    dplyr::mutate(
+      frac = ifelse(strata == "Urban", 0.18, 0.12)
+    )
+
+  sample <- sampling_design() |>
+    stratify_by(region, strata) |>
+    draw(frac = frac_df, method = "pps_poisson", mos = hh_count) |>
+    execute(niger_eas, seed = 42)
+
+  jip <- joint_expectation(sample, niger_eas)
+  mat <- jip[[1]]
+
+  expect_true(is.matrix(mat))
+  expect_equal(nrow(mat), ncol(mat))
+  expect_equal(mat, t(mat), tolerance = 1e-10)
+
+  pik_from_weights <- 1 / sample$.weight_1
+  expect_equal(sort(diag(mat)), sort(pik_from_weights), tolerance = 1e-6)
+})
+
+test_that("joint_expectation decomposes certainty units correctly", {
   # Create a frame where one unit is very large (certainty selection)
   frame <- data.frame(
     id = paste0("u", 1:10),
@@ -443,7 +668,7 @@ test_that("joint_inclusion_prob decomposes certainty units correctly", {
     draw(n = 5, method = "pps_brewer", mos = size, certainty_size = 1000) |>
     execute(frame, seed = 42)
 
-  jip <- joint_inclusion_prob(sample, frame)
+  jip <- joint_expectation(sample, frame)
   mat <- jip[[1]]
 
   expect_true(is.matrix(mat))
@@ -477,14 +702,14 @@ test_that("joint_inclusion_prob decomposes certainty units correctly", {
   }
 })
 
-test_that("joint_inclusion_prob cross-stratum entries equal pi_i * pi_j", {
+test_that("joint_expectation cross-stratum entries equal pi_i * pi_j", {
   sample <- sampling_design() |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
     execute(niger_eas, seed = 2025)
 
-  jip <- joint_inclusion_prob(sample, niger_eas)
+  jip <- joint_expectation(sample, niger_eas)
   mat <- jip[[1]]
 
   # No zeros: cross-stratum entries should be pi_i * pi_j, not 0
@@ -512,14 +737,14 @@ test_that("joint_inclusion_prob cross-stratum entries equal pi_i * pi_j", {
   }
 })
 
-test_that("joint_inclusion_prob matrix matches sample PSU ordering", {
+test_that("joint_expectation matrix matches sample PSU ordering", {
   sample <- sampling_design() |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
     execute(niger_eas, seed = 2025)
 
-  jip <- joint_inclusion_prob(sample, niger_eas)
+  jip <- joint_expectation(sample, niger_eas)
   mat <- jip[[1]]
 
   # Diagonal should equal 1/weight in the same order as the sample
@@ -529,7 +754,7 @@ test_that("joint_inclusion_prob matrix matches sample PSU ordering", {
   expect_equal(diag(mat), pik_from_weights, tolerance = 1e-6)
 })
 
-test_that("joint_inclusion_prob with ppsmat gives valid SE for stratified PPS", {
+test_that("joint_expectation with ppsmat gives valid SE for stratified PPS", {
   skip_if_not_installed("survey")
 
   sample <- sampling_design() |>
@@ -538,10 +763,10 @@ test_that("joint_inclusion_prob with ppsmat gives valid SE for stratified PPS", 
     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
     execute(niger_eas, seed = 2025)
 
-  jip <- joint_inclusion_prob(sample, niger_eas)
+  jip <- joint_expectation(sample, niger_eas)
 
-  svy_exact <- as_survey_design(sample, pps = survey::ppsmat(jip[[1]]))
-  svy_brewer <- as_survey_design(sample)
+  svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
+  svy_brewer <- as_svydesign(sample)
 
   est_exact <- survey::svymean(~hh_count, svy_exact)
   est_brewer <- survey::svymean(~hh_count, svy_brewer)
@@ -558,14 +783,14 @@ test_that("joint_inclusion_prob with ppsmat gives valid SE for stratified PPS", 
   )
 })
 
-test_that("joint_inclusion_prob with certainty works in stratified design", {
+test_that("joint_expectation with certainty works in stratified design", {
   sample <- sampling_design() |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
     draw(n = 10, method = "pps_brewer", mos = hh_count, certainty_size = 800) |>
     execute(niger_eas, seed = 42)
 
-  jip <- joint_inclusion_prob(sample, niger_eas)
+  jip <- joint_expectation(sample, niger_eas)
   mat <- jip[[1]]
 
   expect_true(is.matrix(mat))
@@ -583,7 +808,7 @@ test_that("joint_inclusion_prob with certainty works in stratified design", {
 # WR Row Replication: Survey Export Tests
 # =============================================================================
 
-test_that("as_survey_design for srswr uses .draw_1 as PSU with Inf FPC", {
+test_that("as_svydesign for srswr uses .draw_1 as PSU with Inf FPC", {
   skip_if_not_installed("survey")
   frame <- data.frame(id = 1:20, y = rnorm(20))
 
@@ -591,7 +816,7 @@ test_that("as_survey_design for srswr uses .draw_1 as PSU with Inf FPC", {
     draw(n = 10, method = "srswr") |>
     execute(frame, seed = 42)
 
-  svy <- as_survey_design(result)
+  svy <- as_svydesign(result)
   expect_s3_class(svy, "survey.design")
 
   # Should have 10 rows (one per draw)
@@ -603,7 +828,7 @@ test_that("as_survey_design for srswr uses .draw_1 as PSU with Inf FPC", {
   expect_true(all(survey::SE(est) > 0))
 })
 
-test_that("as_survey_design for pps_chromy uses .draw_1 with Inf FPC", {
+test_that("as_svydesign for pps_chromy uses .draw_1 with Inf FPC", {
   skip_if_not_installed("survey")
   frame <- data.frame(
     id = 1:10,
@@ -615,7 +840,7 @@ test_that("as_survey_design for pps_chromy uses .draw_1 with Inf FPC", {
     draw(n = 6, method = "pps_chromy", mos = size) |>
     execute(frame, seed = 42)
 
-  svy <- as_survey_design(result)
+  svy <- as_svydesign(result)
   expect_s3_class(svy, "survey.design")
 
   est <- survey::svymean(~y, svy)
@@ -672,7 +897,7 @@ test_that("two-stage WR cluster design produces valid survey design", {
     draw(n = 3) |>
     execute(frame, seed = 42)
 
-  svy <- as_survey_design(result)
+  svy <- as_svydesign(result)
   expect_s3_class(svy, "survey.design")
 
   # Should be able to estimate mean without error
@@ -697,7 +922,7 @@ test_that("PPS WOR with certainty creates separate take-all stratum", {
     draw(n = 5, method = "pps_brewer", mos = size, certainty_size = 1000) |>
     execute(frame, seed = 42)
 
-  svy <- as_survey_design(result)
+  svy <- as_svydesign(result)
   expect_s3_class(svy, "survey.design")
 
   # Should have .cert_stratum in the data
@@ -727,7 +952,7 @@ test_that("PPS WOR with certainty + user strata creates interaction strata", {
     draw(n = 5, method = "pps_brewer", mos = size, certainty_size = 1000) |>
     execute(frame, seed = 42)
 
-  svy <- as_survey_design(result)
+  svy <- as_svydesign(result)
   expect_s3_class(svy, "survey.design")
 
   # Should have both group and .cert_stratum
@@ -751,7 +976,7 @@ test_that("PPS WOR without certainty does not add .cert_stratum", {
     draw(n = 5, method = "pps_brewer", mos = size) |>
     execute(frame, seed = 42)
 
-  svy <- as_survey_design(result)
+  svy <- as_svydesign(result)
   expect_false(".cert_stratum" %in% names(svy$variables))
 })
 
@@ -767,7 +992,7 @@ test_that("certainty stratum gives lower df than without separation", {
     draw(n = 5, method = "pps_brewer", mos = size, certainty_size = 1000) |>
     execute(frame, seed = 42)
 
-  svy_with_cert <- as_survey_design(result)
+  svy_with_cert <- as_svydesign(result)
   df_with <- survey::degf(svy_with_cert)
 
   n_cert <- sum(result$.certainty_1)
@@ -778,4 +1003,131 @@ test_that("certainty stratum gives lower df than without separation", {
   # Difference = 1 (one fewer df due to stratum split)
   expect_equal(df_with, (n_cert - 1) + (n_prob - 1))
   expect_true(df_with < nrow(result) - 1)
+})
+
+test_that("as_svydesign works with pps_sps", {
+  skip_if_not_installed("survey")
+
+  sample <- sampling_design() |>
+    draw(n = 20, method = "pps_sps", mos = hh_count) |>
+    execute(niger_eas, seed = 42)
+
+  svy <- as_svydesign(sample)
+  expect_s3_class(svy, "survey.design")
+})
+
+test_that("as_svydesign works with pps_pareto", {
+  skip_if_not_installed("survey")
+
+  sample <- sampling_design() |>
+    draw(n = 20, method = "pps_pareto", mos = hh_count) |>
+    execute(niger_eas, seed = 42)
+
+  svy <- as_svydesign(sample)
+  expect_s3_class(svy, "survey.design")
+})
+
+test_that("joint_expectation works with pps_sps", {
+  sample <- sampling_design() |>
+    draw(n = 20, method = "pps_sps", mos = hh_count) |>
+    execute(niger_eas, seed = 42)
+
+  jip <- joint_expectation(sample, niger_eas)
+  jip_mat <- jip[[1]]
+
+  expect_true(is.matrix(jip_mat))
+  expect_equal(nrow(jip_mat), ncol(jip_mat))
+  expect_equal(nrow(jip_mat), nrow(sample))
+})
+
+test_that("joint_expectation works with pps_pareto", {
+  sample <- sampling_design() |>
+    draw(n = 20, method = "pps_pareto", mos = hh_count) |>
+    execute(niger_eas, seed = 42)
+
+  jip <- joint_expectation(sample, niger_eas)
+  jip_mat <- jip[[1]]
+
+  expect_true(is.matrix(jip_mat))
+  expect_equal(nrow(jip_mat), ncol(jip_mat))
+  expect_equal(nrow(jip_mat), nrow(sample))
+})
+
+# --- WR joint expected hits tests ---
+
+test_that("joint_expectation returns matrix for pps_multinomial", {
+  sample <- sampling_design() |>
+    draw(n = 10, method = "pps_multinomial", mos = hh_count) |>
+    execute(niger_eas, seed = 42)
+
+  je <- joint_expectation(sample, niger_eas)
+  mat <- je[[1]]
+
+  expect_true(is.matrix(mat))
+  expect_equal(nrow(mat), ncol(mat))
+  # Symmetric
+  expect_equal(mat, t(mat), tolerance = 1e-10)
+  # Diagonal = expected hits (should match 1/weight since weight = 1/pik)
+  eh_from_weights <- 1 / sample$.weight_1
+  # For WR, each replicated row has pik = expected_hits per draw;
+  # unique units have total expected_hits = sum over draws
+  unique_units <- as.data.frame(sample) |>
+    dplyr::distinct(across(-c(.draw_1, .sample_id)), .keep_all = TRUE)
+  # Just check the matrix dimensions match unique units
+  n_unique <- dplyr::n_distinct(sample$ea_id)
+  expect_equal(nrow(mat), n_unique)
+})
+
+test_that("joint_expectation returns matrix for pps_chromy", {
+  sample <- sampling_design() |>
+    draw(n = 10, method = "pps_chromy", mos = hh_count) |>
+    execute(niger_eas, seed = 42)
+
+  je <- joint_expectation(sample, niger_eas)
+  mat <- je[[1]]
+
+  expect_true(is.matrix(mat))
+  expect_equal(nrow(mat), ncol(mat))
+  # Symmetric
+  expect_equal(mat, t(mat), tolerance = 1e-10)
+  # Dimensions match unique sampled units
+  n_unique <- dplyr::n_distinct(sample$ea_id)
+  expect_equal(nrow(mat), n_unique)
+})
+
+test_that("joint_expectation for pps_multinomial diagonal matches expected hits", {
+  frame <- data.frame(
+    id = 1:20,
+    size = c(50, 40, 30, rep(10, 17))
+  )
+
+  sample <- sampling_design() |>
+    draw(n = 5, method = "pps_multinomial", mos = size) |>
+    execute(frame, seed = 42)
+
+  je <- joint_expectation(sample, frame)
+  mat <- je[[1]]
+
+  # Reconstruct expected hits from the frame
+  mos_vals <- frame$size
+  eh <- sondage::expected_hits(mos_vals, 5)
+
+  # Diagonal of the joint matrix should equal expected hits
+  # for the units that were sampled (in sample order)
+  unique_ids <- unique(sample$id)
+  expect_equal(diag(mat), eh[unique_ids], tolerance = 1e-10)
+})
+
+test_that("joint_expectation for stratified pps_multinomial works", {
+  sample <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 5, method = "pps_multinomial", mos = hh_count) |>
+    execute(niger_eas, seed = 42)
+
+  je <- joint_expectation(sample, niger_eas)
+  mat <- je[[1]]
+
+  expect_true(is.matrix(mat))
+  expect_equal(nrow(mat), ncol(mat))
+  expect_equal(mat, t(mat), tolerance = 1e-10)
 })

@@ -35,7 +35,7 @@
 #' summary(sample)
 #'
 #' @seealso [tbl_sum.tbl_sample()] for the compact print method,
-#'   [as_survey_design()] for exporting to the survey package
+#'   [as_svydesign()] for exporting to the survey package
 #'
 #' @export
 summary.tbl_sample <- function(object, ...) {

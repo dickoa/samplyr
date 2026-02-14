@@ -1,0 +1,61 @@
+url: https://dickoa.gitlab.io/samplyr
+template:
+  bootstrap: 5
+
+reference:
+  - title: "Design Specification"
+    desc: "Build a sampling design step by step."
+    contents:
+      - sampling_design
+      - stratify_by
+      - cluster_by
+      - draw
+      - add_stage
+
+  - title: "Execution"
+    desc: "Execute designs and validate frames."
+    contents:
+      - execute
+      - validate_frame
+      - frame_validation
+
+  - title: "Survey Export"
+    desc: "Convert samples to survey/srvyr objects for analysis."
+    contents:
+      - as_svydesign
+      - as_svrepdesign
+      - as_survey_design.tbl_sample
+      - as_survey_rep.tbl_sample
+
+  - title: "Diagnostics"
+    desc: "Summarise and inspect sampling results."
+    contents:
+      - summary.tbl_sample
+      - joint_expectation
+      - effective_n
+      - design_effect
+
+  - title: "Helpers"
+    desc: "Sorting, class checks, and serialization."
+    contents:
+      - serp
+      - is_sampling_design
+      - is_tbl_sample
+      - get_design
+      - get_stages_executed
+      - as.list.sampling_design
+      - print.samplyr
+      - "`[.tbl_sample`"
+
+  - title: "Datasets"
+    desc: "Synthetic survey frames for examples."
+    contents:
+      - samplyr-datasets
+      - niger_eas
+      - niger_eas_variance
+      - niger_eas_cost
+      - niger_households
+      - uganda_farms
+      - kenya_health
+      - tanzania_schools
+      - nigeria_business

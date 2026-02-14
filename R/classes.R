@@ -97,16 +97,30 @@ is_sampling_stage <- function(x) {
 #' @param alloc Allocation method
 #' @param variance Variance data frame for Neyman/optimal allocation
 #' @param cost Cost data frame for optimal allocation
+#' @param cv Coefficient-of-variation data frame for power allocation
+#' @param importance Importance/size data frame for power allocation
+#' @param power Power exponent for power allocation
 #'
 #' @return A stratum_spec object
 #' @noRd
-new_stratum_spec <- function(vars, alloc = NULL, variance = NULL, cost = NULL) {
+new_stratum_spec <- function(
+  vars,
+  alloc = NULL,
+  variance = NULL,
+  cost = NULL,
+  cv = NULL,
+  importance = NULL,
+  power = NULL
+) {
   structure(
     list(
       vars = vars,
       alloc = alloc,
       variance = variance,
-      cost = cost
+      cost = cost,
+      cv = cv,
+      importance = importance,
+      power = power
     ),
     class = "stratum_spec"
   )
@@ -131,6 +145,7 @@ new_cluster_spec <- function(vars) {
 #' @param frac Sampling fraction
 #' @param method Selection method
 #' @param mos Measure of size variable name
+#' @param prn Permanent random number variable name
 #' @param min_n Minimum sample size per stratum
 #' @param max_n Maximum sample size per stratum
 #' @param round Rounding method
@@ -145,6 +160,7 @@ new_draw_spec <- function(
   frac = NULL,
   method = "srswor",
   mos = NULL,
+  prn = NULL,
   min_n = NULL,
   max_n = NULL,
   round = "up",
@@ -159,6 +175,7 @@ new_draw_spec <- function(
       frac = frac,
       method = method,
       mos = mos,
+      prn = prn,
       min_n = min_n,
       max_n = max_n,
       round = round,

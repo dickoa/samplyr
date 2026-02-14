@@ -90,6 +90,17 @@ test_that("control sorting within stratified sampling works", {
   }
 })
 
+test_that("control sorting allows strata variables", {
+  frame <- test_frame()
+
+  result <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 25, method = "systematic", control = region) |>
+    execute(frame, seed = 42)
+
+  expect_equal(nrow(result), 100) # 4 strata x 25
+})
+
 test_that("control sorting preserves correctness for srswor (order-insensitive)", {
   frame <- test_frame()
 

@@ -93,7 +93,9 @@ test_that("certainty selection works with different PPS WOR methods", {
   methods <- c(
     "pps_systematic",
     "pps_brewer",
-    "pps_maxent"
+    "pps_cps",
+    "pps_sps",
+    "pps_pareto"
   )
 
   for (m in methods) {

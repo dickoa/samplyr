@@ -12,6 +12,7 @@ draw(
   max_n = NULL,
   method = "srswor",
   mos = NULL,
+  prn = NULL,
   round = "up",
   control = NULL,
   certainty_size = NULL,
@@ -67,14 +68,23 @@ with an allocation method is used. Default is \code{NULL} (no maximum).}
 \itemize{
 \item \code{"pps_systematic"}: PPS systematic sampling
 \item \code{"pps_brewer"}: Generalized Brewer (\enc{Tillé}{Tille}) method
-\item \code{"pps_maxent"}: Maximum entropy / conditional Poisson
+\item \code{"pps_cps"}: Conditional Poisson sampling (maximum entropy)
 \item \code{"pps_poisson"}: PPS Poisson sampling (random sample size)
+\item \code{"pps_sps"}: Sequential Poisson sampling (fixed size, supports \code{prn})
+\item \code{"pps_pareto"}: Pareto sampling (fixed size, supports \code{prn})
 \item \code{"pps_multinomial"}: PPS multinomial (with replacement, any hit count)
 \item \code{"pps_chromy"}: Chromy's sequential PPS (minimum replacement)
 }}
 
-\item{mos}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Measure of size
-variable for PPS methods. Required for all \verb{pps_*} methods.}
+\item{mos}{Measure of size variable for PPS methods, specified as a bare
+column name (unquoted). Required for all \verb{pps_*} methods.}
+
+\item{prn}{Permanent random number variable for sample coordination,
+specified as a bare column name (unquoted). Must be a numeric column
+with values in the open interval (0, 1) and no missing values.
+Supported methods: \code{"bernoulli"}, \code{"pps_poisson"}, \code{"pps_sps"},
+\code{"pps_pareto"}. When supplied, the sample is deterministic for a given
+set of PRN values, enabling coordination across survey waves.}
 
 \item{round}{Rounding method when converting \code{frac} to sample sizes.
 One of:
@@ -133,12 +143,20 @@ Mutually exclusive with \code{certainty_size}.
 Equivalent to SAS SURVEYSELECT \verb{CERTSIZE=P=} option.}
 
 \item{on_empty}{Behaviour when a random-size method (\code{bernoulli},
-\code{pps_poisson}) selects zero units. One of:
+\code{pps_poisson}) selects zero units in a stratum or the whole frame.
+One of:
 \itemize{
 \item \code{"warn"} (default): Issue a warning and fall back to SRS of 1 unit.
-\item \code{"error"}: Stop with an error.
+\item \code{"error"}: Stop with an error. Safest for production designs where
+every stratum must be represented with correct weights.
 \item \code{"silent"}: Fall back to SRS of 1 unit without a message.
-}}
+}
+
+\strong{Weight note:} the fallback selects 1 unit via SRS, so the resulting
+weight is \code{N} (the stratum or frame size), not \code{1/frac}. This reflects
+the actual selection mechanism, not the intended Bernoulli/Poisson
+design. Downstream variance estimation treats this unit as an SRS
+draw.}
 }
 \value{
 A modified \code{sampling_design} object with selection parameters specified.
@@ -164,8 +182,10 @@ sampling design must end with \code{draw()}.
    Method \tab Replacement \tab Sample Size \tab Notes \cr
    \code{pps_systematic} \tab Without \tab Fixed \tab Simple, some bias \cr
    \code{pps_brewer} \tab Without \tab Fixed \tab Fast, joint prob > 0 \cr
-   \code{pps_maxent} \tab Without \tab Fixed \tab Highest entropy, joint prob available \cr
+   \code{pps_cps} \tab Without \tab Fixed \tab Highest entropy, joint prob available \cr
    \code{pps_poisson} \tab Without \tab Random \tab PPS analog of Bernoulli \cr
+   \code{pps_sps} \tab Without \tab Fixed \tab Sequential Poisson, supports \code{prn} \cr
+   \code{pps_pareto} \tab Without \tab Fixed \tab Pareto sampling, supports \code{prn} \cr
    \code{pps_multinomial} \tab With \tab Fixed \tab Any hit count, Hansen-Hurwitz \cr
    \code{pps_chromy} \tab Min. repl. \tab Fixed \tab SAS default PPS_SEQ \cr
 }
@@ -182,8 +202,10 @@ sampling design must end with \code{draw()}.
    \code{bernoulli} \tab -- \tab Yes \tab -- \cr
    \code{pps_systematic} \tab Yes \tab or Yes \tab Yes \cr
    \code{pps_brewer} \tab Yes \tab or Yes \tab Yes \cr
-   \code{pps_maxent} \tab Yes \tab -- \tab Yes \cr
+   \code{pps_cps} \tab Yes \tab -- \tab Yes \cr
    \code{pps_poisson} \tab -- \tab Yes \tab Yes \cr
+   \code{pps_sps} \tab Yes \tab or Yes \tab Yes \cr
+   \code{pps_pareto} \tab Yes \tab or Yes \tab Yes \cr
    \code{pps_multinomial} \tab Yes \tab or Yes \tab Yes \cr
    \code{pps_chromy} \tab Yes \tab or Yes \tab Yes \cr
 }
@@ -193,13 +215,17 @@ sampling design must end with \code{draw()}.
 \subsection{Fixed vs Random Sample Size Methods}{
 
 Methods with \strong{fixed sample size} (\code{srswor}, \code{srswr}, \code{systematic}, \code{pps_systematic},
-\code{pps_brewer}, \code{pps_maxent}, \code{pps_multinomial}) accept either \code{n} or \code{frac}. When \code{frac}
+\code{pps_brewer}, \code{pps_cps}, \code{pps_multinomial}) accept either \code{n} or \code{frac}. When \code{frac}
 is provided, the sample size is computed based on the \code{round} parameter (default: ceiling).
 
 Methods with \strong{random sample size} (\code{bernoulli}, \code{pps_poisson}) require \code{frac} only.
 These methods perform independent selection trials for each unit, so the final sample
 size is a random variable, not a fixed count. Specifying \code{n} would be misleading since
 the method cannot guarantee exactly \code{n} selections.
+
+When an allocation method is set in \code{\link[=stratify_by]{stratify_by()}} (\code{equal},
+\code{proportional}, \code{neyman}, \code{optimal}, \code{power}), specify total sample size via \code{n}.
+Combining \code{alloc} with \code{frac} is not supported.
 }
 
 \subsection{Custom Allocation with Data Frames}{
@@ -221,7 +247,7 @@ The output includes a \code{.certainty_k} column (where \code{k} is the stage nu
 indicating which units were certainty selections.
 
 Certainty selection is only available for WOR PPS methods (\code{pps_systematic},
-\code{pps_brewer}, \code{pps_maxent}, \code{pps_poisson}). With-replacement methods
+\code{pps_brewer}, \code{pps_cps}, \code{pps_poisson}). With-replacement methods
 (\code{pps_multinomial}) and PMR methods (\code{pps_chromy}) handle large units
 natively through their hit mechanism.
 

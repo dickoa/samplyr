@@ -7,8 +7,8 @@
 #'
 #' @param .data A `sampling_design` object (piped from [sampling_design()],
 #'   [stratify_by()], or [add_stage()]).
-#' @param ... <[`tidy-select`][dplyr::dplyr_tidy_select]> Clustering variable(s)
-#'   that identify the sampling units. In most cases this is a single variable
+#' @param ... Clustering variable(s) specified as bare column names that
+#'   identify the sampling units. In most cases this is a single variable
 #'   (e.g., school_id, household_id).
 #'
 #' @return A modified `sampling_design` object with clustering specified.
@@ -85,6 +85,19 @@ cluster_by <- function(.data, ...) {
   vars_quo <- enquos(...)
   if (length(vars_quo) == 0) {
     cli_abort("At least one clustering variable must be specified")
+  }
+
+  is_bare_name <- vapply(
+    vars_quo,
+    function(q) is.symbol(quo_get_expr(q)),
+    logical(1)
+  )
+  if (any(!is_bare_name)) {
+    cli_abort(c(
+      "{.fn cluster_by} variables must be bare column names.",
+      "x" = "Tidy-select helpers and expressions are not supported.",
+      "i" = "Example: {.code cluster_by(ea_id)}"
+    ))
   }
 
   vars <- unname(vapply(vars_quo, as_label, character(1)))

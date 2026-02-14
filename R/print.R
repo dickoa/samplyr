@@ -94,6 +94,10 @@ format_draw_spec <- function(draw) {
     parts <- c(parts, paste0("mos = ", draw$mos))
   }
 
+  if (!is_null(draw$prn)) {
+    parts <- c(parts, paste0("prn = ", draw$prn))
+  }
+
   if (!is_null(draw$control)) {
     control_str <- format_control_quos(draw$control)
     parts <- c(parts, paste0("control = ", control_str))

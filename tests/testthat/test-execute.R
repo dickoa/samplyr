@@ -127,6 +127,21 @@ test_that("execute() with seed is reproducible", {
   expect_equal(result1$id, result2$id)
 })
 
+test_that("execute() validates seed is a single integer", {
+  frame <- test_frame()
+  design <- sampling_design() |> draw(n = 100)
+
+  expect_error(
+    execute(design, frame, seed = 1.5),
+    "single integer"
+  )
+
+  expect_error(
+    execute(design, frame, seed = NA_real_),
+    "single integer"
+  )
+})
+
 test_that("execute() without seed gives different results", {
   frame <- test_frame()
   design <- sampling_design() |> draw(n = 100)
@@ -413,6 +428,123 @@ test_that("cluster sampling tracks stage weight", {
 })
 
 # =============================================================================
+# Two-stage cluster_by at both stages
+# =============================================================================
+
+test_that("two-stage with cluster_by at both stages samples within groups", {
+  frame <- test_frame()
+
+  result <- sampling_design() |>
+    add_stage(label = "Schools") |>
+    cluster_by(school_id) |>
+    draw(n = 10) |>
+    add_stage(label = "Students") |>
+    cluster_by(id) |>
+    draw(n = 3) |>
+    execute(frame, seed = 42)
+
+  # 10 schools * 3 students = 30
+
+  expect_equal(nrow(result), 30)
+  expect_equal(length(unique(result$school_id)), 10)
+
+  # Each school should have exactly 3 students
+  students_per_school <- table(result$school_id)
+  expect_true(all(students_per_school == 3))
+})
+
+test_that("two-stage cluster_by at both stages matches omitting cluster_by at stage 2", {
+  frame <- test_frame()
+
+  result_with <- sampling_design() |>
+    add_stage(label = "Schools") |>
+    cluster_by(school_id) |>
+    draw(n = 10) |>
+    add_stage(label = "Students") |>
+    cluster_by(id) |>
+    draw(n = 3) |>
+    execute(frame, seed = 42)
+
+  result_without <- sampling_design() |>
+    add_stage(label = "Schools") |>
+    cluster_by(school_id) |>
+    draw(n = 10) |>
+    add_stage(label = "Students") |>
+    draw(n = 3) |>
+    execute(frame, seed = 42)
+
+  # Both should produce the same number of rows
+  expect_equal(nrow(result_with), nrow(result_without))
+
+  # Both should produce the same schools and same count per school
+  expect_equal(
+    sort(unique(result_with$school_id)),
+    sort(unique(result_without$school_id))
+  )
+  expect_true(all(table(result_with$school_id) == 3))
+  expect_true(all(table(result_without$school_id) == 3))
+})
+
+test_that("two-stage cluster_by at both stages has correct compound weights", {
+  frame <- test_frame()
+
+  result <- sampling_design() |>
+    add_stage(label = "Schools") |>
+    cluster_by(school_id) |>
+    draw(n = 20) |>
+    add_stage(label = "Students") |>
+    cluster_by(id) |>
+    draw(n = 5) |>
+    execute(frame, seed = 42)
+
+  expect_true(".weight_1" %in% names(result))
+  expect_true(".weight_2" %in% names(result))
+  expect_equal(result$.weight, result$.weight_1 * result$.weight_2)
+})
+
+test_that("three-stage with cluster_by at all stages samples correctly", {
+  # Region (4) -> School (25 per region) -> Student (10 per school)
+  set.seed(99)
+  frame <- data.frame(
+    region = rep(c("N", "S", "E", "W"), each = 250),
+    school_id = rep(1:100, each = 10),
+    student_id = 1:1000,
+    score = rnorm(1000)
+  )
+
+  result <- sampling_design() |>
+    add_stage(label = "Regions") |>
+    cluster_by(region) |>
+    draw(n = 2) |>
+    add_stage(label = "Schools") |>
+    cluster_by(school_id) |>
+    draw(n = 3) |>
+    add_stage(label = "Students") |>
+    draw(n = 4) |>
+    execute(frame, seed = 42)
+
+  # 2 regions * 3 schools * 4 students = 24
+  expect_equal(nrow(result), 24)
+  expect_equal(length(unique(result$region)), 2)
+  expect_equal(length(unique(result$school_id)), 6)
+
+  # Each school should have exactly 4 students
+  expect_true(all(table(result$school_id) == 4))
+
+  # Each region should have exactly 3 schools
+  schools_per_region <- tapply(
+    result$school_id, result$region, function(x) length(unique(x))
+  )
+  expect_true(all(schools_per_region == 3))
+
+  # Compound weight = product of all stage weights
+  expect_equal(
+    result$.weight,
+    result$.weight_1 * result$.weight_2 * result$.weight_3
+  )
+})
+
+# =============================================================================
 # Stage contiguity validation
 # =============================================================================
 
@@ -521,6 +653,16 @@ test_that("execute(design) with stages = 0 errors", {
 
   expect_error(
     execute(design, frame, stages = 0, seed = 1),
+    "stages"
+  )
+})
+
+test_that("execute(design) with non-integer stages errors", {
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  expect_error(
+    execute(design, frame, stages = 1.5, seed = 1),
     "stages"
   )
 })
@@ -640,4 +782,233 @@ test_that("execute(design) with stages = c(2, 1) is sorted to c(1, 2) and works"
   result <- execute(design, frame, stages = c(2, 1), seed = 42)
   expect_s3_class(result, "tbl_sample")
   expect_equal(get_stages_executed(result), c(1L, 2L))
+})
+
+# =============================================================================
+# Multiphase Sampling Tests
+# =============================================================================
+
+test_that("two-phase SRS -> SRS: weights compound correctly", {
+  frame <- data.frame(id = 1:1000, x = rnorm(1000))
+
+  phase1 <- sampling_design() |>
+    draw(n = 200) |>
+    execute(frame, seed = 42)
+
+  expect_equal(nrow(phase1), 200)
+  expect_equal(unique(phase1$.weight), 5) # 1000/200
+
+  phase2 <- sampling_design() |>
+    draw(n = 50) |>
+    execute(phase1, seed = 123)
+
+  expect_s3_class(phase2, "tbl_sample")
+  expect_equal(nrow(phase2), 50)
+
+  # w1 * w2 = (1000/200) * (200/50) = 5 * 4 = 20
+  expect_equal(unique(phase2$.weight), 20)
+  expect_equal(sum(phase2$.weight), 1000)
+})
+
+test_that("stratified phase 1 -> SRS phase 2: heterogeneous weights compound", {
+  frame <- data.frame(
+    id = 1:200,
+    region = c(rep("A", 80), rep("B", 120)),
+    x = rnorm(200)
+  )
+
+  phase1 <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 20) |>
+    execute(frame, seed = 42)
+
+  w_A <- unique(phase1$.weight[phase1$region == "A"])
+  w_B <- unique(phase1$.weight[phase1$region == "B"])
+  expect_equal(w_A, 4)  # 80/20
+  expect_equal(w_B, 6)  # 120/20
+
+  phase2 <- sampling_design() |>
+    draw(n = 10) |>
+    execute(phase1, seed = 123)
+
+  expect_equal(nrow(phase2), 10)
+
+  # Phase 2 SRS weight = 40/10 = 4
+  for (i in seq_len(nrow(phase2))) {
+    expected_w <- ifelse(phase2$region[i] == "A", 4 * 4, 6 * 4)
+    expect_equal(phase2$.weight[i], expected_w)
+  }
+
+  expect_equal(sum(phase2$.weight), 200, tolerance = 1)
+})
+
+test_that("phase 1 -> stratified phase 2", {
+  frame <- data.frame(
+    id = 1:500,
+    region = rep(c("A", "B"), each = 250),
+    x = rnorm(500)
+  )
+
+  phase1 <- sampling_design() |>
+    draw(n = 100) |>
+    execute(frame, seed = 42)
+
+  phase2 <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 10) |>
+    execute(phase1, seed = 123)
+
+  expect_equal(nrow(phase2), 20)
+
+  # Phase 1 weight = 500/100 = 5 for all
+  expect_true(all(phase2$.weight >= 5))
+  expect_equal(phase2$.weight, phase2$.weight_1 * 5)
+})
+
+test_that("phase 1 -> multi-stage phase 2: three-level compounding", {
+  frame <- data.frame(
+    cluster_id = rep(1:20, each = 50),
+    id = 1:1000,
+    x = rnorm(1000)
+  )
+
+  # Cluster phase 1 selects 10 of 20 clusters (all units within selected clusters)
+  phase1 <- sampling_design() |>
+    cluster_by(cluster_id) |>
+    draw(n = 10) |>
+    execute(frame, seed = 42)
+
+  expect_equal(nrow(phase1), 500)
+  phase1_weight <- unique(phase1$.weight)
+  expect_equal(phase1_weight, 2) # 20/10
+
+  # Phase 2: select 5 clusters, then 3 units within each
+  phase2 <- sampling_design() |>
+    add_stage(label = "Clusters") |>
+    cluster_by(cluster_id) |>
+    draw(n = 5) |>
+    add_stage(label = "Units") |>
+    draw(n = 3) |>
+    execute(phase1, seed = 123)
+
+  expect_s3_class(phase2, "tbl_sample")
+  expect_equal(nrow(phase2), 15)
+
+  # Phase 2 stage weights: .weight_1 = 10/5 = 2, .weight_2 = 50/3
+  # Overall: .weight = phase1_weight * .weight_1 * .weight_2
+  expect_equal(
+    phase2$.weight,
+    phase2$.weight_1 * phase2$.weight_2 * phase1_weight
+  )
+  expect_equal(sum(phase2$.weight), 1000, tolerance = 50)
+})
+
+test_that("clustered phase 1 -> phase 2: heterogeneous cluster weights compound", {
+  frame <- data.frame(
+    cluster_id = rep(1:50, each = 20),
+    id = 1:1000,
+    x = rnorm(1000)
+  )
+
+  phase1 <- sampling_design() |>
+    cluster_by(cluster_id) |>
+    draw(n = 10) |>
+    execute(frame, seed = 42)
+
+  expect_equal(unique(phase1$.weight), 5) # 50/10
+
+  phase2 <- sampling_design() |>
+    draw(n = 50) |>
+    execute(phase1, seed = 123)
+
+  expect_equal(nrow(phase2), 50)
+  expect_equal(unique(phase2$.weight), 20) # 5 * (200/50)
+  expect_equal(sum(phase2$.weight), 1000)
+})
+
+test_that("dplyr mutations on phase 1 preserve tbl_sample class for phase 2", {
+  frame <- data.frame(id = 1:200, x = rnorm(200))
+
+  phase1 <- sampling_design() |>
+    draw(n = 50) |>
+    execute(frame, seed = 42)
+
+  phase1_updated <- phase1 |>
+    dplyr::mutate(screening_score = rnorm(50))
+
+  expect_s3_class(phase1_updated, "tbl_sample")
+
+  phase2 <- sampling_design() |>
+    draw(n = 20) |>
+    execute(phase1_updated, seed = 123)
+
+  expect_s3_class(phase2, "tbl_sample")
+  expect_equal(nrow(phase2), 20)
+  expect_true("screening_score" %in% names(phase2))
+
+  # 200/50 = 4, 50/20 = 2.5, compound = 10
+  expect_equal(unique(phase2$.weight), 10)
+})
+
+test_that("internal columns from phase 1 do not collide with phase 2", {
+  frame <- data.frame(id = 1:200, x = rnorm(200))
+
+  phase1 <- sampling_design() |>
+    draw(n = 50) |>
+    execute(frame, seed = 42)
+
+  expect_true(".weight_1" %in% names(phase1))
+  expect_true(".fpc_1" %in% names(phase1))
+
+  phase2 <- sampling_design() |>
+    draw(n = 20) |>
+    execute(phase1, seed = 123)
+
+  # No duplicate suffixed columns (.weight_1.x / .weight_1.y)
+  expect_equal(sum(grepl("^\\.weight_1", names(phase2))), 1)
+  expect_equal(sum(grepl("^\\.fpc_1", names(phase2))), 1)
+})
+
+test_that("as.data.frame on phase 1 disables multiphase compounding", {
+  frame <- data.frame(id = 1:200, x = rnorm(200))
+
+  phase1 <- sampling_design() |>
+    draw(n = 50) |>
+    execute(frame, seed = 42)
+
+  phase1_plain <- as.data.frame(phase1)
+  expect_false(is_tbl_sample(phase1_plain))
+
+  phase2 <- sampling_design() |>
+    draw(n = 20) |>
+    execute(phase1_plain, seed = 123)
+
+  # No compounding — just phase 2 weight (50/20 = 2.5)
+  expect_equal(unique(phase2$.weight), 2.5)
+})
+
+test_that("phase 2 metadata records previous phase info", {
+  frame <- data.frame(id = 1:200, x = rnorm(200))
+
+  phase1 <- sampling_design() |>
+    draw(n = 50) |>
+    execute(frame, seed = 42)
+
+  phase2 <- sampling_design() |>
+    draw(n = 20) |>
+    execute(phase1, seed = 123)
+
+  meta <- attr(phase2, "metadata")
+  expect_false(is.null(meta$prev_phase))
+  expect_true(is_sampling_design(meta$prev_phase$design))
+})
+
+test_that("plain data frame as frame does not trigger multiphase", {
+  frame <- data.frame(id = 1:100, x = rnorm(100))
+
+  result <- sampling_design() |>
+    draw(n = 20) |>
+    execute(frame, seed = 42)
+
+  expect_null(attr(result, "metadata")$prev_phase)
 })

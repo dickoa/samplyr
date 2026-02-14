@@ -149,7 +149,7 @@ test_that("PPS maxent method produces valid weights", {
   )
 
   result <- sampling_design() |>
-    draw(n = 3, method = "pps_maxent", mos = size) |>
+    draw(n = 3, method = "pps_cps", mos = size) |>
     execute(frame, seed = 999)
 
   # Weights should be >= 1 (since prob <= 1 for WOR)
@@ -379,4 +379,78 @@ test_that("Stratified PPS Chromy works correctly", {
   # 3 draws from each stratum
   expect_equal(sum(result$stratum == "A"), 3L)
   expect_equal(sum(result$stratum == "B"), 3L)
+})
+
+test_that("PPS SPS method gives correct weights", {
+  frame <- data.frame(
+    id = 1:6,
+    size = c(10, 20, 30, 40, 50, 60) # Total = 210
+  )
+
+  result <- sampling_design() |>
+    draw(n = 3, method = "pps_sps", mos = size) |>
+    execute(frame, seed = 42)
+
+  expect_equal(nrow(result), 3)
+  expect_true(all(result$.weight > 0))
+  expect_true(all(is.finite(result$.weight)))
+
+  # Weights should be inversely proportional to size
+  total_size <- sum(frame$size)
+  n <- 3
+  for (i in seq_len(nrow(result))) {
+    expected_weight <- total_size / (n * result$size[i])
+    expect_equal(result$.weight[i], expected_weight, tolerance = 1e-10)
+  }
+})
+
+test_that("PPS Pareto method gives correct weights", {
+  frame <- data.frame(
+    id = 1:6,
+    size = c(10, 20, 30, 40, 50, 60) # Total = 210
+  )
+
+  result <- sampling_design() |>
+    draw(n = 3, method = "pps_pareto", mos = size) |>
+    execute(frame, seed = 42)
+
+  expect_equal(nrow(result), 3)
+  expect_true(all(result$.weight > 0))
+  expect_true(all(is.finite(result$.weight)))
+
+  # Weights should be inversely proportional to size
+  total_size <- sum(frame$size)
+  n <- 3
+  for (i in seq_len(nrow(result))) {
+    expected_weight <- total_size / (n * result$size[i])
+    expect_equal(result$.weight[i], expected_weight, tolerance = 1e-10)
+  }
+})
+
+test_that("Stratified PPS SPS gives correct within-stratum weights", {
+  frame <- data.frame(
+    stratum = rep(c("A", "B"), each = 5),
+    id = 1:10,
+    size = c(10, 20, 30, 40, 50, 100, 200, 300, 400, 500)
+  )
+
+  result <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = 2, method = "pps_sps", mos = size) |>
+    execute(frame, seed = 123)
+
+  expect_equal(nrow(result), 4)
+
+  result_A <- result[result$stratum == "A", ]
+  result_B <- result[result$stratum == "B", ]
+
+  for (i in seq_len(nrow(result_A))) {
+    expected_weight <- 150 / (2 * result_A$size[i])
+    expect_equal(result_A$.weight[i], expected_weight, tolerance = 1e-10)
+  }
+
+  for (i in seq_len(nrow(result_B))) {
+    expected_weight <- 1500 / (2 * result_B$size[i])
+    expect_equal(result_B$.weight[i], expected_weight, tolerance = 1e-10)
+  }
 })

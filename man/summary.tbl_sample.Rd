@@ -47,5 +47,5 @@ summary(sample)
 }
 \seealso{
 \code{\link[=tbl_sum.tbl_sample]{tbl_sum.tbl_sample()}} for the compact print method,
-\code{\link[=as_survey_design]{as_survey_design()}} for exporting to the survey package
+\code{\link[=as_svydesign]{as_svydesign()}} for exporting to the survey package
 }

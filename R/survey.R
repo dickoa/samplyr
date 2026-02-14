@@ -12,6 +12,9 @@
 #' @param nest If `TRUE`, relabel cluster ids to enforce nesting within
 #'   strata. Passed to [survey::svydesign()]. Default is `TRUE`, which
 #'   is appropriate for most complex survey designs.
+#' @param method For two-phase samples, the variance method passed to
+#'   [survey::twophase()]. One of `"full"`, `"approx"`, or `"simple"`.
+#'   This argument is ignored for single-phase samples.
 #'
 #' @return A `survey.design2` object from the survey package.
 #'
@@ -28,7 +31,7 @@
 #'
 #' ## Multi-stage designs
 #'
-#' For multi-stage designs, `as_survey_design()` maps each stage's
+#' For multi-stage designs, `as_svydesign()` maps each stage's
 #' cluster variable to a level of the `ids` formula and provides
 #' per-stage finite population corrections. Strata are exported from
 #' the first stage only, which is consistent with the standard
@@ -43,7 +46,7 @@
 #' ## Variance estimation for PPS designs
 #'
 #' For stages using PPS without replacement methods (`pps_brewer`,
-#' `pps_systematic`, `pps_maxent`, `pps_poisson`), variance is
+#' `pps_systematic`, `pps_cps`, `pps_poisson`), variance is
 #' estimated by default using Brewer's approximation (`pps = "brewer"`
 #' in survey's terminology), which approximates the joint inclusion
 #' probabilities from the marginal inclusion probabilities. This is
@@ -51,7 +54,7 @@
 #' most PPS designs regardless of the sampling algorithm used.
 #'
 #' For exact variance estimation, you can compute joint inclusion
-#' probabilities using [joint_inclusion_prob()] and pass them via
+#' probabilities using [joint_expectation()] and pass them via
 #' `pps = survey::ppsmat(joint_matrix)`.
 #'
 #' ## Chromy's sequential PPS method (PMR)
@@ -68,7 +71,7 @@
 #' Hansen-Hurwitz (with-replacement) approximation rather than
 #' exact pairwise expectations, which he found "quite variable."
 #' Chauvet (2019) confirmed this in simulation. Accordingly,
-#' `as_survey_design()` treats `pps_chromy` stages like
+#' `as_svydesign()` treats `pps_chromy` stages like
 #' with-replacement stages (no FPC, no pps argument).
 #'
 #' Note that `survey::ppsmat()` is **not** valid for the general
@@ -125,7 +128,7 @@
 #'   draw(n = 300) |>
 #'   execute(kenya_health, seed = 42)
 #'
-#' svy <- as_survey_design(sample)
+#' svy <- as_svydesign(sample)
 #' survey::svymean(~score, svy)
 #'
 #' # Two-stage cluster sample with PPS first stage
@@ -139,35 +142,93 @@
 #'   execute(niger_eas, seed = 2025)
 #'
 #' # Default: Brewer variance approximation
-#' svy <- as_survey_design(sample)
+#' svy <- as_svydesign(sample)
 #'
 #' # Exact: compute joint probabilities from frame (requires sondage)
 #' # pik <- inclusion_probabilities(frame, n = 5, mos = hh_count)
 #' # joint <- sondage::up_brewer_jip(pik)
-#' # svy <- as_survey_design(sample, pps = survey::ppsmat(joint))
+#' # svy <- as_svydesign(sample, pps = survey::ppsmat(joint))
 #' }
 #'
 #' @seealso [execute()] for producing tbl_sample objects,
-#'   [survey::svydesign()] for the underlying function
+#'   [survey::svydesign()] for the underlying function,
+#'   [as_survey_design()] for converting directly to a srvyr `tbl_svy`,
+#'   `as_svrepdesign()` for replicate-weight export
 #'
 #' @export
-as_survey_design <- function(x, ...) {
-  UseMethod("as_survey_design")
+as_svydesign <- function(x, ...) {
+  UseMethod("as_svydesign")
 }
 
-#' @rdname as_survey_design
-#' @export
-as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
-  rlang::check_installed(
-    "survey",
-    reason = "to convert a tbl_sample to a survey design object."
+#' @noRd
+survey_phase_info <- function(sample) {
+  metadata <- attr(sample, "metadata")
+  prev_phase <- metadata$prev_phase
+  has_prev_sample <- is.list(prev_phase) && is_tbl_sample(prev_phase$sample)
+  prev_prev <- if (has_prev_sample) attr(prev_phase$sample, "metadata") else NULL
+  has_three_phase <- has_prev_sample &&
+    is.list(prev_prev) &&
+    !is_null(prev_prev$prev_phase)
+  is_twophase <- has_prev_sample && !has_three_phase
+
+  list(
+    prev_phase = prev_phase,
+    has_prev_sample = has_prev_sample,
+    has_three_phase = has_three_phase,
+    is_twophase = is_twophase
   )
+}
 
-  design <- get_design(x)
-  stages_executed <- get_stages_executed(x)
+#' @noRd
+survey_validate_phase_support <- function(
+  sample,
+  allow_twophase = TRUE,
+  fn_name = "as_svydesign",
+  call = rlang::caller_env()
+) {
+  phase_info <- survey_phase_info(sample)
 
-  df <- as.data.frame(x)
+  if (phase_info$has_three_phase) {
+    abort_samplyr(
+      c(
+        "{.fn {fn_name}} only supports up to two-phase samples.",
+        "i" = "This sample has more than two phases.",
+        "i" = "Convert phases separately or collapse phases before exporting."
+      ),
+      class = "samplyr_error_survey_multiphase_unsupported",
+      call = call
+    )
+  }
 
+  if (!allow_twophase && phase_info$is_twophase) {
+    abort_samplyr(
+      c(
+        "{.fn {fn_name}} does not support two-phase samples.",
+        "i" = "Use {.fn as_svydesign} for two-phase linearization export."
+      ),
+      class = "samplyr_error_svrep_twophase_unsupported",
+      call = call
+    )
+  }
+
+  phase_info
+}
+
+#' @noRd
+survey_stage_methods <- function(sample) {
+  design <- get_design(sample)
+  stages_executed <- get_stages_executed(sample)
+  vapply(
+    stages_executed,
+    function(stage_idx) {
+      design$stages[[stage_idx]]$draw_spec$method
+    },
+    character(1)
+  )
+}
+
+#' @noRd
+survey_id_vars <- function(design, stages_executed, df) {
   id_vars <- character(0)
   for (stage_idx in stages_executed) {
     stage_spec <- design$stages[[stage_idx]]
@@ -180,13 +241,20 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
       id_vars <- c(id_vars, stage_spec$clusters$vars)
     }
   }
+  id_vars
+}
 
-  ids_formula <- if (length(id_vars) == 0) {
+#' @noRd
+survey_ids_formula <- function(id_vars) {
+  if (length(id_vars) == 0) {
     stats::as.formula("~1")
   } else {
     stats::as.formula(paste("~", paste(id_vars, collapse = " + ")))
   }
+}
 
+#' @noRd
+survey_strata_info <- function(df, design, stages_executed) {
   cert_stratum_col <- NULL
   first_stage_idx <- stages_executed[1]
   first_method <- design$stages[[first_stage_idx]]$draw_spec$method
@@ -220,9 +288,15 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
     stats::as.formula(paste("~", paste(strata_vars, collapse = " + ")))
   }
 
-  has_pps_wor <- FALSE
-  fpc_vars <- character(0)
+  list(
+    df = df,
+    formula = strata_formula,
+    vars = strata_vars
+  )
+}
 
+#' @noRd
+survey_id_stage_indices <- function(design, stages_executed, df) {
   id_stage_indices <- integer(0)
   for (stage_idx in stages_executed) {
     stage_spec <- design$stages[[stage_idx]]
@@ -235,6 +309,13 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
       id_stage_indices <- c(id_stage_indices, stage_idx)
     }
   }
+  id_stage_indices
+}
+
+#' @noRd
+survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
+  has_pps_wor <- FALSE
+  fpc_vars <- character(0)
 
   fpc_stage_indices <- if (length(id_stage_indices) == 0) {
     stages_executed[1]
@@ -275,44 +356,439 @@ as_survey_design.tbl_sample <- function(x, ..., nest = TRUE) {
     stats::as.formula(paste("~", paste(fpc_vars, collapse = " + ")))
   }
 
-  dots <- list(...)
-  pps_arg <- if (!is.null(dots$pps)) {
-    dots$pps
-  } else if (has_pps_wor) {
-    "brewer"
-  } else {
-    FALSE
+  list(
+    df = df,
+    formula = fpc_formula,
+    fpc_vars = fpc_vars,
+    has_pps_wor = has_pps_wor
+  )
+}
+
+#' @rdname as_svydesign
+#' @export
+as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
+  rlang::check_installed(
+    "survey",
+    reason = "to convert a tbl_sample to a survey design object."
+  )
+
+  phase_info <- survey_validate_phase_support(
+    x,
+    allow_twophase = TRUE,
+    fn_name = "as_svydesign"
+  )
+  prev_phase <- phase_info$prev_phase
+  is_twophase <- phase_info$is_twophase
+
+  if (is_twophase) {
+    method <- if (is_null(method)) {
+      NULL
+    } else {
+      match.arg(method, c("full", "approx", "simple"))
+    }
+  } else if (!is_null(method)) {
+    cli_abort(
+      "{.arg method} is only valid when converting a two-phase sample."
+    )
   }
 
-  dots$pps <- NULL
+  design <- get_design(x)
+  stages_executed <- get_stages_executed(x)
 
-  result <- do.call(
-    survey::svydesign,
-    c(
-      list(
-        ids = ids_formula,
-        strata = strata_formula,
-        weights = stats::as.formula("~.weight"),
-        fpc = fpc_formula,
-        data = df,
-        nest = nest,
-        pps = pps_arg
-      ),
-      dots
+  df <- as.data.frame(x)
+
+  if (is_twophase) {
+    phase1 <- prev_phase$sample
+    design1 <- prev_phase$design %||% get_design(phase1)
+    stages1 <- prev_phase$stages %||% get_stages_executed(phase1)
+    df1 <- as.data.frame(phase1)
+    df2 <- df
+    design2 <- design
+
+    id_vars1 <- survey_id_vars(design1, stages1, df1)
+    id_vars2 <- survey_id_vars(design2, stages_executed, df2)
+    key_vars <- intersect(id_vars1, id_vars2)
+
+    if (length(key_vars) == 0) {
+      cli_abort(
+        c(
+          "Two-phase conversion requires shared phase identifiers.",
+          "i" = "Define a unique identifier available in both phases (e.g. via {.fn cluster_by})."
+        )
+      )
+    }
+
+    key_df <- df1[, key_vars, drop = FALSE]
+    if (anyDuplicated(key_df) > 0) {
+      cli_abort(
+        c(
+          "Phase 1 identifiers are not unique.",
+          "i" = "Use a unique unit identifier for two-phase conversion."
+        )
+      )
+    }
+
+    ids_formula1 <- survey_ids_formula(id_vars1)
+    ids_formula2 <- survey_ids_formula(id_vars2)
+
+    strata1 <- survey_strata_info(df1, design1, stages1)
+    df1 <- strata1$df
+    strata2 <- survey_strata_info(df2, design2, stages_executed)
+    df2 <- strata2$df
+
+    id_stage1 <- survey_id_stage_indices(design1, stages1, df1)
+    id_stage2 <- survey_id_stage_indices(design2, stages_executed, df2)
+
+    fpc1 <- survey_fpc_info(df1, design1, stages1, id_stage1)
+    df1 <- fpc1$df
+    fpc2 <- survey_fpc_info(df2, design2, stages_executed, id_stage2)
+    df2 <- fpc2$df
+
+    strata2_extra <- setdiff(strata2$vars, names(df1))
+    id_vars2_extra <- setdiff(id_vars2, names(df1))
+
+    fpc2_vars <- fpc2$fpc_vars
+    fpc2_vars_renamed <- if (length(fpc2_vars) > 0) {
+      sub("^\\.fpc_", ".fpc_phase2_", fpc2_vars)
+    } else {
+      character(0)
+    }
+    fpc2_rename_map <- setNames(fpc2_vars_renamed, fpc2_vars)
+
+    phase2_cols_needed <- unique(
+      c(
+        key_vars,
+        id_vars2_extra,
+        strata2_extra,
+        fpc2_vars,
+        setdiff(names(df2), names(df1)),
+        ".weight"
+      )
     )
+    phase2_cols_needed <- intersect(phase2_cols_needed, names(df2))
+
+    df2_join <- df2[, phase2_cols_needed, drop = FALSE]
+    if (".weight" %in% names(df2_join)) {
+      names(df2_join)[names(df2_join) == ".weight"] <- ".weight_phase2"
+    }
+    if (length(fpc2_rename_map) > 0) {
+      idx <- match(names(fpc2_rename_map), names(df2_join))
+      names(df2_join)[idx] <- fpc2_rename_map
+    }
+
+    df_combined <- df1 |>
+      left_join(df2_join, by = key_vars)
+
+    df_combined$.phase2 <- !is.na(df_combined$.weight_phase2)
+    if (!any(df_combined$.phase2)) {
+      cli_abort(
+        c(
+          "Phase 2 rows could not be matched to phase 1 identifiers.",
+          "i" = "Ensure a shared unique identifier is present in both phases."
+        )
+      )
+    }
+    df_combined$.weight_phase2_cond <- ifelse(
+      df_combined$.phase2,
+      df_combined$.weight_phase2 / df_combined$.weight,
+      NA_real_
+    )
+    if (any(!is.finite(df_combined$.weight_phase2_cond[df_combined$.phase2]))) {
+      cli_abort(
+        "Invalid phase 2 conditional weights detected after matching phases."
+      )
+    }
+    df_combined$.prob_1 <- 1 / df_combined$.weight
+    df_combined$.prob_2 <- ifelse(
+      df_combined$.phase2,
+      1 / df_combined$.weight_phase2_cond,
+      NA_real_
+    )
+
+    dots <- list(...)
+    pps_arg <- if (!is_null(dots$pps)) dots$pps else NULL
+    dots$pps <- NULL
+
+    fpc2_formula <- if (length(fpc2_vars_renamed) == 0) {
+      NULL
+    } else {
+      stats::as.formula(paste("~", paste(fpc2_vars_renamed, collapse = " + ")))
+    }
+
+    use_weights <- !is_null(method) && method %in% c("approx", "simple")
+    probs_arg <- if (use_weights) {
+      NULL
+    } else {
+      list(
+        stats::as.formula("~.prob_1"),
+        stats::as.formula("~.prob_2")
+      )
+    }
+    weights_arg <- if (use_weights) {
+      list(
+        stats::as.formula("~.weight"),
+        stats::as.formula("~.weight_phase2_cond")
+      )
+    } else {
+      NULL
+    }
+
+    result <- do.call(
+      survey::twophase,
+      c(
+        list(
+          id = list(ids_formula1, ids_formula2),
+          strata = list(strata1$formula, strata2$formula),
+          probs = probs_arg,
+          weights = weights_arg,
+          fpc = list(fpc1$formula, fpc2_formula),
+          subset = stats::as.formula("~.phase2"),
+          data = df_combined,
+          method = method,
+          pps = pps_arg
+        ),
+        dots
+      )
+    )
+
+    result
+  } else {
+    id_vars <- survey_id_vars(design, stages_executed, df)
+    ids_formula <- survey_ids_formula(id_vars)
+
+    strata <- survey_strata_info(df, design, stages_executed)
+    df <- strata$df
+
+    id_stage_indices <- survey_id_stage_indices(design, stages_executed, df)
+    fpc <- survey_fpc_info(df, design, stages_executed, id_stage_indices)
+    df <- fpc$df
+
+    dots <- list(...)
+    pps_arg <- if (!is_null(dots$pps)) {
+      dots$pps
+    } else if (fpc$has_pps_wor) {
+      "brewer"
+    } else {
+      FALSE
+    }
+
+    dots$pps <- NULL
+
+    result <- do.call(
+      survey::svydesign,
+      c(
+        list(
+          ids = ids_formula,
+          strata = strata$formula,
+          weights = stats::as.formula("~.weight"),
+          fpc = fpc$formula,
+          data = df,
+          nest = nest,
+          pps = pps_arg
+        ),
+        dots
+      )
+    )
+
+    # Replace the stored call to avoid inlining the entire data frame,
+    # which causes massive output when printing the survey.design object
+    result$call <- call(
+      "svydesign",
+      ids = ids_formula,
+      strata = strata$formula,
+      weights = stats::as.formula("~.weight"),
+      fpc = fpc$formula,
+      data = quote(data),
+      nest = nest
+    )
+
+    result
+  }
+}
+
+#' Convert a tbl_sample to a replicate-weight survey design
+#'
+#' Creates a `svyrep.design` object from a `tbl_sample` by first
+#' converting to a [survey::svydesign()] object via [as_svydesign()],
+#' then converting with [survey::as.svrepdesign()].
+#'
+#' @param x A `tbl_sample` object produced by [execute()].
+#' @param type Replicate method passed to [survey::as.svrepdesign()].
+#'   One of `"auto"`, `"JK1"`, `"JKn"`, `"BRR"`, `"bootstrap"`,
+#'   `"subbootstrap"`, `"mrbbootstrap"`, or `"Fay"`.
+#' @param ... Additional arguments passed to [survey::as.svrepdesign()].
+#'
+#' @return A `svyrep.design` object from the survey package.
+#'
+#' @details
+#' Replicate conversion currently supports single-phase, non-PPS designs.
+#' Two-phase and PPS designs should be exported with [as_svydesign()] and
+#' analyzed with linearization-based variance.
+#'
+#' @examples
+#' \dontrun{
+#' sample <- sampling_design() |>
+#'   stratify_by(facility_type, alloc = "proportional") |>
+#'   draw(n = 300) |>
+#'   execute(kenya_health, seed = 42)
+#'
+#' rep_svy <- as_svrepdesign(sample, type = "auto")
+#' survey::svymean(~score, rep_svy)
+#' }
+#'
+#' @seealso [as_svydesign()] for linearization export,
+#'   [survey::as.svrepdesign()] for the underlying conversion
+#'
+#' @export
+as_svrepdesign <- function(x, ...) {
+  UseMethod("as_svrepdesign")
+}
+
+#' @rdname as_svrepdesign
+#' @export
+as_svrepdesign.tbl_sample <- function(
+  x,
+  ...,
+  type = c(
+    "auto",
+    "JK1",
+    "JKn",
+    "BRR",
+    "bootstrap",
+    "subbootstrap",
+    "mrbbootstrap",
+    "Fay"
+  )
+) {
+  rlang::check_installed(
+    "survey",
+    reason = "to convert a tbl_sample to a replicate-weight survey design."
   )
 
-  # Replace the stored call to avoid inlining the entire data frame,
-  # which causes massive output when printing the survey.design object
-  result$call <- call(
-    "svydesign",
-    ids = ids_formula,
-    strata = strata_formula,
-    weights = stats::as.formula("~.weight"),
-    fpc = fpc_formula,
-    data = quote(data),
-    nest = nest
+  survey_validate_phase_support(
+    x,
+    allow_twophase = FALSE,
+    fn_name = "as_svrepdesign"
   )
 
-  result
+  methods_used <- survey_stage_methods(x)
+  pps_used <- unique(methods_used[methods_used %in% pps_methods])
+  if (length(pps_used) > 0) {
+    abort_samplyr(
+      c(
+        "{.fn as_svrepdesign} does not currently support PPS designs.",
+        "i" = "Found method{?s}: {.val {pps_used}}.",
+        "i" = "Use {.fn as_svydesign} for linearization-based variance, or provide external replicate weights to {.fn survey::svrepdesign}."
+      ),
+      class = "samplyr_error_svrep_pps_unsupported"
+    )
+  }
+
+  type <- match.arg(type)
+  svydesign_obj <- as_svydesign(x)
+
+  tryCatch(
+    survey::as.svrepdesign(design = svydesign_obj, type = type, ...),
+    error = function(e) {
+      abort_samplyr(
+        c(
+          "{.fn as_svrepdesign} failed to convert this design to replicate weights.",
+          "x" = "{conditionMessage(e)}"
+        ),
+        class = "samplyr_error_svrep_conversion_failed"
+      )
+    }
+  )
+}
+
+
+#' Convert a tbl_sample to a srvyr tbl_svy object
+#'
+#' Creates a [srvyr::tbl_svy] object from a `tbl_sample` by first
+#' converting to a [survey::svydesign()] object via [as_svydesign()],
+#' then wrapping with [srvyr::as_survey_design()].
+#'
+#' This method is registered on the [srvyr::as_survey_design()] generic,
+#' so it is available when srvyr is loaded.
+#'
+#' @param .data A `tbl_sample` object produced by [execute()].
+#' @param ... Additional arguments passed to [as_svydesign()].
+#'
+#' @return A `tbl_svy` object from the srvyr package.
+#'
+#' @examples
+#' \dontrun{
+#' library(srvyr)
+#'
+#' sample <- sampling_design() |>
+#'   stratify_by(facility_type, alloc = "proportional") |>
+#'   draw(n = 300) |>
+#'   execute(kenya_health, seed = 42)
+#'
+#' # Returns a tbl_svy for use with srvyr verbs
+#' svy <- as_survey_design(sample)
+#' svy |>
+#'   group_by(facility_type) |>
+#'   summarise(mean_score = survey_mean(score))
+#' }
+#'
+#' @seealso [as_svydesign()] for converting to a survey.design2 object
+#'
+#' @exportS3Method srvyr::as_survey_design
+as_survey_design.tbl_sample <- function(.data, ...) {
+  rlang::check_installed(
+    "srvyr",
+    reason = "to convert a tbl_sample to a srvyr tbl_svy object."
+  )
+
+  survey_validate_phase_support(
+    .data,
+    allow_twophase = TRUE,
+    fn_name = "as_survey_design"
+  )
+
+  svydesign_obj <- as_svydesign(.data, ...)
+  if (inherits(svydesign_obj, c("twophase", "twophase2"))) {
+    srvyr::as_survey_twophase(svydesign_obj)
+  } else {
+    srvyr::as_survey_design(svydesign_obj)
+  }
+}
+
+#' Convert a tbl_sample to a srvyr replicate-weight tbl_svy object
+#'
+#' Creates a [srvyr::tbl_svy] replicate design from a `tbl_sample` by first
+#' converting to a `svyrep.design` object via `as_svrepdesign()`,
+#' then wrapping with [srvyr::as_survey_rep()].
+#'
+#' @param .data A `tbl_sample` object produced by [execute()].
+#' @param ... Additional arguments passed to `as_svrepdesign()`.
+#'
+#' @return A replicate-weight `tbl_svy` object from the srvyr package.
+#'
+#' @examples
+#' \dontrun{
+#' library(srvyr)
+#'
+#' sample <- sampling_design() |>
+#'   stratify_by(facility_type, alloc = "proportional") |>
+#'   draw(n = 300) |>
+#'   execute(kenya_health, seed = 42)
+#'
+#' rep_tbl <- as_survey_rep(sample, type = "auto")
+#' rep_tbl |>
+#'   summarise(mean_score = survey_mean(score, vartype = "se"))
+#' }
+#'
+#' @seealso `as_svrepdesign()` for survey replicate-weight export
+#'
+#' @exportS3Method srvyr::as_survey_rep
+as_survey_rep.tbl_sample <- function(.data, ...) {
+  rlang::check_installed(
+    "srvyr",
+    reason = "to convert a tbl_sample to a srvyr replicate-weight tbl_svy object."
+  )
+
+  rep_design <- as_svrepdesign(.data, ...)
+  srvyr::as_survey_rep(rep_design)
 }

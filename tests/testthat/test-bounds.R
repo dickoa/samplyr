@@ -69,6 +69,22 @@ test_that("max_n must be a positive integer", {
   )
 })
 
+test_that("min_n and max_n reject non-finite values", {
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "proportional") |>
+      draw(n = 100, min_n = NA_real_),
+    "single positive integer"
+  )
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "proportional") |>
+      draw(n = 100, max_n = Inf),
+    "single positive integer"
+  )
+})
+
 test_that("min_n cannot exceed max_n", {
   expect_error(
     sampling_design() |>
@@ -385,4 +401,117 @@ test_that("NULL bounds are stored correctly", {
 
   expect_null(draw_spec$min_n)
   expect_null(draw_spec$max_n)
+})
+
+# =============================================================================
+# Bounded Allocation Rounding Edge Cases
+# =============================================================================
+
+test_that("bounds work with many strata (iteration cap regression)", {
+  # Verifies that apply_bounds() converges for H > 50 strata.
+  # Previous hardcoded cap of 50 iterations could fail for large H.
+  n_strata <- 80
+  sizes <- rep(c(500, 10), length.out = n_strata)
+  frame <- data.frame(
+    id = seq_len(sum(sizes)),
+    stratum = rep(paste0("S", sprintf("%03d", seq_len(n_strata))), times = sizes)
+  )
+
+  # Small strata (N=10) get proportional targets < min_n=3,
+  # forcing redistribution from large strata across many iterations
+  result <- sampling_design() |>
+    stratify_by(stratum, alloc = "proportional") |>
+    draw(n = 400, min_n = 3, max_n = 20) |>
+    execute(frame, seed = 42)
+
+  counts <- table(result$stratum)
+  expect_true(all(counts >= 3))
+  expect_true(all(counts <= 20))
+  expect_equal(sum(counts), 400)
+})
+
+test_that("bounds work with highly skewed population and tight bounds", {
+  # One dominant stratum with 90% of population, tight max forces redistribution
+  frame <- data.frame(
+    id = 1:1000,
+    stratum = c(rep("Huge", 900), rep("B", 50), rep("C", 30), rep("D", 20))
+  )
+
+  # Proportional target for Huge: 900/1000 * 100 = 90, capped at 30
+  # 60 excess units must redistribute to 3 small strata
+  result <- sampling_design() |>
+    stratify_by(stratum, alloc = "proportional") |>
+    draw(n = 100, min_n = 5, max_n = 30) |>
+    execute(frame, seed = 42)
+
+  counts <- table(result$stratum)
+  expect_true(all(counts >= 5))
+  expect_true(all(counts <= 30))
+  expect_equal(sum(counts), 100)
+})
+
+test_that("bounds saturate correctly (all strata at min or max)", {
+  # 5 strata: proportional gives very unequal allocation
+  # Tight bounds force all strata to either min or max
+  frame <- data.frame(
+    id = 1:1100,
+    stratum = c(rep("A", 500), rep("B", 300), rep("C", 200),
+                rep("D", 50), rep("E", 50))
+  )
+
+  # n=50, min=8, max=12: feasible (5*8=40 <= 50 <= 5*12=60)
+  # Proportional: A=22.7, B=13.6, C=9.1, D=2.3, E=2.3
+  # D and E forced to 8, A capped at 12, remainder to B and C
+  result <- sampling_design() |>
+    stratify_by(stratum, alloc = "proportional") |>
+    draw(n = 50, min_n = 8, max_n = 12) |>
+    execute(frame, seed = 42)
+
+  counts <- table(result$stratum)
+  expect_true(all(counts >= 8))
+  expect_true(all(counts <= 12))
+  expect_equal(sum(counts), 50)
+})
+
+test_that("bounds work with equal allocation and many strata", {
+  # Equal allocation with 100 strata — each gets n/100
+  n_strata <- 100
+  frame <- data.frame(
+    id = seq_len(n_strata * 50),
+    stratum = rep(paste0("S", seq_len(n_strata)), each = 50)
+  )
+
+  result <- sampling_design() |>
+    stratify_by(stratum, alloc = "equal") |>
+    draw(n = 500, min_n = 3, max_n = 10) |>
+    execute(frame, seed = 42)
+
+  counts <- table(result$stratum)
+  expect_true(all(counts >= 3))
+  expect_true(all(counts <= 10))
+  expect_equal(sum(counts), 500)
+})
+
+test_that("Neyman allocation with extreme variance spread and bounds", {
+  # One stratum has much higher variance, pulling allocation strongly
+  # Bounds prevent over/under-allocation
+  frame <- data.frame(
+    id = 1:600,
+    stratum = rep(c("Low", "Medium", "High"), each = 200)
+  )
+  var_df <- data.frame(
+    stratum = c("High", "Low", "Medium"),
+    var = c(10000, 1, 1) # extreme spread
+  )
+
+  # Neyman gives almost everything to High, bounds prevent this
+  result <- sampling_design() |>
+    stratify_by(stratum, alloc = "neyman", variance = var_df) |>
+    draw(n = 60, min_n = 10, max_n = 40) |>
+    execute(frame, seed = 42)
+
+  counts <- table(result$stratum)
+  expect_true(all(counts >= 10))
+  expect_true(all(counts <= 40))
+  expect_equal(sum(counts), 60)
 })
