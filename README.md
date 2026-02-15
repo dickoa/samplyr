@@ -168,6 +168,7 @@ When stratifying, control how the total sample is distributed:
 | `proportional` | Proportional to stratum size                            |
 | `neyman`       | Minimize variance (requires `variance`)                 |
 | `optimal`      | Minimize cost-variance (requires `variance` and `cost`) |
+| `power`        | Compromise allocation (requires `cv` and `importance`)  |
 
 ### Sample Size Bounds
 
