@@ -220,17 +220,23 @@ sample <- sampling_design() |>
 Permanent random numbers enable coordinated sampling across survey waves. Assign a stable uniform random number to each frame unit, then pass it via `prn`:
 
 ```r
-frame$prn <- runif(nrow(frame))
+data(nigeria_business)
+frame <- nigeria_business |>
+  mutate(u = runif(n()))
 
 # Wave 1: sequential Poisson sampling with PRN
 wave1 <- sampling_design() |>
-  draw(n = 500, method = "pps_sps", mos = size, prn = prn) |>
+  draw(n = 500, method = "pps_sps", mos = size, prn = u) |>
   execute(frame, seed = 1)
 
 # Wave 2: same PRN → high overlap (positive coordination)
 wave2 <- sampling_design() |>
-  draw(n = 500, method = "pps_sps", mos = size, prn = prn) |>
+  draw(n = 500, method = "pps_sps", mos = size, prn = u) |>
   execute(frame, seed = 2)
+
+overlap_positive <- length(intersect(wave1$enterprise_id,
+                                     wave2$enterprise_id))
+overlap_positive
 ```
 
 PRN is supported for `bernoulli`, `pps_poisson`, `pps_sps`, and `pps_pareto`.

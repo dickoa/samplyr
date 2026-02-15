@@ -167,6 +167,7 @@ new_draw_spec <- function(
   control = NULL,
   certainty_size = NULL,
   certainty_prop = NULL,
+  certainty_overflow = "error",
   on_empty = "warn"
 ) {
   structure(
@@ -182,6 +183,7 @@ new_draw_spec <- function(
       control = control,
       certainty_size = certainty_size,
       certainty_prop = certainty_prop,
+      certainty_overflow = certainty_overflow,
       on_empty = on_empty
     ),
     class = "draw_spec"

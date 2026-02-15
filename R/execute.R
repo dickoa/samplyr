@@ -11,6 +11,10 @@
 #' @param stages Integer vector specifying which stage(s) to execute.
 #'   Default (`NULL`) executes all remaining stages.
 #' @param seed Integer random seed for reproducibility.
+#' @param panels Integer number of rotation groups (panels) to partition the
+#'   sample into. Each panel is a representative subsample created by systematic
+#'   interleaving within strata. The output includes a `.panel` column with
+#'   values 1 through `panels`. Default `NULL` means no panel partitioning.
 #'
 #' @return A `tbl_sample` object (a data frame subclass with sampling
 #'   metadata). Contains the selected units plus:
@@ -25,6 +29,7 @@
 #'     which with-replacement selection the row came from.
 #'   - `.certainty_1`, `.certainty_2`, ...: Whether each unit was a certainty
 #'     selection (PPS methods with certainty thresholds only)
+#'   - `.panel`: Panel assignment (only when `panels` is specified)
 #'   - Stage and stratum identifiers as appropriate
 #'
 #' @details
@@ -75,6 +80,25 @@
 #' - **Multi-stage**: Weights compound across stages
 #' - **Multi-phase**: Weights compound across phases
 #'
+#' ## Panel Partitioning
+#'
+#' When `panels` is specified, the sample is partitioned into non-overlapping
+#' rotation groups suitable for rotating panel surveys. Each panel is a
+#' representative subsample created by systematic interleaving within strata.
+#'
+#' Assignment is deterministic (not random): within each stratum, units are
+#' assigned round-robin to panels 1, 2, ..., k. This ensures each panel has
+#' approximately equal representation from every stratum. The quality of panel
+#' balance benefits from `control` sorting in `draw()`, which determines the
+#' order of units before interleaving.
+#'
+#' For multi-stage designs, panels are assigned at stage 1 (PSU level).
+#' All units within a PSU inherit the PSU's panel assignment.
+#'
+#' Weights are not adjusted for panel membership. They reflect the full-sample
+#' inclusion probability. When analysing a single panel, multiply weights by
+#' `panels` to obtain per-panel weights.
+#'
 #' @examples
 #' # Basic SRS execution
 #' sample <- sampling_design() |>
@@ -112,13 +136,20 @@
 #' selected_eas <- execute(design, niger_eas, stages = 1, seed = 2)
 #' nrow(selected_eas)  # Number of selected EAs
 #'
+#' # Rotating panel: 4 rotation groups
+#' sample <- sampling_design() |>
+#'   stratify_by(region) |>
+#'   draw(n = 200) |>
+#'   execute(niger_eas, seed = 1, panels = 4)
+#' table(sample$.panel)  # ~50 per panel
+#'
 #' @seealso
 #' [sampling_design()] for creating designs,
 #' [is_tbl_sample()] for testing results,
 #' [get_design()] for extracting metadata
 #'
 #' @export
-execute <- function(.data, ..., stages = NULL, seed = NULL) {
+execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL) {
   frames <- list(...)
 
   if (length(frames) == 0) {
@@ -138,11 +169,19 @@ execute <- function(.data, ..., stages = NULL, seed = NULL) {
     seed <- as.integer(seed)
   }
 
+  if (!is_null(panels)) {
+    if (!is.numeric(panels) || length(panels) != 1 ||
+        !is_integerish_numeric(panels) || panels < 2) {
+      cli_abort("{.arg panels} must be a single integer >= 2")
+    }
+    panels <- as.integer(panels)
+  }
+
   run_execution <- function() {
     if (is_sampling_design(.data)) {
-      execute_design(.data, frames, stages, seed)
+      execute_design(.data, frames, stages, seed, panels)
     } else if (is_tbl_sample(.data)) {
-      execute_continuation(.data, frames, stages, seed)
+      execute_continuation(.data, frames, stages, seed, panels)
     } else {
       cli_abort(
         "{.arg .data} must be a {.cls sampling_design} or {.cls tbl_sample}"
@@ -158,7 +197,7 @@ execute <- function(.data, ..., stages = NULL, seed = NULL) {
 }
 
 #' @noRd
-execute_design <- function(design, frames, stages, seed) {
+execute_design <- function(design, frames, stages, seed, panels) {
   validate_design_complete(design)
 
   n_stages <- length(design$stages)
@@ -241,6 +280,12 @@ execute_design <- function(design, frames, stages, seed) {
     previous_stage_idx <- stage_idx
   }
 
+  if (!is_null(panels)) {
+    current_sample <- assign_panels(
+      current_sample, panels, design$stages[[stages[1]]]
+    )
+  }
+
   if (
     !is_null(prev_phase) &&
       "._prev_phase_weight" %in% names(current_sample)
@@ -264,7 +309,7 @@ execute_design <- function(design, frames, stages, seed) {
 }
 
 #' @noRd
-execute_continuation <- function(sample, frames, stages, seed) {
+execute_continuation <- function(sample, frames, stages, seed, panels) {
   design <- get_design(sample)
   executed <- get_stages_executed(sample)
 
@@ -342,6 +387,13 @@ execute_continuation <- function(sample, frames, stages, seed) {
     )
 
     previous_stage_idx <- stage_idx
+  }
+
+  if (!is_null(panels)) {
+    first_stage_idx <- c(executed, stages)[1]
+    current_sample <- assign_panels(
+      current_sample, panels, design$stages[[first_stage_idx]]
+    )
   }
 
   new_tbl_sample(
@@ -484,8 +536,51 @@ find_carry_forward_cols <- function(previous_sample) {
     grep("^\\.weight_\\d+$", nms, value = TRUE),
     grep("^\\.draw_\\d+$", nms, value = TRUE),
     grep("^\\.fpc_\\d+$", nms, value = TRUE),
-    grep("^\\.certainty_\\d+$", nms, value = TRUE)
+    grep("^\\.certainty_\\d+$", nms, value = TRUE),
+    intersect(".panel", nms)
   )
+}
+
+#' Assign panel labels by systematic interleaving within strata
+#' @noRd
+assign_panels <- function(result, k, first_stage_spec) {
+  strata_spec <- first_stage_spec$strata
+  cluster_spec <- first_stage_spec$clusters
+
+  if (!is_null(cluster_spec)) {
+    # Multi-stage: assign at PSU level, propagate to all units
+    cluster_vars <- cluster_spec$vars
+    make_key <- function(df) {
+      if (length(cluster_vars) == 1) return(df[[cluster_vars]])
+      do.call(paste, c(df[cluster_vars], list(sep = "\x1f")))
+    }
+    all_keys <- make_key(result)
+    unique_mask <- !duplicated(all_keys)
+    psu_keys <- all_keys[unique_mask]
+    n_psu <- length(psu_keys)
+
+    if (!is_null(strata_spec)) {
+      psu_data <- result[unique_mask, , drop = FALSE]
+      groups <- split_row_indices(psu_data, strata_spec$vars)
+      psu_panel <- integer(n_psu)
+      for (idxs in groups$indices) {
+        psu_panel[idxs] <- rep_len(seq_len(k), length(idxs))
+      }
+    } else {
+      psu_panel <- rep_len(seq_len(k), n_psu)
+    }
+
+    result$.panel <- psu_panel[match(all_keys, psu_keys)]
+  } else if (!is_null(strata_spec)) {
+    groups <- split_row_indices(result, strata_spec$vars)
+    result$.panel <- integer(nrow(result))
+    for (idxs in groups$indices) {
+      result$.panel[idxs] <- rep_len(seq_len(k), length(idxs))
+    }
+  } else {
+    result$.panel <- rep_len(seq_len(k), nrow(result))
+  }
+  result
 }
 
 #' Determine join variables for weight compounding

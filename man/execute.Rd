@@ -4,7 +4,7 @@
 \alias{execute}
 \title{Execute a Sampling Design}
 \usage{
-execute(.data, ..., stages = NULL, seed = NULL)
+execute(.data, ..., stages = NULL, seed = NULL, panels = NULL)
 }
 \arguments{
 \item{.data}{A \code{sampling_design} object, or a \code{tbl_sample} object
@@ -18,6 +18,11 @@ in stage order.}
 Default (\code{NULL}) executes all remaining stages.}
 
 \item{seed}{Integer random seed for reproducibility.}
+
+\item{panels}{Integer number of rotation groups (panels) to partition the
+sample into. Each panel is a representative subsample created by systematic
+interleaving within strata. The output includes a \code{.panel} column with
+values 1 through \code{panels}. Default \code{NULL} means no panel partitioning.}
 }
 \value{
 A \code{tbl_sample} object (a data frame subclass with sampling
@@ -34,6 +39,7 @@ Each row represents one independent draw; the draw index identifies
 which with-replacement selection the row came from.
 \item \code{.certainty_1}, \code{.certainty_2}, ...: Whether each unit was a certainty
 selection (PPS methods with certainty thresholds only)
+\item \code{.panel}: Panel assignment (only when \code{panels} is specified)
 \item Stage and stratum identifiers as appropriate
 }
 }
@@ -102,6 +108,26 @@ Weights are calculated as the inverse of inclusion probabilities:
 \item \strong{Multi-phase}: Weights compound across phases
 }
 }
+
+\subsection{Panel Partitioning}{
+
+When \code{panels} is specified, the sample is partitioned into non-overlapping
+rotation groups suitable for rotating panel surveys. Each panel is a
+representative subsample created by systematic interleaving within strata.
+
+Assignment is deterministic (not random): within each stratum, units are
+assigned round-robin to panels 1, 2, ..., k. This ensures each panel has
+approximately equal representation from every stratum. The quality of panel
+balance benefits from \code{control} sorting in \code{draw()}, which determines the
+order of units before interleaving.
+
+For multi-stage designs, panels are assigned at stage 1 (PSU level).
+All units within a PSU inherit the PSU's panel assignment.
+
+Weights are not adjusted for panel membership. They reflect the full-sample
+inclusion probability. When analysing a single panel, multiply weights by
+\code{panels} to obtain per-panel weights.
+}
 }
 \examples{
 # Basic SRS execution
@@ -139,6 +165,13 @@ design <- sampling_design() |>
 # Execute only stage 1 to get selected EAs
 selected_eas <- execute(design, niger_eas, stages = 1, seed = 2)
 nrow(selected_eas)  # Number of selected EAs
+
+# Rotating panel: 4 rotation groups
+sample <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 200) |>
+  execute(niger_eas, seed = 1, panels = 4)
+table(sample$.panel)  # ~50 per panel
 
 }
 \seealso{

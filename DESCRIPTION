@@ -13,7 +13,7 @@ Description: Provides a tidy, composable grammar for specifying and executing
     and executable R code, following tidyverse design principles. Includes
     synthetic survey datasets from African countries (Niger, Uganda, Kenya,
     Tanzania, Nigeria) for learning and testing.
-License: GPL-2 | GPL-3
+License: GPL (>= 2)
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
@@ -25,7 +25,7 @@ Imports:
     pillar,
     tibble,
     dplyr (>= 1.1.0),
-    sondage (> 0.1.0),
+    sondage (>= 0.1.0),
     withr
 Suggests:
    testthat (>= 3.0.0),

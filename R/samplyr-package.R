@@ -10,10 +10,10 @@
 #' @importFrom cli cli_abort cli_warn
 #' @importFrom stats setNames
 #' @importFrom tibble as_tibble
-#' @importFrom dplyr mutate select group_by ungroup arrange
+#' @importFrom dplyr mutate select group_by arrange
 #' @importFrom dplyr left_join inner_join semi_join across all_of
 #' @importFrom dplyr n summarise row_number
-#' @importFrom dplyr bind_rows pull distinct
+#' @importFrom dplyr bind_rows distinct
 #' @importFrom dplyr dplyr_reconstruct
 #' @importFrom withr with_seed
 #' @importFrom pillar tbl_sum

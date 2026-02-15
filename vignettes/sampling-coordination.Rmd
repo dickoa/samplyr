@@ -1,0 +1,555 @@
+---
+title: "Sampling Coordination with Permanent Random Numbers"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Sampling Coordination with Permanent Random Numbers}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup, message = FALSE, echo = FALSE}
+library(samplyr)
+library(sondage)
+library(dplyr)
+```
+
+## Why Coordinate Samples?
+
+Repeated surveys such as business panels, labour force surveys, agricultural censuses draw fresh samples at regular intervals from the same population.
+Similarly, multiple survey programmes often sample from the same register simultaneously. Two natural questions arise:
+
+- **Positive coordination**: How can we maximise overlap between samples to reduce respondent burden and improve change estimates?
+- **Negative coordination**: How can we minimise overlap to spread the burden and maximise cumulative coverage?
+
+These questions apply both *temporally* (across waves of the same survey)
+and *cross-sectionally* (across different surveys on the same frame also
+known as **collocated sampling**).
+
+The **permanent random number** (PRN) technique, introduced by
+Brewer et al. (1972) and developed by Ohlsson (1995) and Cotton & Hesse
+(1992), answers both questions with a single mechanism: attach a stable
+$U(0,1)$ value to each frame unit and update it between waves.
+
+samplyr supports PRN-based coordination for four selection methods:
+`bernoulli`, `pps_poisson`, `pps_sps`, and `pps_pareto`.
+
+## Setup
+
+We use `nigeria_business`, a synthetic business register with 11,617
+enterprises.
+
+```{r}
+library(samplyr)
+library(sondage)
+library(dplyr)
+
+data(nigeria_business)
+glimpse(nigeria_business)
+```
+
+Each enterprise has an `annual_turnover` that will serve as our measure of
+size for PPS sampling. We target $n = 200$ enterprises per wave.
+
+```{r}
+n_wave <- 200
+```
+
+### Assigning permanent random numbers
+
+Every frame unit gets a $U(0,1)$ value drawn once and stored permanently
+in the register. These values are reused or updated across waves.
+
+```{r}
+set.seed(2026)
+
+frame <- nigeria_business |>
+  mutate(u = runif(n()))
+```
+
+### Computing inclusion probabilities
+
+Coordination requires knowing each unit's first-order inclusion probability
+$\pi_k$. For PPS without replacement, `sondage::inclusion_prob()` computes
+these from the measure of size and sample size. This must be done on the
+**full frame**, not just the sample.
+
+```{r}
+frame <- frame |>
+  mutate(pik = inclusion_prob(annual_turnover, n_wave))
+
+summary(frame$pik)2
+```
+
+## Positive Coordination: Maximum Overlap
+
+To maximise overlap between waves, reuse the same PRN values. With
+sequential Poisson sampling (SPS), two waves drawn from the same frame
+with identical PRNs produce identical samples.
+
+```{r}
+wave1 <- sampling_design() |>
+  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  execute(frame, seed = 1)
+
+wave2 <- sampling_design() |>
+  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  execute(frame, seed = 1)
+
+overlap_positive <- length(intersect(wave1$enterprise_id, wave2$enterprise_id))
+overlap_positive
+```
+
+Perfect overlap. This is useful when the goal is to track the same units
+over time, for example, measuring quarterly changes in turnover within
+a fixed panel.
+
+## Negative Coordination: Minimum Overlap
+
+To minimise overlap, update the PRN values between waves using Tillé's
+(2006, §8.2) formula:
+
+$$u_k^{(t+1)} = \bigl(u_k^{(t)} - \pi_k\bigr) \bmod 1$$
+
+Selected units (those with small $u_k$) get pushed to the high end of
+$(0,1)$, making them unlikely to be selected again. Non-selected units
+shift downward, increasing their chance of selection.
+
+```{r}
+# Wave 1
+wave1 <- sampling_design() |>
+  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  execute(frame, seed = 1)
+
+# Update PRNs on the full frame
+frame <- frame |>
+  mutate(u = (u - pik) %% 1)
+
+# Wave 2
+wave2 <- sampling_design() |>
+  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  execute(frame, seed = 1)
+
+overlap_negative <- length(intersect(wave1$enterprise_id, wave2$enterprise_id))
+overlap_negative
+```
+
+### Why isn't the overlap zero?
+
+Not all overlap can be eliminated. Units with large $\pi_k$ (big enterprises)
+are selected in almost every wave because their inclusion probability is close
+to or equal to 1. The theoretical minimum overlap known as the **Anticipated Lower
+Bound** (ALB) is:
+
+$$\text{ALB} = \sum_{k=1}^{N} \max(0,\; 2\pi_k - 1)$$
+
+Only units with $\pi_k > 0.5$ contribute to forced overlap.
+
+```{r}
+alb <- sum(pmax(0, 2 * frame$pik - 1))
+expected_independent <- sum(frame$pik^2)
+
+cat("ALB (theoretical minimum):", round(alb), "\n")
+cat("Observed overlap:         ", overlap_negative, "\n")
+cat("Expected if independent:  ", round(expected_independent), "\n")
+cat("AUB (theoretical maximum):", n_wave, "\n")
+```
+
+The negative coordination brings the overlap close to the ALB, well below
+what independent sampling would produce.
+
+## Comparison: Three Strategies
+
+```{r}
+# Independent sampling: fresh PRNs for wave 2
+frame_ind <- nigeria_business |>
+  mutate(
+    u1 = withr::with_seed(2026, runif(n())),
+    u2 = runif(n())
+  )
+
+wave1_ind <- sampling_design() |>
+  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u1) |>
+  execute(frame_ind, seed = 1)
+
+wave2_ind <- sampling_design() |>
+  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u2) |>
+  execute(frame_ind, seed = 1)
+
+overlap_ind <- length(intersect(wave1_ind$enterprise_id, wave2_ind$enterprise_id))
+
+tibble(
+  strategy = c("Positive (same PRN)", "Independent (fresh PRN)", "Negative (Tillé update)"),
+  overlap = c(overlap_positive, overlap_ind, overlap_negative),
+  bound = c(n_wave, round(expected_independent), round(alb))
+) |>
+  mutate(pct = paste0(round(100 * overlap / n_wave), "%"))
+```
+
+## Multi-Wave Rotation
+
+In practice, surveys run for many waves. The PRN update is applied after
+each wave, rotating units through the sample.
+
+```{r}
+set.seed(2026)
+
+frame <- nigeria_business |>
+  mutate(
+    u = runif(n()),
+    pik = inclusion_prob(annual_turnover, n_wave)
+  )
+
+n_waves <- 5
+waves <- vector("list", n_waves)
+
+for (t in seq_len(n_waves)) {
+  waves[[t]] <- sampling_design() |>
+    draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u) |>
+    execute(frame, seed = 1)
+
+  # Update PRNs for next wave
+  frame <- frame |>
+    mutate(u = (u - pik) %% 1)
+}
+```
+
+### Pairwise overlap matrix
+
+```{r}
+ids <- lapply(waves, `[[`, "enterprise_id")
+
+overlap_mat <- outer(ids, ids, Vectorize(\(a, b) length(intersect(a, b))))
+dimnames(overlap_mat) <- rep(list(paste("Wave", seq_len(n_waves))), 2)
+
+overlap_mat
+```
+
+Consecutive waves have low overlap (near the ALB). Non-consecutive waves show
+varying overlap as the rotation cycle progresses.
+
+### Cumulative coverage
+
+After $T$ waves, how many distinct enterprises have been surveyed?
+
+```{r}
+cumulative <- integer(n_waves)
+seen <- character(0)
+
+for (t in seq_len(n_waves)) {
+  seen <- union(seen, waves[[t]]$enterprise_id)
+  cumulative[t] <- length(seen)
+}
+
+tibble(
+  wave = seq_len(n_waves),
+  new_units = c(n_wave, diff(cumulative)),
+  cumulative = cumulative,
+  pct_frame = paste0(round(100 * cumulative / nrow(nigeria_business), 1), "%")
+)
+```
+
+Negative coordination maximises the number of distinct units covered,
+which is valuable for building comprehensive registers or spreading
+respondent burden.
+
+## Handling Births and Deaths
+
+Real business registers change between waves. New enterprises (**births**)
+enter the frame; closed enterprises (**deaths**) leave it.
+
+- **Deaths**: Simply remove them from the frame. Their PRN values are
+  discarded. No special treatment needed.
+- **Births**: Assign fresh $U(0,1)$ values. These new units enter the
+  coordination cycle at a random position.
+
+```{r}
+# Simulate: remove 200 enterprises (deaths), add 500 new ones (births)
+set.seed(42)
+
+n_births <- 500
+
+# Deaths: remove a random subset
+deaths <- sample(frame$enterprise_id, 200)
+frame_t2 <- frame |>
+  filter(!enterprise_id %in% deaths)
+
+# Births: new enterprises with fresh PRNs
+# Resample turnover from the existing frame to get a realistic size distribution
+births <- tibble(
+  enterprise_id = paste0("NEW_", sprintf("%05d", seq_len(n_births))),
+  zone = sample(levels(nigeria_business$zone), n_births, replace = TRUE) |>
+    factor(levels = levels(nigeria_business$zone)),
+  state = sample(levels(nigeria_business$state), n_births, replace = TRUE) |>
+    factor(levels = levels(nigeria_business$state)),
+  sector = sample(levels(nigeria_business$sector), n_births, replace = TRUE) |>
+    factor(levels = levels(nigeria_business$sector)),
+  size_class = sample(levels(nigeria_business$size_class), n_births, replace = TRUE) |>
+    factor(levels = levels(nigeria_business$size_class)),
+  employees = sample(nigeria_business$employees, n_births, replace = TRUE),
+  annual_turnover = sample(nigeria_business$annual_turnover, n_births, replace = TRUE),
+  u = runif(n_births)  # fresh PRNs
+)
+
+frame_t2 <- bind_rows(frame_t2, births)
+
+# Recompute inclusion probabilities on the new frame
+frame_t2 <- frame_t2 |>
+  mutate(pik = inclusion_prob(annual_turnover, n_wave))
+
+# Draw wave from updated frame
+wave_t2 <- sampling_design() |>
+  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  execute(frame_t2, seed = 1)
+
+# How many births were selected?
+n_births_selected <- sum(wave_t2$enterprise_id %in% births$enterprise_id)
+cat("Births selected:", n_births_selected, "out of", n_births, "\n")
+```
+
+The coordination mechanism automatically handles frame changes. Surviving
+units retain their updated PRN values; births start fresh.
+
+## Using Pareto Sampling
+
+The `pps_pareto` method also supports PRN-based coordination. In theory,
+Pareto sampling has maximum entropy among fixed-size PPS designs that
+use PRNs, making it particularly well-suited for coordination.
+
+```{r}
+set.seed(2026)
+
+frame <- nigeria_business |>
+  mutate(
+    u = runif(n()),
+    pik = inclusion_prob(annual_turnover, n_wave)
+  )
+
+wave1_par <- sampling_design() |>
+  draw(n = n_wave, method = "pps_pareto", mos = annual_turnover, prn = u) |>
+  execute(frame, seed = 1)
+
+frame <- frame |> mutate(u = (u - pik) %% 1)
+
+wave2_par <- sampling_design() |>
+  draw(n = n_wave, method = "pps_pareto", mos = annual_turnover, prn = u) |>
+  execute(frame, seed = 1)
+
+overlap_par <- length(intersect(wave1_par$enterprise_id, wave2_par$enterprise_id))
+
+cat("Overlap (Pareto, negative):", overlap_par, "\n")
+cat("ALB:", round(sum(pmax(0, 2 * frame$pik - 1))), "\n")
+```
+
+## Stratified Coordination
+
+When the design is stratified, inclusion probabilities must be computed
+**within each stratum**. The PRN update is then applied globally the per-stratum $\pi_k$ values ensure correct rotation within each group.
+
+```{r}
+set.seed(2026)
+
+frame <- nigeria_business |>
+  mutate(u = runif(n()))
+
+# Compute within-stratum pik
+frame <- frame |>
+  mutate(
+    pik = inclusion_prob(annual_turnover, 50),
+    .by = size_class
+  )
+
+cat("Max pik:", max(frame$pik), "\n")
+cat("ALB:", round(sum(pmax(0, 2 * frame$pik - 1))), "\n")
+
+wave1_str <- sampling_design() |>
+  stratify_by(size_class) |>
+  draw(n = 50, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  execute(frame, seed = 1)
+
+frame <- frame |> mutate(u = (u - pik) %% 1)
+
+wave2_str <- sampling_design() |>
+  stratify_by(size_class) |>
+  draw(n = 50, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  execute(frame, seed = 1)
+
+overlap_str <- length(intersect(wave1_str$enterprise_id, wave2_str$enterprise_id))
+
+cat("Overlap (stratified, negative):", overlap_str, "out of", nrow(wave1_str), "\n")
+```
+
+With smaller within-stratum $\pi_k$ values (all below 0.5), the ALB is zero
+and perfect negative coordination is achievable.
+
+## Collocated Sampling: Coordinating Across Surveys
+
+The examples above coordinate samples from the **same survey** across time
+(waves). A related problem is coordinating **different surveys** drawn from
+the same frame at the same time point. This is called *collocated sampling*
+(Ernst 1986; Ohlsson 1995) and is common in business survey programmes
+where a single register serves multiple survey operations.
+
+The mechanism is identical: all surveys share the same PRN column.
+
+- **Positive coordination** (maximise overlap): both surveys use the same PRN.
+  Useful when surveys share common modules or when joint analysis is
+  planned.
+- **Negative coordination** (minimise overlap): one survey uses shifted PRNs
+  ($u' = (u + 0.5) \bmod 1$). Useful when the goal is to spread respondent
+  burden across the register.
+
+### Example: Turnover survey and employment survey
+
+Suppose a statistical agency runs two surveys on the same business register:
+a turnover survey ($n = 200$, PPS on `annual_turnover`) and an employment
+survey ($n = 150$, PPS on `employees`). The surveys have different sample
+sizes, different measures of size, and different stratification but they
+share the same frame and the same PRN column.
+
+```{r}
+set.seed(2026)
+
+frame <- nigeria_business |>
+  mutate(u = runif(n()))
+
+# Survey A: turnover survey (PPS on annual_turnover, stratified by sector)
+survey_a <- sampling_design() |>
+  draw(n = 200, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  execute(frame, seed = 1)
+
+# Survey B: employment survey (PPS on employees) — positive coordination
+survey_b <- sampling_design() |>
+  draw(n = 150, method = "pps_sps", mos = employees, prn = u) |>
+  execute(frame, seed = 1)
+
+overlap_pos <- length(intersect(survey_a$enterprise_id, survey_b$enterprise_id))
+```
+
+For negative coordination, shift the PRN by 0.5:
+
+```{r}
+# Survey B with negative coordination
+frame_neg <- frame |>
+  mutate(u_neg = (u + 0.5) %% 1)
+
+survey_b_neg <- sampling_design() |>
+  draw(n = 150, method = "pps_sps", mos = employees, prn = u_neg) |>
+  execute(frame_neg, seed = 1)
+
+overlap_neg <- length(intersect(survey_a$enterprise_id, survey_b_neg$enterprise_id))
+```
+
+Compare with independent sampling (fresh PRNs):
+
+```{r}
+frame_ind <- frame |>
+  mutate(u_fresh = runif(n()))
+
+survey_b_ind <- sampling_design() |>
+  draw(n = 150, method = "pps_sps", mos = employees, prn = u_fresh) |>
+  execute(frame_ind, seed = 1)
+
+overlap_ind <- length(intersect(survey_a$enterprise_id, survey_b_ind$enterprise_id))
+```
+
+### Overlap bounds for different surveys
+
+When two surveys have different inclusion probabilities $\pi_k^A$ and $\pi_k^B$,
+the bounds generalise naturally:
+
+```{r}
+pik_a <- inclusion_prob(frame$annual_turnover, 200)
+pik_b <- inclusion_prob(frame$employees, 150)
+
+alb_ab <- sum(pmax(0, pik_a + pik_b - 1))
+aub_ab <- sum(pmin(pik_a, pik_b))
+exp_ind <- sum(pik_a * pik_b)
+
+tibble(
+  strategy = c("Positive (same PRN)", "Independent (fresh PRN)", "Negative (shifted PRN)"),
+  overlap = c(overlap_pos, overlap_ind, overlap_neg),
+  bound = c(round(aub_ab), round(exp_ind), round(alb_ab))
+)
+```
+
+Because `annual_turnover` and `employees` are correlated (large firms have
+both high turnover and many employees), the overlap under positive coordination
+is substantial. Negative coordination via PRN shift effectively spreads the
+burden.
+
+### Scaling to more than two surveys
+
+For $K$ surveys, shift each survey's PRN by $j/K$ for $j = 0, \ldots, K-1$:
+
+```{r, eval = FALSE}
+# Negative coordination across 4 surveys
+for (j in seq_len(4)) {
+  frame_j <- frame |>
+    mutate(u_j = (u + (j - 1) / 4) %% 1)
+
+  samples[[j]] <- sampling_design() |>
+    draw(n = n_j, method = "pps_sps", mos = mos_j, prn = u_j) |>
+    execute(frame_j, seed = 1)
+}
+```
+
+This simple shift strategy works well when the surveys have similar
+$\pi_k$. For more complex programmes, NSOs use dedicated
+coordination systems such as the Rivière method (Rivière 1998),
+the Netherlands EDS (De Ree 1983; Van Huis et al. 1994), or the
+Swiss method (Graf & Qualité 2014). These methods track cumulative
+burden per unit and permute PRNs within microstrata to achieve
+near-optimal coordination across the full survey programme. See
+Tillé (2020, §8.2.7--8.2.9) for a detailed treatment.
+
+## Summary
+
+The PRN coordination workflow in samplyr is:
+
+1. **Assign PRNs** once: `mutate(u = runif(n()))`
+2. **Compute $\pi_k$** on the full frame: `mutate(pik = inclusion_prob(mos, n))`
+3. **Draw the sample**: `sampling_design() |> draw(method = "pps_sps", prn = u) |> execute(frame)`
+4. **Update or shift PRNs**:
+   - Temporal negative coordination (waves): `mutate(u = (u - pik) %% 1)`
+   - Temporal positive coordination: keep `u` unchanged
+   - Cross-survey negative coordination: shift by `(u + 0.5) %% 1`
+   - Cross-survey positive coordination: reuse same `u`
+
+| Goal | PRN update | Expected overlap |
+|------|-----------|-----------------|
+| Maximum overlap | None (reuse) | $\sum \min(\pi_k^A, \pi_k^B)$ |
+| Independent | Fresh $U(0,1)$ | $\sum \pi_k^A \cdot \pi_k^B$ |
+| Minimum overlap | Shift or Tillé update | $\sum \max(0, \pi_k^A + \pi_k^B - 1)$ |
+
+## References
+
+- Brewer, K. R. W., Early, L. J. & Joyce, S. F. (1972). Selecting several
+  samples from a single population. *Australian Journal of Statistics*, 14(3),
+  231--239.
+- Cotton, F. & Hesse, C. (1992). Tirages coordonnés d'échantillons.
+  *Actes des Journées de Méthodologie Statistique*, INSEE.
+- De Ree, S. J. M. (1983). The EDS sampling system for business surveys at
+  the Netherlands Central Bureau of Statistics. *Proceedings of the Section
+  on Survey Research Methods*, ASA, 197--202.
+- Ernst, L. R. (1986). Variance of the estimated mean for several imputation
+  procedures. *Proceedings of the Section on Survey Research Methods*, ASA.
+- Graf, E. & Qualité, L. (2014). The Swiss coordination system.
+  *Statistics in Transition New Series*, 15(3), 371--396.
+- Ohlsson, E. (1995). Coordination of samples using permanent random
+  numbers. In *Business Survey Methods* (eds Cox et al.), Wiley.
+- Rivière, P. (1998). Méthode de micro-stratification pour les tirages
+  coordonnés d'échantillons. *Actes des Journées de Méthodologie
+  Statistique*, INSEE.
+- Tillé, Y. (2006). *Sampling Algorithms*. Springer. Chapter 8.
+- Tillé, Y. (2020). *Sampling and Estimation from Finite Populations*. Wiley.
+  Section 8.2.
+- Van Huis, L. T., De Ree, S. J. M. & Grotendorst, A. (1994). A business
+  survey redesign at Statistics Netherlands. *International Statistical
+  Review*, 62(3), 357--376.

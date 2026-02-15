@@ -474,7 +474,7 @@ draw_sample_pps_certainty <- function(data, n, draw_spec) {
     certainty_prop = draw_spec$certainty_prop
   )
 
-  if (cert$n_remaining < 0) {
+  if (cert$n_remaining < 0 && draw_spec$certainty_overflow == "error") {
     threshold_msg <- if (!is_null(draw_spec$certainty_prop)) {
       c(
         "i" = "With {.arg certainty_prop}, units are selected iteratively until",
@@ -490,7 +490,7 @@ draw_sample_pps_certainty <- function(data, n, draw_spec) {
         "Certainty selection exceeds target sample size.",
         "x" = "Found {cert$n_certain} certainty unit{?s}, but {.arg n} = {n}.",
         threshold_msg,
-        "i" = "Options: increase {.arg n}, raise the threshold, or use {.arg certainty_size} for absolute thresholds."
+        "i" = "Options: increase {.arg n}, raise the threshold, or use {.arg certainty_overflow = \"allow\"} to keep all certainty units."
       )
     )
   }

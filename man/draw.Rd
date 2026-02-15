@@ -17,6 +17,7 @@ draw(
   control = NULL,
   certainty_size = NULL,
   certainty_prop = NULL,
+  certainty_overflow = "error",
   on_empty = "warn"
 )
 }
@@ -142,6 +143,16 @@ recomputed and the check is repeated until no new units qualify.
 Mutually exclusive with \code{certainty_size}.
 Equivalent to SAS SURVEYSELECT \verb{CERTSIZE=P=} option.}
 
+\item{certainty_overflow}{Controls behavior when certainty units exceed the
+target sample size \code{n}. One of:
+\itemize{
+\item \code{"error"} (default): Stop with an informative error.
+\item \code{"allow"}: Return all certainty units with weight 1, even if the
+resulting sample has more than \code{n} units.
+}
+
+Equivalent to SAS SURVEYSELECT allowing \verb{CERTSIZE=} overflow.}
+
 \item{on_empty}{Behaviour when a random-size method (\code{bernoulli},
 \code{pps_poisson}) selects zero units in a stratum or the whole frame.
 One of:
@@ -250,6 +261,12 @@ Certainty selection is only available for WOR PPS methods (\code{pps_systematic}
 \code{pps_brewer}, \code{pps_cps}, \code{pps_poisson}). With-replacement methods
 (\code{pps_multinomial}) and PMR methods (\code{pps_chromy}) handle large units
 natively through their hit mechanism.
+
+When \code{certainty_overflow = "allow"}, if more units qualify for certainty
+selection than the requested \code{n}, all certainty units are returned with
+probability 1 (weight = 1). No probabilistic sampling is performed in
+this case. The resulting sample size will be the number of certainty
+units, which exceeds \code{n}.
 
 For stratum-specific thresholds, pass a data frame containing:
 \itemize{

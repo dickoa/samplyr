@@ -98,6 +98,14 @@
 #'   Mutually exclusive with `certainty_size`.
 #'   Equivalent to SAS SURVEYSELECT `CERTSIZE=P=` option.
 #'
+#' @param certainty_overflow Controls behavior when certainty units exceed the
+#'   target sample size `n`. One of:
+#'   - `"error"` (default): Stop with an informative error.
+#'   - `"allow"`: Return all certainty units with weight 1, even if the
+#'     resulting sample has more than `n` units.
+#'
+#'   Equivalent to SAS SURVEYSELECT allowing `CERTSIZE=` overflow.
+#'
 #' @param on_empty Behaviour when a random-size method (`bernoulli`,
 #'   `pps_poisson`) selects zero units in a stratum or the whole frame.
 #'   One of:
@@ -190,6 +198,12 @@
 #' `pps_brewer`, `pps_cps`, `pps_poisson`). With-replacement methods
 #' (`pps_multinomial`) and PMR methods (`pps_chromy`) handle large units
 #' natively through their hit mechanism.
+#'
+#' When `certainty_overflow = "allow"`, if more units qualify for certainty
+#' selection than the requested `n`, all certainty units are returned with
+#' probability 1 (weight = 1). No probabilistic sampling is performed in
+#' this case. The resulting sample size will be the number of certainty
+#' units, which exceeds `n`.
 #'
 #' For stratum-specific thresholds, pass a data frame containing:
 #' - All stratification variable columns
@@ -337,6 +351,7 @@ draw <- function(
   control = NULL,
   certainty_size = NULL,
   certainty_prop = NULL,
+  certainty_overflow = "error",
   on_empty = "warn"
 ) {
   if (!is_sampling_design(.data)) {
@@ -465,6 +480,8 @@ draw <- function(
     certainty_size_is_df,
     certainty_prop_is_df
   )
+  certainty_overflow <- match.arg(certainty_overflow, c("error", "allow"))
+
   validate_prn(prn_name, method)
 
   if (!is_null(current_stage$draw_spec)) {
@@ -485,6 +502,7 @@ draw <- function(
     control = control_quos,
     certainty_size = certainty_size,
     certainty_prop = certainty_prop,
+    certainty_overflow = certainty_overflow,
     on_empty = on_empty
   )
 
