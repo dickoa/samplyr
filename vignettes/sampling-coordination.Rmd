@@ -84,7 +84,7 @@ these from the measure of size and sample size. This must be done on the
 frame <- frame |>
   mutate(pik = inclusion_prob(annual_turnover, n_wave))
 
-summary(frame$pik)2
+summary(frame$pik)
 ```
 
 ## Positive Coordination: Maximum Overlap
