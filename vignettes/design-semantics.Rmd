@@ -1,6 +1,8 @@
 ---
 title: "Design Semantics and Assumptions"
 output: rmarkdown::html_vignette
+bibliography: references.bib
+link-citations: true
 vignette: >
   %\VignetteIndexEntry{Design Semantics and Assumptions}
   %\VignetteEngine{knitr::rmarkdown}
@@ -217,7 +219,7 @@ $$
 $$
 
 This is the standard assumption in multi-stage sampling theory
-(Cochran 1977, ch. 11; Sarndal et al. 1992, ch. 4.3).
+[@cochran1977, ch. 11; @sarndal1992, ch. 4.3].
 
 **Consequence for variance estimation.** Under the "with-replacement at stage 1" approximation, variance estimation requires only first-stage strata and clusters. Stage-1 PSU totals are treated as the primary source of variability. Later-stage contributions are captured through the variability of these totals.
 
@@ -233,7 +235,7 @@ Only first-stage strata are passed to `survey::svydesign()`. Under the with-repl
 
 ### 2. Joint inclusion probabilities
 
-By default, `as_svydesign()` uses Brewer's variance approximation (Berger 2004), which derives \(\pi_{kl}\) from marginal \(\pi_i\) without computing the full \(N \times N\) matrix. `joint_expectation()` computes second-order quantities directly. The result is exact for CPS, systematic, and Poisson. For Brewer, SPS, and Pareto, it uses the high-entropy approximation (Hajek 1964; Brewer and Donadio 2003), which is \(O(N^2)\). Exact recursive formulas exist for Brewer (Brewer 2002, ch. 9) but are \(O(N^3)\) and impractical for large frames. Units with \(\pi_i = 1\) (certainty selections) are handled internally: the joint matrix is computed on the stochastic part and reassembled with \(\pi_{kl} = 1\) for certainty-certainty pairs and \(\pi_{kl} = \pi_l\) for certainty-stochastic pairs. To use the joint matrix for variance estimation, pass it via `pps = survey::ppsmat(joint_matrix)`. See `?joint_expectation` for the full method-by-method breakdown.
+By default, `as_svydesign()` uses Brewer's variance approximation [@berger2004], which derives \(\pi_{kl}\) from marginal \(\pi_i\) without computing the full \(N \times N\) matrix. `joint_expectation()` computes second-order quantities directly. The result is exact for CPS, systematic, and Poisson. For Brewer, SPS, and Pareto, it uses the high-entropy approximation [@hajek1964; @brewerdonadio2003], which is \(O(N^2)\). Exact recursive formulas exist for Brewer [@brewer2002, ch. 9] but are \(O(N^3)\) and impractical for large frames. Units with \(\pi_i = 1\) (certainty selections) are handled internally: the joint matrix is computed on the stochastic part and reassembled with \(\pi_{kl} = 1\) for certainty-certainty pairs and \(\pi_{kl} = \pi_l\) for certainty-stochastic pairs. To use the joint matrix for variance estimation, pass it via `pps = survey::ppsmat(joint_matrix)`. See `?joint_expectation` for the full method-by-method breakdown.
 
 ### 3. With-replacement row structure
 
@@ -241,15 +243,15 @@ For WR methods (`srswr`, `pps_multinomial`), each draw produces one row with `.d
 
 ### 4. Chromy / PMR semantics
 
-`pps_chromy` is treated identically to WR at export (no FPC, no `pps` argument). The exact Sen--Yates--Grundy formula for PMR requires \(E(n_i) E(n_j) - E(n_i n_j)\) as pairwise weights (Chromy 2009, eq. 5), but `survey::ppsmat()` reads \(\pi_i\) from the diagonal, which for PMR contains \(E(n_i^2)\), not \(E(n_i)\). The Hansen--Hurwitz approximation is conservative and more stable (Chauvet 2019).
+`pps_chromy` is treated identically to WR at export (no FPC, no `pps` argument). The exact Sen--Yates--Grundy formula for PMR requires \(E(n_i) E(n_j) - E(n_i n_j)\) as pairwise weights [@chromy2009, eq. 5], but `survey::ppsmat()` reads \(\pi_i\) from the diagonal, which for PMR contains \(E(n_i^2)\), not \(E(n_i)\). The Hansen--Hurwitz approximation is conservative and more stable [@chauvet2019].
 
 ### 5. Panel assignments
 
-The `.panel` column is not passed to survey. Panels are a sample-management concept: deterministic partitions for rotation or workload distribution. The full-sample weights in `.weight` are correct for the combined sample. For per-panel analysis, multiply weights by \(k\) (number of panels). Systematic interleaving assigns each selected unit to panels with approximately equal probability \(1/k\), so the per-panel inclusion probability is approximately \(\pi_i / k\) and the per-panel weight is \(k \cdot w_i\).
+The `.panel` column is not passed to survey. Panels are a sample-management concept: deterministic partitions for rotation or workload distribution. The full-sample weights in `.weight` are correct for the combined sample. For per-panel analysis, multiply weights by \(k\) (number of panels): systematic interleaving assigns each selected unit to panels with approximately equal probability \(1/k\), so the per-panel inclusion probability is approximately \(\pi_i / k\) and the per-panel weight is \(k \cdot w_i\).
 
 ### 6. Certainty flag
 
-`samplyr` stores `.certainty_k` as a logical column. At export, certainty units (\(\pi_i = 1\)) are placed in a synthetic stratum (`.cert_stratum = "certainty"`), added to the strata formula alongside user-defined strata. The certainty stratum contributes zero variance (it is a census) and does not inflate degrees of freedom (Cochran 1977, ch. 11; Sarndal et al. 1992, ch. 3.5).
+`samplyr` stores `.certainty_k` as a logical column. At export, certainty units (\(\pi_i = 1\)) are placed in a synthetic stratum (`.cert_stratum = "certainty"`), added to the strata formula alongside user-defined strata. The certainty stratum contributes zero variance (it is a census) and does not inflate degrees of freedom [@cochran1977, ch. 11; @sarndal1992, ch. 3.5].
 
 ### 7. Design metadata
 
@@ -263,34 +265,10 @@ The `.panel` column is not passed to survey. Panels are a sample-management conc
 - **Clustered designs**: panels are assigned at the PSU level, then propagated to all units within each PSU.
 - **Control sorting**: the `control` argument to `draw()` determines  row order before interleaving, which affects panel composition.
 
-Weights are **not** adjusted. Panels structure the output but do not affect the selection mechanism or inclusion probabilities. Each panel is a representative subsample of the full sample and for per-panel inference, the analyst could just multiply `.weight` by \(k\).
+Weights are **not** adjusted. Panels structure the output but do not affect the selection mechanism or inclusion probabilities. Each panel is a representative subsample of the full sample. For per-panel inference, multiply `.weight` by \(k\).
 
 ## PRN and sample coordination semantics
 
 `samplyr` passes permanent random numbers through to `sondage` without transformation. PRN-compatible methods (`bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`) produce a deterministic selection given the PRN values. When PRN is supplied, the `seed` argument to `execute()` does not affect selection.
 
-Positive and negative coordination across survey waves is a user-level workflow, not a package feature. `samplyr` provides the infrastructure (PRN passthrough, panel partitioning, tidy output) and the user implements the update rule. See `vignette("sampling-coordination")` for the recommended workflow, including the negative-coordination formula \(u_{\text{new}} = (u - \pi) \bmod 1\) (Tille 2006, sec. 8.2.4).
-
-## References
-
-Bankier, M. D. (1988). Power allocations: determining sample sizes for
-subnational areas. *The American Statistician*, 42(3), 174--177.
-
-Berger, Y. G. (2004). A simple variance estimator for unequal probability
-sampling without replacement. *Journal of Applied Statistics*, 31, 305--315.
-
-Brewer, K. R. W. and Hanif, M. (1983). *Sampling with Unequal
-Probabilities*. Springer.
-
-Chauvet, G. (2019). Properties of Chromy's sampling procedure.
-*arXiv:1912.10896*.
-
-Chromy, J. R. (2009). Some generalizations of the Horvitz-Thompson
-estimator. *JSM Proceedings*.
-
-Cochran, W. G. (1977). *Sampling Techniques* (3rd ed.). Wiley.
-
-Sarndal, C.-E., Swensson, B., and Wretman, J. (1992). *Model Assisted
-Survey Sampling*. Springer.
-
-Tille, Y. (2006). *Sampling Algorithms*. Springer.
+Positive and negative coordination across survey waves is a user-level workflow, not a package feature. `samplyr` provides the infrastructure (PRN passthrough, panel partitioning, tidy output) and the user implements the update rule. See `vignette("sampling-coordination")` for the recommended workflow, including the negative-coordination formula \(u_{\text{new}} = (u - \pi) \bmod 1\) [@tille2006, sec. 8.2.4].

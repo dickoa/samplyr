@@ -1,6 +1,8 @@
 ---
 title: "Survey Analysis with samplyr"
 output: rmarkdown::html_vignette
+bibliography: references.bib
+link-citations: true
 vignette: >
   %\VignetteIndexEntry{Survey Analysis with samplyr}
   %\VignetteEngine{knitr::rmarkdown}
@@ -79,7 +81,7 @@ svymean(~hh_count, svy_cluster)
 
 ### Multi-stage design
 
-For multi-stage designs, each stage's cluster variable maps to a level of the `id` formula. Strata are exported from the first stage, consistent with the standard with-replacement variance approximation (Cochran 1977, ch. 11).
+For multi-stage designs, each stage's cluster variable maps to a level of the `id` formula. Strata are exported from the first stage, consistent with the standard with-replacement variance approximation [@cochran1977, ch. 11].
 
 ```{r}
 data(tanzania_schools)

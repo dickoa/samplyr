@@ -1,6 +1,8 @@
 ---
 title: "Introduction to samplyr"
 output: rmarkdown::html_vignette
+bibliography: references.bib
+link-citations: true
 vignette: >
   %\VignetteIndexEntry{Introduction to samplyr}
   %\VignetteEngine{knitr::rmarkdown}
@@ -56,7 +58,10 @@ sampling_design(title = "My sampling design") |>
 
 ## Deferred Column Resolution
 
-`stratify_by()` and `cluster_by()` accept bare column names and store them in the design object. Column names are validated only when a frame is available (`execute()`, `as_svydesign()`), which keeps design specification separate from execution.
+`stratify_by()` and `cluster_by()` accept bare column names and store
+them in the design object. Column names are validated only when
+a frame is available (`execute()`, `as_svydesign()`), which
+keeps design specification separate from execution.
 
 ```{r, eval = FALSE}
 design <- sampling_design(title = "Stratified cluster sampling") |>
@@ -257,7 +262,7 @@ sample |>
   count(region)
 ```
 
-**Power allocation** (Bankier, 1988) uses
+**Power allocation** [@bankier1988] uses
 \(n_h \propto C_h X_h^q\), where `cv` supplies \(C_h\), `importance`
 supplies \(X_h\), and `power` is \(q \in [0, 1]\).
 
