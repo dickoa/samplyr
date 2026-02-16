@@ -95,7 +95,7 @@ as.list.sampling_design <- function(x, ...) {
       }
       if (
         !is_null(stage$draw_spec$on_empty) &&
-          stage$draw_spec$on_empty != "warn"
+          stage$draw_spec$on_empty != "error"
       ) {
         stage_list$draw$on_empty <- stage$draw_spec$on_empty
       }

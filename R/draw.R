@@ -109,16 +109,18 @@
 #' @param on_empty Behaviour when a random-size method (`bernoulli`,
 #'   `pps_poisson`) selects zero units in a stratum or the whole frame.
 #'   One of:
-#'   - `"warn"` (default): Issue a warning and fall back to SRS of 1 unit.
-#'   - `"error"`: Stop with an error. Safest for production designs where
-#'     every stratum must be represented with correct weights.
+#'   - `"error"` (default): Stop with an informative error. Zero selections
+#'     usually indicate a design problem (sampling fraction too small or
+#'     stratum too small) that should be fixed rather than silently papered
+#'     over.
+#'   - `"warn"`: Issue a warning and fall back to SRS of 1 unit.
 #'   - `"silent"`: Fall back to SRS of 1 unit without a message.
 #'
-#'   **Weight note:** the fallback selects 1 unit via SRS, so the resulting
-#'   weight is `N` (the stratum or frame size), not `1/frac`. This reflects
-#'   the actual selection mechanism, not the intended Bernoulli/Poisson
-#'   design. Downstream variance estimation treats this unit as an SRS
-#'   draw.
+#'   **Weight note:** when falling back (`"warn"` or `"silent"`), the
+#'   fallback selects 1 unit via SRS, so the resulting weight is `N`
+#'   (the stratum or frame size), not `1/frac`. This reflects the actual
+#'   selection mechanism, not the intended Bernoulli/Poisson design.
+#'   Downstream variance estimation treats this unit as an SRS draw.
 #'
 #' @return A modified `sampling_design` object with selection parameters specified.
 #'
@@ -352,7 +354,7 @@ draw <- function(
   certainty_size = NULL,
   certainty_prop = NULL,
   certainty_overflow = "error",
-  on_empty = "warn"
+  on_empty = "error"
 ) {
   if (!is_sampling_design(.data)) {
     cli_abort("{.arg .data} must be a {.cls sampling_design} object")

@@ -332,15 +332,17 @@ sample_unstratified <- function(frame, draw_spec) {
 #' intended Bernoulli/Poisson inclusion probability.
 #' @noRd
 handle_empty_selection <- function(method_label, on_empty, N) {
-  msg <- c(
-    "{method_label} sampling produced zero selections.",
-    "i" = "Consider increasing {.arg frac} or using a fixed-size method."
+  header <- "{method_label} sampling produced zero selections."
+  suggestions <- c(
+    "i" = "Increase {.arg frac}, use a fixed-size method, or set {.code on_empty = \"warn\"} to fall back to SRS of 1 unit."
   )
   switch(on_empty,
-    error = cli_abort(msg),
+    error = cli_abort(c(header, suggestions)),
     warn = cli_warn(c(
-      msg,
-      "i" = "Falling back to SRS of 1 unit (weight = {N})."
+      header,
+      "!" = "Falling back to SRS of 1 unit (weight = {N}).",
+      "i" = "The fallback weight reflects SRS, not the intended {method_label} design.",
+      "i" = "Set {.code on_empty = \"error\"} to catch this, or {.code on_empty = \"silent\"} to suppress."
     )),
     silent = NULL
   )
@@ -405,7 +407,7 @@ draw_sample <- function(data, n, draw_spec) {
       prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
       idx <- sondage::equal_prob_wor(N, frac * N, method = "bernoulli", prn = prn_vals)$sample
       if (length(idx) == 0) {
-        on_empty <- draw_spec$on_empty %||% "warn"
+        on_empty <- draw_spec$on_empty %||% "error"
         fallback <- handle_empty_selection("Bernoulli", on_empty, N)
         idx <- fallback$idx
         pik <- fallback$pik
@@ -419,7 +421,7 @@ draw_sample <- function(data, n, draw_spec) {
       prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
       idx <- sondage::unequal_prob_wor(pik, method = "poisson", prn = prn_vals)$sample
       if (length(idx) == 0) {
-        on_empty <- draw_spec$on_empty %||% "warn"
+        on_empty <- draw_spec$on_empty %||% "error"
         fallback <- handle_empty_selection("PPS Poisson", on_empty, N)
         idx <- fallback$idx
         pik <- fallback$pik
@@ -549,7 +551,7 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
       prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
       idx <- sondage::unequal_prob_wor(pik, method = "poisson", prn = prn_vals)$sample
       if (length(idx) == 0) {
-        on_empty <- draw_spec$on_empty %||% "warn"
+        on_empty <- draw_spec$on_empty %||% "error"
         fallback <- handle_empty_selection("PPS Poisson", on_empty, N)
         idx <- fallback$idx
         pik <- fallback$pik

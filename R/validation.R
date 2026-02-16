@@ -220,45 +220,43 @@ validate_frame <- function(design, frame, stage = NULL) {
 #' Report validation issues
 #' @noRd
 report_validation_issues <- function(issues) {
-  msgs <- "Frame validation failed:"
-
-  for (issue in issues) {
+  bullets <- vapply(issues, function(issue) {
     stage <- issue$stage
     vars <- issue$vars
-    msg <- switch(
+    switch(
       issue$type,
-      "stratification" = c(
-        "x" = "{stage}: missing stratification variable{?s}: {.val {vars}}"
+      "stratification" = cli::format_inline(
+        "{stage}: missing stratification variable{?s}: {.val {vars}}"
       ),
-      "cluster" = c(
-        "x" = "{stage}: missing cluster variable{?s}: {.val {vars}}"
+      "cluster" = cli::format_inline(
+        "{stage}: missing cluster variable{?s}: {.val {vars}}"
       ),
-      "mos" = c(
-        "x" = "{stage}: missing MOS variable: {.var {vars}}"
+      "mos" = cli::format_inline(
+        "{stage}: missing MOS variable: {.var {vars}}"
       ),
-      "mos_type" = c(
-        "x" = "{stage}: MOS variable {.var {vars}} must be numeric, not {.cls {issue$actual_class}}"
+      "mos_type" = cli::format_inline(
+        "{stage}: MOS variable {.var {vars}} must be numeric, not {.cls {issue$actual_class}}"
       ),
-      "mos_na" = c(
-        "x" = "{stage}: MOS variable {.var {vars}} contains NA values"
+      "mos_na" = cli::format_inline(
+        "{stage}: MOS variable {.var {vars}} contains NA values"
       ),
-      "mos_negative" = c(
-        "x" = "{stage}: MOS variable {.var {vars}} contains negative values"
+      "mos_negative" = cli::format_inline(
+        "{stage}: MOS variable {.var {vars}} contains negative values"
       ),
-      "prn" = c(
-        "x" = "{stage}: missing PRN variable: {.var {vars}}"
+      "prn" = cli::format_inline(
+        "{stage}: missing PRN variable: {.var {vars}}"
       ),
-      "prn_type" = c(
-        "x" = "{stage}: PRN variable {.var {vars}} must be numeric, not {.cls {issue$actual_class}}"
+      "prn_type" = cli::format_inline(
+        "{stage}: PRN variable {.var {vars}} must be numeric, not {.cls {issue$actual_class}}"
       ),
-      "prn_na" = c(
-        "x" = "{stage}: PRN variable {.var {vars}} contains NA values"
+      "prn_na" = cli::format_inline(
+        "{stage}: PRN variable {.var {vars}} contains NA values"
       ),
-      "prn_range" = c(
-        "x" = "{stage}: PRN variable {.var {vars}} must have values in (0, 1)"
+      "prn_range" = cli::format_inline(
+        "{stage}: PRN variable {.var {vars}} must have values in (0, 1)"
       )
     )
-    msgs <- c(msgs, msg)
-  }
-  cli_abort(msgs, call = NULL)
+  }, character(1))
+  names(bullets) <- rep("x", length(bullets))
+  cli_abort(c("Frame validation failed:", bullets), call = NULL)
 }

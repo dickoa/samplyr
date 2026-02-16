@@ -1399,16 +1399,11 @@ test_that("certainty selection is rejected for WR/PMR methods", {
 # on_empty parameter for random-size methods
 # =============================================================================
 
-test_that("on_empty = 'warn' is the default and produces a warning on zero selection", {
-  # Use a very small frac on a small frame to force zero selection
-  # We mock sondage::bernoulli to always return integer(0) for this test
-  frame <- data.frame(id = 1:5)
-
+test_that("on_empty = 'error' is the default for random-size methods", {
   design <- sampling_design() |>
     draw(frac = 0.01, method = "bernoulli")
 
-  # Default should be "warn"
-  expect_equal(design$stages[[1]]$draw_spec$on_empty, "warn")
+  expect_equal(design$stages[[1]]$draw_spec$on_empty, "error")
 })
 
 test_that("on_empty = 'error' causes bernoulli to abort on zero selection", {

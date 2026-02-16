@@ -1,6 +1,4 @@
-# samplyr 0.1.0
-
-Initial CRAN release.
+# samplyr 0.2.9999
 
 ## Fixes
 

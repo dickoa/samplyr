@@ -18,7 +18,7 @@ draw(
   certainty_size = NULL,
   certainty_prop = NULL,
   certainty_overflow = "error",
-  on_empty = "warn"
+  on_empty = "error"
 )
 }
 \arguments{
@@ -157,17 +157,19 @@ Equivalent to SAS SURVEYSELECT allowing \verb{CERTSIZE=} overflow.}
 \code{pps_poisson}) selects zero units in a stratum or the whole frame.
 One of:
 \itemize{
-\item \code{"warn"} (default): Issue a warning and fall back to SRS of 1 unit.
-\item \code{"error"}: Stop with an error. Safest for production designs where
-every stratum must be represented with correct weights.
+\item \code{"error"} (default): Stop with an informative error. Zero selections
+usually indicate a design problem (sampling fraction too small or
+stratum too small) that should be fixed rather than silently papered
+over.
+\item \code{"warn"}: Issue a warning and fall back to SRS of 1 unit.
 \item \code{"silent"}: Fall back to SRS of 1 unit without a message.
 }
 
-\strong{Weight note:} the fallback selects 1 unit via SRS, so the resulting
-weight is \code{N} (the stratum or frame size), not \code{1/frac}. This reflects
-the actual selection mechanism, not the intended Bernoulli/Poisson
-design. Downstream variance estimation treats this unit as an SRS
-draw.}
+\strong{Weight note:} when falling back (\code{"warn"} or \code{"silent"}), the
+fallback selects 1 unit via SRS, so the resulting weight is \code{N}
+(the stratum or frame size), not \code{1/frac}. This reflects the actual
+selection mechanism, not the intended Bernoulli/Poisson design.
+Downstream variance estimation treats this unit as an SRS draw.}
 }
 \value{
 A modified \code{sampling_design} object with selection parameters specified.

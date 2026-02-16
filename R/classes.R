@@ -168,7 +168,7 @@ new_draw_spec <- function(
   certainty_size = NULL,
   certainty_prop = NULL,
   certainty_overflow = "error",
-  on_empty = "warn"
+  on_empty = "error"
 ) {
   structure(
     list(
