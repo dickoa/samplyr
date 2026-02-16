@@ -1,0 +1,296 @@
+---
+title: "Design Semantics and Assumptions"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Design Semantics and Assumptions}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup, message = FALSE, echo = FALSE}
+library(samplyr)
+library(dplyr)
+```
+
+This vignette documents what each `samplyr` operation assumes, what it computes, and what is preserved or lost at `survey` export.
+
+For usage tutorials, see `vignette("introduction")`. For survey export workflows, see `vignette("survey-analysis")`. For sample coordination, see `vignette("sampling-coordination")`.
+
+## Assumptions at a glance
+
+The following table summarizes what samplyr assumes and what the user must verify. Each row is expanded in the sections below.
+
+| Assumption                                 | Applies to                 | samplyr behaviour                                                                                    | User must verify                                                                                      |
+|:-------------------------------------------|:---------------------------|:-----------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------|
+| Strata are exhaustive and disjoint         | `stratify_by()`            | Partitions the frame by unique combinations of strata variables                                      | Strata variables define a valid partition                                                             |
+| Independent sampling across strata         | `stratify_by() |> draw()` | Each stratum sampled with a separate call to `sondage`                                                 | Correct by construction when strata are disjoint                                                      |
+| Cluster variables constant within clusters | `cluster_by()`             | Validated at execution: MOS and strata variables may not vary within a cluster                       | Cluster ID uniquely identifies the group                                                              |
+| Conditional independence across stages     | `add_stage()`              | Stage \(k\) sampling depends only on the set of units selected at stage \(k - 1\)                    | Standard multi-stage assumption; holds unless second-stage frame depends on first-stage randomisation |
+| FPC stored as population count             | `execute()`                | `.fpc_k` contains \(N_h\) (or cluster count); converted to \(\pi_i\) at survey export for PPS stages | Frame size at execution is treated as the population                                                  |
+| Weights are \(1/\pi_i\), unadjusted        | All methods                | No calibration, trimming, or non-response adjustment                                                 | Downstream adjustment is the analyst's responsibility                                                 |
+| PRN values are iid \(\text{U}(0, 1)\)      | `draw(prn = ...)`          | Validated: strictly in \((0, 1)\), no NAs, numeric                                                   | Independence and uniformity of the PRN column                                                         |
+
+## Notation
+
+Throughout this vignette:
+
+- \(U = \{1, \ldots, N\}\): finite population (the frame).
+- \(S \subseteq U\): selected sample.
+- \(\pi_i = \Pr(i \in S)\): first-order inclusion probability.
+- \(\pi_{kl} = \Pr(k \in S \text{ and } l \in S)\): joint (second-order)
+  inclusion probability.
+- \(w_i = 1 / \pi_i\): design weight (sampling weight before any adjustment).
+- \(N_h\): population size of stratum \(h\) (\(h = 1, \ldots, H\)).
+- \(n_h\): sample size drawn from stratum \(h\).
+- \(K\): number of sampling stages.
+- \(\pi_i^{(k \mid S^{(k-1)})}\): conditional inclusion probability of unit
+  \(i\) at stage \(k\), given the set \(S^{(k-1)}\) selected at stage \(k - 1\).
+
+`samplyr` produces **design weights only**. Calibration, trimming, and non-response adjustment are out of scope and belong in the estimation layer (`survey`, `srvyr`, or similar).
+
+## What each verb means
+
+### `sampling_design()`: frame-independent plan
+
+A `sampling_design` object is a specification, not a computation. Column names referenced in `stratify_by()`, `cluster_by()`, and `draw()` are stored as strings (deferred resolution). No data is touched until `execute()` binds the design to a frame. This separation means the same design can be applied to different frames or re-executed with different seeds.
+
+```{r design-inert}
+design <- sampling_design(title = "SRS WOR") |>
+  stratify_by(region) |>
+  draw(n = 50, method = "srswor")
+
+# No data has been sampled yet
+design
+```
+
+### `stratify_by()`: partition into independent sub-populations
+
+`stratify_by()` partitions the frame into \(H\) strata defined by the Cartesian product of its variables:
+
+$$
+U = U_1 \cup U_2 \cup \cdots \cup U_H, \qquad U_h \cap U_{h'} = \emptyset
+\; \text{for } h \neq h'.
+$$
+
+Sampling within each stratum is independent. This holds by construction because `samplyr` invokes `sondage` algorithms separately for each stratum.
+
+When an allocation method is specified, the total sample size \(n\) is distributed across strata:
+
+| Allocation       | Formula                                 | Requires           |
+|:-----------------|:----------------------------------------|:-------------------|
+| `"equal"`        | \(n_h = n / H\)                         |                    |
+| `"proportional"` | \(n_h \propto N_h\)                     |                    |
+| `"neyman"`       | \(n_h \propto N_h \, S_h\)              | `variance`         |
+| `"optimal"`      | \(n_h \propto N_h \, S_h / \sqrt{C_h}\) | `variance`, `cost` |
+| `"power"`        | \(n_h \propto \text{CV}_h \cdot X_h^q\) | `cv`, `importance` |
+
+Fractional allocations are rounded to integers using largest-remainder (Hare--Niemeyer) rounding that preserves \(\sum n_h = n\). When `min_n` or `max_n` bounds are active, iterative clamping redistributes the excess or deficit until convergence.
+
+### `cluster_by()`: define the sampling unit
+
+`cluster_by()` declares the variable(s) that identify the primary sampling unit (PSU) at the current stage. Operationally, samplyr:
+
+1. Groups the frame by the cluster variable(s).
+2. Draws a sample of **clusters** (not individual units).
+3. Returns all population units within selected clusters.
+
+Any variable used in PPS size measures (`mos`) or in stratification must be constant within each cluster. `samplyr` validates this at execution time and raises an error if cluster-level variables vary within groups.
+
+`cluster_by()` is purely structural. It does not affect inclusion probabilities directly. They are determined by `draw()` applied to
+the cluster-level aggregates.
+
+### `draw()`: specify the selection mechanism
+
+`draw()` attaches a selection method and sample size (or fraction) to the current stage. The inclusion probabilities and weights depend on the method
+class:
+
+**Equal-probability without replacement** (`srswor`, `systematic`, `bernoulli`):
+
+$$
+\pi_i = \frac{n}{N} \quad (\text{or } \pi_i = f \text{ for bernoulli}),
+\qquad w_i = \frac{1}{\pi_i}.
+$$
+
+Fixed-size for `srswor` and `systematic` and random-size for `bernoulli`. Systematic sampling induces implicit stratification by row order. Use `control` to specify the sort variable.
+
+**PPS without replacement** (`pps_brewer`, `pps_systematic`, `pps_cps`, `pps_poisson`, `pps_sps`, `pps_pareto`):
+
+$$
+\pi_i = n \, \frac{\text{mos}_i}{\sum_j \text{mos}_j}
+$$
+
+computed by `sondage::inclusion_prob()`, which iteratively caps units with \(\pi_i \geq 1\) and redistributes. These "certainty" units (\(\pi_i = 1\))
+receive weight 1 and contribute zero variance. For Poisson sampling, \(\pi_i = f \cdot N \cdot \text{mos}_i / \sum \text{mos}\), capped at 1 (random-size design).
+
+**With-replacement and PMR** (`srswr`, `pps_multinomial`, `pps_chromy`):
+
+The quantity of interest is the expected number of hits \(E(n_i) = n \, \text{mos}_i / \sum \text{mos}\). Each draw is an independent selection; if unit \(i\) is selected \(k\) times, `samplyr` creates \(k\) rows with a `.draw` column indexing each hit. The weight per draw is \(w_i = 1 / p_i\), where \(p_i\) is the single-draw selection probability. No finite population correction applies (FPC = \(\infty\)).
+
+Chromy's sequential PPS (`pps_chromy`) is classified as *probability minimum replacement* (PMR): each unit receives \(\lfloor E(n_i) \rfloor\) or \(\lceil E(n_i) \rceil\) hits. When all \(E(n_i) < 1\), this reduces to WOR.
+
+**PRN-compatible methods** (`bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`):
+
+When `prn` is specified, the permanent random numbers are passed through to `sondage`. Selection becomes deterministic given the PRN values, so the
+`seed` argument to `execute()` has no effect on the selection outcome.
+
+### `add_stage()`: delimit stages
+
+`add_stage()` is syntactic: it closes the current stage and opens a new one. It carries no statistical content of its own. Stages are numbered
+\(1, 2, \ldots, K\) in definition order.
+
+### `execute()`: materialize the sample
+
+`execute()` binds the design to one or more frames and runs the selection:
+
+1. For each stage \(k\), the frame is restricted to units belonging to clusters selected at stage \(k - 1\) (or the full frame for \(k = 1\)).
+2. Strata and cluster groupings are resolved against the (subsetted) frame.
+3. The selection algorithm from `draw()` is invoked via `sondage`.
+4. The `.weight`, `.fpc`, `.draw`, and `.certainty` columns are computed and suffixed with the stage number.
+
+**Partial execution.** `execute(stages = 1)` runs only the first stage, returning a `tbl_sample`. Piping this result into a second `execute()` call continues from the next unexecuted stage, using the first-stage result as the frame. This pattern supports operational workflows where second-stage listing happens after first-stage fieldwork.
+
+**Two-phase sampling.** When the input to `execute()` is itself a `tbl_sample` (from a prior phase), samplyr compounds the phase-1 and phase-2 weights multiplicatively. The conditional phase-2 weight is computed at survey export time.
+
+## Weight compounding across stages
+
+**Single-stage.** The design weight is:
+
+$$
+w_i = \frac{1}{\pi_i}.
+$$
+
+**Multi-stage.** Let \(\pi_i^{(k)}\) denote the conditional inclusion probability of unit \(i\) at stage \(k\), given the set of clusters selected at all prior stages. The compound weight is:
+
+$$
+w_i = \prod_{k=1}^{K} \frac{1}{\pi_i^{(k)}} = \prod_{k=1}^{K} w_i^{(k)}.
+$$
+
+`samplyr` computes this by joining each stage's weight to the previous stage's weight on the shared cluster variables and multiplying. The per-stage weights are preserved as `.weight_1`, `.weight_2`, etc. The `.weight` column always equals their product.
+
+```{r weight-compound}
+two_stage <- sampling_design() |>
+  add_stage("EAs") |>
+    stratify_by(region) |>
+    cluster_by(ea_id) |>
+    draw(n = 3, method = "srswor") |>
+  add_stage("Households") |>
+    draw(n = 5, method = "srswor") |>
+  execute(niger_households, seed = 42)
+
+# Compound weight equals the product of per-stage weights
+all.equal(two_stage$.weight,
+          two_stage$.weight_1 * two_stage$.weight_2)
+```
+
+**Two-phase.** When a `tbl_sample` from phase 1 is piped into `execute()` for phase 2, the phase-1 weight is stored internally and multiplied into
+the final `.weight`. The conditional phase-2 weight \(w_{\text{cond}} = w_{\text{overall}} / w_{\text{phase 1}}\) is computed during survey export for use with `survey::twophase()`.
+
+## Finite population corrections
+
+`samplyr` stores the FPC as a population count in `.fpc_k`. The interpretation depends on the method, and the conversion for survey export happens automatically in `as_svydesign()`:
+
+| Method class                  | `.fpc_k` stores        | Passed to survey as | survey interpretation                 |
+|:------------------------------|:-----------------------|:--------------------|:--------------------------------------|
+| EP-WOR (srswor, systematic)   | \(N_h\) (stratum pop.) | \(N_h\) directly    | Sampling fraction \(f_h = n_h / N_h\) |
+| PPS-WOR (pps_brewer, ...)     | \(N_h\) (stratum pop.) | \(1 / w_k = \pi_i\) | Inclusion probability                 |
+| WR / PMR (srswr, chromy, ...) | \(\infty\) (synthetic) | \(\infty\)          | No FPC (Hansen--Hurwitz variance)     |
+
+The PPS conversion merits explanation. `survey::svydesign()` interprets FPC values less than 1 as inclusion probabilities and values \(\geq 1\) as
+population sizes. `samplyr` stores \(N_h\) uniformly for all methods, then at export time, `as_svydesign()` creates a per-row column `.fpc_pi_k = 1 / .weight_k = \pi_i` for PPS-WOR stages. This is exact: the per-stage weight already encodes \(\pi_i\), so the transformation is lossless.
+
+For WR and PMR methods, a synthetic column filled with `Inf` is created. The survey package interprets this as "no finite population correction," which gives the Hansen--Hurwitz variance estimator.
+
+## Independence across stages
+
+`samplyr` assumes that the stage-\(k\) selection mechanism depends on stage \(k - 1\) only through the **set** of selected clusters, not through
+the specific randomization that produced it. Formally:
+
+$$
+\Pr(S^{(k)} \mid S^{(k-1)}) \text{ depends on } S^{(k-1)} \text{ as a set.}
+$$
+
+This is the standard assumption in multi-stage sampling theory
+(Cochran 1977, ch. 11; Sarndal et al. 1992, ch. 4.3).
+
+**Consequence for variance estimation.** Under the "with-replacement at stage 1" approximation, variance estimation requires only first-stage strata and clusters. Stage-1 PSU totals are treated as the primary source of variability. Later-stage contributions are captured through the variability of these totals.
+
+Accordingly, `as_svydesign()` exports only first-stage strata to `survey::svydesign()`. Second-stage (and deeper) stratification affects weights (which are correctly compounded) but does not appear in the survey design object. If the user needs exact multi-stage variance (without the with-replacement approximation), replicate-weight methods via `as_svrepdesign()` are the recommended path.
+
+## What is lost at survey export
+
+`as_svydesign()` translates a `tbl_sample` into a `survey::svydesign()` object. The translation is faithful for standard variance estimators, but some `samplyr` metadata is not representable in the `survey` framework.
+
+### 1. Second-stage stratification
+
+Only first-stage strata are passed to `survey::svydesign()`. Under the with-replacement approximation this is correct: later-stage strata influence point estimates through weights but do not enter the variance formula. This follows the standard practice described in the `survey` package documentation.
+
+### 2. Joint inclusion probabilities
+
+By default, `as_svydesign()` uses Brewer's variance approximation (Berger 2004), which derives \(\pi_{kl}\) from marginal \(\pi_i\) without computing the full \(N \times N\) matrix. `joint_expectation()` computes second-order quantities directly. The result is exact for CPS, systematic, and Poisson. For Brewer, SPS, and Pareto, it uses the high-entropy approximation (Hajek 1964; Brewer and Donadio 2003), which is \(O(N^2)\). Exact recursive formulas exist for Brewer (Brewer 2002, ch. 9) but are \(O(N^3)\) and impractical for large frames. Units with \(\pi_i = 1\) (certainty selections) are handled internally: the joint matrix is computed on the stochastic part and reassembled with \(\pi_{kl} = 1\) for certainty-certainty pairs and \(\pi_{kl} = \pi_l\) for certainty-stochastic pairs. To use the joint matrix for variance estimation, pass it via `pps = survey::ppsmat(joint_matrix)`. See `?joint_expectation` for the full method-by-method breakdown.
+
+### 3. With-replacement row structure
+
+For WR methods (`srswr`, `pps_multinomial`), each draw produces one row with `.draw_k` indexing the hit. At export, `.draw_k` becomes the sampling-unit identifier in the `ids` formula, and the FPC is set to \(\infty\). The survey package then uses the Hansen--Hurwitz variance estimator, which is the standard approach for WR designs.
+
+### 4. Chromy / PMR semantics
+
+`pps_chromy` is treated identically to WR at export (no FPC, no `pps` argument). The exact Sen--Yates--Grundy formula for PMR requires \(E(n_i) E(n_j) - E(n_i n_j)\) as pairwise weights (Chromy 2009, eq. 5), but `survey::ppsmat()` reads \(\pi_i\) from the diagonal, which for PMR contains \(E(n_i^2)\), not \(E(n_i)\). The Hansen--Hurwitz approximation is conservative and more stable (Chauvet 2019).
+
+### 5. Panel assignments
+
+The `.panel` column is not passed to survey. Panels are a sample-management concept: deterministic partitions for rotation or workload distribution. The full-sample weights in `.weight` are correct for the combined sample. For per-panel analysis, multiply weights by \(k\) (number of panels). Systematic interleaving assigns each selected unit to panels with approximately equal probability \(1/k\), so the per-panel inclusion probability is approximately \(\pi_i / k\) and the per-panel weight is \(k \cdot w_i\).
+
+### 6. Certainty flag
+
+`samplyr` stores `.certainty_k` as a logical column. At export, certainty units (\(\pi_i = 1\)) are placed in a synthetic stratum (`.cert_stratum = "certainty"`), added to the strata formula alongside user-defined strata. The certainty stratum contributes zero variance (it is a census) and does not inflate degrees of freedom (Cochran 1977, ch. 11; Sarndal et al. 1992, ch. 3.5).
+
+### 7. Design metadata
+
+`samplyr` stores the full `sampling_design` object, stage labels, seed, and execution history as attributes of the `tbl_sample`. These are accessible via `get_design()` and `get_stages_executed()` but are not round-tripped through the survey export.
+
+## Panel partitioning semantics
+
+`execute(..., panels = k)` partitions the sample into \(k\) non-overlapping rotation groups via deterministic systematic interleaving:
+
+- **Stratified designs**: within each stratum, units are assigned panels \(1, 2, \ldots, k, 1, 2, \ldots\) in row order (round-robin).
+- **Clustered designs**: panels are assigned at the PSU level, then propagated to all units within each PSU.
+- **Control sorting**: the `control` argument to `draw()` determines  row order before interleaving, which affects panel composition.
+
+Weights are **not** adjusted. Panels structure the output but do not affect the selection mechanism or inclusion probabilities. Each panel is a representative subsample of the full sample and for per-panel inference, the analyst could just multiply `.weight` by \(k\).
+
+## PRN and sample coordination semantics
+
+`samplyr` passes permanent random numbers through to `sondage` without transformation. PRN-compatible methods (`bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`) produce a deterministic selection given the PRN values. When PRN is supplied, the `seed` argument to `execute()` does not affect selection.
+
+Positive and negative coordination across survey waves is a user-level workflow, not a package feature. `samplyr` provides the infrastructure (PRN passthrough, panel partitioning, tidy output) and the user implements the update rule. See `vignette("sampling-coordination")` for the recommended workflow, including the negative-coordination formula \(u_{\text{new}} = (u - \pi) \bmod 1\) (Tille 2006, sec. 8.2.4).
+
+## References
+
+Bankier, M. D. (1988). Power allocations: determining sample sizes for
+subnational areas. *The American Statistician*, 42(3), 174--177.
+
+Berger, Y. G. (2004). A simple variance estimator for unequal probability
+sampling without replacement. *Journal of Applied Statistics*, 31, 305--315.
+
+Brewer, K. R. W. and Hanif, M. (1983). *Sampling with Unequal
+Probabilities*. Springer.
+
+Chauvet, G. (2019). Properties of Chromy's sampling procedure.
+*arXiv:1912.10896*.
+
+Chromy, J. R. (2009). Some generalizations of the Horvitz-Thompson
+estimator. *JSM Proceedings*.
+
+Cochran, W. G. (1977). *Sampling Techniques* (3rd ed.). Wiley.
+
+Sarndal, C.-E., Swensson, B., and Wretman, J. (1992). *Model Assisted
+Survey Sampling*. Springer.
+
+Tille, Y. (2006). *Sampling Algorithms*. Springer.
