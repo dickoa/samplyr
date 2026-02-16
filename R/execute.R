@@ -21,9 +21,25 @@
 #'   - `.sample_id`: Unique identifier for each sampled unit
 #'   - `.weight`: Sampling weight (1/probability)
 #'   - `.weight_1`, `.weight_2`, ...: Per-stage sampling weights
-#'   - `.fpc_1`, `.fpc_2`, ...: Per-stage population sizes (finite
-#'     population correction). For stratified stages, this is the stratum
-#'     population size N_h; for clustered stages, the number of clusters.
+#'     (\eqn{1/\pi_i^{(k)}}{1/pi_i(k)}). The product of all per-stage
+#'     weights equals `.weight`.
+#'   - `.fpc_1`, `.fpc_2`, ...: Per-stage finite population correction
+#'     values. The meaning depends on the method and context:
+#'     - **Equal-probability WOR** (srswor, systematic): \eqn{N_h} (stratum
+#'       population size), or \eqn{N} if unstratified. The sampling fraction
+#'       \eqn{f = n / N} is derived from this at variance-estimation time.
+#'     - **PPS WOR** (pps_brewer, pps_cps, etc.): \eqn{N_h} (stratum
+#'       population size), converted to \eqn{\pi_i = 1/w_i}{pi_i = 1/w_i}
+#'       at survey export, because `survey::svydesign()` expects inclusion
+#'       probabilities for unequal-probability stages.
+#'     - **Clustered stages**: the number of clusters in the
+#'       stratum/group, not the number of ultimate units.
+#'     - **WR / PMR** (srswr, pps_multinomial, pps_chromy): \eqn{\infty}{Inf}.
+#'       With-replacement designs have no finite population correction;
+#'       variance is estimated via the Hansen--Hurwitz formula.
+#'     In a multi-stage design, each stage has its own `.fpc_k`. At survey
+#'     export (`as_svydesign()`), these are assembled into a multi-level FPC
+#'     formula (e.g., `~ .fpc_1 + .fpc_2`).
 #'   - `.draw_1`, `.draw_2`, ...: Draw index per stage (WR/PMR methods only).
 #'     Each row represents one independent draw; the draw index identifies
 #'     which with-replacement selection the row came from.
@@ -73,12 +89,42 @@
 #'
 #' ## Weight Calculation
 #'
-#' Weights are calculated as the inverse of inclusion probabilities:
-#' - **SRS**: w = N/n (population size / sample size)
-#' - **Stratified**: w_h = N_h/n_h within each stratum
-#' - **PPS**: \eqn{w_i = 1/\pi_i}{w_i = 1/pi_i} where \eqn{\pi_i}{pi_i} is the inclusion probability
-#' - **Multi-stage**: Weights compound across stages
-#' - **Multi-phase**: Weights compound across phases
+#' The `.weight` column is always the inverse of the inclusion probability.
+#' For all methods the per-stage weight is \eqn{w_i^{(k)} = 1 / \pi_i^{(k)}}{w_i(k) = 1 / pi_i(k)}:
+#'
+#' - **SRS**: \eqn{w_i = N / n}{w = N/n}, constant for all units.
+#' - **Stratified SRS**: \eqn{w_i = N_h / n_h}{w = N_h/n_h} within stratum \eqn{h}.
+#' - **PPS WOR**: \eqn{w_i = 1 / \pi_i}{w_i = 1/pi_i} where
+#'   \eqn{\pi_i}{pi_i} is computed from the measure of size by
+#'   `sondage::inclusion_prob()`. Varies across units.
+#' - **WR / PMR**: \eqn{w_i = 1 / p_i}{w_i = 1/p_i} where \eqn{p_i}{p_i} is
+#'   the single-draw selection probability. Each draw is one row; a unit
+#'   selected \eqn{k} times appears \eqn{k} times, each with the same weight.
+#'
+#' ### Multi-stage weight compounding
+#'
+#' In a \eqn{K}-stage design, the overall weight for unit \eqn{i} is the
+#' product of per-stage weights:
+#' \deqn{w_i = \prod_{k=1}^{K} w_i^{(k)} = \prod_{k=1}^{K} \frac{1}{\pi_i^{(k \mid S^{(k-1)})}}}
+#' where \eqn{\pi_i^{(k \mid S^{(k-1)})}}{pi_i(k | S(k-1))} is the
+#' conditional inclusion probability at stage \eqn{k}, given the set of
+#' clusters selected at all prior stages. For example, in a two-stage design
+#' where 5 of 30 EAs are selected in a region (stage 1) and 12 of 50
+#' households are listed within each selected EA (stage 2):
+#' \deqn{w_i = \frac{30}{5} \times \frac{50}{12} = 6 \times 4.17 = 25}
+#' The `.weight` column always equals the product of `.weight_1`, `.weight_2`,
+#' etc. Per-stage weights are preserved for diagnostics and for survey
+#' export.
+#'
+#' ### Multi-phase weight compounding
+#'
+#' When `.data` is itself a `tbl_sample` (two-phase sampling), the
+#' phase-1 inclusion probability is already reflected in the input weights.
+#' The final `.weight` is the product of phase-1 and phase-2 weights:
+#' \deqn{w_i = w_i^{(\text{phase 1})} \times w_i^{(\text{phase 2} \mid \text{phase 1})}}
+#' This ensures the Horvitz--Thompson estimator
+#' \eqn{\hat{Y} = \sum_S w_i \, y_i}{Y-hat = sum(w_i * y_i)} is unbiased
+#' for the population total.
 #'
 #' ## Panel Partitioning
 #'

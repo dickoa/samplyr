@@ -30,7 +30,7 @@ sample <- sampling_design() |>
 
 rep_tbl <- as_survey_rep(sample, type = "auto")
 rep_tbl |>
-  summarise(mean_score = survey_mean(score, vartype = "se"))
+  summarise(mean_beds = survey_mean(beds, vartype = "se"))
 }
 
 }

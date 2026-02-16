@@ -21,7 +21,12 @@ library(dplyr)
 
 ## Overview
 
-**samplyr** provides a tidy grammar for specifying and executing survey sampling designs. The package is built around a minimal set of composable verbs that handle stratified, clustered, and multi-stage sampling.
+**`samplyr`** provides a tidy grammar for specifying and executing survey sampling designs. The package is built around a minimal set of composable verbs that handle stratified, clustered, and multi-stage sampling.
+
+For the statistical semantics and assumptions underlying each operation,
+see `vignette("design-semantics")`. For survey export workflows, see
+`vignette("survey-analysis")`. For sample coordination with permanent
+random numbers, see `vignette("sampling-coordination")`.
 
 The core idea is that sampling code should read like its English description:
 
@@ -30,7 +35,7 @@ library(samplyr)
 library(dplyr)
 
 # "Stratify by region, proportionally allocate 500 samples, execute"
-sampling_design() |>
+sampling_design(title = "My sampling design") |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 500) |>
   execute(frame, seed = 1)
@@ -38,7 +43,7 @@ sampling_design() |>
 
 ## The Grammar
 
-samplyr uses 5 verbs and 1 modifier:
+`samplyr` uses 5 verbs and 1 modifier:
 
 | Function | Purpose |
 |----------|---------|
@@ -51,13 +56,10 @@ samplyr uses 5 verbs and 1 modifier:
 
 ## Deferred Column Resolution
 
-`stratify_by()` and `cluster_by()` accept bare column names and store
-them in the design object. Column names are validated only when
-a frame is available (`execute()`, `as_svydesign()`), which
-keeps design specification separate from execution.
+`stratify_by()` and `cluster_by()` accept bare column names and store them in the design object. Column names are validated only when a frame is available (`execute()`, `as_svydesign()`), which keeps design specification separate from execution.
 
 ```{r, eval = FALSE}
-design <- sampling_design() |>
+design <- sampling_design(title = "Stratified cluster sampling") |>
   stratify_by(region, alloc = "proportional") |>
   cluster_by(ea_id) |>
   draw(n = 200)
@@ -83,14 +85,20 @@ niger_eas |>
 The most basic design selects n units at random from the frame.
 
 ```{r}
-sample <- sampling_design() |>
-  draw(n = 100) |>
-  execute(niger_eas, seed = 24)
+design <- sampling_design(title = "Simple Random Sampling") |>
+  draw(n = 100)
+design
+```
 
+The `sampling_design` object stores design metadata and can be reused.
+
+```{r}
+sample <- execute(design, niger_eas, seed = 24)
 nrow(sample)
 ```
 
-The result includes the original columns plus sampling metadata: `.weight` (sampling weight), `.weight_1`, `.weight_2`, etc. (per-stage weights), and for with-replacement methods, `.draw_1`, `.draw_2`, etc. (draw index per stage — each row is one independent draw).
+
+The result includes the original columns plus sampling metadata: `.weight` (sampling weight), `.weight_1`, `.weight_2`, etc. (per-stage weights). For with-replacement methods, `.draw_1`, `.draw_2`, etc. index each independent draw.
 
 ```{r}
 sample |>
@@ -100,22 +108,24 @@ sample |>
 
 ### Selection Methods
 
-The `method` argument controls how units are selected. By default, samplyr uses simple random sampling without replacement (`srswor`).
+The `method` argument controls how units are selected. By default, `samplyr` uses simple random sampling without replacement (`srswor`).
 
 Systematic sampling selects units at fixed intervals, which can improve precision when the frame is ordered.
 
 ```{r}
-sample_sys <- sampling_design() |>
+sample_sys <- sampling_design(title = "Systematic") |>
   draw(n = 100, method = "systematic") |>
   execute(niger_eas, seed = 2021)
+head(sample_sys)
 ```
 
 Sampling with replacement allows the same unit to be selected multiple times, useful for bootstrap procedures.
 
 ```{r}
-sample_wr <- sampling_design() |>
+sample_wr <- sampling_design(title = "SRS WR") |>
   draw(n = 100, method = "srswr") |>
   execute(niger_eas, seed = 123)
+head(sample_wr)
 ```
 
 ### Using Sampling Fractions
@@ -126,7 +136,6 @@ Instead of a fixed sample size, you can specify a sampling fraction with `frac`.
 sample <- sampling_design() |>
   draw(frac = 0.05) |>
   execute(niger_eas, seed = 1789)
-
 nrow(sample)
 ```
 
@@ -136,21 +145,20 @@ Bernoulli sampling selects each unit independently with the specified probabilit
 sample <- sampling_design() |>
   draw(frac = 0.05, method = "bernoulli") |>
   execute(niger_eas, seed = 1960)
-
 nrow(sample)
 ```
 
 ### Rounding Behavior
 
-When using `frac`, the computed sample size (N × frac) must be rounded to an integer. By default, samplyr rounds up (ceiling), which matches SAS SURVEYSELECT's default behavior. Use the `round` argument to control this:
+When using `frac`, the computed sample size (N × frac) must be rounded to an integer. By default, `samplyr` rounds up (ceiling), which matches SAS SURVEYSELECT's default behavior. Use the `round` argument to control this:
 
-- `"up"` (default): Round up — ensures adequate sample size
-- `"down"`: Round down — minimum sample size
+- `"up"` (default): round up, ensures adequate sample size
+- `"down"`: round down, minimum sample size
 - `"nearest"`: Standard mathematical rounding
 
 ```{r}
 # Frame of 105 units, frac = 0.1 → 10.5
-frame_105 <- niger_eas[1:105, ]
+frame_105 <- head(niger_eas, 105)
 
 # Default: rounds up to 11
 nrow(sampling_design() |> draw(frac = 0.1) |> execute(frame_105, seed = 3))
@@ -191,7 +199,7 @@ is not supported when `alloc` is set.
 **Proportional allocation** distributes the sample proportionally to stratum sizes, ensuring the sample mirrors the population structure.
 
 ```{r}
-sample <- sampling_design() |>
+sample <- sampling_design(title = "Proportional Allocation") |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
   execute(niger_eas, seed = 42)
@@ -204,7 +212,7 @@ sample |>
 **Equal allocation** assigns the same sample size to each stratum, regardless of population size. This maximizes precision for comparisons between strata.
 
 ```{r}
-sample <- sampling_design() |>
+sample <- sampling_design(title = "Equal Allocation") |>
   stratify_by(region, alloc = "equal") |>
   draw(n = 160) |>
   execute(niger_eas, seed = 2026)
@@ -221,7 +229,7 @@ data(niger_eas_variance)
 
 niger_eas_variance
 
-sample <- sampling_design() |>
+sample <- sampling_design(title = "Neyman Allocation") |>
   stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
   draw(n = 300) |>
   execute(niger_eas, seed = 12345)
@@ -238,7 +246,7 @@ data(niger_eas_cost)
 
 niger_eas_cost
 
-sample <- sampling_design() |>
+sample <- sampling_design(title = "Optimal Allocation") |>
   stratify_by(region, alloc = "optimal",
               variance = niger_eas_variance,
               cost = niger_eas_cost) |>
@@ -264,7 +272,7 @@ importance_df <- data.frame(
   importance = c(20, 25, 60, 75, 120, 70, 65, 90)
 )
 
-sample <- sampling_design() |>
+sample <- sampling_design(title = "Power Allocation") |>
   stratify_by(
     region,
     alloc = "power",
@@ -385,12 +393,12 @@ Probability Proportional to Size (PPS) sampling selects units with probability p
 Use the `mos` argument to specify the measure of size variable. Here we select EAs with probability proportional to their household count.
 
 ```{r}
-sample <- sampling_design() |>
+sample_pps <- sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 50, method = "pps_brewer", mos = hh_count) |>
   execute(niger_eas, seed = 365)
 
-sample |>
+sample_pps |>
   summarise(
     mean_hh = mean(hh_count),
     median_hh = median(hh_count)
@@ -406,25 +414,25 @@ sample_srs <- sampling_design() |>
   execute(niger_eas, seed = 42)
 
 bind_rows(
-  sample |> summarise(method = "PPS", mean_hh = mean(hh_count)),
+  sample_pps |> summarise(method = "PPS", mean_hh = mean(hh_count)),
   sample_srs |> summarise(method = "SRS", mean_hh = mean(hh_count))
 )
 ```
 
 ### PPS Methods
 
-samplyr supports several PPS methods:
+`samplyr` supports several PPS methods:
 
-| Method            | Description                                                |
-|-------------------|------------------------------------------------------------|
-| `pps_brewer`      | Brewer's method - fast with good properties (recommended)  |
-| `pps_systematic`  | PPS systematic - simple but can have periodicity issues    |
-| `pps_cps`         | Conditional Poisson sampling (maximum entropy)             |
-| `pps_poisson`     | PPS Poisson - random sample size (requires `frac`)         |
-| `pps_sps`         | Sequential Poisson sampling (supports `prn`)               |
-| `pps_pareto`      | Pareto sampling (supports `prn`)                           |
-| `pps_multinomial` | PPS with replacement                                       |
-| `pps_chromy`      | Chromy's sequential PPS / minimum replacement  |
+| Method            | Description                                                           |
+|-------------------|-----------------------------------------------------------------------|
+| `pps_brewer`      | Brewer's method - fast with good properties (recommended)             |
+| `pps_systematic`  | PPS systematic - simple but can have periodicity issues               |
+| `pps_cps`         | Conditional Poisson sampling (maximum entropy)                        |
+| `pps_poisson`     | PPS Poisson - random sample size (requires `frac` and supports `prn`) |
+| `pps_sps`         | Sequential Poisson sampling (supports `prn`)                          |
+| `pps_pareto`      | Pareto sampling (supports `prn`)                                      |
+| `pps_multinomial` | PPS with replacement                                                  |
+| `pps_chromy`      | Chromy's sequential PPS / minimum replacement                         |
 
 ### Certainty Selection
 
@@ -433,14 +441,34 @@ In PPS sampling, very large units can have expected inclusion probabilities abov
 Use `certainty_size` for an absolute threshold or `certainty_prop` for a proportional one.
 
 ```{r}
-sample <- sampling_design() |>
-  cluster_by(ea_id) |>
+sample_cert <- sampling_design(title = "Certainty selection") |>
   draw(n = 50, method = "pps_brewer", mos = hh_count,
        certainty_size = 500) |>
   execute(niger_eas, seed = 123)
 
+# How many EAs with more than 500 hh
+filter(niger_eas, hh_count > 500)
+
 # Check which units were selected with certainty
-table(sample$.certainty_1)
+count(sample_cert, .certainty_1)
+```
+
+With `certainty_prop`, units whose MOS proportion exceeds the threshold are taken with certainty. The process is iterative: after removing certainty units, proportions are recomputed.
+
+```{r}
+sample_certp <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 50, method = "pps_systematic", mos = hh_count,
+       certainty_prop = 0.05) |>
+  execute(niger_eas, seed = 12345)
+
+# How many EAs with more than 5% of the total hh by region
+niger_eas |>
+  mutate(mosprop = hh_count/sum(hh_count),
+         .by = region) |>
+  filter(mosprop >= 0.05)
+
+filter(sample_certp, .certainty_1)
 ```
 
 ### Permanent Random Numbers (PRN)
@@ -448,26 +476,17 @@ table(sample$.certainty_1)
 Some PPS methods support permanent random numbers for sample coordination across survey waves. Assign a stable U(0,1) value to each frame unit, then pass it via `prn`:
 
 ```{r}
-niger_eas$prn <- withr::with_seed(42, runif(nrow(niger_eas)))
+set.seed(1)
+niger_eas$prn <- runif(nrow(niger_eas))
 
-sample_prn <- sampling_design() |>
+sample_prn <- sampling_design(title = "Samples coordination with PRN") |>
   cluster_by(ea_id) |>
   draw(n = 50, method = "pps_sps", mos = hh_count, prn = prn) |>
   execute(niger_eas, seed = 1)
+sample_prn
 ```
 
 Because the PRN values are stable, re-executing the same design on the same frame produces highly overlapping samples (positive coordination). PRN is supported for `bernoulli`, `pps_poisson`, `pps_sps`, and `pps_pareto`.
-
-With `certainty_prop`, units whose MOS proportion exceeds the threshold are taken with certainty. The process is iterative: after removing certainty units, proportions are recomputed.
-
-```{r}
-sample <- sampling_design() |>
-  stratify_by(region) |>
-  cluster_by(ea_id) |>
-  draw(n = 50, method = "pps_systematic", mos = hh_count,
-       certainty_prop = 0.10) |>
-  execute(niger_eas, seed = 12345)
-```
 
 ---
 
@@ -477,30 +496,33 @@ Control sorting orders the frame before selection, providing implicit stratifica
 
 ```{r}
 # Nested sorting: standard ascending order
-sample <- sampling_design() |>
+sample_sort <- sampling_design() |>
   draw(n = 100, method = "systematic",
        control = c(region, department)) |>
   execute(niger_eas, seed = 98765)
+head(sample_sort)
 ```
 
 `serp()` implements serpentine (snake) sorting, which alternates direction at each level of the hierarchy. This minimizes jumps at boundaries, matching SAS PROC SURVEYSELECT's `SORT=SERP`.
 
 ```{r}
 # Serpentine sorting
-sample <- sampling_design() |>
+sample_serp <- sampling_design() |>
   draw(n = 100, method = "systematic",
        control = serp(region, department)) |>
   execute(niger_eas, seed = 1)
+head(sample_serp)
 ```
 
 Control sorting can be combined with explicit stratification. The sorting is then applied within each stratum.
 
 ```{r}
-sample <- sampling_design() |>
+sample_serp2 <- sampling_design() |>
   stratify_by(strata) |>
   draw(n = 100, method = "systematic",
        control = serp(region, department)) |>
   execute(niger_eas, seed = 2)
+head(sample_serp2)
 ```
 
 ---
@@ -536,15 +558,22 @@ schools_frame <- tanzania_schools |>
 Now we can run a two-stage design: select 10 districts with PPS, then sample 5 schools within each.
 
 ```{r}
-sample <- sampling_design() |>
+twostage_design <- sampling_design(title = "Two-stage cluster sampling") |>
   add_stage(label = "Districts") |>
     cluster_by(district) |>
     draw(n = 10, method = "pps_brewer", mos = district_enrollment) |>
   add_stage(label = "Schools") |>
-    draw(n = 5) |>
-  execute(schools_frame, seed = 3)
+  draw(n = 5)
+twostage_design
+```
 
-sample |>
+Let's apply it to the frame.
+
+```{r}
+sample_schools <- execute(twostage_design,
+                          schools_frame, seed = 3)
+
+sample_schools |>
   summarise(n_districts = n_distinct(district),
             n_schools = n())
 ```
@@ -554,7 +583,7 @@ sample |>
 Combining stratification with multi-stage sampling is standard for national surveys. Here we stratify by region (which is constant within districts), then select districts and schools within each stratum.
 
 ```{r}
-sample <- sampling_design() |>
+sample_schools2 <- sampling_design(title = "Stratified two-stage cluster sampling") |>
   add_stage(label = "Districts") |>
     stratify_by(region) |>
     cluster_by(district) |>
@@ -563,7 +592,7 @@ sample <- sampling_design() |>
     draw(n = 3) |>
   execute(schools_frame, seed = 4)
 
-sample |>
+sample_schools2 |>
   count(region, district)
 ```
 
@@ -616,6 +645,12 @@ sample <- sampling_design() |>
   execute(niger_eas, seed = 2024)
 
 design <- get_design(sample)
+design
+```
+
+and accessing element of the design
+
+```{r}
 design$stages[[1]]$strata$vars
 ```
 
@@ -635,51 +670,51 @@ design_effect(sample$.weight)
 
 ### Selection Methods
 
-| Method | Sample Size | Replacement | Notes |
-|--------|-------------|-------------|-------|
-| `srswor` | Fixed | No | Default, general purpose |
-| `srswr` | Fixed | Yes | Bootstrap, rare populations |
-| `systematic` | Fixed | No | Ordered frames |
-| `bernoulli` | Random | No | Simple field protocols |
-| `pps_brewer` | Fixed | No | Recommended PPS method |
-| `pps_systematic` | Fixed | No | Simple PPS |
-| `pps_cps` | Fixed | No | Joint inclusion probs available |
-| `pps_poisson` | Random | No | PPS with random size |
-| `pps_sps` | Fixed | No | Sequential Poisson, supports PRN |
-| `pps_pareto` | Fixed | No | Pareto sampling, supports PRN |
-| `pps_multinomial` | Fixed | Yes | PPS with replacement |
-| `pps_chromy` | Fixed | PMR | Chromy's sequential PPS |
+| Method            | Sample Size | Replacement                                                    | Notes                                        |
+|-------------------|-------------|----------------------------------------------------------------|----------------------------------------------|
+| `srswor`          | Fixed       | No                                                             | Default, general purpose                     |
+| `srswr`           | Fixed       | Yes                                                            | Bootstrap, rare populations                  |
+| `systematic`      | Fixed       | No                                                             | Ordered frames                               |
+| `bernoulli`       | Random      | No                                                             | Simple field protocols                       |
+| `pps_brewer`      | Fixed       | No                                                             | Recommended PPS method                       |
+| `pps_systematic`  | Fixed       | No                                                             | Simple PPS                                   |
+| `pps_cps`         | Fixed       | No                                                             | Maximum entropy, exact joint inclusion probs |
+| `pps_poisson`     | Random      | No                                                             | PPS with random size                         |
+| `pps_sps`         | Fixed       | No                                                             | Sequential Poisson, supports PRN             |
+| `pps_pareto`      | Fixed       | No                                                             | Pareto sampling, supports PRN                |
+| `pps_multinomial` | Fixed       | Yes                                                            | PPS with replacement                         |
+| `pps_chromy`      | Fixed       | PMR.^[Probability Minimum Replacement based on expected hits.] | Chromy's sequential PPS                      |
 
 ### Allocation Methods
 
-| Method | Description | Requirements |
-|--------|-------------|--------------|
-| (none) | n per stratum | — |
-| `equal` | Same n per stratum | — |
-| `proportional` | n ∝ stratum size | — |
-| `neyman` | Minimize variance | `variance` data frame |
-| `optimal` | Minimize variance/cost | `variance` + `cost` data frames |
-| `power` | Compromise: \(n_h \propto C_h X_h^q\) | `cv` + `importance` (+ optional `power`) |
+| Method         | Description                           | Requirements                             |
+|----------------|---------------------------------------|------------------------------------------|
+| (none)         | n per stratum                         |                                          |
+| `equal`        | Same n per stratum                    |                                          |
+| `proportional` | n ∝ stratum size                      |                                          |
+| `neyman`       | Minimize variance                     | `variance` data frame                    |
+| `optimal`      | Minimize variance/cost                | `variance` + `cost` data frames          |
+| `power`        | Compromise: \(n_h \propto C_h X_h^q\) | `cv` + `importance` (+ optional `power`) |
 
 For custom stratum-specific sizes or rates, pass a data frame directly to `n` or `frac` in `draw()`.
 When `alloc` is specified, use `n` (not `frac`).
 
 ### Sample Size Bounds
 
-| Argument | Description |
-|----------|-------------|
-| `min_n` | Minimum sample size per stratum (for variance estimation, set ≥ 2) |
-| `max_n` | Maximum sample size per stratum (to cap dominant strata) |
+| Argument | Description                                                        |
+|----------|--------------------------------------------------------------------|
+| `min_n`  | Minimum sample size per stratum (for variance estimation, set ≥ 2) |
+| `max_n`  | Maximum sample size per stratum (to cap dominant strata)           |
 
 These only apply when using allocation methods (`equal`, `proportional`, `neyman`, `optimal`, `power`).
 
 ### Rounding Methods
 
-| Value | Description |
-|-------|-------------|
-| `"up"` | Round up (ceiling) — default, matches SAS |
-| `"down"` | Round down (floor) |
-| `"nearest"` | Standard mathematical rounding |
+| Value       | Description                              |
+|-------------|------------------------------------------|
+| `"up"`      | Round up (ceiling), default, matches SAS |
+| `"down"`    | Round down (floor)                       |
+| `"nearest"` | Standard mathematical rounding           |
 
 These apply when using `frac` to specify sampling rates. When computed sample size < 1, it is always rounded up to 1.
 

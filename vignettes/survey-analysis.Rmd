@@ -22,11 +22,9 @@ library(survey)
 
 ## Overview
 
-After drawing a sample with samplyr, you typically need to analyze it. This vignette covers the tools samplyr provides for inspecting samples and integrating with the `survey` package for design-based inference.
+After drawing a sample with `samplyr`, you typically need to analyze it. This vignette covers the tools `samplyr` provides for inspecting samples and integrating with the `survey` package for design-based inference.
 
-Design objects store deferred column references (bare column names in
-`stratify_by()` / `cluster_by()`), which are resolved against the frame when
-you validate or execute the design.
+Design objects store deferred column references (bare column names in `stratify_by()` / `cluster_by()`), which are resolved against the frame when you validate or execute the design.
 
 ## Sample Summary
 
@@ -99,21 +97,20 @@ ms_sample <- sampling_design() |>
   execute(schools_frame, seed = 3)
 
 svy_ms <- as_svydesign(ms_sample)
+svy_ms
 svymean(~enrollment, svy_ms)
 ```
 
 ## Replicate-Weight Export
 
-For replicate-based variance estimation (jackknife/BRR/bootstrap), use
-`as_svrepdesign()`. This converts a `tbl_sample` to `svydesign`, then to
-`svyrep.design` using `survey::as.svrepdesign()`.
+For replicate-based variance estimation (jackknife/BRR/bootstrap), use `as_svrepdesign()`. This converts a `tbl_sample` to `svydesign`, then to `svyrep.design` using `survey::as.svrepdesign()`.
 
 ```{r}
 rep_svy <- as_svrepdesign(sample, type = "auto")
 svymean(~staff_count, rep_svy)
 ```
 
-You can also export directly to a srvyr replicate design:
+You can also export directly to a `srvyr` replicate design:
 
 ```{r}
 library(srvyr)
@@ -123,12 +120,11 @@ rep_tbl |>
   summarise(mean_staff = survey_mean(staff_count, vartype = "se"))
 ```
 
-Current scope: replicate export supports single-phase non-PPS designs.
-Two-phase and PPS designs should use `as_svydesign()` (linearization).
+Current scope: replicate export supports single-phase non-PPS designs. Two-phase and PPS designs should use `as_svydesign()` (linearization).
 
 ## Exact Variance with Joint Expectations
 
-The Brewer approximation works well in practice, but if you need exact second-order quantities, `joint_expectation()` computes them for all PPS stages. For WOR stages, this produces joint inclusion probabilities (pi_kl). For WR/PMR stages (`pps_multinomial`, `pps_chromy`), it produces joint expected hits E(n_k * n_l).
+The Brewer approximation works well in practice, but if you need to use second-order quantities directly, `joint_expectation()` computes them for all PPS stages. For WOR stages, this produces joint inclusion probabilities (pi_kl). For WR/PMR stages (`pps_multinomial`, `pps_chromy`), it produces joint expected hits E(n_k * n_l). See `?joint_expectation` to see which methods provide exact second-order moments, which approximations are provided, and for the full method-by-method breakdown.
 
 It replays the design specification against the original frame, computing quantities per stratum and assembling a block-diagonal matrix.
 
@@ -137,31 +133,35 @@ pps_sample <- sampling_design() |>
   add_stage() |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
-    draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+    draw(n = 5, method = "pps_cps", mos = hh_count) |>
   add_stage() |>
     draw(n = 12) |>
   execute(niger_eas, seed = 2025)
 
-# Compute joint probabilities for stage 1
+# Compute joint probabilities for stage 1 (exact for CPS)
 jip <- joint_expectation(pps_sample, niger_eas, stage = 1)
 
 # Use with survey for exact variance (WOR stages)
 svy_exact <- as_svydesign(pps_sample, pps = ppsmat(jip[[1]]))
 svymean(~hh_count, svy_exact)
+
+svy_brewer <- as_svydesign(pps_sample)
+svymean(~hh_count, svy_brewer)
 ```
 
-The supported methods and their corresponding sondage dispatch:
+The supported methods :
 
-| samplyr method     | sondage function               | Returns                |
-|--------------------|--------------------------------|------------------------|
-| `pps_brewer`       | `joint_inclusion_prob(design)` | pi_kl                  |
-| `pps_systematic`   | `joint_inclusion_prob(design)` | pi_kl                  |
-| `pps_cps`          | `joint_inclusion_prob(design)` | pi_kl                  |
-| `pps_poisson`      | `joint_inclusion_prob(design)` | pi_kl                  |
-| `pps_sps`          | `joint_inclusion_prob(design)` | pi_kl                  |
-| `pps_pareto`       | `joint_inclusion_prob(design)` | pi_kl                  |
-| `pps_multinomial`  | `joint_expected_hits(design)`  | E(n_k * n_l)           |
-| `pps_chromy`       | `joint_expected_hits(design)`  | E(n_k * n_l)           |
+| samplyr method    | `joint_expectation()` returns | Precision   |
+|-------------------|-------------------------------|-------------|
+| `pps_brewer`      | $\pi_{kl}$                    | Approximate |
+| `pps_systematic`  | $\pi_{kl}$                    | Exact       |
+| `pps_cps`         | $\pi_{kl}$                    | Exact       |
+| `pps_poisson`     | $\pi_{kl}$                    | Exact       |
+| `pps_sps`         | $\pi_{kl}$                    | Approximate |
+| `pps_pareto`      | $\pi_{kl}$                    | Approximate |
+| `pps_multinomial` | $E(n_k * n_l)$                | Exact       |
+| `pps_chromy`      | $E(n_k * n_l)$                | Approximate |
+
 
 ## End-to-End Workflow
 

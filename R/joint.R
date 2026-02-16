@@ -47,23 +47,53 @@
 #' quantities are computed independently within each group and
 #' assembled into a block-diagonal matrix.
 #'
-#' ## WOR method dispatch
+#' ## Exact vs. approximate computation
 #'
-#' | samplyr method     | sondage function              |
-#' |--------------------|-------------------------------|
-#' | `pps_brewer`       | `joint_inclusion_prob()`      |
-#' | `pps_systematic`   | `joint_inclusion_prob()`      |
-#' | `pps_cps`          | `joint_inclusion_prob()`      |
-#' | `pps_poisson`      | `joint_inclusion_prob()`      |
-#' | `pps_sps`          | `joint_inclusion_prob()`      |
-#' | `pps_pareto`       | `joint_inclusion_prob()`      |
+#' The accuracy of the returned matrix depends on the sampling method.
+#' Some algorithms yield closed-form joint probabilities; others
+#' require approximation or simulation.
 #'
-#' ## WR/PMR method dispatch
+#' ### WOR methods (\eqn{\pi_{kl}}{pi_kl})
 #'
-#' | samplyr method     | sondage function              |
-#' |--------------------|-------------------------------|
-#' | `pps_multinomial`  | `joint_expected_hits()`       |
-#' | `pps_chromy`       | `joint_expected_hits()`       |
+#' | samplyr method     | sondage function              | Quality                            |
+#' |--------------------|-------------------------------|------------------------------------|
+#' | `pps_cps`          | `joint_inclusion_prob()`      | **Exact** (Aires' formula via C)   |
+#' | `pps_systematic`   | `joint_inclusion_prob()`      | **Exact** (combinatorial enumeration) |
+#' | `pps_poisson`      | `joint_inclusion_prob()`      | **Exact** (\eqn{\pi_{kl} = \pi_k \pi_l}{pi_kl = pi_k * pi_l}, independent draws) |
+#' | `pps_brewer`       | `joint_inclusion_prob()`      | **Approximate**\eqn{^*} (high-entropy / Hajek-Brewer-Donadio) |
+#' | `pps_sps`          | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
+#' | `pps_pareto`       | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
+#'
+#' \eqn{^*} Exact recursive formulas for Brewer's joint inclusion
+#' probabilities exist (Brewer 2002, ch. 9) but are
+#' \eqn{O(N^3)}{O(N^3)}, making them impractical for frames of more
+#' than a few hundred units. The high-entropy approximation is
+#' \eqn{O(N^2)}{O(N^2)} and sufficiently accurate for variance
+#' estimation in practice. The same trade-off applies to SPS and
+#' Pareto, whose exact joint probabilities would require enumerating
+#' the combinatorial sample space.
+#'
+#' The high-entropy approximation assumes the design is close to the
+#' maximum-entropy design with the same marginal \eqn{\pi_i}{pi_i}
+#' (Hajek 1964; Brewer and Donadio 2003). This is a good approximation
+#' for most PPS designs and is the same quantity that underlies the
+#' Berger (2004) variance estimator used by `survey::svydesign(pps =
+#' "brewer")`. For CPS (conditional Poisson / maximum entropy), the
+#' joint probabilities are exact by definition.
+#'
+#' ### WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})
+#'
+#' | samplyr method     | sondage function              | Quality                            |
+#' |--------------------|-------------------------------|------------------------------------|
+#' | `pps_multinomial`  | `joint_expected_hits()`       | **Exact** (analytic: \eqn{n(n-1) p_k p_l + n p_k \mathbf{1}_{k=l}}{n(n-1) p_k p_l + n p_k 1(k=l)}) |
+#' | `pps_chromy`       | `joint_expected_hits()`       | **Approximate** (Monte Carlo simulation, 10 000 replicates) |
+#'
+#' For `pps_chromy`, the sequential dependence structure does not admit
+#' a closed-form expression for \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
+#' sondage uses Monte Carlo simulation (default 10 000 replicates) to
+#' estimate the pairwise expectations. Increasing `nsim` (passed
+#' through `...`) reduces Monte Carlo error at the cost of computation
+#' time.
 #'
 #' ## Limitations
 #'

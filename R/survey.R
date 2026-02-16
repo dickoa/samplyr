@@ -22,12 +22,31 @@
 #' The conversion maps samplyr's design specification to the arguments
 #' expected by [survey::svydesign()]:
 #'
-#' - **Cluster ids**: extracted from `cluster_by()` variables at each stage
-#' - **Strata**: extracted from `stratify_by()` variables at the first stage
-#' - **Weights**: the `.weight` column (compound weight across all stages)
-#' - **FPC**: for equal-probability stages, the population size `.fpc_k`;
-#'   for PPS without replacement stages, the per-unit inclusion
-#'   probability (1/`.weight_k`)
+#' - **Cluster ids** (`ids`): extracted from `cluster_by()` variables at each
+#'   stage, assembled into a multi-level formula (e.g., `~ ea_id + hh_id`).
+#'   For WR/PMR stages, the `.draw_k` column is used as the sampling unit
+#'   identifier instead (each draw is treated as an independent unit for
+#'   Hansen--Hurwitz variance estimation).
+#' - **Strata** (`strata`): extracted from `stratify_by()` variables at the
+#'   **first executed stage only** (see Multi-stage designs below).
+#' - **Weights** (`weights`): the `.weight` column -- the compound weight
+#'   across all stages (i.e., the product of per-stage weights
+#'   \eqn{w = \prod w_k = \prod 1/\pi_k}{w = prod(1/pi_k)}).
+#'   This is the inverse of the overall inclusion probability and is the
+#'   correct weight for design-based point estimation
+#'   (\eqn{\hat{Y} = \sum w_i y_i}{Y-hat = sum(w_i * y_i)}).
+#' - **FPC** (`fpc`): a per-stage formula assembled from `.fpc_k` columns.
+#'   The encoding depends on the method:
+#'   - **Equal-probability WOR**: `.fpc_k` (the stratum population count
+#'     \eqn{N_h}) is passed directly. The survey package derives the sampling
+#'     fraction as \eqn{f_h = n_h / N_h}.
+#'   - **PPS WOR**: `.fpc_k` is \eqn{N_h}, but this is **not** passed
+#'     directly. Instead, a derived column \eqn{1 / w_k = \pi_i}{1/w_k = pi_i}
+#'     is created and passed, because `survey::svydesign()` interprets FPC
+#'     values in \eqn{(0, 1)}{(0,1)} as inclusion probabilities.
+#'   - **WR / PMR**: a synthetic column filled with `Inf` is passed. The
+#'     survey package interprets this as no finite population correction,
+#'     giving Hansen--Hurwitz variance.
 #'
 #' ## Multi-stage designs
 #'
@@ -43,10 +62,23 @@
 #' contribution of later stages is captured through the variability
 #' of first-stage unit totals.
 #'
+#' Concretely, for a two-stage stratified-cluster design, the exported
+#' call is equivalent to:
+#' \preformatted{
+#' survey::svydesign(
+#'   ids     = ~ ea_id,         # stage-1 clusters
+#'   strata  = ~ region,        # stage-1 strata only
+#'   weights = ~ .weight,       # product of stage-1 and stage-2 weights
+#'   fpc     = ~ .fpc_pi_1 + .fpc_2,  # pi_i for PPS stage, N_h for SRS stage
+#'   data    = sample,
+#'   nest    = TRUE
+#' )
+#' }
+#'
 #' ## Variance estimation for PPS designs
 #'
 #' For stages using PPS without replacement methods (`pps_brewer`,
-#' `pps_systematic`, `pps_cps`, `pps_poisson`), variance is
+#' `pps_systematic`, `pps_cps`, `pps_poisson`, `pps_sps`, `pps_pareto`), variance is
 #' estimated by default using Brewer's approximation (`pps = "brewer"`
 #' in survey's terminology), which approximates the joint inclusion
 #' probabilities from the marginal inclusion probabilities. This is
@@ -129,7 +161,7 @@
 #'   execute(kenya_health, seed = 42)
 #'
 #' svy <- as_svydesign(sample)
-#' survey::svymean(~score, svy)
+#' survey::svymean(~beds, svy)
 #'
 #' # Two-stage cluster sample with PPS first stage
 #' sample <- sampling_design() |>
@@ -144,15 +176,14 @@
 #' # Default: Brewer variance approximation
 #' svy <- as_svydesign(sample)
 #'
-#' # Exact: compute joint probabilities from frame (requires sondage)
-#' # pik <- inclusion_probabilities(frame, n = 5, mos = hh_count)
-#' # joint <- sondage::up_brewer_jip(pik)
-#' # svy <- as_svydesign(sample, pps = survey::ppsmat(joint))
+#' # Exact: compute joint probabilities from frame
+#' jip <- joint_expectation(sample, niger_eas, stage = 1)
+#' svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 #' }
 #'
 #' @seealso [execute()] for producing tbl_sample objects,
 #'   [survey::svydesign()] for the underlying function,
-#'   [as_survey_design()] for converting directly to a srvyr `tbl_svy`,
+#'   [as_survey_design.tbl_sample] for converting directly to a srvyr `tbl_svy`,
 #'   `as_svrepdesign()` for replicate-weight export
 #'
 #' @export
@@ -633,7 +664,7 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
 #'   execute(kenya_health, seed = 42)
 #'
 #' rep_svy <- as_svrepdesign(sample, type = "auto")
-#' survey::svymean(~score, rep_svy)
+#' survey::svymean(~beds, rep_svy)
 #' }
 #'
 #' @seealso [as_svydesign()] for linearization export,
@@ -729,7 +760,7 @@ as_svrepdesign.tbl_sample <- function(
 #' svy <- as_survey_design(sample)
 #' svy |>
 #'   group_by(facility_type) |>
-#'   summarise(mean_score = survey_mean(score))
+#'   summarise(mean_beds = survey_mean(beds))
 #' }
 #'
 #' @seealso [as_svydesign()] for converting to a survey.design2 object
@@ -777,7 +808,7 @@ as_survey_design.tbl_sample <- function(.data, ...) {
 #'
 #' rep_tbl <- as_survey_rep(sample, type = "auto")
 #' rep_tbl |>
-#'   summarise(mean_score = survey_mean(score, vartype = "se"))
+#'   summarise(mean_beds = survey_mean(beds, vartype = "se"))
 #' }
 #'
 #' @seealso `as_svrepdesign()` for survey replicate-weight export

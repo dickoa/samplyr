@@ -1407,6 +1407,7 @@ test_that("on_empty = 'error' is the default for random-size methods", {
 })
 
 test_that("on_empty = 'error' causes bernoulli to abort on zero selection", {
+  skip_on_cran()
   frame <- data.frame(id = 1:5)
 
   # With frac = 0.001 on N=5, expected count = 0.005; almost always zero
@@ -1433,6 +1434,7 @@ test_that("on_empty = 'error' causes bernoulli to abort on zero selection", {
 })
 
 test_that("on_empty = 'silent' falls back without warning or error", {
+  skip_on_cran()
   frame <- data.frame(id = 1:5)
 
   # Same approach: find a seed that triggers zero selection
@@ -1461,6 +1463,7 @@ test_that("on_empty = 'silent' falls back without warning or error", {
 })
 
 test_that("on_empty = 'warn' produces a warning on zero selection for pps_poisson", {
+  skip_on_cran()
   frame <- data.frame(id = 1:5, size = c(1, 1, 1, 1, 1))
 
   got_warning <- FALSE

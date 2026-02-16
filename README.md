@@ -1,15 +1,15 @@
 # samplyr
 
-A tidy grammar for survey sampling in R. **samplyr** provides a minimal set of composable verbs for stratified, clustered, and multi-stage sampling designs.
+A tidy grammar for survey sampling in R. **samplyr** provides a minimal set of composable verbs for stratified, clustered, multi-stage, and multi-phase sampling designs with PPS methods, sample coordination, and panel rotation.
 
 ## Installation
 
 ``` r
 # Install sondage first (sampling algorithms backend)
-remotes::install_gitlab("dickoa/sondage")
+pak::pkg_install("gitlab::dickoa/sondage")
 
-remotes::install_gitlab("dickoa/samplyr")
-pak::pkg_install("dickoa/samplyr") # github mirror
+# Install samplyr
+pak::pkg_install("gitlab::dickoa/samplyr")
 ```
 
 ## Overview
@@ -212,7 +212,7 @@ data(niger_eas_variance)
 sample <- sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
   draw(n = 300) |>
-  execute(niger_eas, seed = 42)
+  execute(niger_eas, seed = 123)
 ```
 
 ## Sample Coordination (PRN)
@@ -220,23 +220,17 @@ sample <- sampling_design() |>
 Permanent random numbers enable coordinated sampling across survey waves. Assign a stable uniform random number to each frame unit, then pass it via `prn`:
 
 ```r
-data(nigeria_business)
-frame <- nigeria_business |>
-  mutate(u = runif(n()))
+frame$prn <- runif(nrow(frame))
 
 # Wave 1: sequential Poisson sampling with PRN
 wave1 <- sampling_design() |>
-  draw(n = 500, method = "pps_sps", mos = size, prn = u) |>
+  draw(n = 500, method = "pps_sps", mos = size, prn = prn) |>
   execute(frame, seed = 1)
 
 # Wave 2: same PRN → high overlap (positive coordination)
 wave2 <- sampling_design() |>
-  draw(n = 500, method = "pps_sps", mos = size, prn = u) |>
+  draw(n = 500, method = "pps_sps", mos = size, prn = prn) |>
   execute(frame, seed = 2)
-
-overlap_positive <- length(intersect(wave1$enterprise_id,
-                                     wave2$enterprise_id))
-overlap_positive
 ```
 
 PRN is supported for `bernoulli`, `pps_poisson`, `pps_sps`, and `pps_pareto`.
@@ -249,9 +243,61 @@ Convert samples to `survey` or `srvyr` objects for analysis:
 svy <- as_svydesign(sample)
 survey::svymean(~y, svy)
 
-# Exact variance with joint inclusion probabilities
+# Exact or high-entropy joint inclusion probabilities
 jip <- joint_expectation(sample, frame, stage = 1)
 svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
+```
+
+By default `as_svydesign()` uses Brewer's variance approximation. For
+tighter variance estimates, `joint_expectation()` computes pairwise
+joint inclusion probabilities from the original frame. The result is
+exact for CPS, systematic, and Poisson; for Brewer, SPS, and Pareto it
+uses the O(N^2) high-entropy approximation (exact recursive formulas
+exist but are O(N^3) and impractical for large frames). See
+`?joint_expectation` for the full method-by-method breakdown.
+
+## Panel Partitioning
+
+Partition the sample into rotation groups for panel surveys:
+
+```r
+sample <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 200) |>
+  execute(niger_eas, seed = 1, panels = 4)
+
+table(sample$.panel)  # ~50 per panel
+```
+
+Panels are assigned by systematic interleaving within strata. For
+multi-stage designs, panels are assigned at the PSU level and propagated
+to all units. Weights reflect the full-sample inclusion probability; for
+per-panel analysis, multiply by the number of panels.
+
+## Two-Phase Sampling
+
+Pipe a `tbl_sample` into `execute()` for multi-phase designs:
+
+```r
+# Phase 1: large screening sample
+phase1 <- sampling_design() |>
+  draw(n = 500) |>
+  execute(frame, seed = 1)
+
+# Phase 2: subsample from phase 1
+phase2 <- sampling_design() |>
+  draw(n = 50) |>
+  execute(phase1, seed = 2)
+```
+
+Weights compound automatically across phases.
+
+## Diagnostics
+
+```r
+summary(sample)           # Per-stage allocation tables, weight diagnostics
+effective_n(sample)       # Effective sample size (Kish)
+design_effect(sample)     # Design effect (deff)
 ```
 
 ## Included Datasets
@@ -260,11 +306,12 @@ Synthetic datasets for learning and testing:
 
 | Dataset | Description | Rows |
 |---------|-------------|------|
-| `niger_eas` | DHS-style enumeration areas (Niger) | ~1,500 |
-| `uganda_farms` | LSMS-style agricultural frame (Uganda) | ~800 |
-| `kenya_health` | Health facility frame (Kenya) | ~3,000 |
-| `tanzania_schools` | School survey frame (Tanzania) | ~2,500 |
-| `nigeria_business` | Enterprise survey frame (Nigeria) | ~10,000 |
+| `niger_eas` | DHS-style enumeration areas (Niger) | 1,536 |
+| `niger_households` | Household data nested in niger_eas (Niger) | 150,789 |
+| `uganda_farms` | LSMS-style agricultural frame (Uganda) | 790 |
+| `kenya_health` | Health facility frame (Kenya) | 3,098 |
+| `tanzania_schools` | School survey frame (Tanzania) | 2,434 |
+| `nigeria_business` | Enterprise survey frame (Nigeria) | 11,617 |
 
 Plus auxiliary data: `niger_eas_variance`, `niger_eas_cost`
 
@@ -306,7 +353,7 @@ sampling_design() |>
 ### SAS Rounding Control
 
 ```sas
-proc surveyselect data=frame method=sys samprate=0.02 seed=42 round=nearest;
+proc surveyselect data=frame method=sys samprate=0.02 seed=3 round=nearest;
   strata State;
 run;
 ```

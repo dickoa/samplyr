@@ -169,7 +169,8 @@
 #' ## Fixed vs Random Sample Size Methods
 #'
 #' Methods with **fixed sample size** (`srswor`, `srswr`, `systematic`, `pps_systematic`,
-#' `pps_brewer`, `pps_cps`, `pps_multinomial`) accept either `n` or `frac`. When `frac`
+#' `pps_brewer`, `pps_cps`, `pps_sps`, `pps_pareto`, `pps_multinomial`, `pps_chromy`)
+#' accept either `n` or `frac`. When `frac`
 #' is provided, the sample size is computed based on the `round` parameter (default: ceiling).
 #'
 #' Methods with **random sample size** (`bernoulli`, `pps_poisson`) require `frac` only.
@@ -197,7 +198,7 @@
 #' indicating which units were certainty selections.
 #'
 #' Certainty selection is only available for WOR PPS methods (`pps_systematic`,
-#' `pps_brewer`, `pps_cps`, `pps_poisson`). With-replacement methods
+#' `pps_brewer`, `pps_cps`, `pps_poisson`, `pps_sps`, `pps_pareto`). With-replacement methods
 #' (`pps_multinomial`) and PMR methods (`pps_chromy`) handle large units
 #' natively through their hit mechanism.
 #'

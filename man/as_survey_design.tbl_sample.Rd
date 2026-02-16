@@ -36,7 +36,7 @@ sample <- sampling_design() |>
 svy <- as_survey_design(sample)
 svy |>
   group_by(facility_type) |>
-  summarise(mean_score = survey_mean(score))
+  summarise(mean_beds = survey_mean(beds))
 }
 
 }

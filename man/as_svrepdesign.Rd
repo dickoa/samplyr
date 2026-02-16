@@ -44,7 +44,7 @@ sample <- sampling_design() |>
   execute(kenya_health, seed = 42)
 
 rep_svy <- as_svrepdesign(sample, type = "auto")
-survey::svymean(~score, rep_svy)
+survey::svymean(~beds, rep_svy)
 }
 
 }

@@ -37,12 +37,33 @@ finite population corrections) captured during \code{\link[=execute]{execute()}}
 The conversion maps samplyr's design specification to the arguments
 expected by \code{\link[survey:svydesign]{survey::svydesign()}}:
 \itemize{
-\item \strong{Cluster ids}: extracted from \code{cluster_by()} variables at each stage
-\item \strong{Strata}: extracted from \code{stratify_by()} variables at the first stage
-\item \strong{Weights}: the \code{.weight} column (compound weight across all stages)
-\item \strong{FPC}: for equal-probability stages, the population size \code{.fpc_k};
-for PPS without replacement stages, the per-unit inclusion
-probability (1/\code{.weight_k})
+\item \strong{Cluster ids} (\code{ids}): extracted from \code{cluster_by()} variables at each
+stage, assembled into a multi-level formula (e.g., \code{~ ea_id + hh_id}).
+For WR/PMR stages, the \code{.draw_k} column is used as the sampling unit
+identifier instead (each draw is treated as an independent unit for
+Hansen--Hurwitz variance estimation).
+\item \strong{Strata} (\code{strata}): extracted from \code{stratify_by()} variables at the
+\strong{first executed stage only} (see Multi-stage designs below).
+\item \strong{Weights} (\code{weights}): the \code{.weight} column -- the compound weight
+across all stages (i.e., the product of per-stage weights
+\eqn{w = \prod w_k = \prod 1/\pi_k}{w = prod(1/pi_k)}).
+This is the inverse of the overall inclusion probability and is the
+correct weight for design-based point estimation
+(\eqn{\hat{Y} = \sum w_i y_i}{Y-hat = sum(w_i * y_i)}).
+\item \strong{FPC} (\code{fpc}): a per-stage formula assembled from \code{.fpc_k} columns.
+The encoding depends on the method:
+\itemize{
+\item \strong{Equal-probability WOR}: \code{.fpc_k} (the stratum population count
+\eqn{N_h}) is passed directly. The survey package derives the sampling
+fraction as \eqn{f_h = n_h / N_h}.
+\item \strong{PPS WOR}: \code{.fpc_k} is \eqn{N_h}, but this is \strong{not} passed
+directly. Instead, a derived column \eqn{1 / w_k = \pi_i}{1/w_k = pi_i}
+is created and passed, because \code{survey::svydesign()} interprets FPC
+values in \eqn{(0, 1)}{(0,1)} as inclusion probabilities.
+\item \strong{WR / PMR}: a synthetic column filled with \code{Inf} is passed. The
+survey package interprets this as no finite population correction,
+giving Hansen--Hurwitz variance.
+}
 }
 \subsection{Multi-stage designs}{
 
@@ -57,12 +78,25 @@ weights (which are correctly compounded) but does not need to
 appear in the design object for variance estimation -- the
 contribution of later stages is captured through the variability
 of first-stage unit totals.
+
+Concretely, for a two-stage stratified-cluster design, the exported
+call is equivalent to:
+\preformatted{
+survey::svydesign(
+  ids     = ~ ea_id,         # stage-1 clusters
+  strata  = ~ region,        # stage-1 strata only
+  weights = ~ .weight,       # product of stage-1 and stage-2 weights
+  fpc     = ~ .fpc_pi_1 + .fpc_2,  # pi_i for PPS stage, N_h for SRS stage
+  data    = sample,
+  nest    = TRUE
+)
+}
 }
 
 \subsection{Variance estimation for PPS designs}{
 
 For stages using PPS without replacement methods (\code{pps_brewer},
-\code{pps_systematic}, \code{pps_cps}, \code{pps_poisson}), variance is
+\code{pps_systematic}, \code{pps_cps}, \code{pps_poisson}, \code{pps_sps}, \code{pps_pareto}), variance is
 estimated by default using Brewer's approximation (\code{pps = "brewer"}
 in survey's terminology), which approximates the joint inclusion
 probabilities from the marginal inclusion probabilities. This is
@@ -129,7 +163,7 @@ sample <- sampling_design() |>
   execute(kenya_health, seed = 42)
 
 svy <- as_svydesign(sample)
-survey::svymean(~score, svy)
+survey::svymean(~beds, svy)
 
 # Two-stage cluster sample with PPS first stage
 sample <- sampling_design() |>
@@ -144,10 +178,9 @@ sample <- sampling_design() |>
 # Default: Brewer variance approximation
 svy <- as_svydesign(sample)
 
-# Exact: compute joint probabilities from frame (requires sondage)
-# pik <- inclusion_probabilities(frame, n = 5, mos = hh_count)
-# joint <- sondage::up_brewer_jip(pik)
-# svy <- as_svydesign(sample, pps = survey::ppsmat(joint))
+# Exact: compute joint probabilities from frame
+jip <- joint_expectation(sample, niger_eas, stage = 1)
+svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 }
 
 }
@@ -173,6 +206,6 @@ Assisted Survey Sampling}. Springer.
 \seealso{
 \code{\link[=execute]{execute()}} for producing tbl_sample objects,
 \code{\link[survey:svydesign]{survey::svydesign()}} for the underlying function,
-\code{\link[srvyr:as_survey_design]{srvyr::as_survey_design()}} for converting directly to a srvyr \code{tbl_svy},
+\link{as_survey_design.tbl_sample} for converting directly to a srvyr \code{tbl_svy},
 \code{as_svrepdesign()} for replicate-weight export
 }

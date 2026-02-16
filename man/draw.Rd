@@ -228,7 +228,8 @@ sampling design must end with \code{draw()}.
 \subsection{Fixed vs Random Sample Size Methods}{
 
 Methods with \strong{fixed sample size} (\code{srswor}, \code{srswr}, \code{systematic}, \code{pps_systematic},
-\code{pps_brewer}, \code{pps_cps}, \code{pps_multinomial}) accept either \code{n} or \code{frac}. When \code{frac}
+\code{pps_brewer}, \code{pps_cps}, \code{pps_sps}, \code{pps_pareto}, \code{pps_multinomial}, \code{pps_chromy})
+accept either \code{n} or \code{frac}. When \code{frac}
 is provided, the sample size is computed based on the \code{round} parameter (default: ceiling).
 
 Methods with \strong{random sample size} (\code{bernoulli}, \code{pps_poisson}) require \code{frac} only.
@@ -260,7 +261,7 @@ The output includes a \code{.certainty_k} column (where \code{k} is the stage nu
 indicating which units were certainty selections.
 
 Certainty selection is only available for WOR PPS methods (\code{pps_systematic},
-\code{pps_brewer}, \code{pps_cps}, \code{pps_poisson}). With-replacement methods
+\code{pps_brewer}, \code{pps_cps}, \code{pps_poisson}, \code{pps_sps}, \code{pps_pareto}). With-replacement methods
 (\code{pps_multinomial}) and PMR methods (\code{pps_chromy}) handle large units
 natively through their hit mechanism.
 

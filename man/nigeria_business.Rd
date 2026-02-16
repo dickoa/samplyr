@@ -5,7 +5,7 @@
 \alias{nigeria_business}
 \title{Nigeria Business Survey Frame}
 \format{
-A tibble with approximately 10,000 rows and 7 columns:
+A tibble with approximately 11,600 rows and 7 columns:
 \describe{
 \item{enterprise_id}{Character. Unique business identifier}
 \item{zone}{Factor. Geopolitical zone (North Central, North East, North West, South East, South South, South West)}

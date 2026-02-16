@@ -2,6 +2,18 @@ url: https://dickoa.gitlab.io/samplyr
 template:
   bootstrap: 5
 
+articles:
+  - title: "Getting Started"
+    contents:
+      - introduction
+  - title: "Statistical Foundations"
+    contents:
+      - design-semantics
+  - title: "Analysis and Coordination"
+    contents:
+      - survey-analysis
+      - sampling-coordination
+
 reference:
   - title: "Design Specification"
     desc: "Build a sampling design step by step."

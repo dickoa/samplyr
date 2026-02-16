@@ -61,22 +61,52 @@ at sampling time, regardless of allocation method.
 For stratified or conditional (within-cluster) stages, joint
 quantities are computed independently within each group and
 assembled into a block-diagonal matrix.
-\subsection{WOR method dispatch}{\tabular{ll}{
-   samplyr method \tab sondage function \cr
-   \code{pps_brewer} \tab \code{joint_inclusion_prob()} \cr
-   \code{pps_systematic} \tab \code{joint_inclusion_prob()} \cr
-   \code{pps_cps} \tab \code{joint_inclusion_prob()} \cr
-   \code{pps_poisson} \tab \code{joint_inclusion_prob()} \cr
-   \code{pps_sps} \tab \code{joint_inclusion_prob()} \cr
-   \code{pps_pareto} \tab \code{joint_inclusion_prob()} \cr
+\subsection{Exact vs. approximate computation}{
+
+The accuracy of the returned matrix depends on the sampling method.
+Some algorithms yield closed-form joint probabilities; others
+require approximation or simulation.
+\subsection{WOR methods (\eqn{\pi_{kl}}{pi_kl})}{\tabular{lll}{
+   samplyr method \tab sondage function \tab Quality \cr
+   \code{pps_cps} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (Aires' formula via C) \cr
+   \code{pps_systematic} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (combinatorial enumeration) \cr
+   \code{pps_poisson} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (\eqn{\pi_{kl} = \pi_k \pi_l}{pi_kl = pi_k * pi_l}, independent draws) \cr
+   \code{pps_brewer} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate}\eqn{^*} (high-entropy / Hajek-Brewer-Donadio) \cr
+   \code{pps_sps} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
+   \code{pps_pareto} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
 }
 
+
+\eqn{^*} Exact recursive formulas for Brewer's joint inclusion
+probabilities exist (Brewer 2002, ch. 9) but are
+\eqn{O(N^3)}{O(N^3)}, making them impractical for frames of more
+than a few hundred units. The high-entropy approximation is
+\eqn{O(N^2)}{O(N^2)} and sufficiently accurate for variance
+estimation in practice. The same trade-off applies to SPS and
+Pareto, whose exact joint probabilities would require enumerating
+the combinatorial sample space.
+
+The high-entropy approximation assumes the design is close to the
+maximum-entropy design with the same marginal \eqn{\pi_i}{pi_i}
+(Hajek 1964; Brewer and Donadio 2003). This is a good approximation
+for most PPS designs and is the same quantity that underlies the
+Berger (2004) variance estimator used by \code{survey::svydesign(pps = "brewer")}. For CPS (conditional Poisson / maximum entropy), the
+joint probabilities are exact by definition.
 }
 
-\subsection{WR/PMR method dispatch}{\tabular{ll}{
-   samplyr method \tab sondage function \cr
-   \code{pps_multinomial} \tab \code{joint_expected_hits()} \cr
-   \code{pps_chromy} \tab \code{joint_expected_hits()} \cr
+\subsection{WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})}{\tabular{lll}{
+   samplyr method \tab sondage function \tab Quality \cr
+   \code{pps_multinomial} \tab \code{joint_expected_hits()} \tab \strong{Exact} (analytic: \eqn{n(n-1) p_k p_l + n p_k \mathbf{1}_{k=l}}{n(n-1) p_k p_l + n p_k 1(k=l)}) \cr
+   \code{pps_chromy} \tab \code{joint_expected_hits()} \tab \strong{Approximate} (Monte Carlo simulation, 10 000 replicates) \cr
+}
+
+
+For \code{pps_chromy}, the sequential dependence structure does not admit
+a closed-form expression for \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
+sondage uses Monte Carlo simulation (default 10 000 replicates) to
+estimate the pairwise expectations. Increasing \code{nsim} (passed
+through \code{...}) reduces Monte Carlo error at the cost of computation
+time.
 }
 
 }
