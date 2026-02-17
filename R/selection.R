@@ -140,6 +140,19 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
   n_lookup <- setNames(stratum_info$.n_h, stratum_keys)
   draw_lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars)
 
+  if (!draw_spec$method %in% multi_hit_methods) {
+    capped <- stratum_info$.n_h > stratum_info$.N_h
+    if (any(capped)) {
+      n_requested <- sum(stratum_info$.n_h)
+      n_actual <- sum(pmin(stratum_info$.n_h, stratum_info$.N_h))
+      capped_keys <- stratum_keys[capped]
+      cli_warn(c(
+        "Sample size capped to population in {length(capped_keys)} stratum/strata: {.val {capped_keys}}.",
+        "i" = "Requested total: {n_requested}. Actual total: {n_actual}."
+      ))
+    }
+  }
+
   if (is_simple_srswor_draw(draw_spec)) {
     n_per_group <- vapply(
       groups$keys,
@@ -314,6 +327,13 @@ sample_unstratified <- function(frame, draw_spec) {
     round_sample_size(N * draw_spec$frac, round_method)
   } else {
     cli_abort("Cannot determine sample size")
+  }
+
+  if (!draw_spec$method %in% multi_hit_methods && n > N) {
+    cli_warn(c(
+      "Requested sample size ({n}) exceeds population size ({N}).",
+      "i" = "Capped at {N} (census)."
+    ))
   }
 
   result <- draw_sample(frame, n, draw_spec)

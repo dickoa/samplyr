@@ -820,12 +820,14 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
 
   required_vars <- c()
 
-  if (!is_null(stage_spec$strata)) {
-    required_vars <- c(required_vars, stage_spec$strata$vars)
+  strata_vars <- stage_spec$strata$vars
+  if (!is_null(strata_vars)) {
+    required_vars <- c(required_vars, strata_vars)
   }
 
-  if (!is_null(stage_spec$clusters)) {
-    required_vars <- c(required_vars, stage_spec$clusters$vars)
+  cluster_vars <- stage_spec$clusters$vars
+  if (!is_null(cluster_vars)) {
+    required_vars <- c(required_vars, cluster_vars)
   }
 
   mos_var <- stage_spec$draw_spec$mos
@@ -847,6 +849,26 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
       ),
       call = call
     )
+  }
+
+  if (!is_null(strata_vars)) {
+    na_strata <- Filter(function(v) anyNA(frame[[v]]), strata_vars)
+    if (length(na_strata) > 0) {
+      cli_abort(
+        "Stratification variable{?s} {.var {na_strata}} contain{?s/} NA values",
+        call = call
+      )
+    }
+  }
+
+  if (!is_null(cluster_vars)) {
+    na_clusters <- Filter(function(v) anyNA(frame[[v]]), cluster_vars)
+    if (length(na_clusters) > 0) {
+      cli_abort(
+        "Cluster variable{?s} {.var {na_clusters}} contain{?s/} NA values",
+        call = call
+      )
+    }
   }
 
   if (!is_null(mos_var)) {

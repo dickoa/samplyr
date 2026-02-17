@@ -96,6 +96,18 @@ validate_frame <- function(design, frame, stage = NULL) {
             vars = missing_strata
           ))
         )
+      } else {
+        na_strata <- Filter(function(v) anyNA(frame[[v]]), strata_vars)
+        if (length(na_strata) > 0) {
+          issues <- c(
+            issues,
+            list(list(
+              stage = label,
+              type = "strata_na",
+              vars = na_strata
+            ))
+          )
+        }
       }
     }
 
@@ -111,6 +123,18 @@ validate_frame <- function(design, frame, stage = NULL) {
             vars = missing_clusters
           ))
         )
+      } else {
+        na_clusters <- Filter(function(v) anyNA(frame[[v]]), cluster_vars)
+        if (length(na_clusters) > 0) {
+          issues <- c(
+            issues,
+            list(list(
+              stage = label,
+              type = "cluster_na",
+              vars = na_clusters
+            ))
+          )
+        }
       }
     }
 
@@ -230,6 +254,12 @@ report_validation_issues <- function(issues) {
       ),
       "cluster" = cli::format_inline(
         "{stage}: missing cluster variable{?s}: {.val {vars}}"
+      ),
+      "strata_na" = cli::format_inline(
+        "{stage}: stratification variable{?s} {.var {vars}} contain{?s/} NA values"
+      ),
+      "cluster_na" = cli::format_inline(
+        "{stage}: cluster variable{?s} {.var {vars}} contain{?s/} NA values"
       ),
       "mos" = cli::format_inline(
         "{stage}: missing MOS variable: {.var {vars}}"

@@ -212,7 +212,7 @@ data(niger_eas_variance)
 sample <- sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
   draw(n = 300) |>
-  execute(niger_eas, seed = 123)
+  execute(niger_eas, seed = 42)
 ```
 
 ## Sample Coordination (PRN)
@@ -296,8 +296,6 @@ Weights compound automatically across phases.
 
 ```r
 summary(sample)           # Per-stage allocation tables, weight diagnostics
-effective_n(sample)       # Effective sample size (Kish)
-design_effect(sample)     # Design effect (deff)
 ```
 
 ## Included Datasets
@@ -353,7 +351,7 @@ sampling_design() |>
 ### SAS Rounding Control
 
 ```sas
-proc surveyselect data=frame method=sys samprate=0.02 seed=3 round=nearest;
+proc surveyselect data=frame method=sys samprate=0.02 seed=42 round=nearest;
   strata State;
 run;
 ```

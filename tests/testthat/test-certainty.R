@@ -361,15 +361,18 @@ test_that("certainty_prop as data frame applies stratum-specific thresholds", {
     certainty_prop = c(0.50, 0.30)
   )
 
-  result <- sampling_design() |>
-    stratify_by(stratum) |>
-    draw(
-      n = 5,
-      method = "pps_systematic",
-      mos = mos,
-      certainty_prop = cert_df
-    ) |>
-    execute(frame, seed = 202602)
+  expect_warning(
+    result <- sampling_design() |>
+      stratify_by(stratum) |>
+      draw(
+        n = 5,
+        method = "pps_systematic",
+        mos = mos,
+        certainty_prop = cert_df
+      ) |>
+      execute(frame, seed = 202602),
+    "capped to population"
+  )
 
   result_A <- result[result$stratum == "A", ]
   expect_true(4 %in% result_A$id)

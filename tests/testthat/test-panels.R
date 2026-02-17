@@ -51,10 +51,13 @@ test_that("stratified panels have equal representation per stratum", {
     value = rnorm(200)
   )
 
-  result <- sampling_design() |>
-    stratify_by(region) |>
-    draw(n = 100) |>
-    execute(frame, seed = 42, panels = 4)
+  expect_warning(
+    result <- sampling_design() |>
+      stratify_by(region) |>
+      draw(n = 100) |>
+      execute(frame, seed = 42, panels = 4),
+    "capped to population"
+  )
 
   # Each panel should have equal count per stratum
   panel_strata <- table(result$region, result$.panel)

@@ -40,7 +40,7 @@ Initial CRAN release.
 * Control sorting with `serp()` for hierarchic serpentine ordering.
 * Rounding control for fractional allocations (`round` parameter).
 * Partial execution for operational sampling workflows.
-* `effective_n()` and `design_effect()` diagnostics.
+* Weight diagnostics (Kish's effective sample size and deff) in `summary()`.
 * Synthetic survey datasets from African countries for learning and testing.
 
 ## Survey Integration

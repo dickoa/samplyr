@@ -322,14 +322,7 @@ make_strata_group_ids <- function(data, strata_vars) {
   if (nrow(data) == 0L) {
     return(character())
   }
-  as.character(
-    interaction(
-      data[strata_vars],
-      drop = TRUE,
-      lex.order = TRUE,
-      sep = "\r"
-    )
-  )
+  make_group_key(data, strata_vars)
 }
 
 #' Build a lookup object for per-stratum Poisson fractions

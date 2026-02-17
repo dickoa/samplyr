@@ -237,6 +237,15 @@ These methods perform independent selection trials for each unit, so the final s
 size is a random variable, not a fixed count. Specifying \code{n} would be misleading since
 the method cannot guarantee exactly \code{n} selections.
 
+For \code{pps_poisson}, the raw inclusion probabilities are computed as
+\eqn{\pi_i = f \cdot x_i / \bar{x}}{pi_i = f * x_i / mean(x)} where
+\eqn{f} is \code{frac} and \eqn{x_i} is the MOS value. Any \eqn{\pi_i > 1}
+is clipped to 1, so the expected sample size
+\eqn{E[n] = \sum \min(\pi_i, 1)}{E[n] = sum(min(pi_i, 1))} can be less
+than \eqn{f \cdot N}{f * N} when large units dominate the MOS
+distribution. Use \code{certainty_size} or \code{certainty_prop} to handle these
+dominant units explicitly.
+
 When an allocation method is set in \code{\link[=stratify_by]{stratify_by()}} (\code{equal},
 \code{proportional}, \code{neyman}, \code{optimal}, \code{power}), specify total sample size via \code{n}.
 Combining \code{alloc} with \code{frac} is not supported.

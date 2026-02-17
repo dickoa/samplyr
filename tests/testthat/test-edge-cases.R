@@ -156,21 +156,81 @@ test_that("neyman allocation with zero-variance stratum and min_n", {
   expect_equal(nrow(result), 10)
 })
 
-test_that("sample size silently capped at stratum population", {
+test_that("sample size capped at stratum population with warning", {
   frame <- data.frame(
     id = 1:15,
     region = c(rep("A", 5), rep("B", 10))
   )
 
   # Request 10 per stratum, but A only has 5
-  result <- sampling_design() |>
-    stratify_by(region) |>
-    draw(n = 10) |>
-    execute(frame, seed = 42)
+  expect_warning(
+    result <- sampling_design() |>
+      stratify_by(region) |>
+      draw(n = 10) |>
+      execute(frame, seed = 42),
+    "capped to population"
+  )
 
   # A should have 5 (all available), B should have 10
   expect_equal(sum(result$region == "A"), 5)
   expect_equal(sum(result$region == "B"), 10)
+})
+
+test_that("unstratified n > N warns and caps", {
+  frame <- data.frame(id = 1:10)
+
+  expect_warning(
+    result <- sampling_design() |>
+      draw(n = 20) |>
+      execute(frame, seed = 42),
+    "exceeds population size"
+  )
+
+  expect_equal(nrow(result), 10)
+  expect_equal(unique(result$.weight), 1)
+})
+
+test_that("no capping warning when n <= N", {
+  frame <- data.frame(id = 1:100)
+
+  expect_no_warning(
+    result <- sampling_design() |>
+      draw(n = 50) |>
+      execute(frame, seed = 42)
+  )
+
+  expect_equal(nrow(result), 50)
+})
+
+test_that("stratified capping warning reports correct totals", {
+  frame <- data.frame(
+    id = 1:30,
+    region = c(rep("A", 5), rep("B", 10), rep("C", 15))
+  )
+
+  # Request 10 per stratum: A capped at 5, B=10, C=10 => actual 25 vs requested 30
+  expect_warning(
+    result <- sampling_design() |>
+      stratify_by(region) |>
+      draw(n = 10) |>
+      execute(frame, seed = 42),
+    "Requested total: 30.*Actual total: 25"
+  )
+
+  expect_equal(nrow(result), 25)
+})
+
+test_that("no capping warning for WR methods even when n > N", {
+  frame <- data.frame(id = 1:10)
+
+  # srswr with n > N is normal (with replacement)
+  expect_no_warning(
+    result <- sampling_design() |>
+      draw(n = 20, method = "srswr") |>
+      execute(frame, seed = 42)
+  )
+
+  expect_equal(nrow(result), 20)
 })
 
 test_that("very small frac gives at least 1 unit", {
@@ -858,28 +918,28 @@ test_that("named frac vector errors when strata missing from allocation", {
   )
 })
 
-# --- Bug fix: effective_n / design_effect input validation ---
+# --- effective_n / design_effect input validation (internal helpers) ---
 
 test_that("effective_n errors on empty input", {
-  expect_error(effective_n(numeric(0)), "non-empty")
+  expect_error(samplyr:::effective_n(numeric(0)), "non-empty")
 })
 
 test_that("effective_n errors on NA weights", {
-  expect_error(effective_n(c(1, 2, NA)), "NA")
+  expect_error(samplyr:::effective_n(c(1, 2, NA)), "NA")
 })
 
 test_that("effective_n errors on non-positive weights", {
-  expect_error(effective_n(c(1, 0, 3)), "positive")
-  expect_error(effective_n(c(1, -2, 3)), "positive")
+  expect_error(samplyr:::effective_n(c(1, 0, 3)), "positive")
+  expect_error(samplyr:::effective_n(c(1, -2, 3)), "positive")
 })
 
 test_that("effective_n errors on non-numeric input", {
-  expect_error(effective_n("abc"), "non-empty numeric")
+  expect_error(samplyr:::effective_n("abc"), "non-empty numeric")
 })
 
 test_that("design_effect propagates effective_n validation", {
-  expect_error(design_effect(numeric(0)), "non-empty")
-  expect_error(design_effect(c(1, NA)), "NA")
+  expect_error(samplyr:::design_effect(numeric(0)), "non-empty")
+  expect_error(samplyr:::design_effect(c(1, NA)), "NA")
 })
 
 # --- execute() frame validation at execution time ---
@@ -1843,4 +1903,97 @@ test_that("power allocation follows cv * importance^power weights", {
 
   expect_equal(sum(counts), 12)
   expect_equal(counts, c(2, 4, 6))
+})
+
+# =============================================================================
+# NA validation for stratification and cluster variables
+# =============================================================================
+
+test_that("execute() errors on stratification variable with NA", {
+  frame <- data.frame(
+    id = 1:10,
+    region = c("A", "A", "B", "B", NA, "A", "B", "A", "B", "A")
+  )
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region) |>
+      draw(n = 2) |>
+      execute(frame, seed = 1),
+    "NA"
+  )
+})
+
+test_that("execute() errors on cluster variable with NA", {
+  frame <- data.frame(
+    cluster_id = c(1, 1, 2, 2, NA, 3, 3, 3),
+    id = 1:8
+  )
+
+  expect_error(
+    sampling_design() |>
+      cluster_by(cluster_id) |>
+      draw(n = 2) |>
+      execute(frame, seed = 1),
+    "NA"
+  )
+})
+
+test_that("validate_frame() errors on stratification variable with NA", {
+  design <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 2)
+
+  frame <- data.frame(
+    id = 1:10,
+    region = c("A", "A", "B", "B", NA, "A", "B", "A", "B", "A")
+  )
+
+  expect_error(validate_frame(design, frame), "NA")
+})
+
+test_that("validate_frame() errors on cluster variable with NA", {
+  design <- sampling_design() |>
+    cluster_by(cluster_id) |>
+    draw(n = 2)
+
+  frame <- data.frame(
+    cluster_id = c(1, 1, 2, 2, NA, 3, 3, 3),
+    id = 1:8
+  )
+
+  expect_error(validate_frame(design, frame), "NA")
+})
+
+test_that("validate_frame() reports which strata variable has NA", {
+  design <- sampling_design() |>
+    stratify_by(region, urban) |>
+    draw(n = 2)
+
+  # Only urban has NA
+  frame <- data.frame(
+    id = 1:10,
+    region = rep(c("A", "B"), 5),
+    urban = c("U", "R", NA, "U", "R", "U", "R", "U", "R", "U")
+  )
+
+  expect_error(validate_frame(design, frame), "urban")
+})
+
+test_that("execute() errors on multi-stage cluster variable with NA", {
+  frame <- data.frame(
+    school_id = c(1, 1, 1, NA, 2, 2),
+    student_id = 1:6
+  )
+
+  expect_error(
+    sampling_design() |>
+      add_stage(label = "Schools") |>
+      cluster_by(school_id) |>
+      draw(n = 1) |>
+      add_stage(label = "Students") |>
+      draw(n = 1) |>
+      execute(frame, seed = 1),
+    "NA"
+  )
 })

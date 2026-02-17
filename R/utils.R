@@ -84,13 +84,14 @@ format_key_labels <- function(df, vars, max_n = 8L) {
   )
 }
 
-#' Compute effective sample size
+#' Kish's effective sample size (internal)
 #'
-#' Compute effective sample size accounting for unequal weights
+#' Used by `summary.tbl_sample()`. Only captures weighting effect,
+#' not clustering or stratification.
 #'
 #' @param weights Vector of sampling weights
-#' @return Effective sample size
-#' @export
+#' @return Effective sample size due to unequal weighting
+#' @noRd
 effective_n <- function(weights) {
   if (!is.numeric(weights) || length(weights) == 0) {
     cli_abort("{.arg weights} must be a non-empty numeric vector")
@@ -104,13 +105,14 @@ effective_n <- function(weights) {
   sum(weights)^2 / sum(weights^2)
 }
 
-#' Compute design effect
+#' Kish's design effect (internal)
 #'
-#' Estimate design effect from sample weights
+#' Used by `summary.tbl_sample()`. Only captures weighting effect,
+#' not clustering or stratification.
 #'
 #' @param weights Vector of sampling weights
-#' @return Estimated design effect
-#' @export
+#' @return Design effect due to unequal weighting (Kish's deff)
+#' @noRd
 design_effect <- function(weights) {
   n <- length(weights)
   n / effective_n(weights)

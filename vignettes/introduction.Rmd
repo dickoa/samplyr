@@ -661,12 +661,13 @@ design$stages[[1]]$strata$vars
 
 ### Weight Diagnostics
 
-Unequal weights reduce effective sample size. Use `effective_n()` to compute the effective sample size and `design_effect()` for the design effect (ratio of actual variance to variance under SRS).
+The `summary()` method reports weight diagnostics including Kish's effective
+sample size and design effect due to unequal weighting. For the full design
+effect (including clustering and stratification), use `survey::svymean()` with
+`deff = TRUE` after converting with `as_svydesign()`.
 
 ```{r}
-effective_n(sample$.weight)
-
-design_effect(sample$.weight)
+summary(sample)
 ```
 
 ---
@@ -730,7 +731,7 @@ These apply when using `frac` to specify sampling rates. When computed sample si
 1. **Always set a seed** for reproducibility
 2. **Use meaningful stage labels** for documentation
 3. **Validate designs** with `validate_frame()` before execution
-4. **Check weight distributions** with `effective_n()` and `design_effect()`
+4. **Check weight distributions** with `summary()` on the sample
 
 ```{r}
 design <- sampling_design(title = "National Health Survey 2024") |>
