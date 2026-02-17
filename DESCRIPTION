@@ -4,8 +4,6 @@ Version: 0.2.9999
 Authors@R:
     person("Ahmadou", "Dicko", , "mail@ahmadoudicko.com", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-9654-7582"))
-Author: Ahmadou Dicko [aut, cre]
-Maintainer: Ahmadou Dicko <mail@ahmadoudicko.com>
 Description: Provides a tidy, composable grammar for specifying and executing
     complex survey sampling designs. Supports stratified, clustered, multi-stage,
     and multi-phase sampling with a minimal set of verbs that compose naturally.
