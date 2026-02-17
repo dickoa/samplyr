@@ -44,8 +44,6 @@ reference:
     contents:
       - summary.tbl_sample
       - joint_expectation
-      - effective_n
-      - design_effect
 
   - title: "Helpers"
     desc: "Sorting, class checks, and serialization."
