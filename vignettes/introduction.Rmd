@@ -757,3 +757,5 @@ validate_frame(design, niger_eas)
 bad_frame <- data.frame(id = 1:100, value = rnorm(100))
 validate_frame(design, bad_frame)
 ```
+
+## Reference

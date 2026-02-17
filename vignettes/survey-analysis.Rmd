@@ -189,3 +189,5 @@ svy <- as_svydesign(sample)
 svymean(~staff_count, svy)
 confint(svymean(~staff_count, svy))
 ```
+
+## Reference

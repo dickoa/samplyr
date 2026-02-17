@@ -20,7 +20,7 @@ converting to a \code{svyrep.design} object via \code{as_svrepdesign()},
 then wrapping with \code{\link[srvyr:as_survey_rep]{srvyr::as_survey_rep()}}.
 }
 \examples{
-\dontrun{
+\dontshow{if (requireNamespace("srvyr", quietly = TRUE)) withAutoprint(\{ # examplesIf}
 library(srvyr)
 
 sample <- sampling_design() |>
@@ -31,8 +31,7 @@ sample <- sampling_design() |>
 rep_tbl <- as_survey_rep(sample, type = "auto")
 rep_tbl |>
   summarise(mean_beds = survey_mean(beds, vartype = "se"))
-}
-
+\dontshow{\}) # examplesIf}
 }
 \seealso{
 \code{as_svrepdesign()} for survey replicate-weight export

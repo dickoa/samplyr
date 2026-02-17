@@ -272,3 +272,5 @@ Weights are **not** adjusted. Panels structure the output but do not affect the 
 `samplyr` passes permanent random numbers through to `sondage` without transformation. PRN-compatible methods (`bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`) produce a deterministic selection given the PRN values. When PRN is supplied, the `seed` argument to `execute()` does not affect selection.
 
 Positive and negative coordination across survey waves is a user-level workflow, not a package feature. `samplyr` provides the infrastructure (PRN passthrough, panel partitioning, tidy output) and the user implements the update rule. See `vignette("sampling-coordination")` for the recommended workflow, including the negative-coordination formula \(u_{\text{new}} = (u - \pi) \bmod 1\) [@tille2006, sec. 8.2.4].
+
+## Reference

@@ -129,7 +129,7 @@ non-certainty pairs.
 }
 }
 \examples{
-\dontrun{
+\dontshow{if (requireNamespace("survey", quietly = TRUE)) withAutoprint(\{ # examplesIf}
 sample <- sampling_design() |>
   add_stage() |>
     stratify_by(region) |>
@@ -147,8 +147,7 @@ svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 
 # Compute all PPS stages at once
 jip_all <- joint_expectation(sample, niger_eas)
-}
-
+\dontshow{\}) # examplesIf}
 }
 \seealso{
 \code{\link[=as_svydesign]{as_svydesign()}} for the default export using Brewer's

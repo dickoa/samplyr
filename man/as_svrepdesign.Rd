@@ -37,7 +37,7 @@ Two-phase and PPS designs should be exported with \code{\link[=as_svydesign]{as_
 analyzed with linearization-based variance.
 }
 \examples{
-\dontrun{
+\dontshow{if (requireNamespace("survey", quietly = TRUE)) withAutoprint(\{ # examplesIf}
 sample <- sampling_design() |>
   stratify_by(facility_type, alloc = "proportional") |>
   draw(n = 300) |>
@@ -45,8 +45,7 @@ sample <- sampling_design() |>
 
 rep_svy <- as_svrepdesign(sample, type = "auto")
 survey::svymean(~beds, rep_svy)
-}
-
+\dontshow{\}) # examplesIf}
 }
 \seealso{
 \code{\link[=as_svydesign]{as_svydesign()}} for linearization export,

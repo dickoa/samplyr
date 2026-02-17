@@ -24,7 +24,7 @@ This method is registered on the \code{\link[srvyr:as_survey_design]{srvyr::as_s
 so it is available when srvyr is loaded.
 }
 \examples{
-\dontrun{
+\dontshow{if (requireNamespace("srvyr", quietly = TRUE)) withAutoprint(\{ # examplesIf}
 library(srvyr)
 
 sample <- sampling_design() |>
@@ -37,8 +37,7 @@ svy <- as_survey_design(sample)
 svy |>
   group_by(facility_type) |>
   summarise(mean_beds = survey_mean(beds))
-}
-
+\dontshow{\}) # examplesIf}
 }
 \seealso{
 \code{\link[=as_svydesign]{as_svydesign()}} for converting to a survey.design2 object

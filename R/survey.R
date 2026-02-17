@@ -152,8 +152,7 @@
 #' Sarndal, C.-E., Swensson, B. and Wretman, J. (1992). *Model
 #' Assisted Survey Sampling*. Springer.
 #'
-#' @examples
-#' \dontrun{
+#' @examplesIf requireNamespace("survey", quietly = TRUE)
 #' # Stratified sample -> survey design
 #' sample <- sampling_design() |>
 #'   stratify_by(facility_type, alloc = "proportional") |>
@@ -179,7 +178,6 @@
 #' # Exact: compute joint probabilities from frame
 #' jip <- joint_expectation(sample, niger_eas, stage = 1)
 #' svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
-#' }
 #'
 #' @seealso [execute()] for producing tbl_sample objects,
 #'   [survey::svydesign()] for the underlying function,
@@ -656,8 +654,7 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
 #' Two-phase and PPS designs should be exported with [as_svydesign()] and
 #' analyzed with linearization-based variance.
 #'
-#' @examples
-#' \dontrun{
+#' @examplesIf requireNamespace("survey", quietly = TRUE)
 #' sample <- sampling_design() |>
 #'   stratify_by(facility_type, alloc = "proportional") |>
 #'   draw(n = 300) |>
@@ -665,7 +662,6 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
 #'
 #' rep_svy <- as_svrepdesign(sample, type = "auto")
 #' survey::svymean(~beds, rep_svy)
-#' }
 #'
 #' @seealso [as_svydesign()] for linearization export,
 #'   [survey::as.svrepdesign()] for the underlying conversion
@@ -747,8 +743,7 @@ as_svrepdesign.tbl_sample <- function(
 #'
 #' @return A `tbl_svy` object from the srvyr package.
 #'
-#' @examples
-#' \dontrun{
+#' @examplesIf requireNamespace("srvyr", quietly = TRUE)
 #' library(srvyr)
 #'
 #' sample <- sampling_design() |>
@@ -761,7 +756,6 @@ as_svrepdesign.tbl_sample <- function(
 #' svy |>
 #'   group_by(facility_type) |>
 #'   summarise(mean_beds = survey_mean(beds))
-#' }
 #'
 #' @seealso [as_svydesign()] for converting to a survey.design2 object
 #'
@@ -797,8 +791,7 @@ as_survey_design.tbl_sample <- function(.data, ...) {
 #'
 #' @return A replicate-weight `tbl_svy` object from the srvyr package.
 #'
-#' @examples
-#' \dontrun{
+#' @examplesIf requireNamespace("srvyr", quietly = TRUE)
 #' library(srvyr)
 #'
 #' sample <- sampling_design() |>
@@ -809,7 +802,6 @@ as_survey_design.tbl_sample <- function(.data, ...) {
 #' rep_tbl <- as_survey_rep(sample, type = "auto")
 #' rep_tbl |>
 #'   summarise(mean_beds = survey_mean(beds, vartype = "se"))
-#' }
 #'
 #' @seealso `as_svrepdesign()` for survey replicate-weight export
 #'

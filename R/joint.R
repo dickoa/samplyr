@@ -110,8 +110,7 @@
 #'   \eqn{\pi_{ij} = \pi_j}{pi_ij = pi_j} for certainty x
 #'   non-certainty pairs.
 #'
-#' @examples
-#' \dontrun{
+#' @examplesIf requireNamespace("survey", quietly = TRUE)
 #' sample <- sampling_design() |>
 #'   add_stage() |>
 #'     stratify_by(region) |>
@@ -129,7 +128,6 @@
 #'
 #' # Compute all PPS stages at once
 #' jip_all <- joint_expectation(sample, niger_eas)
-#' }
 #'
 #' @seealso [as_svydesign()] for the default export using Brewer's
 #'   approximation, [survey::ppsmat()] for wrapping joint matrices

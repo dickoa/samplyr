@@ -155,7 +155,7 @@ installed to use this function.
 }
 }
 \examples{
-\dontrun{
+\dontshow{if (requireNamespace("survey", quietly = TRUE)) withAutoprint(\{ # examplesIf}
 # Stratified sample -> survey design
 sample <- sampling_design() |>
   stratify_by(facility_type, alloc = "proportional") |>
@@ -181,8 +181,7 @@ svy <- as_svydesign(sample)
 # Exact: compute joint probabilities from frame
 jip <- joint_expectation(sample, niger_eas, stage = 1)
 svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
-}
-
+\dontshow{\}) # examplesIf}
 }
 \references{
 Berger, Y.G. (2004). A Simple Variance Estimator for Unequal

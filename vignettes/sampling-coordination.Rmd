@@ -478,3 +478,4 @@ The PRN coordination workflow in `samplyr` is:
 | Independent     | Fresh $U(0,1)$        | $\sum \pi_k^A \cdot \pi_k^B$          |
 | Minimum overlap | Shift or Tillé update | $\sum \max(0, \pi_k^A + \pi_k^B - 1)$ |
 
+## Reference
