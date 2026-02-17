@@ -1,12 +1,4 @@
-# samplyr 0.1.0
-
-Initial CRAN release.
-
-## Fixes
-
-* `draw()` now rejects `frac` when `stratify_by()` uses an allocation method
-  (`equal`, `proportional`, `neyman`, `optimal`, `power`), with a classed error
-  (`samplyr_error_alloc_frac_with_alloc`).
+# samplyr 0.2.9999 (development)
 
 ## Core Grammar
 
@@ -40,6 +32,9 @@ Initial CRAN release.
 * Control sorting with `serp()` for hierarchic serpentine ordering.
 * Rounding control for fractional allocations (`round` parameter).
 * Partial execution for operational sampling workflows.
+* Frame validation: `validate_frame()` and `execute()` check for missing
+  variables, NA values in strata/cluster columns, and MOS/PRN issues.
+* Capping warning when WOR sample size exceeds population size.
 * Weight diagnostics (Kish's effective sample size and deff) in `summary()`.
 * Synthetic survey datasets from African countries for learning and testing.
 

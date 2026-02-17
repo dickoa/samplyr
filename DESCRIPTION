@@ -1,6 +1,6 @@
 Package: samplyr
 Title: A Tidy Grammar for Survey Sampling
-Version: 0.1.0
+Version: 0.2.9999
 Authors@R:
     person("Ahmadou", "Dicko", , "mail@ahmadoudicko.com", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-9654-7582"))
