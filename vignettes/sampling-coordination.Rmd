@@ -243,7 +243,7 @@ Real business registers change between waves. New enterprises (**births**) enter
 
 ```{r}
 # Simulate: remove 200 enterprises (deaths), add 500 new ones (births)
-set.seed(42)
+set.seed(123)
 n_births <- 500
 
 gen_data <- function(x, n) {

@@ -23,11 +23,9 @@ library(dplyr)
 
 This vignette documents what each `samplyr` operation assumes, what it computes, and what is preserved or lost at `survey` export.
 
-For usage tutorials, see `vignette("introduction")`. For survey export workflows, see `vignette("survey-analysis")`. For sample coordination, see `vignette("sampling-coordination")`.
-
 ## Assumptions at a glance
 
-The following table summarizes what samplyr assumes and what the user must verify. Each row is expanded in the sections below.
+The following table summarizes what `samplyr` assumes and what the user must verify. Each row is expanded in the sections below.
 
 | Assumption                                 | Applies to                 | samplyr behaviour                                                                                    | User must verify                                                                                      |
 |:-------------------------------------------|:---------------------------|:-----------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------|
@@ -97,7 +95,7 @@ Fractional allocations are rounded to integers using largest-remainder (Hare--Ni
 
 ### `cluster_by()`: define the sampling unit
 
-`cluster_by()` declares the variable(s) that identify the primary sampling unit (PSU) at the current stage. Operationally, samplyr:
+`cluster_by()` declares the variable(s) that identify the primary sampling unit (PSU) at the current stage. Operationally, `samplyr`:
 
 1. Groups the frame by the cluster variable(s).
 2. Draws a sample of **clusters** (not individual units).
@@ -105,8 +103,7 @@ Fractional allocations are rounded to integers using largest-remainder (Hare--Ni
 
 Any variable used in PPS size measures (`mos`) or in stratification must be constant within each cluster. `samplyr` validates this at execution time and raises an error if cluster-level variables vary within groups.
 
-`cluster_by()` is purely structural. It does not affect inclusion probabilities directly. They are determined by `draw()` applied to
-the cluster-level aggregates.
+`cluster_by()` is purely structural. It does not affect inclusion probabilities directly. They are determined by `draw()` applied to the cluster-level aggregates.
 
 ### `draw()`: specify the selection mechanism
 

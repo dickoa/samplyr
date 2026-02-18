@@ -29,7 +29,6 @@ reference:
     contents:
       - execute
       - validate_frame
-      - frame_validation
 
   - title: "Survey Export"
     desc: "Convert samples to survey/srvyr objects for analysis."

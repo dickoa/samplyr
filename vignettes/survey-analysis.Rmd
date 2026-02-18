@@ -24,13 +24,22 @@ library(survey)
 
 ## Overview
 
-After drawing a sample with `samplyr`, you typically need to analyze it. This vignette covers the tools `samplyr` provides for inspecting samples and integrating with the `survey` package for design-based inference.
+In a typical survey, sampling is one step in a longer process:
 
-Design objects store deferred column references (bare column names in `stratify_by()` / `cluster_by()`), which are resolved against the frame when you validate or execute the design.
+1. **Design and execute** the sample using `samplyr` to select units from a sampling frame.
+2. **Collect data** in the field on the selected units.
+3. **Merge** the collected data back into the sample, preserving the design metadata (strata, clusters, weights, FPC).
+4. **Analyze** using the `survey` or `srvyr` package for design-based inference.
 
-## Sample Summary
+`samplyr` handles step 1. For steps 3 and 4, it provides bridge functions that convert a `tbl_sample` into `survey` design objects. The `tbl_sample` carries all the information that `survey::svydesign()` needs (strata, cluster ids, weights, finite population corrections), so the conversion is automatic.
 
-`summary()` gives a concise overview of a sample: the design specification, execution details, stratum allocation table, and weight diagnostics.
+Because `tbl_sample` is a tibble subclass, standard dplyr operations like `left_join()` preserve the sampling metadata. This makes step 3 straightforward: join your collected data by unit identifier and the result is still a valid `tbl_sample`.
+
+This vignette covers sample diagnostics (before fieldwork), the merge step, and integration with `survey` and `srvyr` for estimation.
+
+## Sample Diagnostics
+
+After executing a design, `summary()` gives a concise overview: the design specification, execution details, stratum allocation table, and weight diagnostics. This is what you check before going to the field to verify the sample looks right.
 
 ```{r}
 library(samplyr)
@@ -49,6 +58,29 @@ summary(sample)
 
 The allocation table shows the population size ($N_h$), sample size ($n_h$), and sampling fraction ($f_h$) per stratum. The weight diagnostics report the Kish design effect and effective sample size.
 
+## Merging Collected Data
+
+After fieldwork, you have collected data (survey responses, measurements) for the selected units. Join it into the `tbl_sample` by a shared identifier. The `tbl_sample` class and its design metadata are preserved through the join.
+
+```{r}
+# Simulate collected data for the selected EAs
+set.seed(1)
+collected <- tibble(
+  ea_id = sample$ea_id,
+  avg_expenditure = rlnorm(nrow(sample), meanlog = 10, sdlog = 0.8),
+  food_insecure = rbinom(nrow(sample), 1, sample$food_insecurity_pct / 100)
+)
+
+# Merge into the sample
+sample_with_data <- sample |>
+  left_join(collected, by = "ea_id")
+
+# Still a tbl_sample with all design metadata intact
+class(sample_with_data)
+```
+
+The merged object can now be exported to `survey` for design-based analysis of the collected variables.
+
 ## Exporting to the survey Package
 
 `as_svydesign()` converts a `tbl_sample` into a `survey::svydesign()` object. It automatically maps strata, clusters, weights, and finite population corrections from the sampling metadata.
@@ -56,10 +88,14 @@ The allocation table shows the population size ($N_h$), sample size ($n_h$), and
 ### Stratified design
 
 ```{r}
-svy <- as_svydesign(sample)
+svy <- as_svydesign(sample_with_data)
 svy
 
-svymean(~households, svy)
+# Estimate collected variables
+svymean(~avg_expenditure, svy)
+svymean(~food_insecure, svy)
+
+# Frame variables are still available for validation
 svytotal(~population, svy)
 ```
 
@@ -76,6 +112,7 @@ cluster_sample <- sampling_design() |>
   execute(bfa_eas, seed = 2)
 
 svy_cluster <- as_svydesign(cluster_sample)
+svy_cluster
 svymean(~households, svy_cluster)
 ```
 
@@ -126,7 +163,7 @@ Current scope: replicate export supports single-phase non-PPS designs. Two-phase
 
 ## Exact Variance with Joint Expectations
 
-The Brewer approximation works well in practice, but if you need to use second-order quantities directly, `joint_expectation()` computes them for all PPS stages. For WOR stages, this produces joint inclusion probabilities ($pi_{kl}$). For WR/PMR stages (`pps_multinomial`, `pps_chromy`), it produces joint expected hits E(n_k * n_l). See `?joint_expectation` to see which methods provide exact second-order moments, which approximations are provided, and for the full method-by-method breakdown.
+The Brewer approximation works well in practice, but if you need to use second-order quantities directly, `joint_expectation()` computes them for all PPS stages. For WOR stages, this produces joint inclusion probabilities (pi_kl). For WR/PMR stages (`pps_multinomial`, `pps_chromy`), it produces joint expected hits E(n_k * n_l). See `?joint_expectation` to see which methods provide exact second-order moments, which approximations are provided, and for the full method-by-method breakdown.
 
 It replays the design specification against the original frame, computing quantities per stratum and assembling a block-diagonal matrix.
 
@@ -179,15 +216,26 @@ design <- sampling_design(title = "Burkina Faso EA Survey") |>
 validate_frame(design, bfa_eas)
 
 # 3. Draw the sample
-sample <- execute(design, bfa_eas, seed = 2026)
+ea_sample <- execute(design, bfa_eas, seed = 2026)
 
-# 4. Inspect
-summary(sample)
+# 4. Inspect before fieldwork
+summary(ea_sample)
 
-# 5. Export and analyze
-svy <- as_svydesign(sample)
-svymean(~households, svy)
-confint(svymean(~households, svy))
+# 5. Collect data (simulated here)
+set.seed(99)
+field_data <- tibble(
+  ea_id = ea_sample$ea_id,
+  avg_expenditure = rlnorm(nrow(ea_sample), meanlog = 10, sdlog = 0.8)
+)
+
+# 6. Merge collected data
+ea_sample <- ea_sample |>
+  left_join(field_data, by = "ea_id")
+
+# 7. Export and analyze
+svy <- as_svydesign(ea_sample)
+svymean(~avg_expenditure, svy)
+confint(svymean(~avg_expenditure, svy))
 ```
 
 ## Reference
