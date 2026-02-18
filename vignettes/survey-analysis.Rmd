@@ -37,12 +37,12 @@ library(samplyr)
 library(dplyr)
 library(survey)
 
-data(kenya_health)
+data(bfa_eas)
 
 sample <- sampling_design() |>
-  stratify_by(facility_type, alloc = "proportional") |>
+  stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
-  execute(kenya_health, seed = 1)
+  execute(bfa_eas, seed = 1)
 
 summary(sample)
 ```
@@ -59,8 +59,8 @@ The allocation table shows the population size ($N_h$), sample size ($n_h$), and
 svy <- as_svydesign(sample)
 svy
 
-svymean(~staff_count, svy)
-svytotal(~outpatient_visits, svy)
+svymean(~households, svy)
+svytotal(~population, svy)
 ```
 
 ### Cluster design with PPS
@@ -68,15 +68,15 @@ svytotal(~outpatient_visits, svy)
 For PPS without-replacement designs, `as_svydesign()` uses Brewer's variance approximation by default.
 
 ```{r}
-data(niger_eas)
+data(bfa_eas)
 
 cluster_sample <- sampling_design() |>
   cluster_by(ea_id) |>
-  draw(n = 50, method = "pps_brewer", mos = hh_count) |>
-  execute(niger_eas, seed = 2)
+  draw(n = 50, method = "pps_brewer", mos = households) |>
+  execute(bfa_eas, seed = 2)
 
 svy_cluster <- as_svydesign(cluster_sample)
-svymean(~hh_count, svy_cluster)
+svymean(~households, svy_cluster)
 ```
 
 ### Multi-stage design
@@ -84,23 +84,23 @@ svymean(~hh_count, svy_cluster)
 For multi-stage designs, each stage's cluster variable maps to a level of the `id` formula. Strata are exported from the first stage, consistent with the standard with-replacement variance approximation [@cochran1977, ch. 11].
 
 ```{r}
-data(tanzania_schools)
+data(zwe_eas)
 
-schools_frame <- tanzania_schools |>
-  mutate(district_enrollment = sum(enrollment), .by = district)
+zwe_frame <- zwe_eas |>
+  mutate(district_hh = sum(households), .by = district)
 
 ms_sample <- sampling_design() |>
   add_stage(label = "Districts") |>
-    stratify_by(region) |>
+    stratify_by(province) |>
     cluster_by(district) |>
-    draw(n = 2, method = "pps_brewer", mos = district_enrollment) |>
-  add_stage(label = "Schools") |>
+    draw(n = 2, method = "pps_brewer", mos = district_hh) |>
+  add_stage(label = "EAs") |>
     draw(n = 3) |>
-  execute(schools_frame, seed = 3)
+  execute(zwe_frame, seed = 3)
 
 svy_ms <- as_svydesign(ms_sample)
 svy_ms
-svymean(~enrollment, svy_ms)
+svymean(~households, svy_ms)
 ```
 
 ## Replicate-Weight Export
@@ -109,7 +109,7 @@ For replicate-based variance estimation (jackknife/BRR/bootstrap), use `as_svrep
 
 ```{r}
 rep_svy <- as_svrepdesign(sample, type = "auto")
-svymean(~staff_count, rep_svy)
+svymean(~households, rep_svy)
 ```
 
 You can also export directly to a `srvyr` replicate design:
@@ -119,14 +119,14 @@ library(srvyr)
 
 rep_tbl <- as_survey_rep(sample, type = "auto")
 rep_tbl |>
-  summarise(mean_staff = survey_mean(staff_count, vartype = "se"))
+  summarise(mean_hh = survey_mean(households, vartype = "se"))
 ```
 
 Current scope: replicate export supports single-phase non-PPS designs. Two-phase and PPS designs should use `as_svydesign()` (linearization).
 
 ## Exact Variance with Joint Expectations
 
-The Brewer approximation works well in practice, but if you need to use second-order quantities directly, `joint_expectation()` computes them for all PPS stages. For WOR stages, this produces joint inclusion probabilities (pi_kl). For WR/PMR stages (`pps_multinomial`, `pps_chromy`), it produces joint expected hits E(n_k * n_l). See `?joint_expectation` to see which methods provide exact second-order moments, which approximations are provided, and for the full method-by-method breakdown.
+The Brewer approximation works well in practice, but if you need to use second-order quantities directly, `joint_expectation()` computes them for all PPS stages. For WOR stages, this produces joint inclusion probabilities ($pi_{kl}$). For WR/PMR stages (`pps_multinomial`, `pps_chromy`), it produces joint expected hits E(n_k * n_l). See `?joint_expectation` to see which methods provide exact second-order moments, which approximations are provided, and for the full method-by-method breakdown.
 
 It replays the design specification against the original frame, computing quantities per stratum and assembling a block-diagonal matrix.
 
@@ -135,20 +135,20 @@ pps_sample <- sampling_design() |>
   add_stage() |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
-    draw(n = 5, method = "pps_cps", mos = hh_count) |>
+    draw(n = 5, method = "pps_cps", mos = households) |>
   add_stage() |>
     draw(n = 12) |>
-  execute(niger_eas, seed = 2025)
+  execute(bfa_eas, seed = 2025)
 
 # Compute joint probabilities for stage 1 (exact for CPS)
-jip <- joint_expectation(pps_sample, niger_eas, stage = 1)
+jip <- joint_expectation(pps_sample, bfa_eas, stage = 1)
 
 # Use with survey for exact variance (WOR stages)
 svy_exact <- as_svydesign(pps_sample, pps = ppsmat(jip[[1]]))
-svymean(~hh_count, svy_exact)
+svymean(~households, svy_exact)
 
 svy_brewer <- as_svydesign(pps_sample)
-svymean(~hh_count, svy_brewer)
+svymean(~households, svy_brewer)
 ```
 
 The supported methods :
@@ -171,23 +171,23 @@ A complete workflow from design to estimates:
 
 ```{r}
 # 1. Define the design
-design <- sampling_design(title = "Kenya Health Facility Survey") |>
-  stratify_by(facility_type, alloc = "proportional") |>
+design <- sampling_design(title = "Burkina Faso EA Survey") |>
+  stratify_by(region, alloc = "proportional") |>
   draw(n = 300)
 
 # 2. Validate the frame
-validate_frame(design, kenya_health)
+validate_frame(design, bfa_eas)
 
 # 3. Draw the sample
-sample <- execute(design, kenya_health, seed = 2026)
+sample <- execute(design, bfa_eas, seed = 2026)
 
 # 4. Inspect
 summary(sample)
 
 # 5. Export and analyze
 svy <- as_svydesign(sample)
-svymean(~staff_count, svy)
-confint(svymean(~staff_count, svy))
+svymean(~households, svy)
+confint(svymean(~households, svy))
 ```
 
 ## Reference

@@ -329,10 +329,6 @@ test_that("execute() with round='down' ensures minimum of 1 per stratum", {
   expect_equal(as.integer(counts["B"]), 10)
 })
 
-# ============================================================================
-# Weight and Probability Invariant Tests
-# ============================================================================
-
 test_that("single-stage tracks per-stage weight", {
   frame <- test_frame()
 
@@ -426,10 +422,6 @@ test_that("cluster sampling tracks stage weight", {
   # Stagewise weight column should exist
   expect_true(".weight_1" %in% names(result))
 })
-
-# =============================================================================
-# Two-stage cluster_by at both stages
-# =============================================================================
 
 test_that("two-stage with cluster_by at both stages samples within groups", {
   frame <- test_frame()
@@ -544,11 +536,6 @@ test_that("three-stage with cluster_by at all stages samples correctly", {
   )
 })
 
-# =============================================================================
-# Stage contiguity validation
-# =============================================================================
-
-# --- Helper: 3-stage clustered design for contiguity tests ---
 three_stage_design <- function() {
   sampling_design() |>
     add_stage(label = "Schools") |>
@@ -568,8 +555,6 @@ three_stage_frame <- function() {
     score = rnorm(200)
   )
 }
-
-# --- execute_design: must start at 1 ---
 
 test_that("execute(design) with stages = 2 errors (must start at 1)", {
   design <- three_stage_design()
@@ -601,8 +586,6 @@ test_that("execute(design) with stages = 3 errors (must start at 1)", {
   )
 })
 
-# --- execute_design: no gaps ---
-
 test_that("execute(design) with stages = c(1, 3) errors (gap)", {
   design <- three_stage_design()
   frame <- three_stage_frame()
@@ -612,8 +595,6 @@ test_that("execute(design) with stages = c(1, 3) errors (gap)", {
     "contiguous"
   )
 })
-
-# --- execute_design: valid partial execution still works ---
 
 test_that("execute(design) with stages = 1 works (partial)", {
   design <- three_stage_design()
@@ -645,8 +626,6 @@ test_that("execute(design) with stages = NULL runs all stages", {
   expect_equal(get_stages_executed(result), 1:3)
 })
 
-# --- execute_design: out of bounds ---
-
 test_that("execute(design) with stages = 0 errors", {
   design <- three_stage_design()
   frame <- three_stage_frame()
@@ -677,8 +656,6 @@ test_that("execute(design) with stages = 4 errors (exceeds n_stages)", {
   )
 })
 
-# --- execute_continuation: must continue from next stage ---
-
 test_that("continuation with stages = 3 after stage 1 errors (skips stage 2)", {
   design <- three_stage_design()
   frame <- three_stage_frame()
@@ -703,8 +680,6 @@ test_that("continuation with stages = c(2, 3) after stages c(1, 2) errors (alrea
   )
 })
 
-# --- execute_continuation: out-of-bounds ---
-
 test_that("continuation with stages = c(2, 4) errors on out-of-bounds", {
   design <- three_stage_design()
   frame <- three_stage_frame()
@@ -716,8 +691,6 @@ test_that("continuation with stages = c(2, 4) errors on out-of-bounds", {
     "stages"
   )
 })
-
-# --- execute_continuation: valid paths ---
 
 test_that("continuation with stages = 2 after stage 1 works", {
   design <- three_stage_design()
@@ -773,8 +746,6 @@ test_that("chained continuation 1 -> 2 -> 3 works", {
   expect_equal(get_stages_executed(s3), 1:3)
 })
 
-# --- execute_design: unsorted stages are sorted and validated ---
-
 test_that("execute(design) with stages = c(2, 1) is sorted to c(1, 2) and works", {
   design <- three_stage_design()
   frame <- three_stage_frame()
@@ -783,10 +754,6 @@ test_that("execute(design) with stages = c(2, 1) is sorted to c(1, 2) and works"
   expect_s3_class(result, "tbl_sample")
   expect_equal(get_stages_executed(result), c(1L, 2L))
 })
-
-# =============================================================================
-# Multiphase Sampling Tests
-# =============================================================================
 
 test_that("two-phase SRS -> SRS: weights compound correctly", {
   frame <- data.frame(id = 1:1000, x = rnorm(1000))

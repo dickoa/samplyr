@@ -1,7 +1,3 @@
-# Property-based tests: statistical invariants that must hold across all methods
-
-# ---- Shared test frame ----
-
 make_property_frame <- function() {
   set.seed(2026)
   data.frame(
@@ -12,8 +8,6 @@ make_property_frame <- function() {
     stringsAsFactors = FALSE
   )
 }
-
-# ---- 1. Weight sum equals population size (WOR methods) ----
 
 test_that("weight sum = N for unstratified SRSWOR", {
   frame <- make_property_frame()
@@ -72,8 +66,6 @@ test_that("within-stratum weight sum = N_h for stratified designs", {
   }
 })
 
-# ---- 2. All weights are positive ----
-
 test_that("weights are positive for SRSWOR", {
   frame <- make_property_frame()
   result <- sampling_design() |>
@@ -116,8 +108,6 @@ test_that("weights are positive for WR methods", {
   }
 })
 
-# ---- 3. Sample size correctness ----
-
 test_that("fixed-size WOR methods return exactly n rows", {
   frame <- make_property_frame()
   n <- 25
@@ -152,8 +142,6 @@ test_that("WR methods return exactly n rows (one per draw)", {
   }
 })
 
-# ---- 4. Sample is a subset of the frame ----
-
 test_that("sampled IDs are a subset of frame IDs", {
   frame <- make_property_frame()
   result <- sampling_design() |>
@@ -171,8 +159,6 @@ test_that("WOR samples have no duplicate IDs", {
 
   expect_equal(length(unique(result$id)), nrow(result))
 })
-
-# ---- 5. FPC values are valid ----
 
 test_that(".fpc equals population/stratum size", {
   frame <- make_property_frame()
@@ -195,8 +181,6 @@ test_that(".fpc equals population/stratum size", {
     expect_equal(fpc_h, N_h, label = paste("fpc for stratum", r))
   }
 })
-
-# ---- 6. Inclusion probabilities in (0, 1] ----
 
 test_that("implied inclusion probabilities are in (0, 1] for WOR", {
   frame <- make_property_frame()
@@ -223,8 +207,6 @@ test_that("implied inclusion probabilities are in (0, 1] for PPS WOR", {
     expect_true(all(pi_i <= 1 + 1e-10), label = paste(method, "<= 1"))
   }
 })
-
-# ---- 7. Multi-stage weight compounding ----
 
 test_that("compound weight = product of stage weights", {
   frame <- make_property_frame()
@@ -265,8 +247,6 @@ test_that("multi-stage weight sum approximates N", {
   # so sum should be close to N, but depends on cluster sizes
 })
 
-# ---- 8. Stratified PPS: certainty units get weight 1 ----
-
 test_that("certainty units have weight 1", {
   frame <- data.frame(
     id = 1:10,
@@ -281,8 +261,6 @@ test_that("certainty units have weight 1", {
   expect_true(all(certainty_rows$.weight == 1))
 })
 
-# ---- 9. Bernoulli: all selected units have same weight ----
-
 test_that("Bernoulli sampling gives equal weights", {
   frame <- make_property_frame()
   frac <- 0.2
@@ -296,8 +274,6 @@ test_that("Bernoulli sampling gives equal weights", {
     expect_true(all(result$.weight == expected_weight))
   }
 })
-
-# ---- 10. WR methods: .draw_k column is sequential ----
 
 test_that("WR methods produce sequential .draw_k values", {
   frame <- make_property_frame()
@@ -326,8 +302,6 @@ test_that("PPS WR methods produce sequential .draw_k values", {
   }
 })
 
-# ---- 11. tbl_sample class and metadata ----
-
 test_that("execute returns tbl_sample with correct metadata", {
   frame <- make_property_frame()
   design <- sampling_design() |>
@@ -340,8 +314,6 @@ test_that("execute returns tbl_sample with correct metadata", {
   expect_equal(get_stages_executed(result), 1L)
   expect_true(is_sampling_design(get_design(result)))
 })
-
-# ---- 12. Output columns always present ----
 
 test_that("required output columns present for all methods", {
   frame <- make_property_frame()

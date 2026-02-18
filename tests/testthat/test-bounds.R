@@ -1,10 +1,3 @@
-# Tests for min_n and max_n parameters in draw()
-
-# =============================================================================
-# Test Data Setup
-# =============================================================================
-
-# Frame with unequal stratum sizes (for testing bounds)
 make_unequal_frame <- function() {
   set.seed(42)
   data.frame(
@@ -18,17 +11,12 @@ make_unequal_frame <- function() {
   )
 }
 
-# Variance data for Neyman allocation
 make_variance_df <- function() {
   data.frame(
     region = c("Large", "Medium", "Small"),
     var = c(100, 400, 900) # Small stratum has highest variance
   )
 }
-
-# =============================================================================
-# Parameter Validation Tests
-# =============================================================================
 
 test_that("min_n must be a positive integer", {
   expect_error(
@@ -110,10 +98,6 @@ test_that("min_n and max_n warn when no allocation method", {
   )
 })
 
-# =============================================================================
-# Feasibility Tests
-# =============================================================================
-
 test_that("min_n errors when constraint is infeasible", {
   frame <- make_unequal_frame()
 
@@ -139,10 +123,6 @@ test_that("max_n errors when constraint is infeasible", {
     "Cannot satisfy maximum"
   )
 })
-
-# =============================================================================
-# min_n Functionality Tests
-# =============================================================================
 
 test_that("min_n ensures minimum per stratum with proportional allocation", {
   frame <- make_unequal_frame()
@@ -206,10 +186,6 @@ test_that("min_n ensures minimum with equal allocation", {
   expect_equal(sum(counts), 120)
 })
 
-# =============================================================================
-# max_n Functionality Tests
-# =============================================================================
-
 test_that("max_n caps large strata with proportional allocation", {
   frame <- make_unequal_frame()
 
@@ -250,10 +226,6 @@ test_that("max_n caps with Neyman allocation", {
   # Total should be exactly 100
   expect_equal(sum(counts), 100)
 })
-
-# =============================================================================
-# Combined min_n and max_n Tests
-# =============================================================================
 
 test_that("min_n and max_n work together", {
   frame <- make_unequal_frame()
@@ -298,10 +270,6 @@ test_that("tight bounds still work when feasible", {
   expect_true(all(counts <= 35))
   expect_equal(sum(counts), 99)
 })
-
-# =============================================================================
-# Edge Cases
-# =============================================================================
 
 test_that("bounds work when stratum size < min_n", {
   # Create frame where one stratum is smaller than desired min_n
@@ -352,10 +320,6 @@ test_that("bounds work with optimal allocation", {
   expect_equal(sum(counts), 100)
 })
 
-# =============================================================================
-# Weights Correctness with Bounds
-# =============================================================================
-
 test_that("weights are correct when bounds applied", {
   frame <- make_unequal_frame()
 
@@ -376,10 +340,6 @@ test_that("weights are correct when bounds applied", {
     expect_equal(stratum_data$.weight[1], expected_weight, tolerance = 0.001)
   }
 })
-
-# =============================================================================
-# Design Storage Tests
-# =============================================================================
 
 test_that("min_n and max_n are stored in design", {
   design <- sampling_design() |>
@@ -402,10 +362,6 @@ test_that("NULL bounds are stored correctly", {
   expect_null(draw_spec$min_n)
   expect_null(draw_spec$max_n)
 })
-
-# =============================================================================
-# Bounded Allocation Rounding Edge Cases
-# =============================================================================
 
 test_that("bounds work with many strata (iteration cap regression)", {
   # Verifies that apply_bounds() converges for H > 50 strata.

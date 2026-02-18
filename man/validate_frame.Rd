@@ -36,24 +36,27 @@ Validation checks include:
 design <- sampling_design() |>
   stratify_by(region) |>
   cluster_by(ea_id) |>
-  draw(n = 10, method = "pps_brewer", mos = hh_count)
+  draw(n = 10, method = "pps_brewer", mos = households)
 
-# Validate against niger_eas (should pass)
-validate_frame(design, niger_eas)
+# Validate against bfa_eas (should pass)
+validate_frame(design, bfa_eas)
 
 # Create a frame missing required variables (will fail)
 bad_frame <- data.frame(id = 1:100, value = rnorm(100))
 try(validate_frame(design, bad_frame))
 
 # Validate only specific stages of a multi-stage design
+zwe_frame <- zwe_eas |>
+  dplyr::mutate(district_hh = sum(households), .by = district)
+
 multi_design <- sampling_design() |>
-  add_stage(label = "Schools") |>
-    cluster_by(school_id) |>
-    draw(n = 30, method = "pps_brewer", mos = enrollment) |>
-  add_stage(label = "Students") |>
-    draw(n = 15)
+  add_stage(label = "Districts") |>
+    cluster_by(district) |>
+    draw(n = 20, method = "pps_brewer", mos = district_hh) |>
+  add_stage(label = "EAs") |>
+    draw(n = 10)
 
 # Validate stage 1 only
-validate_frame(multi_design, tanzania_schools, stage = 1)
+validate_frame(multi_design, zwe_frame, stage = 1)
 
 }

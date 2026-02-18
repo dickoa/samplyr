@@ -305,9 +305,6 @@ test_that("Print methods work", {
   expect_output(print(design), "Test Survey")
 })
 
-# ============================================================================
-# Test 12: Weight Correctness
-# ============================================================================
 test_that("Weights are mathematically correct", {
   frame <- make_population_frame(n = 1000)
   N <- nrow(frame)

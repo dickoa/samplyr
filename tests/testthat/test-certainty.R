@@ -292,8 +292,6 @@ test_that("certainty selection preserves sample size", {
   }
 })
 
-# Data frame certainty threshold tests
-
 test_that("certainty_size as data frame applies stratum-specific thresholds", {
   frame <- data.frame(
     id = 1:12,

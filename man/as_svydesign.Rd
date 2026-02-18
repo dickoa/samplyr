@@ -158,28 +158,28 @@ installed to use this function.
 \dontshow{if (requireNamespace("survey", quietly = TRUE)) withAutoprint(\{ # examplesIf}
 # Stratified sample -> survey design
 sample <- sampling_design() |>
-  stratify_by(facility_type, alloc = "proportional") |>
+  stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
-  execute(kenya_health, seed = 42)
+  execute(bfa_eas, seed = 42)
 
 svy <- as_svydesign(sample)
-survey::svymean(~beds, svy)
+survey::svymean(~households, svy)
 
 # Two-stage cluster sample with PPS first stage
 sample <- sampling_design() |>
   add_stage() |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
-    draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+    draw(n = 5, method = "pps_brewer", mos = households) |>
   add_stage() |>
     draw(n = 12) |>
-  execute(niger_eas, seed = 2025)
+  execute(bfa_eas, seed = 2025)
 
 # Default: Brewer variance approximation
 svy <- as_svydesign(sample)
 
 # Exact: compute joint probabilities from frame
-jip <- joint_expectation(sample, niger_eas, stage = 1)
+jip <- joint_expectation(sample, bfa_eas, stage = 1)
 svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 \dontshow{\}) # examplesIf}
 }

@@ -718,8 +718,6 @@ test_that("cluster sampling works when MOS is constant within cluster", {
   expect_equal(length(unique(result$cluster_id)), 2)
 })
 
-# --- Bug fix: stratification ignored in within-cluster sampling ---
-
 test_that("within-cluster sampling respects stratification", {
   frame <- data.frame(
     cluster = rep(c("A", "B", "C"), each = 6),
@@ -775,8 +773,6 @@ test_that("within-cluster stratified proportional allocation works", {
   }
 })
 
-# --- Bug fix: interaction() separator collision in within-cluster sampling ---
-
 test_that("within-cluster sampling handles dots in cluster variable values", {
   # Two composite cluster keys that would collide with interaction(sep=".")
   # ("A.B", "C") and ("A", "B.C") both produce "A.B.C" with paste(sep=".")
@@ -802,8 +798,6 @@ test_that("within-cluster sampling handles dots in cluster variable values", {
     nrow()
   expect_equal(n_clusters, 2)
 })
-
-# --- Bug fix: floating-point integer check in draw() ---
 
 test_that("draw() accepts n from floating-point arithmetic that is near-integer", {
   # 0.1 + 0.2 = 0.30000000000000004 in floating-point
@@ -842,8 +836,6 @@ test_that("draw() accepts min_n/max_n from floating-point arithmetic", {
 
   expect_equal(nrow(result), 60)
 })
-
-# --- Bug fix: custom allocation stratum-frame mismatch ---
 
 test_that("custom n data frame errors when strata missing from allocation", {
   frame <- data.frame(
@@ -886,8 +878,6 @@ test_that("custom frac data frame errors when strata missing from allocation", {
   )
 })
 
-# --- Bug fix: named vector stratum-frame mismatch ---
-
 test_that("named n vector errors when strata missing from allocation", {
   frame <- data.frame(
     id = 1:100,
@@ -918,8 +908,6 @@ test_that("named frac vector errors when strata missing from allocation", {
   )
 })
 
-# --- effective_n / design_effect input validation (internal helpers) ---
-
 test_that("effective_n errors on empty input", {
   expect_error(samplyr:::effective_n(numeric(0)), "non-empty")
 })
@@ -941,8 +929,6 @@ test_that("design_effect propagates effective_n validation", {
   expect_error(samplyr:::design_effect(numeric(0)), "non-empty")
   expect_error(samplyr:::design_effect(c(1, NA)), "NA")
 })
-
-# --- execute() frame validation at execution time ---
 
 test_that("execute() errors on empty frame", {
   design <- sampling_design() |> draw(n = 5)
@@ -1040,8 +1026,6 @@ test_that("srswr weights produce correct HH estimation with replicated rows", {
   expect_equal(hh_total, manual_total, tolerance = 1e-10)
 })
 
-# --- joint_expectation uniqueness validation ---
-
 test_that("joint_expectation errors when frame rows are not uniquely identified", {
   # Frame with duplicate rows on non-dot columns (no cluster vars)
   frame <- data.frame(
@@ -1059,8 +1043,6 @@ test_that("joint_expectation errors when frame rows are not uniquely identified"
   )
 })
 
-# --- subset_frame_to_sample linkage ---
-
 test_that("subset_frame_to_sample warns when no design-driven keys available", {
   # Two-stage design with no strata or clusters at either stage
   # This is pathological but should warn rather than silently guess
@@ -1074,8 +1056,6 @@ test_that("subset_frame_to_sample warns when no design-driven keys available", {
   expect_true(TRUE) # structural test - the real protection is the warning
 })
 
-# --- summary() edge cases ---
-
 test_that("summary() handles single-row sample without NA", {
   frame <- data.frame(id = 1:100)
   sample <- sampling_design() |>
@@ -1087,8 +1067,6 @@ test_that("summary() handles single-row sample without NA", {
   cv_line <- output[grepl("CV", output)]
   expect_false(grepl("NA", cv_line))
 })
-
-# --- as.list() serialization completeness ---
 
 test_that("as.list() serializes min_n, max_n, certainty_size, and round", {
   design <- sampling_design() |>
@@ -1124,8 +1102,6 @@ test_that("as.list() serializes certainty_prop", {
   expect_equal(lst$stages[[1]]$draw$certainty_prop, 0.4)
 })
 
-# --- .certainty per-stage tracking ---
-
 test_that(".certainty is tracked per-stage as .certainty_k", {
   frame <- data.frame(
     id = 1:10,
@@ -1140,8 +1116,6 @@ test_that(".certainty is tracked per-stage as .certainty_k", {
   # Raw .certainty should not be present
   expect_false(".certainty" %in% names(result))
 })
-
-# --- Named vector with multiple strata vars ---
 
 test_that("named n vector errors with multiple strata vars", {
   frame <- data.frame(
@@ -1175,38 +1149,36 @@ test_that("named frac vector errors with multiple strata vars", {
   )
 })
 
-# --- Stratified bernoulli/pps_poisson with data frame frac ---
-
 test_that("stratified bernoulli with data frame frac works", {
   frac_df <- data.frame(
-    facility_type = levels(kenya_health$facility_type),
-    frac = rep(0.05, nlevels(kenya_health$facility_type))
+    region = levels(bfa_eas$region),
+    frac = rep(0.05, nlevels(bfa_eas$region))
   )
 
   sample <- sampling_design() |>
-    stratify_by(facility_type) |>
+    stratify_by(region) |>
     draw(frac = frac_df, method = "bernoulli") |>
-    execute(kenya_health, seed = 42)
+    execute(bfa_eas, seed = 42)
 
   expect_s3_class(sample, "tbl_sample")
   expect_true(nrow(sample) > 0)
   # Each stratum should be represented
   expect_equal(
-    sort(unique(as.character(sample$facility_type))),
-    sort(levels(kenya_health$facility_type))
+    sort(unique(as.character(sample$region))),
+    sort(levels(bfa_eas$region))
   )
 })
 
 test_that("stratified pps_poisson with data frame frac works", {
   frac_df <- data.frame(
-    region = levels(niger_eas$region),
-    frac = rep(0.1, nlevels(niger_eas$region))
+    region = levels(bfa_eas$region),
+    frac = rep(0.1, nlevels(bfa_eas$region))
   )
 
   sample <- sampling_design() |>
     stratify_by(region) |>
-    draw(frac = frac_df, method = "pps_poisson", mos = hh_count) |>
-    execute(niger_eas, seed = 42)
+    draw(frac = frac_df, method = "pps_poisson", mos = households) |>
+    execute(bfa_eas, seed = 42)
 
   expect_s3_class(sample, "tbl_sample")
   expect_true(nrow(sample) > 0)
@@ -1214,32 +1186,30 @@ test_that("stratified pps_poisson with data frame frac works", {
 
 test_that("stratified bernoulli with named vector frac works", {
   # Named vector frac should be resolved per stratum
-  levels_ft <- levels(kenya_health$facility_type)
+  levels_ft <- levels(bfa_eas$region)
   frac_vec <- setNames(rep(0.05, length(levels_ft)), levels_ft)
 
   sample <- sampling_design() |>
-    stratify_by(facility_type) |>
+    stratify_by(region) |>
     draw(frac = frac_vec, method = "bernoulli") |>
-    execute(kenya_health, seed = 42)
+    execute(bfa_eas, seed = 42)
 
   expect_s3_class(sample, "tbl_sample")
   expect_true(nrow(sample) > 0)
 })
 
 test_that("stratified pps_poisson with named vector frac works", {
-  levels_r <- levels(niger_eas$region)
+  levels_r <- levels(bfa_eas$region)
   frac_vec <- setNames(rep(0.1, length(levels_r)), levels_r)
 
   sample <- sampling_design() |>
     stratify_by(region) |>
-    draw(frac = frac_vec, method = "pps_poisson", mos = hh_count) |>
-    execute(niger_eas, seed = 42)
+    draw(frac = frac_vec, method = "pps_poisson", mos = households) |>
+    execute(bfa_eas, seed = 42)
 
   expect_s3_class(sample, "tbl_sample")
   expect_true(nrow(sample) > 0)
 })
-
-# --- sum(mos) > 0 guard ---
 
 test_that("PPS errors when all MOS values are zero", {
   frame <- data.frame(
@@ -1285,10 +1255,6 @@ test_that("PPS with zero MOS after certainty removal errors", {
     "sum of MOS"
   )
 })
-
-# =============================================================================
-# WR Row Replication Tests
-# =============================================================================
 
 test_that("srswr produces n replicated rows with correct .draw_1", {
   frame <- data.frame(id = 1:10, y = rnorm(10))
@@ -1455,10 +1421,6 @@ test_that("certainty selection is rejected for WR/PMR methods", {
   )
 })
 
-# =============================================================================
-# on_empty parameter for random-size methods
-# =============================================================================
-
 test_that("on_empty = 'error' is the default for random-size methods", {
   design <- sampling_design() |>
     draw(frac = 0.01, method = "bernoulli")
@@ -1571,10 +1533,6 @@ test_that("on_empty validation rejects invalid values", {
   )
 })
 
-# =============================================================================
-# Bug 3: Vector n/frac rejected in non-data-frame, non-named-vector context
-# =============================================================================
-
 test_that("draw() rejects unnamed vector n", {
   expect_error(
     sampling_design() |> draw(n = c(5, 6)),
@@ -1615,10 +1573,6 @@ test_that("draw() accepts data frame n with stratification", {
     draw(n = n_df)
   expect_true(is.data.frame(design$stages[[1]]$draw_spec$n))
 })
-
-# =============================================================================
-# Bug 5: Neyman/optimal allocation robustness
-# =============================================================================
 
 test_that("Neyman allocation errors when variance doesn't cover all strata", {
   frame <- data.frame(
@@ -1904,10 +1858,6 @@ test_that("power allocation follows cv * importance^power weights", {
   expect_equal(sum(counts), 12)
   expect_equal(counts, c(2, 4, 6))
 })
-
-# =============================================================================
-# NA validation for stratification and cluster variables
-# =============================================================================
 
 test_that("execute() errors on stratification variable with NA", {
   frame <- data.frame(

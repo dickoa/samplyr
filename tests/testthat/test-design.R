@@ -1,5 +1,3 @@
-# Tests for sampling_design()
-
 test_that("sampling_design() creates a valid design object", {
   d <- sampling_design()
 

@@ -155,28 +155,28 @@
 #' @examplesIf requireNamespace("survey", quietly = TRUE)
 #' # Stratified sample -> survey design
 #' sample <- sampling_design() |>
-#'   stratify_by(facility_type, alloc = "proportional") |>
+#'   stratify_by(region, alloc = "proportional") |>
 #'   draw(n = 300) |>
-#'   execute(kenya_health, seed = 42)
+#'   execute(bfa_eas, seed = 42)
 #'
 #' svy <- as_svydesign(sample)
-#' survey::svymean(~beds, svy)
+#' survey::svymean(~households, svy)
 #'
 #' # Two-stage cluster sample with PPS first stage
 #' sample <- sampling_design() |>
 #'   add_stage() |>
 #'     stratify_by(region) |>
 #'     cluster_by(ea_id) |>
-#'     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+#'     draw(n = 5, method = "pps_brewer", mos = households) |>
 #'   add_stage() |>
 #'     draw(n = 12) |>
-#'   execute(niger_eas, seed = 2025)
+#'   execute(bfa_eas, seed = 2025)
 #'
 #' # Default: Brewer variance approximation
 #' svy <- as_svydesign(sample)
 #'
 #' # Exact: compute joint probabilities from frame
-#' jip <- joint_expectation(sample, niger_eas, stage = 1)
+#' jip <- joint_expectation(sample, bfa_eas, stage = 1)
 #' svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 #'
 #' @seealso [execute()] for producing tbl_sample objects,
@@ -656,12 +656,12 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
 #'
 #' @examplesIf requireNamespace("survey", quietly = TRUE)
 #' sample <- sampling_design() |>
-#'   stratify_by(facility_type, alloc = "proportional") |>
+#'   stratify_by(region, alloc = "proportional") |>
 #'   draw(n = 300) |>
-#'   execute(kenya_health, seed = 42)
+#'   execute(bfa_eas, seed = 42)
 #'
 #' rep_svy <- as_svrepdesign(sample, type = "auto")
-#' survey::svymean(~beds, rep_svy)
+#' survey::svymean(~households, rep_svy)
 #'
 #' @seealso [as_svydesign()] for linearization export,
 #'   [survey::as.svrepdesign()] for the underlying conversion
@@ -747,15 +747,15 @@ as_svrepdesign.tbl_sample <- function(
 #' library(srvyr)
 #'
 #' sample <- sampling_design() |>
-#'   stratify_by(facility_type, alloc = "proportional") |>
+#'   stratify_by(region, alloc = "proportional") |>
 #'   draw(n = 300) |>
-#'   execute(kenya_health, seed = 42)
+#'   execute(bfa_eas, seed = 42)
 #'
 #' # Returns a tbl_svy for use with srvyr verbs
 #' svy <- as_survey_design(sample)
 #' svy |>
-#'   group_by(facility_type) |>
-#'   summarise(mean_beds = survey_mean(beds))
+#'   group_by(region) |>
+#'   summarise(mean_hh = survey_mean(households))
 #'
 #' @seealso [as_svydesign()] for converting to a survey.design2 object
 #'
@@ -795,13 +795,13 @@ as_survey_design.tbl_sample <- function(.data, ...) {
 #' library(srvyr)
 #'
 #' sample <- sampling_design() |>
-#'   stratify_by(facility_type, alloc = "proportional") |>
+#'   stratify_by(region, alloc = "proportional") |>
 #'   draw(n = 300) |>
-#'   execute(kenya_health, seed = 42)
+#'   execute(bfa_eas, seed = 42)
 #'
 #' rep_tbl <- as_survey_rep(sample, type = "auto")
 #' rep_tbl |>
-#'   summarise(mean_beds = survey_mean(beds, vartype = "se"))
+#'   summarise(mean_hh = survey_mean(households, vartype = "se"))
 #'
 #' @seealso `as_svrepdesign()` for survey replicate-weight export
 #'

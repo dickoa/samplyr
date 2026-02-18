@@ -91,27 +91,27 @@
 #' sampling_design() |>
 #'   stratify_by(region) |>
 #'   draw(n = 20) |>
-#'   execute(niger_eas, seed = 1234)
+#'   execute(bfa_eas, seed = 1234)
 #'
 #' # Proportional allocation across regions
 #' sampling_design() |>
 #'   stratify_by(region, alloc = "proportional") |>
 #'   draw(n = 200) |>
-#'   execute(niger_eas, seed = 123)
+#'   execute(bfa_eas, seed = 123)
 #'
 #' # Neyman allocation using pre-computed variances
 #' sampling_design() |>
-#'   stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
+#'   stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
 #'   draw(n = 200) |>
-#'   execute(niger_eas, seed = 12)
+#'   execute(bfa_eas, seed = 12)
 #'
 #' # Optimal allocation considering both variance and cost
 #' sampling_design() |>
 #'   stratify_by(region, alloc = "optimal",
-#'               variance = niger_eas_variance,
-#'               cost = niger_eas_cost) |>
+#'               variance = bfa_eas_variance,
+#'               cost = bfa_eas_cost) |>
 #'   draw(n = 200) |>
-#'   execute(niger_eas, seed = 1)
+#'   execute(bfa_eas, seed = 1)
 #'
 #' # Power allocation (Bankier, 1988)
 #' sampling_design() |>
@@ -119,33 +119,35 @@
 #'     region,
 #'     alloc = "power",
 #'     cv = data.frame(
-#'       region = levels(niger_eas$region),
-#'       cv = c(0.40, 0.35, 0.20, 0.18, 0.10, 0.22, 0.25, 0.30)
+#'       region = levels(bfa_eas$region),
+#'       cv = c(0.40, 0.35, 0.12, 0.20, 0.30, 0.18,
+#'              0.15, 0.38, 0.22, 0.32, 0.17, 0.45, 0.25)
 #'     ),
 #'     importance = data.frame(
-#'       region = levels(niger_eas$region),
-#'       importance = c(20, 25, 60, 80, 120, 70, 65, 90)
+#'       region = levels(bfa_eas$region),
+#'       importance = c(60, 40, 120, 70, 80, 65,
+#'                      50, 55, 90, 75, 45, 35, 30)
 #'     ),
 #'     power = 0.5
 #'   ) |>
 #'   draw(n = 200) |>
-#'   execute(niger_eas, seed = 7)
+#'   execute(bfa_eas, seed = 7)
 #'
 #' # Custom sample sizes per stratum using a data frame
 #' custom_sizes <- data.frame(
-#'   region = levels(niger_eas$region),
-#'   n = c(15, 20, 30, 35, 25, 30, 25, 20)
+#'   region = levels(bfa_eas$region),
+#'   n = c(20, 12, 25, 18, 22, 16, 14, 15, 20, 18, 12, 10, 8)
 #' )
 #' sampling_design() |>
 #'   stratify_by(region) |>
 #'   draw(n = custom_sizes) |>
-#'   execute(niger_eas, seed = 2026)
+#'   execute(bfa_eas, seed = 2026)
 #'
 #' # Multiple stratification variables
 #' sampling_design() |>
-#'   stratify_by(region, strata, alloc = "proportional") |>
+#'   stratify_by(region, urban_rural, alloc = "proportional") |>
 #'   draw(n = 300) |>
-#'   execute(niger_eas, seed = 2025)
+#'   execute(bfa_eas, seed = 2025)
 #'
 #' @seealso
 #' [sampling_design()] for creating designs,

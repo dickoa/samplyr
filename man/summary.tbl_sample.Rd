@@ -38,9 +38,9 @@ effect, and effective sample size.
 }
 \examples{
 sample <- sampling_design() |>
-  stratify_by(facility_type, alloc = "proportional") |>
+  stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
-  execute(kenya_health, seed = 42)
+  execute(bfa_eas, seed = 42)
 
 summary(sample)
 

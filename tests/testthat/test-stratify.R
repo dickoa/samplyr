@@ -1,5 +1,3 @@
-# Tests for stratify_by()
-
 test_that("stratify_by() adds stratification to design", {
   d <- sampling_design() |>
     stratify_by(region)

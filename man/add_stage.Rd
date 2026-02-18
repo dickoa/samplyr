@@ -82,46 +82,49 @@ See \code{\link[=execute]{execute()}} for details on execution patterns.
 }
 
 \examples{
-# Two-stage design: schools then students
+# Two-stage design: districts then EAs
+zwe_frame <- zwe_eas |>
+  dplyr::mutate(district_hh = sum(households), .by = district)
+
 sampling_design() |>
-  add_stage(label = "Schools") |>
-    cluster_by(school_id) |>
-    draw(n = 50, method = "pps_brewer", mos = enrollment) |>
-  add_stage(label = "Students") |>
-    draw(n = 20) |>
-  execute(tanzania_schools, seed = 123)
+  add_stage(label = "Districts") |>
+    cluster_by(district) |>
+    draw(n = 20, method = "pps_brewer", mos = district_hh) |>
+  add_stage(label = "EAs") |>
+    draw(n = 10) |>
+  execute(zwe_frame, seed = 123)
 
 # Two-stage with stratification at stage 1
 sampling_design() |>
-  add_stage(label = "Schools") |>
-    stratify_by(school_level) |>
-    cluster_by(school_id) |>
-    draw(n = 20, method = "pps_brewer", mos = enrollment) |>
-  add_stage(label = "Students") |>
-    draw(n = 15) |>
-  execute(tanzania_schools, seed = 1234)
+  add_stage(label = "Districts") |>
+    stratify_by(province) |>
+    cluster_by(district) |>
+    draw(n = 2, method = "pps_brewer", mos = district_hh) |>
+  add_stage(label = "EAs") |>
+    draw(n = 5) |>
+  execute(zwe_frame, seed = 1234)
 
 # DHS-style two-stage stratified cluster sample
 sampling_design(title = "DHS-style Household Survey") |>
   add_stage(label = "Enumeration Areas") |>
-    stratify_by(region, strata) |>
+    stratify_by(region, urban_rural) |>
     cluster_by(ea_id) |>
-    draw(n = 3, method = "pps_brewer", mos = hh_count) |>
+    draw(n = 3, method = "pps_brewer", mos = households) |>
   add_stage(label = "Households") |>
     draw(n = 20) |>
-  execute(niger_eas, seed = 2026)
+  execute(bfa_eas, seed = 2026)
 
 # Partial execution: select only stage 1
 design <- sampling_design() |>
   add_stage(label = "EAs") |>
     stratify_by(region) |>
     cluster_by(ea_id) |>
-    draw(n = 10, method = "pps_brewer", mos = hh_count) |>
+    draw(n = 10, method = "pps_brewer", mos = households) |>
   add_stage(label = "Households") |>
     draw(n = 12)
 
 # Execute stage 1 only
-selected_eas <- execute(design, niger_eas, stages = 1, seed = 1)
+selected_eas <- execute(design, bfa_eas, stages = 1, seed = 1)
 nrow(selected_eas)
 
 }

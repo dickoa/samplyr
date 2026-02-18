@@ -1,5 +1,3 @@
-# Tests for add_stage()
-
 test_that("add_stage() creates a new stage", {
   d <- sampling_design() |>
     add_stage(label = "First") |>

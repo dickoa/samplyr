@@ -61,11 +61,9 @@ reference:
     desc: "Synthetic survey frames for examples."
     contents:
       - samplyr-datasets
-      - niger_eas
-      - niger_eas_variance
-      - niger_eas_cost
-      - niger_households
-      - uganda_farms
-      - kenya_health
-      - tanzania_schools
-      - nigeria_business
+      - bfa_eas
+      - bfa_eas_variance
+      - bfa_eas_cost
+      - zwe_eas
+      - zwe_households
+      - ken_enterprises

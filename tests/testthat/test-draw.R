@@ -1,5 +1,3 @@
-# Tests for draw()
-
 test_that("draw() adds selection parameters to design", {
   d <- sampling_design() |>
     draw(n = 100)

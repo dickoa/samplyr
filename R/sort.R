@@ -73,18 +73,18 @@
 #'   head(12)
 #'
 #' # Implicit stratification with systematic sampling
-#' # Sort Niger EAs in serpentine order, then draw systematic sample
+#' # Sort BFA EAs in serpentine order, then draw systematic sample
 #' sampling_design() |>
 #'   draw(n = 100, method = "systematic") |>
-#'   execute(arrange(niger_eas, serp(region, department)),
-#'                   seed = 42)
+#'   execute(arrange(bfa_eas, serp(region, province)),
+#'                   seed = 1)
 #'
 #' # Combine explicit stratification with serpentine sorting
 #' # Stratify by urban/rural, use serpentine within strata
 #' sampling_design() |>
-#'   stratify_by(strata) |>
+#'   stratify_by(urban_rural) |>
 #'   draw(n = 100, method = "systematic") |>
-#'   execute(arrange(niger_eas, strata, serp(region, department)),
+#'   execute(arrange(bfa_eas, urban_rural, serp(region, province)),
 #'                   seed = 1234)
 #'
 #' @export

@@ -34,25 +34,28 @@
 #' }
 #'
 #' @examples
-#' # Simple random sample of 100 health facilities
+#' # Simple random sample of 100 EAs
 #' sampling_design() |>
 #'   draw(n = 100) |>
-#'   execute(kenya_health, seed = 1)
+#'   execute(bfa_eas, seed = 1)
 #'
 #' # Stratified sample with proportional allocation
-#' sampling_design(title = "Kenya Health Facility Survey") |>
-#'   stratify_by(facility_type, alloc = "proportional") |>
+#' sampling_design(title = "Burkina Faso EA Survey") |>
+#'   stratify_by(region, alloc = "proportional") |>
 #'   draw(n = 400) |>
-#'   execute(kenya_health, seed = 2)
+#'   execute(bfa_eas, seed = 2)
 #'
-#' # Two-stage cluster sample of schools and students
-#' sampling_design(title = "Tanzania Education Survey") |>
-#'   add_stage(label = "Schools") |>
-#'     cluster_by(school_id) |>
-#'     draw(n = 50, method = "pps_brewer", mos = enrollment) |>
-#'   add_stage(label = "Students") |>
-#'     draw(n = 20) |>
-#'   execute(tanzania_schools, seed = 3)
+#' # Two-stage cluster sample of districts and EAs
+#' zwe_frame <- zwe_eas |>
+#'   dplyr::mutate(district_hh = sum(households), .by = district)
+#'
+#' sampling_design(title = "Zimbabwe DHS") |>
+#'   add_stage(label = "Districts") |>
+#'     cluster_by(district) |>
+#'     draw(n = 20, method = "pps_brewer", mos = district_hh) |>
+#'   add_stage(label = "EAs") |>
+#'     draw(n = 10) |>
+#'   execute(zwe_frame, seed = 3)
 #'
 #' @seealso
 #' [stratify_by()] for defining strata,

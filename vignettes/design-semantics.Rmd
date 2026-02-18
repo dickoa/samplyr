@@ -178,13 +178,13 @@ $$
 
 ```{r weight-compound}
 two_stage <- sampling_design() |>
+  add_stage("Districts") |>
+    stratify_by(province) |>
+    cluster_by(district) |>
+    draw(n = 2, method = "srswor") |>
   add_stage("EAs") |>
-    stratify_by(region) |>
-    cluster_by(ea_id) |>
-    draw(n = 3, method = "srswor") |>
-  add_stage("Households") |>
     draw(n = 5, method = "srswor") |>
-  execute(niger_households, seed = 42)
+  execute(zwe_eas, seed = 42)
 
 # Compound weight equals the product of per-stage weights
 all.equal(two_stage$.weight,

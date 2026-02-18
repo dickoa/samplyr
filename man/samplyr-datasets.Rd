@@ -2,30 +2,28 @@
 % Please edit documentation in R/datasets.R
 \name{samplyr-datasets}
 \alias{samplyr-datasets}
-\title{Synthetic Survey Sampling Datasets}
+\title{Sampling Frames}
 \description{
-The samplyr package includes synthetic survey datasets for demonstrating
-survey sampling designs. These datasets use real administrative divisions
-from African countries but contain entirely fictional data. They are
-designed to illustrate common survey sampling scenarios.
+The samplyr package includes synthetic sampling frames for demonstrating
+survey sampling designs. These frames use real administrative divisions
+from African countries. They are designed to illustrate common survey
+sampling scenarios.
 }
 \section{Datasets}{
 
 \itemize{
-\item \link{niger_eas}: DHS-style EA frame (Niger)
-\item \link{niger_households}: Household-level data nested within niger_eas
-\item \link{uganda_farms}: LSMS-style agricultural survey frame (Uganda)
-\item \link{kenya_health}: SPA-style health facility frame (Kenya)
-\item \link{tanzania_schools}: Education survey frame (Tanzania)
-\item \link{nigeria_business}: Enterprise survey frame (Nigeria)
+\item \link{bfa_eas}: LSMS-style EA frame (Burkina Faso, 14,900 EAs)
+\item \link{zwe_eas}: DHS-style EA frame (Zimbabwe, 22,600 EAs)
+\item \link{zwe_households}: Household frame for two-phase sampling (Zimbabwe, 379,326 HH)
+\item \link{ken_enterprises}: Enterprise survey frame (Kenya, 6,823 establishments)
 }
 }
 
 \section{Auxiliary Data}{
 
 \itemize{
-\item \link{niger_eas_variance}: Stratum variances for Neyman allocation
-\item \link{niger_eas_cost}: Stratum costs for optimal allocation
+\item \link{bfa_eas_variance}: Stratum variances for Neyman allocation
+\item \link{bfa_eas_cost}: Stratum costs for optimal allocation
 }
 }
 

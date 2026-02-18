@@ -313,103 +313,101 @@ combined with implicit stratification for sample spread.
 }
 }
 \examples{
-# Simple random sample of 100 facilities
+# Simple random sample of 100 EAs
 sampling_design() |>
   draw(n = 100) |>
-  execute(kenya_health, seed = 1)
+  execute(bfa_eas, seed = 1)
 
 # Systematic sample of 10\%
 sampling_design() |>
   draw(frac = 0.10, method = "systematic") |>
-  execute(kenya_health, seed = 123)
+  execute(bfa_eas, seed = 123)
 
-# PPS sample of schools using enrollment
+# PPS sample of EAs using household count
 sampling_design() |>
-  cluster_by(school_id) |>
-  draw(n = 50, method = "pps_brewer", mos = enrollment) |>
-  execute(tanzania_schools, seed = 42)
+  cluster_by(ea_id) |>
+  draw(n = 50, method = "pps_brewer", mos = households) |>
+  execute(bfa_eas, seed = 42)
 
 # Bernoulli sampling (random sample size, expected ~5\%)
 sampling_design() |>
   draw(frac = 0.05, method = "bernoulli") |>
-  execute(nigeria_business, seed = 1234)
+  execute(ken_enterprises, seed = 12345)
 
 # Stratified with different sizes per stratum (data frame)
-facility_sizes <- data.frame(
-  facility_type = c("Clinic", "Dispensary", "Health Centre",
-                    "Sub-County Hospital", "County Hospital",
-                    "Referral Hospital", "Maternity Home"),
-  n = c(30, 40, 35, 25, 20, 10, 15)
+region_sizes <- data.frame(
+  region = levels(bfa_eas$region),
+  n = c(20, 12, 25, 18, 22, 16, 14, 15, 20, 18, 12, 10, 8)
 )
 sampling_design() |>
-  stratify_by(facility_type) |>
-  draw(n = facility_sizes) |>
-  execute(kenya_health, seed = 123)
+  stratify_by(region) |>
+  draw(n = region_sizes) |>
+  execute(bfa_eas, seed = 123)
 
 # Stratified with different rates per stratum (named vector)
 sampling_design() |>
   stratify_by(size_class) |>
-  draw(frac = c(Micro = 0.01, Small = 0.05, Medium = 0.20, Large = 0.50)) |>
-  execute(nigeria_business, seed = 42)
+  draw(frac = c(Small = 0.02, Medium = 0.10, Large = 0.50)) |>
+  execute(ken_enterprises, seed = 42)
 
 # Neyman allocation with minimum 2 per stratum (for variance estimation)
 sampling_design() |>
-  stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
+  stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
   draw(n = 150, min_n = 2) |>
-  execute(niger_eas, seed = 2026)
+  execute(bfa_eas, seed = 2026)
 
 # Proportional allocation with min and max bounds
 sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 200, min_n = 10, max_n = 50) |>
-  execute(niger_eas, seed = 42)
+  execute(bfa_eas, seed = 1)
 
 # Control sorting with serpentine ordering (implicit stratification)
 sampling_design() |>
   draw(n = 100, method = "systematic",
-       control = serp(region, department)) |>
-  execute(niger_eas, seed = 42)
+       control = serp(region, province)) |>
+  execute(bfa_eas, seed = 2)
 
 # Control sorting with nested (standard) ordering
 sampling_design() |>
   draw(n = 100, method = "systematic",
-       control = c(region, department)) |>
-  execute(niger_eas, seed = 42)
+       control = c(region, province)) |>
+  execute(bfa_eas, seed = 3)
 
 # Combined explicit stratification with control sorting within strata
 sampling_design() |>
-  stratify_by(strata) |>
+  stratify_by(urban_rural) |>
   draw(n = 50, method = "systematic",
-       control = serp(region, department)) |>
-  execute(niger_eas, seed = 42)
+       control = serp(region, province)) |>
+  execute(bfa_eas, seed = 25)
 
 # PPS with certainty selection (absolute threshold)
 # Large EAs selected with certainty, rest sampled with PPS
 sampling_design() |>
   stratify_by(region) |>
-  draw(n = 100, method = "pps_brewer", mos = hh_count,
-       certainty_size = 500) |>
-  execute(niger_eas, seed = 42)
+  draw(n = 100, method = "pps_brewer", mos = households,
+       certainty_size = 800) |>
+  execute(bfa_eas, seed = 3)
 
 # PPS with certainty selection (proportional threshold)
 # EAs with >= 10\% of stratum total selected with certainty
 sampling_design() |>
   stratify_by(region) |>
-  draw(n = 100, method = "pps_systematic", mos = hh_count,
+  draw(n = 100, method = "pps_systematic", mos = households,
        certainty_prop = 0.10) |>
-  execute(niger_eas, seed = 42)
+  execute(bfa_eas, seed = 321)
 
 # Stratum-specific certainty thresholds (data frame)
 cert_thresholds <- data.frame(
-  region = c("Agadez", "Diffa", "Dosso", "Maradi",
-             "Niamey", "Tahoua", "Tillaberi", "Zinder"),
-  certainty_size = c(1000, 500, 600, 700, 300, 800, 650, 750)
+  region = levels(bfa_eas$region),
+  certainty_size = c(700, 450, 800, 850, 750, 800, 550,
+                     450, 700, 950, 750, 600, 480)
 )
 sampling_design() |>
   stratify_by(region) |>
-  draw(n = 100, method = "pps_brewer", mos = hh_count,
+  draw(n = 100, method = "pps_brewer", mos = households,
        certainty_size = cert_thresholds) |>
-  execute(niger_eas, seed = 42)
+  execute(bfa_eas, seed = 424)
 
 }
 \seealso{

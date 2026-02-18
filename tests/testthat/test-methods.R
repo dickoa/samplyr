@@ -1,7 +1,3 @@
-# Tests for equal probability sampling methods: SRS, systematic, Bernoulli
-
-# ---- Simple Random Sampling (SRS) ----
-
 test_that("SRS gives equal weights", {
   frame <- data.frame(id = 1:100)
 
@@ -56,8 +52,6 @@ test_that("Stratified SRS gives within-stratum weights", {
   expect_true(all(result_B$.weight == 20))
 })
 
-# ---- Systematic Sampling ----
-
 test_that("Systematic sampling gives equal weights", {
   frame <- data.frame(id = 1:100)
 
@@ -99,8 +93,6 @@ test_that("Stratified systematic gives within-stratum weights", {
   # Each stratum: N_h/n = 50/5 = 10
   expect_true(all(result$.weight == 10))
 })
-
-# ---- Bernoulli Sampling ----
 
 test_that("Bernoulli sampling gives correct weights", {
   frame <- data.frame(id = 1:100)
@@ -155,8 +147,6 @@ test_that("Stratified Bernoulli gives stratum-specific weights", {
     expect_true(all(result_B$.weight == 2))
   }
 })
-
-# ---- Weight correctness across methods ----
 
 test_that("All equal probability methods give consistent weights", {
   frame <- data.frame(id = 1:100)

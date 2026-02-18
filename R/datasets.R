@@ -1,25 +1,23 @@
-#' Synthetic Survey Sampling Datasets
+#' Sampling Frames
 #'
 #' @description
-#' The samplyr package includes synthetic survey datasets for demonstrating
-#' survey sampling designs. These datasets use real administrative divisions
-#' from African countries but contain entirely fictional data. They are
-#' designed to illustrate common survey sampling scenarios.
+#' The samplyr package includes synthetic sampling frames for demonstrating
+#' survey sampling designs. These frames use real administrative divisions
+#' from African countries. They are designed to illustrate common survey
+#' sampling scenarios.
 #'
 #' @section Datasets:
 #' \itemize{
-#'   \item [niger_eas]: DHS-style EA frame (Niger)
-#'   \item [niger_households]: Household-level data nested within niger_eas
-#'   \item [uganda_farms]: LSMS-style agricultural survey frame (Uganda)
-#'   \item [kenya_health]: SPA-style health facility frame (Kenya)
-#'   \item [tanzania_schools]: Education survey frame (Tanzania)
-#'   \item [nigeria_business]: Enterprise survey frame (Nigeria)
+#'   \item [bfa_eas]: LSMS-style EA frame (Burkina Faso, 14,900 EAs)
+#'   \item [zwe_eas]: DHS-style EA frame (Zimbabwe, 22,600 EAs)
+#'   \item [zwe_households]: Household frame for two-phase sampling (Zimbabwe, 379,326 HH)
+#'   \item [ken_enterprises]: Enterprise survey frame (Kenya, 6,823 establishments)
 #' }
 #'
 #' @section Auxiliary Data:
 #' \itemize{
-#'   \item [niger_eas_variance]: Stratum variances for Neyman allocation
-#'   \item [niger_eas_cost]: Stratum costs for optimal allocation
+#'   \item [bfa_eas_variance]: Stratum variances for Neyman allocation
+#'   \item [bfa_eas_cost]: Stratum costs for optimal allocation
 #' }
 #'
 #' @name samplyr-datasets
@@ -27,21 +25,28 @@
 NULL
 
 
-#' Niger Enumeration Areas (DHS-style)
+#' Burkina Faso Enumeration Areas (LSMS-style)
 #'
 #' @description
-#' A synthetic enumeration area (EA) frame for household surveys, inspired by
-#' Demographic and Health Survey (DHS) sampling designs. Uses real Niger
-#' administrative divisions but contains entirely fictional data.
+#' An enumeration area (EA) frame for household surveys, built from
+#' WorldPop/GRID3 preEA data, EHCVM 2021 household survey parameters, and
+#' COD-AB administrative boundaries. The frame covers 13 regions, 45 provinces,
+#' and 346 communes of Burkina Faso.
 #'
-#' @format A tibble with approximately 1,500 rows and 6 columns:
+#' @format A tibble with 14,900 rows and 12 columns:
 #' \describe{
 #'   \item{ea_id}{Character. Unique enumeration area identifier}
-#'   \item{region}{Factor. Region name (8 regions: Agadez, Diffa, Dosso, Maradi, Niamey, Tahoua, \enc{Tillabéri}{Tillaberi}, Zinder)}
-#'   \item{department}{Factor. Department name within region}
-#'   \item{strata}{Factor. Urban/Rural stratification}
-#'   \item{hh_count}{Integer. Number of households in the EA (measure of size for PPS)}
-#'   \item{pop_estimate}{Integer. Estimated population}
+#'   \item{region}{Factor. Region name (13 regions)}
+#'   \item{province}{Factor. Province name within region (45 provinces)}
+#'   \item{commune}{Factor. Commune name within province (346 communes)}
+#'   \item{urban_rural}{Factor. Urban/Rural classification}
+#'   \item{population}{Numeric. EA population}
+#'   \item{households}{Integer. Number of households in the EA (measure of size for PPS)}
+#'   \item{area_km2}{Numeric. EA area in square kilometres}
+#'   \item{accessible}{Logical. Whether the EA is in an accessible zone}
+#'   \item{dist_road_km}{Numeric. Distance to paved road in km}
+#'   \item{food_insecurity_pct}{Numeric. Cadre Harmonise Phase 3+ prevalence}
+#'   \item{cost}{Numeric. Survey cost per EA (thousands FCFA)}
 #' }
 #'
 #' @details
@@ -50,373 +55,238 @@ NULL
 #'   \item Stratified multi-stage cluster sampling
 #'   \item PPS (probability proportional to size) sampling using household counts
 #'   \item Urban/rural stratification
-#'   \item Two-stage designs (EAs then households)
+#'   \item Neyman and optimal allocation using auxiliary variables
 #' }
 #'
-#' The data structure mirrors typical DHS sampling frames where enumeration
-#' areas are the primary sampling units, selected with probability proportional
-#' to the number of households.
-#'
-#' @note
-#' This is a synthetic dataset created for demonstration purposes. While it uses
-#' real Niger administrative divisions, all data values are fictional.
+#' The data structure mirrors typical LSMS/household survey sampling frames
+#' where enumeration areas are the primary sampling units, selected with
+#' probability proportional to the number of households.
 #'
 #' @seealso
-#' [niger_eas_variance] for Neyman allocation,
-#' [niger_eas_cost] for optimal allocation
+#' [bfa_eas_variance] for Neyman allocation,
+#' [bfa_eas_cost] for optimal allocation
 #'
 #' @examples
 #' # Explore the data
-#' head(niger_eas)
-#' table(niger_eas$region)
-#' table(niger_eas$strata)
+#' head(bfa_eas)
+#' table(bfa_eas$region)
+#' table(bfa_eas$urban_rural)
 #'
-#' # DHS-style two-stage stratified cluster sample
+#' # Stratified PPS cluster sample
 #' sampling_design() |>
 #'   add_stage(label = "EAs") |>
-#'     stratify_by(region, strata) |>
+#'     stratify_by(region, urban_rural) |>
 #'     cluster_by(ea_id) |>
-#'     draw(n = 3, method = "pps_brewer", mos = hh_count) |>
+#'     draw(n = 3, method = "pps_brewer", mos = households) |>
 #'   add_stage(label = "Households") |>
 #'     draw(n = 20) |>
-#'   execute(niger_eas, seed = 42)
+#'   execute(bfa_eas, seed = 42)
 #'
-"niger_eas"
+"bfa_eas"
 
 
-#' Stratum Variances for Niger EAs
+#' Stratum Variances for Burkina Faso EAs
 #'
 #' @description
-#' Variance of household counts by region, calculated from [niger_eas].
+#' Variance of food insecurity prevalence by region, calculated from [bfa_eas].
 #' Used for demonstrating Neyman optimal allocation in stratified sampling.
 #'
-#' @format A tibble with 8 rows and 2 columns:
+#' @format A tibble with 13 rows and 2 columns:
 #' \describe{
 #'   \item{region}{Factor. Region name}
-#'   \item{var}{Numeric. Variance of household counts within region}
+#'   \item{var}{Numeric. Variance of food insecurity prevalence within region}
 #' }
 #'
-#' @seealso [niger_eas], [stratify_by()]
+#' @seealso [bfa_eas], [stratify_by()]
 #'
 #' @examples
 #' # View the variance data
-#' niger_eas_variance
+#' bfa_eas_variance
 #'
 #' # Neyman allocation minimizes variance for fixed sample size
 #' sampling_design() |>
-#'   stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
+#'   stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
 #'   draw(n = 200) |>
-#'   execute(niger_eas, seed = 42)
+#'   execute(bfa_eas, seed = 42)
 #'
-"niger_eas_variance"
+"bfa_eas_variance"
 
 
-#' Stratum Costs for Niger EAs
+#' Stratum Costs for Burkina Faso EAs
 #'
 #' @description
-#' Per-interview cost by region for [niger_eas]. Remote regions (Agadez, Diffa)
-#' have higher costs. Used for demonstrating optimal (cost-variance) allocation.
+#' Mean survey cost per EA by region for [bfa_eas]. Conflict-affected regions
+#' (Sahel, Est) have higher costs. Used for demonstrating optimal
+#' (cost-variance) allocation.
 #'
-#' @format A tibble with 8 rows and 2 columns:
+#' @format A tibble with 13 rows and 2 columns:
 #' \describe{
-#'   \item{region}{Character. Region name}
-#'   \item{cost}{Numeric. Per-interview cost (fictional units)}
+#'   \item{region}{Factor. Region name}
+#'   \item{cost}{Numeric. Mean per-EA survey cost (thousands FCFA)}
 #' }
 #'
-#' @seealso [niger_eas], [niger_eas_variance], [stratify_by()]
+#' @seealso [bfa_eas], [bfa_eas_variance], [stratify_by()]
 #'
 #' @examples
 #' # View the cost data
-#' niger_eas_cost
+#' bfa_eas_cost
 #'
 #' # Optimal allocation minimizes variance for fixed total cost
 #' sampling_design() |>
 #'   stratify_by(region, alloc = "optimal",
-#'               variance = niger_eas_variance,
-#'               cost = niger_eas_cost) |>
+#'               variance = bfa_eas_variance,
+#'               cost = bfa_eas_cost) |>
 #'   draw(n = 200) |>
-#'   execute(niger_eas, seed = 42)
+#'   execute(bfa_eas, seed = 42)
 #'
-"niger_eas_cost"
+"bfa_eas_cost"
 
 
-#' Niger Households (DHS-style)
+#' Zimbabwe Enumeration Areas (DHS Two-Stage Cluster)
 #'
 #' @description
-#' A synthetic household-level dataset nested within [niger_eas]. Each row
-#' represents one household, enabling true two-stage cluster sampling
-#' demonstrations where EAs are selected first, then households within
-#' selected EAs.
+#' An enumeration area (EA) frame for two-stage cluster surveys, built from
+#' WorldPop/GRID3 preEA boundaries, GHS-DUC urban classification, and
+#' Zimbabwe 2022 Census population figures. The frame covers 10 provinces
+#' and 91 districts.
 #'
-#' @format A tibble with approximately 150,000 rows and 9 columns:
-#' \describe{
-#'   \item{hh_id}{Character. Unique household identifier}
-#'   \item{ea_id}{Character. Parent enumeration area identifier (links to [niger_eas])}
-#'   \item{region}{Factor. Region name}
-#'   \item{department}{Factor. Department name}
-#'   \item{strata}{Factor. Urban/Rural stratification}
-#'   \item{hh_size}{Integer. Number of persons in household}
-#'   \item{head_age}{Integer. Age of household head (18-85)}
-#'   \item{head_sex}{Factor. Sex of household head (Male/Female)}
-#'   \item{n_children_u5}{Integer. Number of children under 5 years}
-#' }
-#'
-#' @details
-#' This dataset is designed for demonstrating:
-#' \itemize{
-#'   \item True two-stage cluster sampling (EAs then households)
-#'   \item Joining cluster-level and unit-level data
-#'   \item Within-cluster subsampling
-#' }
-#'
-#' The number of households per EA matches the `hh_count` variable in
-#' [niger_eas], ensuring consistency between the EA frame and household
-#' listing.
-#'
-#' @note
-#' This is a synthetic dataset. All values are fictional.
-#'
-#' @seealso [niger_eas] for the EA-level frame
-#'
-#' @examples
-#' # Explore the data
-#' head(niger_households)
-#' length(unique(niger_households$ea_id))
-#'
-#' # True two-stage sample: select EAs, then households within selected EAs
-#' sampling_design() |>
-#'   add_stage(label = "EAs") |>
-#'     stratify_by(strata) |>
-#'     cluster_by(ea_id) |>
-#'     draw(n = 5) |>
-#'   add_stage(label = "Households") |>
-#'     draw(n = 10) |>
-#'   execute(niger_households, seed = 42)
-#'
-#' # For PPS selection of EAs, use the EA-level frame which has
-#' # cluster-level variables (hh_count) suitable as measure of size:
-#' # selected_eas <- sampling_design() |>
-#' #   add_stage(label = "EAs") |>
-#' #     stratify_by(strata) |>
-#' #     cluster_by(ea_id) |>
-#' #     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
-#' #   add_stage(label = "Households") |>
-#' #     draw(n = 10) |>
-#' #   execute(niger_eas, stages = 1, seed = 42)
-#' # selected_eas |> execute(niger_households, seed = 43)
-#'
-"niger_households"
-
-
-#' Uganda Agricultural Survey Frame (LSMS-style)
-#'
-#' @description
-#' A synthetic agricultural survey frame inspired by Living Standards Measurement
-#' Study - Integrated Surveys on Agriculture (LSMS-ISA). Uses real Uganda
-#' administrative divisions but contains entirely fictional data.
-#'
-#' @format A tibble with approximately 800 rows and 7 columns:
+#' @format A tibble with 22,600 rows and 7 columns:
 #' \describe{
 #'   \item{ea_id}{Character. Unique enumeration area identifier}
-#'   \item{region}{Factor. Region (Central, Eastern, Northern, Western)}
-#'   \item{district}{Factor. District name}
+#'   \item{province}{Factor. Province name (10 provinces)}
+#'   \item{district}{Factor. District name within province (91 districts)}
 #'   \item{urban_rural}{Factor. Urban/Rural classification}
-#'   \item{n_households}{Integer. Number of households in the EA}
-#'   \item{avg_farm_size_ha}{Numeric. Average farm size in hectares}
-#'   \item{main_crop}{Factor. Predominant crop in the EA}
+#'   \item{households}{Integer. Number of households in the EA (measure of size for PPS)}
+#'   \item{population}{Integer. EA population}
+#'   \item{area_km2}{Numeric. EA area in square kilometres}
 #' }
 #'
 #' @details
 #' This dataset is designed for demonstrating:
 #' \itemize{
-#'   \item Agricultural survey sampling
-#'   \item Stratification by region and urban/rural
-#'   \item Domain estimation (by crop type)
-#'   \item Multi-stage sampling for household agricultural surveys
+#'   \item Two-stage cluster sampling (districts then EAs, or EAs then households)
+#'   \item PPS sampling using household counts
+#'   \item Stratification by province and urban/rural
+#'   \item Partial execution (operational multi-stage sampling)
+#'   \item Two-phase sampling (with [zwe_households])
 #' }
 #'
-#' Main crops vary by region reflecting actual Ugandan agriculture:
-#' Central (coffee, maize, beans, banana), Eastern (maize, millet, rice, cotton),
-#' Northern (millet, sorghum, groundnuts, sesame), Western (coffee, banana, tea, maize).
+#' The data structure mirrors typical DHS/MICS sampling frames where EAs
+#' are nested within districts and provinces.
 #'
-#' @note
-#' This is a synthetic dataset. Administrative divisions are real but all
-#' data values are fictional.
+#' @seealso [zwe_households] for household-level data within a subset of EAs
 #'
 #' @examples
 #' # Explore the data
-#' head(uganda_farms)
-#' table(uganda_farms$region, uganda_farms$main_crop)
+#' head(zwe_eas)
+#' table(zwe_eas$province)
+#' table(zwe_eas$urban_rural)
 #'
-#' # Stratified cluster sample by region
+#' # Two-stage cluster sample: districts then EAs
+#' zwe_frame <- zwe_eas |>
+#'   dplyr::mutate(district_hh = sum(households), .by = district)
+#'
 #' sampling_design() |>
-#'   stratify_by(region, alloc = "proportional") |>
-#'   cluster_by(ea_id) |>
-#'   draw(n = 15) |>
-#'   execute(uganda_farms, seed = 42)
+#'   add_stage(label = "Districts") |>
+#'     stratify_by(province) |>
+#'     cluster_by(district) |>
+#'     draw(n = 2, method = "pps_brewer", mos = district_hh) |>
+#'   add_stage(label = "EAs") |>
+#'     draw(n = 5) |>
+#'   execute(zwe_frame, seed = 42)
 #'
-"uganda_farms"
+"zwe_eas"
 
 
-#' Kenya Health Facilities (SPA-style)
+#' Zimbabwe Households (Two-Phase Subframe)
 #'
 #' @description
-#' A synthetic health facility frame inspired by Service Provision Assessment
-#' (SPA) and Service Availability and Readiness Assessment (SARA) surveys.
-#' Uses real Kenya counties but contains entirely fictional data.
+#' A household-level frame for a subset of 2,000 enumeration areas from
+#' [zwe_eas]. Designed for demonstrating two-phase sampling, where phase 1
+#' selects EAs and phase 2 subsamples households within selected EAs.
 #'
-#' @format A tibble with approximately 3,000 rows and 9 columns:
+#' @format A tibble with 379,326 rows and 9 columns:
 #' \describe{
-#'   \item{facility_id}{Character. Unique facility identifier}
-#'   \item{region}{Factor. Former province (8 regions)}
+#'   \item{hh_id}{Character. Unique household identifier}
+#'   \item{ea_id}{Character. Enumeration area identifier (links to [zwe_eas])}
+#'   \item{province}{Factor. Province name}
+#'   \item{district}{Factor. District name}
+#'   \item{urban_rural}{Factor. Urban/Rural classification}
+#'   \item{hh_size}{Integer. Number of household members}
+#'   \item{n_children}{Integer. Number of children under 5}
+#'   \item{wealth_score}{Numeric. Household wealth index score}
+#'   \item{has_improved_water}{Logical. Whether the household has improved water access}
+#' }
+#'
+#' @details
+#' This dataset is designed for demonstrating:
+#' \itemize{
+#'   \item Two-phase sampling (EA selection followed by household subsampling)
+#'   \item Joint inclusion probability computation
+#'   \item Survey export with multi-stage designs
+#' }
+#'
+#' Only a subset of EAs from [zwe_eas] have household-level data, reflecting
+#' the operational reality where household listing is done only in selected EAs.
+#'
+#' @seealso [zwe_eas] for the EA-level frame
+#'
+#' @examples
+#' # Explore the data
+#' head(zwe_households)
+#' table(zwe_households$province)
+#'
+"zwe_households"
+
+
+#' Kenya Enterprises (Enterprise Survey with Panels and PRN)
+#'
+#' @description
+#' A synthetic business establishment frame inspired by the KNBS 2017 Census
+#' of Establishments and the World Bank Enterprise Survey (WBES) 2018 Kenya
+#' design. Covers 47 counties, 11 regions, 7 sectors, and 3 size classes.
+#'
+#' @format A tibble with 6,823 rows and 9 columns:
+#' \describe{
+#'   \item{enterprise_id}{Character. Unique establishment identifier}
 #'   \item{county}{Factor. County name (47 counties)}
-#'   \item{urban_rural}{Factor. Urban/Rural classification}
-#'   \item{facility_type}{Factor. Type of facility (Referral Hospital, County Hospital, Sub-County Hospital, Health Centre, Dispensary, Clinic, Maternity Home)}
-#'   \item{ownership}{Factor. Ownership type (Public, Private, Faith-based, NGO)}
-#'   \item{beds}{Integer. Number of inpatient beds}
-#'   \item{staff_count}{Integer. Number of health workers}
-#'   \item{outpatient_visits}{Integer. Monthly outpatient visits (measure of size)}
-#' }
-#'
-#' @details
-#' This dataset is designed for demonstrating:
-#' \itemize{
-#'   \item Health facility surveys
-#'   \item Stratification by facility type and region
-#'   \item PPS sampling using patient volume
-#'   \item Sampling across different ownership types
-#' }
-#'
-#' Facility types follow the Kenyan health system hierarchy from referral
-#' hospitals down to dispensaries and clinics.
-#'
-#' @note
-#' This is a synthetic dataset. Counties and regions are real but all
-#' data values are fictional.
-#'
-#' @examples
-#' # Explore the data
-#' head(kenya_health)
-#' table(kenya_health$facility_type)
-#'
-#' # Stratified sample by facility type with proportional allocation
-#' sampling_design() |>
-#'   stratify_by(facility_type, alloc = "proportional") |>
-#'   draw(n = 300) |>
-#'   execute(kenya_health, seed = 42)
-#'
-#' # PPS sample using outpatient visits as measure of size
-#' sampling_design() |>
-#'   draw(n = 100, method = "pps_brewer", mos = outpatient_visits) |>
-#'   execute(kenya_health, seed = 42)
-#'
-"kenya_health"
-
-
-#' Tanzania Schools Survey Frame
-#'
-#' @description
-#' A synthetic school survey frame inspired by education census and survey data.
-#' Uses real Tanzania regions and districts but contains entirely fictional data.
-#'
-#' @format A tibble with approximately 2,500 rows and 9 columns:
-#' \describe{
-#'   \item{school_id}{Character. Unique school identifier}
-#'   \item{region}{Factor. Region name (7 regions)}
-#'   \item{district}{Factor. District name}
-#'   \item{school_level}{Factor. Primary or Secondary}
-#'   \item{ownership}{Factor. Government or Private}
-#'   \item{enrollment}{Integer. Total student enrollment (measure of size)}
-#'   \item{n_teachers}{Integer. Number of teachers}
-#'   \item{has_electricity}{Logical. Whether school has electricity}
-#'   \item{has_water}{Logical. Whether school has water supply}
-#' }
-#'
-#' @details
-#' This dataset is designed for demonstrating:
-#' \itemize{
-#'   \item Education surveys
-#'   \item Two-stage sampling (schools then students)
-#'   \item PPS sampling using enrollment
-#'   \item Stratification by school level and ownership
-#' }
-#'
-#' The dataset reflects typical East African education system characteristics
-#' with more primary than secondary schools, and infrastructure varying by
-#' urban/rural location.
-#'
-#' @note
-#' This is a synthetic dataset. Regions and districts are real but all
-#' data values are fictional.
-#'
-#' @examples
-#' # Explore the data
-#' head(tanzania_schools)
-#' table(tanzania_schools$school_level, tanzania_schools$ownership)
-#'
-#' # Two-stage cluster sample: schools then students
-#' sampling_design() |>
-#'   add_stage(label = "Schools") |>
-#'     stratify_by(school_level) |>
-#'     cluster_by(school_id) |>
-#'     draw(n = 25, method = "pps_brewer", mos = enrollment) |>
-#'   add_stage(label = "Students") |>
-#'     draw(n = 20) |>
-#'   execute(tanzania_schools, seed = 42)
-#'
-"tanzania_schools"
-
-
-#' Nigeria Business Survey Frame
-#'
-#' @description
-#' A synthetic business establishment frame inspired by World Bank Enterprise
-#' Surveys. Uses real Nigeria states and geopolitical zones but contains
-#' entirely fictional data.
-#'
-#' @format A tibble with approximately 11,600 rows and 7 columns:
-#' \describe{
-#'   \item{enterprise_id}{Character. Unique business identifier}
-#'   \item{zone}{Factor. Geopolitical zone (North Central, North East, North West, South East, South South, South West)}
-#'   \item{state}{Factor. State name (36 states + FCT)}
-#'   \item{sector}{Factor. Business sector (Manufacturing, Retail Trade, Wholesale Trade, Services, Construction, Transport, Hospitality)}
-#'   \item{size_class}{Factor. Size classification (Micro: 1-4, Small: 5-19, Medium: 20-99, Large: 100+)}
+#'   \item{region}{Factor. Region (11 regions: 10 WBES regions + Rest of Kenya)}
+#'   \item{sector}{Factor. Business sector (7 sectors)}
+#'   \item{size_class}{Factor. Size classification (Small: 5-19, Medium: 20-99, Large: 100+)}
 #'   \item{employees}{Integer. Number of employees (measure of size)}
-#'   \item{annual_turnover}{Numeric. Annual turnover in Naira}
+#'   \item{revenue_millions}{Numeric. Annual revenue in millions KES}
+#'   \item{year_established}{Integer. Year the enterprise was established}
+#'   \item{exporter}{Logical. Whether the enterprise exports}
 #' }
 #'
 #' @details
 #' This dataset is designed for demonstrating:
 #' \itemize{
-#'   \item Business/enterprise surveys
+#'   \item Enterprise/business surveys
 #'   \item Stratification by sector and size class
-#'   \item PPS sampling using employment
-#'   \item Geographic stratification by zone/state
+#'   \item PPS sampling using employment or revenue
+#'   \item Disproportionate sampling (oversampling large enterprises)
+#'   \item PRN-based sample coordination across survey waves
+#'   \item Panel partitioning with \code{execute(..., panels = k)}
+#'   \item Bernoulli and Poisson sampling
 #' }
-#'
-#' The distribution reflects typical business demographics with majority
-#' micro/small enterprises, concentrated in South West (especially Lagos).
-#'
-#' @note
-#' This is a synthetic dataset. States and zones are real but all
-#' data values are fictional.
 #'
 #' @examples
 #' # Explore the data
-#' head(nigeria_business)
-#' table(nigeria_business$size_class)
-#' table(nigeria_business$sector)
+#' head(ken_enterprises)
+#' table(ken_enterprises$size_class)
+#' table(ken_enterprises$sector)
 #'
 #' # Stratified sample by sector and size class
 #' sampling_design() |>
 #'   stratify_by(sector, size_class) |>
 #'   draw(n = 3) |>
-#'   execute(nigeria_business, seed = 42)
+#'   execute(ken_enterprises, seed = 42)
 #'
 #' # Disproportionate sampling: oversample large enterprises
 #' sampling_design() |>
 #'   stratify_by(size_class) |>
-#'   draw(frac = c(Micro = 0.005, Small = 0.02, Medium = 0.10, Large = 0.50)) |>
-#'   execute(nigeria_business, seed = 42)
+#'   draw(frac = c(Small = 0.02, Medium = 0.10, Large = 0.50)) |>
+#'   execute(ken_enterprises, seed = 42)
 #'
-"nigeria_business"
+"ken_enterprises"

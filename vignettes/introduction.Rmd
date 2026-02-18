@@ -23,12 +23,9 @@ library(dplyr)
 
 ## Overview
 
-**`samplyr`** provides a tidy grammar for specifying and executing survey sampling designs. The package is built around a minimal set of composable verbs that handle stratified, clustered, and multi-stage sampling.
+`samplyr` provides a tidy grammar for specifying and executing survey sampling designs. The package is built around a minimal set of composable verbs that handle stratified, clustered, and multi-stage sampling.
 
-For the statistical semantics and assumptions underlying each operation,
-see `vignette("design-semantics")`. For survey export workflows, see
-`vignette("survey-analysis")`. For sample coordination with permanent
-random numbers, see `vignette("sampling-coordination")`.
+For the statistical semantics and assumptions underlying each operation, see `vignette("design-semantics")`. For survey export workflows, see `vignette("survey-analysis")`. For sample coordination with permanent random numbers, see `vignette("sampling-coordination")`.
 
 The core idea is that sampling code should read like its English description:
 
@@ -69,17 +66,17 @@ design <- sampling_design(title = "Stratified cluster sampling") |>
   cluster_by(ea_id) |>
   draw(n = 200)
 
-sample <- execute(design, niger_eas, seed = 101)
+sample <- execute(design, bfa_eas, seed = 101)
 ```
 
 ## Example Data
 
-We'll use the `niger_eas` dataset throughout this vignette. It's a synthetic enumeration area frame inspired by DHS household surveys, with ~1,500 EAs across 8 regions.
+We'll use the `bfa_eas` dataset throughout this vignette. It is an enumeration area frame for Burkina Faso, with ~14,900 EAs across 13 regions.
 
 ```{r}
-data(niger_eas)
+data(bfa_eas)
 
-niger_eas |>
+bfa_eas |>
   glimpse()
 ```
 
@@ -98,16 +95,16 @@ design
 The `sampling_design` object stores design metadata and can be reused.
 
 ```{r}
-sample <- execute(design, niger_eas, seed = 24)
+sample <- execute(design, bfa_eas, seed = 24)
 nrow(sample)
 ```
 
 
-The result includes the original columns plus sampling metadata: `.weight` (sampling weight), `.weight_1`, `.weight_2`, etc. (per-stage weights). For with-replacement methods, `.draw_1`, `.draw_2`, etc. index each independent draw.
+The result includes the original columns plus sampling metadata: `.weight` (sampling weight), `.weight_1`, `.weight_2`, etc. (per-stage weights). For with-replacement methods, `.draw_1`, `.draw_2`, etc. each independent draw.
 
 ```{r}
 sample |>
-  select(ea_id, region, strata, .weight, .weight_1) |>
+  select(ea_id, region, urban_rural, .weight, .weight_1) |>
   head()
 ```
 
@@ -120,7 +117,7 @@ Systematic sampling selects units at fixed intervals, which can improve precisio
 ```{r}
 sample_sys <- sampling_design(title = "Systematic") |>
   draw(n = 100, method = "systematic") |>
-  execute(niger_eas, seed = 2021)
+  execute(bfa_eas, seed = 2021)
 head(sample_sys)
 ```
 
@@ -129,7 +126,7 @@ Sampling with replacement allows the same unit to be selected multiple times, us
 ```{r}
 sample_wr <- sampling_design(title = "SRS WR") |>
   draw(n = 100, method = "srswr") |>
-  execute(niger_eas, seed = 123)
+  execute(bfa_eas, seed = 123)
 head(sample_wr)
 ```
 
@@ -140,7 +137,7 @@ Instead of a fixed sample size, you can specify a sampling fraction with `frac`.
 ```{r}
 sample <- sampling_design() |>
   draw(frac = 0.05) |>
-  execute(niger_eas, seed = 1789)
+  execute(bfa_eas, seed = 1789)
 nrow(sample)
 ```
 
@@ -149,7 +146,7 @@ Bernoulli sampling selects each unit independently with the specified probabilit
 ```{r}
 sample <- sampling_design() |>
   draw(frac = 0.05, method = "bernoulli") |>
-  execute(niger_eas, seed = 1960)
+  execute(bfa_eas, seed = 1960)
 nrow(sample)
 ```
 
@@ -163,7 +160,7 @@ When using `frac`, the computed sample size (N × frac) must be rounded to an in
 
 ```{r}
 # Frame of 105 units, frac = 0.1 → 10.5
-frame_105 <- head(niger_eas, 105)
+frame_105 <- head(bfa_eas, 105)
 
 # Default: rounds up to 11
 nrow(sampling_design() |> draw(frac = 0.1) |> execute(frame_105, seed = 3))
@@ -189,7 +186,7 @@ Without an allocation method, `n` specifies the sample size within each stratum.
 sample <- sampling_design() |>
   stratify_by(region) |>
   draw(n = 20) |>
-  execute(niger_eas, seed = 123)
+  execute(bfa_eas, seed = 123)
 
 sample |>
   count(region)
@@ -197,9 +194,7 @@ sample |>
 
 ### Allocation Methods
 
-With an allocation method, `n` becomes the total sample size to distribute across strata.
-Allocation methods are defined for total sample-size allocation, so `draw(frac = ...)`
-is not supported when `alloc` is set.
+With an allocation method, `n` becomes the total sample size to distribute across strata. Allocation methods are defined for total sample-size allocation, so `draw(frac = ...)` is not supported when `alloc` is set.
 
 **Proportional allocation** distributes the sample proportionally to stratum sizes, ensuring the sample mirrors the population structure.
 
@@ -207,7 +202,7 @@ is not supported when `alloc` is set.
 sample <- sampling_design(title = "Proportional Allocation") |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
-  execute(niger_eas, seed = 42)
+  execute(bfa_eas, seed = 42)
 
 sample |>
   count(region) |>
@@ -220,7 +215,7 @@ sample |>
 sample <- sampling_design(title = "Equal Allocation") |>
   stratify_by(region, alloc = "equal") |>
   draw(n = 160) |>
-  execute(niger_eas, seed = 2026)
+  execute(bfa_eas, seed = 2026)
 
 sample |>
   count(region)
@@ -230,14 +225,14 @@ sample |>
 Use explicit stratification variable names when passing `variance`.
 
 ```{r}
-data(niger_eas_variance)
+data(bfa_eas_variance)
 
-niger_eas_variance
+bfa_eas_variance
 
 sample <- sampling_design(title = "Neyman Allocation") |>
-  stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
+  stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
   draw(n = 300) |>
-  execute(niger_eas, seed = 12345)
+  execute(bfa_eas, seed = 12345)
 
 sample |>
   count(region)
@@ -247,34 +242,34 @@ sample |>
 Use explicit stratification variable names when passing `variance`/`cost`.
 
 ```{r}
-data(niger_eas_cost)
+data(bfa_eas_cost)
 
-niger_eas_cost
+bfa_eas_cost
 
 sample <- sampling_design(title = "Optimal Allocation") |>
   stratify_by(region, alloc = "optimal",
-              variance = niger_eas_variance,
-              cost = niger_eas_cost) |>
+              variance = bfa_eas_variance,
+              cost = bfa_eas_cost) |>
   draw(n = 300) |>
-  execute(niger_eas, seed = 9876)
+  execute(bfa_eas, seed = 9876)
 
 sample |>
   count(region)
 ```
 
-**Power allocation** [@bankier1988] uses
-\(n_h \propto C_h X_h^q\), where `cv` supplies \(C_h\), `importance`
-supplies \(X_h\), and `power` is \(q \in [0, 1]\).
+**Power allocation** [@bankier1988] uses \(n_h \propto C_h X_h^q\), where `cv` supplies \(C_h\), `importance` supplies \(X_h\), and `power` is \(q \in [0, 1]\).
 
 ```{r}
 cv_df <- data.frame(
-  region = levels(niger_eas$region),
-  cv = c(0.45, 0.40, 0.22, 0.20, 0.12, 0.25, 0.28, 0.32)
+  region = levels(bfa_eas$region),
+  cv = c(0.40, 0.35, 0.12, 0.20, 0.30, 0.18,
+         0.15, 0.38, 0.22, 0.32, 0.17, 0.45, 0.25)
 )
 
 importance_df <- data.frame(
-  region = levels(niger_eas$region),
-  importance = c(20, 25, 60, 75, 120, 70, 65, 90)
+  region = levels(bfa_eas$region),
+  importance = c(60, 40, 120, 70, 80, 65,
+                 50, 55, 90, 75, 45, 35, 30)
 )
 
 sample <- sampling_design(title = "Power Allocation") |>
@@ -286,7 +281,7 @@ sample <- sampling_design(title = "Power Allocation") |>
     power = 0.5
   ) |>
   draw(n = 300) |>
-  execute(niger_eas, seed = 777)
+  execute(bfa_eas, seed = 777)
 
 sample |>
   count(region)
@@ -301,9 +296,9 @@ When using allocation methods, you can constrain stratum sample sizes with `min_
 ```{r}
 # Neyman allocation with minimum 5 per stratum
 sample <- sampling_design() |>
-  stratify_by(region, alloc = "neyman", variance = niger_eas_variance) |>
+  stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
   draw(n = 300, min_n = 20) |>
-  execute(niger_eas, seed = 1)
+  execute(bfa_eas, seed = 1)
 
 sample |>
   count(region)
@@ -316,7 +311,7 @@ sample |>
 sample <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300, max_n = 55) |>
-  execute(niger_eas, seed = 40)
+  execute(bfa_eas, seed = 40)
 
 sample |>
   count(region)
@@ -328,7 +323,7 @@ sample |>
 sample <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300, min_n = 20, max_n = 55) |>
-  execute(niger_eas, seed = 2003)
+  execute(bfa_eas, seed = 2003)
 
 sample |>
   count(region)
@@ -340,14 +335,14 @@ When a stratum's population is smaller than `min_n`, the entire stratum is selec
 
 ```{r}
 sizes_df <- data.frame(
-  region = levels(niger_eas$region),
-  n = c(15, 25, 50, 60, 55, 45, 70, 30)
+  region = levels(bfa_eas$region),
+  n = c(20, 12, 25, 18, 22, 16, 14, 15, 20, 18, 12, 10, 8)
 )
 
 sample <- sampling_design() |>
   stratify_by(region) |>
   draw(n = sizes_df) |>
-  execute(niger_eas, seed = 101)
+  execute(bfa_eas, seed = 101)
 
 sample |>
   count(region)
@@ -359,12 +354,12 @@ You can stratify by multiple variables to create crossed strata. Here we stratif
 
 ```{r}
 sample <- sampling_design() |>
-  stratify_by(region, strata, alloc = "proportional") |>
+  stratify_by(region, urban_rural, alloc = "proportional") |>
   draw(n = 300) |>
-  execute(niger_eas, seed = 42)
+  execute(bfa_eas, seed = 42)
 
 sample |>
-  count(region, strata) |>
+  count(region, urban_rural) |>
   head(10)
 ```
 
@@ -380,7 +375,7 @@ Use `cluster_by()` to specify the cluster identifier. All units within selected 
 sample <- sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 50) |>
-  execute(niger_eas, seed = 120)
+  execute(bfa_eas, seed = 120)
 
 sample |>
   summarise(
@@ -400,13 +395,13 @@ Use the `mos` argument to specify the measure of size variable. Here we select E
 ```{r}
 sample_pps <- sampling_design() |>
   cluster_by(ea_id) |>
-  draw(n = 50, method = "pps_brewer", mos = hh_count) |>
-  execute(niger_eas, seed = 365)
+  draw(n = 50, method = "pps_brewer", mos = households) |>
+  execute(bfa_eas, seed = 365)
 
 sample_pps |>
   summarise(
-    mean_hh = mean(hh_count),
-    median_hh = median(hh_count)
+    mean_hh = mean(households),
+    median_hh = median(households)
   )
 ```
 
@@ -416,11 +411,11 @@ Compared to simple random sampling, PPS tends to select larger clusters:
 sample_srs <- sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 50) |>
-  execute(niger_eas, seed = 42)
+  execute(bfa_eas, seed = 42)
 
 bind_rows(
-  sample_pps |> summarise(method = "PPS", mean_hh = mean(hh_count)),
-  sample_srs |> summarise(method = "SRS", mean_hh = mean(hh_count))
+  sample_pps |> summarise(method = "PPS", mean_hh = mean(households)),
+  sample_srs |> summarise(method = "SRS", mean_hh = mean(households))
 )
 ```
 
@@ -447,12 +442,12 @@ Use `certainty_size` for an absolute threshold or `certainty_prop` for a proport
 
 ```{r}
 sample_cert <- sampling_design(title = "Certainty selection") |>
-  draw(n = 50, method = "pps_brewer", mos = hh_count,
-       certainty_size = 500) |>
-  execute(niger_eas, seed = 123)
+  draw(n = 50, method = "pps_brewer", mos = households,
+       certainty_size = 800) |>
+  execute(bfa_eas, seed = 123)
 
-# How many EAs with more than 500 hh
-filter(niger_eas, hh_count > 500)
+# How many EAs with more than 800 households
+filter(bfa_eas, households > 800)
 
 # Check which units were selected with certainty
 count(sample_cert, .certainty_1)
@@ -463,13 +458,13 @@ With `certainty_prop`, units whose MOS proportion exceeds the threshold are take
 ```{r}
 sample_certp <- sampling_design() |>
   stratify_by(region) |>
-  draw(n = 50, method = "pps_systematic", mos = hh_count,
+  draw(n = 50, method = "pps_systematic", mos = households,
        certainty_prop = 0.05) |>
-  execute(niger_eas, seed = 12345)
+  execute(bfa_eas, seed = 12345)
 
 # How many EAs with more than 5% of the total hh by region
-niger_eas |>
-  mutate(mosprop = hh_count/sum(hh_count),
+bfa_eas |>
+  mutate(mosprop = households/sum(households),
          .by = region) |>
   filter(mosprop >= 0.05)
 
@@ -482,12 +477,12 @@ Some PPS methods support permanent random numbers for sample coordination across
 
 ```{r}
 set.seed(1)
-niger_eas$prn <- runif(nrow(niger_eas))
+bfa_eas$prn <- runif(nrow(bfa_eas))
 
 sample_prn <- sampling_design(title = "Samples coordination with PRN") |>
   cluster_by(ea_id) |>
-  draw(n = 50, method = "pps_sps", mos = hh_count, prn = prn) |>
-  execute(niger_eas, seed = 1)
+  draw(n = 50, method = "pps_sps", mos = households, prn = prn) |>
+  execute(bfa_eas, seed = 1)
 sample_prn
 ```
 
@@ -503,8 +498,8 @@ Control sorting orders the frame before selection, providing implicit stratifica
 # Nested sorting: standard ascending order
 sample_sort <- sampling_design() |>
   draw(n = 100, method = "systematic",
-       control = c(region, department)) |>
-  execute(niger_eas, seed = 98765)
+       control = c(region, province)) |>
+  execute(bfa_eas, seed = 98765)
 head(sample_sort)
 ```
 
@@ -514,8 +509,8 @@ head(sample_sort)
 # Serpentine sorting
 sample_serp <- sampling_design() |>
   draw(n = 100, method = "systematic",
-       control = serp(region, department)) |>
-  execute(niger_eas, seed = 1)
+       control = serp(region, province)) |>
+  execute(bfa_eas, seed = 1)
 head(sample_serp)
 ```
 
@@ -523,10 +518,10 @@ Control sorting can be combined with explicit stratification. The sorting is the
 
 ```{r}
 sample_serp2 <- sampling_design() |>
-  stratify_by(strata) |>
+  stratify_by(urban_rural) |>
   draw(n = 100, method = "systematic",
-       control = serp(region, department)) |>
-  execute(niger_eas, seed = 2)
+       control = serp(region, province)) |>
+  execute(bfa_eas, seed = 2)
 head(sample_serp2)
 ```
 
@@ -540,34 +535,34 @@ Use `add_stage()` to delimit each stage of the design.
 
 ### Two-Stage Design
 
-For this example, we'll use `tanzania_schools` to demonstrate a two-stage design: first select districts as PSUs, then sample schools within selected districts.
+For this example, we'll use `zwe_eas` to demonstrate a two-stage design: first select districts as PSUs, then sample EAs within selected districts.
 
 ```{r}
-data(tanzania_schools)
+data(zwe_eas)
 
-# First, let's see the structure: schools nested within districts
-tanzania_schools |>
-  count(region, district) |>
+# First, let's see the structure: EAs nested within districts
+zwe_eas |>
+  count(province, district) |>
   head(10)
 ```
 
-We need to create a measure of size for districts. Here we'll use total enrollment per district.
+We need to create a measure of size for districts. Here we'll use total households per district.
 
 ```{r}
-# Add district-level enrollment as MOS
-schools_frame <- tanzania_schools |>
-  mutate(district_enrollment = sum(enrollment),
+# Add district-level households as MOS
+zwe_frame <- zwe_eas |>
+  mutate(district_hh = sum(households),
          .by = district)
 ```
 
-Now we can run a two-stage design: select 10 districts with PPS, then sample 5 schools within each.
+Now we can run a two-stage design: select 10 districts with PPS, then sample 5 EAs within each.
 
 ```{r}
 twostage_design <- sampling_design(title = "Two-stage cluster sampling") |>
   add_stage(label = "Districts") |>
     cluster_by(district) |>
-    draw(n = 10, method = "pps_brewer", mos = district_enrollment) |>
-  add_stage(label = "Schools") |>
+    draw(n = 10, method = "pps_brewer", mos = district_hh) |>
+  add_stage(label = "EAs") |>
   draw(n = 5)
 twostage_design
 ```
@@ -575,30 +570,30 @@ twostage_design
 Let's apply it to the frame.
 
 ```{r}
-sample_schools <- execute(twostage_design,
-                          schools_frame, seed = 3)
+sample_eas <- execute(twostage_design,
+                      zwe_frame, seed = 3)
 
-sample_schools |>
+sample_eas |>
   summarise(n_districts = n_distinct(district),
-            n_schools = n())
+            n_eas = n())
 ```
 
 ### Stratified Multi-Stage Design
 
-Combining stratification with multi-stage sampling is standard for national surveys. Here we stratify by region (which is constant within districts), then select districts and schools within each stratum.
+Combining stratification with multi-stage sampling is standard for national surveys. Here we stratify by province (which is constant within districts), then select districts and EAs within each stratum.
 
 ```{r}
-sample_schools2 <- sampling_design(title = "Stratified two-stage cluster sampling") |>
+sample_eas2 <- sampling_design(title = "Stratified two-stage cluster sampling") |>
   add_stage(label = "Districts") |>
-    stratify_by(region) |>
+    stratify_by(province) |>
     cluster_by(district) |>
-    draw(n = 2, method = "pps_brewer", mos = district_enrollment) |>
-  add_stage(label = "Schools") |>
+    draw(n = 2, method = "pps_brewer", mos = district_hh) |>
+  add_stage(label = "EAs") |>
     draw(n = 3) |>
-  execute(schools_frame, seed = 4)
+  execute(zwe_frame, seed = 4)
 
-sample_schools2 |>
-  count(region, district)
+sample_eas2 |>
+  count(province, district)
 ```
 
 ---
@@ -612,27 +607,27 @@ The `stages` argument lets you execute only specific stages.
 ```{r}
 design <- sampling_design() |>
   add_stage(label = "Districts") |>
-    stratify_by(region) |>
+    stratify_by(province) |>
     cluster_by(district) |>
-    draw(n = 2, method = "pps_brewer", mos = district_enrollment) |>
-  add_stage(label = "Schools") |>
+    draw(n = 2, method = "pps_brewer", mos = district_hh) |>
+  add_stage(label = "EAs") |>
     draw(n = 4)
 
 # Execute stage 1 only
-selected_districts <- execute(design, schools_frame, stages = 1, seed = 42)
+selected_districts <- execute(design, zwe_frame, stages = 1, seed = 42)
 
 selected_districts |>
-  distinct(region, district)
+  distinct(province, district)
 ```
 
 After fieldwork or preparation is complete, execute the remaining stages.
 
 ```{r}
 final_sample <- selected_districts |>
-  execute(schools_frame, seed = 43)
+  execute(zwe_frame, seed = 43)
 
 final_sample |>
-  count(region, district)
+  count(province, district)
 ```
 
 ---
@@ -647,7 +642,7 @@ The sampling design is attached to the result and can be retrieved with `get_des
 sample <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 200) |>
-  execute(niger_eas, seed = 2024)
+  execute(bfa_eas, seed = 2024)
 
 design <- get_design(sample)
 design
@@ -736,9 +731,9 @@ These apply when using `frac` to specify sampling rates. When computed sample si
 ```{r}
 design <- sampling_design(title = "National Health Survey 2024") |>
   add_stage(label = "Enumeration Areas") |>
-    stratify_by(region, strata) |>
+    stratify_by(region, urban_rural) |>
     cluster_by(ea_id) |>
-    draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+    draw(n = 5, method = "pps_brewer", mos = households) |>
   add_stage(label = "Households") |>
     draw(n = 20)
 
@@ -751,7 +746,7 @@ Use `validate_frame()` to check that a frame has all the variables a design requ
 
 ```{r, error = TRUE}
 # This passes
-validate_frame(design, niger_eas)
+validate_frame(design, bfa_eas)
 
 # This fails with a clear message
 bad_frame <- data.frame(id = 1:100, value = rnorm(100))

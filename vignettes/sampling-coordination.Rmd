@@ -38,18 +38,18 @@ The **permanent random number** (PRN) technique, introduced by @brewer1972 and d
 
 ## Setup
 
-We use `nigeria_business`, a synthetic business register with 11,617 enterprises.
+We use `ken_enterprises`, a synthetic business register with 6,823 enterprises.
 
 ```{r}
 library(samplyr)
 library(sondage)
 library(dplyr)
 
-data(nigeria_business)
-glimpse(nigeria_business)
+data(ken_enterprises)
+glimpse(ken_enterprises)
 ```
 
-Each enterprise has an `annual_turnover` that will serve as our measure of size for PPS sampling. We target $n = 200$ enterprises per wave.
+Each enterprise has a `revenue_millions` column that serves as our measure of size for PPS sampling. We target $n = 200$ enterprises per wave.
 
 ```{r}
 n_wave <- 200
@@ -62,7 +62,7 @@ Every frame unit gets a $U(0,1)$ value drawn once and stored permanently in the 
 ```{r}
 set.seed(1)
 
-frame <- nigeria_business |>
+frame <- ken_enterprises |>
   mutate(u = runif(n()))
 ```
 
@@ -73,7 +73,7 @@ these from the measure of size and sample size. This must be done on the **full 
 
 ```{r}
 frame <- frame |>
-  mutate(pik = inclusion_prob(annual_turnover, n_wave))
+  mutate(pik = inclusion_prob(revenue_millions, n_wave))
 
 round(quantile(frame$pik), 4)
 ```
@@ -84,11 +84,11 @@ To maximise overlap between waves, reuse the same PRN values. With sequential Po
 
 ```{r}
 wave1 <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
   execute(frame, seed = 42)
 
 wave2 <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
   execute(frame, seed = 123)
 
 overlap_positive <- length(intersect(wave1$enterprise_id,
@@ -96,7 +96,7 @@ overlap_positive <- length(intersect(wave1$enterprise_id,
 overlap_positive
 ```
 
-Perfect overlap. This is useful when the goal is to track the same units over time, for example measuring quarterly changes in turnover within a fixed panel.
+Perfect overlap. This is useful when the goal is to track the same units over time, for example measuring quarterly changes in revenue within a fixed panel.
 
 ## Negative Coordination: Minimum Overlap
 
@@ -109,7 +109,7 @@ Selected units (those with small $u_k$) get pushed to the high end of $(0,1)$, m
 ```{r}
 # Wave 1
 wave1 <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
   execute(frame, seed = 1)
 
 # Update PRNs on the full frame
@@ -118,7 +118,7 @@ frame <- frame |>
 
 # Wave 2
 wave2 <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
   execute(frame, seed = 1)
 
 overlap_negative <- length(intersect(wave1$enterprise_id, wave2$enterprise_id))
@@ -152,16 +152,16 @@ The negative coordination brings the overlap close to the ALB, well below what i
 ```{r}
 # Independent sampling: fresh PRNs for wave 2
 set.seed(1)
-frame_ind <- nigeria_business |>
+frame_ind <- ken_enterprises |>
   mutate(u1 = runif(n()),
          u2 = runif(n()))
 
 wave1_ind <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u1) |>
+  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u1) |>
   execute(frame_ind, seed = 1)
 
 wave2_ind <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u2) |>
+  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u2) |>
   execute(frame_ind, seed = 1)
 
 overlap_ind <- length(intersect(wave1_ind$enterprise_id,
@@ -180,16 +180,16 @@ In practice, surveys run for many waves. The PRN update is applied after each wa
 ```{r}
 set.seed(2026)
 
-frame <- nigeria_business |>
+frame <- ken_enterprises |>
   mutate(u = runif(n()),
-         pik = inclusion_prob(annual_turnover, n_wave))
+         pik = inclusion_prob(revenue_millions, n_wave))
 
 n_waves <- 5
 waves <- vector("list", n_waves)
 
 for (t in seq_len(n_waves)) {
   waves[[t]] <- sampling_design() |>
-    draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u) |>
+    draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
     execute(frame, seed = 1)
 
   # Update PRNs for next wave
@@ -227,7 +227,7 @@ for (t in seq_len(n_waves)) {
 tibble(wave = seq_len(n_waves),
        new_units = c(n_wave, diff(cumulative)),
        cumulative = cumulative,
-       pct_frame = paste0(round(100 * cumulative / nrow(nigeria_business), 1), "%"))
+       pct_frame = paste0(round(100 * cumulative / nrow(ken_enterprises), 1), "%"))
 ```
 
 Negative coordination maximises the number of distinct units covered, which is valuable for building comprehensive registers or spreading respondent burden.
@@ -257,25 +257,27 @@ frame_t2 <- frame |>
   filter(!enterprise_id %in% deaths)
 
 # Births: new enterprises with fresh PRNs
-# Resample turnover from the existing frame to get a realistic size distribution
+# Resample revenue from the existing frame to get a realistic size distribution
 births <- tibble(enterprise_id = paste0("NEW_", sprintf("%05d", seq_len(n_births))),
-                 zone = gen_data(nigeria_business$zone, n_births),
-                 state = gen_data(nigeria_business$state, n_births),
-                 sector = gen_data(nigeria_business$sector, n_births),
-                 size_class = gen_data(nigeria_business$size_class, n_births),
-                 employees = sample(nigeria_business$employees, n_births, replace = TRUE),
-                 annual_turnover = sample(nigeria_business$annual_turnover, n_births, replace = TRUE),
+                 county = gen_data(ken_enterprises$county, n_births),
+                 region = gen_data(ken_enterprises$region, n_births),
+                 sector = gen_data(ken_enterprises$sector, n_births),
+                 size_class = gen_data(ken_enterprises$size_class, n_births),
+                 employees = sample(ken_enterprises$employees, n_births, replace = TRUE),
+                 revenue_millions = sample(ken_enterprises$revenue_millions, n_births, replace = TRUE),
+                 year_established = sample(ken_enterprises$year_established, n_births, replace = TRUE),
+                 exporter = sample(ken_enterprises$exporter, n_births, replace = TRUE),
                  u = runif(n_births))
 
 frame_t2 <- bind_rows(frame_t2, births)
 
 # Recompute inclusion probabilities on the new frame
 frame_t2 <- frame_t2 |>
-  mutate(pik = inclusion_prob(annual_turnover, n_wave))
+  mutate(pik = inclusion_prob(revenue_millions, n_wave))
 
 # Draw wave from updated frame
 wave_t2 <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
   execute(frame_t2, seed = 1)
 
 # How many births were selected?
@@ -293,18 +295,18 @@ The `pps_pareto` method also supports PRN-based coordination. In theory, Pareto 
 ```{r}
 set.seed(12345)
 
-frame <- nigeria_business |>
+frame <- ken_enterprises |>
   mutate(u = runif(n()),
-         pik = inclusion_prob(annual_turnover, n_wave))
+         pik = inclusion_prob(revenue_millions, n_wave))
 
 wave1_par <- sampling_design() |>
-  draw(n = n_wave, method = "pps_pareto", mos = annual_turnover, prn = u) |>
+  draw(n = n_wave, method = "pps_pareto", mos = revenue_millions, prn = u) |>
   execute(frame, seed = 1)
 
 frame <- frame |> mutate(u = (u - pik) %% 1)
 
 wave2_par <- sampling_design() |>
-  draw(n = n_wave, method = "pps_pareto", mos = annual_turnover, prn = u) |>
+  draw(n = n_wave, method = "pps_pareto", mos = revenue_millions, prn = u) |>
   execute(frame, seed = 1)
 
 overlap_par <- length(intersect(wave1_par$enterprise_id,
@@ -322,12 +324,12 @@ When the design is stratified, inclusion probabilities must be computed **within
 ```{r}
 set.seed(1980)
 
-frame <- nigeria_business |>
+frame <- ken_enterprises |>
   mutate(u = runif(n()))
 
 # Compute within-stratum pik
 frame <- frame |>
-  mutate(pik = inclusion_prob(annual_turnover, 50),
+  mutate(pik = inclusion_prob(revenue_millions, 50),
          .by = size_class)
 
 max_pik <- max(frame$pik)
@@ -337,14 +339,14 @@ alb
 
 wave1_str <- sampling_design() |>
   stratify_by(size_class) |>
-  draw(n = 50, method = "pps_pareto", mos = annual_turnover, prn = u) |>
+  draw(n = 50, method = "pps_pareto", mos = revenue_millions, prn = u) |>
   execute(frame, seed = 1)
 
 frame <- frame |> mutate(u = (u - pik) %% 1)
 
 wave2_str <- sampling_design() |>
   stratify_by(size_class) |>
-  draw(n = 50, method = "pps_pareto", mos = annual_turnover, prn = u) |>
+  draw(n = 50, method = "pps_pareto", mos = revenue_millions, prn = u) |>
   execute(frame, seed = 1)
 
 overlap_str <- length(intersect(wave1_str$enterprise_id,
@@ -366,17 +368,17 @@ The mechanism is identical: all surveys share the same PRN column.
 ### Example: Turnover survey and employment survey
 
 Suppose a statistical agency runs two surveys on the same business register:
-a turnover survey ($n = 200$, PPS on `annual_turnover`) and an employment survey ($n = 150$, PPS on `employees`). The surveys have different sample sizes, different measures of size, and different stratification, but they share the same frame and the same PRN column.
+a revenue survey ($n = 200$, PPS on `revenue_millions`) and an employment survey ($n = 150$, PPS on `employees`). The surveys have different sample sizes, different measures of size, and different stratification, but they share the same frame and the same PRN column.
 
 ```{r}
 set.seed(123)
 
-frame <- nigeria_business |>
+frame <- ken_enterprises |>
   mutate(u = runif(n()))
 
-# Survey A: turnover survey (PPS on annual_turnover, stratified by sector)
+# Survey A: revenue survey (PPS on revenue_millions, stratified by sector)
 survey_a <- sampling_design() |>
-  draw(n = 200, method = "pps_sps", mos = annual_turnover, prn = u) |>
+  draw(n = 200, method = "pps_sps", mos = revenue_millions, prn = u) |>
   execute(frame, seed = 1)
 
 # Survey B: employment survey (PPS on employees), positive coordination
@@ -425,7 +427,7 @@ overlap_ind
 When two surveys have different inclusion probabilities $\pi_k^A$ and $\pi_k^B$, the bounds generalise naturally:
 
 ```{r}
-pik_a <- inclusion_prob(frame$annual_turnover, 200)
+pik_a <- inclusion_prob(frame$revenue_millions, 200)
 pik_b <- inclusion_prob(frame$employees, 150)
 
 alb_ab <- sum(pmax(0, pik_a + pik_b - 1))
@@ -437,7 +439,7 @@ tibble(strategy = c("Positive (same PRN)", "Independent (fresh PRN)", "Negative 
        bound = c(round(aub_ab), round(exp_ind), round(alb_ab)))
 ```
 
-Because `annual_turnover` and `employees` are correlated (large firms have both high turnover and many employees), the overlap under positive coordination
+Because `revenue_millions` and `employees` are correlated (large firms have both high revenue and many employees), the overlap under positive coordination
 is substantial. Negative coordination via PRN shift effectively spreads the burden.
 
 ### Scaling to more than two surveys

@@ -149,44 +149,47 @@
 #' # Basic SRS execution
 #' sample <- sampling_design() |>
 #'   draw(n = 100) |>
-#'   execute(kenya_health, seed = 1234)
+#'   execute(bfa_eas, seed = 1234)
 #' sample
 #'
 #' # Stratified execution with proportional allocation
 #' sample <- sampling_design() |>
-#'   stratify_by(facility_type, alloc = "proportional") |>
+#'   stratify_by(region, alloc = "proportional") |>
 #'   draw(n = 300) |>
-#'   execute(kenya_health, seed = 5789)
-#' table(sample$facility_type)
+#'   execute(bfa_eas, seed = 5789)
+#' table(sample$region)
 #'
 #' # Two-stage cluster sample execution
+#' zwe_frame <- zwe_eas |>
+#'   dplyr::mutate(district_hh = sum(households), .by = district)
+#'
 #' sample <- sampling_design() |>
-#'   add_stage(label = "Schools") |>
-#'     cluster_by(school_id) |>
-#'     draw(n = 30, method = "pps_brewer", mos = enrollment) |>
-#'   add_stage(label = "Students") |>
-#'     draw(n = 15) |>
-#'   execute(tanzania_schools, seed = 3)
-#' length(unique(sample$school_id))  # 30 schools selected
+#'   add_stage(label = "Districts") |>
+#'     cluster_by(district) |>
+#'     draw(n = 20, method = "pps_brewer", mos = district_hh) |>
+#'   add_stage(label = "EAs") |>
+#'     draw(n = 10) |>
+#'   execute(zwe_frame, seed = 3)
+#' length(unique(sample$district))  # 20 districts selected
 #'
 #' # Partial execution: stage 1 only
 #' design <- sampling_design() |>
 #'   add_stage(label = "EAs") |>
 #'     stratify_by(region) |>
 #'     cluster_by(ea_id) |>
-#'     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+#'     draw(n = 5, method = "pps_brewer", mos = households) |>
 #'   add_stage(label = "Households") |>
 #'     draw(n = 12)
 #'
 #' # Execute only stage 1 to get selected EAs
-#' selected_eas <- execute(design, niger_eas, stages = 1, seed = 2)
+#' selected_eas <- execute(design, bfa_eas, stages = 1, seed = 2)
 #' nrow(selected_eas)  # Number of selected EAs
 #'
 #' # Rotating panel: 4 rotation groups
 #' sample <- sampling_design() |>
 #'   stratify_by(region) |>
 #'   draw(n = 200) |>
-#'   execute(niger_eas, seed = 1, panels = 4)
+#'   execute(bfa_eas, seed = 1, panels = 4)
 #' table(sample$.panel)  # ~50 per panel
 #'
 #' @seealso

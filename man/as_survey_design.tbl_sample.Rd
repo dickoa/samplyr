@@ -28,15 +28,15 @@ so it is available when srvyr is loaded.
 library(srvyr)
 
 sample <- sampling_design() |>
-  stratify_by(facility_type, alloc = "proportional") |>
+  stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
-  execute(kenya_health, seed = 42)
+  execute(bfa_eas, seed = 42)
 
 # Returns a tbl_svy for use with srvyr verbs
 svy <- as_survey_design(sample)
 svy |>
-  group_by(facility_type) |>
-  summarise(mean_beds = survey_mean(beds))
+  group_by(region) |>
+  summarise(mean_hh = survey_mean(households))
 \dontshow{\}) # examplesIf}
 }
 \seealso{

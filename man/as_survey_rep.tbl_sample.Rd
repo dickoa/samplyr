@@ -24,13 +24,13 @@ then wrapping with \code{\link[srvyr:as_survey_rep]{srvyr::as_survey_rep()}}.
 library(srvyr)
 
 sample <- sampling_design() |>
-  stratify_by(facility_type, alloc = "proportional") |>
+  stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
-  execute(kenya_health, seed = 42)
+  execute(bfa_eas, seed = 42)
 
 rep_tbl <- as_survey_rep(sample, type = "auto")
 rep_tbl |>
-  summarise(mean_beds = survey_mean(beds, vartype = "se"))
+  summarise(mean_hh = survey_mean(households, vartype = "se"))
 \dontshow{\}) # examplesIf}
 }
 \seealso{

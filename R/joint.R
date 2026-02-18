@@ -115,19 +115,19 @@
 #'   add_stage() |>
 #'     stratify_by(region) |>
 #'     cluster_by(ea_id) |>
-#'     draw(n = 5, method = "pps_brewer", mos = hh_count) |>
+#'     draw(n = 5, method = "pps_brewer", mos = households) |>
 #'   add_stage() |>
 #'     draw(n = 12) |>
-#'   execute(niger_eas, seed = 2025)
+#'   execute(bfa_eas, seed = 2025)
 #'
 #' # Compute joint probabilities for stage 1
-#' jip <- joint_expectation(sample, niger_eas, stage = 1)
+#' jip <- joint_expectation(sample, bfa_eas, stage = 1)
 #'
 #' # Use with survey package for exact variance (WOR stages)
 #' svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 #'
 #' # Compute all PPS stages at once
-#' jip_all <- joint_expectation(sample, niger_eas)
+#' jip_all <- joint_expectation(sample, bfa_eas)
 #'
 #' @seealso [as_svydesign()] for the default export using Brewer's
 #'   approximation, [survey::ppsmat()] for wrapping joint matrices

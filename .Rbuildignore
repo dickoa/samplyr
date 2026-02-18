@@ -5,6 +5,7 @@
 ^cran-comments\.md$
 ^README\.Rmd$
 ^README\.md$
+^README\.html$
 ^\.appveyor\.yml$
 ^\.gitlab-ci\.yml$
 ^\.codecov\.yml$

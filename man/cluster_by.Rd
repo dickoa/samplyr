@@ -60,33 +60,36 @@ Both \code{stratify_by()} and \code{cluster_by()} are optional but \code{draw()}
 }
 
 \examples{
-# Simple cluster sample: select 30 schools
+# Simple cluster sample: select 30 EAs
 sampling_design() |>
-  cluster_by(school_id) |>
+  cluster_by(ea_id) |>
   draw(n = 30) |>
-  execute(tanzania_schools, seed = 123)
+  execute(zwe_eas, seed = 123)
 
-# Stratified cluster sample: 10 schools per education level
+# Stratified cluster sample: 10 EAs per urban/rural
 sampling_design() |>
-  stratify_by(school_level) |>
-  cluster_by(school_id) |>
+  stratify_by(urban_rural) |>
+  cluster_by(ea_id) |>
   draw(n = 10) |>
-  execute(tanzania_schools, seed = 1)
+  execute(zwe_eas, seed = 1)
 
-# PPS cluster sample using enrollment as measure of size
+# PPS cluster sample using households as measure of size
 sampling_design() |>
-  cluster_by(school_id) |>
-  draw(n = 50, method = "pps_brewer", mos = enrollment) |>
-  execute(tanzania_schools, seed = 2026)
+  cluster_by(ea_id) |>
+  draw(n = 50, method = "pps_brewer", mos = households) |>
+  execute(zwe_eas, seed = 2026)
 
 # Two-stage cluster sample
+zwe_frame <- zwe_eas |>
+  dplyr::mutate(district_hh = sum(households), .by = district)
+
 sampling_design() |>
-  add_stage(label = "Schools") |>
-    cluster_by(school_id) |>
-    draw(n = 30, method = "pps_brewer", mos = enrollment) |>
-  add_stage(label = "Students") |>
-    draw(n = 15) |>
-  execute(tanzania_schools, seed = 1234)
+  add_stage(label = "Districts") |>
+    cluster_by(district) |>
+    draw(n = 20, method = "pps_brewer", mos = district_hh) |>
+  add_stage(label = "EAs") |>
+    draw(n = 10) |>
+  execute(zwe_frame, seed = 1234)
 
 }
 \seealso{

@@ -149,8 +149,8 @@ test_that("replicate export errors use standardized classes", {
   skip_if_not_installed("survey")
 
   pps_sample <- sampling_design() |>
-    draw(n = 20, method = "pps_brewer", mos = hh_count) |>
-    execute(niger_eas, seed = 1)
+    draw(n = 20, method = "pps_brewer", mos = households) |>
+    execute(bfa_eas, seed = 1)
 
   expect_error(
     as_svrepdesign(pps_sample),

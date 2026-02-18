@@ -1,8 +1,3 @@
-# Tests for review fixes
-# =============================================================================
-
-# Shared test data ----------------------------------------------------------
-
 test_frame <- function(n = 1000) {
   set.seed(123)
   data.frame(
@@ -14,10 +9,6 @@ test_frame <- function(n = 1000) {
     value = rnorm(n)
   )
 }
-
-# =============================================================================
-# Fix 1: Control sorting is applied during execution
-# =============================================================================
 
 test_that("control sorting is applied for systematic sampling", {
   frame <- test_frame()
@@ -114,10 +105,6 @@ test_that("control sorting preserves correctness for srswor (order-insensitive)"
   expect_equal(unique(result$.weight), nrow(frame) / 100)
 })
 
-# =============================================================================
-# Fix 2: Multi-stage weight compounding for non-cluster stratified path
-# =============================================================================
-
 test_that("multi-stage non-cluster stratified weights are correct", {
   # Create a frame where strata have different sizes
   frame <- data.frame(
@@ -173,10 +160,6 @@ test_that("non-cluster path with equal strata still works", {
   expect_true(".weight_1" %in% names(result))
   expect_true(".weight_2" %in% names(result))
 })
-
-# =============================================================================
-# Fix 3: PPS with-replacement expected hits
-# =============================================================================
 
 test_that("pps_multinomial uses expected hits for probabilities", {
   skip_if_not_installed("sondage")
@@ -292,10 +275,6 @@ test_that("pps_multinomial dominant unit gets many draws", {
   # All weights should be positive
   expect_true(all(result$.weight > 0))
 })
-
-# =============================================================================
-# Fix 4: %||% works via rlang import (no redefinition)
-# =============================================================================
 
 test_that("%||% operator works after removing custom definition", {
   # This implicitly tests that rlang::`%||%` is properly imported
@@ -456,10 +435,6 @@ test_that("stratified and within-clusters both produce correct weights", {
   expect_equal(sum(twostage_result$.weight), nrow(frame), tolerance = 50)
 })
 
-# =============================================================================
-# Reproducibility check across fixes
-# =============================================================================
-
 test_that("all fixes maintain seed reproducibility", {
   frame <- test_frame()
 
@@ -474,10 +449,6 @@ test_that("all fixes maintain seed reproducibility", {
   expect_equal(result1$.weight, result2$.weight)
 })
 
-# =============================================================================
-# Edge cases
-# =============================================================================
-
 test_that("control sorting with desc() works", {
   frame <- test_frame()
 
@@ -491,10 +462,6 @@ test_that("control sorting with desc() works", {
 
   expect_equal(nrow(result), 50)
 })
-
-# =============================================================================
-# tbl_sum.tbl_sample tests (pillar-style printing)
-# =============================================================================
 
 test_that("tbl_sum.tbl_sample prints header exactly once", {
   frame <- test_frame()
