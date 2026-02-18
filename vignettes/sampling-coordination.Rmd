@@ -459,7 +459,7 @@ for (j in seq_len(n_surveys)) {
 }
 ```
 
-This simple shift strategy works well when the surveys have similar $\pi_k$. For more complex programmes (varying burden weights, priority orderings, or dozens of surveys), NSOs use dedicated coordination systems such as the Rivière method [@riviere1998], the Netherlands EDS [@deree1983; @vanhuis1994], or the Swiss method [@graf2014]. These methods track cumulative burden per unit and permute PRNs within microstrata to achieve near-optimal coordination across the full survey programme. See @tille2020 [§8.2.7--8.2.9] for a detailed treatment.
+This simple shift strategy works well when the surveys have similar $\pi_k$. For more complex programmes (varying burden weights, priority orderings, or dozens of surveys), NSOs use dedicated coordination systems such as the Rivière method [@riviere2001], the Netherlands EDS [@deree1983; @vanhuis1994], or the Swiss method [@graf2014]. These methods track cumulative burden per unit and permute PRNs within microstrata to achieve near-optimal coordination across the full survey programme. See @tille2020 [§8.2.7--8.2.9] for a detailed treatment.
 
 ## Summary
 

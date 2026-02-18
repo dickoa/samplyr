@@ -410,6 +410,38 @@ sampling_design() |>
   execute(bfa_eas, seed = 424)
 
 }
+\references{
+\code{srswor}, \code{srswr}, \code{systematic}, \code{bernoulli}, \code{pps_systematic},
+\code{pps_multinomial}:
+Cochran, W.G. (1977). \emph{Sampling Techniques}, 3rd ed. Wiley.
+
+\code{pps_brewer}:
+Brewer, K.R.W. (1975). A simple procedure for sampling PPS WOR.
+\emph{Australian Journal of Statistics}, 17(3), 166-172.
+
+\code{pps_cps}:
+Hájek, J. (1964). Asymptotic theory of rejective sampling with varying
+probabilities from a finite population.
+\emph{Annals of Mathematical Statistics}, 35(4), 1491-1523.
+
+Chen, X.-H., Dempster, A.P. and Liu, J.S. (1994). Weighted finite
+population sampling to maximize entropy. \emph{Biometrika}, 81(3), 457-469.
+
+\code{pps_poisson}:
+Tillé, Y. (2006). \emph{Sampling Algorithms}. Springer.
+
+\code{pps_sps}:
+Ohlsson, E. (1998). Sequential Poisson sampling.
+\emph{Journal of Official Statistics}, 14(2), 149-162.
+
+\code{pps_pareto}:
+Rosén, B. (1997). Asymptotic theory for order sampling.
+\emph{Journal of Statistical Planning and Inference}, 62(2), 135-158.
+
+\code{pps_chromy}:
+Chromy, J.R. (1979). Sequential sample selection methods.
+\emph{Proceedings of the Survey Research Methods Section, ASA}, 401-406.
+}
 \seealso{
 \code{\link[=sampling_design]{sampling_design()}} for creating designs,
 \code{\link[=stratify_by]{stratify_by()}} for stratification,

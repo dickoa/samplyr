@@ -243,6 +243,38 @@
 #' each stratum. This allows explicit stratification for variance control
 #' combined with implicit stratification for sample spread.
 #'
+#' @references
+#' `srswor`, `srswr`, `systematic`, `bernoulli`, `pps_systematic`,
+#' `pps_multinomial`:
+#' Cochran, W.G. (1977). *Sampling Techniques*, 3rd ed. Wiley.
+#'
+#' `pps_brewer`:
+#' Brewer, K.R.W. (1975). A simple procedure for sampling PPS WOR.
+#' *Australian Journal of Statistics*, 17(3), 166-172.
+#'
+#' `pps_cps`:
+#' Hájek, J. (1964). Asymptotic theory of rejective sampling with varying
+#' probabilities from a finite population.
+#' *Annals of Mathematical Statistics*, 35(4), 1491-1523.
+#'
+#' Chen, X.-H., Dempster, A.P. and Liu, J.S. (1994). Weighted finite
+#' population sampling to maximize entropy. *Biometrika*, 81(3), 457-469.
+#'
+#' `pps_poisson`:
+#' Tillé, Y. (2006). *Sampling Algorithms*. Springer.
+#'
+#' `pps_sps`:
+#' Ohlsson, E. (1998). Sequential Poisson sampling.
+#' *Journal of Official Statistics*, 14(2), 149-162.
+#'
+#' `pps_pareto`:
+#' Rosén, B. (1997). Asymptotic theory for order sampling.
+#' *Journal of Statistical Planning and Inference*, 62(2), 135-158.
+#'
+#' `pps_chromy`:
+#' Chromy, J.R. (1979). Sequential sample selection methods.
+#' *Proceedings of the Survey Research Methods Section, ASA*, 401-406.
+#'
 #' @examples
 #' # Simple random sample of 100 EAs
 #' sampling_design() |>

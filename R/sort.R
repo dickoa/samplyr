@@ -45,7 +45,7 @@
 #' Chromy, J. R. (1979). Sequential sample selection methods.
 #' \emph{Proceedings of the Survey Research Methods Section, ASA}, 401-406.
 #'
-#' Williams, R. L., & Chromy, J. R. (1980). SAS sample selection macros.
+#' Chromy, J. R., & Williams, R. L. (1980). SAS sample selection macros.
 #' \emph{Proceedings of the Fifth Annual SAS Users Group International}, 392-396.
 #'
 #' @seealso [dplyr::arrange()], [dplyr::desc()]
