@@ -1,10 +1,3 @@
-#' Frame Validation and Diagnostics
-#'
-#' Functions for validating sampling frames and checking design compatibility.
-#'
-#' @name frame_validation
-NULL
-
 #' Validate a Frame Against a Design
 #'
 #' Checks if a data frame contains all required variables for a sampling
