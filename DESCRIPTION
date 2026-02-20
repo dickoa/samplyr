@@ -1,6 +1,6 @@
 Package: samplyr
 Title: A Tidy Grammar for Survey Sampling
-Version: 0.2.9999
+Version: 0.3.9999
 Authors@R: person(given = "Ahmadou",
                   family = "Dicko",
 		  email = "mail@ahmadoudicko.com",
@@ -26,6 +26,7 @@ Imports:
     tibble,
     dplyr (>= 1.1.0),
     sondage (>= 0.1.0),
+    svyplan (>= 0.3.0),
     withr
 Suggests:
    testthat (>= 3.0.0),
@@ -38,4 +39,5 @@ Config/testthat/edition: 3
 VignetteBuilder: knitr
 URL: https://gitlab.com/dickoa/samplyr
 BugReports: https://gitlab.com/dickoa/samplyr/-/issues
-Remotes: gitlab::dickoa/sondage
+Remotes: gitlab::dickoa/sondage,
+    gitlab::dickoa/svyplan

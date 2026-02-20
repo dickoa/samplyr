@@ -650,9 +650,13 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
 #' @return A `svyrep.design` object from the survey package.
 #'
 #' @details
-#' Replicate conversion currently supports single-phase, non-PPS designs.
-#' Two-phase and PPS designs should be exported with [as_svydesign()] and
-#' analyzed with linearization-based variance.
+#' Replicate conversion supports single-phase designs. For PPS designs,
+#' `"subbootstrap"` and `"mrbbootstrap"` are the supported replicate types.
+#' Other types emit a warning and may fail because PPS inclusion
+#' probabilities vary within strata. For PPS variance estimation,
+#' linearization via [as_svydesign()] (with Brewer approximation or exact
+#' joint probabilities) is generally preferred. Two-phase designs should
+#' be exported with [as_svydesign()].
 #'
 #' @examplesIf requireNamespace("survey", quietly = TRUE)
 #' sample <- sampling_design() |>
@@ -698,20 +702,21 @@ as_svrepdesign.tbl_sample <- function(
     fn_name = "as_svrepdesign"
   )
 
+  type <- match.arg(type)
+
   methods_used <- survey_stage_methods(x)
   pps_used <- unique(methods_used[methods_used %in% pps_methods])
   if (length(pps_used) > 0) {
-    abort_samplyr(
-      c(
-        "{.fn as_svrepdesign} does not currently support PPS designs.",
+    pps_safe_types <- c("subbootstrap", "mrbbootstrap")
+    if (!type %in% pps_safe_types) {
+      cli_warn(c(
+        "{.fn as_svrepdesign} with {.val {type}} may not work for PPS designs.",
         "i" = "Found method{?s}: {.val {pps_used}}.",
-        "i" = "Use {.fn as_svydesign} for linearization-based variance, or provide external replicate weights to {.fn survey::svrepdesign}."
-      ),
-      class = "samplyr_error_svrep_pps_unsupported"
-    )
+        "i" = "Use {.val subbootstrap} or {.val mrbbootstrap} for PPS designs,
+               or use {.fn as_svydesign} for linearization-based variance."
+      ))
+    }
   }
-
-  type <- match.arg(type)
   svydesign_obj <- as_svydesign(x)
 
   tryCatch(

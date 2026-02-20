@@ -172,3 +172,110 @@ test_that("All equal probability methods give consistent weights", {
 
   expect_equal(unique(result$.weight), 5, tolerance = 1e-10)
 })
+
+test_that("Bernoulli with n gives expected sample size and correct weights", {
+  frame <- data.frame(id = 1:1000)
+
+  result <- sampling_design() |>
+    draw(n = 100, method = "bernoulli") |>
+    execute(frame, seed = 42)
+
+  # Weight should be N/n = 1000/100 = 10 (since frac = n/N = 0.1)
+  expect_true(all(abs(result$.weight - 10) < 1e-10))
+
+  # Sample size should be approximately 100 (random)
+  expect_true(nrow(result) > 50 && nrow(result) < 200)
+})
+
+test_that("pps_poisson with n gives correct weights", {
+  frame <- data.frame(
+    id = 1:100,
+    size = runif(100, 1, 50)
+  )
+
+  result <- sampling_design() |>
+    draw(n = 20, method = "pps_poisson", mos = size) |>
+    execute(frame, seed = 42)
+
+  # Should produce a sample (random size)
+  expect_true(nrow(result) > 0)
+  # Weights should all be positive and finite
+  expect_true(all(result$.weight > 0))
+  expect_true(all(is.finite(result$.weight)))
+})
+
+test_that("Stratified bernoulli with scalar n uses n per stratum", {
+  frame <- data.frame(
+    stratum = rep(c("A", "B"), each = 500),
+    id = 1:1000
+  )
+
+  sizes <- sapply(1:5, function(seed) {
+    result <- sampling_design() |>
+      stratify_by(stratum) |>
+      draw(n = 50, method = "bernoulli") |>
+      execute(frame, seed = seed)
+    c(A = sum(result$stratum == "A"), B = sum(result$stratum == "B"))
+  })
+
+  # frac = 50/500 = 0.1 per stratum, expected 50 each
+  # Mean across seeds should be close to 50 for each stratum
+  expect_true(abs(mean(sizes["A", ]) - 50) < 20)
+  expect_true(abs(mean(sizes["B", ]) - 50) < 20)
+})
+
+test_that("Stratified bernoulli with named vector n", {
+  frame <- data.frame(
+    stratum = rep(c("A", "B"), c(200, 800)),
+    id = 1:1000
+  )
+
+  result <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = c(A = 20, B = 80), method = "bernoulli") |>
+    execute(frame, seed = 42)
+
+  # Stratum A: frac = 20/200 = 0.1, weight = 10
+  result_A <- result[result$stratum == "A", ]
+  if (nrow(result_A) > 0) {
+    expect_true(all(abs(result_A$.weight - 10) < 1e-10))
+  }
+
+  # Stratum B: frac = 80/800 = 0.1, weight = 10
+  result_B <- result[result$stratum == "B", ]
+  if (nrow(result_B) > 0) {
+    expect_true(all(abs(result_B$.weight - 10) < 1e-10))
+  }
+})
+
+test_that("bernoulli errors when both n and frac provided", {
+  expect_error(
+    sampling_design() |>
+      draw(n = 50, frac = 0.1, method = "bernoulli"),
+    "not both"
+  )
+})
+
+test_that("pps_poisson errors when both n and frac provided", {
+  expect_error(
+    sampling_design() |>
+      draw(n = 50, frac = 0.1, method = "pps_poisson", mos = size),
+    "not both"
+  )
+})
+
+test_that("bernoulli errors when neither n nor frac provided", {
+  expect_error(
+    sampling_design() |>
+      draw(method = "bernoulli"),
+    "requires.*n.*or.*frac"
+  )
+})
+
+test_that("pps_poisson errors when neither n nor frac provided", {
+  expect_error(
+    sampling_design() |>
+      draw(method = "pps_poisson", mos = size),
+    "requires.*n.*or.*frac"
+  )
+})

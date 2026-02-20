@@ -1,0 +1,226 @@
+---
+title: "Survey Planning with svyplan"
+output: rmarkdown::html_vignette
+bibliography: references.bib
+link-citations: true
+vignette: >
+  %\VignetteIndexEntry{Survey Planning with svyplan}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup, message = FALSE, echo = FALSE}
+library(samplyr)
+library(svyplan)
+library(dplyr)
+```
+
+## Overview
+
+Before drawing a sample, you need to answer two questions: how many units to select, and how to divide them across strata. The `svyplan` package provides tools for both. `samplyr` integrates with `svyplan` so that planning results flow directly into `draw()` and `execute()`.
+
+The three packages form a pipeline:
+
+- **svyplan** determines sample sizes and strata boundaries (planning).
+- **samplyr** specifies and executes the sampling design (selection).
+- **sondage** provides the low-level sampling algorithms (engine).
+
+This vignette uses the `ken_enterprises` dataset, a synthetic frame of 6,823 Kenyan establishments with revenue, employee counts, and export status.
+
+```{r}
+data(ken_enterprises)
+glimpse(ken_enterprises)
+```
+
+## Sample Size for a Proportion
+
+Suppose we want to estimate the proportion of exporting firms. We know from the census that about 17% of firms export. We want a margin of error of 3 percentage points at 95% confidence.
+
+```{r}
+n_export <- n_prop(p = 0.17, moe = 0.03)
+n_export
+```
+
+The result is a `svyplan_n` object. You can pass it directly to `draw()`:
+
+```{r}
+samp <- sampling_design() |>
+  draw(n = n_export) |>
+  execute(ken_enterprises, seed = 1)
+nrow(samp)
+```
+
+## Sample Size for a Mean
+
+We also want to estimate mean revenue with a margin of error of 30 million KES. We compute the population variance from the frame:
+
+```{r}
+rev_var <- var(ken_enterprises$revenue_millions)
+n_rev <- n_mean(var = rev_var, moe = 30)
+n_rev
+```
+
+## Multiple Indicators
+
+In practice, a survey measures several things at once. `n_multi()` takes the binding constraint across indicators:
+
+```{r}
+targets <- data.frame(
+  indicator = c("exporter_rate", "mean_revenue"),
+  p = c(0.17, NA),
+  var = c(NA, rev_var),
+  moe = c(0.03, 30)
+)
+n_survey <- n_multi(targets)
+n_survey
+```
+
+The sample size is driven by whichever indicator requires the most units. Pass it to `draw()` like any other sample size:
+
+```{r}
+samp <- sampling_design() |>
+  draw(n = n_survey) |>
+  execute(ken_enterprises, seed = 2)
+nrow(samp)
+```
+
+## Power Analysis
+
+If the goal is to detect a difference (for example, comparing exporter rates between two regions), `power_prop()` gives the required per-group sample size:
+
+```{r}
+n_power <- power_prop(p1 = 0.17, p2 = 0.25, power = 0.8)
+n_power
+```
+
+This also works directly with `draw()`:
+
+```{r}
+samp <- sampling_design() |>
+  draw(n = n_power) |>
+  execute(ken_enterprises, seed = 3)
+nrow(samp)
+```
+
+## Stratification Boundaries
+
+Enterprise surveys typically stratify by size. Rather than using predefined size classes, `strata_bound()` finds optimal boundaries on a continuous variable. The cumulative square root of frequency method minimizes the coefficient of variation for a given number of strata and total sample size:
+
+```{r}
+bounds <- strata_bound(
+  ken_enterprises$revenue_millions,
+  n_strata = 4,
+  method = "cumrootf",
+  cv = 0.05
+)
+bounds
+```
+
+The result includes jointly optimized boundaries and stratum sample sizes. The `predict()` method assigns each frame unit to a stratum:
+
+```{r}
+labels <- paste0("S", 1:4)
+ken_enterprises$rev_stratum <- predict(
+  bounds,
+  ken_enterprises$revenue_millions,
+  labels = labels
+)
+table(ken_enterprises$rev_stratum)
+```
+
+Use the stratum allocations from `strata_bound()` directly as a named vector for `draw()`. This preserves the joint optimization between boundaries and allocation:
+
+```{r}
+n_alloc <- setNames(bounds$strata$n_h, labels)
+n_alloc
+```
+
+```{r}
+samp <- sampling_design() |>
+  stratify_by(rev_stratum) |>
+  draw(n = n_alloc) |>
+  execute(ken_enterprises, seed = 4)
+samp |>
+  count(rev_stratum, name = "n_sampled")
+```
+
+Note that the boundaries and allocation are coupled. The `cumrootf` method optimizes them together to achieve the target CV. Using `strata_bound()` for boundaries but a different allocation in `samplyr` (for example, proportional instead of Neyman) might break this optimality. If you need a different allocation method, compute boundaries and allocation separately.
+
+## Design Effects After Sampling
+
+After executing a design, you can evaluate its efficiency using `design_effect()` and `effective_n()`. These are re-exported from
+`svyplan` and work directly on `tbl_sample` objects.
+
+### Kish Design Effect
+
+The Kish design effect measures the loss of precision due to unequal weights. It equals 1 for self-weighting designs:
+
+```{r}
+design_effect(samp)
+effective_n(samp)
+```
+
+The effective sample size is the number of observations an SRS would need to achieve the same precision.
+
+### Spencer Method
+
+The Spencer method accounts for the relationship between the outcome variable and the selection probabilities. Pass the outcome as a bare column name. The selection probabilities are extracted automatically
+from `.weight_1`:
+
+```{r}
+design_effect(samp, y = revenue_millions, method = "spencer")
+```
+
+### Henry Method
+
+The Henry method also accounts for a calibration covariate. Both `y` and `x_cal` are column names in the sample:
+
+```{r}
+design_effect(samp, y = revenue_millions, x_cal = employees,
+              method = "henry")
+```
+
+### Chen-Rust Decomposition
+
+For stratified or clustered designs, the Chen-Rust (CR) method decomposes the design effect into weighting (`deff_w`), clustering (`deff_c`), and stratification (`deff_s`) components:
+
+```{r}
+cr <- design_effect(samp, y = revenue_millions, method = "cr")
+cr$strata
+cr$overall
+```
+
+The `tbl_sample` method extracts stratification and clustering variables from the stored design metadata. You only need to supply the outcome.
+
+### Cluster Planning
+
+Before collecting data, you can anticipate the design effect for a cluster design using the intraclass correlation coefficient (ICC) and
+cluster size. This uses `svyplan::design_effect()` directly (not through a `tbl_sample`):
+
+```{r}
+design_effect(delta = 0.05, m = 10)
+design_effect(delta = 0.15, m = 10)
+```
+
+With an ICC of 0.05 and 10 units per cluster, the design effect is 1.45. An ICC of 0.15 raises it to 2.35. This helps decide the number of clusters and units per cluster during the planning stage.
+
+## Summary
+
+The typical planning workflow can be:
+
+1. Determine sample size with `n_prop()`, `n_mean()`, `n_multi()`, or
+   `power_prop()` / `power_mean()`.
+2. Optionally create stratification boundaries with `strata_bound()` and
+   assign strata with `predict()`.
+3. Pass the sample size to `draw()` and execute the design.
+4. Evaluate the realized design with `design_effect()` and `effective_n()`.
+
+All `svyplan` sample size objects work directly with `draw()`, so the
+planning and execution steps connect without manual conversion.

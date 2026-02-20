@@ -152,9 +152,13 @@ test_that("replicate export errors use standardized classes", {
     draw(n = 20, method = "pps_brewer", mos = households) |>
     execute(bfa_eas, seed = 1)
 
-  expect_error(
-    as_svrepdesign(pps_sample),
-    class = "samplyr_error_svrep_pps_unsupported"
+  # PPS + non-safe type emits warning (no longer a hard error)
+  expect_warning(
+    tryCatch(
+      as_svrepdesign(pps_sample, type = "bootstrap"),
+      samplyr_error_svrep_conversion_failed = function(e) NULL
+    ),
+    "may not work for PPS"
   )
 
   frame <- data.frame(id = 1:120, x = rnorm(120))

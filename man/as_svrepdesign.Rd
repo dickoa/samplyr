@@ -32,9 +32,13 @@ converting to a \code{\link[survey:svydesign]{survey::svydesign()}} object via \
 then converting with \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.
 }
 \details{
-Replicate conversion currently supports single-phase, non-PPS designs.
-Two-phase and PPS designs should be exported with \code{\link[=as_svydesign]{as_svydesign()}} and
-analyzed with linearization-based variance.
+Replicate conversion supports single-phase designs. For PPS designs,
+\code{"subbootstrap"} and \code{"mrbbootstrap"} are the supported replicate types.
+Other types emit a warning and may fail because PPS inclusion
+probabilities vary within strata. For PPS variance estimation,
+linearization via \code{\link[=as_svydesign]{as_svydesign()}} (with Brewer approximation or exact
+joint probabilities) is generally preferred. Two-phase designs should
+be exported with \code{\link[=as_svydesign]{as_svydesign()}}.
 }
 \examples{
 \dontshow{if (requireNamespace("survey", quietly = TRUE)) withAutoprint(\{ # examplesIf}

@@ -908,27 +908,6 @@ test_that("named frac vector errors when strata missing from allocation", {
   )
 })
 
-test_that("effective_n errors on empty input", {
-  expect_error(samplyr:::effective_n(numeric(0)), "non-empty")
-})
-
-test_that("effective_n errors on NA weights", {
-  expect_error(samplyr:::effective_n(c(1, 2, NA)), "NA")
-})
-
-test_that("effective_n errors on non-positive weights", {
-  expect_error(samplyr:::effective_n(c(1, 0, 3)), "positive")
-  expect_error(samplyr:::effective_n(c(1, -2, 3)), "positive")
-})
-
-test_that("effective_n errors on non-numeric input", {
-  expect_error(samplyr:::effective_n("abc"), "non-empty numeric")
-})
-
-test_that("design_effect propagates effective_n validation", {
-  expect_error(samplyr:::design_effect(numeric(0)), "non-empty")
-  expect_error(samplyr:::design_effect(c(1, NA)), "NA")
-})
 
 test_that("execute() errors on empty frame", {
   design <- sampling_design() |> draw(n = 5)

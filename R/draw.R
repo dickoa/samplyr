@@ -6,7 +6,9 @@
 #'
 #' @param .data A `sampling_design` object (piped from [sampling_design()],
 #'   [stratify_by()], or [cluster_by()]).
-#' @param n Sample size. Can be:
+#' @param n Sample size. For random-size methods (`bernoulli`, `pps_poisson`),
+#'   `n` is the **expected** sample size (converted internally to `frac = n / N`).
+#'   Can be:
 #'   - A scalar: applies per stratum (if no `alloc`) or as total (if `alloc` specified)
 #'   - A named vector: stratum-specific sizes (for single stratification variable)
 #'   - A data frame: stratum-specific sizes with stratification columns + `n` column
@@ -156,11 +158,11 @@
 #' | `srswor` | Yes | or Yes | -- |
 #' | `srswr` | Yes | or Yes | -- |
 #' | `systematic` | Yes | or Yes | -- |
-#' | `bernoulli` | -- | Yes | -- |
+#' | `bernoulli` | Expected | or Yes | -- |
 #' | `pps_systematic` | Yes | or Yes | Yes |
 #' | `pps_brewer` | Yes | or Yes | Yes |
 #' | `pps_cps` | Yes | -- | Yes |
-#' | `pps_poisson` | -- | Yes | Yes |
+#' | `pps_poisson` | Expected | or Yes | Yes |
 #' | `pps_sps` | Yes | or Yes | Yes |
 #' | `pps_pareto` | Yes | or Yes | Yes |
 #' | `pps_multinomial` | Yes | or Yes | Yes |
@@ -173,10 +175,10 @@
 #' accept either `n` or `frac`. When `frac`
 #' is provided, the sample size is computed based on the `round` parameter (default: ceiling).
 #'
-#' Methods with **random sample size** (`bernoulli`, `pps_poisson`) require `frac` only.
-#' These methods perform independent selection trials for each unit, so the final sample
-#' size is a random variable, not a fixed count. Specifying `n` would be misleading since
-#' the method cannot guarantee exactly `n` selections.
+#' Methods with **random sample size** (`bernoulli`, `pps_poisson`) accept either
+#' `n` or `frac`. When `n` is provided, it is converted to `frac = n / N` (where
+#' `N` is the stratum or frame size). The resulting sample size is still random:
+#' `n` specifies the **expected** sample size, not a fixed count.
 #'
 #' For `pps_poisson`, the raw inclusion probabilities are computed as
 #' \eqn{\pi_i = f \cdot x_i / \bar{x}}{pi_i = f * x_i / mean(x)} where
@@ -292,10 +294,15 @@
 #'   draw(n = 50, method = "pps_brewer", mos = households) |>
 #'   execute(bfa_eas, seed = 42)
 #'
-#' # Bernoulli sampling (random sample size, expected ~5%)
+#' # Bernoulli sampling with frac (random sample size, expected ~5%)
 #' sampling_design() |>
 #'   draw(frac = 0.05, method = "bernoulli") |>
 #'   execute(ken_enterprises, seed = 12345)
+#'
+#' # Bernoulli sampling with expected n (converted to frac = 500/N)
+#' sampling_design() |>
+#'   draw(n = 500, method = "bernoulli") |>
+#'   execute(bfa_eas, seed = 42)
 #'
 #' # Stratified with different sizes per stratum (data frame)
 #' region_sizes <- data.frame(
@@ -460,6 +467,7 @@ draw <- function(
 
   strata_vars <- current_stage$strata$vars
 
+  n <- coerce_svyplan_n(n)
   n_is_df <- is.data.frame(n)
   frac_is_df <- is.data.frame(frac)
   certainty_size_is_df <- is.data.frame(certainty_size)
@@ -689,31 +697,21 @@ validate_draw_args <- function(
     cli_warn("{.arg mos} is ignored for non-PPS methods")
   }
 
-  if (method == "bernoulli") {
-    if (!is_null(n)) {
+  random_size_methods <- c("bernoulli", "pps_poisson")
+  if (method %in% random_size_methods) {
+    if (!is_null(n) && !is_null(frac)) {
       cli_abort(
-        "{.val bernoulli} sampling requires {.arg frac}, not {.arg n}",
+        "Specify either {.arg n} (expected sample size) or {.arg frac}, not both",
         call = call
       )
     }
-    if (is_null(frac)) {
-      cli_abort("{.val bernoulli} sampling requires {.arg frac}", call = call)
-    }
-  }
-
-  if (method == "pps_poisson") {
-    if (!is_null(n)) {
+    if (is_null(n) && is_null(frac)) {
       cli_abort(
-        "{.val pps_poisson} sampling requires {.arg frac}, not {.arg n}",
+        "{.val {method}} sampling requires {.arg n} or {.arg frac}",
         call = call
       )
     }
-    if (is_null(frac)) {
-      cli_abort("{.val pps_poisson} sampling requires {.arg frac}", call = call)
-    }
-  }
-
-  if (method == "pps_cps") {
+  } else if (method == "pps_cps") {
     if (!is_null(frac)) {
       cli_abort(
         "{.val pps_cps} sampling requires {.arg n}, not {.arg frac}",
@@ -723,10 +721,7 @@ validate_draw_args <- function(
     if (is_null(n)) {
       cli_abort("{.val pps_cps} sampling requires {.arg n}", call = call)
     }
-  }
-
-  random_size_methods <- c("bernoulli", "pps_poisson")
-  if (!method %in% random_size_methods) {
+  } else {
     if (is_null(n) && is_null(frac)) {
       cli_abort("Specify either {.arg n} or {.arg frac}", call = call)
     }

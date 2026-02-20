@@ -190,12 +190,34 @@ test_that("as_svrepdesign rejects two-phase samples", {
   )
 })
 
-test_that("as_svrepdesign rejects PPS designs", {
+test_that("as_svrepdesign works for PPS with subbootstrap type", {
   skip_if_not_installed("survey")
 
-  expect_error(
-    as_svrepdesign(fix_pps_brewer, type = "auto"),
-    class = "samplyr_error_svrep_pps_unsupported"
+  expect_no_warning(
+    rep_svy <- as_svrepdesign(fix_pps_brewer, type = "subbootstrap")
+  )
+  expect_s3_class(rep_svy, "svyrep.design")
+})
+
+test_that("as_svrepdesign works for PPS with mrbbootstrap type", {
+  skip_if_not_installed("survey")
+
+  expect_no_warning(
+    rep_svy <- as_svrepdesign(fix_pps_brewer, type = "mrbbootstrap")
+  )
+  expect_s3_class(rep_svy, "svyrep.design")
+})
+
+test_that("as_svrepdesign warns for PPS with non-safe type", {
+  skip_if_not_installed("survey")
+
+  # bootstrap warns and then may fail (conversion error is caught separately)
+  expect_warning(
+    tryCatch(
+      as_svrepdesign(fix_pps_brewer, type = "bootstrap"),
+      samplyr_error_svrep_conversion_failed = function(e) NULL
+    ),
+    "may not work for PPS"
   )
 })
 

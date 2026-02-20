@@ -13,6 +13,9 @@ articles:
     contents:
       - survey-analysis
       - sampling-coordination
+  - title: "Survey Planning"
+    contents:
+      - survey-planning
 
 reference:
   - title: "Design Specification"
@@ -43,6 +46,8 @@ reference:
     contents:
       - summary.tbl_sample
       - joint_expectation
+      - design_effect
+      - effective_n
 
   - title: "Helpers"
     desc: "Sorting, class checks, and serialization."

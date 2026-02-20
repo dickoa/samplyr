@@ -25,7 +25,9 @@ draw(
 \item{.data}{A \code{sampling_design} object (piped from \code{\link[=sampling_design]{sampling_design()}},
 \code{\link[=stratify_by]{stratify_by()}}, or \code{\link[=cluster_by]{cluster_by()}}).}
 
-\item{n}{Sample size. Can be:
+\item{n}{Sample size. For random-size methods (\code{bernoulli}, \code{pps_poisson}),
+\code{n} is the \strong{expected} sample size (converted internally to \code{frac = n / N}).
+Can be:
 \itemize{
 \item A scalar: applies per stratum (if no \code{alloc}) or as total (if \code{alloc} specified)
 \item A named vector: stratum-specific sizes (for single stratification variable)
@@ -212,11 +214,11 @@ sampling design must end with \code{draw()}.
    \code{srswor} \tab Yes \tab or Yes \tab -- \cr
    \code{srswr} \tab Yes \tab or Yes \tab -- \cr
    \code{systematic} \tab Yes \tab or Yes \tab -- \cr
-   \code{bernoulli} \tab -- \tab Yes \tab -- \cr
+   \code{bernoulli} \tab Expected \tab or Yes \tab -- \cr
    \code{pps_systematic} \tab Yes \tab or Yes \tab Yes \cr
    \code{pps_brewer} \tab Yes \tab or Yes \tab Yes \cr
    \code{pps_cps} \tab Yes \tab -- \tab Yes \cr
-   \code{pps_poisson} \tab -- \tab Yes \tab Yes \cr
+   \code{pps_poisson} \tab Expected \tab or Yes \tab Yes \cr
    \code{pps_sps} \tab Yes \tab or Yes \tab Yes \cr
    \code{pps_pareto} \tab Yes \tab or Yes \tab Yes \cr
    \code{pps_multinomial} \tab Yes \tab or Yes \tab Yes \cr
@@ -232,10 +234,10 @@ Methods with \strong{fixed sample size} (\code{srswor}, \code{srswr}, \code{syst
 accept either \code{n} or \code{frac}. When \code{frac}
 is provided, the sample size is computed based on the \code{round} parameter (default: ceiling).
 
-Methods with \strong{random sample size} (\code{bernoulli}, \code{pps_poisson}) require \code{frac} only.
-These methods perform independent selection trials for each unit, so the final sample
-size is a random variable, not a fixed count. Specifying \code{n} would be misleading since
-the method cannot guarantee exactly \code{n} selections.
+Methods with \strong{random sample size} (\code{bernoulli}, \code{pps_poisson}) accept either
+\code{n} or \code{frac}. When \code{n} is provided, it is converted to \code{frac = n / N} (where
+\code{N} is the stratum or frame size). The resulting sample size is still random:
+\code{n} specifies the \strong{expected} sample size, not a fixed count.
 
 For \code{pps_poisson}, the raw inclusion probabilities are computed as
 \eqn{\pi_i = f \cdot x_i / \bar{x}}{pi_i = f * x_i / mean(x)} where
@@ -329,10 +331,15 @@ sampling_design() |>
   draw(n = 50, method = "pps_brewer", mos = households) |>
   execute(bfa_eas, seed = 42)
 
-# Bernoulli sampling (random sample size, expected ~5\%)
+# Bernoulli sampling with frac (random sample size, expected ~5\%)
 sampling_design() |>
   draw(frac = 0.05, method = "bernoulli") |>
   execute(ken_enterprises, seed = 12345)
+
+# Bernoulli sampling with expected n (converted to frac = 500/N)
+sampling_design() |>
+  draw(n = 500, method = "bernoulli") |>
+  execute(bfa_eas, seed = 42)
 
 # Stratified with different sizes per stratum (data frame)
 region_sizes <- data.frame(

@@ -354,7 +354,7 @@ sample_unstratified <- function(frame, draw_spec) {
 handle_empty_selection <- function(method_label, on_empty, N) {
   header <- "{method_label} sampling produced zero selections."
   suggestions <- c(
-    "i" = "Increase {.arg frac}, use a fixed-size method, or set {.code on_empty = \"warn\"} to fall back to SRS of 1 unit."
+    "i" = "Increase {.arg frac} (or {.arg n}), use a fixed-size method, or set {.code on_empty = \"warn\"} to fall back to SRS of 1 unit."
   )
   switch(on_empty,
     error = cli_abort(c(header, suggestions)),
@@ -419,10 +419,7 @@ draw_sample <- function(data, n, draw_spec) {
       pik <- rep(n / N, N)
     },
     bernoulli = {
-      frac <- draw_spec$frac
-      if (is_null(frac) || length(frac) == 0) {
-        cli_abort("Bernoulli sampling requires {.arg frac} but none was provided")
-      }
+      frac <- draw_spec$frac %||% (n / N)
       pik <- rep(frac, N)
       prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
       idx <- sondage::equal_prob_wor(N, frac * N, method = "bernoulli", prn = prn_vals)$sample

@@ -71,19 +71,23 @@ test_that("draw() validates method", {
   )
 })
 
-test_that("draw() with bernoulli requires frac", {
+test_that("draw() with bernoulli requires n or frac", {
   expect_error(
-    sampling_design() |> draw(n = 100, method = "bernoulli"),
-    "frac.*not.*n"
+    sampling_design() |> draw(method = "bernoulli"),
+    "requires.*n.*or.*frac"
   )
 
   expect_error(
-    sampling_design() |> draw(method = "bernoulli"),
-    "frac"
+    sampling_design() |> draw(n = 100, frac = 0.1, method = "bernoulli"),
+    "not both"
   )
 
   expect_no_error(
     sampling_design() |> draw(frac = 0.1, method = "bernoulli")
+  )
+
+  expect_no_error(
+    sampling_design() |> draw(n = 100, method = "bernoulli")
   )
 })
 
@@ -105,14 +109,23 @@ test_that("draw() with PPS methods requires mos", {
   }
 })
 
-test_that("draw() with pps_poisson requires frac", {
+test_that("draw() with pps_poisson requires n or frac", {
   expect_error(
-    sampling_design() |> draw(n = 100, method = "pps_poisson", mos = size),
-    "frac"
+    sampling_design() |> draw(method = "pps_poisson", mos = size),
+    "requires.*n.*or.*frac"
+  )
+
+  expect_error(
+    sampling_design() |> draw(n = 100, frac = 0.1, method = "pps_poisson", mos = size),
+    "not both"
   )
 
   expect_no_error(
     sampling_design() |> draw(frac = 0.1, method = "pps_poisson", mos = size)
+  )
+
+  expect_no_error(
+    sampling_design() |> draw(n = 100, method = "pps_poisson", mos = size)
   )
 })
 
