@@ -29,17 +29,17 @@ new_sampling_design <- function(
 
 #' Validate a sampling_design object
 #' @noRd
-validate_sampling_design <- function(x) {
+validate_sampling_design <- function(x, call = caller_env()) {
   if (!inherits(x, "sampling_design")) {
-    cli_abort("Object must be a {.cls sampling_design}")
+    cli_abort("Object must be a {.cls sampling_design}", call = call)
   }
 
   if (!is_null(x$title) && !is_character(x$title)) {
-    cli_abort("{.arg title} must be a character string")
+    cli_abort("{.arg title} must be a character string", call = call)
   }
 
   if (!is.list(x$stages)) {
-    cli_abort("{.arg stages} must be a list")
+    cli_abort("{.arg stages} must be a list", call = call)
   }
 
   x

@@ -28,7 +28,7 @@ sample_clusters <- function(frame, strata_spec, cluster_spec, draw_spec) {
         "{.val {varying}} must be constant within each cluster defined by {.val {cluster_vars}}.",
         "i" = "Found clusters where {.val {varying}} varies across rows.",
         "i" = "Ensure the frame has one consistent value per cluster for these columns."
-      ))
+      ), call = NULL)
     }
   }
 
@@ -159,7 +159,8 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
       function(stratum_key) {
         n_h <- n_lookup[[stratum_key]]
         if (is_null(n_h) || length(n_h) == 0 || is.na(n_h)) {
-          cli_abort("Could not determine sample size for stratum {.val {stratum_key}}")
+          cli_abort("Could not determine sample size for stratum {.val {stratum_key}}",
+                    call = NULL)
         }
         as.integer(n_h)
       },
@@ -330,7 +331,7 @@ sample_unstratified <- function(frame, draw_spec) {
   } else if (!is_null(draw_spec$frac)) {
     round_sample_size(N * draw_spec$frac, round_method)
   } else {
-    cli_abort("Cannot determine sample size")
+    cli_abort("Cannot determine sample size", call = NULL)
   }
 
   if (!draw_spec$method %in% multi_hit_methods && n > N) {
@@ -561,7 +562,7 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
       "Cannot use PPS sampling: sum of MOS values is zero.",
       "i" = "At least one remaining unit must have a positive measure of size.",
       "i" = "This can happen when certainty selection removes all units with positive MOS."
-    ))
+    ), call = NULL)
   }
 
   switch(method,

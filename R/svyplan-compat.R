@@ -83,7 +83,7 @@ effective_n.tbl_sample <- function(x, ..., y = NULL, x_cal = NULL,
 
 #' Resolve design_effect arguments from tbl_sample metadata
 #' @noRd
-resolve_deff_args <- function(x, y, x_cal, method) {
+resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
   y_val <- if (!quo_is_null(y)) rlang::eval_tidy(y, data = x) else NULL
   x_cal_val <- if (!quo_is_null(x_cal)) rlang::eval_tidy(x_cal, data = x) else NULL
 
@@ -125,7 +125,7 @@ resolve_deff_args <- function(x, y, x_cal, method) {
       cli_abort(c(
         "The CR method requires stratification or clustering in the design.",
         i = "Use {.fn design_effect} with {.arg method = \"kish\"} for unstratified, unclustered designs."
-      ))
+      ), call = call)
     }
   }
 

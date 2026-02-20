@@ -81,7 +81,7 @@ apply_bounds <- function(target, n_total, min_n, max_n, N_h) {
       "Cannot satisfy minimum sample size constraint",
       "x" = "Minimum allocation requires n >= {sum(effective_min)}",
       "i" = "Total sample size n = {n_total}"
-    ))
+    ), call = NULL)
   }
 
   if (sum(effective_max) < n_total) {
@@ -89,7 +89,7 @@ apply_bounds <- function(target, n_total, min_n, max_n, N_h) {
       "Cannot satisfy maximum sample size constraint",
       "x" = "Maximum allocation allows at most n = {sum(effective_max)}",
       "i" = "Total sample size n = {n_total}"
-    ))
+    ), call = NULL)
   }
 
   # Each iteration fixes at least one stratum at its bound or converges,
@@ -365,7 +365,7 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
           cli_abort(c(
             "Named {.arg n} vectors are only supported for single stratification variables.",
             "i" = "Use a data frame for multi-variable stratification: {.val {strata_spec$vars}}"
-          ))
+          ), call = NULL)
         }
         matched <- n_total[as.character(strata_ids)]
         if (anyNA(matched)) {
@@ -373,7 +373,7 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
           cli_abort(c(
             "Named {.arg n} does not cover all strata in the frame.",
             "x" = "Missing allocation for: {.val {missing}}"
-          ))
+          ), call = NULL)
         }
         as.integer(matched)
       } else {
@@ -385,7 +385,7 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
           cli_abort(c(
             "Named {.arg frac} vectors are only supported for single stratification variables.",
             "i" = "Use a data frame for multi-variable stratification: {.val {strata_spec$vars}}"
-          ))
+          ), call = NULL)
         }
         frac_matched <- frac[as.character(strata_ids)]
         if (anyNA(frac_matched)) {
@@ -393,14 +393,14 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
           cli_abort(c(
             "Named {.arg frac} does not cover all strata in the frame.",
             "x" = "Missing allocation for: {.val {missing}}"
-          ))
+          ), call = NULL)
         }
         round_sample_size(stratum_info$.N_h * frac_matched, round_method)
       } else {
         round_sample_size(stratum_info$.N_h * frac, round_method)
       }
     } else {
-      cli_abort("Cannot determine stratum sample sizes")
+      cli_abort("Cannot determine stratum sample sizes", call = NULL)
     }
   } else {
     switch(alloc,

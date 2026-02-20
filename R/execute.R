@@ -246,7 +246,8 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL) {
 }
 
 #' @noRd
-execute_design <- function(design, frames, stages, seed, panels) {
+execute_design <- function(design, frames, stages, seed, panels,
+                           call = caller_env()) {
   validate_design_complete(design)
 
   n_stages <- length(design$stages)
@@ -259,18 +260,19 @@ execute_design <- function(design, frames, stages, seed, panels) {
         any(stages < 1) ||
         any(stages > n_stages)
     ) {
-      cli_abort("{.arg stages} must be integers between 1 and {n_stages}")
+      cli_abort("{.arg stages} must be integers between 1 and {n_stages}",
+                call = call)
     }
     stages <- sort(as.integer(stages))
     if (stages[1] != 1L) {
       cli_abort(c(
         "{.arg stages} must start at stage 1 when executing from a design.",
         "i" = "To continue from a previous sample, pass the {.cls tbl_sample} instead of the design."
-      ))
+      ), call = call)
     }
     expected <- seq.int(stages[1], stages[length(stages)])
     if (!identical(stages, expected)) {
-      cli_abort("{.arg stages} must be contiguous (no gaps)")
+      cli_abort("{.arg stages} must be contiguous (no gaps)", call = call)
     }
   }
 
@@ -278,7 +280,8 @@ execute_design <- function(design, frames, stages, seed, panels) {
     frames <- rep(frames, length(stages))
   } else if (length(frames) != length(stages)) {
     cli_abort(
-      "Number of frames ({length(frames)}) must be 1 or match number of stages to execute ({length(stages)})"
+      "Number of frames ({length(frames)}) must be 1 or match number of stages to execute ({length(stages)})",
+      call = call
     )
   }
 
@@ -358,7 +361,8 @@ execute_design <- function(design, frames, stages, seed, panels) {
 }
 
 #' @noRd
-execute_continuation <- function(sample, frames, stages, seed, panels) {
+execute_continuation <- function(sample, frames, stages, seed, panels,
+                                 call = caller_env()) {
   design <- get_design(sample)
   executed <- get_stages_executed(sample)
 
@@ -367,7 +371,7 @@ execute_continuation <- function(sample, frames, stages, seed, panels) {
   if (is_null(stages)) {
     remaining <- setdiff(seq_len(n_stages), executed)
     if (length(remaining) == 0) {
-      cli_abort("All stages have been executed")
+      cli_abort("All stages have been executed", call = call)
     }
     stages <- remaining
   } else {
@@ -376,12 +380,13 @@ execute_continuation <- function(sample, frames, stages, seed, panels) {
         any(stages < 1) ||
         any(stages > n_stages)
     ) {
-      cli_abort("{.arg stages} must be integers between 1 and {n_stages}")
+      cli_abort("{.arg stages} must be integers between 1 and {n_stages}",
+                call = call)
     }
     stages <- sort(as.integer(stages))
     already_done <- intersect(stages, executed)
     if (length(already_done) > 0) {
-      cli_abort("Stage{?s} {already_done} already executed")
+      cli_abort("Stage{?s} {already_done} already executed", call = call)
     }
     next_expected <- max(executed) + 1L
     if (stages[1] != next_expected) {
@@ -389,11 +394,11 @@ execute_continuation <- function(sample, frames, stages, seed, panels) {
       cli_abort(c(
         "{.arg stages} must continue from stage {next_expected}.",
         "i" = "Stage(s) {executed_str} already executed; next stage must be {next_expected}."
-      ))
+      ), call = call)
     }
     expected <- seq.int(stages[1], stages[length(stages)])
     if (!identical(stages, expected)) {
-      cli_abort("{.arg stages} must be contiguous (no gaps)")
+      cli_abort("{.arg stages} must be contiguous (no gaps)", call = call)
     }
   }
 
@@ -405,7 +410,8 @@ execute_continuation <- function(sample, frames, stages, seed, panels) {
     frames <- rep(frames, length(stages))
   } else if (length(frames) != length(stages)) {
     cli_abort(
-      "Number of frames ({length(frames)}) must be 1 or match number of stages ({length(stages)})"
+      "Number of frames ({length(frames)}) must be 1 or match number of stages ({length(stages)})",
+      call = call
     )
   }
 
@@ -738,7 +744,7 @@ subset_frame_to_sample <- function(
       "No design-driven columns for linking frames across stages.",
       "i" = "Neither strata nor cluster variables are available as join keys.",
       "i" = "Multi-stage designs require cluster or strata variables to link stages."
-    ))
+    ), call = NULL)
   }
   semi_join(frame, sample, by = join_cols)
 }

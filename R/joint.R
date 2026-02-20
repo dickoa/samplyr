@@ -288,7 +288,8 @@ compute_stratified_jip <- function(
     n_h <- n_h_lookup[[stratum_id]]
     if (is_null(n_h) || is.na(n_h)) {
       cli_abort(
-        "Could not resolve target stratum sample size while computing joint probabilities."
+        "Could not resolve target stratum sample size while computing joint probabilities.",
+        call = NULL
       )
     }
 
@@ -410,7 +411,8 @@ resolve_unstratified_n <- function(frame, draw_spec) {
     }
   }
 
-  cli_abort("Cannot determine target sample size for unstratified stage.")
+  cli_abort("Cannot determine target sample size for unstratified stage.",
+            call = NULL)
 }
 
 #' Prepare the effective frame for a given stage
@@ -492,7 +494,7 @@ compute_joint_matrix <- function(frame, n, draw_spec) {
     cli_abort(c(
       "Cannot compute joint expectations: sum of MOS variable {.var {mos_var}} is zero.",
       "i" = "At least one unit must have a positive measure of size."
-    ))
+    ), call = NULL)
   }
 
   # WR/PMR: joint expected hits, no certainty decomposition needed
@@ -516,7 +518,8 @@ compute_joint_matrix <- function(frame, n, draw_spec) {
       pik_raw <- frac * mos_vals / sum(mos_vals) * N
       pmin(pik_raw, 1)
     },
-    cli_abort("No joint probability function for method {.val {method}}")
+    cli_abort("No joint probability function for method {.val {method}}",
+              call = NULL)
   )
 
   # NOTE: pik = 1 causes division by zero in _jip functions; decompose
@@ -627,7 +630,8 @@ match_sampled_units <- function(
   }
 
   if (length(match_vars) == 0) {
-    cli_abort("No shared columns to match sampled units to frame.")
+    cli_abort("No shared columns to match sampled units to frame.",
+              call = NULL)
   }
 
   group_sample <- sample_df
@@ -650,7 +654,7 @@ match_sampled_units <- function(
         "Frame rows are not uniquely identified by columns {.val {match_vars}}.",
         "i" = "Found {nrow(group_frame)} rows but only {n_unique} unique key combinations.",
         "i" = "Ensure the frame has a column (or combination) that uniquely identifies each unit."
-      ))
+      ), call = NULL)
     }
 
     sample_key <- group_sample[[key_var]]
@@ -668,7 +672,7 @@ match_sampled_units <- function(
       "Frame rows are not uniquely identified by columns {.val {match_vars}}.",
       "i" = "Found {nrow(group_frame)} rows but only {n_unique} unique key combinations.",
       "i" = "Ensure the frame has a column (or combination) that uniquely identifies each unit."
-    ))
+    ), call = NULL)
   }
 
   frame_keys <- group_frame |>
