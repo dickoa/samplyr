@@ -25,7 +25,7 @@ Imports:
     pillar,
     tibble,
     dplyr (>= 1.1.0),
-    sondage (>= 0.1.0),
+    sondage (>= 0.2.0),
     svyplan (>= 0.3.0),
     withr
 Suggests:

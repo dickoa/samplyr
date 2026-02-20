@@ -923,7 +923,7 @@ test_that("joint_expectation returns matrix for pps_chromy", {
   expect_equal(nrow(mat), n_unique)
 })
 
-test_that("joint_expectation for pps_multinomial diagonal matches expected hits", {
+test_that("joint_expectation for pps_multinomial diagonal matches E[n_i^2]", {
   frame <- data.frame(
     id = 1:20,
     size = c(50, 40, 30, rep(10, 17))
@@ -936,14 +936,15 @@ test_that("joint_expectation for pps_multinomial diagonal matches expected hits"
   je <- joint_expectation(sample, frame)
   mat <- je[[1]]
 
-  # Reconstruct expected hits from the frame
+  # Diagonal of the joint expected hits matrix is E[n_i^2], not E[n_i].
+  # For multinomial: E[n_i^2] = n*(n-1)*p_i^2 + n*p_i
   mos_vals <- frame$size
-  eh <- sondage::expected_hits(mos_vals, 5)
+  n <- 5
+  p <- mos_vals / sum(mos_vals)
+  eh_sq <- n * (n - 1) * p^2 + n * p
 
-  # Diagonal of the joint matrix should equal expected hits
-  # for the units that were sampled (in sample order)
   unique_ids <- unique(sample$id)
-  expect_equal(diag(mat), eh[unique_ids], tolerance = 1e-10)
+  expect_equal(diag(mat), eh_sq[unique_ids], tolerance = 1e-10)
 })
 
 test_that("joint_expectation for stratified pps_multinomial works", {
