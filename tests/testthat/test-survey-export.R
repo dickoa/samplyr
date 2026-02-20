@@ -7,7 +7,11 @@ test_that("execute() produces .fpc_k columns for unstratified SRS", {
 test_that("execute() produces .fpc_k columns for stratified design", {
   expect_true(".fpc_1" %in% names(fix_strat_prop))
   # FPC should vary by stratum and equal stratum population sizes
-  fpc_by_stratum <- tapply(fix_strat_prop$.fpc_1, fix_strat_prop$stratum, unique)
+  fpc_by_stratum <- tapply(
+    fix_strat_prop$.fpc_1,
+    fix_strat_prop$stratum,
+    unique
+  )
   pop_by_stratum <- table(test_frame$stratum)
   for (s in names(fpc_by_stratum)) {
     expect_equal(
@@ -300,6 +304,32 @@ test_that("as_svydesign errors for three-phase samples", {
   expect_error(
     as_svydesign(phase3),
     "two-phase"
+  )
+})
+
+test_that("as_svydesign errors for two-phase with PPS at phase 1", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    id = 1:200,
+    size = runif(200, 1, 10),
+    y = rnorm(200)
+  )
+
+  d1 <- sampling_design() |>
+    cluster_by(id) |>
+    draw(n = 80, method = "pps_brewer", mos = size)
+
+  d2 <- sampling_design() |>
+    cluster_by(id) |>
+    draw(n = 40)
+
+  p1 <- execute(d1, frame, seed = 1)
+  p2 <- execute(d2, p1, seed = 2)
+
+  expect_error(
+    as_svydesign(p2),
+    "PPS at phase 1"
   )
 })
 

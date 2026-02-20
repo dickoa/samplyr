@@ -542,6 +542,7 @@ three_stage_design <- function() {
     cluster_by(school_id) |>
     draw(n = 5) |>
     add_stage(label = "Classes") |>
+    cluster_by(class_id) |>
     draw(n = 3) |>
     add_stage(label = "Students") |>
     draw(n = 2)
@@ -618,10 +619,7 @@ test_that("execute(design) with stages = NULL runs all stages", {
   design <- three_stage_design()
   frame <- three_stage_frame()
 
-  expect_warning(
-    result <- execute(design, frame, seed = 42),
-    "No design-driven columns"
-  )
+  result <- execute(design, frame, seed = 42)
   expect_s3_class(result, "tbl_sample")
   expect_equal(get_stages_executed(result), 1:3)
 })
@@ -708,10 +706,7 @@ test_that("continuation with stages = c(2, 3) after stage 1 works", {
   frame <- three_stage_frame()
 
   s1 <- execute(design, frame, stages = 1, seed = 42)
-  expect_warning(
-    s23 <- execute(s1, frame, stages = c(2, 3), seed = 2),
-    "No design-driven columns"
-  )
+  s23 <- execute(s1, frame, stages = c(2, 3), seed = 2)
 
   expect_s3_class(s23, "tbl_sample")
   expect_equal(get_stages_executed(s23), 1:3)
@@ -722,10 +717,7 @@ test_that("continuation with stages = NULL picks up remaining stages", {
   frame <- three_stage_frame()
 
   s1 <- execute(design, frame, stages = 1, seed = 42)
-  expect_warning(
-    s_rest <- execute(s1, frame, seed = 2),
-    "No design-driven columns"
-  )
+  s_rest <- execute(s1, frame, seed = 2)
 
   expect_s3_class(s_rest, "tbl_sample")
   expect_equal(get_stages_executed(s_rest), 1:3)
@@ -737,10 +729,7 @@ test_that("chained continuation 1 -> 2 -> 3 works", {
 
   s1 <- execute(design, frame, stages = 1, seed = 42)
   s2 <- execute(s1, frame, stages = 2, seed = 2)
-  expect_warning(
-    s3 <- execute(s2, frame, stages = 3, seed = 3),
-    "No design-driven columns"
-  )
+  s3 <- execute(s2, frame, stages = 3, seed = 3)
 
   expect_s3_class(s3, "tbl_sample")
   expect_equal(get_stages_executed(s3), 1:3)
@@ -753,6 +742,48 @@ test_that("execute(design) with stages = c(2, 1) is sorted to c(1, 2) and works"
   result <- execute(design, frame, stages = c(2, 1), seed = 42)
   expect_s3_class(result, "tbl_sample")
   expect_equal(get_stages_executed(result), c(1L, 2L))
+})
+
+test_that("subset_frame_to_sample errors when no join keys exist", {
+  frame <- data.frame(id = 1:100)
+
+  design <- sampling_design() |>
+    draw(n = 50) |>
+    add_stage() |>
+    draw(n = 10)
+
+  expect_error(
+    execute(design, frame, seed = 123),
+    "No design-driven columns"
+  )
+})
+
+test_that("WR parent + clustered final stage does not cross-duplicate rows", {
+  frame <- data.frame(
+    district = rep(1:3, each = 6),
+    ea = rep(1:6, each = 3),
+    unit = 1:18
+  )
+
+  design <- sampling_design() |>
+    add_stage() |>
+    cluster_by(district) |>
+    draw(n = 4, method = "srswr") |>
+    add_stage() |>
+    cluster_by(ea) |>
+    draw(n = 1)
+
+  result <- execute(design, frame, seed = 1)
+
+  # 4 draws, 1 EA per draw, 3 units per EA = 12 rows
+  expect_equal(nrow(result), 12L)
+
+  # Each draw_1 context should have exactly 3 rows (one EA's worth)
+  draw_counts <- table(result$.draw_1)
+  expect_true(all(draw_counts == 3L))
+
+  # Weights should sum to the population total
+  expect_equal(sum(result$.weight), 18)
 })
 
 test_that("two-phase SRS -> SRS: weights compound correctly", {

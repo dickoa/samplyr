@@ -511,7 +511,10 @@ execute_single_stage <- function(
 
     if (is_final_stage) {
       cluster_vars <- cluster_spec$vars
-      join_cols <- c(cluster_vars, ".weight", ".fpc", ".sample_id")
+      draw_k_cols <- grep("^\\.draw_\\d+$", names(result), value = TRUE)
+      draw_k_cols <- intersect(draw_k_cols, names(frame))
+      by_vars <- c(cluster_vars, draw_k_cols)
+      join_cols <- c(by_vars, ".weight", ".fpc", ".sample_id")
       if (".draw" %in% names(result)) {
         join_cols <- c(join_cols, ".draw")
       }
@@ -521,7 +524,7 @@ execute_single_stage <- function(
       cluster_data <- result[, join_cols, drop = FALSE]
       result <- dplyr::inner_join(
         frame, cluster_data,
-        by = cluster_vars, relationship = "many-to-many"
+        by = by_vars, relationship = "many-to-many"
       )
     }
   } else if (
@@ -731,12 +734,11 @@ subset_frame_to_sample <- function(
   join_cols <- intersect(join_cols, intersect(names(frame), names(sample)))
 
   if (length(join_cols) == 0) {
-    cli_warn(c(
+    cli_abort(c(
       "No design-driven columns for linking frames across stages.",
       "i" = "Neither strata nor cluster variables are available as join keys.",
-      "i" = "Returning full frame; results may be incorrect if the frame should be subsetted."
+      "i" = "Multi-stage designs require cluster or strata variables to link stages."
     ))
-    return(frame)
   }
   semi_join(frame, sample, by = join_cols)
 }

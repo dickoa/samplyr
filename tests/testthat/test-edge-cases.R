@@ -1356,6 +1356,39 @@ test_that("WR cluster sampling replicates cluster rows", {
   }
 })
 
+test_that("WR/PMR methods store Inf in .fpc_k", {
+  frame <- data.frame(id = 1:20, y = rnorm(20))
+
+  s_wr <- sampling_design() |>
+    draw(n = 10, method = "srswr") |>
+    execute(frame, seed = 1)
+  expect_true(all(is.infinite(s_wr$.fpc_1)))
+
+  s_mult <- sampling_design() |>
+    draw(n = 10, method = "pps_multinomial", mos = id) |>
+    execute(frame, seed = 1)
+  expect_true(all(is.infinite(s_mult$.fpc_1)))
+
+  s_chromy <- sampling_design() |>
+    draw(n = 10, method = "pps_chromy", mos = id) |>
+    execute(frame, seed = 1)
+  expect_true(all(is.infinite(s_chromy$.fpc_1)))
+})
+
+test_that("stratified WR stores Inf in .fpc_k", {
+  frame <- data.frame(
+    stratum = rep(c("A", "B"), each = 10),
+    id = 1:20,
+    y = rnorm(20)
+  )
+
+  result <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = 5, method = "srswr") |>
+    execute(frame, seed = 1)
+  expect_true(all(is.infinite(result$.fpc_1)))
+})
+
 test_that("as_svydesign uses .draw_k as id for WR methods", {
   skip_if_not_installed("survey")
   frame <- data.frame(

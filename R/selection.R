@@ -202,7 +202,11 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
     )
     selected$.weight <- 1 / selected$.pik
     selected$.pik <- NULL
-    selected$.fpc <- rep.int(N_h, nrow(selected))
+    selected$.fpc <- if (draw_spec$method %in% multi_hit_methods) {
+      rep.int(Inf, nrow(selected))
+    } else {
+      rep.int(N_h, nrow(selected))
+    }
     selected
   })
 
@@ -339,7 +343,7 @@ sample_unstratified <- function(frame, draw_spec) {
   result <- draw_sample(frame, n, draw_spec)
   result$.weight <- 1 / result$.pik
   result$.pik <- NULL
-  result$.fpc <- N
+  result$.fpc <- if (draw_spec$method %in% multi_hit_methods) Inf else N
   result$.sample_id <- seq_len(nrow(result))
   result
 }

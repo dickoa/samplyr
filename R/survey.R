@@ -473,6 +473,14 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
     fpc2 <- survey_fpc_info(df2, design2, stages_executed, id_stage2)
     df2 <- fpc2$df
 
+    if (fpc1$has_pps_wor) {
+      cli_abort(c(
+        "Two-phase export does not support PPS at phase 1.",
+        "i" = "{.fn survey::twophase} requires the phase 1 PPS specification to be {.code NULL}.",
+        "i" = "Export each phase separately with {.fn as_svydesign} instead."
+      ))
+    }
+
     strata2_extra <- setdiff(strata2$vars, names(df1))
     id_vars2_extra <- setdiff(id_vars2, names(df1))
 
