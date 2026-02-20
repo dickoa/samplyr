@@ -896,6 +896,14 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
         call = call
       )
     }
+    if (any(mos_vals == 0) && sum(mos_vals) > 0) {
+      n_zero <- sum(mos_vals == 0)
+      cli_warn(c(
+        "MOS variable {.var {mos_var}} contains {n_zero} zero value{?s}.",
+        "i" = "Units with MOS = 0 have zero inclusion probability and will never be selected.",
+        "i" = "Consider removing them from the frame or assigning a positive measure of size."
+      ))
+    }
   }
 
   if (!is_null(prn_var)) {

@@ -21,9 +21,14 @@ sample_clusters <- function(frame, strata_spec, cluster_spec, draw_spec) {
       nrow()
 
     if (n_combos != n_clusters) {
-      varying <- invariant_vars[vapply(invariant_vars, function(v) {
-        nrow(distinct(frame, across(all_of(c(cluster_vars, v))))) != n_clusters
-      }, logical(1))]
+      varying <- invariant_vars[vapply(
+        invariant_vars,
+        function(v) {
+          nrow(distinct(frame, across(all_of(c(cluster_vars, v))))) !=
+            n_clusters
+        },
+        logical(1)
+      )]
       cli_abort(c(
         "{.val {varying}} must be constant within each cluster defined by {.val {cluster_vars}}.",
         "i" = "Found clusters where {.val {varying}} varies across rows.",
@@ -159,7 +164,9 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
       function(stratum_key) {
         n_h <- n_lookup[[stratum_key]]
         if (is_null(n_h) || length(n_h) == 0 || is.na(n_h)) {
-          cli_abort("Could not determine sample size for stratum {.val {stratum_key}}")
+          cli_abort(
+            "Could not determine sample size for stratum {.val {stratum_key}}"
+          )
         }
         as.integer(n_h)
       },
@@ -178,7 +185,9 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
 
     n_h <- n_lookup[[stratum_key]]
     if (is_null(n_h) || length(n_h) == 0 || is.na(n_h)) {
-      cli_abort("Could not determine sample size for stratum {.val {stratum_key}}")
+      cli_abort(
+        "Could not determine sample size for stratum {.val {stratum_key}}"
+      )
     }
 
     N_h <- nrow(data)
@@ -352,7 +361,7 @@ sample_unstratified <- function(frame, draw_spec) {
 #'
 #' When a random-size method produces zero selections, either abort or
 #' fall back to SRS of 1 unit.  The fallback weight is 1/(1/N) = N,
-#' reflecting the actual SRS(1, N) selection mechanism — **not** the
+#' reflecting the actual SRS(1, N) selection mechanism **not** the
 #' intended Bernoulli/Poisson inclusion probability.
 #' @noRd
 handle_empty_selection <- function(method_label, on_empty, N) {
@@ -360,7 +369,8 @@ handle_empty_selection <- function(method_label, on_empty, N) {
   suggestions <- c(
     "i" = "Increase {.arg frac} (or {.arg n}), use a fixed-size method, or set {.code on_empty = \"warn\"} to fall back to SRS of 1 unit."
   )
-  switch(on_empty,
+  switch(
+    on_empty,
     error = cli_abort(c(header, suggestions)),
     warn = cli_warn(c(
       header,
@@ -409,7 +419,8 @@ draw_sample <- function(data, n, draw_spec) {
 
   pik <- NULL
 
-  switch(method,
+  switch(
+    method,
     srswor = {
       idx <- sondage::equal_prob_wor(N, n)$sample
       pik <- rep(n / N, N)
@@ -426,7 +437,12 @@ draw_sample <- function(data, n, draw_spec) {
       frac <- draw_spec$frac %||% (n / N)
       pik <- rep(frac, N)
       prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
-      idx <- sondage::equal_prob_wor(N, frac * N, method = "bernoulli", prn = prn_vals)$sample
+      idx <- sondage::equal_prob_wor(
+        N,
+        frac * N,
+        method = "bernoulli",
+        prn = prn_vals
+      )$sample
       if (length(idx) == 0) {
         on_empty <- draw_spec$on_empty %||% "error"
         fallback <- handle_empty_selection("Bernoulli", on_empty, N)
@@ -440,7 +456,11 @@ draw_sample <- function(data, n, draw_spec) {
       pik <- frac * mos_vals / sum(mos_vals) * N
       pik <- pmin(pik, 1)
       prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
-      idx <- sondage::unequal_prob_wor(pik, method = "poisson", prn = prn_vals)$sample
+      idx <- sondage::unequal_prob_wor(
+        pik,
+        method = "poisson",
+        prn = prn_vals
+      )$sample
       if (length(idx) == 0) {
         on_empty <- draw_spec$on_empty %||% "error"
         fallback <- handle_empty_selection("PPS Poisson", on_empty, N)
@@ -456,13 +476,20 @@ draw_sample <- function(data, n, draw_spec) {
       mos_vals <- data[[mos]]
       pik <- sondage::inclusion_prob(mos_vals, n)
       prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
-      idx <- sondage::unequal_prob_wor(pik, method = sondage_method_name(method), prn = prn_vals)$sample
+      idx <- sondage::unequal_prob_wor(
+        pik,
+        method = sondage_method_name(method),
+        prn = prn_vals
+      )$sample
     },
     pps_multinomial = ,
     pps_chromy = {
       mos_vals <- data[[mos]]
       pik <- sondage::expected_hits(mos_vals, n)
-      idx <- sondage::unequal_prob_wr(pik, method = sondage_method_name(method))$sample
+      idx <- sondage::unequal_prob_wr(
+        pik,
+        method = sondage_method_name(method)
+      )$sample
     },
     cli_abort("Unknown sampling method: {.val {method}}")
   )
@@ -564,13 +591,18 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
     ))
   }
 
-  switch(method,
+  switch(
+    method,
     pps_poisson = {
       frac <- draw_spec$frac %||% (n / N)
       pik <- frac * mos_vals / sum(mos_vals) * N
       pik <- pmin(pik, 1)
       prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
-      idx <- sondage::unequal_prob_wor(pik, method = "poisson", prn = prn_vals)$sample
+      idx <- sondage::unequal_prob_wor(
+        pik,
+        method = "poisson",
+        prn = prn_vals
+      )$sample
       if (length(idx) == 0) {
         on_empty <- draw_spec$on_empty %||% "error"
         fallback <- handle_empty_selection("PPS Poisson", on_empty, N)
@@ -585,12 +617,19 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
     pps_pareto = {
       pik <- sondage::inclusion_prob(mos_vals, n)
       prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
-      idx <- sondage::unequal_prob_wor(pik, method = sondage_method_name(method), prn = prn_vals)$sample
+      idx <- sondage::unequal_prob_wor(
+        pik,
+        method = sondage_method_name(method),
+        prn = prn_vals
+      )$sample
     },
     pps_multinomial = ,
     pps_chromy = {
       pik <- sondage::expected_hits(mos_vals, n)
-      idx <- sondage::unequal_prob_wr(pik, method = sondage_method_name(method))$sample
+      idx <- sondage::unequal_prob_wr(
+        pik,
+        method = sondage_method_name(method)
+      )$sample
     }
   )
 

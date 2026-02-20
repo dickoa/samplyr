@@ -453,9 +453,11 @@ test_that("PPS with zero size unit never selects it", {
   )
 
   for (seed in 1:5) {
-    result <- sampling_design() |>
-      draw(n = 2, method = "pps_systematic", mos = size) |>
-      execute(frame, seed = seed)
+    result <- suppressWarnings(
+      sampling_design() |>
+        draw(n = 2, method = "pps_systematic", mos = size) |>
+        execute(frame, seed = seed)
+    )
 
     expect_false(1 %in% result$id)
   }
@@ -1190,6 +1192,21 @@ test_that("stratified pps_poisson with named vector frac works", {
   expect_true(nrow(sample) > 0)
 })
 
+test_that("PPS warns when some MOS values are zero", {
+  frame <- data.frame(id = 1:5, size = c(0, 10, 20, 30, 40))
+
+  expect_warning(
+    result <- sampling_design() |>
+      draw(n = 3, method = "pps_brewer", mos = size) |>
+      execute(frame, seed = 1),
+    "zero value"
+  )
+
+  # Unit with MOS=0 should not be in the sample
+  expect_false(1 %in% result$id)
+  expect_equal(nrow(result), 3L)
+})
+
 test_that("PPS errors when all MOS values are zero", {
   frame <- data.frame(
     id = 1:10,
@@ -1211,13 +1228,13 @@ test_that("PPS errors when all MOS are zero within a stratum", {
     size = c(rep(0L, 10), 1:10) # group A has all zeros
   )
 
-  expect_error(
+  suppressWarnings(expect_error(
     sampling_design() |>
       stratify_by(group) |>
       draw(n = 3, method = "pps_brewer", mos = size) |>
       execute(frame, seed = 1),
     "sum of MOS"
-  )
+  ))
 })
 
 test_that("PPS with zero MOS after certainty removal errors", {
@@ -1227,12 +1244,12 @@ test_that("PPS with zero MOS after certainty removal errors", {
     size = c(1000, 0, 0, 0, 0)
   )
 
-  expect_error(
+  suppressWarnings(expect_error(
     sampling_design() |>
       draw(n = 3, method = "pps_brewer", mos = size, certainty_size = 500) |>
       execute(frame, seed = 1),
     "sum of MOS"
-  )
+  ))
 })
 
 test_that("srswr produces n replicated rows with correct .draw_1", {

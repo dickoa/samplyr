@@ -7,11 +7,7 @@ test_that("execute() produces .fpc_k columns for unstratified SRS", {
 test_that("execute() produces .fpc_k columns for stratified design", {
   expect_true(".fpc_1" %in% names(fix_strat_prop))
   # FPC should vary by stratum and equal stratum population sizes
-  fpc_by_stratum <- tapply(
-    fix_strat_prop$.fpc_1,
-    fix_strat_prop$stratum,
-    unique
-  )
+  fpc_by_stratum <- tapply(fix_strat_prop$.fpc_1, fix_strat_prop$stratum, unique)
   pop_by_stratum <- table(test_frame$stratum)
   for (s in names(fpc_by_stratum)) {
     expect_equal(
