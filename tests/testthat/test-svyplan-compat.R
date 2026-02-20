@@ -324,6 +324,13 @@ test_that("Spencer returns finite deff on unequal-weight sample", {
   expect_true(is.finite(deff))
 })
 
+test_that("CR on unstratified unclustered design gives informative error", {
+  expect_error(
+    design_effect(fix_deff_srs, y = income, method = "cr"),
+    "CR method requires stratification or clustering"
+  )
+})
+
 test_that("summary.tbl_sample reports deff correctly", {
   out <- capture.output(summary(fix_deff_disprop))
   expect_true(any(grepl("DEFF", out)))

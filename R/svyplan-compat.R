@@ -120,6 +120,13 @@ resolve_deff_args <- function(x, y, x_cal, method) {
         clvar_val <- x[[cluster_vars[1L]]]
       }
     }
+
+    if (is.null(strvar_val) && is.null(clvar_val)) {
+      cli_abort(c(
+        "The CR method requires stratification or clustering in the design.",
+        i = "Use {.fn design_effect} with {.arg method = \"kish\"} for unstratified, unclustered designs."
+      ))
+    }
   }
 
   list(y = y_val, x_cal = x_cal_val, p = p_val,
