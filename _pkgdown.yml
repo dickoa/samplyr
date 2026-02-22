@@ -1,6 +1,7 @@
 url: https://dickoa.gitlab.io/samplyr
 template:
   bootstrap: 5
+  math-rendering: mathjax
 
 articles:
   - title: "Getting Started"
