@@ -207,6 +207,22 @@ test_that("serp matches SAS SURVEYSELECT SORT=SERP behavior", {
 })
 
 
+test_that("serp uses byte-order (radix) for character variable ranks", {
+  # Byte/ASCII order: uppercase before lowercase (A=65 < B=66 < a=97 < b=98).
+  # The fix (method = "radix" in sort()) ensures this holds regardless of
+  # system locale, which may interleave cases (e.g. A, a, B, b).
+  # Input deliberately scrambles position order to distinguish from position-based sort.
+  df <- data.frame(
+    region   = c("a", "B", "A", "b"),
+    district = c(1L, 1L, 1L, 1L),
+    id       = 1:4
+  )
+  result <- df[order(serp(df$region, df$district)), ]
+  # Radix level order: A(rank 1), B(rank 2), a(rank 3), b(rank 4)
+  expect_equal(result$id, c(3L, 2L, 1L, 4L))
+})
+
+
 test_that("serp is fast for large datasets", {
   skip_on_cran()
 

@@ -114,7 +114,7 @@ serp <- function(...) {
   }
 
   ranks <- lapply(var_vals, function(v) {
-    lvls <- sort(unique(v[!is.na(v)]))
+    lvls <- sort(unique(v[!is.na(v)]), method = "radix")
     r <- as.integer(factor(v, levels = lvls))
     r[is.na(r)] <- length(lvls) + 1L
     r

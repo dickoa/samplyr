@@ -16,7 +16,10 @@ round_preserve_total <- function(x, n) {
   shortfall <- n - sum(floored)
 
   if (shortfall > 0) {
-    add_indices <- order(remainders, decreasing = TRUE)[seq_len(shortfall)]
+    # True ORIC (Cont & Heidari 2014): primary sort by fractional remainder
+    # descending; secondary sort by floor(x) descending to break ties in favour
+    # of larger strata, minimising relative rounding error.
+    add_indices <- order(remainders, floored, decreasing = TRUE, method = "radix")[seq_len(shortfall)]
     floored[add_indices] <- floored[add_indices] + 1
   }
   as.integer(floored)
@@ -50,7 +53,7 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
     if (length(eligible) == 0L) break
     scores <- (x - a)[eligible]
     k <- min(shortfall, length(eligible))
-    top <- eligible[order(scores, decreasing = TRUE)[seq_len(k)]]
+    top <- eligible[order(scores, a[eligible], decreasing = TRUE, method = "radix")[seq_len(k)]]
     a[top] <- a[top] + 1L
     shortfall <- n - sum(a)
   }
@@ -60,7 +63,7 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
     if (length(eligible) == 0L) break
     scores <- (a - x)[eligible]
     k <- min(-shortfall, length(eligible))
-    top <- eligible[order(scores, decreasing = TRUE)[seq_len(k)]]
+    top <- eligible[order(scores, a[eligible], decreasing = TRUE, method = "radix")[seq_len(k)]]
     a[top] <- a[top] - 1L
     shortfall <- n - sum(a)
   }

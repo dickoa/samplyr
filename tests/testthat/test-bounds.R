@@ -471,3 +471,26 @@ test_that("Neyman allocation with extreme variance spread and bounds", {
   expect_true(all(counts <= 40))
   expect_equal(sum(counts), 60)
 })
+
+
+test_that("round_preserve_total uses ORIC tie-breaking: larger stratum wins", {
+  # Three strata with equal fractional remainders, scrambled position order.
+  # x = c(0.5, 2.5, 1.5), n = 4: shortfall = 1, all frac = 0.5.
+  # Position-based tie-break: index 1 (floor = 0) gets +1 -> c(1, 2, 1).
+  # ORIC tie-break: index 2 (floor = 2, largest) gets +1 -> c(0, 3, 1).
+  x <- c(0.5, 2.5, 1.5)
+  result <- samplyr:::round_preserve_total(x, 4L)
+  expect_equal(result, c(0L, 3L, 1L))
+  expect_equal(sum(result), 4L)
+})
+
+test_that("round_preserve_total total is always preserved", {
+  set.seed(99)
+  for (i in 1:20) {
+    x <- runif(10, 0, 5)
+    n <- as.integer(round(sum(x)))
+    result <- samplyr:::round_preserve_total(x, n)
+    expect_equal(sum(result), n)
+    expect_true(all(result >= 0L))
+  }
+})
