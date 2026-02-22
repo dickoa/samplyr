@@ -168,7 +168,7 @@ final_sample <- selected_districts |> execute(zwe_frame, seed = 2)
 | `srswor`     | Fixed       | Simple random sampling without replacement (default) |
 | `srswr`      | Fixed       | Simple random sampling with replacement              |
 | `systematic` | Fixed       | Systematic sampling                                  |
-| `bernoulli`  | Random      | Bernoulli sampling (requires `frac`)                 |
+| `bernoulli`  | Random      | Bernoulli sampling                                   |
 
 ### Probability Proportional to Size (PPS)
 
@@ -177,7 +177,7 @@ final_sample <- selected_districts |> execute(zwe_frame, seed = 2)
 | `pps_brewer`      | Fixed       | Brewer's method (recommended) |
 | `pps_systematic`  | Fixed       | PPS systematic                |
 | `pps_cps`         | Fixed       | Conditional Poisson sampling  |
-| `pps_poisson`     | Random      | PPS Poisson (requires `frac`) |
+| `pps_poisson`     | Random      | PPS Poisson (PRN) |
 | `pps_sps`         | Fixed       | Sequential Poisson sampling (PRN) |
 | `pps_pareto`      | Fixed       | Pareto piPS sampling (PRN)        |
 | `pps_multinomial` | Fixed       | PPS with replacement          |
@@ -207,7 +207,7 @@ data(bfa_eas_variance)
 sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
   draw(n = 300, min_n = 2) |>
-  execute(bfa_eas, seed = 42)
+  execute(bfa_eas, seed = 321)
 ```
 
 ### Custom Allocation
@@ -342,7 +342,7 @@ Plus auxiliary data: `bfa_eas_variance`, `bfa_eas_cost`
 ### SAS PROC SURVEYSELECT
 
 ```sas
-proc surveyselect data=frame method=pps n=50 seed=42;
+proc surveyselect data=frame method=pps n=50 seed=12345;
   strata region;
   cluster school;
   size enrollment;
@@ -375,7 +375,7 @@ sampling_design() |>
 ### SAS Rounding Control
 
 ```sas
-proc surveyselect data=frame method=sys samprate=0.02 seed=42 round=nearest;
+proc surveyselect data=frame method=sys samprate=0.02 seed=2 round=nearest;
   strata State;
 run;
 ```

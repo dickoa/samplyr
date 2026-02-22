@@ -263,7 +263,7 @@ final_sample <- selected_districts |> execute(zwe_frame, seed = 2)
 | `srswor` | Fixed | Simple random sampling without replacement (default) |
 | `srswr` | Fixed | Simple random sampling with replacement |
 | `systematic` | Fixed | Systematic sampling |
-| `bernoulli` | Random | Bernoulli sampling (requires `frac`) |
+| `bernoulli` | Random | Bernoulli sampling |
 
 ### Probability Proportional to Size (PPS)
 
@@ -272,7 +272,7 @@ final_sample <- selected_districts |> execute(zwe_frame, seed = 2)
 | `pps_brewer`      | Fixed       | Brewer’s method (recommended)     |
 | `pps_systematic`  | Fixed       | PPS systematic                    |
 | `pps_cps`         | Fixed       | Conditional Poisson sampling      |
-| `pps_poisson`     | Random      | PPS Poisson (requires `frac`)     |
+| `pps_poisson`     | Random      | PPS Poisson (PRN)                 |
 | `pps_sps`         | Fixed       | Sequential Poisson sampling (PRN) |
 | `pps_pareto`      | Fixed       | Pareto piPS sampling (PRN)        |
 | `pps_multinomial` | Fixed       | PPS with replacement              |
@@ -303,21 +303,21 @@ data(bfa_eas_variance)
 sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
   draw(n = 300, min_n = 2) |>
-  execute(bfa_eas, seed = 42)
+  execute(bfa_eas, seed = 321)
 #> # A tbl_sample: 300 × 17
 #> # Weights:      49.67 [36.08, 77.8]
 #>    ea_id    region     province commune urban_rural population households area_km2 accessible dist_road_km
 #>  * <chr>    <fct>      <fct>    <fct>   <fct>            <dbl>      <int>    <dbl> <lgl>             <dbl>
-#>  1 EA_02518 Boucle du… Kossi    Bouras… Rural              806         91    14.8  TRUE               14  
-#>  2 EA_11697 Boucle du… Banwa    Sanaba  Rural             1359        197    31.2  TRUE               49.7
-#>  3 EA_06821 Boucle du… Nayala   Kougny  Rural             3371        449     3.12 TRUE                9.5
-#>  4 EA_12935 Boucle du… Mouhoun  Tcheri… Rural             1279        153    10.4  TRUE               15.1
-#>  5 EA_14276 Boucle du… Nayala   Ye      Rural             1314        232     2.27 FALSE              40.3
-#>  6 EA_06814 Boucle du… Nayala   Kougny  Rural              849        113    52.8  TRUE               18.6
-#>  7 EA_03727 Boucle du… Kossi    Dokui   Rural             2183        349    10.0  TRUE               29  
-#>  8 EA_02157 Boucle du… Bale     Boromo  Rural              129         17     8.12 FALSE               7.9
-#>  9 EA_04881 Boucle du… Nayala   Gossina Rural             1549        250    15.1  TRUE                8.4
-#> 10 EA_05968 Boucle du… Sourou   Kiemba… Rural              976        155    20.4  TRUE                6.4
+#>  1 EA_13725 Boucle du… Nayala   Toma    Rural             1235        128    17.3  TRUE               10  
+#>  2 EA_14301 Boucle du… Nayala   Ye      Rural             1231        217    29.9  TRUE                7.1
+#>  3 EA_11709 Boucle du… Banwa    Sanaba  Rural             1074        156    25.2  TRUE               15.9
+#>  4 EA_10155 Boucle du… Mouhoun  Ouarko… Rural             1347        187    33.0  TRUE                7.1
+#>  5 EA_06444 Boucle du… Mouhoun  Kona    Rural             1148        181    16.6  TRUE                7.6
+#>  6 EA_02527 Boucle du… Kossi    Bouras… Rural             1268        143    42.5  TRUE               14.9
+#>  7 EA_03143 Boucle du… Mouhoun  Dedoug… Rural             1286        228    12.4  TRUE                5.1
+#>  8 EA_12514 Boucle du… Kossi    Sono    Rural             1296        187    23.6  FALSE              22.9
+#>  9 EA_14276 Boucle du… Nayala   Ye      Rural             1314        232     2.27 FALSE              40.3
+#> 10 EA_12908 Boucle du… Mouhoun  Tcheri… Rural             1170        140     9.7  TRUE                8.1
 #> # ℹ 290 more rows
 #> # ℹ 7 more variables: food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
@@ -476,15 +476,15 @@ Weights compound automatically across phases.
 
 ``` r
 summary(strata_smpl)
-#> ── Sample Summary ───────────────────────────────────────────────────────────────────────────────────
+#> ── Sample Summary ────────────────────────────────────────────────────────────────────────────────────
 #> 
 #> ℹ n = 300 | stages = 1/1 | seed = 42
 #> 
-#> ── Design: Stage 1 ──────────────────────────────────────────────────────────────────────────────────
+#> ── Design: Stage 1 ───────────────────────────────────────────────────────────────────────────────────
 #> • Strata: region (proportional)
 #> • Method: srswor
 #> 
-#> ── Allocation: Stage 1 ──────────────────────────────────────────────────────────────────────────────
+#> ── Allocation: Stage 1 ───────────────────────────────────────────────────────────────────────────────
 #>   region             N_h    n_h  f_h   
 #>   Boucle du Mouhoun  1483   30   0.0202
 #>   Cascades           667    14   0.0210
@@ -502,7 +502,7 @@ summary(strata_smpl)
 #>                      ─────  ───  ──────
 #>   Total              14900  300  0.0201
 #> 
-#> ── Weights ──────────────────────────────────────────────────────────────────────────────────────────
+#> ── Weights ───────────────────────────────────────────────────────────────────────────────────────────
 #> • Range: [47.64, 50.67]
 #> • Mean:  49.67 · CV: 0.02
 #> • DEFF:  1 · n_eff: 300
@@ -526,7 +526,7 @@ Plus auxiliary data: `bfa_eas_variance`, `bfa_eas_cost`
 ### SAS PROC SURVEYSELECT
 
 ``` sas
-proc surveyselect data=frame method=pps n=50 seed=42;
+proc surveyselect data=frame method=pps n=50 seed=12345;
   strata region;
   cluster school;
   size enrollment;
@@ -559,7 +559,7 @@ sampling_design() |>
 ### SAS Rounding Control
 
 ``` sas
-proc surveyselect data=frame method=sys samprate=0.02 seed=42 round=nearest;
+proc surveyselect data=frame method=sys samprate=0.02 seed=2 round=nearest;
   strata State;
 run;
 ```
