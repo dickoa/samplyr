@@ -1,4 +1,4 @@
-# samplyr 0.3.9999 (development)
+# samplyr 0.4.9999 (development)
 
 ## Core Grammar
 
@@ -8,7 +8,7 @@
 * Frame-independent design pattern: specification is separate from execution.
   Designs are reusable across different frames.
 
-## Sampling Methods (12 total)
+## Sampling Methods (13 total)
 
 * Equal probability: SRS without replacement (`srswor`), SRS with
   replacement (`srswr`), systematic, and Bernoulli.
@@ -16,6 +16,10 @@
   entropy), Poisson, sequential Poisson (SPS), and Pareto.
 * PPS with replacement / PMR: multinomial and Chromy (probability minimum
   replacement).
+* Balanced sampling (`balanced`): the cube method (Deville & Tille 2004)
+  with optional auxiliary variables (`aux`) and measure of size (`mos`).
+  Stratified designs use the stratified cube algorithm (Chauvet 2009).
+  Supported for up to 2 stages.
 * Permanent random number (PRN) support for sample coordination:
   `bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`.
 * Random-size methods (`bernoulli`, `pps_poisson`) accept `n` as expected
@@ -69,14 +73,16 @@
 * `as_svydesign()` converts `tbl_sample` to `survey::svydesign()` with
   correct strata, cluster ids, weights, and finite population corrections.
   Handles PPS WOR (Brewer approximation or exact ppsmat), WR/PMR (Inf FPC,
-  Hansen-Hurwitz), certainty strata, and two-phase designs.
+  Hansen-Hurwitz), certainty strata, balanced sampling, and two-phase
+  designs.
 * `as_svrepdesign()` converts to replicate-weight designs via
-  `survey::as.svrepdesign()`. For PPS designs, `"subbootstrap"` and
-  `"mrbbootstrap"` are supported; other types emit a warning.
+  `survey::as.svrepdesign()`. For PPS and balanced designs, `"subbootstrap"`
+  and `"mrbbootstrap"` are supported; other types emit a warning.
 * `as_survey_design()` and `as_survey_rep()` methods registered on srvyr
   generics for direct conversion to `tbl_svy` objects.
 * `joint_expectation()` computes pairwise joint inclusion probabilities
   (WOR) or joint expected hits (WR/PMR) for exact variance estimation.
+  Supports balanced sampling via high-entropy approximation.
 
 ## Survey Planning (svyplan integration)
 
@@ -93,7 +99,8 @@
 * `summary.tbl_sample()` shows per-stage stratum allocation tables with
   N_h, n_h, f_h, and weight diagnostics (Kish DEFF, n_eff, CV).
 * `validate_frame()` checks for missing variables, NA values in
-  strata/cluster columns, and MOS/PRN issues before execution.
+  strata/cluster columns, and MOS/PRN/auxiliary variable issues before
+  execution.
 
 ## Datasets
 

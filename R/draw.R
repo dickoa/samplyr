@@ -49,14 +49,30 @@
 #'   - `"pps_multinomial"`: PPS multinomial (with replacement, any hit count)
 #'   - `"pps_chromy"`: Chromy's sequential PPS (minimum replacement)
 #'
-#' @param mos Measure of size variable for PPS methods, specified as a bare
-#'   column name (unquoted). Required for all `pps_*` methods.
+#'   **Balanced sampling:**
+#'   - `"balanced"`: Balanced sampling via the cube method (Deville & Tille 2004).
+#'     Uses auxiliary variables (`aux`) to balance the sample so that
+#'     Horvitz-Thompson estimates of auxiliary totals match population totals.
+#'     Supports equal or unequal (`mos`) inclusion probabilities. When
+#'     stratified, uses the stratified cube algorithm (Chauvet 2009). At most
+#'     2 stages may use `"balanced"`.
+#'
+#' @param mos Measure of size variable for PPS methods and optional for
+#'   `"balanced"`, specified as a bare column name (unquoted). Required for
+#'   all `pps_*` methods.
 #' @param prn Permanent random number variable for sample coordination,
 #'   specified as a bare column name (unquoted). Must be a numeric column
 #'   with values in the open interval (0, 1) and no missing values.
 #'   Supported methods: `"bernoulli"`, `"pps_poisson"`, `"pps_sps"`,
 #'   `"pps_pareto"`. When supplied, the sample is deterministic for a given
 #'   set of PRN values, enabling coordination across survey waves.
+#' @param aux Auxiliary balancing variables for `method = "balanced"`,
+#'   specified as bare column names: `aux = c(income, pop_density)`. Columns
+#'   must be numeric with no missing values. The cube algorithm ensures the
+#'   Horvitz-Thompson estimator of these auxiliary totals equals (or nearly
+#'   equals) the population totals, improving precision. When used with
+#'   `cluster_by()`, auxiliary values are automatically aggregated (summed)
+#'   to the cluster level before selection.
 #' @param round Rounding method when converting `frac` to sample sizes.
 #'   One of:
 #'   - `"up"` (default): Round up (ceiling). Matches SAS SURVEYSELECT default.
@@ -151,22 +167,29 @@
 #' | `pps_multinomial` | With | Fixed | Any hit count, Hansen-Hurwitz |
 #' | `pps_chromy` | Min. repl. | Fixed | SAS default PPS_SEQ |
 #'
+#' ### Balanced Sampling
+#'
+#' | Method | Replacement | Sample Size | Notes |
+#' |--------|-------------|-------------|-------|
+#' | `balanced` | Without | Fixed | Deville & Tille 2004, uses `aux` |
+#'
 #' ## Parameter Requirements
 #'
-#' | Method | `n` | `frac` | `mos` |
-#' |--------|-----|--------|-------|
-#' | `srswor` | Yes | or Yes | -- |
-#' | `srswr` | Yes | or Yes | -- |
-#' | `systematic` | Yes | or Yes | -- |
-#' | `bernoulli` | Expected | or Yes | -- |
-#' | `pps_systematic` | Yes | or Yes | Yes |
-#' | `pps_brewer` | Yes | or Yes | Yes |
-#' | `pps_cps` | Yes | -- | Yes |
-#' | `pps_poisson` | Expected | or Yes | Yes |
-#' | `pps_sps` | Yes | or Yes | Yes |
-#' | `pps_pareto` | Yes | or Yes | Yes |
-#' | `pps_multinomial` | Yes | or Yes | Yes |
-#' | `pps_chromy` | Yes | or Yes | Yes |
+#' | Method | `n` | `frac` | `mos` | `aux` |
+#' |--------|-----|--------|-------|-------|
+#' | `srswor` | Yes | or Yes | -- | -- |
+#' | `srswr` | Yes | or Yes | -- | -- |
+#' | `systematic` | Yes | or Yes | -- | -- |
+#' | `bernoulli` | Expected | or Yes | -- | -- |
+#' | `pps_systematic` | Yes | or Yes | Yes | -- |
+#' | `pps_brewer` | Yes | or Yes | Yes | -- |
+#' | `pps_cps` | Yes | -- | Yes | -- |
+#' | `pps_poisson` | Expected | or Yes | Yes | -- |
+#' | `pps_sps` | Yes | or Yes | Yes | -- |
+#' | `pps_pareto` | Yes | or Yes | Yes | -- |
+#' | `pps_multinomial` | Yes | or Yes | Yes | -- |
+#' | `pps_chromy` | Yes | or Yes | Yes | -- |
+#' | `balanced` | Yes | or Yes | Optional | Optional |
 #'
 #' ## Fixed vs Random Sample Size Methods
 #'
@@ -276,6 +299,13 @@
 #' `pps_chromy`:
 #' Chromy, J.R. (1979). Sequential sample selection methods.
 #' *Proceedings of the Survey Research Methods Section, ASA*, 401-406.
+#'
+#' `balanced`:
+#' Deville, J.-C. and \enc{Tillé}{Tille}, Y. (2004). Efficient balanced
+#' sampling: the cube method. *Biometrika*, 91(4), 893-912.
+#'
+#' Chauvet, G. (2009). Stratified balanced sampling.
+#' *Survey Methodology*, 35(1), 115-119.
 #'
 #' @examples
 #' # Simple random sample of 100 EAs
@@ -396,6 +426,7 @@ draw <- function(
   method = "srswor",
   mos = NULL,
   prn = NULL,
+  aux = NULL,
   round = "up",
   control = NULL,
   certainty_size = NULL,
@@ -429,6 +460,18 @@ draw <- function(
     }
   }
 
+  aux_quo <- enquo(aux)
+  aux_names <- if (quo_is_null(aux_quo)) {
+    NULL
+  } else {
+    aux_expr <- quo_get_expr(aux_quo)
+    if (is_call(aux_expr, "c")) {
+      vapply(as.list(aux_expr)[-1], as_label, character(1))
+    } else {
+      as_label(aux_quo)
+    }
+  }
+
   valid_methods <- c(
     "srswor",
     "srswr",
@@ -441,7 +484,8 @@ draw <- function(
     "pps_sps",
     "pps_pareto",
     "pps_multinomial",
-    "pps_chromy"
+    "pps_chromy",
+    "balanced"
   )
 
   if (!is_character(method) || length(method) != 1) {
@@ -518,7 +562,8 @@ draw <- function(
     has_alloc,
     n_is_df,
     frac_is_df,
-    strata_vars = strata_vars
+    strata_vars = strata_vars,
+    aux = aux_names
   )
   validate_bounds(min_n, max_n, has_alloc)
   validate_certainty(
@@ -546,6 +591,7 @@ draw <- function(
     method = method,
     mos = mos_name,
     prn = prn_name,
+    aux = aux_names,
     min_n = min_n,
     max_n = max_n,
     round = round,
@@ -651,7 +697,8 @@ validate_draw_df <- function(
       "pps_cps",
       "pps_poisson",
       "pps_sps",
-      "pps_pareto"
+      "pps_pareto",
+      "balanced"
     )
     if (!is_null(method) && method %in% wor_methods && any(values > 1)) {
       cli_abort(
@@ -674,6 +721,7 @@ validate_draw_args <- function(
   n_is_df,
   frac_is_df,
   strata_vars = NULL,
+  aux = NULL,
   call = rlang::caller_env()
 ) {
   if (has_alloc && is_null(n) && !is_null(frac)) {
@@ -693,8 +741,24 @@ validate_draw_args <- function(
     cli_abort("PPS methods require {.arg mos} (measure of size)", call = call)
   }
 
-  if (!is_pps && !is_null(mos)) {
+  if (!is_pps && !identical(method, "balanced") && !is_null(mos)) {
     cli_warn("{.arg mos} is ignored for non-PPS methods")
+  }
+
+  if (!is_null(aux) && !identical(method, "balanced")) {
+    cli_abort(
+      c(
+        "{.arg aux} is only supported for {.val balanced} sampling.",
+        "x" = "Current method: {.val {method}}"
+      ),
+      call = call
+    )
+  }
+
+  if (!is_null(aux)) {
+    if (!is.character(aux) || length(aux) < 1) {
+      cli_abort("{.arg aux} must specify at least one column name", call = call)
+    }
   }
 
   random_size_methods <- c("bernoulli", "pps_poisson")
@@ -776,7 +840,8 @@ validate_draw_args <- function(
       "pps_cps",
       "pps_poisson",
       "pps_sps",
-      "pps_pareto"
+      "pps_pareto",
+      "balanced"
     )
     if (method %in% wor_methods && any(frac > 1)) {
       cli_abort(

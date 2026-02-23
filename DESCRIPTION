@@ -1,6 +1,6 @@
 Package: samplyr
 Title: A Tidy Grammar for Survey Sampling
-Version: 0.3.9999
+Version: 0.4.9999
 Authors@R: person(given = "Ahmadou",
                   family = "Dicko",
 		  email = "mail@ahmadoudicko.com",
@@ -25,7 +25,7 @@ Imports:
     pillar,
     tibble,
     dplyr (>= 1.1.0),
-    sondage (>= 0.2.0),
+    sondage (>= 0.3.0),
     svyplan (>= 0.3.0),
     withr
 Suggests:

@@ -182,6 +182,44 @@ validate_frame <- function(design, frame, stage = NULL) {
       }
     }
 
+    if (!is_null(stage_spec$draw_spec) && !is_null(stage_spec$draw_spec$aux)) {
+      aux_vars <- stage_spec$draw_spec$aux
+      for (av in aux_vars) {
+        if (!av %in% names(frame)) {
+          issues <- c(
+            issues,
+            list(list(
+              stage = label,
+              type = "aux",
+              vars = av
+            ))
+          )
+        } else {
+          aux_vals <- frame[[av]]
+          if (!is.numeric(aux_vals)) {
+            issues <- c(
+              issues,
+              list(list(
+                stage = label,
+                type = "aux_type",
+                vars = av,
+                actual_class = class(aux_vals)[[1]]
+              ))
+            )
+          } else if (any(is.na(aux_vals))) {
+            issues <- c(
+              issues,
+              list(list(
+                stage = label,
+                type = "aux_na",
+                vars = av
+              ))
+            )
+          }
+        }
+      }
+    }
+
     if (!is_null(stage_spec$draw_spec) && !is_null(stage_spec$draw_spec$prn)) {
       prn_var <- stage_spec$draw_spec$prn
       if (!prn_var %in% names(frame)) {
@@ -268,6 +306,15 @@ report_validation_issues <- function(issues) {
       ),
       "mos_negative" = cli::format_inline(
         "{stage}: MOS variable {.var {vars}} contains negative values"
+      ),
+      "aux" = cli::format_inline(
+        "{stage}: missing auxiliary variable: {.var {vars}}"
+      ),
+      "aux_type" = cli::format_inline(
+        "{stage}: auxiliary variable {.var {vars}} must be numeric, not {.cls {issue$actual_class}}"
+      ),
+      "aux_na" = cli::format_inline(
+        "{stage}: auxiliary variable {.var {vars}} contains NA values"
       ),
       "prn" = cli::format_inline(
         "{stage}: missing PRN variable: {.var {vars}}"

@@ -527,6 +527,47 @@ head(sample_serp2)
 
 ---
 
+## Balanced Sampling
+
+Balanced sampling selects a sample whose Horvitz-Thompson estimates of auxiliary totals match (or nearly match) the population totals. This improves precision for any variable correlated with the auxiliary variables. samplyr implements the cube method (Deville & Tille 2004) via `method = "balanced"`.
+
+Specify auxiliary variables with `aux`. Without `mos`, inclusion probabilities are equal; with `mos`, they are proportional to size:
+
+```{r}
+# Equal-probability balanced sample
+balanced_eq <- sampling_design() |>
+  draw(n = 100, method = "balanced",
+       aux = c(population, households)) |>
+  execute(bfa_eas, seed = 42)
+balanced_eq
+```
+
+The balancing property means the HT estimate of auxiliary totals is close to the true total:
+
+```{r}
+pop_total <- sum(bfa_eas$population)
+ht_total <- sum(balanced_eq$population * balanced_eq$.weight)
+c(population = pop_total, ht_estimate = ht_total)
+```
+
+Balanced sampling combines naturally with stratification. When stratified, samplyr calls the stratified cube algorithm (Chauvet 2009) in a single pass, preserving the allocation computed by `stratify_by()`:
+
+```{r}
+# Stratified PPS balanced sample
+balanced_strat <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300, method = "balanced", mos = households,
+       aux = c(population, area_km2)) |>
+  execute(bfa_eas, seed = 1960)
+balanced_strat
+```
+
+When used with `cluster_by()`, auxiliary values are automatically aggregated (summed) to the cluster level before selection.
+
+Balanced sampling supports up to 2 stages. At stage 1, element-level auxiliary variables are aggregated to PSU totals; at stage 2, the cube method runs on the element-level frame within each selected PSU.
+
+---
+
 ## Multi-Stage Sampling
 
 Multi-stage designs sample in stages: first select primary sampling units (PSUs), then sample within them. This is the standard approach for large-scale surveys when a complete frame of ultimate units isn't available upfront.
@@ -683,6 +724,7 @@ summary(sample)
 | `pps_pareto`      | Fixed       | No                                                             | Pareto sampling, supports PRN                |
 | `pps_multinomial` | Fixed       | Yes                                                            | PPS with replacement                         |
 | `pps_chromy`      | Fixed       | PMR.^[Probability Minimum Replacement based on expected hits.] | Chromy's sequential PPS                      |
+| `balanced`        | Fixed       | No                                                             | Cube method, balances on `aux` variables     |
 
 ### Allocation Methods
 

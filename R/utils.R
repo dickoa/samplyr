@@ -19,10 +19,12 @@ pps_wor_methods <- c(
 pps_wr_methods <- c("pps_multinomial", "pps_chromy")
 pps_methods <- c(pps_wor_methods, pps_wr_methods)
 prn_methods <- c("bernoulli", "pps_poisson", "pps_sps", "pps_pareto")
+jip_methods <- c(pps_methods, "balanced")
 
 #' Map samplyr PPS method name to sondage method name
 #' @noRd
 sondage_method_name <- function(method) {
+  if (identical(method, "balanced")) return("cube")
   sub("^pps_", "", method)
 }
 

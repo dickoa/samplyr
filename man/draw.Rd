@@ -13,6 +13,7 @@ draw(
   method = "srswor",
   mos = NULL,
   prn = NULL,
+  aux = NULL,
   round = "up",
   control = NULL,
   certainty_size = NULL,
@@ -77,10 +78,21 @@ with an allocation method is used. Default is \code{NULL} (no maximum).}
 \item \code{"pps_pareto"}: Pareto sampling (fixed size, supports \code{prn})
 \item \code{"pps_multinomial"}: PPS multinomial (with replacement, any hit count)
 \item \code{"pps_chromy"}: Chromy's sequential PPS (minimum replacement)
+}
+
+\strong{Balanced sampling:}
+\itemize{
+\item \code{"balanced"}: Balanced sampling via the cube method (Deville & Tille 2004).
+Uses auxiliary variables (\code{aux}) to balance the sample so that
+Horvitz-Thompson estimates of auxiliary totals match population totals.
+Supports equal or unequal (\code{mos}) inclusion probabilities. When
+stratified, uses the stratified cube algorithm (Chauvet 2009). At most
+2 stages may use \code{"balanced"}.
 }}
 
-\item{mos}{Measure of size variable for PPS methods, specified as a bare
-column name (unquoted). Required for all \verb{pps_*} methods.}
+\item{mos}{Measure of size variable for PPS methods and optional for
+\code{"balanced"}, specified as a bare column name (unquoted). Required for
+all \verb{pps_*} methods.}
 
 \item{prn}{Permanent random number variable for sample coordination,
 specified as a bare column name (unquoted). Must be a numeric column
@@ -88,6 +100,14 @@ with values in the open interval (0, 1) and no missing values.
 Supported methods: \code{"bernoulli"}, \code{"pps_poisson"}, \code{"pps_sps"},
 \code{"pps_pareto"}. When supplied, the sample is deterministic for a given
 set of PRN values, enabling coordination across survey waves.}
+
+\item{aux}{Auxiliary balancing variables for \code{method = "balanced"},
+specified as bare column names: \code{aux = c(income, pop_density)}. Columns
+must be numeric with no missing values. The cube algorithm ensures the
+Horvitz-Thompson estimator of these auxiliary totals equals (or nearly
+equals) the population totals, improving precision. When used with
+\code{cluster_by()}, auxiliary values are automatically aggregated (summed)
+to the cluster level before selection.}
 
 \item{round}{Rounding method when converting \code{frac} to sample sizes.
 One of:
@@ -207,22 +227,30 @@ sampling design must end with \code{draw()}.
 
 }
 
+\subsection{Balanced Sampling}{\tabular{llll}{
+   Method \tab Replacement \tab Sample Size \tab Notes \cr
+   \code{balanced} \tab Without \tab Fixed \tab Deville & Tille 2004, uses \code{aux} \cr
 }
 
-\subsection{Parameter Requirements}{\tabular{llll}{
-   Method \tab \code{n} \tab \code{frac} \tab \code{mos} \cr
-   \code{srswor} \tab Yes \tab or Yes \tab -- \cr
-   \code{srswr} \tab Yes \tab or Yes \tab -- \cr
-   \code{systematic} \tab Yes \tab or Yes \tab -- \cr
-   \code{bernoulli} \tab Expected \tab or Yes \tab -- \cr
-   \code{pps_systematic} \tab Yes \tab or Yes \tab Yes \cr
-   \code{pps_brewer} \tab Yes \tab or Yes \tab Yes \cr
-   \code{pps_cps} \tab Yes \tab -- \tab Yes \cr
-   \code{pps_poisson} \tab Expected \tab or Yes \tab Yes \cr
-   \code{pps_sps} \tab Yes \tab or Yes \tab Yes \cr
-   \code{pps_pareto} \tab Yes \tab or Yes \tab Yes \cr
-   \code{pps_multinomial} \tab Yes \tab or Yes \tab Yes \cr
-   \code{pps_chromy} \tab Yes \tab or Yes \tab Yes \cr
+}
+
+}
+
+\subsection{Parameter Requirements}{\tabular{lllll}{
+   Method \tab \code{n} \tab \code{frac} \tab \code{mos} \tab \code{aux} \cr
+   \code{srswor} \tab Yes \tab or Yes \tab -- \tab -- \cr
+   \code{srswr} \tab Yes \tab or Yes \tab -- \tab -- \cr
+   \code{systematic} \tab Yes \tab or Yes \tab -- \tab -- \cr
+   \code{bernoulli} \tab Expected \tab or Yes \tab -- \tab -- \cr
+   \code{pps_systematic} \tab Yes \tab or Yes \tab Yes \tab -- \cr
+   \code{pps_brewer} \tab Yes \tab or Yes \tab Yes \tab -- \cr
+   \code{pps_cps} \tab Yes \tab -- \tab Yes \tab -- \cr
+   \code{pps_poisson} \tab Expected \tab or Yes \tab Yes \tab -- \cr
+   \code{pps_sps} \tab Yes \tab or Yes \tab Yes \tab -- \cr
+   \code{pps_pareto} \tab Yes \tab or Yes \tab Yes \tab -- \cr
+   \code{pps_multinomial} \tab Yes \tab or Yes \tab Yes \tab -- \cr
+   \code{pps_chromy} \tab Yes \tab or Yes \tab Yes \tab -- \cr
+   \code{balanced} \tab Yes \tab or Yes \tab Optional \tab Optional \cr
 }
 
 }
@@ -448,6 +476,13 @@ Rosén, B. (1997). Asymptotic theory for order sampling.
 \code{pps_chromy}:
 Chromy, J.R. (1979). Sequential sample selection methods.
 \emph{Proceedings of the Survey Research Methods Section, ASA}, 401-406.
+
+\code{balanced}:
+Deville, J.-C. and \enc{Tillé}{Tille}, Y. (2004). Efficient balanced
+sampling: the cube method. \emph{Biometrika}, 91(4), 893-912.
+
+Chauvet, G. (2009). Stratified balanced sampling.
+\emph{Survey Methodology}, 35(1), 115-119.
 }
 \seealso{
 \code{\link[=sampling_design]{sampling_design()}} for creating designs,

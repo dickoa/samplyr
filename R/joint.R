@@ -63,6 +63,7 @@
 #' | `pps_brewer`       | `joint_inclusion_prob()`      | **Approximate**\eqn{^*} (high-entropy / Hajek-Brewer-Donadio) |
 #' | `pps_sps`          | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
 #' | `pps_pareto`       | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
+#' | `balanced`         | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
 #'
 #' \eqn{^*} Exact recursive formulas for Brewer's joint inclusion
 #' probabilities exist (Brewer 2002, ch. 9) but are
@@ -167,7 +168,7 @@ joint_expectation <- function(x, frame, stage = NULL) {
     stage_spec <- design$stages[[stage_idx]]
     method <- stage_spec$draw_spec$method
 
-    if (!(method %in% pps_methods)) {
+    if (!(method %in% jip_methods)) {
       next
     }
 
@@ -487,14 +488,18 @@ compute_group_jip <- function(
 compute_joint_matrix <- function(frame, n, draw_spec) {
   method <- draw_spec$method
   mos_var <- draw_spec$mos
-  mos_vals <- frame[[mos_var]]
   N <- nrow(frame)
 
-  if (sum(mos_vals) <= 0) {
-    cli_abort(c(
-      "Cannot compute joint expectations: sum of MOS variable {.var {mos_var}} is zero.",
-      "i" = "At least one unit must have a positive measure of size."
-    ), call = NULL)
+  if (!is_null(mos_var)) {
+    mos_vals <- frame[[mos_var]]
+    if (sum(mos_vals) <= 0) {
+      cli_abort(c(
+        "Cannot compute joint expectations: sum of MOS variable {.var {mos_var}} is zero.",
+        "i" = "At least one unit must have a positive measure of size."
+      ), call = NULL)
+    }
+  } else {
+    mos_vals <- NULL
   }
 
   # WR/PMR: joint expected hits, no certainty decomposition needed
@@ -517,6 +522,13 @@ compute_joint_matrix <- function(frame, n, draw_spec) {
       frac <- draw_spec$frac %||% (n / N)
       pik_raw <- frac * mos_vals / sum(mos_vals) * N
       pmin(pik_raw, 1)
+    },
+    balanced = {
+      if (!is_null(mos_vals)) {
+        sondage::inclusion_prob(mos_vals, n)
+      } else {
+        rep(n / N, N)
+      }
     },
     cli_abort("No joint probability function for method {.val {method}}",
               call = NULL)

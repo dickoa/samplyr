@@ -74,6 +74,7 @@ require approximation or simulation.
    \code{pps_brewer} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate}\eqn{^*} (high-entropy / Hajek-Brewer-Donadio) \cr
    \code{pps_sps} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
    \code{pps_pareto} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
+   \code{balanced} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
 }
 
 

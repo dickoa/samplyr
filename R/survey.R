@@ -369,7 +369,7 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
       next
     }
 
-    if (method %in% pps_wor_methods) {
+    if (method %in% pps_wor_methods || method == "balanced") {
       has_pps_wor <- TRUE
       fpc_pi_col <- paste0(".fpc_pi_", stage_idx)
       df[[fpc_pi_col]] <- 1 / df[[weight_col]]
@@ -713,7 +713,7 @@ as_svrepdesign.tbl_sample <- function(
   type <- match.arg(type)
 
   methods_used <- survey_stage_methods(x)
-  pps_used <- unique(methods_used[methods_used %in% pps_methods])
+  pps_used <- unique(methods_used[methods_used %in% c(pps_methods, "balanced")])
   if (length(pps_used) > 0) {
     pps_safe_types <- c("subbootstrap", "mrbbootstrap")
     if (!type %in% pps_safe_types) {

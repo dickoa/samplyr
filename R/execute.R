@@ -820,6 +820,17 @@ validate_design_complete <- function(design, call = rlang::caller_env()) {
       cli_abort("{.val {label}} is incomplete: missing {.fn draw}", call = call)
     }
   }
+
+  balanced_stages <- which(vapply(design$stages, function(s) {
+    identical(s$draw_spec$method, "balanced")
+  }, logical(1)))
+  if (length(balanced_stages) > 2) {
+    cli_abort(c(
+      "Balanced sampling ({.val balanced}) is supported for at most 2 stages.",
+      "i" = "Found {.val balanced} at stages {balanced_stages}."
+    ), call = call)
+  }
+
   invisible(TRUE)
 }
 
@@ -931,6 +942,32 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
         "PRN variable {.var {prn_var}} must have values in the open interval (0, 1)",
         call = call
       )
+    }
+  }
+
+  aux_vars <- stage_spec$draw_spec$aux
+  if (!is_null(aux_vars)) {
+    missing_aux <- setdiff(aux_vars, names(frame))
+    if (length(missing_aux) > 0) {
+      cli_abort(c(
+        "Required {cli::qty(length(missing_aux))} auxiliary variable{?s} not found in frame:",
+        "x" = "{.val {missing_aux}}"
+      ), call = call)
+    }
+    for (av in aux_vars) {
+      aux_vals <- frame[[av]]
+      if (!is.numeric(aux_vals)) {
+        cli_abort(
+          "Auxiliary variable {.var {av}} must be numeric, not {.cls {class(aux_vals)[[1]]}}",
+          call = call
+        )
+      }
+      if (anyNA(aux_vals)) {
+        cli_abort(
+          "Auxiliary variable {.var {av}} contains NA values",
+          call = call
+        )
+      }
     }
   }
 

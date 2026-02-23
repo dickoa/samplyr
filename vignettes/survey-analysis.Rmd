@@ -198,6 +198,7 @@ The supported methods :
 | `pps_poisson`     | $\pi_{kl}$                    | Exact       |
 | `pps_sps`         | $\pi_{kl}$                    | Approximate |
 | `pps_pareto`      | $\pi_{kl}$                    | Approximate |
+| `balanced`        | $\pi_{kl}$                    | Approximate |
 | `pps_multinomial` | $E(n_k * n_l)$                | Exact       |
 | `pps_chromy`      | $E(n_k * n_l)$                | Approximate |
 

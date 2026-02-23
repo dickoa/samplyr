@@ -134,6 +134,10 @@ The quantity of interest is the expected number of hits \(E(n_i) = n \, \text{mo
 
 Chromy's sequential PPS (`pps_chromy`) is classified as *probability minimum replacement* (PMR): each unit receives \(\lfloor E(n_i) \rfloor\) or \(\lceil E(n_i) \rceil\) hits. When all \(E(n_i) < 1\), this reduces to WOR.
 
+**Balanced sampling** (`balanced`):
+
+The cube method (Deville & Tille 2004) selects a fixed-size sample that satisfies (or nearly satisfies) the balancing equations $\sum_{i \in S} a_{ij} / \pi_i = \sum_{i \in U} a_{ij}$ for auxiliary variables $a_j$ specified via `aux`. Without `mos`, $\pi_i = n/N$ (equal probability); with `mos`, $\pi_i$ is computed by `sondage::inclusion_prob()`. When stratified, the stratified cube algorithm (Chauvet 2009) is used: flight phases run per-stratum, then a global flight phase, then per-stratum landing phases. At most 2 stages may use `balanced`. PRN and certainty selection are not supported.
+
 **PRN-compatible methods** (`bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`):
 
 When `prn` is specified, the permanent random numbers are passed through to `sondage`. Selection becomes deterministic given the PRN values, so the

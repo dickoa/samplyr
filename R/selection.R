@@ -34,6 +34,15 @@ sample_clusters <- function(frame, strata_spec, cluster_spec, draw_spec) {
 
   first_rows <- first_row_indices_by_group(cluster_indices)
   cluster_frame <- frame[first_rows, , drop = FALSE]
+
+  if (identical(draw_spec$method, "balanced") && !is_null(draw_spec$aux)) {
+    for (v in draw_spec$aux) {
+      cluster_frame[[v]] <- vapply(cluster_indices, function(idx) {
+        sum(frame[[v]][idx])
+      }, numeric(1))
+    }
+  }
+
   sample_units(cluster_frame, strata_spec, draw_spec)
 }
 
@@ -136,6 +145,11 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
   stratum_info <- stratum_info_from_groups(frame, strata_vars, groups$indices)
 
   stratum_info <- calculate_stratum_sizes(stratum_info, strata_spec, draw_spec)
+
+  if (identical(draw_spec$method, "balanced")) {
+    return(draw_balanced_stratified(frame, groups, stratum_info, strata_vars, draw_spec))
+  }
+
   stratum_keys <- make_group_key(stratum_info, strata_vars)
   n_lookup <- setNames(stratum_info$.n_h, stratum_keys)
   draw_lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars)
@@ -213,6 +227,59 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
 
   result <- bind_rows(results_list)
 
+  result$.sample_id <- seq_len(nrow(result))
+  result
+}
+
+#' Balanced sampling with stratified cube (single call to sondage::balanced_wor)
+#' @noRd
+draw_balanced_stratified <- function(frame, groups, stratum_info, strata_vars, draw_spec) {
+  N <- nrow(frame)
+  mos <- draw_spec$mos
+  aux_vars <- draw_spec$aux
+
+  pik <- numeric(N)
+  fpc_vec <- numeric(N)
+  strata_int <- integer(N)
+
+  stratum_keys <- make_group_key(stratum_info, strata_vars)
+  n_lookup <- setNames(stratum_info$.n_h, stratum_keys)
+  N_lookup <- setNames(stratum_info$.N_h, stratum_keys)
+
+  for (i in seq_along(groups$indices)) {
+    idxs <- groups$indices[[i]]
+    stratum_key <- groups$keys[[i]]
+    n_h <- n_lookup[[stratum_key]]
+    N_h <- N_lookup[[stratum_key]]
+    n_h <- min(n_h, N_h)
+
+    if (!is_null(mos)) {
+      pik[idxs] <- sondage::inclusion_prob(frame[[mos]][idxs], n_h)
+    } else {
+      pik[idxs] <- rep(n_h / N_h, N_h)
+    }
+    fpc_vec[idxs] <- N_h
+    strata_int[idxs] <- i
+  }
+
+  aux_mat <- if (!is_null(aux_vars)) {
+    as.matrix(frame[, aux_vars, drop = FALSE])
+  } else {
+    NULL
+  }
+
+  row_order <- order(strata_int)
+  pik_sorted <- pik[row_order]
+  strata_sorted <- strata_int[row_order]
+  aux_sorted <- if (!is_null(aux_mat)) aux_mat[row_order, , drop = FALSE] else NULL
+
+  res <- sondage::balanced_wor(pik_sorted, aux = aux_sorted, strata = strata_sorted)
+  selected_sorted <- res$sample
+
+  original_idx <- row_order[selected_sorted]
+  result <- frame[original_idx, , drop = FALSE]
+  result$.weight <- 1 / pik[original_idx]
+  result$.fpc <- fpc_vec[original_idx]
   result$.sample_id <- seq_len(nrow(result))
   result
 }
@@ -464,6 +531,19 @@ draw_sample <- function(data, n, draw_spec) {
       mos_vals <- data[[mos]]
       pik <- sondage::expected_hits(mos_vals, n)
       idx <- sondage::unequal_prob_wr(pik, method = sondage_method_name(method))$sample
+    },
+    balanced = {
+      pik <- if (!is_null(mos)) {
+        sondage::inclusion_prob(data[[mos]], n)
+      } else {
+        rep(n / N, N)
+      }
+      aux_mat <- if (!is_null(draw_spec$aux)) {
+        as.matrix(data[, draw_spec$aux, drop = FALSE])
+      } else {
+        NULL
+      }
+      idx <- sondage::balanced_wor(pik, aux = aux_mat)$sample
     },
     cli_abort("Unknown sampling method: {.val {method}}")
   )

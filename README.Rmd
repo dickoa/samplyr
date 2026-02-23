@@ -69,7 +69,7 @@ design <- sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 300)
 
-sample <- execute(design, bfa_eas, seed = 42)
+sample <- execute(design, bfa_eas, seed = 2)
 sample
 ```
 
@@ -82,7 +82,7 @@ data(bfa_eas)
 # Simple random sample
 srs_smpl <- sampling_design() |>
   draw(n = 100) |>
-  execute(bfa_eas, seed = 42)
+  execute(bfa_eas, seed = 321)
 
 srs_smpl
 
@@ -90,7 +90,7 @@ srs_smpl
 strata_smpl <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
-  execute(bfa_eas, seed = 42)
+  execute(bfa_eas, seed = 12)
 
 strata_smpl
 
@@ -98,7 +98,7 @@ strata_smpl
 cluster_smpl <- sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 50, method = "pps_brewer", mos = households) |>
-  execute(bfa_eas, seed = 42)
+  execute(bfa_eas, seed = 123)
 
 cluster_smpl
 ```
@@ -122,7 +122,7 @@ sample <- sampling_design() |>
     draw(n = 10, method = "pps_brewer", mos = district_hh) |>
   add_stage(label = "EAs") |>
     draw(n = 5) |>
-  execute(zwe_frame, seed = 123)
+  execute(zwe_frame, seed = 12345)
 
 sample
 ```
@@ -183,6 +183,12 @@ final_sample <- selected_districts |> execute(zwe_frame, seed = 2)
 | `pps_multinomial` | Fixed       | PPS with replacement          |
 | `pps_chromy`      | Fixed       | PPS with minimum replacement  |
 
+### Balanced Sampling
+
+| Method     | Sample Size | Description                                     |
+|------------|-------------|-------------------------------------------------|
+| `balanced` | Fixed       | Cube method (Deville & Tille 2004), uses `aux`  |
+
 ## Allocation Methods
 
 When stratifying, control how the total sample is distributed:
@@ -234,7 +240,7 @@ data(bfa_eas_variance)
 sample <- sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
   draw(n = 300) |>
-  execute(bfa_eas, seed = 42)
+  execute(bfa_eas, seed = 4321)
 
 sample
 ```
@@ -249,15 +255,32 @@ frame$prn <- runif(nrow(frame))
 # Wave 1: sequential Poisson sampling with PRN
 wave1 <- sampling_design() |>
   draw(n = 500, method = "pps_sps", mos = size, prn = prn) |>
-  execute(frame, seed = 1)
+  execute(frame, seed = 10)
 
 # Wave 2: same PRN -> high overlap (positive coordination)
 wave2 <- sampling_design() |>
   draw(n = 500, method = "pps_sps", mos = size, prn = prn) |>
-  execute(frame, seed = 2)
+  execute(frame, seed = 20)
 ```
 
 PRN is supported for `bernoulli`, `pps_poisson`, `pps_sps`, and `pps_pareto`.
+
+## Balanced Sampling
+
+The cube method (Deville & Tille 2004) produces samples whose Horvitz-Thompson estimates of auxiliary totals match the population totals, improving precision:
+
+```{r balanced}
+# Balanced sample using population and area as auxiliary variables
+balanced_smpl <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300, method = "balanced", mos = households,
+       aux = c(population, area_km2)) |>
+  execute(bfa_eas, seed = 24)
+
+balanced_smpl
+```
+
+The `aux` parameter accepts bare column names. When combined with `mos`, inclusion probabilities are proportional to size while the sample remains balanced on the auxiliary variables. Stratified designs use the stratified cube algorithm (Chauvet 2009) in a single call. Balanced sampling is supported for up to 2 stages.
 
 ## Survey Export
 
