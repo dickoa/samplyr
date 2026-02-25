@@ -23,7 +23,7 @@ A tidy grammar for survey sampling in R. **samplyr** provides a minimal set of c
 # Install sondage first (sampling algorithms backend)
 pak::pkg_install("gitlab::dickoa/sondage")
 
-# Install svyplan first (sample size, power and strata alloc)
+# Install svyplan (sample size, precision, power, and stratification)
 pak::pkg_install("gitlab::dickoa/svyplan")
 
 # Install samplyr

@@ -40,7 +40,8 @@
 #' # Spencer (selection probabilities extracted automatically)
 #' design_effect(samp, y = income, method = "spencer")
 #'
-#' @seealso [svyplan::design_effect()], [svyplan::effective_n()]
+#' @seealso [svyplan::design_effect()], [svyplan::effective_n()],
+#'   [svyplan::prec_prop()], [svyplan::prec_mean()]
 #'
 #' @name design_effect
 #' @importFrom svyplan design_effect effective_n
@@ -136,7 +137,7 @@ resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
 #' Coerce svyplan objects for draw()
 #' @noRd
 coerce_svyplan_n <- function(n) {
-  if (inherits(n, c("svyplan_n", "svyplan_power"))) {
+  if (inherits(n, c("svyplan_n", "svyplan_power", "svyplan_cluster"))) {
     return(as.integer(n))
   }
   n

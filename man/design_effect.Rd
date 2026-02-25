@@ -66,5 +66,6 @@ design_effect(samp, y = income, method = "spencer")
 
 }
 \seealso{
-\code{\link[svyplan:design_effect]{svyplan::design_effect()}}, \code{\link[svyplan:effective_n]{svyplan::effective_n()}}
+\code{\link[svyplan:design_effect]{svyplan::design_effect()}}, \code{\link[svyplan:effective_n]{svyplan::effective_n()}},
+\code{\link[svyplan:prec_prop]{svyplan::prec_prop()}}, \code{\link[svyplan:prec_mean]{svyplan::prec_mean()}}
 }

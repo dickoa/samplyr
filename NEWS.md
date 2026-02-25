@@ -84,15 +84,25 @@
   (WOR) or joint expected hits (WR/PMR) for exact variance estimation.
   Supports balanced sampling via high-entropy approximation.
 
-## Survey Planning (svyplan integration)
+## Survey Planning (svyplan >= 0.4.0 integration)
 
 * `design_effect()` and `effective_n()` re-exported from svyplan with
   `tbl_sample` methods. Five methods: Kish, Henry, Spencer, Chen-Rust,
   and cluster planning.
 * Auto-extraction of design metadata (strata, clusters, selection
   probabilities) from the stored sampling design.
-* `draw()` accepts `svyplan_n` and `svyplan_power` objects directly
-  from `n_prop()`, `n_mean()`, `n_multi()`, `power_prop()`, `power_mean()`.
+* `draw()` accepts `svyplan_n`, `svyplan_power`, and `svyplan_cluster`
+  objects directly from `n_prop()`, `n_mean()`, `n_multi()`,
+  `n_cluster()`, `power_prop()`, `power_mean()`.
+* Precision analysis: `prec_prop()`, `prec_mean()`, `prec_cluster()`,
+  `prec_multi()` evaluate achieved precision at a given sample size.
+  Bidirectional round-trip between `n_*()` and `prec_*()` via S3
+  dispatch.
+* Sensitivity analysis via `predict()` methods on all svyplan objects.
+* Response rate adjustment via `resp_rate` parameter across all
+  planning functions.
+* Confidence intervals via `confint()` on sample size and precision
+  objects.
 
 ## Diagnostics
 

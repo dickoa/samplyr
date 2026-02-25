@@ -44,11 +44,41 @@ test_that("draw accepts svyplan_power from power_mean", {
   expect_equal(nrow(result), as.integer(n_obj))
 })
 
+test_that("draw accepts svyplan_cluster from n_cluster", {
+  cl_obj <- svyplan::n_cluster(cost = c(500, 50), delta = 0.05, budget = 100000)
+  n_int <- as.integer(cl_obj)
+  design <- sampling_design() |> draw(n = cl_obj)
+  frame <- data.frame(id = seq_len(n_int + 100))
+  result <- execute(design, frame, seed = 1)
+  expect_equal(nrow(result), n_int)
+})
+
 test_that("non-svyplan n values pass through unchanged", {
   expect_equal(samplyr:::coerce_svyplan_n(50L), 50L)
   expect_equal(samplyr:::coerce_svyplan_n(50), 50)
   df <- data.frame(stratum = "A", n = 10)
   expect_identical(samplyr:::coerce_svyplan_n(df), df)
+})
+
+test_that("svyplan prec_prop round-trip preserves n", {
+  s <- svyplan::n_prop(p = 0.3, moe = 0.05)
+  p <- svyplan::prec_prop(s)
+  s2 <- svyplan::n_prop(p)
+  expect_equal(as.integer(s), as.integer(s2))
+})
+
+test_that("svyplan n_prop with resp_rate inflates sample size", {
+  n_base <- svyplan::n_prop(p = 0.3, moe = 0.05)
+  n_resp <- svyplan::n_prop(p = 0.3, moe = 0.05, resp_rate = 0.8)
+  expect_true(as.integer(n_resp) > as.integer(n_base))
+})
+
+test_that("svyplan predict returns sensitivity data frame", {
+  x <- svyplan::n_prop(p = 0.3, moe = 0.05, deff = 1.5)
+  result <- predict(x, data.frame(deff = c(1.0, 2.0)))
+  expect_s3_class(result, "data.frame")
+  expect_true(nrow(result) == 2)
+  expect_true("n" %in% names(result))
 })
 
 test_that("strata_bound + predict + n_h workflow", {

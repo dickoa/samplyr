@@ -28,7 +28,7 @@ Before drawing a sample, you need to answer two questions: how many units to sel
 
 The three packages form a pipeline:
 
-- **svyplan** determines sample sizes and strata boundaries (planning).
+- **svyplan** determines sample sizes, evaluates precision, and computes strata boundaries (planning).
 - **samplyr** specifies and executes the sampling design (selection).
 - **sondage** provides the low-level sampling algorithms (engine).
 
@@ -106,6 +106,108 @@ This also works directly with `draw()`:
 samp <- sampling_design() |>
   draw(n = n_power) |>
   execute(ken_enterprises, seed = 3)
+nrow(samp)
+```
+
+## Response Rate Adjustment
+
+All svyplan functions accept a `resp_rate` parameter. The sample size is inflated by `1 / resp_rate` to account for expected non-response:
+
+```{r}
+n_prop(p = 0.17, moe = 0.03, resp_rate = 0.85)
+```
+
+The net sample size (after non-response) matches the original target. This works in `n_mean()`, `n_multi()`, `n_cluster()`, and `power_*()` functions as well.
+
+## Precision Analysis
+
+Given a fixed sample size, how precise will the estimates be? The `prec_*()` functions are the inverse of `n_*()`:
+
+```{r}
+prec_prop(p = 0.17, n = 600)
+```
+
+```{r}
+prec_mean(var = rev_var, n = 300, mu = mean(ken_enterprises$revenue_millions))
+```
+
+### Round-trip between size and precision
+
+All `n_*()` and `prec_*()` functions are S3 generics. Pass a precision result to `n_*()` to recover the sample size, or a sample size result to `prec_*()` to compute the achieved precision:
+
+```{r}
+s <- n_prop(p = 0.17, moe = 0.03)
+p <- prec_prop(s)
+p
+
+# Recover the original n
+n_prop(p)
+```
+
+You can override a parameter on the way back:
+
+```{r}
+n_prop(p, cv = 0.10)
+```
+
+### Confidence intervals
+
+`confint()` extracts the expected confidence interval from any sample size or precision object:
+
+```{r}
+confint(s)
+confint(p, level = 0.99)
+```
+
+## Sensitivity Analysis
+
+How sensitive is a sample size to assumptions about the design effect or response rate? The `predict()` method evaluates any svyplan result at new parameter combinations:
+
+```{r}
+x <- n_prop(p = 0.17, moe = 0.03, deff = 1.5)
+predict(x, expand.grid(
+  deff = c(1.0, 1.5, 2.0, 2.5),
+  resp_rate = c(0.8, 0.9, 1.0)
+))
+```
+
+This works for all svyplan object types: sample size, precision, cluster, and power.
+
+## Multistage Cluster Planning
+
+For cluster designs, `n_cluster()` finds the optimal allocation across stages given costs and the degree of clustering.
+
+### Variance components
+
+If a frame with cluster identifiers is available, `varcomp()` estimates the between-cluster and within-cluster variance components:
+
+```{r}
+vc <- varcomp(
+  revenue_millions ~ county,
+  data = ken_enterprises
+)
+vc
+```
+
+The `delta` value (measure of homogeneity) feeds directly into `n_cluster()` and `design_effect()`.
+
+### Optimal allocation
+
+```{r}
+# Minimize cost to achieve CV = 0.05
+n_cluster(cost = c(500, 50), delta = vc, cv = 0.05)
+
+# Maximize precision within a budget
+n_cluster(cost = c(500, 50), delta = vc, budget = 100000)
+```
+
+The total sample size from `n_cluster()` can be passed to `draw()`:
+
+```{r}
+cl <- n_cluster(cost = c(500, 50), delta = vc, budget = 100000)
+samp <- sampling_design() |>
+  draw(n = cl) |>
+  execute(ken_enterprises, seed = 5)
 nrow(samp)
 ```
 
@@ -217,10 +319,15 @@ The typical planning workflow can be:
 
 1. Determine sample size with `n_prop()`, `n_mean()`, `n_multi()`, or
    `power_prop()` / `power_mean()`.
-2. Optionally create stratification boundaries with `strata_bound()` and
+2. Evaluate precision at the chosen *n* with `prec_prop()`, `prec_mean()`.
+3. Run sensitivity analysis with `predict()` to check robustness.
+4. Optionally create stratification boundaries with `strata_bound()` and
    assign strata with `predict()`.
-3. Pass the sample size to `draw()` and execute the design.
-4. Evaluate the realized design with `design_effect()` and `effective_n()`.
+5. For cluster designs, estimate variance components with `varcomp()` and
+   optimize the allocation with `n_cluster()`.
+6. Pass the sample size to `draw()` and execute the design.
+7. Evaluate the realized design with `design_effect()` and `effective_n()`.
 
-All `svyplan` sample size objects work directly with `draw()`, so the
-planning and execution steps connect without manual conversion.
+All `svyplan` sample size objects (`svyplan_n`, `svyplan_power`,
+`svyplan_cluster`) work directly with `draw()`, so the planning and
+execution steps connect without manual conversion.
