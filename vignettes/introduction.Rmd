@@ -46,7 +46,7 @@ To see how this works in practice, consider a real survey design from @lohr2022 
 >
 > The sampling frame consisted of all rural villages of fewer than 3,000 people. The villages were **stratified by three geographic regions** (eastern, central, and western) and by **whether the village had a public health clinic (PHC)** or not. In each region **five districts were chosen with probability proportional to the district population**. In each district **four villages were chosen, again with probability proportional to census population**: two PHC villages and two non-PHC villages. Finally, **six compounds were chosen** more or less randomly from each village.
 
-In samplyr, this three-stage stratified cluster design translates directly into code:
+In `samplyr`, this three-stage stratified cluster design translates directly into code:
 
 
 ```{r}
@@ -60,11 +60,11 @@ design <- sampling_design(title = "Gambia bed net") |>
     cluster_by(village) |>
     draw(n = 2, method = "pps_brewer", mos = population) |>
   add_stage() |>
-  draw(n = 6)
+    draw(n = 6)
 design
 ```
 
-And you
+And you can then use `execute` to get your sample.
 
 ```{r, eval = FALSE}
 sampling_design(title = "Gambia bed net") |>
@@ -84,7 +84,7 @@ sampling_design(title = "Gambia bed net") |>
 execute(design, frame, seed = 1991)
 ```
 
-The samplyr code mirrors the verbal description verb for verb.
+The `samplyr` code mirrors the verbal description verb for verb.
 
 ## The Grammar
 
@@ -575,7 +575,7 @@ head(sample_serp2)
 
 ## Balanced Sampling
 
-Balanced sampling selects a sample whose Horvitz-Thompson estimates of auxiliary totals match (or nearly match) the population totals. This improves precision for any variable correlated with the auxiliary variables. samplyr implements the cube method (Deville & Tille 2004) via `method = "balanced"`.
+Balanced sampling selects a sample whose Horvitz-Thompson estimates of auxiliary totals match (or nearly match) the population totals. This improves precision for any variable correlated with the auxiliary variables. `samplyr` implements the cube method (Deville & Tille 2004) via `method = "balanced"`.
 
 Specify auxiliary variables with `aux`. Without `mos`, inclusion probabilities are equal; with `mos`, they are proportional to size:
 
@@ -596,7 +596,7 @@ ht_total <- sum(balanced_eq$population * balanced_eq$.weight)
 c(population = pop_total, ht_estimate = ht_total)
 ```
 
-Balanced sampling combines naturally with stratification. When stratified, samplyr calls the stratified cube algorithm (Chauvet 2009) in a single pass, preserving the allocation computed by `stratify_by()`:
+Balanced sampling combines naturally with stratification. When stratified, `samplyr` calls the stratified cube algorithm (Chauvet 2009) in a single pass, preserving the allocation computed by `stratify_by()`:
 
 ```{r}
 # Stratified PPS balanced sample

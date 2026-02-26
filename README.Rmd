@@ -38,7 +38,7 @@ design <- sampling_design(title = "Gambia bed net") |>
     cluster_by(village) |>
     draw(n = 2, method = "pps_brewer", mos = population) |>
   add_stage() |>
-  draw(n = 6)
+    draw(n = 6)
 design
 ```
 
@@ -61,7 +61,7 @@ pak::pkg_install("gitlab::dickoa/samplyr")
 
 ## Overview
 
-samplyr is built around a simple idea: sampling code should read like its English description.
+`samplyr` is built around a simple idea: sampling code should read like its English description.
 
 ```{r overview}
 library(samplyr)
