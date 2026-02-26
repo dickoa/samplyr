@@ -50,7 +50,7 @@ In `samplyr`, this three-stage stratified cluster design translates directly int
 
 
 ```{r}
-design <- sampling_design(title = "Gambia bed net") |>
+design <- sampling_design(title = "Gambia bed nets") |>
   add_stage() |>
     stratify_by(region) |>
     cluster_by(district) |>
@@ -95,7 +95,7 @@ The `samplyr` code mirrors the verbal description verb for verb.
 | `sampling_design()` | Create a new sampling design |
 | `stratify_by()` | Define stratification variables and allocation |
 | `cluster_by()` | Define cluster/PSU variable |
-| `draw()` | Specify sample size, method, and measure of size |
+| `draw()` | Specify sample size, method |
 | `execute()` | Run the design on a frame |
 | `add_stage()` | Delimit stages in multi-stage designs |
 

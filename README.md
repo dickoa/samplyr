@@ -10,80 +10,7 @@ panel rotation.
 
 ## Why samplyr?
 
-Consider a real survey design from Lohr (2022, Example 7.1), based on a
-1991 study of bed net use in rural Gambia (D’Alessandro et al., 1994):
-
-> Malaria morbidity can be reduced by using bed nets impregnated with
-> insecticide, but this is only effective if the bed nets are in
-> widespread use. In 1991, a nationwide survey was designed to estimate
-> the prevalence of bed net use in rural areas of the Gambia
-> (D’Alessandro et al., 1994).
->
-> The sampling frame consisted of all rural villages of fewer than 3,000
-> people. The villages were **stratified by three geographic regions**
-> (eastern, central, and western) and by **whether the village had a
-> public health clinic (PHC)** or not. In each region **five districts
-> were chosen with probability proportional to the district
-> population**. In each district **four villages were chosen, again with
-> probability proportional to census population**: two PHC villages and
-> two non-PHC villages. Finally, **six compounds were chosen** more or
-> less randomly from each village.
-
-In `samplyr`, this three-stage stratified cluster design translates
-directly into code:
-
-``` r
-design <- sampling_design(title = "Gambia bed net") |>
-  add_stage() |>
-    stratify_by(region) |>
-    cluster_by(district) |>
-    draw(n = 5, method = "pps_brewer", mos = population) |>
-  add_stage() |>
-    stratify_by(phc) |>
-    cluster_by(village) |>
-    draw(n = 2, method = "pps_brewer", mos = population) |>
-  add_stage() |>
-    draw(n = 6)
-design
-#> ── Sampling Design: Gambia bed net ─────────────────────────────────────────
-#> 
-#> ℹ 3 stages
-#> 
-#> ── Stage 1 ─────────────────────────────────────────────────────────────────
-#> • Strata: region
-#> • Cluster: district
-#> • Draw: n = 5, method = pps_brewer, mos = population
-#> 
-#> ── Stage 2 ─────────────────────────────────────────────────────────────────
-#> • Strata: phc
-#> • Cluster: village
-#> • Draw: n = 2, method = pps_brewer, mos = population
-#> 
-#> ── Stage 3 ─────────────────────────────────────────────────────────────────
-#> • Draw: n = 6, method = srswor
-```
-
-The `samplyr` code mirrors the verbal description verb for verb.
-
-*Lohr, S. L. (2022). Sampling: Design and Analysis (3rd ed.). CRC
-Press.*
-
-## Installation
-
-``` r
-# Install sondage first (sampling algorithms backend)
-pak::pkg_install("gitlab::dickoa/sondage")
-
-# Install svyplan (sample size, precision, power, and stratification)
-pak::pkg_install("gitlab::dickoa/svyplan")
-
-# Install samplyr
-pak::pkg_install("gitlab::dickoa/samplyr")
-```
-
-## Overview
-
-samplyr is built around a simple idea: sampling code should read like
+`samplyr` is built around a simple idea: sampling code should read like
 its English description.
 
 ``` r
@@ -115,7 +42,80 @@ sampling_design() |>
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 ```
 
-The package uses 5 verbs and 1 modifier:
+Consider a real survey design from Lohr (2022, Example 7.1), based on a
+1991 study of bed net use in rural Gambia (D’Alessandro et al., 1994):
+
+> Malaria morbidity can be reduced by using bed nets impregnated with
+> insecticide, but this is only effective if the bed nets are in
+> widespread use. In 1991, a nationwide survey was designed to estimate
+> the prevalence of bed net use in rural areas of the Gambia
+> (D’Alessandro et al., 1994).
+>
+> The sampling frame consisted of all rural villages of fewer than 3,000
+> people. The villages were **stratified by three geographic regions**
+> (eastern, central, and western) and by **whether the village had a
+> public health clinic (PHC)** or not. In each region **five districts
+> were chosen with probability proportional to the district
+> population**. In each district **four villages were chosen, again with
+> probability proportional to census population**: two PHC villages and
+> two non-PHC villages. Finally, **six compounds were chosen** more or
+> less randomly from each village.
+
+In `samplyr`, this three-stage stratified cluster design translates
+directly into code:
+
+``` r
+design <- sampling_design(title = "Gambia bed nets") |>
+  add_stage() |>
+    stratify_by(region) |>
+    cluster_by(district) |>
+    draw(n = 5, method = "pps_brewer", mos = population) |>
+  add_stage() |>
+    stratify_by(phc) |>
+    cluster_by(village) |>
+    draw(n = 2, method = "pps_brewer", mos = population) |>
+  add_stage() |>
+    draw(n = 6)
+design
+#> ── Sampling Design: Gambia bed nets ──────────────────────────────────────────────────────────────────
+#> 
+#> ℹ 3 stages
+#> 
+#> ── Stage 1 ───────────────────────────────────────────────────────────────────────────────────────────
+#> • Strata: region
+#> • Cluster: district
+#> • Draw: n = 5, method = pps_brewer, mos = population
+#> 
+#> ── Stage 2 ───────────────────────────────────────────────────────────────────────────────────────────
+#> • Strata: phc
+#> • Cluster: village
+#> • Draw: n = 2, method = pps_brewer, mos = population
+#> 
+#> ── Stage 3 ───────────────────────────────────────────────────────────────────────────────────────────
+#> • Draw: n = 6, method = srswor
+```
+
+The `samplyr` code mirrors the verbal description verb for verb.
+
+*Lohr, S. L. (2022). Sampling: Design and Analysis (3rd ed.). CRC
+Press.*
+
+## Installation
+
+``` r
+# Install sondage first (sampling algorithms backend)
+pak::pkg_install("gitlab::dickoa/sondage")
+
+# Install svyplan (sample size, precision, power, and stratification)
+pak::pkg_install("gitlab::dickoa/svyplan")
+
+# Install samplyr
+pak::pkg_install("gitlab::dickoa/samplyr")
+```
+
+## The Grammar
+
+`samplyr` uses 5 verbs and 1 modifier:
 
 | Function            | Purpose                               |
 |---------------------|---------------------------------------|
@@ -592,15 +592,15 @@ Weights compound automatically across phases.
 
 ``` r
 summary(strata_smpl)
-#> ── Sample Summary ──────────────────────────────────────────────────────────
+#> ── Sample Summary ────────────────────────────────────────────────────────────────────────────────────
 #> 
 #> ℹ n = 300 | stages = 1/1 | seed = 12
 #> 
-#> ── Design: Stage 1 ─────────────────────────────────────────────────────────
+#> ── Design: Stage 1 ───────────────────────────────────────────────────────────────────────────────────
 #> • Strata: region (proportional)
 #> • Method: srswor
 #> 
-#> ── Allocation: Stage 1 ─────────────────────────────────────────────────────
+#> ── Allocation: Stage 1 ───────────────────────────────────────────────────────────────────────────────
 #>   region             N_h    n_h  f_h   
 #>   Boucle du Mouhoun  1483   30   0.0202
 #>   Cascades           667    14   0.0210
@@ -618,7 +618,7 @@ summary(strata_smpl)
 #>                      ─────  ───  ──────
 #>   Total              14900  300  0.0201
 #> 
-#> ── Weights ─────────────────────────────────────────────────────────────────
+#> ── Weights ───────────────────────────────────────────────────────────────────────────────────────────
 #> • Range: [47.64, 50.67]
 #> • Mean:  49.67 · CV: 0.02
 #> • DEFF:  1 · n_eff: 300

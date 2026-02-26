@@ -19,6 +19,19 @@ A tidy grammar for survey sampling in R. `samplyr` provides a minimal set of com
 
 ## Why samplyr?
 
+`samplyr` is built around a simple idea: sampling code should read like its English description.
+
+```{r overview}
+library(samplyr)
+data(bfa_eas)
+
+# "Stratify by region, proportionally allocate 500 samples, execute"
+sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 500) |>
+  execute(bfa_eas, seed = 1)
+```
+
 Consider a real survey design from Lohr (2022, Example 7.1), based on a 1991 study of bed net use in rural Gambia (D'Alessandro et al., 1994):
 
 > Malaria morbidity can be reduced by using bed nets impregnated with insecticide, but this is only effective if the bed nets are in widespread use. In 1991, a nationwide survey was designed to estimate the prevalence of bed net use in rural areas of the Gambia (D'Alessandro et al., 1994).
@@ -28,7 +41,7 @@ Consider a real survey design from Lohr (2022, Example 7.1), based on a 1991 stu
 In `samplyr`, this three-stage stratified cluster design translates directly into code:
 
 ```{r}
-design <- sampling_design(title = "Gambia bed net") |>
+design <- sampling_design(title = "Gambia bed nets") |>
   add_stage() |>
     stratify_by(region) |>
     cluster_by(district) |>
@@ -59,22 +72,9 @@ pak::pkg_install("gitlab::dickoa/svyplan")
 pak::pkg_install("gitlab::dickoa/samplyr")
 ```
 
-## Overview
+## The Grammar
 
-`samplyr` is built around a simple idea: sampling code should read like its English description.
-
-```{r overview}
-library(samplyr)
-data(bfa_eas)
-
-# "Stratify by region, proportionally allocate 500 samples, execute"
-sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 500) |>
-  execute(bfa_eas, seed = 1)
-```
-
-The package uses 5 verbs and 1 modifier:
+`samplyr` uses 5 verbs and 1 modifier:
 
 | Function            | Purpose                               |
 |---------------------|---------------------------------------|
