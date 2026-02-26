@@ -57,6 +57,18 @@ abort_samplyr <- function(
   )
 }
 
+#' Collect cluster variables from all stages before the given stage
+#' @noRd
+collect_ancestor_cluster_vars <- function(design, stage_idx) {
+  if (stage_idx <= 1L) return(character(0))
+  vars <- character(0)
+  for (i in seq_len(stage_idx - 1L)) {
+    spec <- design$stages[[i]]
+    if (!is_null(spec$clusters)) vars <- c(vars, spec$clusters$vars)
+  }
+  unique(vars)
+}
+
 #' @noRd
 find_duplicate_key_rows <- function(df, vars) {
   key_df <- df[, vars, drop = FALSE]

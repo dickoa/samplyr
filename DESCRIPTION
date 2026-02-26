@@ -1,6 +1,6 @@
 Package: samplyr
 Title: A Tidy Grammar for Survey Sampling
-Version: 0.5.9999
+Version: 0.5.4999
 Authors@R: person(given = "Ahmadou",
                   family = "Dicko",
 		  email = "mail@ahmadoudicko.com",

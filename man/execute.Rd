@@ -125,9 +125,10 @@ For all methods the per-stage weight is \eqn{w_i^{(k)} = 1 / \pi_i^{(k)}}{w_i(k)
 \item \strong{PPS WOR}: \eqn{w_i = 1 / \pi_i}{w_i = 1/pi_i} where
 \eqn{\pi_i}{pi_i} is computed from the measure of size by
 \code{sondage::inclusion_prob()}. Varies across units.
-\item \strong{WR / PMR}: \eqn{w_i = 1 / p_i}{w_i = 1/p_i} where \eqn{p_i}{p_i} is
-the single-draw selection probability. Each draw is one row; a unit
-selected \eqn{k} times appears \eqn{k} times, each with the same weight.
+\item \strong{WR / PMR}: \eqn{w_i = 1 / E(n_i)}{w_i = 1/E(n_i)} where
+\eqn{E(n_i) = n \cdot p_i}{E(n_i) = n * p_i} is the expected number
+of selections. Each draw is one row; a unit selected \eqn{k} times
+appears \eqn{k} times, each with the same weight.
 }
 \subsection{Multi-stage weight compounding}{
 

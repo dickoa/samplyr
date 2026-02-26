@@ -208,16 +208,19 @@ compute_stage_jip <- function(
   strata_vars <- if (!is_null(strata_spec)) strata_spec$vars else character()
   sample_df <- as.data.frame(x)
 
+  ancestor_vars <- collect_ancestor_cluster_vars(design, stage_idx)
+
   if (!is_null(cluster_spec)) {
     cluster_vars <- cluster_spec$vars
-    frame_keep <- unique(c(cluster_vars, strata_vars, draw_spec$mos))
+    dedup_vars <- unique(c(ancestor_vars, cluster_vars))
+    frame_keep <- unique(c(dedup_vars, strata_vars, draw_spec$mos))
     effective_frame <- effective_frame |>
       select(all_of(frame_keep)) |>
-      distinct(across(all_of(cluster_vars)), .keep_all = TRUE)
-    sample_keep <- unique(c(cluster_vars, strata_vars))
+      distinct(across(all_of(dedup_vars)), .keep_all = TRUE)
+    sample_keep <- unique(c(dedup_vars, strata_vars))
     sample_df <- sample_df |>
       select(all_of(sample_keep)) |>
-      distinct(across(all_of(cluster_vars)), .keep_all = TRUE)
+      distinct(across(all_of(dedup_vars)), .keep_all = TRUE)
   }
 
   if (!is_null(strata_spec)) {
@@ -226,7 +229,8 @@ compute_stage_jip <- function(
       sample_df,
       strata_spec,
       draw_spec,
-      cluster_spec
+      cluster_spec,
+      ancestor_cluster_vars = ancestor_vars
     )
   } else {
     n_target <- resolve_unstratified_n(effective_frame, draw_spec)
@@ -236,7 +240,8 @@ compute_stage_jip <- function(
       draw_spec,
       n_target,
       strata_vars = NULL,
-      cluster_spec = cluster_spec
+      cluster_spec = cluster_spec,
+      ancestor_cluster_vars = ancestor_vars
     )
   }
 }
@@ -252,7 +257,8 @@ compute_stratified_jip <- function(
   sample_df,
   strata_spec,
   draw_spec,
-  cluster_spec
+  cluster_spec,
+  ancestor_cluster_vars = character(0)
 ) {
   strata_vars <- strata_spec$vars
 
@@ -309,7 +315,8 @@ compute_stratified_jip <- function(
       stratum_draw_spec,
       n_h,
       strata_vars = NULL,
-      cluster_spec
+      cluster_spec,
+      ancestor_cluster_vars = ancestor_cluster_vars
     )
   })
 
@@ -437,14 +444,18 @@ prepare_stage_frame <- function(
   prev_stage_spec <- design$stages[[prev_stage_idx]]
 
   if (!is_null(prev_stage_spec$clusters)) {
-    cluster_vars <- prev_stage_spec$clusters$vars
+    ancestor_vars <- collect_ancestor_cluster_vars(design, stage_idx)
+    join_vars <- unique(c(ancestor_vars, prev_stage_spec$clusters$vars))
     sample_df <- as.data.frame(x)
+    join_vars <- intersect(
+      join_vars, intersect(names(frame), names(sample_df))
+    )
 
     selected_clusters <- sample_df |>
-      distinct(across(all_of(cluster_vars)))
+      distinct(across(all_of(join_vars)))
 
     frame |>
-      semi_join(selected_clusters, by = cluster_vars)
+      semi_join(selected_clusters, by = join_vars)
   } else {
     frame
   }
@@ -459,7 +470,8 @@ compute_group_jip <- function(
   draw_spec,
   n_target,
   strata_vars,
-  cluster_spec
+  cluster_spec,
+  ancestor_cluster_vars = character(0)
 ) {
   method <- draw_spec$method
 
@@ -467,7 +479,8 @@ compute_group_jip <- function(
     group_frame,
     sample_df,
     strata_vars,
-    cluster_spec
+    cluster_spec,
+    ancestor_cluster_vars = ancestor_cluster_vars
   )
 
   if (length(sampled_idx) == 0) {
@@ -625,10 +638,11 @@ match_sampled_units <- function(
   group_frame,
   sample_df,
   strata_vars,
-  cluster_spec
+  cluster_spec,
+  ancestor_cluster_vars = character(0)
 ) {
   if (!is_null(cluster_spec)) {
-    match_vars <- cluster_spec$vars
+    match_vars <- unique(c(ancestor_cluster_vars, cluster_spec$vars))
   } else {
     frame_vars <- setdiff(
       names(group_frame),

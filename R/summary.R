@@ -114,10 +114,26 @@ summary.tbl_sample <- function(object, ...) {
     cat("\n")
     cli::cat_rule(left = paste0("Allocation: ", label))
 
+    # Build the full identity key for this stage's units once
+    if (!is_null(stage_spec$clusters)) {
+      ancestor_vars <- collect_ancestor_cluster_vars(design, stage_idx)
+      stage_unit_vars <- unique(c(ancestor_vars, stage_spec$clusters$vars))
+      stage_unit_vars <- intersect(stage_unit_vars, names(object))
+    } else {
+      stage_unit_vars <- NULL
+    }
+
     if (!is_null(stage_spec$strata) && has_fpc) {
       strata_vars <- stage_spec$strata$vars
 
-      alloc_tbl <- object |>
+      count_data <- object
+      if (!is_null(stage_unit_vars)) {
+        dedup_vars <- unique(c(strata_vars, stage_unit_vars))
+        count_data <- count_data |>
+          distinct(across(all_of(dedup_vars)), .keep_all = TRUE)
+      }
+
+      alloc_tbl <- count_data |>
         group_by(across(all_of(strata_vars))) |>
         summarise(
           N_h = .data[[fpc_col]][1],
@@ -129,7 +145,11 @@ summary.tbl_sample <- function(object, ...) {
       print_allocation_table(alloc_tbl, strata_vars)
     } else if (has_fpc) {
       N <- object[[fpc_col]][1]
-      n_sel <- nrow(object)
+      if (!is_null(stage_unit_vars)) {
+        n_sel <- nrow(dplyr::distinct(object, across(all_of(stage_unit_vars))))
+      } else {
+        n_sel <- nrow(object)
+      }
       f <- format(round(n_sel / N, 4), nsmall = 4)
       cli::cat_bullet(
         paste0("N = ", N, ", n = ", n_sel, ", f = ", f),

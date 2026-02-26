@@ -97,9 +97,10 @@
 #' - **PPS WOR**: \eqn{w_i = 1 / \pi_i}{w_i = 1/pi_i} where
 #'   \eqn{\pi_i}{pi_i} is computed from the measure of size by
 #'   `sondage::inclusion_prob()`. Varies across units.
-#' - **WR / PMR**: \eqn{w_i = 1 / p_i}{w_i = 1/p_i} where \eqn{p_i}{p_i} is
-#'   the single-draw selection probability. Each draw is one row; a unit
-#'   selected \eqn{k} times appears \eqn{k} times, each with the same weight.
+#' - **WR / PMR**: \eqn{w_i = 1 / E(n_i)}{w_i = 1/E(n_i)} where
+#'   \eqn{E(n_i) = n \cdot p_i}{E(n_i) = n * p_i} is the expected number
+#'   of selections. Each draw is one row; a unit selected \eqn{k} times
+#'   appears \eqn{k} times, each with the same weight.
 #'
 #' ### Multi-stage weight compounding
 #'
@@ -296,6 +297,7 @@ execute_design <- function(design, frames, stages, seed, panels,
 
   current_sample <- NULL
   previous_stage_idx <- NULL
+  all_prior_cluster_vars <- character(0)
 
   for (i in seq_along(stages)) {
     stage_idx <- stages[i]
@@ -316,7 +318,8 @@ execute_design <- function(design, frames, stages, seed, panels,
         frame,
         current_sample,
         stage_spec,
-        prev_stage_for_frame
+        prev_stage_for_frame,
+        all_prior_cluster_vars = all_prior_cluster_vars
       )
     }
 
@@ -326,9 +329,15 @@ execute_design <- function(design, frames, stages, seed, panels,
       stage_num = stage_idx,
       previous_sample = current_sample,
       previous_stage_spec = prev_stage_for_frame,
-      is_final_stage = is_final_stage
+      is_final_stage = is_final_stage,
+      all_prior_cluster_vars = all_prior_cluster_vars
     )
 
+    if (!is_null(stage_spec$clusters)) {
+      all_prior_cluster_vars <- unique(c(
+        all_prior_cluster_vars, stage_spec$clusters$vars
+      ))
+    }
     previous_stage_idx <- stage_idx
   }
 
@@ -405,6 +414,7 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
   current_sample <- as.data.frame(sample)
   last_executed_stage <- max(executed)
   previous_stage_idx <- last_executed_stage
+  all_prior_cluster_vars <- collect_ancestor_cluster_vars(design, stages[1])
 
   if (length(frames) == 1) {
     frames <- rep(frames, length(stages))
@@ -429,7 +439,8 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
       frame,
       current_sample,
       stage_spec,
-      prev_stage_for_frame
+      prev_stage_for_frame,
+      all_prior_cluster_vars = all_prior_cluster_vars
     )
 
     current_sample <- execute_single_stage(
@@ -438,9 +449,15 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
       stage_num = stage_idx,
       previous_sample = current_sample,
       previous_stage_spec = prev_stage_for_frame,
-      is_final_stage = is_final_stage
+      is_final_stage = is_final_stage,
+      all_prior_cluster_vars = all_prior_cluster_vars
     )
 
+    if (!is_null(stage_spec$clusters)) {
+      all_prior_cluster_vars <- unique(c(
+        all_prior_cluster_vars, stage_spec$clusters$vars
+      ))
+    }
     previous_stage_idx <- stage_idx
   }
 
@@ -476,7 +493,8 @@ execute_single_stage <- function(
   stage_num,
   previous_sample,
   previous_stage_spec = NULL,
-  is_final_stage = FALSE
+  is_final_stage = FALSE,
+  all_prior_cluster_vars = character(0)
 ) {
   strata_spec <- stage_spec$strata
   cluster_spec <- stage_spec$clusters
@@ -488,14 +506,16 @@ execute_single_stage <- function(
     if (
       !is_null(previous_stage_spec) && !is_null(previous_stage_spec$clusters)
     ) {
-      cluster_vars_prev <- previous_stage_spec$clusters$vars
-      split_vars <- cluster_vars_prev
+      full_parent_vars <- unique(c(
+        all_prior_cluster_vars, previous_stage_spec$clusters$vars
+      ))
+      split_vars <- full_parent_vars
 
       if (!is_null(previous_sample)) {
         attach <- attach_draw_assignments(
           frame,
           previous_sample,
-          cluster_vars_prev
+          full_parent_vars
         )
         frame <- attach$frame
         split_vars <- attach$split_vars
@@ -519,7 +539,8 @@ execute_single_stage <- function(
       cluster_vars <- cluster_spec$vars
       draw_k_cols <- grep("^\\.draw_\\d+$", names(result), value = TRUE)
       draw_k_cols <- intersect(draw_k_cols, names(frame))
-      by_vars <- c(cluster_vars, draw_k_cols)
+      ancestor_in_frame <- intersect(all_prior_cluster_vars, names(frame))
+      by_vars <- unique(c(ancestor_in_frame, cluster_vars, draw_k_cols))
       join_cols <- c(by_vars, ".weight", ".fpc", ".sample_id")
       if (".draw" %in% names(result)) {
         join_cols <- c(join_cols, ".draw")
@@ -536,14 +557,16 @@ execute_single_stage <- function(
   } else if (
     !is_null(previous_stage_spec) && !is_null(previous_stage_spec$clusters)
   ) {
-    cluster_vars_prev <- previous_stage_spec$clusters$vars
-    split_vars <- cluster_vars_prev
+    full_parent_vars <- unique(c(
+      all_prior_cluster_vars, previous_stage_spec$clusters$vars
+    ))
+    split_vars <- full_parent_vars
 
     if (!is_null(previous_sample)) {
       attach <- attach_draw_assignments(
         frame,
         previous_sample,
-        cluster_vars_prev
+        full_parent_vars
       )
       frame <- attach$frame
       split_vars <- attach$split_vars
@@ -581,7 +604,9 @@ execute_single_stage <- function(
   }
 
   if (!is_null(previous_sample) && ".weight" %in% names(previous_sample)) {
-    result <- compound_stage_weights(result, previous_sample, previous_stage_spec)
+    result <- compound_stage_weights(
+      result, previous_sample, previous_stage_spec, all_prior_cluster_vars
+    )
   }
   result
 }
@@ -643,13 +668,20 @@ assign_panels <- function(result, k, first_stage_spec) {
 
 #' Determine join variables for weight compounding
 #' @noRd
-find_compound_join_vars <- function(result, previous_sample, previous_stage_spec) {
+find_compound_join_vars <- function(
+  result,
+  previous_sample,
+  previous_stage_spec,
+  all_prior_cluster_vars = character(0)
+) {
   if (is_null(previous_stage_spec)) {
     return(character(0))
   }
 
   if (!is_null(previous_stage_spec$clusters)) {
-    cluster_vars <- previous_stage_spec$clusters$vars
+    cluster_vars <- unique(c(
+      all_prior_cluster_vars, previous_stage_spec$clusters$vars
+    ))
     prev_draw_cols <- grep(
       "^\\.draw_\\d+$",
       names(previous_sample),
@@ -703,9 +735,16 @@ compound_broadcast <- function(result, previous_sample, carry_cols) {
 
 #' Compound current-stage weights with previous-stage weights
 #' @noRd
-compound_stage_weights <- function(result, previous_sample, previous_stage_spec) {
+compound_stage_weights <- function(
+  result,
+  previous_sample,
+  previous_stage_spec,
+  all_prior_cluster_vars = character(0)
+) {
   carry_cols <- find_carry_forward_cols(previous_sample)
-  join_vars <- find_compound_join_vars(result, previous_sample, previous_stage_spec)
+  join_vars <- find_compound_join_vars(
+    result, previous_sample, previous_stage_spec, all_prior_cluster_vars
+  )
 
   if (length(join_vars) > 0) {
     compound_by_join(result, previous_sample, join_vars, carry_cols)
@@ -719,10 +758,16 @@ subset_frame_to_sample <- function(
   frame,
   sample,
   stage_spec,
-  previous_stage_spec = NULL
+  previous_stage_spec = NULL,
+  all_prior_cluster_vars = character(0)
 ) {
   if (!is_null(previous_stage_spec) && !is_null(previous_stage_spec$clusters)) {
-    cluster_vars <- previous_stage_spec$clusters$vars
+    cluster_vars <- unique(c(
+      all_prior_cluster_vars, previous_stage_spec$clusters$vars
+    ))
+    cluster_vars <- intersect(
+      cluster_vars, intersect(names(frame), names(sample))
+    )
     selected_clusters <- unique(sample[, cluster_vars, drop = FALSE])
     return(semi_join(frame, selected_clusters, by = cluster_vars))
   }
