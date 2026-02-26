@@ -21,23 +21,20 @@ make_group_key <- function(df, vars) {
 
 #' @noRd
 split_row_indices <- function(df, vars) {
-  grouped <- group_by(df, across(all_of(vars)))
-  indices <- dplyr::group_rows(grouped)
+  key_df <- df[, vars, drop = FALSE]
+  loc <- vec_group_loc(key_df)
 
-  if (length(indices) == 0L) {
+  if (nrow(loc) == 0L) {
     return(list(keys = character(), indices = list()))
   }
 
-  key_df <- dplyr::group_keys(grouped)
-  keys <- make_group_key(key_df, vars)
-
-  # Keep first-appearance group order for deterministic downstream behavior.
-  first_rows <- first_row_indices_by_group(indices)
-  ord <- order(first_rows)
+  # vec_group_loc returns groups in first-appearance order,
+  # so no reordering is needed.
+  keys <- make_group_key(loc$key, vars)
 
   list(
-    keys = keys[ord],
-    indices = indices[ord]
+    keys = keys,
+    indices = loc$loc
   )
 }
 

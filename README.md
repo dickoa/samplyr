@@ -3,10 +3,70 @@
 
 # samplyr
 
-A tidy grammar for survey sampling in R. **samplyr** provides a minimal
+A tidy grammar for survey sampling in R. `samplyr` provides a minimal
 set of composable verbs for stratified, clustered, multi-stage, and
 multi-phase sampling designs with PPS methods, sample coordination, and
 panel rotation.
+
+## Why samplyr?
+
+Consider a real survey design from Lohr (2022, Example 7.1), based on a
+1991 study of bed net use in rural Gambia (D’Alessandro et al., 1994):
+
+> Malaria morbidity can be reduced by using bed nets impregnated with
+> insecticide, but this is only effective if the bed nets are in
+> widespread use. In 1991, a nationwide survey was designed to estimate
+> the prevalence of bed net use in rural areas of the Gambia
+> (D’Alessandro et al., 1994).
+>
+> The sampling frame consisted of all rural villages of fewer than 3,000
+> people. The villages were **stratified by three geographic regions**
+> (eastern, central, and western) and by **whether the village had a
+> public health clinic (PHC)** or not. In each region **five districts
+> were chosen with probability proportional to the district
+> population**. In each district **four villages were chosen, again with
+> probability proportional to census population**: two PHC villages and
+> two non-PHC villages. Finally, **six compounds were chosen** more or
+> less randomly from each village.
+
+In `samplyr`, this three-stage stratified cluster design translates
+directly into code:
+
+``` r
+design <- sampling_design(title = "Gambia bed net") |>
+  add_stage() |>
+    stratify_by(region) |>
+    cluster_by(district) |>
+    draw(n = 5, method = "pps_brewer", mos = population) |>
+  add_stage() |>
+    stratify_by(phc) |>
+    cluster_by(village) |>
+    draw(n = 2, method = "pps_brewer", mos = population) |>
+  add_stage() |>
+  draw(n = 6)
+design
+#> ── Sampling Design: Gambia bed net ──────────────────────────────────────────────────────────────────
+#> 
+#> ℹ 3 stages
+#> 
+#> ── Stage 1 ──────────────────────────────────────────────────────────────────────────────────────────
+#> • Strata: region
+#> • Cluster: district
+#> • Draw: n = 5, method = pps_brewer, mos = population
+#> 
+#> ── Stage 2 ──────────────────────────────────────────────────────────────────────────────────────────
+#> • Strata: phc
+#> • Cluster: village
+#> • Draw: n = 2, method = pps_brewer, mos = population
+#> 
+#> ── Stage 3 ──────────────────────────────────────────────────────────────────────────────────────────
+#> • Draw: n = 6, method = srswor
+```
+
+The `samplyr` code mirrors the verbal description verb for verb.
+
+*Lohr, S. L. (2022). Sampling: Design and Analysis (3rd ed.). CRC
+Press.*
 
 ## Installation
 
@@ -37,21 +97,20 @@ sampling_design() |>
   execute(bfa_eas, seed = 1)
 #> # A tbl_sample: 500 × 17
 #> # Weights:      29.8 [28.95, 30.32]
-#>    ea_id    region   province commune urban_rural population households area_km2
-#>  * <chr>    <fct>    <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 EA_10155 Boucle … Mouhoun  Ouarko… Rural             1347        187    33.0 
-#>  2 EA_03955 Boucle … Kossi    Doumba… Rural             1558        211    16.6 
-#>  3 EA_10325 Boucle … Bale     Ouri    Rural              767         92    17.6 
-#>  4 EA_03209 Boucle … Mouhoun  Dedoug… Rural              446         79    18.1 
-#>  5 EA_12881 Boucle … Banwa    Tansila Rural             1076        137     9.45
-#>  6 EA_11613 Boucle … Banwa    Sami    Rural              912        118    43.2 
-#>  7 EA_06857 Boucle … Banwa    Kouka   Rural             1642        189    12.5 
-#>  8 EA_13730 Boucle … Nayala   Toma    Rural              973        101     0.88
-#>  9 EA_05972 Boucle … Sourou   Kiemba… Rural             1359        216    36.6 
-#> 10 EA_03571 Boucle … Kossi    Djibas… Rural              725         86     1.01
+#>    ea_id    region     province commune urban_rural population households area_km2 accessible dist_road_km
+#>  * <chr>    <fct>      <fct>    <fct>   <fct>            <dbl>      <int>    <dbl> <lgl>             <dbl>
+#>  1 EA_10155 Boucle du… Mouhoun  Ouarko… Rural             1347        187    33.0  TRUE                7.1
+#>  2 EA_03955 Boucle du… Kossi    Doumba… Rural             1558        211    16.6  TRUE               19.6
+#>  3 EA_10325 Boucle du… Bale     Ouri    Rural              767         92    17.6  TRUE                7.7
+#>  4 EA_03209 Boucle du… Mouhoun  Dedoug… Rural              446         79    18.1  TRUE                5.7
+#>  5 EA_12881 Boucle du… Banwa    Tansila Rural             1076        137     9.45 TRUE               13.1
+#>  6 EA_11613 Boucle du… Banwa    Sami    Rural              912        118    43.2  TRUE                9.1
+#>  7 EA_06857 Boucle du… Banwa    Kouka   Rural             1642        189    12.5  TRUE               17.6
+#>  8 EA_13730 Boucle du… Nayala   Toma    Rural              973        101     0.88 TRUE                8  
+#>  9 EA_05972 Boucle du… Sourou   Kiemba… Rural             1359        216    36.6  TRUE                8.6
+#> 10 EA_03571 Boucle du… Kossi    Djibas… Rural              725         86     1.01 TRUE               10  
 #> # ℹ 490 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 7 more variables: food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 ```
 
@@ -83,21 +142,20 @@ sample <- execute(design, bfa_eas, seed = 2)
 sample
 #> # A tbl_sample: 300 × 17
 #> # Weights:      49.67 [47.64, 50.67]
-#>    ea_id    region   province commune urban_rural population households area_km2
-#>  * <chr>    <fct>    <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 EA_00466 Boucle … Bale     Bana    Rural             1272        166     1.13
-#>  2 EA_10340 Boucle … Bale     Ouri    Rural             2128        254    11.1 
-#>  3 EA_00373 Boucle … Banwa    Balave  Rural             1624        256    57.0 
-#>  4 EA_00380 Boucle … Banwa    Balave  Rural             1005        158    26.5 
-#>  5 EA_06860 Boucle … Banwa    Kouka   Rural             1748        201    18.1 
-#>  6 EA_12372 Boucle … Banwa    Solenzo Rural             1012        121    27.3 
-#>  7 EA_12393 Boucle … Banwa    Solenzo Rural               79          9     5.68
-#>  8 EA_12417 Boucle … Banwa    Solenzo Rural             1316        157    15.5 
-#>  9 EA_12874 Boucle … Banwa    Tansila Rural             1267        162    44.5 
-#> 10 EA_12890 Boucle … Banwa    Tansila Rural              789        101    15.3 
+#>    ea_id    region     province commune urban_rural population households area_km2 accessible dist_road_km
+#>  * <chr>    <fct>      <fct>    <fct>   <fct>            <dbl>      <int>    <dbl> <lgl>             <dbl>
+#>  1 EA_00466 Boucle du… Bale     Bana    Rural             1272        166     1.13 TRUE               12.6
+#>  2 EA_10340 Boucle du… Bale     Ouri    Rural             2128        254    11.1  FALSE               8.9
+#>  3 EA_00373 Boucle du… Banwa    Balave  Rural             1624        256    57.0  TRUE                3.2
+#>  4 EA_00380 Boucle du… Banwa    Balave  Rural             1005        158    26.5  TRUE               31.1
+#>  5 EA_06860 Boucle du… Banwa    Kouka   Rural             1748        201    18.1  TRUE               22.8
+#>  6 EA_12372 Boucle du… Banwa    Solenzo Rural             1012        121    27.3  TRUE               20.3
+#>  7 EA_12393 Boucle du… Banwa    Solenzo Rural               79          9     5.68 TRUE                5.5
+#>  8 EA_12417 Boucle du… Banwa    Solenzo Rural             1316        157    15.5  TRUE                3.2
+#>  9 EA_12874 Boucle du… Banwa    Tansila Rural             1267        162    44.5  TRUE                4.9
+#> 10 EA_12890 Boucle du… Banwa    Tansila Rural              789        101    15.3  TRUE               12  
 #> # ℹ 290 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 7 more variables: food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 ```
 
@@ -115,21 +173,20 @@ srs_smpl <- sampling_design() |>
 srs_smpl
 #> # A tbl_sample: 100 × 17
 #> # Weights:      149 [149, 149]
-#>    ea_id    region   province commune urban_rural population households area_km2
-#>  * <chr>    <fct>    <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 EA_03776 Sahel    Seno     Dori    Rural             1813        235    18.7 
-#>  2 EA_12039 Nord     Yatenga  Sengue… Rural             1017        126     3.23
-#>  3 EA_11709 Boucle … Banwa    Sanaba  Rural             1074        156    25.2 
-#>  4 EA_04563 Est      Komandj… Gayeri  Rural             1302        140    32.2 
-#>  5 EA_06603 Centre-… Sanmate… Korsim… Rural              632         97    20.2 
-#>  6 EA_14769 Plateau… Oubrite… Zitenga Rural             1628        232    10.3 
-#>  7 EA_09105 Centre   Kadiogo  Ouagad… Urban             1900        360     0.34
-#>  8 EA_10304 Plateau… Oubrite… Ourgou… Rural             1309        161    10.6 
-#>  9 EA_00281 Centre-… Boulgou  Bagre   Rural             1609        255    30   
-#> 10 EA_04646 Centre-… Sanguie  Godyr   Rural              720        109     7.1 
+#>    ea_id    region     province commune urban_rural population households area_km2 accessible dist_road_km
+#>  * <chr>    <fct>      <fct>    <fct>   <fct>            <dbl>      <int>    <dbl> <lgl>             <dbl>
+#>  1 EA_03776 Sahel      Seno     Dori    Rural             1813        235    18.7  TRUE                7.5
+#>  2 EA_12039 Nord       Yatenga  Sengue… Rural             1017        126     3.23 TRUE                3.3
+#>  3 EA_11709 Boucle du… Banwa    Sanaba  Rural             1074        156    25.2  TRUE               15.9
+#>  4 EA_04563 Est        Komandj… Gayeri  Rural             1302        140    32.2  FALSE               7.3
+#>  5 EA_06603 Centre-No… Sanmate… Korsim… Rural              632         97    20.2  FALSE              16.8
+#>  6 EA_14769 Plateau-C… Oubrite… Zitenga Rural             1628        232    10.3  TRUE                3.8
+#>  7 EA_09105 Centre     Kadiogo  Ouagad… Urban             1900        360     0.34 TRUE                0.2
+#>  8 EA_10304 Plateau-C… Oubrite… Ourgou… Rural             1309        161    10.6  TRUE                6.4
+#>  9 EA_00281 Centre-Est Boulgou  Bagre   Rural             1609        255    30    TRUE               10.1
+#> 10 EA_04646 Centre-Ou… Sanguie  Godyr   Rural              720        109     7.1  TRUE                4.4
 #> # ℹ 90 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 7 more variables: food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 
 # Stratified proportional allocation
@@ -141,21 +198,20 @@ strata_smpl <- sampling_design() |>
 strata_smpl
 #> # A tbl_sample: 300 × 17
 #> # Weights:      49.67 [47.64, 50.67]
-#>    ea_id    region   province commune urban_rural population households area_km2
-#>  * <chr>    <fct>    <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 EA_12451 Boucle … Banwa    Solenzo Rural             2360        282    27.0 
-#>  2 EA_12347 Boucle … Banwa    Solenzo Rural             1929        230    30.2 
-#>  3 EA_11712 Boucle … Banwa    Sanaba  Rural              816        118    34.3 
-#>  4 EA_14295 Boucle … Nayala   Ye      Rural             1281        226    25.9 
-#>  5 EA_03138 Boucle … Mouhoun  Dedoug… Rural             1461        259    18.2 
-#>  6 EA_11050 Boucle … Bale     Pompoi  Rural              917        144    26.8 
-#>  7 EA_13839 Boucle … Sourou   Tougan  Rural             1073        148    12.2 
-#>  8 EA_12930 Boucle … Mouhoun  Tcheri… Rural             1243        149     1.15
-#>  9 EA_02077 Boucle … Kossi    Bombor… Rural             1036        136     7.59
-#> 10 EA_04889 Boucle … Nayala   Gossina Rural             1032        166    27.0 
+#>    ea_id    region     province commune urban_rural population households area_km2 accessible dist_road_km
+#>  * <chr>    <fct>      <fct>    <fct>   <fct>            <dbl>      <int>    <dbl> <lgl>             <dbl>
+#>  1 EA_12451 Boucle du… Banwa    Solenzo Rural             2360        282    27.0  TRUE               20.5
+#>  2 EA_12347 Boucle du… Banwa    Solenzo Rural             1929        230    30.2  TRUE               43.6
+#>  3 EA_11712 Boucle du… Banwa    Sanaba  Rural              816        118    34.3  TRUE               11.2
+#>  4 EA_14295 Boucle du… Nayala   Ye      Rural             1281        226    25.9  TRUE               32.8
+#>  5 EA_03138 Boucle du… Mouhoun  Dedoug… Rural             1461        259    18.2  TRUE                3.4
+#>  6 EA_11050 Boucle du… Bale     Pompoi  Rural              917        144    26.8  TRUE               16  
+#>  7 EA_13839 Boucle du… Sourou   Tougan  Rural             1073        148    12.2  TRUE                4.6
+#>  8 EA_12930 Boucle du… Mouhoun  Tcheri… Rural             1243        149     1.15 TRUE                8.4
+#>  9 EA_02077 Boucle du… Kossi    Bombor… Rural             1036        136     7.59 TRUE                7.5
+#> 10 EA_04889 Boucle du… Nayala   Gossina Rural             1032        166    27.0  FALSE               7.9
 #> # ℹ 290 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 7 more variables: food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 
 # PPS cluster sampling
@@ -167,21 +223,20 @@ cluster_smpl <- sampling_design() |>
 cluster_smpl
 #> # A tbl_sample: 50 × 18
 #> # Weights:      319.78 [126.62, 1185.84]
-#>    ea_id    region   province commune urban_rural population households area_km2
-#>  * <chr>    <fct>    <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 EA_12440 Boucle … Banwa    Solenzo Rural             1481        177    11.5 
-#>  2 EA_12513 Boucle … Kossi    Sono    Rural             1566        225    41.1 
-#>  3 EA_03121 Boucle … Mouhoun  Dedoug… Rural             1061        188    11.9 
-#>  4 EA_12173 Cascades Comoe    Sidera… Rural             2610        360     6.97
-#>  5 EA_08851 Centre   Kadiogo  Ouagad… Urban             1635        310     0.21
-#>  6 EA_08884 Centre   Kadiogo  Ouagad… Urban             1514        287     0.32
-#>  7 EA_08920 Centre   Kadiogo  Ouagad… Urban             1647        312     0.48
-#>  8 EA_08962 Centre   Kadiogo  Ouagad… Urban             1726        327     0.27
-#>  9 EA_09481 Centre   Kadiogo  Ouagad… Urban             1556        295     0.18
-#> 10 EA_09604 Centre   Kadiogo  Ouagad… Urban             2568        487     0.97
+#>    ea_id    region     province commune urban_rural population households area_km2 accessible dist_road_km
+#>  * <chr>    <fct>      <fct>    <fct>   <fct>            <dbl>      <int>    <dbl> <lgl>             <dbl>
+#>  1 EA_12440 Boucle du… Banwa    Solenzo Rural             1481        177    11.5  TRUE               15.7
+#>  2 EA_12513 Boucle du… Kossi    Sono    Rural             1566        225    41.1  TRUE                4  
+#>  3 EA_03121 Boucle du… Mouhoun  Dedoug… Rural             1061        188    11.9  TRUE                9.8
+#>  4 EA_12173 Cascades   Comoe    Sidera… Rural             2610        360     6.97 TRUE               23.4
+#>  5 EA_08851 Centre     Kadiogo  Ouagad… Urban             1635        310     0.21 TRUE                1.2
+#>  6 EA_08884 Centre     Kadiogo  Ouagad… Urban             1514        287     0.32 TRUE                0.3
+#>  7 EA_08920 Centre     Kadiogo  Ouagad… Urban             1647        312     0.48 TRUE                0.1
+#>  8 EA_08962 Centre     Kadiogo  Ouagad… Urban             1726        327     0.27 TRUE                0.2
+#>  9 EA_09481 Centre     Kadiogo  Ouagad… Urban             1556        295     0.18 TRUE                0.3
+#> 10 EA_09604 Centre     Kadiogo  Ouagad… Urban             2568        487     0.97 TRUE                0.1
 #> # ℹ 40 more rows
-#> # ℹ 10 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 8 more variables: food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>, .certainty_1 <lgl>
 ```
 
@@ -210,21 +265,20 @@ sample <- sampling_design() |>
 sample
 #> # A tbl_sample: 50 × 16
 #> # Weights:      472.68 [196.93, 541.06]
-#>    ea_id    province   district urban_rural population households area_km2
-#>  * <chr>    <fct>      <fct>    <fct>            <int>      <int>    <dbl>
-#>  1 EA_00955 Harare     Harare   Urban             1379        407     0.52
-#>  2 EA_01509 Harare     Harare   Urban             1417        377     0.22
-#>  3 EA_00825 Harare     Harare   Urban             1273        374     0.72
-#>  4 EA_00814 Harare     Harare   Urban             1332        400     0.5 
-#>  5 EA_00777 Harare     Harare   Urban             1471        443     0.16
-#>  6 EA_02797 Manicaland Chipinge Rural              673        152    12.4 
-#>  7 EA_03044 Manicaland Chipinge Rural              769        180     9.57
-#>  8 EA_02960 Manicaland Chipinge Rural              681        156     9.52
-#>  9 EA_03159 Manicaland Chipinge Rural              366         83     9.62
-#> 10 EA_03110 Manicaland Chipinge Urban             1011        283     3.78
+#>    ea_id    province   district urban_rural population households area_km2 district_hh .weight .sample_id
+#>  * <chr>    <fct>      <fct>    <fct>            <int>      <int>    <dbl>       <int>   <dbl>      <int>
+#>  1 EA_00955 Harare     Harare   Urban             1379        407     0.52      374741    197.          1
+#>  2 EA_01509 Harare     Harare   Urban             1417        377     0.22      374741    197.          2
+#>  3 EA_00825 Harare     Harare   Urban             1273        374     0.72      374741    197.          3
+#>  4 EA_00814 Harare     Harare   Urban             1332        400     0.5       374741    197.          4
+#>  5 EA_00777 Harare     Harare   Urban             1471        443     0.16      374741    197.          5
+#>  6 EA_02797 Manicaland Chipinge Rural              673        152    12.4        79897    466.          6
+#>  7 EA_03044 Manicaland Chipinge Rural              769        180     9.57       79897    466.          7
+#>  8 EA_02960 Manicaland Chipinge Rural              681        156     9.52       79897    466.          8
+#>  9 EA_03159 Manicaland Chipinge Rural              366         83     9.62       79897    466.          9
+#> 10 EA_03110 Manicaland Chipinge Urban             1011        283     3.78       79897    466.         10
 #> # ℹ 40 more rows
-#> # ℹ 9 more variables: district_hh <int>, .weight <dbl>, .sample_id <int>,
-#> #   .stage <int>, .weight_2 <dbl>, .fpc_2 <int>, .weight_1 <dbl>, .fpc_1 <int>,
+#> # ℹ 6 more variables: .stage <int>, .weight_2 <dbl>, .fpc_2 <int>, .weight_1 <dbl>, .fpc_1 <int>,
 #> #   .certainty_1 <lgl>
 ```
 
@@ -318,21 +372,20 @@ sampling_design() |>
   execute(bfa_eas, seed = 321)
 #> # A tbl_sample: 300 × 17
 #> # Weights:      49.67 [36.08, 77.8]
-#>    ea_id    region   province commune urban_rural population households area_km2
-#>  * <chr>    <fct>    <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 EA_13725 Boucle … Nayala   Toma    Rural             1235        128    17.3 
-#>  2 EA_14301 Boucle … Nayala   Ye      Rural             1231        217    29.9 
-#>  3 EA_11709 Boucle … Banwa    Sanaba  Rural             1074        156    25.2 
-#>  4 EA_10155 Boucle … Mouhoun  Ouarko… Rural             1347        187    33.0 
-#>  5 EA_06444 Boucle … Mouhoun  Kona    Rural             1148        181    16.6 
-#>  6 EA_02527 Boucle … Kossi    Bouras… Rural             1268        143    42.5 
-#>  7 EA_03143 Boucle … Mouhoun  Dedoug… Rural             1286        228    12.4 
-#>  8 EA_12514 Boucle … Kossi    Sono    Rural             1296        187    23.6 
-#>  9 EA_14276 Boucle … Nayala   Ye      Rural             1314        232     2.27
-#> 10 EA_12908 Boucle … Mouhoun  Tcheri… Rural             1170        140     9.7 
+#>    ea_id    region     province commune urban_rural population households area_km2 accessible dist_road_km
+#>  * <chr>    <fct>      <fct>    <fct>   <fct>            <dbl>      <int>    <dbl> <lgl>             <dbl>
+#>  1 EA_13725 Boucle du… Nayala   Toma    Rural             1235        128    17.3  TRUE               10  
+#>  2 EA_14301 Boucle du… Nayala   Ye      Rural             1231        217    29.9  TRUE                7.1
+#>  3 EA_11709 Boucle du… Banwa    Sanaba  Rural             1074        156    25.2  TRUE               15.9
+#>  4 EA_10155 Boucle du… Mouhoun  Ouarko… Rural             1347        187    33.0  TRUE                7.1
+#>  5 EA_06444 Boucle du… Mouhoun  Kona    Rural             1148        181    16.6  TRUE                7.6
+#>  6 EA_02527 Boucle du… Kossi    Bouras… Rural             1268        143    42.5  TRUE               14.9
+#>  7 EA_03143 Boucle du… Mouhoun  Dedoug… Rural             1286        228    12.4  TRUE                5.1
+#>  8 EA_12514 Boucle du… Kossi    Sono    Rural             1296        187    23.6  FALSE              22.9
+#>  9 EA_14276 Boucle du… Nayala   Ye      Rural             1314        232     2.27 FALSE              40.3
+#> 10 EA_12908 Boucle du… Mouhoun  Tcheri… Rural             1170        140     9.7  TRUE                8.1
 #> # ℹ 290 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 7 more variables: food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 ```
 
@@ -366,21 +419,20 @@ sample <- sampling_design() |>
 sample
 #> # A tbl_sample: 300 × 17
 #> # Weights:      49.67 [36.08, 77.8]
-#>    ea_id    region   province commune urban_rural population households area_km2
-#>  * <chr>    <fct>    <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 EA_13823 Boucle … Sourou   Tougan  Rural             1153        159    21.0 
-#>  2 EA_11104 Boucle … Bale     Poura   Urban             1287        174     0.95
-#>  3 EA_12348 Boucle … Banwa    Solenzo Rural              528         63     8.98
-#>  4 EA_02124 Boucle … Mouhoun  Bondok… Rural             1372        209    29.8 
-#>  5 EA_03164 Boucle … Mouhoun  Dedoug… Rural              650        115    14.6 
-#>  6 EA_00273 Boucle … Bale     Bagassi Rural             1459        175    16.3 
-#>  7 EA_14004 Boucle … Nayala   Yaba    Rural             2013        271    30.6 
-#>  8 EA_03733 Boucle … Kossi    Dokui   Rural             1017        163    24.4 
-#>  9 EA_08669 Boucle … Kossi    Nouna   Rural             1470        191    89.2 
-#> 10 EA_14009 Boucle … Nayala   Yaba    Rural             1299        175    24.7 
+#>    ea_id    region     province commune urban_rural population households area_km2 accessible dist_road_km
+#>  * <chr>    <fct>      <fct>    <fct>   <fct>            <dbl>      <int>    <dbl> <lgl>             <dbl>
+#>  1 EA_13823 Boucle du… Sourou   Tougan  Rural             1153        159    21.0  TRUE                6.2
+#>  2 EA_11104 Boucle du… Bale     Poura   Urban             1287        174     0.95 TRUE                0  
+#>  3 EA_12348 Boucle du… Banwa    Solenzo Rural              528         63     8.98 TRUE                5.1
+#>  4 EA_02124 Boucle du… Mouhoun  Bondok… Rural             1372        209    29.8  TRUE               21.6
+#>  5 EA_03164 Boucle du… Mouhoun  Dedoug… Rural              650        115    14.6  FALSE              12.2
+#>  6 EA_00273 Boucle du… Bale     Bagassi Rural             1459        175    16.3  TRUE                8.2
+#>  7 EA_14004 Boucle du… Nayala   Yaba    Rural             2013        271    30.6  TRUE               20.2
+#>  8 EA_03733 Boucle du… Kossi    Dokui   Rural             1017        163    24.4  TRUE               15.6
+#>  9 EA_08669 Boucle du… Kossi    Nouna   Rural             1470        191    89.2  TRUE               15.4
+#> 10 EA_14009 Boucle du… Nayala   Yaba    Rural             1299        175    24.7  FALSE              12.6
 #> # ℹ 290 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 7 more variables: food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 ```
 
@@ -424,21 +476,20 @@ balanced_smpl <- sampling_design() |>
 balanced_smpl
 #> # A tbl_sample: 300 × 17
 #> # Weights:      48.19 [16.47, 157.71]
-#>    ea_id    region   province commune urban_rural population households area_km2
-#>  * <chr>    <fct>    <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 EA_00253 Boucle … Bale     Bagassi Rural             1053        127    15.1 
-#>  2 EA_04189 Boucle … Bale     Fara    Rural             1093        175    26.1 
-#>  3 EA_10340 Boucle … Bale     Ouri    Rural             2128        254    11.1 
-#>  4 EA_10382 Boucle … Bale     Pa      Rural              825        116     0.66
-#>  5 EA_14033 Boucle … Bale     Yaho    Rural              946        125    18.5 
-#>  6 EA_06882 Boucle … Banwa    Kouka   Rural             1024        118     3.26
-#>  7 EA_11693 Boucle … Banwa    Sanaba  Rural             1548        225    16.9 
-#>  8 EA_00758 Boucle … Kossi    Barani  Rural             1786        234    49.7 
-#>  9 EA_00769 Boucle … Kossi    Barani  Rural             1448        190    40.7 
-#> 10 EA_03727 Boucle … Kossi    Dokui   Rural             2183        349    10.0 
+#>    ea_id    region     province commune urban_rural population households area_km2 accessible dist_road_km
+#>  * <chr>    <fct>      <fct>    <fct>   <fct>            <dbl>      <int>    <dbl> <lgl>             <dbl>
+#>  1 EA_00253 Boucle du… Bale     Bagassi Rural             1053        127    15.1  TRUE               10.9
+#>  2 EA_04189 Boucle du… Bale     Fara    Rural             1093        175    26.1  TRUE                7  
+#>  3 EA_10340 Boucle du… Bale     Ouri    Rural             2128        254    11.1  FALSE               8.9
+#>  4 EA_10382 Boucle du… Bale     Pa      Rural              825        116     0.66 TRUE                5.2
+#>  5 EA_14033 Boucle du… Bale     Yaho    Rural              946        125    18.5  TRUE                3.9
+#>  6 EA_06882 Boucle du… Banwa    Kouka   Rural             1024        118     3.26 TRUE                9.9
+#>  7 EA_11693 Boucle du… Banwa    Sanaba  Rural             1548        225    16.9  FALSE              21.2
+#>  8 EA_00758 Boucle du… Kossi    Barani  Rural             1786        234    49.7  FALSE               5.2
+#>  9 EA_00769 Boucle du… Kossi    Barani  Rural             1448        190    40.7  TRUE                5.3
+#> 10 EA_03727 Boucle du… Kossi    Dokui   Rural             2183        349    10.0  TRUE               29  
 #> # ℹ 290 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 7 more variables: food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <dbl>
 ```
 
@@ -508,21 +559,20 @@ phase2 <- sampling_design() |>
 phase2
 #> # A tbl_sample: 50 × 17
 #> # Weights:      298 [298, 298]
-#>    ea_id    region   province commune urban_rural population households area_km2
-#>  * <chr>    <fct>    <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 EA_13110 Centre-… Boulgou  Tenkod… Rural             1761        348     3.96
-#>  2 EA_11301 Centre-… Bam      Rouko   Urban             2578        374    19.5 
-#>  3 EA_07031 Hauts-B… Kenedou… Kourin… Rural             1149        152    35.0 
-#>  4 EA_10184 Sud-Oue… Ioba     Ouessa  Rural             2061        306    33.6 
-#>  5 EA_05021 Nord     Zondoma  Goursi  Rural              747         91     0.27
-#>  6 EA_02164 Boucle … Bale     Boromo  Rural              528         69    12.5 
-#>  7 EA_03618 Sahel    Soum     Djibo   Rural             1237        163    32.8 
-#>  8 EA_00184 Nord     Passore  Arbolle Rural             2026        234    20.1 
-#>  9 EA_06727 Centre-… Boulkie… Koudou… Urban             1916        368     3.39
-#> 10 EA_09532 Centre   Kadiogo  Ouagad… Urban             2282        433     0.4 
+#>    ea_id    region     province commune urban_rural population households area_km2 accessible dist_road_km
+#>  * <chr>    <fct>      <fct>    <fct>   <fct>            <dbl>      <int>    <dbl> <lgl>             <dbl>
+#>  1 EA_13110 Centre-Est Boulgou  Tenkod… Rural             1761        348     3.96 TRUE               27.9
+#>  2 EA_11301 Centre-No… Bam      Rouko   Urban             2578        374    19.5  TRUE                0  
+#>  3 EA_07031 Hauts-Bas… Kenedou… Kourin… Rural             1149        152    35.0  TRUE                7  
+#>  4 EA_10184 Sud-Ouest  Ioba     Ouessa  Rural             2061        306    33.6  TRUE               17.2
+#>  5 EA_05021 Nord       Zondoma  Goursi  Rural              747         91     0.27 TRUE               30  
+#>  6 EA_02164 Boucle du… Bale     Boromo  Rural              528         69    12.5  TRUE                6.8
+#>  7 EA_03618 Sahel      Soum     Djibo   Rural             1237        163    32.8  FALSE               6.1
+#>  8 EA_00184 Nord       Passore  Arbolle Rural             2026        234    20.1  FALSE               9.2
+#>  9 EA_06727 Centre-Ou… Boulkie… Koudou… Urban             1916        368     3.39 TRUE                0  
+#> 10 EA_09532 Centre     Kadiogo  Ouagad… Urban             2282        433     0.4  TRUE                0.5
 #> # ℹ 40 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 7 more variables: food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 ```
 
@@ -532,15 +582,15 @@ Weights compound automatically across phases.
 
 ``` r
 summary(strata_smpl)
-#> ── Sample Summary ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#> ── Sample Summary ───────────────────────────────────────────────────────────────────────────────────
 #> 
 #> ℹ n = 300 | stages = 1/1 | seed = 12
 #> 
-#> ── Design: Stage 1 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#> ── Design: Stage 1 ──────────────────────────────────────────────────────────────────────────────────
 #> • Strata: region (proportional)
 #> • Method: srswor
 #> 
-#> ── Allocation: Stage 1 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#> ── Allocation: Stage 1 ──────────────────────────────────────────────────────────────────────────────
 #>   region             N_h    n_h  f_h   
 #>   Boucle du Mouhoun  1483   30   0.0202
 #>   Cascades           667    14   0.0210
@@ -558,7 +608,7 @@ summary(strata_smpl)
 #>                      ─────  ───  ──────
 #>   Total              14900  300  0.0201
 #> 
-#> ── Weights ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#> ── Weights ──────────────────────────────────────────────────────────────────────────────────────────
 #> • Range: [47.64, 50.67]
 #> • Mean:  49.67 · CV: 0.02
 #> • DEFF:  1 · n_eff: 300

@@ -16,7 +16,7 @@ test_that("draw accepts svyplan_n from n_mean", {
 
 test_that("draw accepts svyplan_n from n_multi", {
   targets <- data.frame(
-    indicator = c("a", "b"),
+    name = c("a", "b"),
     p = c(0.3, 0.1),
     moe = c(0.05, 0.03)
   )
@@ -84,7 +84,12 @@ test_that("svyplan predict returns sensitivity data frame", {
 test_that("strata_bound + predict + n_h workflow", {
   set.seed(1)
   x <- rlnorm(500, 5, 1.2)
-  bounds <- svyplan::strata_bound(x, n_strata = 3, method = "cumrootf", cv = 0.05)
+  bounds <- svyplan::strata_bound(
+    x,
+    n_strata = 3,
+    method = "cumrootf",
+    cv = 0.05
+  )
   labels <- paste0("S", 1:3)
 
   frame <- data.frame(id = seq_len(500), revenue = x)
@@ -181,10 +186,18 @@ test_that("design_effect.tbl_sample errors without .weight", {
 })
 
 test_that("Henry accepts y and x_cal as bare column names", {
-  deff_tidy <- design_effect(fix_deff_disprop, y = income, x_cal = census_pop,
-                             method = "henry")
-  deff_vec <- design_effect(fix_deff_disprop$.weight, y = fix_deff_disprop$income,
-                            x_cal = fix_deff_disprop$census_pop, method = "henry")
+  deff_tidy <- design_effect(
+    fix_deff_disprop,
+    y = income,
+    x_cal = census_pop,
+    method = "henry"
+  )
+  deff_vec <- design_effect(
+    fix_deff_disprop$.weight,
+    y = fix_deff_disprop$income,
+    x_cal = fix_deff_disprop$census_pop,
+    method = "henry"
+  )
   expect_equal(deff_tidy, deff_vec)
 })
 
@@ -195,23 +208,35 @@ test_that("Spencer accepts y as bare column name", {
 
 test_that("Spencer auto-extracts p from .weight_1", {
   deff_auto <- design_effect(fix_deff_disprop, y = income, method = "spencer")
-  deff_manual <- design_effect(fix_deff_disprop$.weight, y = fix_deff_disprop$income,
-                               p = 1 / fix_deff_disprop$.weight_1, method = "spencer")
+  deff_manual <- design_effect(
+    fix_deff_disprop$.weight,
+    y = fix_deff_disprop$income,
+    p = 1 / fix_deff_disprop$.weight_1,
+    method = "spencer"
+  )
   expect_equal(deff_auto, deff_manual)
 })
 
 test_that("effective_n with Henry uses bare column names", {
-  eff <- effective_n(fix_deff_disprop, y = income, x_cal = census_pop,
-                     method = "henry")
+  eff <- effective_n(
+    fix_deff_disprop,
+    y = income,
+    x_cal = census_pop,
+    method = "henry"
+  )
   expect_true(is.finite(eff))
   expect_true(eff > 0)
 })
 
 test_that("CR auto-extracts strvar and stages from stratified design", {
   cr_auto <- design_effect(fix_deff_disprop, y = income, method = "cr")
-  cr_manual <- design_effect(fix_deff_disprop$.weight, y = fix_deff_disprop$income,
-                             strvar = fix_deff_disprop$stratum,
-                             stages = c(1L, 1L), method = "cr")
+  cr_manual <- design_effect(
+    fix_deff_disprop$.weight,
+    y = fix_deff_disprop$income,
+    strvar = fix_deff_disprop$stratum,
+    stages = c(1L, 1L),
+    method = "cr"
+  )
   expect_equal(cr_auto$overall, cr_manual$overall)
 })
 
@@ -344,8 +369,12 @@ test_that("CR on stratified + clustered returns full decomposition", {
 })
 
 test_that("Henry returns finite deff on unequal-weight sample", {
-  deff <- design_effect(fix_deff_disprop, y = income, x_cal = census_pop,
-                        method = "henry")
+  deff <- design_effect(
+    fix_deff_disprop,
+    y = income,
+    x_cal = census_pop,
+    method = "henry"
+  )
   expect_true(is.finite(deff))
 })
 

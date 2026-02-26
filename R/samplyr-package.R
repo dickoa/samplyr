@@ -15,6 +15,7 @@
 #' @importFrom dplyr n summarise row_number
 #' @importFrom dplyr bind_rows distinct
 #' @importFrom dplyr dplyr_reconstruct
+#' @importFrom vctrs vec_group_loc
 #' @importFrom withr with_seed
 #' @importFrom pillar tbl_sum
 ## usethis namespace: end
