@@ -73,7 +73,7 @@ In practice, a survey measures several things at once. `n_multi()` takes the bin
 
 ```{r}
 targets <- data.frame(
-  indicator = c("exporter_rate", "mean_revenue"),
+  name = c("exporter_rate", "mean_revenue"),
   p = c(0.17, NA),
   var = c(NA, rev_var),
   moe = c(0.03, 30)
