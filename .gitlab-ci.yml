@@ -1,5 +1,6 @@
 stages:
   - check
+  - coverage
   - pkgdown
 
 variables:
@@ -44,6 +45,27 @@ check-devel:
   script:
     - Rscript -e "rcmdcheck::rcmdcheck(args = c('--no-manual', '--as-cran'), error_on = 'error')"
   allow_failure: true
+
+coverage:
+  stage: coverage
+  image: rocker/r-ver:4.5.0
+  before_script:
+    - apt-get update && apt-get install -y
+        libcurl4-openssl-dev
+        libssl-dev
+        libxml2-dev
+        pandoc
+        qpdf
+        git
+    - mkdir -p $R_LIBS_USER
+    - Rscript -e "install.packages(c('remotes', 'covr'), repos='https://cloud.r-project.org')"
+    - Rscript -e "remotes::install_deps(dependencies = TRUE)"
+  script:
+    - Rscript -e "cov <- covr::package_coverage(); print(cov)"
+  coverage: '/Coverage:\s*\d+\.\d+%/'
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
 pages:
   stage: pkgdown

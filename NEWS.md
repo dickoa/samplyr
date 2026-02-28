@@ -1,4 +1,4 @@
-# samplyr 0.5.4999 (development)
+# samplyr 0.5.9999 (development)
 
 ## Core Grammar
 
@@ -84,7 +84,7 @@
   (WOR) or joint expected hits (WR/PMR) for exact variance estimation.
   Supports balanced sampling via high-entropy approximation.
 
-## Survey Planning (svyplan >= 0.4.0 integration)
+## Survey Planning (svyplan >= 0.6.0 integration)
 
 * `design_effect()` and `effective_n()` re-exported from svyplan with
   `tbl_sample` methods. Five methods: Kish, Henry, Spencer, Chen-Rust,

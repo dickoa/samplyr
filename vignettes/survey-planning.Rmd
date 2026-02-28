@@ -307,8 +307,8 @@ Before collecting data, you can anticipate the design effect for a cluster desig
 cluster size. This uses `svyplan::design_effect()` directly (not through a `tbl_sample`):
 
 ```{r}
-design_effect(delta = 0.05, m = 10)
-design_effect(delta = 0.15, m = 10)
+design_effect(delta = 0.05, psu_size = 10)
+design_effect(delta = 0.15, psu_size = 10)
 ```
 
 With an ICC of 0.05 and 10 units per cluster, the design effect is 1.45. An ICC of 0.15 raises it to 2.35. This helps decide the number of clusters and units per cluster during the planning stage.

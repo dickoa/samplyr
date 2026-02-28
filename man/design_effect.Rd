@@ -48,6 +48,7 @@ and \code{x_cal} (calibration covariate) for Henry.
 }
 \examples{
 # Kish design effect (default)
+set.seed(1)
 frame <- data.frame(
   id = 1:200,
   stratum = rep(c("A", "B"), each = 100),

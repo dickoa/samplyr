@@ -24,6 +24,7 @@
 #'
 #' @examples
 #' # Kish design effect (default)
+#' set.seed(1)
 #' frame <- data.frame(
 #'   id = 1:200,
 #'   stratum = rep(c("A", "B"), each = 100),
@@ -54,49 +55,87 @@ svyplan::effective_n
 
 #' @rdname design_effect
 #' @export
-design_effect.tbl_sample <- function(x, ..., y = NULL, x_cal = NULL,
-                                     method = "kish") {
+design_effect.tbl_sample <- function(
+  x,
+  ...,
+  y = NULL,
+  x_cal = NULL,
+  method = "kish"
+) {
   w <- x[[".weight"]]
   if (is.null(w)) {
     cli_abort("tbl_sample has no {.field .weight} column.")
   }
-  args <- resolve_deff_args(x, y = enquo(y), x_cal = enquo(x_cal),
-                            method = method)
-  design_effect(w, y = args$y, x_cal = args$x_cal, p = args$p,
-                strvar = args$strvar, clvar = args$clvar,
-                stages = args$stages, method = method, ...)
+  args <- resolve_deff_args(
+    x,
+    y = enquo(y),
+    x_cal = enquo(x_cal),
+    method = method
+  )
+  design_effect(
+    w,
+    y = args$y,
+    x_cal = args$x_cal,
+    prob = args$prob,
+    strata_id = args$strata_id,
+    cluster_id = args$cluster_id,
+    stages = args$stages,
+    method = method,
+    ...
+  )
 }
 
 #' @rdname design_effect
 #' @export
-effective_n.tbl_sample <- function(x, ..., y = NULL, x_cal = NULL,
-                                   method = "kish") {
+effective_n.tbl_sample <- function(
+  x,
+  ...,
+  y = NULL,
+  x_cal = NULL,
+  method = "kish"
+) {
   w <- x[[".weight"]]
   if (is.null(w)) {
     cli_abort("tbl_sample has no {.field .weight} column.")
   }
-  args <- resolve_deff_args(x, y = enquo(y), x_cal = enquo(x_cal),
-                            method = method)
-  effective_n(w, y = args$y, x_cal = args$x_cal, p = args$p,
-              strvar = args$strvar, clvar = args$clvar,
-              stages = args$stages, method = method, ...)
+  args <- resolve_deff_args(
+    x,
+    y = enquo(y),
+    x_cal = enquo(x_cal),
+    method = method
+  )
+  effective_n(
+    w,
+    y = args$y,
+    x_cal = args$x_cal,
+    prob = args$prob,
+    strata_id = args$strata_id,
+    cluster_id = args$cluster_id,
+    stages = args$stages,
+    method = method,
+    ...
+  )
 }
 
 #' Resolve design_effect arguments from tbl_sample metadata
 #' @noRd
 resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
   y_val <- if (!quo_is_null(y)) rlang::eval_tidy(y, data = x) else NULL
-  x_cal_val <- if (!quo_is_null(x_cal)) rlang::eval_tidy(x_cal, data = x) else NULL
+  x_cal_val <- if (!quo_is_null(x_cal)) {
+    rlang::eval_tidy(x_cal, data = x)
+  } else {
+    NULL
+  }
 
-  p_val <- NULL
-  strvar_val <- NULL
-  clvar_val <- NULL
+  prob_val <- NULL
+  strata_id_val <- NULL
+  cluster_id_val <- NULL
   stages_val <- NULL
 
   if (method == "spencer") {
     w1 <- x[[".weight_1"]]
     if (!is.null(w1)) {
-      p_val <- 1 / w1
+      prob_val <- 1 / w1
     }
   }
 
@@ -105,33 +144,46 @@ resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
     if (!is_null(design)) {
       stage1 <- design$stages[[1L]]
       strata_vars <- stage1$strata$vars
-      cluster_vars <- if (!is_null(stage1$clusters)) stage1$clusters$vars else NULL
+      cluster_vars <- if (!is_null(stage1$clusters)) {
+        stage1$clusters$vars
+      } else {
+        NULL
+      }
 
       if (!is_null(strata_vars)) {
         if (length(strata_vars) == 1L) {
-          strvar_val <- x[[strata_vars]]
+          strata_id_val <- x[[strata_vars]]
         } else {
-          strvar_val <- interaction(x[strata_vars], drop = TRUE)
+          strata_id_val <- interaction(x[strata_vars], drop = TRUE)
         }
-        n_strata <- length(unique(strvar_val))
+        n_strata <- length(unique(strata_id_val))
         stages_val <- rep(if (!is_null(cluster_vars)) 2L else 1L, n_strata)
       }
 
       if (!is_null(cluster_vars)) {
-        clvar_val <- x[[cluster_vars[1L]]]
+        cluster_id_val <- x[[cluster_vars[1L]]]
       }
     }
 
-    if (is.null(strvar_val) && is.null(clvar_val)) {
-      cli_abort(c(
-        "The CR method requires stratification or clustering in the design.",
-        i = "Use {.fn design_effect} with {.arg method = \"kish\"} for unstratified, unclustered designs."
-      ), call = call)
+    if (is.null(strata_id_val) && is.null(cluster_id_val)) {
+      cli_abort(
+        c(
+          "The CR method requires stratification or clustering in the design.",
+          i = "Use {.fn design_effect} with {.arg method = \"kish\"} for unstratified, unclustered designs."
+        ),
+        call = call
+      )
     }
   }
 
-  list(y = y_val, x_cal = x_cal_val, p = p_val,
-       strvar = strvar_val, clvar = clvar_val, stages = stages_val)
+  list(
+    y = y_val,
+    x_cal = x_cal_val,
+    prob = prob_val,
+    strata_id = strata_id_val,
+    cluster_id = cluster_id_val,
+    stages = stages_val
+  )
 }
 
 #' Coerce svyplan objects for draw()

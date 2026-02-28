@@ -37,7 +37,7 @@ test_that("draw accepts svyplan_power from power_prop", {
 })
 
 test_that("draw accepts svyplan_power from power_mean", {
-  n_obj <- svyplan::power_mean(delta = 5, var = 200)
+  n_obj <- svyplan::power_mean(effect = 5, var = 200)
   design <- sampling_design() |> draw(n = n_obj)
   frame <- data.frame(id = seq_len(500))
   result <- execute(design, frame, seed = 1)
@@ -211,7 +211,7 @@ test_that("Spencer auto-extracts p from .weight_1", {
   deff_manual <- design_effect(
     fix_deff_disprop$.weight,
     y = fix_deff_disprop$income,
-    p = 1 / fix_deff_disprop$.weight_1,
+    prob = 1 / fix_deff_disprop$.weight_1,
     method = "spencer"
   )
   expect_equal(deff_auto, deff_manual)
@@ -233,7 +233,7 @@ test_that("CR auto-extracts strvar and stages from stratified design", {
   cr_manual <- design_effect(
     fix_deff_disprop$.weight,
     y = fix_deff_disprop$income,
-    strvar = fix_deff_disprop$stratum,
+    strata_id = fix_deff_disprop$stratum,
     stages = c(1L, 1L),
     method = "cr"
   )
