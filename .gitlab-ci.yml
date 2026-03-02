@@ -58,8 +58,9 @@ coverage:
         qpdf
         git
     - mkdir -p $R_LIBS_USER
-    - Rscript -e "install.packages(c('remotes', 'covr'), repos='https://cloud.r-project.org')"
+    - Rscript -e "install.packages(c('remotes', 'covr', 'xml2'), repos='https://cloud.r-project.org')"
     - Rscript -e "remotes::install_deps(dependencies = TRUE)"
+  script:
     - Rscript -e "covr::codecov(quiet = FALSE, token = Sys.getenv('CODECOV_TOKEN'))"
   coverage: '/Coverage:\s*\d+\.\d+%/'
   rules:
