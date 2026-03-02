@@ -3,10 +3,35 @@
 
 # samplyr
 
+<!-- badges: start -->
+
+[![CRAN
+status](https://www.r-pkg.org/badges/version/samplyr)](https://CRAN.R-project.org/package=samplyr)
+[![R-CMD-check](https://gitlab.com/dickoa/samplyr/badges/main/pipeline.svg)](https://gitlab.com/dickoa/samplyr/-/pipelines)
+[![Codecov test
+coverage](https://codecov.io/gl/dickoa/samplyr/branch/main/graph/badge.svg)](https://app.codecov.io/gl/dickoa/samplyr?branch=main)
+<!-- badges: end -->
+
 A tidy grammar for survey sampling in R. `samplyr` provides a minimal
 set of composable verbs for stratified, clustered, multi-stage, and
 multi-phase sampling designs with PPS methods, sample coordination, and
 panel rotation.
+
+## Ecosystem Positioning
+
+`samplyr` sits in the middle of a three-layer workflow:
+
+- Use `svyplan` for planning (`n`, precision, power, allocation,
+  budget).
+- Use `samplyr` to specify designs, draw samples, and carry design
+  metadata through fieldwork.
+- Use `survey`/`srvyr` after data collection for estimation and
+  inference.
+
+These packages are complementary, not competing. Handoffs are explicit
+(for example, `svyplan` outputs can feed `draw(n = ...)`, and `samplyr`
+outputs convert via `as_svydesign()`, `as_svrepdesign()`, and
+`as_survey_design()`).
 
 ## Why samplyr?
 
@@ -77,21 +102,21 @@ design <- sampling_design(title = "Gambia bed nets") |>
   add_stage() |>
     draw(n = 6)
 design
-#> ── Sampling Design: Gambia bed nets ──────────────────────────────────────────────────────────────────
+#> ── Sampling Design: Gambia bed nets ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> 
 #> ℹ 3 stages
 #> 
-#> ── Stage 1 ───────────────────────────────────────────────────────────────────────────────────────────
+#> ── Stage 1 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Strata: region
 #> • Cluster: district
 #> • Draw: n = 5, method = pps_brewer, mos = population
 #> 
-#> ── Stage 2 ───────────────────────────────────────────────────────────────────────────────────────────
+#> ── Stage 2 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Strata: phc
 #> • Cluster: village
 #> • Draw: n = 2, method = pps_brewer, mos = population
 #> 
-#> ── Stage 3 ───────────────────────────────────────────────────────────────────────────────────────────
+#> ── Stage 3 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Draw: n = 6, method = srswor
 ```
 
@@ -521,13 +546,14 @@ jip <- joint_expectation(sample, frame, stage = 1)
 svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 ```
 
-By default `as_svydesign()` uses Brewer’s variance approximation. For
+By default `as_svydesign()` uses Brewer variance approximation. For
 tighter variance estimates, `joint_expectation()` computes pairwise
 joint inclusion probabilities from the original frame. The result is
-exact for CPS, systematic, and Poisson; for Brewer, SPS, and Pareto it
-uses the O(N^2) high-entropy approximation (exact recursive formulas
-exist but are O(N^3) and impractical for large frames). See
-`?joint_expectation` for the full method-by-method breakdown.
+exact for CPS, systematic, and Poisson whereas high-entropy
+approximation O(N^2) is by Brewer, SPS, Pareto and Balanced sampling
+using the Cube algorithm (exact recursive formulas exist for some of
+these methods but are usually O(N^3) and impractical for large frames).
+See `?joint_expectation` for the full method-by-method breakdown.
 
 ## Panel Partitioning
 
@@ -547,8 +573,9 @@ table(panel_sample$.panel)
 
 Panels are assigned by systematic interleaving within strata. For
 multi-stage designs, panels are assigned at the PSU level and propagated
-to all units. Weights reflect the full-sample inclusion probability; for
-per-panel analysis, multiply by the number of panels.
+to all units. Per-panel analysis is also possible by multiplying the
+weights by the number of panels since the weights reflect the
+full-sample inclusion probability.
 
 ## Two-Phase Sampling
 
@@ -592,15 +619,15 @@ Weights compound automatically across phases.
 
 ``` r
 summary(strata_smpl)
-#> ── Sample Summary ────────────────────────────────────────────────────────────────────────────────────
+#> ── Sample Summary ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> 
 #> ℹ n = 300 | stages = 1/1 | seed = 12
 #> 
-#> ── Design: Stage 1 ───────────────────────────────────────────────────────────────────────────────────
+#> ── Design: Stage 1 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Strata: region (proportional)
 #> • Method: srswor
 #> 
-#> ── Allocation: Stage 1 ───────────────────────────────────────────────────────────────────────────────
+#> ── Allocation: Stage 1 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #>   region             N_h    n_h  f_h   
 #>   Boucle du Mouhoun  1483   30   0.0202
 #>   Cascades           667    14   0.0210
@@ -618,11 +645,18 @@ summary(strata_smpl)
 #>                      ─────  ───  ──────
 #>   Total              14900  300  0.0201
 #> 
-#> ── Weights ───────────────────────────────────────────────────────────────────────────────────────────
+#> ── Weights ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Range: [47.64, 50.67]
 #> • Mean:  49.67 · CV: 0.02
 #> • DEFF:  1 · n_eff: 300
 ```
+
+## Validation
+
+For statistical validation on synthetic populations with known truths,
+see `vignette("validation")`. It combines deterministic invariants
+(weights, FPC, certainty, stage compounding) with Monte Carlo checks of
+bias, standard-error calibration, and coverage.
 
 ## Included Datasets
 

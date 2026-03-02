@@ -152,16 +152,20 @@ resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
 
       if (!is_null(strata_vars)) {
         if (length(strata_vars) == 1L) {
-          strata_id_val <- x[[strata_vars]]
+          strata_id_val <- x[[strata_vars[[1L]]]]
         } else {
-          strata_id_val <- interaction(x[strata_vars], drop = TRUE)
+          strata_id_val <- make_group_key(x, strata_vars)
         }
         n_strata <- length(unique(strata_id_val))
         stages_val <- rep(if (!is_null(cluster_vars)) 2L else 1L, n_strata)
       }
 
       if (!is_null(cluster_vars)) {
-        cluster_id_val <- x[[cluster_vars[1L]]]
+        if (length(cluster_vars) == 1L) {
+          cluster_id_val <- x[[cluster_vars[[1L]]]]
+        } else {
+          cluster_id_val <- make_group_key(x, cluster_vars)
+        }
       }
     }
 

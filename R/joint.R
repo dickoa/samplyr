@@ -271,7 +271,7 @@ compute_stratified_jip <- function(
     stratum_info$.n_h,
     make_strata_group_ids(stratum_info, strata_vars)
   )
-  frac_lookup <- build_jip_frac_lookup(draw_spec, strata_vars)
+  draw_lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars)
 
   frame_group_ids <- make_strata_group_ids(effective_frame, strata_vars)
   frame_group_rows <- split(seq_len(nrow(effective_frame)), frame_group_ids)
@@ -301,12 +301,12 @@ compute_stratified_jip <- function(
     }
 
     keys <- group_frame[1, strata_vars, drop = FALSE]
-    stratum_draw_spec <- resolve_jip_frac(
+    stratum_draw_spec <- resolve_stratum_draw_spec(
       draw_spec,
       keys,
       strata_vars,
-      strata_id = stratum_id,
-      frac_lookup = frac_lookup
+      stratum_key = stratum_id,
+      lookup = draw_lookup
     )
 
     compute_group_jip(
@@ -330,76 +330,6 @@ make_strata_group_ids <- function(data, strata_vars) {
     return(character())
   }
   make_group_key(data, strata_vars)
-}
-
-#' Build a lookup object for per-stratum Poisson fractions
-#' @noRd
-build_jip_frac_lookup <- function(draw_spec, strata_vars) {
-  frac <- draw_spec$frac
-
-  if (is.data.frame(frac)) {
-    frac_ids <- make_strata_group_ids(frac, strata_vars)
-    return(list(
-      type = "data_frame",
-      values = setNames(frac$frac, frac_ids)
-    ))
-  }
-
-  if (
-    !is_null(frac) &&
-      length(frac) > 1 &&
-      !is_null(names(frac))
-  ) {
-    return(list(type = "named_vector", values = frac))
-  }
-
-  NULL
-}
-
-#' Resolve per-stratum frac for joint probability computation
-#' @noRd
-resolve_jip_frac <- function(
-  draw_spec,
-  keys,
-  strata_vars,
-  strata_id = NULL,
-  frac_lookup = NULL
-) {
-  if (!is_null(frac_lookup)) {
-    switch(frac_lookup$type,
-      data_frame = {
-        matched_frac <- frac_lookup$values[[strata_id]]
-        if (!is_null(matched_frac)) {
-          draw_spec$frac <- matched_frac
-        }
-        return(draw_spec)
-      },
-      named_vector = {
-        strata_value <- as.character(keys[[strata_vars[1]]])
-        if (strata_value %in% names(frac_lookup$values)) {
-          draw_spec$frac <- frac_lookup$values[[strata_value]]
-        }
-        return(draw_spec)
-      }
-    )
-  }
-
-  if (is.data.frame(draw_spec$frac)) {
-    matched <- inner_join(keys, draw_spec$frac, by = strata_vars)
-    if (nrow(matched) > 0) {
-      draw_spec$frac <- matched$frac[1]
-    }
-  } else if (
-    !is_null(draw_spec$frac) &&
-      length(draw_spec$frac) > 1 &&
-      !is_null(names(draw_spec$frac))
-  ) {
-    strata_id <- as.character(keys[[strata_vars[1]]])
-    if (strata_id %in% names(draw_spec$frac)) {
-      draw_spec$frac <- draw_spec$frac[[strata_id]]
-    }
-  }
-  draw_spec
 }
 
 #' Resolve target sample size for an unstratified stage
@@ -473,8 +403,6 @@ compute_group_jip <- function(
   cluster_spec,
   ancestor_cluster_vars = character(0)
 ) {
-  method <- draw_spec$method
-
   sampled_idx <- match_sampled_units(
     group_frame,
     sample_df,
@@ -487,18 +415,20 @@ compute_group_jip <- function(
     return(NULL)
   }
 
-  jip_full <- compute_joint_matrix(group_frame, n_target, draw_spec)
-  jip_full[sampled_idx, sampled_idx, drop = FALSE]
+  compute_joint_matrix(
+    frame = group_frame,
+    n = n_target,
+    draw_spec = draw_spec,
+    sampled_idx = sampled_idx
+  )
 }
 
-#' Compute the full population joint inclusion probability matrix
+#' Compute the sampled joint matrix for one group
 #'
-#' For fixed-size methods (brewer, systematic, cps), computes
-#' pi_i via `sondage::inclusion_prob(mos, n)`.
-#' For Poisson, reconstructs pi_i from frac and mos to match
-#' the formula used in `draw_sample()`.
+#' Reconstructs first-order quantities on the full group, then requests
+#' sampled-only second-order expectations from `sondage`.
 #' @noRd
-compute_joint_matrix <- function(frame, n, draw_spec) {
+compute_joint_matrix <- function(frame, n, draw_spec, sampled_idx) {
   method <- draw_spec$method
   mos_var <- draw_spec$mos
   N <- nrow(frame)
@@ -515,15 +445,38 @@ compute_joint_matrix <- function(frame, n, draw_spec) {
     mos_vals <- NULL
   }
 
+  has_explicit_certainty <- !is_null(draw_spec$certainty_size) ||
+    !is_null(draw_spec$certainty_prop)
+
+  if (has_explicit_certainty) {
+    return(compute_joint_matrix_with_certainty(
+      method = method,
+      mos_vals = mos_vals,
+      n = n,
+      draw_spec = draw_spec,
+      sampled_idx = sampled_idx
+    ))
+  }
+
   # WR/PMR: joint expected hits, no certainty decomposition needed
   if (method %in% pps_wr_methods) {
     pik <- sondage::expected_hits(mos_vals, n)
-    return(compute_jeh_by_method(pik, n, method))
+    return(compute_jeh_by_method(pik, n, method, sampled_idx))
   }
 
-  # WOR: joint inclusion probabilities
-  pik <- switch(
+  pik <- compute_stage_pik(method, mos_vals, n, draw_spec, N = N)
+  compute_jip_from_pik(pik, method, sampled_idx)
+}
+
+#' Compute first-order inclusion/hit expectations for one stage
+#' @noRd
+compute_stage_pik <- function(method, mos_vals, n, draw_spec, N = length(mos_vals)) {
+  switch(
     method,
+    pps_multinomial = ,
+    pps_chromy = {
+      sondage::expected_hits(mos_vals, n)
+    },
     pps_brewer = ,
     pps_systematic = ,
     pps_cps = ,
@@ -543,28 +496,121 @@ compute_joint_matrix <- function(frame, n, draw_spec) {
         rep(n / N, N)
       }
     },
-    cli_abort("No joint probability function for method {.val {method}}",
-              call = NULL)
+    cli_abort(
+      "No joint probability function for method {.val {method}}",
+      call = NULL
+    )
   )
+}
 
-  # NOTE: pik = 1 causes division by zero in _jip functions; decompose
+#' Compute sampled joint matrix from first-order probabilities/hits
+#' @noRd
+compute_jip_from_pik <- function(pik, method, sampled_idx, n = NULL) {
+  sampled_idx <- as.integer(sampled_idx)
+
+  if (method %in% pps_wr_methods) {
+    if (is_null(n)) {
+      cli_abort(
+        "Internal error: {.arg n} must be provided for WR/PMR methods.",
+        call = NULL
+      )
+    }
+    return(compute_jeh_by_method(pik, n, method, sampled_idx))
+  }
+
   cert_tol <- 1 - sqrt(.Machine$double.eps)
   cert_idx <- which(pik >= cert_tol)
 
   if (length(cert_idx) == 0) {
-    return(compute_jip_by_method(pik, method))
+    return(compute_jip_by_method(pik, method, sampled_idx))
   }
 
-  assemble_jip_with_certainty(pik, cert_idx, method)
+  assemble_jip_with_certainty(pik, cert_idx, method, sampled_idx)
+}
+
+#' Compute sampled joint matrix when certainty thresholds are explicit
+#' @noRd
+compute_joint_matrix_with_certainty <- function(
+  method,
+  mos_vals,
+  n,
+  draw_spec,
+  sampled_idx
+) {
+  cert <- identify_certainty(
+    mos_vals = mos_vals,
+    n = n,
+    certainty_size = draw_spec$certainty_size,
+    certainty_prop = draw_spec$certainty_prop
+  )
+
+  sampled_idx <- as.integer(sampled_idx)
+  n_sampled <- length(sampled_idx)
+  result <- matrix(0, nrow = n_sampled, ncol = n_sampled)
+
+  cert_idx <- cert$certainty_idx
+  cert_pos <- which(sampled_idx %in% cert_idx)
+  prob_pos <- which(!(sampled_idx %in% cert_idx))
+
+  if (length(cert_pos) > 0) {
+    result[cert_pos, cert_pos] <- 1
+  }
+
+  if (length(prob_pos) == 0) {
+    return(result)
+  }
+
+  if (cert$n_remaining <= 0 || length(cert$remaining_idx) == 0) {
+    cli_abort(
+      c(
+        "Could not reconstruct probabilistic remainder for certainty design.",
+        "i" = "Sample contains non-certainty units but certainty selection left no remainder."
+      ),
+      call = NULL
+    )
+  }
+
+  remaining_idx <- cert$remaining_idx
+  n_prob <- min(cert$n_remaining, length(remaining_idx))
+  remaining_mos <- mos_vals[remaining_idx]
+  sampled_prob_idx <- sampled_idx[prob_pos]
+  sampled_prob_reduced <- match(sampled_prob_idx, remaining_idx)
+
+  reduced_draw_spec <- draw_spec
+  reduced_draw_spec$certainty_size <- NULL
+  reduced_draw_spec$certainty_prop <- NULL
+  pik_prob <- compute_stage_pik(
+    method = method,
+    mos_vals = remaining_mos,
+    n = n_prob,
+    draw_spec = reduced_draw_spec,
+    N = length(remaining_mos)
+  )
+
+  prob_block <- compute_jip_from_pik(
+    pik = pik_prob,
+    method = method,
+    sampled_idx = sampled_prob_reduced,
+    n = n_prob
+  )
+  result[prob_pos, prob_pos] <- prob_block
+
+  if (length(cert_pos) > 0) {
+    prob_diag <- diag(prob_block)
+    result[cert_pos, prob_pos] <- rep(prob_diag, each = length(cert_pos))
+    result[prob_pos, cert_pos] <- rep(prob_diag, times = length(cert_pos))
+  }
+
+  result
 }
 
 #' Dispatch to sondage::joint_inclusion_prob for WOR methods
 #' @noRd
-compute_jip_by_method <- function(pik, method) {
+compute_jip_by_method <- function(pik, method, sampled_idx) {
   sondage_name <- sondage_method_name(method)
   design <- structure(
     list(
-      sample = integer(0),
+      sample = as.integer(sampled_idx),
       pik = pik,
       n = as.integer(round(sum(pik))),
       N = length(pik),
@@ -573,18 +619,24 @@ compute_jip_by_method <- function(pik, method) {
     ),
     class = c("unequal_prob", "wor", "sondage_sample")
   )
-  sondage::joint_inclusion_prob(design)
+  sondage::joint_inclusion_prob(design, sampled_only = TRUE)
 }
 
 #' Dispatch to sondage::joint_expected_hits for WR/PMR methods
 #' @noRd
-compute_jeh_by_method <- function(pik, n, method) {
+compute_jeh_by_method <- function(pik, n, method, sampled_idx) {
   sondage_name <- sondage_method_name(method)
+
+  sampled_idx <- as.integer(sampled_idx)
+  sampled_sorted <- sort(unique(sampled_idx))
+  hits <- integer(length(pik))
+  hits[sampled_sorted] <- 1L
+
   design <- structure(
     list(
-      sample = integer(0),
+      sample = sampled_sorted,
       prob = pik / n,
-      hits = integer(0),
+      hits = hits,
       n = as.integer(n),
       N = length(pik),
       method = sondage_name,
@@ -592,7 +644,10 @@ compute_jeh_by_method <- function(pik, n, method) {
     ),
     class = c("unequal_prob", "wr", "sondage_sample")
   )
-  sondage::joint_expected_hits(design)
+  jeh_sorted <- sondage::joint_expected_hits(design, sampled_only = TRUE)
+
+  reorder_idx <- match(sampled_idx, sampled_sorted)
+  jeh_sorted[reorder_idx, reorder_idx, drop = FALSE]
 }
 
 #' Assemble joint matrix separating certainty from stochastic units
@@ -603,30 +658,49 @@ compute_jeh_by_method <- function(pik, n, method) {
 #'   pi_ij = pi_j     if only i is certainty
 #' The stochastic part is computed from the reduced pi vector.
 #' @noRd
-assemble_jip_with_certainty <- function(pik, cert_idx, method) {
+assemble_jip_with_certainty <- function(pik, cert_idx, method, sampled_idx) {
   N <- length(pik)
   non_cert_idx <- setdiff(seq_len(N), cert_idx)
+  sampled_idx <- as.integer(sampled_idx)
+  n_sampled <- length(sampled_idx)
 
-  result <- matrix(0, nrow = N, ncol = N)
+  if (n_sampled == 0L) {
+    return(NULL)
+  }
 
-  result[cert_idx, cert_idx] <- 1
+  is_cert_sample <- sampled_idx %in% cert_idx
+  result <- matrix(0, nrow = n_sampled, ncol = n_sampled)
 
-  if (length(non_cert_idx) > 0) {
-    result[cert_idx, non_cert_idx] <- rep(
-      pik[non_cert_idx],
-      each = length(cert_idx)
+  cert_pos <- which(is_cert_sample)
+  non_cert_pos <- which(!is_cert_sample)
+  sampled_non_cert_idx <- sampled_idx[non_cert_pos]
+
+  if (length(cert_pos) > 0) {
+    result[cert_pos, cert_pos] <- 1
+  }
+
+  if (length(cert_pos) > 0 && length(non_cert_pos) > 0) {
+    non_cert_pik <- pik[sampled_non_cert_idx]
+    result[cert_pos, non_cert_pos] <- rep(
+      non_cert_pik,
+      each = length(cert_pos)
     )
-    result[non_cert_idx, cert_idx] <- rep(
-      pik[non_cert_idx],
-      times = length(cert_idx)
+    result[non_cert_pos, cert_pos] <- rep(
+      non_cert_pik,
+      times = length(cert_pos)
     )
   }
 
-  if (length(non_cert_idx) > 1) {
-    jip_reduced <- compute_jip_by_method(pik[non_cert_idx], method)
-    result[non_cert_idx, non_cert_idx] <- jip_reduced
-  } else if (length(non_cert_idx) == 1) {
-    result[non_cert_idx, non_cert_idx] <- pik[non_cert_idx]
+  if (length(non_cert_pos) > 1) {
+    sampled_non_cert_reduced <- match(sampled_non_cert_idx, non_cert_idx)
+    jip_reduced <- compute_jip_by_method(
+      pik = pik[non_cert_idx],
+      method = method,
+      sampled_idx = sampled_non_cert_reduced
+    )
+    result[non_cert_pos, non_cert_pos] <- jip_reduced
+  } else if (length(non_cert_pos) == 1) {
+    result[non_cert_pos, non_cert_pos] <- pik[sampled_non_cert_idx]
   }
 
   result

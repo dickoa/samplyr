@@ -1,0 +1,245 @@
+---
+title: "Validation on Synthetic Populations"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Validation on Synthetic Populations}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## Why this vignette
+
+This vignette validates `samplyr` on synthetic finite populations with known truths. It uses two complementary layers:
+
+1. Deterministic checks on design metadata and invariants.
+2. Monte Carlo checks for estimator bias, standard-error calibration, and 95% CI coverage.
+
+The goal is not to benchmark speed. The goal is to show statistical correctness.
+
+## Synthetic population with known properties
+
+```{r}
+library(dplyr)
+set.seed(20260302)
+
+make_population <- function(
+    n_strata = 6L,
+    psu_per_stratum = 50L,
+    units_per_psu = 30L) {
+  n_psu <- n_strata * psu_per_stratum
+  stratum <- rep(LETTERS[seq_len(n_strata)], each = psu_per_stratum * units_per_psu)
+  psu <- rep(sprintf("PSU%03d", seq_len(n_psu)), each = units_per_psu)
+
+  psu_mos <- round(runif(n_psu, min = 80, max = 420))
+  psu_re <- rnorm(n_psu, sd = 18)
+  stratum_re <- rep(
+    seq(-12, 16, length.out = n_strata),
+    each = psu_per_stratum * units_per_psu
+  )
+
+  x <- rep(psu_mos, each = units_per_psu) + rnorm(n_psu * units_per_psu, sd = 10)
+  y <- 200 + stratum_re + rep(psu_re, each = units_per_psu) + 0.08 * x + rnorm(n_psu * units_per_psu, sd = 20)
+
+  tibble(
+    id = seq_len(n_psu * units_per_psu),
+    stratum = factor(stratum),
+    psu = factor(psu),
+    psu_mos = rep(psu_mos, each = units_per_psu),
+    x = x,
+    y = y
+  )
+}
+
+population <- make_population()
+
+truth <- population |>
+  summarise(
+    N = dplyr::n(),
+    Y_total = sum(y),
+    Y_mean = mean(y)
+  )
+
+truth
+```
+
+## Layer 1: deterministic checks
+
+```{r}
+library(samplyr)
+library(survey)
+
+srs_sample <- sampling_design() |>
+  draw(n = 400) |>
+  execute(population, seed = 1001)
+
+strat_sample <- sampling_design() |>
+  stratify_by(stratum, alloc = "proportional") |>
+  draw(n = 400) |>
+  execute(population, seed = 1002)
+
+pps_two_stage <- sampling_design() |>
+  add_stage("PSU") |>
+    stratify_by(stratum) |>
+    cluster_by(psu) |>
+    draw(
+      n = 8,
+      method = "pps_brewer",
+      mos = psu_mos,
+      certainty_size = 390
+    ) |>
+  add_stage("SSU") |>
+    draw(n = 6) |>
+  execute(population, seed = 1003)
+
+stratum_sizes <- population |>
+  count(stratum, name = "N_h")
+
+strat_weight_by_stratum <- strat_sample |>
+  summarise(weight_sum = sum(.weight), .by = stratum) |>
+  left_join(stratum_sizes, by = "stratum")
+
+checks <- tibble(
+  check = c(
+    "SRS: sum(weights) = N",
+    "Stratified SRS: sum_h weights_h = N_h",
+    "Two-stage PPS: .weight = .weight_1 * .weight_2",
+    "Two-stage PPS certainty: certainty PSUs have .weight_1 = 1"
+  ),
+  pass = c(
+    isTRUE(all.equal(sum(srs_sample$.weight), truth$N)),
+    isTRUE(all(abs(strat_weight_by_stratum$weight_sum - strat_weight_by_stratum$N_h) < 1e-8)),
+    isTRUE(all.equal(pps_two_stage$.weight, pps_two_stage$.weight_1 * pps_two_stage$.weight_2, tolerance = 1e-10)),
+    all(pps_two_stage$.weight_1[pps_two_stage$.certainty_1] == 1)
+  )
+)
+
+checks
+```
+
+These are structural, non-random checks. If they fail, the design object is wrong before analysis begins.
+
+## Layer 2: Monte Carlo validation
+
+Below we repeatedly sample from the same finite population and analyze with `survey`.
+For each design we report:
+
+- `rel_bias_pct`: relative bias of \(\hat{\bar{Y}}\),
+- `se_ratio`: empirical SD of estimates divided by mean estimated SE,
+- `coverage_95`: fraction of 95% CIs covering the true finite-population mean.
+
+This vignette fixes Monte Carlo replication at `R = 199`.
+
+```{r}
+evaluate_design <- function(design_fn, population, true_mean, R = 199L, seed_init = 3000L) {
+  est <- numeric(R)
+  se <- numeric(R)
+  cover <- logical(R)
+
+  for (i in seq_len(R)) {
+    sample_i <- design_fn(population, seed_init + i)
+    svy_i <- as_svydesign(sample_i)
+    fit <- svymean(~y, svy_i)
+
+    est[i] <- unname(coef(fit)[1])
+    se[i] <- unname(SE(fit)[1])
+
+    ci <- suppressWarnings(confint(fit, level = 0.95))
+    cover[i] <- ci[1, 1] <= true_mean && ci[1, 2] >= true_mean
+  }
+
+  tibble(R = R,
+         bias = mean(est - true_mean),
+         rel_bias_pct = 100 * mean(est - true_mean) / true_mean,
+         emp_sd = sd(est),
+         mean_se = mean(se),
+         se_ratio = sd(est) / mean(se),
+         coverage_95 = mean(cover))
+}
+
+mcse_coverage <- function(R, p = 0.95) {
+  sqrt(p * (1 - p) / R)
+}
+
+design_srs <- function(pop, seed) {
+  sampling_design() |>
+    draw(n = 400, method = "srswor") |>
+    execute(pop, seed = seed)
+}
+
+design_strat <- function(pop, seed) {
+  sampling_design() |>
+    stratify_by(stratum, alloc = "proportional") |>
+    draw(n = 400, method = "srswor") |>
+    execute(pop, seed = seed)
+}
+
+design_two_stage <- function(pop, seed) {
+  sampling_design() |>
+    add_stage("PSU") |>
+      stratify_by(stratum) |>
+      cluster_by(psu) |>
+      draw(n = 8, method = "pps_brewer", mos = psu_mos) |>
+    add_stage("SSU") |>
+      draw(n = 6, method = "srswor") |>
+    execute(pop, seed = seed)
+}
+
+R_mc <- 199L
+R_mc
+
+mc_results <- bind_rows(
+  evaluate_design(design_srs, population, truth$Y_mean, R = R_mc) |>
+    mutate(design = "SRSWOR"),
+  evaluate_design(design_strat, population, truth$Y_mean, R = R_mc) |>
+    mutate(design = "Stratified SRS"),
+  evaluate_design(design_two_stage, population, truth$Y_mean, R = R_mc) |>
+    mutate(design = "Two-stage PPS->SRS")
+) |>
+  select(design, everything())
+
+mc_results
+```
+
+## Interpreting the results
+
+For this short validation, practical acceptance bands are:
+
+- `abs(rel_bias_pct) <= 2`,
+- `0.85 <= se_ratio <= 1.15`,
+- `0.90 <= coverage_95 <= 0.98`.
+
+Coverage has Monte Carlo uncertainty. At nominal 95% coverage, the Monte Carlo standard error is approximately \(\sqrt{0.95 \times 0.05 / R}\). With `R = 199`, this is about 1.5 percentage points.
+
+```{r}
+acceptance <- mc_results |>
+  mutate(
+    pass_bias = abs(rel_bias_pct) <= 2,
+    pass_se = se_ratio >= 0.85 & se_ratio <= 1.15,
+    pass_cov = coverage_95 >= 0.90 & coverage_95 <= 0.98,
+    pass_all = pass_bias & pass_se & pass_cov
+  ) |>
+  select(design, pass_bias, pass_se, pass_cov, pass_all)
+
+acceptance
+```
+
+```{r}
+tibble(
+  R = R_mc,
+  mcse_coverage_95 = mcse_coverage(R_mc, p = 0.95)
+)
+```
+
+If these checks hold across core designs, we have strong evidence that:
+
+1. `samplyr` design metadata is internally consistent,
+2. exported `survey` designs reproduce correct design-based inference on known finite populations.
+
+In this vignette, `R` is fixed at 199 as a practical default. If you need higher confidence when interpreting package accuracy, rerun the same validation with a larger `R`.

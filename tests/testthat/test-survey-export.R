@@ -603,6 +603,30 @@ test_that("joint_expectation decomposes certainty units correctly", {
   }
 })
 
+test_that("joint_expectation honors explicit certainty thresholds", {
+  frame <- data.frame(
+    id = 1:100,
+    size = 1:100
+  )
+
+  sample <- sampling_design() |>
+    draw(n = 20, method = "pps_brewer", mos = size, certainty_size = 95) |>
+    execute(frame, seed = 1)
+
+  expect_true(any(sample$.certainty_1))
+
+  jip <- joint_expectation(sample, frame)
+  mat <- jip[[1]]
+
+  expect_true(is.matrix(mat))
+  expect_equal(nrow(mat), nrow(sample))
+  expect_equal(mat, t(mat), tolerance = 1e-10)
+
+  pik_from_weights <- 1 / sample$.weight_1
+  expect_equal(diag(mat), pik_from_weights, tolerance = 1e-8)
+  expect_equal(diag(mat)[sample$.certainty_1], rep(1, sum(sample$.certainty_1)))
+})
+
 test_that("joint_expectation cross-stratum entries equal pi_i * pi_j", {
   jip <- joint_expectation(fix_strat_pps, test_frame)
   mat <- jip[[1]]

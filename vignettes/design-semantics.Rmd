@@ -126,7 +126,7 @@ $$
 $$
 
 computed by `sondage::inclusion_prob()`, which iteratively caps units with \(\pi_i \geq 1\) and redistributes. These "certainty" units (\(\pi_i = 1\))
-receive weight 1 and contribute zero variance. For Poisson sampling, \(\pi_i = f \cdot N \cdot \text{mos}_i / \sum \text{mos}\), capped at 1 (random-size design).
+receive stage weight 1 and contribute zero first-stage variance. In multi-stage designs, final `.weight` still compounds all stages, so certainty at one stage does not imply overall weight 1. For Poisson sampling, \(\pi_i = f \cdot N \cdot \text{mos}_i / \sum \text{mos}\), capped at 1 (random-size design).
 
 **With-replacement and PMR** (`srswr`, `pps_multinomial`, `pps_chromy`):
 

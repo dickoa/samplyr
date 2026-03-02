@@ -1,116 +1,96 @@
-# samplyr 0.5.9999 (development)
+# samplyr 0.5.9999
 
-## Core Grammar
+Initial release.
 
-* Five verbs and one modifier for composable survey sampling designs:
-  `sampling_design()`, `stratify_by()`, `cluster_by()`, `draw()`,
-  `execute()`, and `add_stage()`.
-* Frame-independent design pattern: specification is separate from execution.
-  Designs are reusable across different frames.
+## Core grammar
 
-## Sampling Methods (13 total)
+* Frame-independent design specification with five verbs and one modifier:
+  `sampling_design()`, `add_stage()`, `stratify_by()`, `cluster_by()`,
+  `draw()`, and `execute()`.
+* Designs are reusable across different frames.
 
-* Equal probability: SRS without replacement (`srswor`), SRS with
-  replacement (`srswr`), systematic, and Bernoulli.
-* PPS without replacement: systematic, Brewer, conditional Poisson (maximum
-  entropy), Poisson, sequential Poisson (SPS), and Pareto.
-* PPS with replacement / PMR: multinomial and Chromy (probability minimum
-  replacement).
-* Balanced sampling (`balanced`): the cube method (Deville & Tille 2004)
-  with optional auxiliary variables (`aux`) and measure of size (`mos`).
-  Stratified designs use the stratified cube algorithm (Chauvet 2009).
-  Supported for up to 2 stages.
-* Permanent random number (PRN) support for sample coordination:
+## Sampling methods
+
+* 13 methods in three families:
+  - Equal probability: `srswor`, `srswr`, `systematic`, `bernoulli`.
+  - PPS without replacement: `pps_systematic`, `pps_brewer`, `pps_cps`
+    (maximum entropy), `pps_poisson`, `pps_sps`, `pps_pareto`.
+  - PPS with replacement / PMR: `pps_multinomial`, `pps_chromy`.
+* Balanced sampling via the cube method (`method = "balanced"`) with optional
+  auxiliary balancing variables and measure of size. Stratified designs use
+  the stratified cube algorithm. Supported for up to 2 stages.
+* Permanent random numbers (PRN) for sample coordination:
   `bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`.
-* Random-size methods (`bernoulli`, `pps_poisson`) accept `n` as expected
-  sample size or `frac` as sampling fraction.
+* Random-size methods (`bernoulli`, `pps_poisson`) accept `n` (expected size)
+  or `frac` (sampling fraction).
 
-## Stratification and Allocation
+## Stratification and allocation
 
-* Proportional, equal, Neyman, optimal, and power allocation via
-  `stratify_by(..., alloc = )`.
+* Five allocation methods via `stratify_by(..., alloc =)`: proportional,
+  equal, Neyman, optimal, and power.
 * Custom allocation via named vectors or data frames.
-* Minimum and maximum sample size constraints (`min_n`, `max_n`).
+* Minimum and maximum sample size constraints per stratum (`min_n`, `max_n`).
 
-## Multi-Stage and Multi-Phase
+## Multi-stage and multi-phase
 
-* Multi-stage sampling with `add_stage()` and automatic weight compounding
+* Multi-stage sampling with `add_stage()`. Weights compound automatically
   across stages.
 * Partial execution via `execute(..., stages = 1)` for operational workflows.
-* Two-phase sampling: pipe a `tbl_sample` into `execute()`.
+* Two-phase sampling by piping a `tbl_sample` into `execute()`.
 
-## Panel Partitioning
+## Certainty selection
+
+* PPS WOR methods support certainty selection via absolute (`certainty_size`)
+  or proportional (`certainty_prop`) thresholds, including iterative
+  identification for proportional thresholds.
+* `certainty_overflow = "allow"` returns all certainty units when they
+  exceed `n`.
+* Stratum-specific thresholds via data frames.
+
+## Panel partitioning
 
 * `execute(..., panels = k)` assigns units to `k` panels via systematic
   within-stratum interleaving.
-* Multi-stage designs: panels assigned at PSU level and propagated.
-* Full-sample weights preserved; analyst multiplies by `k` for per-panel
-  estimation.
+* Multi-stage designs assign panels at PSU level and propagate to all units.
 
-## Certainty Selection
+## Control sorting
 
-* PPS WOR methods support certainty selection via `certainty_size`
-  (absolute threshold) or `certainty_prop` (proportional threshold).
-* Iterative identification for proportional thresholds.
-* `certainty_overflow = "allow"` returns all certainty units when they
-  exceed the target `n`.
-* Stratum-specific thresholds via data frames.
+* `control = c(var1, var2)` for nested sorting.
+* `control = serp(var1, var2)` for serpentine (alternating direction) sorting.
 
-## Control Sorting
-
-* `control = c(var1, var2)` for nested (standard) sorting.
-* `control = serp(var1, var2)` for serpentine (alternating direction)
-  sorting.
-* Applied within strata when combined with `stratify_by()`.
-
-## Zero-Selection Handling
-
-* `on_empty` parameter for random-size methods: `"error"` (default),
-  `"warn"` (fall back to SRS of 1), or `"silent"`.
-
-## Survey Export
+## Survey export
 
 * `as_svydesign()` converts `tbl_sample` to `survey::svydesign()` with
-  correct strata, cluster ids, weights, and finite population corrections.
-  Handles PPS WOR (Brewer approximation or exact ppsmat), WR/PMR (Inf FPC,
-  Hansen-Hurwitz), certainty strata, balanced sampling, and two-phase
-  designs.
-* `as_svrepdesign()` converts to replicate-weight designs via
-  `survey::as.svrepdesign()`. For PPS and balanced designs, `"subbootstrap"`
-  and `"mrbbootstrap"` are supported; other types emit a warning.
-* `as_survey_design()` and `as_survey_rep()` methods registered on srvyr
-  generics for direct conversion to `tbl_svy` objects.
+  correct strata, cluster IDs, weights, and finite population corrections.
+  Handles PPS WOR (Brewer approximation or exact `ppsmat`), WR/PMR
+  (`Inf` FPC, Hansen-Hurwitz), certainty strata, balanced sampling, and
+  two-phase designs.
+* `as_svrepdesign()` converts to replicate-weight designs. For PPS and
+  balanced designs, `"subbootstrap"` and `"mrbbootstrap"` are supported.
+* `as_survey_design()` and `as_survey_rep()` for direct conversion to
+  srvyr `tbl_svy` objects.
 * `joint_expectation()` computes pairwise joint inclusion probabilities
   (WOR) or joint expected hits (WR/PMR) for exact variance estimation.
-  Supports balanced sampling via high-entropy approximation.
 
-## Survey Planning (svyplan >= 0.6.0 integration)
+## Survey planning
 
-* `design_effect()` and `effective_n()` re-exported from svyplan with
-  `tbl_sample` methods. Five methods: Kish, Henry, Spencer, Chen-Rust,
-  and cluster planning.
-* Auto-extraction of design metadata (strata, clusters, selection
-  probabilities) from the stored sampling design.
-* `draw()` accepts `svyplan_n`, `svyplan_power`, and `svyplan_cluster`
-  objects directly from `n_prop()`, `n_mean()`, `n_multi()`,
-  `n_cluster()`, `power_prop()`, `power_mean()`.
-* Precision analysis: `prec_prop()`, `prec_mean()`, `prec_cluster()`,
-  `prec_multi()` evaluate achieved precision at a given sample size.
-  Bidirectional round-trip between `n_*()` and `prec_*()` via S3
-  dispatch.
-* Sensitivity analysis via `predict()` methods on all svyplan objects.
-* Response rate adjustment via `resp_rate` parameter across all
-  planning functions.
-* Confidence intervals via `confint()` on sample size and precision
-  objects.
+* `design_effect()` and `effective_n()` with `tbl_sample` methods. Five
+  methods: Kish, Henry, Spencer, Chen-Rust, and cluster planning.
+  Auto-extraction of strata, clusters, and selection probabilities from
+  the stored design.
+* `draw()` accepts `svyplan` sample size objects (`svyplan_n`, `svyplan_power`,
+  `svyplan_cluster`) directly.
+* Precision analysis (`prec_prop()`, `prec_mean()`, `prec_cluster()`,
+  `prec_multi()`), sensitivity analysis (`predict()`), response rate
+  adjustment (`resp_rate`), and confidence intervals (`confint()`) on
+  all planning objects.
 
 ## Diagnostics
 
-* `summary.tbl_sample()` shows per-stage stratum allocation tables with
-  N_h, n_h, f_h, and weight diagnostics (Kish DEFF, n_eff, CV).
-* `validate_frame()` checks for missing variables, NA values in
-  strata/cluster columns, and MOS/PRN/auxiliary variable issues before
-  execution.
+* `summary()` shows per-stage stratum allocation tables with N_h, n_h,
+  f_h, and weight diagnostics (Kish DEFF, n_eff, CV).
+* `validate_frame()` checks for missing variables, NA values in key
+  columns, and MOS/PRN/auxiliary variable issues before execution.
 
 ## Datasets
 
@@ -118,6 +98,16 @@
   Companion tables `bfa_eas_variance` and `bfa_eas_cost` for Neyman and
   optimal allocation.
 * `zwe_eas` and `zwe_households`: DHS-style two-stage cluster frame from
-  Zimbabwe (22,600 EAs, 379,326 households).
+  Zimbabwe (22,600 EAs and 379,326 households).
 * `ken_enterprises`: 6,823 establishments from Kenya for enterprise surveys,
   panel partitioning, and PRN coordination examples.
+
+## Vignettes
+
+* Introduction: full tutorial covering SRS through multi-stage PPS designs.
+* Design semantics: assumptions, weight formulas, and method properties.
+* Survey analysis: export to survey/srvyr, joint probabilities, two-phase.
+* Sampling coordination: PRN workflows, positive/negative coordination.
+* Survey planning: svyplan integration, sample size, precision, design effects.
+* Validation: deterministic invariants and Monte Carlo coverage checks on
+  synthetic populations.

@@ -254,6 +254,39 @@ test_that("CR auto-extracts clvar from unstratified clustered design", {
   expect_true("deff_c" %in% names(cr_auto$strata))
 })
 
+test_that("CR auto-extraction uses full multi-column cluster key", {
+  set.seed(42)
+  two_key_frame <- data.frame(
+    id = 1:400,
+    region = rep(c("A", "B"), each = 200),
+    district = rep(rep(1:20, each = 10), 2),
+    income = rnorm(400, 50, 10)
+  )
+
+  two_key_sample <- sampling_design() |>
+    add_stage("psu") |>
+    cluster_by(region, district) |>
+    draw(n = 12) |>
+    add_stage("ssu") |>
+    draw(n = 4) |>
+    execute(two_key_frame, seed = 7)
+
+  cr_auto <- design_effect(two_key_sample, y = income, method = "cr")
+  composite_cluster <- interaction(
+    two_key_sample$region,
+    two_key_sample$district,
+    drop = TRUE
+  )
+  cr_manual <- design_effect(
+    two_key_sample$.weight,
+    y = two_key_sample$income,
+    cluster_id = composite_cluster,
+    method = "cr"
+  )
+
+  expect_equal(cr_auto$overall, cr_manual$overall)
+})
+
 test_that("effective_n with CR uses auto-extraction", {
   eff <- effective_n(fix_deff_strat_clust, y = income, method = "cr")
   expect_type(eff, "double")

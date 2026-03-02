@@ -10,6 +10,7 @@ articles:
   - title: "Statistical Foundations"
     contents:
       - design-semantics
+      - validation
   - title: "Analysis and Coordination"
     contents:
       - survey-analysis

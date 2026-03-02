@@ -119,7 +119,7 @@
 #' @param certainty_overflow Controls behavior when certainty units exceed the
 #'   target sample size `n`. One of:
 #'   - `"error"` (default): Stop with an informative error.
-#'   - `"allow"`: Return all certainty units with weight 1, even if the
+#'   - `"allow"`: Return all certainty units with stage weight 1, even if the
 #'     resulting sample has more than `n` units.
 #'
 #'   Equivalent to SAS SURVEYSELECT allowing `CERTSIZE=` overflow.
@@ -238,9 +238,10 @@
 #'
 #' When `certainty_overflow = "allow"`, if more units qualify for certainty
 #' selection than the requested `n`, all certainty units are returned with
-#' probability 1 (weight = 1). No probabilistic sampling is performed in
+#' probability 1 (stage weight = 1). No probabilistic sampling is performed in
 #' this case. The resulting sample size will be the number of certainty
-#' units, which exceeds `n`.
+#' units, which exceeds `n`. In multi-stage designs, the final `.weight` can
+#' still exceed 1 because it compounds all stage weights.
 #'
 #' For stratum-specific thresholds, pass a data frame containing:
 #' - All stratification variable columns

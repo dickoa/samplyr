@@ -15,7 +15,23 @@ knitr::opts_chunk$set(
 
 # samplyr
 
+<!-- badges: start -->
+[![CRAN status](https://www.r-pkg.org/badges/version/samplyr)](https://CRAN.R-project.org/package=samplyr)
+[![R-CMD-check](https://gitlab.com/dickoa/samplyr/badges/main/pipeline.svg)](https://gitlab.com/dickoa/samplyr/-/pipelines)
+[![Codecov test coverage](https://codecov.io/gl/dickoa/samplyr/branch/main/graph/badge.svg)](https://app.codecov.io/gl/dickoa/samplyr?branch=main)
+<!-- badges: end -->
+
 A tidy grammar for survey sampling in R. `samplyr` provides a minimal set of composable verbs for stratified, clustered, multi-stage, and multi-phase sampling designs with PPS methods, sample coordination, and panel rotation.
+
+## Ecosystem Positioning
+
+`samplyr` sits in the middle of a three-layer workflow:
+
+- Use `svyplan` for planning (`n`, precision, power, allocation, budget).
+- Use `samplyr` to specify designs, draw samples, and carry design metadata through fieldwork.
+- Use `survey`/`srvyr` after data collection for estimation and inference.
+
+These packages are complementary, not competing. Handoffs are explicit (for example, `svyplan` outputs can feed `draw(n = ...)`, and `samplyr` outputs convert via `as_svydesign()`, `as_svrepdesign()`, and `as_survey_design()`).
 
 ## Why samplyr?
 
@@ -87,10 +103,8 @@ pak::pkg_install("gitlab::dickoa/samplyr")
 
 ### Frame-Independent Design
 
-`stratify_by()` and `cluster_by()` take bare column names. The design is
-stored as a specification and resolved only when a frame is available
-(`validate_frame()`, `execute()`, `as_svydesign()`), so design specification
-stays separate from execution.
+`stratify_by()` and `cluster_by()` take bare column names. The design is stored as a specification and resolved only when a frame is available
+(`validate_frame()`, `execute()`, `as_svydesign()`), so design specification stays separate from execution.
 
 ```{r frame-independent}
 design <- sampling_design() |>
@@ -324,13 +338,8 @@ jip <- joint_expectation(sample, frame, stage = 1)
 svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 ```
 
-By default `as_svydesign()` uses Brewer's variance approximation. For
-tighter variance estimates, `joint_expectation()` computes pairwise
-joint inclusion probabilities from the original frame. The result is
-exact for CPS, systematic, and Poisson; for Brewer, SPS, and Pareto it
-uses the O(N^2) high-entropy approximation (exact recursive formulas
-exist but are O(N^3) and impractical for large frames). See
-`?joint_expectation` for the full method-by-method breakdown.
+By default `as_svydesign()` uses Brewer variance approximation. For tighter variance estimates, `joint_expectation()` computes pairwise joint inclusion probabilities from the original frame. The result is
+exact for CPS, systematic, and Poisson whereas high-entropy approximation O(N^2) is by  Brewer, SPS, Pareto and Balanced sampling using the Cube algorithm (exact recursive formulas exist for some of these methods but are usually O(N^3) and impractical for large frames). See `?joint_expectation` for the full method-by-method breakdown.
 
 ## Panel Partitioning
 
@@ -345,10 +354,7 @@ panel_sample <- sampling_design() |>
 table(panel_sample$.panel)
 ```
 
-Panels are assigned by systematic interleaving within strata. For
-multi-stage designs, panels are assigned at the PSU level and propagated
-to all units. Weights reflect the full-sample inclusion probability; for
-per-panel analysis, multiply by the number of panels.
+Panels are assigned by systematic interleaving within strata. For multi-stage designs, panels are assigned at the PSU level and propagated to all units. Per-panel analysis is also possible by multiplying the weights by the number of panels since the weights reflect the full-sample inclusion probability.
 
 ## Two-Phase Sampling
 
@@ -376,16 +382,20 @@ Weights compound automatically across phases.
 summary(strata_smpl)
 ```
 
+## Validation
+
+For statistical validation on synthetic populations with known truths, see `vignette("validation")`. It combines deterministic invariants (weights, FPC, certainty, stage compounding) with Monte Carlo checks of bias, standard-error calibration, and coverage.
+
 ## Included Datasets
 
 Synthetic sampling frames for learning and testing:
 
-| Dataset | Description | Rows |
-|---------|-------------|------|
-| `bfa_eas` | LSMS-style EA frame (Burkina Faso) | 14,900 |
-| `zwe_eas` | DHS-style EA frame (Zimbabwe) | 22,600 |
-| `zwe_households` | Household frame for two-phase sampling (Zimbabwe) | 379,326 |
-| `ken_enterprises` | Enterprise survey frame (Kenya) | 6,823 |
+| Dataset           | Description                                       | Rows    |
+|-------------------|---------------------------------------------------|---------|
+| `bfa_eas`         | LSMS-style EA frame (Burkina Faso)                | 14,900  |
+| `zwe_eas`         | DHS-style EA frame (Zimbabwe)                     | 22,600  |
+| `zwe_households`  | Household frame for two-phase sampling (Zimbabwe) | 379,326 |
+| `ken_enterprises` | Enterprise survey frame (Kenya)                   | 6,823   |
 
 Plus auxiliary data: `bfa_eas_variance`, `bfa_eas_cost`
 

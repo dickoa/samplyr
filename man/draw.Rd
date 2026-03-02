@@ -169,7 +169,7 @@ Equivalent to SAS SURVEYSELECT \verb{CERTSIZE=P=} option.}
 target sample size \code{n}. One of:
 \itemize{
 \item \code{"error"} (default): Stop with an informative error.
-\item \code{"allow"}: Return all certainty units with weight 1, even if the
+\item \code{"allow"}: Return all certainty units with stage weight 1, even if the
 resulting sample has more than \code{n} units.
 }
 
@@ -306,9 +306,10 @@ natively through their hit mechanism.
 
 When \code{certainty_overflow = "allow"}, if more units qualify for certainty
 selection than the requested \code{n}, all certainty units are returned with
-probability 1 (weight = 1). No probabilistic sampling is performed in
+probability 1 (stage weight = 1). No probabilistic sampling is performed in
 this case. The resulting sample size will be the number of certainty
-units, which exceeds \code{n}.
+units, which exceeds \code{n}. In multi-stage designs, the final \code{.weight} can
+still exceed 1 because it compounds all stage weights.
 
 For stratum-specific thresholds, pass a data frame containing:
 \itemize{
