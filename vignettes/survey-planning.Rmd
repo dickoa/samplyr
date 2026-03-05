@@ -195,16 +195,16 @@ The `delta` value (measure of homogeneity) feeds directly into `n_cluster()` and
 
 ```{r}
 # Minimize cost to achieve CV = 0.05
-n_cluster(cost = c(500, 50), delta = vc, cv = 0.05)
+n_cluster(stage_cost = c(500, 50), delta = vc, cv = 0.05)
 
 # Maximize precision within a budget
-n_cluster(cost = c(500, 50), delta = vc, budget = 100000)
+n_cluster(stage_cost = c(500, 50), delta = vc, budget = 100000)
 ```
 
 The total sample size from `n_cluster()` can be passed to `draw()`:
 
 ```{r}
-cl <- n_cluster(cost = c(500, 50), delta = vc, budget = 100000)
+cl <- n_cluster(stage_cost = c(500, 50), delta = vc, budget = 100000)
 samp <- sampling_design() |>
   draw(n = cl) |>
   execute(ken_enterprises, seed = 5)

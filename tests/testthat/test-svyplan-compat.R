@@ -45,7 +45,7 @@ test_that("draw accepts svyplan_power from power_mean", {
 })
 
 test_that("draw accepts svyplan_cluster from n_cluster", {
-  cl_obj <- svyplan::n_cluster(cost = c(500, 50), delta = 0.05, budget = 100000)
+  cl_obj <- svyplan::n_cluster(stage_cost = c(500, 50), delta = 0.05, budget = 100000)
   n_int <- as.integer(cl_obj)
   design <- sampling_design() |> draw(n = cl_obj)
   frame <- data.frame(id = seq_len(n_int + 100))
