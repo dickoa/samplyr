@@ -234,10 +234,33 @@ is_tbl_sample <- function(x) {
   inherits(x, "tbl_sample")
 }
 
-#' Get design from a sample
+#' Get the design specification stored on a sample
 #'
-#' @param x A tbl_sample object
-#' @return The sampling_design used to create the sample
+#' Returns the `sampling_design` metadata attached to a `tbl_sample`. This is
+#' the original design object used to create the sample, including all stage
+#' specifications, labels, stratification, clustering, and draw settings.
+#'
+#' This is especially useful for:
+#' - inspecting the design after execution
+#' - programmatic workflows that need to branch on design metadata
+#' - continuation workflows, where later calls to [execute()] resume from a
+#'   partially executed sample
+#'
+#' @param x A `tbl_sample` object.
+#'
+#' @return The `sampling_design` object stored in `x`.
+#'
+#' @examples
+#' design <- sampling_design(title = "Example") |>
+#'   stratify_by(region) |>
+#'   draw(n = 20)
+#'
+#' sample <- execute(design, bfa_eas, seed = 1)
+#'
+#' get_design(sample)
+#'
+#' # The returned object is the original sampling_design
+#' is_sampling_design(get_design(sample))
 #' @export
 get_design <- function(x) {
   if (!is_tbl_sample(x)) {
@@ -246,10 +269,35 @@ get_design <- function(x) {
   attr(x, "design")
 }
 
-#' Get executed stages from a sample
+#' Get the executed stage numbers stored on a sample
 #'
-#' @param x A tbl_sample object
-#' @return Integer vector of executed stages
+#' Returns the stage indices that have been executed for a `tbl_sample`.
+#' For a fully executed single-stage design, this is typically `1L`. For
+#' partial execution or continuation workflows, this indicates how far the
+#' design has progressed.
+#'
+#' This is mainly useful for:
+#' - checking whether a multi-stage design was executed completely
+#' - writing continuation workflows that resume from the next stage
+#' - inspecting samples created with `stages =` in [execute()]
+#'
+#' @param x A `tbl_sample` object.
+#'
+#' @return An integer vector of executed stage numbers.
+#'
+#' @examples
+#' design <- sampling_design() |>
+#'   add_stage("EAs") |>
+#'     cluster_by(ea_id) |>
+#'     draw(n = 10) |>
+#'   add_stage("Households") |>
+#'     draw(n = 5)
+#'
+#' stage1 <- execute(design, bfa_eas, stages = 1, seed = 1)
+#' get_stages_executed(stage1)
+#'
+#' full_sample <- execute(stage1, bfa_eas, seed = 2)
+#' get_stages_executed(full_sample)
 #' @export
 get_stages_executed <- function(x) {
   if (!is_tbl_sample(x)) {

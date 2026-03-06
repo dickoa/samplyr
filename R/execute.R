@@ -61,7 +61,9 @@
 #' \preformatted{
 #' design |> execute(frame, seed = 2025)
 #' }
-#' The frame must contain all clustering variables and respect nesting.
+#' The frame must contain all clustering variables and represent the stage
+#' hierarchy correctly. Lower-stage IDs may repeat across different parents;
+#' `samplyr` resolves them using the full ancestry from earlier stages.
 #'
 #' ### Multi-Stage with Multiple Frames
 #' When each stage has its own frame:
@@ -608,6 +610,10 @@ execute_single_stage <- function(
       result, previous_sample, previous_stage_spec, all_prior_cluster_vars
     )
   }
+
+  # Materialized outputs should always expose a row-unique sample id,
+  # including clustered stages that are expanded back to all rows.
+  result$.sample_id <- seq_len(nrow(result))
   result
 }
 
@@ -629,6 +635,7 @@ find_carry_forward_cols <- function(previous_sample) {
 assign_panels <- function(result, k, first_stage_spec) {
   strata_spec <- first_stage_spec$strata
   cluster_spec <- first_stage_spec$clusters
+  control_quos <- first_stage_spec$draw_spec$control
 
   if (!is_null(cluster_spec)) {
     # Multi-stage: assign at PSU level, propagate to all units
@@ -639,11 +646,16 @@ assign_panels <- function(result, k, first_stage_spec) {
     }
     all_keys <- make_key(result)
     unique_mask <- !duplicated(all_keys)
-    psu_keys <- all_keys[unique_mask]
-    n_psu <- length(psu_keys)
+    psu_data <- result[unique_mask, , drop = FALSE]
+    psu_data <- apply_panel_control_order(
+      psu_data,
+      strata_spec = strata_spec,
+      control_quos = control_quos
+    )
+    psu_keys <- make_key(psu_data)
+    n_psu <- nrow(psu_data)
 
     if (!is_null(strata_spec)) {
-      psu_data <- result[unique_mask, , drop = FALSE]
       groups <- split_row_indices(psu_data, strata_spec$vars)
       psu_panel <- integer(n_psu)
       for (idxs in groups$indices) {
@@ -664,6 +676,24 @@ assign_panels <- function(result, k, first_stage_spec) {
     result$.panel <- rep_len(seq_len(k), nrow(result))
   }
   result
+}
+
+#' Apply control sorting to panel assignment units
+#' @noRd
+apply_panel_control_order <- function(df, strata_spec = NULL, control_quos = NULL) {
+  if (is_null(control_quos) || length(control_quos) == 0 || nrow(df) <= 1) {
+    return(df)
+  }
+
+  if (is_null(strata_spec)) {
+    return(arrange(df, !!!control_quos))
+  }
+
+  groups <- split_row_indices(df, strata_spec$vars)
+  ordered <- lapply(groups$indices, function(idxs) {
+    arrange(df[idxs, , drop = FALSE], !!!control_quos)
+  })
+  bind_rows(ordered)
 }
 
 #' Determine join variables for weight compounding

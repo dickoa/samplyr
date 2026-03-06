@@ -2,16 +2,39 @@
 % Please edit documentation in R/classes.R
 \name{get_design}
 \alias{get_design}
-\title{Get design from a sample}
+\title{Get the design specification stored on a sample}
 \usage{
 get_design(x)
 }
 \arguments{
-\item{x}{A tbl_sample object}
+\item{x}{A \code{tbl_sample} object.}
 }
 \value{
-The sampling_design used to create the sample
+The \code{sampling_design} object stored in \code{x}.
 }
 \description{
-Get design from a sample
+Returns the \code{sampling_design} metadata attached to a \code{tbl_sample}. This is
+the original design object used to create the sample, including all stage
+specifications, labels, stratification, clustering, and draw settings.
+}
+\details{
+This is especially useful for:
+\itemize{
+\item inspecting the design after execution
+\item programmatic workflows that need to branch on design metadata
+\item continuation workflows, where later calls to \code{\link[=execute]{execute()}} resume from a
+partially executed sample
+}
+}
+\examples{
+design <- sampling_design(title = "Example") |>
+  stratify_by(region) |>
+  draw(n = 20)
+
+sample <- execute(design, bfa_eas, seed = 1)
+
+get_design(sample)
+
+# The returned object is the original sampling_design
+is_sampling_design(get_design(sample))
 }

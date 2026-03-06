@@ -80,7 +80,9 @@ For hierarchical data where all stages are in one frame:
 \preformatted{
 design |> execute(frame, seed = 2025)
 }
-The frame must contain all clustering variables and respect nesting.
+The frame must contain all clustering variables and represent the stage
+hierarchy correctly. Lower-stage IDs may repeat across different parents;
+\code{samplyr} resolves them using the full ancestry from earlier stages.
 }
 
 \subsection{Multi-Stage with Multiple Frames}{

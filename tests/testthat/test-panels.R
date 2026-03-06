@@ -93,6 +93,56 @@ test_that("multi-stage panels assigned at PSU level", {
   }
 })
 
+test_that("clustered panels follow control ordering", {
+  frame <- data.frame(
+    psu = rep(1:4, each = 2),
+    ssu = 1:8,
+    score = rep(c(10, 20, 30, 40), each = 2)
+  )
+
+  asc <- sampling_design() |>
+    cluster_by(psu) |>
+    draw(n = 4, control = score) |>
+    execute(frame, seed = 1, panels = 2)
+
+  desc <- sampling_design() |>
+    cluster_by(psu) |>
+    draw(n = 4, control = dplyr::desc(score)) |>
+    execute(frame, seed = 1, panels = 2)
+
+  asc_map <- unique(asc[c("psu", ".panel")])
+  desc_map <- unique(desc[c("psu", ".panel")])
+
+  expect_false(identical(asc_map, desc_map))
+})
+
+test_that("clustered panels support mixed desc() and serp() control ordering", {
+  frame <- data.frame(
+    psu = rep(1:8, each = 2),
+    region = rep(c("A", "A", "A", "A", "B", "B", "B", "B"), each = 2),
+    district = rep(c(1, 2, 3, 4, 1, 2, 3, 4), each = 2),
+    score = rep(c(10, 20, 30, 40, 50, 60, 70, 80), each = 2),
+    ssu = 1:16
+  )
+
+  desc_first <- sampling_design() |>
+    stratify_by(region) |>
+    cluster_by(psu) |>
+    draw(n = 4, control = c(dplyr::desc(score), serp(district, ssu))) |>
+    execute(frame, seed = 1, panels = 2)
+
+  asc_first <- sampling_design() |>
+    stratify_by(region) |>
+    cluster_by(psu) |>
+    draw(n = 4, control = c(score, serp(district, ssu))) |>
+    execute(frame, seed = 1, panels = 2)
+
+  desc_map <- unique(desc_first[c("psu", "region", ".panel")])
+  asc_map <- unique(asc_first[c("psu", "region", ".panel")])
+
+  expect_false(identical(desc_map, asc_map))
+})
+
 test_that("panels = 1 errors", {
   frame <- data.frame(id = 1:100, value = rnorm(100))
 

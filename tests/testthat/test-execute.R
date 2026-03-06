@@ -42,6 +42,38 @@ test_that("execute() adds weight columns", {
   expect_true(".sample_id" %in% names(result))
 })
 
+test_that("execute() keeps .sample_id unique for clustered outputs", {
+  frame <- data.frame(
+    psu = rep(1:4, each = 3),
+    ssu = 1:12
+  )
+
+  result <- sampling_design() |>
+    cluster_by(psu) |>
+    draw(n = 2) |>
+    execute(frame, seed = 1)
+
+  expect_equal(length(unique(result$.sample_id)), nrow(result))
+})
+
+test_that("partial clustered execution keeps .sample_id unique after expansion", {
+  frame <- data.frame(
+    psu = rep(1:4, each = 3),
+    ssu = 1:12
+  )
+
+  design <- sampling_design() |>
+    add_stage("PSU") |>
+    cluster_by(psu) |>
+    draw(n = 2) |>
+    add_stage("SSU") |>
+    draw(n = 1)
+
+  stage1 <- execute(design, frame, stages = 1, seed = 1)
+
+  expect_equal(length(unique(stage1$.sample_id)), nrow(stage1))
+})
+
 test_that("execute() weights sum to population", {
   frame <- test_frame()
   N <- nrow(frame)

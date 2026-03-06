@@ -44,7 +44,17 @@ In multi-stage designs, each stage typically has its own clustering variable:
 \item Stage 3: Select students within classrooms (no clustering, sample individuals)
 }
 
-The nesting structure (classrooms within schools) is validated at execution time.
+Child-stage IDs do not need to be globally unique across the entire frame.
+For example, \code{classroom_id = 1} can appear in more than one school. At
+execution time, \code{samplyr} resolves lower-stage clusters using the full
+ancestry from earlier stages, so IDs can be unique within parent clusters
+rather than globally unique.
+
+In practice, this means the frame must represent a valid hierarchy through
+the combination of parent-stage and current-stage IDs. If a lower-stage ID is
+only meaningful within a parent, that is supported. If users want a stage's
+cluster variable to be globally unique on its own, they should provide a
+globally unique ID or include multiple columns in \code{cluster_by()}.
 }
 }
 \section{Order of Operations}{

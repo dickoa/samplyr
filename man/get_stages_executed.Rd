@@ -2,16 +2,41 @@
 % Please edit documentation in R/classes.R
 \name{get_stages_executed}
 \alias{get_stages_executed}
-\title{Get executed stages from a sample}
+\title{Get the executed stage numbers stored on a sample}
 \usage{
 get_stages_executed(x)
 }
 \arguments{
-\item{x}{A tbl_sample object}
+\item{x}{A \code{tbl_sample} object.}
 }
 \value{
-Integer vector of executed stages
+An integer vector of executed stage numbers.
 }
 \description{
-Get executed stages from a sample
+Returns the stage indices that have been executed for a \code{tbl_sample}.
+For a fully executed single-stage design, this is typically \code{1L}. For
+partial execution or continuation workflows, this indicates how far the
+design has progressed.
+}
+\details{
+This is mainly useful for:
+\itemize{
+\item checking whether a multi-stage design was executed completely
+\item writing continuation workflows that resume from the next stage
+\item inspecting samples created with \verb{stages =} in \code{\link[=execute]{execute()}}
+}
+}
+\examples{
+design <- sampling_design() |>
+  add_stage("EAs") |>
+    cluster_by(ea_id) |>
+    draw(n = 10) |>
+  add_stage("Households") |>
+    draw(n = 5)
+
+stage1 <- execute(design, bfa_eas, stages = 1, seed = 1)
+get_stages_executed(stage1)
+
+full_sample <- execute(stage1, bfa_eas, seed = 2)
+get_stages_executed(full_sample)
 }
