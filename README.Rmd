@@ -356,6 +356,26 @@ table(panel_sample$.panel)
 
 Panels are assigned by systematic interleaving within strata. For multi-stage designs, panels are assigned at the PSU level and propagated to all units. Per-panel analysis is also possible by multiplying the weights by the number of panels since the weights reflect the full-sample inclusion probability.
 
+## Replicated Sampling
+
+Draw multiple independent samples from the same frame and design with `reps`. This is useful for simulation studies, variance estimation via repeated sampling, or quality control:
+
+```{r reps}
+rep_sample <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300) |>
+  execute(bfa_eas, seed = 42, reps = 5)
+
+table(rep_sample$.replicate)
+```
+
+Each replicate is an independent draw. Replicate `r` uses seed `seed + r - 1`. To analyse a single replicate, filter first:
+
+```{r reps-filter, eval = FALSE}
+rep1 <- rep_sample |> filter(.replicate == 1)
+as_svydesign(rep1)
+```
+
 ## Two-Phase Sampling
 
 Pipe a `tbl_sample` into `execute()` for multi-phase designs:

@@ -76,6 +76,45 @@ find_duplicate_key_rows <- function(df, vars) {
   unique(key_df[dup, , drop = FALSE])
 }
 
+#' Test whether a tbl_sample contains multiple replicates
+#'
+#' Note: if `.replicate` contains NA, unique() includes it, so this
+#' returns TRUE for c(1, NA). This is intentionally conservative.
+#' In guarded contexts (survey export, svyplan), check_single_replicate()
+#' catches NA before calling this. In display contexts (print, summary),
+#' treating corrupted data as multi-replicate is the safe default.
+#' @noRd
+has_multiple_replicates <- function(x) {
+  ".replicate" %in% names(x) && length(unique(x$.replicate)) > 1L
+}
+
+#' Check that a tbl_sample has at most one replicate
+#' @noRd
+check_single_replicate <- function(x, fn_name, call = caller_env()) {
+  if (!".replicate" %in% names(x)) {
+    return(invisible(NULL))
+  }
+  if (anyNA(x$.replicate)) {
+    cli_abort(
+      "{.field .replicate} column contains {.val NA} values.",
+      call = call
+    )
+  }
+  if (has_multiple_replicates(x)) {
+    n_reps <- length(unique(x$.replicate))
+    abort_samplyr(
+      c(
+        "{.fn {fn_name}} requires a single replicate.",
+        "i" = "This sample has {n_reps} replicates.",
+        "i" = "Filter first: {.code x |> filter(.replicate == 1)}"
+      ),
+      class = "samplyr_error_replicated_sample_unsupported",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
 #' @noRd
 format_key_labels <- function(df, vars, max_n = 8L) {
   if (nrow(df) == 0) {

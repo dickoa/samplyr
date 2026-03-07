@@ -25,7 +25,7 @@ The goal is not to benchmark speed. The goal is to show statistical correctness.
 
 ## Synthetic population with known properties
 
-```{r}
+```{r, message = FALSE}
 library(dplyr)
 set.seed(20260302)
 
@@ -71,7 +71,7 @@ truth
 
 ## Layer 1: deterministic checks
 
-```{r}
+```{r, message = FALSE}
 library(samplyr)
 library(survey)
 

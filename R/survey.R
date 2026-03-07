@@ -396,6 +396,7 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
 #' @rdname as_svydesign
 #' @export
 as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
+  check_single_replicate(x, "as_svydesign")
   rlang::check_installed(
     "survey",
     reason = "to convert a tbl_sample to a survey design object."
@@ -699,6 +700,7 @@ as_svrepdesign.tbl_sample <- function(
     "Fay"
   )
 ) {
+  check_single_replicate(x, "as_svrepdesign")
   rlang::check_installed(
     "survey",
     reason = "to convert a tbl_sample to a replicate-weight survey design."

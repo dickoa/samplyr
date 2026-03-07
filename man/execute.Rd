@@ -4,7 +4,7 @@
 \alias{execute}
 \title{Execute a Sampling Design}
 \usage{
-execute(.data, ..., stages = NULL, seed = NULL, panels = NULL)
+execute(.data, ..., stages = NULL, seed = NULL, panels = NULL, reps = NULL)
 }
 \arguments{
 \item{.data}{A \code{sampling_design} object, or a \code{tbl_sample} object
@@ -22,7 +22,19 @@ Default (\code{NULL}) executes all remaining stages.}
 \item{panels}{Integer number of rotation groups (panels) to partition the
 sample into. Each panel is a representative subsample created by systematic
 interleaving within strata. The output includes a \code{.panel} column with
-values 1 through \code{panels}. Default \code{NULL} means no panel partitioning.}
+values 1 through \code{panels}. Default \code{NULL} means no panel partitioning.
+Cannot be used together with \code{reps}.}
+
+\item{reps}{Integer number of independent replicate samples to draw (>= 2),
+or \code{NULL} (default) for a single sample. When specified, \code{execute()} draws
+\code{reps} independent samples from the same frame under the same design and
+returns a single stacked \code{tbl_sample} with a \code{.replicate} column (integer
+1 through \code{reps}). Replicate \code{r} uses seed \code{seed + r - 1}. Cannot be
+combined with \code{panels} or with stages that use permanent random numbers.
+
+This is \strong{repeated sample realization} (drawing multiple independent
+samples), not replicate-weight variance estimation. For the latter, see
+\code{\link[=as_svrepdesign]{as_svrepdesign()}}.}
 }
 \value{
 A \code{tbl_sample} object (a data frame subclass with sampling
@@ -57,6 +69,7 @@ Each row represents one independent draw; the draw index identifies
 which with-replacement selection the row came from.
 \item \code{.certainty_1}, \code{.certainty_2}, ...: Whether each unit was a certainty
 selection (PPS methods with certainty thresholds only)
+\item \code{.replicate}: Replicate identifier (only when \code{reps} is specified)
 \item \code{.panel}: Panel assignment (only when \code{panels} is specified)
 \item Stage and stratum identifiers as appropriate
 }
@@ -220,6 +233,12 @@ design <- sampling_design() |>
 # Execute only stage 1 to get selected EAs
 selected_eas <- execute(design, bfa_eas, stages = 1, seed = 2)
 nrow(selected_eas)  # Number of selected EAs
+
+# Replicated sampling: 5 independent draws
+sample <- sampling_design() |>
+  draw(n = 100) |>
+  execute(bfa_eas, seed = 42, reps = 5)
+table(sample$.replicate)  # 100 per replicate
 
 # Rotating panel: 4 rotation groups
 sample <- sampling_design() |>

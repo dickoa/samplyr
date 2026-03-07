@@ -719,6 +719,61 @@ final_sample |>
 
 ---
 
+## Replicated Sampling
+
+The `reps` parameter in `execute()` draws multiple independent samples from the same frame under the same design. The output is a single stacked `tbl_sample` with a `.replicate` column identifying each replicate. This is useful for simulation studies, repeated-sampling variance estimation, or quality control.
+
+```{r}
+rep_sample <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300) |>
+  execute(bfa_eas, seed = 42, reps = 5)
+
+rep_sample |>
+  count(.replicate)
+```
+
+Each replicate is a fully independent draw. Replicate `r` uses seed `seed + r - 1`, so the first replicate matches a standalone execution with the same seed:
+
+```{r}
+standalone <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300) |>
+  execute(bfa_eas, seed = 42)
+
+rep1 <- rep_sample |> filter(.replicate == 1)
+identical(sort(rep1$ea_id), sort(standalone$ea_id))
+```
+
+Replicated sampling also works with multi-stage designs. When continuing from a replicated partial execution, each replicate is continued independently:
+
+```{r}
+design <- sampling_design() |>
+  add_stage(label = "Districts") |>
+    cluster_by(district) |>
+    draw(n = 10, method = "pps_brewer", mos = district_hh) |>
+  add_stage(label = "EAs") |>
+    draw(n = 5)
+
+stage1 <- execute(design, zwe_frame, stages = 1, seed = 1, reps = 3)
+final <- execute(stage1, zwe_frame, seed = 100)
+
+final |>
+  summarise(n_districts = n_distinct(district), n_eas = n(),
+            .by = .replicate)
+```
+
+Survey export functions require a single replicate. Filter first:
+
+```{r, eval = FALSE}
+one_rep <- rep_sample |> filter(.replicate == 1)
+svy <- as_svydesign(one_rep)
+```
+
+Note: `reps` cannot be combined with `panels` or with stages that use permanent random numbers (PRN). PRN produces identical samples across replicates, so coordination across waves should use an explicit loop with different PRN vectors instead.
+
+---
+
 ## Working with Results
 
 ### Accessing the Design

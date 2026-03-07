@@ -138,6 +138,7 @@ joint_expectation <- function(x, frame, stage = NULL) {
   if (!inherits(x, "tbl_sample")) {
     cli_abort("{.arg x} must be a {.cls tbl_sample} object.")
   }
+  check_single_replicate(x, "joint_expectation")
 
   design <- get_design(x)
   stages_executed <- get_stages_executed(x)

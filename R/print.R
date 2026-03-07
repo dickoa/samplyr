@@ -153,6 +153,11 @@ tbl_sum.tbl_sample <- function(x, ...) {
     )
   }
 
+  if (has_multiple_replicates(x) && !anyNA(x$.replicate)) {
+    n_reps <- length(unique(x$.replicate))
+    result <- c(result, "Replicates" = as.character(n_reps))
+  }
+
   if (".weight" %in% names(x)) {
     w <- x$.weight
     result <- c(

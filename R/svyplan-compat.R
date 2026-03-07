@@ -62,6 +62,7 @@ design_effect.tbl_sample <- function(
   x_cal = NULL,
   method = "kish"
 ) {
+  check_single_replicate(x, "design_effect")
   w <- x[[".weight"]]
   if (is.null(w)) {
     cli_abort("tbl_sample has no {.field .weight} column.")
@@ -94,6 +95,7 @@ effective_n.tbl_sample <- function(
   x_cal = NULL,
   method = "kish"
 ) {
+  check_single_replicate(x, "effective_n")
   w <- x[[".weight"]]
   if (is.null(w)) {
     cli_abort("tbl_sample has no {.field .weight} column.")

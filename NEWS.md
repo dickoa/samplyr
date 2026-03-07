@@ -1,4 +1,4 @@
-# samplyr 0.5.9999
+# samplyr 0.6.9999
 
 Initial release.
 
@@ -52,6 +52,19 @@ Initial release.
 * `execute(..., panels = k)` assigns units to `k` panels via systematic
   within-stratum interleaving.
 * Multi-stage designs assign panels at PSU level and propagate to all units.
+
+## Replicated sampling
+
+* `execute(..., reps = R)` draws R independent samples from the same frame
+  under the same design. Output is a single stacked `tbl_sample` with a
+  `.replicate` column (integer 1 through R).
+* Replicate r uses seed `seed + r - 1` (SAS convention).
+* Continuation from a replicated partial sample auto-loops per replicate.
+* Cannot be combined with `panels` or with stages that use permanent random
+  numbers.
+* Survey export functions (`as_svydesign()`, `as_svrepdesign()`,
+  `joint_expectation()`, `design_effect()`, `effective_n()`) require
+  filtering to a single replicate first.
 
 ## Control sorting
 

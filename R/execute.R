@@ -15,6 +15,17 @@
 #'   sample into. Each panel is a representative subsample created by systematic
 #'   interleaving within strata. The output includes a `.panel` column with
 #'   values 1 through `panels`. Default `NULL` means no panel partitioning.
+#'   Cannot be used together with `reps`.
+#' @param reps Integer number of independent replicate samples to draw (>= 2),
+#'   or `NULL` (default) for a single sample. When specified, `execute()` draws
+#'   `reps` independent samples from the same frame under the same design and
+#'   returns a single stacked `tbl_sample` with a `.replicate` column (integer
+#'   1 through `reps`). Replicate `r` uses seed `seed + r - 1`. Cannot be
+#'   combined with `panels` or with stages that use permanent random numbers.
+#'
+#'   This is **repeated sample realization** (drawing multiple independent
+#'   samples), not replicate-weight variance estimation. For the latter, see
+#'   [as_svrepdesign()].
 #'
 #' @return A `tbl_sample` object (a data frame subclass with sampling
 #'   metadata). Contains the selected units plus:
@@ -45,6 +56,7 @@
 #'     which with-replacement selection the row came from.
 #'   - `.certainty_1`, `.certainty_2`, ...: Whether each unit was a certainty
 #'     selection (PPS methods with certainty thresholds only)
+#'   - `.replicate`: Replicate identifier (only when `reps` is specified)
 #'   - `.panel`: Panel assignment (only when `panels` is specified)
 #'   - Stage and stratum identifiers as appropriate
 #'
@@ -188,6 +200,12 @@
 #' selected_eas <- execute(design, bfa_eas, stages = 1, seed = 2)
 #' nrow(selected_eas)  # Number of selected EAs
 #'
+#' # Replicated sampling: 5 independent draws
+#' sample <- sampling_design() |>
+#'   draw(n = 100) |>
+#'   execute(bfa_eas, seed = 42, reps = 5)
+#' table(sample$.replicate)  # 100 per replicate
+#'
 #' # Rotating panel: 4 rotation groups
 #' sample <- sampling_design() |>
 #'   stratify_by(region) |>
@@ -201,7 +219,8 @@
 #' [get_design()] for extracting metadata
 #'
 #' @export
-execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL) {
+execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
+                    reps = NULL) {
   frames <- list(...)
 
   if (length(frames) == 0) {
@@ -229,11 +248,91 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL) {
     panels <- as.integer(panels)
   }
 
+  if (!is_null(reps)) {
+    if (!is.numeric(reps) || length(reps) != 1 ||
+        !is_integerish_numeric(reps) || reps < 2) {
+      cli_abort("{.arg reps} must be a single integer >= 2")
+    }
+    reps <- as.integer(reps)
+  }
+
+  if (!is_null(reps) && !is_null(panels)) {
+    cli_abort("{.arg panels} and {.arg reps} cannot be used together.")
+  }
+
   run_execution <- function() {
+    # PRN conflict check: only on stages being executed in this call
+    if (!is_null(reps)) {
+      design <- if (is_sampling_design(.data)) .data else get_design(.data)
+      n_design_stages <- length(design$stages)
+      executed_stages <- if (is_null(stages)) {
+        if (is_sampling_design(.data)) {
+          seq_along(design$stages)
+        } else {
+          setdiff(seq_along(design$stages), get_stages_executed(.data))
+        }
+      } else {
+        stages
+      }
+      # Only check PRN for valid stage indices (stage validation follows)
+      valid_stages <- executed_stages[
+        executed_stages >= 1L & executed_stages <= n_design_stages
+      ]
+      if (length(valid_stages) > 0) {
+        has_prn <- any(vapply(valid_stages, function(idx) {
+          !is_null(design$stages[[idx]]$draw_spec$prn)
+        }, logical(1)))
+        if (has_prn) {
+          cli_abort(c(
+            "{.arg reps} cannot be used when an executed stage uses permanent random numbers.",
+            "i" = "PRN produces identical samples across replicates.",
+            "i" = "Use a loop with different PRN vectors for coordinated repeated sampling."
+          ))
+        }
+      }
+    }
+
+    # Detect replicated tbl_sample passed as a frame (multi-phase)
+    frame_has_reps <- any(vapply(frames, function(f) {
+      is_tbl_sample(f) && has_multiple_replicates(f)
+    }, logical(1)))
+
     if (is_sampling_design(.data)) {
-      execute_design(.data, frames, stages, seed, panels)
+      if (frame_has_reps) {
+        if (!is_null(reps)) {
+          cli_abort(c(
+            "Cannot add new replicates when the frame is already replicated.",
+            "i" = "The frame has {length(unique(frames[[1]]$.replicate))} replicates."
+          ))
+        }
+        if (!is_null(panels)) {
+          cli_abort(
+            "{.arg panels} cannot be used with a replicated frame.",
+          )
+        }
+        execute_replicated_multiphase(.data, frames, stages, seed)
+      } else if (is_null(reps)) {
+        execute_design(.data, frames, stages, seed, panels)
+      } else {
+        execute_replicated(.data, frames, stages, seed, reps,
+                           executor = "design")
+      }
     } else if (is_tbl_sample(.data)) {
-      execute_continuation(.data, frames, stages, seed, panels)
+      has_existing_reps <- has_multiple_replicates(.data)
+      if (has_existing_reps && !is_null(reps)) {
+        cli_abort(c(
+          "Cannot add new replicates to an already-replicated sample.",
+          "i" = "The input sample already has {length(unique(.data$.replicate))} replicates."
+        ))
+      }
+      if (has_existing_reps) {
+        execute_replicated_continuation(.data, frames, stages, seed, panels)
+      } else if (!is_null(reps)) {
+        execute_replicated(.data, frames, stages, seed, reps,
+                           executor = "continuation")
+      } else {
+        execute_continuation(.data, frames, stages, seed, panels)
+      }
     } else {
       cli_abort(
         "{.arg .data} must be a {.cls sampling_design} or {.cls tbl_sample}"
@@ -241,7 +340,7 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL) {
     }
   }
 
-  if (!is_null(seed)) {
+  if (!is_null(seed) && is_null(reps)) {
     withr::with_seed(seed, run_execution())
   } else {
     run_execution()
@@ -372,6 +471,71 @@ execute_design <- function(design, frames, stages, seed, panels,
 }
 
 #' @noRd
+execute_replicated <- function(.data, frames, stages, seed, reps,
+                               executor = "design",
+                               call = caller_env()) {
+  results <- vector("list", reps)
+
+  for (r in seq_len(reps)) {
+    rep_seed <- if (!is_null(seed)) seed + r - 1L else NULL
+
+    run_one <- function() {
+      if (executor == "design") {
+        execute_design(.data, frames, stages, rep_seed, panels = NULL)
+      } else {
+        execute_continuation(.data, frames, stages, rep_seed, panels = NULL)
+      }
+    }
+
+    result <- if (!is_null(rep_seed)) {
+      withr::with_seed(rep_seed, run_one())
+    } else {
+      run_one()
+    }
+
+    df <- as.data.frame(result)
+    df$.replicate <- r
+    results[[r]] <- df
+  }
+
+  combined <- do.call(rbind, results)
+  combined$.sample_id <- seq_len(nrow(combined))
+
+  # Derive metadata from inputs, not from last loop iteration.
+  # Only prev_phase genuinely comes from inner pipeline.
+  the_design <- if (is_sampling_design(.data)) .data else get_design(.data)
+  the_stages <- if (executor == "design") {
+    if (!is_null(stages)) as.integer(stages) else seq_along(the_design$stages)
+  } else {
+    already <- get_stages_executed(.data)
+    new_s <- if (!is_null(stages)) {
+      as.integer(stages)
+    } else {
+      setdiff(seq_along(the_design$stages), already)
+    }
+    c(already, new_s)
+  }
+
+  new_tbl_sample(
+    data = combined,
+    design = the_design,
+    stages_executed = the_stages,
+    seed = seed,
+    metadata = list(
+      n_selected = nrow(combined),
+      executed_at = Sys.time(),
+      reps = reps,
+      replicate_seeds = if (!is_null(seed)) {
+        seed + seq_len(reps) - 1L
+      } else {
+        NULL
+      },
+      prev_phase = attr(result, "metadata")$prev_phase
+    )
+  )
+}
+
+#' @noRd
 execute_continuation <- function(sample, frames, stages, seed, panels,
                                  call = caller_env()) {
   design <- get_design(sample)
@@ -484,6 +648,178 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
         stages = get_stages_executed(sample),
         sample = sample
       )
+    )
+  )
+}
+
+#' @noRd
+execute_replicated_continuation <- function(sample, frames, stages, seed,
+                                            panels,
+                                            call = caller_env()) {
+  if (!is_null(panels)) {
+    cli_abort(
+      "{.arg panels} cannot be used with a replicated sample.",
+      call = call
+    )
+  }
+
+  rep_ids <- sort(unique(sample$.replicate))
+  results <- vector("list", length(rep_ids))
+
+  for (i in seq_along(rep_ids)) {
+    r <- rep_ids[i]
+    rep_sample <- sample[sample$.replicate == r, ]
+    rep_sample$.replicate <- NULL
+
+    # Restore tbl_sample class for the subset
+    rep_sample <- new_tbl_sample(
+      data = rep_sample,
+      design = get_design(sample),
+      stages_executed = get_stages_executed(sample),
+      seed = attr(sample, "seed"),
+      metadata = attr(sample, "metadata")
+    )
+
+    rep_seed <- if (!is_null(seed)) seed + i - 1L else NULL
+
+    run_one <- function() {
+      execute_continuation(rep_sample, frames, stages, rep_seed, panels = NULL)
+    }
+
+    result <- if (!is_null(rep_seed)) {
+      withr::with_seed(rep_seed, run_one())
+    } else {
+      run_one()
+    }
+
+    df <- as.data.frame(result)
+    df$.replicate <- r
+    results[[i]] <- df
+  }
+
+  combined <- do.call(rbind, results)
+  combined$.sample_id <- seq_len(nrow(combined))
+
+  # Derive metadata from inputs, not from last loop iteration.
+  the_design <- get_design(sample)
+  already_executed <- get_stages_executed(sample)
+  cont_stages <- if (!is_null(stages)) {
+    as.integer(stages)
+  } else {
+    setdiff(seq_along(the_design$stages), already_executed)
+  }
+
+  new_tbl_sample(
+    data = combined,
+    design = the_design,
+    stages_executed = c(already_executed, cont_stages),
+    seed = seed,
+    metadata = list(
+      n_selected = nrow(combined),
+      executed_at = Sys.time(),
+      reps = length(rep_ids),
+      replicate_seeds = if (!is_null(seed)) {
+        seed + seq_along(rep_ids) - 1L
+      } else {
+        NULL
+      },
+      continued_from = attr(sample, "metadata")
+    )
+  )
+}
+
+#' Execute a design on replicated multi-phase frame(s)
+#'
+#' When one or more replicated tbl_samples are passed as frames to a new
+#' sampling_design, each replicate must be sampled independently. Non-replicated
+#' frames are left unchanged across replicates.
+#' @noRd
+execute_replicated_multiphase <- function(design, frames, stages, seed,
+                                          call = caller_env()) {
+  # Identify which frames are replicated tbl_samples
+  is_rep <- vapply(frames, function(f) {
+    is_tbl_sample(f) && has_multiple_replicates(f)
+  }, logical(1))
+  rep_indices <- which(is_rep)
+
+  # Determine replicate IDs; validate consistency across frames
+  rep_ids <- sort(unique(frames[[rep_indices[1]]]$.replicate))
+  if (length(rep_indices) > 1) {
+    for (idx in rep_indices[-1]) {
+      other_ids <- sort(unique(frames[[idx]]$.replicate))
+      if (!identical(rep_ids, other_ids)) {
+        cli_abort(c(
+          "Replicated frames have inconsistent replicate IDs.",
+          "i" = "Frame {rep_indices[1]} has replicates: {paste(rep_ids, collapse = ', ')}.",
+          "i" = "Frame {idx} has replicates: {paste(other_ids, collapse = ', ')}."
+        ), call = call)
+      }
+    }
+  }
+
+  results <- vector("list", length(rep_ids))
+
+  for (i in seq_along(rep_ids)) {
+    r <- rep_ids[i]
+
+    # Build per-replicate frame set: subset replicated frames, keep others
+    rep_frames <- frames
+    for (idx in rep_indices) {
+      orig <- frames[[idx]]
+      sub <- orig[orig$.replicate == r, ]
+      sub$.replicate <- NULL
+      # Restore tbl_sample class so prepare_multiphase_frame recognises it
+      sub <- new_tbl_sample(
+        data = sub,
+        design = get_design(orig),
+        stages_executed = get_stages_executed(orig),
+        seed = attr(orig, "seed"),
+        metadata = attr(orig, "metadata")
+      )
+      rep_frames[[idx]] <- sub
+    }
+
+    rep_seed <- if (!is_null(seed)) seed + i - 1L else NULL
+
+    run_one <- function() {
+      execute_design(design, rep_frames, stages, rep_seed, panels = NULL)
+    }
+
+    result <- if (!is_null(rep_seed)) {
+      withr::with_seed(rep_seed, run_one())
+    } else {
+      run_one()
+    }
+
+    df <- as.data.frame(result)
+    df$.replicate <- r
+    results[[i]] <- df
+  }
+
+  combined <- do.call(rbind, results)
+  combined$.sample_id <- seq_len(nrow(combined))
+
+  the_stages <- if (!is_null(stages)) {
+    as.integer(stages)
+  } else {
+    seq_along(design$stages)
+  }
+
+  new_tbl_sample(
+    data = combined,
+    design = design,
+    stages_executed = the_stages,
+    seed = seed,
+    metadata = list(
+      n_selected = nrow(combined),
+      executed_at = Sys.time(),
+      reps = length(rep_ids),
+      replicate_seeds = if (!is_null(seed)) {
+        seed + seq_along(rep_ids) - 1L
+      } else {
+        NULL
+      },
+      prev_phase = attr(result, "metadata")$prev_phase
     )
   )
 }
@@ -877,7 +1213,7 @@ prepare_multiphase_frame <- function(frame) {
 #' @noRd
 samplyr_internal_cols <- function(x) {
   nms <- names(x)
-  internal_pattern <- "^\\.(weight|fpc|sample_id|stage|draw|certainty)"
+  internal_pattern <- "^\\.(weight|fpc|sample_id|stage|draw|certainty|replicate)"
   grep(internal_pattern, nms, value = TRUE)
 }
 
