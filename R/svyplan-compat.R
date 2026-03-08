@@ -193,8 +193,17 @@ resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
 }
 
 #' Coerce svyplan objects for draw()
+#'
+#' For `n_alloc()` results (type = "alloc"), extracts per-stratum allocations
+#' as a named integer vector. For other svyplan objects (`n_prop`, `n_mean`,
+#' `n_multi`, `power_*`, `n_cluster`), extracts the scalar total via
+#' `as.integer()`.
 #' @noRd
 coerce_svyplan_n <- function(n) {
+  if (inherits(n, "svyplan_n") && identical(n$type, "alloc")) {
+    detail <- n$detail
+    return(stats::setNames(detail$n_h_int, detail$stratum))
+  }
   if (inherits(n, c("svyplan_n", "svyplan_power", "svyplan_cluster"))) {
     return(as.integer(n))
   }

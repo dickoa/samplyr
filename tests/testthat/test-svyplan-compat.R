@@ -53,6 +53,61 @@ test_that("draw accepts svyplan_cluster from n_cluster", {
   expect_equal(nrow(result), n_int)
 })
 
+test_that("draw accepts svyplan n_alloc with per-stratum allocation", {
+  alloc_frame <- data.frame(
+    stratum = c("A", "B", "C"),
+    N_h = c(200, 300, 500),
+    S_h = c(10, 15, 8)
+  )
+  alloc_obj <- svyplan::n_alloc(alloc_frame, n = 100, alloc = "neyman")
+  expected_n <- alloc_obj$detail$n_h_int
+
+  frame <- data.frame(
+    id = seq_len(1000),
+    stratum = rep(c("A", "B", "C"), times = c(200, 300, 500))
+  )
+  result <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = alloc_obj) |>
+    execute(frame, seed = 1)
+
+  expect_equal(nrow(result), sum(expected_n))
+  for (i in seq_along(alloc_frame$stratum)) {
+    lbl <- alloc_frame$stratum[i]
+    expect_equal(sum(result$stratum == lbl), expected_n[i])
+  }
+})
+
+test_that("coerce_svyplan_n returns named vector for n_alloc", {
+  alloc_frame <- data.frame(
+    stratum = c("X", "Y"),
+    N_h = c(100, 200),
+    S_h = c(5, 10)
+  )
+  alloc_obj <- svyplan::n_alloc(alloc_frame, n = 50, alloc = "neyman")
+  result <- samplyr:::coerce_svyplan_n(alloc_obj)
+
+  expect_type(result, "integer")
+  expect_named(result, c("X", "Y"))
+  expect_equal(sum(result), 50L)
+})
+
+test_that("n_alloc with alloc in stratify_by errors", {
+  alloc_frame <- data.frame(
+    stratum = c("A", "B"),
+    N_h = c(100, 200),
+    S_h = c(5, 10)
+  )
+  alloc_obj <- svyplan::n_alloc(alloc_frame, n = 50, alloc = "neyman")
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(stratum, alloc = "proportional") |>
+      draw(n = alloc_obj),
+    class = "samplyr_error_alloc_named_n_with_alloc"
+  )
+})
+
 test_that("non-svyplan n values pass through unchanged", {
   expect_equal(samplyr:::coerce_svyplan_n(50L), 50L)
   expect_equal(samplyr:::coerce_svyplan_n(50), 50)

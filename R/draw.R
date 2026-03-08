@@ -736,6 +736,17 @@ validate_draw_args <- function(
     )
   }
 
+  if (has_alloc && !is_null(n) && !n_is_df && length(n) > 1 && !is_null(names(n))) {
+    abort_samplyr(
+      c(
+        "Per-stratum {.arg n} cannot be combined with {.arg alloc} in {.fn stratify_by}.",
+        "i" = "Remove {.arg alloc} when providing per-stratum allocations, or pass a scalar {.arg n} for samplyr to allocate."
+      ),
+      class = "samplyr_error_alloc_named_n_with_alloc",
+      call = call
+    )
+  }
+
   is_pps <- method %in% pps_methods
 
   if (is_pps && is_null(mos)) {

@@ -255,6 +255,81 @@ samp |>
 
 Note that the boundaries and allocation are coupled. The `cumrootf` method optimizes them together to achieve the target CV. Using `strata_bound()` for boundaries but a different allocation in `samplyr` (for example, proportional instead of Neyman) might break this optimality. If you need a different allocation method, compute boundaries and allocation separately.
 
+## Stratified Allocation
+
+When strata are defined by administrative or domain boundaries rather than
+optimal boundaries from `strata_bound()`, use `n_alloc()` to compute the
+allocation. It supports Neyman, proportional, optimal (cost-weighted), and
+power allocation with optional constraints on minimum stratum size.
+
+First, summarize the frame to get stratum population sizes and variabilities:
+
+```{r}
+alloc_frame <- ken_enterprises |>
+  summarize(
+    N_h = n(),
+    S_h = sd(revenue_millions),
+    mean_h = mean(revenue_millions),
+    .by = sector
+  ) |>
+  rename(stratum = sector)
+alloc_frame
+```
+
+Then compute the allocation. Here we use Neyman allocation targeting 600 units
+with a minimum of 20 per stratum:
+
+```{r}
+alloc <- n_alloc(alloc_frame, n = 600, alloc = "neyman", min_n = 20)
+alloc
+alloc$detail[, c("stratum", "N_h", "n_h_int", "weight")]
+```
+
+The result passes directly to `draw()`. The per-stratum allocations are
+matched by stratum name to the values of the stratification variable:
+
+```{r}
+samp <- sampling_design() |>
+  stratify_by(sector) |>
+  draw(n = alloc) |>
+  execute(ken_enterprises, seed = 10)
+samp |>
+  count(sector, name = "n_sampled")
+```
+
+Because `n_alloc()` already provides per-stratum sizes, do not combine it
+with `alloc` in `stratify_by()`. The two allocation mechanisms are
+mutually exclusive: either let `svyplan` allocate (via `n_alloc()`) or let
+`samplyr` allocate (via `alloc` in `stratify_by()`), but not both.
+
+### Budget-constrained allocation
+
+When field costs vary across strata, `n_alloc()` can optimize under a budget
+constraint using cost-weighted (optimal) allocation:
+
+```{r}
+alloc_frame_cost <- alloc_frame |>
+  mutate(cost_h = c(120, 200, 150, 130, 80, 100, 90))
+
+budget_alloc <- n_alloc(
+  alloc_frame_cost,
+  budget = 50000,
+  alloc = "optimal",
+  min_n = 20
+)
+budget_alloc
+budget_alloc$detail[, c("stratum", "N_h", "cost_h", "n_h_int", "weight")]
+```
+
+```{r}
+samp_budget <- sampling_design() |>
+  stratify_by(sector) |>
+  draw(n = budget_alloc) |>
+  execute(ken_enterprises, seed = 11)
+samp_budget |>
+  count(sector, name = "n_sampled")
+```
+
 ## Design Effects After Sampling
 
 After executing a design, you can evaluate its efficiency using `design_effect()` and `effective_n()`. These are re-exported from
@@ -323,11 +398,14 @@ The typical planning workflow can be:
 3. Run sensitivity analysis with `predict()` to check robustness.
 4. Optionally create stratification boundaries with `strata_bound()` and
    assign strata with `predict()`.
-5. For cluster designs, estimate variance components with `varcomp()` and
+5. Allocate across strata with `n_alloc()` (Neyman, proportional, optimal,
+   or power allocation with constraints).
+6. For cluster designs, estimate variance components with `varcomp()` and
    optimize the allocation with `n_cluster()`.
-6. Pass the sample size to `draw()` and execute the design.
-7. Evaluate the realized design with `design_effect()` and `effective_n()`.
+7. Pass the sample size or allocation to `draw()` and execute the design.
+8. Evaluate the realized design with `design_effect()` and `effective_n()`.
 
 All `svyplan` sample size objects (`svyplan_n`, `svyplan_power`,
-`svyplan_cluster`) work directly with `draw()`, so the planning and
-execution steps connect without manual conversion.
+`svyplan_cluster`) work directly with `draw()`. For `n_alloc()`, the
+per-stratum allocations are passed through automatically. For other objects,
+the scalar total is extracted. No manual conversion is needed.
