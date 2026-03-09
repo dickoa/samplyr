@@ -26,7 +26,7 @@ bfa_eas_variance
 sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
   draw(n = 200) |>
-  execute(bfa_eas, seed = 42)
+  execute(bfa_eas, seed = 2)
 
 }
 \seealso{

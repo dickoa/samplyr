@@ -117,7 +117,7 @@ sample <- execute(design, bfa_eas, seed = 101)
 
 ## Example Data
 
-We'll use the `bfa_eas` dataset throughout this vignette. It is an enumeration area frame for Burkina Faso, with ~14,900 EAs across 13 regions.
+We'll use the `bfa_eas` dataset throughout this vignette. It is an enumeration area frame for Burkina Faso, with ~14,934 EAs across 13 regions.
 
 ```{r}
 data(bfa_eas)

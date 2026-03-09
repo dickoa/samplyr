@@ -107,7 +107,7 @@ Initial release.
 
 ## Datasets
 
-* `bfa_eas`: 14,900 enumeration areas from Burkina Faso (LSMS/HBS style).
+* `bfa_eas`: 14,934 enumeration areas from Burkina Faso (LSMS/HBS style).
   Companion tables `bfa_eas_variance` and `bfa_eas_cost` for Neyman and
   optimal allocation.
 * `zwe_eas` and `zwe_households`: DHS-style two-stage cluster frame from

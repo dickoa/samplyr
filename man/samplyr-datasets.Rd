@@ -12,7 +12,7 @@ sampling scenarios.
 \section{Datasets}{
 
 \itemize{
-\item \link{bfa_eas}: LSMS-style EA frame (Burkina Faso, 14,900 EAs)
+\item \link{bfa_eas}: LSMS-style EA frame (Burkina Faso, 14,934 EAs)
 \item \link{zwe_eas}: DHS-style EA frame (Zimbabwe, 22,600 EAs)
 \item \link{zwe_households}: Household frame for two-phase sampling (Zimbabwe, 379,326 HH)
 \item \link{ken_enterprises}: Enterprise survey frame (Kenya, 6,823 establishments)

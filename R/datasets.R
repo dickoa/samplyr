@@ -8,7 +8,7 @@
 #'
 #' @section Datasets:
 #' \itemize{
-#'   \item [bfa_eas]: LSMS-style EA frame (Burkina Faso, 14,900 EAs)
+#'   \item [bfa_eas]: LSMS-style EA frame (Burkina Faso, 14,934 EAs)
 #'   \item [zwe_eas]: DHS-style EA frame (Zimbabwe, 22,600 EAs)
 #'   \item [zwe_households]: Household frame for two-phase sampling (Zimbabwe, 379,326 HH)
 #'   \item [ken_enterprises]: Enterprise survey frame (Kenya, 6,823 establishments)
@@ -30,15 +30,15 @@ NULL
 #' @description
 #' An enumeration area (EA) frame for household surveys, built from
 #' WorldPop/GRID3 preEA data, EHCVM 2021 household survey parameters, and
-#' COD-AB administrative boundaries. The frame covers 13 regions, 45 provinces,
-#' and 346 communes of Burkina Faso.
+#' HDX COD-AB administrative boundaries. The frame covers 13 regions, 45 provinces,
+#' and 348 communes of Burkina Faso.
 #'
-#' @format A tibble with 14,900 rows and 12 columns:
+#' @format A tibble with 14,934 rows and 12 columns:
 #' \describe{
 #'   \item{ea_id}{Character. Unique enumeration area identifier}
 #'   \item{region}{Factor. Region name (13 regions)}
 #'   \item{province}{Factor. Province name within region (45 provinces)}
-#'   \item{commune}{Factor. Commune name within province (346 communes)}
+#'   \item{commune}{Factor. Commune name within province (348 communes)}
 #'   \item{urban_rural}{Factor. Urban/Rural classification}
 #'   \item{population}{Numeric. EA population}
 #'   \item{households}{Integer. Number of households in the EA (measure of size for PPS)}
@@ -80,7 +80,7 @@ NULL
 #'     draw(n = 3, method = "pps_brewer", mos = households) |>
 #'   add_stage(label = "Households") |>
 #'     draw(n = 20) |>
-#'   execute(bfa_eas, seed = 42)
+#'   execute(bfa_eas, seed = 3)
 #'
 "bfa_eas"
 
@@ -107,7 +107,7 @@ NULL
 #' sampling_design() |>
 #'   stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
 #'   draw(n = 200) |>
-#'   execute(bfa_eas, seed = 42)
+#'   execute(bfa_eas, seed = 2)
 #'
 "bfa_eas_variance"
 
@@ -137,7 +137,7 @@ NULL
 #'               variance = bfa_eas_variance,
 #'               cost = bfa_eas_cost) |>
 #'   draw(n = 200) |>
-#'   execute(bfa_eas, seed = 42)
+#'   execute(bfa_eas, seed = 1)
 #'
 "bfa_eas_cost"
 
@@ -193,7 +193,7 @@ NULL
 #'     draw(n = 2, method = "pps_brewer", mos = district_hh) |>
 #'   add_stage(label = "EAs") |>
 #'     draw(n = 5) |>
-#'   execute(zwe_frame, seed = 42)
+#'   execute(zwe_frame, seed = 123)
 #'
 "zwe_eas"
 
@@ -205,7 +205,7 @@ NULL
 #' [zwe_eas]. Designed for demonstrating two-phase sampling, where phase 1
 #' selects EAs and phase 2 subsamples households within selected EAs.
 #'
-#' @format A tibble with 379,326 rows and 9 columns:
+#' @format A tibble with 10 columns:
 #' \describe{
 #'   \item{hh_id}{Character. Unique household identifier}
 #'   \item{ea_id}{Character. Enumeration area identifier (links to [zwe_eas])}
@@ -213,9 +213,10 @@ NULL
 #'   \item{district}{Factor. District name}
 #'   \item{urban_rural}{Factor. Urban/Rural classification}
 #'   \item{hh_size}{Integer. Number of household members}
-#'   \item{n_children}{Integer. Number of children under 5}
-#'   \item{wealth_score}{Numeric. Household wealth index score}
-#'   \item{has_improved_water}{Logical. Whether the household has improved water access}
+#'   \item{women_15_49}{Integer. Number of women aged 15-49 in the household}
+#'   \item{men_15_54}{Integer. Number of men aged 15-54 in the household}
+#'   \item{children_under5}{Integer. Number of children under 5}
+#'   \item{ea_households}{Integer. Total households in the EA (measure of size)}
 #' }
 #'
 #' @details
@@ -287,6 +288,6 @@ NULL
 #' sampling_design() |>
 #'   stratify_by(size_class) |>
 #'   draw(frac = c(Small = 0.02, Medium = 0.10, Large = 0.50)) |>
-#'   execute(ken_enterprises, seed = 42)
+#'   execute(ken_enterprises, seed = 1960)
 #'
 "ken_enterprises"

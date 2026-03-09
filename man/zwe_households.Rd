@@ -5,7 +5,7 @@
 \alias{zwe_households}
 \title{Zimbabwe Households (Two-Phase Subframe)}
 \format{
-A tibble with 379,326 rows and 9 columns:
+A tibble with 10 columns:
 \describe{
 \item{hh_id}{Character. Unique household identifier}
 \item{ea_id}{Character. Enumeration area identifier (links to \link{zwe_eas})}
@@ -13,9 +13,10 @@ A tibble with 379,326 rows and 9 columns:
 \item{district}{Factor. District name}
 \item{urban_rural}{Factor. Urban/Rural classification}
 \item{hh_size}{Integer. Number of household members}
-\item{n_children}{Integer. Number of children under 5}
-\item{wealth_score}{Numeric. Household wealth index score}
-\item{has_improved_water}{Logical. Whether the household has improved water access}
+\item{women_15_49}{Integer. Number of women aged 15-49 in the household}
+\item{men_15_54}{Integer. Number of men aged 15-54 in the household}
+\item{children_under5}{Integer. Number of children under 5}
+\item{ea_households}{Integer. Total households in the EA (measure of size)}
 }
 }
 \usage{

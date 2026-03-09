@@ -29,7 +29,7 @@ sampling_design() |>
               variance = bfa_eas_variance,
               cost = bfa_eas_cost) |>
   draw(n = 200) |>
-  execute(bfa_eas, seed = 42)
+  execute(bfa_eas, seed = 1)
 
 }
 \seealso{

@@ -412,7 +412,7 @@ Synthetic sampling frames for learning and testing:
 
 | Dataset           | Description                                       | Rows    |
 |-------------------|---------------------------------------------------|---------|
-| `bfa_eas`         | LSMS-style EA frame (Burkina Faso)                | 14,900  |
+| `bfa_eas`         | LSMS-style EA frame (Burkina Faso)                | 14,934  |
 | `zwe_eas`         | DHS-style EA frame (Zimbabwe)                     | 22,600  |
 | `zwe_households`  | Household frame for two-phase sampling (Zimbabwe) | 379,326 |
 | `ken_enterprises` | Enterprise survey frame (Kenya)                   | 6,823   |

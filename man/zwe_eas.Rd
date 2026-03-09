@@ -55,7 +55,7 @@ sampling_design() |>
     draw(n = 2, method = "pps_brewer", mos = district_hh) |>
   add_stage(label = "EAs") |>
     draw(n = 5) |>
-  execute(zwe_frame, seed = 42)
+  execute(zwe_frame, seed = 123)
 
 }
 \seealso{

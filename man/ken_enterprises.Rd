@@ -54,7 +54,7 @@ sampling_design() |>
 sampling_design() |>
   stratify_by(size_class) |>
   draw(frac = c(Small = 0.02, Medium = 0.10, Large = 0.50)) |>
-  execute(ken_enterprises, seed = 42)
+  execute(ken_enterprises, seed = 1960)
 
 }
 \keyword{datasets}

@@ -5,12 +5,12 @@
 \alias{bfa_eas}
 \title{Burkina Faso Enumeration Areas (LSMS-style)}
 \format{
-A tibble with 14,900 rows and 12 columns:
+A tibble with 14,934 rows and 12 columns:
 \describe{
 \item{ea_id}{Character. Unique enumeration area identifier}
 \item{region}{Factor. Region name (13 regions)}
 \item{province}{Factor. Province name within region (45 provinces)}
-\item{commune}{Factor. Commune name within province (346 communes)}
+\item{commune}{Factor. Commune name within province (348 communes)}
 \item{urban_rural}{Factor. Urban/Rural classification}
 \item{population}{Numeric. EA population}
 \item{households}{Integer. Number of households in the EA (measure of size for PPS)}
@@ -27,8 +27,8 @@ bfa_eas
 \description{
 An enumeration area (EA) frame for household surveys, built from
 WorldPop/GRID3 preEA data, EHCVM 2021 household survey parameters, and
-COD-AB administrative boundaries. The frame covers 13 regions, 45 provinces,
-and 346 communes of Burkina Faso.
+HDX COD-AB administrative boundaries. The frame covers 13 regions, 45 provinces,
+and 348 communes of Burkina Faso.
 }
 \details{
 This dataset is designed for demonstrating:
@@ -57,7 +57,7 @@ sampling_design() |>
     draw(n = 3, method = "pps_brewer", mos = households) |>
   add_stage(label = "Households") |>
     draw(n = 20) |>
-  execute(bfa_eas, seed = 42)
+  execute(bfa_eas, seed = 3)
 
 }
 \seealso{
