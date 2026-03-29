@@ -169,7 +169,7 @@ joint_expectation <- function(x, frame, stage = NULL) {
     stage_spec <- design$stages[[stage_idx]]
     method <- stage_spec$draw_spec$method
 
-    if (!(method %in% jip_methods)) {
+    if (!(method %in% jip_methods) && is_null(stage_spec$draw_spec$method_type)) {
       next
     }
 
@@ -460,18 +460,28 @@ compute_joint_matrix <- function(frame, n, draw_spec, sampled_idx) {
   }
 
   # WR/PMR: joint expected hits, no certainty decomposition needed
-  if (method %in% pps_wr_methods) {
+  is_wr <- method %in% pps_wr_methods ||
+    identical(draw_spec$method_type, "wr")
+  if (is_wr) {
     pik <- sondage::expected_hits(mos_vals, n)
     return(compute_jeh_by_method(pik, n, method, sampled_idx))
   }
 
   pik <- compute_stage_pik(method, mos_vals, n, draw_spec, N = N)
-  compute_jip_from_pik(pik, method, sampled_idx)
+  compute_jip_from_pik(pik, method, sampled_idx, draw_spec = draw_spec)
 }
 
 #' Compute first-order inclusion/hit expectations for one stage
 #' @noRd
 compute_stage_pik <- function(method, mos_vals, n, draw_spec, N = length(mos_vals)) {
+  # Custom registered methods
+  if (!is_null(draw_spec$method_type)) {
+    if (draw_spec$method_type == "wr") {
+      return(sondage::expected_hits(mos_vals, n))
+    }
+    return(sondage::inclusion_prob(mos_vals, n))
+  }
+
   switch(
     method,
     pps_multinomial = ,
@@ -506,10 +516,12 @@ compute_stage_pik <- function(method, mos_vals, n, draw_spec, N = length(mos_val
 
 #' Compute sampled joint matrix from first-order probabilities/hits
 #' @noRd
-compute_jip_from_pik <- function(pik, method, sampled_idx, n = NULL) {
+compute_jip_from_pik <- function(pik, method, sampled_idx, n = NULL, draw_spec = NULL) {
   sampled_idx <- as.integer(sampled_idx)
 
-  if (method %in% pps_wr_methods) {
+  is_wr <- method %in% pps_wr_methods ||
+    identical(draw_spec$method_type, "wr")
+  if (is_wr) {
     if (is_null(n)) {
       cli_abort(
         "Internal error: {.arg n} must be provided for WR/PMR methods.",
@@ -523,10 +535,10 @@ compute_jip_from_pik <- function(pik, method, sampled_idx, n = NULL) {
   cert_idx <- which(pik >= cert_tol)
 
   if (length(cert_idx) == 0) {
-    return(compute_jip_by_method(pik, method, sampled_idx))
+    return(compute_jip_by_method(pik, method, sampled_idx, draw_spec = draw_spec))
   }
 
-  assemble_jip_with_certainty(pik, cert_idx, method, sampled_idx)
+  assemble_jip_with_certainty(pik, cert_idx, method, sampled_idx, draw_spec = draw_spec)
 }
 
 #' Compute sampled joint matrix when certainty thresholds are explicit
@@ -592,7 +604,8 @@ compute_joint_matrix_with_certainty <- function(
     pik = pik_prob,
     method = method,
     sampled_idx = sampled_prob_reduced,
-    n = n_prob
+    n = n_prob,
+    draw_spec = reduced_draw_spec
   )
   result[prob_pos, prob_pos] <- prob_block
 
@@ -607,8 +620,13 @@ compute_joint_matrix_with_certainty <- function(
 
 #' Dispatch to sondage::joint_inclusion_prob for WOR methods
 #' @noRd
-compute_jip_by_method <- function(pik, method, sampled_idx) {
+compute_jip_by_method <- function(pik, method, sampled_idx, draw_spec = NULL) {
   sondage_name <- sondage_method_name(method)
+  fixed <- if (!is_null(draw_spec$method_fixed)) {
+    draw_spec$method_fixed
+  } else {
+    !(sondage_name %in% c("poisson", "bernoulli"))
+  }
   design <- structure(
     list(
       sample = as.integer(sampled_idx),
@@ -616,7 +634,7 @@ compute_jip_by_method <- function(pik, method, sampled_idx) {
       n = as.integer(round(sum(pik))),
       N = length(pik),
       method = sondage_name,
-      fixed_size = !(sondage_name %in% c("poisson", "bernoulli"))
+      fixed_size = fixed
     ),
     class = c("unequal_prob", "wor", "sondage_sample")
   )
@@ -659,7 +677,7 @@ compute_jeh_by_method <- function(pik, n, method, sampled_idx) {
 #'   pi_ij = pi_j     if only i is certainty
 #' The stochastic part is computed from the reduced pi vector.
 #' @noRd
-assemble_jip_with_certainty <- function(pik, cert_idx, method, sampled_idx) {
+assemble_jip_with_certainty <- function(pik, cert_idx, method, sampled_idx, draw_spec = NULL) {
   N <- length(pik)
   non_cert_idx <- setdiff(seq_len(N), cert_idx)
   sampled_idx <- as.integer(sampled_idx)
@@ -697,7 +715,8 @@ assemble_jip_with_certainty <- function(pik, cert_idx, method, sampled_idx) {
     jip_reduced <- compute_jip_by_method(
       pik = pik[non_cert_idx],
       method = method,
-      sampled_idx = sampled_non_cert_reduced
+      sampled_idx = sampled_non_cert_reduced,
+      draw_spec = draw_spec
     )
     result[non_cert_pos, non_cert_pos] <- jip_reduced
   } else if (length(non_cert_pos) == 1) {

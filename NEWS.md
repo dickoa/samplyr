@@ -1,4 +1,4 @@
-# samplyr 0.6.9999
+# samplyr 0.7.9999
 
 Initial release.
 
@@ -23,6 +23,10 @@ Initial release.
   `bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`.
 * Random-size methods (`bernoulli`, `pps_poisson`) accept `n` (expected size)
   or `frac` (sampling fraction).
+* Custom PPS methods registered via `sondage::register_method()` are accepted
+  using the `pps_<name>` convention. Method metadata (WOR/WR type, fixed size,
+  PRN support) flows through validation, execution, joint probabilities, and
+  survey export.
 
 ## Stratification and allocation
 

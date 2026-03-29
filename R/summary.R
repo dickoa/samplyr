@@ -11,13 +11,11 @@
 #'   printing a summary.
 #'
 #' @details
-#' The summary has four sections:
+#' The summary has three sections preceded by a header line showing
+#' the total sample size, stages executed, and seed:
 #'
 #' **Design** -- the sampling specification (method, strata, clusters,
 #' allocation) for each stage.
-#'
-#' **Execution** -- seed, stages executed, timestamp, and total sample
-#' size.
 #'
 #' **Allocation** -- per-stage stratum tables showing population size
 #' (N_h), sample size (n_h), and sampling fraction (f_h). Requires
@@ -109,7 +107,9 @@ summary.tbl_sample <- function(object, ...) {
     }
 
     method <- stage_spec$draw_spec$method
-    wr_label <- if (method %in% wr_methods) " (with replacement)" else ""
+    is_wr <- method %in% wr_methods ||
+      identical(stage_spec$draw_spec$method_type, "wr")
+    wr_label <- if (is_wr) " (with replacement)" else ""
     cli::cat_bullet(
       paste0("Method: ", method, wr_label),
       bullet = "bullet"

@@ -67,7 +67,7 @@ test_that("draw() validates method", {
   # Invalid method
   expect_error(
     sampling_design() |> draw(n = 100, method = "invalid"),
-    "arg"
+    "Unknown sampling method"
   )
 })
 

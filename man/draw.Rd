@@ -88,7 +88,10 @@ Horvitz-Thompson estimates of auxiliary totals match population totals.
 Supports equal or unequal (\code{mos}) inclusion probabilities. When
 stratified, uses the stratified cube algorithm (Chauvet 2009). At most
 2 stages may use \code{"balanced"}.
-}}
+}
+
+Custom PPS methods registered with \code{\link[sondage:register_method]{sondage::register_method()}} are also
+accepted, using the \code{"pps_<name>"} convention (e.g., \code{"pps_mymethod"}).}
 
 \item{mos}{Measure of size variable for PPS methods and optional for
 \code{"balanced"}, specified as a bare column name (unquoted). Required for

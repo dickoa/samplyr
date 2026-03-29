@@ -28,6 +28,36 @@ sondage_method_name <- function(method) {
   sub("^pps_", "", method)
 }
 
+#' Check if a method is a custom registered method in sondage
+#' @noRd
+is_custom_method <- function(method) {
+  sondage_name <- sondage_method_name(method)
+  sondage::is_registered_method(sondage_name)
+}
+
+#' Query metadata for a custom registered method
+#' @return A list with type, fixed_size, supports_prn, or NULL.
+#' @noRd
+custom_method_spec <- function(method) {
+  sondage::method_spec(sondage_method_name(method))
+}
+
+#' Check if method is WOR (built-in or registered)
+#' @noRd
+is_wor_method <- function(draw_spec) {
+  method <- draw_spec$method
+  if (!is_null(draw_spec$method_type)) return(draw_spec$method_type == "wor")
+  !(method %in% c(wr_methods, pmr_methods))
+}
+
+#' Check if method is a multi-hit method (built-in or registered)
+#' @noRd
+is_multi_hit_method <- function(draw_spec) {
+  method <- draw_spec$method
+  if (!is_null(draw_spec$method_type)) return(draw_spec$method_type == "wr")
+  method %in% multi_hit_methods
+}
+
 #' @noRd
 is_finite_numeric <- function(x) {
   is.numeric(x) &&

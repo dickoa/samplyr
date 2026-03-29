@@ -614,6 +614,63 @@ Balanced sampling supports up to 2 stages. At stage 1, element-level auxiliary v
 
 ---
 
+## Custom Sampling Methods
+
+Any unequal probability method can be plugged into samplyr by registering it with `sondage::register_method()`. The method is then available in `draw()` using the `pps_<name>` convention.
+
+For example, the elimination procedure of @tille1996 is available in the sampling package. We can register it as a custom method along with its exact joint inclusion probabilities:
+
+```{r custom-method}
+# Wrap sampling::UPtille to return selected indices
+tille_fn <- function(pik, n = NULL, prn = NULL, ...) {
+  which(as.logical(sampling::UPtille(pik)))
+}
+
+# Joint inclusion probabilities, restricted to the sampled units
+tille_joint_fn <- function(pik, sample_idx = NULL, ...) {
+  pi2 <- sampling::UPtillepi2(pik)
+  if (!is.null(sample_idx))
+    pi2 <- pi2[sample_idx, sample_idx, drop = FALSE]
+  pi2
+}
+
+sondage::register_method(
+  "tille", type = "wor",
+  sample_fn = tille_fn,
+  joint_fn = tille_joint_fn
+)
+```
+
+Once registered, the method works like any built-in PPS method:
+
+```{r custom-method-execute}
+set.seed(1)
+frame <- bfa_eas[sample(1:nrow(bfa_eas), 500), ]
+
+sample_tille <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 50, method = "pps_tille", mos = households) |>
+  execute(frame, seed = 1)
+
+sample_tille
+```
+
+Because we provided a `joint_fn`, exact variance estimation is available via `joint_expectation()`:
+
+```{r custom-method-joint, eval = requireNamespace("survey", quietly = TRUE)}
+jip <- joint_expectation(sample_tille, frame)
+svy <- as_svydesign(sample_tille, pps = survey::ppsmat(jip$stage_1))
+survey::svymean(~population, svy)
+```
+
+```{r custom-method-cleanup, echo = FALSE}
+sondage::unregister_method("tille")
+```
+
+Custom methods flow through the full pipeline: stratification, certainty selection, multi-stage designs, survey export, and summary diagnostics. See `?sondage::register_method` for the full contract including WR methods and PRN support.
+
+---
+
 ## Multi-Stage Sampling
 
 Multi-stage designs sample in stages: first select primary sampling units (PSUs), then sample within them. This is the standard approach for large-scale surveys when a complete frame of ultimate units isn't available upfront.

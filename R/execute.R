@@ -642,12 +642,7 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
     metadata = list(
       n_selected = nrow(current_sample),
       executed_at = Sys.time(),
-      continued_from = attr(sample, "metadata"),
-      prev_phase = list(
-        design = get_design(sample),
-        stages = get_stages_executed(sample),
-        sample = sample
-      )
+      continued_from = attr(sample, "metadata")
     )
   )
 }
@@ -1388,7 +1383,7 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
     if (length(missing_control) > 0) {
       cli_abort(
         c(
-          "Control variable{?s} not found in frame:",
+          "Control {cli::qty(missing_control)}variable{?s} not found in frame:",
           "x" = "{.val {missing_control}}",
           "i" = "Control sorting is applied within strata or clusters, so control variables must exist in the frame."
         ),

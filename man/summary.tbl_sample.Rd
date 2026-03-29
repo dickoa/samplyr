@@ -21,13 +21,11 @@ execution details, per-stage stratum allocation tables, and weight
 diagnostics.
 }
 \details{
-The summary has four sections:
+The summary has three sections preceded by a header line showing
+the total sample size, stages executed, and seed:
 
 \strong{Design} -- the sampling specification (method, strata, clusters,
 allocation) for each stage.
-
-\strong{Execution} -- seed, stages executed, timestamp, and total sample
-size.
 
 \strong{Allocation} -- per-stage stratum tables showing population size
 (N_h), sample size (n_h), and sampling fraction (f_h). Requires

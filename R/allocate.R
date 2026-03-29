@@ -342,18 +342,7 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
         class = "samplyr_error_alloc_frac_bounds"
       )
     }
-    wor_methods <- c(
-      "srswor",
-      "systematic",
-      "bernoulli",
-      "pps_systematic",
-      "pps_brewer",
-      "pps_cps",
-      "pps_poisson",
-      "pps_sps",
-      "pps_pareto"
-    )
-    if (draw_spec$method %in% wor_methods && any(frac_values > 1)) {
+    if (is_wor_method(draw_spec) && any(frac_values > 1)) {
       abort_samplyr(
         "{.arg frac} cannot exceed 1 for without-replacement methods",
         class = "samplyr_error_alloc_frac_wor_bounds"

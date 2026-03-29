@@ -57,6 +57,9 @@
 #'     stratified, uses the stratified cube algorithm (Chauvet 2009). At most
 #'     2 stages may use `"balanced"`.
 #'
+#'   Custom PPS methods registered with [sondage::register_method()] are also
+#'   accepted, using the `"pps_<name>"` convention (e.g., `"pps_mymethod"`).
+#'
 #' @param mos Measure of size variable for PPS methods and optional for
 #'   `"balanced"`, specified as a bare column name (unquoted). Required for
 #'   all `pps_*` methods.
@@ -493,7 +496,20 @@ draw <- function(
     cli_abort("{.arg method} must be a single character string")
   }
 
-  method <- match.arg(method, valid_methods)
+  custom_spec <- NULL
+  if (method %in% valid_methods) {
+    method <- match.arg(method, valid_methods)
+  } else if (is_custom_method(method)) {
+    custom_spec <- custom_method_spec(method)
+  } else {
+    cli_abort(
+      c(
+        "Unknown sampling method: {.val {method}}.",
+        "i" = "Built-in methods: {.val {valid_methods}}",
+        "i" = "Custom methods can be registered via {.fn sondage::register_method}."
+      )
+    )
+  }
 
   valid_round <- c("up", "down", "nearest")
   if (!is_character(round) || length(round) != 1) {
@@ -530,6 +546,7 @@ draw <- function(
         strata_vars = strata_vars,
         value_col = "n",
         method = method,
+        custom_spec = custom_spec,
         check_keys = TRUE
       )
     }
@@ -539,6 +556,7 @@ draw <- function(
         strata_vars = strata_vars,
         value_col = "frac",
         method = method,
+        custom_spec = custom_spec,
         check_keys = TRUE
       )
     }
@@ -564,7 +582,8 @@ draw <- function(
     n_is_df,
     frac_is_df,
     strata_vars = strata_vars,
-    aux = aux_names
+    aux = aux_names,
+    custom_spec = custom_spec
   )
   validate_bounds(min_n, max_n, has_alloc)
   validate_certainty(
@@ -574,11 +593,12 @@ draw <- function(
     method,
     strata_vars,
     certainty_size_is_df,
-    certainty_prop_is_df
+    certainty_prop_is_df,
+    custom_spec = custom_spec
   )
   certainty_overflow <- match.arg(certainty_overflow, c("error", "allow"))
 
-  validate_prn(prn_name, method)
+  validate_prn(prn_name, method, custom_spec = custom_spec)
 
   if (!is_null(current_stage$draw_spec)) {
     cli_abort(
@@ -600,7 +620,9 @@ draw <- function(
     certainty_size = certainty_size,
     certainty_prop = certainty_prop,
     certainty_overflow = certainty_overflow,
-    on_empty = on_empty
+    on_empty = on_empty,
+    method_type = custom_spec$type,
+    method_fixed = custom_spec$fixed_size
   )
 
   .data$stages[[current]]$draw_spec <- draw_spec
@@ -619,6 +641,7 @@ validate_draw_df <- function(
   strata_vars = NULL,
   value_col,
   method = NULL,
+  custom_spec = NULL,
   check_keys = TRUE,
   call = rlang::caller_env()
 ) {
@@ -689,19 +712,9 @@ validate_draw_df <- function(
     if (any(values <= 0)) {
       cli_abort("{.arg frac} values must be positive", call = call)
     }
-    wor_methods <- c(
-      "srswor",
-      "systematic",
-      "bernoulli",
-      "pps_systematic",
-      "pps_brewer",
-      "pps_cps",
-      "pps_poisson",
-      "pps_sps",
-      "pps_pareto",
-      "balanced"
-    )
-    if (!is_null(method) && method %in% wor_methods && any(values > 1)) {
+    is_wor <- (!is_null(method) && !(method %in% c(wr_methods, pmr_methods))) ||
+      (!is_null(custom_spec) && custom_spec$type == "wor")
+    if (is_wor && any(values > 1)) {
       cli_abort(
         "{.arg frac} cannot exceed 1 for without-replacement methods",
         call = call
@@ -723,6 +736,7 @@ validate_draw_args <- function(
   frac_is_df,
   strata_vars = NULL,
   aux = NULL,
+  custom_spec = NULL,
   call = rlang::caller_env()
 ) {
   if (has_alloc && is_null(n) && !is_null(frac)) {
@@ -747,7 +761,7 @@ validate_draw_args <- function(
     )
   }
 
-  is_pps <- method %in% pps_methods
+  is_pps <- method %in% pps_methods || !is_null(custom_spec)
 
   if (is_pps && is_null(mos)) {
     cli_abort("PPS methods require {.arg mos} (measure of size)", call = call)
@@ -774,7 +788,9 @@ validate_draw_args <- function(
   }
 
   random_size_methods <- c("bernoulli", "pps_poisson")
-  if (method %in% random_size_methods) {
+  is_random_size <- method %in% random_size_methods ||
+    (!is_null(custom_spec) && !custom_spec$fixed_size)
+  if (is_random_size) {
     if (!is_null(n) && !is_null(frac)) {
       cli_abort(
         "Specify either {.arg n} (expected sample size) or {.arg frac}, not both",
@@ -843,19 +859,9 @@ validate_draw_args <- function(
     if (any(frac <= 0)) {
       cli_abort("{.arg frac} must be positive", call = call)
     }
-    wor_methods <- c(
-      "srswor",
-      "systematic",
-      "bernoulli",
-      "pps_systematic",
-      "pps_brewer",
-      "pps_cps",
-      "pps_poisson",
-      "pps_sps",
-      "pps_pareto",
-      "balanced"
-    )
-    if (method %in% wor_methods && any(frac > 1)) {
+    is_wor <- !(method %in% c(wr_methods, pmr_methods)) ||
+      (!is_null(custom_spec) && custom_spec$type == "wor")
+    if (is_wor && any(frac > 1)) {
       cli_abort(
         "{.arg frac} cannot exceed 1 for without-replacement methods",
         call = call
@@ -918,6 +924,7 @@ validate_certainty <- function(
   strata_vars,
   certainty_size_is_df,
   certainty_prop_is_df,
+  custom_spec = NULL,
   call = rlang::caller_env()
 ) {
   if (!is_null(certainty_size) && !is_null(certainty_prop)) {
@@ -939,11 +946,14 @@ validate_certainty <- function(
     )
   }
 
-  if (!method %in% pps_wor_methods) {
+  is_pps_wor <- method %in% pps_wor_methods ||
+    (!is_null(custom_spec) && custom_spec$type == "wor")
+  if (!is_pps_wor) {
     cli_abort(
       c(
         "Certainty selection is only available for PPS without-replacement methods.",
         "i" = "Valid methods: {.val {pps_wor_methods}}",
+        "i" = "Custom WOR methods registered via {.fn sondage::register_method} are also supported.",
         "i" = "WR ({.val pps_multinomial}) and PMR ({.val pps_chromy}) methods handle large units natively.",
         "x" = "Current method: {.val {method}}"
       ),
@@ -1013,15 +1023,18 @@ validate_certainty <- function(
 }
 
 #' @noRd
-validate_prn <- function(prn, method, call = rlang::caller_env()) {
+validate_prn <- function(prn, method, custom_spec = NULL, call = rlang::caller_env()) {
   if (is_null(prn)) {
     return(invisible(NULL))
   }
-  if (!method %in% prn_methods) {
+  supports_prn <- method %in% prn_methods ||
+    (!is_null(custom_spec) && custom_spec$supports_prn)
+  if (!supports_prn) {
     cli_abort(
       c(
         "{.arg prn} is only supported for methods that use permanent random numbers.",
         "i" = "Valid methods: {.val {prn_methods}}",
+        "i" = "Custom methods can declare PRN support via {.fn sondage::register_method}.",
         "x" = "Current method: {.val {method}}"
       ),
       call = call

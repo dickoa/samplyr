@@ -264,7 +264,7 @@ survey_id_vars <- function(design, stages_executed, df) {
     method <- stage_spec$draw_spec$method
     draw_col <- paste0(".draw_", stage_idx)
 
-    if (method %in% multi_hit_methods && draw_col %in% names(df)) {
+    if (is_multi_hit_method(stage_spec$draw_spec) && draw_col %in% names(df)) {
       id_vars <- c(id_vars, draw_col)
     } else if (!is_null(stage_spec$clusters)) {
       id_vars <- c(id_vars, stage_spec$clusters$vars)
@@ -289,9 +289,10 @@ survey_strata_info <- function(df, design, stages_executed) {
   first_method <- design$stages[[first_stage_idx]]$draw_spec$method
   cert_col <- paste0(".certainty_", first_stage_idx)
 
+  first_draw_spec <- design$stages[[first_stage_idx]]$draw_spec
   if (
-    first_method %in%
-      pps_wor_methods &&
+    (first_method %in% pps_wor_methods ||
+      (identical(first_draw_spec$method_type, "wor"))) &&
       cert_col %in% names(df) &&
       any(df[[cert_col]])
   ) {
@@ -332,7 +333,7 @@ survey_id_stage_indices <- function(design, stages_executed, df) {
     method <- stage_spec$draw_spec$method
     draw_col <- paste0(".draw_", stage_idx)
 
-    if (method %in% multi_hit_methods && draw_col %in% names(df)) {
+    if (is_multi_hit_method(stage_spec$draw_spec) && draw_col %in% names(df)) {
       id_stage_indices <- c(id_stage_indices, stage_idx)
     } else if (!is_null(stage_spec$clusters)) {
       id_stage_indices <- c(id_stage_indices, stage_idx)
@@ -358,7 +359,9 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
     weight_col <- paste0(".weight_", stage_idx)
     fpc_col <- paste0(".fpc_", stage_idx)
 
-    if (method %in% c(wr_methods, pmr_methods)) {
+    draw_spec <- stage_spec$draw_spec
+    if (method %in% c(wr_methods, pmr_methods) ||
+        identical(draw_spec$method_type, "wr")) {
       inf_col <- paste0(".fpc_inf_", stage_idx)
       df[[inf_col]] <- Inf
       fpc_vars <- c(fpc_vars, inf_col)
@@ -369,7 +372,8 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
       next
     }
 
-    if (method %in% pps_wor_methods || method == "balanced") {
+    if (method %in% pps_wor_methods || method == "balanced" ||
+        identical(draw_spec$method_type, "wor")) {
       has_pps_wor <- TRUE
       fpc_pi_col <- paste0(".fpc_pi_", stage_idx)
       df[[fpc_pi_col]] <- 1 / df[[weight_col]]

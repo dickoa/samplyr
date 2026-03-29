@@ -102,21 +102,21 @@ design <- sampling_design(title = "Gambia bed nets") |>
   add_stage() |>
     draw(n = 6)
 design
-#> ── Sampling Design: Gambia bed nets ────────────────────────────────────────
+#> ── Sampling Design: Gambia bed nets ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> 
 #> ℹ 3 stages
 #> 
-#> ── Stage 1 ─────────────────────────────────────────────────────────────────
+#> ── Stage 1 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Strata: region
 #> • Cluster: district
 #> • Draw: n = 5, method = pps_brewer, mos = population
 #> 
-#> ── Stage 2 ─────────────────────────────────────────────────────────────────
+#> ── Stage 2 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Strata: phc
 #> • Cluster: village
 #> • Draw: n = 2, method = pps_brewer, mos = population
 #> 
-#> ── Stage 3 ─────────────────────────────────────────────────────────────────
+#> ── Stage 3 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Draw: n = 6, method = srswor
 ```
 
@@ -533,6 +533,72 @@ remains balanced on the auxiliary variables. Stratified designs use the
 stratified cube algorithm (Chauvet 2009) in a single call. Balanced
 sampling is supported for up to 2 stages.
 
+## Custom Sampling Methods
+
+Any unequal probability sampling method can be plugged into `samplyr` by
+registering it with `sondage::register_method()`. The registered method
+is then available in `draw()` using the `pps_<name>` convention.
+
+For example, to use the elimination procedure of Tille (1996) from the
+sampling package:
+
+``` r
+# Wrap sampling::UPtille to return selected indices
+tille_fn <- function(pik, n = NULL, prn = NULL, ...) {
+  which(as.logical(sampling::UPtille(pik)))
+}
+
+# Joint inclusion probabilities, restricted to the sampled units
+tille_joint_fn <- function(pik, sample_idx = NULL, ...) {
+  pi2 <- sampling::UPtillepi2(pik)
+  if (!is.null(sample_idx))
+    pi2 <- pi2[sample_idx, sample_idx, drop = FALSE]
+  pi2
+}
+
+# Register with both sampling and joint probability functions
+sondage::register_method(
+  "tille", type = "wor",
+  sample_fn = tille_fn,
+  joint_fn = tille_joint_fn
+)
+
+# Use it like any built-in method
+sample_tille <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300, method = "pps_tille", mos = households) |>
+  execute(bfa_eas, seed = 1)
+
+sample_tille
+#> # A tbl_sample: 300 × 18
+#> # Weights:      50.7 [13.19, 233.8]
+#>    ea_id    region   province commune urban_rural population households area_km2
+#>  * <chr>    <fct>    <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
+#>  1 EA_02168 Boucle … Bale     Boromo  Rural             2163        282   195.  
+#>  2 EA_04231 Boucle … Bale     Fara    Rural             3917        573    24.6 
+#>  3 EA_10394 Boucle … Bale     Pa      Rural             2676        384    22.4 
+#>  4 EA_11077 Boucle … Bale     Pompoi  Rural              917        124    26.8 
+#>  5 EA_11134 Boucle … Bale     Poura   Urban             1602        257     3.6 
+#>  6 EA_12383 Boucle … Banwa    Solenzo Rural             2258        303    17.5 
+#>  7 EA_12405 Boucle … Banwa    Solenzo Rural             1296        174    33.9 
+#>  8 EA_12912 Boucle … Banwa    Tansila Rural             1050        126     9.63
+#>  9 EA_12926 Boucle … Banwa    Tansila Rural             1506        181     9.22
+#> 10 EA_12927 Boucle … Banwa    Tansila Rural             1353        162    54.4 
+#> # ℹ 290 more rows
+#> # ℹ 10 more variables: accessible <lgl>, dist_road_km <dbl>,
+#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>, .certainty_1 <lgl>
+
+# Clean up
+sondage::unregister_method("tille")
+```
+
+Custom methods flow through the full pipeline: stratification,
+multi-stage designs, certainty selection, survey export, and joint
+probabilities. Providing a `joint_fn` enables exact variance estimation
+via `joint_expectation()` and `survey::ppsmat()`. See
+`?sondage::register_method` for the full contract.
+
 ## Survey Export
 
 Convert samples to `survey` or `srvyr` objects for analysis:
@@ -645,15 +711,15 @@ Weights compound automatically across phases.
 
 ``` r
 summary(strata_smpl)
-#> ── Sample Summary ──────────────────────────────────────────────────────────
+#> ── Sample Summary ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> 
 #> ℹ n = 300 | stages = 1/1 | seed = 12
 #> 
-#> ── Design: Stage 1 ─────────────────────────────────────────────────────────
+#> ── Design: Stage 1 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Strata: region (proportional)
 #> • Method: srswor
 #> 
-#> ── Allocation: Stage 1 ─────────────────────────────────────────────────────
+#> ── Allocation: Stage 1 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #>   region             N_h    n_h  f_h   
 #>   Boucle du Mouhoun  1510   30   0.0199
 #>   Cascades           667    14   0.0210
@@ -671,7 +737,7 @@ summary(strata_smpl)
 #>                      ─────  ───  ──────
 #>   Total              14934  300  0.0201
 #> 
-#> ── Weights ─────────────────────────────────────────────────────────────────
+#> ── Weights ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Range: [47.64, 51.25]
 #> • Mean:  49.78 · CV: 0.02
 #> • DEFF:  1 · n_eff: 300

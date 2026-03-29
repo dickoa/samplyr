@@ -220,6 +220,21 @@ validate_frame <- function(design, frame, stage = NULL) {
       }
     }
 
+    if (!is_null(stage_spec$draw_spec) && !is_null(stage_spec$draw_spec$control)) {
+      control_vars <- extract_control_vars(stage_spec$draw_spec$control)
+      missing_control <- setdiff(control_vars, names(frame))
+      if (length(missing_control) > 0) {
+        issues <- c(
+          issues,
+          list(list(
+            stage = label,
+            type = "control",
+            vars = missing_control
+          ))
+        )
+      }
+    }
+
     if (!is_null(stage_spec$draw_spec) && !is_null(stage_spec$draw_spec$prn)) {
       prn_var <- stage_spec$draw_spec$prn
       if (!prn_var %in% names(frame)) {
@@ -315,6 +330,9 @@ report_validation_issues <- function(issues) {
       ),
       "aux_na" = cli::format_inline(
         "{stage}: auxiliary variable {.var {vars}} contains NA values"
+      ),
+      "control" = cli::format_inline(
+        "{stage}: missing control variable{?s}: {.val {vars}}"
       ),
       "prn" = cli::format_inline(
         "{stage}: missing PRN variable: {.var {vars}}"

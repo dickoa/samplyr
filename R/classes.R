@@ -169,7 +169,9 @@ new_draw_spec <- function(
   certainty_size = NULL,
   certainty_prop = NULL,
   certainty_overflow = "error",
-  on_empty = "error"
+  on_empty = "error",
+  method_type = NULL,
+  method_fixed = NULL
 ) {
   structure(
     list(
@@ -186,7 +188,9 @@ new_draw_spec <- function(
       certainty_size = certainty_size,
       certainty_prop = certainty_prop,
       certainty_overflow = certainty_overflow,
-      on_empty = on_empty
+      on_empty = on_empty,
+      method_type = method_type,
+      method_fixed = method_fixed
     ),
     class = "draw_spec"
   )

@@ -154,7 +154,7 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
   n_lookup <- setNames(stratum_info$.n_h, stratum_keys)
   draw_lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars)
 
-  if (!draw_spec$method %in% multi_hit_methods) {
+  if (!is_multi_hit_method(draw_spec)) {
     capped <- stratum_info$.n_h > stratum_info$.N_h
     if (any(capped)) {
       n_requested <- sum(stratum_info$.n_h)
@@ -217,7 +217,7 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
     )
     selected$.weight <- 1 / selected$.pik
     selected$.pik <- NULL
-    selected$.fpc <- if (draw_spec$method %in% multi_hit_methods) {
+    selected$.fpc <- if (is_multi_hit_method(draw_spec)) {
       rep.int(Inf, nrow(selected))
     } else {
       rep.int(N_h, nrow(selected))
@@ -401,7 +401,7 @@ sample_unstratified <- function(frame, draw_spec) {
     cli_abort("Cannot determine sample size", call = NULL)
   }
 
-  if (!draw_spec$method %in% multi_hit_methods && n > N) {
+  if (!is_multi_hit_method(draw_spec) && n > N) {
     cli_warn(c(
       "Requested sample size ({n}) exceeds population size ({N}).",
       "i" = "Capped at {N} (census)."
@@ -411,7 +411,7 @@ sample_unstratified <- function(frame, draw_spec) {
   result <- draw_sample(frame, n, draw_spec)
   result$.weight <- 1 / result$.pik
   result$.pik <- NULL
-  result$.fpc <- if (draw_spec$method %in% multi_hit_methods) Inf else N
+  result$.fpc <- if (is_multi_hit_method(draw_spec)) Inf else N
   result$.sample_id <- seq_len(nrow(result))
   result
 }
@@ -454,7 +454,7 @@ draw_sample <- function(data, n, draw_spec) {
     data <- arrange(data, !!!draw_spec$control)
   }
 
-  if (!method %in% multi_hit_methods) {
+  if (!is_multi_hit_method(draw_spec)) {
     n <- min(n, N)
   }
 
@@ -471,13 +471,26 @@ draw_sample <- function(data, n, draw_spec) {
     }
   }
 
-  if (method %in% pps_methods && has_certainty) {
+  is_custom <- !is_null(draw_spec$method_type)
+
+  if ((method %in% pps_methods || is_custom) && has_certainty) {
     return(draw_sample_pps_certainty(data, n, draw_spec))
   }
 
   pik <- NULL
 
-  switch(method,
+  if (is_custom) {
+    mos_vals <- data[[mos]]
+    sondage_name <- sondage_method_name(method)
+    prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
+    if (draw_spec$method_type == "wr") {
+      pik <- sondage::expected_hits(mos_vals, n)
+      idx <- sondage::unequal_prob_wr(pik, method = sondage_name)$sample
+    } else {
+      pik <- sondage::inclusion_prob(mos_vals, n)
+      idx <- sondage::unequal_prob_wor(pik, method = sondage_name, prn = prn_vals)$sample
+    }
+  } else switch(method,
     srswor = {
       idx <- sondage::equal_prob_wor(N, n)$sample
       pik <- rep(n / N, N)
@@ -548,7 +561,7 @@ draw_sample <- function(data, n, draw_spec) {
     cli_abort("Unknown sampling method: {.val {method}}")
   )
 
-  if (method %in% multi_hit_methods) {
+  if (is_multi_hit_method(draw_spec)) {
     result <- data[idx, , drop = FALSE]
     result$.pik <- pik[idx]
     result$.draw <- seq_along(idx)
@@ -557,7 +570,7 @@ draw_sample <- function(data, n, draw_spec) {
     result$.pik <- pik[idx]
   }
 
-  if (method %in% pps_methods) {
+  if (method %in% pps_methods || is_custom) {
     result$.certainty <- FALSE
   }
 
@@ -645,7 +658,25 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
     ), call = NULL)
   }
 
-  switch(method,
+  is_custom <- !is_null(draw_spec$method_type)
+
+  if (is_custom) {
+    sondage_name <- sondage_method_name(method)
+    prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
+    if (draw_spec$method_type == "wr") {
+      pik <- sondage::expected_hits(mos_vals, n)
+      idx <- sondage::unequal_prob_wr(pik, method = sondage_name, prn = prn_vals)$sample
+    } else {
+      pik <- sondage::inclusion_prob(mos_vals, n)
+      idx <- sondage::unequal_prob_wor(pik, method = sondage_name, prn = prn_vals)$sample
+      if (length(idx) == 0) {
+        on_empty <- draw_spec$on_empty %||% "error"
+        fallback <- handle_empty_selection(method, on_empty, N)
+        idx <- fallback$idx
+        pik <- fallback$pik
+      }
+    }
+  } else switch(method,
     pps_poisson = {
       frac <- draw_spec$frac %||% (n / N)
       pik <- frac * mos_vals / sum(mos_vals) * N
@@ -675,7 +706,7 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
     }
   )
 
-  if (method %in% multi_hit_methods) {
+  if (is_multi_hit_method(draw_spec)) {
     result <- data[idx, , drop = FALSE]
     result$.pik <- pik[idx]
     result$.draw <- seq_along(idx)
