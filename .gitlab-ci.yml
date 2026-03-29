@@ -20,8 +20,10 @@ check-release:
         libcurl4-openssl-dev
         libssl-dev
         libxml2-dev
+        libuv1-dev
         pandoc
         qpdf
+        cmake
     - mkdir -p $R_LIBS_USER
     # Install package dependencies including vignette builders
     - Rscript -e "install.packages(c('remotes', 'rcmdcheck'), repos='https://cloud.r-project.org')"
@@ -37,8 +39,10 @@ check-devel:
         libcurl4-openssl-dev
         libssl-dev
         libxml2-dev
+        libuv1-dev
         pandoc
         qpdf
+        cmake
     - mkdir -p $R_LIBS_USER
     - Rscript -e "install.packages(c('remotes', 'rcmdcheck'), repos='https://cloud.r-project.org')"
     - Rscript -e "remotes::install_deps(dependencies = TRUE)"
@@ -54,9 +58,11 @@ coverage:
         libcurl4-openssl-dev
         libssl-dev
         libxml2-dev
+        libuv1-dev
         pandoc
         qpdf
         git
+        cmake
     - mkdir -p $R_LIBS_USER
     - Rscript -e "install.packages(c('remotes', 'covr', 'xml2'), repos='https://cloud.r-project.org')"
     - Rscript -e "remotes::install_deps(dependencies = TRUE)"
@@ -77,6 +83,7 @@ pages:
         libcurl4-openssl-dev
         libssl-dev
         libxml2-dev
+        libuv1-dev
         libfontconfig1-dev
         libharfbuzz-dev
         libfribidi-dev
@@ -84,8 +91,9 @@ pages:
         libpng-dev
         libtiff5-dev
         libjpeg-dev
+        cmake
     - mkdir -p $R_LIBS_USER
-    - Rscript -e "install.packages(c('remotes', 'pkgdown'), repos='https://cloud.r-project.org')"
+    - Rscript -e "install.packages(c('remotes', 'pkgdown', 'bslib', 'rmarkdown', 'fs'), repos='https://cloud.r-project.org')"
     - Rscript -e "remotes::install_deps(dependencies = TRUE)"
   script:
     - Rscript -e "pkgdown::build_site()"
