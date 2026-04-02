@@ -645,7 +645,7 @@ Once registered, the method works like any built-in PPS method:
 
 ```{r custom-method-execute}
 set.seed(1)
-frame <- bfa_eas[sample(1:nrow(bfa_eas), 500), ]
+frame <- bfa_eas[sample(seq_len(nrow(bfa_eas)), 500), ]
 
 sample_tille <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
@@ -750,28 +750,33 @@ The `stages` argument lets you execute only specific stages.
 
 ```{r}
 design <- sampling_design() |>
-  add_stage(label = "Districts") |>
-    stratify_by(province) |>
-    cluster_by(district) |>
-    draw(n = 2, method = "pps_brewer", mos = district_hh) |>
-  add_stage(label = "EAs") |>
-    draw(n = 4)
+  add_stage(label = "EA") |>
+    stratify_by(urban_rural) |>
+    cluster_by(ea_id) |>
+    draw(n = 10, method = "pps_brewer", mos = households) |>
+  add_stage(label = "HH") |>
+    draw(n = 5)
 
 # Execute stage 1 only
-selected_districts <- execute(design, zwe_frame, stages = 1, seed = 42)
+selected_eas <- execute(design, zwe_eas, stages = 1, seed = 1)
+head(selected_eas)
+```
 
-selected_districts |>
-  distinct(province, district)
+Once the EAs selected, households are listed in each of them.
+
+```{r}
+selected_eas_list <- selected_eas |>
+  slice(rep(seq_len(n()), households)) |>
+  mutate(hh_id = row_number())
+head(selected_eas_list)
 ```
 
 After fieldwork or preparation is complete, execute the remaining stages.
 
 ```{r}
-final_sample <- selected_districts |>
-  execute(zwe_frame, seed = 43)
-
-final_sample |>
-  count(province, district)
+final_sample <- design |>
+  execute(selected_eas_list, seed = 2)
+head(final_sample)
 ```
 
 ---

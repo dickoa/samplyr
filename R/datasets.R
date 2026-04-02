@@ -3,14 +3,13 @@
 #' @description
 #' The samplyr package includes synthetic sampling frames for demonstrating
 #' survey sampling designs. These frames use real administrative divisions
-#' from African countries. They are designed to illustrate common survey
-#' sampling scenarios.
+#' and population data from African countries. They are designed to illustrate
+#' common survey sampling scenarios.
 #'
 #' @section Datasets:
 #' \itemize{
-#'   \item [bfa_eas]: LSMS-style EA frame (Burkina Faso, 14,934 EAs)
-#'   \item [zwe_eas]: DHS-style EA frame (Zimbabwe, 22,600 EAs)
-#'   \item [zwe_households]: Household frame for two-phase sampling (Zimbabwe, 379,326 HH)
+#'   \item [bfa_eas]: Household survey EA frame (Burkina Faso, 44,570 EAs)
+#'   \item [zwe_eas]: Two-stage cluster survey EA frame (Zimbabwe, 107,250 EAs)
 #'   \item [ken_enterprises]: Enterprise survey frame (Kenya, 6,823 establishments)
 #' }
 #'
@@ -25,28 +24,30 @@
 NULL
 
 
-#' Burkina Faso Enumeration Areas (LSMS-style)
+#' Burkina Faso Enumeration Areas
 #'
 #' @description
 #' An enumeration area (EA) frame for household surveys, built from
-#' WorldPop/GRID3 preEA data, EHCVM 2021 household survey parameters, and
-#' HDX COD-AB administrative boundaries. The frame covers 13 regions, 45 provinces,
-#' and 348 communes of Burkina Faso.
+#' WorldPop/GRID3 preEA boundaries (CC-BY 4.0), EHCVM 2021 household survey
+#' parameters, Cadre Harmonise food security analysis, and HDX COD-AB
+#' administrative boundaries. Each row corresponds to one preEA polygon
+#' from the WorldPop shapefile, providing a 1:1 mapping for spatial joins.
+#' The frame covers 13 regions, 45 provinces, and 348 communes of Burkina Faso.
 #'
-#' @format A tibble with 14,934 rows and 12 columns:
+#' @format A tibble with 44,570 rows and 12 columns:
 #' \describe{
-#'   \item{ea_id}{Character. Unique enumeration area identifier}
+#'   \item{ea_id}{Integer. Unique enumeration area identifier (matches preEA_EAID in WorldPop shapefile)}
 #'   \item{region}{Factor. Region name (13 regions)}
 #'   \item{province}{Factor. Province name within region (45 provinces)}
 #'   \item{commune}{Factor. Commune name within province (348 communes)}
-#'   \item{urban_rural}{Factor. Urban/Rural classification}
-#'   \item{population}{Numeric. EA population}
-#'   \item{households}{Integer. Number of households in the EA (measure of size for PPS)}
+#'   \item{urban_rural}{Factor. Urban/Rural classification based on commune density}
+#'   \item{population}{Integer. EA population from RGPH 2019}
+#'   \item{households}{Integer. Number of households, derived from EHCVM 2021 household size parameters}
 #'   \item{area_km2}{Numeric. EA area in square kilometres}
-#'   \item{accessible}{Logical. Whether the EA is in an accessible zone}
-#'   \item{dist_road_km}{Numeric. Distance to paved road in km}
-#'   \item{food_insecurity_pct}{Numeric. Cadre Harmonise Phase 3+ prevalence}
-#'   \item{cost}{Numeric. Survey cost per EA (thousands FCFA)}
+#'   \item{accessible}{Logical. Whether the EA is in an accessible zone (conflict-affected regions have lower accessibility)}
+#'   \item{dist_road_km}{Numeric. Distance to paved road in km (synthetic, calibrated by milieu)}
+#'   \item{food_insecurity_pct}{Numeric. Cadre Harmonise Phase 3+ prevalence, calibrated from Jan-May 2024 province-level analysis}
+#'   \item{cost}{Numeric. Survey cost per EA in thousands FCFA (driven by accessibility and distance)}
 #' }
 #'
 #' @details
@@ -56,10 +57,11 @@ NULL
 #'   \item PPS (probability proportional to size) sampling using household counts
 #'   \item Urban/rural stratification
 #'   \item Neyman and optimal allocation using auxiliary variables
+#'   \item Sampling in conflict-affected contexts with accessibility constraints
 #' }
 #'
-#' The data structure mirrors typical LSMS/household survey sampling frames
-#' where enumeration areas are the primary sampling units, selected with
+#' The data structure follows typical household survey sampling frames
+#' where enumeration areas serve as primary sampling units, selected with
 #' probability proportional to the number of households.
 #'
 #' @seealso
@@ -142,39 +144,52 @@ NULL
 "bfa_eas_cost"
 
 
-#' Zimbabwe Enumeration Areas (DHS Two-Stage Cluster)
+#' Zimbabwe Enumeration Areas
 #'
 #' @description
 #' An enumeration area (EA) frame for two-stage cluster surveys, built from
-#' WorldPop/GRID3 preEA boundaries, GHS-DUC urban classification, and
-#' Zimbabwe 2022 Census population figures. The frame covers 10 provinces
-#' and 91 districts.
+#' WorldPop/GRID3 preEA boundaries (CC-BY 4.0), GHS-DUC urban classification,
+#' WorldPop 2022 constrained 100m age-sex grids, and Zimbabwe 2022 Population
+#' Census ward-level tallies. Each row corresponds to one preEA polygon from
+#' the WorldPop shapefile, providing a 1:1 mapping for spatial joins. The frame
+#' covers 10 provinces and 91 districts.
 #'
-#' @format A tibble with 22,600 rows and 7 columns:
+#' @format A tibble with 107,250 rows and 12 columns:
 #' \describe{
-#'   \item{ea_id}{Character. Unique enumeration area identifier}
+#'   \item{ea_id}{Integer. Unique enumeration area identifier (matches preEA_EAID in WorldPop shapefile)}
 #'   \item{province}{Factor. Province name (10 provinces)}
 #'   \item{district}{Factor. District name within province (91 districts)}
-#'   \item{urban_rural}{Factor. Urban/Rural classification}
-#'   \item{households}{Integer. Number of households in the EA (measure of size for PPS)}
-#'   \item{population}{Integer. EA population}
+#'   \item{ward_pcode}{Character. Ward P-code from OCHA COD-AB (e.g. "ZW150104")}
+#'   \item{urban_rural}{Factor. Urban/Rural classification based on building density, calibrated to GHS-DUC provincial shares}
+#'   \item{population}{Integer. EA population, calibrated to 2022 Census ward totals}
+#'   \item{households}{Integer. Number of households, calibrated to 2022 Census ward totals}
+#'   \item{buildings}{Integer. Building count from GRID3 building footprints}
+#'   \item{women_15_49}{Integer. Estimated women aged 15-49, from WorldPop age-sex grids scaled to census population}
+#'   \item{men_15_49}{Integer. Estimated men aged 15-49, from WorldPop age-sex grids scaled to census population}
+#'   \item{children_under5}{Integer. Estimated children under 5, from WorldPop age-sex grids scaled to census population}
 #'   \item{area_km2}{Numeric. EA area in square kilometres}
 #' }
 #'
 #' @details
 #' This dataset is designed for demonstrating:
 #' \itemize{
-#'   \item Two-stage cluster sampling (districts then EAs, or EAs then households)
-#'   \item PPS sampling using household counts
+#'   \item Two-stage cluster sampling (EAs then households)
+#'   \item PPS sampling using household or population counts
 #'   \item Stratification by province and urban/rural
 #'   \item Partial execution (operational multi-stage sampling)
-#'   \item Two-phase sampling (with [zwe_households])
+#'   \item Creating household listings from selected EAs for second-stage sampling
 #' }
 #'
-#' The data structure mirrors typical DHS/MICS sampling frames where EAs
-#' are nested within districts and provinces.
+#' The data structure follows typical two-stage cluster survey frames where
+#' EAs are nested within districts and provinces. To create a household
+#' listing for second-stage sampling after selecting EAs, expand each
+#' selected EA into individual household rows:
 #'
-#' @seealso [zwe_households] for household-level data within a subset of EAs
+#' \preformatted{
+#' # After stage 1 selection:
+#' listing <- selected[rep(seq_len(nrow(selected)), selected$households), ]
+#' listing$hh_id <- seq_len(nrow(listing))
+#' }
 #'
 #' @examples
 #' # Explore the data
@@ -182,76 +197,31 @@ NULL
 #' table(zwe_eas$province)
 #' table(zwe_eas$urban_rural)
 #'
-#' # Two-stage cluster sample: districts then EAs
-#' zwe_frame <- zwe_eas |>
-#'   dplyr::mutate(district_hh = sum(households), .by = district)
-#'
+#' # Two-stage cluster sample: EAs then households
 #' sampling_design() |>
-#'   add_stage(label = "Districts") |>
-#'     stratify_by(province) |>
-#'     cluster_by(district) |>
-#'     draw(n = 2, method = "pps_brewer", mos = district_hh) |>
 #'   add_stage(label = "EAs") |>
-#'     draw(n = 5) |>
-#'   execute(zwe_frame, seed = 123)
+#'     stratify_by(province, urban_rural) |>
+#'     cluster_by(ea_id) |>
+#'     draw(n = 3, method = "pps_systematic", mos = households) |>
+#'   add_stage(label = "Households") |>
+#'     draw(n = 20) |>
+#'   execute(zwe_eas, seed = 123)
 #'
 "zwe_eas"
 
 
-#' Zimbabwe Households (Two-Phase Subframe)
+#' Kenya Enterprises
 #'
 #' @description
-#' A household-level frame for a subset of 2,000 enumeration areas from
-#' [zwe_eas]. Designed for demonstrating two-phase sampling, where phase 1
-#' selects EAs and phase 2 subsamples households within selected EAs.
-#'
-#' @format A tibble with 10 columns:
-#' \describe{
-#'   \item{hh_id}{Character. Unique household identifier}
-#'   \item{ea_id}{Character. Enumeration area identifier (links to [zwe_eas])}
-#'   \item{province}{Factor. Province name}
-#'   \item{district}{Factor. District name}
-#'   \item{urban_rural}{Factor. Urban/Rural classification}
-#'   \item{hh_size}{Integer. Number of household members}
-#'   \item{women_15_49}{Integer. Number of women aged 15-49 in the household}
-#'   \item{men_15_54}{Integer. Number of men aged 15-54 in the household}
-#'   \item{children_under5}{Integer. Number of children under 5}
-#'   \item{ea_households}{Integer. Total households in the EA (measure of size)}
-#' }
-#'
-#' @details
-#' This dataset is designed for demonstrating:
-#' \itemize{
-#'   \item Two-phase sampling (EA selection followed by household subsampling)
-#'   \item Joint inclusion probability computation
-#'   \item Survey export with multi-stage designs
-#' }
-#'
-#' Only a subset of EAs from [zwe_eas] have household-level data, reflecting
-#' the operational reality where household listing is done only in selected EAs.
-#'
-#' @seealso [zwe_eas] for the EA-level frame
-#'
-#' @examples
-#' # Explore the data
-#' head(zwe_households)
-#' table(zwe_households$province)
-#'
-"zwe_households"
-
-
-#' Kenya Enterprises (Enterprise Survey with Panels and PRN)
-#'
-#' @description
-#' A synthetic business establishment frame inspired by the KNBS 2017 Census
-#' of Establishments and the World Bank Enterprise Survey (WBES) 2018 Kenya
-#' design. Covers 47 counties, 11 regions, 7 sectors, and 3 size classes.
+#' A synthetic business establishment frame covering 47 counties, 11 regions,
+#' 7 sectors, and 3 size classes. Population structure calibrated to published
+#' census of establishments and enterprise survey design parameters.
 #'
 #' @format A tibble with 6,823 rows and 9 columns:
 #' \describe{
 #'   \item{enterprise_id}{Character. Unique establishment identifier}
 #'   \item{county}{Factor. County name (47 counties)}
-#'   \item{region}{Factor. Region (11 regions: 10 WBES regions + Rest of Kenya)}
+#'   \item{region}{Factor. Region (11 regions)}
 #'   \item{sector}{Factor. Business sector (7 sectors)}
 #'   \item{size_class}{Factor. Size classification (Small: 5-19, Medium: 20-99, Large: 100+)}
 #'   \item{employees}{Integer. Number of employees (measure of size)}

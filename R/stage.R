@@ -82,8 +82,8 @@
 #'     draw(n = 5) |>
 #'   execute(zwe_frame, seed = 1234)
 #'
-#' # DHS-style two-stage stratified cluster sample
-#' sampling_design(title = "DHS-style Household Survey") |>
+#' # Two-stage stratified cluster sample
+#' sampling_design(title = "Household Survey") |>
 #'   add_stage(label = "Enumeration Areas") |>
 #'     stratify_by(region, urban_rural) |>
 #'     cluster_by(ea_id) |>

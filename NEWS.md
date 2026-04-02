@@ -1,4 +1,4 @@
-# samplyr 0.7.9999
+# samplyr 0.8.9999
 
 Initial release.
 
@@ -111,11 +111,12 @@ Initial release.
 
 ## Datasets
 
-* `bfa_eas`: 14,934 enumeration areas from Burkina Faso (LSMS/HBS style).
-  Companion tables `bfa_eas_variance` and `bfa_eas_cost` for Neyman and
-  optimal allocation.
-* `zwe_eas` and `zwe_households`: DHS-style two-stage cluster frame from
-  Zimbabwe (22,600 EAs and 379,326 households).
+* `bfa_eas`: 44,570 enumeration areas from Burkina Faso for household survey
+  sampling. Companion tables `bfa_eas_variance` and `bfa_eas_cost` for Neyman
+  and optimal allocation. Food insecurity calibrated from Cadre Harmonise.
+* `zwe_eas`: 107,250 enumeration areas from Zimbabwe for two-stage cluster
+  survey sampling. Population and households calibrated to 2022 Census
+  ward-level tallies. Demographic columns from WorldPop 100m age-sex grids.
 * `ken_enterprises`: 6,823 establishments from Kenya for enterprise surveys,
   panel partitioning, and PRN coordination examples.
 

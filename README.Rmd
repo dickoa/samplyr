@@ -174,32 +174,29 @@ sample
 
 Execute stages separately when fieldwork happens between stages:
 
-```{r operational, eval = FALSE}
+```{r operational}
 design <- sampling_design() |>
-  add_stage(label = "Districts") |>
-    cluster_by(district) |>
-    draw(n = 10, method = "pps_brewer", mos = district_hh) |>
-  add_stage(label = "EAs") |>
+  add_stage(label = "EA") |>
+    stratify_by(urban_rural) |>
+    cluster_by(ea_id) |>
+    draw(n = 10, method = "pps_brewer", mos = households) |>
+  add_stage(label = "HH") |>
     draw(n = 5)
 
-# Add district-level measure of size
-zwe_frame_agg <- zwe_eas |>
-  summarize(district_hh = sum(households),
-            m = n(),
-            .by = district)
-
 # Execute stage 1 only
-selected_districts <- execute(design, zwe_frame_agg, stages = 1, seed = 1)
+selected_eas <- execute(design, zwe_eas, stages = 1, seed = 1)
+selected_eas
 
 # ... fieldwork ...
-
-zwe_frame <- zwe_eas |>
-  mutate(district_hh = sum(households),
-         m = n(),
-         .by = district)
+# list all households in selected EAs
+selected_eas_list <- selected_eas |>
+  slice(rep(seq_len(n()), households)) |>
+  mutate(hh_id = row_number())
 
 # Execute stage 2
-final_sample <- selected_districts |> execute(zwe_frame, seed = 2)
+final_sample <- design |>
+  execute(selected_eas_list, seed = 2)
+final_sample
 ```
 
 ## Selection Methods
@@ -453,9 +450,8 @@ Synthetic sampling frames for learning and testing:
 
 | Dataset           | Description                                       | Rows    |
 |-------------------|---------------------------------------------------|---------|
-| `bfa_eas`         | LSMS-style EA frame (Burkina Faso)                | 14,934  |
-| `zwe_eas`         | DHS-style EA frame (Zimbabwe)                     | 22,600  |
-| `zwe_households`  | Household frame for two-phase sampling (Zimbabwe) | 379,326 |
+| `bfa_eas`         | Household survey EA frame (Burkina Faso)          | 44,570  |
+| `zwe_eas`         | Two-stage cluster survey EA frame (Zimbabwe)      | 107,250 |
 | `ken_enterprises` | Enterprise survey frame (Kenya)                   | 6,823   |
 
 Plus auxiliary data: `bfa_eas_variance`, `bfa_eas_cost`

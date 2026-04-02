@@ -3,13 +3,13 @@
 \docType{data}
 \name{ken_enterprises}
 \alias{ken_enterprises}
-\title{Kenya Enterprises (Enterprise Survey with Panels and PRN)}
+\title{Kenya Enterprises}
 \format{
 A tibble with 6,823 rows and 9 columns:
 \describe{
 \item{enterprise_id}{Character. Unique establishment identifier}
 \item{county}{Factor. County name (47 counties)}
-\item{region}{Factor. Region (11 regions: 10 WBES regions + Rest of Kenya)}
+\item{region}{Factor. Region (11 regions)}
 \item{sector}{Factor. Business sector (7 sectors)}
 \item{size_class}{Factor. Size classification (Small: 5-19, Medium: 20-99, Large: 100+)}
 \item{employees}{Integer. Number of employees (measure of size)}
@@ -22,9 +22,9 @@ A tibble with 6,823 rows and 9 columns:
 ken_enterprises
 }
 \description{
-A synthetic business establishment frame inspired by the KNBS 2017 Census
-of Establishments and the World Bank Enterprise Survey (WBES) 2018 Kenya
-design. Covers 47 counties, 11 regions, 7 sectors, and 3 size classes.
+A synthetic business establishment frame covering 47 counties, 11 regions,
+7 sectors, and 3 size classes. Population structure calibrated to published
+census of establishments and enterprise survey design parameters.
 }
 \details{
 This dataset is designed for demonstrating:

@@ -6,15 +6,14 @@
 \description{
 The samplyr package includes synthetic sampling frames for demonstrating
 survey sampling designs. These frames use real administrative divisions
-from African countries. They are designed to illustrate common survey
-sampling scenarios.
+and population data from African countries. They are designed to illustrate
+common survey sampling scenarios.
 }
 \section{Datasets}{
 
 \itemize{
-\item \link{bfa_eas}: LSMS-style EA frame (Burkina Faso, 14,934 EAs)
-\item \link{zwe_eas}: DHS-style EA frame (Zimbabwe, 22,600 EAs)
-\item \link{zwe_households}: Household frame for two-phase sampling (Zimbabwe, 379,326 HH)
+\item \link{bfa_eas}: Household survey EA frame (Burkina Faso, 44,570 EAs)
+\item \link{zwe_eas}: Two-stage cluster survey EA frame (Zimbabwe, 107,250 EAs)
 \item \link{ken_enterprises}: Enterprise survey frame (Kenya, 6,823 establishments)
 }
 }

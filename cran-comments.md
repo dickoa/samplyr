@@ -6,7 +6,7 @@
 
 ## Test environments
 
-* Local: Arch Linux, R 4.5.2
+* Local: Arch Linux, R 4.5.3
 * GitLab CI: Linux (rocker/r-ver:4.5.0, R-release)
 * GitLab CI: Linux (rocker/r-devel, R-devel)
 * GitHub Actions: macOS-latest (R-release)

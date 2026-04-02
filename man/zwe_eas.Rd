@@ -3,16 +3,21 @@
 \docType{data}
 \name{zwe_eas}
 \alias{zwe_eas}
-\title{Zimbabwe Enumeration Areas (DHS Two-Stage Cluster)}
+\title{Zimbabwe Enumeration Areas}
 \format{
-A tibble with 22,600 rows and 7 columns:
+A tibble with 107,250 rows and 12 columns:
 \describe{
-\item{ea_id}{Character. Unique enumeration area identifier}
+\item{ea_id}{Integer. Unique enumeration area identifier (matches preEA_EAID in WorldPop shapefile)}
 \item{province}{Factor. Province name (10 provinces)}
 \item{district}{Factor. District name within province (91 districts)}
-\item{urban_rural}{Factor. Urban/Rural classification}
-\item{households}{Integer. Number of households in the EA (measure of size for PPS)}
-\item{population}{Integer. EA population}
+\item{ward_pcode}{Character. Ward P-code from OCHA COD-AB (e.g. "ZW150104")}
+\item{urban_rural}{Factor. Urban/Rural classification based on building density, calibrated to GHS-DUC provincial shares}
+\item{population}{Integer. EA population, calibrated to 2022 Census ward totals}
+\item{households}{Integer. Number of households, calibrated to 2022 Census ward totals}
+\item{buildings}{Integer. Building count from GRID3 building footprints}
+\item{women_15_49}{Integer. Estimated women aged 15-49, from WorldPop age-sex grids scaled to census population}
+\item{men_15_49}{Integer. Estimated men aged 15-49, from WorldPop age-sex grids scaled to census population}
+\item{children_under5}{Integer. Estimated children under 5, from WorldPop age-sex grids scaled to census population}
 \item{area_km2}{Numeric. EA area in square kilometres}
 }
 }
@@ -21,22 +26,32 @@ zwe_eas
 }
 \description{
 An enumeration area (EA) frame for two-stage cluster surveys, built from
-WorldPop/GRID3 preEA boundaries, GHS-DUC urban classification, and
-Zimbabwe 2022 Census population figures. The frame covers 10 provinces
-and 91 districts.
+WorldPop/GRID3 preEA boundaries (CC-BY 4.0), GHS-DUC urban classification,
+WorldPop 2022 constrained 100m age-sex grids, and Zimbabwe 2022 Population
+Census ward-level tallies. Each row corresponds to one preEA polygon from
+the WorldPop shapefile, providing a 1:1 mapping for spatial joins. The frame
+covers 10 provinces and 91 districts.
 }
 \details{
 This dataset is designed for demonstrating:
 \itemize{
-\item Two-stage cluster sampling (districts then EAs, or EAs then households)
-\item PPS sampling using household counts
+\item Two-stage cluster sampling (EAs then households)
+\item PPS sampling using household or population counts
 \item Stratification by province and urban/rural
 \item Partial execution (operational multi-stage sampling)
-\item Two-phase sampling (with \link{zwe_households})
+\item Creating household listings from selected EAs for second-stage sampling
 }
 
-The data structure mirrors typical DHS/MICS sampling frames where EAs
-are nested within districts and provinces.
+The data structure follows typical two-stage cluster survey frames where
+EAs are nested within districts and provinces. To create a household
+listing for second-stage sampling after selecting EAs, expand each
+selected EA into individual household rows:
+
+\preformatted{
+# After stage 1 selection:
+listing <- selected[rep(seq_len(nrow(selected)), selected$households), ]
+listing$hh_id <- seq_len(nrow(listing))
+}
 }
 \examples{
 # Explore the data
@@ -44,21 +59,15 @@ head(zwe_eas)
 table(zwe_eas$province)
 table(zwe_eas$urban_rural)
 
-# Two-stage cluster sample: districts then EAs
-zwe_frame <- zwe_eas |>
-  dplyr::mutate(district_hh = sum(households), .by = district)
-
+# Two-stage cluster sample: EAs then households
 sampling_design() |>
-  add_stage(label = "Districts") |>
-    stratify_by(province) |>
-    cluster_by(district) |>
-    draw(n = 2, method = "pps_brewer", mos = district_hh) |>
   add_stage(label = "EAs") |>
-    draw(n = 5) |>
-  execute(zwe_frame, seed = 123)
+    stratify_by(province, urban_rural) |>
+    cluster_by(ea_id) |>
+    draw(n = 3, method = "pps_systematic", mos = households) |>
+  add_stage(label = "Households") |>
+    draw(n = 20) |>
+  execute(zwe_eas, seed = 123)
 
-}
-\seealso{
-\link{zwe_households} for household-level data within a subset of EAs
 }
 \keyword{datasets}

@@ -3,22 +3,22 @@
 \docType{data}
 \name{bfa_eas}
 \alias{bfa_eas}
-\title{Burkina Faso Enumeration Areas (LSMS-style)}
+\title{Burkina Faso Enumeration Areas}
 \format{
-A tibble with 14,934 rows and 12 columns:
+A tibble with 44,570 rows and 12 columns:
 \describe{
-\item{ea_id}{Character. Unique enumeration area identifier}
+\item{ea_id}{Integer. Unique enumeration area identifier (matches preEA_EAID in WorldPop shapefile)}
 \item{region}{Factor. Region name (13 regions)}
 \item{province}{Factor. Province name within region (45 provinces)}
 \item{commune}{Factor. Commune name within province (348 communes)}
-\item{urban_rural}{Factor. Urban/Rural classification}
-\item{population}{Numeric. EA population}
-\item{households}{Integer. Number of households in the EA (measure of size for PPS)}
+\item{urban_rural}{Factor. Urban/Rural classification based on commune density}
+\item{population}{Integer. EA population from RGPH 2019}
+\item{households}{Integer. Number of households, derived from EHCVM 2021 household size parameters}
 \item{area_km2}{Numeric. EA area in square kilometres}
-\item{accessible}{Logical. Whether the EA is in an accessible zone}
-\item{dist_road_km}{Numeric. Distance to paved road in km}
-\item{food_insecurity_pct}{Numeric. Cadre Harmonise Phase 3+ prevalence}
-\item{cost}{Numeric. Survey cost per EA (thousands FCFA)}
+\item{accessible}{Logical. Whether the EA is in an accessible zone (conflict-affected regions have lower accessibility)}
+\item{dist_road_km}{Numeric. Distance to paved road in km (synthetic, calibrated by milieu)}
+\item{food_insecurity_pct}{Numeric. Cadre Harmonise Phase 3+ prevalence, calibrated from Jan-May 2024 province-level analysis}
+\item{cost}{Numeric. Survey cost per EA in thousands FCFA (driven by accessibility and distance)}
 }
 }
 \usage{
@@ -26,9 +26,11 @@ bfa_eas
 }
 \description{
 An enumeration area (EA) frame for household surveys, built from
-WorldPop/GRID3 preEA data, EHCVM 2021 household survey parameters, and
-HDX COD-AB administrative boundaries. The frame covers 13 regions, 45 provinces,
-and 348 communes of Burkina Faso.
+WorldPop/GRID3 preEA boundaries (CC-BY 4.0), EHCVM 2021 household survey
+parameters, Cadre Harmonise food security analysis, and HDX COD-AB
+administrative boundaries. Each row corresponds to one preEA polygon
+from the WorldPop shapefile, providing a 1:1 mapping for spatial joins.
+The frame covers 13 regions, 45 provinces, and 348 communes of Burkina Faso.
 }
 \details{
 This dataset is designed for demonstrating:
@@ -37,10 +39,11 @@ This dataset is designed for demonstrating:
 \item PPS (probability proportional to size) sampling using household counts
 \item Urban/rural stratification
 \item Neyman and optimal allocation using auxiliary variables
+\item Sampling in conflict-affected contexts with accessibility constraints
 }
 
-The data structure mirrors typical LSMS/household survey sampling frames
-where enumeration areas are the primary sampling units, selected with
+The data structure follows typical household survey sampling frames
+where enumeration areas serve as primary sampling units, selected with
 probability proportional to the number of households.
 }
 \examples{
