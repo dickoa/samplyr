@@ -238,6 +238,80 @@ is_tbl_sample <- function(x) {
   inherits(x, "tbl_sample")
 }
 
+#' Coerce to a tbl_sample
+#'
+#' Restores the `tbl_sample` class on a data frame that carries sampling
+#' attributes (`design`, `stages_executed`) but has lost its class, for
+#' example after a tidyr operation such as [tidyr::uncount()].
+#'
+#' @section Class preservation:
+#'
+#' All dplyr verbs (`mutate`, `filter`, `select`, `*_join`, etc.)
+#' preserve the `tbl_sample` class automatically.
+#'
+#' Some operations strip the class but keep the sampling attributes.
+#' Use `as_tbl_sample()` to restore it:
+#' - `tidyr::uncount()`
+#' - `tibble::as_tibble()`
+#' - `as.data.frame()`
+#'
+#' Other operations strip both class and attributes and are
+#' not recoverable. Use dplyr alternatives instead:
+#' - `base::merge()` -- use `dplyr::left_join()` etc.
+#' - `base::cbind()` -- use `dplyr::bind_cols()`
+#' - `tidyr::pivot_longer()` / `tidyr::pivot_wider()`
+#'
+#' @param x A data frame with sampling attributes.
+#' @param ... Not used.
+#'
+#' @return A `tbl_sample`, or an error if `x` does not carry the
+#'   required attributes.
+#'
+#' @examples
+#' design <- sampling_design() |>
+#'   stratify_by(region) |>
+#'   draw(n = 20)
+#'
+#' sample <- execute(design, bfa_eas, seed = 42)
+#'
+#' # as_tibble() strips the class but keeps attributes
+#' plain <- tibble::as_tibble(sample)
+#' is_tbl_sample(plain)
+#'
+#' # as_tbl_sample() restores it
+#' restored <- as_tbl_sample(plain)
+#' is_tbl_sample(restored)
+#' @export
+as_tbl_sample <- function(x, ...) {
+  UseMethod("as_tbl_sample")
+}
+
+#' @rdname as_tbl_sample
+#' @export
+as_tbl_sample.tbl_sample <- function(x, ...) {
+  x
+}
+
+#' @rdname as_tbl_sample
+#' @export
+as_tbl_sample.data.frame <- function(x, ...) {
+  design <- attr(x, "design")
+  stages <- attr(x, "stages_executed")
+  if (is.null(design) || is.null(stages)) {
+    cli_abort(c(
+      "Cannot coerce to {.cls tbl_sample}.",
+      "i" = "The object does not carry the required sampling attributes."
+    ))
+  }
+  new_tbl_sample(
+    data = x,
+    design = design,
+    stages_executed = stages,
+    seed = attr(x, "seed"),
+    metadata = attr(x, "metadata")
+  )
+}
+
 #' Get the design specification stored on a sample
 #'
 #' Returns the `sampling_design` metadata attached to a `tbl_sample`. This is

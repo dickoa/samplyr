@@ -57,6 +57,7 @@ reference:
       - serp
       - is_sampling_design
       - is_tbl_sample
+      - as_tbl_sample
       - get_design
       - get_stages_executed
       - as.list.sampling_design

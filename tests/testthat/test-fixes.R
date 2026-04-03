@@ -643,3 +643,104 @@ test_that("multi-stage stratified then unstratified compounding works", {
   # Weights should be positive
   expect_true(all(result$.weight > 0))
 })
+
+
+test_that("as_tbl_sample is a no-op on a tbl_sample", {
+  expect_identical(as_tbl_sample(fix_srs), fix_srs)
+  expect_identical(as_tbl_sample(fix_multistage), fix_multistage)
+})
+
+test_that("as_tbl_sample restores class from as_tibble()", {
+  stripped <- tibble::as_tibble(fix_srs)
+  expect_false(is_tbl_sample(stripped))
+  expect_true(!is.null(attr(stripped, "design")))
+
+  restored <- as_tbl_sample(stripped)
+  expect_s3_class(restored, "tbl_sample")
+  expect_equal(get_design(restored), get_design(fix_srs))
+  expect_equal(get_stages_executed(restored), get_stages_executed(fix_srs))
+  expect_equal(restored$.weight, fix_srs$.weight)
+})
+
+test_that("as_tbl_sample restores class from as.data.frame()", {
+  stripped <- as.data.frame(fix_strat_prop)
+  expect_false(is_tbl_sample(stripped))
+
+  restored <- as_tbl_sample(stripped)
+  expect_s3_class(restored, "tbl_sample")
+  expect_equal(
+    get_stages_executed(restored),
+    get_stages_executed(fix_strat_prop)
+  )
+})
+
+test_that("as_tbl_sample errors on plain data frame without attributes", {
+  expect_error(as_tbl_sample(data.frame(x = 1)), "sampling attributes")
+  expect_error(as_tbl_sample(test_frame()), "sampling attributes")
+})
+
+test_that("as_tbl_sample preserves all metadata through roundtrip", {
+  stripped <- tibble::as_tibble(fix_multistage)
+  restored <- as_tbl_sample(stripped)
+
+  expect_equal(attr(restored, "seed"), attr(fix_multistage, "seed"))
+  expect_equal(attr(restored, "metadata"), attr(fix_multistage, "metadata"))
+  expect_equal(ncol(restored), ncol(fix_multistage))
+  expect_equal(nrow(restored), nrow(fix_multistage))
+})
+
+test_that("dplyr joins preserve tbl_sample class", {
+  extra <- data.frame(
+    stratum = c("A", "B", "C", "D"),
+    pop = c(1000, 2000, 3000, 4000)
+  )
+  for (join_fn in list(
+    dplyr::left_join,
+    dplyr::inner_join,
+    dplyr::semi_join,
+    dplyr::anti_join
+  )) {
+    result <- join_fn(fix_strat_prop, extra, by = "stratum")
+    expect_s3_class(result, "tbl_sample")
+    expect_equal(get_design(result), get_design(fix_strat_prop))
+  }
+})
+
+test_that("base merge strips class and attributes", {
+  extra <- data.frame(
+    stratum = c("A", "B", "C", "D"),
+    pop = c(1000, 2000, 3000, 4000)
+  )
+  result <- merge(fix_strat_prop, extra, by = "stratum")
+  expect_false(is_tbl_sample(result))
+  expect_null(attr(result, "design"))
+  expect_error(as_tbl_sample(result), "sampling attributes")
+})
+
+test_that("as_tbl_sample works with tidyr::uncount()", {
+  skip_if_not_installed("tidyr")
+
+  frame <- test_frame()
+  design <- sampling_design() |>
+    add_stage(label = "School") |>
+    cluster_by(school_id) |>
+    draw(n = 10, method = "pps_brewer", mos = enrollment) |>
+    add_stage(label = "Student") |>
+    draw(n = 3, method = "srswor")
+
+  stage1 <- execute(design, frame, stages = 1, seed = 1)
+
+  listing <- stage1 |>
+    tidyr::uncount(weights = enrollment, .id = "hh_id", .remove = FALSE)
+
+  expect_false(is_tbl_sample(listing))
+  expect_true(!is.null(attr(listing, "design")))
+
+  restored <- as_tbl_sample(listing)
+  expect_s3_class(restored, "tbl_sample")
+
+  final <- design |> execute(restored, seed = 2)
+  expect_s3_class(final, "tbl_sample")
+  expect_equal(get_stages_executed(final), c(1L, 2L))
+  expect_true(all(final$.weight > 0))
+})

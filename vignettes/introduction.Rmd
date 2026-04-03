@@ -771,6 +771,16 @@ selected_eas_list <- selected_eas |>
 head(selected_eas_list)
 ```
 
+You can also use `tidyr::uncount()` for the listing step. Because tidyr
+operations strip the `tbl_sample` class, pipe the result through
+`as_tbl_sample()` to restore it before passing it back to `execute()`.
+
+```{r}
+selected_eas_list <- selected_eas |>
+  tidyr::uncount(weights = households, .id = "hh_id", .remove = FALSE) |>
+  as_tbl_sample()
+```
+
 After fieldwork or preparation is complete, execute the remaining stages.
 
 ```{r}
@@ -778,6 +788,12 @@ final_sample <- design |>
   execute(selected_eas_list, seed = 2)
 head(final_sample)
 ```
+
+> **Note:** All dplyr verbs (`mutate()`, `filter()`, `*_join()`, etc.) preserve the
+> `tbl_sample` class automatically. If you manipulate a sample with base R functions
+> like `merge()` or `cbind()`, both the class and its attributes are lost. Prefer the
+> dplyr equivalents (`left_join()`, `bind_cols()`). See `?as_tbl_sample` for the full
+> list.
 
 ---
 

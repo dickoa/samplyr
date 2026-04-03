@@ -26,8 +26,8 @@ check-release:
         cmake
     - mkdir -p $R_LIBS_USER
     # Install package dependencies including vignette builders
-    - Rscript -e "install.packages(c('remotes', 'rcmdcheck'), repos='https://cloud.r-project.org')"
-    - Rscript -e "remotes::install_deps(dependencies = TRUE)"
+    - Rscript -e "install.packages(c('pak', 'rcmdcheck')"
+    - Rscript -e 'pak::local_install_dev_deps(dependencies = TRUE)'
   script:
     - Rscript -e "rcmdcheck::rcmdcheck(args = c('--no-manual', '--as-cran'), error_on = 'error')"
 
@@ -44,8 +44,8 @@ check-devel:
         qpdf
         cmake
     - mkdir -p $R_LIBS_USER
-    - Rscript -e "install.packages(c('remotes', 'rcmdcheck'), repos='https://cloud.r-project.org')"
-    - Rscript -e "remotes::install_deps(dependencies = TRUE)"
+    - Rscript -e "install.packages(c('pak', 'rcmdcheck')"
+    - Rscript -e 'pak::local_install_dev_deps(dependencies = TRUE)'
   script:
     - Rscript -e "rcmdcheck::rcmdcheck(args = c('--no-manual', '--as-cran'), error_on = 'error')"
   allow_failure: true
@@ -64,8 +64,8 @@ coverage:
         git
         cmake
     - mkdir -p $R_LIBS_USER
-    - Rscript -e "install.packages(c('remotes', 'covr', 'xml2'), repos='https://cloud.r-project.org')"
-    - Rscript -e "remotes::install_deps(dependencies = TRUE)"
+    - Rscript -e "install.packages(c('pak', 'covr', 'xml2', 'rcmdcheck')"
+    - Rscript -e 'pak::local_install_dev_deps(dependencies = TRUE)'
   script:
     - Rscript -e "covr::codecov(quiet = FALSE, token = Sys.getenv('CODECOV_TOKEN'))"
   coverage: '/Coverage:\s*\d+\.\d+%/'
@@ -93,8 +93,8 @@ pages:
         libjpeg-dev
         cmake
     - mkdir -p $R_LIBS_USER
-    - Rscript -e "install.packages(c('remotes', 'pkgdown', 'bslib', 'rmarkdown', 'fs'), repos='https://cloud.r-project.org')"
-    - Rscript -e "remotes::install_deps(dependencies = TRUE)"
+    - Rscript -e "install.packages(c('pak', 'pkgdown', 'bslib', 'rmarkdown', 'fs'), repos='https://cloud.r-project.org')"
+    - Rscript -e 'pak::local_install_dev_deps(dependencies = TRUE)'
   script:
     - Rscript -e "pkgdown::build_site()"
     - mv docs public
