@@ -5,12 +5,15 @@
 \alias{ken_enterprises}
 \title{Kenya Enterprises}
 \format{
-A tibble with 6,823 rows and 9 columns:
+A tibble with 17,004 rows and 9 columns:
 \describe{
 \item{enterprise_id}{Character. Unique establishment identifier}
 \item{county}{Factor. County name (47 counties)}
-\item{region}{Factor. Region (11 regions)}
-\item{sector}{Factor. Business sector (7 sectors)}
+\item{region}{Factor. Region (6 regions: Central, Coast,
+East and Northeastern, Nairobi, Nyanza and Western, Rift Valley)}
+\item{sector}{Factor. Business sector (7 sectors: Food,
+Chemicals & Chemical Products, Other Manufacturing, Construction,
+Retail, Hotels and Restaurants, Other Services)}
 \item{size_class}{Factor. Size classification (Small: 5-19, Medium: 20-99, Large: 100+)}
 \item{employees}{Integer. Number of employees (measure of size)}
 \item{revenue_millions}{Numeric. Annual revenue in millions KES}
@@ -22,9 +25,11 @@ A tibble with 6,823 rows and 9 columns:
 ken_enterprises
 }
 \description{
-A synthetic business establishment frame covering 47 counties, 11 regions,
-7 sectors, and 3 size classes. Population structure calibrated to published
-census of establishments and enterprise survey design parameters.
+A synthetic business establishment frame covering 47 counties, 6 regions,
+7 sectors, and 3 size classes. Population structure calibrated to the
+Republic of Kenya 2025 World Bank Enterprise Survey universe table
+(17,004 KRA-registered establishments) with county-level disaggregation
+from the KNBS 2017 Census of Establishments.
 }
 \details{
 This dataset is designed for demonstrating:

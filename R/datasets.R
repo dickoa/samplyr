@@ -10,7 +10,7 @@
 #' \itemize{
 #'   \item [bfa_eas]: Household survey EA frame (Burkina Faso, 44,570 EAs)
 #'   \item [zwe_eas]: Two-stage cluster survey EA frame (Zimbabwe, 107,250 EAs)
-#'   \item [ken_enterprises]: Enterprise survey frame (Kenya, 6,823 establishments)
+#'   \item [ken_enterprises]: Enterprise survey frame (Kenya, 17,004 establishments)
 #' }
 #'
 #' @section Auxiliary Data:
@@ -74,14 +74,10 @@ NULL
 #' table(bfa_eas$region)
 #' table(bfa_eas$urban_rural)
 #'
-#' # Stratified PPS cluster sample
+#' # Stratified PPS sample
 #' sampling_design() |>
-#'   add_stage(label = "EAs") |>
-#'     stratify_by(region, urban_rural) |>
-#'     cluster_by(ea_id) |>
-#'     draw(n = 3, method = "pps_brewer", mos = households) |>
-#'   add_stage(label = "Households") |>
-#'     draw(n = 20) |>
+#'   stratify_by(region, urban_rural) |>
+#'   draw(n = 3, method = "pps_brewer", mos = households) |>
 #'   execute(bfa_eas, seed = 3)
 #'
 "bfa_eas"
@@ -198,14 +194,25 @@ NULL
 #' table(zwe_eas$urban_rural)
 #'
 #' # Two-stage cluster sample: EAs then households
-#' sampling_design() |>
+#' design <- sampling_design() |>
 #'   add_stage(label = "EAs") |>
 #'     stratify_by(province, urban_rural) |>
 #'     cluster_by(ea_id) |>
 #'     draw(n = 3, method = "pps_systematic", mos = households) |>
 #'   add_stage(label = "Households") |>
-#'     draw(n = 20) |>
-#'   execute(zwe_eas, seed = 123)
+#'     draw(n = 20)
+#'
+#' selected <- execute(design, zwe_eas, stages = 1, seed = 123)
+#'
+#' # listing after fieldwork
+#' library(dplyr)
+#' listing <- selected |>
+#'   slice(rep(seq_len(n()), households)) |>
+#'   mutate(hh_id = row_number())
+#'
+#' # final sample
+#' smpl <- execute(design, listing, seed = 1234)
+#' smpl
 #'
 "zwe_eas"
 
@@ -213,16 +220,21 @@ NULL
 #' Kenya Enterprises
 #'
 #' @description
-#' A synthetic business establishment frame covering 47 counties, 11 regions,
-#' 7 sectors, and 3 size classes. Population structure calibrated to published
-#' census of establishments and enterprise survey design parameters.
+#' A synthetic business establishment frame covering 47 counties, 6 regions,
+#' 7 sectors, and 3 size classes. Population structure calibrated to the
+#' Republic of Kenya 2025 World Bank Enterprise Survey universe table
+#' (17,004 KRA-registered establishments) with county-level disaggregation
+#' from the KNBS 2017 Census of Establishments.
 #'
-#' @format A tibble with 6,823 rows and 9 columns:
+#' @format A tibble with 17,004 rows and 9 columns:
 #' \describe{
 #'   \item{enterprise_id}{Character. Unique establishment identifier}
 #'   \item{county}{Factor. County name (47 counties)}
-#'   \item{region}{Factor. Region (11 regions)}
-#'   \item{sector}{Factor. Business sector (7 sectors)}
+#'   \item{region}{Factor. Region (6 regions: Central, Coast,
+#'     East and Northeastern, Nairobi, Nyanza and Western, Rift Valley)}
+#'   \item{sector}{Factor. Business sector (7 sectors: Food,
+#'     Chemicals & Chemical Products, Other Manufacturing, Construction,
+#'     Retail, Hotels and Restaurants, Other Services)}
 #'   \item{size_class}{Factor. Size classification (Small: 5-19, Medium: 20-99, Large: 100+)}
 #'   \item{employees}{Integer. Number of employees (measure of size)}
 #'   \item{revenue_millions}{Numeric. Annual revenue in millions KES}

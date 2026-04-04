@@ -38,7 +38,7 @@ The **permanent random number** (PRN) technique, introduced by @brewer1972 and d
 
 ## Setup
 
-We use `ken_enterprises`, a synthetic business register with 6,823 enterprises.
+We use `ken_enterprises`, a synthetic business register with 17,004 enterprises.
 
 ```{r}
 library(samplyr)

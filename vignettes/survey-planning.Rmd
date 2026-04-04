@@ -32,7 +32,7 @@ The three packages form a pipeline:
 - **samplyr** specifies and executes the sampling design (selection).
 - **sondage** provides the low-level sampling algorithms (engine).
 
-This vignette uses the `ken_enterprises` dataset, a synthetic frame of 6,823 Kenyan establishments with revenue, employee counts, and export status.
+This vignette uses the `ken_enterprises` dataset, a synthetic frame of 17,004 Kenyan establishments with revenue, employee counts, and export status.
 
 ```{r}
 data(ken_enterprises)

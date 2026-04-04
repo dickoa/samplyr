@@ -52,14 +52,10 @@ head(bfa_eas)
 table(bfa_eas$region)
 table(bfa_eas$urban_rural)
 
-# Stratified PPS cluster sample
+# Stratified PPS sample
 sampling_design() |>
-  add_stage(label = "EAs") |>
-    stratify_by(region, urban_rural) |>
-    cluster_by(ea_id) |>
-    draw(n = 3, method = "pps_brewer", mos = households) |>
-  add_stage(label = "Households") |>
-    draw(n = 20) |>
+  stratify_by(region, urban_rural) |>
+  draw(n = 3, method = "pps_brewer", mos = households) |>
   execute(bfa_eas, seed = 3)
 
 }

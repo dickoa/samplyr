@@ -117,8 +117,9 @@ Initial release.
 * `zwe_eas`: 107,250 enumeration areas from Zimbabwe for two-stage cluster
   survey sampling. Population and households calibrated to 2022 Census
   ward-level tallies. Demographic columns from WorldPop 100m age-sex grids.
-* `ken_enterprises`: 6,823 establishments from Kenya for enterprise surveys,
-  panel partitioning, and PRN coordination examples.
+* `ken_enterprises`: 17,004 establishments from Kenya for enterprise surveys,
+  panel partitioning, and PRN coordination examples. Calibrated to the
+  Republic of Kenya 2025 WBES universe (KRA register, 6 regions, 7 sectors).
 
 ## Vignettes
 

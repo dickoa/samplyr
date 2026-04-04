@@ -14,7 +14,7 @@ common survey sampling scenarios.
 \itemize{
 \item \link{bfa_eas}: Household survey EA frame (Burkina Faso, 44,570 EAs)
 \item \link{zwe_eas}: Two-stage cluster survey EA frame (Zimbabwe, 107,250 EAs)
-\item \link{ken_enterprises}: Enterprise survey frame (Kenya, 6,823 establishments)
+\item \link{ken_enterprises}: Enterprise survey frame (Kenya, 17,004 establishments)
 }
 }
 

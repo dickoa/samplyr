@@ -452,7 +452,7 @@ Synthetic sampling frames for learning and testing:
 |-------------------|---------------------------------------------------|---------|
 | `bfa_eas`         | Household survey EA frame (Burkina Faso)          | 44,570  |
 | `zwe_eas`         | Two-stage cluster survey EA frame (Zimbabwe)      | 107,250 |
-| `ken_enterprises` | Enterprise survey frame (Kenya)                   | 6,823   |
+| `ken_enterprises` | Enterprise survey frame (Kenya)                   | 17,004  |
 
 Plus auxiliary data: `bfa_eas_variance`, `bfa_eas_cost`
 

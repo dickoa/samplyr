@@ -60,14 +60,25 @@ table(zwe_eas$province)
 table(zwe_eas$urban_rural)
 
 # Two-stage cluster sample: EAs then households
-sampling_design() |>
+design <- sampling_design() |>
   add_stage(label = "EAs") |>
     stratify_by(province, urban_rural) |>
     cluster_by(ea_id) |>
     draw(n = 3, method = "pps_systematic", mos = households) |>
   add_stage(label = "Households") |>
-    draw(n = 20) |>
-  execute(zwe_eas, seed = 123)
+    draw(n = 20)
+
+selected <- execute(design, zwe_eas, stages = 1, seed = 123)
+
+# listing after fieldwork
+library(dplyr)
+listing <- selected |>
+  slice(rep(seq_len(n()), households)) |>
+  mutate(hh_id = row_number())
+
+# final sample
+smpl <- execute(design, listing, seed = 1234)
+smpl
 
 }
 \keyword{datasets}
