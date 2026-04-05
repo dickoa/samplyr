@@ -202,7 +202,7 @@ resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
 coerce_svyplan_n <- function(n) {
   if (inherits(n, "svyplan_n") && identical(n$type, "alloc")) {
     detail <- n$detail
-    return(stats::setNames(detail$n_h_int, detail$stratum))
+    return(stats::setNames(detail$n_int, detail$stratum))
   }
   if (inherits(n, c("svyplan_n", "svyplan_power", "svyplan_cluster"))) {
     return(as.integer(n))

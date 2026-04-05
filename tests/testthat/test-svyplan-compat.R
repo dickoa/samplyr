@@ -56,11 +56,11 @@ test_that("draw accepts svyplan_cluster from n_cluster", {
 test_that("draw accepts svyplan n_alloc with per-stratum allocation", {
   alloc_frame <- data.frame(
     stratum = c("A", "B", "C"),
-    N_h = c(200, 300, 500),
-    S_h = c(10, 15, 8)
+    N = c(200, 300, 500),
+    sd = c(10, 15, 8)
   )
   alloc_obj <- svyplan::n_alloc(alloc_frame, n = 100, alloc = "neyman")
-  expected_n <- alloc_obj$detail$n_h_int
+  expected_n <- alloc_obj$detail$n_int
 
   frame <- data.frame(
     id = seq_len(1000),
@@ -81,8 +81,8 @@ test_that("draw accepts svyplan n_alloc with per-stratum allocation", {
 test_that("coerce_svyplan_n returns named vector for n_alloc", {
   alloc_frame <- data.frame(
     stratum = c("X", "Y"),
-    N_h = c(100, 200),
-    S_h = c(5, 10)
+    N = c(100, 200),
+    sd = c(5, 10)
   )
   alloc_obj <- svyplan::n_alloc(alloc_frame, n = 50, alloc = "neyman")
   result <- samplyr:::coerce_svyplan_n(alloc_obj)
@@ -95,8 +95,8 @@ test_that("coerce_svyplan_n returns named vector for n_alloc", {
 test_that("n_alloc with alloc in stratify_by errors", {
   alloc_frame <- data.frame(
     stratum = c("A", "B"),
-    N_h = c(100, 200),
-    S_h = c(5, 10)
+    N = c(100, 200),
+    sd = c(5, 10)
   )
   alloc_obj <- svyplan::n_alloc(alloc_frame, n = 50, alloc = "neyman")
 
@@ -150,7 +150,7 @@ test_that("strata_bound + predict + n_h workflow", {
   frame <- data.frame(id = seq_len(500), revenue = x)
   frame$stratum <- predict(bounds, frame$revenue, labels = labels)
 
-  n_alloc <- setNames(bounds$strata$n_h, labels)
+  n_alloc <- setNames(bounds$strata$n, labels)
 
   result <- sampling_design() |>
     stratify_by(stratum) |>

@@ -240,7 +240,7 @@ table(ken_enterprises$rev_stratum)
 Use the stratum allocations from `strata_bound()` directly as a named vector for `draw()`. This preserves the joint optimization between boundaries and allocation:
 
 ```{r}
-n_alloc <- setNames(bounds$strata$n_h, labels)
+n_alloc <- setNames(bounds$strata$n, labels)
 n_alloc
 ```
 
@@ -267,9 +267,9 @@ First, summarize the frame to get stratum population sizes and variabilities:
 ```{r}
 alloc_frame <- ken_enterprises |>
   summarize(
-    N_h = n(),
-    S_h = sd(revenue_millions),
-    mean_h = mean(revenue_millions),
+    N = n(),
+    sd = sd(revenue_millions),
+    mean = mean(revenue_millions),
     .by = sector
   ) |>
   rename(stratum = sector)
@@ -282,7 +282,7 @@ with a minimum of 20 per stratum:
 ```{r}
 alloc <- n_alloc(alloc_frame, n = 600, alloc = "neyman", min_n = 20)
 alloc
-alloc$detail[, c("stratum", "N_h", "n_h_int", "weight")]
+alloc$detail[, c("stratum", "N", "n_int", "weight")]
 ```
 
 The result passes directly to `draw()`. The per-stratum allocations are
@@ -309,7 +309,7 @@ constraint using cost-weighted (optimal) allocation:
 
 ```{r}
 alloc_frame_cost <- alloc_frame |>
-  mutate(cost_h = c(120, 200, 150, 130, 80, 100, 90))
+  mutate(cost = c(120, 200, 150, 130, 80, 100, 90))
 
 budget_alloc <- n_alloc(
   alloc_frame_cost,
@@ -318,7 +318,7 @@ budget_alloc <- n_alloc(
   min_n = 20
 )
 budget_alloc
-budget_alloc$detail[, c("stratum", "N_h", "cost_h", "n_h_int", "weight")]
+budget_alloc$detail[, c("stratum", "N", "cost", "n_int", "weight")]
 ```
 
 ```{r}
