@@ -762,7 +762,7 @@ selected_eas <- execute(design, zwe_eas, stages = 1, seed = 1)
 head(selected_eas)
 ```
 
-Once the EAs selected, households are listed in each of them.
+Once the EAs are selected, households are listed in each of them.
 
 ```{r}
 selected_eas_list <- selected_eas |>
@@ -771,20 +771,20 @@ selected_eas_list <- selected_eas |>
 head(selected_eas_list)
 ```
 
-You can also use `tidyr::uncount()` for the listing step. Because tidyr
-operations strip the `tbl_sample` class, pipe the result through
-`as_tbl_sample()` to restore it before passing it back to `execute()`.
+You can also use `tidyr::uncount()` for the listing step.
 
 ```{r}
 selected_eas_list <- selected_eas |>
-  tidyr::uncount(weights = households, .id = "hh_id", .remove = FALSE) |>
-  as_tbl_sample()
+  tidyr::uncount(weights = households, .id = "hh_id", .remove = FALSE)
 ```
 
-After fieldwork or preparation is complete, execute the remaining stages.
+After fieldwork or preparation is complete, execute the remaining stages
+by piping the stage-1 result into `execute()` with the listing frame.
+This continuation pattern preserves the full design metadata needed for
+survey export.
 
 ```{r}
-final_sample <- design |>
+final_sample <- selected_eas |>
   execute(selected_eas_list, seed = 2)
 head(final_sample)
 ```

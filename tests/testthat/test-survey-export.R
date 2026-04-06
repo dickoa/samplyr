@@ -997,6 +997,28 @@ test_that("joint_expectation for pps_multinomial diagonal matches E[n_i^2]", {
   expect_equal(diag(mat), eh_sq[unique_ids], tolerance = 1e-10)
 })
 
+test_that("joint_expectation for pps_multinomial with n > N is not truncated", {
+  frame <- data.frame(
+    id = 1:5,
+    mos = c(1, 2, 3, 4, 5)
+  )
+  n <- 10L
+
+  sample <- sampling_design() |>
+    draw(n = n, method = "pps_multinomial", mos = mos) |>
+    execute(frame, seed = 1)
+
+  je <- joint_expectation(sample, frame)
+  mat <- je[[1]]
+
+  p <- frame$mos / sum(frame$mos)
+  eh_sq <- n * (n - 1) * p^2 + n * p
+
+  unique_ids <- unique(sample$id)
+  expect_equal(diag(mat), eh_sq[unique_ids], tolerance = 1e-10)
+  expect_equal(sum(diag(mat)), sum(eh_sq[unique_ids]), tolerance = 1e-10)
+})
+
 test_that("joint_expectation for stratified pps_multinomial works", {
   sample <- sampling_design() |>
     stratify_by(stratum) |>

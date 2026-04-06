@@ -16,9 +16,12 @@ effective_n(x = NULL, ...)
 \method{effective_n}{tbl_sample}(x, ..., y = NULL, x_cal = NULL, method = "kish")
 }
 \arguments{
-\item{x}{A numeric weight vector or a \code{tbl_sample}.}
+\item{x}{A numeric weight vector, a \code{tbl_sample}, or \code{NULL} (for
+the \code{"cluster"} planning method).}
 
-\item{...}{Passed to the svyplan method.}
+\item{...}{Passed to the svyplan method. For \code{method = "cluster"},
+pass \code{delta} (measure of homogeneity, scalar or \code{svyplan_varcomp})
+and \code{psu_size} (mean cluster size). See \code{\link[svyplan:design_effect]{svyplan::design_effect()}}.}
 
 \item{y}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Outcome variable
 (column name). Required for Henry, Spencer, and CR methods.}
@@ -26,25 +29,50 @@ effective_n(x = NULL, ...)
 \item{x_cal}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Calibration
 covariate (column name). Required for the Henry method.}
 
-\item{method}{Design effect method. One of \code{"kish"} (default), \code{"henry"},
-\code{"spencer"}, or \code{"cr"}. See \code{\link[svyplan:design_effect]{svyplan::design_effect()}} for details.}
+\item{method}{Design effect method. For diagnostic use (with weights):
+one of \code{"kish"} (default), \code{"henry"}, \code{"spencer"}, or \code{"cr"}. For
+planning (no weights): \code{"cluster"}.}
+}
+\value{
+For \code{"kish"}, \code{"henry"}, \code{"spencer"}, and \code{"cluster"}: a
+numeric scalar. For \code{"cr"}: a list with \verb{$strata} (data frame of
+per-stratum DEFF values) and \verb{$overall} (numeric scalar).
 }
 \description{
-Re-exported from \pkg{svyplan}. Compute the design effect or effective
-sample size from sampling weights. Five methods are available: Kish
-(default), Henry, Spencer, Chen-Rust, and cluster planning.
+Re-exported from \pkg{svyplan}. Compute the design effect (DEFF) or
+effective sample size from sampling weights. Five methods are available
+for two use cases:
 }
 \details{
-The \code{tbl_sample} methods extract what they can from the sample:
+\strong{After data collection (diagnostic):} assess how much precision was
+lost due to the complex design.
+\itemize{
+\item \code{"kish"} (default): weights only. Quick, outcome-independent summary.
+\item \code{"henry"}: weights + outcome + calibration covariate. Accounts for
+calibration weighting.
+\item \code{"spencer"}: weights + outcome + selection probabilities. Accounts
+for correlation between weights and the outcome.
+\item \code{"cr"}: weights + outcome + strata/cluster IDs. Full Chen-Rust
+decomposition for multistage stratified designs.
+}
+
+\strong{Before data collection (planning):} estimate an expected DEFF to
+inflate a simple-random-sample size calculation.
+\itemize{
+\item \code{"cluster"}: uses homogeneity (\code{delta}) and mean cluster size
+(\code{psu_size}) to compute DEFF = 1 + (psu_size - 1) * delta. Pass
+the result to \code{\link[svyplan:n_prop]{svyplan::n_prop()}}, \code{\link[svyplan:n_mean]{svyplan::n_mean()}}, or other
+sizing functions.
+}
+
+The \code{tbl_sample} methods extract what they can from the sample
+metadata. The user only needs to supply column names for variables
+that are not part of the sampling metadata.
 \itemize{
 \item Weights from \code{.weight}
 \item Selection probabilities from \code{.weight_1} (for Spencer)
 \item Stratification and clustering variables from the stored design (for CR)
 }
-
-The user only needs to supply column names for variables that are not
-part of the sampling metadata: \code{y} (outcome) for all non-Kish methods,
-and \code{x_cal} (calibration covariate) for Henry.
 }
 \examples{
 # Kish design effect (default)
@@ -52,7 +80,8 @@ set.seed(1)
 frame <- data.frame(
   id = 1:200,
   stratum = rep(c("A", "B"), each = 100),
-  income = c(rnorm(100, 50, 10), rnorm(100, 80, 15))
+  income = c(rnorm(100, 50, 10), rnorm(100, 80, 15)),
+  x_cal = runif(200, 0.5, 2)
 )
 samp <- sampling_design() |>
   stratify_by(stratum) |>
@@ -62,11 +91,21 @@ samp <- sampling_design() |>
 design_effect(samp)
 effective_n(samp)
 
+# Henry (calibration covariate)
+design_effect(samp, y = income, x_cal = x_cal, method = "henry")
+
 # Spencer (selection probabilities extracted automatically)
 design_effect(samp, y = income, method = "spencer")
+
+# Chen-Rust (strata and clusters extracted from design)
+design_effect(samp, y = income, method = "cr")
+
+# Cluster planning (no sample needed)
+design_effect(delta = 0.05, psu_size = 25, method = "cluster")
 
 }
 \seealso{
 \code{\link[svyplan:design_effect]{svyplan::design_effect()}}, \code{\link[svyplan:effective_n]{svyplan::effective_n()}},
+\code{\link[svyplan:varcomp]{svyplan::varcomp()}}, \code{\link[svyplan:n_cluster]{svyplan::n_cluster()}},
 \code{\link[svyplan:prec_prop]{svyplan::prec_prop()}}, \code{\link[svyplan:prec_mean]{svyplan::prec_mean()}}
 }

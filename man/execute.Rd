@@ -115,6 +115,11 @@ selected_eas <- design |> execute(ea_frame, stages = 1, seed = 42)
 # ... fieldwork: listing in selected EAs ...
 sample <- selected_eas |> execute(listing_frame, seed = 43)
 }
+When the listing frame is derived from a \code{tbl_sample} (e.g. via
+\code{\link[tidyr:uncount]{tidyr::uncount()}} or \code{\link[dplyr:slice]{dplyr::slice()}}), it may carry internal
+columns (\code{.weight}, \code{.fpc_1}, etc.) from the earlier stage. These
+are automatically stripped before sampling so they do not collide
+with the metadata carried by the stage-1 result.
 }
 
 \subsection{Multi-Phase (Continuation)}{

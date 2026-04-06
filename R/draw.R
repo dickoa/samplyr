@@ -83,7 +83,8 @@
 #'   - `"nearest"`: Round to nearest integer (standard rounding).
 #'
 #'   This parameter only affects designs using `frac` to specify the sampling
-#'   rate. When `n` is specified directly, no rounding occurs.
+#'   rate. When `n` is specified directly, no rounding occurs. After rounding,
+#'   a minimum of 1 is enforced per stratum or group.
 #'
 #' @param control <[`data-masking`][dplyr::dplyr_data_masking]> Variables for
 #'   sorting the frame before selection. Control sorting provides implicit

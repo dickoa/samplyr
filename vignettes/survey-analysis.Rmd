@@ -159,7 +159,7 @@ rep_tbl |>
   summarise(mean_hh = survey_mean(households, vartype = "se"))
 ```
 
-Current scope: replicate export supports single-phase non-PPS designs. Two-phase and PPS designs should use `as_svydesign()` (linearization).
+Replicate export supports single-phase designs. For PPS designs, use `type = "subbootstrap"` or `type = "mrbbootstrap"`. Two-phase designs should use `as_svydesign()` (linearization).
 
 ## Exact Variance with Joint Expectations
 

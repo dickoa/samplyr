@@ -340,7 +340,10 @@ resolve_unstratified_n <- function(frame, draw_spec) {
   round_method <- draw_spec$round %||% "up"
 
   if (!is_null(draw_spec$n)) {
-    return(min(as.integer(draw_spec$n), N))
+    n_val <- as.integer(draw_spec$n)
+    is_wr <- draw_spec$method %in% pps_wr_methods ||
+      identical(draw_spec$method_type, "wr")
+    return(if (is_wr) n_val else min(n_val, N))
   }
 
   if (!is_null(draw_spec$frac)) {

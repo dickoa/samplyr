@@ -1,26 +1,49 @@
 #' Design Effect and Effective Sample Size
 #'
-#' Re-exported from \pkg{svyplan}. Compute the design effect or effective
-#' sample size from sampling weights. Five methods are available: Kish
-#' (default), Henry, Spencer, Chen-Rust, and cluster planning.
+#' Re-exported from \pkg{svyplan}. Compute the design effect (DEFF) or
+#' effective sample size from sampling weights. Five methods are available
+#' for two use cases:
 #'
-#' The `tbl_sample` methods extract what they can from the sample:
+#' **After data collection (diagnostic):** assess how much precision was
+#' lost due to the complex design.
+#' - `"kish"` (default): weights only. Quick, outcome-independent summary.
+#' - `"henry"`: weights + outcome + calibration covariate. Accounts for
+#'   calibration weighting.
+#' - `"spencer"`: weights + outcome + selection probabilities. Accounts
+#'   for correlation between weights and the outcome.
+#' - `"cr"`: weights + outcome + strata/cluster IDs. Full Chen-Rust
+#'   decomposition for multistage stratified designs.
+#'
+#' **Before data collection (planning):** estimate an expected DEFF to
+#' inflate a simple-random-sample size calculation.
+#' - `"cluster"`: uses homogeneity (`delta`) and mean cluster size
+#'   (`psu_size`) to compute DEFF = 1 + (psu_size - 1) * delta. Pass
+#'   the result to [svyplan::n_prop()], [svyplan::n_mean()], or other
+#'   sizing functions.
+#'
+#' The `tbl_sample` methods extract what they can from the sample
+#' metadata. The user only needs to supply column names for variables
+#' that are not part of the sampling metadata.
 #' - Weights from `.weight`
 #' - Selection probabilities from `.weight_1` (for Spencer)
 #' - Stratification and clustering variables from the stored design (for CR)
 #'
-#' The user only needs to supply column names for variables that are not
-#' part of the sampling metadata: `y` (outcome) for all non-Kish methods,
-#' and `x_cal` (calibration covariate) for Henry.
-#'
-#' @param x A numeric weight vector or a `tbl_sample`.
-#' @param ... Passed to the svyplan method.
+#' @param x A numeric weight vector, a `tbl_sample`, or `NULL` (for
+#'   the `"cluster"` planning method).
+#' @param ... Passed to the svyplan method. For `method = "cluster"`,
+#'   pass `delta` (measure of homogeneity, scalar or `svyplan_varcomp`)
+#'   and `psu_size` (mean cluster size). See [svyplan::design_effect()].
 #' @param y <[`data-masking`][dplyr::dplyr_data_masking]> Outcome variable
 #'   (column name). Required for Henry, Spencer, and CR methods.
 #' @param x_cal <[`data-masking`][dplyr::dplyr_data_masking]> Calibration
 #'   covariate (column name). Required for the Henry method.
-#' @param method Design effect method. One of `"kish"` (default), `"henry"`,
-#'   `"spencer"`, or `"cr"`. See [svyplan::design_effect()] for details.
+#' @param method Design effect method. For diagnostic use (with weights):
+#'   one of `"kish"` (default), `"henry"`, `"spencer"`, or `"cr"`. For
+#'   planning (no weights): `"cluster"`.
+#'
+#' @return For `"kish"`, `"henry"`, `"spencer"`, and `"cluster"`: a
+#'   numeric scalar. For `"cr"`: a list with `$strata` (data frame of
+#'   per-stratum DEFF values) and `$overall` (numeric scalar).
 #'
 #' @examples
 #' # Kish design effect (default)
@@ -28,7 +51,8 @@
 #' frame <- data.frame(
 #'   id = 1:200,
 #'   stratum = rep(c("A", "B"), each = 100),
-#'   income = c(rnorm(100, 50, 10), rnorm(100, 80, 15))
+#'   income = c(rnorm(100, 50, 10), rnorm(100, 80, 15)),
+#'   x_cal = runif(200, 0.5, 2)
 #' )
 #' samp <- sampling_design() |>
 #'   stratify_by(stratum) |>
@@ -38,10 +62,20 @@
 #' design_effect(samp)
 #' effective_n(samp)
 #'
+#' # Henry (calibration covariate)
+#' design_effect(samp, y = income, x_cal = x_cal, method = "henry")
+#'
 #' # Spencer (selection probabilities extracted automatically)
 #' design_effect(samp, y = income, method = "spencer")
 #'
+#' # Chen-Rust (strata and clusters extracted from design)
+#' design_effect(samp, y = income, method = "cr")
+#'
+#' # Cluster planning (no sample needed)
+#' design_effect(delta = 0.05, psu_size = 25, method = "cluster")
+#'
 #' @seealso [svyplan::design_effect()], [svyplan::effective_n()],
+#'   [svyplan::varcomp()], [svyplan::n_cluster()],
 #'   [svyplan::prec_prop()], [svyplan::prec_mean()]
 #'
 #' @name design_effect

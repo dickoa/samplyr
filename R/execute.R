@@ -91,6 +91,11 @@
 #' # ... fieldwork: listing in selected EAs ...
 #' sample <- selected_eas |> execute(listing_frame, seed = 43)
 #' }
+#' When the listing frame is derived from a `tbl_sample` (e.g. via
+#' [tidyr::uncount()] or [dplyr::slice()]), it may carry internal
+#' columns (`.weight`, `.fpc_1`, etc.) from the earlier stage. These
+#' are automatically stripped before sampling so they do not collide
+#' with the metadata carried by the stage-1 result.
 #'
 #' ### Multi-Phase (Continuation)
 #' When `.data` is a `tbl_sample`, sampling continues from that sample:
@@ -596,6 +601,13 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
     frame <- frames[[i]]
     stage_spec <- design$stages[[stage_idx]]
     prev_stage_for_frame <- design$stages[[previous_stage_idx]]
+
+    # Strip internal columns from the frame so they do not collide with
+    # stage-1 metadata carried in current_sample (e.g. .fpc_1, .weight).
+    internal <- samplyr_internal_cols(frame)
+    if (length(internal) > 0L) {
+      frame <- frame[, setdiff(names(frame), internal), drop = FALSE]
+    }
 
     is_final_stage_of_execution <- (i == length(stages))
     is_final_stage_of_design <- (stage_idx == length(design$stages))

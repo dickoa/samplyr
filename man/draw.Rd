@@ -121,7 +121,8 @@ One of:
 }
 
 This parameter only affects designs using \code{frac} to specify the sampling
-rate. When \code{n} is specified directly, no rounding occurs.}
+rate. When \code{n} is specified directly, no rounding occurs. After rounding,
+a minimum of 1 is enforced per stratum or group.}
 
 \item{control}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Variables for
 sorting the frame before selection. Control sorting provides implicit
