@@ -541,6 +541,10 @@ draw_sample <- function(data, n, draw_spec) {
     },
     pps_multinomial = ,
     pps_chromy = {
+      # Built-in WR methods do not support PRN coordination; `prn_methods`
+      # in R/utils.R rejects it at validation time, so no prn arg is
+      # threaded here. Custom WR methods that declare supports_prn = TRUE
+      # are handled in the `is_custom` branch above.
       mos_vals <- data[[mos]]
       pik <- sondage::expected_hits(mos_vals, n)
       idx <- sondage::unequal_prob_wr(pik, method = sondage_method_name(method))$sample
@@ -701,6 +705,7 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
     },
     pps_multinomial = ,
     pps_chromy = {
+      # Built-in WR methods do not accept PRN; see the note in draw_sample().
       pik <- sondage::expected_hits(mos_vals, n)
       idx <- sondage::unequal_prob_wr(pik, method = sondage_method_name(method))$sample
     }

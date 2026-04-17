@@ -157,7 +157,8 @@ apply_bounds <- function(target, n_total, min_n, max_n, N_h) {
     ))
   }
 
-  adjusted <- pmin(adjusted, N_h)
+  # `effective_max <= N_h` by construction, so the bounded rounder already
+  # respects the population cap; no additional pmin(adjusted, N_h) needed.
   round_preserve_total_bounded(adjusted, n_total, effective_min, effective_max)
 }
 

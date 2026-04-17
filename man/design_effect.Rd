@@ -70,7 +70,12 @@ metadata. The user only needs to supply column names for variables
 that are not part of the sampling metadata.
 \itemize{
 \item Weights from \code{.weight}
-\item Selection probabilities from \code{.weight_1} (for Spencer)
+\item Selection probabilities from \code{1 / .weight} (for Spencer). Spencer
+(2000) derives his DEFF at the unit level, so the required
+probability is the overall inclusion probability
+\eqn{\pi_i = 1/w_i}{pi_i = 1/w_i}, i.e. the product of all per-stage
+inclusion probabilities for multi-stage designs. This matches the
+convention used by \code{PracTools::deffS()}.
 \item Stratification and clustering variables from the stored design (for CR)
 }
 }

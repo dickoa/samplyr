@@ -325,6 +325,44 @@ test_that("print works with scalar n", {
 
   output <- capture.output(print(design))
   expect_true(any(grepl("n = 100", output)))
+  # Unstratified n carries no scope qualifier.
+  expect_false(any(grepl("n = 100 \\(", output)))
+})
+
+test_that("print qualifies scalar n as per-stratum when stratified w/o alloc", {
+  design <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 100)
+
+  output <- capture.output(print(design))
+  expect_true(any(grepl("n = 100 \\(per stratum\\)", output)))
+})
+
+test_that("print qualifies scalar n as total when stratified w/ alloc", {
+  design <- sampling_design() |>
+    stratify_by(region, alloc = "proportional") |>
+    draw(n = 100)
+
+  output <- capture.output(print(design))
+  expect_true(any(grepl("n = 100 \\(total\\)", output)))
+})
+
+test_that("print shows per-stratum tag for named-vector n", {
+  design <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = c(a = 10, b = 20, c = 30))
+
+  output <- capture.output(print(design))
+  expect_true(any(grepl("<3 values, per stratum>", output)))
+})
+
+test_that("print qualifies scalar frac as per-stratum when stratified", {
+  design <- sampling_design() |>
+    stratify_by(region) |>
+    draw(frac = 0.1)
+
+  output <- capture.output(print(design))
+  expect_true(any(grepl("frac = 0.1 \\(per stratum\\)", output)))
 })
 
 

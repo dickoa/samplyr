@@ -59,7 +59,13 @@ print_stage <- function(stage, num) {
   }
 
   if (!is_null(stage$draw_spec)) {
-    draw_desc <- format_draw_spec(stage$draw_spec)
+    has_strata <- !is_null(stage$strata)
+    alloc <- stage$strata$alloc
+    draw_desc <- format_draw_spec(
+      stage$draw_spec,
+      has_strata = has_strata,
+      alloc = alloc
+    )
     cli::cat_bullet(paste0("Draw: ", draw_desc), bullet = "bullet")
   } else {
     cli::cat_bullet(
@@ -69,22 +75,49 @@ print_stage <- function(stage, num) {
   }
 }
 
+#' Qualify a scalar n/frac with its scope when the stage is stratified
+#'
+#' Without stratification, `n = 300` is unambiguous.
+#' With stratification and no `alloc`, it is per stratum.
+#' With stratification and `alloc`, it is the total.
+#' Named vectors and data frames are already explicit per-stratum.
 #' @noRd
-format_draw_spec <- function(draw) {
+format_draw_spec <- function(draw, has_strata = FALSE, alloc = NULL) {
   parts <- c()
+
+  scope_tag <- function(value, has_strata, alloc) {
+    if (!has_strata) return("")
+    if (length(value) > 1 && !is_null(names(value))) {
+      return(" (per stratum)")
+    }
+    if (length(value) == 1) {
+      if (is_null(alloc)) " (per stratum)" else " (total)"
+    } else {
+      ""
+    }
+  }
+
+  format_scalar <- function(value_name, value, has_strata, alloc) {
+    if (length(value) > 1 && !is_null(names(value))) {
+      return(paste0(
+        value_name, " = <", length(value), " values, per stratum>"
+      ))
+    }
+    paste0(value_name, " = ", value, scope_tag(value, has_strata, alloc))
+  }
 
   if (!is_null(draw$n)) {
     if (is.data.frame(draw$n)) {
-      parts <- c(parts, "n = <custom data frame>")
+      parts <- c(parts, "n = <custom data frame, per stratum>")
     } else {
-      parts <- c(parts, paste0("n = ", draw$n))
+      parts <- c(parts, format_scalar("n", draw$n, has_strata, alloc))
     }
   }
   if (!is_null(draw$frac)) {
     if (is.data.frame(draw$frac)) {
-      parts <- c(parts, "frac = <custom data frame>")
+      parts <- c(parts, "frac = <custom data frame, per stratum>")
     } else {
-      parts <- c(parts, paste0("frac = ", draw$frac))
+      parts <- c(parts, format_scalar("frac", draw$frac, has_strata, alloc))
     }
   }
 

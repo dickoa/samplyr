@@ -25,7 +25,12 @@
 #' metadata. The user only needs to supply column names for variables
 #' that are not part of the sampling metadata.
 #' - Weights from `.weight`
-#' - Selection probabilities from `.weight_1` (for Spencer)
+#' - Selection probabilities from `1 / .weight` (for Spencer). Spencer
+#'   (2000) derives his DEFF at the unit level, so the required
+#'   probability is the overall inclusion probability
+#'   \eqn{\pi_i = 1/w_i}{pi_i = 1/w_i}, i.e. the product of all per-stage
+#'   inclusion probabilities for multi-stage designs. This matches the
+#'   convention used by `PracTools::deffS()`.
 #' - Stratification and clustering variables from the stored design (for CR)
 #'
 #' @param x A numeric weight vector, a `tbl_sample`, or `NULL` (for
@@ -169,9 +174,12 @@ resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
   stages_val <- NULL
 
   if (method == "spencer") {
-    w1 <- x[[".weight_1"]]
-    if (!is.null(w1)) {
-      prob_val <- 1 / w1
+    # Spencer (2000) is a unit-level approximation: the probability input
+    # is the overall inclusion probability pi_i = 1/w_i, not a stage-1
+    # probability. This matches PracTools::deffS().
+    w_overall <- x[[".weight"]]
+    if (!is.null(w_overall)) {
+      prob_val <- 1 / w_overall
     }
   }
 

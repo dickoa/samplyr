@@ -261,12 +261,12 @@ test_that("Spencer accepts y as bare column name", {
   expect_true(is.finite(deff))
 })
 
-test_that("Spencer auto-extracts p from .weight_1", {
+test_that("Spencer auto-extracts p from overall .weight", {
   deff_auto <- design_effect(fix_deff_disprop, y = income, method = "spencer")
   deff_manual <- design_effect(
     fix_deff_disprop$.weight,
     y = fix_deff_disprop$income,
-    prob = 1 / fix_deff_disprop$.weight_1,
+    prob = 1 / fix_deff_disprop$.weight,
     method = "spencer"
   )
   expect_equal(deff_auto, deff_manual)

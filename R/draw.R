@@ -16,7 +16,10 @@
 #'   - A scalar: same fraction for all strata
 #'   - A named vector: stratum-specific fractions
 #'   - A data frame: stratum-specific fractions with stratification columns + `frac` column
-#'   Only one of `n` or `frac` should be specified.
+#'   Only one of `n` or `frac` should be specified. When the rounded
+#'   stratum sample size (\eqn{N_h \cdot \text{frac}}{N_h * frac}) would
+#'   be zero, it is floored at 1 so every stratum receives at least one
+#'   unit.
 #' @param min_n Minimum sample size per stratum. When an allocation method
 #'   (e.g., Neyman, proportional) would assign fewer than `min_n` units to a
 #'   stratum, that stratum receives `min_n` units instead. The excess is
@@ -250,6 +253,16 @@
 #' For stratum-specific thresholds, pass a data frame containing:
 #' - All stratification variable columns
 #' - A `certainty_size` or `certainty_prop` column
+#'
+#' **Certainty with `pps_poisson` and user-supplied `frac`.** For
+#' `pps_poisson`, the probabilistic remainder reuses the user-supplied
+#' `frac` against the *remaining* (non-certainty) units. That is,
+#' \eqn{\pi_i = \text{frac} \cdot \text{mos}_i \cdot N_r / \sum_{r}\text{mos}_r}{pi_i = frac * mos_i * N_r / sum_r(mos_r)}
+#' for the \eqn{N_r} remaining units, so the expected total sample size is
+#' \eqn{n_{\mathrm{cert}} + \text{frac} \cdot N_r}{n_cert + frac * N_r}
+#' rather than \eqn{\text{frac} \cdot N}{frac * N}. If you need the
+#' expected total to track `frac * N`, pass an expected `n` instead and
+#' let samplyr derive the remaining fraction as `(n - n_cert) / N_r`.
 #'
 #' ## Control Sorting
 #'

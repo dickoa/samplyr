@@ -1220,7 +1220,12 @@ prepare_multiphase_frame <- function(frame) {
 #' @noRd
 samplyr_internal_cols <- function(x) {
   nms <- names(x)
-  internal_pattern <- "^\\.(weight|fpc|sample_id|stage|draw|certainty|replicate)"
+  # Internal tbl_sample metadata columns. When a tbl_sample is reused as
+  # a frame (continuation or new-phase execute), these are stripped so
+  # they do not collide with new-stage metadata or leak into downstream
+  # samples as ordinary data columns. `.panel` is included because panel
+  # labels are post-hoc sample metadata, not frame attributes.
+  internal_pattern <- "^\\.(weight|fpc|sample_id|stage|draw|certainty|replicate|panel)"
   grep(internal_pattern, nms, value = TRUE)
 }
 
@@ -1331,6 +1336,9 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
         call = call
       )
     }
+    # Only warn about zero MOS when there is a non-zero remainder to
+    # sample from; an all-zero MOS is handled by the harder PPS error
+    # raised later in draw_sample() / draw_pps_method().
     if (any(mos_vals == 0) && sum(mos_vals) > 0) {
       n_zero <- sum(mos_vals == 0)
       cli_warn(c(
