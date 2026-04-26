@@ -158,7 +158,7 @@ test_that("replicate export errors use standardized classes", {
       as_svrepdesign(pps_sample, type = "bootstrap"),
       samplyr_error_svrep_conversion_failed = function(e) NULL
     ),
-    "may not work for PPS"
+    "may not work for unequal-probability"
   )
 
   frame <- data.frame(id = 1:120, x = rnorm(120))

@@ -32,13 +32,34 @@ converting to a \code{\link[survey:svydesign]{survey::svydesign()}} object via \
 then converting with \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.
 }
 \details{
-Replicate conversion supports single-phase designs. For PPS designs,
-\code{"subbootstrap"} and \code{"mrbbootstrap"} are the supported replicate types.
-Other types emit a warning and may fail because PPS inclusion
-probabilities vary within strata. For PPS variance estimation,
-linearization via \code{\link[=as_svydesign]{as_svydesign()}} (with Brewer approximation or exact
-joint probabilities) is generally preferred. Two-phase designs should
-be exported with \code{\link[=as_svydesign]{as_svydesign()}}.
+Replicate conversion supports single-phase designs. For unequal-probability
+designs (PPS or random-size Poisson), \code{"subbootstrap"} and \code{"mrbbootstrap"}
+are the supported replicate types. Other types emit a warning and may fail
+because inclusion probabilities vary within strata. For fixed-size PPS
+variance estimation, linearization via \code{\link[=as_svydesign]{as_svydesign()}} is generally
+preferred. Two-phase designs should be exported with \code{\link[=as_svydesign]{as_svydesign()}}.
+\subsection{Bootstrap escape hatch for random-size Poisson at stage 1}{
+
+Some designs cannot be expressed as a linearization-based
+\code{\link[survey:svydesign]{survey::svydesign()}} object. Specifically, multi-stage designs with
+a random-size Poisson method (\code{bernoulli} or \code{pps_poisson}) at stage 1,
+and single-stage designs with \code{cluster_by()} and multiple rows per
+sampled cluster, are rejected by \code{\link[=as_svydesign]{as_svydesign()}} for those methods.
+
+For these cases \code{as_svrepdesign(type = "subbootstrap")} (or
+\code{"mrbbootstrap"}) is the recommended path. The design is exported with
+a permissive specification (no finite-population correction at the
+Poisson stage, no \code{pps} argument), and the bootstrap resampler supplies
+the variance through replicate weights.
+
+This is the package's bootstrap approximation for designs that exact
+Horvitz-Thompson linearization cannot express in
+\code{\link[survey:svydesign]{survey::svydesign()}}. The subbootstrap and mrbbootstrap methods were
+developed for fixed-size PPS sampling (Antal and Tille 2011); their
+behaviour on random-size Poisson designs, especially at multiple
+stages, has weaker theoretical backing and should be treated as an
+approximation.
+}
 }
 \examples{
 \dontshow{if (requireNamespace("survey", quietly = TRUE)) withAutoprint(\{ # examplesIf}

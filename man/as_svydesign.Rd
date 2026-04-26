@@ -95,8 +95,8 @@ survey::svydesign(
 
 \subsection{Variance estimation for PPS designs}{
 
-For stages using PPS without replacement methods (\code{pps_brewer},
-\code{pps_systematic}, \code{pps_cps}, \code{pps_poisson}, \code{pps_sps}, \code{pps_pareto}), variance is
+For fixed-size PPS without-replacement stages (\code{pps_brewer},
+\code{pps_systematic}, \code{pps_cps}, \code{pps_sps}, \code{pps_pareto}), variance is
 estimated by default using Brewer's approximation (\code{pps = "brewer"}
 in survey's terminology), which approximates the joint inclusion
 probabilities from the marginal inclusion probabilities. This is
@@ -106,6 +106,41 @@ most PPS designs regardless of the sampling algorithm used.
 For exact variance estimation, you can compute joint inclusion
 probabilities using \code{\link[=joint_expectation]{joint_expectation()}} and pass them via
 \code{pps = survey::ppsmat(joint_matrix)}.
+}
+
+\subsection{Random-size Poisson methods}{
+
+Methods \code{bernoulli} and \code{pps_poisson} select units independently
+with known marginal inclusion probabilities, so the realized
+sample size is random. The standard SRSWOR variance estimator
+is not appropriate, and Brewer's approximation (designed for
+fixed-size PPS) understates the variance. Instead, these
+methods are exported with \code{pps = survey::poisson_sampling(pi)},
+which produces the Horvitz-Thompson Poisson variance estimator
+\eqn{\hat V = \sum_{i \in S} (1 - \pi_i) / \pi_i^2 \cdot y_i^2}
+described in Sarndal, Swensson and Wretman (1992), section 2.8.
+
+This applies under the following conditions.
+\itemize{
+\item Single-stage designs (no \code{cluster_by()}, or \code{cluster_by()} with
+one row per sampled cluster) are exported with \code{poisson_sampling()}
+and produce the exact Horvitz-Thompson Poisson variance.
+\item Multi-stage designs with a random-size Poisson method at stage k > 1
+omit the finite-population correction at the Poisson stage (the same
+handling used for with-replacement methods). The Poisson stage's
+contribution to variance is captured through the variability of the
+previous stage's cluster totals, under the with-replacement at
+stage 1 approximation.
+\item Multi-stage designs with a random-size Poisson method at stage 1
+are not supported by \code{survey::svydesign()}, which rejects multi-stage
+designs when the \code{pps} argument is set. Such designs raise an error
+suggesting \code{as_svrepdesign(type = "subbootstrap")}.
+\item Single-stage designs that use \code{cluster_by()} with multiple rows per
+sampled cluster (for example a household listing within sampled EAs)
+raise an error. \code{survey::poisson_sampling()} treats rows as
+independent and does not honour within-cluster correlation. Use
+\code{as_svrepdesign(type = "subbootstrap")} for these designs.
+}
 }
 
 \subsection{Chromy's sequential PPS method (PMR)}{

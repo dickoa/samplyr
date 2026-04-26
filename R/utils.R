@@ -21,6 +21,12 @@ pps_methods <- c(pps_wor_methods, pps_wr_methods)
 prn_methods <- c("bernoulli", "pps_poisson", "pps_sps", "pps_pareto")
 jip_methods <- c(pps_methods, "balanced")
 
+# Random-size Poisson methods: independent unit selection with random
+# realised sample size. Variance estimation requires the Horvitz-Thompson
+# Poisson formula via survey::poisson_sampling(), not the SRSWOR or
+# Brewer estimators used for fixed-size designs.
+rs_poisson_methods <- c("bernoulli", "pps_poisson")
+
 #' Map samplyr PPS method name to sondage method name
 #' @noRd
 sondage_method_name <- function(method) {

@@ -77,8 +77,8 @@
 #'
 #' ## Variance estimation for PPS designs
 #'
-#' For stages using PPS without replacement methods (`pps_brewer`,
-#' `pps_systematic`, `pps_cps`, `pps_poisson`, `pps_sps`, `pps_pareto`), variance is
+#' For fixed-size PPS without-replacement stages (`pps_brewer`,
+#' `pps_systematic`, `pps_cps`, `pps_sps`, `pps_pareto`), variance is
 #' estimated by default using Brewer's approximation (`pps = "brewer"`
 #' in survey's terminology), which approximates the joint inclusion
 #' probabilities from the marginal inclusion probabilities. This is
@@ -88,6 +88,39 @@
 #' For exact variance estimation, you can compute joint inclusion
 #' probabilities using [joint_expectation()] and pass them via
 #' `pps = survey::ppsmat(joint_matrix)`.
+#'
+#' ## Random-size Poisson methods
+#'
+#' Methods `bernoulli` and `pps_poisson` select units independently
+#' with known marginal inclusion probabilities, so the realized
+#' sample size is random. The standard SRSWOR variance estimator
+#' is not appropriate, and Brewer's approximation (designed for
+#' fixed-size PPS) understates the variance. Instead, these
+#' methods are exported with `pps = survey::poisson_sampling(pi)`,
+#' which produces the Horvitz-Thompson Poisson variance estimator
+#' \eqn{\hat V = \sum_{i \in S} (1 - \pi_i) / \pi_i^2 \cdot y_i^2}
+#' described in Sarndal, Swensson and Wretman (1992), section 2.8.
+#'
+#' This applies under the following conditions.
+#'
+#' - Single-stage designs (no `cluster_by()`, or `cluster_by()` with
+#'   one row per sampled cluster) are exported with `poisson_sampling()`
+#'   and produce the exact Horvitz-Thompson Poisson variance.
+#' - Multi-stage designs with a random-size Poisson method at stage k > 1
+#'   omit the finite-population correction at the Poisson stage (the same
+#'   handling used for with-replacement methods). The Poisson stage's
+#'   contribution to variance is captured through the variability of the
+#'   previous stage's cluster totals, under the with-replacement at
+#'   stage 1 approximation.
+#' - Multi-stage designs with a random-size Poisson method at stage 1
+#'   are not supported by `survey::svydesign()`, which rejects multi-stage
+#'   designs when the `pps` argument is set. Such designs raise an error
+#'   suggesting `as_svrepdesign(type = "subbootstrap")`.
+#' - Single-stage designs that use `cluster_by()` with multiple rows per
+#'   sampled cluster (for example a household listing within sampled EAs)
+#'   raise an error. `survey::poisson_sampling()` treats rows as
+#'   independent and does not honour within-cluster correlation. Use
+#'   `as_svrepdesign(type = "subbootstrap")` for these designs.
 #'
 #' ## Chromy's sequential PPS method (PMR)
 #'
@@ -194,7 +227,11 @@ survey_phase_info <- function(sample) {
   metadata <- attr(sample, "metadata")
   prev_phase <- metadata$prev_phase
   has_prev_sample <- is.list(prev_phase) && is_tbl_sample(prev_phase$sample)
-  prev_prev <- if (has_prev_sample) attr(prev_phase$sample, "metadata") else NULL
+  prev_prev <- if (has_prev_sample) {
+    attr(prev_phase$sample, "metadata")
+  } else {
+    NULL
+  }
   has_three_phase <- has_prev_sample &&
     is.list(prev_prev) &&
     !is_null(prev_prev$prev_phase)
@@ -291,7 +328,8 @@ survey_strata_info <- function(df, design, stages_executed) {
 
   first_draw_spec <- design$stages[[first_stage_idx]]$draw_spec
   if (
-    (first_method %in% pps_wor_methods ||
+    (first_method %in%
+      pps_wor_methods ||
       (identical(first_draw_spec$method_type, "wor"))) &&
       cert_col %in% names(df) &&
       any(df[[cert_col]])
@@ -345,6 +383,7 @@ survey_id_stage_indices <- function(design, stages_executed, df) {
 #' @noRd
 survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
   has_pps_wor <- FALSE
+  has_rs_poisson_stage1 <- FALSE
   fpc_vars <- character(0)
 
   fpc_stage_indices <- if (length(id_stage_indices) == 0) {
@@ -353,6 +392,8 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
     id_stage_indices
   }
 
+  first_executed <- stages_executed[1]
+
   for (stage_idx in fpc_stage_indices) {
     stage_spec <- design$stages[[stage_idx]]
     method <- stage_spec$draw_spec$method
@@ -360,11 +401,28 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
     fpc_col <- paste0(".fpc_", stage_idx)
 
     draw_spec <- stage_spec$draw_spec
-    if (method %in% c(wr_methods, pmr_methods) ||
-        identical(draw_spec$method_type, "wr")) {
+    if (
+      method %in%
+        c(wr_methods, pmr_methods) ||
+        identical(draw_spec$method_type, "wr")
+    ) {
       inf_col <- paste0(".fpc_inf_", stage_idx)
       df[[inf_col]] <- Inf
       fpc_vars <- c(fpc_vars, inf_col)
+      next
+    }
+
+    if (method %in% rs_poisson_methods) {
+      if (identical(stage_idx, first_executed)) {
+        has_rs_poisson_stage1 <- TRUE
+        fpc_pi_col <- paste0(".fpc_pi_", stage_idx)
+        df[[fpc_pi_col]] <- 1 / df[[weight_col]]
+        fpc_vars <- c(fpc_vars, fpc_pi_col)
+      } else {
+        inf_col <- paste0(".fpc_inf_", stage_idx)
+        df[[inf_col]] <- Inf
+        fpc_vars <- c(fpc_vars, inf_col)
+      }
       next
     }
 
@@ -372,8 +430,12 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
       next
     }
 
-    if (method %in% pps_wor_methods || method == "balanced" ||
-        identical(draw_spec$method_type, "wor")) {
+    if (
+      method %in%
+        pps_wor_methods ||
+        method == "balanced" ||
+        identical(draw_spec$method_type, "wor")
+    ) {
       has_pps_wor <- TRUE
       fpc_pi_col <- paste0(".fpc_pi_", stage_idx)
       df[[fpc_pi_col]] <- 1 / df[[weight_col]]
@@ -393,8 +455,103 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
     df = df,
     formula = fpc_formula,
     fpc_vars = fpc_vars,
-    has_pps_wor = has_pps_wor
+    has_pps_wor = has_pps_wor,
+    has_rs_poisson_stage1 = has_rs_poisson_stage1
   )
+}
+
+#' Demote a stage-1 random-size Poisson FPC to Inf.
+#'
+#' Used by the bootstrap escape hatch when survey::svydesign() cannot
+#' represent exact multi-stage Poisson linearization. The demoted design
+#' carries no finite-population correction at the Poisson stage; the
+#' bootstrap resampler supplies the variance instead.
+#' @noRd
+survey_demote_rs_poisson_stage1 <- function(df, fpc, first_idx) {
+  pi_col <- paste0(".fpc_pi_", first_idx)
+  inf_col <- paste0(".fpc_inf_", first_idx)
+  df[[inf_col]] <- Inf
+  df[[pi_col]] <- NULL
+  fpc$fpc_vars <- ifelse(fpc$fpc_vars == pi_col, inf_col, fpc$fpc_vars)
+  fpc$formula <- if (length(fpc$fpc_vars) == 0) {
+    NULL
+  } else {
+    stats::as.formula(paste("~", paste(fpc$fpc_vars, collapse = " + ")))
+  }
+  fpc$has_rs_poisson_stage1 <- FALSE
+  list(df = df, fpc = fpc)
+}
+
+#' Resolve the pps argument for as_svydesign.
+#'
+#' Single-phase only. Encapsulates the case split documented in
+#' as_svydesign(): exact poisson_sampling() at single-stage, error or
+#' bootstrap relaxation for multi-stage stage-1 Poisson, error or
+#' bootstrap relaxation for clustered single-stage Poisson with multiple
+#' rows per cluster, Brewer for fixed-size PPS WOR, FALSE otherwise.
+#'
+#' Returns a list with the resolved `pps` argument plus possibly modified
+#' `df` and `fpc` (when the bootstrap relaxation rewrites a stage-1
+#' Poisson FPC to Inf).
+#' @noRd
+survey_resolve_pps <- function(
+  df,
+  design,
+  stages_executed,
+  fpc,
+  user_pps = NULL,
+  relax_pps_for_bootstrap = FALSE
+) {
+  if (!is_null(user_pps)) {
+    return(list(pps = user_pps, df = df, fpc = fpc))
+  }
+
+  if (!fpc$has_rs_poisson_stage1) {
+    pps <- if (fpc$has_pps_wor) "brewer" else FALSE
+    return(list(pps = pps, df = df, fpc = fpc))
+  }
+
+  first_idx <- stages_executed[1]
+
+  if (length(stages_executed) > 1L) {
+    if (relax_pps_for_bootstrap) {
+      relaxed <- survey_demote_rs_poisson_stage1(df, fpc, first_idx)
+      pps <- if (relaxed$fpc$has_pps_wor) "brewer" else FALSE
+      return(list(pps = pps, df = relaxed$df, fpc = relaxed$fpc))
+    }
+    abort_samplyr(
+      c(
+        "{.pkg survey} does not support multi-stage designs with a random-size Poisson method at stage 1.",
+        "i" = "{.pkg survey} rejects multi-stage designs when the {.code pps} argument is set.",
+        "i" = "Use {.code as_svrepdesign(type = \"subbootstrap\")} for a bootstrap approximation.",
+        "i" = "Or convert each stage separately."
+      ),
+      class = "samplyr_error_multistage_poisson_stage1"
+    )
+  }
+
+  stage_spec <- design$stages[[first_idx]]
+  if (!is_null(stage_spec$clusters)) {
+    cluster_vars <- stage_spec$clusters$vars
+    n_clusters <- nrow(unique(df[, cluster_vars, drop = FALSE]))
+    if (nrow(df) > n_clusters) {
+      if (relax_pps_for_bootstrap) {
+        relaxed <- survey_demote_rs_poisson_stage1(df, fpc, first_idx)
+        return(list(pps = FALSE, df = relaxed$df, fpc = relaxed$fpc))
+      }
+      abort_samplyr(
+        c(
+          "Cannot export a clustered random-size Poisson design with multiple rows per sampled cluster via {.fn as_svydesign}.",
+          "i" = "{.pkg survey}'s {.fn poisson_sampling} estimator treats rows as independent and does not honour within-cluster correlation.",
+          "i" = "Use {.code as_svrepdesign(type = \"subbootstrap\")} for a bootstrap approximation that resamples clusters."
+        ),
+        class = "samplyr_error_cluster_poisson_export"
+      )
+    }
+  }
+
+  pi_vec <- df[[paste0(".fpc_pi_", first_idx)]]
+  list(pps = survey::poisson_sampling(pi_vec), df = df, fpc = fpc)
 }
 
 #' @rdname as_svydesign
@@ -595,57 +752,88 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
 
     result
   } else {
-    id_vars <- survey_id_vars(design, stages_executed, df)
-    ids_formula <- survey_ids_formula(id_vars)
-
-    strata <- survey_strata_info(df, design, stages_executed)
-    df <- strata$df
-
-    id_stage_indices <- survey_id_stage_indices(design, stages_executed, df)
-    fpc <- survey_fpc_info(df, design, stages_executed, id_stage_indices)
-    df <- fpc$df
-
-    dots <- list(...)
-    pps_arg <- if (!is_null(dots$pps)) {
-      dots$pps
-    } else if (fpc$has_pps_wor) {
-      "brewer"
-    } else {
-      FALSE
-    }
-
-    dots$pps <- NULL
-
-    result <- do.call(
-      survey::svydesign,
-      c(
-        list(
-          ids = ids_formula,
-          strata = strata$formula,
-          weights = stats::as.formula("~.weight"),
-          fpc = fpc$formula,
-          data = df,
-          nest = nest,
-          pps = pps_arg
-        ),
-        dots
-      )
+    build_singlephase_svydesign(
+      x,
+      dots = list(...),
+      nest = nest,
+      relax_pps_for_bootstrap = FALSE
     )
-
-    # Replace the stored call to avoid inlining the entire data frame,
-    # which causes massive output when printing the survey.design object
-    result$call <- call(
-      "svydesign",
-      ids = ids_formula,
-      strata = strata$formula,
-      weights = stats::as.formula("~.weight"),
-      fpc = fpc$formula,
-      data = quote(data),
-      nest = nest
-    )
-
-    result
   }
+}
+
+#' Build a single-phase survey.design from a tbl_sample.
+#'
+#' Shared by [as_svydesign.tbl_sample()] and [as_svrepdesign.tbl_sample()].
+#' When `relax_pps_for_bootstrap = TRUE`, multi-stage stage-1 random-size
+#' Poisson designs and clustered single-stage random-size Poisson designs
+#' with multi-row clusters are exported with a permissive specification
+#' (Inf at the Poisson stage, no `pps` argument), so that the bootstrap
+#' resampler can produce a variance estimate. The relaxed design is not a
+#' valid linearization design.
+#' @noRd
+build_singlephase_svydesign <- function(
+  x,
+  dots,
+  nest,
+  relax_pps_for_bootstrap = FALSE
+) {
+  design <- get_design(x)
+  stages_executed <- get_stages_executed(x)
+  df <- as.data.frame(x)
+
+  id_vars <- survey_id_vars(design, stages_executed, df)
+  ids_formula <- survey_ids_formula(id_vars)
+
+  strata <- survey_strata_info(df, design, stages_executed)
+  df <- strata$df
+
+  id_stage_indices <- survey_id_stage_indices(design, stages_executed, df)
+  fpc <- survey_fpc_info(df, design, stages_executed, id_stage_indices)
+  df <- fpc$df
+
+  resolved <- survey_resolve_pps(
+    df = df,
+    design = design,
+    stages_executed = stages_executed,
+    fpc = fpc,
+    user_pps = dots$pps,
+    relax_pps_for_bootstrap = relax_pps_for_bootstrap
+  )
+  df <- resolved$df
+  fpc <- resolved$fpc
+  pps_arg <- resolved$pps
+
+  dots$pps <- NULL
+
+  result <- do.call(
+    survey::svydesign,
+    c(
+      list(
+        ids = ids_formula,
+        strata = strata$formula,
+        weights = stats::as.formula("~.weight"),
+        fpc = fpc$formula,
+        data = df,
+        nest = nest,
+        pps = pps_arg
+      ),
+      dots
+    )
+  )
+
+  # Replace the stored call to avoid inlining the entire data frame,
+  # which causes massive output when printing the survey.design object
+  result$call <- call(
+    "svydesign",
+    ids = ids_formula,
+    strata = strata$formula,
+    weights = stats::as.formula("~.weight"),
+    fpc = fpc$formula,
+    data = quote(data),
+    nest = nest
+  )
+
+  result
 }
 
 #' Convert a tbl_sample to a replicate-weight survey design
@@ -663,13 +851,34 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
 #' @return A `svyrep.design` object from the survey package.
 #'
 #' @details
-#' Replicate conversion supports single-phase designs. For PPS designs,
-#' `"subbootstrap"` and `"mrbbootstrap"` are the supported replicate types.
-#' Other types emit a warning and may fail because PPS inclusion
-#' probabilities vary within strata. For PPS variance estimation,
-#' linearization via [as_svydesign()] (with Brewer approximation or exact
-#' joint probabilities) is generally preferred. Two-phase designs should
-#' be exported with [as_svydesign()].
+#' Replicate conversion supports single-phase designs. For unequal-probability
+#' designs (PPS or random-size Poisson), `"subbootstrap"` and `"mrbbootstrap"`
+#' are the supported replicate types. Other types emit a warning and may fail
+#' because inclusion probabilities vary within strata. For fixed-size PPS
+#' variance estimation, linearization via [as_svydesign()] is generally
+#' preferred. Two-phase designs should be exported with [as_svydesign()].
+#'
+#' ## Bootstrap escape hatch for random-size Poisson at stage 1
+#'
+#' Some designs cannot be expressed as a linearization-based
+#' [survey::svydesign()] object. Specifically, multi-stage designs with
+#' a random-size Poisson method (`bernoulli` or `pps_poisson`) at stage 1,
+#' and single-stage designs with `cluster_by()` and multiple rows per
+#' sampled cluster, are rejected by [as_svydesign()] for those methods.
+#'
+#' For these cases `as_svrepdesign(type = "subbootstrap")` (or
+#' `"mrbbootstrap"`) is the recommended path. The design is exported with
+#' a permissive specification (no finite-population correction at the
+#' Poisson stage, no `pps` argument), and the bootstrap resampler supplies
+#' the variance through replicate weights.
+#'
+#' This is the package's bootstrap approximation for designs that exact
+#' Horvitz-Thompson linearization cannot express in
+#' [survey::svydesign()]. The subbootstrap and mrbbootstrap methods were
+#' developed for fixed-size PPS sampling (Antal and Tille 2011); their
+#' behaviour on random-size Poisson designs, especially at multiple
+#' stages, has weaker theoretical backing and should be treated as an
+#' approximation.
 #'
 #' @examplesIf requireNamespace("survey", quietly = TRUE)
 #' sample <- sampling_design() |>
@@ -719,19 +928,26 @@ as_svrepdesign.tbl_sample <- function(
   type <- match.arg(type)
 
   methods_used <- survey_stage_methods(x)
-  pps_used <- unique(methods_used[methods_used %in% c(pps_methods, "balanced")])
-  if (length(pps_used) > 0) {
-    pps_safe_types <- c("subbootstrap", "mrbbootstrap")
-    if (!type %in% pps_safe_types) {
-      cli_warn(c(
-        "{.fn as_svrepdesign} with {.val {type}} may not work for PPS designs.",
-        "i" = "Found method{?s}: {.val {pps_used}}.",
-        "i" = "Use {.val subbootstrap} or {.val mrbbootstrap} for PPS designs,
-               or use {.fn as_svydesign} for linearization-based variance."
-      ))
-    }
+  unequal_used <- unique(methods_used[
+    methods_used %in%
+      c(pps_methods, "balanced", rs_poisson_methods)
+  ])
+  pps_safe_types <- c("subbootstrap", "mrbbootstrap")
+  if (length(unequal_used) > 0 && !type %in% pps_safe_types) {
+    cli_warn(c(
+      "{.fn as_svrepdesign} with {.val {type}} may not work for unequal-probability designs.",
+      "i" = "Found method{?s}: {.val {unequal_used}}.",
+      "i" = "Use {.val subbootstrap} or {.val mrbbootstrap} for unequal-probability designs,
+             or use {.fn as_svydesign} for linearization-based variance."
+    ))
   }
-  svydesign_obj <- as_svydesign(x)
+
+  svydesign_obj <- build_singlephase_svydesign(
+    x,
+    dots = list(),
+    nest = TRUE,
+    relax_pps_for_bootstrap = type %in% pps_safe_types
+  )
 
   tryCatch(
     survey::as.svrepdesign(design = svydesign_obj, type = type, ...),
