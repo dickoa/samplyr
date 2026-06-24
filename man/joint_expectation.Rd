@@ -23,7 +23,7 @@ stages. Each element is either:
 \itemize{
 \item For PPS WOR stages: a square matrix of joint inclusion
 probabilities \eqn{\pi_{kl}}{pi_kl}, usable with
-\code{\link[survey:HR]{survey::ppsmat()}} for exact variance estimation.
+\code{\link[survey:ppsmat]{survey::ppsmat()}} for exact variance estimation.
 \item For PPS WR/PMR stages (\code{pps_multinomial}, \code{pps_chromy}): a
 square matrix of joint expected hits
 \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
@@ -152,5 +152,5 @@ jip_all <- joint_expectation(sample, bfa_eas)
 }
 \seealso{
 \code{\link[=as_svydesign]{as_svydesign()}} for the default export using Brewer's
-approximation, \code{\link[survey:HR]{survey::ppsmat()}} for wrapping joint matrices
+approximation, \code{\link[survey:ppsmat]{survey::ppsmat()}} for wrapping joint matrices
 }

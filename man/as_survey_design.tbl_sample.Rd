@@ -22,6 +22,10 @@ then wrapping with \code{\link[srvyr:as_survey_design]{srvyr::as_survey_design()
 \details{
 This method is registered on the \code{\link[srvyr:as_survey_design]{srvyr::as_survey_design()}} generic,
 so it is available when srvyr is loaded.
+
+Random-size Poisson designs (\code{bernoulli}, \code{pps_poisson}) export to a
+\code{pps} survey design. These are summarised, grouped, and subset like any
+other srvyr design, with Horvitz-Thompson Poisson variances.
 }
 \examples{
 \dontshow{if (requireNamespace("srvyr", quietly = TRUE)) withAutoprint(\{ # examplesIf}
@@ -30,7 +34,7 @@ library(srvyr)
 sample <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
-  execute(bfa_eas, seed = 42)
+  execute(bfa_eas, seed = 12345)
 
 # Returns a tbl_svy for use with srvyr verbs
 svy <- as_survey_design(sample)

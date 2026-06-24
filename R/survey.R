@@ -973,6 +973,10 @@ as_svrepdesign.tbl_sample <- function(
 #' This method is registered on the [srvyr::as_survey_design()] generic,
 #' so it is available when srvyr is loaded.
 #'
+#' Random-size Poisson designs (`bernoulli`, `pps_poisson`) export to a
+#' `pps` survey design. These are summarised, grouped, and subset like any
+#' other srvyr design, with Horvitz-Thompson Poisson variances.
+#'
 #' @param .data A `tbl_sample` object produced by [execute()].
 #' @param ... Additional arguments passed to [as_svydesign()].
 #'
@@ -984,7 +988,7 @@ as_svrepdesign.tbl_sample <- function(
 #' sample <- sampling_design() |>
 #'   stratify_by(region, alloc = "proportional") |>
 #'   draw(n = 300) |>
-#'   execute(bfa_eas, seed = 42)
+#'   execute(bfa_eas, seed = 12345)
 #'
 #' # Returns a tbl_svy for use with srvyr verbs
 #' svy <- as_survey_design(sample)
@@ -1011,8 +1015,34 @@ as_survey_design.tbl_sample <- function(.data, ...) {
   if (inherits(svydesign_obj, c("twophase", "twophase2"))) {
     srvyr::as_survey_twophase(svydesign_obj)
   } else {
-    srvyr::as_survey_design(svydesign_obj)
+    srvyr::as_survey_design(srvyr_dispatchable_design(svydesign_obj))
   }
+}
+
+#' Make a survey design object dispatchable by srvyr's as_survey_design
+#'
+#' Random-size Poisson methods (`bernoulli`, `pps_poisson`) export through
+#' [survey::poisson_sampling()], which yields an object of class
+#' `c("pps", "survey.design")`. This trips srvyr in two ways: srvyr only
+#' registers an `as_survey_design` method for `survey.design2` (so the
+#' generic finds no method and errors), and its grouped path subsets the
+#' design with `[`, which dispatches to the old `[.survey.design` method
+#' that fails on `pps` objects.
+#'
+#' A `pps` design is built on the same internals as `survey.design2`, so
+#' we insert that class tag just before `survey.design`. The generic then
+#' finds srvyr's method, and `[` dispatches to the working
+#' `[.survey.design2` method, which enables grouped srvyr verbs. `pps`
+#' stays first, so survey's unequal-probability variance methods still
+#' dispatch correctly.
+#' @noRd
+srvyr_dispatchable_design <- function(x) {
+  if (inherits(x, "pps") && !inherits(x, "survey.design2")) {
+    cls <- class(x)
+    pos <- match("survey.design", cls)
+    class(x) <- append(cls, "survey.design2", after = pos - 1L)
+  }
+  x
 }
 
 #' Convert a tbl_sample to a srvyr replicate-weight tbl_svy object

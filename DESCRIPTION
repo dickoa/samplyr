@@ -17,7 +17,6 @@ License: GPL (>= 2)
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
 Depends: R (>= 4.1.0)
 Imports:
     rlang (>= 1.0.0),
@@ -45,3 +44,4 @@ URL: https://gitlab.com/dickoa/samplyr
 BugReports: https://gitlab.com/dickoa/samplyr/-/issues
 Remotes: gitlab::dickoa/sondage,
     gitlab::dickoa/svyplan
+Config/roxygen2/version: 8.0.0
