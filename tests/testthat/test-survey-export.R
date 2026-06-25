@@ -600,6 +600,66 @@ test_that("as_svrepdesign warns and may fail for non-bootstrap types on bernoull
   )
 })
 
+test_that("as_survey_design returns a tbl_svy for single-stage bernoulli", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("srvyr")
+
+  s <- sampling_design() |>
+    draw(frac = 0.3, method = "bernoulli") |>
+    execute(test_frame, seed = 27)
+
+  svy <- srvyr::as_survey_design(s)
+  expect_s3_class(svy, "tbl_svy")
+  expect_true(inherits(svy, "pps"))
+})
+
+test_that("as_survey_design returns a tbl_svy for single-stage pps_poisson", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("srvyr")
+
+  s <- sampling_design() |>
+    draw(frac = 0.3, method = "pps_poisson", mos = mos) |>
+    execute(test_frame, seed = 28)
+
+  svy <- srvyr::as_survey_design(s)
+  expect_s3_class(svy, "tbl_svy")
+  expect_true(inherits(svy, "pps"))
+})
+
+test_that("as_survey_design pps_poisson SE matches the survey design SE", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("srvyr")
+
+  s <- sampling_design() |>
+    draw(frac = 0.3, method = "pps_poisson", mos = mos) |>
+    execute(test_frame, seed = 29)
+
+  svy <- srvyr::as_survey_design(s)
+  est <- srvyr::summarise(svy, t = srvyr::survey_total(y, vartype = "se"))
+
+  ref_se <- unname(survey::SE(survey::svytotal(~y, as_svydesign(s)))[1])
+  expect_equal(est$t_se, ref_se, tolerance = 1e-6)
+})
+
+test_that("as_survey_design supports grouped verbs for pps_poisson", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("srvyr")
+
+  s <- sampling_design() |>
+    draw(frac = 0.3, method = "pps_poisson", mos = mos) |>
+    execute(test_frame, seed = 30)
+
+  svy <- srvyr::as_survey_design(s)
+  grouped <- svy |>
+    srvyr::group_by(stratum) |>
+    srvyr::summarise(t = srvyr::survey_total(y, vartype = "se"))
+
+  # svyby on the survey.design object is the known-good domain estimator
+  ref <- survey::svyby(~y, ~stratum, as_svydesign(s), survey::svytotal)
+  expect_equal(grouped$t, unname(ref$y), tolerance = 1e-6)
+  expect_equal(grouped$t_se, unname(ref$se), tolerance = 1e-6)
+})
+
 test_that("joint_expectation returns list of correct length", {
   jip <- joint_expectation(fix_multistage, test_frame)
   expect_type(jip, "list")
