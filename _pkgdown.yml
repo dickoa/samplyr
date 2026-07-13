@@ -31,7 +31,6 @@ reference:
       - cluster_by
       - draw
       - add_stage
-      - bound
 
   - title: "Execution"
     desc: "Execute designs and validate frames."
@@ -67,6 +66,7 @@ reference:
     desc: "Sorting and class checks."
     contents:
       - serp
+      - bound
       - is_sampling_design
       - is_tbl_sample
       - as_tbl_sample
