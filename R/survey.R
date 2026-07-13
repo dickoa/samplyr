@@ -22,58 +22,115 @@
 #' The conversion maps samplyr's design specification to the arguments
 #' expected by [survey::svydesign()]:
 #'
-#' - **Cluster ids** (`ids`): extracted from `cluster_by()` variables at each
-#'   stage, assembled into a multi-level formula (e.g., `~ ea_id + hh_id`).
-#'   For WR/PMR stages, the `.draw_k` column is used as the sampling unit
-#'   identifier instead (each draw is treated as an independent unit for
-#'   Hansen--Hurwitz variance estimation).
-#' - **Strata** (`strata`): extracted from `stratify_by()` variables at the
-#'   **first executed stage only** (see Multi-stage designs below).
+#' - **Cluster ids** (`ids`): one formula term per executed stage.
+#'   Clustered stages use the `cluster_by()` variable; when a stage
+#'   clusters by several variables, their combination (which execution
+#'   treats as a single cluster id) is collapsed into one synthesized
+#'   interaction column, because [survey::svydesign()] reads each
+#'   formula term as a separate sampling stage. A final unclustered
+#'   stage (elements sampled within the previous stage's clusters) gets
+#'   a synthesized row-identity column so that its sampling variance is
+#'   represented. For WR/PMR stages, the `.draw_k` column is used as
+#'   the sampling unit identifier instead (each draw is treated as an
+#'   independent unit for Hansen--Hurwitz variance estimation).
+#' - **Strata** (`strata`): one term per stage, aligned with `ids`.
+#'   A stage stratified by several variables exports their
+#'   cross-classification as a single synthesized interaction column
+#'   (survey silently ignores extra variables within a stage's term).
+#'   Trailing unstratified stages are omitted; unstratified stages
+#'   before a stratified stage get a constant placeholder column.
 #' - **Weights** (`weights`): the `.weight` column -- the compound weight
 #'   across all stages (i.e., the product of per-stage weights
 #'   \eqn{w = \prod w_k = \prod 1/\pi_k}{w = prod(1/pi_k)}).
 #'   This is the inverse of the overall inclusion probability and is the
 #'   correct weight for design-based point estimation
 #'   (\eqn{\hat{Y} = \sum w_i y_i}{Y-hat = sum(w_i * y_i)}).
-#' - **FPC** (`fpc`): a per-stage formula assembled from `.fpc_k` columns.
-#'   The encoding depends on the method:
-#'   - **Equal-probability WOR**: `.fpc_k` (the stratum population count
-#'     \eqn{N_h}) is passed directly. The survey package derives the sampling
-#'     fraction as \eqn{f_h = n_h / N_h}.
-#'   - **PPS WOR**: `.fpc_k` is \eqn{N_h}, but this is **not** passed
-#'     directly. Instead, a derived column \eqn{1 / w_k = \pi_i}{1/w_k = pi_i}
-#'     is created and passed, because `survey::svydesign()` interprets FPC
-#'     values in \eqn{(0, 1)}{(0,1)} as inclusion probabilities.
-#'   - **WR / PMR**: a synthetic column filled with `Inf` is passed. The
-#'     survey package interprets this as no finite population correction,
-#'     giving Hansen--Hurwitz variance.
+#' - **FPC** (`fpc`): one term per stage, aligned with `ids`. Because
+#'   [survey::svydesign()] requires every FPC term on the same scale,
+#'   two encodings are used:
+#'   - **Count scale** (designs without unequal-probability WOR
+#'     stages): `.fpc_k` (the stratum population count \eqn{N_h}) is
+#'     passed for equal-probability WOR stages; a synthetic `Inf`
+#'     column (no correction, Hansen--Hurwitz variance) for WR/PMR
+#'     stages and for random-size Poisson stages after the first.
+#'   - **Fraction scale** (multi-stage designs with a PPS WOR,
+#'     balanced, or custom WOR stage): every WOR stage passes its
+#'     per-unit stage sampling fraction
+#'     \eqn{1 / w_k = \pi_k}{1/w_k = pi_k}; WR/PMR and later Poisson
+#'     stages pass 0 (no correction).
+#'   A single-stage PPS WOR design passes \eqn{\pi_i}{pi_i} directly,
+#'   which survey interprets as inclusion probabilities.
 #'
 #' ## Multi-stage designs
 #'
-#' For multi-stage designs, `as_svydesign()` maps each stage's
-#' cluster variable to a level of the `ids` formula and provides
-#' per-stage finite population corrections. Strata are exported from
-#' the first stage only, which is consistent with the standard
-#' "with-replacement at stage 1" variance approximation used by
-#' [survey::svydesign()] (Cochran 1977, ch. 11). Under this
-#' approximation, second-stage and deeper stratification affects
-#' weights (which are correctly compounded) but does not need to
-#' appear in the design object for variance estimation -- the
-#' contribution of later stages is captured through the variability
-#' of first-stage unit totals.
+#' Every executed sampling stage is represented in the exported design:
+#' one `ids` term, one `fpc` term, and (when stratified) one `strata`
+#' term per stage, so [survey::svydesign()] performs exact multi-stage
+#' linearization (Sarndal et al. 1992, ch. 4.3). In particular, a
+#' design whose first stage is a census of PSUs correctly attributes
+#' all variance to the later stages.
 #'
-#' Concretely, for a two-stage stratified-cluster design, the exported
-#' call is equivalent to:
+#' One shape cannot be represented: an unclustered element-sampling
+#' stage *followed by further stages* is not nested cluster sampling
+#' (the later selections are conditional on the realized element
+#' sample, i.e. phase sampling), and `as_svydesign()` raises an error.
+#' Express such designs as two-phase samples instead: execute the
+#' element stage as its own phase and pipe the result into a second
+#' [execute()] call, which exports via [survey::twophase()].
+#'
+#' Concretely, for a two-stage stratified-cluster design with a final
+#' element stage, the exported call is equivalent to:
 #' \preformatted{
 #' survey::svydesign(
-#'   ids     = ~ ea_id,         # stage-1 clusters
-#'   strata  = ~ region,        # stage-1 strata only
-#'   weights = ~ .weight,       # product of stage-1 and stage-2 weights
-#'   fpc     = ~ .fpc_pi_1 + .fpc_2,  # pi_i for PPS stage, N_h for SRS stage
+#'   ids     = ~ ea_id + .id_2,       # stage-1 clusters, stage-2 elements
+#'   strata  = ~ region,              # stage-1 strata
+#'   weights = ~ .weight,             # product of per-stage weights
+#'   fpc     = ~ .fpc_pi_1 + .fpc_f_2,  # per-stage sampling fractions
 #'   data    = sample,
 #'   nest    = TRUE
 #' )
 #' }
+#'
+#' ## Modified samples and domain analysis
+#'
+#' The conversion requires a sample whose rows still match the executed
+#' design. A `tbl_sample` whose row set was changed after [execute()]
+#' (rows removed by [dplyr::filter()] or `[`, added, or duplicated by a
+#' join) or whose internal design columns (`.weight`, `.weight_k`,
+#' `.fpc_k`, ...) were overwritten, dropped, or renamed is marked as
+#' modified, and `as_svydesign()` raises an error. The check is
+#' authoritative, not just mark-based: the sample is verified against
+#' an integrity record (row count and a hash of the weights, design
+#' metadata, and strata/cluster columns) stored at execution, so
+#' modifications through routes the dplyr hooks cannot see (base
+#' assignment, `rbind()`, vctrs operations, third-party verbs) are
+#' also caught, and an overwrite that left every value identical
+#' passes. Physically dropping out-of-domain
+#' rows before conversion is not equivalent to domain estimation: the
+#' point estimate agrees, but the variance is understated because the
+#' domain sample size is random under the design.
+#'
+#' For subpopulation estimates, convert the full sample first and then
+#' subset the design, which applies the proper domain estimator:
+#' \preformatted{
+#' svy <- as_svydesign(sample)
+#' survey::svymean(~y, subset(svy, domain))
+#' # or with srvyr:
+#' as_survey_design(sample) |> filter(domain) |> summarise(...)
+#' }
+#'
+#' Row reordering, one-to-one joins, and adding ordinary data columns
+#' do not mark the sample. Extracting one complete replicate from a
+#' replicated execution (`filter(.replicate == r)`) is verified against
+#' the execution metadata and remains supported.
+#'
+#' ## Equal-probability systematic sampling
+#'
+#' `systematic` stages are exported with the SRSWOR variance estimator,
+#' the standard approximation for systematic sampling. Depending on the
+#' frame ordering (see the `control` argument of [draw()]), the true
+#' variance can be smaller (favourable ordering) or larger (periodic
+#' ordering) than this estimate.
 #'
 #' ## Variance estimation for PPS designs
 #'
@@ -108,10 +165,8 @@
 #'   and produce the exact Horvitz-Thompson Poisson variance.
 #' - Multi-stage designs with a random-size Poisson method at stage k > 1
 #'   omit the finite-population correction at the Poisson stage (the same
-#'   handling used for with-replacement methods). The Poisson stage's
-#'   contribution to variance is captured through the variability of the
-#'   previous stage's cluster totals, under the with-replacement at
-#'   stage 1 approximation.
+#'   handling used for with-replacement methods). The Poisson stage is
+#'   treated as sampled with replacement, which is mildly conservative.
 #' - Multi-stage designs with a random-size Poisson method at stage 1
 #'   are not supported by `survey::svydesign()`, which rejects multi-stage
 #'   designs when the `pps` argument is set. Such designs raise an error
@@ -121,6 +176,30 @@
 #'   raise an error. `survey::poisson_sampling()` treats rows as
 #'   independent and does not honour within-cluster correlation. Use
 #'   `as_svrepdesign(type = "subbootstrap")` for these designs.
+#' - Custom methods registered with `fixed_size = FALSE`
+#'   (`sondage::register_method()`) are also random-size, but samplyr
+#'   cannot verify that their selections are independent across units,
+#'   which the Poisson estimator requires. The method author can settle
+#'   this at registration: a method registered with
+#'   `variance_family = "poisson"` asserts independent selections and is
+#'   exported through `poisson_sampling()` exactly like the built-ins
+#'   above. Undeclared methods raise an error; if you know the method is
+#'   Poisson-type, pass the probabilities explicitly:
+#'   `as_svydesign(x, pps = survey::poisson_sampling(1 / x$.weight))`,
+#'   or use `as_svrepdesign(type = "subbootstrap")`.
+#'
+#' ## Declared variance families for custom methods
+#'
+#' `sondage::register_method()` accepts a `variance_family` declaration
+#' (`"srs"`, `"pps_brewer"`, `"poisson"`, `"wr"`, `"unsupported"`).
+#' When present it overrides the classification samplyr would otherwise
+#' infer from the method's `type` and `fixed_size`: `"srs"` receives the
+#' equal-probability treatment (count-scale FPC), `"pps_brewer"` the
+#' fixed-size PPS treatment (Brewer approximation), `"poisson"` exact
+#' Poisson linearization, and `"wr"` the with-replacement treatment.
+#' A method declared `"unsupported"` cannot be linearized at all:
+#' `as_svydesign()` refuses with an error and
+#' `as_svrepdesign(type = "subbootstrap")` remains the escape hatch.
 #'
 #' ## Chromy's sequential PPS method (PMR)
 #'
@@ -280,34 +359,202 @@ survey_validate_phase_support <- function(
   phase_info
 }
 
+#' Classify a stage's selection method for variance export.
+#'
+#' Single source of truth for the method-combination matrix: every
+#' export decision (FPC encoding, pps argument, replicate-type warning)
+#' derives from this kind rather than re-testing method constants.
+#'
+#' - "wr": with-replacement or PMR selection. Hansen-Hurwitz variance,
+#'   no finite-population correction.
+#' - "rs_poisson": random-size independent-selection WOR (bernoulli,
+#'   pps_poisson, or a custom WOR method registered with
+#'   fixed_size = FALSE). Poisson linearization at stage 1 (built-ins
+#'   only; see survey_resolve_pps), WR treatment at later stages.
+#' - "pps_wor": fixed-size unequal-probability WOR (PPS methods,
+#'   balanced, custom fixed-size WOR). Brewer approximation.
+#' - "equal_wor": equal-probability fixed-size WOR (srswor,
+#'   systematic). Count-scale FPC, SRS-style variance.
+#' - "unsupported": the method declares that no linearization
+#'   treatment is valid (variance_family = "unsupported").
+#'   survey_resolve_pps() refuses as_svydesign() and points to
+#'   replicate methods; the bootstrap escape demotes its FPC.
 #' @noRd
-survey_stage_methods <- function(sample) {
-  design <- get_design(sample)
-  stages_executed <- get_stages_executed(sample)
-  vapply(
-    stages_executed,
-    function(stage_idx) {
-      design$stages[[stage_idx]]$draw_spec$method
-    },
-    character(1)
-  )
+survey_stage_kind <- function(draw_spec) {
+  # Built-in controlled and spatially balanced designs do not have a valid
+  # linearization family in v1. Keep this classification here, alongside all
+  # other built-in method rules; method_variance remains metadata supplied by
+  # registered methods.
+  if (
+    !is_null(draw_spec$bounds) ||
+      draw_spec$method %in% spatial_balanced_methods
+  ) {
+    return("unsupported")
+  }
+
+  # A variance family declared at registration (sondage
+  # register_method(variance_family = )) overrides inference from
+  # type/fixed: the method author knows the estimator, samplyr can
+  # only guess. Unknown values (a newer sondage) fall through to the
+  # inference below.
+  if (!is_null(draw_spec$method_variance)) {
+    kind <- switch(
+      draw_spec$method_variance,
+      srs = "equal_wor",
+      pps_brewer = "pps_wor",
+      poisson = "rs_poisson",
+      wr = "wr",
+      unsupported = "unsupported",
+      NULL
+    )
+    if (!is_null(kind)) {
+      return(kind)
+    }
+  }
+  method <- draw_spec$method
+  if (
+    method %in%
+      c(wr_methods, pmr_methods) ||
+      identical(draw_spec$method_type, "wr")
+  ) {
+    return("wr")
+  }
+  if (method %in% rs_poisson_methods) {
+    return("rs_poisson")
+  }
+  if (identical(draw_spec$method_type, "wor")) {
+    # Custom WOR methods: fixed-size follows the Brewer (PPS-WOR)
+    # strategy; random-size follows the Poisson strategy.
+    if (identical(draw_spec$method_fixed, FALSE)) {
+      return("rs_poisson")
+    }
+    return("pps_wor")
+  }
+  if (identical(draw_spec$method_type, "balanced")) {
+    # Custom balanced methods follow the built-in balanced (cube)
+    # strategy. Without this branch they would fall through to
+    # "equal_wor" (the method field holds the custom name, so the
+    # name test below never matches) and export with SRS variance.
+    return("pps_wor")
+  }
+  if (method %in% pps_wor_methods || method %in% balanced_methods) {
+    return("pps_wor")
+  }
+  "equal_wor"
 }
 
+#' Flattened unit-identifier variables across executed stages.
+#'
+#' Cluster variables and .draw_k columns, in stage order. Used only to
+#' find shared unit identifiers between the phases of a two-phase
+#' sample; formula construction uses survey_id_info().
 #' @noRd
-survey_id_vars <- function(design, stages_executed, df) {
-  id_vars <- character(0)
+survey_key_vars <- function(design, stages_executed, df) {
+  vars <- character(0)
   for (stage_idx in stages_executed) {
     stage_spec <- design$stages[[stage_idx]]
-    method <- stage_spec$draw_spec$method
+    draw_col <- paste0(".draw_", stage_idx)
+
+    if (is_multi_hit_method(stage_spec$draw_spec) && draw_col %in% names(df)) {
+      vars <- c(vars, draw_col)
+    } else if (!is_null(stage_spec$clusters)) {
+      vars <- c(vars, stage_spec$clusters$vars)
+    }
+  }
+  vars
+}
+
+#' Per-stage survey sampling-unit identifiers.
+#'
+#' Builds exactly one id term per represented executed stage, in
+#' execution order. survey::svydesign() reads each term of the `ids`
+#' formula as one sampling stage, so the number of terms must match the
+#' number of represented stages:
+#'
+#' - Multi-hit (WR/PMR) stages use the .draw_k column: one row per
+#'   draw, each draw an independent unit.
+#' - Clustered stages use the cluster variable directly, or a
+#'   synthesized interaction column when cluster_by() has several
+#'   variables. Execution treats the combination as a single-stage
+#'   cluster id; listing the variables as separate formula terms would
+#'   make survey read them as extra sampling stages.
+#' - Unclustered WOR stages are element-sampling stages. The final
+#'   executed stage gets a synthesized row-identity column so its
+#'   sampling variance is represented (a single-stage design keeps
+#'   ids = ~1, which survey treats identically). An unclustered
+#'   element stage followed by further stages cannot be expressed as
+#'   nested cluster sampling and aborts.
+#'
+#' `synthesize_unclustered = FALSE` keeps the legacy behavior of
+#' skipping unclustered WOR stages. It is used by the two-phase path,
+#' where survey::twophase() handles between-phase subsampling variance
+#' itself.
+#'
+#' `prefix` disambiguates synthesized column names when two designs
+#' share one data frame (two-phase export).
+#' @noRd
+survey_id_info <- function(
+  design,
+  stages_executed,
+  df,
+  synthesize_unclustered = TRUE,
+  prefix = "",
+  call = rlang::caller_env()
+) {
+  id_vars <- character(0)
+  stage_indices <- integer(0)
+  n_exec <- length(stages_executed)
+
+  for (pos in seq_len(n_exec)) {
+    stage_idx <- stages_executed[pos]
+    stage_spec <- design$stages[[stage_idx]]
     draw_col <- paste0(".draw_", stage_idx)
 
     if (is_multi_hit_method(stage_spec$draw_spec) && draw_col %in% names(df)) {
       id_vars <- c(id_vars, draw_col)
+      stage_indices <- c(stage_indices, stage_idx)
     } else if (!is_null(stage_spec$clusters)) {
-      id_vars <- c(id_vars, stage_spec$clusters$vars)
+      cluster_vars <- stage_spec$clusters$vars
+      if (length(cluster_vars) == 1L) {
+        id_var <- cluster_vars
+      } else {
+        id_var <- paste0(".", prefix, "id_", stage_idx)
+        df[[id_var]] <- interaction(df[cluster_vars], drop = TRUE)
+      }
+      id_vars <- c(id_vars, id_var)
+      stage_indices <- c(stage_indices, stage_idx)
+    } else if (synthesize_unclustered && n_exec > 1L) {
+      if (pos < n_exec) {
+        abort_samplyr(
+          c(
+            "Cannot export stage {stage_idx} to {.fn survey::svydesign}:
+             an unclustered element-sampling stage followed by later
+             stages cannot be expressed as nested cluster sampling.",
+            "i" = "If stage {stage_idx} selects whole clusters, declare
+                   them with {.fn cluster_by}.",
+            "i" = "If it selects elements, this is phase sampling:
+                   execute stages 1-{stage_idx} as phase 1, then run the
+                   remaining stages as a {.emph separate design} on that
+                   result (not a continuation of this one).
+                   {.fn as_svydesign} then exports via
+                   {.fn survey::twophase}.",
+            "i" = "Declare a shared unit identifier with
+                   {.fn cluster_by} in both phase designs so the phases
+                   can be linked at export."
+          ),
+          class = "samplyr_error_survey_midstage_element",
+          call = call
+        )
+      }
+      id_var <- paste0(".", prefix, "id_", stage_idx)
+      df[[id_var]] <- seq_len(nrow(df))
+      id_vars <- c(id_vars, id_var)
+      stage_indices <- c(stage_indices, stage_idx)
     }
+    # Single executed unclustered stage: ids = ~1 (element sampling).
   }
-  id_vars
+
+  list(df = df, id_vars = id_vars, stage_indices = stage_indices)
 }
 
 #' @noRd
@@ -319,73 +566,136 @@ survey_ids_formula <- function(id_vars) {
   }
 }
 
+#' Per-stage survey strata terms.
+#'
+#' survey::svydesign() reads each term of the `strata` formula as the
+#' strata for the corresponding sampling stage; extra variables in one
+#' stage's term are silently ignored. Each stage therefore contributes
+#' at most ONE term: a single stratification variable is used directly,
+#' while several variables (or a certainty stratum combined with user
+#' strata) are collapsed into a synthesized interaction column.
+#'
+#' In "multistage" mode, terms are positionally aligned with the ids
+#' formula (id_stage_indices). Unstratified stages between stratified
+#' ones get a constant placeholder column (a single stratum);
+#' trailing unstratified stages are dropped, which survey pads as
+#' unstratified.
+#'
+#' In "first_stage" mode (two-phase export), only the first executed
+#' stage's strata are used, matching survey::twophase() expectations.
+#'
+#' The certainty stratum applies to the first executed stage: WOR
+#' take-all units form a separate stratum that contributes zero
+#' variance.
 #' @noRd
-survey_strata_info <- function(df, design, stages_executed) {
-  cert_stratum_col <- NULL
+survey_strata_info <- function(
+  df,
+  design,
+  stages_executed,
+  id_stage_indices = integer(0),
+  mode = c("multistage", "first_stage"),
+  prefix = ""
+) {
+  mode <- match.arg(mode)
   first_stage_idx <- stages_executed[1]
-  first_method <- design$stages[[first_stage_idx]]$draw_spec$method
-  cert_col <- paste0(".certainty_", first_stage_idx)
 
+  cert_var <- NULL
   first_draw_spec <- design$stages[[first_stage_idx]]$draw_spec
+  first_method <- first_draw_spec$method
+  cert_col <- paste0(".certainty_", first_stage_idx)
   if (
-    (first_method %in%
-      pps_wor_methods ||
-      (identical(first_draw_spec$method_type, "wor"))) &&
+    (
+      first_method %in% pps_wor_methods ||
+        identical(first_draw_spec$method_type, "wor")
+    ) &&
       cert_col %in% names(df) &&
       any(df[[cert_col]])
   ) {
-    cert_stratum_col <- ".cert_stratum"
-    df[[cert_stratum_col]] <- ifelse(
+    cert_var <- paste0(".", prefix, "cert_stratum")
+    df[[cert_var]] <- ifelse(
       df[[cert_col]],
       "certainty",
       "probability"
     )
   }
 
-  first_stage <- design$stages[[stages_executed[1]]]
-  user_strata_vars <- if (!is_null(first_stage$strata)) {
-    first_stage$strata$vars
+  term_stages <- if (mode == "first_stage" || length(id_stage_indices) == 0) {
+    first_stage_idx
   } else {
-    character(0)
+    id_stage_indices
   }
 
-  strata_vars <- c(user_strata_vars, cert_stratum_col)
-  strata_formula <- if (length(strata_vars) == 0) {
+  terms <- rep(NA_character_, length(term_stages))
+  for (i in seq_along(term_stages)) {
+    stage_idx <- term_stages[i]
+    stage_spec <- design$stages[[stage_idx]]
+    vars <- if (!is_null(stage_spec$strata)) {
+      stage_spec$strata$vars
+    } else {
+      character(0)
+    }
+    if (identical(stage_idx, first_stage_idx)) {
+      vars <- c(vars, cert_var)
+    }
+    if (length(vars) == 0) {
+      next
+    }
+    if (length(vars) == 1) {
+      terms[i] <- vars
+    } else {
+      combined <- paste0(".", prefix, "strata_", stage_idx)
+      df[[combined]] <- interaction(df[vars], drop = TRUE)
+      terms[i] <- combined
+    }
+  }
+
+  # Trailing unstratified stages are dropped from the formula; interior
+  # gaps get a single-stratum placeholder to keep terms aligned with
+  # the ids formula.
+  last_stratified <- max(c(0L, which(!is.na(terms))))
+  terms <- terms[seq_len(last_stratified)]
+  for (i in seq_along(terms)) {
+    if (is.na(terms[i])) {
+      placeholder <- paste0(".", prefix, "strata_all_", term_stages[i])
+      df[[placeholder]] <- "all"
+      terms[i] <- placeholder
+    }
+  }
+
+  strata_formula <- if (length(terms) == 0) {
     NULL
   } else {
-    stats::as.formula(paste("~", paste(strata_vars, collapse = " + ")))
+    stats::as.formula(paste("~", paste(terms, collapse = " + ")))
   }
 
   list(
     df = df,
     formula = strata_formula,
-    vars = strata_vars
+    vars = terms
   )
 }
 
-#' @noRd
-survey_id_stage_indices <- function(design, stages_executed, df) {
-  id_stage_indices <- integer(0)
-  for (stage_idx in stages_executed) {
-    stage_spec <- design$stages[[stage_idx]]
-    method <- stage_spec$draw_spec$method
-    draw_col <- paste0(".draw_", stage_idx)
-
-    if (is_multi_hit_method(stage_spec$draw_spec) && draw_col %in% names(df)) {
-      id_stage_indices <- c(id_stage_indices, stage_idx)
-    } else if (!is_null(stage_spec$clusters)) {
-      id_stage_indices <- c(id_stage_indices, stage_idx)
-    }
-  }
-  id_stage_indices
-}
-
+#' Per-stage FPC terms.
+#'
+#' Builds exactly one fpc term per represented stage, positionally
+#' aligned with the ids formula. Two encodings are used, because
+#' survey::svydesign() requires every fpc term on the same scale
+#' (all population counts >= 1, or all sampling fractions <= 1):
+#'
+#' - Count scale (default): the .fpc_k population count for
+#'   equal-probability WOR stages, Inf (no correction) for WR/PMR
+#'   stages and for random-size Poisson stages after the first.
+#' - Fraction scale: used whenever a stage passes per-unit inclusion
+#'   probabilities (PPS WOR, balanced, custom WOR, first-stage
+#'   random-size Poisson) in a design with more than one represented
+#'   stage. Each WOR stage passes its per-unit stage sampling
+#'   fraction 1/.weight_k (equal to pi_k); WR/PMR and later Poisson
+#'   stages pass 0 (no correction).
+#'
+#' A single represented pi-scale stage keeps the legacy "pi" encoding
+#' (one .fpc_pi_k term).
 #' @noRd
 survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
-  has_pps_wor <- FALSE
-  has_rs_poisson_stage1 <- FALSE
-  fpc_vars <- character(0)
-
   fpc_stage_indices <- if (length(id_stage_indices) == 0) {
     stages_executed[1]
   } else {
@@ -394,30 +704,52 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
 
   first_executed <- stages_executed[1]
 
-  for (stage_idx in fpc_stage_indices) {
-    stage_spec <- design$stages[[stage_idx]]
-    method <- stage_spec$draw_spec$method
+  stage_kind <- vapply(
+    fpc_stage_indices,
+    function(stage_idx) {
+      kind <- survey_stage_kind(design$stages[[stage_idx]]$draw_spec)
+      # "unsupported" gets the same FPC encoding as rs_poisson (pi at
+      # stage 1, no correction later): survey_resolve_pps() errors on
+      # it before the FPC is used, or demotes it for the bootstrap.
+      if (kind %in% c("rs_poisson", "unsupported")) {
+        if (identical(stage_idx, first_executed)) {
+          paste0(kind, "_first")
+        } else {
+          paste0(kind, "_later")
+        }
+      } else {
+        kind
+      }
+    },
+    character(1)
+  )
+
+  has_pps_wor <- any(stage_kind == "pps_wor")
+  has_rs_poisson_stage1 <- any(stage_kind == "rs_poisson_first")
+
+  needs_pi <- has_pps_wor ||
+    has_rs_poisson_stage1 ||
+    any(stage_kind == "unsupported_first")
+  scale <- if (needs_pi && length(fpc_stage_indices) > 1L) {
+    "fraction"
+  } else if (needs_pi) {
+    "pi"
+  } else {
+    "count"
+  }
+
+  fpc_vars <- character(0)
+  for (i in seq_along(fpc_stage_indices)) {
+    stage_idx <- fpc_stage_indices[i]
+    kind <- stage_kind[i]
     weight_col <- paste0(".weight_", stage_idx)
     fpc_col <- paste0(".fpc_", stage_idx)
 
-    draw_spec <- stage_spec$draw_spec
-    if (
-      method %in%
-        c(wr_methods, pmr_methods) ||
-        identical(draw_spec$method_type, "wr")
-    ) {
-      inf_col <- paste0(".fpc_inf_", stage_idx)
-      df[[inf_col]] <- Inf
-      fpc_vars <- c(fpc_vars, inf_col)
-      next
-    }
-
-    if (method %in% rs_poisson_methods) {
-      if (identical(stage_idx, first_executed)) {
-        has_rs_poisson_stage1 <- TRUE
-        fpc_pi_col <- paste0(".fpc_pi_", stage_idx)
-        df[[fpc_pi_col]] <- 1 / df[[weight_col]]
-        fpc_vars <- c(fpc_vars, fpc_pi_col)
+    if (kind %in% c("wr", "rs_poisson_later", "unsupported_later")) {
+      if (scale == "fraction") {
+        f0_col <- paste0(".fpc_f0_", stage_idx)
+        df[[f0_col]] <- 0
+        fpc_vars <- c(fpc_vars, f0_col)
       } else {
         inf_col <- paste0(".fpc_inf_", stage_idx)
         df[[inf_col]] <- Inf
@@ -426,22 +758,27 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
       next
     }
 
-    if (!(fpc_col %in% names(df))) {
-      next
-    }
-
-    if (
-      method %in%
-        pps_wor_methods ||
-        method == "balanced" ||
-        identical(draw_spec$method_type, "wor")
-    ) {
-      has_pps_wor <- TRUE
+    if (kind %in% c("pps_wor", "rs_poisson_first", "unsupported_first")) {
       fpc_pi_col <- paste0(".fpc_pi_", stage_idx)
       df[[fpc_pi_col]] <- 1 / df[[weight_col]]
       fpc_vars <- c(fpc_vars, fpc_pi_col)
-    } else {
+      next
+    }
+
+    # Equal-probability WOR.
+    if (scale == "fraction") {
+      f_col <- paste0(".fpc_f_", stage_idx)
+      df[[f_col]] <- 1 / df[[weight_col]]
+      fpc_vars <- c(fpc_vars, f_col)
+    } else if (fpc_col %in% names(df)) {
       fpc_vars <- c(fpc_vars, fpc_col)
+    } else {
+      # No population count available for this stage. Fall back to no
+      # correction rather than dropping the term, which would misalign
+      # the remaining fpc terms with the ids formula.
+      inf_col <- paste0(".fpc_inf_", stage_idx)
+      df[[inf_col]] <- Inf
+      fpc_vars <- c(fpc_vars, inf_col)
     }
   }
 
@@ -455,6 +792,7 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
     df = df,
     formula = fpc_formula,
     fpc_vars = fpc_vars,
+    scale = scale,
     has_pps_wor = has_pps_wor,
     has_rs_poisson_stage1 = has_rs_poisson_stage1
   )
@@ -469,8 +807,15 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
 #' @noRd
 survey_demote_rs_poisson_stage1 <- function(df, fpc, first_idx) {
   pi_col <- paste0(".fpc_pi_", first_idx)
-  inf_col <- paste0(".fpc_inf_", first_idx)
-  df[[inf_col]] <- Inf
+  # On the fraction scale, "no correction" is a sampling fraction of 0;
+  # on the count/pi scales it is an infinite population.
+  if (identical(fpc$scale, "fraction")) {
+    inf_col <- paste0(".fpc_f0_", first_idx)
+    df[[inf_col]] <- 0
+  } else {
+    inf_col <- paste0(".fpc_inf_", first_idx)
+    df[[inf_col]] <- Inf
+  }
   df[[pi_col]] <- NULL
   fpc$fpc_vars <- ifelse(fpc$fpc_vars == pi_col, inf_col, fpc$fpc_vars)
   fpc$formula <- if (length(fpc$fpc_vars) == 0) {
@@ -504,6 +849,40 @@ survey_resolve_pps <- function(
 ) {
   if (!is_null(user_pps)) {
     return(list(pps = user_pps, df = df, fpc = fpc))
+  }
+
+  # Stages whose method declares variance_family = "unsupported": no
+  # linearization treatment is valid, whatever the selection metadata
+  # looks like. as_svydesign() refuses; the bootstrap escape demotes a
+  # stage-1 pi FPC (later-stage unsupported FPCs are already Inf/0).
+  unsupported_idx <- stages_executed[vapply(
+    stages_executed,
+    function(i) {
+      identical(survey_stage_kind(design$stages[[i]]$draw_spec), "unsupported")
+    },
+    logical(1)
+  )]
+  if (length(unsupported_idx) > 0) {
+    if (!relax_pps_for_bootstrap) {
+      unsupported_methods <- vapply(
+        unsupported_idx,
+        function(i) design$stages[[i]]$draw_spec$method,
+        character(1)
+      )
+      abort_samplyr(
+        c(
+          "Cannot export method{?s} {.val {unsupported_methods}} via {.fn as_svydesign}.",
+          "i" = "No linearization variance estimator is available for this method and its declared constraints.",
+          "i" = "Use {.code as_svrepdesign(type = \"subbootstrap\")} for a bootstrap approximation."
+        ),
+        class = "samplyr_error_custom_random_wor_export"
+      )
+    }
+    if (stages_executed[1] %in% unsupported_idx) {
+      relaxed <- survey_demote_rs_poisson_stage1(df, fpc, stages_executed[1])
+      df <- relaxed$df
+      fpc <- relaxed$fpc
+    }
   }
 
   if (!fpc$has_rs_poisson_stage1) {
@@ -550,6 +929,36 @@ survey_resolve_pps <- function(
     }
   }
 
+  # Custom random-size WOR methods (registered with fixed_size = FALSE)
+  # reach this point classified as rs_poisson, but
+  # survey::poisson_sampling() is only valid when selections are
+  # independent across units. Built-in Poisson methods qualify, and so
+  # do custom methods whose author declared variance_family =
+  # "poisson" (the declaration asserts independence). Undeclared
+  # custom methods still error.
+  is_declared_poisson <- identical(
+    stage_spec$draw_spec$method_variance,
+    "poisson"
+  )
+  if (
+    !stage_spec$draw_spec$method %in% rs_poisson_methods &&
+      !is_declared_poisson
+  ) {
+    if (relax_pps_for_bootstrap) {
+      relaxed <- survey_demote_rs_poisson_stage1(df, fpc, first_idx)
+      return(list(pps = FALSE, df = relaxed$df, fpc = relaxed$fpc))
+    }
+    abort_samplyr(
+      c(
+        "Cannot export the custom random-size method {.val {stage_spec$draw_spec$method}} via {.fn as_svydesign}.",
+        "i" = "The method is registered with {.code fixed_size = FALSE}, so the sample size is random. {.pkg survey}'s Poisson variance estimator assumes selections are independent across units, which samplyr cannot verify for a custom method.",
+        "i" = "If selections are independent (Poisson-type), pass the inclusion probabilities explicitly: {.code as_svydesign(x, pps = survey::poisson_sampling(1 / x$.weight))}.",
+        "i" = "Otherwise use {.code as_svrepdesign(type = \"subbootstrap\")} for a bootstrap approximation."
+      ),
+      class = "samplyr_error_custom_random_wor_export"
+    )
+  }
+
   pi_vec <- df[[paste0(".fpc_pi_", first_idx)]]
   list(pps = survey::poisson_sampling(pi_vec), df = df, fpc = fpc)
 }
@@ -558,6 +967,7 @@ survey_resolve_pps <- function(
 #' @export
 as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
   check_single_replicate(x, "as_svydesign")
+  check_sample_unmodified(x, "as_svydesign")
   rlang::check_installed(
     "survey",
     reason = "to convert a tbl_sample to a survey design object."
@@ -590,15 +1000,33 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
 
   if (is_twophase) {
     phase1 <- prev_phase$sample
+    # The phase-2 sample itself is clean (checked above), but the
+    # phase-1 sample it was drawn from may have been filtered or
+    # otherwise modified before phase-2 execution. twophase() then
+    # treats the modified rows as the complete phase-1 sample.
+    phase1_status <- sample_realization_status(phase1)
+    phase1_mods <- phase1_status$mods
+    if (!phase1_status$ok) {
+      cli_warn(c(
+        "The phase-1 sample was modified after its execution
+         ({.field {phase1_mods}} changed).",
+        "i" = "{.fn survey::twophase} treats the current phase-1 rows
+               as the complete phase-1 sample.",
+        "i" = "If rows were removed to screen eligibility, estimates
+               describe the screened population. For domain analysis,
+               subset the exported design instead."
+      ))
+    }
     design1 <- prev_phase$design %||% get_design(phase1)
     stages1 <- prev_phase$stages %||% get_stages_executed(phase1)
     df1 <- as.data.frame(phase1)
     df2 <- df
     design2 <- design
 
-    id_vars1 <- survey_id_vars(design1, stages1, df1)
-    id_vars2 <- survey_id_vars(design2, stages_executed, df2)
-    key_vars <- intersect(id_vars1, id_vars2)
+    key_vars <- intersect(
+      survey_key_vars(design1, stages1, df1),
+      survey_key_vars(design2, stages_executed, df2)
+    )
 
     if (length(key_vars) == 0) {
       cli_abort(
@@ -619,20 +1047,38 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
       )
     }
 
-    ids_formula1 <- survey_ids_formula(id_vars1)
+    # Between-phase subsampling variance is handled by
+    # survey::twophase() itself, so unclustered element stages are not
+    # synthesized into the per-phase ids formulas.
+    id_info1 <- survey_id_info(
+      design1, stages1, df1,
+      synthesize_unclustered = FALSE, prefix = "p1_"
+    )
+    df1 <- id_info1$df
+    id_info2 <- survey_id_info(
+      design2, stages_executed, df2,
+      synthesize_unclustered = FALSE, prefix = "p2_"
+    )
+    df2 <- id_info2$df
+    id_vars2 <- id_info2$id_vars
+
+    ids_formula1 <- survey_ids_formula(id_info1$id_vars)
     ids_formula2 <- survey_ids_formula(id_vars2)
 
-    strata1 <- survey_strata_info(df1, design1, stages1)
+    strata1 <- survey_strata_info(
+      df1, design1, stages1,
+      mode = "first_stage", prefix = "p1_"
+    )
     df1 <- strata1$df
-    strata2 <- survey_strata_info(df2, design2, stages_executed)
+    strata2 <- survey_strata_info(
+      df2, design2, stages_executed,
+      mode = "first_stage", prefix = "p2_"
+    )
     df2 <- strata2$df
 
-    id_stage1 <- survey_id_stage_indices(design1, stages1, df1)
-    id_stage2 <- survey_id_stage_indices(design2, stages_executed, df2)
-
-    fpc1 <- survey_fpc_info(df1, design1, stages1, id_stage1)
+    fpc1 <- survey_fpc_info(df1, design1, stages1, id_info1$stage_indices)
     df1 <- fpc1$df
-    fpc2 <- survey_fpc_info(df2, design2, stages_executed, id_stage2)
+    fpc2 <- survey_fpc_info(df2, design2, stages_executed, id_info2$stage_indices)
     df2 <- fpc2$df
 
     if (fpc1$has_pps_wor) {
@@ -781,14 +1227,34 @@ build_singlephase_svydesign <- function(
   stages_executed <- get_stages_executed(x)
   df <- as.data.frame(x)
 
-  id_vars <- survey_id_vars(design, stages_executed, df)
-  ids_formula <- survey_ids_formula(id_vars)
+  # A user-supplied pps object (ppsmat, poisson_sampling, HR) is
+  # single-stage in survey: multistage ids are rejected outright.
+  # Export the first-stage design in that case, as documented for
+  # exact PPS variance estimation.
+  if (!is_null(dots$pps) && length(stages_executed) > 1L) {
+    cli_warn(c(
+      "Exact PPS variance ({.arg pps}) is single-stage in {.pkg survey}.",
+      "i" = "Exporting the stage-1 design only; later-stage sampling
+             variance is not represented.",
+      "i" = "Omit {.arg pps} for exact multi-stage linearization with
+             Brewer's approximation at the PPS stage."
+    ))
+    stages_executed <- stages_executed[1]
+  }
 
-  strata <- survey_strata_info(df, design, stages_executed)
+  id_info <- survey_id_info(design, stages_executed, df)
+  df <- id_info$df
+  ids_formula <- survey_ids_formula(id_info$id_vars)
+
+  strata <- survey_strata_info(
+    df,
+    design,
+    stages_executed,
+    id_stage_indices = id_info$stage_indices
+  )
   df <- strata$df
 
-  id_stage_indices <- survey_id_stage_indices(design, stages_executed, df)
-  fpc <- survey_fpc_info(df, design, stages_executed, id_stage_indices)
+  fpc <- survey_fpc_info(df, design, stages_executed, id_info$stage_indices)
   df <- fpc$df
 
   resolved <- survey_resolve_pps(
@@ -878,7 +1344,19 @@ build_singlephase_svydesign <- function(
 #' developed for fixed-size PPS sampling (Antal and Tille 2011); their
 #' behaviour on random-size Poisson designs, especially at multiple
 #' stages, has weaker theoretical backing and should be treated as an
-#' approximation.
+#' approximation. In particular, the resampling is fixed-size, so it
+#' does not capture the variance contribution of the random sample
+#' size and can materially understate the total variance of a
+#' Poisson-type design. When the exact Poisson linearization is
+#' available (single-stage designs), prefer [as_svydesign()].
+#'
+#' Bounded cube, LPM2, and SCPS designs likewise have no native,
+#' design-specific replicate variance estimator in `samplyr`.
+#' `as_svrepdesign(type = "subbootstrap")` and `"mrbbootstrap"` export a
+#' generic PPS bootstrap approximation for them; they do not reproduce the
+#' original cube constraints or spatial selection algorithm within each
+#' replicate. Treat the resulting variance estimates as approximations, not
+#' as exact variance estimators for those designs.
 #'
 #' @examplesIf requireNamespace("survey", quietly = TRUE)
 #' sample <- sampling_design() |>
@@ -914,6 +1392,7 @@ as_svrepdesign.tbl_sample <- function(
   )
 ) {
   check_single_replicate(x, "as_svrepdesign")
+  check_sample_unmodified(x, "as_svrepdesign")
   rlang::check_installed(
     "survey",
     reason = "to convert a tbl_sample to a replicate-weight survey design."
@@ -927,11 +1406,18 @@ as_svrepdesign.tbl_sample <- function(
 
   type <- match.arg(type)
 
-  methods_used <- survey_stage_methods(x)
-  unequal_used <- unique(methods_used[
-    methods_used %in%
-      c(pps_methods, "balanced", rs_poisson_methods)
-  ])
+  design <- get_design(x)
+  unequal_used <- unique(unlist(lapply(
+    get_stages_executed(x),
+    function(stage_idx) {
+      draw_spec <- design$stages[[stage_idx]]$draw_spec
+      kind <- survey_stage_kind(draw_spec)
+      unequal <- kind %in%
+        c("pps_wor", "rs_poisson", "unsupported") ||
+        (kind == "wr" && !is_null(draw_spec$mos))
+      if (unequal) draw_spec$method else NULL
+    }
+  )))
   pps_safe_types <- c("subbootstrap", "mrbbootstrap")
   if (length(unequal_used) > 0 && !type %in% pps_safe_types) {
     cli_warn(c(

@@ -4,25 +4,28 @@
 \alias{samplyr-datasets}
 \title{Sampling Frames}
 \description{
-The samplyr package includes synthetic sampling frames for demonstrating
-survey sampling designs. These frames use real administrative divisions
-and population data from African countries. They are designed to illustrate
-common survey sampling scenarios.
+The samplyr package includes derived and synthetic sampling frames for
+demonstrating survey sampling designs. The frames represent three common
+survey settings: household budget and living-standards surveys, demographic,
+health, and child-indicator household surveys, and establishment surveys.
 }
 \section{Datasets}{
 
 \itemize{
-\item \link{bfa_eas}: Household survey EA frame (Burkina Faso, 44,570 EAs)
-\item \link{zwe_eas}: Two-stage cluster survey EA frame (Zimbabwe, 107,250 EAs)
-\item \link{ken_enterprises}: Enterprise survey frame (Kenya, 17,004 establishments)
+\item \link{bfa_eas}: Household budget and living-standards EA frame
+(Burkina Faso, 44,570 EAs)
+\item \link{zwe_eas}: Demographic, health, and child-indicator EA frame
+(Zimbabwe, 107,250 EAs)
+\item \link{ken_enterprises}: Establishment survey frame (Kenya, 17,004 establishments)
 }
 }
 
 \section{Auxiliary Data}{
 
 \itemize{
-\item \link{bfa_eas_variance}: Stratum variances for Neyman allocation
-\item \link{bfa_eas_cost}: Stratum costs for optimal allocation
+\item \link{bfa_eas_variance}: Illustrative prior consumption variances for
+Neyman allocation
+\item \link{bfa_eas_cost}: Relative fieldwork costs for optimal allocation
 }
 }
 

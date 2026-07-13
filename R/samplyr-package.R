@@ -14,8 +14,9 @@
 #' @importFrom dplyr left_join inner_join semi_join across all_of
 #' @importFrom dplyr n summarise row_number
 #' @importFrom dplyr bind_rows distinct
-#' @importFrom dplyr dplyr_reconstruct
-#' @importFrom vctrs vec_group_loc
+#' @importFrom dplyr dplyr_reconstruct dplyr_row_slice dplyr_col_modify
+#' @importFrom dplyr ungroup
+#' @importFrom vctrs vec_group_loc vec_as_location vec_restore
 #' @importFrom withr with_seed
 #' @importFrom pillar tbl_sum
 ## usethis namespace: end

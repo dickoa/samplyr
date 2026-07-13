@@ -102,6 +102,7 @@ design_effect.tbl_sample <- function(
   method = "kish"
 ) {
   check_single_replicate(x, "design_effect")
+  check_sample_unmodified(x, "design_effect")
   w <- x[[".weight"]]
   if (is.null(w)) {
     cli_abort("tbl_sample has no {.field .weight} column.")
@@ -135,6 +136,7 @@ effective_n.tbl_sample <- function(
   method = "kish"
 ) {
   check_single_replicate(x, "effective_n")
+  check_sample_unmodified(x, "effective_n")
   w <- x[[".weight"]]
   if (is.null(w)) {
     cli_abort("tbl_sample has no {.field .weight} column.")
@@ -236,17 +238,110 @@ resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
 
 #' Coerce svyplan objects for draw()
 #'
-#' For `n_alloc()` results (type = "alloc"), extracts per-stratum allocations
-#' as a named integer vector. For other svyplan objects (`n_prop`, `n_mean`,
-#' `n_multi`, `power_*`, `n_cluster`), extracts the scalar total via
-#' `as.integer()`.
+#' Uses svyplan's `as.data.frame()` contract for tabular plans and the
+#' design context for multistage ones. A stage is "stage-aware" when it
+#' is clustered or is not the first stage; there, cluster plans hand over
+#' the value for that stage (PSU count, then per-cluster take) instead
+#' of a grand total.
+#'
+#' - `n_alloc()` results: named per-stratum vector. For stratified
+#'   two-stage plans (cluster mode), stage 1 gets `n_psu_int` and
+#'   stage 2 gets `psu_size_int`, both named by stratum (the jointly
+#'   integerized field design, svyplan >= 0.8.8).
+#' - `n_multi()` results with domains: data frame keyed on the domain
+#'   columns (requires a matching `stratify_by()`).
+#' - `n_cluster()` results: `as.integer()` returns the integerized
+#'   field design as a stage vector; stage-aware contexts take the
+#'   value for their stage, a flat single-stage design takes the
+#'   product (operational element total). Per-domain plans expose only
+#'   continuous stages, which are ceiled.
+#' - Other svyplan objects: scalar total via `as.integer()`.
 #' @noRd
-coerce_svyplan_n <- function(n) {
+coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
+  stage_aware <- clustered || stage_index > 1L
+
   if (inherits(n, "svyplan_n") && identical(n$type, "alloc")) {
-    detail <- n$detail
+    detail <- as.data.frame(n)
+    if ("n_psu_int" %in% names(detail)) {
+      if (stage_index == 1L && !clustered) {
+        abort_samplyr(
+          c(
+            "This svyplan allocation plans PSUs, then elements within them.",
+            "i" = "Declare the cluster structure with {.fn cluster_by} at stage 1 (on an EA-level frame, cluster by the EA id)."
+          ),
+          class = "samplyr_error_svyplan_clustered_plan"
+        )
+      }
+      if (stage_index == 1L) {
+        return(stats::setNames(detail$n_psu_int, detail$stratum))
+      }
+      if (stage_index == 2L) {
+        return(stats::setNames(
+          as.integer(detail$psu_size_int),
+          detail$stratum
+        ))
+      }
+      abort_samplyr(
+        c(
+          "This svyplan allocation covers 2 stages; the design is at stage {stage_index}.",
+          "i" = "Pass an explicit {.arg n} for stages beyond the plan."
+        ),
+        class = "samplyr_error_svyplan_stage"
+      )
+    }
     return(stats::setNames(detail$n_int, detail$stratum))
   }
-  if (inherits(n, c("svyplan_n", "svyplan_power", "svyplan_cluster"))) {
+
+  if (inherits(n, "svyplan_n") && identical(n$type, "multi") &&
+      !is_null(n$domains)) {
+    tab <- as.data.frame(n)
+    out <- tab[, setdiff(names(tab), grep("^\\.", names(tab), value = TRUE)),
+               drop = FALSE]
+    out$n <- as.integer(ceiling(tab$.n))
+    return(out)
+  }
+
+  if (inherits(n, "svyplan_cluster")) {
+    stage_cols <- c("n_psu", "psu_size", "ssu_size")
+    if (!is_null(n$domains)) {
+      dom <- as.data.frame(n)
+      if (!stage_aware) {
+        abort_samplyr(
+          c(
+            "This svyplan plan allocates per domain and per stage.",
+            "i" = "Use it in a design with {.fn stratify_by} on the domain variable{?s} and {.fn cluster_by} at stage 1."
+          ),
+          class = "samplyr_error_svyplan_domains"
+        )
+      }
+      if (stage_index > n$stages) {
+        abort_samplyr(
+          "This svyplan plan covers {n$stages} stages; the design is at stage {stage_index}.",
+          class = "samplyr_error_svyplan_stage"
+        )
+      }
+      keep <- setdiff(
+        names(dom),
+        c(stage_cols, grep("^\\.", names(dom), value = TRUE))
+      )
+      out <- dom[, keep, drop = FALSE]
+      out$n <- as.integer(ceiling(dom[[stage_cols[stage_index]]]))
+      return(out)
+    }
+    stages <- as.integer(n)
+    if (stage_aware) {
+      if (stage_index > length(stages)) {
+        abort_samplyr(
+          "This svyplan plan covers {length(stages)} stages; the design is at stage {stage_index}.",
+          class = "samplyr_error_svyplan_stage"
+        )
+      }
+      return(stages[[stage_index]])
+    }
+    return(as.integer(prod(stages)))
+  }
+
+  if (inherits(n, c("svyplan_n", "svyplan_power"))) {
     return(as.integer(n))
   }
   n

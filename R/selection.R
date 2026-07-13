@@ -11,6 +11,11 @@ sample_clusters <- function(frame, strata_spec, cluster_spec, draw_spec) {
   if (!is_null(strata_spec)) {
     invariant_vars <- c(invariant_vars, strata_spec$vars)
   }
+  invariant_vars <- c(
+    invariant_vars,
+    draw_spec$bounds %||% character(0),
+    draw_spec$spread %||% character(0)
+  )
   invariant_vars <- intersect(invariant_vars, names(frame))
 
   if (length(invariant_vars) > 0) {
@@ -35,7 +40,7 @@ sample_clusters <- function(frame, strata_spec, cluster_spec, draw_spec) {
   first_rows <- first_row_indices_by_group(cluster_indices)
   cluster_frame <- frame[first_rows, , drop = FALSE]
 
-  if (identical(draw_spec$method, "balanced") && !is_null(draw_spec$aux)) {
+  if (is_balanced_method(draw_spec) && !is_null(draw_spec$aux)) {
     for (v in draw_spec$aux) {
       cluster_frame[[v]] <- vapply(cluster_indices, function(idx) {
         sum(frame[[v]][idx])
@@ -146,7 +151,7 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
 
   stratum_info <- calculate_stratum_sizes(stratum_info, strata_spec, draw_spec)
 
-  if (identical(draw_spec$method, "balanced")) {
+  if (identical(draw_spec$method, "cube")) {
     return(draw_balanced_stratified(frame, groups, stratum_info, strata_vars, draw_spec))
   }
 
@@ -273,7 +278,21 @@ draw_balanced_stratified <- function(frame, groups, stratum_info, strata_vars, d
   strata_sorted <- strata_int[row_order]
   aux_sorted <- if (!is_null(aux_mat)) aux_mat[row_order, , drop = FALSE] else NULL
 
-  res <- sondage::balanced_wor(pik_sorted, aux = aux_sorted, strata = strata_sorted)
+  if (!is_null(draw_spec$bounds)) {
+    bounds <- compile_count_bounds(
+      frame[row_order, , drop = FALSE],
+      pik_sorted,
+      draw_spec$bounds,
+      strata = strata_sorted
+    )
+    res <- draw_cube_with_bounds(pik_sorted, aux_sorted, bounds)
+  } else {
+    res <- sondage::balanced_wor(
+      pik_sorted,
+      aux = aux_sorted,
+      strata = strata_sorted
+    )
+  }
   selected_sorted <- res$sample
 
   original_idx <- row_order[selected_sorted]
@@ -282,6 +301,85 @@ draw_balanced_stratified <- function(frame, groups, stratum_info, strata_vars, d
   result$.fpc <- fpc_vec[original_idx]
   result$.sample_id <- seq_len(nrow(result))
   result
+}
+
+#' Compile bound() markers into sondage linear count constraints
+#' @noRd
+compile_count_bounds <- function(data, pik, bound_vars, strata = NULL) {
+  blocks <- list()
+  labels <- character(0)
+
+  for (var in bound_vars) {
+    values <- data[[var]]
+    levels_seen <- unique(values)
+    block <- vapply(
+      levels_seen,
+      function(level) as.numeric(values == level),
+      numeric(length(values))
+    )
+    if (is_null(dim(block))) {
+      block <- matrix(block, ncol = 1L)
+    }
+    blocks[[length(blocks) + 1L]] <- block
+    labels <- c(labels, paste0(var, "=", as.character(levels_seen)))
+  }
+
+  B <- do.call(cbind, blocks)
+  expected <- as.numeric(crossprod(B, pik))
+  tol <- 1e-10 * (1 + abs(expected))
+  lower <- floor(expected + tol)
+  upper <- ceiling(expected - tol)
+
+  if (!is_null(strata)) {
+    strata_levels <- unique(strata)
+    strata_B <- vapply(
+      strata_levels,
+      function(level) as.numeric(strata == level),
+      numeric(length(strata))
+    )
+    if (is_null(dim(strata_B))) {
+      strata_B <- matrix(strata_B, ncol = 1L)
+    }
+    strata_n <- round(as.numeric(crossprod(strata_B, pik)))
+    B <- cbind(B, strata_B)
+    lower <- c(lower, strata_n)
+    upper <- c(upper, strata_n)
+    labels <- c(labels, paste0(".stratum=", strata_levels))
+  }
+
+  colnames(B) <- labels
+  list(B = B, lower = lower, upper = upper)
+}
+
+#' Draw a cube sample while treating bound() constraints as hard requirements
+#' @noRd
+draw_cube_with_bounds <- function(pik, aux, bounds) {
+  res <- withCallingHandlers(
+    sondage::balanced_wor(pik, aux = aux, bounds = bounds, method = "cube"),
+    warning = function(w) {
+      if (grepl("bound.*relax|relax.*bound", conditionMessage(w), ignore.case = TRUE)) {
+        abort_samplyr(
+          c(
+            "Controlled count bounds could not all be satisfied.",
+            "i" = conditionMessage(w),
+            "i" = "Reduce or widen the {.fn bound} constraints."
+          ),
+          class = "samplyr_error_relaxed_bounds",
+          call = NULL
+        )
+      }
+    }
+  )
+  realised <- colSums(bounds$B[res$sample, , drop = FALSE])
+  violated <- realised < bounds$lower | realised > bounds$upper
+  if (any(violated)) {
+    abort_samplyr(
+      "Controlled count bounds were violated during cube landing.",
+      class = "samplyr_error_relaxed_bounds",
+      call = NULL
+    )
+  }
+  res
 }
 
 #' @noRd
@@ -411,37 +509,43 @@ sample_unstratified <- function(frame, draw_spec) {
   result <- draw_sample(frame, n, draw_spec)
   result$.weight <- 1 / result$.pik
   result$.pik <- NULL
-  result$.fpc <- if (is_multi_hit_method(draw_spec)) Inf else N
+  result$.fpc <- if (is_multi_hit_method(draw_spec)) {
+    rep.int(Inf, nrow(result))
+  } else {
+    rep.int(N, nrow(result))
+  }
   result$.sample_id <- seq_len(nrow(result))
   result
 }
 
-#' Handle zero-selection fallback for random-size methods
+#' Handle zero-selection outcomes for random-size methods
 #'
-#' When a random-size method produces zero selections, either abort or
-#' fall back to SRS of 1 unit.  The fallback weight is 1/(1/N) = N,
-#' reflecting the actual SRS(1, N) selection mechanism — **not** the
-#' intended Bernoulli/Poisson inclusion probability.
+#' When a random-size method produces zero selections, either abort
+#' (the default) or accept the empty realization. An empty sample is a
+#' valid outcome of a Bernoulli/Poisson design: it contributes zero to
+#' Horvitz-Thompson totals, which is what keeps the estimator unbiased
+#' over repeated realizations. (An earlier fallback drew one unit by
+#' SRS with weight N; those weights were conditional on the branch
+#' reached, not inverse inclusion probabilities of the combined design,
+#' and biased HT totals upward by N * (1 - p)^N.)
 #' @noRd
-handle_empty_selection <- function(method_label, on_empty, N) {
+handle_empty_selection <- function(method_label, on_empty) {
   header <- "{method_label} sampling produced zero selections."
-  suggestions <- c(
-    "i" = "Increase {.arg frac} (or {.arg n}), use a fixed-size method, or set {.code on_empty = \"warn\"} to fall back to SRS of 1 unit."
-  )
   switch(on_empty,
-    error = cli_abort(c(header, suggestions)),
+    error = cli_abort(c(
+      header,
+      "i" = "Increase {.arg frac} (or {.arg n}), or use a fixed-size method.",
+      "i" = "Set {.code on_empty = \"warn\"} or {.code \"silent\"} to accept an empty sample (a valid realization of a random-size design; estimates from repeated executions remain unbiased)."
+    ), call = NULL),
     warn = cli_warn(c(
       header,
-      "!" = "Falling back to SRS of 1 unit (weight = {N}).",
-      "i" = "The fallback weight reflects SRS, not the intended {method_label} design.",
+      "!" = "Returning an empty sample.",
+      "i" = "This is a valid realization of a random-size design; it contributes zero to Horvitz-Thompson totals.",
       "i" = "Set {.code on_empty = \"error\"} to catch this, or {.code on_empty = \"silent\"} to suppress."
     )),
     silent = NULL
   )
-  list(
-    idx = sondage::equal_prob_wor(N, 1L)$sample,
-    pik = rep(1 / N, N)
-  )
+  invisible(NULL)
 }
 
 #' @noRd
@@ -480,15 +584,41 @@ draw_sample <- function(data, n, draw_spec) {
   pik <- NULL
 
   if (is_custom) {
-    mos_vals <- data[[mos]]
     sondage_name <- sondage_method_name(method)
     prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
     if (draw_spec$method_type == "wr") {
+      mos_vals <- data[[mos]]
       pik <- sondage::expected_hits(mos_vals, n)
       idx <- sondage::unequal_prob_wr(pik, method = sondage_name)$sample
+    } else if (draw_spec$method_type == "balanced") {
+      pik <- if (!is_null(mos)) {
+        sondage::inclusion_prob(data[[mos]], n)
+      } else {
+        rep(n / N, N)
+      }
+      aux_mat <- if (!is_null(draw_spec$aux)) {
+        as.matrix(data[, draw_spec$aux, drop = FALSE])
+      } else {
+        NULL
+      }
+      spread_mat <- if (!is_null(draw_spec$spread)) {
+        as.matrix(data[, draw_spec$spread, drop = FALSE])
+      } else {
+        NULL
+      }
+      idx <- sondage::balanced_wor(
+        pik,
+        aux = aux_mat,
+        spread = spread_mat,
+        method = sondage_name
+      )$sample
     } else {
+      mos_vals <- data[[mos]]
       pik <- sondage::inclusion_prob(mos_vals, n)
       idx <- sondage::unequal_prob_wor(pik, method = sondage_name, prn = prn_vals)$sample
+      if (length(idx) == 0) {
+        handle_empty_selection(method, draw_spec$on_empty %||% "error")
+      }
     }
   } else switch(method,
     srswor = {
@@ -509,10 +639,7 @@ draw_sample <- function(data, n, draw_spec) {
       prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
       idx <- sondage::equal_prob_wor(N, frac * N, method = "bernoulli", prn = prn_vals)$sample
       if (length(idx) == 0) {
-        on_empty <- draw_spec$on_empty %||% "error"
-        fallback <- handle_empty_selection("Bernoulli", on_empty, N)
-        idx <- fallback$idx
-        pik <- fallback$pik
+        handle_empty_selection("Bernoulli", draw_spec$on_empty %||% "error")
       }
     },
     pps_poisson = {
@@ -523,15 +650,13 @@ draw_sample <- function(data, n, draw_spec) {
       prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
       idx <- sondage::unequal_prob_wor(pik, method = "poisson", prn = prn_vals)$sample
       if (length(idx) == 0) {
-        on_empty <- draw_spec$on_empty %||% "error"
-        fallback <- handle_empty_selection("PPS Poisson", on_empty, N)
-        idx <- fallback$idx
-        pik <- fallback$pik
+        handle_empty_selection("PPS Poisson", draw_spec$on_empty %||% "error")
       }
     },
     pps_brewer = ,
     pps_systematic = ,
     pps_cps = ,
+    pps_sampford = ,
     pps_sps = ,
     pps_pareto = {
       mos_vals <- data[[mos]]
@@ -549,7 +674,21 @@ draw_sample <- function(data, n, draw_spec) {
       pik <- sondage::expected_hits(mos_vals, n)
       idx <- sondage::unequal_prob_wr(pik, method = sondage_method_name(method))$sample
     },
-    balanced = {
+    lpm2 = ,
+    scps = {
+      pik <- if (!is_null(mos)) {
+        sondage::inclusion_prob(data[[mos]], n)
+      } else {
+        rep(n / N, N)
+      }
+      spread_mat <- as.matrix(data[, draw_spec$spread, drop = FALSE])
+      idx <- sondage::balanced_wor(
+        pik,
+        spread = spread_mat,
+        method = method
+      )$sample
+    },
+    cube = {
       pik <- if (!is_null(mos)) {
         sondage::inclusion_prob(data[[mos]], n)
       } else {
@@ -560,7 +699,12 @@ draw_sample <- function(data, n, draw_spec) {
       } else {
         NULL
       }
-      idx <- sondage::balanced_wor(pik, aux = aux_mat)$sample
+      if (!is_null(draw_spec$bounds)) {
+        bounds <- compile_count_bounds(data, pik, draw_spec$bounds)
+        idx <- draw_cube_with_bounds(pik, aux_mat, bounds)$sample
+      } else {
+        idx <- sondage::balanced_wor(pik, aux = aux_mat)$sample
+      }
     },
     cli_abort("Unknown sampling method: {.val {method}}")
   )
@@ -575,7 +719,7 @@ draw_sample <- function(data, n, draw_spec) {
   }
 
   if (method %in% pps_methods || is_custom) {
-    result$.certainty <- FALSE
+    result$.certainty <- rep.int(FALSE, nrow(result))
   }
 
   result
@@ -636,7 +780,7 @@ draw_sample_pps_certainty <- function(data, n, draw_spec) {
       mos_vals = remaining_mos,
       draw_spec = draw_spec
     )
-    prob_result$.certainty <- FALSE
+    prob_result$.certainty <- rep.int(FALSE, nrow(prob_result))
   }
 
   if (is_null(certainty_result) && is_null(prob_result)) {
@@ -674,10 +818,7 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
       pik <- sondage::inclusion_prob(mos_vals, n)
       idx <- sondage::unequal_prob_wor(pik, method = sondage_name, prn = prn_vals)$sample
       if (length(idx) == 0) {
-        on_empty <- draw_spec$on_empty %||% "error"
-        fallback <- handle_empty_selection(method, on_empty, N)
-        idx <- fallback$idx
-        pik <- fallback$pik
+        handle_empty_selection(method, draw_spec$on_empty %||% "error")
       }
     }
   } else switch(method,
@@ -688,15 +829,13 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
       prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
       idx <- sondage::unequal_prob_wor(pik, method = "poisson", prn = prn_vals)$sample
       if (length(idx) == 0) {
-        on_empty <- draw_spec$on_empty %||% "error"
-        fallback <- handle_empty_selection("PPS Poisson", on_empty, N)
-        idx <- fallback$idx
-        pik <- fallback$pik
+        handle_empty_selection("PPS Poisson", draw_spec$on_empty %||% "error")
       }
     },
     pps_brewer = ,
     pps_systematic = ,
     pps_cps = ,
+    pps_sampford = ,
     pps_sps = ,
     pps_pareto = {
       pik <- sondage::inclusion_prob(mos_vals, n)

@@ -49,7 +49,7 @@
 #' zwe_frame <- zwe_eas |>
 #'   dplyr::mutate(district_hh = sum(households), .by = district)
 #'
-#' sampling_design(title = "Zimbabwe DHS") |>
+#' sampling_design(title = "Zimbabwe Household Health Survey") |>
 #'   add_stage(label = "Districts") |>
 #'     cluster_by(district) |>
 #'     draw(n = 20, method = "pps_brewer", mos = district_hh) |>

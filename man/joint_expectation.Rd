@@ -69,12 +69,13 @@ require approximation or simulation.
 \subsection{WOR methods (\eqn{\pi_{kl}}{pi_kl})}{\tabular{lll}{
    samplyr method \tab sondage function \tab Quality \cr
    \code{pps_cps} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (Aires' formula via C) \cr
+   \code{pps_sampford} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (Sampford design) \cr
    \code{pps_systematic} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (combinatorial enumeration) \cr
    \code{pps_poisson} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (\eqn{\pi_{kl} = \pi_k \pi_l}{pi_kl = pi_k * pi_l}, independent draws) \cr
    \code{pps_brewer} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate}\eqn{^*} (high-entropy / Hajek-Brewer-Donadio) \cr
    \code{pps_sps} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
    \code{pps_pareto} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
-   \code{balanced} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
+   \code{cube} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
 }
 
 

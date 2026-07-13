@@ -6,7 +6,7 @@
 \alias{samplyr-package}
 \title{samplyr: A Tidy Grammar for Survey Sampling}
 \description{
-Provides a tidy, composable grammar for specifying and executing complex survey sampling designs. Supports stratified, clustered, multi-stage, and multi-phase sampling with a minimal set of verbs that compose naturally. Designed to bridge the gap between verbal descriptions of sampling plans and executable R code, following tidy design principles. Includes synthetic sampling frames from African countries (Burkina Faso, Zimbabwe, Kenya) for learning and testing.
+Provides a tidy, composable grammar for specifying and executing complex survey sampling designs. Supports equal-probability and probability-proportional-to-size (PPS) selection, the cube method for balanced sampling following Deville and Tillé (2004) \doi{10.1093/biomet/91.4.893}, spatially balanced sampling with local pivotal and spatially correlated Poisson methods, and controlled category counts. Stratified, clustered, multi-stage, and multi-phase designs compose through a small set of tidy verbs. Includes sampling frames derived for learning and testing from public data for Burkina Faso, Zimbabwe, and Kenya.
 }
 \seealso{
 Useful links:

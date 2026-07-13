@@ -37,60 +37,119 @@ finite population corrections) captured during \code{\link[=execute]{execute()}}
 The conversion maps samplyr's design specification to the arguments
 expected by \code{\link[survey:svydesign]{survey::svydesign()}}:
 \itemize{
-\item \strong{Cluster ids} (\code{ids}): extracted from \code{cluster_by()} variables at each
-stage, assembled into a multi-level formula (e.g., \code{~ ea_id + hh_id}).
-For WR/PMR stages, the \code{.draw_k} column is used as the sampling unit
-identifier instead (each draw is treated as an independent unit for
-Hansen--Hurwitz variance estimation).
-\item \strong{Strata} (\code{strata}): extracted from \code{stratify_by()} variables at the
-\strong{first executed stage only} (see Multi-stage designs below).
+\item \strong{Cluster ids} (\code{ids}): one formula term per executed stage.
+Clustered stages use the \code{cluster_by()} variable; when a stage
+clusters by several variables, their combination (which execution
+treats as a single cluster id) is collapsed into one synthesized
+interaction column, because \code{\link[survey:svydesign]{survey::svydesign()}} reads each
+formula term as a separate sampling stage. A final unclustered
+stage (elements sampled within the previous stage's clusters) gets
+a synthesized row-identity column so that its sampling variance is
+represented. For WR/PMR stages, the \code{.draw_k} column is used as
+the sampling unit identifier instead (each draw is treated as an
+independent unit for Hansen--Hurwitz variance estimation).
+\item \strong{Strata} (\code{strata}): one term per stage, aligned with \code{ids}.
+A stage stratified by several variables exports their
+cross-classification as a single synthesized interaction column
+(survey silently ignores extra variables within a stage's term).
+Trailing unstratified stages are omitted; unstratified stages
+before a stratified stage get a constant placeholder column.
 \item \strong{Weights} (\code{weights}): the \code{.weight} column -- the compound weight
 across all stages (i.e., the product of per-stage weights
 \eqn{w = \prod w_k = \prod 1/\pi_k}{w = prod(1/pi_k)}).
 This is the inverse of the overall inclusion probability and is the
 correct weight for design-based point estimation
 (\eqn{\hat{Y} = \sum w_i y_i}{Y-hat = sum(w_i * y_i)}).
-\item \strong{FPC} (\code{fpc}): a per-stage formula assembled from \code{.fpc_k} columns.
-The encoding depends on the method:
+\item \strong{FPC} (\code{fpc}): one term per stage, aligned with \code{ids}. Because
+\code{\link[survey:svydesign]{survey::svydesign()}} requires every FPC term on the same scale,
+two encodings are used:
 \itemize{
-\item \strong{Equal-probability WOR}: \code{.fpc_k} (the stratum population count
-\eqn{N_h}) is passed directly. The survey package derives the sampling
-fraction as \eqn{f_h = n_h / N_h}.
-\item \strong{PPS WOR}: \code{.fpc_k} is \eqn{N_h}, but this is \strong{not} passed
-directly. Instead, a derived column \eqn{1 / w_k = \pi_i}{1/w_k = pi_i}
-is created and passed, because \code{survey::svydesign()} interprets FPC
-values in \eqn{(0, 1)}{(0,1)} as inclusion probabilities.
-\item \strong{WR / PMR}: a synthetic column filled with \code{Inf} is passed. The
-survey package interprets this as no finite population correction,
-giving Hansen--Hurwitz variance.
+\item \strong{Count scale} (designs without unequal-probability WOR
+stages): \code{.fpc_k} (the stratum population count \eqn{N_h}) is
+passed for equal-probability WOR stages; a synthetic \code{Inf}
+column (no correction, Hansen--Hurwitz variance) for WR/PMR
+stages and for random-size Poisson stages after the first.
+\item \strong{Fraction scale} (multi-stage designs with a PPS WOR,
+balanced, or custom WOR stage): every WOR stage passes its
+per-unit stage sampling fraction
+\eqn{1 / w_k = \pi_k}{1/w_k = pi_k}; WR/PMR and later Poisson
+stages pass 0 (no correction).
+A single-stage PPS WOR design passes \eqn{\pi_i}{pi_i} directly,
+which survey interprets as inclusion probabilities.
 }
 }
 \subsection{Multi-stage designs}{
 
-For multi-stage designs, \code{as_svydesign()} maps each stage's
-cluster variable to a level of the \code{ids} formula and provides
-per-stage finite population corrections. Strata are exported from
-the first stage only, which is consistent with the standard
-"with-replacement at stage 1" variance approximation used by
-\code{\link[survey:svydesign]{survey::svydesign()}} (Cochran 1977, ch. 11). Under this
-approximation, second-stage and deeper stratification affects
-weights (which are correctly compounded) but does not need to
-appear in the design object for variance estimation -- the
-contribution of later stages is captured through the variability
-of first-stage unit totals.
+Every executed sampling stage is represented in the exported design:
+one \code{ids} term, one \code{fpc} term, and (when stratified) one \code{strata}
+term per stage, so \code{\link[survey:svydesign]{survey::svydesign()}} performs exact multi-stage
+linearization (Sarndal et al. 1992, ch. 4.3). In particular, a
+design whose first stage is a census of PSUs correctly attributes
+all variance to the later stages.
 
-Concretely, for a two-stage stratified-cluster design, the exported
-call is equivalent to:
+One shape cannot be represented: an unclustered element-sampling
+stage \emph{followed by further stages} is not nested cluster sampling
+(the later selections are conditional on the realized element
+sample, i.e. phase sampling), and \code{as_svydesign()} raises an error.
+Express such designs as two-phase samples instead: execute the
+element stage as its own phase and pipe the result into a second
+\code{\link[=execute]{execute()}} call, which exports via \code{\link[survey:twophase]{survey::twophase()}}.
+
+Concretely, for a two-stage stratified-cluster design with a final
+element stage, the exported call is equivalent to:
 \preformatted{
 survey::svydesign(
-  ids     = ~ ea_id,         # stage-1 clusters
-  strata  = ~ region,        # stage-1 strata only
-  weights = ~ .weight,       # product of stage-1 and stage-2 weights
-  fpc     = ~ .fpc_pi_1 + .fpc_2,  # pi_i for PPS stage, N_h for SRS stage
+  ids     = ~ ea_id + .id_2,       # stage-1 clusters, stage-2 elements
+  strata  = ~ region,              # stage-1 strata
+  weights = ~ .weight,             # product of per-stage weights
+  fpc     = ~ .fpc_pi_1 + .fpc_f_2,  # per-stage sampling fractions
   data    = sample,
   nest    = TRUE
 )
 }
+}
+
+\subsection{Modified samples and domain analysis}{
+
+The conversion requires a sample whose rows still match the executed
+design. A \code{tbl_sample} whose row set was changed after \code{\link[=execute]{execute()}}
+(rows removed by \code{\link[dplyr:filter]{dplyr::filter()}} or \code{[}, added, or duplicated by a
+join) or whose internal design columns (\code{.weight}, \code{.weight_k},
+\code{.fpc_k}, ...) were overwritten, dropped, or renamed is marked as
+modified, and \code{as_svydesign()} raises an error. The check is
+authoritative, not just mark-based: the sample is verified against
+an integrity record (row count and a hash of the weights, design
+metadata, and strata/cluster columns) stored at execution, so
+modifications through routes the dplyr hooks cannot see (base
+assignment, \code{rbind()}, vctrs operations, third-party verbs) are
+also caught, and an overwrite that left every value identical
+passes. Physically dropping out-of-domain
+rows before conversion is not equivalent to domain estimation: the
+point estimate agrees, but the variance is understated because the
+domain sample size is random under the design.
+
+For subpopulation estimates, convert the full sample first and then
+subset the design, which applies the proper domain estimator:
+\preformatted{
+svy <- as_svydesign(sample)
+survey::svymean(~y, subset(svy, domain))
+# or with srvyr:
+as_survey_design(sample) |> filter(domain) |> summarise(...)
+}
+
+Row reordering, one-to-one joins, and adding ordinary data columns
+do not mark the sample. Extracting one complete replicate from a
+replicated execution (\code{filter(.replicate == r)}) is verified against
+the execution metadata and remains supported.
+}
+
+\subsection{Equal-probability systematic sampling}{
+
+\code{systematic} stages are exported with the SRSWOR variance estimator,
+the standard approximation for systematic sampling. Depending on the
+frame ordering (see the \code{control} argument of \code{\link[=draw]{draw()}}), the true
+variance can be smaller (favourable ordering) or larger (periodic
+ordering) than this estimate.
 }
 
 \subsection{Variance estimation for PPS designs}{
@@ -127,10 +186,8 @@ one row per sampled cluster) are exported with \code{poisson_sampling()}
 and produce the exact Horvitz-Thompson Poisson variance.
 \item Multi-stage designs with a random-size Poisson method at stage k > 1
 omit the finite-population correction at the Poisson stage (the same
-handling used for with-replacement methods). The Poisson stage's
-contribution to variance is captured through the variability of the
-previous stage's cluster totals, under the with-replacement at
-stage 1 approximation.
+handling used for with-replacement methods). The Poisson stage is
+treated as sampled with replacement, which is mildly conservative.
 \item Multi-stage designs with a random-size Poisson method at stage 1
 are not supported by \code{survey::svydesign()}, which rejects multi-stage
 designs when the \code{pps} argument is set. Such designs raise an error
@@ -140,7 +197,32 @@ sampled cluster (for example a household listing within sampled EAs)
 raise an error. \code{survey::poisson_sampling()} treats rows as
 independent and does not honour within-cluster correlation. Use
 \code{as_svrepdesign(type = "subbootstrap")} for these designs.
+\item Custom methods registered with \code{fixed_size = FALSE}
+(\code{sondage::register_method()}) are also random-size, but samplyr
+cannot verify that their selections are independent across units,
+which the Poisson estimator requires. The method author can settle
+this at registration: a method registered with
+\code{variance_family = "poisson"} asserts independent selections and is
+exported through \code{poisson_sampling()} exactly like the built-ins
+above. Undeclared methods raise an error; if you know the method is
+Poisson-type, pass the probabilities explicitly:
+\code{as_svydesign(x, pps = survey::poisson_sampling(1 / x$.weight))},
+or use \code{as_svrepdesign(type = "subbootstrap")}.
 }
+}
+
+\subsection{Declared variance families for custom methods}{
+
+\code{sondage::register_method()} accepts a \code{variance_family} declaration
+(\code{"srs"}, \code{"pps_brewer"}, \code{"poisson"}, \code{"wr"}, \code{"unsupported"}).
+When present it overrides the classification samplyr would otherwise
+infer from the method's \code{type} and \code{fixed_size}: \code{"srs"} receives the
+equal-probability treatment (count-scale FPC), \code{"pps_brewer"} the
+fixed-size PPS treatment (Brewer approximation), \code{"poisson"} exact
+Poisson linearization, and \code{"wr"} the with-replacement treatment.
+A method declared \code{"unsupported"} cannot be linearized at all:
+\code{as_svydesign()} refuses with an error and
+\code{as_svrepdesign(type = "subbootstrap")} remains the escape hatch.
 }
 
 \subsection{Chromy's sequential PPS method (PMR)}{

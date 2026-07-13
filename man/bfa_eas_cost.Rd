@@ -8,16 +8,20 @@
 A tibble with 13 rows and 2 columns:
 \describe{
 \item{region}{Factor. Region name}
-\item{cost}{Numeric. Mean per-EA survey cost (thousands FCFA)}
+\item{cost}{Numeric. Mean relative fieldwork cost index per EA}
 }
+}
+\source{
+Aggregated from the synthetic \code{fieldwork_cost} variable in
+\link{bfa_eas}.
 }
 \usage{
 bfa_eas_cost
 }
 \description{
-Mean survey cost per EA by region for \link{bfa_eas}. Conflict-affected regions
-(Sahel, Est) have higher costs. Used for demonstrating optimal
-(cost-variance) allocation.
+Mean synthetic relative fieldwork cost per EA by region for \link{bfa_eas}. Used
+for demonstrating optimal (cost-variance) allocation. The values are a
+planning index, not monetary estimates or official costs.
 }
 \examples{
 # View the cost data

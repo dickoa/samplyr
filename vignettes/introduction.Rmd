@@ -150,8 +150,8 @@ The result includes the original columns plus sampling metadata: `.weight` (samp
 
 ```{r}
 sample |>
-  select(ea_id, region, urban_rural, .weight, .weight_1) |>
-  head()
+  as_tibble() |>
+  select(ea_id, region, urban_rural, .weight, .weight_1)
 ```
 
 ### Selection Methods
@@ -164,7 +164,7 @@ Systematic sampling selects units at fixed intervals, which can improve precisio
 sample_sys <- sampling_design(title = "Systematic") |>
   draw(n = 100, method = "systematic") |>
   execute(bfa_eas, seed = 2021)
-head(sample_sys)
+sample_sys
 ```
 
 Sampling with replacement allows the same unit to be selected multiple times, useful for bootstrap procedures.
@@ -173,7 +173,7 @@ Sampling with replacement allows the same unit to be selected multiple times, us
 sample_wr <- sampling_design(title = "SRS WR") |>
   draw(n = 100, method = "srswr") |>
   execute(bfa_eas, seed = 123)
-head(sample_wr)
+sample_wr
 ```
 
 ### Using Sampling Fractions
@@ -474,6 +474,7 @@ bind_rows(
 | `pps_brewer`      | Brewer's method - fast with good properties (recommended)             |
 | `pps_systematic`  | PPS systematic - simple but can have periodicity issues               |
 | `pps_cps`         | Conditional Poisson sampling (maximum entropy)                        |
+| `pps_sampford`    | Sampford fixed-size PPS sampling                                      |
 | `pps_poisson`     | PPS Poisson - random sample size (requires `frac` and supports `prn`) |
 | `pps_sps`         | Sequential Poisson sampling (supports `prn`)                          |
 | `pps_pareto`      | Pareto sampling (supports `prn`)                                      |
@@ -546,7 +547,7 @@ sample_sort <- sampling_design() |>
   draw(n = 100, method = "systematic",
        control = c(region, province)) |>
   execute(bfa_eas, seed = 98765)
-head(sample_sort)
+sample_sort
 ```
 
 `serp()` implements serpentine (snake) sorting, which alternates direction at each level of the hierarchy. This minimizes jumps at boundaries, matching SAS PROC SURVEYSELECT's `SORT=SERP`.
@@ -557,7 +558,7 @@ sample_serp <- sampling_design() |>
   draw(n = 100, method = "systematic",
        control = serp(region, province)) |>
   execute(bfa_eas, seed = 1)
-head(sample_serp)
+sample_serp
 ```
 
 Control sorting can be combined with explicit stratification. The sorting is then applied within each stratum.
@@ -568,21 +569,21 @@ sample_serp2 <- sampling_design() |>
   draw(n = 100, method = "systematic",
        control = serp(region, province)) |>
   execute(bfa_eas, seed = 2)
-head(sample_serp2)
+sample_serp2
 ```
 
 ---
 
 ## Balanced Sampling
 
-Balanced sampling selects a sample whose Horvitz-Thompson estimates of auxiliary totals match (or nearly match) the population totals. This improves precision for any variable correlated with the auxiliary variables. `samplyr` implements the cube method (Deville & Tille 2004) via `method = "balanced"`.
+Balanced sampling selects a sample whose Horvitz-Thompson estimates of auxiliary totals match (or nearly match) the population totals. This improves precision for any variable correlated with the auxiliary variables. `samplyr` implements the cube method (Deville & Tillé 2004) via `method = "cube"`. The older `method = "balanced"` spelling remains a compatibility alias, but designs are stored and printed with the canonical `"cube"` name.
 
 Specify auxiliary variables with `aux`. Without `mos`, inclusion probabilities are equal; with `mos`, they are proportional to size:
 
 ```{r}
 # Equal-probability balanced sample
 balanced_eq <- sampling_design() |>
-  draw(n = 100, method = "balanced",
+  draw(n = 100, method = "cube",
        aux = c(population, households)) |>
   execute(bfa_eas, seed = 42)
 balanced_eq
@@ -602,7 +603,7 @@ Balanced sampling combines naturally with stratification. When stratified, `samp
 # Stratified PPS balanced sample
 balanced_strat <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
-  draw(n = 300, method = "balanced", mos = households,
+  draw(n = 300, method = "cube", mos = households,
        aux = c(population, area_km2)) |>
   execute(bfa_eas, seed = 1960)
 balanced_strat
@@ -610,13 +611,47 @@ balanced_strat
 
 When used with `cluster_by()`, auxiliary values are automatically aggregated (summed) to the cluster level before selection.
 
-Balanced sampling supports up to 2 stages. At stage 1, element-level auxiliary variables are aggregated to PSU totals; at stage 2, the cube method runs on the element-level frame within each selected PSU.
+### Controlled category counts
+
+Place `bound()` around a categorical variable inside `aux` to require its realised sample count to be either the floor or ceiling of the expected count. Bare auxiliary variables and count bounds can be used together:
+
+```{r, eval = FALSE}
+controlled <- sampling_design() |>
+  draw(
+    n = 300,
+    method = "cube",
+    mos = households,
+    aux = c(population, bound(region), bound(urban_rural))
+  ) |>
+  execute(bfa_eas, seed = 1960)
+```
+
+`bound(region)` controls each observed region margin separately. Use separate `bound()` calls to control several margins. If the cube landing step cannot satisfy every requested bound, execution fails rather than silently relaxing a constraint.
+
+### Spatially balanced sampling
+
+LPM2 and SCPS spread the sample through a coordinate space. Select the algorithm explicitly and pass finite numeric coordinates through `spread`:
+
+```{r, eval = FALSE}
+spatial <- sampling_design() |>
+  draw(
+    n = 300,
+    method = "lpm2",
+    mos = households,
+    spread = c(longitude, latitude)
+  ) |>
+  execute(bfa_eas, seed = 1960)
+```
+
+Use `method = "scps"` for spatially correlated Poisson sampling. Spatial methods cannot be combined with cube auxiliaries or `bound()` constraints. Linearized survey export and joint inclusion probabilities are unavailable for bounded cube, LPM2, and SCPS designs. `as_svrepdesign(type = "subbootstrap")` provides a generic PPS bootstrap approximation: it is not a native design-specific variance estimator and does not recreate the bounds or spatial algorithm inside each replicate.
+
+Balanced-family sampling supports up to 2 stages. At stage 1, element-level auxiliary variables are aggregated to PSU totals; at stage 2, the method runs on the element-level frame within each selected PSU.
 
 ---
 
 ## Custom Sampling Methods
 
-Any unequal probability method can be plugged into samplyr by registering it with `sondage::register_method()`. The method is then available in `draw()` using the `pps_<name>` convention.
+Methods registered with `sondage::register_method()` use a family prefix in `draw()`. Registered `type = "wor"` and `type = "wr"` methods use `pps_<name>` and require `mos`. Registered `type = "balanced"` methods use `balanced_<name>` and may omit `mos` for equal probabilities. A balanced method can declare `supports_aux = TRUE` to receive `aux`, or `supports_spread = TRUE` to require and receive `spread` coordinates.
 
 For example, the elimination procedure of @tille1996 is available in the sampling package. We can register it as a custom method along with its exact joint inclusion probabilities:
 
@@ -759,7 +794,7 @@ design <- sampling_design() |>
 
 # Execute stage 1 only
 selected_eas <- execute(design, zwe_eas, stages = 1, seed = 1)
-head(selected_eas)
+selected_eas
 ```
 
 Once the EAs are selected, households are listed in each of them.
@@ -786,14 +821,106 @@ survey export.
 ```{r}
 final_sample <- selected_eas |>
   execute(selected_eas_list, seed = 2)
-head(final_sample)
+final_sample
 ```
 
 > **Note:** All dplyr verbs (`mutate()`, `filter()`, `*_join()`, etc.) preserve the
-> `tbl_sample` class automatically. If you manipulate a sample with base R functions
+> `tbl_sample` class automatically. Operations that change the row set
+> (removing, adding, or duplicating rows) or that drop, rename, or
+> overwrite internal design columns such as `.weight` or `.fpc_1` keep
+> the class but mark the sample as
+> modified: it still works as data, but `as_svydesign()` and other
+> design-based computations refuse it, because the stored design no
+> longer describes the rows. For subpopulation estimates, export first
+> and subset the survey design (see the survey analysis vignette).
+> Extracting one complete replicate with `filter(.replicate == r)` stays
+> fully supported. If you manipulate a sample with base R functions
 > like `merge()` or `cbind()`, both the class and its attributes are lost. Prefer the
 > dplyr equivalents (`left_join()`, `bind_cols()`). See `?as_tbl_sample` for the full
 > list.
+
+### A Self-Weighting Design
+
+Many household surveys want every household in a domain to have the same
+inclusion probability `f`. Equal probabilities give equal weights, which
+simplifies analysis and keeps weight variation from inflating the
+variance. The classic recipe selects EAs with PPS on a household count,
+then samples households within each selected EA at a rate that
+compensates for the first stage. The product of the two stages is
+constant by construction: `pi1 * frac = f`.
+
+```{r}
+domain <- zwe_eas |> filter(province == "Bulawayo")
+
+m <- 30                                # EAs to select
+b <- 5                                 # target household take per EA
+f <- b * m / sum(domain$households)    # overall household rate
+
+pi1 <- sondage::inclusion_prob(domain$households, m)
+rates <- tibble(ea_id = domain$ea_id, frac = f / pi1)
+```
+
+`sondage::inclusion_prob()` computes the same first-stage probabilities
+the EA stage will use, including certainty truncation when a large EA
+reaches `pik = 1` (a certainty EA simply gets `frac = f`). The rate table
+covers every EA in the domain because the design is written before stage
+1 runs; the household stage only consults the EAs that were selected.
+
+Choosing `f = b * m / M` makes the expected take exactly `b` households
+in every EA. Set `round = "nearest"` so the realized take stays at `b`
+instead of being rounded up:
+
+```{r}
+design_sw <- sampling_design("Self-weighting household survey") |>
+  add_stage(label = "EA") |>
+    cluster_by(ea_id) |>
+    draw(n = m, method = "pps_systematic", mos = households) |>
+  add_stage(label = "HH") |>
+    stratify_by(ea_id) |>
+    draw(frac = rates, round = "nearest")
+```
+
+`stratify_by(ea_id)` at the household stage makes each selected EA its
+own stratum, which is what lets the sampling rate vary by EA. Execution
+follows the same listing pattern as above:
+
+```{r}
+eas_sw <- execute(design_sw, domain, stages = 1, seed = 101)
+listing_sw <- eas_sw |>
+  tidyr::uncount(households, .id = "hh_no", .remove = FALSE)
+
+hh_sw <- eas_sw |> execute(listing_sw, seed = 102)
+
+range(hh_sw$.weight)
+1 / f
+```
+
+Every household carries the same weight `1/f`.
+
+Why a compensating rate instead of a fixed take of `b` households
+(`draw(n = b)`)? With a fixed take the design is self-weighting only when
+the listing finds exactly the household count used as the measure of
+size. Fresh listings differ from census counts. The compensating rate
+keeps the weights centred on `1/f` whatever the listing finds; only the
+rounding of small takes moves them. A fixed take passes listing changes
+straight into the weights:
+
+```{r}
+set.seed(7)
+fresh_counts <- eas_sw |>
+  mutate(listed = pmax(1L, as.integer(round(households * runif(n(), 0.85, 1.35)))))
+listing_fresh <- fresh_counts |>
+  tidyr::uncount(listed, .id = "hh_no", .remove = FALSE)
+
+hh_fresh <- eas_sw |> execute(listing_fresh, seed = 103)
+
+range(hh_fresh$.weight) * f    # stays near 1
+```
+
+Feasibility requires `f <= pi1` in every EA, so that `frac <= 1`. Very
+small EAs can violate this. The standard fixes are to merge small EAs
+with a neighbour before sampling, or to cap their rate with
+`frac = pmin(1, f / pi1)` and accept a weight above `1/f` in those EAs.
 
 ---
 
@@ -903,7 +1030,7 @@ summary(sample)
 | `pps_pareto`      | Fixed       | No                                                             | Pareto sampling, supports PRN                |
 | `pps_multinomial` | Fixed       | Yes                                                            | PPS with replacement                         |
 | `pps_chromy`      | Fixed       | PMR.^[Probability Minimum Replacement based on expected hits.] | Chromy's sequential PPS                      |
-| `balanced`        | Fixed       | No                                                             | Cube method, balances on `aux` variables     |
+| `cube`            | Fixed       | No                                                             | Cube method, balances on `aux` variables     |
 
 ### Allocation Methods
 

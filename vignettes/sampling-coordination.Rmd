@@ -127,7 +127,9 @@ overlap_negative
 
 ### Why isn't the overlap zero?
 
-Not all overlap can be eliminated. Units with large $\pi_k$ (big enterprises) are selected in almost every wave because their inclusion probability is close to or equal to 1. The theoretical minimum overlap, the **Anticipated Lower Bound** (ALB), is:
+Not all overlap can be eliminated. Units with large $\pi_k$ (big enterprises)
+are selected in almost every wave because their inclusion probability is close
+to or equal to 1. The **Anticipated Lower Bound** (ALB) for expected overlap is:
 
 $$\text{ALB} = \sum_{k=1}^{N} \max(0,\; 2\pi_k - 1)$$
 
@@ -137,15 +139,18 @@ Only units with $\pi_k > 0.5$ contribute to forced overlap.
 alb <- sum(pmax(0, 2 * frame$pik - 1))
 expected_independent <- sum(frame$pik^2)
 
-tibble(x = c("ALB (theoretical minimum)",
+tibble(x = c("ALB (expected lower bound)",
              "Observed overlap",
              "Expected if independent",
-             "AUB (theoretical max)"),
+             "AUB (expected upper bound)"),
        y = c(round(alb), overlap_negative,
              round(expected_independent), n_wave))
 ```
 
-The negative coordination brings the overlap close to the ALB, well below what independent sampling would produce.
+The negative coordination brings the realized overlap near the anticipated
+lower-bound benchmark, well below what independent sampling would produce. The
+ALB applies to expected overlap across repeated coordinated draws; one realized
+overlap can fall on either side of its rounded value.
 
 ## Comparison: Three Strategies
 
@@ -209,7 +214,9 @@ dimnames(overlap_mat) <- rep(list(paste("Wave", seq_len(n_waves))), 2)
 overlap_mat
 ```
 
-Consecutive waves have low overlap (near the ALB). Non-consecutive waves show varying overlap as the rotation cycle progresses.
+Consecutive waves have low overlap around the anticipated lower-bound
+benchmark. Non-consecutive waves show varying overlap as the rotation cycle
+progresses.
 
 ### Cumulative coverage
 
@@ -230,7 +237,9 @@ tibble(wave = seq_len(n_waves),
        pct_frame = paste0(round(100 * cumulative / nrow(ken_enterprises), 1), "%"))
 ```
 
-Negative coordination maximises the number of distinct units covered, which is valuable for building comprehensive registers or spreading respondent burden.
+Negative coordination aims to maximise the number of distinct units covered,
+which is valuable for building comprehensive registers or spreading respondent
+burden.
 
 ## Handling Births and Deaths
 
@@ -246,28 +255,20 @@ Real business registers change between waves. New enterprises (**births**) enter
 set.seed(123)
 n_births <- 500
 
-gen_data <- function(x, n) {
-  sample(levels(x), n, replace = TRUE) |>
-    factor(levels = levels(x))
-}
-
 # Deaths: remove a random subset
 deaths <- sample(frame$enterprise_id, 200)
 frame_t2 <- frame |>
   filter(!enterprise_id %in% deaths)
 
 # Births: new enterprises with fresh PRNs
-# Resample revenue from the existing frame to get a realistic size distribution
-births <- tibble(enterprise_id = paste0("NEW_", sprintf("%05d", seq_len(n_births))),
-                 county = gen_data(ken_enterprises$county, n_births),
-                 region = gen_data(ken_enterprises$region, n_births),
-                 sector = gen_data(ken_enterprises$sector, n_births),
-                 size_class = gen_data(ken_enterprises$size_class, n_births),
-                 employees = sample(ken_enterprises$employees, n_births, replace = TRUE),
-                 revenue_millions = sample(ken_enterprises$revenue_millions, n_births, replace = TRUE),
-                 year_established = sample(ken_enterprises$year_established, n_births, replace = TRUE),
-                 exporter = sample(ken_enterprises$exporter, n_births, replace = TRUE),
-                 u = runif(n_births))
+# Sample complete donor records so county-region pairs and business attributes
+# remain internally coherent.
+births <- ken_enterprises |>
+  slice_sample(n = n_births, replace = TRUE) |>
+  mutate(
+    enterprise_id = paste0("NEW_", sprintf("%05d", seq_len(n_births))),
+    u = runif(n_births)
+  )
 
 frame_t2 <- bind_rows(frame_t2, births)
 
@@ -354,7 +355,10 @@ overlap_str <- length(intersect(wave1_str$enterprise_id,
 overlap_str
 ```
 
-With smaller within-stratum $\pi_k$ values (all below 0.5), the ALB is zero and perfect negative coordination is achievable.
+With smaller within-stratum $\pi_k$ values (all below 0.5), the ALB is zero:
+no overlap is forced by certainty or near-certainty units. This is an expected
+lower bound, however, not a guarantee that one randomized pair of samples will
+have zero realized overlap.
 
 ## Collocated Sampling: Coordinating Across Surveys
 
@@ -376,7 +380,7 @@ set.seed(123)
 frame <- ken_enterprises |>
   mutate(u = runif(n()))
 
-# Survey A: revenue survey (PPS on revenue_millions, stratified by sector)
+# Survey A: revenue survey (PPS on revenue_millions)
 survey_a <- sampling_design() |>
   draw(n = 200, method = "pps_sps", mos = revenue_millions, prn = u) |>
   execute(frame, seed = 1)

@@ -318,3 +318,35 @@ test_that("Weights are mathematically correct", {
   expected_weight <- N / n
   expect_equal(unique(result$.weight), expected_weight)
 })
+
+test_that("per-EA frac compensation yields a self-weighting two-stage design", {
+  # Two-stage self-weighting recipe: PPS EAs on a household count, then
+  # households at frac = f / pi1 so every household has probability f and
+  # weight 1/f.
+  sizes <- c(4, 6, 8, 10, 12, 5, 7, 9, 11, 8)
+  frame <- data.frame(
+    ea = rep(seq_along(sizes), sizes),
+    hh_count = rep(sizes, sizes)
+  )
+  m <- 4
+  b <- 2
+  f <- b * m / sum(sizes)
+  rates <- data.frame(
+    ea = seq_along(sizes),
+    frac = f / sondage::inclusion_prob(sizes, m)
+  )
+
+  design <- sampling_design() |>
+    add_stage(label = "EA") |>
+      cluster_by(ea) |>
+      draw(n = m, method = "pps_systematic", mos = hh_count) |>
+    add_stage(label = "HH") |>
+      stratify_by(ea) |>
+      draw(frac = rates, round = "nearest")
+
+  smpl <- execute(design, frame, seed = 7)
+
+  expect_equal(nrow(smpl), m * b)
+  expect_true(all(table(smpl$ea) == b))
+  expect_equal(smpl$.weight, rep(1 / f, m * b))
+})

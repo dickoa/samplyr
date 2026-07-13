@@ -3,34 +3,55 @@
 \docType{data}
 \name{zwe_eas}
 \alias{zwe_eas}
-\title{Zimbabwe Enumeration Areas}
+\title{Zimbabwe Enumeration Areas for Demographic, Health, and Child-Indicator Surveys}
 \format{
 A tibble with 107,250 rows and 12 columns:
 \describe{
-\item{ea_id}{Integer. Unique enumeration area identifier (matches preEA_EAID in WorldPop shapefile)}
+\item{ea_id}{Integer. Unique preEA identifier from the WorldPop source}
 \item{province}{Factor. Province name (10 provinces)}
 \item{district}{Factor. District name within province (91 districts)}
-\item{ward_pcode}{Character. Ward P-code from OCHA COD-AB (e.g. "ZW150104")}
-\item{urban_rural}{Factor. Urban/Rural classification based on building density, calibrated to GHS-DUC provincial shares}
+\item{ward_pcode}{Character. Ward P-code carried by the source preEA
+product (e.g. "ZW150104")}
+\item{urban_rural}{Factor. Modelled urban/rural classification based on
+building density and calibrated to GHS-DUC provincial shares}
 \item{population}{Integer. EA population, calibrated to 2022 Census ward totals}
 \item{households}{Integer. Number of households, calibrated to 2022 Census ward totals}
-\item{buildings}{Integer. Building count from GRID3 building footprints}
-\item{women_15_49}{Integer. Estimated women aged 15-49, from WorldPop age-sex grids scaled to census population}
-\item{men_15_49}{Integer. Estimated men aged 15-49, from WorldPop age-sex grids scaled to census population}
-\item{children_under5}{Integer. Estimated children under 5, from WorldPop age-sex grids scaled to census population}
+\item{buildings}{Integer. Modelled building count from the WorldPop preEA
+product}
+\item{women_15_49}{Integer. Estimated women aged 15-49, from WorldPop
+age-sex grids scaled to census population}
+\item{men_15_49}{Integer. Estimated men aged 15-49, from WorldPop age-sex
+grids scaled to census population}
+\item{children_under5}{Integer. Estimated children under 5, from WorldPop
+age-sex grids scaled to census population}
 \item{area_km2}{Numeric. EA area in square kilometres}
+}
+}
+\source{
+\itemize{
+\item Qader, Kuepie, and Tatem (2024), \emph{Automatic national census
+pre-Enumeration Areas for Zimbabwe in 2021, version 1.0}, WorldPop,
+University of Southampton, \doi{10.5258/SOTON/WP00797}. Data licensed
+CC BY 4.0.
+\item European Commission Joint Research Centre, GHS-WUP-DUC R2025A,
+\url{https://human-settlement.emergency.copernicus.eu/GHSWUPDownload.php?ds=WUPDUC}.
+\item Zimbabwe National Statistics Agency, \emph{2022 Population Distribution
+by District and Ward},
+\url{https://zimgeoportal.org.zw/datasets/2022-population-distribution-by-district-and-ward/}.
+\item WorldPop 2022 constrained 100 m age-sex grids,
+\url{https://www.worldpop.org/}.
 }
 }
 \usage{
 zwe_eas
 }
 \description{
-An enumeration area (EA) frame for two-stage cluster surveys, built from
-WorldPop/GRID3 preEA boundaries (CC-BY 4.0), GHS-DUC urban classification,
-WorldPop 2022 constrained 100m age-sex grids, and Zimbabwe 2022 Population
-Census ward-level tallies. Each row corresponds to one preEA polygon from
-the WorldPop shapefile, providing a 1:1 mapping for spatial joins. The frame
-covers 10 provinces and 91 districts.
+A derived enumeration area (EA) frame for two-stage demographic, health, and
+child-indicator household surveys. Each row corresponds to one modelled
+WorldPop/GRID3 preEA polygon, and \code{ea_id} preserves the source identifier for
+spatial joins. Population and household counts are disaggregated from
+Zimbabwe's 2022 census ward totals. The frame covers 10 provinces and 91
+districts.
 }
 \details{
 This dataset is designed for demonstrating:
@@ -45,7 +66,9 @@ This dataset is designed for demonstrating:
 The data structure follows typical two-stage cluster survey frames where
 EAs are nested within districts and provinces. To create a household
 listing for second-stage sampling after selecting EAs, expand each
-selected EA into individual household rows:
+selected EA into individual household rows. The preEAs are modelled
+building-delimited areas rather than official census EAs, and the resulting
+counts should not be used as official small-area statistics.
 
 \preformatted{
 # After stage 1 selection:
@@ -80,5 +103,8 @@ listing <- selected |>
 smpl <- execute(design, listing, seed = 1234)
 smpl
 
+}
+\seealso{
+\code{\link[=add_stage]{add_stage()}}, \code{\link[=cluster_by]{cluster_by()}}, \code{\link[=execute]{execute()}}
 }
 \keyword{datasets}

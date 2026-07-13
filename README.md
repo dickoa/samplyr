@@ -47,23 +47,23 @@ sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 500) |>
   execute(bfa_eas, seed = 1)
-#> # A tbl_sample: 500 × 17
+#> # A tbl_sample: 500 × 18
 #> # Weights:      89.14 [87.47, 90.09]
 #>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
+#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
 #>  1  9648 Boucle du … Banwa    Sanaba  Rural              279         35     8.37
-#>  2 11547 Boucle du … Sourou   Toeni   Rural               49          5    21.4 
-#>  3 41824 Boucle du … Kossi    Dokui   Rural               75          9    15.8 
+#>  2 11547 Boucle du … Sourou   Toéni   Rural               49          7    21.4 
+#>  3 41824 Boucle du … Kossi    Dokui   Rural               75         10    15.8 
 #>  4 11012 Boucle du … Banwa    Tansila Rural              592         71     0.95
-#>  5 32308 Boucle du … Sourou   Lanfie… Rural               57          8     9.49
+#>  5 32308 Boucle du … Sourou   Lanfiè… Rural               57          8     9.49
 #>  6  7017 Boucle du … Kossi    Madouba Rural              599         74     0.74
 #>  7 36700 Boucle du … Bale     Fara    Rural              402         59     6.36
 #>  8 11611 Boucle du … Nayala   Yaba    Rural              111         15     8.97
 #>  9  8342 Boucle du … Mouhoun  Ouarko… Rural               94         13     8.1 
 #> 10 11626 Boucle du … Nayala   Yaba    Rural               56          7     8.31
 #> # ℹ 490 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 ```
 
@@ -102,21 +102,21 @@ design <- sampling_design(title = "Gambia bed nets") |>
   add_stage() |>
     draw(n = 6)
 design
-#> ── Sampling Design: Gambia bed nets ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#> ── Sampling Design: Gambia bed nets ────────────────────────────────────────────
 #> 
 #> ℹ 3 stages
 #> 
-#> ── Stage 1 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#> ── Stage 1 ─────────────────────────────────────────────────────────────────────
 #> • Strata: region
 #> • Cluster: district
 #> • Draw: n = 5 (per stratum), method = pps_brewer, mos = population
 #> 
-#> ── Stage 2 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#> ── Stage 2 ─────────────────────────────────────────────────────────────────────
 #> • Strata: phc
 #> • Cluster: village
 #> • Draw: n = 2 (per stratum), method = pps_brewer, mos = population
 #> 
-#> ── Stage 3 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#> ── Stage 3 ─────────────────────────────────────────────────────────────────────
 #> • Draw: n = 6, method = srswor
 ```
 
@@ -166,23 +166,23 @@ design <- sampling_design() |>
 
 sample <- execute(design, bfa_eas, seed = 2)
 sample
-#> # A tbl_sample: 300 × 17
+#> # A tbl_sample: 300 × 18
 #> # Weights:      148.57 [146.5, 151.22]
 #>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
+#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
 #>  1 29513 Boucle du … Bale     Bana    Rural              181         24     4.89
 #>  2 29527 Boucle du … Bale     Bana    Rural              193         25     0.14
 #>  3 36703 Boucle du … Bale     Fara    Rural              975        143     1.31
-#>  4  8455 Boucle du … Bale     Ouri    Rural               57          7     5.95
-#>  5  8580 Boucle du … Bale     Pa      Rural              171         25     5.12
+#>  4  8455 Boucle du … Bale     Ouri    Rural               57          8     5.95
+#>  5  8580 Boucle du … Bale     Pâ      Rural              171         20     5.12
 #>  6 11739 Boucle du … Bale     Yaho    Rural              509         76     8.8 
 #>  7 11746 Boucle du … Bale     Yaho    Rural               98         15     8.72
-#>  8  6291 Boucle du … Banwa    Kouka   Rural              563         78     7.96
+#>  8  6291 Boucle du … Banwa    Kouka   Rural              563         65     7.96
 #>  9 34031 Boucle du … Banwa    Sami    Rural               41          6    20.2 
 #> 10 34058 Boucle du … Banwa    Sami    Rural              516         78     7.6 
 #> # ℹ 290 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 ```
 
@@ -198,23 +198,23 @@ srs_smpl <- sampling_design() |>
   execute(bfa_eas, seed = 321)
 
 srs_smpl
-#> # A tbl_sample: 100 × 17
+#> # A tbl_sample: 100 × 18
 #> # Weights:      445.7 [445.7, 445.7]
 #>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1  5168 Centre-Nord Sanmate… Kaya    Urban              794        117     0.18
-#>  2 11281 Centre-Sud  Nahouri  Tiebele Rural              123         19     8.83
+#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
+#>  1  5168 Centre-Nord Sanmate… Kaya    Urban              794        129     0.18
+#>  2 11281 Centre-Sud  Nahouri  Tiébélé Rural              123         20     8.83
 #>  3 30149 Centre-Oue… Sanguie  Dassa   Rural              813        127     7.52
 #>  4 13590 Est         Gnagna   Koala   Rural              353         44     6.04
-#>  5 26045 Boucle du … Mouhoun  Dedoug… Rural              378         67     8.36
-#>  6 44140 Centre-Est  Koulpel… Soudou… Rural              258         39     8.95
-#>  7 30931 Est         Komandj… Gayeri  Rural              150         19     8.8 
+#>  5 26045 Boucle du … Mouhoun  Dédoug… Rural              378         54     8.36
+#>  6 44140 Centre-Est  Koulpel… Soudou… Rural              258         43     8.95
+#>  7 30931 Est         Komandj… Gayéri  Rural              150         16     8.8 
 #>  8 10745 Sahel       Yagha    Tankou… Rural              312         43    17.0 
-#>  9 13990 Hauts-Bass… Kenedou… Kourou… Rural              406         64     8.98
-#> 10 27757 Est         Tapoa    Partia… Rural              571         78     8.82
+#>  9 13990 Hauts-Bass… Kenedou… Kourou… Rural              406         48     8.98
+#> 10 27757 Est         Tapoa    Partia… Rural              571         75     8.82
 #> # ℹ 90 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 
 # Stratified proportional allocation
@@ -224,23 +224,23 @@ strata_smpl <- sampling_design() |>
   execute(bfa_eas, seed = 12)
 
 strata_smpl
-#> # A tbl_sample: 300 × 17
+#> # A tbl_sample: 300 × 18
 #> # Weights:      148.57 [146.5, 151.22]
 #>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
+#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
 #>  1 31987 Boucle du … Sourou   Kiemba… Rural               24          3     7.24
-#>  2  4968 Boucle du … Sourou   Kassoum Rural              303         45     4.13
-#>  3  4958 Boucle du … Sourou   Kassoum Rural              142         21     8.24
+#>  2  4968 Boucle du … Sourou   Kassoum Rural              303         41     4.13
+#>  3  4958 Boucle du … Sourou   Kassoum Rural              142         19     8.24
 #>  4 23903 Boucle du … Banwa    Solenzo Rural               94         13    13.5 
-#>  5 25996 Boucle du … Mouhoun  Dedoug… Rural              538         95     8.63
-#>  6 21501 Boucle du … Kossi    Doumba… Rural              247         30     7.93
-#>  7 43794 Boucle du … Mouhoun  Safane  Rural               87         12     8.96
+#>  5 25996 Boucle du … Mouhoun  Dédoug… Rural              538         76     8.63
+#>  6 21501 Boucle du … Kossi    Doumba… Rural              247         42     7.93
+#>  7 43794 Boucle du … Mouhoun  Safané  Rural               87         12     8.96
 #>  8  9724 Boucle du … Banwa    Sanaba  Rural               51          6     8.02
 #>  9 10979 Boucle du … Banwa    Tansila Rural               71          9     7.72
-#> 10  8893 Boucle du … Bale     Pompoi  Rural              522         71     0.48
+#> 10  8893 Boucle du … Bale     Pompoï  Rural              522         77     0.48
 #> # ℹ 290 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 
 # PPS cluster sampling
@@ -250,23 +250,23 @@ cluster_smpl <- sampling_design() |>
   execute(bfa_eas, seed = 123)
 
 cluster_smpl
-#> # A tbl_sample: 50 × 18
-#> # Weights:      812.6 [113.61, 3998.97]
+#> # A tbl_sample: 50 × 19
+#> # Weights:      779.3 [188.64, 2999.41]
 #>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 23926 Boucle du … Banwa    Solenzo Rural              843        113     7.84
-#>  2 33198 Boucle du … Kossi    Nouna   Rural             1011        149    15.9 
-#>  3 20930 Boucle du … Mouhoun  Bondok… Rural              792        121     9.76
-#>  4 23139 Cascades    Comoe    Ouo     Rural              275         32     7.57
-#>  5 15175 Centre      Kadiogo  Ouagad… Urban             1287        194     0.2 
-#>  6 15267 Centre      Kadiogo  Ouagad… Urban             3506        528     0.88
-#>  7 15367 Centre      Kadiogo  Ouagad… Urban              993        150     0.32
-#>  8 15491 Centre      Kadiogo  Ouagad… Urban              854        129     0.11
-#>  9 17031 Centre      Kadiogo  Ouagad… Urban              802        121     1.93
-#> 10 17414 Centre      Kadiogo  Ouagad… Urban              874        132     0.12
+#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
+#>  1 23944 Boucle du … Banwa    Solenzo Rural              758        102     0.77
+#>  2 33134 Boucle du … Kossi    Nouna   Rural             1116        145     1.35
+#>  3 10578 Boucle du … Kossi    Sônô    Rural              326         49     0.41
+#>  4 23289 Cascades    Comoe    Ouô     Rural              534         70     8.62
+#>  5 15240 Centre      Kadiogo  Ouagad… Urban              614         92     0.14
+#>  6 15327 Centre      Kadiogo  Ouagad… Urban             1061        160     0.7 
+#>  7 15429 Centre      Kadiogo  Ouagad… Urban              667        100     0.14
+#>  8 15550 Centre      Kadiogo  Ouagad… Urban              967        146     0.24
+#>  9 17098 Centre      Kadiogo  Ouagad… Urban              844        127     0.12
+#> 10 17487 Centre      Kadiogo  Ouagad… Urban              938        141     0.11
 #> # ℹ 40 more rows
-#> # ℹ 10 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 11 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>, .certainty_1 <lgl>
 ```
 
@@ -368,6 +368,10 @@ selected_eas_list <- selected_eas |>
 # Execute stage 2
 final_sample <- design |>
   execute(selected_eas_list, seed = 2)
+#> Warning: The frame sample was modified after execution (rows changed).
+#> ℹ Its weights and design metadata are used as-is for the new selection.
+#> ℹ If rows were removed to define a subpopulation, prefer restricting the frame
+#>   before executing.
 final_sample
 #> # A tbl_sample: 100 × 21
 #> # Weights:      38147.25 [35714.84, 40579.66]
@@ -408,6 +412,7 @@ final_sample
 | `pps_brewer`      | Fixed       | Brewer’s method (recommended)     |
 | `pps_systematic`  | Fixed       | PPS systematic                    |
 | `pps_cps`         | Fixed       | Conditional Poisson sampling      |
+| `pps_sampford`    | Fixed       | Sampford sampling                 |
 | `pps_poisson`     | Random      | PPS Poisson (PRN)                 |
 | `pps_sps`         | Fixed       | Sequential Poisson sampling (PRN) |
 | `pps_pareto`      | Fixed       | Pareto piPS sampling (PRN)        |
@@ -416,9 +421,11 @@ final_sample
 
 ### Balanced Sampling
 
-| Method     | Sample Size | Description                                    |
-|------------|-------------|------------------------------------------------|
-| `balanced` | Fixed       | Cube method (Deville & Tille 2004), uses `aux` |
+| Method | Sample Size | Description                                     |
+|--------|-------------|-------------------------------------------------|
+| `cube` | Fixed       | Cube method (Deville & Tillé 2004), uses `aux`  |
+| `lpm2` | Fixed       | Local pivotal sampling, requires `spread`       |
+| `scps` | Fixed       | Spatially correlated Poisson, requires `spread` |
 
 ## Allocation Methods
 
@@ -446,23 +453,23 @@ sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
   draw(n = 300, min_n = 2) |>
   execute(bfa_eas, seed = 321)
-#> # A tbl_sample: 300 × 17
-#> # Weights:      148.57 [56.35, 1209.75]
+#> # A tbl_sample: 300 × 18
+#> # Weights:      148.57 [142.32, 162]
 #>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
+#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
 #>  1 11643 Boucle du … Nayala   Yaba    Rural              396         52     8.75
 #>  2 36763 Boucle du … Bale     Fara    Rural               79         12     2.36
 #>  3  9648 Boucle du … Banwa    Sanaba  Rural              279         35     8.37
-#>  4 10555 Boucle du … Kossi    Sono    Rural              164         25     8.38
-#>  5 34926 Boucle du … Sourou   Tougan  Rural             1239        170     1.15
-#>  6 44501 Boucle du … Mouhoun  Tcheri… Rural              221         35     0.22
+#>  4 10555 Boucle du … Kossi    Sônô    Rural              164         24     8.38
+#>  5 34926 Boucle du … Sourou   Tougan  Rural             1239        189     1.15
+#>  6 44501 Boucle du … Mouhoun  Tchéri… Rural              221         35     0.22
 #>  7  9702 Boucle du … Banwa    Sanaba  Rural              260         33     6.92
-#>  8 26045 Boucle du … Mouhoun  Dedoug… Rural              378         67     8.36
-#>  9  8605 Boucle du … Bale     Pa      Rural              283         41     8.78
-#> 10 21078 Boucle du … Kossi    Bouras… Rural               93         11     7.08
+#>  8 26045 Boucle du … Mouhoun  Dédoug… Rural              378         54     8.36
+#>  9  8605 Boucle du … Bale     Pâ      Rural              283         33     8.78
+#> 10 21078 Boucle du … Kossi    Bouras… Rural               93         15     7.08
 #> # ℹ 290 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 ```
 
@@ -494,23 +501,23 @@ sample <- sampling_design() |>
   execute(bfa_eas, seed = 4321)
 
 sample
-#> # A tbl_sample: 300 × 17
-#> # Weights:      148.57 [56.35, 1209.75]
+#> # A tbl_sample: 300 × 18
+#> # Weights:      148.57 [142.32, 162]
 #>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 21517 Boucle du … Kossi    Doumba… Rural              354         43     8.72
+#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
+#>  1 21517 Boucle du … Kossi    Doumba… Rural              354         61     8.72
 #>  2 33112 Boucle du … Kossi    Nouna   Rural               28          4     5.47
-#>  3 25963 Boucle du … Mouhoun  Dedoug… Rural              416         74     0.67
-#>  4  6354 Boucle du … Banwa    Kouka   Rural              296         41     8.95
+#>  3 25963 Boucle du … Mouhoun  Dédoug… Rural              416         59     0.67
+#>  4  6354 Boucle du … Banwa    Kouka   Rural              296         34     8.95
 #>  5 11787 Boucle du … Bale     Bagassi Rural              874        105     1.4 
 #>  6  8233 Boucle du … Mouhoun  Ouarko… Rural              183         25     9.54
 #>  7  9925 Boucle du … Bale     Siby    Rural              204         30     0.36
-#>  8 34812 Boucle du … Sourou   Tougan  Rural             1072        147     0.3 
-#>  9 11441 Boucle du … Sourou   Toeni   Rural               64          7    23.9 
-#> 10  8883 Boucle du … Bale     Pompoi  Rural              192         26     9.42
+#>  8 34812 Boucle du … Sourou   Tougan  Rural             1072        164     0.3 
+#>  9 11441 Boucle du … Sourou   Toéni   Rural               64          9    23.9 
+#> 10  8883 Boucle du … Bale     Pompoï  Rural              192         28     9.42
 #> # ℹ 290 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 ```
 
@@ -539,7 +546,7 @@ PRN is supported for `bernoulli`, `pps_poisson`, `pps_sps`, and
 
 ## Balanced Sampling
 
-The cube method (Deville & Tille 2004) produces samples whose
+The cube method (Deville & Tillé 2004) produces samples whose
 Horvitz-Thompson estimates of auxiliary totals match the population
 totals, improving precision:
 
@@ -547,44 +554,76 @@ totals, improving precision:
 # Balanced sample using population and area as auxiliary variables
 balanced_smpl <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
-  draw(n = 300, method = "balanced", mos = households,
+  draw(n = 300, method = "cube", mos = households,
        aux = c(population, area_km2)) |>
   execute(bfa_eas, seed = 24)
 
 balanced_smpl
-#> # A tbl_sample: 300 × 17
-#> # Weights:      144.02 [13.68, 2034.38]
+#> # A tbl_sample: 300 × 18
+#> # Weights:      153.12 [12.35, 2866.07]
 #>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 11819 Boucle du … Bale     Bagassi Rural              386         46     0.57
-#>  2  1136 Boucle du … Bale     Boromo  Rural             3613        471     4.23
-#>  3  1205 Boucle du … Bale     Boromo  Rural             4324        564     3.13
-#>  4  8453 Boucle du … Bale     Ouri    Rural              809        103     0.62
-#>  5 39991 Boucle du … Banwa    Balave  Rural              865        136     0.81
-#>  6 39992 Boucle du … Banwa    Balave  Rural              947        149     1.05
-#>  7  6360 Boucle du … Banwa    Kouka   Rural              592         82     0.54
-#>  8 23749 Boucle du … Banwa    Solenzo Rural              235         32     8.79
-#>  9 23855 Boucle du … Banwa    Solenzo Rural              831        112     6.92
-#> 10 24020 Boucle du … Banwa    Solenzo Rural              466         63     8.71
+#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
+#>  1  1205 Boucle du … Bale     Boromo  Rural             4324        630     3.13
+#>  2  1207 Boucle du … Bale     Boromo  Rural             1465        213     1.67
+#>  3  8426 Boucle du … Bale     Ouri    Rural              394         56     1.29
+#>  4  9923 Boucle du … Bale     Siby    Rural               54          8     8.7 
+#>  5 39991 Boucle du … Banwa    Balavé  Rural              865        136     0.81
+#>  6  6334 Boucle du … Banwa    Kouka   Rural              785         90     0.94
+#>  7 23749 Boucle du … Banwa    Solenzo Rural              235         32     8.79
+#>  8 23855 Boucle du … Banwa    Solenzo Rural              831        112     6.92
+#>  9 24031 Boucle du … Banwa    Solenzo Rural              227         30     0.35
+#> 10 10952 Boucle du … Banwa    Tansila Rural              434         52     8.51
 #> # ℹ 290 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <dbl>
 ```
 
 The `aux` parameter accepts bare column names. When combined with `mos`,
 inclusion probabilities are proportional to size while the sample
-remains balanced on the auxiliary variables. Stratified designs use the
-stratified cube algorithm (Chauvet 2009) in a single call. Balanced
-sampling is supported for up to 2 stages.
+remains balanced on the auxiliary variables. A `bound()` marker adds
+hard adjacent-integer count constraints for each observed category:
+
+``` r
+controlled_smpl <- sampling_design() |>
+  draw(
+    n = 300,
+    method = "cube",
+    mos = households,
+    aux = c(population, bound(region), bound(urban_rural))
+  ) |>
+  execute(bfa_eas, seed = 24)
+```
+
+For spatially balanced sampling, choose `lpm2` or `scps` explicitly and
+provide coordinates through `spread`:
+
+``` r
+spatial_smpl <- sampling_design() |>
+  draw(
+    n = 300,
+    method = "lpm2",
+    mos = households,
+    spread = c(longitude, latitude)
+  ) |>
+  execute(bfa_eas, seed = 24)
+```
+
+Spatial methods cannot be combined with cube auxiliaries or `bound()`
+constraints. Stratified cube designs use the stratified cube algorithm
+(Chauvet 2009) in a single call. Balanced-family methods are supported
+for up to 2 stages.
 
 ## Custom Sampling Methods
 
-Any unequal probability sampling method can be plugged into `samplyr` by
-registering it with `sondage::register_method()`. The registered method
-is then available in `draw()` using the `pps_<name>` convention.
+Methods registered with `sondage::register_method()` use a family prefix
+in `draw()`. Registered `type = "wor"` and `type = "wr"` methods use
+`pps_<name>` and require `mos`. Registered `type = "balanced"` methods
+use `balanced_<name>` and may omit `mos` for equal probabilities. A
+balanced method can declare `supports_aux = TRUE` to receive `aux`, or
+`supports_spread = TRUE` to require and receive `spread` coordinates.
 
-For example, to use the elimination procedure of Tille (1996) from the
+For example, to use the elimination procedure of Tillé (1996) from the
 sampling package:
 
 ``` r
@@ -615,23 +654,23 @@ sample_tille <- sampling_design() |>
   execute(bfa_eas, seed = 1)
 
 sample_tille
-#> # A tbl_sample: 300 × 18
-#> # Weights:      146.13 [13.68, 1719.7]
+#> # A tbl_sample: 300 × 19
+#> # Weights:      130.21 [14.77, 1717.89]
 #>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
+#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
 #>  1 29508 Boucle du … Bale     Bana    Rural              998        130     2.14
-#>  2  1205 Boucle du … Bale     Boromo  Rural             4324        564     3.13
-#>  3 36751 Boucle du … Bale     Fara    Rural              581         85     8.69
-#>  4  8609 Boucle du … Bale     Pa      Rural              778        112     0.88
-#>  5  9895 Boucle du … Bale     Siby    Rural             1813        268     1.7 
-#>  6 11739 Boucle du … Bale     Yaho    Rural              509         76     8.8 
-#>  7 39999 Boucle du … Banwa    Balave  Rural             1820        287     2.04
-#>  8  6256 Boucle du … Banwa    Kouka   Rural              493         68     8.55
-#>  9  6304 Boucle du … Banwa    Kouka   Rural              540         74     8.06
-#> 10  6366 Boucle du … Banwa    Kouka   Rural              717         99     0.5 
+#>  2  1198 Boucle du … Bale     Boromo  Rural              924        135     0.42
+#>  3 36745 Boucle du … Bale     Fara    Rural             1839        269     1.22
+#>  4  8606 Boucle du … Bale     Pâ      Rural              256         30     0.34
+#>  5  9052 Boucle du … Bale     Poura   Urban              727        138     0.26
+#>  6 11709 Boucle du … Bale     Yaho    Rural              416         62     8.97
+#>  7 39994 Boucle du … Banwa    Balavé  Rural              106         17     7.98
+#>  8 40012 Boucle du … Banwa    Balavé  Rural             1312        207     0.82
+#>  9  6311 Boucle du … Banwa    Kouka   Rural             3561        410     2.69
+#> 10 34016 Boucle du … Banwa    Sami    Rural              593         89     1.06
 #> # ℹ 290 more rows
-#> # ℹ 10 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 11 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>, .certainty_1 <lgl>
 
 # Clean up
@@ -660,11 +699,12 @@ svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 By default `as_svydesign()` uses Brewer variance approximation. For
 tighter variance estimates, `joint_expectation()` computes pairwise
 joint inclusion probabilities from the original frame. The result is
-exact for CPS, systematic, and Poisson whereas high-entropy
-approximation O(N^2) is by Brewer, SPS, Pareto and Balanced sampling
-using the Cube algorithm (exact recursive formulas exist for some of
-these methods but are usually O(N^3) and impractical for large frames).
-See `?joint_expectation` for the full method-by-method breakdown.
+exact for CPS, Sampford, systematic, and Poisson methods. Brewer, SPS,
+Pareto, and cube sampling use an O(N^2) high-entropy approximation;
+exact recursive formulas for some of these designs are usually O(N^3)
+and impractical for large frames. Joint probabilities are unavailable
+for bounded cube, LPM2, and SCPS designs. See `?joint_expectation` for
+the full method-by-method breakdown.
 
 ## Panel Partitioning
 
@@ -730,23 +770,23 @@ phase2 <- sampling_design() |>
   execute(phase1, seed = 2)
 
 phase2
-#> # A tbl_sample: 50 × 17
+#> # A tbl_sample: 50 × 18
 #> # Weights:      891.4 [891.4, 891.4]
 #>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <dbl>      <int>    <dbl>
-#>  1 33282 Boucle du … Kossi    Nouna   Rural              327         48     4.35
-#>  2 25236 Est         Gnagna   Bilanga Rural              581         88     8.72
+#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
+#>  1 33282 Boucle du … Kossi    Nouna   Rural              327         43     4.35
+#>  2 25236 Est         Gnagna   Bilanga Rural              581         89     8.72
 #>  3 33467 Est         Kompien… Pama    Rural               46          6    34.1 
-#>  4 19744 Centre-Est  Boulgou  Zabre   Rural              433         79     8.46
+#>  4 19744 Centre-Est  Boulgou  Zabré   Rural              433         79     8.46
 #>  5 16081 Centre      Kadiogo  Ouagad… Urban              830        125     0.11
-#>  6 20688 Cascades    Comoe    Banfora Rural              823        101     0.18
-#>  7 36869 Boucle du … Nayala   Gassan  Rural             1172        129     1.18
-#>  8 32034 Centre-Est  Koulpel… Komin-… Rural              444         62     7.97
+#>  6 20688 Cascades    Comoe    Banfora Rural              823         94     0.18
+#>  7 36869 Boucle du … Nayala   Gassan  Rural             1172        143     1.18
+#>  8 32034 Centre-Est  Koulpel… Komin-… Rural              444         69     7.97
 #>  9 15189 Centre      Kadiogo  Ouagad… Urban              471         71     0.08
-#> 10 11082 Sud-Ouest   Bougour… Tianko… Rural               43          6    10.1 
+#> 10 11082 Sud-Ouest   Bougour… Tianko… Rural               43          7    10.1 
 #> # ℹ 40 more rows
-#> # ℹ 9 more variables: accessible <lgl>, dist_road_km <dbl>,
-#> #   food_insecurity_pct <dbl>, cost <dbl>, .weight <dbl>, .sample_id <int>,
+#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
 #> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
 ```
 
@@ -756,15 +796,15 @@ Weights compound automatically across phases.
 
 ``` r
 summary(strata_smpl)
-#> ── Sample Summary ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#> ── Sample Summary ──────────────────────────────────────────────────────────────
 #> 
 #> ℹ n = 300 | stages = 1/1 | seed = 12
 #> 
-#> ── Design: Stage 1 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#> ── Design: Stage 1 ─────────────────────────────────────────────────────────────
 #> • Strata: region (proportional)
 #> • Method: srswor
 #> 
-#> ── Allocation: Stage 1 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#> ── Allocation: Stage 1 ─────────────────────────────────────────────────────────
 #>   region             N_h    n_h  f_h   
 #>   Boucle du Mouhoun  5009   34   0.0068
 #>   Cascades           2508   17   0.0068
@@ -782,7 +822,7 @@ summary(strata_smpl)
 #>                      ─────  ───  ──────
 #>   Total              44570  300  0.0067
 #> 
-#> ── Weights ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#> ── Weights ─────────────────────────────────────────────────────────────────────
 #> • Range: [146.5, 151.22]
 #> • Mean:  148.57 · CV: 0.01
 #> • DEFF:  1 · n_eff: 300
@@ -797,13 +837,13 @@ bias, standard-error calibration, and coverage.
 
 ## Included Datasets
 
-Synthetic sampling frames for learning and testing:
+Derived and synthetic sampling frames for learning and testing:
 
-| Dataset           | Description                                  | Rows    |
-|-------------------|----------------------------------------------|---------|
-| `bfa_eas`         | Household survey EA frame (Burkina Faso)     | 44,570  |
-| `zwe_eas`         | Two-stage cluster survey EA frame (Zimbabwe) | 107,250 |
-| `ken_enterprises` | Enterprise survey frame (Kenya)              | 17,004  |
+| Dataset           | Description                            | Rows    |
+|-------------------|----------------------------------------|---------|
+| `bfa_eas`         | Household budget and living-standards EA frame (Burkina Faso) | 44,570  |
+| `zwe_eas`         | Demographic, health, and child-indicator EA frame (Zimbabwe)   | 107,250 |
+| `ken_enterprises` | Establishment survey frame (Kenya)     | 17,004  |
 
 Plus auxiliary data: `bfa_eas_variance`, `bfa_eas_cost`
 

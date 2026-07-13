@@ -246,16 +246,24 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
   }
 
   if (!is_null(panels)) {
-    if (!is.numeric(panels) || length(panels) != 1 ||
-        !is_integerish_numeric(panels) || panels < 2) {
+    if (
+      !is.numeric(panels) ||
+        length(panels) != 1 ||
+        !is_integerish_numeric(panels) ||
+        panels < 2
+    ) {
       cli_abort("{.arg panels} must be a single integer >= 2")
     }
     panels <- as.integer(panels)
   }
 
   if (!is_null(reps)) {
-    if (!is.numeric(reps) || length(reps) != 1 ||
-        !is_integerish_numeric(reps) || reps < 2) {
+    if (
+      !is.numeric(reps) ||
+        length(reps) != 1 ||
+        !is_integerish_numeric(reps) ||
+        reps < 2
+    ) {
       cli_abort("{.arg reps} must be a single integer >= 2")
     }
     reps <- as.integer(reps)
@@ -266,6 +274,42 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
   }
 
   run_execution <- function() {
+    # A modified tbl_sample (rows or design columns changed after its
+    # own execute()) is accepted as input, but its weights and design
+    # metadata are taken at face value for the new selection.
+    warn_if_modified <- function(obj, role) {
+      status <- sample_realization_status(obj)
+      if (!status$ok) {
+        mods <- status$mods
+        cli_warn(c(
+          "The {role} sample was modified after execution ({.field {mods}} changed).",
+          "i" = "Its weights and design metadata are used as-is for the new selection.",
+          "i" = "If rows were removed to define a subpopulation, prefer restricting the frame before executing."
+        ))
+      }
+    }
+    # Empty replicates leave no rows in a stacked sample, so without
+    # the check_no_empty_replicates() guard the replicate machinery
+    # would silently skip them and condition every downstream result on
+    # nonempty realizations.
+    if (is_tbl_sample(.data)) {
+      warn_if_modified(.data, "input")
+      check_no_empty_replicates(.data, blocked = "stages")
+    } else {
+      # When .data is a design, a tbl_sample frame is the prior phase's
+      # sample and its provenance matters. In a continuation
+      # (.data is a tbl_sample) the frames are listing frames whose
+      # sample provenance is stripped anyway (e.g. the documented
+      # row-expansion household listing), so marks on them are
+      # irrelevant.
+      for (f in frames) {
+        if (is_tbl_sample(f)) {
+          warn_if_modified(f, "frame")
+          check_no_empty_replicates(f, blocked = "phase")
+        }
+      }
+    }
+
     # PRN conflict check: only on stages being executed in this call
     if (!is_null(reps)) {
       design <- if (is_sampling_design(.data)) .data else get_design(.data)
@@ -439,6 +483,13 @@ execute_design <- function(design, frames, stages, seed, panels,
       all_prior_cluster_vars = all_prior_cluster_vars
     )
 
+    # A random-size stage with on_empty = "warn"/"silent" can select
+    # zero units. Later stages then have nothing to select from: the
+    # empty sample is the realization, so stop here.
+    if (nrow(current_sample) == 0) {
+      break
+    }
+
     if (!is_null(stage_spec$clusters)) {
       all_prior_cluster_vars <- unique(c(
         all_prior_cluster_vars, stage_spec$clusters$vars
@@ -447,7 +498,7 @@ execute_design <- function(design, frames, stages, seed, panels,
     previous_stage_idx <- stage_idx
   }
 
-  if (!is_null(panels)) {
+  if (!is_null(panels) && nrow(current_sample) > 0) {
     current_sample <- assign_panels(
       current_sample, panels, design$stages[[stages[1]]]
     )
@@ -470,7 +521,9 @@ execute_design <- function(design, frames, stages, seed, panels,
     metadata = list(
       n_selected = nrow(current_sample),
       executed_at = Sys.time(),
-      prev_phase = prev_phase
+      panels = panels,
+      prev_phase = prev_phase,
+      integrity = sample_integrity_record(current_sample, design, stages)
     )
   )
 }
@@ -499,7 +552,7 @@ execute_replicated <- function(.data, frames, stages, seed, reps,
     }
 
     df <- as.data.frame(result)
-    df$.replicate <- r
+    df$.replicate <- rep.int(r, nrow(df))
     results[[r]] <- df
   }
 
@@ -521,6 +574,11 @@ execute_replicated <- function(.data, frames, stages, seed, reps,
     c(already, new_s)
   }
 
+  integrity <- sample_integrity_record(combined, the_design, the_stages)
+  integrity$replicate_hashes <- replicate_integrity_hashes(
+    combined, integrity$cols, seq_len(reps)
+  )
+
   new_tbl_sample(
     data = combined,
     design = the_design,
@@ -535,7 +593,12 @@ execute_replicated <- function(.data, frames, stages, seed, reps,
       } else {
         NULL
       },
-      prev_phase = attr(result, "metadata")$prev_phase
+      replicate_rows = setNames(
+        vapply(results, nrow, integer(1)),
+        as.character(seq_len(reps))
+      ),
+      prev_phase = attr(result, "metadata")$prev_phase,
+      integrity = integrity
     )
   )
 }
@@ -631,6 +694,11 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
       all_prior_cluster_vars = all_prior_cluster_vars
     )
 
+    # See execute_design(): an empty stage ends the selection.
+    if (nrow(current_sample) == 0) {
+      break
+    }
+
     if (!is_null(stage_spec$clusters)) {
       all_prior_cluster_vars <- unique(c(
         all_prior_cluster_vars, stage_spec$clusters$vars
@@ -639,7 +707,7 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
     previous_stage_idx <- stage_idx
   }
 
-  if (!is_null(panels)) {
+  if (!is_null(panels) && nrow(current_sample) > 0) {
     first_stage_idx <- c(executed, stages)[1]
     current_sample <- assign_panels(
       current_sample, panels, design$stages[[first_stage_idx]]
@@ -654,8 +722,128 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
     metadata = list(
       n_selected = nrow(current_sample),
       executed_at = Sys.time(),
-      continued_from = attr(sample, "metadata")
+      panels = panels,
+      continued_from = attr(sample, "metadata"),
+      integrity = sample_integrity_record(
+        current_sample, design, c(executed, stages)
+      )
     )
+  )
+}
+
+#' Phase number of a sample (1 + length of its prev_phase chain)
+#' @noRd
+sample_phase_number <- function(x) {
+  n <- 1L
+  prev <- attr(x, "metadata")$prev_phase
+  while (is.list(prev) && is_tbl_sample(prev$sample)) {
+    n <- n + 1L
+    prev <- attr(prev$sample, "metadata")$prev_phase
+  }
+  n
+}
+
+#' Replicate ids of a stacked sample that have zero rows
+#'
+#' Empty replicates leave no rows in the stacked data, so they are
+#' invisible to the .replicate column. They are recovered from the
+#' per-replicate row counts recorded at execution
+#' (metadata$replicate_rows), with metadata$reps as a fallback for
+#' samples that predate replicate_rows.
+#' @noRd
+find_empty_replicates <- function(sample) {
+  meta <- attr(sample, "metadata")
+  counts <- meta$replicate_rows
+  if (!is_null(counts) && !is_null(names(counts))) {
+    return(names(counts)[counts == 0L])
+  }
+  reps <- meta$reps
+  if (is_null(reps) || !".replicate" %in% names(sample)) {
+    return(character(0))
+  }
+  present <- unique(sample$.replicate)
+  if (length(present) < reps) {
+    return(as.character(setdiff(seq_len(reps), present)))
+  }
+  character(0)
+}
+
+#' Check that a tbl_sample entering execution has no empty replicates
+#'
+#' A verified single-replicate extraction (filter(.replicate == r) of a
+#' complete nonempty replicate) is a standalone sample; empty siblings
+#' recorded in the parent metadata are irrelevant to it.
+#' @noRd
+check_no_empty_replicates <- function(x, blocked, call = caller_env()) {
+  if (identical(sample_modifications(x), "rows") && is_complete_replicate(x)) {
+    return(invisible(NULL))
+  }
+  empty_reps <- find_empty_replicates(x)
+  if (length(empty_reps) > 0) {
+    abort_empty_replicate(x, empty_reps, blocked = blocked, call = call)
+  }
+  invisible(NULL)
+}
+
+#' Abort when empty replicates block further execution
+#'
+#' A replicate with zero rows (an accepted empty realization under
+#' on_empty = "warn"/"silent") cannot serve as the frame for a later
+#' phase or as the basis for continuing later stages. Without this
+#' check the replicate loop, which reads replicate ids from the data,
+#' would silently skip empty replicates and condition all downstream
+#' results on nonempty realizations. The error names the replicates,
+#' phase, and random-size method(s) so the failure is traceable to the
+#' design, and warns against dropping empty replicates for the same
+#' conditioning reason.
+#' @noRd
+abort_empty_replicate <- function(
+  sample,
+  r,
+  blocked = c("phase", "stages"),
+  call = caller_env()
+) {
+  blocked <- match.arg(blocked)
+  design <- get_design(sample)
+  stages_exec <- get_stages_executed(sample)
+  rs_methods <- unique(unlist(lapply(stages_exec, function(i) {
+    spec <- design$stages[[i]]$draw_spec
+    if (
+      spec$method %in% rs_poisson_methods ||
+        identical(spec$method_fixed, FALSE)
+    ) {
+      spec$method
+    } else {
+      NULL
+    }
+  })))
+  phase <- sample_phase_number(sample)
+  title <- design$title
+
+  if (blocked == "phase") {
+    header <- "Replicate{cli::qty(r)}{?s} {r} of the phase-{phase} sample {cli::qty(r)}{?is/are} empty, so phase {phase + 1L} cannot be executed."
+    blocked_txt <- paste0("phase-", phase + 1L, " execution")
+  } else {
+    header <- "Replicate{cli::qty(r)}{?s} {r} {cli::qty(r)}{?is/are} empty, so the remaining stages cannot be executed."
+    blocked_txt <- "continuing the remaining stages"
+  }
+
+  method_bullet <- if (length(rs_methods) > 0) {
+    c("i" = "Empty realizations are possible under random-size method{?s} {.val {rs_methods}}.")
+  } else {
+    c("i" = "Empty realizations are possible under Bernoulli and Poisson sampling.")
+  }
+
+  abort_samplyr(
+    c(
+      header,
+      if (!is_null(title)) c("i" = "Design: {.val {title}}."),
+      method_bullet,
+      "i" = "Increase the expected sample size, use a fixed-size method, or handle empty replicates explicitly before {blocked_txt}.",
+      "i" = "Dropping empty replicates conditions results on nonempty realizations, which can bias simulation summaries."
+    ),
+    class = "samplyr_error_empty_phase_replicate",
+    call = call
   )
 }
 
@@ -700,7 +888,7 @@ execute_replicated_continuation <- function(sample, frames, stages, seed,
     }
 
     df <- as.data.frame(result)
-    df$.replicate <- r
+    df$.replicate <- rep.int(r, nrow(df))
     results[[i]] <- df
   }
 
@@ -730,7 +918,20 @@ execute_replicated_continuation <- function(sample, frames, stages, seed,
       } else {
         NULL
       },
-      continued_from = attr(sample, "metadata")
+      replicate_rows = setNames(
+        vapply(results, nrow, integer(1)),
+        as.character(rep_ids)
+      ),
+      continued_from = attr(sample, "metadata"),
+      integrity = {
+        integrity <- sample_integrity_record(
+          combined, the_design, c(already_executed, cont_stages)
+        )
+        integrity$replicate_hashes <- replicate_integrity_hashes(
+          combined, integrity$cols, rep_ids
+        )
+        integrity
+      }
     )
   )
 }
@@ -799,7 +1000,7 @@ execute_replicated_multiphase <- function(design, frames, stages, seed,
     }
 
     df <- as.data.frame(result)
-    df$.replicate <- r
+    df$.replicate <- rep.int(r, nrow(df))
     results[[i]] <- df
   }
 
@@ -826,7 +1027,18 @@ execute_replicated_multiphase <- function(design, frames, stages, seed,
       } else {
         NULL
       },
-      prev_phase = attr(result, "metadata")$prev_phase
+      replicate_rows = setNames(
+        vapply(results, nrow, integer(1)),
+        as.character(rep_ids)
+      ),
+      prev_phase = attr(result, "metadata")$prev_phase,
+      integrity = {
+        integrity <- sample_integrity_record(combined, design, the_stages)
+        integrity$replicate_hashes <- replicate_integrity_hashes(
+          combined, integrity$cols, rep_ids
+        )
+        integrity
+      }
     )
   )
 }
@@ -927,7 +1139,7 @@ execute_single_stage <- function(
     result <- sample_units(frame, strata_spec, draw_spec)
   }
 
-  result$.stage <- stage_num
+  result$.stage <- rep.int(stage_num, nrow(result))
 
   stage_weight_col <- paste0(".weight_", stage_num)
   result[[stage_weight_col]] <- result$.weight
@@ -1219,14 +1431,12 @@ prepare_multiphase_frame <- function(frame) {
 
 #' @noRd
 samplyr_internal_cols <- function(x) {
-  nms <- names(x)
   # Internal tbl_sample metadata columns. When a tbl_sample is reused as
   # a frame (continuation or new-phase execute), these are stripped so
   # they do not collide with new-stage metadata or leak into downstream
   # samples as ordinary data columns. `.panel` is included because panel
   # labels are post-hoc sample metadata, not frame attributes.
-  internal_pattern <- "^\\.(weight|fpc|sample_id|stage|draw|certainty|replicate|panel)"
-  grep(internal_pattern, nms, value = TRUE)
+  grep(samplyr_internal_col_pattern, names(x), value = TRUE)
 }
 
 
@@ -1245,7 +1455,7 @@ validate_design_complete <- function(design, call = rlang::caller_env()) {
   }
 
   balanced_stages <- which(vapply(design$stages, function(s) {
-    identical(s$draw_spec$method, "balanced")
+    is_balanced_method(s$draw_spec)
   }, logical(1)))
   if (length(balanced_stages) > 2) {
     cli_abort(c(
@@ -1391,6 +1601,42 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
       if (anyNA(aux_vals)) {
         cli_abort(
           "Auxiliary variable {.var {av}} contains NA values",
+          call = call
+        )
+      }
+    }
+  }
+
+  bound_vars <- stage_spec$draw_spec$bounds
+  if (!is_null(bound_vars)) {
+    missing_bounds <- setdiff(bound_vars, names(frame))
+    if (length(missing_bounds) > 0) {
+      cli_abort(c(
+        "Required count-bound variable{?s} not found in frame:",
+        "x" = "{.val {missing_bounds}}"
+      ), call = call)
+    }
+    for (var in bound_vars) {
+      if (anyNA(frame[[var]])) {
+        cli_abort("Count-bound variable {.var {var}} contains NA values", call = call)
+      }
+    }
+  }
+
+  spread_vars <- stage_spec$draw_spec$spread
+  if (!is_null(spread_vars)) {
+    missing_spread <- setdiff(spread_vars, names(frame))
+    if (length(missing_spread) > 0) {
+      cli_abort(c(
+        "Required spatial coordinate variable{?s} not found in frame:",
+        "x" = "{.val {missing_spread}}"
+      ), call = call)
+    }
+    for (var in spread_vars) {
+      values <- frame[[var]]
+      if (!is.numeric(values) || anyNA(values) || any(!is.finite(values))) {
+        cli_abort(
+          "Spatial coordinate variable {.var {var}} must be finite numeric with no missing values",
           call = call
         )
       }

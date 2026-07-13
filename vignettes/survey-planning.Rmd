@@ -41,10 +41,15 @@ glimpse(ken_enterprises)
 
 ## Sample Size for a Proportion
 
-Suppose we want to estimate the proportion of exporting firms. We know from the census that about 17% of firms export. We want a margin of error of 3 percentage points at 95% confidence.
+Suppose we want to estimate the proportion of exporting firms. For this
+demonstration, we use the proportion in the synthetic frame as the planning
+value. We want a margin of error of 3 percentage points at 95% confidence.
 
 ```{r}
-n_export <- n_prop(p = 0.17, moe = 0.03)
+p_export <- mean(ken_enterprises$exporter)
+round(p_export, 3)
+
+n_export <- n_prop(p = p_export, moe = 0.03)
 n_export
 ```
 
@@ -74,7 +79,7 @@ In practice, a survey measures several things at once. `n_multi()` takes the bin
 ```{r}
 targets <- data.frame(
   name = c("exporter_rate", "mean_revenue"),
-  p = c(0.17, NA),
+  p = c(p_export, NA),
   var = c(NA, rev_var),
   moe = c(0.03, 30)
 )
@@ -91,12 +96,34 @@ samp <- sampling_design() |>
 nrow(samp)
 ```
 
+### Per-domain targets
+
+With `domains`, `n_multi()` sizes each reporting domain separately. The
+result hands `draw()` a per-domain table, so the design needs a matching
+`stratify_by()`:
+
+```{r}
+targets_dom <- data.frame(
+  name = "exporter_rate",
+  size_class = c("Small", "Medium", "Large"),
+  p = c(0.10, 0.22, 0.45),
+  cv = 0.10
+)
+n_dom <- n_multi(targets_dom, domains = "size_class")
+
+samp_dom <- sampling_design() |>
+  stratify_by(size_class) |>
+  draw(n = n_dom) |>
+  execute(ken_enterprises, seed = 2)
+table(samp_dom$size_class)
+```
+
 ## Power Analysis
 
 If the goal is to detect a difference (for example, comparing exporter rates between two regions), `power_prop()` gives the required per-group sample size:
 
 ```{r}
-n_power <- power_prop(p1 = 0.17, p2 = 0.25, power = 0.8)
+n_power <- power_prop(p1 = p_export, p2 = p_export + 0.08, power = 0.8)
 n_power
 ```
 
@@ -114,7 +141,7 @@ nrow(samp)
 All svyplan functions accept a `resp_rate` parameter. The sample size is inflated by `1 / resp_rate` to account for expected non-response:
 
 ```{r}
-n_prop(p = 0.17, moe = 0.03, resp_rate = 0.85)
+n_prop(p = p_export, moe = 0.03, resp_rate = 0.85)
 ```
 
 The net sample size (after non-response) matches the original target. This works in `n_mean()`, `n_multi()`, `n_cluster()`, and `power_*()` functions as well.
@@ -124,7 +151,7 @@ The net sample size (after non-response) matches the original target. This works
 Given a fixed sample size, how precise will the estimates be? The `prec_*()` functions are the inverse of `n_*()`:
 
 ```{r}
-prec_prop(p = 0.17, n = 600)
+prec_prop(p = p_export, n = 600)
 ```
 
 ```{r}
@@ -136,7 +163,7 @@ prec_mean(var = rev_var, n = 300, mu = mean(ken_enterprises$revenue_millions))
 All `n_*()` and `prec_*()` functions are S3 generics. Pass a precision result to `n_*()` to recover the sample size, or a sample size result to `prec_*()` to compute the achieved precision:
 
 ```{r}
-s <- n_prop(p = 0.17, moe = 0.03)
+s <- n_prop(p = p_export, moe = 0.03)
 p <- prec_prop(s)
 p
 
@@ -164,7 +191,7 @@ confint(p, level = 0.99)
 How sensitive is a sample size to assumptions about the design effect or response rate? The `predict()` method evaluates any svyplan result at new parameter combinations:
 
 ```{r}
-x <- n_prop(p = 0.17, moe = 0.03, deff = 1.5)
+x <- n_prop(p = p_export, moe = 0.03, deff = 1.5)
 predict(x, expand.grid(
   deff = c(1.0, 1.5, 2.0, 2.5),
   resp_rate = c(0.8, 0.9, 1.0)
@@ -194,22 +221,41 @@ The `delta` value (measure of homogeneity) feeds directly into `n_cluster()` and
 ### Optimal allocation
 
 ```{r}
-# Minimize cost to achieve CV = 0.05
-n_cluster(stage_cost = c(500, 50), delta = vc, cv = 0.05)
+# Minimize cost to achieve CV = 0.10
+n_cluster(stage_cost = c(500, 50), delta = vc, cv = 0.10)
 
 # Maximize precision within a budget
-n_cluster(stage_cost = c(500, 50), delta = vc, budget = 100000)
+n_cluster(stage_cost = c(500, 50), delta = vc, budget = 30000)
 ```
 
-The total sample size from `n_cluster()` can be passed to `draw()`:
+The precision-target result is diagnostic: its required number of county PSUs
+far exceeds the 47 available in this frame, so a 10% CV is infeasible under
+these assumptions. The budget-constrained result is feasible and is the plan
+used below.
+
+A cluster plan feeds a two-stage design directly. In a design with
+`cluster_by()`, `draw(n = cl)` hands stage 1 the number of PSUs and
+stage 2 the per-cluster take, using the plan's integerized field
+design (`as.integer(cl)`, which svyplan re-optimizes to whole units
+rather than rounding each stage up):
 
 ```{r}
-cl <- n_cluster(stage_cost = c(500, 50), delta = vc, budget = 100000)
+cl <- n_cluster(stage_cost = c(500, 50), delta = vc, budget = 30000)
+as.integer(cl)
+
 samp <- sampling_design() |>
+  cluster_by(county) |>
+  draw(n = cl) |>
+  add_stage() |>
   draw(n = cl) |>
   execute(ken_enterprises, seed = 5)
+length(unique(samp$county))
 nrow(samp)
 ```
+
+In a flat, unclustered single-stage design the same object contributes
+its operational element total (`prod(as.integer(cl))`) instead, for
+sizing an element sample.
 
 ## Stratification Boundaries
 
@@ -237,10 +283,10 @@ ken_enterprises$rev_stratum <- predict(
 table(ken_enterprises$rev_stratum)
 ```
 
-Use the stratum allocations from `strata_bound()` directly as a named vector for `draw()`. This preserves the joint optimization between boundaries and allocation:
+Use the stratum allocations from `strata_bound()` directly as a named vector for `draw()`. The `as.data.frame()` method exposes the boundary table; this preserves the joint optimization between boundaries and allocation:
 
 ```{r}
-n_alloc <- setNames(bounds$strata$n, labels)
+n_alloc <- setNames(ceiling(as.data.frame(bounds)$n), labels)
 n_alloc
 ```
 
@@ -282,7 +328,7 @@ with a minimum of 20 per stratum:
 ```{r}
 alloc <- n_alloc(alloc_frame, n = 600, alloc = "neyman", min_n = 20)
 alloc
-alloc$detail[, c("stratum", "N", "n_int", "weight")]
+as.data.frame(alloc)[, c("stratum", "N", "n_int", "weight")]
 ```
 
 The result passes directly to `draw()`. The per-stratum allocations are
@@ -318,7 +364,7 @@ budget_alloc <- n_alloc(
   min_n = 20
 )
 budget_alloc
-budget_alloc$detail[, c("stratum", "N", "cost", "n_int", "weight")]
+as.data.frame(budget_alloc)[, c("stratum", "N", "cost", "n_int", "weight")]
 ```
 
 ```{r}
@@ -329,6 +375,74 @@ samp_budget <- sampling_design() |>
 samp_budget |>
   count(sector, name = "n_sampled")
 ```
+
+## Stratified Two-Stage Designs
+
+The workhorse of household surveys stratifies by region, samples
+enumeration areas within each region, then households within each EA.
+`n_alloc()` plans this design when the frame carries a `delta_psu`
+column; the whole plan then drives both stages of the samplyr design.
+
+Build the planning frame from the EA frame's own aggregates. The
+homogeneity `delta_psu` typically comes from a previous survey round
+(via `varcomp()` with its `strata` argument); here we use a flat 0.05:
+
+```{r}
+frame_bfa <- bfa_eas |>
+  summarise(
+    N = sum(households),
+    cost_psu = round(mean(fieldwork_cost)),
+    .by = region
+  ) |>
+  left_join(bfa_eas_variance, by = "region") |>
+  mutate(
+    stratum = region,
+    sd = sqrt(var),
+    delta_psu = 0.05,
+    cost_ssu = 15
+  )
+
+plan_2stage <- n_alloc(
+  frame_bfa[, c("stratum", "N", "sd", "delta_psu", "cost_psu", "cost_ssu")],
+  n = 6000,
+  alloc = "neyman"
+)
+head(as.data.frame(plan_2stage)[, c("stratum", "n_int", "n_psu_int", "psu_size_int")])
+```
+
+Each region gets a whole-unit cluster take (`psu_size_int`) and a
+number of EAs (`n_psu_int`), integerized together so their product
+stays on target. Execute stage 1 against the EA frame, then stage 2
+within each EA. Note the `cluster_by(ea_id)` even though rows already
+are EAs: it declares the cluster structure the plan assumes.
+
+```{r}
+design_2stage <- sampling_design() |>
+  stratify_by(region) |>
+  cluster_by(ea_id) |>
+  draw(n = plan_2stage) |>
+  add_stage() |>
+  stratify_by(region) |>
+  draw(n = plan_2stage)
+
+eas_selected <- execute(design_2stage, bfa_eas, stages = 1, seed = 7)
+nrow(eas_selected)
+```
+
+Stage 2 runs later as a continuation, once households have been listed
+in the selected EAs (the listing must carry the `region` column):
+
+```{r, eval = FALSE}
+eas_selected |>
+  execute(household_listing, seed = 8)
+```
+
+Two conventions to keep in mind. First, the meaning of `n` shifts
+across stages: at stage 1 a value is the stratum *total* of PSUs, while
+at stage 2 it is the take *per PSU*. Second, per-stratum values at
+stage 2 need the explicit `stratify_by(region)` shown above; strata do
+not carry over from stage 1, and the second `stratify_by()` only routes
+the takes (every EA lies in one region), so weights are unaffected.
 
 ## Design Effects After Sampling
 
@@ -405,7 +519,13 @@ The typical planning workflow can be:
 7. Pass the sample size or allocation to `draw()` and execute the design.
 8. Evaluate the realized design with `design_effect()` and `effective_n()`.
 
-All `svyplan` sample size objects (`svyplan_n`, `svyplan_power`,
-`svyplan_cluster`) work directly with `draw()`. For `n_alloc()`, the
-per-stratum allocations are passed through automatically. For other objects,
-the scalar total is extracted. No manual conversion is needed.
+All `svyplan` sample size objects work directly with `draw()`, and the
+handoff is stage-aware. `n_alloc()` results become per-stratum
+allocations; their stratified two-stage variant feeds PSU counts to a
+clustered stage 1 and per-cluster takes to stage 2. `n_cluster()`
+results contribute the matching stage value in a clustered design (and
+their operational total in a flat single-stage one). `n_multi()` domain
+plans become per-domain tables for a design stratified on the domain
+variables. Scalar objects (`n_prop()`, `n_mean()`, `power_*()`)
+contribute their operational total. The stable tabular form of any plan
+is available via `as.data.frame()` when you need the numbers yourself.

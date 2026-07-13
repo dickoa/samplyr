@@ -32,6 +32,16 @@ example after a tidyr operation such as \code{\link[tidyr:uncount]{tidyr::uncoun
 All dplyr verbs (\code{mutate}, \code{filter}, \code{select}, \verb{*_join}, etc.)
 preserve the \code{tbl_sample} class automatically.
 
+Preserving the class does not mean the sample remains analyzable:
+operations that remove, add, or duplicate rows, or overwrite
+internal design columns (\code{.weight}, \code{.fpc_k}, ...), mark the sample
+as modified. Design-based computations (\code{\link[=as_svydesign]{as_svydesign()}},
+\code{\link[=joint_expectation]{joint_expectation()}}, \code{\link[=design_effect]{design_effect()}}) reject modified samples;
+see the Domain analysis section of \code{\link[=as_svydesign]{as_svydesign()}}. Restoring the
+class with \code{as_tbl_sample()} does not clear the mark: the data is
+re-verified against the integrity record stored at execution, so a
+stripped, altered, and restored object is detected.
+
 Some operations strip the class but keep the sampling attributes.
 Use \code{as_tbl_sample()} to restore it:
 \itemize{

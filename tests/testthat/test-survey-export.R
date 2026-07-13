@@ -565,7 +565,12 @@ test_that("as_svrepdesign(subbootstrap) is the escape hatch for multi-stage stag
       draw(n = 4) |>
     execute(frame, seed = 24)
 
-  rep_svy <- as_svrepdesign(s, type = "subbootstrap")
+  # survey drops the (correctly exported) stage-2 FPC when
+  # bootstrapping at stage 1; the warning is informative, not an error.
+  expect_warning(
+    rep_svy <- as_svrepdesign(s, type = "subbootstrap"),
+    "Finite population corrections"
+  )
   expect_s3_class(rep_svy, "svyrep.design")
 
   est <- survey::svytotal(~y, rep_svy)
@@ -1262,4 +1267,405 @@ test_that("joint_expectation for stratified pps_multinomial works", {
   expect_true(is.matrix(mat))
   expect_equal(nrow(mat), ncol(mat))
   expect_equal(mat, t(mat), tolerance = 1e-10)
+})
+
+# Multistage export completeness (July 2026 review) ------------------------
+#
+# Every executed sampling stage must be represented in the exported ids
+# and fpc formulas, multi-variable cluster_by()/stratify_by() must
+# collapse to a single formula term per stage, and the certainty stratum
+# must combine with user strata instead of being appended.
+
+test_that("first-stage census + unclustered SRS stage has positive SE matching reference", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    psu = rep(1:10, each = 20),
+    id = seq_len(200),
+    y = rep(1:20, 10)^2
+  )
+
+  s <- sampling_design() |>
+    add_stage("PSU") |>
+      cluster_by(psu) |>
+      draw(n = 10) |>
+    add_stage("unit") |>
+      draw(n = 5) |>
+    execute(frame, seed = 7)
+
+  svy <- as_svydesign(s)
+  se <- unname(survey::SE(survey::svymean(~y, svy)))
+  expect_gt(se, 0)
+
+  ref <- survey::svydesign(
+    ids = ~psu + id,
+    fpc = ~.fpc_1 + .fpc_2,
+    weights = ~.weight,
+    data = as.data.frame(s)
+  )
+  ref_se <- unname(survey::SE(survey::svymean(~y, ref)))
+  expect_equal(se, ref_se, tolerance = 1e-10)
+})
+
+test_that("implicit final unit stage matches explicit cluster_by(id)", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    psu = rep(1:10, each = 20),
+    id = seq_len(200),
+    y = rep(1:20, 10)^2
+  )
+
+  implicit <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 6) |>
+    add_stage() |> draw(n = 5) |>
+    execute(frame, seed = 11)
+  explicit <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 6) |>
+    add_stage() |> cluster_by(id) |> draw(n = 5) |>
+    execute(frame, seed = 11)
+
+  est_i <- survey::svymean(~y, as_svydesign(implicit))
+  est_e <- survey::svymean(~y, as_svydesign(explicit))
+  expect_equal(unname(coef(est_i)), unname(coef(est_e)), tolerance = 1e-10)
+  expect_equal(
+    unname(survey::SE(est_i)),
+    unname(survey::SE(est_e)),
+    tolerance = 1e-10
+  )
+})
+
+test_that("exported design has one id and one fpc term per executed stage", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    psu = rep(1:10, each = 20),
+    id = seq_len(200),
+    y = seq_len(200)
+  )
+
+  s <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 6) |>
+    add_stage() |> draw(n = 5) |>
+    execute(frame, seed = 3)
+
+  svy <- as_svydesign(s)
+  expect_length(all.vars(svy$call$ids), 2L)
+  expect_length(all.vars(svy$call$fpc), 2L)
+})
+
+test_that("multi-variable cluster_by exports a single interaction id", {
+  skip_if_not_installed("survey")
+
+  frame <- expand.grid(unit = 1:10, ea = 1:5, region = c("N", "S"))
+  frame$y <- seq_len(nrow(frame)) + 40 * (frame$region == "S")
+
+  s <- sampling_design() |>
+    cluster_by(region, ea) |>
+    draw(n = 4) |>
+    execute(frame, seed = 11)
+
+  svy <- as_svydesign(s)
+  expect_length(all.vars(svy$call$ids), 1L)
+
+  df <- as.data.frame(s)
+  df$cl <- interaction(df$region, df$ea, drop = TRUE)
+  ref <- survey::svydesign(
+    ids = ~cl, fpc = ~.fpc_1, weights = ~.weight, data = df
+  )
+  expect_equal(
+    unname(survey::SE(survey::svytotal(~y, svy))),
+    unname(survey::SE(survey::svytotal(~y, ref))),
+    tolerance = 1e-10
+  )
+})
+
+test_that("multi-variable cluster_by at stage 1 of a two-stage design matches reference", {
+  skip_if_not_installed("survey")
+
+  frame <- expand.grid(unit = 1:10, ea = 1:5, region = c("N", "S"))
+  frame$y <- seq_len(nrow(frame))
+  frame$row_id <- seq_len(nrow(frame))
+
+  s <- sampling_design() |>
+    add_stage() |> cluster_by(region, ea) |> draw(n = 4) |>
+    add_stage() |> draw(n = 5) |>
+    execute(frame, seed = 12)
+
+  svy <- as_svydesign(s)
+  df <- as.data.frame(s)
+  df$cl <- interaction(df$region, df$ea, drop = TRUE)
+  ref <- survey::svydesign(
+    ids = ~cl + row_id,
+    fpc = ~.fpc_1 + .fpc_2,
+    weights = ~.weight,
+    data = df,
+    nest = TRUE
+  )
+  expect_equal(
+    unname(survey::SE(survey::svytotal(~y, svy))),
+    unname(survey::SE(survey::svytotal(~y, ref))),
+    tolerance = 1e-10
+  )
+})
+
+test_that("multi-variable stratify_by exports interaction strata", {
+  skip_if_not_installed("survey")
+
+  frame <- expand.grid(
+    unit = 1:25,
+    sector = c("A", "B"),
+    size = c("small", "large")
+  )
+  frame$y <- as.integer(factor(frame$sector)) * 10 +
+    as.integer(factor(frame$size)) * 100 + frame$unit
+
+  s <- sampling_design() |>
+    stratify_by(sector, size) |>
+    draw(frac = 0.2) |>
+    execute(frame, seed = 13)
+
+  svy <- as_svydesign(s)
+
+  df <- as.data.frame(s)
+  df$stratum <- interaction(df$sector, df$size, drop = TRUE)
+  ref <- survey::svydesign(
+    ids = ~1, strata = ~stratum, fpc = ~.fpc_1,
+    weights = ~.weight, data = df
+  )
+  # Must match full cross-classification, not first-variable-only.
+  expect_equal(
+    unname(survey::SE(survey::svytotal(~y, svy))),
+    unname(survey::SE(survey::svytotal(~y, ref))),
+    tolerance = 1e-10
+  )
+})
+
+test_that("certainty stratum combines with user strata", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    s = rep(c("A", "B"), each = 20),
+    id = 1:40,
+    mos = rep(c(rep(1, 19), 100), 2),
+    y = 1:40
+  )
+
+  smp <- sampling_design() |>
+    stratify_by(s) |>
+    draw(
+      n = c(A = 5, B = 5), method = "pps_brewer", mos = mos,
+      certainty_size = 50
+    ) |>
+    execute(frame, seed = 19)
+  expect_equal(sum(smp$.certainty_1), 2L)
+
+  svy <- as_svydesign(smp)
+  # One combined stratum term, with certainty separated within each
+  # user stratum.
+  expect_length(all.vars(svy$call$strata), 1L)
+  expect_equal(
+    length(unique(svy$strata[[1]])),
+    4L
+  )
+})
+
+test_that("second-stage strata are exported and match reference", {
+  skip_if_not_installed("survey")
+
+  frame <- expand.grid(unit = 1:4, s2 = c("m", "f"), psu = 1:8)
+  frame$row_id <- seq_len(nrow(frame))
+  frame$y <- frame$row_id %% 7 + 10 * (frame$s2 == "f")
+
+  s <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 4) |>
+    add_stage() |> stratify_by(s2) |> draw(n = c(m = 2, f = 2)) |>
+    execute(frame, seed = 21)
+
+  svy <- as_svydesign(s)
+
+  df <- as.data.frame(s)
+  df$s1 <- "all"
+  ref <- survey::svydesign(
+    ids = ~psu + row_id,
+    strata = ~s1 + s2,
+    fpc = ~.fpc_1 + .fpc_2,
+    weights = ~.weight,
+    data = df,
+    nest = TRUE
+  )
+  expect_equal(
+    unname(survey::SE(survey::svytotal(~y, svy))),
+    unname(survey::SE(survey::svytotal(~y, ref))),
+    tolerance = 1e-10
+  )
+})
+
+test_that("srswr export still matches the manual with-replacement design", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(id = 1:20, y = (1:20)^1.5)
+  s <- sampling_design() |>
+    draw(n = 10, method = "srswr") |>
+    execute(frame, seed = 3)
+
+  svy <- as_svydesign(s)
+  ref <- survey::svydesign(
+    ids = ~1, weights = ~.weight, data = as.data.frame(s)
+  )
+  expect_equal(
+    unname(survey::SE(survey::svymean(~y, svy))),
+    unname(survey::SE(survey::svymean(~y, ref))),
+    tolerance = 1e-10
+  )
+})
+
+test_that("PPS stage 1 with later stages exports fraction-scale fpc", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    psu = rep(1:10, each = 20),
+    mos = rep(c(30, 50, 20, 80, 40, 60, 25, 45, 70, 35), each = 20),
+    id = 1:200,
+    y = (1:200) %% 13
+  )
+
+  s <- sampling_design() |>
+    add_stage() |>
+      cluster_by(psu) |>
+      draw(n = 4, method = "pps_brewer", mos = mos) |>
+    add_stage() |>
+      draw(n = 8) |>
+    execute(frame, seed = 31)
+
+  svy <- as_svydesign(s)
+  se <- unname(survey::SE(survey::svymean(~y, svy)))
+  expect_gt(se, 0)
+
+  df <- as.data.frame(s)
+  df$pi1 <- 1 / df$.weight_1
+  df$f2 <- 1 / df$.weight_2
+  ref <- survey::svydesign(
+    ids = ~psu + id,
+    fpc = ~pi1 + f2,
+    weights = ~.weight,
+    data = df,
+    pps = "brewer",
+    nest = TRUE
+  )
+  expect_equal(
+    se,
+    unname(survey::SE(survey::svymean(~y, ref))),
+    tolerance = 1e-10
+  )
+})
+
+test_that("PPS stage 1 with clustered stage 2 exports without fpc scale error", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    psu = rep(1:10, each = 20),
+    mos = rep(c(30, 50, 20, 80, 40, 60, 25, 45, 70, 35), each = 20),
+    id = 1:200,
+    y = (1:200) %% 13
+  )
+
+  # Errored before the multistage export rewrite: survey requires all
+  # fpc terms on one scale, and pi at stage 1 was mixed with a count
+  # at stage 2.
+  s <- sampling_design() |>
+    add_stage() |>
+      cluster_by(psu) |>
+      draw(n = 4, method = "pps_brewer", mos = mos) |>
+    add_stage() |>
+      cluster_by(id) |>
+      draw(n = 8) |>
+    execute(frame, seed = 31)
+
+  svy <- as_svydesign(s)
+  expect_s3_class(svy, "survey.design2")
+  expect_gt(unname(survey::SE(survey::svymean(~y, svy))), 0)
+})
+
+test_that("unclustered element stage before later stages aborts export", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    psu = rep(1:10, each = 20),
+    id = seq_len(200),
+    y = seq_len(200)
+  )
+
+  s <- sampling_design() |>
+    add_stage() |> draw(n = 100) |>
+    add_stage() |> cluster_by(psu) |> draw(n = 4) |>
+    execute(frame, seed = 5)
+
+  expect_error(
+    as_svydesign(s),
+    class = "samplyr_error_survey_midstage_element"
+  )
+})
+
+test_that("WR stage 1 with unclustered stage 2 keeps the WR variance", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    psu = rep(1:8, each = 10),
+    mos = rep(c(5, 10, 15, 20, 25, 30, 35, 40), each = 10),
+    id = 1:80,
+    y = (1:80 %% 7) + rep(1:8, each = 10)
+  )
+
+  s <- sampling_design() |>
+    add_stage() |>
+      cluster_by(psu) |>
+      draw(n = 4, method = "pps_multinomial", mos = mos) |>
+    add_stage() |>
+      draw(n = 3) |>
+    execute(frame, seed = 5)
+
+  svy <- as_svydesign(s)
+
+  # With replacement at stage 1 (fpc = Inf, f1 = 0), later-stage terms
+  # contribute nothing: the export must equal the pure between-draw
+  # estimator.
+  df <- as.data.frame(s)
+  ref <- survey::svydesign(
+    ids = ~.draw_1, weights = ~.weight, data = df
+  )
+  expect_equal(
+    unname(survey::SE(survey::svymean(~y, svy))),
+    unname(survey::SE(survey::svymean(~y, ref))),
+    tolerance = 1e-10
+  )
+})
+
+test_that("user pps object on a multi-stage sample warns and exports stage 1", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    psu = rep(1:10, each = 20),
+    mos = rep(c(30, 50, 20, 80, 40, 60, 25, 45, 70, 35), each = 20),
+    id = 1:200,
+    y = (1:200) %% 13
+  )
+
+  s <- sampling_design() |>
+    add_stage() |>
+      cluster_by(psu) |>
+      draw(n = 4, method = "pps_brewer", mos = mos) |>
+    add_stage() |>
+      draw(n = 8) |>
+    execute(frame, seed = 31)
+
+  jip <- joint_expectation(s, frame, stage = 1)[[1]]
+  # survey needs the joint matrix at row level for multi-row clusters
+  idx <- match(s$psu, sort(unique(s$psu)))
+  expect_warning(
+    svy <- as_svydesign(s, pps = survey::ppsmat(jip[idx, idx])),
+    "single-stage"
+  )
+  expect_s3_class(svy, "survey.design")
+  expect_gt(unname(survey::SE(survey::svymean(~y, svy))), 0)
 })

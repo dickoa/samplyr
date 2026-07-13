@@ -69,7 +69,7 @@ print_stage <- function(stage, num) {
     cli::cat_bullet(paste0("Draw: ", draw_desc), bullet = "bullet")
   } else {
     cli::cat_bullet(
-      paste0("(incomplete ", "\u2014", " no draw specification)"),
+      "Incomplete: no draw specification",
       bullet = "warning"
     )
   }
@@ -129,6 +129,19 @@ format_draw_spec <- function(draw, has_strata = FALSE, alloc = NULL) {
 
   if (!is_null(draw$prn)) {
     parts <- c(parts, paste0("prn = ", draw$prn))
+  }
+
+  if (!is_null(draw$aux)) {
+    parts <- c(parts, paste0("aux = ", paste(draw$aux, collapse = ", ")))
+  }
+
+  if (!is_null(draw$bounds)) {
+    bound_text <- paste0("bound(", draw$bounds, ")", collapse = ", ")
+    parts <- c(parts, paste0("count bounds = ", bound_text))
+  }
+
+  if (!is_null(draw$spread)) {
+    parts <- c(parts, paste0("spread = ", paste(draw$spread, collapse = ", ")))
   }
 
   if (!is_null(draw$control)) {
@@ -191,7 +204,19 @@ tbl_sum.tbl_sample <- function(x, ...) {
     result <- c(result, "Replicates" = as.character(n_reps))
   }
 
-  if (".weight" %in% names(x)) {
+  if (inherits(x, "grouped_df")) {
+    result <- c(
+      result,
+      "Groups" = paste(dplyr::group_vars(x), collapse = ", ")
+    )
+  }
+
+  mods <- sample_modifications(x)
+  if (length(mods) > 0) {
+    result <- c(result, "Modified" = paste(mods, collapse = ", "))
+  }
+
+  if (".weight" %in% names(x) && nrow(x) > 0) {
     w <- x$.weight
     result <- c(
       result,

@@ -14,6 +14,7 @@ draw(
   mos = NULL,
   prn = NULL,
   aux = NULL,
+  spread = NULL,
   round = "up",
   control = NULL,
   certainty_size = NULL,
@@ -76,6 +77,7 @@ with an allocation method is used. Default is \code{NULL} (no maximum).}
 \item \code{"pps_systematic"}: PPS systematic sampling
 \item \code{"pps_brewer"}: Generalized Brewer (\enc{Tillé}{Tille}) method
 \item \code{"pps_cps"}: Conditional Poisson sampling (maximum entropy)
+\item \code{"pps_sampford"}: Sampford fixed-size PPS sampling
 \item \code{"pps_poisson"}: PPS Poisson sampling (random sample size)
 \item \code{"pps_sps"}: Sequential Poisson sampling (fixed size, supports \code{prn})
 \item \code{"pps_pareto"}: Pareto sampling (fixed size, supports \code{prn})
@@ -85,20 +87,34 @@ with an allocation method is used. Default is \code{NULL} (no maximum).}
 
 \strong{Balanced sampling:}
 \itemize{
-\item \code{"balanced"}: Balanced sampling via the cube method (Deville & Tille 2004).
+\item \code{"cube"}: Balanced sampling via the cube method
+(Deville & \enc{Tillé}{Tille} 2004).
 Uses auxiliary variables (\code{aux}) to balance the sample so that
 Horvitz-Thompson estimates of auxiliary totals match population totals.
 Supports equal or unequal (\code{mos}) inclusion probabilities. When
 stratified, uses the stratified cube algorithm (Chauvet 2009). At most
-2 stages may use \code{"balanced"}.
+2 stages may use a balanced-family method. \code{"balanced"} is retained
+as a compatibility alias for \code{"cube"}.
+\item \code{"lpm2"}: Local pivotal sampling. Requires spatial coordinates in
+\code{spread} and does not accept \code{aux} or \code{bound()} constraints.
+\item \code{"scps"}: Spatially correlated Poisson sampling. Requires spatial
+coordinates in \code{spread} and does not accept \code{aux} or \code{bound()}.
 }
 
-Custom PPS methods registered with \code{\link[sondage:register_method]{sondage::register_method()}} are also
-accepted, using the \code{"pps_<name>"} convention (e.g., \code{"pps_mymethod"}).}
+Methods registered with \code{\link[sondage:register_method]{sondage::register_method()}} use a prefix that
+identifies their sampling family. Registered \code{type = "wor"} and
+\code{type = "wr"} methods use \code{"pps_<name>"} (for example,
+\code{"pps_mymethod"}). Registered \code{type = "balanced"} methods use
+\code{"balanced_<name>"}. For the latter, \code{mos} is optional;
+\code{supports_aux = TRUE} permits ordinary balancing variables in \code{aux}, and
+\code{supports_spread = TRUE} requires coordinates in \code{spread}. These
+capabilities are declared when the method is registered in \code{sondage}.}
 
-\item{mos}{Measure of size variable for PPS methods and optional for
-\code{"balanced"}, specified as a bare column name (unquoted). Required for
-all \verb{pps_*} methods.}
+\item{mos}{Measure of size variable, specified as a bare column name
+(unquoted). Required for built-in PPS methods and registered \code{type = "wor"} or \code{type = "wr"} methods named with the \code{pps_} prefix. Optional
+for \code{cube}, \code{lpm2}, \code{scps}, and registered \code{type = "balanced"} methods
+named with the \code{balanced_} prefix; when omitted, equal inclusion
+probabilities are used.}
 
 \item{prn}{Permanent random number variable for sample coordination,
 specified as a bare column name (unquoted). Must be a numeric column
@@ -107,13 +123,23 @@ Supported methods: \code{"bernoulli"}, \code{"pps_poisson"}, \code{"pps_sps"},
 \code{"pps_pareto"}. When supplied, the sample is deterministic for a given
 set of PRN values, enabling coordination across survey waves.}
 
-\item{aux}{Auxiliary balancing variables for \code{method = "balanced"},
-specified as bare column names: \code{aux = c(income, pop_density)}. Columns
-must be numeric with no missing values. The cube algorithm ensures the
-Horvitz-Thompson estimator of these auxiliary totals equals (or nearly
-equals) the population totals, improving precision. When used with
-\code{cluster_by()}, auxiliary values are automatically aggregated (summed)
-to the cluster level before selection.}
+\item{aux}{Cube balancing declarations for \code{method = "cube"}, or ordinary
+balancing variables for a registered balanced method that declares
+\code{supports_aux = TRUE}.
+Bare numeric columns, such as \code{aux = c(income, pop_density)}, request
+approximate Horvitz-Thompson total balance. A \code{\link[=bound]{bound()}} marker requests
+adjacent-integer count bounds for every observed category, for example
+\code{aux = c(income, bound(region), bound(urban_rural))}. Use separate
+\code{bound()} calls for separate marginal constraints. With \code{cluster_by()},
+ordinary auxiliary values are summed to cluster level, while bound
+variables must be constant within each cluster.}
+
+\item{spread}{Spatial coordinates for \code{method = "lpm2"}, \code{"scps"}, or a
+registered balanced method that declares \code{supports_spread = TRUE},
+specified as bare numeric columns, for example \code{spread = c(longitude, latitude)}. Coordinates must be finite and have no missing values. They
+should be placed on comparable scales before sampling. Methods declaring
+\code{supports_spread = TRUE} require this argument. With \code{cluster_by()},
+coordinates must be constant within each cluster.}
 
 \item{round}{Rounding method when converting \code{frac} to sample sizes.
 One of:
@@ -183,22 +209,38 @@ resulting sample has more than \code{n} units.
 Equivalent to SAS SURVEYSELECT allowing \verb{CERTSIZE=} overflow.}
 
 \item{on_empty}{Behaviour when a random-size method (\code{bernoulli},
-\code{pps_poisson}) selects zero units in a stratum or the whole frame.
-One of:
+\code{pps_poisson}, or a custom method registered with
+\code{fixed_size = FALSE}) selects zero units in a stratum or the whole
+frame. One of:
 \itemize{
 \item \code{"error"} (default): Stop with an informative error. Zero selections
 usually indicate a design problem (sampling fraction too small or
 stratum too small) that should be fixed rather than silently papered
 over.
-\item \code{"warn"}: Issue a warning and fall back to SRS of 1 unit.
-\item \code{"silent"}: Fall back to SRS of 1 unit without a message.
+\item \code{"warn"}: Issue a warning and keep the empty selection.
+\item \code{"silent"}: Keep the empty selection without a message.
 }
 
-\strong{Weight note:} when falling back (\code{"warn"} or \code{"silent"}), the
-fallback selects 1 unit via SRS, so the resulting weight is \code{N}
-(the stratum or frame size), not \code{1/frac}. This reflects the actual
-selection mechanism, not the intended Bernoulli/Poisson design.
-Downstream variance estimation treats this unit as an SRS draw.}
+An empty selection is a valid realization of a random-size design:
+it contributes zero to Horvitz-Thompson totals, so estimates from
+repeated executions remain unbiased. (A fallback that draws a
+substitute unit would need weights from the combined "draw, then
+fall back" design; reusing the SRS or Poisson weights biases HT
+totals upward.) When an empty stage occurs in a multi-stage
+design, later stages have nothing to select from and the result is
+an empty sample. \code{"warn"} and \code{"silent"} are intended for
+simulation and replicated runs; check \code{nrow()} before analyzing a
+single realization.
+
+A replicated execution that produced empty replicates cannot be
+passed to a later \code{\link[=execute]{execute()}} call (a new phase or a stage
+continuation): this raises an error of class
+\code{samplyr_error_empty_phase_replicate} rather than silently
+skipping the empty replicates, which would condition all
+downstream results on nonempty realizations. Handle empty
+replicates explicitly, for example by executing each nonempty
+replicate separately while accounting for the empty ones in the
+analysis.}
 }
 \value{
 A modified \code{sampling_design} object with selection parameters specified.
@@ -225,6 +267,7 @@ sampling design must end with \code{draw()}.
    \code{pps_systematic} \tab Without \tab Fixed \tab Simple, some bias \cr
    \code{pps_brewer} \tab Without \tab Fixed \tab Fast, joint prob > 0 \cr
    \code{pps_cps} \tab Without \tab Fixed \tab Highest entropy, joint prob available \cr
+   \code{pps_sampford} \tab Without \tab Fixed \tab Exact Sampford joint probabilities \cr
    \code{pps_poisson} \tab Without \tab Random \tab PPS analog of Bernoulli \cr
    \code{pps_sps} \tab Without \tab Fixed \tab Sequential Poisson, supports \code{prn} \cr
    \code{pps_pareto} \tab Without \tab Fixed \tab Pareto sampling, supports \code{prn} \cr
@@ -236,7 +279,9 @@ sampling design must end with \code{draw()}.
 
 \subsection{Balanced Sampling}{\tabular{llll}{
    Method \tab Replacement \tab Sample Size \tab Notes \cr
-   \code{balanced} \tab Without \tab Fixed \tab Deville & Tille 2004, uses \code{aux} \cr
+   \code{cube} \tab Without \tab Fixed \tab Deville & \enc{Tillé}{Tille} 2004, uses \code{aux} \cr
+   \code{lpm2} \tab Without \tab Fixed \tab Spatial spread; requires \code{spread} \cr
+   \code{scps} \tab Without \tab Fixed \tab Spatial spread; requires \code{spread} \cr
 }
 
 }
@@ -244,7 +289,7 @@ sampling design must end with \code{draw()}.
 }
 
 \subsection{Parameter Requirements}{\tabular{lllll}{
-   Method \tab \code{n} \tab \code{frac} \tab \code{mos} \tab \code{aux} \cr
+   Method \tab \code{n} \tab \code{frac} \tab \code{mos} \tab Extra input \cr
    \code{srswor} \tab Yes \tab or Yes \tab -- \tab -- \cr
    \code{srswr} \tab Yes \tab or Yes \tab -- \tab -- \cr
    \code{systematic} \tab Yes \tab or Yes \tab -- \tab -- \cr
@@ -252,12 +297,15 @@ sampling design must end with \code{draw()}.
    \code{pps_systematic} \tab Yes \tab or Yes \tab Yes \tab -- \cr
    \code{pps_brewer} \tab Yes \tab or Yes \tab Yes \tab -- \cr
    \code{pps_cps} \tab Yes \tab -- \tab Yes \tab -- \cr
+   \code{pps_sampford} \tab Yes \tab or Yes \tab Yes \tab -- \cr
    \code{pps_poisson} \tab Expected \tab or Yes \tab Yes \tab -- \cr
    \code{pps_sps} \tab Yes \tab or Yes \tab Yes \tab -- \cr
    \code{pps_pareto} \tab Yes \tab or Yes \tab Yes \tab -- \cr
    \code{pps_multinomial} \tab Yes \tab or Yes \tab Yes \tab -- \cr
    \code{pps_chromy} \tab Yes \tab or Yes \tab Yes \tab -- \cr
-   \code{balanced} \tab Yes \tab or Yes \tab Optional \tab Optional \cr
+   \code{cube} \tab Yes \tab or Yes \tab Optional \tab \code{aux} optional \cr
+   \code{lpm2} \tab Yes \tab or Yes \tab Optional \tab \code{spread} required \cr
+   \code{scps} \tab Yes \tab or Yes \tab Optional \tab \code{spread} required \cr
 }
 
 }
@@ -265,7 +313,8 @@ sampling design must end with \code{draw()}.
 \subsection{Fixed vs Random Sample Size Methods}{
 
 Methods with \strong{fixed sample size} (\code{srswor}, \code{srswr}, \code{systematic}, \code{pps_systematic},
-\code{pps_brewer}, \code{pps_cps}, \code{pps_sps}, \code{pps_pareto}, \code{pps_multinomial}, \code{pps_chromy})
+\code{pps_brewer}, \code{pps_cps}, \code{pps_sampford}, \code{pps_sps}, \code{pps_pareto},
+\code{pps_multinomial}, \code{pps_chromy}, \code{cube}, \code{lpm2}, \code{scps})
 accept either \code{n} or \code{frac}. When \code{frac}
 is provided, the sample size is computed based on the \code{round} parameter (default: ceiling).
 

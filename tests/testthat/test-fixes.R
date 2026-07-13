@@ -776,8 +776,15 @@ test_that("as_tbl_sample works with tidyr::uncount()", {
 
   restored <- as_tbl_sample(listing)
   expect_s3_class(restored, "tbl_sample")
+  # The expanded listing no longer matches its executed realization;
+  # integrity verification marks it on restore, and executing a design
+  # on it (a new-phase flow) warns that its weights are used as-is.
+  expect_identical(samplyr:::sample_modifications(restored), "rows")
 
-  final <- design |> execute(restored, seed = 2)
+  expect_warning(
+    final <- design |> execute(restored, seed = 2),
+    "modified after execution"
+  )
   expect_s3_class(final, "tbl_sample")
   expect_equal(get_stages_executed(final), c(1L, 2L))
   expect_true(all(final$.weight > 0))

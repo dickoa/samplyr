@@ -37,7 +37,8 @@ test_that("print flags a stage with no draw specification", {
     add_stage(label = "Incomplete")
 
   txt <- paste(capture.output(print(design)), collapse = "\n")
-  expect_match(txt, "no draw specification")
+  expect_match(txt, "Incomplete: no draw specification", fixed = TRUE)
+  expect_false(grepl("\u2014", txt, fixed = TRUE))
 })
 
 test_that("print shows a single control variable without c() wrapping", {
@@ -46,4 +47,25 @@ test_that("print shows a single control variable without c() wrapping", {
 
   txt <- paste(capture.output(print(design)), collapse = "\n")
   expect_match(txt, "control = cluster")
+})
+
+test_that("print shows balanced and spatial declarations compactly", {
+  cube <- sampling_design() |>
+    draw(
+      n = 10,
+      method = "cube",
+      mos = size,
+      aux = c(x, bound(group))
+    )
+  cube_txt <- paste(capture.output(print(cube)), collapse = "\n")
+  expect_match(cube_txt, "method = cube", fixed = TRUE)
+  expect_match(cube_txt, "mos = size", fixed = TRUE)
+  expect_match(cube_txt, "aux = x", fixed = TRUE)
+  expect_match(cube_txt, "count bounds = bound(group)", fixed = TRUE)
+
+  spatial <- sampling_design() |>
+    draw(n = 10, method = "lpm2", spread = c(longitude, latitude))
+  spatial_txt <- paste(capture.output(print(spatial)), collapse = "\n")
+  expect_match(spatial_txt, "method = lpm2", fixed = TRUE)
+  expect_match(spatial_txt, "spread = longitude, latitude", fixed = TRUE)
 })

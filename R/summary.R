@@ -51,7 +51,7 @@ summary.tbl_sample <- function(object, ...) {
   is_replicated <- has_multiple_replicates(object)
   if (is_replicated && anyNA(object$.replicate)) {
     cli::cat_bullet(
-      "{.field .replicate} contains NA values; replicate reporting disabled.",
+      "{.field .replicate} contains missing values. Replicate reporting disabled.",
       bullet = "warning"
     )
     is_replicated <- FALSE
@@ -117,7 +117,25 @@ summary.tbl_sample <- function(object, ...) {
 
     if (!is_null(stage_spec$draw_spec$mos)) {
       cli::cat_bullet(
-        paste0("Size: ", stage_spec$draw_spec$mos),
+        paste0("MOS: ", stage_spec$draw_spec$mos),
+        bullet = "bullet"
+      )
+    }
+    if (!is_null(stage_spec$draw_spec$aux)) {
+      cli::cat_bullet(
+        paste0("HT totals: ", paste(stage_spec$draw_spec$aux, collapse = ", ")),
+        bullet = "bullet"
+      )
+    }
+    if (!is_null(stage_spec$draw_spec$bounds)) {
+      cli::cat_bullet(
+        paste0("Bounded counts: ", paste(stage_spec$draw_spec$bounds, collapse = ", ")),
+        bullet = "bullet"
+      )
+    }
+    if (!is_null(stage_spec$draw_spec$spread)) {
+      cli::cat_bullet(
+        paste0("Spatial spread: ", paste(stage_spec$draw_spec$spread, collapse = ", ")),
         bullet = "bullet"
       )
     }
@@ -135,22 +153,31 @@ summary.tbl_sample <- function(object, ...) {
     has_fpc <- fpc_col %in% names(object_for_alloc)
     label <- stage_spec$label %||% paste("Stage", stage_idx)
 
-    # f_h is a uniform sampling rate only for equal-probability WOR
-    # stages. For PPS/balanced it is the mean inclusion fraction;
-    # for WR/PMR there is no meaningful fraction (.fpc is Inf).
+    # f_h = n_h / N_h is the realised sample fraction. It is not a
+    # unit-level inclusion probability for unequal-probability designs.
+    # WR/PMR stages have no sampling fraction because their FPC is Inf.
+    # A declared variance_family = "srs" asserts equal probability.
     stage_method <- stage_spec$draw_spec$method
     stage_method_type <- stage_spec$draw_spec$method_type
     is_wr_stage <- stage_method %in% c(wr_methods, pmr_methods) ||
       identical(stage_method_type, "wr")
-    is_pps_like_stage <- stage_method %in% pps_wor_methods ||
-      identical(stage_method, "balanced") ||
-      (identical(stage_method_type, "wor") && !is_null(stage_spec$draw_spec$mos))
-    f_h_label <- if (is_pps_like_stage) "f_h (mean)" else "f_h"
+    has_unequal_prob <- (
+      stage_method %in% pps_wor_methods ||
+        (
+          is_balanced_method(stage_spec$draw_spec) &&
+            !is_null(stage_spec$draw_spec$mos)
+        ) ||
+        (
+          identical(stage_method_type, "wor") &&
+            !is_null(stage_spec$draw_spec$mos)
+        )
+    ) &&
+      !identical(stage_spec$draw_spec$method_variance, "srs")
 
     cat("\n")
     cli::cat_rule(left = paste0("Allocation: ", label))
     if (is_replicated) {
-      cli::cat_bullet("(showing replicate 1)", bullet = "info")
+      cli::cat_bullet("Allocation for replicate 1.", bullet = "info")
     }
 
     # Build the full identity key for this stage's units once
@@ -172,7 +199,7 @@ summary.tbl_sample <- function(object, ...) {
         nrow(object_for_alloc)
       }
       cli::cat_bullet(
-        paste0("n = ", n_drawn, " (with-replacement; no FPC)"),
+        paste0("n = ", n_drawn, " (with replacement, no FPC)"),
         bullet = "bullet"
       )
     } else if (!is_null(stage_spec$strata) && has_fpc) {
@@ -194,10 +221,10 @@ summary.tbl_sample <- function(object, ...) {
           .groups = "drop"
         )
 
-      print_allocation_table(alloc_tbl, strata_vars, f_h_label = f_h_label)
-      if (is_pps_like_stage) {
+      print_allocation_table(alloc_tbl, strata_vars)
+      if (has_unequal_prob) {
         cli::cat_bullet(
-          "f_h is the mean inclusion fraction; PPS inclusion probabilities vary across units.",
+          "Inclusion probabilities are unit-specific.",
           bullet = "info"
         )
       }
@@ -211,26 +238,32 @@ summary.tbl_sample <- function(object, ...) {
         n_sel <- nrow(object_for_alloc)
       }
       f <- format(round(n_sel / N, 4), nsmall = 4)
-      f_tag <- if (is_pps_like_stage) "mean f" else "f"
       cli::cat_bullet(
-        paste0("N = ", N, ", n = ", n_sel, ", ", f_tag, " = ", f),
+        paste0("N = ", N, ", n = ", n_sel, ", f = ", f),
         bullet = "bullet"
       )
-      if (is_pps_like_stage) {
+      if (has_unequal_prob) {
         cli::cat_bullet(
-          "f is the mean inclusion fraction; PPS inclusion probabilities vary across units.",
+          "Inclusion probabilities are unit-specific.",
           bullet = "info"
         )
       }
     } else {
       cli::cat_bullet(
-        "(no FPC information available)",
+        "FPC information unavailable.",
         bullet = "warning"
       )
     }
   }
 
-  if (".weight" %in% names(object)) {
+  if (".weight" %in% names(object) && nrow(object) == 0) {
+    cat("\n")
+    cli::cat_rule(left = "Weights")
+    cli::cat_bullet(
+      "No weight diagnostics for an empty sample.",
+      bullet = "info"
+    )
+  } else if (".weight" %in% names(object)) {
     cat("\n")
     cli::cat_rule(left = "Weights")
     if (is_replicated) {
@@ -274,7 +307,7 @@ summary.tbl_sample <- function(object, ...) {
 }
 
 #' @noRd
-print_allocation_table <- function(alloc_tbl, strata_vars, f_h_label = "f_h") {
+print_allocation_table <- function(alloc_tbl, strata_vars) {
   display <- alloc_tbl
   display$f_h <- format(round(display$f_h, 4), nsmall = 4)
 
@@ -285,15 +318,10 @@ print_allocation_table <- function(alloc_tbl, strata_vars, f_h_label = "f_h") {
   display$N_h <- as.character(display$N_h)
   display$n_h <- as.character(display$n_h)
 
-  # The underlying column name is still "f_h"; only the header display
-  # label changes (e.g. "f_h (mean)" for PPS stages).
   col_names <- c(strata_vars, "N_h", "n_h", "f_h")
-  header_labels <- c(strata_vars, "N_h", "n_h", f_h_label)
   col_widths <- vapply(
-    seq_along(col_names),
-    function(i) {
-      col <- col_names[[i]]
-      header_label <- header_labels[[i]]
+    col_names,
+    function(col) {
       vals <- as.character(display[[col]])
       if (col == "N_h") {
         vals <- c(vals, as.character(total_N))
@@ -304,16 +332,15 @@ print_allocation_table <- function(alloc_tbl, strata_vars, f_h_label = "f_h") {
       if (col == "f_h") {
         vals <- c(vals, total_f)
       }
-      max(nchar(header_label), max(nchar(vals)))
+      max(nchar(col), max(nchar(vals)))
     },
     integer(1)
   )
-  names(col_widths) <- col_names
 
   header <- paste(
     mapply(
       function(nm, w) formatC(nm, width = w, flag = "-"),
-      header_labels,
+      col_names,
       col_widths
     ),
     collapse = "  "

@@ -63,12 +63,19 @@ The allocation table shows the population size ($N_h$), sample size ($n_h$), and
 After fieldwork, you have collected data (survey responses, measurements) for the selected units. Join it into the `tbl_sample` by a shared identifier. The `tbl_sample` class and its design metadata are preserved through the join.
 
 ```{r}
-# Simulate collected data for the selected EAs
+# Simulate household-budget outcomes collected after selecting the EAs.
+# These outcomes are not variables on the sampling frame.
 set.seed(1)
+log_consumption <- rnorm(
+  nrow(sample),
+  mean = 11 + 0.25 * (sample$urban_rural == "Urban") -
+    0.12 * (sample$remoteness == "High"),
+  sd = 0.65
+)
 collected <- tibble(
   ea_id = sample$ea_id,
-  avg_expenditure = rlnorm(nrow(sample), meanlog = 10, sdlog = 0.8),
-  food_insecure = rbinom(nrow(sample), 1, sample$food_insecurity_pct / 100)
+  consumption_per_capita = round(exp(log_consumption)),
+  below_consumption_threshold = as.integer(log_consumption < 11)
 )
 
 # Merge into the sample
@@ -92,8 +99,8 @@ svy <- as_svydesign(sample_with_data)
 svy
 
 # Estimate collected variables
-svymean(~avg_expenditure, svy)
-svymean(~food_insecure, svy)
+svymean(~consumption_per_capita, svy)
+svymean(~below_consumption_threshold, svy)
 
 # Frame variables are still available for validation
 svytotal(~population, svy)
@@ -118,7 +125,7 @@ svymean(~households, svy_cluster)
 
 ### Multi-stage design
 
-For multi-stage designs, each stage's cluster variable maps to a level of the `id` formula. Strata are exported from the first stage, consistent with the standard with-replacement variance approximation [@cochran1977, ch. 11].
+For multi-stage designs, every executed stage maps to one term of the `id` formula, with a matching finite population correction. A final stage without `cluster_by()` gets a synthesized element identifier. Strata are exported per stage, so the result is exact multi-stage linearization [@sarndal1992, ch. 4.3].
 
 ```{r}
 data(zwe_eas)
@@ -138,6 +145,55 @@ ms_sample <- sampling_design() |>
 svy_ms <- as_svydesign(ms_sample)
 svy_ms
 svymean(~households, svy_ms)
+```
+
+## Domain (Subpopulation) Analysis
+
+To estimate for a subpopulation, convert the full sample first and
+subset the survey design. Do not filter the `tbl_sample` rows before
+converting.
+
+```{r}
+urban_svy <- subset(svy, urban_rural == "Urban")
+svymean(~consumption_per_capita, urban_svy)
+```
+
+The distinction matters for variance. Dropping out-of-domain rows
+before conversion produces the same point estimate but understates the
+standard error, because the number of sampled units falling in the
+domain is itself random and that variation is part of the design
+variance [@sarndal1992, ch. 5.8]. `survey::subset()` keeps the full
+design structure and applies the correct domain estimator.
+
+For this reason a filtered `tbl_sample` is marked as modified and
+`as_svydesign()` refuses it:
+
+```{r, error=TRUE}
+urban_only <- sample_with_data |>
+  filter(urban_rural == "Urban")
+
+as_svydesign(urban_only)
+```
+
+The same rule applies to any operation that removes, adds, or
+duplicates rows, or that drops, renames, or overwrites internal design
+columns such as `.weight` or `.fpc_1` (a `select()` that keeps only
+`.weight` would silently lose the finite population correction).
+One-to-one joins (as in the merge above), row reordering, and column
+reordering are unaffected. Extracting a single complete replicate with
+`filter(.replicate == r)` from a replicated execution remains
+supported.
+
+With srvyr, the same domain analysis reads naturally as a pipeline:
+convert first, then filter the design object.
+
+```{r, eval=requireNamespace("srvyr", quietly = TRUE)}
+library(srvyr)
+
+sample_with_data |>
+  as_survey_design() |>
+  filter(urban_rural == "Urban") |>
+  summarise(mean_consumption = survey_mean(consumption_per_capita))
 ```
 
 ## Replicate-Weight Export
@@ -198,7 +254,7 @@ The supported methods :
 | `pps_poisson`     | $\pi_{kl}$                    | Exact       |
 | `pps_sps`         | $\pi_{kl}$                    | Approximate |
 | `pps_pareto`      | $\pi_{kl}$                    | Approximate |
-| `balanced`        | $\pi_{kl}$                    | Approximate |
+| `cube`            | $\pi_{kl}$                    | Approximate |
 | `pps_multinomial` | $E(n_k * n_l)$                | Exact       |
 | `pps_chromy`      | $E(n_k * n_l)$                | Approximate |
 
@@ -226,7 +282,9 @@ summary(ea_sample)
 set.seed(99)
 field_data <- tibble(
   ea_id = ea_sample$ea_id,
-  avg_expenditure = rlnorm(nrow(ea_sample), meanlog = 10, sdlog = 0.8)
+  consumption_per_capita = round(
+    rlnorm(nrow(ea_sample), meanlog = 11, sdlog = 0.65)
+  )
 )
 
 # 6. Merge collected data
@@ -235,8 +293,8 @@ ea_sample <- ea_sample |>
 
 # 7. Export and analyze
 svy <- as_svydesign(ea_sample)
-svymean(~avg_expenditure, svy)
-confint(svymean(~avg_expenditure, svy))
+svymean(~consumption_per_capita, svy)
+confint(svymean(~consumption_per_capita, svy))
 ```
 
 ## Reference

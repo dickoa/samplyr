@@ -46,6 +46,7 @@
 #'   - `"pps_systematic"`: PPS systematic sampling
 #'   - `"pps_brewer"`: Generalized Brewer (\enc{Tillé}{Tille}) method
 #'   - `"pps_cps"`: Conditional Poisson sampling (maximum entropy)
+#'   - `"pps_sampford"`: Sampford fixed-size PPS sampling
 #'   - `"pps_poisson"`: PPS Poisson sampling (random sample size)
 #'   - `"pps_sps"`: Sequential Poisson sampling (fixed size, supports `prn`)
 #'   - `"pps_pareto"`: Pareto sampling (fixed size, supports `prn`)
@@ -53,32 +54,57 @@
 #'   - `"pps_chromy"`: Chromy's sequential PPS (minimum replacement)
 #'
 #'   **Balanced sampling:**
-#'   - `"balanced"`: Balanced sampling via the cube method (Deville & Tille 2004).
+#'   - `"cube"`: Balanced sampling via the cube method
+#'     (Deville & \enc{Tillé}{Tille} 2004).
 #'     Uses auxiliary variables (`aux`) to balance the sample so that
 #'     Horvitz-Thompson estimates of auxiliary totals match population totals.
 #'     Supports equal or unequal (`mos`) inclusion probabilities. When
 #'     stratified, uses the stratified cube algorithm (Chauvet 2009). At most
-#'     2 stages may use `"balanced"`.
+#'     2 stages may use a balanced-family method. `"balanced"` is retained
+#'     as a compatibility alias for `"cube"`.
+#'   - `"lpm2"`: Local pivotal sampling. Requires spatial coordinates in
+#'     `spread` and does not accept `aux` or `bound()` constraints.
+#'   - `"scps"`: Spatially correlated Poisson sampling. Requires spatial
+#'     coordinates in `spread` and does not accept `aux` or `bound()`.
 #'
-#'   Custom PPS methods registered with [sondage::register_method()] are also
-#'   accepted, using the `"pps_<name>"` convention (e.g., `"pps_mymethod"`).
+#'   Methods registered with [sondage::register_method()] use a prefix that
+#'   identifies their sampling family. Registered `type = "wor"` and
+#'   `type = "wr"` methods use `"pps_<name>"` (for example,
+#'   `"pps_mymethod"`). Registered `type = "balanced"` methods use
+#'   `"balanced_<name>"`. For the latter, `mos` is optional;
+#'   `supports_aux = TRUE` permits ordinary balancing variables in `aux`, and
+#'   `supports_spread = TRUE` requires coordinates in `spread`. These
+#'   capabilities are declared when the method is registered in `sondage`.
 #'
-#' @param mos Measure of size variable for PPS methods and optional for
-#'   `"balanced"`, specified as a bare column name (unquoted). Required for
-#'   all `pps_*` methods.
+#' @param mos Measure of size variable, specified as a bare column name
+#'   (unquoted). Required for built-in PPS methods and registered `type =
+#'   "wor"` or `type = "wr"` methods named with the `pps_` prefix. Optional
+#'   for `cube`, `lpm2`, `scps`, and registered `type = "balanced"` methods
+#'   named with the `balanced_` prefix; when omitted, equal inclusion
+#'   probabilities are used.
 #' @param prn Permanent random number variable for sample coordination,
 #'   specified as a bare column name (unquoted). Must be a numeric column
 #'   with values in the open interval (0, 1) and no missing values.
 #'   Supported methods: `"bernoulli"`, `"pps_poisson"`, `"pps_sps"`,
 #'   `"pps_pareto"`. When supplied, the sample is deterministic for a given
 #'   set of PRN values, enabling coordination across survey waves.
-#' @param aux Auxiliary balancing variables for `method = "balanced"`,
-#'   specified as bare column names: `aux = c(income, pop_density)`. Columns
-#'   must be numeric with no missing values. The cube algorithm ensures the
-#'   Horvitz-Thompson estimator of these auxiliary totals equals (or nearly
-#'   equals) the population totals, improving precision. When used with
-#'   `cluster_by()`, auxiliary values are automatically aggregated (summed)
-#'   to the cluster level before selection.
+#' @param aux Cube balancing declarations for `method = "cube"`, or ordinary
+#'   balancing variables for a registered balanced method that declares
+#'   `supports_aux = TRUE`.
+#'   Bare numeric columns, such as `aux = c(income, pop_density)`, request
+#'   approximate Horvitz-Thompson total balance. A [bound()] marker requests
+#'   adjacent-integer count bounds for every observed category, for example
+#'   `aux = c(income, bound(region), bound(urban_rural))`. Use separate
+#'   `bound()` calls for separate marginal constraints. With `cluster_by()`,
+#'   ordinary auxiliary values are summed to cluster level, while bound
+#'   variables must be constant within each cluster.
+#' @param spread Spatial coordinates for `method = "lpm2"`, `"scps"`, or a
+#'   registered balanced method that declares `supports_spread = TRUE`,
+#'   specified as bare numeric columns, for example `spread = c(longitude,
+#'   latitude)`. Coordinates must be finite and have no missing values. They
+#'   should be placed on comparable scales before sampling. Methods declaring
+#'   `supports_spread = TRUE` require this argument. With `cluster_by()`,
+#'   coordinates must be constant within each cluster.
 #' @param round Rounding method when converting `frac` to sample sizes.
 #'   One of:
 #'   - `"up"` (default): Round up (ceiling). Matches SAS SURVEYSELECT default.
@@ -132,20 +158,36 @@
 #'   Equivalent to SAS SURVEYSELECT allowing `CERTSIZE=` overflow.
 #'
 #' @param on_empty Behaviour when a random-size method (`bernoulli`,
-#'   `pps_poisson`) selects zero units in a stratum or the whole frame.
-#'   One of:
+#'   `pps_poisson`, or a custom method registered with
+#'   `fixed_size = FALSE`) selects zero units in a stratum or the whole
+#'   frame. One of:
 #'   - `"error"` (default): Stop with an informative error. Zero selections
 #'     usually indicate a design problem (sampling fraction too small or
 #'     stratum too small) that should be fixed rather than silently papered
 #'     over.
-#'   - `"warn"`: Issue a warning and fall back to SRS of 1 unit.
-#'   - `"silent"`: Fall back to SRS of 1 unit without a message.
+#'   - `"warn"`: Issue a warning and keep the empty selection.
+#'   - `"silent"`: Keep the empty selection without a message.
 #'
-#'   **Weight note:** when falling back (`"warn"` or `"silent"`), the
-#'   fallback selects 1 unit via SRS, so the resulting weight is `N`
-#'   (the stratum or frame size), not `1/frac`. This reflects the actual
-#'   selection mechanism, not the intended Bernoulli/Poisson design.
-#'   Downstream variance estimation treats this unit as an SRS draw.
+#'   An empty selection is a valid realization of a random-size design:
+#'   it contributes zero to Horvitz-Thompson totals, so estimates from
+#'   repeated executions remain unbiased. (A fallback that draws a
+#'   substitute unit would need weights from the combined "draw, then
+#'   fall back" design; reusing the SRS or Poisson weights biases HT
+#'   totals upward.) When an empty stage occurs in a multi-stage
+#'   design, later stages have nothing to select from and the result is
+#'   an empty sample. `"warn"` and `"silent"` are intended for
+#'   simulation and replicated runs; check `nrow()` before analyzing a
+#'   single realization.
+#'
+#'   A replicated execution that produced empty replicates cannot be
+#'   passed to a later [execute()] call (a new phase or a stage
+#'   continuation): this raises an error of class
+#'   `samplyr_error_empty_phase_replicate` rather than silently
+#'   skipping the empty replicates, which would condition all
+#'   downstream results on nonempty realizations. Handle empty
+#'   replicates explicitly, for example by executing each nonempty
+#'   replicate separately while accounting for the empty ones in the
+#'   analysis.
 #'
 #' @return A modified `sampling_design` object with selection parameters specified.
 #'
@@ -168,6 +210,7 @@
 #' | `pps_systematic` | Without | Fixed | Simple, some bias |
 #' | `pps_brewer` | Without | Fixed | Fast, joint prob > 0 |
 #' | `pps_cps` | Without | Fixed | Highest entropy, joint prob available |
+#' | `pps_sampford` | Without | Fixed | Exact Sampford joint probabilities |
 #' | `pps_poisson` | Without | Random | PPS analog of Bernoulli |
 #' | `pps_sps` | Without | Fixed | Sequential Poisson, supports `prn` |
 #' | `pps_pareto` | Without | Fixed | Pareto sampling, supports `prn` |
@@ -178,12 +221,14 @@
 #'
 #' | Method | Replacement | Sample Size | Notes |
 #' |--------|-------------|-------------|-------|
-#' | `balanced` | Without | Fixed | Deville & Tille 2004, uses `aux` |
+#' | `cube` | Without | Fixed | Deville & \enc{Tillé}{Tille} 2004, uses `aux` |
+#' | `lpm2` | Without | Fixed | Spatial spread; requires `spread` |
+#' | `scps` | Without | Fixed | Spatial spread; requires `spread` |
 #'
 #' ## Parameter Requirements
 #'
-#' | Method | `n` | `frac` | `mos` | `aux` |
-#' |--------|-----|--------|-------|-------|
+#' | Method | `n` | `frac` | `mos` | Extra input |
+#' |--------|-----|--------|-------|-------------|
 #' | `srswor` | Yes | or Yes | -- | -- |
 #' | `srswr` | Yes | or Yes | -- | -- |
 #' | `systematic` | Yes | or Yes | -- | -- |
@@ -191,17 +236,21 @@
 #' | `pps_systematic` | Yes | or Yes | Yes | -- |
 #' | `pps_brewer` | Yes | or Yes | Yes | -- |
 #' | `pps_cps` | Yes | -- | Yes | -- |
+#' | `pps_sampford` | Yes | or Yes | Yes | -- |
 #' | `pps_poisson` | Expected | or Yes | Yes | -- |
 #' | `pps_sps` | Yes | or Yes | Yes | -- |
 #' | `pps_pareto` | Yes | or Yes | Yes | -- |
 #' | `pps_multinomial` | Yes | or Yes | Yes | -- |
 #' | `pps_chromy` | Yes | or Yes | Yes | -- |
-#' | `balanced` | Yes | or Yes | Optional | Optional |
+#' | `cube` | Yes | or Yes | Optional | `aux` optional |
+#' | `lpm2` | Yes | or Yes | Optional | `spread` required |
+#' | `scps` | Yes | or Yes | Optional | `spread` required |
 #'
 #' ## Fixed vs Random Sample Size Methods
 #'
 #' Methods with **fixed sample size** (`srswor`, `srswr`, `systematic`, `pps_systematic`,
-#' `pps_brewer`, `pps_cps`, `pps_sps`, `pps_pareto`, `pps_multinomial`, `pps_chromy`)
+#' `pps_brewer`, `pps_cps`, `pps_sampford`, `pps_sps`, `pps_pareto`,
+#' `pps_multinomial`, `pps_chromy`, `cube`, `lpm2`, `scps`)
 #' accept either `n` or `frac`. When `frac`
 #' is provided, the sample size is computed based on the `round` parameter (default: ceiling).
 #'
@@ -445,6 +494,7 @@ draw <- function(
   mos = NULL,
   prn = NULL,
   aux = NULL,
+  spread = NULL,
   round = "up",
   control = NULL,
   certainty_size = NULL,
@@ -478,48 +528,41 @@ draw <- function(
     }
   }
 
-  aux_quo <- enquo(aux)
-  aux_names <- if (quo_is_null(aux_quo)) {
-    NULL
-  } else {
-    aux_expr <- quo_get_expr(aux_quo)
-    if (is_call(aux_expr, "c")) {
-      vapply(as.list(aux_expr)[-1], as_label, character(1))
-    } else {
-      as_label(aux_quo)
-    }
-  }
-
-  valid_methods <- c(
-    "srswor",
-    "srswr",
-    "systematic",
-    "bernoulli",
-    "pps_systematic",
-    "pps_brewer",
-    "pps_cps",
-    "pps_poisson",
-    "pps_sps",
-    "pps_pareto",
-    "pps_multinomial",
-    "pps_chromy",
-    "balanced"
-  )
+  aux_spec <- parse_balanced_aux(enquo(aux))
+  aux_names <- aux_spec$aux
+  bound_names <- aux_spec$bounds
+  spread_names <- parse_draw_variables(enquo(spread), "spread")
 
   if (!is_character(method) || length(method) != 1) {
     cli_abort("{.arg method} must be a single character string")
   }
 
   custom_spec <- NULL
-  if (method %in% valid_methods) {
-    method <- match.arg(method, valid_methods)
+  if (method %in% valid_builtin_methods) {
+    method <- match.arg(method, valid_builtin_methods)
+    if (method %in% names(builtin_method_aliases)) {
+      method <- unname(builtin_method_aliases[[method]])
+    }
   } else if (is_custom_method(method)) {
     custom_spec <- custom_method_spec(method)
+    prefix <- custom_method_prefix(method)
+    expected_prefix <- if (identical(custom_spec$type, "balanced")) {
+      "balanced"
+    } else {
+      "pps"
+    }
+    if (!identical(prefix, expected_prefix)) {
+      cli_abort(c(
+        "Method {.val {method}} uses the wrong family prefix.",
+        "i" = "Registered methods with {.code type = \"{custom_spec$type}\"} use the {.val {paste0(expected_prefix, '_')}} prefix.",
+        "i" = "Use {.code method = \"{paste0(expected_prefix, '_', sondage_method_name(method))}\"}."
+      ))
+    }
   } else {
     cli_abort(
       c(
         "Unknown sampling method: {.val {method}}.",
-        "i" = "Built-in methods: {.val {valid_methods}}",
+        "i" = "Built-in methods: {.val {valid_builtin_methods}}",
         "i" = "Custom methods can be registered via {.fn sondage::register_method}."
       )
     )
@@ -542,7 +585,11 @@ draw <- function(
 
   strata_vars <- current_stage$strata$vars
 
-  n <- coerce_svyplan_n(n)
+  n <- coerce_svyplan_n(
+    n,
+    stage_index = current,
+    clustered = !is_null(current_stage$clusters)
+  )
   n_is_df <- is.data.frame(n)
   frac_is_df <- is.data.frame(frac)
   certainty_size_is_df <- is.data.frame(certainty_size)
@@ -597,6 +644,8 @@ draw <- function(
     frac_is_df,
     strata_vars = strata_vars,
     aux = aux_names,
+    bounds = bound_names,
+    spread = spread_names,
     custom_spec = custom_spec
   )
   validate_bounds(min_n, max_n, has_alloc)
@@ -627,6 +676,8 @@ draw <- function(
     mos = mos_name,
     prn = prn_name,
     aux = aux_names,
+    bounds = bound_names,
+    spread = spread_names,
     min_n = min_n,
     max_n = max_n,
     round = round,
@@ -636,7 +687,8 @@ draw <- function(
     certainty_overflow = certainty_overflow,
     on_empty = on_empty,
     method_type = custom_spec$type,
-    method_fixed = custom_spec$fixed_size
+    method_fixed = custom_spec$fixed_size,
+    method_variance = custom_spec$variance_family
   )
 
   .data$stages[[current]]$draw_spec <- draw_spec
@@ -647,6 +699,68 @@ draw <- function(
 #' @noRd
 quo_is_null <- function(quo) {
   is_null(rlang::quo_get_expr(quo))
+}
+
+#' Parse bare variables from a data-masked draw argument
+#' @noRd
+parse_draw_variables <- function(quo, arg) {
+  if (quo_is_null(quo)) {
+    return(NULL)
+  }
+  expr <- quo_get_expr(quo)
+  terms <- if (is_call(expr, "c", ns = "")) as.list(expr)[-1] else list(expr)
+  if (length(terms) == 0 || !all(vapply(terms, is.symbol, logical(1)))) {
+    cli_abort(
+      "{.arg {arg}} must contain bare column names, for example {.code {arg} = c(x, y)}."
+    )
+  }
+  unique(vapply(terms, as_label, character(1)))
+}
+
+#' Parse ordinary cube auxiliaries and bound() markers
+#' @noRd
+parse_balanced_aux <- function(quo) {
+  if (quo_is_null(quo)) {
+    return(list(aux = NULL, bounds = NULL))
+  }
+  expr <- quo_get_expr(quo)
+  terms <- if (is_call(expr, "c", ns = "")) as.list(expr)[-1] else list(expr)
+  if (length(terms) == 0) {
+    cli_abort(
+      "{.arg aux} must contain at least one column or {.fn bound} marker."
+    )
+  }
+
+  aux <- character(0)
+  bounds <- character(0)
+  for (term in terms) {
+    if (is.symbol(term)) {
+      aux <- c(aux, as_label(term))
+      next
+    }
+    if (is_call(term, "bound", ns = "")) {
+      args <- as.list(term)[-1]
+      if (length(args) != 1L || !is.symbol(args[[1]])) {
+        cli_abort(
+          "{.fn bound} must contain exactly one bare column name; use separate calls for separate margins."
+        )
+      }
+      bounds <- c(bounds, as_label(args[[1]]))
+      next
+    }
+    cli_abort(
+      c(
+        "Unsupported expression in {.arg aux}: {.code {as_label(term)}}.",
+        "i" = "Use bare numeric columns and single-column {.fn bound} markers."
+      )
+    )
+  }
+  aux <- unique(aux)
+  bounds <- unique(bounds)
+  list(
+    aux = if (length(aux) > 0) aux else NULL,
+    bounds = if (length(bounds) > 0) bounds else NULL
+  )
 }
 
 #' @noRd
@@ -726,8 +840,15 @@ validate_draw_df <- function(
     if (any(values <= 0)) {
       cli_abort("{.arg frac} values must be positive", call = call)
     }
-    is_wor <- (!is_null(method) && !(method %in% c(wr_methods, pmr_methods))) ||
-      (!is_null(custom_spec) && custom_spec$type == "wor")
+    # The declared type is the truth for custom methods; the name test
+    # only classifies built-ins (a custom name is never in the method
+    # vectors, so the name test alone would call every custom method
+    # WOR and wrongly reject frac > 1 for custom WR methods).
+    is_wor <- if (!is_null(custom_spec)) {
+      custom_spec$type %in% c("wor", "balanced")
+    } else {
+      !is_null(method) && !(method %in% c(wr_methods, pmr_methods))
+    }
     if (is_wor && any(values > 1)) {
       cli_abort(
         "{.arg frac} cannot exceed 1 for without-replacement methods",
@@ -750,6 +871,8 @@ validate_draw_args <- function(
   frac_is_df,
   strata_vars = NULL,
   aux = NULL,
+  bounds = NULL,
+  spread = NULL,
   custom_spec = NULL,
   call = rlang::caller_env()
 ) {
@@ -764,7 +887,9 @@ validate_draw_args <- function(
     )
   }
 
-  if (has_alloc && !is_null(n) && !n_is_df && length(n) > 1 && !is_null(names(n))) {
+  if (
+    has_alloc && !is_null(n) && !n_is_df && length(n) > 1 && !is_null(names(n))
+  ) {
     abort_samplyr(
       c(
         "Per-stratum {.arg n} cannot be combined with {.arg alloc} in {.fn stratify_by}.",
@@ -775,20 +900,27 @@ validate_draw_args <- function(
     )
   }
 
-  is_pps <- method %in% pps_methods || !is_null(custom_spec)
+  is_balanced <- method %in%
+    balanced_methods ||
+    (!is_null(custom_spec) && custom_spec$type == "balanced")
+  is_pps <- method %in%
+    pps_methods ||
+    (!is_null(custom_spec) && custom_spec$type != "balanced")
 
   if (is_pps && is_null(mos)) {
     cli_abort("PPS methods require {.arg mos} (measure of size)", call = call)
   }
 
-  if (!is_pps && !identical(method, "balanced") && !is_null(mos)) {
+  if (!is_pps && !is_balanced && !is_null(mos)) {
     cli_warn("{.arg mos} is ignored for non-PPS methods")
   }
 
-  if (!is_null(aux) && !identical(method, "balanced")) {
+  if (!is_null(aux) && !is_balanced) {
     cli_abort(
       c(
-        "{.arg aux} is only supported for {.val balanced} sampling.",
+        "{.arg aux} is only supported for balanced sampling
+         ({.val cube} or a custom method registered with
+         {.code type = \"balanced\"}).",
         "x" = "Current method: {.val {method}}"
       ),
       call = call
@@ -801,8 +933,59 @@ validate_draw_args <- function(
     }
   }
 
-  random_size_methods <- c("bernoulli", "pps_poisson")
-  is_random_size <- method %in% random_size_methods ||
+  if (
+    !is_null(aux) &&
+      !is_null(custom_spec) &&
+      identical(custom_spec$type, "balanced") &&
+      !isTRUE(custom_spec$supports_aux)
+  ) {
+    cli_abort(
+      "Method {.val {method}} does not support ordinary auxiliary balancing variables.",
+      call = call
+    )
+  }
+
+  if (!is_null(bounds) && !identical(method, "cube")) {
+    cli_abort(
+      c(
+        "{.fn bound} constraints are only supported by {.code method = \"cube\"}.",
+        "x" = "Current method: {.val {method}}"
+      ),
+      call = call
+    )
+  }
+
+  supports_spread <- method %in%
+    spatial_balanced_methods ||
+    (!is_null(custom_spec) &&
+      identical(custom_spec$type, "balanced") &&
+      isTRUE(custom_spec$supports_spread))
+  if (!is_null(spread) && !supports_spread) {
+    cli_abort(
+      c(
+        "{.arg spread} requires a spatially balanced method.",
+        "i" = "Use {.code method = \"lpm2\"} or {.code method = \"scps\"}.",
+        "i" = "Registered balanced methods may opt in with {.code supports_spread = TRUE}.",
+        "x" = "Current method: {.val {method}}"
+      ),
+      call = call
+    )
+  }
+  if (supports_spread && is_null(spread)) {
+    cli_abort(
+      "Method {.val {method}} requires {.arg spread} coordinates.",
+      call = call
+    )
+  }
+  if (supports_spread && (!is_null(aux) || !is_null(bounds))) {
+    cli_abort(
+      "Method {.val {method}} cannot combine {.arg spread} with cube auxiliary or count-bound constraints.",
+      call = call
+    )
+  }
+
+  is_random_size <- method %in%
+    rs_poisson_methods ||
     (!is_null(custom_spec) && !custom_spec$fixed_size)
   if (is_random_size) {
     if (!is_null(n) && !is_null(frac)) {
@@ -843,6 +1026,24 @@ validate_draw_args <- function(
     if (!is_finite_numeric(n)) {
       cli_abort("{.arg n} must not contain NA, NaN, or Inf", call = call)
     }
+    if (length(n) > 1 && !is_null(names(n)) && is_null(strata_vars)) {
+      cli_abort(
+        c(
+          "Named {.arg n} requires stratification at this stage.",
+          "i" = "Add {.fn stratify_by} before this {.fn draw} (per-stage; stage-1 strata do not carry over), or pass a scalar."
+        ),
+        call = call
+      )
+    }
+    if (length(n) > 1 && !is_null(names(n)) && length(strata_vars) > 1) {
+      cli_abort(
+        c(
+          "Named {.arg n} vectors are only supported for single stratification variables.",
+          "i" = "Use a data frame with columns {.val {strata_vars}} and {.val n}."
+        ),
+        call = call
+      )
+    }
     if (length(n) > 1 && (is_null(names(n)) || is_null(strata_vars))) {
       cli_abort(
         "{.arg n} must be a scalar, a named vector, or a data frame",
@@ -873,8 +1074,13 @@ validate_draw_args <- function(
     if (any(frac <= 0)) {
       cli_abort("{.arg frac} must be positive", call = call)
     }
-    is_wor <- !(method %in% c(wr_methods, pmr_methods)) ||
-      (!is_null(custom_spec) && custom_spec$type == "wor")
+    # See validate_draw_df(): custom_spec$type first, name test only
+    # for built-ins.
+    is_wor <- if (!is_null(custom_spec)) {
+      custom_spec$type %in% c("wor", "balanced")
+    } else {
+      !(method %in% c(wr_methods, pmr_methods))
+    }
     if (is_wor && any(frac > 1)) {
       cli_abort(
         "{.arg frac} cannot exceed 1 for without-replacement methods",
@@ -960,7 +1166,8 @@ validate_certainty <- function(
     )
   }
 
-  is_pps_wor <- method %in% pps_wor_methods ||
+  is_pps_wor <- method %in%
+    pps_wor_methods ||
     (!is_null(custom_spec) && custom_spec$type == "wor")
   if (!is_pps_wor) {
     cli_abort(
@@ -1037,11 +1244,17 @@ validate_certainty <- function(
 }
 
 #' @noRd
-validate_prn <- function(prn, method, custom_spec = NULL, call = rlang::caller_env()) {
+validate_prn <- function(
+  prn,
+  method,
+  custom_spec = NULL,
+  call = rlang::caller_env()
+) {
   if (is_null(prn)) {
     return(invisible(NULL))
   }
-  supports_prn <- method %in% prn_methods ||
+  supports_prn <- method %in%
+    prn_methods ||
     (!is_null(custom_spec) && custom_spec$supports_prn)
   if (!supports_prn) {
     cli_abort(
@@ -1055,4 +1268,34 @@ validate_prn <- function(prn, method, custom_spec = NULL, call = rlang::caller_e
     )
   }
   invisible(NULL)
+}
+
+#' Controlled Count Bounds for Balanced Sampling
+#'
+#' `bound()` is a declarative marker used inside the `aux` argument of
+#' [draw()] with `method = "cube"`. It requests adjacent-integer bounds on
+#' the realised sample count for every observed category of `x`.
+#'
+#' @param x A single categorical frame variable. Use separate `bound()` calls
+#'   for separate marginal constraints.
+#'
+#' @return `bound()` is only meaningful inside `draw(aux = ...)` and otherwise
+#'   throws an informative error.
+#'
+#' @examples
+#' sampling_design() |>
+#'   draw(
+#'     n = 100,
+#'     method = "cube",
+#'     aux = c(income, bound(region), bound(urban_rural))
+#'   )
+#'
+#' @export
+bound <- function(x) {
+  cli_abort(
+    paste0(
+      "{.fn bound} is a declarative marker and must be used inside ",
+      "{.code draw(aux = ...)}."
+    )
+  )
 }

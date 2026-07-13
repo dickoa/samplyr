@@ -3,38 +3,47 @@
 \docType{data}
 \name{ken_enterprises}
 \alias{ken_enterprises}
-\title{Kenya Enterprises}
+\title{Synthetic Kenya Establishment Frame}
 \format{
 A tibble with 17,004 rows and 9 columns:
 \describe{
-\item{enterprise_id}{Character. Unique establishment identifier}
-\item{county}{Factor. County name (47 counties)}
+\item{enterprise_id}{Character. Synthetic unique establishment identifier}
+\item{county}{Factor. Synthetically allocated county name (47 counties)}
 \item{region}{Factor. Region (6 regions: Central, Coast,
 East and Northeastern, Nairobi, Nyanza and Western, Rift Valley)}
 \item{sector}{Factor. Business sector (7 sectors: Food,
 Chemicals & Chemical Products, Other Manufacturing, Construction,
 Retail, Hotels and Restaurants, Other Services)}
 \item{size_class}{Factor. Size classification (Small: 5-19, Medium: 20-99, Large: 100+)}
-\item{employees}{Integer. Number of employees (measure of size)}
-\item{revenue_millions}{Numeric. Annual revenue in millions KES}
-\item{year_established}{Integer. Year the enterprise was established}
-\item{exporter}{Logical. Whether the enterprise exports}
+\item{employees}{Integer. Simulated number of employees and measure of size}
+\item{revenue_millions}{Numeric. Simulated annual revenue in millions of
+Kenyan shillings (KES)}
+\item{year_established}{Integer. Simulated year of establishment}
+\item{exporter}{Logical. Simulated export status}
+}
+}
+\source{
+\itemize{
+\item World Bank Group, \emph{Republic of Kenya World Bank Enterprise Survey
+2025}, reference KEN_2025_WBES_v01_M,
+\url{https://microdata.worldbank.org/catalog/8150}.
 }
 }
 \usage{
 ken_enterprises
 }
 \description{
-A synthetic business establishment frame covering 47 counties, 6 regions,
-7 sectors, and 3 size classes. Population structure calibrated to the
-Republic of Kenya 2025 World Bank Enterprise Survey universe table
-(17,004 KRA-registered establishments) with county-level disaggregation
-from the KNBS 2017 Census of Establishments.
+A synthetic establishment frame covering 47 counties, 6 regions, 7 sectors,
+and 3 size classes. Region-by-sector-by-size counts reproduce the Republic
+of Kenya 2025 World Bank Enterprise Survey universe table (17,004 eligible
+KRA-registered establishments). County assignments use reproducible
+synthetic weights within each survey region. Every row, identifier, county
+allocation, and establishment attribute is synthetic.
 }
 \details{
 This dataset is designed for demonstrating:
 \itemize{
-\item Enterprise/business surveys
+\item Establishment surveys
 \item Stratification by sector and size class
 \item PPS sampling using employment or revenue
 \item Disproportionate sampling (oversampling large enterprises)
@@ -42,6 +51,12 @@ This dataset is designed for demonstrating:
 \item Panel partitioning with \code{execute(..., panels = k)}
 \item Bernoulli and Poisson sampling
 }
+
+These records do not represent actual Kenyan establishments and must not be
+used to produce substantive business statistics. The dataset is intended
+only for sampling, planning, and coordination examples. In particular,
+county totals are illustrative and do not reproduce official establishment
+counts.
 }
 \examples{
 # Explore the data
@@ -61,5 +76,8 @@ sampling_design() |>
   draw(frac = c(Small = 0.02, Medium = 0.10, Large = 0.50)) |>
   execute(ken_enterprises, seed = 1960)
 
+}
+\seealso{
+\code{\link[=stratify_by]{stratify_by()}}, \code{\link[=draw]{draw()}}, \code{\link[=execute]{execute()}}
 }
 \keyword{datasets}

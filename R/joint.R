@@ -58,12 +58,13 @@
 #' | samplyr method     | sondage function              | Quality                            |
 #' |--------------------|-------------------------------|------------------------------------|
 #' | `pps_cps`          | `joint_inclusion_prob()`      | **Exact** (Aires' formula via C)   |
+#' | `pps_sampford`     | `joint_inclusion_prob()`      | **Exact** (Sampford design)        |
 #' | `pps_systematic`   | `joint_inclusion_prob()`      | **Exact** (combinatorial enumeration) |
 #' | `pps_poisson`      | `joint_inclusion_prob()`      | **Exact** (\eqn{\pi_{kl} = \pi_k \pi_l}{pi_kl = pi_k * pi_l}, independent draws) |
 #' | `pps_brewer`       | `joint_inclusion_prob()`      | **Approximate**\eqn{^*} (high-entropy / Hajek-Brewer-Donadio) |
 #' | `pps_sps`          | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
 #' | `pps_pareto`       | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
-#' | `balanced`         | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
+#' | `cube`             | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
 #'
 #' \eqn{^*} Exact recursive formulas for Brewer's joint inclusion
 #' probabilities exist (Brewer 2002, ch. 9) but are
@@ -139,6 +140,7 @@ joint_expectation <- function(x, frame, stage = NULL) {
     cli_abort("{.arg x} must be a {.cls tbl_sample} object.")
   }
   check_single_replicate(x, "joint_expectation")
+  check_sample_unmodified(x, "joint_expectation")
 
   design <- get_design(x)
   stages_executed <- get_stages_executed(x)
@@ -167,7 +169,17 @@ joint_expectation <- function(x, frame, stage = NULL) {
 
   for (stage_idx in stages_requested) {
     stage_spec <- design$stages[[stage_idx]]
-    method <- stage_spec$draw_spec$method
+    draw_spec <- stage_spec$draw_spec
+    method <- draw_spec$method
+
+    if (!is_null(draw_spec$bounds) || !is_null(draw_spec$spread)) {
+      cli_abort(
+        c(
+          "Joint inclusion probabilities are unavailable for method {.val {method}} with its declared constraints.",
+          "i" = "Controlled count bounds and spatial spreading alter pairwise selection behavior beyond the available approximation."
+        )
+      )
+    }
 
     if (!(method %in% jip_methods) && is_null(stage_spec$draw_spec$method_type)) {
       next
@@ -482,6 +494,9 @@ compute_stage_pik <- function(method, mos_vals, n, draw_spec, N = length(mos_val
     if (draw_spec$method_type == "wr") {
       return(sondage::expected_hits(mos_vals, n))
     }
+    if (draw_spec$method_type == "balanced" && is_null(mos_vals)) {
+      return(rep(n / N, N))
+    }
     return(sondage::inclusion_prob(mos_vals, n))
   }
 
@@ -494,6 +509,7 @@ compute_stage_pik <- function(method, mos_vals, n, draw_spec, N = length(mos_val
     pps_brewer = ,
     pps_systematic = ,
     pps_cps = ,
+    pps_sampford = ,
     pps_sps = ,
     pps_pareto = {
       sondage::inclusion_prob(mos_vals, n)
@@ -503,7 +519,7 @@ compute_stage_pik <- function(method, mos_vals, n, draw_spec, N = length(mos_val
       pik_raw <- frac * mos_vals / sum(mos_vals) * N
       pmin(pik_raw, 1)
     },
-    balanced = {
+    cube = {
       if (!is_null(mos_vals)) {
         sondage::inclusion_prob(mos_vals, n)
       } else {

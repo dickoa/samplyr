@@ -162,6 +162,8 @@ new_draw_spec <- function(
   mos = NULL,
   prn = NULL,
   aux = NULL,
+  bounds = NULL,
+  spread = NULL,
   min_n = NULL,
   max_n = NULL,
   round = "up",
@@ -171,8 +173,10 @@ new_draw_spec <- function(
   certainty_overflow = "error",
   on_empty = "error",
   method_type = NULL,
-  method_fixed = NULL
+  method_fixed = NULL,
+  method_variance = NULL
 ) {
+  method <- canonical_method_name(method, method_type)
   structure(
     list(
       n = n,
@@ -181,6 +185,8 @@ new_draw_spec <- function(
       mos = mos,
       prn = prn,
       aux = aux,
+      bounds = bounds,
+      spread = spread,
       min_n = min_n,
       max_n = max_n,
       round = round,
@@ -190,7 +196,8 @@ new_draw_spec <- function(
       certainty_overflow = certainty_overflow,
       on_empty = on_empty,
       method_type = method_type,
-      method_fixed = method_fixed
+      method_fixed = method_fixed,
+      method_variance = method_variance
     ),
     class = "draw_spec"
   )
@@ -249,6 +256,16 @@ is_tbl_sample <- function(x) {
 #' All dplyr verbs (`mutate`, `filter`, `select`, `*_join`, etc.)
 #' preserve the `tbl_sample` class automatically.
 #'
+#' Preserving the class does not mean the sample remains analyzable:
+#' operations that remove, add, or duplicate rows, or overwrite
+#' internal design columns (`.weight`, `.fpc_k`, ...), mark the sample
+#' as modified. Design-based computations ([as_svydesign()],
+#' [joint_expectation()], [design_effect()]) reject modified samples;
+#' see the Domain analysis section of [as_svydesign()]. Restoring the
+#' class with `as_tbl_sample()` does not clear the mark: the data is
+#' re-verified against the integrity record stored at execution, so a
+#' stripped, altered, and restored object is detected.
+#'
 #' Some operations strip the class but keep the sampling attributes.
 #' Use `as_tbl_sample()` to restore it:
 #' - `tidyr::uncount()`
@@ -303,13 +320,16 @@ as_tbl_sample.data.frame <- function(x, ...) {
       "i" = "The object does not carry the required sampling attributes."
     ))
   }
-  new_tbl_sample(
+  out <- new_tbl_sample(
     data = x,
     design = design,
     stages_executed = stages,
     seed = attr(x, "seed"),
     metadata = attr(x, "metadata")
   )
+  # Restoring the class does not launder modifications: verify the
+  # data against the stored integrity record and mark discrepancies.
+  apply_integrity_marks(out)
 }
 
 #' Get the design specification stored on a sample
@@ -391,34 +411,271 @@ get_stages_executed <- function(x) {
 #' Operations like summarise() or count() that remove this column
 #' will return a regular tibble instead.
 #'
+#' Operations that change the number of rows (filtering, joins that
+#' drop or duplicate rows) keep the class but mark the sample as
+#' modified: the stored design then no longer describes the data, so
+#' design-based computations ([as_svydesign()], [joint_expectation()],
+#' [design_effect()]) refuse the sample and point to survey-side
+#' domain analysis instead. Dropping an internal design column
+#' (for example `select()` without `.fpc_1`) is marked the same way,
+#' because the export would silently change (a missing FPC column
+#' falls back to no finite population correction). Reordering rows,
+#' reordering columns, and adding ordinary data columns are harmless
+#' and are not marked.
+#'
 #' @param data The modified data
 #' @param template The original tbl_sample object
 #' @return A tbl_sample if essential columns present, otherwise a tibble
 #' @export
 #' @keywords internal
 dplyr_reconstruct.tbl_sample <- function(data, template) {
-  essential_cols <- c(".weight")
+  if (inherits(template, "grouped_df")) {
+    # Let the grouped_df method rebuild the grouping structure, then
+    # re-attach the sample provenance with the usual marks.
+    out <- NextMethod()
+    if (!".weight" %in% names(out)) {
+      return(out)
+    }
+    return(restore_tbl_sample(out, template))
+  }
+  restore_tbl_sample(data, template)
+}
 
-  has_essential <- all(essential_cols %in% names(data))
+#' Attach sample provenance to a grouped data frame
+#'
+#' `tbl_sample` is placed ahead of `grouped_df` so samplyr's methods
+#' (ungroup, the dplyr hooks, `[`) dispatch first; grouped verbs still
+#' reach the `grouped_df` methods through NextMethod().
+#' @noRd
+as_grouped_sample <- function(out, template) {
+  attr(out, "design") <- attr(template, "design")
+  attr(out, "stages_executed") <- attr(template, "stages_executed")
+  attr(out, "seed") <- attr(template, "seed")
+  attr(out, "metadata") <- attr(template, "metadata")
+  cls <- class(out)
+  if (!"tbl_sample" %in% cls) {
+    class(out) <- c("tbl_sample", cls)
+  }
+  out
+}
 
-  if (has_essential) {
-    new_tbl_sample(
+#' Group a tbl_sample without losing sample provenance
+#'
+#' Grouping does not change rows or design columns, so a grouped
+#' sample keeps its clean/modified state. `group_by()` and `ungroup()`
+#' do not use the dplyr extension generics, so explicit methods are
+#' required (see the dplyr extending documentation).
+#'
+#' @param .data A tbl_sample object
+#' @param ... Grouping variables, passed to [dplyr::group_by()]
+#' @param .add,.drop Passed to [dplyr::group_by()]
+#' @return A grouped tbl_sample
+#' @export
+#' @keywords internal
+group_by.tbl_sample <- function(
+  .data,
+  ...,
+  .add = FALSE,
+  .drop = dplyr::group_by_drop_default(.data)
+) {
+  out <- NextMethod()
+  if (dplyr::is_grouped_df(out)) {
+    as_grouped_sample(out, .data)
+  } else {
+    # group_by() with no variables returns an ungrouped frame
+    restore_tbl_sample(out, .data)
+  }
+}
+
+#' @rdname group_by.tbl_sample
+#' @param x A grouped tbl_sample object
+#' @export
+#' @keywords internal
+ungroup.tbl_sample <- function(x, ...) {
+  out <- NextMethod()
+  if (dplyr::is_grouped_df(out)) {
+    # Partial ungrouping (ungroup(x, some_var)) keeps a grouped frame
+    as_grouped_sample(out, x)
+  } else {
+    restore_tbl_sample(out, x)
+  }
+}
+
+#' Centralized tbl_sample restoration
+#'
+#' Every method that rebuilds a tbl_sample from new data and a template
+#' (dplyr_reconstruct, `[`, vec_restore, grouping) funnels through this
+#' helper, so validity has a single definition:
+#'
+#' - `.weight` gone: not a sample anymore, demote to a plain tibble
+#'   with the sampling attributes stripped.
+#' - Row count changed: mark "rows".
+#' - Internal design column missing: mark "columns".
+#'
+#' Marks give immediate feedback; the integrity record in
+#' metadata$integrity remains the authoritative check at the analysis
+#' boundary (sample_realization_status()).
+#' @noRd
+restore_tbl_sample <- function(data, template) {
+  if (!".weight" %in% names(data)) {
+    return(demote_to_tibble(data))
+  }
+  if (inherits(data, "grouped_df")) {
+    # Grouped results keep their grouping structure; provenance is
+    # attached on top (tbl_sample ahead of grouped_df in the class).
+    out <- as_grouped_sample(data, template)
+  } else {
+    out <- new_tbl_sample(
       data = data,
       design = attr(template, "design"),
       stages_executed = attr(template, "stages_executed"),
       seed = attr(template, "seed"),
       metadata = attr(template, "metadata")
     )
-  } else {
-    tibble::as_tibble(data)
   }
+  if (nrow(data) != nrow(template)) {
+    out <- mark_sample_modified(out, "rows")
+  }
+  internal_cols <- grep(
+    samplyr_internal_col_pattern,
+    names(template),
+    value = TRUE
+  )
+  if (!all(internal_cols %in% names(data))) {
+    out <- mark_sample_modified(out, "columns")
+  }
+  out
+}
+
+#' @noRd
+demote_to_tibble <- function(data) {
+  data <- tibble::as_tibble(data)
+  class(data) <- setdiff(class(data), "tbl_sample")
+  attr(data, "design") <- NULL
+  attr(data, "stages_executed") <- NULL
+  attr(data, "seed") <- NULL
+  attr(data, "metadata") <- NULL
+  data
+}
+
+#' Restore a tbl_sample after vctrs operations
+#'
+#' vctrs restores attributes from a prototype after operations like
+#' [vctrs::vec_rbind()]; the default restoration copies them blindly,
+#' which previously produced a "clean" doubled realization from
+#' `vec_rbind(sample, sample)`. Routing through the shared restore
+#' helper applies the same demotion and marking rules as the dplyr
+#' hooks. (The integrity record catches base `rbind()` and any other
+#' route at the analysis boundary regardless.)
+#'
+#' @param x The data to restore
+#' @param to The tbl_sample prototype
+#' @param ... Unused
+#' @return A tbl_sample or plain tibble, per the restoration rules
+#' @export
+#' @keywords internal
+vec_restore.tbl_sample <- function(x, to, ...) {
+  restore_tbl_sample(x, to)
+}
+
+#' Track row-set changes from dplyr verbs
+#'
+#' filter(), slice(), arrange(), and friends funnel through
+#' dplyr_row_slice(). Row removal or duplication is recorded on the
+#' result (see [dplyr_reconstruct.tbl_sample()]); a pure reordering is
+#' not. The location check catches same-length changes (for example
+#' `slice(c(1, 1, 3:n))`) that a row-count comparison would miss.
+#'
+#' @param data A tbl_sample object
+#' @param i Row locations, as passed by dplyr
+#' @param ... Additional arguments passed to the default method
+#' @return A tbl_sample, marked as modified if the row set changed
+#' @export
+#' @keywords internal
+dplyr_row_slice.tbl_sample <- function(data, i, ...) {
+  out <- NextMethod()
+  # The grouped_df method rebuilds the result without consulting
+  # dplyr_reconstruct() on our template, so re-attach provenance here.
+  if (
+    is.data.frame(out) &&
+      !is_tbl_sample(out) &&
+      ".weight" %in% names(out)
+  ) {
+    out <- restore_tbl_sample(out, data)
+  }
+  if (is_tbl_sample(out)) {
+    loc <- vctrs::vec_as_location(i, n = nrow(data))
+    if (length(loc) != nrow(data) || anyDuplicated(loc) > 0L) {
+      out <- mark_sample_modified(out, "rows")
+    }
+  }
+  out
+}
+
+#' Track renames of internal design columns
+#'
+#' [dplyr::rename()] assigns names directly instead of reconstructing,
+#' so renamed internal columns are caught here. Renaming `.weight_1`
+#' away breaks the export exactly like dropping it.
+#'
+#' @param x A tbl_sample object
+#' @param value New column names
+#' @return A tbl_sample, marked as modified if an internal design
+#'   column was renamed
+#' @export
+#' @keywords internal
+`names<-.tbl_sample` <- function(x, value) {
+  internal_cols <- grep(samplyr_internal_col_pattern, names(x), value = TRUE)
+  out <- NextMethod()
+  if (is_tbl_sample(out) && !all(internal_cols %in% names(out))) {
+    out <- mark_sample_modified(out, "columns")
+  }
+  out
+}
+
+#' Track overwrites of internal design columns
+#'
+#' mutate() and friends funnel through dplyr_col_modify(). Overwriting
+#' or dropping an internal design column (`.weight`, `.weight_k`,
+#' `.fpc_k`, `.draw_k`, `.certainty_k`, `.replicate`, `.sample_id`,
+#' `.panel`) breaks the link between the data and the stored design,
+#' so the result is marked as modified. Adding or changing ordinary
+#' data columns is unaffected.
+#'
+#' @param data A tbl_sample object
+#' @param cols Named list of modified columns, as passed by dplyr
+#' @return A tbl_sample, marked as modified if a design column changed
+#' @export
+#' @keywords internal
+dplyr_col_modify.tbl_sample <- function(data, cols) {
+  out <- NextMethod()
+  # See dplyr_row_slice.tbl_sample(): the grouped_df method bypasses
+  # our reconstruct, so re-attach provenance.
+  if (
+    is.data.frame(out) &&
+      !is_tbl_sample(out) &&
+      ".weight" %in% names(out)
+  ) {
+    out <- restore_tbl_sample(out, data)
+  }
+  if (is_tbl_sample(out)) {
+    touched <- intersect(names(cols), names(data))
+    if (any(grepl(samplyr_internal_col_pattern, touched))) {
+      out <- mark_sample_modified(out, "columns")
+    }
+  }
+  out
 }
 
 #' Subset a tbl_sample preserving class
 #'
 #' Subsetting a tbl_sample with `[` preserves the tbl_sample class
 #' and its sampling metadata when the essential column (.weight)
-#' remains.
+#' remains. Row subsetting that changes the number of rows, and column
+#' subsetting that drops internal design columns (`.fpc_k`,
+#' `.weight_k`, ...), mark the sample as modified, consistent with
+#' [dplyr::filter()] and [dplyr::select()] (see
+#' [dplyr_reconstruct.tbl_sample()]).
 #'
 #' @param x A tbl_sample object
 #' @param i Row index
@@ -429,23 +686,33 @@ dplyr_reconstruct.tbl_sample <- function(data, template) {
 #' @method [ tbl_sample
 #' @export
 `[.tbl_sample` <- function(x, i, j, ..., drop = FALSE) {
+  # x[i, ] and x[i, j] pass three or more index arguments; x[i] (column
+  # subsetting) passes two. Captured before NextMethod() consumes them.
+  matrix_style <- (nargs() - !missing(drop)) >= 3L
   result <- NextMethod()
-  if (is.data.frame(result)) {
-    essential_cols <- c(".weight")
-    if (all(essential_cols %in% names(result))) {
-      return(new_tbl_sample(
-        data = result,
-        design = attr(x, "design"),
-        stages_executed = attr(x, "stages_executed"),
-        seed = attr(x, "seed"),
-        metadata = attr(x, "metadata")
-      ))
-    }
-    class(result) <- setdiff(class(result), "tbl_sample")
-    attr(result, "design") <- NULL
-    attr(result, "stages_executed") <- NULL
-    attr(result, "seed") <- NULL
-    attr(result, "metadata") <- NULL
+  if (!is.data.frame(result)) {
+    return(result)
   }
-  result
+  out <- restore_tbl_sample(result, x)
+  if (
+    is_tbl_sample(out) &&
+      matrix_style &&
+      !missing(i) &&
+      nrow(result) == nrow(x)
+  ) {
+    # Same-length row subsets can still duplicate and drop rows
+    # (x[c(1, 1, 3:n), ]); the row-count check in the restore helper
+    # cannot see that, so inspect the locations directly.
+    loc <- tryCatch(
+      vctrs::vec_as_location(i, n = nrow(x)),
+      error = function(cnd) NULL
+    )
+    if (
+      !is_null(loc) &&
+        (length(loc) != nrow(x) || anyDuplicated(loc) > 0L)
+    ) {
+      out <- mark_sample_modified(out, "rows")
+    }
+  }
+  out
 }

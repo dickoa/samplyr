@@ -23,5 +23,9 @@ A tbl_sample if essential columns remain, otherwise a data.frame
 \description{
 Subsetting a tbl_sample with \code{[} preserves the tbl_sample class
 and its sampling metadata when the essential column (.weight)
-remains.
+remains. Row subsetting that changes the number of rows, and column
+subsetting that drops internal design columns (\code{.fpc_k},
+\code{.weight_k}, ...), mark the sample as modified, consistent with
+\code{\link[dplyr:filter]{dplyr::filter()}} and \code{\link[dplyr:select]{dplyr::select()}} (see
+\code{\link[=dplyr_reconstruct.tbl_sample]{dplyr_reconstruct.tbl_sample()}}).
 }

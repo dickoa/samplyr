@@ -20,4 +20,17 @@ when the essential column (.weight) is still present.
 Operations like summarise() or count() that remove this column
 will return a regular tibble instead.
 }
+\details{
+Operations that change the number of rows (filtering, joins that
+drop or duplicate rows) keep the class but mark the sample as
+modified: the stored design then no longer describes the data, so
+design-based computations (\code{\link[=as_svydesign]{as_svydesign()}}, \code{\link[=joint_expectation]{joint_expectation()}},
+\code{\link[=design_effect]{design_effect()}}) refuse the sample and point to survey-side
+domain analysis instead. Dropping an internal design column
+(for example \code{select()} without \code{.fpc_1}) is marked the same way,
+because the export would silently change (a missing FPC column
+falls back to no finite population correction). Reordering rows,
+reordering columns, and adding ordinary data columns are harmless
+and are not marked.
+}
 \keyword{internal}

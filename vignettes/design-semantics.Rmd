@@ -134,9 +134,9 @@ The quantity of interest is the expected number of hits \(E(n_i) = n \, \text{mo
 
 Chromy's sequential PPS (`pps_chromy`) is classified as *probability minimum replacement* (PMR): each unit receives \(\lfloor E(n_i) \rfloor\) or \(\lceil E(n_i) \rceil\) hits. When all \(E(n_i) < 1\), this reduces to WOR.
 
-**Balanced sampling** (`balanced`):
+**Balanced sampling** (`cube`):
 
-The cube method (Deville & Tille 2004) selects a fixed-size sample that satisfies (or nearly satisfies) the balancing equations $\sum_{i \in S} a_{ij} / \pi_i = \sum_{i \in U} a_{ij}$ for auxiliary variables $a_j$ specified via `aux`. Without `mos`, $\pi_i = n/N$ (equal probability); with `mos`, $\pi_i$ is computed by `sondage::inclusion_prob()`. When stratified, the stratified cube algorithm (Chauvet 2009) is used: flight phases run per-stratum, then a global flight phase, then per-stratum landing phases. At most 2 stages may use `balanced`. PRN and certainty selection are not supported.
+The cube method (Deville & Tillé 2004) selects a fixed-size sample that satisfies (or nearly satisfies) the balancing equations $\sum_{i \in S} a_{ij} / \pi_i = \sum_{i \in U} a_{ij}$ for auxiliary variables $a_j$ specified via `aux`. Without `mos`, $\pi_i = n/N$ (equal probability); with `mos`, $\pi_i$ is computed by `sondage::inclusion_prob()`. A `bound()` marker adds hard adjacent-integer category-count constraints. When stratified, the stratified cube algorithm (Chauvet 2009) is used: flight phases run per-stratum, then a global flight phase, then per-stratum landing phases. LPM2 and SCPS instead use the coordinates supplied through `spread`; they do not accept cube auxiliaries or count bounds. At most 2 stages may use a balanced-family method. PRN and certainty selection are not supported.
 
 **PRN-compatible methods** (`bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`):
 
@@ -222,17 +222,15 @@ $$
 This is the standard assumption in multi-stage sampling theory
 [@cochran1977, ch. 11; @sarndal1992, ch. 4.3].
 
-**Consequence for variance estimation.** Under the "with-replacement at stage 1" approximation, variance estimation requires only first-stage strata and clusters. Stage-1 PSU totals are treated as the primary source of variability. Later-stage contributions are captured through the variability of these totals.
-
-Accordingly, `as_svydesign()` exports only first-stage strata to `survey::svydesign()`. Second-stage (and deeper) stratification affects weights (which are correctly compounded) but does not appear in the survey design object. If the user needs exact multi-stage variance (without the with-replacement approximation), replicate-weight methods via `as_svrepdesign()` are the recommended path.
+**Consequence for variance estimation.** Under this assumption, the recursive multi-stage variance formula applies [@sarndal1992, ch. 4.3]. `as_svydesign()` exports every executed stage to `survey::svydesign()`: one `ids` term, one `fpc` term, and (when the stage is stratified) one `strata` term per stage, so `survey` performs exact multi-stage linearization. A first-stage census, for example, correctly attributes all variance to the later stages. The one exception is a stage that samples with replacement: later stages nested in it contribute nothing beyond the between-draw variability, which the Hansen-Hurwitz estimator already captures.
 
 ## What is lost at survey export
 
 `as_svydesign()` translates a `tbl_sample` into a `survey::svydesign()` object. The translation is faithful for standard variance estimators, but some `samplyr` metadata is not representable in the `survey` framework.
 
-### 1. Second-stage stratification
+### 1. Element sampling before later stages
 
-Only first-stage strata are passed to `survey::svydesign()`. Under the with-replacement approximation this is correct: later-stage strata influence point estimates through weights but do not enter the variance formula. This follows the standard practice described in the `survey` package documentation.
+An unclustered element-sampling stage followed by further stages is not nested cluster sampling: the later selections operate on the realized element sample, not within larger units, so there is no hierarchy for the multi-stage variance recursion (or for replicate-weight resampling) to use. This is phase sampling. `as_svydesign()` raises an error for this shape and the supported path is a two-phase sample: execute the element stage as its own phase, pipe the result into a second `execute()` call, and export with `as_svydesign()`, which uses `survey::twophase()`. A *final* unclustered stage is fully supported: it is exported with a synthesized row-identity `ids` term and its own FPC.
 
 ### 2. Joint inclusion probabilities
 

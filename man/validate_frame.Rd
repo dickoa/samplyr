@@ -4,7 +4,12 @@
 \alias{validate_frame}
 \title{Validate a Frame Against a Design}
 \usage{
-validate_frame(design, frame, stage = NULL)
+validate_frame(
+  design,
+  frame,
+  stage = NULL,
+  fingerprint = c("inform", "warn", "ignore")
+)
 }
 \arguments{
 \item{design}{A \code{sampling_design} object}
@@ -12,6 +17,13 @@ validate_frame(design, frame, stage = NULL)
 \item{frame}{A data frame to validate}
 
 \item{stage}{Which stage(s) to validate against. Default validates all stages.}
+
+\item{fingerprint}{How to report differences between \code{frame} and the
+frame fingerprint stored in a design file. Applies to designs restored
+with \code{\link[=read_design]{read_design()}} when the design was saved with \verb{frame =}. One of
+\code{"inform"} (default, emits a message), \code{"warn"}, or \code{"ignore"}. The
+comparison is informational and never fails validation, because a
+design remains executable on any frame that passes the variable checks.}
 }
 \value{
 Invisibly returns \code{TRUE} if validation passes.
@@ -30,6 +42,19 @@ Validation checks include:
 \item Non-empty frame
 \item Positive values for MOS variables
 }
+
+For designs restored with \code{\link[=read_design]{read_design()}}, if the design file carries a
+frame fingerprint, \code{validate_frame()} also compares it against \code{frame}
+and reports what changed (rows, columns, column types, or content).
+
+When \code{frame} is itself a \code{tbl_sample} (that is, the design is being
+prepared as phase 2 of a two-phase sample), \code{validate_frame()} also
+pre-flights the two-phase export requirements: the design and the
+phase-1 sample must share unit identifiers declared with
+\code{\link[=cluster_by]{cluster_by()}}, and those identifiers must uniquely identify the
+phase-1 rows. Problems are reported as warnings rather than errors,
+because selection and weighting work without linkage; only
+\code{\link[=as_svydesign]{as_svydesign()}} needs it.
 }
 \examples{
 # Create a design requiring region stratification and PPS by household count
@@ -58,5 +83,17 @@ multi_design <- sampling_design() |>
 
 # Validate stage 1 only
 validate_frame(multi_design, zwe_frame, stage = 1)
+
+# Designs restored from a file also check the stored frame fingerprint
+path <- tempfile(fileext = ".json")
+write_design(design, path, frame = bfa_eas)
+restored <- read_design(path)
+
+# Same frame, no message
+validate_frame(restored, bfa_eas)
+
+# A modified frame passes validation with an informational message
+validate_frame(restored, bfa_eas[-1, ])
+unlink(path)
 
 }

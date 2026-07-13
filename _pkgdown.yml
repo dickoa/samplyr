@@ -15,6 +15,9 @@ articles:
     contents:
       - survey-analysis
       - sampling-coordination
+  - title: "Sharing and Reproducibility"
+    contents:
+      - serialization
   - title: "Survey Planning"
     contents:
       - survey-planning
@@ -51,8 +54,16 @@ reference:
       - design_effect
       - effective_n
 
+  - title: "Serialization"
+    desc: "Save, share, and restore designs as JSON files."
+    contents:
+      - write_design
+      - design_json
+      - replay_design
+      - as.list.sampling_design
+
   - title: "Helpers"
-    desc: "Sorting, class checks, and serialization."
+    desc: "Sorting and class checks."
     contents:
       - serp
       - is_sampling_design
@@ -60,7 +71,6 @@ reference:
       - as_tbl_sample
       - get_design
       - get_stages_executed
-      - as.list.sampling_design
       - print.samplyr
       - "`[.tbl_sample`"
 

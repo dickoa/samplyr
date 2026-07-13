@@ -11,22 +11,57 @@ Initial release.
 
 ## Sampling methods
 
-* 13 methods in three families:
+* Added Sampford fixed-size PPS sampling (`method = "pps_sampford"`) with
+  exact joint inclusion probabilities through `joint_expectation()`.
+* Balanced sampling is now an explicit method family: the existing
+  `method = "cube"` is now the canonical cube path (`"balanced"` remains a
+  compatibility alias), while `"lpm2"` and
+  `"scps"` provide spatially balanced draws through `spread = c(x, y)`.
+* `bound()` markers inside the cube `aux` specification add hard
+  adjacent-integer count constraints, for example
+  `aux = c(income, bound(region), bound(urban))`.
+* 16 methods across equal-probability, PPS, and balanced families:
   - Equal probability: `srswor`, `srswr`, `systematic`, `bernoulli`.
   - PPS without replacement: `pps_systematic`, `pps_brewer`, `pps_cps`
-    (maximum entropy), `pps_poisson`, `pps_sps`, `pps_pareto`.
+    (maximum entropy), `pps_sampford`, `pps_poisson`, `pps_sps`,
+    `pps_pareto`.
   - PPS with replacement / PMR: `pps_multinomial`, `pps_chromy`.
-* Balanced sampling via the cube method (`method = "balanced"`) with optional
-  auxiliary balancing variables and measure of size. Stratified designs use
-  the stratified cube algorithm. Supported for up to 2 stages.
+  - Balanced: cube (`cube`), local pivotal (`lpm2`), and spatially
+    correlated Poisson (`scps`).
 * Permanent random numbers (PRN) for sample coordination:
   `bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`.
 * Random-size methods (`bernoulli`, `pps_poisson`) accept `n` (expected size)
   or `frac` (sampling fraction).
-* Custom PPS methods registered via `sondage::register_method()` are accepted
-  using the `pps_<name>` convention. Method metadata (WOR/WR type, fixed size,
-  PRN support) flows through validation, execution, joint probabilities, and
-  survey export.
+* Zero selections from a random-size method error by default
+  (`on_empty = "error"`); `"warn"` and `"silent"` accept the empty
+  realization, which contributes zero to Horvitz-Thompson totals and keeps
+  estimates from repeated executions unbiased. Custom methods registered
+  with `fixed_size = FALSE` honour `on_empty` the same way. A replicated
+  execution with empty replicates cannot enter a later `execute()` call
+  (class `samplyr_error_empty_phase_replicate`): silently skipping them
+  would condition downstream results on nonempty realizations. Extracted
+  single nonempty replicates remain executable.
+* Custom methods registered via `sondage::register_method()` use family-aware
+  names: WOR/WR methods use `pps_<name>`, while balanced methods use
+  `balanced_<name>`. Method metadata (type, fixed size, PRN support) flows
+  through validation, execution, joint probabilities, and survey export.
+* Custom balanced methods (`type = "balanced"`) execute through
+  `sondage::balanced_wor()`, may omit `mos` for equal probabilities, and may
+  opt into `aux` or `spread` through the registry's `supports_aux` and
+  `supports_spread` capabilities. They count toward the two-stage balanced
+  limit and export with the built-in cube's variance treatment (Brewer,
+  fraction-scale FPC) rather than falling through to SRS.
+* `frac` validation follows a custom method's declared type: custom WR
+  methods accept `frac > 1` like the built-in WR methods (the name-based
+  test previously classified every custom method as WOR and rejected it).
+* A `variance_family` declared at registration
+  (`sondage::register_method(variance_family = )`) drives the survey
+  export directly instead of inference from type and fixed size:
+  `"poisson"` methods get exact `survey::poisson_sampling()`
+  linearization without the explicit `pps =` escape, `"srs"` methods the
+  equal-probability treatment, and `"unsupported"` methods refuse
+  `as_svydesign()` while keeping the `subbootstrap` escape hatch. The
+  declaration is serialized with the design receipt.
 
 ## Stratification and allocation
 
@@ -75,6 +110,39 @@ Initial release.
 * `control = c(var1, var2)` for nested sorting.
 * `control = serp(var1, var2)` for serpentine (alternating direction) sorting.
 
+## Serialization
+
+* `write_design()` and `read_design()` save and restore designs as
+  versioned, human-readable JSON files. A restored design executes
+  identically to the original. `design_json()` renders the same format
+  as an in-memory string for databases and APIs.
+* Design files record the frame variables each stage requires, and
+  optionally a frame fingerprint (name, dimensions, column types,
+  content hash) via `write_design(..., frame =)` -- the frame data
+  itself is never written. The content hash covers column names, column
+  values, and row order; a tibble and a plain data frame holding the
+  same data fingerprint identically, and column order does not matter.
+* Saving an executed `tbl_sample` records an execution receipt with
+  every `execute()` argument that affects the result (seed, executed
+  stages, `panels`, `reps`, replicate seeds) plus the number of
+  selected units and the timestamp. `replay_design()` re-runs the
+  recorded call and reproduces the full sample -- including `.panel`
+  and `.replicate` assignments -- with only the timestamp differing.
+  Samples built by several `execute()` calls (continuation,
+  multi-phase) or modified after execution are flagged in the receipt
+  and warned about at write time; `replay_design()` refuses chained
+  receipts rather than replaying only the final call.
+* Control expressions are stored as text and reparsed against an
+  allowlist (bare columns, `desc()`, `serp()`), so reading a design
+  file never executes arbitrary code. `read_design()` accepts local
+  file paths and JSON strings only; URLs are refused, so reading a
+  design never touches the network.
+* `validate_frame()` compares a restored design's stored fingerprint
+  against the supplied frame and reports what changed (rows, columns,
+  column types, or content). The comparison is informational and never
+  fails validation; control it with the `fingerprint` argument
+  (`"inform"`, `"warn"`, or `"ignore"`).
+
 ## Survey export
 
 * `as_svydesign()` converts `tbl_sample` to `survey::svydesign()` with
@@ -82,12 +150,48 @@ Initial release.
   Handles PPS WOR (Brewer approximation or exact `ppsmat`), WR/PMR
   (`Inf` FPC, Hansen-Hurwitz), certainty strata, balanced sampling, and
   two-phase designs.
+* Exact multi-stage linearization: every executed stage is exported with
+  one `ids`, one `fpc`, and (when stratified) one `strata` term. A final
+  stage without `cluster_by()` gets a synthesized element identifier.
+  Multi-variable `cluster_by()` and `stratify_by()` export as a single
+  interaction term per stage, and certainty strata combine with user
+  strata. Multi-stage PPS designs use fraction-scale FPCs throughout.
 * `as_svrepdesign()` converts to replicate-weight designs. For PPS and
   balanced designs, `"subbootstrap"` and `"mrbbootstrap"` are supported.
 * `as_survey_design()` and `as_survey_rep()` for direct conversion to
   srvyr `tbl_svy` objects.
 * `joint_expectation()` computes pairwise joint inclusion probabilities
   (WOR) or joint expected hits (WR/PMR) for exact variance estimation.
+* Modified-sample guard: a `tbl_sample` whose rows were removed, added,
+  or duplicated after `execute()`, or whose internal design columns
+  (`.weight`, `.fpc_k`, ...) were overwritten, dropped, or renamed
+  (including via `select()` and column `[`), is marked as modified and
+  rejected by `as_svydesign()`, `as_svrepdesign()`, `joint_expectation()`,
+  `design_effect()`, and `effective_n()`. Physically filtering rows
+  before export silently understated domain variance. For subpopulation
+  estimates, convert first and use `survey::subset()` or srvyr's
+  `filter()` on the design object. Extracting one complete replicate
+  with `filter(.replicate == r)` is verified against execution metadata
+  and remains supported. Two-phase export warns when the phase-1 sample
+  was modified before phase-2 execution, since `survey::twophase()`
+  treats the current phase-1 rows as the complete phase-1 sample.
+* Integrity record: `execute()` stores the row count and an
+  order-invariant hash of the protected columns (weights, design
+  metadata, and the executed stages' strata/cluster variables). The
+  analysis boundary verifies it authoritatively, so modifications
+  through routes the dplyr hooks cannot see (base assignment,
+  `rbind()`, `vctrs::vec_rbind()`, stripping and restoring the class,
+  changing strata or cluster values) are caught, and value-identical
+  overwrites pass. `as_tbl_sample()` re-verifies on restore.
+* `tbl_sample` is a fuller tibble subclass: `group_by()`/`ungroup()`
+  preserve sample provenance (grouped verbs work and marks flow
+  through), `vec_restore()` applies the same rules as the dplyr hooks,
+  and base `[` detects same-length row duplication.
+* Custom methods registered with `fixed_size = FALSE` are random-size;
+  `as_svydesign()` now errors instead of applying Brewer's fixed-size
+  approximation (which could report near-zero variance). Pass
+  `pps = survey::poisson_sampling(1 / x$.weight)` for Poisson-type
+  methods, or use `as_svrepdesign(type = "subbootstrap")`.
 
 ## Survey planning
 
@@ -96,7 +200,17 @@ Initial release.
   Auto-extraction of strata, clusters, and selection probabilities from
   the stored design.
 * `draw()` accepts `svyplan` sample size objects (`svyplan_n`, `svyplan_power`,
-  `svyplan_cluster`) directly.
+  `svyplan_cluster`) directly, and the handoff is stage-aware: cluster
+  plans contribute the PSU count at a clustered stage 1 and the
+  per-cluster take at later stages; stratified two-stage `n_alloc()`
+  plans feed both stages by stratum; `n_multi()` domain plans become
+  per-domain tables for domain-stratified designs. Consumption goes
+  through svyplan's documented coercions (`as.data.frame()`,
+  `as.integer()`), so draws use the plan's integerized field design
+  (svyplan >= 0.8.8) rather than per-stage rounding.
+* Clearer `draw()` errors: a named `n` without stage-level
+  stratification, or with crossed stratification variables, now fails at
+  design time with guidance instead of at execution.
 * Precision analysis (`prec_prop()`, `prec_mean()`, `prec_cluster()`,
   `prec_multi()`), sensitivity analysis (`predict()`), response rate
   adjustment (`resp_rate`), and confidence intervals (`confint()`) on
@@ -108,15 +222,22 @@ Initial release.
   f_h, and weight diagnostics (Kish DEFF, n_eff, CV).
 * `validate_frame()` checks for missing variables, NA values in key
   columns, and MOS/PRN/auxiliary variable issues before execution.
+* When the frame is itself a `tbl_sample` (phase-2 preparation),
+  `validate_frame()` pre-flights the two-phase export requirements:
+  shared `cluster_by()` identifiers between the phases, unique on the
+  phase-1 rows. Problems warn rather than error, because only
+  `as_svydesign()` needs the linkage.
 
 ## Datasets
 
-* `bfa_eas`: 44,570 enumeration areas from Burkina Faso for household survey
-  sampling. Companion tables `bfa_eas_variance` and `bfa_eas_cost` for Neyman
-  and optimal allocation. Food insecurity calibrated from Cadre Harmonise.
-* `zwe_eas`: 107,250 enumeration areas from Zimbabwe for two-stage cluster
-  survey sampling. Population and households calibrated to 2022 Census
-  ward-level tallies. Demographic columns from WorldPop 100m age-sex grids.
+* `bfa_eas`: 44,570 enumeration areas from Burkina Faso for household budget
+  and living-standards sampling. Companion tables `bfa_eas_variance` and
+  `bfa_eas_cost` provide synthetic prior-consumption variances and relative
+  fieldwork costs.
+* `zwe_eas`: 107,250 enumeration areas from Zimbabwe for demographic, health,
+  and child-indicator two-stage cluster survey sampling. Population and
+  households calibrated to 2022 Census ward-level tallies. Demographic columns
+  from WorldPop 100m age-sex grids.
 * `ken_enterprises`: 17,004 establishments from Kenya for enterprise surveys,
   panel partitioning, and PRN coordination examples. Calibrated to the
   Republic of Kenya 2025 WBES universe (KRA register, 6 regions, 7 sectors).
@@ -130,3 +251,5 @@ Initial release.
 * Survey planning: svyplan integration, sample size, precision, design effects.
 * Validation: deterministic invariants and Monte Carlo coverage checks on
   synthetic populations.
+* Serialization: saving, sharing, and restoring designs as JSON files,
+  frame fingerprints, and reproducible execution receipts.

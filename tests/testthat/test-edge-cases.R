@@ -1484,12 +1484,12 @@ test_that("on_empty = 'error' causes bernoulli to abort on zero selection", {
   )
 })
 
-test_that("on_empty = 'silent' falls back without warning or error", {
+test_that("on_empty = 'silent' returns an empty sample without warning", {
   skip_on_cran()
   frame <- data.frame(id = 1:5)
 
   # Same approach: find a seed that triggers zero selection
-  got_silent_fallback <- FALSE
+  got_empty <- FALSE
   for (seed in 1:200) {
     warns <- NULL
     result <- withCallingHandlers(
@@ -1501,15 +1501,16 @@ test_that("on_empty = 'silent' falls back without warning or error", {
         invokeRestart("muffleWarning")
       }
     )
-    # If we selected only 1 unit, it might be the fallback
-    if (nrow(result) == 1 && is.null(warns)) {
-      got_silent_fallback <- TRUE
+    if (nrow(result) == 0) {
+      expect_null(warns)
+      expect_s3_class(result, "tbl_sample")
+      got_empty <- TRUE
       break
     }
   }
   expect_true(
-    got_silent_fallback,
-    info = "Expected at least one silent fallback (1 row, no warning) across 200 seeds"
+    got_empty,
+    info = "Expected at least one empty realization (0 rows, no warning) across 200 seeds"
   )
 })
 

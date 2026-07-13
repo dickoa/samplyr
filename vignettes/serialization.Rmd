@@ -1,0 +1,231 @@
+---
+title: "Saving and Sharing Designs"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Saving and Sharing Designs}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup, message = FALSE, echo = FALSE}
+library(samplyr)
+library(dplyr)
+```
+
+## Overview
+
+A `samplyr` design is a frame-independent specification. It describes *how* to sample, not *what* to sample from. That makes a design a natural artifact to save, version, reuse, and share alongside the survey protocol, in a git repository, or with a collaborator who will execute it on the confidential frame you cannot send.
+
+Three functions cover this workflow:
+
+| Function         | Purpose                                                        |
+|:-----------------|:---------------------------------------------------------------|
+| `write_design()` | Save a design (or an executed sample's design) to a JSON file  |
+| `read_design()`  | Restore a design from a file or JSON string                    |
+| `design_json()`  | Render the same format as an in-memory string (databases, APIs) |
+
+The file format is versioned JSON, human-readable, diffable in version control, and language-neutral, so the sampling plan can be inspected without R. The guarantee is behavioural. A restored design executes identically to the original:
+
+```{r, eval = FALSE}
+execute(read_design("plan.json"), frame, seed = 1)
+# is identical to
+execute(design, frame, seed = 1)
+```
+
+## Saving a design
+
+Any design can be written, from a simple SRS to a multi-stage PPS plan with control sorting:
+
+```{r}
+design <- sampling_design(title = "BFA EA Survey") |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(
+    n = 300,
+    method = "systematic",
+    control = c(serp(province, commune))
+  )
+
+path <- tempfile(fileext = ".json")
+write_design(design, path)
+```
+
+The file is plain JSON:
+
+```{r, comment = ""}
+cat(readLines(path), sep = "\n")
+```
+
+Everything the design holds is written out in full, including per-stratum allocations, auxiliary data frames for Neyman or optimal allocation, and certainty thresholds. Nothing is lost between sessions:
+
+```{r}
+design_named <- sampling_design() |>
+  stratify_by(urban_rural) |>
+  draw(n = c(Urban = 120, Rural = 180))
+
+cat(design_json(design_named, pretty = TRUE))
+```
+
+Scalars are written as JSON numbers, named vectors as objects, and data-frame specifications as arrays of rows. The three shapes are unambiguous, so files can be written or edited by other tools without special type annotations.
+
+## Reading a design back
+
+`read_design()` restores a `sampling_design` that behaves exactly like the original:
+
+```{r}
+restored <- read_design(path)
+restored
+```
+
+```{r}
+s_original <- execute(design, bfa_eas, seed = 123)
+s_restored <- execute(restored, bfa_eas, seed = 123)
+
+identical(s_original$ea_id, s_restored$ea_id)
+identical(s_original$.weight, s_restored$.weight)
+```
+
+`read_design()` also accepts a JSON string directly, which pairs with `design_json()` when designs are stored in a database or sent over an API rather than as files:
+
+```{r}
+json <- design_json(design)
+identical(
+  execute(read_design(json), bfa_eas, seed = 7)$ea_id,
+  execute(design, bfa_eas, seed = 7)$ea_id
+)
+```
+
+## Frame requirements and fingerprints
+
+We made the design files frame-independent, so the frame data is never written. Two derived blocks describe the frame instead.
+
+The **requirements** block is always recorded. It lists the columns each stage needs, tagged by role (stratification, clustering, measure of size, PRN, auxiliary, and control sorting), so that a candidate frame can be checked before execution:
+
+```{r}
+info <- attr(restored, "frame_info")
+
+bind_rows(info$required_variables)
+```
+
+This complements `validate_frame()`, which performs the full check against an actual frame:
+
+```{r}
+validate_frame(restored, bfa_eas)
+```
+
+The **fingerprint** block is written when you pass the frame to `write_design()`. It records the frame's name, dimensions, column types, and a content hash. This is enough to verify later that a frame is the exact one the design was built against, without shipping any data:
+
+```{r}
+write_design(design, path, frame = bfa_eas)
+
+fingerprint <- attr(read_design(path), "frame_info")$fingerprint
+fingerprint$name
+fingerprint$nrow
+fingerprint$hash
+```
+
+The hash covers the column names, the column values, and the row order. It does not depend on whether the frame is a tibble or a plain data frame, or on the order of its columns. Frames that differ only in those respects are the same population.
+
+To verify a frame months later, pass it to `validate_frame()` together with the restored design. The check is silent when the frame matches the stored fingerprint. If the frame has been revised since the design was written, it explains what changed and still runs the variable checks, because a design remains executable on any compatible frame:
+
+```{r}
+validate_frame(read_design(path), bfa_eas[-(1:10), ])
+```
+
+Set `fingerprint = "warn"` to escalate the message to a warning, or `"ignore"` to skip the comparison entirely.
+
+## Execution receipts
+
+Passing an executed `tbl_sample` to `write_design()` saves the design together with an execution receipt: every `execute()` argument that affects the result (the seed, the executed stages, and `panels` or `reps` when used), plus the number of selected units and the execution timestamp.
+
+```{r}
+sample <- execute(design, bfa_eas, seed = 2026, panels = 4)
+
+write_design(sample, path, frame = bfa_eas)
+
+receipt <- attr(read_design(path), "execution")
+receipt$seed
+unlist(receipt$stages_executed)
+receipt$panels
+receipt$n_selected
+```
+
+Together with the frame fingerprint, the receipt makes the sample exactly reproducible. `replay_design()` passes the recorded arguments back to `execute()`, so nothing has to be reconstructed by hand:
+
+```{r}
+replayed <- replay_design(read_design(path), bfa_eas)
+```
+
+The contract is full equality of the materialized sample. Given the same frame, the replayed `tbl_sample` has the same rows in the same order, the same weights and design columns, and the same `.panel` and `.replicate` assignments; only the execution timestamp differs.
+
+```{r}
+identical(replayed$ea_id, sample$ea_id)
+identical(replayed$.weight, sample$.weight)
+identical(replayed$.panel, sample$.panel)
+```
+
+`replay_design()` first compares the frame against the stored fingerprint and warns if it differs, and afterwards checks the replayed row count against the receipt. Replaying against a different frame yields a valid new sample, not the recorded one.
+
+Two situations fall outside the single-call contract, and `write_design()` warns about both. A sample built by several `execute()` calls (a stage continuation or a multi-phase pipeline) is flagged as `chained` in its receipt: the receipt records only the final call, so `replay_design()` refuses it. Save and replay each phase or stage batch separately. A sample whose rows or design columns were modified after execution is flagged as `modified`: its receipt describes the original execution, not the modified object.
+
+The sampled rows themselves are not stored, because a design file is a *recipe*, not a dataset. Save the selected units with the usual data tools (`write.csv()`, arrow, ...) and keep the design file next to them as the audit trail.
+
+## Control expressions and safety
+
+`draw(control = ...)` accepts expressions, and expressions are the one part of a design that is not plain data. In a design file they are stored as text and rebuilt on read:
+
+```json
+"control": ["serp(province, commune)"]
+```
+
+Only three forms can be represented: bare column names, `desc()`, and `serp()` on bare column names. `write_design()` refuses anything else rather than writing a file that would not round-trip:
+
+```{r, error = TRUE}
+odd_design <- sampling_design() |>
+  draw(n = 50, control = c(population / households))
+
+design_json(odd_design)
+```
+
+The same allowlist is enforced when reading, so a design file can never execute arbitrary code, even one received from a third party:
+
+```{r, error = TRUE}
+tampered <- sub(
+  "serp(province, commune)",
+  "system('echo pwned')",
+  design_json(design),
+  fixed = TRUE
+)
+
+read_design(tampered)
+```
+
+## What round-trips, and what does not
+
+The round-trip contract is **execution equality**. A restored design draws the same sample as the original under the same seed, while the objects themselves may differ in inconsequential ways:
+
+| Aspect                          | Behaviour after a round-trip                                        |
+|:--------------------------------|:---------------------------------------------------------------------|
+| Stages, strata, clusters, draws | Preserved exactly, including all per-stratum vectors and data frames |
+| Whole numbers                   | May switch between integer and double (JSON does not distinguish)    |
+| Data-frame specifications       | Returned as tibbles; factor columns become character                 |
+| Control expressions             | Rebuilt from text into equivalent quosures                           |
+| Builder state                   | Not stored; the design is revalidated on read                        |
+
+Files carry a `format_version` so that future versions of `samplyr` can read (and migrate) files written today. `read_design()` reports a clear error when a file was written by a newer version than the installed one.
+
+```{r, include = FALSE}
+unlink(path)
+```
+
+## Where serialization fits
+
+- `vignette("design-semantics")` explains the frame-independence that makes designs portable in the first place.
+- `validate_frame()` (see `vignette("introduction")`) checks any candidate frame against a design's requirements before execution.
+- For coordinated samples across waves (see `vignette("sampling-coordination")`), archiving each wave's design file together with the PRN frame gives a complete, replayable history of the sample selection.

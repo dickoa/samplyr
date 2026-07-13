@@ -46,7 +46,7 @@ test_that("draw accepts svyplan_power from power_mean", {
 
 test_that("draw accepts svyplan_cluster from n_cluster", {
   cl_obj <- svyplan::n_cluster(stage_cost = c(500, 50), delta = 0.05, budget = 100000)
-  n_int <- as.integer(cl_obj)
+  n_int <- prod(as.integer(cl_obj))
   design <- sampling_design() |> draw(n = cl_obj)
   frame <- data.frame(id = seq_len(n_int + 100))
   result <- execute(design, frame, seed = 1)
@@ -481,4 +481,184 @@ test_that("CR on unstratified unclustered design gives informative error", {
 test_that("summary.tbl_sample reports deff correctly", {
   out <- capture.output(summary(fix_deff_disprop))
   expect_true(any(grepl("DEFF", out)))
+})
+
+test_that("svyplan_cluster feeds both stages of a clustered design", {
+  cl <- svyplan::n_cluster(cv = 0.05, delta = 0.05, unit_var = 1,
+                           stage_cost = c(500, 50))
+  frame <- data.frame(
+    ea = rep(sprintf("EA%03d", 1:200), each = 20),
+    hh = 1:4000
+  )
+  res <- sampling_design() |>
+    cluster_by(ea) |>
+    draw(n = cl) |>
+    add_stage() |>
+    draw(n = cl) |>
+    execute(frame, seed = 1)
+  stages <- as.integer(cl)
+  expect_equal(length(unique(res$ea)), stages[[1]])
+  expect_equal(nrow(res), prod(stages))
+})
+
+test_that("svyplan_cluster keeps the operational total in a flat design", {
+  cl <- svyplan::n_cluster(cv = 0.05, delta = 0.05, unit_var = 1,
+                           stage_cost = c(500, 50))
+  total <- prod(as.integer(cl))
+  frame <- data.frame(id = seq_len(total + 100))
+  res <- sampling_design() |> draw(n = cl) |> execute(frame, seed = 1)
+  expect_equal(nrow(res), total)
+})
+
+test_that("svyplan_cluster errors past its planned stages", {
+  cl <- svyplan::n_cluster(cv = 0.05, delta = 0.05, unit_var = 1,
+                           stage_cost = c(500, 50))
+  expect_error(
+    sampling_design() |>
+      cluster_by(ea) |> draw(n = 10) |>
+      add_stage() |> draw(n = 5) |>
+      add_stage() |> draw(n = cl),
+    class = "samplyr_error_svyplan_stage"
+  )
+})
+
+test_that("stratified two-stage n_alloc plan feeds both stages", {
+  fr <- data.frame(
+    stratum = c("North", "South"),
+    N = c(2000, 2000),
+    sd = c(14, 16),
+    mean = c(58, 62),
+    delta_psu = c(0.04, 0.06),
+    cost_psu = c(400, 550),
+    cost_ssu = c(45, 60)
+  )
+  plan <- svyplan::n_alloc(fr, cv = 0.02)
+  d <- as.data.frame(plan)
+
+  frame <- data.frame(
+    region = rep(c("North", "South"), each = 2000),
+    ea = rep(sprintf("EA%03d", 1:200), each = 20),
+    hh = 1:4000
+  )
+  res <- sampling_design() |>
+    stratify_by(region) |>
+    cluster_by(ea) |>
+    draw(n = plan) |>
+    add_stage() |>
+    stratify_by(region) |>
+    draw(n = plan) |>
+    execute(frame, seed = 2)
+
+  eas <- unique(res[, c("ea", "region")])
+  expect_equal(
+    as.integer(table(eas$region)[d$stratum]),
+    d$n_psu_int
+  )
+  take <- as.integer(d$psu_size_int)
+  expect_equal(
+    as.integer(table(res$region)[d$stratum]),
+    d$n_psu_int * take
+  )
+})
+
+test_that("n_multi domain plans become per-domain data frames", {
+  tg <- data.frame(
+    indicator = "stunting",
+    domain = c("urban", "rural"),
+    p = c(0.25, 0.35),
+    cv = 0.08
+  )
+  nm <- svyplan::n_multi(tg, domains = "domain")
+  frame <- data.frame(
+    domain = rep(c("urban", "rural"), each = 1000),
+    id = 1:2000
+  )
+  res <- sampling_design() |>
+    stratify_by(domain) |>
+    draw(n = nm) |>
+    execute(frame, seed = 1)
+  expected <- setNames(as.integer(ceiling(nm$domains$.n)), nm$domains$domain)
+  expect_equal(as.integer(table(res$domain)[names(expected)]),
+               unname(expected))
+})
+
+test_that("multistage n_multi domain plans feed both stages", {
+  tg <- data.frame(
+    indicator = "stunting",
+    domain = c("urban", "rural"),
+    p = c(0.25, 0.35),
+    cv = 0.08,
+    delta_psu = 0.05
+  )
+  nm <- svyplan::n_multi(tg, domains = "domain", stage_cost = c(500, 50))
+  frame <- data.frame(
+    domain = rep(c("urban", "rural"), each = 3000),
+    ea = rep(sprintf("EA%03d", 1:300), each = 20),
+    hh = 1:6000
+  )
+  res <- sampling_design() |>
+    stratify_by(domain) |> cluster_by(ea) |> draw(n = nm) |>
+    add_stage() |> stratify_by(domain) |> draw(n = nm) |>
+    execute(frame, seed = 2)
+  eas <- unique(res[, c("ea", "domain")])
+  expected <- setNames(as.integer(ceiling(nm$domains$n_psu)),
+                       nm$domains$domain)
+  expect_equal(as.integer(table(eas$domain)[names(expected)]),
+               unname(expected))
+})
+
+test_that("named n without stage strata gets a targeted error", {
+  expect_error(
+    sampling_design() |>
+      cluster_by(ea) |> draw(n = 10) |>
+      add_stage() |> draw(n = c(North = 6, South = 7)),
+    "requires stratification at this stage"
+  )
+})
+
+test_that("named n with crossed strata errors at draw time", {
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, phc) |>
+      draw(n = c(yes = 1, no = 2)),
+    "single stratification variable"
+  )
+})
+
+test_that("cluster-mode alloc plan requires cluster_by at stage 1", {
+  fr <- data.frame(
+    stratum = c("A", "B"), N = c(2000, 2000), sd = c(14, 16),
+    mean = c(58, 62), delta_psu = c(0.04, 0.06),
+    cost_psu = c(400, 550), cost_ssu = c(45, 60)
+  )
+  plan <- svyplan::n_alloc(fr, cv = 0.02)
+  expect_error(
+    sampling_design() |> stratify_by(region) |> draw(n = plan),
+    class = "samplyr_error_svyplan_clustered_plan"
+  )
+})
+
+test_that("cluster-mode alloc plan draws PSUs from an EA-level frame", {
+  fr <- data.frame(
+    stratum = c("North", "South"), N = c(2000, 2000), sd = c(14, 16),
+    mean = c(58, 62), delta_psu = c(0.04, 0.06),
+    cost_psu = c(400, 550), cost_ssu = c(45, 60)
+  )
+  plan <- svyplan::n_alloc(fr, cv = 0.02)
+  d <- as.data.frame(plan)
+
+  ea_frame <- data.frame(
+    region = rep(c("North", "South"), each = 100),
+    ea_id = 1:200,
+    households = 20
+  )
+  res <- sampling_design() |>
+    stratify_by(region) |>
+    cluster_by(ea_id) |>
+    draw(n = plan) |>
+    execute(ea_frame, seed = 3)
+  expect_equal(
+    as.integer(table(res$region)[d$stratum]),
+    d$n_psu_int
+  )
 })

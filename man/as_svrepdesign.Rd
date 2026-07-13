@@ -58,7 +58,19 @@ Horvitz-Thompson linearization cannot express in
 developed for fixed-size PPS sampling (Antal and Tille 2011); their
 behaviour on random-size Poisson designs, especially at multiple
 stages, has weaker theoretical backing and should be treated as an
-approximation.
+approximation. In particular, the resampling is fixed-size, so it
+does not capture the variance contribution of the random sample
+size and can materially understate the total variance of a
+Poisson-type design. When the exact Poisson linearization is
+available (single-stage designs), prefer \code{\link[=as_svydesign]{as_svydesign()}}.
+
+Bounded cube, LPM2, and SCPS designs likewise have no native,
+design-specific replicate variance estimator in \code{samplyr}.
+\code{as_svrepdesign(type = "subbootstrap")} and \code{"mrbbootstrap"} export a
+generic PPS bootstrap approximation for them; they do not reproduce the
+original cube constraints or spatial selection algorithm within each
+replicate. Treat the resulting variance estimates as approximations, not
+as exact variance estimators for those designs.
 }
 }
 \examples{

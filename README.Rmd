@@ -217,6 +217,7 @@ final_sample
 | `pps_brewer`      | Fixed       | Brewer's method (recommended) |
 | `pps_systematic`  | Fixed       | PPS systematic                |
 | `pps_cps`         | Fixed       | Conditional Poisson sampling  |
+| `pps_sampford`    | Fixed       | Sampford sampling             |
 | `pps_poisson`     | Random      | PPS Poisson (PRN) |
 | `pps_sps`         | Fixed       | Sequential Poisson sampling (PRN) |
 | `pps_pareto`      | Fixed       | Pareto piPS sampling (PRN)        |
@@ -225,9 +226,11 @@ final_sample
 
 ### Balanced Sampling
 
-| Method     | Sample Size | Description                                     |
-|------------|-------------|-------------------------------------------------|
-| `balanced` | Fixed       | Cube method (Deville & Tille 2004), uses `aux`  |
+| Method     | Sample Size | Description                                      |
+|------------|-------------|--------------------------------------------------|
+| `cube`     | Fixed       | Cube method (Deville & Tillé 2004), uses `aux`   |
+| `lpm2`     | Fixed       | Local pivotal sampling, requires `spread`        |
+| `scps`     | Fixed       | Spatially correlated Poisson, requires `spread`  |
 
 ## Allocation Methods
 
@@ -307,26 +310,52 @@ PRN is supported for `bernoulli`, `pps_poisson`, `pps_sps`, and `pps_pareto`.
 
 ## Balanced Sampling
 
-The cube method (Deville & Tille 2004) produces samples whose Horvitz-Thompson estimates of auxiliary totals match the population totals, improving precision:
+The cube method (Deville & Tillé 2004) produces samples whose Horvitz-Thompson estimates of auxiliary totals match the population totals, improving precision:
 
 ```{r balanced}
 # Balanced sample using population and area as auxiliary variables
 balanced_smpl <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
-  draw(n = 300, method = "balanced", mos = households,
+  draw(n = 300, method = "cube", mos = households,
        aux = c(population, area_km2)) |>
   execute(bfa_eas, seed = 24)
 
 balanced_smpl
 ```
 
-The `aux` parameter accepts bare column names. When combined with `mos`, inclusion probabilities are proportional to size while the sample remains balanced on the auxiliary variables. Stratified designs use the stratified cube algorithm (Chauvet 2009) in a single call. Balanced sampling is supported for up to 2 stages.
+The `aux` parameter accepts bare column names. When combined with `mos`, inclusion probabilities are proportional to size while the sample remains balanced on the auxiliary variables. A `bound()` marker adds hard adjacent-integer count constraints for each observed category:
+
+```{r balanced-bounds, eval = FALSE}
+controlled_smpl <- sampling_design() |>
+  draw(
+    n = 300,
+    method = "cube",
+    mos = households,
+    aux = c(population, bound(region), bound(urban_rural))
+  ) |>
+  execute(bfa_eas, seed = 24)
+```
+
+For spatially balanced sampling, choose `lpm2` or `scps` explicitly and provide coordinates through `spread`:
+
+```{r spatial-balanced, eval = FALSE}
+spatial_smpl <- sampling_design() |>
+  draw(
+    n = 300,
+    method = "lpm2",
+    mos = households,
+    spread = c(longitude, latitude)
+  ) |>
+  execute(bfa_eas, seed = 24)
+```
+
+Spatial methods cannot be combined with cube auxiliaries or `bound()` constraints. Stratified cube designs use the stratified cube algorithm (Chauvet 2009) in a single call. Balanced-family methods are supported for up to 2 stages.
 
 ## Custom Sampling Methods
 
-Any unequal probability sampling method can be plugged into `samplyr` by registering it with `sondage::register_method()`. The registered method is then available in `draw()` using the `pps_<name>` convention.
+Methods registered with `sondage::register_method()` use a family prefix in `draw()`. Registered `type = "wor"` and `type = "wr"` methods use `pps_<name>` and require `mos`. Registered `type = "balanced"` methods use `balanced_<name>` and may omit `mos` for equal probabilities. A balanced method can declare `supports_aux = TRUE` to receive `aux`, or `supports_spread = TRUE` to require and receive `spread` coordinates.
 
-For example, to use the elimination procedure of Tille (1996) from the sampling package:
+For example, to use the elimination procedure of Tillé (1996) from the sampling package:
 
 ```{r custom-method}
 # Wrap sampling::UPtille to return selected indices
@@ -377,7 +406,11 @@ svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 ```
 
 By default `as_svydesign()` uses Brewer variance approximation. For tighter variance estimates, `joint_expectation()` computes pairwise joint inclusion probabilities from the original frame. The result is
-exact for CPS, systematic, and Poisson whereas high-entropy approximation O(N^2) is by  Brewer, SPS, Pareto and Balanced sampling using the Cube algorithm (exact recursive formulas exist for some of these methods but are usually O(N^3) and impractical for large frames). See `?joint_expectation` for the full method-by-method breakdown.
+exact for CPS, Sampford, systematic, and Poisson methods. Brewer, SPS, Pareto,
+and cube sampling use an O(N^2) high-entropy approximation; exact recursive
+formulas for some of these designs are usually O(N^3) and impractical for large
+frames. Joint probabilities are unavailable for bounded cube, LPM2, and SCPS
+designs. See `?joint_expectation` for the full method-by-method breakdown.
 
 ## Panel Partitioning
 
@@ -446,13 +479,13 @@ For statistical validation on synthetic populations with known truths, see `vign
 
 ## Included Datasets
 
-Synthetic sampling frames for learning and testing:
+Derived and synthetic sampling frames for learning and testing:
 
 | Dataset           | Description                                       | Rows    |
 |-------------------|---------------------------------------------------|---------|
-| `bfa_eas`         | Household survey EA frame (Burkina Faso)          | 44,570  |
-| `zwe_eas`         | Two-stage cluster survey EA frame (Zimbabwe)      | 107,250 |
-| `ken_enterprises` | Enterprise survey frame (Kenya)                   | 17,004  |
+| `bfa_eas`         | Household budget and living-standards EA frame (Burkina Faso) | 44,570  |
+| `zwe_eas`         | Demographic, health, and child-indicator EA frame (Zimbabwe)   | 107,250 |
+| `ken_enterprises` | Establishment survey frame (Kenya)                | 17,004  |
 
 Plus auxiliary data: `bfa_eas_variance`, `bfa_eas_cost`
 
