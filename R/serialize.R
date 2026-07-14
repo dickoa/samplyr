@@ -121,10 +121,11 @@ as.list.sampling_design <- function(x, ...) {
 # {
 #   "format": "samplyr/design",
 #   "format_version": 1,
-#   "samplyr_version": "0.8.9999",
+#   "schema": { "method_vocabulary": {...} },
 #   "design": { "title": ..., "stages": [...] },
 #   "frame": { "required_variables": [...], "fingerprint": {...} },
-#   "execution": { "seed": ..., "stages_executed": [...], ... }
+#   "execution": { "seed": ..., "stages_executed": [...], ... },
+#   "tools": { "samplyr": {...} }
 # }
 #
 # Per-stratum values (n, frac, min_n, max_n, certainty_*, variance, cost,
@@ -133,12 +134,16 @@ as.list.sampling_design <- function(x, ...) {
 #   named vector  -> JSON object
 #   data frame    -> JSON array of row objects
 #
-# Control expressions are stored as deparsed text and reparsed on read
-# against an allowlist (bare columns, desc(), serp()), so reading a design
-# file never executes arbitrary code.
+# Control expressions use a declarative JSON grammar. Each term records an
+# ordering type (ascending, descending, or serpentine) and its variables, so
+# the file contains no R source code and reading it never parses or executes
+# arbitrary code. The portable design and frame metadata are separate from
+# namespaced samplyr/R metadata needed for exact reconstruction.
 
 design_format_id <- "samplyr/design"
 design_format_version <- 1L
+method_vocabulary_id <- "samplyr/common-sampling-method"
+method_vocabulary_version <- 1L
 
 #' Write a sampling design to a file
 #'
@@ -164,9 +169,11 @@ design_format_version <- 1L
 #'   (stratification, clustering, `mos`, `prn`, `aux`, and control
 #'   variables), so any candidate frame can be checked before execution
 #'   with [validate_frame()].
-#' - *Fingerprint* (written when `frame` is supplied): the frame's name,
-#'   dimensions, column types, and a content hash, so you can later verify
-#'   that a frame is the exact one the design was built against.
+#' - *Fingerprint* (written when `frame` is supplied): portable dimensions
+#'   and column types in `frame`, plus the R source label, native classes, and
+#'   content hash in `tools.samplyr`. Together these can verify that a frame is
+#'   the exact one the design was built against without putting R details in
+#'   the common metadata.
 #'
 #' ## Execution receipts
 #'
@@ -192,11 +199,22 @@ design_format_version <- 1L
 #'
 #' ## Control expressions
 #'
-#' `draw(control = ...)` expressions are stored as text and rebuilt on
-#' read. Only bare column names, `dplyr::desc()`, and [serp()] can be
-#' represented; `write_design()` errors on anything else, and
-#' `read_design()` refuses to evaluate any other function, so design files
-#' from third parties cannot execute arbitrary code.
+#' `draw(control = ...)` expressions are stored as declarative JSON terms,
+#' not R code. Each term records an ordering type (`"ascending"`,
+#' `"descending"`, or `"serpentine"`) and its variables. Only bare column
+#' names, `dplyr::desc()`, and [serp()] can be represented;
+#' `write_design()` errors on anything else.
+#'
+#' ## Portable and tool-specific metadata
+#'
+#' The `design`, `frame`, and `execution` blocks describe the statistical
+#' design in tool-neutral terms. Selection methods use a common vocabulary
+#' with explicit family, replacement, sample-size, and probability
+#' properties, plus a DDI Sampling Procedure reference. The `tools` block is
+#' namespaced by implementation. `tools.samplyr` records samplyr method names,
+#' R classes, the R-derived frame hash, and runtime versions needed to rebuild
+#' the native object exactly. Other tools may add their own namespace without
+#' changing the common design.
 #'
 #' @param x A `sampling_design`, or a `tbl_sample` (the stored design is
 #'   saved along with an execution receipt).
@@ -558,6 +576,7 @@ design_payload <- function(
     }
   } else if (is_sampling_design(x)) {
     design <- x
+    execution <- attr(x, "execution")
   } else {
     cli_abort(
       "{.arg x} must be a {.cls sampling_design} or a {.cls tbl_sample}",
@@ -570,12 +589,204 @@ design_payload <- function(
   payload <- list(
     format = design_format_id,
     format_version = design_format_version,
-    samplyr_version = as.character(utils::packageVersion("samplyr")),
+    schema = list(
+      method_vocabulary = list(
+        id = method_vocabulary_id,
+        version = method_vocabulary_version
+      )
+    ),
     design = encode_design(design)
   )
   payload$frame <- encode_frame_info(design, frame, frame_label)
   payload$execution <- execution
+  payload$tools <- attr(design, "design_tools") %||% list()
+  payload$tools$samplyr <- encode_samplyr_metadata(
+    design,
+    frame,
+    frame_label
+  )
   payload
+}
+
+# Sampling method vocabulary -----------------------------------------------
+
+# The common identifiers are intentionally implementation-neutral. DDI's
+# Sampling Procedure vocabulary supplies the broader standard classification;
+# algorithm-level distinctions such as Brewer, Sampford, and cube are retained
+# by the common identifier and properties because DDI does not distinguish all
+# of them.
+
+#' @noRd
+sampling_method_dictionary <- function() {
+  probability <- list(
+    code = "Probability",
+    uri = paste0(
+      "http://rdf-vocabulary.ddialliance.org/cv/",
+      "SamplingProcedure/1.1.4/0d2765b"
+    )
+  )
+  simple_random <- list(
+    code = "Probability.SimpleRandom",
+    uri = paste0(
+      "http://rdf-vocabulary.ddialliance.org/cv/",
+      "SamplingProcedure/1.1.4/38e8e88"
+    )
+  )
+  systematic_random <- list(
+    code = "Probability.SystematicRandom",
+    uri = paste0(
+      "http://rdf-vocabulary.ddialliance.org/cv/",
+      "SamplingProcedure/1.1.4/f189f62"
+    )
+  )
+  entry <- function(
+    id,
+    family,
+    algorithm,
+    replacement,
+    sample_size,
+    probabilities,
+    ddi = probability
+  ) {
+    list(
+      id = id,
+      family = family,
+      algorithm = algorithm,
+      replacement = replacement,
+      sample_size = sample_size,
+      probabilities = probabilities,
+      ddi = ddi
+    )
+  }
+
+  list(
+    srswor = entry(
+      "simple_random_without_replacement", "equal_probability", "simple_random",
+      "without_replacement", "fixed", "equal", simple_random
+    ),
+    srswr = entry(
+      "simple_random_with_replacement", "equal_probability", "simple_random",
+      "with_replacement", "fixed", "equal"
+    ),
+    systematic = entry(
+      "systematic_equal_probability", "equal_probability", "systematic",
+      "without_replacement", "fixed", "equal", systematic_random
+    ),
+    bernoulli = entry(
+      "bernoulli", "equal_probability", "bernoulli",
+      "without_replacement", "random", "equal"
+    ),
+    pps_systematic = entry(
+      "systematic_probability_proportional_to_size",
+      "probability_proportional_to_size", "systematic",
+      "without_replacement", "fixed", "unequal"
+    ),
+    pps_brewer = entry(
+      "brewer_probability_proportional_to_size",
+      "probability_proportional_to_size", "brewer",
+      "without_replacement", "fixed", "unequal"
+    ),
+    pps_cps = entry(
+      "conditional_poisson", "probability_proportional_to_size",
+      "conditional_poisson",
+      "without_replacement", "fixed", "unequal"
+    ),
+    pps_sampford = entry(
+      "sampford", "probability_proportional_to_size", "sampford",
+      "without_replacement", "fixed", "unequal"
+    ),
+    pps_poisson = entry(
+      "poisson_probability_proportional_to_size",
+      "probability_proportional_to_size", "poisson",
+      "without_replacement", "random", "unequal"
+    ),
+    pps_sps = entry(
+      "sequential_poisson", "probability_proportional_to_size",
+      "sequential_poisson",
+      "without_replacement", "fixed", "unequal"
+    ),
+    pps_pareto = entry(
+      "pareto", "probability_proportional_to_size", "pareto",
+      "without_replacement", "fixed", "unequal"
+    ),
+    pps_multinomial = entry(
+      "multinomial_probability_proportional_to_size",
+      "probability_proportional_to_size", "multinomial",
+      "with_replacement", "fixed", "unequal"
+    ),
+    pps_chromy = entry(
+      "chromy_minimum_replacement", "probability_proportional_to_size",
+      "chromy",
+      "minimum_replacement", "fixed", "unequal"
+    ),
+    cube = entry(
+      "cube_balanced", "balanced", "cube",
+      "without_replacement", "fixed", "equal_or_unequal"
+    ),
+    lpm2 = entry(
+      "local_pivotal", "spatially_balanced", "local_pivotal",
+      "without_replacement", "fixed", "equal_or_unequal"
+    ),
+    scps = entry(
+      "spatially_correlated_poisson", "spatially_balanced",
+      "spatially_correlated_poisson",
+      "without_replacement", "fixed", "equal_or_unequal"
+    )
+  )
+}
+
+#' @noRd
+encode_method <- function(spec) {
+  entry <- sampling_method_dictionary()[[spec$method]]
+  if (is_null(entry)) {
+    entry <- list(
+      id = "tool_specific",
+      family = switch(
+        spec$method_type %||% "",
+        balanced = "balanced",
+        wr = "probability_proportional_to_size",
+        wor = "probability_proportional_to_size",
+        "tool_specific"
+      ),
+      algorithm = "tool_specific",
+      replacement = switch(
+        spec$method_type %||% "",
+        wr = "with_replacement",
+        balanced = "without_replacement",
+        wor = "without_replacement",
+        "tool_specific"
+      ),
+      sample_size = if (is_null(spec$method_fixed)) {
+        "tool_specific"
+      } else if (isTRUE(spec$method_fixed)) {
+        "fixed"
+      } else {
+        "random"
+      },
+      probabilities = "tool_specific",
+      ddi = list(
+        code = "Probability",
+        uri = paste0(
+          "http://rdf-vocabulary.ddialliance.org/cv/",
+          "SamplingProcedure/1.1.4/0d2765b"
+        )
+      )
+    )
+  }
+  list(
+    id = entry$id,
+    family = entry$family,
+    algorithm = entry$algorithm,
+    replacement = entry$replacement,
+    sample_size = entry$sample_size,
+    probabilities = entry$probabilities,
+    standards = list(list(
+      vocabulary = "DDI SamplingProcedure",
+      version = "1.1.4",
+      code = entry$ddi$code,
+      uri = entry$ddi$uri
+    ))
+  )
 }
 
 #' @noRd
@@ -615,7 +826,7 @@ encode_stage <- function(stage) {
     draw <- list()
     draw$n <- encode_value(spec$n)
     draw$frac <- encode_value(spec$frac)
-    draw$method <- spec$method
+    draw$method <- encode_method(spec)
     draw$mos <- spec$mos
     draw$prn <- spec$prn
     if (!is_null(spec$aux)) {
@@ -631,15 +842,12 @@ encode_stage <- function(stage) {
     draw$max_n <- encode_value(spec$max_n)
     draw$round <- spec$round
     if (!is_null(spec$control)) {
-      draw$control <- I(encode_control(spec$control))
+      draw$control <- encode_control(spec$control)
     }
     draw$certainty_size <- encode_value(spec$certainty_size)
     draw$certainty_prop <- encode_value(spec$certainty_prop)
     draw$certainty_overflow <- spec$certainty_overflow
     draw$on_empty <- spec$on_empty
-    draw$method_type <- spec$method_type
-    draw$method_fixed <- spec$method_fixed
-    draw$method_variance <- spec$method_variance
     out$draw <- draw
   }
 
@@ -694,11 +902,24 @@ check_controls_serializable <- function(design, call = caller_env()) {
 
 #' @noRd
 encode_control <- function(control_quos) {
-  vapply(
-    control_quos,
-    function(quo) paste(deparse(quo_get_expr(quo)), collapse = " "),
-    character(1)
-  )
+  lapply(control_quos, function(quo) {
+    expr <- quo_get_expr(quo)
+    if (is.symbol(expr)) {
+      return(list(
+        type = "ascending",
+        variables = I(as.character(expr))
+      ))
+    }
+
+    operation <- as.character(expr[[1]])
+    type <- switch(
+      operation,
+      desc = "descending",
+      serp = "serpentine"
+    )
+    variables <- vapply(as.list(expr)[-1], as.character, character(1))
+    list(type = type, variables = I(variables))
+  })
 }
 
 #' @noRd
@@ -706,27 +927,59 @@ decode_control <- function(control) {
   if (is_null(control)) {
     return(NULL)
   }
+
   env <- control_eval_env()
-  lapply(control, function(text) {
-    expr <- tryCatch(
-      rlang::parse_expr(text),
-      error = function(cnd) {
-        cli_abort(
-          "Invalid control expression in design file: {.code {text}}",
-          parent = cnd
-        )
-      }
-    )
-    if (!control_expr_serializable(expr)) {
-      cli_abort(c(
-        "Refusing to evaluate the control expression {.code {text}} from
-         a design file.",
-        "i" = "Only bare column names, {.fn desc}, and {.fn serp} calls
-               on bare column names are allowed."
-      ))
-    }
+  lapply(control, function(term) {
+    expr <- decode_control_term(term)
     new_quosure(expr, env)
   })
+}
+
+#' Decode the declarative control grammar
+#' @noRd
+decode_control_term <- function(term, call = caller_env()) {
+  if (!is.list(term) || is_null(names(term))) {
+    cli_abort("Design file contains a malformed control term.", call = call)
+  }
+
+  type <- term$type
+  variables <- term$variables
+  valid_variables <- is.list(variables) &&
+    length(variables) > 0 &&
+    all(vapply(
+      variables,
+      function(x) is.character(x) && length(x) == 1 && nzchar(x),
+      logical(1)
+    ))
+  if (
+    !is.character(type) || length(type) != 1 ||
+      !type %in% c("ascending", "descending", "serpentine") ||
+      !valid_variables
+  ) {
+    cli_abort(
+      c(
+        "Design file contains an invalid control term.",
+        "i" = "Each term needs a supported {.field type} and a non-empty
+               {.field variables} array."
+      ),
+      call = call
+    )
+  }
+  if (type != "serpentine" && length(variables) != 1) {
+    cli_abort(
+      "Control type {.val {type}} requires exactly one variable.",
+      call = call
+    )
+  }
+
+  variables <- unlist(variables, use.names = FALSE)
+  symbols <- lapply(variables, rlang::sym)
+  switch(
+    type,
+    ascending = symbols[[1]],
+    descending = rlang::call2("desc", symbols[[1]]),
+    serpentine = rlang::call2("serp", !!!symbols)
+  )
 }
 
 #' Allowlist for control expressions in design files
@@ -744,9 +997,13 @@ control_expr_serializable <- function(expr) {
   }
   if (is_call(expr, c("desc", "serp"), ns = "")) {
     args <- as.list(expr)[-1]
-    return(
-      length(args) > 0 && all(vapply(args, is.symbol, logical(1)))
-    )
+    operation <- as.character(expr[[1]])
+    valid_arity <- if (identical(operation, "desc")) {
+      length(args) == 1
+    } else {
+      length(args) > 0
+    }
+    return(valid_arity && all(vapply(args, is.symbol, logical(1))))
   }
   FALSE
 }
@@ -771,14 +1028,57 @@ frame_arg_label <- function(frame_quo) {
 
 #' @noRd
 encode_frame_info <- function(design, frame, frame_label) {
+  stored <- attr(design, "portable_frame_info")
+  if (is_null(frame) && !is_null(stored)) {
+    return(stored)
+  }
   info <- list(required_variables = design_requirements(design))
   if (!is_null(frame)) {
     if (!is.data.frame(frame)) {
       cli_abort("{.arg frame} must be a data frame")
     }
-    info$fingerprint <- frame_fingerprint(frame, frame_label)
+    info$fingerprint <- portable_frame_fingerprint(frame)
   }
   info
+}
+
+#' Encode metadata that belongs to the samplyr/R implementation
+#' @noRd
+encode_samplyr_metadata <- function(design, frame, frame_label) {
+  out <- list(
+    version = as.character(utils::packageVersion("samplyr")),
+    language = list(
+      name = "R",
+      version = as.character(getRversion())
+    ),
+    dependencies = list(
+      sondage = as.character(utils::packageVersion("sondage")),
+      svyplan = as.character(utils::packageVersion("svyplan"))
+    ),
+    design = list(
+      stages = lapply(design$stages, encode_samplyr_stage_metadata)
+    )
+  )
+  if (!is_null(frame)) {
+    out$frame <- samplyr_frame_fingerprint(frame, frame_label)
+  } else {
+    out$frame <- attr(design, "design_tools")$samplyr$frame
+  }
+  out
+}
+
+#' @noRd
+encode_samplyr_stage_metadata <- function(stage) {
+  spec <- stage$draw_spec
+  if (is_null(spec)) {
+    return(list())
+  }
+  list(method = list(
+    name = spec$method,
+    registry_type = spec$method_type,
+    fixed_size = spec$method_fixed,
+    variance_family = spec$method_variance
+  ))
 }
 
 #' Derive the frame variables a design requires, stage by stage
@@ -809,19 +1109,50 @@ design_requirements <- function(design) {
   reqs
 }
 
+#' Portable structural fingerprint. Content hashes and native column classes
+#' live in the tool namespace because their canonicalization is implementation
+#' dependent.
 #' @noRd
-frame_fingerprint <- function(frame, frame_label) {
+portable_frame_fingerprint <- function(frame) {
   fingerprint <- list()
-  if (!is_null(frame_label)) {
-    fingerprint$name <- frame_label
-  }
-  fingerprint$nrow <- nrow(frame)
-  fingerprint$ncol <- ncol(frame)
+  fingerprint$row_count <- nrow(frame)
+  fingerprint$column_count <- ncol(frame)
   fingerprint$columns <- lapply(names(frame), function(col) {
-    list(name = col, type = class(frame[[col]])[[1]])
+    list(name = col, type = portable_column_type(frame[[col]]))
   })
-  fingerprint$hash <- frame_content_hash(frame)
   fingerprint
+}
+
+#' @noRd
+portable_column_type <- function(x) {
+  if (inherits(x, "POSIXt")) return("date_time")
+  if (inherits(x, "Date")) return("date")
+  if (inherits(x, "difftime")) return("duration")
+  if (is.ordered(x)) return("ordered_categorical")
+  if (is.factor(x)) return("categorical")
+  if (is.logical(x)) return("boolean")
+  if (is.integer(x)) return("integer")
+  if (is.numeric(x)) return("number")
+  if (is.character(x)) return("string")
+  if (is.raw(x)) return("binary")
+  if (is.list(x)) return("composite")
+  "tool_specific"
+}
+
+#' @noRd
+samplyr_frame_fingerprint <- function(frame, frame_label) {
+  out <- list()
+  if (!is_null(frame_label)) {
+    out$source <- list(kind = "r_expression", value = frame_label)
+  }
+  out$columns <- lapply(names(frame), function(col) {
+    list(name = col, class = I(class(frame[[col]])))
+  })
+  out$hash <- list(
+    algorithm = "rlang::hash",
+    value = frame_content_hash(frame)
+  )
+  out
 }
 
 #' Content hash of a frame for fingerprinting
@@ -890,7 +1221,11 @@ decode_design_payload <- function(payload, call = caller_env()) {
     )
   }
   version <- payload$format_version
-  if (!is.numeric(version) || version > design_format_version) {
+  if (
+    !is.numeric(version) || length(version) != 1 || is.na(version) ||
+      version < 1 || version != floor(version) ||
+      version > design_format_version
+  ) {
     cli_abort(
       c(
         "Design file format version {.val {version}} is not supported.",
@@ -904,8 +1239,27 @@ decode_design_payload <- function(payload, call = caller_env()) {
   if (!is.list(payload$design) || !is.list(payload$design$stages)) {
     cli_abort("Design file has no {.field design.stages} entry", call = call)
   }
+  vocabulary <- payload$schema$method_vocabulary
+  if (
+    !identical(vocabulary$id, method_vocabulary_id) ||
+      !is.numeric(vocabulary$version) || length(vocabulary$version) != 1 ||
+      vocabulary$version > method_vocabulary_version
+  ) {
+    cli_abort(
+      "Design file uses an unsupported sampling method vocabulary.",
+      call = call
+    )
+  }
 
-  stages <- lapply(payload$design$stages, decode_stage)
+  samplyr_tools <- payload$tools$samplyr
+  tool_stages <- samplyr_tools$design$stages %||% list()
+  stages <- lapply(seq_along(payload$design$stages), function(i) {
+    tool_stage <- if (length(tool_stages) >= i) tool_stages[[i]] else NULL
+    decode_stage(
+      payload$design$stages[[i]],
+      tool_stage = tool_stage
+    )
+  })
   design <- new_sampling_design(
     title = decode_chr(payload$design$title),
     stages = stages,
@@ -914,13 +1268,21 @@ decode_design_payload <- function(payload, call = caller_env()) {
   )
   design <- validate_sampling_design(design, call = call)
 
-  attr(design, "frame_info") <- payload$frame
+  attr(design, "frame_info") <- decode_frame_info(
+    payload$frame,
+    samplyr_tools$frame
+  )
+  attr(design, "portable_frame_info") <- payload$frame
+  attr(design, "design_tools") <- payload$tools
   attr(design, "execution") <- payload$execution
   design
 }
 
 #' @noRd
-decode_stage <- function(stage) {
+decode_stage <- function(
+  stage,
+  tool_stage = NULL
+) {
   strata <- NULL
   if (!is_null(stage$strata)) {
     strata <- new_stratum_spec(
@@ -942,10 +1304,14 @@ decode_stage <- function(stage) {
   draw_spec <- NULL
   if (!is_null(stage$draw)) {
     draw <- stage$draw
+    method <- decode_method(
+      draw$method,
+      tool_method = tool_stage$method
+    )
     draw_spec <- new_draw_spec(
       n = decode_value(draw$n),
       frac = decode_value(draw$frac),
-      method = decode_chr(draw$method) %||% "srswor",
+      method = method$name,
       mos = decode_chr(draw$mos),
       prn = decode_chr(draw$prn),
       aux = decode_chr(draw$aux),
@@ -959,9 +1325,9 @@ decode_stage <- function(stage) {
       certainty_prop = decode_value(draw$certainty_prop),
       certainty_overflow = decode_chr(draw$certainty_overflow) %||% "error",
       on_empty = decode_chr(draw$on_empty) %||% "error",
-      method_type = decode_chr(draw$method_type),
-      method_fixed = decode_flag(draw$method_fixed),
-      method_variance = decode_chr(draw$method_variance)
+      method_type = method$registry_type,
+      method_fixed = method$fixed_size,
+      method_variance = method$variance_family
     )
   }
 
@@ -970,6 +1336,154 @@ decode_stage <- function(stage) {
     strata = strata,
     clusters = clusters,
     draw_spec = draw_spec
+  )
+}
+
+#' Decode a common method descriptor, preferring a matching samplyr extension
+#' when one is present. A file produced by another tool can omit the extension
+#' and still be read when its common identifier maps to a built-in method.
+#' @noRd
+decode_method <- function(
+  method,
+  tool_method = NULL,
+  call = caller_env()
+) {
+  if (!is.list(method) || !is.character(method$id) || length(method$id) != 1) {
+    cli_abort("Design file contains an invalid sampling method.", call = call)
+  }
+
+  common_id <- method$id
+  dictionary <- sampling_method_dictionary()
+  by_common_id <- vapply(dictionary, `[[`, character(1), "id")
+  common_match <- names(dictionary)[match(common_id, by_common_id)]
+  if (!is.na(common_match)) {
+    expected <- dictionary[[common_match]]
+    fields <- c(
+      "family", "algorithm", "replacement", "sample_size", "probabilities"
+    )
+    matches <- vapply(fields, function(field) {
+      identical(decode_chr(method[[field]]), expected[[field]])
+    }, logical(1))
+    if (!all(matches)) {
+      cli_abort(
+        "Common sampling method {.val {common_id}} has contradictory
+         properties.",
+        call = call
+      )
+    }
+  }
+
+  if (!is_null(tool_method)) {
+    name <- decode_chr(tool_method$name)
+    if (is_null(name) || length(name) != 1) {
+      cli_abort(
+        "Design file contains invalid samplyr method metadata.",
+        call = call
+      )
+    }
+    known <- dictionary[[name]]
+    if (!is_null(known) && !identical(known$id, common_id)) {
+      cli_abort(
+        c(
+          "Common and samplyr sampling methods disagree.",
+          "i" = "Common method {.val {common_id}} does not describe
+                 samplyr method {.val {name}}."
+        ),
+        call = call
+      )
+    }
+    if (is_null(known) && !identical(common_id, "tool_specific")) {
+      cli_abort(
+        "Unknown samplyr method {.val {name}} must use common method
+         {.val tool_specific}.",
+        call = call
+      )
+    }
+    return(list(
+      name = name,
+      registry_type = decode_chr(tool_method$registry_type),
+      fixed_size = decode_flag(tool_method$fixed_size),
+      variance_family = decode_chr(tool_method$variance_family)
+    ))
+  }
+
+  if (is.na(common_match)) {
+    cli_abort(
+      c(
+        "Common sampling method {.val {common_id}} has no samplyr mapping.",
+        "i" = "Add a {.field tools.samplyr} method extension to reproduce
+               a tool-specific method."
+      ),
+      call = call
+    )
+  }
+  list(
+    name = common_match,
+    registry_type = NULL,
+    fixed_size = NULL,
+    variance_family = NULL
+  )
+}
+
+#' Reconstruct samplyr's native frame metadata view from the portable and
+#' namespaced representations.
+#' @noRd
+decode_frame_info <- function(
+  frame,
+  tool_frame = NULL
+) {
+  if (is_null(frame$fingerprint)) {
+    return(frame)
+  }
+  portable <- frame$fingerprint
+  tool_columns <- tool_frame$columns %||% list()
+  class_by_name <- setNames(
+    lapply(tool_columns, function(x) decode_chr(x$class)),
+    vapply(tool_columns, function(x) decode_chr(x$name), character(1))
+  )
+  columns <- lapply(portable$columns, function(column) {
+    name <- decode_chr(column$name)
+    native_class <- class_by_name[[name]]
+    list(
+      name = name,
+      type = native_class[[1]] %||% portable_type_to_r(column$type)
+    )
+  })
+  source <- tool_frame$source
+  hash <- tool_frame$hash
+  fingerprint <- list(
+    nrow = decode_num(portable$row_count),
+    ncol = decode_num(portable$column_count),
+    columns = columns
+  )
+  if (!is_null(source$value)) {
+    fingerprint$name <- decode_chr(source$value)
+  }
+  if (!is_null(hash$value)) {
+    fingerprint$hash <- decode_chr(hash$value)
+  }
+  list(
+    required_variables = frame$required_variables,
+    fingerprint = fingerprint
+  )
+}
+
+#' @noRd
+portable_type_to_r <- function(type) {
+  switch(
+    decode_chr(type),
+    boolean = "logical",
+    integer = "integer",
+    number = "numeric",
+    string = "character",
+    categorical = "factor",
+    ordered_categorical = "ordered",
+    date = "Date",
+    date_time = "POSIXct",
+    duration = "difftime",
+    binary = "raw",
+    composite = "list",
+    "tool_specific"
   )
 }
 

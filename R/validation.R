@@ -557,7 +557,8 @@ check_frame_fingerprint <- function(design, frame, fingerprint) {
 #' Describe how a frame differs from a stored fingerprint
 #' @noRd
 fingerprint_differences <- function(fp, frame) {
-  if (identical(fp$hash, frame_content_hash(frame))) {
+  has_content_hash <- !is_null(fp$hash)
+  if (has_content_hash && identical(fp$hash, frame_content_hash(frame))) {
     return(character(0))
   }
 
@@ -625,7 +626,7 @@ fingerprint_differences <- function(fp, frame) {
     )
   }
 
-  if (length(diffs) == 0) {
+  if (length(diffs) == 0 && has_content_hash) {
     diffs <- "same structure but different content (hash mismatch)"
   }
   diffs

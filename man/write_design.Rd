@@ -58,9 +58,11 @@ blocks describe the frame without embedding it:
 (stratification, clustering, \code{mos}, \code{prn}, \code{aux}, and control
 variables), so any candidate frame can be checked before execution
 with \code{\link[=validate_frame]{validate_frame()}}.
-\item \emph{Fingerprint} (written when \code{frame} is supplied): the frame's name,
-dimensions, column types, and a content hash, so you can later verify
-that a frame is the exact one the design was built against.
+\item \emph{Fingerprint} (written when \code{frame} is supplied): portable dimensions
+and column types in \code{frame}, plus the R source label, native classes, and
+content hash in \code{tools.samplyr}. Together these can verify that a frame is
+the exact one the design was built against without putting R details in
+the common metadata.
 }
 }
 
@@ -89,11 +91,23 @@ receipt describes the original execution, not the modified object.
 
 \subsection{Control expressions}{
 
-\code{draw(control = ...)} expressions are stored as text and rebuilt on
-read. Only bare column names, \code{dplyr::desc()}, and \code{\link[=serp]{serp()}} can be
-represented; \code{write_design()} errors on anything else, and
-\code{read_design()} refuses to evaluate any other function, so design files
-from third parties cannot execute arbitrary code.
+\code{draw(control = ...)} expressions are stored as declarative JSON terms,
+not R code. Each term records an ordering type (\code{"ascending"},
+\code{"descending"}, or \code{"serpentine"}) and its variables. Only bare column
+names, \code{dplyr::desc()}, and \code{\link[=serp]{serp()}} can be represented;
+\code{write_design()} errors on anything else.
+}
+
+\subsection{Portable and tool-specific metadata}{
+
+The \code{design}, \code{frame}, and \code{execution} blocks describe the statistical
+design in tool-neutral terms. Selection methods use a common vocabulary
+with explicit family, replacement, sample-size, and probability
+properties, plus a DDI Sampling Procedure reference. The \code{tools} block is
+namespaced by implementation. \code{tools.samplyr} records samplyr method names,
+R classes, the R-derived frame hash, and runtime versions needed to rebuild
+the native object exactly. Other tools may add their own namespace without
+changing the common design.
 }
 }
 \examples{

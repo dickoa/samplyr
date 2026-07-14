@@ -85,20 +85,24 @@ test_that("a simple design round-trips through a file", {
   expect_equal(s2$.weight, s1$.weight)
 })
 
-test_that("legacy balanced method names restore as canonical cube", {
+test_that("balanced method alias serializes as canonical cube", {
   design <- sampling_design() |>
-    draw(n = 10, method = "cube", aux = y)
+    draw(n = 10, method = "balanced", aux = y)
   payload <- jsonlite::fromJSON(
     design_json(design),
     simplifyVector = FALSE
   )
-  payload$design$stages[[1]]$draw$method <- "balanced"
-  legacy_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
-
-  restored <- read_design(legacy_json)
+  restored <- read_design(design_json(design))
 
   expect_identical(restored$stages[[1]]$draw_spec$method, "cube")
-  expect_match(design_json(restored), '"method":"cube"', fixed = TRUE)
+  expect_identical(
+    payload$design$stages[[1]]$draw$method$id,
+    "cube_balanced"
+  )
+  expect_identical(
+    payload$tools$samplyr$design$stages[[1]]$method$name,
+    "cube"
+  )
 })
 
 test_that("a complex multi-stage design round-trips faithfully", {
@@ -168,12 +172,33 @@ test_that("named-vector and data-frame sample sizes round-trip", {
 test_that("control expressions round-trip and order identically", {
   design <- sampling_design() |>
     stratify_by(stratum) |>
-    draw(n = 12, method = "systematic", control = c(desc(mos), serp(cluster)))
+    draw(
+      n = 12,
+      method = "systematic",
+      control = c(stratum, desc(mos), serp(cluster, y))
+    )
 
-  restored <- read_design(design_json(design))
+  json <- design_json(design)
+  payload <- jsonlite::fromJSON(json, simplifyVector = FALSE)
+  control_json <- payload$design$stages[[1]]$draw$control
+
+  expect_equal(payload$format_version, 1)
+  expect_equal(control_json, list(
+    list(type = "ascending", variables = list("stratum")),
+    list(type = "descending", variables = list("mos")),
+    list(type = "serpentine", variables = list("cluster", "y"))
+  ))
+  expect_false(grepl("serp\\(", json))
+  expect_false(grepl("desc\\(", json))
+
+  restored <- read_design(json)
   control <- restored$stages[[1]]$draw_spec$control
-  expect_length(control, 2)
+  expect_length(control, 3)
   expect_true(all(vapply(control, rlang::is_quosure, logical(1))))
+  expect_equal(
+    vapply(control, rlang::as_label, character(1)),
+    c("stratum", "desc(mos)", "serp(cluster, y)")
+  )
 
   s1 <- execute(design, test_frame, seed = 11)
   s2 <- execute(restored, test_frame, seed = 11)
@@ -190,16 +215,20 @@ test_that("write_design() rejects control expressions outside the allowlist", {
   )
 })
 
-test_that("read_design() refuses non-allowlisted control expressions", {
+test_that("read_design() refuses unknown declarative control types", {
   design <- sampling_design() |>
     draw(n = 5, method = "systematic", control = c(mos))
-  json <- design_json(design)
-  bad <- sub('"mos"', '"system(\\"echo pwned\\")"', json, fixed = TRUE)
+  payload <- jsonlite::fromJSON(
+    design_json(design),
+    simplifyVector = FALSE
+  )
+  payload$design$stages[[1]]$draw$control[[1]]$type <- "system"
+  bad <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
 
-  expect_error(read_design(bad), "Refusing to evaluate")
+  expect_error(read_design(bad), "invalid control term")
 })
 
-test_that("namespaced control calls are rejected at both ends", {
+test_that("namespaced control calls are rejected when writing", {
   design <- sampling_design() |>
     draw(n = 5, method = "systematic", control = c(dplyr::desc(mos)))
 
@@ -208,12 +237,162 @@ test_that("namespaced control calls are rejected at both ends", {
     "Cannot serialize the control expression"
   )
 
-  ok <- sampling_design() |>
-    draw(n = 5, method = "systematic", control = c(mos))
-  json <- design_json(ok)
-  bad <- sub('"mos"', '"somepkg::desc(mos)"', json, fixed = TRUE)
+})
 
-  expect_error(read_design(bad), "Refusing to evaluate")
+test_that("control variables are always treated as data", {
+  design <- sampling_design() |>
+    draw(n = 5, method = "systematic", control = c(mos))
+  payload <- jsonlite::fromJSON(
+    design_json(design),
+    simplifyVector = FALSE
+  )
+  literal_name <- 'system("echo pwned")'
+  payload$design$stages[[1]]$draw$control[[1]]$variables <- list(literal_name)
+  json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
+
+  restored <- read_design(json)
+  expr <- rlang::quo_get_expr(
+    restored$stages[[1]]$draw_spec$control[[1]]
+  )
+  expect_true(rlang::is_symbol(expr))
+  expect_identical(as.character(expr), literal_name)
+})
+
+test_that("sampling methods have a portable descriptor and samplyr mapping", {
+  design <- sampling_design() |>
+    draw(n = 5, method = "pps_brewer", mos = mos)
+  payload <- jsonlite::fromJSON(
+    design_json(design),
+    simplifyVector = FALSE
+  )
+
+  common <- payload$design$stages[[1]]$draw$method
+  expect_equal(common$id, "brewer_probability_proportional_to_size")
+  expect_equal(common$family, "probability_proportional_to_size")
+  expect_equal(common$algorithm, "brewer")
+  expect_equal(common$replacement, "without_replacement")
+  expect_equal(common$sample_size, "fixed")
+  expect_equal(common$probabilities, "unequal")
+  expect_equal(common$standards[[1]]$vocabulary, "DDI SamplingProcedure")
+  expect_equal(common$standards[[1]]$code, "Probability")
+
+  native <- payload$tools$samplyr$design$stages[[1]]$method
+  expect_equal(native$name, "pps_brewer")
+  expect_equal(payload$tools$samplyr$language$name, "R")
+})
+
+test_that("portable frame metadata is separated from R metadata", {
+  design <- sampling_design() |>
+    draw(n = 2)
+  frame <- data.frame(
+    id = 1:4,
+    group = factor(c("a", "a", "b", "b")),
+    date = as.Date("2026-01-01") + 0:3
+  )
+  payload <- jsonlite::fromJSON(
+    design_json(design, frame = frame),
+    simplifyVector = FALSE
+  )
+
+  portable <- payload$frame$fingerprint
+  expect_equal(portable$row_count, 4)
+  expect_equal(
+    vapply(portable$columns, `[[`, character(1), "type"),
+    c("integer", "categorical", "date")
+  )
+  expect_null(portable$name)
+  expect_null(portable$hash)
+
+  native <- payload$tools$samplyr$frame
+  expect_equal(native$source$kind, "r_expression")
+  expect_equal(native$source$value, "frame")
+  expect_equal(native$hash$algorithm, "rlang::hash")
+  expect_equal(native$columns[[2]]$class, list("factor"))
+})
+
+test_that("all built-in methods have unique common mappings", {
+  dictionary <- sampling_method_dictionary()
+
+  expect_setequal(names(dictionary), builtin_methods)
+  ids <- vapply(dictionary, `[[`, character(1), "id")
+  expect_identical(anyDuplicated(ids), 0L)
+  expect_true(all(vapply(
+    dictionary,
+    function(x) all(c(
+      "id", "family", "algorithm", "replacement", "sample_size",
+      "probabilities", "ddi"
+    ) %in% names(x)),
+    logical(1)
+  )))
+
+  published <- jsonlite::fromJSON(
+    system.file(
+      "schema", "sampling-methods-v1.json",
+      package = "samplyr",
+      mustWork = TRUE
+    ),
+    simplifyVector = FALSE
+  )
+  expect_equal(published$id, method_vocabulary_id)
+  expect_equal(published$version, method_vocabulary_version)
+  published_names <- vapply(
+    published$methods,
+    function(x) x$implementations$samplyr,
+    character(1)
+  )
+  published_ids <- vapply(published$methods, `[[`, character(1), "id")
+  expect_equal(
+    setNames(published_ids, published_names)[names(dictionary)],
+    ids
+  )
+})
+
+test_that("common-only methods from another tool map into samplyr", {
+  design <- sampling_design() |>
+    draw(n = 5, method = "pps_brewer", mos = mos)
+  payload <- jsonlite::fromJSON(
+    design_json(design),
+    simplifyVector = FALSE
+  )
+  payload$tools$samplyr <- NULL
+  payload$tools$other_sampler <- list(
+    version = "1.0",
+    language = list(name = "Python", version = "3.14")
+  )
+  foreign_json <- jsonlite::toJSON(
+    payload,
+    auto_unbox = TRUE,
+    null = "null"
+  )
+
+  restored <- read_design(foreign_json)
+  expect_identical(
+    restored$stages[[1]]$draw_spec$method,
+    "pps_brewer"
+  )
+
+  reencoded <- jsonlite::fromJSON(
+    design_json(restored),
+    simplifyVector = FALSE
+  )
+  expect_equal(reencoded$tools$other_sampler, payload$tools$other_sampler)
+  expect_equal(
+    reencoded$tools$samplyr$design$stages[[1]]$method$name,
+    "pps_brewer"
+  )
+})
+
+test_that("common and samplyr method metadata cannot contradict", {
+  design <- sampling_design() |>
+    draw(n = 5, method = "pps_brewer", mos = mos)
+  payload <- jsonlite::fromJSON(
+    design_json(design),
+    simplifyVector = FALSE
+  )
+  payload$tools$samplyr$design$stages[[1]]$method$name <- "srswor"
+  bad <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
+
+  expect_error(read_design(bad), "methods disagree")
 })
 
 test_that("write_design() warns when the sample was executed without a seed", {

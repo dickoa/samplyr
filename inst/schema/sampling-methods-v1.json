@@ -1,0 +1,27 @@
+{
+  "id": "samplyr/common-sampling-method",
+  "version": 1,
+  "external_standard": {
+    "name": "DDI SamplingProcedure",
+    "version": "1.1.4",
+    "uri": "http://rdf-vocabulary.ddialliance.org/ddi-cv/SamplingProcedure/1.1.4/SamplingProcedure.html"
+  },
+  "methods": [
+    {"id": "simple_random_without_replacement", "family": "equal_probability", "algorithm": "simple_random", "replacement": "without_replacement", "sample_size": "fixed", "probabilities": "equal", "ddi_code": "Probability.SimpleRandom", "implementations": {"samplyr": "srswor"}},
+    {"id": "simple_random_with_replacement", "family": "equal_probability", "algorithm": "simple_random", "replacement": "with_replacement", "sample_size": "fixed", "probabilities": "equal", "ddi_code": "Probability", "implementations": {"samplyr": "srswr"}},
+    {"id": "systematic_equal_probability", "family": "equal_probability", "algorithm": "systematic", "replacement": "without_replacement", "sample_size": "fixed", "probabilities": "equal", "ddi_code": "Probability.SystematicRandom", "implementations": {"samplyr": "systematic"}},
+    {"id": "bernoulli", "family": "equal_probability", "algorithm": "bernoulli", "replacement": "without_replacement", "sample_size": "random", "probabilities": "equal", "ddi_code": "Probability", "implementations": {"samplyr": "bernoulli"}},
+    {"id": "systematic_probability_proportional_to_size", "family": "probability_proportional_to_size", "algorithm": "systematic", "replacement": "without_replacement", "sample_size": "fixed", "probabilities": "unequal", "ddi_code": "Probability", "implementations": {"samplyr": "pps_systematic"}},
+    {"id": "brewer_probability_proportional_to_size", "family": "probability_proportional_to_size", "algorithm": "brewer", "replacement": "without_replacement", "sample_size": "fixed", "probabilities": "unequal", "ddi_code": "Probability", "implementations": {"samplyr": "pps_brewer"}},
+    {"id": "conditional_poisson", "family": "probability_proportional_to_size", "algorithm": "conditional_poisson", "replacement": "without_replacement", "sample_size": "fixed", "probabilities": "unequal", "ddi_code": "Probability", "implementations": {"samplyr": "pps_cps"}},
+    {"id": "sampford", "family": "probability_proportional_to_size", "algorithm": "sampford", "replacement": "without_replacement", "sample_size": "fixed", "probabilities": "unequal", "ddi_code": "Probability", "implementations": {"samplyr": "pps_sampford"}},
+    {"id": "poisson_probability_proportional_to_size", "family": "probability_proportional_to_size", "algorithm": "poisson", "replacement": "without_replacement", "sample_size": "random", "probabilities": "unequal", "ddi_code": "Probability", "implementations": {"samplyr": "pps_poisson"}},
+    {"id": "sequential_poisson", "family": "probability_proportional_to_size", "algorithm": "sequential_poisson", "replacement": "without_replacement", "sample_size": "fixed", "probabilities": "unequal", "ddi_code": "Probability", "implementations": {"samplyr": "pps_sps"}},
+    {"id": "pareto", "family": "probability_proportional_to_size", "algorithm": "pareto", "replacement": "without_replacement", "sample_size": "fixed", "probabilities": "unequal", "ddi_code": "Probability", "implementations": {"samplyr": "pps_pareto"}},
+    {"id": "multinomial_probability_proportional_to_size", "family": "probability_proportional_to_size", "algorithm": "multinomial", "replacement": "with_replacement", "sample_size": "fixed", "probabilities": "unequal", "ddi_code": "Probability", "implementations": {"samplyr": "pps_multinomial"}},
+    {"id": "chromy_minimum_replacement", "family": "probability_proportional_to_size", "algorithm": "chromy", "replacement": "minimum_replacement", "sample_size": "fixed", "probabilities": "unequal", "ddi_code": "Probability", "implementations": {"samplyr": "pps_chromy"}},
+    {"id": "cube_balanced", "family": "balanced", "algorithm": "cube", "replacement": "without_replacement", "sample_size": "fixed", "probabilities": "equal_or_unequal", "ddi_code": "Probability", "implementations": {"samplyr": "cube"}},
+    {"id": "local_pivotal", "family": "spatially_balanced", "algorithm": "local_pivotal", "replacement": "without_replacement", "sample_size": "fixed", "probabilities": "equal_or_unequal", "ddi_code": "Probability", "implementations": {"samplyr": "lpm2"}},
+    {"id": "spatially_correlated_poisson", "family": "spatially_balanced", "algorithm": "spatially_correlated_poisson", "replacement": "without_replacement", "sample_size": "fixed", "probabilities": "equal_or_unequal", "ddi_code": "Probability", "implementations": {"samplyr": "scps"}}
+  ]
+}

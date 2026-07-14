@@ -132,11 +132,19 @@ Initial release.
   multi-phase) or modified after execution are flagged in the receipt
   and warned about at write time; `replay_design()` refuses chained
   receipts rather than replaying only the final call.
-* Control expressions are stored as text and reparsed against an
-  allowlist (bare columns, `desc()`, `serp()`), so reading a design
-  file never executes arbitrary code. `read_design()` accepts local
-  file paths and JSON strings only; URLs are refused, so reading a
-  design never touches the network.
+* The design format separates portable statistical metadata from
+  implementation metadata. Selection methods use a common descriptor
+  (family, algorithm, replacement, sample-size behaviour, and probability
+  basis) with DDI Sampling Procedure references, while exact samplyr names,
+  R classes, runtime versions, and the R-native frame hash live under the
+  namespaced `tools.samplyr` block. Files from another tool can omit that
+  block and still map recognized common methods into samplyr; other tool
+  namespaces are preserved on re-serialization.
+* Control ordering uses a declarative JSON grammar (`ascending`,
+  `descending`, and `serpentine`, with explicit variable arrays) rather than
+  embedded R expressions. `read_design()` accepts local file paths and JSON
+  strings only; URLs are refused, so reading a design never touches the
+  network.
 * `validate_frame()` compares a restored design's stored fingerprint
   against the supplied frame and reports what changed (rows, columns,
   column types, or content). The comparison is informational and never
