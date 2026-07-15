@@ -267,9 +267,12 @@ test_that("sampling methods have a portable descriptor and samplyr mapping", {
   )
 
   common <- payload$design$stages[[1]]$draw$method
-  expect_equal(common$id, "brewer_probability_proportional_to_size")
+  expect_equal(
+    common$id,
+    "generalized_brewer_probability_proportional_to_size"
+  )
   expect_equal(common$family, "probability_proportional_to_size")
-  expect_equal(common$algorithm, "brewer")
+  expect_equal(common$algorithm, "generalized_brewer")
   expect_equal(common$replacement, "without_replacement")
   expect_equal(common$sample_size, "fixed")
   expect_equal(common$probabilities, "unequal")
@@ -401,11 +404,26 @@ test_that("write_design() warns when the sample was executed without a seed", {
   smpl <- execute(design, test_frame)
 
   path <- withr::local_tempfile(fileext = ".json")
-  expect_warning(write_design(smpl, path), "without a seed")
+  expect_warning(
+    write_design(smpl, path, frame = test_frame),
+    "without a seed"
+  )
 
   receipt <- attr(read_design(path), "execution")
   expect_null(receipt$seed)
   expect_equal(receipt$n_selected, 10)
+})
+
+test_that("write_design() warns when a receipt has no frame fingerprint", {
+  sample <- sampling_design() |>
+    draw(n = 10) |>
+    execute(test_frame, seed = 3)
+  path <- withr::local_tempfile(fileext = ".json")
+
+  expect_warning(
+    write_design(sample, path),
+    "without a frame fingerprint"
+  )
 })
 
 test_that("design files record frame requirements and fingerprint", {
@@ -457,6 +475,19 @@ test_that("saving a tbl_sample records a receipt that reproduces the sample", {
   expect_equal(receipt$seed, 99)
   expect_equal(unlist(receipt$stages_executed), 1L)
   expect_equal(receipt$n_selected, nrow(sample))
+
+  recorded_environment <- attr(
+    restored,
+    "design_tools"
+  )$samplyr$execution$environment
+  expect_equal(
+    recorded_environment,
+    attr(sample, "metadata")$execution_environment
+  )
+  expect_named(
+    recorded_environment$rng,
+    c("kind", "normal_kind", "sample_kind")
+  )
 
   replay <- execute(restored, test_frame, seed = receipt$seed)
   expect_equal(replay$id, sample$id)
@@ -596,6 +627,71 @@ test_that("replay_design() accepts a tbl_sample directly", {
   expect_identical(sans_timestamp(replay), sans_timestamp(sample))
 })
 
+test_that("replay_design() restores the execution-time RNG configuration", {
+  old_kind <- RNGkind()
+  on.exit(do.call(RNGkind, as.list(old_kind)), add = TRUE)
+
+  RNGkind(kind = "L'Ecuyer-CMRG")
+  sample <- sampling_design() |>
+    draw(n = 20) |>
+    execute(test_frame, seed = 31)
+
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(sample, path, frame = test_frame)
+
+  RNGkind(kind = "Mersenne-Twister")
+  caller_kind <- RNGkind()
+  replay <- replay_design(read_design(path), test_frame)
+
+  expect_identical(sample_data(replay), sample_data(sample))
+  expect_identical(RNGkind(), caller_kind)
+})
+
+test_that("replay_design() warns when execution versions differ", {
+  sample <- sampling_design() |>
+    draw(n = 10) |>
+    execute(test_frame, seed = 4)
+  payload <- jsonlite::fromJSON(
+    design_json(sample, frame = test_frame),
+    simplifyVector = FALSE
+  )
+  payload$tools$samplyr$execution$environment$packages$samplyr <- "0.0.0"
+  json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
+
+  expect_warning(
+    replay_design(read_design(json), test_frame),
+    "samplyr: recorded 0.0.0"
+  )
+})
+
+test_that("replay_design() requires recorded custom methods", {
+  toy_method <- function(pik, n = NULL, prn = NULL, ...) {
+    order(pik, decreasing = TRUE)[seq_len(n)]
+  }
+  sondage::register_method(
+    "serialize_wor",
+    "wor",
+    sample_fn = toy_method
+  )
+  on.exit(
+    if (sondage::is_registered_method("serialize_wor")) {
+      sondage::unregister_method("serialize_wor")
+    },
+    add = TRUE
+  )
+
+  sample <- sampling_design() |>
+    draw(n = 10, method = "pps_serialize_wor", mos = mos) |>
+    execute(test_frame, seed = 8)
+  json <- design_json(sample, frame = test_frame)
+  sondage::unregister_method("serialize_wor")
+
+  expect_error(
+    replay_design(read_design(json), test_frame),
+    class = "samplyr_error_replay_method_unregistered"
+  )
+})
+
 test_that("chained receipts warn at write time and refuse replay", {
   stage1 <- sampling_design() |>
     add_stage("Clusters") |>
@@ -671,7 +767,7 @@ test_that("replay_design() rejects missing receipts and seedless receipts", {
   )
 })
 
-test_that("replay_design() warns when the frame differs", {
+test_that("replay_design() is strict by default when the frame differs", {
   sample <- sampling_design() |>
     draw(frac = 0.2) |>
     execute(test_frame, seed = 13)
@@ -681,9 +777,14 @@ test_that("replay_design() warns when the frame differs", {
   restored <- read_design(path)
 
   other <- rbind(test_frame, test_frame)
+  expect_error(
+    replay_design(restored, other),
+    class = "samplyr_error_replay_frame_mismatch"
+  )
+
   warns <- character(0)
   withCallingHandlers(
-    replay_design(restored, other),
+    replay_design(restored, other, fingerprint = "warn"),
     warning = function(w) {
       warns <<- c(warns, cli::ansi_strip(conditionMessage(w)))
       invokeRestart("muffleWarning")

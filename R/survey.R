@@ -135,16 +135,30 @@
 #' ## Variance estimation for PPS designs
 #'
 #' For fixed-size PPS without-replacement stages (`pps_brewer`,
-#' `pps_systematic`, `pps_cps`, `pps_sps`, `pps_pareto`), variance is
-#' estimated by default using Brewer's approximation (`pps = "brewer"`
-#' in survey's terminology), which approximates the joint inclusion
-#' probabilities from the marginal inclusion probabilities. This is
-#' the approximation described by Berger (2004) and works well for
-#' most PPS designs regardless of the sampling algorithm used.
+#' `pps_systematic`, `pps_cps`, `pps_sampford`, `pps_sps`, `pps_pareto`),
+#' variance is estimated by default using Brewer's approximation (`pps =
+#' "brewer"` in survey's terminology), which approximates the joint inclusion
+#' probabilities from the marginal inclusion probabilities. Here Brewer names
+#' the variance estimator, not the selection algorithm: Sampford selection,
+#' for example, receives this default treatment. This is the approximation
+#' described by Berger (2004) and works well for most PPS designs regardless
+#' of the sampling algorithm used.
 #'
-#' For exact variance estimation, you can compute joint inclusion
-#' probabilities using [joint_expectation()] and pass them via
-#' `pps = survey::ppsmat(joint_matrix)`.
+#' For supported methods, you can instead compute joint inclusion
+#' probabilities using [joint_expectation()] and pass them via `pps =
+#' survey::ppsmat(joint_matrix)`. The matrix is exact for CPS, Sampford,
+#' systematic PPS, and Poisson selection; generalized Brewer, SPS, Pareto, and
+#' unconstrained cube use the documented high-entropy approximation.
+#'
+#' ## Spatial and constrained balanced methods
+#'
+#' Bounded cube, LPM2, and SCPS alter pairwise selection behaviour beyond the
+#' available linearization approximation. [as_svydesign()] therefore refuses
+#' these designs, and [joint_expectation()] does not provide a matrix for them.
+#' Use `as_svrepdesign(type = "subbootstrap")` or `"mrbbootstrap"` for a
+#' generic PPS bootstrap approximation. These replicates do not recreate the
+#' count constraints or spatial algorithm and are not an exact,
+#' design-specific variance estimator.
 #'
 #' ## Random-size Poisson methods
 #'

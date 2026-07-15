@@ -38,17 +38,24 @@ attributes.
 }
 \description{
 \code{write_design()} saves a sampling design (or the design carried by an
-executed sample) to a portable, human-readable JSON file.
+executed sample) to a human-readable, samplyr-native JSON file.
 \code{read_design()} reads it back into a \code{sampling_design} that executes
 identically to the original.
 
-The file format is versioned JSON: diffable in version control,
-language-neutral, and stable across samplyr versions. It stores the
-complete design specification (stages, stratification, clustering, draw
-settings, including per-stratum vectors and data frames), never the
-frame data itself.
+The file format is versioned JSON and diffable in version control. It
+stores the complete design specification (stages, stratification,
+clustering, draw settings, including per-stratum vectors and data frames),
+never the frame data itself.
 }
 \details{
+\subsection{Lifecycle}{
+
+The serialization interface and its samplyr-native file format are
+experimental. They support samplyr persistence and replay; they are not a
+finalized cross-tool survey-sampling interchange standard. The structure
+may change while that separate specification is developed.
+}
+
 \subsection{Frame information}{
 
 Designs are frame-independent, and so are design files. Two derived
@@ -71,14 +78,16 @@ the common metadata.
 When \code{x} is a \code{tbl_sample}, the file additionally records an execution
 receipt: every argument of the \code{\link[=execute]{execute()}} call that affects the
 result (\code{seed}, executed stages, \code{panels}, \code{reps}, and the per
-replicate seeds), plus the number of selected units and the execution
-timestamp. Together with the frame fingerprint this makes a
-single-call sample exactly reproducible: anyone with the frame can
-run \code{replay_design(read_design(path), frame)} and obtain the same
-\code{tbl_sample} -- the same rows in the same order, including \code{.panel}
-and \code{.replicate} assignments -- with only the execution timestamp
-differing. The sampled rows themselves are not stored; use a data
-format (CSV, parquet) for those.
+replicate seeds), the execution-time RNG configuration and package
+versions, plus the number of selected units and the execution timestamp.
+Together with the frame fingerprint this makes a single-call sample
+reproducible when the same frame, compatible package implementations, and
+any recorded custom methods are available. Running
+\code{replay_design(read_design(path), frame)} then obtains the same
+\code{tbl_sample} -- the same rows in the same order, including \code{.panel} and
+\code{.replicate} assignments -- with only the execution timestamp differing.
+The sampled rows themselves are not stored; use a data format (CSV,
+parquet) for those.
 
 Receipts describe one \code{\link[=execute]{execute()}} call. A sample built by several
 calls (a stage continuation or a multi-phase pipeline) is flagged as
@@ -98,16 +107,14 @@ names, \code{dplyr::desc()}, and \code{\link[=serp]{serp()}} can be represented;
 \code{write_design()} errors on anything else.
 }
 
-\subsection{Portable and tool-specific metadata}{
+\subsection{Declarative and implementation metadata}{
 
-The \code{design}, \code{frame}, and \code{execution} blocks describe the statistical
-design in tool-neutral terms. Selection methods use a common vocabulary
-with explicit family, replacement, sample-size, and probability
-properties, plus a DDI Sampling Procedure reference. The \code{tools} block is
-namespaced by implementation. \code{tools.samplyr} records samplyr method names,
-R classes, the R-derived frame hash, and runtime versions needed to rebuild
-the native object exactly. Other tools may add their own namespace without
-changing the common design.
+The \code{design}, \code{frame}, and \code{execution} blocks use declarative JSON rather
+than R expressions. Selection methods carry samplyr's internal semantic
+descriptor. The \code{tools.samplyr} block records exact method names, R classes,
+the R-derived frame hash, and execution environment needed to rebuild and
+replay the native object. These descriptors are not a finalized external
+method vocabulary.
 }
 }
 \examples{

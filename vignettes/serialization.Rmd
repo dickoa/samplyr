@@ -31,7 +31,12 @@ Three functions cover this workflow:
 | `read_design()`  | Restore a design from a file or JSON string                    |
 | `design_json()`  | Render the same format as an in-memory string (databases, APIs) |
 
-The file format is versioned JSON, human-readable, diffable in version control, and language-neutral, so the sampling plan can be inspected without R. The guarantee is behavioural. A restored design executes identically to the original:
+The file format is versioned, human-readable JSON and is diffable in version
+control, so the sampling plan can be inspected without evaluating R code. It
+is currently an experimental, samplyr-native persistence format, not the
+finalized cross-tool interchange standard. Its present guarantee is
+behavioural: a restored design executes identically to the original in a
+compatible samplyr environment.
 
 ```{r, eval = FALSE}
 execute(read_design("plan.json"), frame, seed = 1)
@@ -74,15 +79,19 @@ cat(design_json(design_named, pretty = TRUE))
 
 Scalars are written as JSON numbers, named vectors as objects, and data-frame specifications as arrays of rows. The three shapes are unambiguous, so files can be written or edited by other tools without special type annotations.
 
-## Common design and tool metadata
+## Declarative design and samplyr metadata
 
-The JSON has two layers. `design`, `frame`, and `execution` contain the statistical metadata that tools exchange. `tools` is an open, namespaced object in which each implementation can retain the details it needs for native reconstruction. A samplyr file therefore records both a common method description and its exact samplyr spelling:
+The JSON separates declarative design content from implementation metadata.
+`design`, `frame`, and `execution` avoid executable R expressions, while
+`tools.samplyr` retains exact method names, R classes, frame hashes, and replay
+environment details. A samplyr file records both an internal semantic method
+descriptor and its exact native spelling:
 
 ```json
 "method": {
-  "id": "brewer_probability_proportional_to_size",
+  "id": "generalized_brewer_probability_proportional_to_size",
   "family": "probability_proportional_to_size",
-  "algorithm": "brewer",
+  "algorithm": "generalized_brewer",
   "replacement": "without_replacement",
   "sample_size": "fixed",
   "probabilities": "unequal",
@@ -104,11 +113,18 @@ The JSON has two layers. `design`, `frame`, and `execution` contain the statisti
 }
 ```
 
-The common vocabulary distinguishes all built-in algorithms and links them to the broader [DDI Sampling Procedure controlled vocabulary](https://rdf-vocabulary.ddialliance.org/ddi-cv/SamplingProcedure/1.1.4/SamplingProcedure.html). A different implementation can translate the common descriptor to its own method name. Conversely, `read_design()` can restore a recognized common method from a file with no `tools.samplyr` block. Tool-specific custom methods use the common identifier `tool_specific` and require their native extension.
+The internal vocabulary distinguishes the built-in algorithms and links them
+to the broader [DDI Sampling Procedure controlled vocabulary](https://rdf-vocabulary.ddialliance.org/ddi-cv/SamplingProcedure/1.1.4/SamplingProcedure.html).
+It is useful for inspecting samplyr files, but it is not presented as the
+finalized external method vocabulary. `read_design()` can restore a recognized
+internal method without a `tools.samplyr` block. Custom methods use the
+identifier `tool_specific`; the same method must be registered through
+`sondage::register_method()` before replay.
 
 The complete, machine-readable dictionary ships as `schema/sampling-methods-v1.json` inside the installed package. Its identifier and version are declared in each document's `schema.method_vocabulary` block.
 
-Tool namespaces not understood by samplyr are retained when a design is read and written again. This lets several implementations enrich the same common design without claiming that implementation settings are universal statistical metadata.
+Unknown tool namespaces are retained when a design is read and written again,
+but preservation alone is not a claim of cross-tool design equivalence.
 
 ## Reading a design back
 
@@ -178,7 +194,11 @@ Set `fingerprint = "warn"` to escalate the message to a warning, or `"ignore"` t
 
 ## Execution receipts
 
-Passing an executed `tbl_sample` to `write_design()` saves the design together with an execution receipt: every `execute()` argument that affects the result (the seed, the executed stages, and `panels` or `reps` when used), plus the number of selected units and the execution timestamp.
+Passing an executed `tbl_sample` to `write_design()` saves the design together
+with an execution receipt: every `execute()` argument that affects the result
+(the seed, executed stages, and `panels` or `reps` when used), plus the number
+of selected units and execution timestamp. `tools.samplyr.execution` records
+the execution-time R and package versions and the RNG configuration.
 
 ```{r}
 sample <- execute(design, bfa_eas, seed = 2026, panels = 4)
@@ -198,7 +218,13 @@ Together with the frame fingerprint, the receipt makes the sample exactly reprod
 replayed <- replay_design(read_design(path), bfa_eas)
 ```
 
-The contract is full equality of the materialized sample. Given the same frame, the replayed `tbl_sample` has the same rows in the same order, the same weights and design columns, and the same `.panel` and `.replicate` assignments; only the execution timestamp differs.
+The contract is full equality of the materialized sample when the same frame,
+compatible package implementations, and any required registered custom
+methods are available. `replay_design()` restores the recorded RNG
+configuration for execution and then restores the caller's RNG state. The
+replayed `tbl_sample` has the same rows in the same order, the same weights and
+design columns, and the same `.panel` and `.replicate` assignments; only the
+execution timestamp differs.
 
 ```{r}
 identical(replayed$ea_id, sample$ea_id)
@@ -206,7 +232,11 @@ identical(replayed$.weight, sample$.weight)
 identical(replayed$.panel, sample$.panel)
 ```
 
-`replay_design()` first compares the frame against the stored fingerprint and warns if it differs, and afterwards checks the replayed row count against the receipt. Replaying against a different frame yields a valid new sample, not the recorded one.
+`replay_design()` first compares the frame against the stored fingerprint and
+errors by default if it differs. Use `fingerprint = "warn"`, `"inform"`, or
+`"ignore"` only when you intentionally accept that the result will not be the
+recorded sample. It also warns when the recorded R or package versions differ
+and checks the replayed row count against the receipt.
 
 Two situations fall outside the single-call contract, and `write_design()` warns about both. A sample built by several `execute()` calls (a stage continuation or a multi-phase pipeline) is flagged as `chained` in its receipt: the receipt records only the final call, so `replay_design()` refuses it. Save and replay each phase or stage batch separately. A sample whose rows or design columns were modified after execution is flagged as `modified`: its receipt describes the original execution, not the modified object.
 
@@ -225,7 +255,10 @@ The sampled rows themselves are not stored, because a design file is a *recipe*,
 ]
 ```
 
-The three types are `ascending` for a bare column name, `descending` for `desc()`, and `serpentine` for `serp()`. This JSON grammar is independent of R and can be consumed by other tools without parsing source code. `write_design()` refuses expressions outside this grammar rather than writing a file that would not round-trip:
+The three types are `ascending` for a bare column name, `descending` for
+`desc()`, and `serpentine` for `serp()`. This declarative grammar can be
+inspected without parsing R source code. `write_design()` refuses expressions
+outside this grammar rather than writing a file that would not round-trip:
 
 ```{r, error = TRUE}
 odd_design <- sampling_design() |>
@@ -234,7 +267,9 @@ odd_design <- sampling_design() |>
 design_json(odd_design)
 ```
 
-The reader validates the type and variables as data and constructs the restricted expression directly; it does not parse them as R code. An unknown type is rejected, even in a file received from a third party. Version 1 design files are still supported through their original restricted-expression reader.
+The reader validates the type and variables as data and constructs the
+restricted expression directly; it does not parse them as R code. An unknown
+type is rejected, even in a file received from a third party.
 
 ```{r, error = TRUE}
 payload <- jsonlite::fromJSON(design_json(design), simplifyVector = FALSE)

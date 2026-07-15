@@ -149,17 +149,23 @@ method_vocabulary_version <- 1L
 #'
 #' @description
 #' `write_design()` saves a sampling design (or the design carried by an
-#' executed sample) to a portable, human-readable JSON file.
+#' executed sample) to a human-readable, samplyr-native JSON file.
 #' `read_design()` reads it back into a `sampling_design` that executes
 #' identically to the original.
 #'
-#' The file format is versioned JSON: diffable in version control,
-#' language-neutral, and stable across samplyr versions. It stores the
-#' complete design specification (stages, stratification, clustering, draw
-#' settings, including per-stratum vectors and data frames), never the
-#' frame data itself.
+#' The file format is versioned JSON and diffable in version control. It
+#' stores the complete design specification (stages, stratification,
+#' clustering, draw settings, including per-stratum vectors and data frames),
+#' never the frame data itself.
 #'
 #' @details
+#' ## Lifecycle
+#'
+#' The serialization interface and its samplyr-native file format are
+#' experimental. They support samplyr persistence and replay; they are not a
+#' finalized cross-tool survey-sampling interchange standard. The structure
+#' may change while that separate specification is developed.
+#'
 #' ## Frame information
 #'
 #' Designs are frame-independent, and so are design files. Two derived
@@ -180,14 +186,16 @@ method_vocabulary_version <- 1L
 #' When `x` is a `tbl_sample`, the file additionally records an execution
 #' receipt: every argument of the [execute()] call that affects the
 #' result (`seed`, executed stages, `panels`, `reps`, and the per
-#' replicate seeds), plus the number of selected units and the execution
-#' timestamp. Together with the frame fingerprint this makes a
-#' single-call sample exactly reproducible: anyone with the frame can
-#' run `replay_design(read_design(path), frame)` and obtain the same
-#' `tbl_sample` -- the same rows in the same order, including `.panel`
-#' and `.replicate` assignments -- with only the execution timestamp
-#' differing. The sampled rows themselves are not stored; use a data
-#' format (CSV, parquet) for those.
+#' replicate seeds), the execution-time RNG configuration and package
+#' versions, plus the number of selected units and the execution timestamp.
+#' Together with the frame fingerprint this makes a single-call sample
+#' reproducible when the same frame, compatible package implementations, and
+#' any recorded custom methods are available. Running
+#' `replay_design(read_design(path), frame)` then obtains the same
+#' `tbl_sample` -- the same rows in the same order, including `.panel` and
+#' `.replicate` assignments -- with only the execution timestamp differing.
+#' The sampled rows themselves are not stored; use a data format (CSV,
+#' parquet) for those.
 #'
 #' Receipts describe one [execute()] call. A sample built by several
 #' calls (a stage continuation or a multi-phase pipeline) is flagged as
@@ -205,16 +213,14 @@ method_vocabulary_version <- 1L
 #' names, `dplyr::desc()`, and [serp()] can be represented;
 #' `write_design()` errors on anything else.
 #'
-#' ## Portable and tool-specific metadata
+#' ## Declarative and implementation metadata
 #'
-#' The `design`, `frame`, and `execution` blocks describe the statistical
-#' design in tool-neutral terms. Selection methods use a common vocabulary
-#' with explicit family, replacement, sample-size, and probability
-#' properties, plus a DDI Sampling Procedure reference. The `tools` block is
-#' namespaced by implementation. `tools.samplyr` records samplyr method names,
-#' R classes, the R-derived frame hash, and runtime versions needed to rebuild
-#' the native object exactly. Other tools may add their own namespace without
-#' changing the common design.
+#' The `design`, `frame`, and `execution` blocks use declarative JSON rather
+#' than R expressions. Selection methods carry samplyr's internal semantic
+#' descriptor. The `tools.samplyr` block records exact method names, R classes,
+#' the R-derived frame hash, and execution environment needed to rebuild and
+#' replay the native object. These descriptors are not a finalized external
+#' method vocabulary.
 #'
 #' @param x A `sampling_design`, or a `tbl_sample` (the stored design is
 #'   saved along with an execution receipt).
@@ -360,10 +366,12 @@ read_design <- function(file) {
 #' the receipt fields.
 #'
 #' @details
-#' Given the same frame, the replayed sample is identical to the
-#' original: the same rows in the same order, the same weights and
-#' design columns, and the same `.panel` and `.replicate` assignments.
-#' Only the execution timestamp differs.
+#' Given the same frame and compatible recorded implementations, the replayed
+#' sample is identical to the original: the same rows in the same order, the
+#' same weights and design columns, and the same `.panel` and `.replicate`
+#' assignments. Only the execution timestamp differs. Replay restores the
+#' execution-time RNG configuration and then restores the caller's RNG state.
+#' It warns when recorded R or package versions differ.
 #'
 #' Receipts record a single [execute()] call. A sample produced by
 #' several calls (a stage continuation or a multi-phase pipeline)
@@ -372,7 +380,7 @@ read_design <- function(file) {
 #'
 #' When the design was saved with a frame fingerprint, `frame` is
 #' compared against it before replaying. A differing frame still yields
-#' a valid sample, but not the recorded one, so the default is to warn.
+#' a valid sample, but not the recorded one, so the default is to error.
 #' After replaying, the row count is checked against the receipt's
 #' `n_selected` as a final consistency check.
 #'
@@ -383,7 +391,7 @@ read_design <- function(file) {
 #'   without a file round trip.
 #' @param frame The sampling frame the receipt refers to.
 #' @param fingerprint How to respond when `frame` differs from the
-#'   fingerprint stored in the design file: `"warn"` (default),
+#'   fingerprint stored in the design file: `"error"` (default), `"warn"`,
 #'   `"inform"`, or `"ignore"`.
 #'
 #' @return The replayed `tbl_sample`.
@@ -409,7 +417,7 @@ read_design <- function(file) {
 replay_design <- function(
   x,
   frame,
-  fingerprint = c("warn", "inform", "ignore")
+  fingerprint = c("error", "warn", "inform", "ignore")
 ) {
   fingerprint <- match.arg(fingerprint)
 
@@ -417,10 +425,15 @@ replay_design <- function(
     design <- get_design(x)
     receipt <- encode_execution(x)
     frame_info <- NULL
+    execution_environment <- attr(x, "metadata")$execution_environment
   } else if (is_sampling_design(x)) {
     design <- x
     receipt <- attr(x, "execution")
     frame_info <- attr(x, "frame_info")
+    execution_environment <- attr(
+      x,
+      "design_tools"
+    )$samplyr$execution$environment
   } else {
     cli_abort(
       "{.arg x} must be a {.cls sampling_design} or a {.cls tbl_sample}"
@@ -464,6 +477,9 @@ replay_design <- function(
     )
   }
 
+  check_replay_custom_methods(design)
+  check_replay_environment(execution_environment)
+
   fp <- frame_info$fingerprint
   if (!is_null(fp) && !identical(fingerprint, "ignore")) {
     diffs <- fingerprint_differences(fp, frame)
@@ -474,7 +490,12 @@ replay_design <- function(
         "i" = "The replay yields a valid sample from this frame, but
                not the recorded one."
       )
-      if (identical(fingerprint, "warn")) {
+      if (identical(fingerprint, "error")) {
+        abort_samplyr(
+          msg,
+          class = "samplyr_error_replay_frame_mismatch"
+        )
+      } else if (identical(fingerprint, "warn")) {
         cli_warn(msg)
       } else {
         cli::cli_inform(msg)
@@ -493,13 +514,16 @@ replay_design <- function(
     NULL
   }
 
-  result <- execute(
-    design,
-    frame,
-    stages = stages,
-    seed = as.integer(seed),
-    panels = panels,
-    reps = reps
+  result <- with_replay_rng(
+    execution_environment$rng,
+    execute(
+      design,
+      frame,
+      stages = stages,
+      seed = as.integer(seed),
+      panels = panels,
+      reps = reps
+    )
   )
 
   n_recorded <- receipt$n_selected
@@ -512,6 +536,163 @@ replay_design <- function(
   }
 
   result
+}
+
+#' Verify that registered methods required by a restored design are present
+#' and still advertise the metadata recorded in the design file.
+#' @noRd
+check_replay_custom_methods <- function(design, call = caller_env()) {
+  specs <- lapply(design$stages, function(stage) stage$draw_spec)
+  specs <- Filter(function(spec) !is_null(spec$method_type), specs)
+  if (length(specs) == 0) {
+    return(invisible(design))
+  }
+
+  for (spec in specs) {
+    native_name <- sondage_method_name(spec$method)
+    if (!sondage::is_registered_method(native_name)) {
+      abort_samplyr(
+        c(
+          "Cannot replay the unregistered custom method {.val {spec$method}}.",
+          "i" = "Register the same implementation with
+                 {.fn sondage::register_method} before replaying."
+        ),
+        class = "samplyr_error_replay_method_unregistered",
+        call = call
+      )
+    }
+
+    current <- sondage::method_spec(native_name)
+    recorded <- list(
+      type = spec$method_type,
+      fixed_size = spec$method_fixed,
+      variance_family = spec$method_variance
+    )
+    fields <- names(recorded)[!vapply(recorded, is_null, logical(1))]
+    agrees <- vapply(
+      fields,
+      function(field) identical(recorded[[field]], current[[field]]),
+      logical(1)
+    )
+    if (!all(agrees)) {
+      abort_samplyr(
+        c(
+          "Registered method {.val {spec$method}} differs from the
+           method recorded in the design file.",
+          "i" = "Re-register the original implementation before replaying."
+        ),
+        class = "samplyr_error_replay_method_mismatch",
+        call = call
+      )
+    }
+  }
+  invisible(design)
+}
+
+#' Warn when implementation versions differ from the execution receipt.
+#' @noRd
+check_replay_environment <- function(recorded, call = caller_env()) {
+  if (is_null(recorded)) {
+    return(invisible(NULL))
+  }
+  current <- capture_execution_environment()
+  pairs <- list(
+    R = c(recorded$language$version, current$language$version),
+    samplyr = c(recorded$packages$samplyr, current$packages$samplyr),
+    sondage = c(recorded$packages$sondage, current$packages$sondage),
+    svyplan = c(recorded$packages$svyplan, current$packages$svyplan)
+  )
+  differences <- character()
+  for (label in names(pairs)) {
+    pair <- decode_chr(pairs[[label]])
+    if (length(pair) == 2 && !identical(pair[[1]], pair[[2]])) {
+      differences <- c(
+        differences,
+        sprintf(
+          "%s: recorded %s, current %s",
+          label,
+          pair[[1]],
+          pair[[2]]
+        )
+      )
+    }
+  }
+  if (length(differences) > 0) {
+    cli_warn(
+      c(
+        "The replay environment differs from the recorded execution:",
+        setNames(differences, rep("*", length(differences))),
+        "i" = "Replay will be attempted, but an identical realization is
+               not guaranteed."
+      ),
+      call = call
+    )
+  }
+  invisible(recorded)
+}
+
+#' Evaluate replay under its recorded RNG configuration, restoring the
+#' caller's RNG kind and state afterwards.
+#' @noRd
+with_replay_rng <- function(rng, code, call = caller_env()) {
+  if (is_null(rng)) {
+    return(force(code))
+  }
+
+  kind <- decode_chr(rng$kind)
+  normal_kind <- decode_chr(rng$normal_kind)
+  sample_kind <- decode_chr(rng$sample_kind)
+  if (
+    length(kind) != 1 || length(normal_kind) != 1 ||
+      length(sample_kind) != 1
+  ) {
+    abort_samplyr(
+      "The execution receipt contains an invalid RNG configuration.",
+      class = "samplyr_error_replay_rng",
+      call = call
+    )
+  }
+
+  old_kind <- RNGkind()
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  if (had_seed) {
+    old_seed <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  }
+  on.exit({
+    do.call(
+      RNGkind,
+      list(
+        kind = old_kind[[1]],
+        normal.kind = old_kind[[2]],
+        sample.kind = old_kind[[3]]
+      )
+    )
+    if (had_seed) {
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+  }, add = TRUE)
+
+  tryCatch(
+    do.call(
+      RNGkind,
+      list(
+        kind = kind,
+        normal.kind = normal_kind,
+        sample.kind = sample_kind
+      )
+    ),
+    error = function(cnd) {
+      cli_abort(
+        "Cannot restore the RNG configuration recorded for this execution.",
+        parent = cnd,
+        class = "samplyr_error_replay_rng",
+        call = call
+      )
+    }
+  )
+  force(code)
 }
 
 # Encoding ----------------------------------------------------------------
@@ -543,8 +724,10 @@ design_payload <- function(
   call = caller_env()
 ) {
   execution <- NULL
+  execution_environment <- NULL
   if (is_tbl_sample(x)) {
     execution <- encode_execution(x)
+    execution_environment <- attr(x, "metadata")$execution_environment
     if (is_null(execution$seed)) {
       cli_warn(c(
         "{.arg x} was executed without a seed.",
@@ -577,6 +760,10 @@ design_payload <- function(
   } else if (is_sampling_design(x)) {
     design <- x
     execution <- attr(x, "execution")
+    execution_environment <- attr(
+      x,
+      "design_tools"
+    )$samplyr$execution$environment
   } else {
     cli_abort(
       "{.arg x} must be a {.cls sampling_design} or a {.cls tbl_sample}",
@@ -585,6 +772,18 @@ design_payload <- function(
   }
   validate_sampling_design(design, call = call)
   check_controls_serializable(design, call = call)
+  if (
+    is_tbl_sample(x) && is_null(frame) &&
+      is_null(attr(design, "portable_frame_info")$fingerprint)
+  ) {
+    cli_warn(c(
+      "{.arg x} is being saved without a frame fingerprint.",
+      "i" = "The receipt can be replayed, but {.fn replay_design} cannot
+             verify that the supplied frame is the one originally sampled.",
+      "i" = "Supply {.arg frame} to {.fn write_design} for verifiable
+             replay."
+    ))
+  }
 
   payload <- list(
     format = design_format_id,
@@ -603,7 +802,8 @@ design_payload <- function(
   payload$tools$samplyr <- encode_samplyr_metadata(
     design,
     frame,
-    frame_label
+    frame_label,
+    execution_environment
   )
   payload
 }
@@ -682,8 +882,8 @@ sampling_method_dictionary <- function() {
       "without_replacement", "fixed", "unequal"
     ),
     pps_brewer = entry(
-      "brewer_probability_proportional_to_size",
-      "probability_proportional_to_size", "brewer",
+      "generalized_brewer_probability_proportional_to_size",
+      "probability_proportional_to_size", "generalized_brewer",
       "without_replacement", "fixed", "unequal"
     ),
     pps_cps = entry(
@@ -1044,7 +1244,12 @@ encode_frame_info <- function(design, frame, frame_label) {
 
 #' Encode metadata that belongs to the samplyr/R implementation
 #' @noRd
-encode_samplyr_metadata <- function(design, frame, frame_label) {
+encode_samplyr_metadata <- function(
+  design,
+  frame,
+  frame_label,
+  execution_environment = NULL
+) {
   out <- list(
     version = as.character(utils::packageVersion("samplyr")),
     language = list(
@@ -1063,6 +1268,9 @@ encode_samplyr_metadata <- function(design, frame, frame_label) {
     out$frame <- samplyr_frame_fingerprint(frame, frame_label)
   } else {
     out$frame <- attr(design, "design_tools")$samplyr$frame
+  }
+  if (!is_null(execution_environment)) {
+    out$execution <- list(environment = execution_environment)
   }
   out
 }

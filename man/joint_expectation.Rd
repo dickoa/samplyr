@@ -75,7 +75,9 @@ require approximation or simulation.
    \code{pps_brewer} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate}\eqn{^*} (high-entropy / Hajek-Brewer-Donadio) \cr
    \code{pps_sps} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
    \code{pps_pareto} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
-   \code{cube} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
+   \code{cube} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} when unconstrained (high-entropy / Hajek-Brewer-Donadio) \cr
+   \code{lpm2} \tab unavailable \tab Spatial spreading is not represented \cr
+   \code{scps} \tab unavailable \tab Spatial spreading is not represented \cr
 }
 
 
@@ -94,6 +96,10 @@ maximum-entropy design with the same marginal \eqn{\pi_i}{pi_i}
 for most PPS designs and is the same quantity that underlies the
 Berger (2004) variance estimator used by \code{survey::svydesign(pps = "brewer")}. For CPS (conditional Poisson / maximum entropy), the
 joint probabilities are exact by definition.
+
+Bounded cube, LPM2, and SCPS designs are rejected because count constraints
+and spatial spreading alter pairwise selection behaviour beyond the
+available approximation. Use \code{\link[=as_svrepdesign]{as_svrepdesign()}} with \code{type = "subbootstrap"} for a generic bootstrap approximation instead.
 }
 
 \subsection{WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})}{\tabular{lll}{

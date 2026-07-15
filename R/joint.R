@@ -64,7 +64,9 @@
 #' | `pps_brewer`       | `joint_inclusion_prob()`      | **Approximate**\eqn{^*} (high-entropy / Hajek-Brewer-Donadio) |
 #' | `pps_sps`          | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
 #' | `pps_pareto`       | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
-#' | `cube`             | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
+#' | `cube`             | `joint_inclusion_prob()`      | **Approximate** when unconstrained (high-entropy / Hajek-Brewer-Donadio) |
+#' | `lpm2`             | unavailable                   | Spatial spreading is not represented |
+#' | `scps`             | unavailable                   | Spatial spreading is not represented |
 #'
 #' \eqn{^*} Exact recursive formulas for Brewer's joint inclusion
 #' probabilities exist (Brewer 2002, ch. 9) but are
@@ -82,6 +84,11 @@
 #' Berger (2004) variance estimator used by `survey::svydesign(pps =
 #' "brewer")`. For CPS (conditional Poisson / maximum entropy), the
 #' joint probabilities are exact by definition.
+#'
+#' Bounded cube, LPM2, and SCPS designs are rejected because count constraints
+#' and spatial spreading alter pairwise selection behaviour beyond the
+#' available approximation. Use [as_svrepdesign()] with `type =
+#' "subbootstrap"` for a generic bootstrap approximation instead.
 #'
 #' ### WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})
 #'

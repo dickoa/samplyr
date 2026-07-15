@@ -119,7 +119,8 @@ $$
 
 Fixed-size for `srswor` and `systematic` and random-size for `bernoulli`. Systematic sampling induces implicit stratification by row order. Use `control` to specify the sort variable.
 
-**PPS without replacement** (`pps_brewer`, `pps_systematic`, `pps_cps`, `pps_poisson`, `pps_sps`, `pps_pareto`):
+**PPS without replacement** (`pps_brewer`, `pps_systematic`, `pps_cps`,
+`pps_sampford`, `pps_poisson`, `pps_sps`, `pps_pareto`):
 
 $$
 \pi_i = n \, \frac{\text{mos}_i}{\sum_j \text{mos}_j}
@@ -134,7 +135,7 @@ The quantity of interest is the expected number of hits \(E(n_i) = n \, \text{mo
 
 Chromy's sequential PPS (`pps_chromy`) is classified as *probability minimum replacement* (PMR): each unit receives \(\lfloor E(n_i) \rfloor\) or \(\lceil E(n_i) \rceil\) hits. When all \(E(n_i) < 1\), this reduces to WOR.
 
-**Balanced sampling** (`cube`):
+**Balanced and spatially balanced sampling** (`cube`, `lpm2`, `scps`):
 
 The cube method (Deville & Tillé 2004) selects a fixed-size sample that satisfies (or nearly satisfies) the balancing equations $\sum_{i \in S} a_{ij} / \pi_i = \sum_{i \in U} a_{ij}$ for auxiliary variables $a_j$ specified via `aux`. Without `mos`, $\pi_i = n/N$ (equal probability); with `mos`, $\pi_i$ is computed by `sondage::inclusion_prob()`. A `bound()` marker adds hard adjacent-integer category-count constraints. When stratified, the stratified cube algorithm (Chauvet 2009) is used: flight phases run per-stratum, then a global flight phase, then per-stratum landing phases. LPM2 and SCPS instead use the coordinates supplied through `spread`; they do not accept cube auxiliaries or count bounds. At most 2 stages may use a balanced-family method. PRN and certainty selection are not supported.
 
@@ -222,7 +223,17 @@ $$
 This is the standard assumption in multi-stage sampling theory
 [@cochran1977, ch. 11; @sarndal1992, ch. 4.3].
 
-**Consequence for variance estimation.** Under this assumption, the recursive multi-stage variance formula applies [@sarndal1992, ch. 4.3]. `as_svydesign()` exports every executed stage to `survey::svydesign()`: one `ids` term, one `fpc` term, and (when the stage is stratified) one `strata` term per stage, so `survey` performs exact multi-stage linearization. A first-stage census, for example, correctly attributes all variance to the later stages. The one exception is a stage that samples with replacement: later stages nested in it contribute nothing beyond the between-draw variability, which the Hansen-Hurwitz estimator already captures.
+**Consequence for variance estimation.** Under this assumption, the recursive
+multi-stage variance formula applies [@sarndal1992, ch. 4.3]. For methods with
+a supported linearization estimator, `as_svydesign()` exports every executed
+stage to `survey::svydesign()`: one `ids` term, one `fpc` term, and (when the
+stage is stratified) one `strata` term per stage. A first-stage census, for
+example, correctly attributes all variance to the later stages. A stage that
+samples with replacement is handled differently: later stages nested in it
+contribute nothing beyond the between-draw variability, which the
+Hansen--Hurwitz estimator already captures. Bounded cube, LPM2, and SCPS do
+not currently have supported linearization estimators; they use the generic
+bootstrap approximation described below.
 
 ## What is lost at survey export
 
@@ -234,7 +245,25 @@ An unclustered element-sampling stage followed by further stages is not nested c
 
 ### 2. Joint inclusion probabilities
 
-By default, `as_svydesign()` uses Brewer's variance approximation [@berger2004], which derives \(\pi_{kl}\) from marginal \(\pi_i\) without computing the full \(N \times N\) matrix. `joint_expectation()` computes second-order quantities directly. The result is exact for CPS, systematic, and Poisson. For Brewer, SPS, and Pareto, it uses the high-entropy approximation [@hajek1964; @brewerdonadio2003], which is \(O(N^2)\). Exact recursive formulas exist for Brewer [@brewer2002, ch. 9] but are \(O(N^3)\) and impractical for large frames. Units with \(\pi_i = 1\) (certainty selections) are handled internally: the joint matrix is computed on the stochastic part and reassembled with \(\pi_{kl} = 1\) for certainty-certainty pairs and \(\pi_{kl} = \pi_l\) for certainty-stochastic pairs. To use the joint matrix for variance estimation, pass it via `pps = survey::ppsmat(joint_matrix)`. See `?joint_expectation` for the full method-by-method breakdown.
+By default, `as_svydesign()` uses Brewer's variance approximation
+[@berger2004] for fixed-size PPS WOR methods, including Sampford. Here Brewer
+names the variance estimator, not the selection algorithm. The approximation
+derives \(\pi_{kl}\) from marginal \(\pi_i\) without computing the full
+\(N \times N\) matrix. `joint_expectation()` computes second-order quantities
+directly. The result is exact for CPS, Sampford, systematic, and Poisson. For
+generalized Brewer, SPS, Pareto, and unconstrained cube, it uses the
+high-entropy approximation [@hajek1964; @brewerdonadio2003], which is
+\(O(N^2)\). Exact recursive formulas exist for generalized Brewer
+[@brewer2002, ch. 9] but are \(O(N^3)\) and impractical for large frames.
+Units with \(\pi_i = 1\) (certainty selections) are handled internally: the
+joint matrix is computed on the stochastic part and reassembled with
+\(\pi_{kl} = 1\) for certainty-certainty pairs and \(\pi_{kl} = \pi_l\) for
+certainty-stochastic pairs. To use the joint matrix for single-stage variance
+estimation, pass it via `pps = survey::ppsmat(joint_matrix)`. Joint
+probabilities are unavailable for bounded cube, LPM2, and SCPS. Their
+supported analysis route is `as_svrepdesign(type = "subbootstrap")`, a generic
+PPS bootstrap approximation that does not recreate the constraints or spatial
+algorithm. See `?joint_expectation` for the full method-by-method breakdown.
 
 ### 3. With-replacement row structure
 

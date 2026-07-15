@@ -155,16 +155,29 @@ ordering) than this estimate.
 \subsection{Variance estimation for PPS designs}{
 
 For fixed-size PPS without-replacement stages (\code{pps_brewer},
-\code{pps_systematic}, \code{pps_cps}, \code{pps_sps}, \code{pps_pareto}), variance is
-estimated by default using Brewer's approximation (\code{pps = "brewer"}
-in survey's terminology), which approximates the joint inclusion
-probabilities from the marginal inclusion probabilities. This is
-the approximation described by Berger (2004) and works well for
-most PPS designs regardless of the sampling algorithm used.
+\code{pps_systematic}, \code{pps_cps}, \code{pps_sampford}, \code{pps_sps}, \code{pps_pareto}),
+variance is estimated by default using Brewer's approximation (\code{pps = "brewer"} in survey's terminology), which approximates the joint inclusion
+probabilities from the marginal inclusion probabilities. Here Brewer names
+the variance estimator, not the selection algorithm: Sampford selection,
+for example, receives this default treatment. This is the approximation
+described by Berger (2004) and works well for most PPS designs regardless
+of the sampling algorithm used.
 
-For exact variance estimation, you can compute joint inclusion
-probabilities using \code{\link[=joint_expectation]{joint_expectation()}} and pass them via
-\code{pps = survey::ppsmat(joint_matrix)}.
+For supported methods, you can instead compute joint inclusion
+probabilities using \code{\link[=joint_expectation]{joint_expectation()}} and pass them via \code{pps = survey::ppsmat(joint_matrix)}. The matrix is exact for CPS, Sampford,
+systematic PPS, and Poisson selection; generalized Brewer, SPS, Pareto, and
+unconstrained cube use the documented high-entropy approximation.
+}
+
+\subsection{Spatial and constrained balanced methods}{
+
+Bounded cube, LPM2, and SCPS alter pairwise selection behaviour beyond the
+available linearization approximation. \code{\link[=as_svydesign]{as_svydesign()}} therefore refuses
+these designs, and \code{\link[=joint_expectation]{joint_expectation()}} does not provide a matrix for them.
+Use \code{as_svrepdesign(type = "subbootstrap")} or \code{"mrbbootstrap"} for a
+generic PPS bootstrap approximation. These replicates do not recreate the
+count constraints or spatial algorithm and are not an exact,
+design-specific variance estimator.
 }
 
 \subsection{Random-size Poisson methods}{

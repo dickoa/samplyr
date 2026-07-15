@@ -228,6 +228,8 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
                     reps = NULL) {
   frames <- list(...)
 
+  execution_environment <- capture_execution_environment()
+
   if (length(frames) == 0) {
     cli_abort("At least one data frame must be provided")
   }
@@ -359,12 +361,17 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
             "{.arg panels} cannot be used with a replicated frame.",
           )
         }
-        execute_replicated_multiphase(.data, frames, stages, seed)
+        execute_replicated_multiphase(
+          .data, frames, stages, seed, execution_environment
+        )
       } else if (is_null(reps)) {
-        execute_design(.data, frames, stages, seed, panels)
+        execute_design(
+          .data, frames, stages, seed, panels, execution_environment
+        )
       } else {
         execute_replicated(.data, frames, stages, seed, reps,
-                           executor = "design")
+                           executor = "design",
+                           execution_environment = execution_environment)
       }
     } else if (is_tbl_sample(.data)) {
       has_existing_reps <- has_multiple_replicates(.data)
@@ -375,12 +382,17 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
         ))
       }
       if (has_existing_reps) {
-        execute_replicated_continuation(.data, frames, stages, seed, panels)
+        execute_replicated_continuation(
+          .data, frames, stages, seed, panels, execution_environment
+        )
       } else if (!is_null(reps)) {
         execute_replicated(.data, frames, stages, seed, reps,
-                           executor = "continuation")
+                           executor = "continuation",
+                           execution_environment = execution_environment)
       } else {
-        execute_continuation(.data, frames, stages, seed, panels)
+        execute_continuation(
+          .data, frames, stages, seed, panels, execution_environment
+        )
       }
     } else {
       cli_abort(
@@ -396,8 +408,31 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
   }
 }
 
+#' Capture the implementation state that affects a sample realization
+#' @noRd
+capture_execution_environment <- function() {
+  rng <- RNGkind()
+  list(
+    language = list(
+      name = "R",
+      version = as.character(getRversion())
+    ),
+    packages = list(
+      samplyr = as.character(utils::packageVersion("samplyr")),
+      sondage = as.character(utils::packageVersion("sondage")),
+      svyplan = as.character(utils::packageVersion("svyplan"))
+    ),
+    rng = list(
+      kind = unname(rng[[1]]),
+      normal_kind = unname(rng[[2]]),
+      sample_kind = unname(rng[[3]])
+    )
+  )
+}
+
 #' @noRd
 execute_design <- function(design, frames, stages, seed, panels,
+                           execution_environment,
                            call = caller_env()) {
   validate_design_complete(design)
 
@@ -523,6 +558,7 @@ execute_design <- function(design, frames, stages, seed, panels,
       executed_at = Sys.time(),
       panels = panels,
       prev_phase = prev_phase,
+      execution_environment = execution_environment,
       integrity = sample_integrity_record(current_sample, design, stages)
     )
   )
@@ -531,6 +567,7 @@ execute_design <- function(design, frames, stages, seed, panels,
 #' @noRd
 execute_replicated <- function(.data, frames, stages, seed, reps,
                                executor = "design",
+                               execution_environment,
                                call = caller_env()) {
   results <- vector("list", reps)
 
@@ -539,9 +576,15 @@ execute_replicated <- function(.data, frames, stages, seed, reps,
 
     run_one <- function() {
       if (executor == "design") {
-        execute_design(.data, frames, stages, rep_seed, panels = NULL)
+        execute_design(
+          .data, frames, stages, rep_seed, panels = NULL,
+          execution_environment = execution_environment
+        )
       } else {
-        execute_continuation(.data, frames, stages, rep_seed, panels = NULL)
+        execute_continuation(
+          .data, frames, stages, rep_seed, panels = NULL,
+          execution_environment = execution_environment
+        )
       }
     }
 
@@ -598,6 +641,7 @@ execute_replicated <- function(.data, frames, stages, seed, reps,
         as.character(seq_len(reps))
       ),
       prev_phase = attr(result, "metadata")$prev_phase,
+      execution_environment = execution_environment,
       integrity = integrity
     )
   )
@@ -605,6 +649,7 @@ execute_replicated <- function(.data, frames, stages, seed, reps,
 
 #' @noRd
 execute_continuation <- function(sample, frames, stages, seed, panels,
+                                 execution_environment,
                                  call = caller_env()) {
   design <- get_design(sample)
   executed <- get_stages_executed(sample)
@@ -724,6 +769,7 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
       executed_at = Sys.time(),
       panels = panels,
       continued_from = attr(sample, "metadata"),
+      execution_environment = execution_environment,
       integrity = sample_integrity_record(
         current_sample, design, c(executed, stages)
       )
@@ -850,6 +896,7 @@ abort_empty_replicate <- function(
 #' @noRd
 execute_replicated_continuation <- function(sample, frames, stages, seed,
                                             panels,
+                                            execution_environment,
                                             call = caller_env()) {
   if (!is_null(panels)) {
     cli_abort(
@@ -878,7 +925,10 @@ execute_replicated_continuation <- function(sample, frames, stages, seed,
     rep_seed <- if (!is_null(seed)) seed + i - 1L else NULL
 
     run_one <- function() {
-      execute_continuation(rep_sample, frames, stages, rep_seed, panels = NULL)
+      execute_continuation(
+        rep_sample, frames, stages, rep_seed, panels = NULL,
+        execution_environment = execution_environment
+      )
     }
 
     result <- if (!is_null(rep_seed)) {
@@ -923,6 +973,7 @@ execute_replicated_continuation <- function(sample, frames, stages, seed,
         as.character(rep_ids)
       ),
       continued_from = attr(sample, "metadata"),
+      execution_environment = execution_environment,
       integrity = {
         integrity <- sample_integrity_record(
           combined, the_design, c(already_executed, cont_stages)
@@ -943,6 +994,7 @@ execute_replicated_continuation <- function(sample, frames, stages, seed,
 #' frames are left unchanged across replicates.
 #' @noRd
 execute_replicated_multiphase <- function(design, frames, stages, seed,
+                                          execution_environment,
                                           call = caller_env()) {
   # Identify which frames are replicated tbl_samples
   is_rep <- vapply(frames, function(f) {
@@ -990,7 +1042,10 @@ execute_replicated_multiphase <- function(design, frames, stages, seed,
     rep_seed <- if (!is_null(seed)) seed + i - 1L else NULL
 
     run_one <- function() {
-      execute_design(design, rep_frames, stages, rep_seed, panels = NULL)
+      execute_design(
+        design, rep_frames, stages, rep_seed, panels = NULL,
+        execution_environment = execution_environment
+      )
     }
 
     result <- if (!is_null(rep_seed)) {
@@ -1032,6 +1087,7 @@ execute_replicated_multiphase <- function(design, frames, stages, seed,
         as.character(rep_ids)
       ),
       prev_phase = attr(result, "metadata")$prev_phase,
+      execution_environment = execution_environment,
       integrity = {
         integrity <- sample_integrity_record(combined, design, the_stages)
         integrity$replicate_hashes <- replicate_integrity_hashes(

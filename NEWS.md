@@ -113,9 +113,10 @@ Initial release.
 ## Serialization
 
 * `write_design()` and `read_design()` save and restore designs as
-  versioned, human-readable JSON files. A restored design executes
-  identically to the original. `design_json()` renders the same format
-  as an in-memory string for databases and APIs.
+  versioned, human-readable, samplyr-native JSON files. A restored design
+  executes identically to the original. `design_json()` renders the same
+  format as an in-memory string for databases and APIs. This interface and
+  file format are experimental and are not a finalized cross-tool standard.
 * Design files record the frame variables each stage requires, and
   optionally a frame fingerprint (name, dimensions, column types,
   content hash) via `write_design(..., frame =)` -- the frame data
@@ -124,22 +125,22 @@ Initial release.
   same data fingerprint identically, and column order does not matter.
 * Saving an executed `tbl_sample` records an execution receipt with
   every `execute()` argument that affects the result (seed, executed
-  stages, `panels`, `reps`, replicate seeds) plus the number of
-  selected units and the timestamp. `replay_design()` re-runs the
-  recorded call and reproduces the full sample -- including `.panel`
-  and `.replicate` assignments -- with only the timestamp differing.
+  stages, `panels`, `reps`, replicate seeds), the execution-time RNG
+  configuration and package versions, plus the number of selected units and
+  the timestamp. `replay_design()` restores the recorded RNG configuration
+  and re-runs the call, reproducing the full sample -- including `.panel` and
+  `.replicate` assignments -- with only the timestamp differing when the
+  frame and implementations match. Frame mismatches error by default;
+  implementation-version mismatches warn.
   Samples built by several `execute()` calls (continuation,
   multi-phase) or modified after execution are flagged in the receipt
   and warned about at write time; `replay_design()` refuses chained
   receipts rather than replaying only the final call.
-* The design format separates portable statistical metadata from
-  implementation metadata. Selection methods use a common descriptor
-  (family, algorithm, replacement, sample-size behaviour, and probability
-  basis) with DDI Sampling Procedure references, while exact samplyr names,
-  R classes, runtime versions, and the R-native frame hash live under the
-  namespaced `tools.samplyr` block. Files from another tool can omit that
-  block and still map recognized common methods into samplyr; other tool
-  namespaces are preserved on re-serialization.
+* The design format separates declarative design metadata from native
+  implementation metadata. Selection methods use samplyr's internal semantic
+  descriptor, while exact method names, R classes, execution environment, and
+  the R-native frame hash live under `tools.samplyr`. These descriptors are
+  not presented as a finalized external method vocabulary.
 * Control ordering uses a declarative JSON grammar (`ascending`,
   `descending`, and `serpentine`, with explicit variable arrays) rather than
   embedded R expressions. `read_design()` accepts local file paths and JSON

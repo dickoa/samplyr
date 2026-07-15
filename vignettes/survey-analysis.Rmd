@@ -108,7 +108,12 @@ svytotal(~population, svy)
 
 ### Cluster design with PPS
 
-For PPS without-replacement designs, `as_svydesign()` uses Brewer's variance approximation by default.
+For fixed-size PPS without-replacement designs (`pps_brewer`,
+`pps_systematic`, `pps_cps`, `pps_sampford`, `pps_sps`, and `pps_pareto`),
+`as_svydesign()` uses Brewer's variance approximation by default. Here
+"Brewer" names the variance approximation used by `survey`, not the selection
+algorithm: a Sampford sample, for example, still receives this default unless
+you supply its exact joint inclusion probabilities.
 
 ```{r}
 data(bfa_eas)
@@ -217,47 +222,90 @@ rep_tbl |>
 
 Replicate export supports single-phase designs. For PPS designs, use `type = "subbootstrap"` or `type = "mrbbootstrap"`. Two-phase designs should use `as_svydesign()` (linearization).
 
-## Exact Variance with Joint Expectations
+LPM2 and SCPS require a different qualification. Their spatial spreading
+changes pairwise selection behaviour, and samplyr does not currently provide
+a design-specific linearization estimator or joint inclusion probabilities
+for them. Consequently, `as_svydesign()` refuses these designs.
+`as_svrepdesign(type = "subbootstrap")` provides a generic PPS bootstrap
+approximation, but it does not reproduce the spatial selection algorithm
+inside each replicate and should not be described as exact.
 
-The Brewer approximation works well in practice, but if you need to use second-order quantities directly, `joint_expectation()` computes them for all PPS stages. For WOR stages, this produces joint inclusion probabilities (pi_kl). For WR/PMR stages (`pps_multinomial`, `pps_chromy`), it produces joint expected hits E(n_k * n_l). See `?joint_expectation` to see which methods provide exact second-order moments, which approximations are provided, and for the full method-by-method breakdown.
+```{r}
+spatial_frame <- slice_head(bfa_eas, n = 500)
+
+spatial_sample <- sampling_design() |>
+  draw(
+    n = 40,
+    method = "lpm2",
+    spread = c(longitude, latitude)
+  ) |>
+  execute(spatial_frame, seed = 7)
+
+# Use method = "scps" for spatially correlated Poisson sampling.
+spatial_rep <- as_svrepdesign(
+  spatial_sample,
+  type = "subbootstrap",
+  replicates = 20
+)
+svymean(~households, spatial_rep)
+```
+
+## Variance with Joint Expectations
+
+The Brewer approximation works well in practice, but
+`joint_expectation()` can reconstruct second-order quantities directly for
+supported methods. For WOR stages, it returns joint inclusion probabilities
+$\pi_{kl}$. For WR/PMR stages (`pps_multinomial`, `pps_chromy`), it returns
+joint expected hits $E(n_k n_l)$. Depending on the selection method, these
+quantities are exact or approximate.
 
 It replays the design specification against the original frame, computing quantities per stratum and assembling a block-diagonal matrix.
 
 ```{r}
-pps_sample <- sampling_design() |>
-  add_stage() |>
-    stratify_by(region) |>
-    cluster_by(ea_id) |>
-    draw(n = 5, method = "pps_cps", mos = households) |>
-  add_stage() |>
-    draw(n = 12) |>
+sampford_sample <- sampling_design() |>
+  stratify_by(region) |>
+  cluster_by(ea_id) |>
+  draw(n = 5, method = "pps_sampford", mos = households) |>
   execute(bfa_eas, seed = 2025)
 
-# Compute joint probabilities for stage 1 (exact for CPS)
-jip <- joint_expectation(pps_sample, bfa_eas, stage = 1)
+# Sampford joint inclusion probabilities are exact.
+jip <- joint_expectation(sampford_sample, bfa_eas, stage = 1)
 
-# Use with survey for exact variance (WOR stages)
-svy_exact <- as_svydesign(pps_sample, pps = ppsmat(jip[[1]]))
+# Use the exact matrix for single-stage PPS variance estimation.
+svy_exact <- as_svydesign(
+  sampford_sample,
+  pps = ppsmat(jip[[1]])
+)
 svymean(~households, svy_exact)
 
-svy_brewer <- as_svydesign(pps_sample)
+# The default export instead uses the generic Brewer approximation.
+svy_brewer <- as_svydesign(sampford_sample)
 svymean(~households, svy_brewer)
 ```
 
-The supported methods :
+The method-specific availability is:
 
-| samplyr method    | `joint_expectation()` returns | Precision   |
-|-------------------|-------------------------------|-------------|
-| `pps_brewer`      | $\pi_{kl}$                    | Approximate |
-| `pps_systematic`  | $\pi_{kl}$                    | Exact       |
-| `pps_cps`         | $\pi_{kl}$                    | Exact       |
-| `pps_poisson`     | $\pi_{kl}$                    | Exact       |
-| `pps_sps`         | $\pi_{kl}$                    | Approximate |
-| `pps_pareto`      | $\pi_{kl}$                    | Approximate |
-| `cube`            | $\pi_{kl}$                    | Approximate |
-| `pps_multinomial` | $E(n_k * n_l)$                | Exact       |
-| `pps_chromy`      | $E(n_k * n_l)$                | Approximate |
+| samplyr method    | `joint_expectation()` result | Precision or status |
+|:------------------|:-----------------------------|:--------------------|
+| `pps_brewer`      | $\pi_{kl}$                   | Approximate          |
+| `pps_sampford`    | $\pi_{kl}$                   | Exact                |
+| `pps_systematic`  | $\pi_{kl}$                   | Exact                |
+| `pps_cps`         | $\pi_{kl}$                   | Exact                |
+| `pps_poisson`     | $\pi_{kl}$                   | Exact                |
+| `pps_sps`         | $\pi_{kl}$                   | Approximate          |
+| `pps_pareto`      | $\pi_{kl}$                   | Approximate          |
+| `pps_multinomial` | $E(n_k n_l)$                 | Exact                |
+| `pps_chromy`      | $E(n_k n_l)$                 | Approximate          |
+| `cube`            | $\pi_{kl}$                   | Approximate when unconstrained |
+| `lpm2`            | Unavailable                  | Spatial bootstrap only |
+| `scps`            | Unavailable                  | Spatial bootstrap only |
 
+For bounded cube designs, joint probabilities are also unavailable because
+the count constraints alter pairwise selection behaviour. For LPM2, SCPS, and
+bounded cube, use the generic bootstrap route described above. For a
+multi-stage PPS design, supplying `pps = ppsmat(...)` represents only the
+stage covered by that matrix; omit `pps` to retain samplyr's full multi-stage
+linearization with the default stage-level approximation.
 
 ## End-to-End Workflow
 

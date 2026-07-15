@@ -4,7 +4,7 @@
 \alias{replay_design}
 \title{Replay an execution receipt}
 \usage{
-replay_design(x, frame, fingerprint = c("warn", "inform", "ignore"))
+replay_design(x, frame, fingerprint = c("error", "warn", "inform", "ignore"))
 }
 \arguments{
 \item{x}{A \code{sampling_design} carrying an execution receipt, as
@@ -16,7 +16,7 @@ without a file round trip.}
 \item{frame}{The sampling frame the receipt refers to.}
 
 \item{fingerprint}{How to respond when \code{frame} differs from the
-fingerprint stored in the design file: \code{"warn"} (default),
+fingerprint stored in the design file: \code{"error"} (default), \code{"warn"},
 \code{"inform"}, or \code{"ignore"}.}
 }
 \value{
@@ -29,10 +29,12 @@ passing the stored \code{seed}, \code{stages}, \code{panels}, and \code{reps} ba
 the receipt fields.
 }
 \details{
-Given the same frame, the replayed sample is identical to the
-original: the same rows in the same order, the same weights and
-design columns, and the same \code{.panel} and \code{.replicate} assignments.
-Only the execution timestamp differs.
+Given the same frame and compatible recorded implementations, the replayed
+sample is identical to the original: the same rows in the same order, the
+same weights and design columns, and the same \code{.panel} and \code{.replicate}
+assignments. Only the execution timestamp differs. Replay restores the
+execution-time RNG configuration and then restores the caller's RNG state.
+It warns when recorded R or package versions differ.
 
 Receipts record a single \code{\link[=execute]{execute()}} call. A sample produced by
 several calls (a stage continuation or a multi-phase pipeline)
@@ -41,7 +43,7 @@ save and replay each phase or stage batch separately.
 
 When the design was saved with a frame fingerprint, \code{frame} is
 compared against it before replaying. A differing frame still yields
-a valid sample, but not the recorded one, so the default is to warn.
+a valid sample, but not the recorded one, so the default is to error.
 After replaying, the row count is checked against the receipt's
 \code{n_selected} as a final consistency check.
 }
