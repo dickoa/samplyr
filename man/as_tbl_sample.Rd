@@ -50,6 +50,12 @@ Use \code{as_tbl_sample()} to restore it:
 \item \code{as.data.frame()}
 }
 
+For an operational multistage listing, keep the unmodified partial sample
+as the first argument to \code{\link[=execute]{execute()}} and pass the expanded plain object only
+as its frame; restoring the listing itself is not required. A plain object
+that still carries sample provenance is rejected as the frame of a fresh
+design execution, because that would rerun stage 1.
+
 Other operations strip both class and attributes and are
 not recoverable. Use dplyr alternatives instead:
 \itemize{

@@ -23,10 +23,11 @@ is appropriate for most complex survey designs.}
 
 \item{method}{For two-phase samples, the variance method passed to
 \code{\link[survey:twophase]{survey::twophase()}}. One of \code{"full"}, \code{"approx"}, or \code{"simple"}.
-This argument is ignored for single-phase samples.}
+This argument is only accepted for two-phase samples.}
 }
 \value{
-A \code{survey.design2} object from the survey package.
+A \code{survey.design2} object for single-phase and multistage samples,
+or a \code{twophase}/\code{twophase2} object for two-phase samples.
 }
 \description{
 Creates a \code{\link[survey:svydesign]{survey::svydesign()}} object from a \code{tbl_sample}, using
@@ -87,13 +88,25 @@ linearization (Sarndal et al. 1992, ch. 4.3). In particular, a
 design whose first stage is a census of PSUs correctly attributes
 all variance to the later stages.
 
+Operational execution does not change this classification. For example,
+\code{stage1 <- execute(design, psu_frame, stages = 1)} followed by
+\code{sample <- execute(stage1, listing_frame)} remains one multistage design.
+The partial \code{tbl_sample} stores the same design plus the realized PSU
+selection; the final sample records all executed stages and
+\code{as_svydesign()} calls \code{\link[survey:svydesign]{survey::svydesign()}}, not \code{\link[survey:twophase]{survey::twophase()}}.
+
+A two-phase sample has a different provenance: a \emph{new} phase-2
+\code{sampling_design} is executed with the phase-1 \code{tbl_sample} as its frame,
+for example \code{phase2 <- execute(design2, phase1)}. That execution records a
+previous-phase link, and \code{as_svydesign()} calls \code{\link[survey:twophase]{survey::twophase()}}.
+
 One shape cannot be represented: an unclustered element-sampling
 stage \emph{followed by further stages} is not nested cluster sampling
 (the later selections are conditional on the realized element
 sample, i.e. phase sampling), and \code{as_svydesign()} raises an error.
-Express such designs as two-phase samples instead: execute the
-element stage as its own phase and pipe the result into a second
-\code{\link[=execute]{execute()}} call, which exports via \code{\link[survey:twophase]{survey::twophase()}}.
+Express such designs as two-phase samples instead: execute the element
+stage under its first-phase design, then execute a new second-phase design
+with that sample as its frame. This exports via \code{\link[survey:twophase]{survey::twophase()}}.
 
 Concretely, for a two-stage stratified-cluster design with a final
 element stage, the exported call is equivalent to:

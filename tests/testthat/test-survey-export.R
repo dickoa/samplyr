@@ -129,6 +129,109 @@ test_that("as_svydesign works for multi-stage design", {
   expect_s3_class(svy, "survey.design2")
 })
 
+test_that("operational continuation exports as one multistage design", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    psu = rep(seq_len(6), each = 5),
+    unit = seq_len(30)
+  )
+  design <- sampling_design() |>
+    add_stage("PSUs") |>
+    cluster_by(psu) |>
+    draw(n = 3) |>
+    add_stage("Units") |>
+    draw(n = 2)
+
+  psu_sample <- execute(design, frame, stages = 1, seed = 1)
+  sample <- execute(psu_sample, frame, seed = 2)
+  meta <- attr(sample, "metadata")
+
+  expect_identical(get_design(sample), design)
+  expect_equal(get_stages_executed(sample), c(1L, 2L))
+  expect_false(is.null(meta$continued_from))
+  expect_null(meta$prev_phase)
+  expect_false(samplyr:::survey_phase_info(sample)$is_twophase)
+  expect_equal(sample$.weight, sample$.weight_1 * sample$.weight_2)
+
+  svy <- as_svydesign(sample)
+  expect_s3_class(svy, "survey.design2")
+  expect_false(inherits(svy, c("twophase", "twophase2")))
+  expect_identical(all.vars(svy$call$ids), c("psu", ".id_2"))
+  expect_identical(all.vars(svy$call$fpc), c(".fpc_1", ".fpc_2"))
+})
+
+test_that("same-design partial frame warns but remains a valid new phase", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("tidyr")
+
+  frame <- data.frame(site = seq_len(40))
+  design <- sampling_design() |>
+    add_stage("Sites") |>
+    cluster_by(site) |>
+    draw(frac = 0.5) |>
+    add_stage("People") |>
+    cluster_by(person) |>
+    draw(n = 2)
+
+  stage1 <- execute(design, frame, stages = 1, seed = 1)
+  listing <- tidyr::expand_grid(
+    site = stage1$site,
+    person = seq_len(5)
+  )
+  expect_warning(
+    phase2 <- execute(design, stage1, listing, seed = 2),
+    "partial result of the same design",
+    class = "samplyr_warning_same_design_frame"
+  )
+
+  meta <- attr(phase2, "metadata")
+  expect_false(is.null(meta$prev_phase))
+  expect_true(samplyr:::survey_phase_info(phase2)$is_twophase)
+  expect_equal(unique(stage1$.weight), 2)
+  expect_equal(unique(phase2$.weight_1), 2)
+  expect_equal(unique(phase2$.weight_2), 2.5)
+  expect_equal(unique(phase2$.weight), 10)
+
+  svy <- as_svydesign(phase2, method = "simple")
+  expect_s3_class(svy, "twophase")
+})
+
+test_that("stage continuation preserves an existing phase link", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("tidyr")
+
+  frame <- data.frame(unit = seq_len(60), y = rnorm(60))
+  phase1_design <- sampling_design() |>
+    cluster_by(unit) |>
+    draw(n = 30)
+  phase1 <- execute(phase1_design, frame, seed = 1)
+
+  phase2_design <- sampling_design() |>
+    add_stage("Units") |>
+    cluster_by(unit) |>
+    draw(n = 20) |>
+    add_stage("Subunits") |>
+    cluster_by(subunit) |>
+    draw(n = 2)
+  phase2_stage1 <- execute(
+    phase2_design, phase1, stages = 1, seed = 2
+  )
+  listing <- tidyr::expand_grid(
+    unit = phase2_stage1$unit,
+    subunit = seq_len(4)
+  )
+  phase2 <- execute(phase2_stage1, listing, seed = 3)
+  meta <- attr(phase2, "metadata")
+
+  expect_false(is.null(meta$continued_from))
+  expect_false(is.null(meta$prev_phase))
+  expect_true(samplyr:::survey_phase_info(phase2)$is_twophase)
+
+  svy <- as_svydesign(phase2, method = "simple")
+  expect_s3_class(svy, "twophase")
+})
+
 test_that("as_svrepdesign produces valid replicate survey object", {
   skip_if_not_installed("survey")
 

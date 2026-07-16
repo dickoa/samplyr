@@ -14,9 +14,10 @@
 #'   is appropriate for most complex survey designs.
 #' @param method For two-phase samples, the variance method passed to
 #'   [survey::twophase()]. One of `"full"`, `"approx"`, or `"simple"`.
-#'   This argument is ignored for single-phase samples.
+#'   This argument is only accepted for two-phase samples.
 #'
-#' @return A `survey.design2` object from the survey package.
+#' @return A `survey.design2` object for single-phase and multistage samples,
+#'   or a `twophase`/`twophase2` object for two-phase samples.
 #'
 #' @details
 #' The conversion maps samplyr's design specification to the arguments
@@ -70,13 +71,25 @@
 #' design whose first stage is a census of PSUs correctly attributes
 #' all variance to the later stages.
 #'
+#' Operational execution does not change this classification. For example,
+#' `stage1 <- execute(design, psu_frame, stages = 1)` followed by
+#' `sample <- execute(stage1, listing_frame)` remains one multistage design.
+#' The partial `tbl_sample` stores the same design plus the realized PSU
+#' selection; the final sample records all executed stages and
+#' `as_svydesign()` calls [survey::svydesign()], not [survey::twophase()].
+#'
+#' A two-phase sample has a different provenance: a *new* phase-2
+#' `sampling_design` is executed with the phase-1 `tbl_sample` as its frame,
+#' for example `phase2 <- execute(design2, phase1)`. That execution records a
+#' previous-phase link, and `as_svydesign()` calls [survey::twophase()].
+#'
 #' One shape cannot be represented: an unclustered element-sampling
 #' stage *followed by further stages* is not nested cluster sampling
 #' (the later selections are conditional on the realized element
 #' sample, i.e. phase sampling), and `as_svydesign()` raises an error.
-#' Express such designs as two-phase samples instead: execute the
-#' element stage as its own phase and pipe the result into a second
-#' [execute()] call, which exports via [survey::twophase()].
+#' Express such designs as two-phase samples instead: execute the element
+#' stage under its first-phase design, then execute a new second-phase design
+#' with that sample as its frame. This exports via [survey::twophase()].
 #'
 #' Concretely, for a two-stage stratified-cluster design with a final
 #' element stage, the exported call is equivalent to:

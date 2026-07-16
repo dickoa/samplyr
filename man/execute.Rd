@@ -7,14 +7,20 @@
 execute(.data, ..., stages = NULL, seed = NULL, panels = NULL, reps = NULL)
 }
 \arguments{
-\item{.data}{A \code{sampling_design} object, or a \code{tbl_sample} object
-for continuation (multi-phase or multi-stage with separate frames).}
+\item{.data}{A \code{sampling_design} object to start a new execution, or a
+partially executed \code{tbl_sample} to continue the remaining stages of its
+stored design.}
 
 \item{...}{Data frame(s) to sample from. For single-stage designs, provide
 one frame. For multi-stage designs with separate frames, provide frames
-in stage order.}
+in stage order. Passing a \code{tbl_sample} here while \code{.data} is a new
+\code{sampling_design} starts a new sampling phase; it does not continue the
+stages stored in that sample.}
 
 \item{stages}{Integer vector specifying which stage(s) to execute.
+From a \code{sampling_design}, the vector must start at stage 1; this is how
+an operational workflow stops after its first contiguous batch of stages.
+From a partial \code{tbl_sample}, it must start at the next unexecuted stage.
 Default (\code{NULL}) executes all remaining stages.}
 
 \item{seed}{Integer random seed for reproducibility.}
@@ -43,8 +49,10 @@ metadata). Contains the selected units plus:
 \item \code{.sample_id}: Unique identifier for each sampled unit
 \item \code{.weight}: Sampling weight (1/probability)
 \item \code{.weight_1}, \code{.weight_2}, ...: Per-stage sampling weights
-(\eqn{1/\pi_i^{(k)}}{1/pi_i(k)}). The product of all per-stage
-weights equals \code{.weight}.
+(\eqn{1/\pi_i^{(k)}}{1/pi_i(k)}) for the stored design. In a
+single-phase multistage sample their product equals \code{.weight}; in a
+multiphase sample \code{.weight} additionally includes earlier-phase
+weights.
 \item \code{.fpc_1}, \code{.fpc_2}, ...: Per-stage finite population correction
 values. The meaning depends on the method and context:
 \itemize{
@@ -120,17 +128,34 @@ When the listing frame is derived from a \code{tbl_sample} (e.g. via
 columns (\code{.weight}, \code{.fpc_1}, etc.) from the earlier stage. These
 are automatically stripped before sampling so they do not collide
 with the metadata carried by the stage-1 result.
+Pass the unmodified stage-1 result as \code{.data} and the expanded listing
+as the frame, as above. Passing the original design as \code{.data} instead
+starts a new execution at stage 1 and treats a \code{tbl_sample} frame as a
+previous sampling phase; it is not a stage continuation. When an intact
+frame is a strict partial result of that same design, \code{execute()} warns
+about this ambiguity but permits it because it is a valid new-phase
+operation and will export through \code{\link[survey:twophase]{survey::twophase()}}.
+If a class-dropping operation such as \code{\link[tidyr:uncount]{tidyr::uncount()}} leaves a plain
+listing with sampling attributes or generated columns, \code{execute()} refuses
+to use it as an ordinary frame for a fresh design execution. It remains a
+valid listing frame when the unmodified partial sample is \code{.data}. To use
+such rows as a genuinely unrelated ordinary frame, remove both the sampling
+attributes and the generated sample columns explicitly.
 }
 
-\subsection{Multi-Phase (Continuation)}{
+\subsection{Multi-Phase Sampling}{
 
-When \code{.data} is a \code{tbl_sample}, sampling continues from that sample:
+To start a new phase, use the new phase's design as \code{.data} and pass the
+previous phase's \code{tbl_sample} as its frame:
 \preformatted{
 phase1 <- design1 |> execute(frame, seed = 42)
 # ... add screening data to phase1 ...
 phase2 <- design2 |> execute(phase1_updated, seed = 123)
 }
-Weights compound automatically in multi-phase designs.
+This is distinct from stage continuation: \code{phase1} is a frame for a new
+design, rather than \code{.data} carrying unexecuted stages of the same design.
+Weights compound automatically in multi-phase designs, and
+\code{\link[=as_svydesign]{as_svydesign()}} exports this path through \code{\link[survey:twophase]{survey::twophase()}}.
 }
 
 }
@@ -168,8 +193,9 @@ export.
 
 \subsection{Multi-phase weight compounding}{
 
-When \code{.data} is itself a \code{tbl_sample} (two-phase sampling), the
-phase-1 inclusion probability is already reflected in the input weights.
+When a new phase's design is executed with a previous-phase \code{tbl_sample}
+as its frame, the phase-1 inclusion probability is already reflected in
+the input weights.
 The final \code{.weight} is the product of phase-1 and phase-2 weights:
 \deqn{w_i = w_i^{(\text{phase 1})} \times w_i^{(\text{phase 2} \mid \text{phase 1})}}
 This ensures the Horvitz--Thompson estimator

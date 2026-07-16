@@ -999,7 +999,7 @@ test_that("internal columns from phase 1 do not collide with phase 2", {
   expect_equal(sum(grepl("^\\.fpc_1", names(phase2))), 1)
 })
 
-test_that("as.data.frame on phase 1 disables multiphase compounding", {
+test_that("dropping the sample class does not silently disable provenance", {
   frame <- data.frame(id = 1:200, x = rnorm(200))
 
   phase1 <- sampling_design() |>
@@ -1009,9 +1009,23 @@ test_that("as.data.frame on phase 1 disables multiphase compounding", {
   phase1_plain <- as.data.frame(phase1)
   expect_false(is_tbl_sample(phase1_plain))
 
-  phase2 <- sampling_design() |>
-    draw(n = 20) |>
-    execute(phase1_plain, seed = 123)
+  phase2_design <- sampling_design() |> draw(n = 20)
+  expect_error(
+    execute(phase2_design, phase1_plain, seed = 123),
+    class = "samplyr_error_stripped_sample_frame"
+  )
+
+  # Treating those rows as a genuinely ordinary frame requires an explicit
+  # opt-out: remove both provenance attributes and generated sample columns.
+  ordinary_frame <- phase1_plain
+  attr(ordinary_frame, "design") <- NULL
+  attr(ordinary_frame, "stages_executed") <- NULL
+  attr(ordinary_frame, "seed") <- NULL
+  attr(ordinary_frame, "metadata") <- NULL
+  internal <- samplyr:::samplyr_internal_cols(ordinary_frame)
+  ordinary_frame[internal] <- NULL
+
+  phase2 <- execute(phase2_design, ordinary_frame, seed = 123)
 
   # No compounding — just phase 2 weight (50/20 = 2.5)
   expect_equal(unique(phase2$.weight), 2.5)

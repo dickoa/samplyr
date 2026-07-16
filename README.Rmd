@@ -194,10 +194,23 @@ selected_eas_list <- selected_eas |>
   mutate(hh_id = row_number())
 
 # Execute stage 2
-final_sample <- design |>
+final_sample <- selected_eas |>
   execute(selected_eas_list, seed = 2)
 final_sample
 ```
+
+`selected_eas` still contains `design` plus the realized stage-1 selection.
+Using it as the first argument continues that same multistage design; the
+expanded listing is only the candidate frame for stage 2. Starting from a new
+design with a prior `tbl_sample` as its frame instead denotes a new sampling
+phase.
+
+If `tidyr::uncount()` or another operation drops the listing's `tbl_sample`
+class, keep using that plain object as the second argument above. `execute()`
+recognizes its inherited sampling attributes and generated columns and refuses
+to run it as a fresh frame from `design`, which would silently rerun stage 1.
+Passing the intact `selected_eas` back as a frame of `design` also warns: that
+call is supported as a new sampling phase, but it is not stage continuation.
 
 ## Selection Methods
 

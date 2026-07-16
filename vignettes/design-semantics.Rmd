@@ -158,9 +158,9 @@ When `prn` is specified, the permanent random numbers are passed through to `son
 3. The selection algorithm from `draw()` is invoked via `sondage`.
 4. The `.weight`, `.fpc`, `.draw`, and `.certainty` columns are computed and suffixed with the stage number.
 
-**Partial execution.** `execute(stages = 1)` runs only the first stage, returning a `tbl_sample`. Piping this result into a second `execute()` call continues from the next unexecuted stage, using the first-stage result as the frame. This pattern supports operational workflows where second-stage listing happens after first-stage fieldwork.
+**Partial execution.** `execute(design, psu_frame, stages = 1)` runs only the first stage and returns a `tbl_sample`. That object stores both the unchanged design and the realized PSU selection. Use it as the first argument of the later call and supply the new listing as the frame: `execute(psu_sample, listing_frame)`. Execution resumes at the next unexecuted stage, carries forward the PSU weights and FPC, and remains one multistage design. The `stages` argument may select any initial contiguous batch beginning at stage 1; on a partial `tbl_sample`, it may select the next contiguous batch. Omitting it executes all remaining stages.
 
-**Two-phase sampling.** When the input to `execute()` is itself a `tbl_sample` (from a prior phase), samplyr compounds the phase-1 and phase-2 weights multiplicatively. The conditional phase-2 weight is computed at survey export time.
+**Two-phase sampling.** A new phase starts with a new design: `execute(design2, phase1_sample)`. Here the phase-1 `tbl_sample` is the frame argument, not the execution object. samplyr records a previous-phase link and compounds the phase-1 and phase-2 weights multiplicatively. The conditional phase-2 weight is computed at survey export time. Thus `execute(psu_sample, listing_frame)` means “continue this design's stages,” whereas `execute(new_design, prior_sample)` means “sample a new phase.”
 
 ## Weight compounding across stages
 
@@ -193,8 +193,7 @@ all.equal(two_stage$.weight,
           two_stage$.weight_1 * two_stage$.weight_2)
 ```
 
-**Two-phase.** When a `tbl_sample` from phase 1 is piped into `execute()` for phase 2, the phase-1 weight is stored internally and multiplied into
-the final `.weight`. The conditional phase-2 weight \(w_{\text{cond}} = w_{\text{overall}} / w_{\text{phase 1}}\) is computed during survey export for use with `survey::twophase()`.
+**Two-phase.** When a new phase-2 design is executed with the phase-1 `tbl_sample` as its frame, the phase-1 weight is stored internally and multiplied into the final `.weight`. The conditional phase-2 weight \(w_{\text{cond}} = w_{\text{overall}} / w_{\text{phase 1}}\) is computed during survey export for use with `survey::twophase()`.
 
 ## Finite population corrections
 
@@ -241,7 +240,7 @@ bootstrap approximation described below.
 
 ### 1. Element sampling before later stages
 
-An unclustered element-sampling stage followed by further stages is not nested cluster sampling: the later selections operate on the realized element sample, not within larger units, so there is no hierarchy for the multi-stage variance recursion (or for replicate-weight resampling) to use. This is phase sampling. `as_svydesign()` raises an error for this shape and the supported path is a two-phase sample: execute the element stage as its own phase, pipe the result into a second `execute()` call, and export with `as_svydesign()`, which uses `survey::twophase()`. A *final* unclustered stage is fully supported: it is exported with a synthesized row-identity `ids` term and its own FPC.
+An unclustered element-sampling stage followed by further stages is not nested cluster sampling: the later selections operate on the realized element sample, not within larger units, so there is no hierarchy for the multi-stage variance recursion (or for replicate-weight resampling) to use. This is phase sampling. `as_svydesign()` raises an error for this shape and the supported path is a two-phase sample: execute the element stage under its first-phase design, execute a new second-phase design with that sample as its frame, and export with `as_svydesign()`, which uses `survey::twophase()`. A *final* unclustered stage is fully supported: it is exported with a synthesized row-identity `ids` term and its own FPC.
 
 ### 2. Joint inclusion probabilities
 

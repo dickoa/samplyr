@@ -102,21 +102,21 @@ design <- sampling_design(title = "Gambia bed nets") |>
   add_stage() |>
     draw(n = 6)
 design
-#> ── Sampling Design: Gambia bed nets ────────────────────────────────────────────
+#> ── Sampling Design: Gambia bed nets ────────────────────────────────────────
 #> 
 #> ℹ 3 stages
 #> 
-#> ── Stage 1 ─────────────────────────────────────────────────────────────────────
+#> ── Stage 1 ─────────────────────────────────────────────────────────────────
 #> • Strata: region
 #> • Cluster: district
 #> • Draw: n = 5 (per stratum), method = pps_brewer, mos = population
 #> 
-#> ── Stage 2 ─────────────────────────────────────────────────────────────────────
+#> ── Stage 2 ─────────────────────────────────────────────────────────────────
 #> • Strata: phc
 #> • Cluster: village
 #> • Draw: n = 2 (per stratum), method = pps_brewer, mos = population
 #> 
-#> ── Stage 3 ─────────────────────────────────────────────────────────────────────
+#> ── Stage 3 ─────────────────────────────────────────────────────────────────
 #> • Draw: n = 6, method = srswor
 ```
 
@@ -366,12 +366,8 @@ selected_eas_list <- selected_eas |>
   mutate(hh_id = row_number())
 
 # Execute stage 2
-final_sample <- design |>
+final_sample <- selected_eas |>
   execute(selected_eas_list, seed = 2)
-#> Warning: The frame sample was modified after execution (rows changed).
-#> ℹ Its weights and design metadata are used as-is for the new selection.
-#> ℹ If rows were removed to define a subpopulation, prefer restricting the frame
-#>   before executing.
 final_sample
 #> # A tbl_sample: 100 × 21
 #> # Weights:      38147.25 [35714.84, 40579.66]
@@ -393,6 +389,20 @@ final_sample
 #> #   .sample_id <int>, .stage <int>, .weight_2 <dbl>, .fpc_2 <int>,
 #> #   .weight_1 <dbl>, .fpc_1 <int>, .certainty_1 <lgl>
 ```
+
+`selected_eas` still contains `design` plus the realized stage-1
+selection. Using it as the first argument continues that same multistage
+design; the expanded listing is only the candidate frame for stage 2.
+Starting from a new design with a prior `tbl_sample` as its frame
+instead denotes a new sampling phase.
+
+If `tidyr::uncount()` or another operation drops the listing’s
+`tbl_sample` class, keep using that plain object as the second argument
+above. `execute()` recognizes its inherited sampling attributes and
+generated columns and refuses to run it as a fresh frame from `design`,
+which would silently rerun stage 1. Passing the intact `selected_eas`
+back as a frame of `design` also warns: that call is supported as a new
+sampling phase, but it is not stage continuation.
 
 ## Selection Methods
 
@@ -796,15 +806,15 @@ Weights compound automatically across phases.
 
 ``` r
 summary(strata_smpl)
-#> ── Sample Summary ──────────────────────────────────────────────────────────────
+#> ── Sample Summary ──────────────────────────────────────────────────────────
 #> 
 #> ℹ n = 300 | stages = 1/1 | seed = 12
 #> 
-#> ── Design: Stage 1 ─────────────────────────────────────────────────────────────
+#> ── Design: Stage 1 ─────────────────────────────────────────────────────────
 #> • Strata: region (proportional)
 #> • Method: srswor
 #> 
-#> ── Allocation: Stage 1 ─────────────────────────────────────────────────────────
+#> ── Allocation: Stage 1 ─────────────────────────────────────────────────────
 #>   region             N_h    n_h  f_h   
 #>   Boucle du Mouhoun  5009   34   0.0068
 #>   Cascades           2508   17   0.0068
@@ -822,7 +832,7 @@ summary(strata_smpl)
 #>                      ─────  ───  ──────
 #>   Total              44570  300  0.0067
 #> 
-#> ── Weights ─────────────────────────────────────────────────────────────────────
+#> ── Weights ─────────────────────────────────────────────────────────────────
 #> • Range: [146.5, 151.22]
 #> • Mean:  148.57 · CV: 0.01
 #> • DEFF:  1 · n_eff: 300
@@ -839,11 +849,11 @@ bias, standard-error calibration, and coverage.
 
 Derived and synthetic sampling frames for learning and testing:
 
-| Dataset           | Description                            | Rows    |
-|-------------------|----------------------------------------|---------|
-| `bfa_eas`         | Household budget and living-standards EA frame (Burkina Faso) | 44,570  |
-| `zwe_eas`         | Demographic, health, and child-indicator EA frame (Zimbabwe)   | 107,250 |
-| `ken_enterprises` | Establishment survey frame (Kenya)     | 17,004  |
+| Dataset | Description | Rows |
+|----|----|----|
+| `bfa_eas` | Household budget and living-standards EA frame (Burkina Faso) | 44,570 |
+| `zwe_eas` | Demographic, health, and child-indicator EA frame (Zimbabwe) | 107,250 |
+| `ken_enterprises` | Establishment survey frame (Kenya) | 17,004 |
 
 Plus auxiliary data: `bfa_eas_variance`, `bfa_eas_cost`
 

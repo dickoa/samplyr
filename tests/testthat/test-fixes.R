@@ -755,7 +755,7 @@ test_that("base merge strips class and attributes", {
   expect_error(as_tbl_sample(result), "sampling attributes")
 })
 
-test_that("as_tbl_sample works with tidyr::uncount()", {
+test_that("an expanded listing is accepted as a continuation frame", {
   skip_if_not_installed("tidyr")
 
   frame <- test_frame()
@@ -774,18 +774,55 @@ test_that("as_tbl_sample works with tidyr::uncount()", {
   expect_false(is_tbl_sample(listing))
   expect_true(!is.null(attr(listing, "design")))
 
-  restored <- as_tbl_sample(listing)
-  expect_s3_class(restored, "tbl_sample")
-  # The expanded listing no longer matches its executed realization;
-  # integrity verification marks it on restore, and executing a design
-  # on it (a new-phase flow) warns that its weights are used as-is.
-  expect_identical(samplyr:::sample_modifications(restored), "rows")
+  expect_error(
+    design |> execute(listing, seed = 2),
+    class = "samplyr_error_stripped_sample_frame"
+  )
 
-  expect_warning(
-    final <- design |> execute(restored, seed = 2),
-    "modified after execution"
+  signature_only <- listing
+  attr(signature_only, "design") <- NULL
+  attr(signature_only, "stages_executed") <- NULL
+  attr(signature_only, "seed") <- NULL
+  attr(signature_only, "metadata") <- NULL
+  expect_error(
+    design |> execute(signature_only, seed = 2),
+    "For operational multistage sampling",
+    class = "samplyr_error_stripped_sample_frame"
+  )
+
+  # The class-dropped object is valid as the new listing frame when the clean
+  # partial sample supplies the design and realized stage-1 state.
+  expect_no_warning(
+    final <- stage1 |> execute(listing, seed = 2)
   )
   expect_s3_class(final, "tbl_sample")
   expect_equal(get_stages_executed(final), c(1L, 2L))
   expect_true(all(final$.weight > 0))
+
+  restored <- as_tbl_sample(listing)
+  expect_s3_class(restored, "tbl_sample")
+  # The expanded listing no longer matches its executed realization;
+  # integrity verification marks it on restore. In a stage continuation,
+  # however, it is a new listing frame: stage-1 weights come from the clean
+  # stage1 input and the listing's inherited sample columns are stripped.
+  expect_identical(samplyr:::sample_modifications(restored), "rows")
+
+  # Starting again from the design denotes a new phase. When the frame came
+  # from a partial execution of that same design, point to the continuation
+  # form instead of showing only the generic modified-sample warning.
+  expect_warning(
+    design |> execute(restored, seed = 2),
+    "continue from the unmodified partial sample"
+  )
+})
+
+test_that("a lone user weight column is not sample provenance", {
+  frame <- data.frame(id = seq_len(20), .weight = rep(1, 20))
+
+  expect_false(samplyr:::looks_like_stripped_tbl_sample(frame))
+  expect_no_error(
+    sampling_design() |>
+      draw(n = 5) |>
+      execute(frame, seed = 1)
+  )
 })

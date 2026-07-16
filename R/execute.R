@@ -3,12 +3,18 @@
 #' `execute()` runs a sampling design against one or more data frames,
 #' producing a sampled dataset with appropriate weights and metadata.
 #'
-#' @param .data A `sampling_design` object, or a `tbl_sample` object
-#'   for continuation (multi-phase or multi-stage with separate frames).
+#' @param .data A `sampling_design` object to start a new execution, or a
+#'   partially executed `tbl_sample` to continue the remaining stages of its
+#'   stored design.
 #' @param ... Data frame(s) to sample from. For single-stage designs, provide
 #'   one frame. For multi-stage designs with separate frames, provide frames
-#'   in stage order.
+#'   in stage order. Passing a `tbl_sample` here while `.data` is a new
+#'   `sampling_design` starts a new sampling phase; it does not continue the
+#'   stages stored in that sample.
 #' @param stages Integer vector specifying which stage(s) to execute.
+#'   From a `sampling_design`, the vector must start at stage 1; this is how
+#'   an operational workflow stops after its first contiguous batch of stages.
+#'   From a partial `tbl_sample`, it must start at the next unexecuted stage.
 #'   Default (`NULL`) executes all remaining stages.
 #' @param seed Integer random seed for reproducibility.
 #' @param panels Integer number of rotation groups (panels) to partition the
@@ -32,8 +38,10 @@
 #'   - `.sample_id`: Unique identifier for each sampled unit
 #'   - `.weight`: Sampling weight (1/probability)
 #'   - `.weight_1`, `.weight_2`, ...: Per-stage sampling weights
-#'     (\eqn{1/\pi_i^{(k)}}{1/pi_i(k)}). The product of all per-stage
-#'     weights equals `.weight`.
+#'     (\eqn{1/\pi_i^{(k)}}{1/pi_i(k)}) for the stored design. In a
+#'     single-phase multistage sample their product equals `.weight`; in a
+#'     multiphase sample `.weight` additionally includes earlier-phase
+#'     weights.
 #'   - `.fpc_1`, `.fpc_2`, ...: Per-stage finite population correction
 #'     values. The meaning depends on the method and context:
 #'     - **Equal-probability WOR** (srswor, systematic): \eqn{N_h} (stratum
@@ -96,15 +104,32 @@
 #' columns (`.weight`, `.fpc_1`, etc.) from the earlier stage. These
 #' are automatically stripped before sampling so they do not collide
 #' with the metadata carried by the stage-1 result.
+#' Pass the unmodified stage-1 result as `.data` and the expanded listing
+#' as the frame, as above. Passing the original design as `.data` instead
+#' starts a new execution at stage 1 and treats a `tbl_sample` frame as a
+#' previous sampling phase; it is not a stage continuation. When an intact
+#' frame is a strict partial result of that same design, `execute()` warns
+#' about this ambiguity but permits it because it is a valid new-phase
+#' operation and will export through [survey::twophase()].
+#' If a class-dropping operation such as [tidyr::uncount()] leaves a plain
+#' listing with sampling attributes or generated columns, `execute()` refuses
+#' to use it as an ordinary frame for a fresh design execution. It remains a
+#' valid listing frame when the unmodified partial sample is `.data`. To use
+#' such rows as a genuinely unrelated ordinary frame, remove both the sampling
+#' attributes and the generated sample columns explicitly.
 #'
-#' ### Multi-Phase (Continuation)
-#' When `.data` is a `tbl_sample`, sampling continues from that sample:
+#' ### Multi-Phase Sampling
+#' To start a new phase, use the new phase's design as `.data` and pass the
+#' previous phase's `tbl_sample` as its frame:
 #' \preformatted{
 #' phase1 <- design1 |> execute(frame, seed = 42)
 #' # ... add screening data to phase1 ...
 #' phase2 <- design2 |> execute(phase1_updated, seed = 123)
 #' }
-#' Weights compound automatically in multi-phase designs.
+#' This is distinct from stage continuation: `phase1` is a frame for a new
+#' design, rather than `.data` carrying unexecuted stages of the same design.
+#' Weights compound automatically in multi-phase designs, and
+#' [as_svydesign()] exports this path through [survey::twophase()].
 #'
 #' ## Weight Calculation
 #'
@@ -138,8 +163,9 @@
 #'
 #' ### Multi-phase weight compounding
 #'
-#' When `.data` is itself a `tbl_sample` (two-phase sampling), the
-#' phase-1 inclusion probability is already reflected in the input weights.
+#' When a new phase's design is executed with a previous-phase `tbl_sample`
+#' as its frame, the phase-1 inclusion probability is already reflected in
+#' the input weights.
 #' The final `.weight` is the product of phase-1 and phase-2 weights:
 #' \deqn{w_i = w_i^{(\text{phase 1})} \times w_i^{(\text{phase 2} \mid \text{phase 1})}}
 #' This ensures the Horvitz--Thompson estimator
@@ -240,6 +266,43 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
     }
   }
 
+  # A class-dropping operation such as tidyr::uncount() can leave both the
+  # sample attributes and all generated design columns on an apparently plain
+  # frame. Starting from a design would otherwise rerun stage 1 silently.
+  if (is_sampling_design(.data)) {
+    for (i in seq_along(frames)) {
+      frame <- frames[[i]]
+      if (looks_like_stripped_tbl_sample(frame)) {
+        has_provenance <-
+          is_sampling_design(attr(frame, "design")) &&
+            !is_null(attr(frame, "stages_executed"))
+
+        abort_samplyr(
+          c(
+            "Frame {i} looks like a {.cls tbl_sample} whose class was dropped.",
+            "x" = "Executing it from a {.cls sampling_design} would start a
+                   fresh execution at stage 1 and could silently produce
+                   incorrect weights.",
+            "i" = "For operational multistage sampling, continue from the
+                   unmodified partial sample and pass this object only as
+                   the listing frame:
+                   {.code partial_sample |> execute(listing_frame)}.",
+            if (has_provenance) c(
+              "i" = "For a genuinely new sampling phase, restore the previous
+                     sample explicitly with {.fn as_tbl_sample} before using
+                     it as the new design's frame."
+            ),
+            "i" = "Generated columns such as {.field .weight},
+                   {.field .weight_k}, {.field .fpc_k},
+                   {.field .sample_id}, and {.field .stage} are evidence of
+                   an earlier execution."
+          ),
+          class = "samplyr_error_stripped_sample_frame"
+        )
+      }
+    }
+  }
+
   if (!is_null(seed)) {
     if (length(seed) != 1 || !is_integerish_numeric(seed)) {
       cli_abort("{.arg seed} must be a single integer")
@@ -281,11 +344,43 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
     # metadata are taken at face value for the new selection.
     warn_if_modified <- function(obj, role) {
       status <- sample_realization_status(obj)
+      same_partial_design <-
+        identical(role, "frame") &&
+          is_sampling_design(.data) &&
+          identical(get_design(obj), .data) &&
+          length(get_stages_executed(obj)) < length(.data$stages)
+
+      stage_hint <- if (same_partial_design) {
+        c(
+          "i" = "Passing a partial result as a frame starts a new sampling
+                 phase and restarts the design at stage 1; it does not
+                 continue with only the remaining stages.",
+          "i" = "For operational multistage sampling, continue from the
+                 unmodified partial sample and pass the listing as its frame:
+                 {.code partial_sample |> execute(listing_frame)}."
+        )
+      } else {
+        character(0)
+      }
+
+      if (same_partial_design && status$ok) {
+        cli_warn(
+          c(
+            "The frame sample is a partial result of the same design.",
+            stage_hint,
+            "i" = "If a new phase is intended, this execution is valid and
+                   will be exported through {.fn survey::twophase}."
+          ),
+          class = "samplyr_warning_same_design_frame"
+        )
+      }
+
       if (!status$ok) {
         mods <- status$mods
         cli_warn(c(
           "The {role} sample was modified after execution ({.field {mods}} changed).",
           "i" = "Its weights and design metadata are used as-is for the new selection.",
+          stage_hint,
           "i" = "If rows were removed to define a subpopulation, prefer restricting the frame before executing."
         ))
       }
@@ -769,6 +864,11 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
       executed_at = Sys.time(),
       panels = panels,
       continued_from = attr(sample, "metadata"),
+      # A stage continuation remains in the same phase. If that phase was
+      # itself sampled from an earlier phase, retain the phase link so survey
+      # export does not mistake the completed multistage phase for a
+      # single-phase design.
+      prev_phase = attr(sample, "metadata")$prev_phase,
       execution_environment = execution_environment,
       integrity = sample_integrity_record(
         current_sample, design, c(executed, stages)
@@ -973,6 +1073,7 @@ execute_replicated_continuation <- function(sample, frames, stages, seed,
         as.character(rep_ids)
       ),
       continued_from = attr(sample, "metadata"),
+      prev_phase = attr(sample, "metadata")$prev_phase,
       execution_environment = execution_environment,
       integrity = {
         integrity <- sample_integrity_record(
@@ -1237,7 +1338,8 @@ find_carry_forward_cols <- function(previous_sample) {
     grep("^\\.draw_\\d+$", nms, value = TRUE),
     grep("^\\.fpc_\\d+$", nms, value = TRUE),
     grep("^\\.certainty_\\d+$", nms, value = TRUE),
-    intersect(".panel", nms)
+    intersect(".panel", nms),
+    intersect("._prev_phase_weight", nms)
   )
 }
 
@@ -1383,6 +1485,11 @@ compound_stage_weights <- function(
   all_prior_cluster_vars = character(0)
 ) {
   carry_cols <- find_carry_forward_cols(previous_sample)
+  # A repeated/shared phase frame may already put this transient column on
+  # the current result. Do not join a second copy with .x/.y suffixes.
+  if ("._prev_phase_weight" %in% names(result)) {
+    carry_cols <- setdiff(carry_cols, "._prev_phase_weight")
+  }
   join_vars <- find_compound_join_vars(
     result, previous_sample, previous_stage_spec, all_prior_cluster_vars
   )

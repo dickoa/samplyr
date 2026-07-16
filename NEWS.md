@@ -184,6 +184,22 @@ Initial release.
   and remains supported. Two-phase export warns when the phase-1 sample
   was modified before phase-2 execution, since `survey::twophase()`
   treats the current phase-1 rows as the complete phase-1 sample.
+* Class-stripped sample guard: a plain data frame that retains sampling
+  provenance or the full bundle of generated execution columns is rejected as
+  the frame of a fresh design execution. This prevents operations such as
+  `tidyr::uncount()` from silently dropping `tbl_sample`, rerunning stage 1 on
+  an expanded listing, and producing weights for the listing rather than the
+  population. The same object remains valid as a later-stage listing frame
+  when the clean partial sample is used as the continuation input.
+* Passing an intact strict-prefix result back as the frame of its own design
+  now warns even when the sample is pristine. The diagnostic explains that
+  this starts a new phase and restarts the design at stage 1, points to the
+  stage-continuation
+  form, and notes that an intentional new phase remains supported through
+  `survey::twophase()`.
+* Earlier-phase weights now carry through every stage when a multistage new
+  phase is executed against separate frames in one call. The final weight is
+  the product of the previous-phase weight and every conditional stage weight.
 * Integrity record: `execute()` stores the row count and an
   order-invariant hash of the protected columns (weights, design
   metadata, and the executed stages' strata/cluster variables). The

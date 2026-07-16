@@ -272,6 +272,12 @@ is_tbl_sample <- function(x) {
 #' - `tibble::as_tibble()`
 #' - `as.data.frame()`
 #'
+#' For an operational multistage listing, keep the unmodified partial sample
+#' as the first argument to [execute()] and pass the expanded plain object only
+#' as its frame; restoring the listing itself is not required. A plain object
+#' that still carries sample provenance is rejected as the frame of a fresh
+#' design execution, because that would rerun stage 1.
+#'
 #' Other operations strip both class and attributes and are
 #' not recoverable. Use dplyr alternatives instead:
 #' - `base::merge()` -- use `dplyr::left_join()` etc.

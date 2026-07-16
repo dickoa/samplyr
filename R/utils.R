@@ -202,6 +202,36 @@ check_single_replicate <- function(x, fn_name, call = caller_env()) {
 samplyr_internal_col_pattern <-
   "^\\.(weight|fpc|sample_id|stage|draw|certainty|replicate|panel)"
 
+#' Detect a tbl_sample whose class was stripped
+#'
+#' Some tidyr and base operations preserve samplyr's attributes and generated
+#' columns while dropping only the tbl_sample class. Such an object must not be
+#' accepted as an ordinary population frame for a fresh design execution: that
+#' would silently rerun stage 1 and treat inherited weights as frame variables.
+#'
+#' Attributes are definitive evidence. The column fallback deliberately
+#' requires the full core/stage signature so an unrelated frame with a single
+#' conventional `.weight` column is not rejected.
+#' @noRd
+looks_like_stripped_tbl_sample <- function(x) {
+  if (is_tbl_sample(x) || !is.data.frame(x)) {
+    return(FALSE)
+  }
+
+  has_provenance <-
+    is_sampling_design(attr(x, "design")) &&
+      !is_null(attr(x, "stages_executed")) &&
+      is.list(attr(x, "metadata"))
+
+  nms <- names(x)
+  has_internal_signature <-
+    all(c(".weight", ".sample_id", ".stage") %in% nms) &&
+      any(grepl("^\\.weight_[0-9]+$", nms)) &&
+      any(grepl("^\\.fpc_[0-9]+$", nms))
+
+  has_provenance || has_internal_signature
+}
+
 #' Columns whose values the stored design depends on
 #'
 #' Internal metadata columns plus the stratification and clustering
