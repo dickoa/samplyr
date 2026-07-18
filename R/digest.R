@@ -1330,8 +1330,19 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #' Allocation is reported as three quantities that only coincide for
 #' fixed-size designs: `n_target` (requested), `n_expected` (sum of
 #' resolved chances), and `n_realized` (selected units or
-#' occurrences). For replicated executions where realized allocation
-#' varies by replicate, `n_realized` may be `NA` at the pool level.
+#' occurrences). For replicated executions, allocation quantities are
+#' per replicate: when the realized allocation is identical across
+#' replicates the common value is reported, and when it varies
+#' (random-size designs) `n_realized` and `take_rate` are `NA` rather
+#' than a guess. Unit detail spans the stacked replicates:
+#' `is_selected` marks units selected in at least one replicate and
+#' `n_hits` counts occurrences across all replicates, so a
+#' without-replacement unit can show `n_hits > 1`. The per-replicate
+#' trace is the `replicate` column of the digest's selected units.
+#' A replicated multi-stage execution records only the stage prefix
+#' shared by every replicate: later-stage pools hang off each
+#' replicate's own selected parents, so those stages are not part of
+#' the manifest and `frame_summary()` says so.
 #'
 #' A digest whose sample was modified after execution (rows, weights,
 #' or design columns changed) is reported as invalidated and refused:
@@ -1393,6 +1404,31 @@ frame_summary <- function(
 
   stages <- digest$stages
   stage_ids <- vapply(stages, function(s) s$stage_id, integer(1))
+
+  # A replicated multi-stage execution records only the stage prefix
+  # shared by every replicate: later-stage pools hang off each
+  # replicate's own selected parents. Say so instead of silently
+  # reporting fewer stages than were executed.
+  dropped <- if (is_tbl_sample(x)) {
+    setdiff(get_stages_executed(x), stage_ids)
+  } else {
+    integer(0)
+  }
+  replicated <- is_tbl_sample(x) && has_multiple_replicates(x)
+  if (length(dropped) > 0 && is_null(stage)) {
+    cli::cli_inform(c(
+      "The digest records {cli::qty(length(stage_ids))} stage{?s}
+       {.val {stage_ids}} of the {length(get_stages_executed(x))}
+       executed.",
+      "i" = if (replicated) {
+        "Later stages are replicate-specific, execute with
+         {.code reps = 1} for a full-depth digest."
+      } else {
+        "The remaining stages are not part of this manifest."
+      }
+    ))
+  }
+
   if (!is_null(stage)) {
     if (!is_id_vector(stage) || length(stage) == 0) {
       abort_samplyr("{.arg stage} must be a vector of stage numbers.")
@@ -1403,7 +1439,11 @@ frame_summary <- function(
       abort_samplyr(
         c(
           "Stage {.val {unknown}} not recorded in the frame digest.",
-          "i" = "Recorded stages: {.val {stage_ids}}."
+          "i" = "Recorded stages: {.val {stage_ids}}.",
+          "i" = if (replicated && any(unknown %in% dropped)) {
+            "Later stages are replicate-specific, execute with
+             {.code reps = 1} for a full-depth digest."
+          }
         )
       )
     }

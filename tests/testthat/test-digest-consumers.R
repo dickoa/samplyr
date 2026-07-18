@@ -121,3 +121,93 @@ test_that("pools under different parents keep distinct lines", {
   expect_equal(fs$N, c(3, 3))
   expect_equal(fs$n_realized, c(1, 1))
 })
+
+test_that("frame_summary reports replicated executions per replicate", {
+  # Fixed size: allocation identical across replicates, so the common
+  # per-replicate value is reported, not the stacked total.
+  r <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = 10) |>
+    execute(test_frame, seed = 3, reps = 3)
+  fs <- frame_summary(r)
+  expect_equal(fs$n_realized, 40)
+  expect_equal(fs$n_target, 40)
+  expect_equal(fs$take_rate, 40 / 120)
+  fp <- frame_summary(r, detail = "pool")
+  expect_equal(fp$n_realized, rep(10L, 4))
+  expect_equal(fp$take_rate, rep(1 / 3, 4))
+
+  # Random size varies by replicate: NA rather than a guess, with the
+  # per-replicate expectation kept.
+  b <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(frac = 0.1, method = "bernoulli", on_empty = "silent") |>
+    execute(test_frame, seed = 5, reps = 3)
+  fs <- frame_summary(b)
+  expect_true(is.na(fs$n_target))
+  expect_true(is.na(fs$n_realized))
+  expect_true(is.na(fs$take_rate))
+  expect_equal(fs$n_expected, 12)
+  fp <- frame_summary(b, detail = "pool")
+  expect_true(all(is.na(fp$n_realized)))
+  expect_equal(fp$n_expected, rep(3, 4))
+})
+
+test_that("frame_summary unit detail spans the stacked replicates", {
+  r <- sampling_design() |>
+    draw(n = 10, method = "pps_brewer", mos = mos) |>
+    execute(test_frame, seed = 9, reps = 3, frame_digest = "full")
+  fu <- frame_summary(r, detail = "unit")
+  expect_identical(nrow(fu), 120L)
+  # n_hits counts occurrences across all replicates; is_selected marks
+  # selection in at least one.
+  expect_equal(sum(fu$n_hits), 30)
+  expect_identical(sum(fu$is_selected), 26L)
+  expect_true(all(fu$n_hits[!fu$is_selected] == 0))
+  # A WOR unit drawn by more than one replicate shows n_hits > 1.
+  expect_true(any(fu$n_hits > 1))
+
+  # Cross-check against the per-replicate trace.
+  sel <- samplyr:::get_frame_digest(r)$stages[[1]]$selected
+  expect_identical(sort(unique(sel$replicate)), 1:3)
+  expect_equal(
+    sum(fu$n_hits),
+    nrow(sel)
+  )
+  per_rep <- table(sel$replicate)
+  expect_true(all(per_rep == 10))
+})
+
+test_that("replicated multi-stage digests report the shared stage prefix", {
+  r <- sampling_design() |>
+    add_stage("Clusters") |> stratify_by(stratum) |> cluster_by(cluster) |>
+    draw(n = 2, method = "pps_brewer", mos = mos) |>
+    add_stage("Units") |> draw(n = 3) |>
+    execute(test_frame, seed = 8, reps = 3)
+
+  # Later stages are replicate-specific: the manifest keeps stage 1
+  # and frame_summary states the truncation instead of silently
+  # narrowing.
+  expect_message(
+    fs <- frame_summary(r),
+    "replicate-specific"
+  )
+  expect_identical(fs$stage, 1L)
+  expect_identical(
+    samplyr:::get_frame_digest(r)$status, "partial"
+  )
+
+  expect_error(
+    suppressMessages(frame_summary(r, stage = 2)),
+    "replicate-specific"
+  )
+
+  # One replicate records the full depth, silently.
+  s1 <- sampling_design() |>
+    add_stage("Clusters") |> stratify_by(stratum) |> cluster_by(cluster) |>
+    draw(n = 2, method = "pps_brewer", mos = mos) |>
+    add_stage("Units") |> draw(n = 3) |>
+    execute(test_frame, seed = 8)
+  expect_no_message(fs1 <- frame_summary(s1))
+  expect_identical(fs1$stage, 1:2)
+})
