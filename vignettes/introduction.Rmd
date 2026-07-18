@@ -1015,7 +1015,7 @@ summary(sample)
 
 ### The Frame Digest
 
-Every execution records a frame digest by default: a compact summary of the selection pools and chances the design resolved, with no unit identifiers. The `n/N` line in the printed header and the pool tables in `summary()` come from it, and `frame_summary()` returns it as tibbles. The original frame is not needed:
+Every execution records a frame digest by default: a compact summary of the selection pools and chances the design resolved, with no unit identifiers. The `n/N` line in the printed header and the per-stage realization lines in `summary()` come from it, and `frame_summary()` returns it as tibbles. The original frame is not needed:
 
 ```{r}
 ea_sample <- sampling_design(title = "EA sample") |>

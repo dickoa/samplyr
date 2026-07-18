@@ -79,7 +79,7 @@ test_that("srswor records one constant pool and the frame fingerprint", {
   expect_identical(nrow(p), 1L)
   expect_identical(p$N, 120L)
   expect_equal(p$n_target, 20)
-  expect_equal(p$expected_n, 20)
+  expect_equal(p$n_expected, 20)
   expect_identical(p$n_realized, 20L)
   expect_equal(p$chance, 20 / 120)
   expect_identical(nrow(st$selected), 20L)
@@ -102,7 +102,7 @@ test_that("stratified allocation records the quadruple per stratum pool", {
   expect_setequal(as.character(p$stratum), c("A", "B", "C", "D"))
   expect_identical(p$N, rep(30L, 4))
   expect_equal(p$n_target, rep(10, 4))
-  expect_equal(p$expected_n, rep(10, 4))
+  expect_equal(p$n_expected, rep(10, 4))
   expect_identical(p$n_realized, rep(10L, 4))
   # Frame roles cover the stratification column.
   roles <- d$frames[[1]]$roles
@@ -123,10 +123,10 @@ test_that("row-level PPS compresses to a mean-faithful distribution", {
   dist <- st$chance_distribution
   expect_identical(nrow(dist), 101L)
   expect_identical(sum(dist$n_units), st$pools$N)
-  # The n_units-weighted sum reproduces expected_n exactly.
-  expect_equal(sum(dist$chance * dist$n_units), st$pools$expected_n,
+  # The n_units-weighted sum reproduces n_expected exactly.
+  expect_equal(sum(dist$chance * dist$n_units), st$pools$n_expected,
                tolerance = 1e-10)
-  expect_equal(st$pools$expected_n, 100, tolerance = 1e-8)
+  expect_equal(st$pools$n_expected, 100, tolerance = 1e-8)
   # Selected unit ids are executed-order positions within the pool.
   expect_identical(nrow(st$selected), 100L)
   expect_true(all(st$selected$unit_id >= 1 &
@@ -155,7 +155,7 @@ test_that("random-size stages record no target and the realized size", {
   d <- digest_of(s)
   p <- d$stages[[1]]$pools
   expect_true(is.na(p$n_target))
-  expect_equal(p$expected_n, 12)
+  expect_equal(p$n_expected, 12)
   expect_identical(p$n_realized, nrow(s))
   expect_equal(d$stages[[1]]$pools$chance, 0.1)
 
@@ -177,7 +177,7 @@ test_that("with-replacement stages record expected hits and occurrences", {
   d <- digest_of(s)
   st <- d$stages[[1]]
   expect_identical(st$chance_kind, "expected_hits")
-  expect_equal(st$pools$expected_n, 15, tolerance = 1e-8)
+  expect_equal(st$pools$n_expected, 15, tolerance = 1e-8)
   # One trace row per draw; occurrences count repeat hits.
   expect_identical(nrow(st$selected), 15L)
   expect_identical(st$pools$n_realized, 15L)
@@ -247,7 +247,7 @@ test_that("the unit registry chances reconcile with sample weights", {
   expect_identical(nrow(st1$units), 24L)
   expect_equal(
     sum(st1$units$chance[st1$units$pool_id == 1]),
-    st1$pools$expected_n[1]
+    st1$pools$n_expected[1]
   )
 })
 
@@ -282,70 +282,6 @@ test_that("element-stage parents are absent by design", {
   d <- digest_of(s)
   expect_false(is.null(d))
   expect_true(all(is.na(d$stages[[2]]$pools$parent_unit)))
-})
-
-## Fixture 7: Gambia three-stage reference (structural)
-
-test_that("the Gambia reference design yields the expected scope chain", {
-  gmb_path <- file.path("..", "..", "dev", "gmb_compounds.rda")
-  skip_if_not(
-    file.exists(gmb_path),
-    "Gambia reference fixture is kept in the dev tree only"
-  )
-  load(gmb_path)
-
-  s <- sampling_design() |>
-    add_stage("Districts") |> stratify_by(region) |>
-    cluster_by(district) |>
-    draw(n = 5, method = "pps_systematic", mos = district_pop) |>
-    add_stage("Villages") |> stratify_by(phc) |> cluster_by(village) |>
-    draw(n = 2, method = "pps_systematic", mos = village_pop) |>
-    add_stage("Compounds") |> draw(n = 6) |>
-    execute(gmb_compounds, seed = 1991)
-  expect_identical(nrow(s), 360L)
-
-  # Eligible basis: denominators cover what this realization could
-  # reach. The single universe frame also lets every stage resolve
-  # its unreached pools from the design, so the universe basis has
-  # complete denominators too (the proto20 promise).
-  fs <- frame_summary(s)
-  expect_equal(fs$N, c(36, 278, 2206))
-  expect_equal(fs$n_realized, c(15, 60, 360))
-  expect_equal(fs$n_target, c(15, 60, 360))
-  expect_identical(fs$scope, rep("universe", 3))
-  expect_identical(fs$unit_level, c("cluster", "cluster", "element"))
-
-  fu <- frame_summary(s, scope = "universe")
-  expect_equal(fu$N, c(36, 655, 19344))
-  expect_equal(fu$n_realized, c(15, 60, 360))
-
-  # Stage-2 pools are parent x phc, never merged across parents that
-  # share a stratum label: 30 executed under the 15 selected
-  # districts, the rest design-resolved.
-  d <- digest_of(s)
-  st2 <- d$stages[[2]]
-  executed2 <- st2$pools$chance_status != "design_resolved"
-  expect_identical(sum(executed2), 30L)
-  expect_identical(
-    as.integer(table(st2$pools$parent_unit[executed2])),
-    rep(2L, 15)
-  )
-  # The full village registry, with the 27 whole-take villages the
-  # bare sample cannot know about (stage-3 chance 1).
-  expect_identical(nrow(st2$units), 655L)
-  st3 <- d$stages[[3]]
-  expect_identical(nrow(st3$pools), 655L)
-  expect_identical(sum(st3$pools$chance >= 1 - 1e-9), 27L)
-  # Descendant counts are ultimate frame rows (compounds).
-  st1 <- d$stages[[1]]
-  expect_identical(sum(st1$units$n_descendants), nrow(gmb_compounds))
-  expect_identical(sum(st2$units$n_descendants), nrow(gmb_compounds))
-  sel2_desc <- st2$units$n_descendants[
-    match(st2$selected$unit_id, st2$units$unit_id)
-  ]
-  expect_identical(sum(sel2_desc), 2206L)
-  # The verified sample_row locator maps the trace to the rows.
-  expect_identical(st3$selected$sample_row, 1:360)
 })
 
 ## Fixture 8: on_empty designs (empty pools stay present)
@@ -564,7 +500,7 @@ test_that("custom WOR methods pass their resolved chances through", {
     st$selected$unit_id,
     order(st$units$chance, decreasing = TRUE)[1:10]
   )
-  expect_equal(st$pools$expected_n, 10, tolerance = 1e-8)
+  expect_equal(st$pools$n_expected, 10, tolerance = 1e-8)
 })
 
 test_that("custom WR methods record expected hits", {
@@ -583,7 +519,7 @@ test_that("custom WR methods record expected hits", {
   d <- digest_of(s)
   st <- d$stages[[1]]
   expect_identical(st$chance_kind, "expected_hits")
-  expect_equal(st$pools$expected_n, 12, tolerance = 1e-8)
+  expect_equal(st$pools$n_expected, 12, tolerance = 1e-8)
   expect_identical(nrow(st$selected), 12L)
   expect_true(all(st$selected$occurrence >= 1))
 })
@@ -870,7 +806,8 @@ test_that("spatial stages record coordinate metadata, not coordinates", {
 })
 
 ## Synthetic three-stage reference: same structural assertions as the
-## Gambia fixture, from a frame reproducible in code (helper-fixtures.R)
+## Fixture 7: three-stage reference, from a frame reproducible in
+## code (helper-fixtures.R)
 
 test_that("the synthetic three-stage design yields the expected scope chain", {
   frame <- synth_three_stage_frame()

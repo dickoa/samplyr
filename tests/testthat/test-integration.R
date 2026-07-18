@@ -155,9 +155,9 @@ test_that("Cluster sample workflow", {
   # All students from selected schools should be included
   selected_schools <- unique(result$school_id)
   for (school in selected_schools) {
-    expected_n <- sum(frame$school_id == school)
+    n_expected <- sum(frame$school_id == school)
     actual_n <- sum(result$school_id == school)
-    expect_equal(actual_n, expected_n)
+    expect_equal(actual_n, n_expected)
   }
 })
 

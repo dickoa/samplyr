@@ -286,7 +286,7 @@ test_that("a correctly declared certainty unit passes", {
   d <- digest_fixture_units()
   d$stages[[1]]$units$chance[1] <- 1
   d$stages[[1]]$units$is_certainty[1] <- TRUE
-  d$stages[[1]]$pools$expected_n[1] <- 2.5
+  d$stages[[1]]$pools$n_expected[1] <- 2.5
   expect_no_error(samplyr:::validate_frame_digest(d))
 })
 
@@ -333,23 +333,23 @@ test_that("validator rejects distributions referencing unknown pools", {
   expect_digest_error(d, "broken_link")
 })
 
-## Validator: expected_n consistency
+## Validator: n_expected consistency
 
-test_that("expected_n must match the constant representation", {
+test_that("n_expected must match the constant representation", {
   d <- digest_fixture_constant()
-  d$stages[[1]]$pools$expected_n[1] <- 12
+  d$stages[[1]]$pools$n_expected[1] <- 12
   expect_digest_error(d, "allocation")
 })
 
-test_that("expected_n must match the sum of unit chances", {
+test_that("n_expected must match the sum of unit chances", {
   d <- digest_fixture_units()
-  d$stages[[1]]$pools$expected_n[1] <- 3
+  d$stages[[1]]$pools$n_expected[1] <- 3
   expect_digest_error(d, "allocation")
 })
 
-test_that("expected_n must match the quantile representation loosely", {
+test_that("n_expected must match the quantile representation loosely", {
   d <- digest_fixture_quantiles()
-  d$stages[[1]]$pools$expected_n <- 15
+  d$stages[[1]]$pools$n_expected <- 15
   expect_digest_error(d, "allocation")
 })
 
@@ -365,7 +365,7 @@ test_that("a stage with no selections may omit the trace", {
   d <- digest_fixture_constant()
   d$stages[[1]]$selected <- NULL
   d$stages[[1]]$pools$n_realized <- 0L
-  d$stages[[1]]$pools$expected_n <- 10
+  d$stages[[1]]$pools$n_expected <- 10
   expect_no_error(samplyr:::validate_frame_digest(d))
 })
 
@@ -517,7 +517,7 @@ test_that("stage detail reports the selection chain", {
   expect_s3_class(fs, "tbl_df")
   expect_named(fs, c(
     "stage", "unit_level", "scope", "chance_kind", "probabilities",
-    "storage", "n_pools", "N", "n_target", "expected_n", "n_realized",
+    "storage", "n_pools", "N", "n_target", "n_expected", "n_realized",
     "take_rate"
   ))
   expect_identical(nrow(fs), 1L)
@@ -564,7 +564,7 @@ test_that("stage detail keeps expected and realized sizes distinct", {
   s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_quantiles())
   fs <- frame_summary(s)
   expect_identical(fs$storage, "quantiles")
-  expect_equal(fs$expected_n, 0.085 * 120)
+  expect_equal(fs$n_expected, 0.085 * 120)
   expect_equal(fs$n_realized, 10)
   s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_wr())
   fs <- frame_summary(s)
@@ -633,17 +633,17 @@ test_that("unit detail reports the anonymous unit registry", {
   fs <- frame_summary(s, detail = "unit")
   expect_named(fs, c(
     "stage", "pool_id", "unit_id", "unit_order", "chance",
-    "is_certainty", "n_descendants", "selected", "n_hits"
+    "is_certainty", "n_descendants", "is_selected", "n_hits"
   ))
   # Only stage 1 retained units; stage 2 is constant storage.
   expect_identical(unique(fs$stage), 1L)
   expect_identical(nrow(fs), 24L)
-  expect_identical(sum(fs$selected), 8L)
+  expect_identical(sum(fs$is_selected), 8L)
   expect_identical(
-    fs$unit_id[fs$selected],
+    fs$unit_id[fs$is_selected],
     c(1L, 2L, 7L, 8L, 13L, 14L, 19L, 20L)
   )
-  expect_identical(fs$n_hits[fs$selected], rep(1L, 8))
+  expect_identical(fs$n_hits[fs$is_selected], rep(1L, 8))
   expect_identical(fs$n_descendants, rep(5L, 24))
 })
 
@@ -661,6 +661,6 @@ test_that("unit detail is empty when no stage retained units", {
   expect_identical(nrow(fs), 0L)
   expect_named(fs, c(
     "stage", "pool_id", "unit_id", "unit_order", "chance",
-    "is_certainty", "n_descendants", "selected", "n_hits"
+    "is_certainty", "n_descendants", "is_selected", "n_hits"
   ))
 })

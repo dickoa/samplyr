@@ -346,3 +346,290 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
   }
   n
 }
+
+#' Variance Components from an Executed Sample
+#'
+#' Estimate design-based variance components (B, W, delta, k) from a
+#' `tbl_sample`, for planning the next round with
+#' [svyplan::n_cluster()]. The method extracts everything the
+#' estimation needs from the sample's design columns, applying two
+#' conventions that are easy to get wrong by hand:
+#'
+#' - **Within-PSU weights.** The components are weighted by the
+#'   product of the per-stage weights below stage 1 (`.weight_2`, or
+#'   `.weight_2 * .weight_3`), never the compound `.weight`, whose
+#'   stage-1 factor would overstate every cluster size.
+#' - **Stage-1 selection shares.** For an unequal-probability first
+#'   stage, per-PSU shares are derived from the stage-1 weights and
+#'   normalized to sum to 1 over the sampled PSUs (per stratum when
+#'   the first stage is stratified). For an equal-probability first
+#'   stage the SRS path applies. See the Details of
+#'   [svyplan::varcomp()].
+#'
+#' The decomposition covers the clustered stages plus the sample rows
+#' as elements: one clustered stage gives 2-stage components, two give
+#' 3-stage. Deeper designs are refused; estimate the top stages and
+#' fold the rest into a design effect. With-replacement (WR/PMR)
+#' stages treat each draw as an independent unit, keyed by the
+#' `.draw_k` column as in [as_svydesign()]: a cluster hit twice enters
+#' the decomposition twice, with its share counted per draw. Two-phase samples are refused:
+#' the nested decomposition does not model phase sampling. Certainty
+#' PSUs are refused: self-representing PSUs contribute no between-PSU
+#' variance and belong in their own stratum, so estimate components on
+#' the probability part of the design.
+#'
+#' Variance-component estimation should use this method on the
+#' `tbl_sample` directly, not [as_svydesign()]: the exported design
+#' carries the compound weight and encodes stage probabilities in
+#' fpc conventions that `varcomp` cannot see.
+#'
+#' @param x A `tbl_sample` with at least one executed clustered stage.
+#' @param ... The outcome as a one-sided formula, e.g.
+#'   `varcomp(x, ~y)`, mirroring the survey.design method.
+#' @param strata Optional one-sided formula naming a column to
+#'   estimate per-stratum components by, when the first stage was not
+#'   stratified. Stage-1 design strata are picked up automatically;
+#'   combining them with `strata` is an error, because per-stratum
+#'   components crossed with design strata are ambiguous.
+#'
+#' @return A `svyplan_varcomp` object; pass it as `delta` to
+#'   [svyplan::n_cluster()].
+#'
+#' @examples
+#' # Two-stage sample: 8 of 24 clusters by PPS, 3 persons per cluster
+#' set.seed(7)
+#' frame <- data.frame(
+#'   cl = rep(sprintf("c%02d", 1:24), each = 5),
+#'   size = rep(rep(c(80, 120, 160, 200), 6), each = 5),
+#'   y = rnorm(120) + rep(rnorm(24, sd = 0.4), each = 5)
+#' )
+#' sam <- sampling_design() |>
+#'   add_stage() |> cluster_by(cl) |>
+#'   draw(n = 8, method = "pps_brewer", mos = size) |>
+#'   add_stage() |> draw(n = 3) |>
+#'   execute(frame, seed = 11)
+#'
+#' vc <- varcomp(sam, ~y)
+#' vc
+#'
+#' # Feed the components into next-round cluster planning
+#' svyplan::n_cluster(stage_cost = c(500, 50), delta = vc,
+#'                    budget = 100000)
+#'
+#' @seealso [svyplan::varcomp()] for the estimator and its
+#'   conventions, [svyplan::n_cluster()] for planning with the result
+#'
+#' @name varcomp.tbl_sample
+#' @aliases varcomp
+#' @importFrom svyplan varcomp
+#' @export
+svyplan::varcomp
+
+#' @rdname varcomp.tbl_sample
+#' @export
+varcomp.tbl_sample <- function(x, ..., strata = NULL) {
+  check_single_replicate(x, "varcomp")
+  check_sample_unmodified(x, "varcomp")
+
+  metadata <- attr(x, "metadata") %||% list()
+  if (!is_null(metadata$prev_phase)) {
+    abort_samplyr(
+      c(
+        "{.fn varcomp} does not support two-phase samples.",
+        "i" = "The decomposition assumes nested stages; phase sampling
+               is not a stage. Estimate components on each phase
+               separately."
+      ),
+      class = "samplyr_error_varcomp_two_phase"
+    )
+  }
+
+  dots <- list(...)
+  fml <- if (length(dots) >= 1) dots[[1]] else NULL
+  if (!inherits(fml, "formula") || length(fml) != 2L) {
+    abort_samplyr(
+      "Pass the outcome as a one-sided formula: {.code varcomp(x, ~y)}."
+    )
+  }
+  y_name <- all.vars(fml)
+  if (length(y_name) != 1L) {
+    abort_samplyr(
+      "The outcome formula must reference exactly one variable."
+    )
+  }
+  if (!y_name %in% names(x)) {
+    abort_samplyr("Variable {.var {y_name}} not found in the sample.")
+  }
+  y <- x[[y_name]]
+
+  design <- get_design(x)
+  stages_executed <- get_stages_executed(x)
+  k1 <- stages_executed[1]
+
+  # Decomposition levels: every executed clustered stage contributes
+  # its (ancestor-qualified) cluster key; the sample rows are the
+  # elements below them.
+  clustered <- stages_executed[vapply(
+    stages_executed,
+    function(k) !is_null(design$stages[[k]]$clusters),
+    logical(1)
+  )]
+  if (length(clustered) == 0) {
+    abort_samplyr(
+      c(
+        "{.fn varcomp} needs a clustered sample.",
+        "i" = "The decomposition estimates between- and within-cluster
+               components; this sample has no {.fn cluster_by} stage."
+      ),
+      class = "samplyr_error_varcomp_unclustered"
+    )
+  }
+  if (length(clustered) > 2) {
+    abort_samplyr(
+      c(
+        "{.fn varcomp} decomposes at most 3 stages (2 clustered stages
+         above the elements); this sample has {length(clustered)}.",
+        "i" = "Estimate components for the top stages and fold deeper
+               stages into a design effect."
+      ),
+      class = "samplyr_error_varcomp_stages"
+    )
+  }
+  stage_key <- function(k) {
+    # Multi-hit (WR/PMR) stages: each draw is an independent unit for
+    # Hansen-Hurwitz treatment, so the draw index is the key, exactly
+    # as in as_svydesign(). Keying by the cluster variable would merge
+    # repeated hits of one cluster: its estimated size doubles while
+    # its selection share counts once. The draw index restarts per
+    # pool, so qualify it by the stage strata and ancestors.
+    draw_col <- paste0(".draw_", k)
+    if (is_multi_hit_method(design$stages[[k]]$draw_spec) &&
+        draw_col %in% names(x)) {
+      vars <- c(
+        intersect(collect_ancestor_cluster_vars(design, k), names(x)),
+        intersect(design$stages[[k]]$strata$vars, names(x)),
+        draw_col
+      )
+      if (length(vars) == 1L) {
+        return(x[[draw_col]])
+      }
+      return(make_group_key(x, vars))
+    }
+    vars <- unique(c(
+      intersect(collect_ancestor_cluster_vars(design, k), names(x)),
+      design$stages[[k]]$clusters$vars
+    ))
+    if (length(vars) == 1L) x[[vars]] else make_group_key(x, vars)
+  }
+  stage_ids <- lapply(clustered, stage_key)
+  psu_key <- stage_ids[[1]]
+  if (!any(duplicated(psu_key))) {
+    abort_samplyr(
+      c(
+        "{.fn varcomp} needs elements below the first-stage clusters.",
+        "i" = "Every row is its own cluster here, so within-cluster
+               components are undefined."
+      ),
+      class = "samplyr_error_varcomp_unclustered"
+    )
+  }
+
+  # Certainty PSUs have chance 1: no between-PSU variance, and no
+  # place in the share normalization below.
+  cert_col <- paste0(".certainty_", k1)
+  if (cert_col %in% names(x) && any(x[[cert_col]])) {
+    abort_samplyr(
+      c(
+        "The first stage holds certainty selections; {.fn varcomp}
+         covers probability PSUs only.",
+        "i" = "Self-representing PSUs contribute no between-PSU
+               variance and act as their own strata. Estimate the
+               components on a design without certainty selections,
+               and handle the certainty stratum separately."
+      ),
+      class = "samplyr_error_varcomp_certainty"
+    )
+  }
+
+  # Within-PSU weights: the product of the per-stage weights below
+  # stage 1. Whole-take rows below a single executed clustered stage
+  # are self-weighting within their cluster.
+  later <- stages_executed[-1]
+  w_within <- if (length(later) == 0) {
+    rep(1, nrow(x))
+  } else {
+    Reduce(`*`, lapply(later, function(k) x[[paste0(".weight_", k)]]))
+  }
+
+  # Stage-1 strata (design) or the user's stratification, not both.
+  strata_vec <- NULL
+  design_strata <- design$stages[[k1]]$strata$vars
+  if (!is_null(strata) && !is_null(design_strata)) {
+    abort_samplyr(
+      c(
+        "The first stage is stratified by
+         {.var {design_strata}}; a {.arg strata} argument would cross
+         two stratifications.",
+        "i" = "Design strata are picked up automatically. For other
+               splits, derive per-domain samples and estimate each."
+      ),
+      class = "samplyr_error_varcomp_strata"
+    )
+  }
+  if (!is_null(design_strata)) {
+    strata_vec <- if (length(design_strata) == 1L) {
+      x[[design_strata]]
+    } else {
+      make_group_key(x, design_strata)
+    }
+  } else if (!is_null(strata)) {
+    if (!inherits(strata, "formula") || length(all.vars(strata)) != 1L) {
+      abort_samplyr(
+        "{.arg strata} must be a one-sided formula naming one column."
+      )
+    }
+    s_name <- all.vars(strata)
+    if (!s_name %in% names(x)) {
+      abort_samplyr("Variable {.var {s_name}} not found in the sample.")
+    }
+    strata_vec <- x[[s_name]]
+  }
+
+  # Stage-1 selection shares. Equal-probability first stages take the
+  # SRS path; unequal-probability first stages derive per-PSU shares
+  # from the stage-1 weights (pi proportional to the one-draw
+  # probabilities for fixed-size PPS, Hansen-Hurwitz WR, and Poisson
+  # designs, so normalized shares are exact without the frame).
+  spec1 <- design$stages[[k1]]$draw_spec
+  equal_prob <- spec1$method %in% equal_prob_methods ||
+    identical(spec1$method_variance, "srs") ||
+    (is_balanced_method(spec1) && is_null(spec1$mos))
+  prob <- NULL
+  if (!equal_prob) {
+    pi1 <- 1 / x[[paste0(".weight_", k1)]]
+    spread_in_psu <- tapply(pi1, psu_key, function(v) diff(range(v)))
+    if (any(spread_in_psu > 1e-9 * max(pi1))) {
+      abort_samplyr(
+        "Stage-1 weights vary within a first-stage cluster; the design
+         columns are inconsistent."
+      )
+    }
+    first_of_psu <- !duplicated(psu_key)
+    psu_pi <- pi1[first_of_psu]
+    psu_stratum <- if (is_null(strata_vec)) {
+      rep("all", sum(first_of_psu))
+    } else {
+      as.character(strata_vec)[first_of_psu]
+    }
+    share <- psu_pi / stats::ave(psu_pi, psu_stratum, FUN = sum)
+    prob <- share[match(psu_key, psu_key[first_of_psu])]
+  }
+
+  svyplan::varcomp(
+    y,
+    stage_id = stage_ids,
+    prob = prob,
+    weights = w_within,
+    strata = strata_vec
+  )
+}

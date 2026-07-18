@@ -36,7 +36,7 @@ test_that("the digest round-trips through design JSON", {
     expect_identical(p1$pool_id, p0$pool_id)
     expect_identical(p1$N, p0$N)
     expect_identical(p1$n_realized, p0$n_realized)
-    expect_equal(p1$expected_n, p0$expected_n, tolerance = 1e-12)
+    expect_equal(p1$n_expected, p0$n_expected, tolerance = 1e-12)
     expect_identical(p1$scope, p0$scope)
     expect_identical(
       d1$stages[[k]]$selected$unit_id,

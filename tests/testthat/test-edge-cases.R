@@ -464,7 +464,7 @@ test_that("PPS with zero size unit never selects it", {
 })
 
 
-library(dplyr, quietly = TRUE)
+suppressPackageStartupMessages(library(dplyr))
 test_that("tbl_sample survives filter()", {
   frame <- data.frame(id = 1:100, region = rep(c("A", "B"), 50))
 

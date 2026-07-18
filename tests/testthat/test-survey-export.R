@@ -67,27 +67,24 @@ test_that(".fpc_k is preserved through dplyr operations", {
 
 test_that("summary.tbl_sample runs without error", {
   expect_output(summary(fix_strat_prop), "Sample Summary")
-  expect_output(summary(fix_strat_prop), "Design")
+  expect_output(summary(fix_strat_prop), "Stage 1")
   expect_output(summary(fix_strat_prop), "stages =")
-  expect_output(summary(fix_strat_prop), "Allocation")
   expect_output(summary(fix_strat_prop), "Weights")
 })
 
-test_that("summary.tbl_sample shows stratum allocation table", {
+test_that("summary.tbl_sample shows stratum allocation ranges", {
   output <- capture.output(summary(fix_strat_prop))
-  # Should contain N_h and n_h headers
   expect_true(any(grepl("N_h", output)))
   expect_true(any(grepl("n_h", output)))
   expect_true(any(grepl("f_h", output)))
-  # Should contain Total row
-  expect_true(any(grepl("Total", output)))
+  # One line covering the four strata
+  expect_true(any(grepl("4 strata: N_h 30, n_h 10, f_h 0.3333", output,
+                        fixed = TRUE)))
 })
 
 test_that("summary.tbl_sample shows allocation with stratum name", {
   output <- capture.output(summary(fix_strat_prop))
-  expect_true(any(grepl("Allocation", output)))
-  expect_true(any(grepl("stratum", output)))
-  expect_true(any(grepl("Total", output)))
+  expect_true(any(grepl("by stratum", output)))
 })
 
 test_that("summary.tbl_sample works for unstratified design", {

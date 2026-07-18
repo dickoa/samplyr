@@ -196,29 +196,16 @@ digest_coverage_line <- function(x) {
   if (k < length(get_stages_executed(x))) {
     return(character(0))
   }
-  first <- stages[[1]]
   last <- stages[[k]]
 
   # Ultimate units are counted at the element level of the last stage.
-  if (!identical(last$unit_level, "element") ||
-        anyNA(last$pools$n_realized)) {
+  if (anyNA(last$pools$n_realized)) {
     return(character(0))
   }
   realized <- sum(last$pools$n_realized)
 
-  total <- if (k == 1L && identical(first$scope, "universe") &&
-                 !anyNA(first$pools$N)) {
-    sum(first$pools$N)
-  } else if (
-    k > 1L &&
-      identical(first$unit_level, "cluster") &&
-      identical(first$scope, "universe") &&
-      !is_null(first$units) &&
-      "n_descendants" %in% names(first$units) &&
-      !anyNA(first$units$n_descendants)
-  ) {
-    sum(first$units$n_descendants)
-  } else {
+  total <- digest_universe_units(digest)
+  if (is.na(total)) {
     return(character(0))
   }
 
@@ -226,6 +213,37 @@ digest_coverage_line <- function(x) {
     k, if (k == 1L) " stage" else " stages",
     " | ", fmt(realized), "/", fmt(total), " units"
   ))
+}
+
+#' Complete ultimate-unit universe denominator of a digest, or NA
+#'
+#' A number only when the digest supports it: an element-level last
+#' stage, and either a universe-scope single element stage or a
+#' universe-scope cluster first stage with complete descendant counts.
+#' @noRd
+digest_universe_units <- function(digest) {
+  stages <- digest$stages
+  k <- length(stages)
+  first <- stages[[1]]
+  if (!identical(stages[[k]]$unit_level, "element")) {
+    return(NA_real_)
+  }
+  if (k == 1L) {
+    if (identical(first$scope, "universe") && !anyNA(first$pools$N)) {
+      return(sum(first$pools$N))
+    }
+    return(NA_real_)
+  }
+  if (
+    identical(first$unit_level, "cluster") &&
+      identical(first$scope, "universe") &&
+      !is_null(first$units) &&
+      "n_descendants" %in% names(first$units) &&
+      !anyNA(first$units$n_descendants)
+  ) {
+    return(sum(first$units$n_descendants))
+  }
+  NA_real_
 }
 
 #' @rdname print.samplyr

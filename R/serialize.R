@@ -1504,7 +1504,7 @@ decode_frame_digest <- function(x) {
     strata <- chrs(s$strata)
     pool_spec <- c(
       pool_id = "int", parent_unit = "int", N = "int",
-      n_target = "dbl", expected_n = "dbl", n_realized = "int",
+      n_target = "dbl", n_expected = "dbl", n_realized = "int",
       scope = "chr", chance_status = "chr", chance = "dbl",
       n_descendants = "int",
       setNames(rep("chr", length(strata)), strata)

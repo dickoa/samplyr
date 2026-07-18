@@ -40,12 +40,12 @@ underlying representation is (\code{"eligible"}, \code{"universe"},
 
 For \code{detail = "stage"}, one row per stage with \code{stage},
 \code{unit_level}, \code{scope}, \code{chance_kind}, \code{probabilities}, \code{storage},
-\code{n_pools}, \code{N}, \code{n_target}, \code{expected_n}, \code{n_realized}, and
+\code{n_pools}, \code{N}, \code{n_target}, \code{n_expected}, \code{n_realized}, and
 \code{take_rate}.
 
 For \code{detail = "pool"}, one row per selection pool with \code{stage},
 \code{pool_id}, \code{parent_unit}, any stratum label columns, \code{N},
-\code{n_target}, \code{expected_n}, \code{n_realized}, \code{scope}, \code{chance_status},
+\code{n_target}, \code{n_expected}, \code{n_realized}, \code{scope}, \code{chance_status},
 \code{chance} (the constant per-unit chance where one applies, \code{NA}
 otherwise), and \code{take_rate}. Stratum columns of stages that do not
 use them are \code{NA}.
@@ -53,7 +53,7 @@ use them are \code{NA}.
 For \code{detail = "unit"}, one row per population unit of each stage
 that stored units, with \code{stage}, \code{pool_id}, \code{unit_id},
 \code{unit_order}, \code{chance}, \code{is_certainty}, \code{n_descendants},
-\code{selected}, and \code{n_hits}. Stages that stored only a constant or a
+\code{is_selected}, and \code{n_hits}. Stages that stored only a constant or a
 chance distribution contribute no rows; requesting such a stage
 explicitly is an error rather than a silently empty result.
 }
@@ -79,7 +79,7 @@ registered methods declared \code{probabilities = "approximate"}), and
 \code{NA} for digests recorded before the field existed.
 
 Allocation is reported as three quantities that only coincide for
-fixed-size designs: \code{n_target} (requested), \code{expected_n} (sum of
+fixed-size designs: \code{n_target} (requested), \code{n_expected} (sum of
 resolved chances), and \code{n_realized} (selected units or
 occurrences). For replicated executions where realized allocation
 varies by replicate, \code{n_realized} may be \code{NA} at the pool level.

@@ -240,6 +240,17 @@ Initial release.
   methods: Kish, Henry, Spencer, Chen-Rust, and cluster planning.
   Auto-extraction of strata, clusters, and selection probabilities from
   the stored design.
+* `varcomp()` gains a `tbl_sample` method: design-based variance
+  components (B, W, delta, k) estimated from an executed clustered
+  sample, feeding `svyplan::n_cluster()` for next-round planning. It
+  applies the two conventions that are easy to get wrong by hand:
+  within-PSU weights (the product of the per-stage weights below
+  stage 1, never the compound `.weight`) and stage-1 selection shares
+  derived from the stage-1 weights, normalized over the sampled PSUs
+  (per stratum when stratified). Handles 2- and 3-stage designs with
+  SRS, PPS (WOR and WR), and stratified first stages; refuses
+  two-phase samples, certainty PSUs, and deeper designs with precise
+  messages.
 * `draw()` accepts `svyplan` sample size objects (`svyplan_n`, `svyplan_power`,
   `svyplan_cluster`) directly, and the handoff is stage-aware: cluster
   plans contribute the PSU count at a clustered stage 1 and the
@@ -269,10 +280,10 @@ Initial release.
   two coincide; `frame_digest = "none"` opts out).
 * The digest keeps a `tbl_sample` intelligible without its frame: the
   printed header shows population coverage (`360/19,344 units`),
-  `summary()` reports realization per pool at parent-by-strata
-  resolution, and `frame_summary()` returns the same information as
-  documented tibbles with stage, pool, or unit detail and eligible or
-  universe scope.
+  `summary()` reports one realization line per stage, and
+  `frame_summary()` returns the full record as documented tibbles
+  with stage, pool, or unit detail (pools at parent-by-strata
+  resolution) and eligible or universe scope.
 * When one universe frame feeds every stage, pools under unselected
   parents are resolved from the design alone (`design_resolved`), so
   coverage is reported against the full universe.
@@ -314,8 +325,14 @@ Initial release.
 
 ## Diagnostics
 
-* `summary()` shows per-stage stratum allocation tables with N_h, n_h,
-  f_h, and weight diagnostics (Kish DEFF, n_eff, CV).
+* `summary()` prints one section per stage: a design line (method,
+  MOS, clusters, strata, balancing declarations) and a realization
+  line (population and sample sizes with fractions as N_h/n_h/f_h
+  ranges; later stages report how many universe pools the
+  realization reached), then one line of weight diagnostics (mean
+  and range, CV, Kish DEFF, n_eff). The header states the universe
+  size when the digest records a complete denominator. Per-pool
+  allocation tables live in `frame_summary(detail = "pool")`.
 * `validate_frame()` checks for missing variables, NA values in key
   columns, and MOS/PRN/auxiliary variable issues before execution.
 * When the frame is itself a `tbl_sample` (phase-2 preparation),

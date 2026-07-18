@@ -193,8 +193,8 @@ test_that("execute() with frac samples correct proportion", {
     draw(frac = 0.1) |>
     execute(frame, seed = 42)
 
-  expected_n <- ceiling(N * 0.1)
-  expect_equal(nrow(result), expected_n)
+  n_expected <- ceiling(N * 0.1)
+  expect_equal(nrow(result), n_expected)
 })
 
 test_that("execute() with cluster_by samples clusters", {

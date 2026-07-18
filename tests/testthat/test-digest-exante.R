@@ -59,9 +59,9 @@ test_that("the ex-ante digest resolves what execution would resolve", {
   )
   est2 <- ed$stages[[2]]$pools
   expect_equal(
-    sort(paste(est2$N, est2$n_target, round(est2$expected_n, 9))),
+    sort(paste(est2$N, est2$n_target, round(est2$n_expected, 9))),
     sort(paste(
-      st2$pools$N, st2$pools$n_target, round(st2$pools$expected_n, 9)
+      st2$pools$N, st2$pools$n_target, round(st2$pools$n_expected, 9)
     ))
   )
 })
@@ -75,7 +75,7 @@ test_that("stratum allocation and per-stratum sizes are replayed", {
   expect_identical(st$storage, "constant")
   expect_equal(st$pools$n_target, rep(10, 4))
   expect_equal(st$pools$chance, rep(1 / 3, 4))
-  expect_equal(sum(st$pools$expected_n), 40)
+  expect_equal(sum(st$pools$n_expected), 40)
   ed <- samplyr::get_frame_digest(fix_strat_prop)
   expect_equal(st$pools$n_target, ed$stages[[1]]$pools$n_target)
 
@@ -135,7 +135,7 @@ test_that("certainty and with-replacement designs resolve ex-ante", {
     samplyr::build_exante_digest(test_frame)
   st <- d_wr$stages[[1]]
   expect_identical(st$chance_kind, "expected_hits")
-  expect_equal(sum(st$pools$expected_n), 15, tolerance = 1e-9)
+  expect_equal(sum(st$pools$n_expected), 15, tolerance = 1e-9)
 })
 
 test_that("realization-dependent designs are refused", {
@@ -183,46 +183,6 @@ test_that("a phase-2 design resolves ex-ante over a phase-1 sample", {
   expect_equal(sum(st$pools$n_target), 20)
 })
 
-test_that("the Gambia design resolves its ex-ante expectations", {
-  gmb_path <- file.path("..", "..", "dev", "gmb_compounds.rda")
-  skip_if_not(
-    file.exists(gmb_path),
-    "Gambia reference fixture is kept in the dev tree only"
-  )
-  load(gmb_path)
-  design <- sampling_design("Gambia bed nets") |>
-    add_stage("Districts") |> stratify_by(region) |>
-    cluster_by(district) |>
-    draw(n = 5, method = "pps_systematic", mos = district_pop) |>
-    add_stage("Villages") |> stratify_by(phc) |> cluster_by(village) |>
-    draw(n = 2, method = "pps_systematic", mos = village_pop) |>
-    add_stage("Compounds") |> draw(n = 6)
-
-  d <- samplyr::build_exante_digest(design, gmb_compounds)
-  st1 <- d$stages[[1]]
-  st2 <- d$stages[[2]]
-  st3 <- d$stages[[3]]
-  expect_identical(nrow(st1$units), 36L)
-  expect_identical(sum(st1$units$n_descendants), 19344L)
-  expect_equal(sum(st1$pools$expected_n), 15)
-  expect_identical(nrow(st2$units), 655L)
-  expect_identical(nrow(st3$pools), 655L)
-  # The 27 whole-take villages: every compound of a village with at
-  # most 6 compounds is a certainty selection.
-  expect_identical(sum(st3$pools$chance >= 1 - 1e-9), 27L)
-
-  # The executed digest's universe expansion resolves the same
-  # chances the ex-ante digest resolves.
-  s <- design |> execute(gmb_compounds, seed = 1991)
-  ed <- samplyr::get_frame_digest(s)
-  expect_equal(sort(st2$units$chance), sort(ed$stages[[2]]$units$chance),
-               tolerance = 1e-9)
-  expect_equal(
-    sort(round(st3$pools$expected_n, 9)),
-    sort(round(ed$stages[[3]]$pools$expected_n, 9))
-  )
-})
-
 test_that("the synthetic three-stage design resolves ex-ante", {
   frame <- synth_three_stage_frame()
   design <- synth_three_stage_design()
@@ -235,7 +195,7 @@ test_that("the synthetic three-stage design resolves ex-ante", {
     nrow(d$stages[[2]]$units), length(unique(frame$village))
   )
   expect_identical(sum(d$stages[[1]]$units$n_descendants), nrow(frame))
-  expect_equal(sum(d$stages[[1]]$pools$expected_n), 6)
+  expect_equal(sum(d$stages[[1]]$pools$n_expected), 6)
   # Whole-take villages: every compound of a village with at most 3
   # compounds is a certainty selection.
   expect_identical(
@@ -253,8 +213,8 @@ test_that("the synthetic three-stage design resolves ex-ante", {
     tolerance = 1e-9
   )
   expect_equal(
-    sort(round(d$stages[[3]]$pools$expected_n, 9)),
-    sort(round(ed$stages[[3]]$pools$expected_n, 9))
+    sort(round(d$stages[[3]]$pools$n_expected, 9)),
+    sort(round(ed$stages[[3]]$pools$n_expected, 9))
   )
 })
 

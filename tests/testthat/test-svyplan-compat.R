@@ -60,7 +60,7 @@ test_that("draw accepts svyplan n_alloc with per-stratum allocation", {
     sd = c(10, 15, 8)
   )
   alloc_obj <- svyplan::n_alloc(alloc_frame, n = 100, alloc = "neyman")
-  expected_n <- alloc_obj$detail$n_int
+  n_expected <- alloc_obj$detail$n_int
 
   frame <- data.frame(
     id = seq_len(1000),
@@ -71,10 +71,10 @@ test_that("draw accepts svyplan n_alloc with per-stratum allocation", {
     draw(n = alloc_obj) |>
     execute(frame, seed = 1)
 
-  expect_equal(nrow(result), sum(expected_n))
+  expect_equal(nrow(result), sum(n_expected))
   for (i in seq_along(alloc_frame$stratum)) {
     lbl <- alloc_frame$stratum[i]
-    expect_equal(sum(result$stratum == lbl), expected_n[i])
+    expect_equal(sum(result$stratum == lbl), n_expected[i])
   }
 })
 

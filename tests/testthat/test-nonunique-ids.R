@@ -172,7 +172,7 @@ test_that("summary: clustered stage shows cluster counts not row counts", {
   expect_true(all(fh_values <= 1))
 
   # n_h = 2 clusters per district, N_h = 4 EAs per district, f_h = 0.5
-  expect_true(any(grepl("0\\.5000", output)))
+  expect_true(any(grepl("N_h 4, n_h 2, f_h 0.5", output, fixed = TRUE)))
 })
 
 test_that("summary: unstratified clustered stage with non-unique IDs", {
@@ -203,13 +203,14 @@ test_that("summary: unstratified clustered stage with non-unique IDs", {
   output <- capture.output(summary(s))
 
   # Stage 2 allocation at parent resolution: each district is its own
-  # pool of 3 EAs with 1 selected (f = 0.3333). The former display
-  # merged the two pools into N = 3, n = 2, f = 0.6667, overstating
-  # the take rate.
-  expect_identical(sum(grepl("0\\.3333", output)), 3L)
-  expect_true(any(grepl("^\\s+A\\s+3\\s+1\\s+0\\.3333", output)))
-  expect_true(any(grepl("^\\s+B\\s+3\\s+1\\s+0\\.3333", output)))
-  expect_true(any(grepl("Total\\s+6\\s+2\\s+0\\.3333", output)))
+  # pool of 3 EAs with 1 selected (f = 0.3333). A merged display
+  # would show N = 3, n = 2, f = 0.6667, overstating the take rate.
+  expect_true(any(grepl("2 pools: N_h 3, n_h 1, f_h 0.3333", output,
+                        fixed = TRUE)))
+  expect_false(any(grepl("0.6667", output, fixed = TRUE)))
+  fs <- frame_summary(s, stage = 2, detail = "pool")
+  expect_equal(fs$N, c(3, 3))
+  expect_equal(fs$n_realized, c(1, 1))
 })
 
 test_that("summary: stratified clustered stage with non-unique IDs", {

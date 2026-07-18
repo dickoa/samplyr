@@ -83,7 +83,7 @@ test_that("summary reports certainty selections from the registry", {
          certainty_size = 180) |>
     execute(test_frame, seed = 4, frame_digest = "full")
   out <- paste(capture.output(summary(s)), collapse = "\n")
-  expect_match(out, "Certainty selections (chance 1): 5", fixed = TRUE)
+  expect_match(out, "5 certainty selections", fixed = TRUE)
 })
 
 test_that("summary falls back to the sample-based report without a digest", {
@@ -92,8 +92,7 @@ test_that("summary falls back to the sample-based report without a digest", {
     draw(n = 40) |>
     execute(test_frame, seed = 2, frame_digest = "none")
   out <- paste(capture.output(summary(s)), collapse = "\n")
-  expect_match(out, "N_h", fixed = TRUE)
-  expect_match(out, "Total", fixed = TRUE)
+  expect_match(out, "4 strata: N_h 30, n_h 10, f_h 0.3333", fixed = TRUE)
 })
 
 test_that("pools under different parents keep distinct lines", {
@@ -112,6 +111,13 @@ test_that("pools under different parents keep distinct lines", {
     draw(n = 1) |>
     execute(frame, seed = 2)
   out <- capture.output(summary(s))
-  # Two stage-2 pools, one per parent district, each 1/3.
-  expect_identical(sum(grepl("^\\s+(A|B)\\s+A?B?\\s*3\\s+1\\s+0\\.3333", out)), 2L)
+  # Two stage-2 pools, one per parent district, each 1/3; a merged
+  # display would overstate the take rate as N 6, n 2, f 0.6667.
+  expect_true(any(grepl("2 pools: N_h 3, n_h 1, f_h 0.3333", out,
+                        fixed = TRUE)))
+  expect_false(any(grepl("0.6667", out, fixed = TRUE)))
+  fs <- frame_summary(s, stage = 2, detail = "pool")
+  expect_identical(nrow(fs), 2L)
+  expect_equal(fs$N, c(3, 3))
+  expect_equal(fs$n_realized, c(1, 1))
 })

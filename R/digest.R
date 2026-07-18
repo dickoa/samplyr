@@ -63,7 +63,7 @@ digest_pool_cols <- c(
   "parent_unit",
   "N",
   "n_target",
-  "expected_n",
+  "n_expected",
   "n_realized",
   "scope",
   "chance_status"
@@ -153,7 +153,7 @@ new_digest_frame <- function(
 #'   "constant", "units", or "quantiles".
 #' @param pools Data frame, one row per selection pool (full parent
 #'   ancestry x stage strata). Required columns: pool_id, parent_unit,
-#'   N, n_target, expected_n, n_realized, scope, chance_status.
+#'   N, n_target, n_expected, n_realized, scope, chance_status.
 #'   Optional: chance (constant storage only), n_descendants, plus the
 #'   stratum label columns named by `strata`.
 #' @param units Data frame, one anonymous row per population unit.
@@ -162,7 +162,7 @@ new_digest_frame <- function(
 #' @param chance_distribution Data frame of compressed chance
 #'   quantiles. Present iff storage is "quantiles". Columns: pool_id,
 #'   quantile, chance; optional n_units (units per bin, summing to the
-#'   pool size, which makes the weighted mean reproduce expected_n
+#'   pool size, which makes the weighted mean reproduce n_expected
 #'   exactly).
 #' @param selected Selected-unit trace: one row per selected
 #'   occurrence. Required columns: pool_id, unit_id, occurrence;
@@ -294,13 +294,13 @@ is_id_vector <- function(x) {
 #'
 #' Checks the digest against the schema contract: identifier
 #' uniqueness, parent links, chance ranges by chance_kind, storage and
-#' scope declarations, expected_n consistency with the retained chance
+#' scope declarations, n_expected consistency with the retained chance
 #' representation, selected-trace linkage, and certainty declarations.
 #'
 #' @param x A frame digest list.
 #' @param tol Absolute-relative tolerance for exact representations
 #'   (constant and units storage) and for certainty declarations.
-#' @param quantile_tol Looser relative tolerance for expected_n checks
+#' @param quantile_tol Looser relative tolerance for n_expected checks
 #'   against compressed quantile representations.
 #' @return `x`, invisibly.
 #' @noRd
@@ -513,7 +513,7 @@ validate_digest_stage <- function(
   pools <- validate_digest_pools(stage, pos, prev, tol)
   units <- validate_digest_units(stage, pools, tol)
   validate_digest_distribution(stage, pools, tol)
-  validate_digest_expected_n(stage, pools, units, tol, quantile_tol)
+  validate_digest_n_expected(stage, pools, units, tol, quantile_tol)
   validate_digest_selected(stage, pools, units)
 
   if (!is_null(stage$diagnostics) && !is.list(stage$diagnostics)) {
@@ -623,7 +623,7 @@ validate_digest_pools <- function(stage, pos, prev, tol) {
   }
   check_nonneg("N", integerish = TRUE)
   check_nonneg("n_target")
-  check_nonneg("expected_n")
+  check_nonneg("n_expected")
   check_nonneg("n_realized", integerish = TRUE)
 
   if ("chance" %in% names(pools)) {
@@ -996,11 +996,11 @@ validate_digest_distribution <- function(stage, pools, tol) {
   invisible(NULL)
 }
 
-#' expected_n must match the retained chance representation
+#' n_expected must match the retained chance representation
 #' @noRd
-validate_digest_expected_n <- function(stage, pools, units, tol, quantile_tol) {
+validate_digest_n_expected <- function(stage, pools, units, tol, quantile_tol) {
   id <- stage$stage_id
-  checkable <- !is.na(pools$expected_n) &
+  checkable <- !is.na(pools$n_expected) &
     pools$chance_status != "unavailable"
 
   represented <- switch(
@@ -1033,10 +1033,10 @@ validate_digest_expected_n <- function(stage, pools, units, tol, quantile_tol) {
   use_tol <- if (stage$storage == "quantiles") quantile_tol else tol
   bad <- checkable &
     !is.na(represented) &
-    abs(pools$expected_n - represented) > use_tol * pmax(1, pools$expected_n)
+    abs(pools$n_expected - represented) > use_tol * pmax(1, pools$n_expected)
   if (any(bad)) {
     abort_digest(
-      "Stage {id}: {.field expected_n} does not match the sum of
+      "Stage {id}: {.field n_expected} does not match the sum of
        retained chances for pool{?s} {.val {pools$pool_id[bad]}}.",
       "allocation"
     )
@@ -1297,12 +1297,12 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #'
 #'   For `detail = "stage"`, one row per stage with `stage`,
 #'   `unit_level`, `scope`, `chance_kind`, `probabilities`, `storage`,
-#'   `n_pools`, `N`, `n_target`, `expected_n`, `n_realized`, and
+#'   `n_pools`, `N`, `n_target`, `n_expected`, `n_realized`, and
 #'   `take_rate`.
 #'
 #'   For `detail = "pool"`, one row per selection pool with `stage`,
 #'   `pool_id`, `parent_unit`, any stratum label columns, `N`,
-#'   `n_target`, `expected_n`, `n_realized`, `scope`, `chance_status`,
+#'   `n_target`, `n_expected`, `n_realized`, `scope`, `chance_status`,
 #'   `chance` (the constant per-unit chance where one applies, `NA`
 #'   otherwise), and `take_rate`. Stratum columns of stages that do not
 #'   use them are `NA`.
@@ -1310,7 +1310,7 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #'   For `detail = "unit"`, one row per population unit of each stage
 #'   that stored units, with `stage`, `pool_id`, `unit_id`,
 #'   `unit_order`, `chance`, `is_certainty`, `n_descendants`,
-#'   `selected`, and `n_hits`. Stages that stored only a constant or a
+#'   `is_selected`, and `n_hits`. Stages that stored only a constant or a
 #'   chance distribution contribute no rows; requesting such a stage
 #'   explicitly is an error rather than a silently empty result.
 #'
@@ -1328,7 +1328,7 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #' `NA` for digests recorded before the field existed.
 #'
 #' Allocation is reported as three quantities that only coincide for
-#' fixed-size designs: `n_target` (requested), `expected_n` (sum of
+#' fixed-size designs: `n_target` (requested), `n_expected` (sum of
 #' resolved chances), and `n_realized` (selected units or
 #' occurrences). For replicated executions where realized allocation
 #' varies by replicate, `n_realized` may be `NA` at the pool level.
@@ -1469,7 +1469,7 @@ frame_summary_stage <- function(stages, scope) {
       n_pools = nrow(pools),
       N = N,
       n_target = sum_or_na(pools$n_target[executed]),
-      expected_n = sum_or_na(pools$expected_n[executed]),
+      n_expected = sum_or_na(pools$n_expected[executed]),
       n_realized = n_realized,
       take_rate = take_rate
     )
@@ -1505,7 +1505,7 @@ frame_summary_pool <- function(stages, scope) {
       parent_unit = as.integer(pools$parent_unit),
       N = as.double(pools$N),
       n_target = as.double(pools$n_target),
-      expected_n = as.double(pools$expected_n),
+      n_expected = as.double(pools$n_expected),
       n_realized = as.double(pools$n_realized),
       scope = pools$scope,
       chance_status = pools$chance_status,
@@ -1567,7 +1567,7 @@ frame_summary_unit <- function(stages, explicit) {
       chance = as.double(units$chance),
       is_certainty = units$is_certainty,
       n_descendants = n_descendants,
-      selected = hits > 0L,
+      is_selected = hits > 0L,
       n_hits = hits
     )
   })
@@ -1580,7 +1580,7 @@ frame_summary_unit <- function(stages, explicit) {
       chance = double(0),
       is_certainty = logical(0),
       n_descendants = integer(0),
-      selected = logical(0),
+      is_selected = logical(0),
       n_hits = integer(0)
     ))
   }

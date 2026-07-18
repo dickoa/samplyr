@@ -24,12 +24,7 @@ test_that("summary distinguishes sample fractions from inclusion probabilities",
   )
 
   expect_match(unequal_txt, "N = 100, n = 20, f = 0.2000", fixed = TRUE)
-  expect_match(unequal_txt, "MOS: size", fixed = TRUE)
-  expect_match(
-    unequal_txt,
-    "Inclusion probabilities are unit-specific.",
-    fixed = TRUE
-  )
+  expect_match(unequal_txt, "MOS size", fixed = TRUE)
   expect_false(grepl("mean inclusion fraction", unequal_txt, fixed = TRUE))
 })
 
@@ -40,7 +35,8 @@ test_that("summary uses concise with-replacement wording", {
     execute(frame, seed = 1)
 
   txt <- paste(capture.output(summary(sample)), collapse = "\n")
-  expect_match(txt, "n = 5 (with replacement, no FPC)", fixed = TRUE)
+  expect_match(txt, "srswr (with replacement)", fixed = TRUE)
+  expect_match(txt, "n = 5 draws (no FPC)", fixed = TRUE)
   expect_false(grepl(";", txt, fixed = TRUE))
 })
 
@@ -54,7 +50,7 @@ test_that("summary flags approximate-probabilities methods", {
   txt <- paste(capture.output(summary(approx)), collapse = "\n")
   expect_match(
     txt,
-    "Method: pps_sps (approximate probabilities)",
+    "pps_sps (approximate probabilities)",
     fixed = TRUE
   )
 
@@ -62,6 +58,6 @@ test_that("summary flags approximate-probabilities methods", {
     draw(n = 8, method = "pps_brewer", mos = size) |>
     execute(frame, seed = 3)
   txt <- paste(capture.output(summary(exact)), collapse = "\n")
-  expect_match(txt, "Method: pps_brewer", fixed = TRUE)
+  expect_match(txt, "pps_brewer", fixed = TRUE)
   expect_false(grepl("approximate probabilities", txt, fixed = TRUE))
 })

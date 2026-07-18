@@ -311,7 +311,7 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
   } else {
     vapply(records, function(r) as.double(r$leaf$n_target), numeric(1))
   }
-  pools$expected_n <- vapply(
+  pools$n_expected <- vapply(
     records, function(r) sum(r$leaf$chance), numeric(1)
   )
   pools$n_realized <- vapply(
@@ -597,7 +597,7 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
   next_pool <- max(pools$pool_id) + 1L
   first_rows <- vapply(groups[new_keys], function(r) r[1], integer(1))
 
-  make_pools <- function(N, n_target, expected_n, chance = NULL) {
+  make_pools <- function(N, n_target, n_expected, chance = NULL) {
     out <- data.frame(
       pool_id = seq.int(next_pool, length.out = length(new_keys)),
       parent_unit = parent_all[first_rows]
@@ -608,7 +608,7 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
     }
     out$N <- as.integer(N)
     out$n_target <- n_target
-    out$expected_n <- expected_n
+    out$n_expected <- n_expected
     out$n_realized <- 0L
     out$scope <- "universe"
     out$chance_status <- "design_resolved"
@@ -800,7 +800,7 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N) {
 #' Equal-count quantile bins of per-pool chance vectors
 #'
 #' Equal-count bins over the sorted chance vector, storing each bin's
-#' mean and unit count. The n_units-weighted sum reproduces expected_n
+#' mean and unit count. The n_units-weighted sum reproduces n_expected
 #' exactly, unlike an interpolated quantile grid, which is not
 #' mean-faithful under heavy skew. Pools with at most 101 units come
 #' back exact (one unit per bin).
@@ -1096,7 +1096,7 @@ build_exante_stage <- function(design, stage_idx, frame,
   pools$n_target <- vapply(
     pools_acc, function(p) as.double(p$n_target), numeric(1)
   )
-  pools$expected_n <- vapply(chance_by_pool, sum, numeric(1))
+  pools$n_expected <- vapply(chance_by_pool, sum, numeric(1))
   pools$n_realized <- 0L
   pools$scope <- "universe"
   pools$chance_status <- "design_resolved"

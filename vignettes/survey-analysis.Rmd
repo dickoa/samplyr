@@ -39,7 +39,7 @@ This vignette covers sample diagnostics (before fieldwork), the merge step, and 
 
 ## Sample Diagnostics
 
-After executing a design, `summary()` gives a concise overview: the design specification, execution details, stratum allocation table, and weight diagnostics. This is what you check before going to the field to verify the sample looks right.
+After executing a design, `summary()` gives a concise overview: one design line and one realization line per stage, then weight diagnostics. This is what you check before going to the field to verify the sample looks right. Per-pool allocation tables are in `frame_summary(detail = "pool")`.
 
 ```{r}
 library(samplyr)

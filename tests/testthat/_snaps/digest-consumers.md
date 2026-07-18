@@ -13,45 +13,18 @@
     Output
       -- Sample Summary --------------------------------------------------------------
       
-      i n = 24 | stages = 2/2 | seed = 8
+      i n = 24 of 120 | stages = 2/2 | seed = 8
       
-      -- Design: Clusters ------------------------------------------------------------
-      * Strata: stratum
-      * Cluster: cluster
-      * Method: pps_brewer
-      * MOS: mos
+      -- Stage 1: Clusters -----------------------------------------------------------
+      * pps_brewer, MOS mos, cluster cluster, by stratum
+      * 4 strata: N_h 6, n_h 2, f_h 0.3333
       
-      -- Design: Units ---------------------------------------------------------------
-      * Method: srswor
-      
-      -- Allocation: Clusters --------------------------------------------------------
-        stratum  N_h  n_h  f_h   
-        A        6    2    0.3333
-        B        6    2    0.3333
-        C        6    2    0.3333
-        D        6    2    0.3333
-                 ───  ───  ──────
-        Total    24   8    0.3333
-      i Inclusion probabilities are unit-specific.
-      
-      -- Allocation: Units -----------------------------------------------------------
-      i Universe: 24 pools, 120 units (16 pools resolved from the design, not reached by this realization).
-        cluster  N_h  n_h  f_h   
-        cl01     5    3    0.6000
-        cl03     5    3    0.6000
-        cl09     5    3    0.6000
-        cl11     5    3    0.6000
-        cl15     5    3    0.6000
-        cl16     5    3    0.6000
-        cl19     5    3    0.6000
-        cl23     5    3    0.6000
-                 ───  ───  ──────
-        Total    40   24   0.6000
+      -- Stage 2: Units --------------------------------------------------------------
+      * srswor
+      * 8/24 pools: N_h 5, n_h 3, f_h 0.6
       
       -- Weights ---------------------------------------------------------------------
-      * Range: [3.1, 6.39]
-      * Mean:  4.46 · CV: 0.27
-      * DEFF:  1.07 · n_eff: 22
+      * Mean 4.46 [3.1, 6.39] | CV 0.27 | DEFF 1.07 | n_eff 22
       
 
 # summary shows replicate ranges for random-size designs
@@ -61,22 +34,13 @@
     Output
       -- Sample Summary --------------------------------------------------------------
       
-      i n = 43 | stages = 1/1 | seed = 3 | reps = 3 | n/rep ~ 14
+      i n = 43 of 120 | stages = 1/1 | seed = 3 | reps = 3 | n/rep ~ 14
       
-      -- Design: Stage 1 -------------------------------------------------------------
-      * Strata: stratum
-      * Method: bernoulli
-      
-      -- Allocation: Stage 1 ---------------------------------------------------------
-      i Realized sizes vary by replicate. Ranges shown.
-        stratum  N_h  expected  n_h
-        A        30   3         1-6
-        B        30   3         2-4
-        C        30   3         4-7
-        D        30   3         1-2
+      -- Stage 1 ---------------------------------------------------------------------
+      * bernoulli, by stratum
+      * 4 strata: N_h 30, n_h 1-7 across replicates, n_expected 12
       
       -- Weights ---------------------------------------------------------------------
-      i Weight diagnostics omitted for stacked replicated sample.
-      i Filter to one replicate: x |> filter(.replicate == 1)
+      i Weight diagnostics omitted for stacked replicates. Filter to one first: x |> filter(.replicate == 1)
       
 

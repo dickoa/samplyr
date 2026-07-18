@@ -16,23 +16,33 @@ Invisibly returns \code{object}. Called for its side effect of
 printing a summary.
 }
 \description{
-Produces a detailed summary of a sample including design specification,
-execution details, per-stage stratum allocation tables, and weight
+Produces a compact summary of a sample: one section per executed
+stage with a design line and a realization line, followed by weight
 diagnostics.
 }
 \details{
-The summary has three sections preceded by a header line showing
-the total sample size, stages executed, and seed:
+The header line shows the total sample size (with the universe size
+when the frame digest records a complete denominator), the stages
+executed, and the seed.
 
-\strong{Design} -- the sampling specification (method, strata, clusters,
-allocation) for each stage.
+Each stage section has two lines:
+\itemize{
+\item the design: method (with with-replacement and
+approximate-probabilities qualifiers), measure of size, cluster
+and stratification variables, and balancing declarations;
+\item the realization: population and sample sizes with the sampling
+fraction. Stages with several selection pools report ranges
+(\code{N_h}, \code{n_h}, \code{f_h}) and, for later stages, how many of the
+universe pools the realization reached. \code{f_h} is a realized
+sampling fraction, not a unit-level inclusion probability for
+unequal-probability designs.
+}
 
-\strong{Allocation} -- per-stage stratum tables showing population size
-(N_h), sample size (n_h), and sampling fraction (f_h). Requires
-\code{.fpc_k} columns to be present (produced by samplyr >= 0.2.0).
+Per-pool detail (one row per parent-by-stratum pool) lives in
+\code{\link[=frame_summary]{frame_summary()}} with \code{detail = "pool"}.
 
-\strong{Weights} -- range, mean, coefficient of variation, Kish design
-effect, and effective sample size.
+\strong{Weights} reports the mean and range, coefficient of variation,
+Kish design effect, and effective sample size on one line.
 }
 \examples{
 sample <- sampling_design() |>
@@ -45,5 +55,6 @@ summary(sample)
 }
 \seealso{
 \code{\link[=tbl_sum.tbl_sample]{tbl_sum.tbl_sample()}} for the compact print method,
+\code{\link[=frame_summary]{frame_summary()}} for per-pool allocation tables,
 \code{\link[=as_svydesign]{as_svydesign()}} for exporting to the survey package
 }
