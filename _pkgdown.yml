@@ -50,6 +50,7 @@ reference:
     desc: "Summarise and inspect sampling results."
     contents:
       - summary.tbl_sample
+      - frame_summary
       - joint_expectation
       - design_effect
       - effective_n

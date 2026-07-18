@@ -12,18 +12,23 @@ validate_frame(
 )
 }
 \arguments{
-\item{design}{A \code{sampling_design} object}
+\item{design}{A \code{sampling_design} object, or an executed
+\code{tbl_sample}: its stored design is validated and its frame digest
+(when present) is compared against \code{frame}.}
 
 \item{frame}{A data frame to validate}
 
 \item{stage}{Which stage(s) to validate against. Default validates all stages.}
 
-\item{fingerprint}{How to report differences between \code{frame} and the
-frame fingerprint stored in a design file. Applies to designs restored
-with \code{\link[=read_design]{read_design()}} when the design was saved with \verb{frame =}. One of
-\code{"inform"} (default, emits a message), \code{"warn"}, or \code{"ignore"}. The
-comparison is informational and never fails validation, because a
-design remains executable on any frame that passes the variable checks.}
+\item{fingerprint}{How to report differences between \code{frame} and
+what was recorded earlier: the frame fingerprint stored in a
+design file (designs restored with \code{\link[=read_design]{read_design()}} when saved
+with \verb{frame =}) and the frame digest recorded at execution (when
+\code{design} is a \code{tbl_sample}, or a restored design whose receipt
+carries one). One of \code{"inform"} (default, emits a message),
+\code{"warn"}, or \code{"ignore"}. Both comparisons are informational and
+never fail validation, because a design remains executable on any
+frame that passes the variable checks.}
 }
 \value{
 Invisibly returns \code{TRUE} if validation passes.
@@ -46,6 +51,15 @@ Validation checks include:
 For designs restored with \code{\link[=read_design]{read_design()}}, if the design file carries a
 frame fingerprint, \code{validate_frame()} also compares it against \code{frame}
 and reports what changed (rows, columns, column types, or content).
+
+When a frame digest is available (an executed \code{tbl_sample}, or a
+design file written from one), the structural comparison goes
+further: the role-scoped fingerprint (analysis columns added later
+do not trigger it), the frame size, and per-pool population sizes
+recomputed from \code{frame} at every stage the digest can anchor
+(stage 1 over the universe; later stages under the recorded
+parents). The report says where the frame drifted, not merely that
+it did.
 
 When \code{frame} is itself a \code{tbl_sample} (that is, the design is being
 prepared as phase 2 of a two-phase sample), \code{validate_frame()} also

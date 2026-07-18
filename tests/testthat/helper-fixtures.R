@@ -74,3 +74,51 @@ fix_pps_multinomial <- sampling_design() |>
 fix_pps_chromy <- sampling_design() |>
   draw(n = 8, method = "pps_chromy", mos = mos) |>
   execute(test_frame, seed = 42)
+
+# Synthetic three-stage frame: 3 regions x 4 districts, villages per
+# district cycling 4-7 with alternating phc strata, compounds per
+# village cycling 2-12. Purely arithmetic (no RNG, no stored data):
+# the frame, and every count derived from it, is reproducible from
+# this code alone. Villages with at most 3 compounds become stage-3
+# whole takes under the reference design (n = 3).
+synth_three_stage_frame <- function() {
+  vil_counts <- c(4L, 5L, 6L, 7L)
+  comp_cycle <- c(2L, 4L, 6L, 9L, 12L, 3L, 8L)
+  rows <- list()
+  v_global <- 0L
+  for (r in 1:3) {
+    for (d in 1:4) {
+      district <- sprintf("d%02d", (r - 1L) * 4L + d)
+      for (v in seq_len(vil_counts[d])) {
+        v_global <- v_global + 1L
+        n_comp <- comp_cycle[(v_global - 1L) %% 7L + 1L]
+        rows[[v_global]] <- data.frame(
+          region = c("East", "Central", "West")[r],
+          district = district,
+          phc = if (v %% 2L == 0L) "yes" else "no",
+          village = sprintf("%s-v%02d", district, v),
+          compound = seq_len(n_comp)
+        )
+      }
+    }
+  }
+  frame <- do.call(rbind, rows)
+  frame$village_pop <- as.integer(
+    ave(frame$compound, frame$village, FUN = length)
+  )
+  frame$district_pop <- as.integer(
+    ave(frame$compound, frame$district, FUN = length)
+  )
+  frame
+}
+
+# The reference three-stage design over synth_three_stage_frame().
+synth_three_stage_design <- function() {
+  sampling_design("Synthetic three-stage") |>
+    add_stage("Districts") |> stratify_by(region) |>
+    cluster_by(district) |>
+    draw(n = 2, method = "pps_systematic", mos = district_pop) |>
+    add_stage("Villages") |> stratify_by(phc) |> cluster_by(village) |>
+    draw(n = 2, method = "pps_systematic", mos = village_pop) |>
+    add_stage("Compounds") |> draw(n = 3)
+}

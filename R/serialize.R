@@ -378,6 +378,16 @@ read_design <- function(file) {
 #' carries a `chained` flag in its receipt and cannot be replayed;
 #' save and replay each phase or stage batch separately.
 #'
+#' For a design using a registered custom method, the receipt records a
+#' fingerprint of the implementation (the formals and body of the
+#' registered `sample_fn` and `joint_fn`). Replay refuses when the
+#' currently registered function differs from the recorded one, since
+#' identical registry metadata does not imply the same selections.
+#' The fingerprint normalizes formatting and comments and does not
+#' cover the function's enclosing environment: a registered function
+#' that reads from its environment can change behavior without
+#' changing its fingerprint.
+#'
 #' When the design was saved with a frame fingerprint, `frame` is
 #' compared against it before replaying. A differing frame still yields
 #' a valid sample, but not the recorded one, so the default is to error.
@@ -563,10 +573,16 @@ check_replay_custom_methods <- function(design, call = caller_env()) {
     }
 
     current <- sondage::method_spec(native_name)
+    # Metadata alone cannot tell two functions apart: the fingerprint
+    # covers the registered formals and body, so replay refuses a
+    # different implementation registered under the same name.
+    current$implementation <- method_implementation_hash(current)
     recorded <- list(
       type = spec$method_type,
       fixed_size = spec$method_fixed,
-      variance_family = spec$method_variance
+      variance_family = spec$method_variance,
+      probabilities = spec$method_probabilities,
+      implementation = spec$method_implementation
     )
     fields <- names(recorded)[!vapply(recorded, is_null, logical(1))]
     agrees <- vapply(
@@ -575,10 +591,12 @@ check_replay_custom_methods <- function(design, call = caller_env()) {
       logical(1)
     )
     if (!all(agrees)) {
+      differing <- fields[!agrees]
       abort_samplyr(
         c(
           "Registered method {.val {spec$method}} differs from the
-           method recorded in the design file.",
+           method recorded in the design file
+           ({.field {differing}} disagree{?s/}).",
           "i" = "Re-register the original implementation before replaying."
         ),
         class = "samplyr_error_replay_method_mismatch",
@@ -1285,7 +1303,9 @@ encode_samplyr_stage_metadata <- function(stage) {
     name = spec$method,
     registry_type = spec$method_type,
     fixed_size = spec$method_fixed,
-    variance_family = spec$method_variance
+    variance_family = spec$method_variance,
+    probabilities = spec$method_probabilities,
+    implementation = spec$method_implementation
   ))
 }
 
@@ -1372,11 +1392,19 @@ samplyr_frame_fingerprint <- function(frame, frame_label) {
 #' only in those respects are the same population. Row order does
 #' contribute, because replaying a seed against reordered rows selects
 #' different units.
+#'
+#' `columns` restricts the hash to a subset of columns. The frame
+#' digest uses this for the role-scoped fingerprint, which must not be
+#' invalidated by analysis columns added later.
 #' @noRd
-frame_content_hash <- function(frame) {
-  ord <- order(names(frame), method = "radix")
-  cols <- lapply(ord, function(i) frame[[i]])
-  names(cols) <- names(frame)[ord]
+frame_content_hash <- function(frame, columns = NULL) {
+  nms <- names(frame)
+  if (!is_null(columns)) {
+    nms <- intersect(nms, columns)
+  }
+  ord <- nms[order(nms, method = "radix")]
+  cols <- lapply(ord, function(nm) frame[[nm]])
+  names(cols) <- ord
   rlang::hash(cols)
 }
 
@@ -1414,7 +1442,179 @@ encode_execution <- function(sample) {
   if (!sample_realization_status(sample)$ok) {
     receipt$modified <- TRUE
   }
+  # The frame digest travels inside the receipt with its own schema
+  # version. An invalidated digest is not written: it no longer
+  # describes any sample.
+  digest <- get_frame_digest(sample)
+  if (!is_null(digest) && !identical(digest$status, "invalidated")) {
+    receipt$frame_digest <- digest
+  }
   receipt
+}
+
+#' Decode a frame digest read back from a design file
+#'
+#' Rebuilds the digest tables from the row-wise JSON representation,
+#' checks the digest schema version, and validates the result. The
+#' caller wraps this in tryCatch: an unreadable or newer-version digest
+#' drops with a warning, never failing the file read.
+#' @noRd
+decode_frame_digest <- function(x) {
+  version <- x$version
+  if (
+    !is.numeric(version) || length(version) != 1 || is.na(version)
+  ) {
+    abort_samplyr(
+      "The stored frame digest has no valid version field.",
+      class = "samplyr_error_digest_malformed",
+      call = NULL
+    )
+  }
+  if (version > frame_digest_version) {
+    abort_samplyr(
+      "The stored frame digest has schema version {version}; this
+       version of samplyr reads up to {frame_digest_version}.",
+      class = "samplyr_error_digest_version",
+      call = NULL
+    )
+  }
+  # Migration stub: no earlier digest versions exist yet.
+
+  chr1 <- function(v) {
+    if (is_null(v)) NULL else as.character(v)[1]
+  }
+  chrs <- function(v) {
+    if (is_null(v)) NULL else as.character(unlist(v))
+  }
+
+  frames <- lapply(x$frames, function(f) {
+    list(
+      frame_id = as.integer(f$frame_id),
+      fingerprint_exact = chr1(f$fingerprint_exact),
+      fingerprint_roles = chr1(f$fingerprint_roles),
+      n_rows = as.integer(f$n_rows),
+      roles = decode_digest_table(
+        f$roles, c(column = "chr", role = "chr", stage = "int")
+      ),
+      scope = chr1(f$scope)
+    )
+  })
+
+  stages <- lapply(x$stages, function(s) {
+    strata <- chrs(s$strata)
+    pool_spec <- c(
+      pool_id = "int", parent_unit = "int", N = "int",
+      n_target = "dbl", expected_n = "dbl", n_realized = "int",
+      scope = "chr", chance_status = "chr", chance = "dbl",
+      n_descendants = "int",
+      setNames(rep("chr", length(strata)), strata)
+    )
+    diagnostics <- NULL
+    if (!is_null(s$diagnostics)) {
+      diagnostics <- list()
+      diagnostics$balance <- decode_digest_table(
+        s$diagnostics$balance,
+        c(pool_id = "int", term = "chr", target = "dbl",
+          realized = "dbl", residual = "dbl")
+      )
+      diagnostics$bounds <- decode_digest_table(
+        s$diagnostics$bounds,
+        c(pool_id = "int", term = "chr", level = "chr",
+          expected = "dbl", lower = "dbl", upper = "dbl",
+          realized = "dbl", satisfied = "lgl")
+      )
+      if (!is_null(s$diagnostics$spatial)) {
+        sp <- s$diagnostics$spatial
+        diagnostics$spatial <- list(
+          variables = chrs(sp$variables),
+          dimensions = as.integer(sp$dimensions),
+          ranges = decode_digest_table(
+            sp$ranges, c(variable = "chr", min = "dbl", max = "dbl")
+          ),
+          n_duplicate_coordinates = as.integer(
+            sp$n_duplicate_coordinates
+          )
+        )
+      }
+      diagnostics <- Filter(Negate(is_null), diagnostics)
+      if (length(diagnostics) == 0) diagnostics <- NULL
+    }
+    new_digest_stage(
+      stage_id = as.integer(s$stage_id),
+      frame_ref = as.integer(s$frame_ref),
+      unit_level = chr1(s$unit_level),
+      scope = chr1(s$scope),
+      chance_kind = chr1(s$chance_kind),
+      probabilities = chr1(s$probabilities),
+      order_kind = chr1(s$order_kind),
+      storage = chr1(s$storage),
+      pools = decode_digest_table(s$pools, pool_spec),
+      units = decode_digest_table(
+        s$units,
+        c(unit_id = "int", pool_id = "int", unit_order = "int",
+          chance = "dbl", is_certainty = "lgl", n_descendants = "int")
+      ),
+      chance_distribution = decode_digest_table(
+        s$chance_distribution,
+        c(pool_id = "int", quantile = "dbl", chance = "dbl",
+          n_units = "int")
+      ),
+      selected = decode_digest_table(
+        s$selected,
+        c(pool_id = "int", unit_id = "int", occurrence = "int",
+          replicate = "int", key = "chr", sample_row = "int")
+      ),
+      strata = strata,
+      diagnostics = diagnostics
+    )
+  })
+
+  digest <- new_frame_digest(
+    frames = frames,
+    stages = stages,
+    privacy = digest_privacy(
+      mode = chr1(x$privacy$mode) %||% "summary",
+      stable_keys = isTRUE(x$privacy$stable_keys),
+      labels_retained = isTRUE(x$privacy$labels_retained)
+    ),
+    status = chr1(x$status) %||% "complete"
+  )
+  validate_frame_digest(digest)
+  digest
+}
+
+#' Rebuild one digest table from row-wise JSON
+#'
+#' `spec` names the known columns and their types ("int", "dbl",
+#' "chr", "lgl"). Columns absent from every row stay absent; JSON
+#' nulls become typed NA.
+#' @noRd
+decode_digest_table <- function(rows, spec) {
+  if (is_null(rows) || length(rows) == 0) {
+    return(NULL)
+  }
+  present <- unique(unlist(lapply(rows, names)))
+  cols <- intersect(names(spec), present)
+  out <- lapply(cols, function(col) {
+    values <- lapply(rows, function(row) row[[col]])
+    switch(
+      spec[[col]],
+      int = vapply(values, function(v) {
+        if (is_null(v)) NA_integer_ else as.integer(v)
+      }, integer(1)),
+      dbl = vapply(values, function(v) {
+        if (is_null(v)) NA_real_ else as.double(v)
+      }, numeric(1)),
+      chr = vapply(values, function(v) {
+        if (is_null(v)) NA_character_ else as.character(v)
+      }, character(1)),
+      lgl = vapply(values, function(v) {
+        if (is_null(v)) NA else as.logical(v)
+      }, logical(1))
+    )
+  })
+  names(out) <- cols
+  as.data.frame(out, check.names = FALSE)
 }
 
 # Decoding ----------------------------------------------------------------
@@ -1482,7 +1682,21 @@ decode_design_payload <- function(payload, call = caller_env()) {
   )
   attr(design, "portable_frame_info") <- payload$frame
   attr(design, "design_tools") <- payload$tools
-  attr(design, "execution") <- payload$execution
+  execution <- payload$execution
+  if (!is_null(execution$frame_digest)) {
+    execution$frame_digest <- tryCatch(
+      decode_frame_digest(execution$frame_digest),
+      error = function(e) {
+        cli_warn(c(
+          "The frame digest stored with this design could not be read
+           and was dropped.",
+          "i" = conditionMessage(e)
+        ))
+        NULL
+      }
+    )
+  }
+  attr(design, "execution") <- execution
   design
 }
 
@@ -1535,7 +1749,9 @@ decode_stage <- function(
       on_empty = decode_chr(draw$on_empty) %||% "error",
       method_type = method$registry_type,
       method_fixed = method$fixed_size,
-      method_variance = method$variance_family
+      method_variance = method$variance_family,
+      method_probabilities = method$probabilities,
+      method_implementation = method$implementation
     )
   }
 
@@ -1611,7 +1827,9 @@ decode_method <- function(
       name = name,
       registry_type = decode_chr(tool_method$registry_type),
       fixed_size = decode_flag(tool_method$fixed_size),
-      variance_family = decode_chr(tool_method$variance_family)
+      variance_family = decode_chr(tool_method$variance_family),
+      probabilities = decode_chr(tool_method$probabilities),
+      implementation = decode_chr(tool_method$implementation)
     ))
   }
 
@@ -1629,7 +1847,9 @@ decode_method <- function(
     name = common_match,
     registry_type = NULL,
     fixed_size = NULL,
-    variance_family = NULL
+    variance_family = NULL,
+    probabilities = NULL,
+    implementation = NULL
   )
 }
 

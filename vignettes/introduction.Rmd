@@ -672,7 +672,8 @@ tille_joint_fn <- function(pik, sample_idx = NULL, ...) {
 sondage::register_method(
   "tille", type = "wor",
   sample_fn = tille_fn,
-  joint_fn = tille_joint_fn
+  joint_fn = tille_joint_fn,
+  probabilities = "exact"
 )
 ```
 
@@ -703,6 +704,8 @@ sondage::unregister_method("tille")
 ```
 
 Custom methods flow through the full pipeline: stratification, certainty selection, multi-stage designs, survey export, and summary diagnostics. See `?sondage::register_method` for the full contract including WR methods and PRN support.
+
+samplyr weights every sample by `1 / pik`, the chance vector it resolves and hands to the registered method. Those weights, and the chances the frame digest records, are only valid when the method honors `pik` as its first-order target. Registered methods state their tier with `probabilities` (sondage >= 0.8.8): `"exact"` when the design's true first-order inclusion probabilities equal `pik` (UPtille above), `"approximate"` when they are honored to a documented approximation (as Pareto sampling is), and `"unknown"` (the default) when `pik` is a selection weight only. `draw()` refuses `"unknown"` methods rather than produce biased weights, so declaring the tier is part of registering a method for samplyr. The classic trap the default protects against: `sample(prob = pik)` yields expected hits exactly equal to `pik` with replacement, but its without-replacement inclusion probabilities differ from `pik`, so a WOR wrapper's tier really is unknown.
 
 ---
 
@@ -1009,6 +1012,22 @@ effect (including clustering and stratification), use `survey::svymean()` with `
 ```{r}
 summary(sample)
 ```
+
+### The Frame Digest
+
+Every execution records a frame digest by default: a compact summary of the selection pools and chances the design resolved, with no unit identifiers. The `n/N` line in the printed header and the pool tables in `summary()` come from it, and `frame_summary()` returns it as tibbles. The original frame is not needed:
+
+```{r}
+ea_sample <- sampling_design(title = "EA sample") |>
+  stratify_by(region) |>
+  cluster_by(ea_id) |>
+  draw(n = 25, method = "pps_brewer", mos = households) |>
+  execute(bfa_eas, seed = 42)
+
+frame_summary(ea_sample)
+```
+
+The companion package samplens, in development, draws the digest as a visual sampling card.
 
 ---
 

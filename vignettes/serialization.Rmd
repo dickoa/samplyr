@@ -119,7 +119,10 @@ It is useful for inspecting samplyr files, but it is not presented as the
 finalized external method vocabulary. `read_design()` can restore a recognized
 internal method without a `tools.samplyr` block. Custom methods use the
 identifier `tool_specific`; the same method must be registered through
-`sondage::register_method()` before replay.
+`sondage::register_method()` before replay. The file records a
+fingerprint of the registered implementation (formals and body of
+`sample_fn` and `joint_fn`), and replay refuses a function that
+differs from the recorded one even when its registry metadata matches.
 
 The complete, machine-readable dictionary ships as `schema/sampling-methods-v1.json` inside the installed package. Its identifier and version are declared in each document's `schema.method_vocabulary` block.
 
@@ -171,7 +174,7 @@ This complements `validate_frame()`, which performs the full check against an ac
 validate_frame(restored, bfa_eas)
 ```
 
-The **fingerprint** block is written when you pass the frame to `write_design()`. Its common part records dimensions and portable column types such as `integer`, `categorical`, and `date`. R-specific details—the expression used for the frame, native R classes, and the `rlang::hash()` content hash—are isolated in `tools.samplyr.frame`. Together they are enough for samplyr to verify the exact frame without shipping any data, while another tool can still use the structural metadata:
+The **fingerprint** block is written when you pass the frame to `write_design()`. Its common part records dimensions and portable column types such as `integer`, `categorical`, and `date`. R-specific details (the expression used for the frame, native R classes, and the `rlang::hash()` content hash) are isolated in `tools.samplyr.frame`. Together they are enough for samplyr to verify the exact frame without shipping any data, while another tool can still use the structural metadata:
 
 ```{r}
 write_design(design, path, frame = bfa_eas)
@@ -241,6 +244,38 @@ and checks the replayed row count against the receipt.
 Two situations fall outside the single-call contract, and `write_design()` warns about both. A sample built by several `execute()` calls (a stage continuation or a multi-phase pipeline) is flagged as `chained` in its receipt: the receipt records only the final call, so `replay_design()` refuses it. Save and replay each phase or stage batch separately. A sample whose rows or design columns were modified after execution is flagged as `modified`: its receipt describes the original execution, not the modified object.
 
 The sampled rows themselves are not stored, because a design file is a *recipe*, not a dataset. Save the selected units with the usual data tools (`write.csv()`, arrow, ...) and keep the design file next to them as the audit trail.
+
+## Drift detection with the execution digest
+
+The receipt also carries a frame digest: the pool sizes and selection chances that execution resolved, with no unit identifiers. `validate_frame()` uses it to answer a question a fingerprint cannot: does a candidate frame still imply the recorded sample?
+
+A fingerprint only says that bytes changed. The digest comparison says what the change means for the design. Rescaling a size measure changes every byte of the column but not one inclusion probability, and the message says so:
+
+```{r}
+pps_sample <- sampling_design(title = "EA PPS") |>
+  stratify_by(region) |>
+  cluster_by(ea_id) |>
+  draw(n = 25, method = "pps_brewer", mos = households) |>
+  execute(bfa_eas, seed = 7)
+
+rescaled <- bfa_eas |>
+  mutate(households = households * 10)
+
+validate_frame(pps_sample, rescaled)
+```
+
+Shifting sizes for some units does change the chances the design would resolve today, and the message points at the stage:
+
+```{r}
+shifted <- bfa_eas |>
+  mutate(households = ifelse(
+    province == "Soum", households + 500, households
+  ))
+
+validate_frame(pps_sample, shifted)
+```
+
+Structural drift is reported the same way: removing or adding units names each affected pool with its recorded and current sizes. All of this is informational. A drifted frame remains executable; it just no longer reproduces the recorded sample, so replaying or extending the sample on it would give a different result.
 
 ## Control expressions and safety
 

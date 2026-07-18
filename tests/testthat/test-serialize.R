@@ -656,7 +656,11 @@ test_that("replay_design() warns when execution versions differ", {
     simplifyVector = FALSE
   )
   payload$tools$samplyr$execution$environment$packages$samplyr <- "0.0.0"
-  json <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
+  # Match the writer's serialization settings: default digits would
+  # truncate the digest's chance values and fail its round trip.
+  json <- jsonlite::toJSON(
+    payload, auto_unbox = TRUE, null = "null", na = "null", digits = NA
+  )
 
   expect_warning(
     replay_design(read_design(json), test_frame),
@@ -671,7 +675,8 @@ test_that("replay_design() requires recorded custom methods", {
   sondage::register_method(
     "serialize_wor",
     "wor",
-    sample_fn = toy_method
+    sample_fn = toy_method,
+    probabilities = "exact"
   )
   on.exit(
     if (sondage::is_registered_method("serialize_wor")) {
@@ -803,4 +808,69 @@ test_that("replay_design() is strict by default when the frame differs", {
     }
   )
   expect_false(any(grepl("differs from the frame", warns2)))
+})
+
+test_that("built-in probability tiers are serialized and back-filled", {
+  design <- sampling_design() |>
+    draw(n = 10, method = "pps_sps", mos = mos)
+  json <- design_json(design)
+  payload <- jsonlite::fromJSON(json, simplifyVector = FALSE)
+  expect_identical(
+    payload$tools$samplyr$design$stages[[1]]$method$probabilities,
+    "approximate"
+  )
+  expect_identical(
+    read_design(json)$stages[[1]]$draw_spec$method_probabilities,
+    "approximate"
+  )
+
+  # Files written before the field carry no tier for built-ins;
+  # reconstruction fills it from the method name.
+  payload$tools$samplyr$design$stages[[1]]$method$probabilities <- NULL
+  restored <- read_design(
+    jsonlite::toJSON(payload, auto_unbox = TRUE, na = "null")
+  )
+  expect_identical(
+    restored$stages[[1]]$draw_spec$method_probabilities,
+    "approximate"
+  )
+})
+
+test_that("replay refuses a different implementation under the same name", {
+  on.exit(sondage::unregister_method("impl_swap"), add = TRUE)
+  first_k <- function(pik, n = NULL, prn = NULL, ...) seq_len(n)
+  sondage::register_method(
+    "impl_swap", "wor", sample_fn = first_k, probabilities = "exact"
+  )
+  s <- sampling_design() |>
+    draw(n = 3, method = "pps_impl_swap", mos = mos) |>
+    execute(test_frame, seed = 5)
+  expect_identical(s$id, sprintf("u%03d", 1:3))
+  json <- design_json(s, frame = test_frame)
+  restored <- read_design(json)
+
+  # Re-registering the same code (formatting and comments may differ)
+  # fingerprints identically and replays the recorded sample.
+  sondage::unregister_method("impl_swap")
+  same_code <- function(pik, n = NULL, prn = NULL, ...)   seq_len(n) # same tree
+  sondage::register_method(
+    "impl_swap", "wor", sample_fn = same_code, probabilities = "exact"
+  )
+  replayed <- replay_design(restored, test_frame)
+  expect_identical(replayed$id, s$id)
+  expect_identical(replayed$.weight, s$.weight)
+
+  # A different function under identical registry metadata is refused:
+  # without the fingerprint this silently replayed different rows.
+  sondage::unregister_method("impl_swap")
+  last_k <- function(pik, n = NULL, prn = NULL, ...) {
+    rev(seq_along(pik))[seq_len(n)]
+  }
+  sondage::register_method(
+    "impl_swap", "wor", sample_fn = last_k, probabilities = "exact"
+  )
+  expect_error(
+    replay_design(restored, test_frame),
+    class = "samplyr_error_replay_method_mismatch"
+  )
 })

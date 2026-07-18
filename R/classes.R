@@ -174,9 +174,16 @@ new_draw_spec <- function(
   on_empty = "error",
   method_type = NULL,
   method_fixed = NULL,
-  method_variance = NULL
+  method_variance = NULL,
+  method_probabilities = NULL,
+  method_implementation = NULL
 ) {
   method <- canonical_method_name(method, method_type)
+  # Built-in tiers are known here; registered methods carry theirs from
+  # sondage::method_spec(). Designs read from files that predate the
+  # field pick the tier up on reconstruction.
+  method_probabilities <- method_probabilities %||%
+    builtin_method_probabilities(method)
   structure(
     list(
       n = n,
@@ -197,7 +204,9 @@ new_draw_spec <- function(
       on_empty = on_empty,
       method_type = method_type,
       method_fixed = method_fixed,
-      method_variance = method_variance
+      method_variance = method_variance,
+      method_probabilities = method_probabilities,
+      method_implementation = method_implementation
     ),
     class = "draw_spec"
   )

@@ -48,23 +48,26 @@ sampling_design() |>
   draw(n = 500) |>
   execute(bfa_eas, seed = 1)
 #> # A tbl_sample: 500 × 18
+#> # Sampling:     1 stage | 500/44,570 units
 #> # Weights:      89.14 [87.47, 90.09]
-#>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
-#>  1  9648 Boucle du … Banwa    Sanaba  Rural              279         35     8.37
-#>  2 11547 Boucle du … Sourou   Toéni   Rural               49          7    21.4 
-#>  3 41824 Boucle du … Kossi    Dokui   Rural               75         10    15.8 
-#>  4 11012 Boucle du … Banwa    Tansila Rural              592         71     0.95
-#>  5 32308 Boucle du … Sourou   Lanfiè… Rural               57          8     9.49
-#>  6  7017 Boucle du … Kossi    Madouba Rural              599         74     0.74
-#>  7 36700 Boucle du … Bale     Fara    Rural              402         59     6.36
-#>  8 11611 Boucle du … Nayala   Yaba    Rural              111         15     8.97
-#>  9  8342 Boucle du … Mouhoun  Ouarko… Rural               94         13     8.1 
-#> 10 11626 Boucle du … Nayala   Yaba    Rural               56          7     8.31
+#>    ea_id region           province commune urban_rural population
+#>  * <int> <fct>            <fct>    <fct>   <fct>            <int>
+#>  1  9648 Boucle du Mouho… Banwa    Sanaba  Rural              279
+#>  2 11547 Boucle du Mouho… Sourou   Toéni   Rural               49
+#>  3 41824 Boucle du Mouho… Kossi    Dokui   Rural               75
+#>  4 11012 Boucle du Mouho… Banwa    Tansila Rural              592
+#>  5 32308 Boucle du Mouho… Sourou   Lanfiè… Rural               57
+#>  6  7017 Boucle du Mouho… Kossi    Madouba Rural              599
+#>  7 36700 Boucle du Mouho… Bale     Fara    Rural              402
+#>  8 11611 Boucle du Mouho… Nayala   Yaba    Rural              111
+#>  9  8342 Boucle du Mouho… Mouhoun  Ouarko… Rural               94
+#> 10 11626 Boucle du Mouho… Nayala   Yaba    Rural               56
 #> # ℹ 490 more rows
-#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
-#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
-#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
+#> # ℹ 12 more variables: households <int>, area_km2 <dbl>,
+#> #   pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>,
+#> #   .sample_id <int>, .stage <int>, .weight_1 <dbl>,
+#> #   .fpc_1 <int>
 ```
 
 Consider a real survey design from Lohr (2022, Example 7.1), based on a
@@ -102,21 +105,21 @@ design <- sampling_design(title = "Gambia bed nets") |>
   add_stage() |>
     draw(n = 6)
 design
-#> ── Sampling Design: Gambia bed nets ────────────────────────────────────────
+#> ── Sampling Design: Gambia bed nets ─────────────────────────────
 #> 
 #> ℹ 3 stages
 #> 
-#> ── Stage 1 ─────────────────────────────────────────────────────────────────
+#> ── Stage 1 ──────────────────────────────────────────────────────
 #> • Strata: region
 #> • Cluster: district
 #> • Draw: n = 5 (per stratum), method = pps_brewer, mos = population
 #> 
-#> ── Stage 2 ─────────────────────────────────────────────────────────────────
+#> ── Stage 2 ──────────────────────────────────────────────────────
 #> • Strata: phc
 #> • Cluster: village
 #> • Draw: n = 2 (per stratum), method = pps_brewer, mos = population
 #> 
-#> ── Stage 3 ─────────────────────────────────────────────────────────────────
+#> ── Stage 3 ──────────────────────────────────────────────────────
 #> • Draw: n = 6, method = srswor
 ```
 
@@ -168,22 +171,24 @@ sample <- execute(design, bfa_eas, seed = 2)
 sample
 #> # A tbl_sample: 300 × 18
 #> # Weights:      148.57 [146.5, 151.22]
-#>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
-#>  1 29513 Boucle du … Bale     Bana    Rural              181         24     4.89
-#>  2 29527 Boucle du … Bale     Bana    Rural              193         25     0.14
-#>  3 36703 Boucle du … Bale     Fara    Rural              975        143     1.31
-#>  4  8455 Boucle du … Bale     Ouri    Rural               57          8     5.95
-#>  5  8580 Boucle du … Bale     Pâ      Rural              171         20     5.12
-#>  6 11739 Boucle du … Bale     Yaho    Rural              509         76     8.8 
-#>  7 11746 Boucle du … Bale     Yaho    Rural               98         15     8.72
-#>  8  6291 Boucle du … Banwa    Kouka   Rural              563         65     7.96
-#>  9 34031 Boucle du … Banwa    Sami    Rural               41          6    20.2 
-#> 10 34058 Boucle du … Banwa    Sami    Rural              516         78     7.6 
+#>    ea_id region           province commune urban_rural population
+#>  * <int> <fct>            <fct>    <fct>   <fct>            <int>
+#>  1 29513 Boucle du Mouho… Bale     Bana    Rural              181
+#>  2 29527 Boucle du Mouho… Bale     Bana    Rural              193
+#>  3 36703 Boucle du Mouho… Bale     Fara    Rural              975
+#>  4  8455 Boucle du Mouho… Bale     Ouri    Rural               57
+#>  5  8580 Boucle du Mouho… Bale     Pâ      Rural              171
+#>  6 11739 Boucle du Mouho… Bale     Yaho    Rural              509
+#>  7 11746 Boucle du Mouho… Bale     Yaho    Rural               98
+#>  8  6291 Boucle du Mouho… Banwa    Kouka   Rural              563
+#>  9 34031 Boucle du Mouho… Banwa    Sami    Rural               41
+#> 10 34058 Boucle du Mouho… Banwa    Sami    Rural              516
 #> # ℹ 290 more rows
-#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
-#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
-#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
+#> # ℹ 12 more variables: households <int>, area_km2 <dbl>,
+#> #   pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>,
+#> #   .sample_id <int>, .stage <int>, .weight_1 <dbl>,
+#> #   .fpc_1 <int>
 ```
 
 ## Quick Start
@@ -199,23 +204,26 @@ srs_smpl <- sampling_design() |>
 
 srs_smpl
 #> # A tbl_sample: 100 × 18
+#> # Sampling:     1 stage | 100/44,570 units
 #> # Weights:      445.7 [445.7, 445.7]
-#>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
-#>  1  5168 Centre-Nord Sanmate… Kaya    Urban              794        129     0.18
-#>  2 11281 Centre-Sud  Nahouri  Tiébélé Rural              123         20     8.83
-#>  3 30149 Centre-Oue… Sanguie  Dassa   Rural              813        127     7.52
-#>  4 13590 Est         Gnagna   Koala   Rural              353         44     6.04
-#>  5 26045 Boucle du … Mouhoun  Dédoug… Rural              378         54     8.36
-#>  6 44140 Centre-Est  Koulpel… Soudou… Rural              258         43     8.95
-#>  7 30931 Est         Komandj… Gayéri  Rural              150         16     8.8 
-#>  8 10745 Sahel       Yagha    Tankou… Rural              312         43    17.0 
-#>  9 13990 Hauts-Bass… Kenedou… Kourou… Rural              406         48     8.98
-#> 10 27757 Est         Tapoa    Partia… Rural              571         75     8.82
+#>    ea_id region           province commune urban_rural population
+#>  * <int> <fct>            <fct>    <fct>   <fct>            <int>
+#>  1  5168 Centre-Nord      Sanmate… Kaya    Urban              794
+#>  2 11281 Centre-Sud       Nahouri  Tiébélé Rural              123
+#>  3 30149 Centre-Ouest     Sanguie  Dassa   Rural              813
+#>  4 13590 Est              Gnagna   Koala   Rural              353
+#>  5 26045 Boucle du Mouho… Mouhoun  Dédoug… Rural              378
+#>  6 44140 Centre-Est       Koulpel… Soudou… Rural              258
+#>  7 30931 Est              Komandj… Gayéri  Rural              150
+#>  8 10745 Sahel            Yagha    Tankou… Rural              312
+#>  9 13990 Hauts-Bassins    Kenedou… Kourou… Rural              406
+#> 10 27757 Est              Tapoa    Partia… Rural              571
 #> # ℹ 90 more rows
-#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
-#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
-#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
+#> # ℹ 12 more variables: households <int>, area_km2 <dbl>,
+#> #   pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>,
+#> #   .sample_id <int>, .stage <int>, .weight_1 <dbl>,
+#> #   .fpc_1 <int>
 
 # Stratified proportional allocation
 strata_smpl <- sampling_design() |>
@@ -225,23 +233,26 @@ strata_smpl <- sampling_design() |>
 
 strata_smpl
 #> # A tbl_sample: 300 × 18
+#> # Sampling:     1 stage | 300/44,570 units
 #> # Weights:      148.57 [146.5, 151.22]
-#>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
-#>  1 31987 Boucle du … Sourou   Kiemba… Rural               24          3     7.24
-#>  2  4968 Boucle du … Sourou   Kassoum Rural              303         41     4.13
-#>  3  4958 Boucle du … Sourou   Kassoum Rural              142         19     8.24
-#>  4 23903 Boucle du … Banwa    Solenzo Rural               94         13    13.5 
-#>  5 25996 Boucle du … Mouhoun  Dédoug… Rural              538         76     8.63
-#>  6 21501 Boucle du … Kossi    Doumba… Rural              247         42     7.93
-#>  7 43794 Boucle du … Mouhoun  Safané  Rural               87         12     8.96
-#>  8  9724 Boucle du … Banwa    Sanaba  Rural               51          6     8.02
-#>  9 10979 Boucle du … Banwa    Tansila Rural               71          9     7.72
-#> 10  8893 Boucle du … Bale     Pompoï  Rural              522         77     0.48
+#>    ea_id region           province commune urban_rural population
+#>  * <int> <fct>            <fct>    <fct>   <fct>            <int>
+#>  1 31987 Boucle du Mouho… Sourou   Kiemba… Rural               24
+#>  2  4968 Boucle du Mouho… Sourou   Kassoum Rural              303
+#>  3  4958 Boucle du Mouho… Sourou   Kassoum Rural              142
+#>  4 23903 Boucle du Mouho… Banwa    Solenzo Rural               94
+#>  5 25996 Boucle du Mouho… Mouhoun  Dédoug… Rural              538
+#>  6 21501 Boucle du Mouho… Kossi    Doumba… Rural              247
+#>  7 43794 Boucle du Mouho… Mouhoun  Safané  Rural               87
+#>  8  9724 Boucle du Mouho… Banwa    Sanaba  Rural               51
+#>  9 10979 Boucle du Mouho… Banwa    Tansila Rural               71
+#> 10  8893 Boucle du Mouho… Bale     Pompoï  Rural              522
 #> # ℹ 290 more rows
-#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
-#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
-#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
+#> # ℹ 12 more variables: households <int>, area_km2 <dbl>,
+#> #   pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>,
+#> #   .sample_id <int>, .stage <int>, .weight_1 <dbl>,
+#> #   .fpc_1 <int>
 
 # PPS cluster sampling
 cluster_smpl <- sampling_design() |>
@@ -252,22 +263,24 @@ cluster_smpl <- sampling_design() |>
 cluster_smpl
 #> # A tbl_sample: 50 × 19
 #> # Weights:      779.3 [188.64, 2999.41]
-#>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
-#>  1 23944 Boucle du … Banwa    Solenzo Rural              758        102     0.77
-#>  2 33134 Boucle du … Kossi    Nouna   Rural             1116        145     1.35
-#>  3 10578 Boucle du … Kossi    Sônô    Rural              326         49     0.41
-#>  4 23289 Cascades    Comoe    Ouô     Rural              534         70     8.62
-#>  5 15240 Centre      Kadiogo  Ouagad… Urban              614         92     0.14
-#>  6 15327 Centre      Kadiogo  Ouagad… Urban             1061        160     0.7 
-#>  7 15429 Centre      Kadiogo  Ouagad… Urban              667        100     0.14
-#>  8 15550 Centre      Kadiogo  Ouagad… Urban              967        146     0.24
-#>  9 17098 Centre      Kadiogo  Ouagad… Urban              844        127     0.12
-#> 10 17487 Centre      Kadiogo  Ouagad… Urban              938        141     0.11
+#>    ea_id region           province commune urban_rural population
+#>  * <int> <fct>            <fct>    <fct>   <fct>            <int>
+#>  1 23944 Boucle du Mouho… Banwa    Solenzo Rural              758
+#>  2 33134 Boucle du Mouho… Kossi    Nouna   Rural             1116
+#>  3 10578 Boucle du Mouho… Kossi    Sônô    Rural              326
+#>  4 23289 Cascades         Comoe    Ouô     Rural              534
+#>  5 15240 Centre           Kadiogo  Ouagad… Urban              614
+#>  6 15327 Centre           Kadiogo  Ouagad… Urban             1061
+#>  7 15429 Centre           Kadiogo  Ouagad… Urban              667
+#>  8 15550 Centre           Kadiogo  Ouagad… Urban              967
+#>  9 17098 Centre           Kadiogo  Ouagad… Urban              844
+#> 10 17487 Centre           Kadiogo  Ouagad… Urban              938
 #> # ℹ 40 more rows
-#> # ℹ 11 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
-#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
-#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>, .certainty_1 <lgl>
+#> # ℹ 13 more variables: households <int>, area_km2 <dbl>,
+#> #   pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>,
+#> #   .sample_id <int>, .stage <int>, .weight_1 <dbl>,
+#> #   .fpc_1 <int>, .certainty_1 <lgl>
 ```
 
 ## Multi-Stage Sampling
@@ -294,24 +307,27 @@ sample <- sampling_design() |>
 
 sample
 #> # A tbl_sample: 50 × 21
+#> # Sampling:     2 stages | 50/107,250 units
 #> # Weights:      2514.13 [784.4, 4121.21]
-#>    ea_id province   district    ward_pcode urban_rural population households
-#>  * <int> <fct>      <fct>       <chr>      <fct>            <int>      <int>
-#>  1 88821 Harare     Harare      ZW192102   Urban              197         57
-#>  2 87420 Harare     Harare      ZW192116   Urban             1378        353
-#>  3 86941 Harare     Harare      ZW192108   Urban              103         38
-#>  4 88444 Harare     Harare      ZW192129   Urban              538        142
-#>  5 34696 Harare     Harare      ZW192120   Urban              452        124
-#>  6 14864 Manicaland Chimanimani ZW110201   Rural              111         29
-#>  7 59668 Manicaland Chimanimani ZW110204   Rural              142         36
-#>  8 60166 Manicaland Chimanimani ZW110203   Rural              114         29
-#>  9 60082 Manicaland Chimanimani ZW110216   Rural               73         19
-#> 10 58991 Manicaland Chimanimani ZW110219   Rural               73         18
+#>    ea_id province   district    ward_pcode urban_rural population
+#>  * <int> <fct>      <fct>       <chr>      <fct>            <int>
+#>  1 88821 Harare     Harare      ZW192102   Urban              197
+#>  2 87420 Harare     Harare      ZW192116   Urban             1378
+#>  3 86941 Harare     Harare      ZW192108   Urban              103
+#>  4 88444 Harare     Harare      ZW192129   Urban              538
+#>  5 34696 Harare     Harare      ZW192120   Urban              452
+#>  6 14864 Manicaland Chimanimani ZW110201   Rural              111
+#>  7 59668 Manicaland Chimanimani ZW110204   Rural              142
+#>  8 60166 Manicaland Chimanimani ZW110203   Rural              114
+#>  9 60082 Manicaland Chimanimani ZW110216   Rural               73
+#> 10 58991 Manicaland Chimanimani ZW110219   Rural               73
 #> # ℹ 40 more rows
-#> # ℹ 14 more variables: buildings <int>, women_15_49 <int>, men_15_49 <int>,
-#> #   children_under5 <int>, area_km2 <dbl>, district_hh <int>, .weight <dbl>,
-#> #   .sample_id <int>, .stage <int>, .weight_2 <dbl>, .fpc_2 <int>,
-#> #   .weight_1 <dbl>, .fpc_1 <int>, .certainty_1 <lgl>
+#> # ℹ 15 more variables: households <int>, buildings <int>,
+#> #   women_15_49 <int>, men_15_49 <int>, children_under5 <int>,
+#> #   area_km2 <dbl>, district_hh <int>, .weight <dbl>,
+#> #   .sample_id <int>, .stage <int>, .weight_2 <dbl>,
+#> #   .fpc_2 <int>, .weight_1 <dbl>, .fpc_1 <int>,
+#> #   .certainty_1 <lgl>
 ```
 
 ### Operational Sampling
@@ -333,31 +349,33 @@ selected_eas
 #> # A tbl_sample: 20 × 18
 #> # Stages:       1/2
 #> # Weights:      6492.06 [591.31, 14492.74]
-#>    ea_id province          district ward_pcode urban_rural population households
-#>  * <int> <fct>             <fct>    <chr>      <fct>            <int>      <int>
-#>  1 47209 Bulawayo          Bulawayo ZW102127   Urban              462        121
-#>  2 35161 Harare            Harare   ZW192109   Urban              140         38
-#>  3 86782 Harare            Harare   ZW192130   Urban              974        263
-#>  4 88462 Harare            Harare   ZW192103   Urban              993        302
-#>  5 93947 Mashonaland Cent… Bindura  ZW120105   Rural               95         23
-#>  6 35770 Mashonaland Cent… Guruve   ZW120307   Urban              121         32
-#>  7 35831 Mashonaland Cent… Guruve   ZW120322   Rural              322         80
-#>  8 83626 Mashonaland East  Goromon… ZW130225   Urban              277         72
-#>  9 37885 Mashonaland East  Mudzi    ZW130514   Urban              294         80
-#> 10 83520 Mashonaland East  Murehwa  ZW130627   Rural               55         15
-#> 11 20895 Mashonaland East  Mutoko   ZW130726   Rural               96         23
-#> 12 36189 Mashonaland West  Makonde  ZW140513   Rural               94         21
-#> 13 42748 Masvingo          Mwenezi  ZW180610   Rural               73         15
-#> 14 76867 Matabeleland Nor… Binga    ZW150107   Rural               74         20
-#> 15  5602 Matabeleland Nor… Tsholot… ZW150603   Rural               62         14
-#> 16 61444 Matabeleland Nor… Tsholot… ZW150605   Rural               75         18
-#> 17 28253 Matabeleland Sou… Gwanda … ZW162103   Urban              106         35
-#> 18 51722 Matabeleland Sou… Umzingw… ZW160701   Urban              357         81
-#> 19 54466 Midlands          Gweru U… ZW172114   Urban              510        136
-#> 20   866 Midlands          Zvishav… ZW170818   Rural               91         19
-#> # ℹ 11 more variables: buildings <int>, women_15_49 <int>, men_15_49 <int>,
-#> #   children_under5 <int>, area_km2 <dbl>, .weight <dbl>, .sample_id <int>,
-#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>, .certainty_1 <lgl>
+#>    ea_id province      district ward_pcode urban_rural population
+#>  * <int> <fct>         <fct>    <chr>      <fct>            <int>
+#>  1 47209 Bulawayo      Bulawayo ZW102127   Urban              462
+#>  2 35161 Harare        Harare   ZW192109   Urban              140
+#>  3 86782 Harare        Harare   ZW192130   Urban              974
+#>  4 88462 Harare        Harare   ZW192103   Urban              993
+#>  5 93947 Mashonaland … Bindura  ZW120105   Rural               95
+#>  6 35770 Mashonaland … Guruve   ZW120307   Urban              121
+#>  7 35831 Mashonaland … Guruve   ZW120322   Rural              322
+#>  8 83626 Mashonaland … Goromon… ZW130225   Urban              277
+#>  9 37885 Mashonaland … Mudzi    ZW130514   Urban              294
+#> 10 83520 Mashonaland … Murehwa  ZW130627   Rural               55
+#> 11 20895 Mashonaland … Mutoko   ZW130726   Rural               96
+#> 12 36189 Mashonaland … Makonde  ZW140513   Rural               94
+#> 13 42748 Masvingo      Mwenezi  ZW180610   Rural               73
+#> 14 76867 Matabeleland… Binga    ZW150107   Rural               74
+#> 15  5602 Matabeleland… Tsholot… ZW150603   Rural               62
+#> 16 61444 Matabeleland… Tsholot… ZW150605   Rural               75
+#> 17 28253 Matabeleland… Gwanda … ZW162103   Urban              106
+#> 18 51722 Matabeleland… Umzingw… ZW160701   Urban              357
+#> 19 54466 Midlands      Gweru U… ZW172114   Urban              510
+#> 20   866 Midlands      Zvishav… ZW170818   Rural               91
+#> # ℹ 12 more variables: households <int>, buildings <int>,
+#> #   women_15_49 <int>, men_15_49 <int>, children_under5 <int>,
+#> #   area_km2 <dbl>, .weight <dbl>, .sample_id <int>,
+#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>,
+#> #   .certainty_1 <lgl>
 
 # ... fieldwork ...
 # list all households in selected EAs
@@ -370,24 +388,27 @@ final_sample <- selected_eas |>
   execute(selected_eas_list, seed = 2)
 final_sample
 #> # A tbl_sample: 100 × 21
+#> # Sampling:     2 stages | 100/107,250 units
 #> # Weights:      38147.25 [35714.84, 40579.66]
-#>    ea_id province district ward_pcode urban_rural population households
-#>  * <int> <fct>    <fct>    <chr>      <fct>            <int>      <int>
-#>  1 47209 Bulawayo Bulawayo ZW102127   Urban              462        121
-#>  2 47209 Bulawayo Bulawayo ZW102127   Urban              462        121
-#>  3 47209 Bulawayo Bulawayo ZW102127   Urban              462        121
-#>  4 47209 Bulawayo Bulawayo ZW102127   Urban              462        121
-#>  5 47209 Bulawayo Bulawayo ZW102127   Urban              462        121
-#>  6 35161 Harare   Harare   ZW192109   Urban              140         38
-#>  7 35161 Harare   Harare   ZW192109   Urban              140         38
-#>  8 35161 Harare   Harare   ZW192109   Urban              140         38
-#>  9 35161 Harare   Harare   ZW192109   Urban              140         38
-#> 10 35161 Harare   Harare   ZW192109   Urban              140         38
+#>    ea_id province district ward_pcode urban_rural population
+#>  * <int> <fct>    <fct>    <chr>      <fct>            <int>
+#>  1 47209 Bulawayo Bulawayo ZW102127   Urban              462
+#>  2 47209 Bulawayo Bulawayo ZW102127   Urban              462
+#>  3 47209 Bulawayo Bulawayo ZW102127   Urban              462
+#>  4 47209 Bulawayo Bulawayo ZW102127   Urban              462
+#>  5 47209 Bulawayo Bulawayo ZW102127   Urban              462
+#>  6 35161 Harare   Harare   ZW192109   Urban              140
+#>  7 35161 Harare   Harare   ZW192109   Urban              140
+#>  8 35161 Harare   Harare   ZW192109   Urban              140
+#>  9 35161 Harare   Harare   ZW192109   Urban              140
+#> 10 35161 Harare   Harare   ZW192109   Urban              140
 #> # ℹ 90 more rows
-#> # ℹ 14 more variables: buildings <int>, women_15_49 <int>, men_15_49 <int>,
-#> #   children_under5 <int>, area_km2 <dbl>, hh_id <int>, .weight <dbl>,
-#> #   .sample_id <int>, .stage <int>, .weight_2 <dbl>, .fpc_2 <int>,
-#> #   .weight_1 <dbl>, .fpc_1 <int>, .certainty_1 <lgl>
+#> # ℹ 15 more variables: households <int>, buildings <int>,
+#> #   women_15_49 <int>, men_15_49 <int>, children_under5 <int>,
+#> #   area_km2 <dbl>, hh_id <int>, .weight <dbl>,
+#> #   .sample_id <int>, .stage <int>, .weight_2 <dbl>,
+#> #   .fpc_2 <int>, .weight_1 <dbl>, .fpc_1 <int>,
+#> #   .certainty_1 <lgl>
 ```
 
 `selected_eas` still contains `design` plus the realized stage-1
@@ -464,23 +485,26 @@ sampling_design() |>
   draw(n = 300, min_n = 2) |>
   execute(bfa_eas, seed = 321)
 #> # A tbl_sample: 300 × 18
+#> # Sampling:     1 stage | 300/44,570 units
 #> # Weights:      148.57 [142.32, 162]
-#>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
-#>  1 11643 Boucle du … Nayala   Yaba    Rural              396         52     8.75
-#>  2 36763 Boucle du … Bale     Fara    Rural               79         12     2.36
-#>  3  9648 Boucle du … Banwa    Sanaba  Rural              279         35     8.37
-#>  4 10555 Boucle du … Kossi    Sônô    Rural              164         24     8.38
-#>  5 34926 Boucle du … Sourou   Tougan  Rural             1239        189     1.15
-#>  6 44501 Boucle du … Mouhoun  Tchéri… Rural              221         35     0.22
-#>  7  9702 Boucle du … Banwa    Sanaba  Rural              260         33     6.92
-#>  8 26045 Boucle du … Mouhoun  Dédoug… Rural              378         54     8.36
-#>  9  8605 Boucle du … Bale     Pâ      Rural              283         33     8.78
-#> 10 21078 Boucle du … Kossi    Bouras… Rural               93         15     7.08
+#>    ea_id region           province commune urban_rural population
+#>  * <int> <fct>            <fct>    <fct>   <fct>            <int>
+#>  1 11643 Boucle du Mouho… Nayala   Yaba    Rural              396
+#>  2 36763 Boucle du Mouho… Bale     Fara    Rural               79
+#>  3  9648 Boucle du Mouho… Banwa    Sanaba  Rural              279
+#>  4 10555 Boucle du Mouho… Kossi    Sônô    Rural              164
+#>  5 34926 Boucle du Mouho… Sourou   Tougan  Rural             1239
+#>  6 44501 Boucle du Mouho… Mouhoun  Tchéri… Rural              221
+#>  7  9702 Boucle du Mouho… Banwa    Sanaba  Rural              260
+#>  8 26045 Boucle du Mouho… Mouhoun  Dédoug… Rural              378
+#>  9  8605 Boucle du Mouho… Bale     Pâ      Rural              283
+#> 10 21078 Boucle du Mouho… Kossi    Bouras… Rural               93
 #> # ℹ 290 more rows
-#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
-#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
-#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
+#> # ℹ 12 more variables: households <int>, area_km2 <dbl>,
+#> #   pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>,
+#> #   .sample_id <int>, .stage <int>, .weight_1 <dbl>,
+#> #   .fpc_1 <int>
 ```
 
 ### Custom Allocation
@@ -512,23 +536,26 @@ sample <- sampling_design() |>
 
 sample
 #> # A tbl_sample: 300 × 18
+#> # Sampling:     1 stage | 300/44,570 units
 #> # Weights:      148.57 [142.32, 162]
-#>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
-#>  1 21517 Boucle du … Kossi    Doumba… Rural              354         61     8.72
-#>  2 33112 Boucle du … Kossi    Nouna   Rural               28          4     5.47
-#>  3 25963 Boucle du … Mouhoun  Dédoug… Rural              416         59     0.67
-#>  4  6354 Boucle du … Banwa    Kouka   Rural              296         34     8.95
-#>  5 11787 Boucle du … Bale     Bagassi Rural              874        105     1.4 
-#>  6  8233 Boucle du … Mouhoun  Ouarko… Rural              183         25     9.54
-#>  7  9925 Boucle du … Bale     Siby    Rural              204         30     0.36
-#>  8 34812 Boucle du … Sourou   Tougan  Rural             1072        164     0.3 
-#>  9 11441 Boucle du … Sourou   Toéni   Rural               64          9    23.9 
-#> 10  8883 Boucle du … Bale     Pompoï  Rural              192         28     9.42
+#>    ea_id region           province commune urban_rural population
+#>  * <int> <fct>            <fct>    <fct>   <fct>            <int>
+#>  1 21517 Boucle du Mouho… Kossi    Doumba… Rural              354
+#>  2 33112 Boucle du Mouho… Kossi    Nouna   Rural               28
+#>  3 25963 Boucle du Mouho… Mouhoun  Dédoug… Rural              416
+#>  4  6354 Boucle du Mouho… Banwa    Kouka   Rural              296
+#>  5 11787 Boucle du Mouho… Bale     Bagassi Rural              874
+#>  6  8233 Boucle du Mouho… Mouhoun  Ouarko… Rural              183
+#>  7  9925 Boucle du Mouho… Bale     Siby    Rural              204
+#>  8 34812 Boucle du Mouho… Sourou   Tougan  Rural             1072
+#>  9 11441 Boucle du Mouho… Sourou   Toéni   Rural               64
+#> 10  8883 Boucle du Mouho… Bale     Pompoï  Rural              192
 #> # ℹ 290 more rows
-#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
-#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
-#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
+#> # ℹ 12 more variables: households <int>, area_km2 <dbl>,
+#> #   pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>,
+#> #   .sample_id <int>, .stage <int>, .weight_1 <dbl>,
+#> #   .fpc_1 <int>
 ```
 
 ## Sample Coordination (PRN)
@@ -570,23 +597,26 @@ balanced_smpl <- sampling_design() |>
 
 balanced_smpl
 #> # A tbl_sample: 300 × 18
+#> # Sampling:     1 stage | 300/44,570 units
 #> # Weights:      153.12 [12.35, 2866.07]
-#>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
-#>  1  1205 Boucle du … Bale     Boromo  Rural             4324        630     3.13
-#>  2  1207 Boucle du … Bale     Boromo  Rural             1465        213     1.67
-#>  3  8426 Boucle du … Bale     Ouri    Rural              394         56     1.29
-#>  4  9923 Boucle du … Bale     Siby    Rural               54          8     8.7 
-#>  5 39991 Boucle du … Banwa    Balavé  Rural              865        136     0.81
-#>  6  6334 Boucle du … Banwa    Kouka   Rural              785         90     0.94
-#>  7 23749 Boucle du … Banwa    Solenzo Rural              235         32     8.79
-#>  8 23855 Boucle du … Banwa    Solenzo Rural              831        112     6.92
-#>  9 24031 Boucle du … Banwa    Solenzo Rural              227         30     0.35
-#> 10 10952 Boucle du … Banwa    Tansila Rural              434         52     8.51
+#>    ea_id region           province commune urban_rural population
+#>  * <int> <fct>            <fct>    <fct>   <fct>            <int>
+#>  1  1205 Boucle du Mouho… Bale     Boromo  Rural             4324
+#>  2  1207 Boucle du Mouho… Bale     Boromo  Rural             1465
+#>  3  8426 Boucle du Mouho… Bale     Ouri    Rural              394
+#>  4  9923 Boucle du Mouho… Bale     Siby    Rural               54
+#>  5 39991 Boucle du Mouho… Banwa    Balavé  Rural              865
+#>  6  6334 Boucle du Mouho… Banwa    Kouka   Rural              785
+#>  7 23749 Boucle du Mouho… Banwa    Solenzo Rural              235
+#>  8 23855 Boucle du Mouho… Banwa    Solenzo Rural              831
+#>  9 24031 Boucle du Mouho… Banwa    Solenzo Rural              227
+#> 10 10952 Boucle du Mouho… Banwa    Tansila Rural              434
 #> # ℹ 290 more rows
-#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
-#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
-#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <dbl>
+#> # ℹ 12 more variables: households <int>, area_km2 <dbl>,
+#> #   pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>,
+#> #   .sample_id <int>, .stage <int>, .weight_1 <dbl>,
+#> #   .fpc_1 <dbl>
 ```
 
 The `aux` parameter accepts bare column names. When combined with `mos`,
@@ -650,11 +680,14 @@ tille_joint_fn <- function(pik, sample_idx = NULL, ...) {
   pi2
 }
 
-# Register with both sampling and joint probability functions
+# Register with both sampling and joint probability functions.
+# UPtille honors the pik it receives, so declare probabilities =
+# "exact"; draw() refuses methods left at the strict "unknown" default.
 sondage::register_method(
   "tille", type = "wor",
   sample_fn = tille_fn,
-  joint_fn = tille_joint_fn
+  joint_fn = tille_joint_fn,
+  probabilities = "exact"
 )
 
 # Use it like any built-in method
@@ -665,23 +698,26 @@ sample_tille <- sampling_design() |>
 
 sample_tille
 #> # A tbl_sample: 300 × 19
+#> # Sampling:     1 stage | 300/44,570 units
 #> # Weights:      130.21 [14.77, 1717.89]
-#>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
-#>  1 29508 Boucle du … Bale     Bana    Rural              998        130     2.14
-#>  2  1198 Boucle du … Bale     Boromo  Rural              924        135     0.42
-#>  3 36745 Boucle du … Bale     Fara    Rural             1839        269     1.22
-#>  4  8606 Boucle du … Bale     Pâ      Rural              256         30     0.34
-#>  5  9052 Boucle du … Bale     Poura   Urban              727        138     0.26
-#>  6 11709 Boucle du … Bale     Yaho    Rural              416         62     8.97
-#>  7 39994 Boucle du … Banwa    Balavé  Rural              106         17     7.98
-#>  8 40012 Boucle du … Banwa    Balavé  Rural             1312        207     0.82
-#>  9  6311 Boucle du … Banwa    Kouka   Rural             3561        410     2.69
-#> 10 34016 Boucle du … Banwa    Sami    Rural              593         89     1.06
+#>    ea_id region           province commune urban_rural population
+#>  * <int> <fct>            <fct>    <fct>   <fct>            <int>
+#>  1 29508 Boucle du Mouho… Bale     Bana    Rural              998
+#>  2  1198 Boucle du Mouho… Bale     Boromo  Rural              924
+#>  3 36745 Boucle du Mouho… Bale     Fara    Rural             1839
+#>  4  8606 Boucle du Mouho… Bale     Pâ      Rural              256
+#>  5  9052 Boucle du Mouho… Bale     Poura   Urban              727
+#>  6 11709 Boucle du Mouho… Bale     Yaho    Rural              416
+#>  7 39994 Boucle du Mouho… Banwa    Balavé  Rural              106
+#>  8 40012 Boucle du Mouho… Banwa    Balavé  Rural             1312
+#>  9  6311 Boucle du Mouho… Banwa    Kouka   Rural             3561
+#> 10 34016 Boucle du Mouho… Banwa    Sami    Rural              593
 #> # ℹ 290 more rows
-#> # ℹ 11 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
-#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
-#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>, .certainty_1 <lgl>
+#> # ℹ 13 more variables: households <int>, area_km2 <dbl>,
+#> #   pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>,
+#> #   .sample_id <int>, .stage <int>, .weight_1 <dbl>,
+#> #   .fpc_1 <int>, .certainty_1 <lgl>
 
 # Clean up
 sondage::unregister_method("tille")
@@ -781,23 +817,26 @@ phase2 <- sampling_design() |>
 
 phase2
 #> # A tbl_sample: 50 × 18
+#> # Sampling:     1 stage | 50/500 units
 #> # Weights:      891.4 [891.4, 891.4]
-#>    ea_id region      province commune urban_rural population households area_km2
-#>  * <int> <fct>       <fct>    <fct>   <fct>            <int>      <int>    <dbl>
-#>  1 33282 Boucle du … Kossi    Nouna   Rural              327         43     4.35
-#>  2 25236 Est         Gnagna   Bilanga Rural              581         89     8.72
-#>  3 33467 Est         Kompien… Pama    Rural               46          6    34.1 
-#>  4 19744 Centre-Est  Boulgou  Zabré   Rural              433         79     8.46
-#>  5 16081 Centre      Kadiogo  Ouagad… Urban              830        125     0.11
-#>  6 20688 Cascades    Comoe    Banfora Rural              823         94     0.18
-#>  7 36869 Boucle du … Nayala   Gassan  Rural             1172        143     1.18
-#>  8 32034 Centre-Est  Koulpel… Komin-… Rural              444         69     7.97
-#>  9 15189 Centre      Kadiogo  Ouagad… Urban              471         71     0.08
-#> 10 11082 Sud-Ouest   Bougour… Tianko… Rural               43          7    10.1 
+#>    ea_id region           province commune urban_rural population
+#>  * <int> <fct>            <fct>    <fct>   <fct>            <int>
+#>  1 33282 Boucle du Mouho… Kossi    Nouna   Rural              327
+#>  2 25236 Est              Gnagna   Bilanga Rural              581
+#>  3 33467 Est              Kompien… Pama    Rural               46
+#>  4 19744 Centre-Est       Boulgou  Zabré   Rural              433
+#>  5 16081 Centre           Kadiogo  Ouagad… Urban              830
+#>  6 20688 Cascades         Comoe    Banfora Rural              823
+#>  7 36869 Boucle du Mouho… Nayala   Gassan  Rural             1172
+#>  8 32034 Centre-Est       Koulpel… Komin-… Rural              444
+#>  9 15189 Centre           Kadiogo  Ouagad… Urban              471
+#> 10 11082 Sud-Ouest        Bougour… Tianko… Rural               43
 #> # ℹ 40 more rows
-#> # ℹ 10 more variables: pop_density <dbl>, longitude <dbl>, latitude <dbl>,
-#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>, .sample_id <int>,
-#> #   .stage <int>, .weight_1 <dbl>, .fpc_1 <int>
+#> # ℹ 12 more variables: households <int>, area_km2 <dbl>,
+#> #   pop_density <dbl>, longitude <dbl>, latitude <dbl>,
+#> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>,
+#> #   .sample_id <int>, .stage <int>, .weight_1 <dbl>,
+#> #   .fpc_1 <int>
 ```
 
 Weights compound automatically across phases.
@@ -806,15 +845,15 @@ Weights compound automatically across phases.
 
 ``` r
 summary(strata_smpl)
-#> ── Sample Summary ──────────────────────────────────────────────────────────
+#> ── Sample Summary ───────────────────────────────────────────────
 #> 
 #> ℹ n = 300 | stages = 1/1 | seed = 12
 #> 
-#> ── Design: Stage 1 ─────────────────────────────────────────────────────────
+#> ── Design: Stage 1 ──────────────────────────────────────────────
 #> • Strata: region (proportional)
 #> • Method: srswor
 #> 
-#> ── Allocation: Stage 1 ─────────────────────────────────────────────────────
+#> ── Allocation: Stage 1 ──────────────────────────────────────────
 #>   region             N_h    n_h  f_h   
 #>   Boucle du Mouhoun  5009   34   0.0068
 #>   Cascades           2508   17   0.0068
@@ -832,11 +871,17 @@ summary(strata_smpl)
 #>                      ─────  ───  ──────
 #>   Total              44570  300  0.0067
 #> 
-#> ── Weights ─────────────────────────────────────────────────────────────────
+#> ── Weights ──────────────────────────────────────────────────────
 #> • Range: [146.5, 151.22]
 #> • Mean:  148.57 · CV: 0.01
 #> • DEFF:  1 · n_eff: 300
 ```
+
+Every execution also records a frame digest, a compact summary of the
+selection pools and chances the design resolved. `frame_summary()`
+returns it as tibbles without needing the frame. The companion package
+samplens, in development, draws the digest as a visual sampling card.
+See `vignette("introduction")` for examples.
 
 ## Validation
 

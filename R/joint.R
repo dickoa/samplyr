@@ -1,16 +1,29 @@
-#' Compute pairwise joint expectations from a sample and its frame
+#' Compute pairwise joint expectations from a sample
 #'
-#' Reconstructs the second-order design quantities for PPS stages by
-#' replaying the design specification against the original sampling
-#' frame. For without-replacement (WOR) stages, this produces the joint
+#' Reconstructs the second-order design quantities for PPS stages. For
+#' without-replacement (WOR) stages, this produces the joint
 #' inclusion probabilities \eqn{\pi_{kl}}{pi_kl}. For with-replacement
 #' (WR) and PMR stages, this produces the joint expected hits
 #' \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
 #'
+#' Without `frame`, the computation runs off the frame digest recorded
+#' at execution: the digest holds each pool's exact resolved chance
+#' vector, which is all the joint computation needs, so a sample that
+#' traveled without its (possibly confidential) frame still yields
+#' exact joint expectations. This requires an exact chance
+#' representation: cluster stages always have one, element stages with
+#' constant chances have one, and element stages with varying chances
+#' keep one only under `execute(frame_digest = "full")`. A summarized
+#' representation refuses rather than approximates. With `frame`, the
+#' quantities are replayed against it as before; the frame must be
+#' unchanged since execution ([validate_frame()] reports drift).
+#'
 #' @param x A `tbl_sample` object produced by [execute()].
 #' @param frame The data frame originally passed to [execute()]. Must
 #'   contain the same columns used during sampling (strata variables,
-#'   cluster variables, measure of size).
+#'   cluster variables, measure of size). When `NULL` (the default),
+#'   the computation uses the frame digest recorded on the sample
+#'   instead.
 #' @param stage An integer vector of stage numbers to compute, or
 #'   `NULL` (default) to compute all PPS stages.
 #'   Non-PPS stages produce `NULL` entries in the returned list.
@@ -106,10 +119,15 @@
 #'
 #' ## Limitations
 #'
-#' - Requires the original sampling frame. The frame must be unchanged
-#'   from what was passed to [execute()].
-#' - Units in the frame must be uniquely identifiable within each
-#'   stratum/cluster group by their column values.
+#' - The frame-free path requires a digest with exact chances: the
+#'   default summary digest suffices for cluster stages and
+#'   constant-chance element stages; element stages with varying
+#'   chances need `execute(frame_digest = "full")`. Otherwise pass
+#'   the frame.
+#' - When `frame` is supplied it must be unchanged from what was
+#'   passed to [execute()], and units in it must be uniquely
+#'   identifiable within each stratum/cluster group by their column
+#'   values.
 #' - For WOR designs with certainty selections (\eqn{\pi_i = 1}{pi_i = 1}),
 #'   the joint matrix is decomposed: certainty units are separated
 #'   from the stochastic part, the joint probabilities for
@@ -142,12 +160,40 @@
 #'   approximation, [survey::ppsmat()] for wrapping joint matrices
 #'
 #' @export
-joint_expectation <- function(x, frame, stage = NULL) {
+joint_expectation <- function(x, frame = NULL, stage = NULL) {
   if (!inherits(x, "tbl_sample")) {
     cli_abort("{.arg x} must be a {.cls tbl_sample} object.")
   }
   check_single_replicate(x, "joint_expectation")
   check_sample_unmodified(x, "joint_expectation")
+
+  digest <- NULL
+  if (is_null(frame)) {
+    digest <- get_frame_digest(x)
+    if (is_null(digest)) {
+      abort_samplyr(
+        c(
+          "No {.arg frame} was supplied and this sample carries no
+           frame digest to compute from.",
+          "i" = "Pass the original frame, or re-execute with
+                 {.code frame_digest = \"summary\"} (the default) to
+                 record one."
+        ),
+        class = "samplyr_error_no_digest"
+      )
+    }
+    if (identical(digest$status, "invalidated")) {
+      abort_samplyr(
+        c(
+          "The frame digest on this sample is invalidated, so the
+           frame-free computation would describe a sample that no
+           longer exists.",
+          "i" = "Pass the original frame instead."
+        ),
+        class = "samplyr_error_digest_invalidated"
+      )
+    }
+  }
 
   design <- get_design(x)
   stages_executed <- get_stages_executed(x)
@@ -192,16 +238,165 @@ joint_expectation <- function(x, frame, stage = NULL) {
       next
     }
 
-    result[[stage_idx]] <- compute_stage_jip(
-      x,
-      frame,
-      design,
-      stage_idx,
-      stages_executed
-    )
+    result[[stage_idx]] <- if (is_null(frame)) {
+      compute_stage_jip_digest(digest, design, stage_idx, x)
+    } else {
+      compute_stage_jip(
+        x,
+        frame,
+        design,
+        stage_idx,
+        stages_executed
+      )
+    }
   }
 
   result
+}
+
+#' Compute one stage's sampled joint matrix from the frame digest
+#'
+#' The digest records, per selection pool, the exact resolved chance
+#' vector and the selected positions, which is everything the joint
+#' computation needs: no frame access, no allocation replay. Pools are
+#' independent selections, so the stage matrix is block-diagonal over
+#' pools with cross-pool entries at the product of marginals.
+#'
+#' Row order matches the frame path's "ordered to match the sample"
+#' contract: the sample rows themselves say where each selection
+#' appears (the verified sample_row locator for element stages, the
+#' selected ancestry keys matched against the sample columns for
+#' cluster stages), so blocks are ordered parents-by-sample-order,
+#' strata sorted within a parent, and selections by sample position
+#' within a pool.
+#'
+#' Refuses summarized chance representations rather than turning them
+#' into apparently exact joint probabilities.
+#' @noRd
+compute_stage_jip_digest <- function(digest, design, stage_idx, x) {
+  stage_ids <- vapply(digest$stages, function(s) s$stage_id, integer(1))
+  pos <- match(stage_idx, stage_ids)
+  if (is.na(pos)) {
+    abort_samplyr(
+      c(
+        "The frame digest does not cover stage {stage_idx}.",
+        "i" = "Pass the original {.arg frame} to compute this stage."
+      ),
+      class = "samplyr_error_digest_no_stage"
+    )
+  }
+  st <- digest$stages[[pos]]
+  draw_spec <- design$stages[[stage_idx]]$draw_spec
+
+  if (!st$storage %in% c("units", "constant")) {
+    abort_samplyr(
+      c(
+        "Stage {stage_idx}'s chances were stored as a summarized
+         distribution, which cannot yield exact joint
+         expectations.",
+        "i" = "Re-execute with {.code frame_digest = \"full\"} to keep
+               exact per-unit chances, or pass the original
+               {.arg frame}."
+      ),
+      class = "samplyr_error_digest_summarized"
+    )
+  }
+
+  sel <- st$selected
+  if (is_null(sel) || nrow(sel) == 0) {
+    return(NULL)
+  }
+  pools <- st$pools
+
+  # Sample-position rank of every selected occurrence: sample_row is
+  # the verified element locator; cluster selections match their
+  # ancestry keys against the sample columns. Trace order is the
+  # fallback when neither anchor is available.
+  sel$.rank <- seq_len(nrow(sel))
+  if (
+    identical(st$unit_level, "element") && "sample_row" %in% names(sel)
+  ) {
+    sel$.rank <- sel$sample_row
+  } else if ("key" %in% names(sel)) {
+    key_vars <- unique(c(
+      collect_ancestor_cluster_vars(design, stage_idx),
+      design$stages[[stage_idx]]$clusters$vars
+    ))
+    if (all(key_vars %in% names(x))) {
+      sample_keys <- digest_path_keys(
+        as.data.frame(x), seq_len(nrow(x)), key_vars
+      )
+      rank <- match(sel$key, unique(sample_keys))
+      if (!anyNA(rank)) {
+        sel$.rank <- rank
+      }
+    }
+  }
+
+  sel_pools <- unique(sel$pool_id)
+  pool_pos <- match(sel_pools, pools$pool_id)
+  unavailable <- pools$chance_status[pool_pos] == "unavailable"
+  if (any(unavailable)) {
+    abort_samplyr(
+      c(
+        "Stage {stage_idx} has pools whose chances are recorded as
+         unavailable.",
+        "i" = "Pass the original {.arg frame} to compute this stage."
+      ),
+      class = "samplyr_error_digest_unavailable"
+    )
+  }
+
+  # Frame-path block order: parents in sample order, then strata in
+  # sorted key order within a parent.
+  stratum_key <- if (is_null(st$strata)) {
+    rep("", length(sel_pools))
+  } else {
+    do.call(paste, c(
+      lapply(st$strata, function(v) {
+        as.character(pools[[v]][pool_pos])
+      }),
+      sep = "\x01"
+    ))
+  }
+  pool_min_rank <- vapply(sel_pools, function(pid) {
+    min(sel$.rank[sel$pool_id == pid])
+  }, numeric(1))
+  parent <- pools$parent_unit[pool_pos]
+  parent_rank <- if (all(is.na(parent))) {
+    rep(1, length(sel_pools))
+  } else {
+    parent_first <- vapply(unique(parent), function(pu) {
+      min(pool_min_rank[parent == pu])
+    }, numeric(1))
+    parent_first[match(parent, unique(parent))]
+  }
+  block_order <- order(parent_rank, stratum_key)
+
+  blocks <- lapply(sel_pools[block_order], function(pid) {
+    p <- pools[pools$pool_id == pid, , drop = FALSE]
+    in_pool <- sel[sel$pool_id == pid, , drop = FALSE]
+    in_pool <- in_pool[order(in_pool$.rank), , drop = FALSE]
+    if (identical(st$storage, "units")) {
+      u <- st$units[st$units$pool_id == pid, , drop = FALSE]
+      u <- u[order(u$unit_order), , drop = FALSE]
+      pik <- u$chance
+      sampled_idx <- match(in_pool$unit_id, u$unit_id)
+    } else {
+      # Constant element storage: unit_id is the position in the pool.
+      pik <- rep(p$chance, p$N)
+      sampled_idx <- in_pool$unit_id
+    }
+    compute_jip_from_pik(
+      pik = pik,
+      method = draw_spec$method,
+      sampled_idx = sampled_idx,
+      n = if (is.na(p$n_target)) NULL else as.integer(p$n_target),
+      draw_spec = draw_spec
+    )
+  })
+
+  assemble_block_diagonal(blocks)
 }
 
 #' Compute joint inclusion probabilities for a single stage
@@ -243,6 +438,50 @@ compute_stage_jip <- function(
       distinct(across(all_of(dedup_vars)), .keep_all = TRUE)
   }
 
+  # A later stage selects independently WITHIN each parent cluster:
+  # allocation and first-order chances are conditional per parent, so
+  # the computation must split by ancestry before anything else.
+  # Pooling parents would understate every within-parent chance.
+  ancestor_split <- intersect(
+    ancestor_vars, intersect(names(effective_frame), names(sample_df))
+  )
+  if (length(ancestor_split) > 0) {
+    frame_keys <- make_group_key(effective_frame, ancestor_split)
+    sample_keys <- make_group_key(sample_df, ancestor_split)
+    parents <- unique(sample_keys)
+    blocks <- lapply(parents, function(key) {
+      compute_stage_jip_pool(
+        effective_frame[frame_keys == key, , drop = FALSE],
+        sample_df[sample_keys == key, , drop = FALSE],
+        strata_spec,
+        draw_spec,
+        cluster_spec,
+        ancestor_vars
+      )
+    })
+    return(assemble_block_diagonal(blocks))
+  }
+
+  compute_stage_jip_pool(
+    effective_frame,
+    sample_df,
+    strata_spec,
+    draw_spec,
+    cluster_spec,
+    ancestor_vars
+  )
+}
+
+#' Joint matrix of one parent's pool (or the whole stage-1 frame)
+#' @noRd
+compute_stage_jip_pool <- function(
+  effective_frame,
+  sample_df,
+  strata_spec,
+  draw_spec,
+  cluster_spec,
+  ancestor_vars
+) {
   if (!is_null(strata_spec)) {
     compute_stratified_jip(
       effective_frame,

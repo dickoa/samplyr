@@ -361,3 +361,20 @@ test_that("draw() validates round parameter", {
     "character"
   )
 })
+
+test_that("draw records the probabilities tier for built-in methods", {
+  tier_of <- function(method, ...) {
+    design <- sampling_design() |> draw(n = 5, method = method, ...)
+    design$stages[[1]]$draw_spec$method_probabilities
+  }
+  expect_identical(tier_of("srswor"), "exact")
+  expect_identical(tier_of("srswr"), "exact")
+  expect_identical(tier_of("pps_brewer", mos = size), "exact")
+  expect_identical(tier_of("pps_sampford", mos = size), "exact")
+  # The order-sampling pair honors the target pik only to a documented
+  # approximation; the tier must say so.
+  expect_identical(tier_of("pps_sps", mos = size), "approximate")
+  expect_identical(tier_of("pps_pareto", mos = size), "approximate")
+  # Aliases canonicalize before the lookup.
+  expect_identical(tier_of("balanced"), "exact")
+})

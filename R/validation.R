@@ -3,15 +3,20 @@
 #' Checks if a data frame contains all required variables for a sampling
 #' design and reports any issues.
 #'
-#' @param design A `sampling_design` object
+#' @param design A `sampling_design` object, or an executed
+#'   `tbl_sample`: its stored design is validated and its frame digest
+#'   (when present) is compared against `frame`.
 #' @param frame A data frame to validate
 #' @param stage Which stage(s) to validate against. Default validates all stages.
-#' @param fingerprint How to report differences between `frame` and the
-#'   frame fingerprint stored in a design file. Applies to designs restored
-#'   with [read_design()] when the design was saved with `frame =`. One of
-#'   `"inform"` (default, emits a message), `"warn"`, or `"ignore"`. The
-#'   comparison is informational and never fails validation, because a
-#'   design remains executable on any frame that passes the variable checks.
+#' @param fingerprint How to report differences between `frame` and
+#'   what was recorded earlier: the frame fingerprint stored in a
+#'   design file (designs restored with [read_design()] when saved
+#'   with `frame =`) and the frame digest recorded at execution (when
+#'   `design` is a `tbl_sample`, or a restored design whose receipt
+#'   carries one). One of `"inform"` (default, emits a message),
+#'   `"warn"`, or `"ignore"`. Both comparisons are informational and
+#'   never fail validation, because a design remains executable on any
+#'   frame that passes the variable checks.
 #'
 #' @return Invisibly returns `TRUE` if validation passes.
 #'   Throws an informative error if validation fails.
@@ -27,6 +32,15 @@
 #' For designs restored with [read_design()], if the design file carries a
 #' frame fingerprint, `validate_frame()` also compares it against `frame`
 #' and reports what changed (rows, columns, column types, or content).
+#'
+#' When a frame digest is available (an executed `tbl_sample`, or a
+#' design file written from one), the structural comparison goes
+#' further: the role-scoped fingerprint (analysis columns added later
+#' do not trigger it), the frame size, and per-pool population sizes
+#' recomputed from `frame` at every stage the digest can anchor
+#' (stage 1 over the universe; later stages under the recorded
+#' parents). The report says where the frame drifted, not merely that
+#' it did.
 #'
 #' When `frame` is itself a `tbl_sample` (that is, the design is being
 #' prepared as phase 2 of a two-phase sample), `validate_frame()` also
@@ -84,8 +98,21 @@ validate_frame <- function(
   stage = NULL,
   fingerprint = c("inform", "warn", "ignore")
 ) {
+  digest <- NULL
+  if (is_tbl_sample(design)) {
+    digest <- get_frame_digest(design)
+    if (!is_null(digest) && identical(digest$status, "invalidated")) {
+      digest <- NULL
+    }
+    design <- get_design(design)
+  } else if (is_sampling_design(design)) {
+    digest <- attr(design, "execution")$frame_digest
+  }
   if (!is_sampling_design(design)) {
-    cli_abort("{.arg design} must be a {.cls sampling_design}")
+    cli_abort(
+      "{.arg design} must be a {.cls sampling_design} or a
+       {.cls tbl_sample}"
+    )
   }
 
   if (!is.data.frame(frame)) {
@@ -98,6 +125,7 @@ validate_frame <- function(
 
   fingerprint <- match.arg(fingerprint)
   check_frame_fingerprint(design, frame, fingerprint)
+  check_digest_drift(digest, design, frame, fingerprint)
 
   n_stages <- length(design$stages)
   if (is_null(stage)) {
@@ -516,6 +544,361 @@ report_validation_issues <- function(issues) {
   }, character(1))
   names(bullets) <- rep("x", length(bullets))
   cli_abort(c("Frame validation failed:", bullets), call = NULL)
+}
+
+#' Report structural drift between a frame and a recorded digest
+#'
+#' Compares the supplied frame against the population structure the
+#' frame digest recorded at execution: the role-scoped fingerprint,
+#' the frame size, and per-pool population sizes recomputed from the
+#' frame at every stage the digest can anchor (stage 1 over the
+#' universe; later stages under the recorded parents). Informational,
+#' like the fingerprint check: a drifted frame remains executable.
+#' @noRd
+check_digest_drift <- function(digest, design, frame, fingerprint) {
+  if (is_null(digest) || identical(fingerprint, "ignore")) {
+    return(invisible(NULL))
+  }
+  diffs <- tryCatch(
+    digest_frame_drift(digest, design, frame),
+    error = function(e) {
+      cli::format_inline(
+        "the drift comparison itself failed ({conditionMessage(e)})"
+      )
+    }
+  )
+  if (length(diffs) == 0) {
+    return(invisible(NULL))
+  }
+  msg <- c(
+    "Frame structure differs from the digest recorded at execution:",
+    setNames(diffs, rep("*", length(diffs))),
+    "i" = "This is informational. The design remains executable, but
+           replaying or extending the recorded sample on this frame
+           would not reproduce it."
+  )
+  if (identical(fingerprint, "warn")) {
+    cli_warn(msg, class = "samplyr_warning_digest_drift")
+  } else {
+    cli::cli_inform(msg, class = "samplyr_message_digest_drift")
+  }
+  invisible(NULL)
+}
+
+#' @return Character vector of drift descriptions; empty = no drift.
+#' @noRd
+digest_frame_drift <- function(digest, design, frame) {
+  rec <- digest$frames[[1]]
+
+  # Exact content match: nothing can have drifted.
+  if (
+    !is_null(rec$fingerprint_exact) &&
+      identical(rec$fingerprint_exact, frame_content_hash(frame))
+  ) {
+    return(character(0))
+  }
+
+  diffs <- character(0)
+
+  role_cols <- unique(rec$roles$column)
+  missing_roles <- setdiff(role_cols, names(frame))
+  if (length(missing_roles) > 0) {
+    diffs <- c(
+      diffs,
+      cli::format_inline(
+        "design-relevant column{?s} {.val {missing_roles}} no longer
+         present"
+      )
+    )
+  }
+  roles_match <- FALSE
+  if (
+    length(missing_roles) == 0 && !is_null(rec$fingerprint_roles)
+  ) {
+    roles_match <- identical(
+      rec$fingerprint_roles,
+      frame_content_hash(frame, columns = role_cols)
+    )
+    if (!roles_match) {
+      diffs <- c(
+        diffs,
+        "design-relevant columns changed (role-scoped fingerprint
+         mismatch)"
+      )
+    }
+  }
+
+  if (!is_null(rec$n_rows) && rec$n_rows != nrow(frame)) {
+    diffs <- c(
+      diffs,
+      cli::format_inline(
+        "{nrow(frame)} row{?s} instead of the {rec$n_rows} recorded"
+      )
+    )
+  }
+
+  # Identical role content at identical size: the pool structure is
+  # unchanged by construction; skip the per-stage recount.
+  if (roles_match && rec$n_rows == nrow(frame)) {
+    return(diffs)
+  }
+  if (length(missing_roles) > 0) {
+    return(diffs)
+  }
+
+  pool_diffs <- character(0)
+  parent_keys <- NULL
+  for (pos in seq_along(digest$stages)) {
+    st <- digest$stages[[pos]]
+    spec <- design$stages[[st$stage_id]]
+    label <- spec$label %||% paste("Stage", st$stage_id)
+    ancestor_vars <- collect_ancestor_cluster_vars(design, st$stage_id)
+    if (!all(c(ancestor_vars, st$strata) %in% names(frame))) {
+      break
+    }
+
+    if (pos > 1L) {
+      if (is_null(parent_keys)) {
+        break
+      }
+      scope_keys <- digest_path_keys(
+        frame, seq_len(nrow(frame)), ancestor_vars
+      )
+      key_of_pool <- parent_keys[
+        match(st$pools$parent_unit, parent_keys$unit_id), "key"
+      ]
+    }
+
+    for (p in seq_len(nrow(st$pools))) {
+      pool <- st$pools[p, , drop = FALSE]
+      # Design-resolved pools hang under unselected parents, whose
+      # ancestry keys the digest deliberately does not retain.
+      if (pos > 1L && is.na(key_of_pool[p])) {
+        next
+      }
+      rows <- if (pos == 1L) {
+        seq_len(nrow(frame))
+      } else {
+        which(scope_keys == key_of_pool[p])
+      }
+      for (v in st$strata %||% character(0)) {
+        rows <- rows[
+          as.character(frame[[v]][rows]) == as.character(pool[[v]])
+        ]
+      }
+      n_now <- if (identical(st$unit_level, "cluster")) {
+        cluster_vars <- spec$clusters$vars
+        length(unique(digest_path_keys(
+          frame, rows, c(ancestor_vars, cluster_vars)
+        )))
+      } else {
+        length(rows)
+      }
+      if (n_now != pool$N) {
+        pool_label <- paste(
+          c(
+            if (pos > 1L) {
+              paste0(
+                "under ", gsub("\x1f", "/", key_of_pool[p], fixed = TRUE)
+              )
+            },
+            vapply(
+              st$strata %||% character(0),
+              function(v) paste0(v, " = ", as.character(pool[[v]])),
+              character(1)
+            )
+          ),
+          collapse = ", "
+        )
+        pool_diffs <- c(
+          pool_diffs,
+          cli::format_inline(
+            "{label}{if (nzchar(pool_label)) paste0(' (', pool_label, ')')}:
+             {n_now} units instead of the {pool$N} recorded"
+          )
+        )
+      }
+    }
+
+    sel <- st$selected
+    if (
+      identical(st$unit_level, "cluster") &&
+        !is_null(sel) && "key" %in% names(sel)
+    ) {
+      parent_keys <- sel[!duplicated(sel$unit_id), c("unit_id", "key")]
+    } else {
+      parent_keys <- NULL
+    }
+  }
+
+  if (length(pool_diffs) > 5) {
+    pool_diffs <- c(
+      pool_diffs[1:5],
+      cli::format_inline(
+        "and {length(pool_diffs) - 5L} more pool difference{?s}"
+      )
+    )
+  }
+
+  # Chance drift: resolve the chances the design would use on this
+  # frame (the ex-ante digest) and compare them to the recorded ones.
+  # This is sharper than the role-scoped fingerprint: a size measure
+  # rescaled by a constant factor changes the bytes but not one
+  # selection chance.
+  chance <- digest_chance_drift(digest, design, frame)
+  all_diffs <- c(diffs, pool_diffs, chance$diffs)
+  if (
+    length(all_diffs) > 0 && length(chance$diffs) == 0 &&
+      chance$n_compared > 0
+  ) {
+    all_diffs <- c(
+      all_diffs,
+      cli::format_inline(
+        "resolved selection chances are unchanged in the
+         {chance$n_compared} comparable pool{?s}"
+      )
+    )
+  }
+  all_diffs
+}
+
+#' Compare recorded selection chances against the design's ex-ante
+#' resolution over a frame
+#'
+#' Pools are lined up by parent ancestry key (recorded side: the
+#' selected-trace keys; ex-ante side: the keys the builder retains)
+#' plus stratum labels, so only pools the recorded digest can anchor
+#' are compared: stage-1 pools always, later pools under selected
+#' parents. Each side's retained representation is expanded to a
+#' sorted chance vector; pools whose sizes differ are left to the
+#' recount. Designs the ex-ante builder refuses (with-replacement or
+#' element-level parents) skip the comparison silently: the
+#' structural checks have already run.
+#'
+#' @return list(diffs = character per-stage drift lines,
+#'   n_compared = number of pools compared).
+#' @noRd
+digest_chance_drift <- function(digest, design, frame) {
+  none <- list(diffs = character(0), n_compared = 0L)
+  exante <- tryCatch(
+    build_exante_digest(design, frame),
+    error = function(e) NULL
+  )
+  if (is_null(exante)) {
+    return(none)
+  }
+  ex_keys <- attr(exante, "exante_pool_keys")
+  ex_ids <- vapply(exante$stages, function(s) s$stage_id, integer(1))
+
+  strata_label_key <- function(pools, strata) {
+    if (is_null(strata)) {
+      rep("", nrow(pools))
+    } else {
+      do.call(paste, c(
+        lapply(strata, function(v) as.character(pools[[v]])),
+        sep = "\x1f"
+      ))
+    }
+  }
+  pool_chances <- function(stg, p) {
+    pid <- stg$pools$pool_id[p]
+    switch(
+      stg$storage,
+      constant = rep(stg$pools$chance[p], stg$pools$N[p]),
+      units = sort(stg$units$chance[stg$units$pool_id == pid]),
+      quantiles = {
+        b <- stg$chance_distribution[
+          stg$chance_distribution$pool_id == pid, , drop = FALSE
+        ]
+        if (!"n_units" %in% names(b)) {
+          return(NULL)
+        }
+        b <- b[order(b$quantile), , drop = FALSE]
+        rep(b$chance, b$n_units)
+      }
+    )
+  }
+
+  diffs <- character(0)
+  n_compared <- 0L
+  parent_keys <- NULL
+  for (pos in seq_along(digest$stages)) {
+    st <- digest$stages[[pos]]
+    ex_pos <- match(st$stage_id, ex_ids)
+    rec_parent <- if (pos == 1L) {
+      rep("", nrow(st$pools))
+    } else if (is_null(parent_keys)) {
+      rep(NA_character_, nrow(st$pools))
+    } else {
+      parent_keys$key[match(st$pools$parent_unit, parent_keys$unit_id)]
+    }
+
+    ex <- if (is.na(ex_pos)) NULL else exante$stages[[ex_pos]]
+    ex_match <- rep(NA_integer_, nrow(st$pools))
+    comparable <- logical(nrow(st$pools))
+    if (
+      !is_null(ex) && st$frame_ref == 1L &&
+        identical(st$chance_kind, ex$chance_kind)
+    ) {
+      rec_key <- paste(
+        rec_parent, strata_label_key(st$pools, st$strata),
+        sep = "\x1f\x1f"
+      )
+      ex_match <- match(
+        rec_key,
+        paste(
+          ex_keys[[ex_pos]], strata_label_key(ex$pools, ex$strata),
+          sep = "\x1f\x1f"
+        )
+      )
+      comparable <- !is.na(rec_parent) & !is.na(ex_match) &
+        st$pools$chance_status != "unavailable"
+    }
+
+    n_stage <- 0L
+    n_drifted <- 0L
+    max_diff <- 0
+    for (p in which(comparable)) {
+      rec_ch <- pool_chances(st, p)
+      ex_ch <- pool_chances(ex, ex_match[p])
+      if (
+        is_null(rec_ch) || is_null(ex_ch) || anyNA(rec_ch) ||
+          length(rec_ch) != length(ex_ch)
+      ) {
+        next
+      }
+      n_stage <- n_stage + 1L
+      d <- max(abs(sort(rec_ch) - ex_ch))
+      if (d > 1e-9) {
+        n_drifted <- n_drifted + 1L
+        max_diff <- max(max_diff, d)
+      }
+    }
+    n_compared <- n_compared + n_stage
+    if (n_drifted > 0) {
+      spec <- design$stages[[st$stage_id]]
+      label <- spec$label %||% paste("Stage", st$stage_id)
+      diffs <- c(
+        diffs,
+        cli::format_inline(
+          "{label}: selection chances differ in {n_drifted} of
+           {n_stage} comparable pool{?s} (largest difference
+           {signif(max_diff, 2)})"
+        )
+      )
+    }
+
+    sel <- st$selected
+    if (
+      identical(st$unit_level, "cluster") &&
+        !is_null(sel) && "key" %in% names(sel)
+    ) {
+      parent_keys <- sel[!duplicated(sel$unit_id), c("unit_id", "key")]
+    } else {
+      parent_keys <- NULL
+    }
+  }
+  list(diffs = diffs, n_compared = n_compared)
 }
 
 #' Compare a frame against a stored fingerprint and report differences

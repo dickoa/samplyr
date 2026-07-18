@@ -202,9 +202,14 @@ test_that("summary: unstratified clustered stage with non-unique IDs", {
 
   output <- capture.output(summary(s))
 
-  # Stage 2 allocation: N = 3, n = 2, f = 0.6667
-  expect_true(any(grepl("n = 2", output)))
-  expect_true(any(grepl("0\\.6667", output)))
+  # Stage 2 allocation at parent resolution: each district is its own
+  # pool of 3 EAs with 1 selected (f = 0.3333). The former display
+  # merged the two pools into N = 3, n = 2, f = 0.6667, overstating
+  # the take rate.
+  expect_identical(sum(grepl("0\\.3333", output)), 3L)
+  expect_true(any(grepl("^\\s+A\\s+3\\s+1\\s+0\\.3333", output)))
+  expect_true(any(grepl("^\\s+B\\s+3\\s+1\\s+0\\.3333", output)))
+  expect_true(any(grepl("Total\\s+6\\s+2\\s+0\\.3333", output)))
 })
 
 test_that("summary: stratified clustered stage with non-unique IDs", {

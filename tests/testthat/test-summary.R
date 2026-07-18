@@ -43,3 +43,25 @@ test_that("summary uses concise with-replacement wording", {
   expect_match(txt, "n = 5 (with replacement, no FPC)", fixed = TRUE)
   expect_false(grepl(";", txt, fixed = TRUE))
 })
+
+test_that("summary flags approximate-probabilities methods", {
+  set.seed(7)
+  frame <- data.frame(id = seq_len(40), size = runif(40, 1, 3))
+
+  approx <- sampling_design() |>
+    draw(n = 8, method = "pps_sps", mos = size) |>
+    execute(frame, seed = 3)
+  txt <- paste(capture.output(summary(approx)), collapse = "\n")
+  expect_match(
+    txt,
+    "Method: pps_sps (approximate probabilities)",
+    fixed = TRUE
+  )
+
+  exact <- sampling_design() |>
+    draw(n = 8, method = "pps_brewer", mos = size) |>
+    execute(frame, seed = 3)
+  txt <- paste(capture.output(summary(exact)), collapse = "\n")
+  expect_match(txt, "Method: pps_brewer", fixed = TRUE)
+  expect_false(grepl("approximate probabilities", txt, fixed = TRUE))
+})

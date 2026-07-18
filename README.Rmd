@@ -384,11 +384,14 @@ tille_joint_fn <- function(pik, sample_idx = NULL, ...) {
   pi2
 }
 
-# Register with both sampling and joint probability functions
+# Register with both sampling and joint probability functions.
+# UPtille honors the pik it receives, so declare probabilities =
+# "exact"; draw() refuses methods left at the strict "unknown" default.
 sondage::register_method(
   "tille", type = "wor",
   sample_fn = tille_fn,
-  joint_fn = tille_joint_fn
+  joint_fn = tille_joint_fn,
+  probabilities = "exact"
 )
 
 # Use it like any built-in method
@@ -485,6 +488,8 @@ Weights compound automatically across phases.
 ```{r diagnostics}
 summary(strata_smpl)
 ```
+
+Every execution also records a frame digest, a compact summary of the selection pools and chances the design resolved. `frame_summary()` returns it as tibbles without needing the frame. The companion package samplens, in development, draws the digest as a visual sampling card. See `vignette("introduction")` for examples.
 
 ## Validation
 

@@ -2,16 +2,18 @@
 % Please edit documentation in R/joint.R
 \name{joint_expectation}
 \alias{joint_expectation}
-\title{Compute pairwise joint expectations from a sample and its frame}
+\title{Compute pairwise joint expectations from a sample}
 \usage{
-joint_expectation(x, frame, stage = NULL)
+joint_expectation(x, frame = NULL, stage = NULL)
 }
 \arguments{
 \item{x}{A \code{tbl_sample} object produced by \code{\link[=execute]{execute()}}.}
 
 \item{frame}{The data frame originally passed to \code{\link[=execute]{execute()}}. Must
 contain the same columns used during sampling (strata variables,
-cluster variables, measure of size).}
+cluster variables, measure of size). When \code{NULL} (the default),
+the computation uses the frame digest recorded on the sample
+instead.}
 
 \item{stage}{An integer vector of stage numbers to compute, or
 \code{NULL} (default) to compute all PPS stages.
@@ -35,14 +37,25 @@ match the sample.
 }
 }
 \description{
-Reconstructs the second-order design quantities for PPS stages by
-replaying the design specification against the original sampling
-frame. For without-replacement (WOR) stages, this produces the joint
+Reconstructs the second-order design quantities for PPS stages. For
+without-replacement (WOR) stages, this produces the joint
 inclusion probabilities \eqn{\pi_{kl}}{pi_kl}. For with-replacement
 (WR) and PMR stages, this produces the joint expected hits
 \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
 }
 \details{
+Without \code{frame}, the computation runs off the frame digest recorded
+at execution: the digest holds each pool's exact resolved chance
+vector, which is all the joint computation needs, so a sample that
+traveled without its (possibly confidential) frame still yields
+exact joint expectations. This requires an exact chance
+representation: cluster stages always have one, element stages with
+constant chances have one, and element stages with varying chances
+keep one only under \code{execute(frame_digest = "full")}. A summarized
+representation refuses rather than approximates. With \code{frame}, the
+quantities are replayed against it as before; the frame must be
+unchanged since execution (\code{\link[=validate_frame]{validate_frame()}} reports drift).
+
 For each PPS stage, the function:
 \enumerate{
 \item Reconstructs the full-population first-order quantities from
@@ -121,10 +134,15 @@ time.
 
 \subsection{Limitations}{
 \itemize{
-\item Requires the original sampling frame. The frame must be unchanged
-from what was passed to \code{\link[=execute]{execute()}}.
-\item Units in the frame must be uniquely identifiable within each
-stratum/cluster group by their column values.
+\item The frame-free path requires a digest with exact chances: the
+default summary digest suffices for cluster stages and
+constant-chance element stages; element stages with varying
+chances need \code{execute(frame_digest = "full")}. Otherwise pass
+the frame.
+\item When \code{frame} is supplied it must be unchanged from what was
+passed to \code{\link[=execute]{execute()}}, and units in it must be uniquely
+identifiable within each stratum/cluster group by their column
+values.
 \item For WOR designs with certainty selections (\eqn{\pi_i = 1}{pi_i = 1}),
 the joint matrix is decomposed: certainty units are separated
 from the stochastic part, the joint probabilities for

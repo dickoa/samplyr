@@ -38,7 +38,7 @@ custom_frame <- data.frame(
 
 test_that("draw() accepts registered custom methods", {
   on.exit(sondage::unregister_method("test_wor"), add = TRUE)
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn)
+  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   design <- sampling_design() |>
     draw(n = 10, method = "pps_test_wor", mos = size)
@@ -58,7 +58,7 @@ test_that("draw() rejects unregistered custom methods", {
 
 test_that("draw() requires mos for custom methods", {
   on.exit(sondage::unregister_method("test_wor"), add = TRUE)
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn)
+  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   expect_error(
     sampling_design() |> draw(n = 10, method = "pps_test_wor"),
@@ -68,7 +68,7 @@ test_that("draw() requires mos for custom methods", {
 
 test_that("draw() validates frac <= 1 for custom WOR methods", {
   on.exit(sondage::unregister_method("test_wor"), add = TRUE)
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn)
+  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   expect_error(
     sampling_design() |> draw(frac = 1.5, method = "pps_test_wor", mos = size),
@@ -82,7 +82,8 @@ test_that("draw() validates PRN support for custom methods", {
     "test_wor",
     "wor",
     sample_fn = toy_wor_fn,
-    supports_prn = FALSE
+    supports_prn = FALSE,
+    probabilities = "exact"
   )
 
   expect_error(
@@ -99,7 +100,8 @@ test_that("draw() accepts PRN for custom methods that support it", {
     "wor",
     sample_fn = toy_prn_fn,
     fixed_size = FALSE,
-    supports_prn = TRUE
+    supports_prn = TRUE,
+    probabilities = "exact"
   )
 
   design <- sampling_design() |>
@@ -109,7 +111,7 @@ test_that("draw() accepts PRN for custom methods that support it", {
 
 test_that("execute() works with custom WOR method", {
   on.exit(sondage::unregister_method("test_wor"), add = TRUE)
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn)
+  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   result <- sampling_design() |>
     draw(n = 10, method = "pps_test_wor", mos = size) |>
@@ -125,7 +127,7 @@ test_that("execute() works with custom WOR method", {
 
 test_that("execute() works with stratified custom WOR method", {
   on.exit(sondage::unregister_method("test_wor"), add = TRUE)
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn)
+  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   result <- sampling_design() |>
     stratify_by(region) |>
@@ -140,7 +142,7 @@ test_that("execute() works with stratified custom WOR method", {
 
 test_that("execute() works with custom WR method", {
   on.exit(sondage::unregister_method("test_wr"), add = TRUE)
-  sondage::register_method("test_wr", "wr", sample_fn = toy_wr_fn)
+  sondage::register_method("test_wr", "wr", sample_fn = toy_wr_fn, probabilities = "exact")
 
   result <- sampling_design() |>
     draw(n = 10, method = "pps_test_wr", mos = size) |>
@@ -160,7 +162,8 @@ test_that("execute() works with custom random-size PRN method", {
     "wor",
     sample_fn = toy_prn_fn,
     fixed_size = FALSE,
-    supports_prn = TRUE
+    supports_prn = TRUE,
+    probabilities = "exact"
   )
 
   result <- sampling_design() |>
@@ -173,7 +176,7 @@ test_that("execute() works with custom random-size PRN method", {
 
 test_that("certainty selection works with custom WOR method", {
   on.exit(sondage::unregister_method("test_wor"), add = TRUE)
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn)
+  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   # Extreme skew: one unit dominates
   cert_frame <- data.frame(
@@ -196,7 +199,8 @@ test_that("joint_expectation() works with custom WOR method + joint_fn", {
     "test_wor",
     "wor",
     sample_fn = toy_wor_fn,
-    joint_fn = toy_joint_fn
+    joint_fn = toy_joint_fn,
+    probabilities = "exact"
   )
 
   result <- sampling_design() |>
@@ -213,7 +217,7 @@ test_that("joint_expectation() works with custom WOR method + joint_fn", {
 
 test_that("joint_expectation() errors gracefully without joint_fn", {
   on.exit(sondage::unregister_method("test_wor"), add = TRUE)
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn)
+  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   result <- sampling_design() |>
     draw(n = 10, method = "pps_test_wor", mos = size) |>
@@ -225,7 +229,7 @@ test_that("joint_expectation() errors gracefully without joint_fn", {
 test_that("as_svydesign() works with custom WOR method", {
   skip_if_not_installed("survey")
   on.exit(sondage::unregister_method("test_wor"), add = TRUE)
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn)
+  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   result <- sampling_design() |>
     draw(n = 10, method = "pps_test_wor", mos = size) |>
@@ -238,7 +242,7 @@ test_that("as_svydesign() works with custom WOR method", {
 test_that("as_svydesign() works with custom WR method", {
   skip_if_not_installed("survey")
   on.exit(sondage::unregister_method("test_wr"), add = TRUE)
-  sondage::register_method("test_wr", "wr", sample_fn = toy_wr_fn)
+  sondage::register_method("test_wr", "wr", sample_fn = toy_wr_fn, probabilities = "exact")
 
   result <- sampling_design() |>
     draw(n = 10, method = "pps_test_wr", mos = size) |>
@@ -250,7 +254,7 @@ test_that("as_svydesign() works with custom WR method", {
 
 test_that("summary() works with custom methods", {
   on.exit(sondage::unregister_method("test_wor"), add = TRUE)
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn)
+  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   result <- sampling_design() |>
     draw(n = 10, method = "pps_test_wor", mos = size) |>
@@ -262,7 +266,7 @@ test_that("summary() works with custom methods", {
 
 test_that("summary() shows WR label for custom WR method", {
   on.exit(sondage::unregister_method("test_wr"), add = TRUE)
-  sondage::register_method("test_wr", "wr", sample_fn = toy_wr_fn)
+  sondage::register_method("test_wr", "wr", sample_fn = toy_wr_fn, probabilities = "exact")
 
   result <- sampling_design() |>
     draw(n = 10, method = "pps_test_wr", mos = size) |>
@@ -284,7 +288,8 @@ test_that("custom random-size WOR export errors instead of using Brewer", {
   on.exit(sondage::unregister_method("test_rswor"), add = TRUE)
   sondage::register_method(
     "test_rswor", "wor",
-    sample_fn = toy_random_wor_fn, fixed_size = FALSE
+    sample_fn = toy_random_wor_fn, fixed_size = FALSE,
+    probabilities = "exact"
   )
 
   result <- sampling_design() |>
@@ -303,7 +308,8 @@ test_that("custom random-size WOR exports with explicit poisson_sampling", {
   on.exit(sondage::unregister_method("test_rswor"), add = TRUE)
   sondage::register_method(
     "test_rswor", "wor",
-    sample_fn = toy_random_wor_fn, fixed_size = FALSE
+    sample_fn = toy_random_wor_fn, fixed_size = FALSE,
+    probabilities = "exact"
   )
 
   result <- sampling_design() |>
@@ -334,7 +340,8 @@ test_that("custom random-size WOR supports the subbootstrap escape hatch", {
   on.exit(sondage::unregister_method("test_rswor"), add = TRUE)
   sondage::register_method(
     "test_rswor", "wor",
-    sample_fn = toy_random_wor_fn, fixed_size = FALSE
+    sample_fn = toy_random_wor_fn, fixed_size = FALSE,
+    probabilities = "exact"
   )
 
   result <- sampling_design() |>
@@ -363,7 +370,8 @@ test_that("custom balanced methods execute and match the built-in cube", {
   on.exit(sondage::unregister_method("test_cube"), add = TRUE)
   sondage::register_method(
     "test_cube", "balanced",
-    sample_fn = toy_balanced_fn
+    sample_fn = toy_balanced_fn,
+    probabilities = "exact"
   )
 
   s_custom <- sampling_design() |>
@@ -390,7 +398,8 @@ test_that("custom balanced methods support equal inclusion probabilities", {
   on.exit(sondage::unregister_method("test_cube"), add = TRUE)
   sondage::register_method(
     "test_cube", "balanced",
-    sample_fn = toy_balanced_fn
+    sample_fn = toy_balanced_fn,
+    probabilities = "exact"
   )
 
   s_custom <- sampling_design() |>
@@ -414,7 +423,8 @@ test_that("clustered custom balanced methods receive aggregated aux", {
   sondage::register_method(
     "test_cluster_aux", "balanced",
     sample_fn = capture_balanced_fn,
-    supports_aux = TRUE
+    supports_aux = TRUE,
+    probabilities = "exact"
   )
 
   frame <- data.frame(
@@ -440,9 +450,10 @@ test_that("registered method prefixes agree with their declared family", {
   on.exit(sondage::unregister_method("test_wor"), add = TRUE)
   sondage::register_method(
     "test_cube", "balanced",
-    sample_fn = toy_balanced_fn
+    sample_fn = toy_balanced_fn,
+    probabilities = "exact"
   )
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn)
+  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   expect_error(
     sampling_design() |>
@@ -463,7 +474,8 @@ test_that("custom spatial balanced methods receive spread coordinates", {
     sample_fn = toy_spatial_balanced_fn,
     supports_aux = FALSE,
     supports_spread = TRUE,
-    variance_family = "unsupported"
+    variance_family = "unsupported",
+    probabilities = "exact"
   )
 
   result <- sampling_design() |>
@@ -485,7 +497,8 @@ test_that("custom balanced methods export like the built-in cube", {
   on.exit(sondage::unregister_method("test_cube"), add = TRUE)
   sondage::register_method(
     "test_cube", "balanced",
-    sample_fn = toy_balanced_fn
+    sample_fn = toy_balanced_fn,
+    probabilities = "exact"
   )
 
   s_custom <- sampling_design() |>
@@ -510,7 +523,8 @@ test_that("custom balanced methods respect the two-stage limit", {
   on.exit(sondage::unregister_method("test_cube"), add = TRUE)
   sondage::register_method(
     "test_cube", "balanced",
-    sample_fn = toy_balanced_fn
+    sample_fn = toy_balanced_fn,
+    probabilities = "exact"
   )
 
   three_stage <- sampling_design() |>
@@ -532,7 +546,8 @@ test_that("custom balanced methods count as WOR for frac validation", {
   on.exit(sondage::unregister_method("test_cube"), add = TRUE)
   sondage::register_method(
     "test_cube", "balanced",
-    sample_fn = toy_balanced_fn
+    sample_fn = toy_balanced_fn,
+    probabilities = "exact"
   )
 
   # draw-time scalar frac check
@@ -566,8 +581,8 @@ test_that("custom balanced methods count as WOR for frac validation", {
 test_that("frac > 1 follows the declared type, not the method name", {
   on.exit(sondage::unregister_method("test_wr"), add = TRUE)
   on.exit(sondage::unregister_method("test_wor"), add = TRUE)
-  sondage::register_method("test_wr", "wr", sample_fn = toy_wr_fn)
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn)
+  sondage::register_method("test_wr", "wr", sample_fn = toy_wr_fn, probabilities = "exact")
+  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   # Custom WR methods allow frac > 1, like the built-in WR methods
   # (the name test alone misclassified every custom method as WOR)
@@ -602,9 +617,10 @@ test_that("draw() carries a declared variance_family into the draw_spec", {
   sondage::register_method(
     "test_pois", "wor",
     sample_fn = toy_prn_fn, fixed_size = FALSE,
-    supports_prn = TRUE, variance_family = "poisson"
+    supports_prn = TRUE, variance_family = "poisson",
+    probabilities = "exact"
   )
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn)
+  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   design <- sampling_design() |>
     draw(n = 20, method = "pps_test_pois", mos = size, prn = prn_col)
@@ -621,7 +637,8 @@ test_that("method_variance round-trips through design serialization", {
   sondage::register_method(
     "test_pois", "wor",
     sample_fn = toy_prn_fn, fixed_size = FALSE,
-    supports_prn = TRUE, variance_family = "poisson"
+    supports_prn = TRUE, variance_family = "poisson",
+    probabilities = "exact"
   )
 
   design <- sampling_design() |>
@@ -692,7 +709,8 @@ test_that("declared poisson family exports like the built-in pps_poisson", {
   sondage::register_method(
     "test_pois", "wor",
     sample_fn = toy_prn_fn, fixed_size = FALSE,
-    supports_prn = TRUE, variance_family = "poisson"
+    supports_prn = TRUE, variance_family = "poisson",
+    probabilities = "exact"
   )
 
   # Same PRN column -> identical Poisson samples for clone and built-in
@@ -725,7 +743,8 @@ test_that("declared unsupported family refuses linearization, keeps bootstrap", 
   sondage::register_method(
     "test_unsup", "wor",
     sample_fn = toy_wor_fn, fixed_size = TRUE,
-    variance_family = "unsupported"
+    variance_family = "unsupported",
+    probabilities = "exact"
   )
 
   result <- sampling_design() |>
@@ -753,7 +772,8 @@ test_that("declared srs family gets the equal-probability treatment", {
   sondage::register_method(
     "test_srs", "wor",
     sample_fn = toy_srs_fn, fixed_size = TRUE,
-    variance_family = "srs"
+    variance_family = "srs",
+    probabilities = "exact"
   )
 
   frame_const <- transform(custom_frame, one = 1)

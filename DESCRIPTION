@@ -29,7 +29,7 @@ Imports:
     vctrs (>= 0.5.0),
     dplyr (>= 1.1.0),
     jsonlite,
-    sondage (>= 0.8.6),
+    sondage (>= 0.8.8),
     svyplan (>= 0.8.8),
     withr
 Suggests:
@@ -44,7 +44,7 @@ Suggests:
    srvyr
 Config/testthat/edition: 3
 VignetteBuilder: knitr
-URL: https://gitlab.com/dickoa/samplyr
+URL: https://dickoa.gitlab.io/samplyr, https://gitlab.com/dickoa/samplyr
 BugReports: https://gitlab.com/dickoa/samplyr/-/issues
 Remotes: gitlab::dickoa/sondage,
     gitlab::dickoa/svyplan

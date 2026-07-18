@@ -76,6 +76,22 @@
 #'   `supports_spread = TRUE` requires coordinates in `spread`. These
 #'   capabilities are declared when the method is registered in `sondage`.
 #'
+#'   Sample weights are `1 / pik`, where `pik` is the chance vector
+#'   (target inclusion probabilities, or expected hits for `type = "wr"`
+#'   methods) that samplyr resolves and hands to the registered method.
+#'   Registered methods state where they sit in the taxonomy with
+#'   `probabilities` at registration: `"exact"` (the design's true
+#'   first-order inclusion probabilities, or expected hits, equal
+#'   `pik`), `"approximate"`
+#'   (honored to a documented approximation, as Pareto sampling does), or
+#'   `"unknown"` (the default: `pik` is a selection weight only, so the
+#'   weights would be systematically biased). `draw()` refuses `"unknown"`
+#'   methods; declare the method's tier to use it. The classic trap is
+#'   `sample(prob = pik)`: with `replace = TRUE` it yields expected hits
+#'   exactly equal to `pik` (a valid `type = "wr"` method), but without
+#'   replacement its inclusion probabilities differ from `pik`, so a
+#'   `type = "wor"` wrapper's tier really is unknown.
+#'
 #' @param mos Measure of size variable, specified as a bare column name
 #'   (unquoted). Required for built-in PPS methods and registered `type =
 #'   "wor"` or `type = "wr"` methods named with the `pps_` prefix. Optional
@@ -558,6 +574,9 @@ draw <- function(
         "i" = "Use {.code method = \"{paste0(expected_prefix, '_', sondage_method_name(method))}\"}."
       ))
     }
+    if (identical(custom_spec$probabilities, "unknown")) {
+      abort_unknown_probabilities(method)
+    }
   } else {
     cli_abort(
       c(
@@ -688,7 +707,9 @@ draw <- function(
     on_empty = on_empty,
     method_type = custom_spec$type,
     method_fixed = custom_spec$fixed_size,
-    method_variance = custom_spec$variance_family
+    method_variance = custom_spec$variance_family,
+    method_probabilities = custom_spec$probabilities,
+    method_implementation = method_implementation_hash(custom_spec)
   )
 
   .data$stages[[current]]$draw_spec <- draw_spec

@@ -173,6 +173,61 @@ format_control_quos <- function(control_quos) {
   }
 }
 
+#' Digest-backed coverage line for the tbl_sample header
+#'
+#' At most one line: the stage count and the ultimate-unit coverage,
+#' "3 stages \u00b7 360/19,344 units". It appears only when the digest
+#' supports a complete universe denominator (a universe-scope first
+#' stage with complete descendant counts, or a single element stage
+#' over the universe) and the realized count is not replicate-varying.
+#' The per-stage detail lives in summary() and frame_summary().
+#' @noRd
+digest_coverage_line <- function(x) {
+  digest <- get_frame_digest(x)
+  if (is_null(digest) || identical(digest$status, "invalidated")) {
+    return(character(0))
+  }
+  fmt <- function(v) format(v, big.mark = ",", trim = TRUE)
+
+  stages <- digest$stages
+  k <- length(stages)
+  # A digest describing fewer stages than were executed (a partial
+  # replicated manifest) cannot state the sample's coverage.
+  if (k < length(get_stages_executed(x))) {
+    return(character(0))
+  }
+  first <- stages[[1]]
+  last <- stages[[k]]
+
+  # Ultimate units are counted at the element level of the last stage.
+  if (!identical(last$unit_level, "element") ||
+        anyNA(last$pools$n_realized)) {
+    return(character(0))
+  }
+  realized <- sum(last$pools$n_realized)
+
+  total <- if (k == 1L && identical(first$scope, "universe") &&
+                 !anyNA(first$pools$N)) {
+    sum(first$pools$N)
+  } else if (
+    k > 1L &&
+      identical(first$unit_level, "cluster") &&
+      identical(first$scope, "universe") &&
+      !is_null(first$units) &&
+      "n_descendants" %in% names(first$units) &&
+      !anyNA(first$units$n_descendants)
+  ) {
+    sum(first$units$n_descendants)
+  } else {
+    return(character(0))
+  }
+
+  c("Sampling" = paste0(
+    k, if (k == 1L) " stage" else " stages",
+    " | ", fmt(realized), "/", fmt(total), " units"
+  ))
+}
+
 #' @rdname print.samplyr
 #' @export
 tbl_sum.tbl_sample <- function(x, ...) {
@@ -198,6 +253,8 @@ tbl_sum.tbl_sample <- function(x, ...) {
       )
     )
   }
+
+  result <- c(result, digest_coverage_line(x))
 
   if (has_multiple_replicates(x) && !anyNA(x$.replicate)) {
     n_reps <- length(unique(x$.replicate))

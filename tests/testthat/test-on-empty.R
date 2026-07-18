@@ -142,6 +142,8 @@ test_that("custom random-size WOR methods honour on_empty", {
     "always_empty", "wor",
     sample_fn = function(pik, ...) integer(0),
     fixed_size = FALSE
+  ,
+    probabilities = "exact"
   )
   frame <- data.frame(id = 1:5, size = rep(1, 5))
 

@@ -507,7 +507,7 @@ test_that("summary reports replicate count and omits weight diagnostics", {
 
   expect_match(output_text, "reps = 3")
   expect_match(output_text, "n/rep")
-  expect_match(output_text, "replicate 1")
+  expect_match(output_text, "per replicate")
   expect_match(output_text, "omitted")
 })
 

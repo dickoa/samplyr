@@ -32,6 +32,28 @@
 #'   This is **repeated sample realization** (drawing multiple independent
 #'   samples), not replicate-weight variance estimation. For the latter, see
 #'   [as_svrepdesign()].
+#' @param frame_digest Controls the frame digest, a compact execution
+#'   manifest recorded with the sample and read by [frame_summary()].
+#'   `"summary"` (default) records anonymous population structure:
+#'   selection pools, resolved chances (exact for cluster stages,
+#'   constant or quantile-compressed for element stages), and the
+#'   selected-unit trace. `"full"` keeps exact per-unit chances for
+#'   element stages too. `"none"` records no digest. When one universe
+#'   frame feeds every stage, later stages also record the pools their
+#'   realization never reached, with chances resolved deterministically
+#'   from the design (`chance_status = "design_resolved"`); this gives
+#'   [frame_summary()] and downstream digest consumers complete universe
+#'   denominators without the frame. The digest never
+#'   affects selection, weights, or estimation. Design executions
+#'   record a digest, replicated executions share the population
+#'   structure across replicates with replicate-specific traces, and a
+#'   stage continuation extends the digest carried by its input sample
+#'   (an input without a valid digest yields no digest). In a
+#'   replicated multistage execution, later-stage pools depend on each
+#'   replicate's realized parents, so the digest keeps the stage
+#'   prefix shared by all replicates and reports status `"partial"`.
+#'   Replicated multi-phase and replicated-continuation executions do
+#'   not record one yet.
 #'
 #' @return A `tbl_sample` object (a data frame subclass with sampling
 #'   metadata). Contains the selected units plus:
@@ -133,8 +155,11 @@
 #'
 #' ## Weight Calculation
 #'
-#' The `.weight` column is always the inverse of the inclusion probability.
-#' For all methods the per-stage weight is \eqn{w_i^{(k)} = 1 / \pi_i^{(k)}}{w_i(k) = 1 / pi_i(k)}:
+#' The `.weight` column is the inverse of the selection chance that
+#' samplyr resolves for the unit: the first-order inclusion probability
+#' for without-replacement methods, or the expected number of
+#' selections for with-replacement methods. The per-stage weight is
+#' \eqn{w_i^{(k)} = 1 / \pi_i^{(k)}}{w_i(k) = 1 / pi_i(k)}:
 #'
 #' - **SRS**: \eqn{w_i = N / n}{w = N/n}, constant for all units.
 #' - **Stratified SRS**: \eqn{w_i = N_h / n_h}{w = N_h/n_h} within stratum \eqn{h}.
@@ -145,6 +170,19 @@
 #'   \eqn{E(n_i) = n \cdot p_i}{E(n_i) = n * p_i} is the expected number
 #'   of selections. Each draw is one row; a unit selected \eqn{k} times
 #'   appears \eqn{k} times, each with the same weight.
+#'
+#' For every built-in method except `"pps_sps"` and `"pps_pareto"`, the
+#' resolved chance equals the design's true first-order inclusion
+#' probability (or expected hits), so `.weight` is the inverse of that
+#' true probability. The order-sampling pair, and registered methods
+#' declared `probabilities = "approximate"`, honor the resolved chance
+#' only to a documented approximation: `.weight` is then the inverse of
+#' the target probability, not of the design's true first-order
+#' inclusion probability. Weighting by the inverse target is standard
+#' practice for these methods, and the deviation is typically small,
+#' but it is a bias of the method, not of samplyr. The tier is recorded
+#' per stage in the frame digest, reported by [frame_summary()] as the
+#' `probabilities` column, and flagged by `summary()`.
 #'
 #' ### Multi-stage weight compounding
 #'
@@ -251,7 +289,9 @@
 #'
 #' @export
 execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
-                    reps = NULL) {
+                    reps = NULL,
+                    frame_digest = c("summary", "full", "none")) {
+  frame_digest <- match.arg(frame_digest)
   frames <- list(...)
 
   execution_environment <- capture_execution_environment()
@@ -461,12 +501,14 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
         )
       } else if (is_null(reps)) {
         execute_design(
-          .data, frames, stages, seed, panels, execution_environment
+          .data, frames, stages, seed, panels, execution_environment,
+          frame_digest = frame_digest
         )
       } else {
         execute_replicated(.data, frames, stages, seed, reps,
                            executor = "design",
-                           execution_environment = execution_environment)
+                           execution_environment = execution_environment,
+                           frame_digest = frame_digest)
       }
     } else if (is_tbl_sample(.data)) {
       has_existing_reps <- has_multiple_replicates(.data)
@@ -478,7 +520,8 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
       }
       if (has_existing_reps) {
         execute_replicated_continuation(
-          .data, frames, stages, seed, panels, execution_environment
+          .data, frames, stages, seed, panels, execution_environment,
+          frame_digest = frame_digest
         )
       } else if (!is_null(reps)) {
         execute_replicated(.data, frames, stages, seed, reps,
@@ -486,7 +529,8 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
                            execution_environment = execution_environment)
       } else {
         execute_continuation(
-          .data, frames, stages, seed, panels, execution_environment
+          .data, frames, stages, seed, panels, execution_environment,
+          frame_digest = frame_digest
         )
       }
     } else {
@@ -528,6 +572,7 @@ capture_execution_environment <- function() {
 #' @noRd
 execute_design <- function(design, frames, stages, seed, panels,
                            execution_environment,
+                           frame_digest = "summary",
                            call = caller_env()) {
   validate_design_complete(design)
 
@@ -578,6 +623,8 @@ execute_design <- function(design, frames, stages, seed, panels,
   current_sample <- NULL
   previous_stage_idx <- NULL
   all_prior_cluster_vars <- character(0)
+  stage_traces <- vector("list", length(stages))
+  stage_used_frames <- vector("list", length(stages))
 
   for (i in seq_along(stages)) {
     stage_idx <- stages[i]
@@ -603,7 +650,7 @@ execute_design <- function(design, frames, stages, seed, panels,
       )
     }
 
-    current_sample <- execute_single_stage(
+    step <- execute_single_stage(
       frame = frame,
       stage_spec = stage_spec,
       stage_num = stage_idx,
@@ -612,6 +659,9 @@ execute_design <- function(design, frames, stages, seed, panels,
       is_final_stage = is_final_stage,
       all_prior_cluster_vars = all_prior_cluster_vars
     )
+    current_sample <- step$sample
+    stage_traces[[i]] <- step$trace
+    stage_used_frames[[i]] <- step$frame
 
     # A random-size stage with on_empty = "warn"/"silent" can select
     # zero units. Later stages then have nothing to select from: the
@@ -643,6 +693,30 @@ execute_design <- function(design, frames, stages, seed, panels,
     current_sample$._prev_phase_weight <- NULL
   }
 
+  digest <- NULL
+  if (!identical(frame_digest, "none")) {
+    # Digest failure must never fail the execution: the sample is the
+    # product, the digest an annotation.
+    digest <- tryCatch(
+      build_frame_digest(
+        design = design,
+        stage_ids = stages,
+        stage_traces = stage_traces,
+        stage_frames = stage_used_frames,
+        input_frames = frames,
+        mode = frame_digest,
+        sample = current_sample
+      ),
+      error = function(e) {
+        cli_warn(c(
+          "The frame digest could not be recorded for this execution.",
+          "i" = conditionMessage(e)
+        ))
+        NULL
+      }
+    )
+  }
+
   new_tbl_sample(
     data = current_sample,
     design = design,
@@ -654,7 +728,8 @@ execute_design <- function(design, frames, stages, seed, panels,
       panels = panels,
       prev_phase = prev_phase,
       execution_environment = execution_environment,
-      integrity = sample_integrity_record(current_sample, design, stages)
+      integrity = sample_integrity_record(current_sample, design, stages),
+      frame_digest = digest
     )
   )
 }
@@ -663,8 +738,12 @@ execute_design <- function(design, frames, stages, seed, panels,
 execute_replicated <- function(.data, frames, stages, seed, reps,
                                executor = "design",
                                execution_environment,
+                               frame_digest = "none",
                                call = caller_env()) {
   results <- vector("list", reps)
+  rep_digests <- vector("list", reps)
+  collect_digest <- executor == "design" &&
+    !identical(frame_digest, "none")
 
   for (r in seq_len(reps)) {
     rep_seed <- if (!is_null(seed)) seed + r - 1L else NULL
@@ -673,7 +752,8 @@ execute_replicated <- function(.data, frames, stages, seed, reps,
       if (executor == "design") {
         execute_design(
           .data, frames, stages, rep_seed, panels = NULL,
-          execution_environment = execution_environment
+          execution_environment = execution_environment,
+          frame_digest = if (collect_digest) frame_digest else "none"
         )
       } else {
         execute_continuation(
@@ -689,9 +769,27 @@ execute_replicated <- function(.data, frames, stages, seed, reps,
       run_one()
     }
 
+    if (collect_digest) {
+      rep_digests[[r]] <- attr(result, "metadata")$frame_digest
+    }
     df <- as.data.frame(result)
     df$.replicate <- rep.int(r, nrow(df))
     results[[r]] <- df
+  }
+
+  digest <- NULL
+  if (collect_digest) {
+    digest <- tryCatch(
+      merge_replicated_digests(rep_digests),
+      error = function(e) {
+        cli_warn(c(
+          "The frame digest could not be recorded for this replicated
+           execution.",
+          "i" = conditionMessage(e)
+        ))
+        NULL
+      }
+    )
   }
 
   combined <- do.call(rbind, results)
@@ -737,7 +835,8 @@ execute_replicated <- function(.data, frames, stages, seed, reps,
       ),
       prev_phase = attr(result, "metadata")$prev_phase,
       execution_environment = execution_environment,
-      integrity = integrity
+      integrity = integrity,
+      frame_digest = digest
     )
   )
 }
@@ -745,6 +844,7 @@ execute_replicated <- function(.data, frames, stages, seed, reps,
 #' @noRd
 execute_continuation <- function(sample, frames, stages, seed, panels,
                                  execution_environment,
+                                 frame_digest = "none",
                                  call = caller_env()) {
   design <- get_design(sample)
   executed <- get_stages_executed(sample)
@@ -799,6 +899,10 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
     )
   }
 
+  stage_traces <- vector("list", length(stages))
+  stage_used_frames <- vector("list", length(stages))
+  input_frames_used <- vector("list", length(stages))
+
   for (i in seq_along(stages)) {
     stage_idx <- stages[i]
     frame <- frames[[i]]
@@ -811,6 +915,7 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
     if (length(internal) > 0L) {
       frame <- frame[, setdiff(names(frame), internal), drop = FALSE]
     }
+    input_frames_used[[i]] <- frame
 
     is_final_stage_of_execution <- (i == length(stages))
     is_final_stage_of_design <- (stage_idx == length(design$stages))
@@ -824,7 +929,7 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
       all_prior_cluster_vars = all_prior_cluster_vars
     )
 
-    current_sample <- execute_single_stage(
+    step <- execute_single_stage(
       frame = frame,
       stage_spec = stage_spec,
       stage_num = stage_idx,
@@ -833,6 +938,9 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
       is_final_stage = is_final_stage,
       all_prior_cluster_vars = all_prior_cluster_vars
     )
+    current_sample <- step$sample
+    stage_traces[[i]] <- step$trace
+    stage_used_frames[[i]] <- step$frame
 
     # See execute_design(): an empty stage ends the selection.
     if (nrow(current_sample) == 0) {
@@ -854,6 +962,32 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
     )
   }
 
+  digest <- NULL
+  if (!identical(frame_digest, "none")) {
+    # Merge only onto a prior digest that still describes its sample;
+    # a continuation cannot manufacture the manifest of stages it did
+    # not observe.
+    prior <- get_frame_digest(sample)
+    if (!is_null(prior) && !identical(prior$status, "invalidated")) {
+      digest <- tryCatch(
+        merge_continuation_digest(
+          prior, design, stages,
+          stage_traces = stage_traces,
+          stage_frames = stage_used_frames,
+          input_frames = input_frames_used
+        ),
+        error = function(e) {
+          cli_warn(c(
+            "The frame digest could not be extended for this
+             continuation.",
+            "i" = conditionMessage(e)
+          ))
+          NULL
+        }
+      )
+    }
+  }
+
   new_tbl_sample(
     data = current_sample,
     design = design,
@@ -863,6 +997,7 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
       n_selected = nrow(current_sample),
       executed_at = Sys.time(),
       panels = panels,
+      frame_digest = digest,
       continued_from = attr(sample, "metadata"),
       # A stage continuation remains in the same phase. If that phase was
       # itself sampled from an earlier phase, retain the phase link so survey
@@ -997,6 +1132,7 @@ abort_empty_replicate <- function(
 execute_replicated_continuation <- function(sample, frames, stages, seed,
                                             panels,
                                             execution_environment,
+                                            frame_digest = "none",
                                             call = caller_env()) {
   if (!is_null(panels)) {
     cli_abort(
@@ -1054,6 +1190,18 @@ execute_replicated_continuation <- function(sample, frames, stages, seed,
     setdiff(seq_along(the_design$stages), already_executed)
   }
 
+  # Continued pools hang off each replicate's realized parents, so the
+  # continued stages are replicate-specific by construction: the
+  # shareable manifest is the prior one, explicitly marked partial.
+  digest <- NULL
+  if (!identical(frame_digest, "none")) {
+    prior <- get_frame_digest(sample)
+    if (!is_null(prior) && !identical(prior$status, "invalidated")) {
+      digest <- prior
+      digest$status <- "partial"
+    }
+  }
+
   new_tbl_sample(
     data = combined,
     design = the_design,
@@ -1062,6 +1210,7 @@ execute_replicated_continuation <- function(sample, frames, stages, seed,
     metadata = list(
       n_selected = nrow(combined),
       executed_at = Sys.time(),
+      frame_digest = digest,
       reps = length(rep_ids),
       replicate_seeds = if (!is_null(seed)) {
         seed + seq_along(rep_ids) - 1L
@@ -1145,7 +1294,8 @@ execute_replicated_multiphase <- function(design, frames, stages, seed,
     run_one <- function() {
       execute_design(
         design, rep_frames, stages, rep_seed, panels = NULL,
-        execution_environment = execution_environment
+        execution_environment = execution_environment,
+        frame_digest = "none"
       )
     }
 
@@ -1235,18 +1385,32 @@ execute_single_stage <- function(
         split_vars <- attach$split_vars
       }
 
-      indices_list <- split_row_indices(frame, split_vars)$indices
+      split <- split_row_indices(frame, split_vars)
+      indices_list <- split$indices
 
       results_list <- lapply(indices_list, function(idxs) {
         data <- frame[idxs, , drop = FALSE]
         sample_clusters(data, strata_spec, cluster_spec, draw_spec)
       })
-      result <- bind_rows(results_list)
+      result <- bind_rows(lapply(results_list, function(r) r$sample))
       if (nrow(result) > 0) {
         result$.sample_id <- seq_len(nrow(result))
       }
+      stage_trace <- trace_split(
+        by = split_vars,
+        groups = lapply(seq_along(indices_list), function(i) {
+          trace_group(
+            key = split$keys[[i]],
+            keys = NULL,
+            rows = indices_list[[i]],
+            node = results_list[[i]]$trace
+          )
+        })
+      )
     } else {
-      result <- sample_clusters(frame, strata_spec, cluster_spec, draw_spec)
+      res <- sample_clusters(frame, strata_spec, cluster_spec, draw_spec)
+      result <- res$sample
+      stage_trace <- res$trace
     }
 
     if (is_final_stage) {
@@ -1286,14 +1450,18 @@ execute_single_stage <- function(
       split_vars <- attach$split_vars
     }
 
-    result <- sample_within_clusters(
+    res <- sample_within_clusters(
       frame,
       strata_spec,
       draw_spec,
       split_vars
     )
+    result <- res$sample
+    stage_trace <- res$trace
   } else {
-    result <- sample_units(frame, strata_spec, draw_spec)
+    res <- sample_units(frame, strata_spec, draw_spec)
+    result <- res$sample
+    stage_trace <- res$trace
   }
 
   result$.stage <- rep.int(stage_num, nrow(result))
@@ -1326,7 +1494,9 @@ execute_single_stage <- function(
   # Materialized outputs should always expose a row-unique sample id,
   # including clustered stages that are expanded back to all rows.
   result$.sample_id <- seq_len(nrow(result))
-  result
+  # `frame` is returned because draw-assignment attachment can rebuild
+  # it, and the trace's row indices refer to the frame actually used.
+  list(sample = result, trace = stage_trace, frame = frame)
 }
 
 #' Detect columns to carry forward from a previous stage
@@ -1614,6 +1784,11 @@ validate_design_complete <- function(design, call = rlang::caller_env()) {
     if (is_null(stage$draw_spec)) {
       label <- stage$label %||% paste("Stage", i)
       cli_abort("{.val {label}} is incomplete: missing {.fn draw}", call = call)
+    }
+    # draw() refuses these at design time; a design restored from a
+    # file bypasses draw(), so execution re-checks.
+    if (identical(stage$draw_spec$method_probabilities, "unknown")) {
+      abort_unknown_probabilities(stage$draw_spec$method, call = call)
     }
   }
 

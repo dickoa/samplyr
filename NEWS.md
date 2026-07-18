@@ -136,6 +136,13 @@ Initial release.
   multi-phase) or modified after execution are flagged in the receipt
   and warned about at write time; `replay_design()` refuses chained
   receipts rather than replaying only the final call.
+* Receipts for designs using registered custom methods record an
+  implementation fingerprint (formals and body of the registered
+  `sample_fn` and `joint_fn`, via `sondage::method_spec()`). Replay
+  refuses a re-registered function whose code differs from the
+  recorded one: matching registry metadata alone does not imply the
+  same selections. The fingerprint does not cover the function's
+  enclosing environment.
 * The design format separates declarative design metadata from native
   implementation metadata. Selection methods use samplyr's internal semantic
   descriptor, while exact method names, R classes, execution environment, and
@@ -171,6 +178,15 @@ Initial release.
   srvyr `tbl_svy` objects.
 * `joint_expectation()` computes pairwise joint inclusion probabilities
   (WOR) or joint expected hits (WR/PMR) for exact variance estimation.
+  Later stages are computed conditionally within each parent cluster,
+  with cross-parent pairs at the product of marginals (independent
+  selections). The frame argument is optional: without it, the
+  computation runs off the frame digest recorded at execution, so a
+  sample that traveled without its frame still yields exact joint
+  expectations. This needs an exact chance representation (the default
+  digest for cluster and constant-chance stages;
+  `frame_digest = "full"` for element stages with varying chances);
+  summarized chances refuse rather than approximate.
 * Modified-sample guard: a `tbl_sample` whose rows were removed, added,
   or duplicated after `execute()`, or whose internal design columns
   (`.weight`, `.fpc_k`, ...) were overwritten, dropped, or renamed
@@ -241,6 +257,61 @@ Initial release.
   adjustment (`resp_rate`), and confidence intervals (`confint()`) on
   all planning objects.
 
+## Frame digest
+
+* Every `execute()` records a frame digest by default
+  (`frame_digest = "summary"`; `"full"` keeps exact unit chances,
+  `"none"` disables it): a versioned manifest of the selection pools,
+  first-order chances, and selected units the execution resolved, with
+  no unit identifiers. Recording is observational and never changes the
+  selection; its size scales with pools, clusters, and quantile bins
+  rather than frame rows (clusters that are single frame rows make the
+  two coincide; `frame_digest = "none"` opts out).
+* The digest keeps a `tbl_sample` intelligible without its frame: the
+  printed header shows population coverage (`360/19,344 units`),
+  `summary()` reports realization per pool at parent-by-strata
+  resolution, and `frame_summary()` returns the same information as
+  documented tibbles with stage, pool, or unit detail and eligible or
+  universe scope.
+* When one universe frame feeds every stage, pools under unselected
+  parents are resolved from the design alone (`design_resolved`), so
+  coverage is reported against the full universe.
+* Registered methods declare their first-order probability tier with
+  `sondage::register_method(probabilities =)` (sondage >= 0.8.8):
+  `"exact"` (the design's true first-order inclusion probabilities,
+  or expected hits, equal the `pik` handed to the method),
+  `"approximate"` (honored to
+  a documented approximation, as Pareto and sequential Poisson order
+  sampling are), or `"unknown"` (the default: `pik` is a selection
+  weight only). `draw()` refuses `"unknown"` methods, because their
+  `1 / pik` design weights would be systematically biased, and
+  execution re-checks designs restored from files. The strict
+  default makes the classic `sample(prob = pik)` trap (exact for
+  with-replacement expected hits, biased without replacement)
+  impossible to hit silently.
+* The probability tier is recorded for built-in methods too:
+  `"pps_sps"` and
+  `"pps_pareto"` honor the target `pik` only to a documented
+  approximation, so their stages carry `probabilities = "approximate"`
+  in the frame digest, the `probabilities` column of
+  `frame_summary()`, the serialized design metadata, and a
+  `(approximate probabilities)` flag in `summary()`. For these
+  methods `.weight` is the inverse target probability, not the
+  inverse of the design's true first-order inclusion probability;
+  the `execute()` weight documentation now says so.
+* The digest travels inside execution receipts, so a design restored
+  with `read_design()` carries it, and `frame_summary()` accepts such
+  designs directly: a shipped design file supports next-wave planning
+  (population counts, realized allocations) without the frame or the
+  sample. The survey-planning vignette shows the wave loop into
+  `svyplan::n_alloc()`. `validate_frame()` compares a
+  candidate frame against the recorded digest and reports structural
+  drift (per-pool recounts of population sizes) and chance drift: the
+  chances the design would resolve on the new frame are compared with
+  the recorded ones, so a size measure rescaled by a constant factor
+  reports unchanged chances while a real shift names the stage. The
+  comparison is informational and never fails validation.
+
 ## Diagnostics
 
 * `summary()` shows per-stage stratum allocation tables with N_h, n_h,
@@ -277,4 +348,5 @@ Initial release.
 * Validation: deterministic invariants and Monte Carlo coverage checks on
   synthetic populations.
 * Serialization: saving, sharing, and restoring designs as JSON files,
-  frame fingerprints, and reproducible execution receipts.
+  frame fingerprints, reproducible execution receipts, and drift
+  detection with the execution digest.

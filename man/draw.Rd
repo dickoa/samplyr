@@ -108,7 +108,23 @@ identifies their sampling family. Registered \code{type = "wor"} and
 \code{"balanced_<name>"}. For the latter, \code{mos} is optional;
 \code{supports_aux = TRUE} permits ordinary balancing variables in \code{aux}, and
 \code{supports_spread = TRUE} requires coordinates in \code{spread}. These
-capabilities are declared when the method is registered in \code{sondage}.}
+capabilities are declared when the method is registered in \code{sondage}.
+
+Sample weights are \code{1 / pik}, where \code{pik} is the chance vector
+(target inclusion probabilities, or expected hits for \code{type = "wr"}
+methods) that samplyr resolves and hands to the registered method.
+Registered methods state where they sit in the taxonomy with
+\code{probabilities} at registration: \code{"exact"} (the design's true
+first-order inclusion probabilities, or expected hits, equal
+\code{pik}), \code{"approximate"}
+(honored to a documented approximation, as Pareto sampling does), or
+\code{"unknown"} (the default: \code{pik} is a selection weight only, so the
+weights would be systematically biased). \code{draw()} refuses \code{"unknown"}
+methods; declare the method's tier to use it. The classic trap is
+\code{sample(prob = pik)}: with \code{replace = TRUE} it yields expected hits
+exactly equal to \code{pik} (a valid \code{type = "wr"} method), but without
+replacement its inclusion probabilities differ from \code{pik}, so a
+\code{type = "wor"} wrapper's tier really is unknown.}
 
 \item{mos}{Measure of size variable, specified as a bare column name
 (unquoted). Required for built-in PPS methods and registered \code{type = "wor"} or \code{type = "wr"} methods named with the \code{pps_} prefix. Optional

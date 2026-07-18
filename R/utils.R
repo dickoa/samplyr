@@ -34,6 +34,12 @@ jip_methods <- c(pps_methods, balanced_methods)
 # Brewer estimators used for fixed-size designs.
 rs_poisson_methods <- c("bernoulli", "pps_poisson")
 
+# Built-in methods whose true first-order inclusion probabilities equal
+# the target pik only to a documented approximation (Rosen's order
+# sampling). Every other built-in is exact; sondage::method_spec()
+# reports the same tiers.
+approx_probability_methods <- c("pps_sps", "pps_pareto")
+
 #' Return the public family prefix for a registered method
 #' @noRd
 custom_method_prefix <- function(method) {
@@ -75,6 +81,61 @@ is_custom_method <- function(method) {
 #' @noRd
 custom_method_spec <- function(method) {
   sondage::method_spec(sondage_method_name(method))
+}
+
+#' Probabilities tier of a built-in method, NULL for non-built-ins
+#' @noRd
+builtin_method_probabilities <- function(method) {
+  if (!method %in% builtin_methods) return(NULL)
+  if (method %in% approx_probability_methods) "approximate" else "exact"
+}
+
+#' Fingerprint of a registered method's implementation
+#'
+#' Hash of the formals and body of the registered sample_fn and
+#' joint_fn (sondage >= 0.8.8 exposes them in method_spec()).
+#' Deparsing the language objects normalizes formatting and drops
+#' comments, so re-registering the same code fingerprints identically;
+#' the enclosing environment is not covered. NULL for built-ins and
+#' for specs without functions.
+#' @noRd
+method_implementation_hash <- function(spec) {
+  if (is_null(spec$sample_fn)) return(NULL)
+  fingerprint_fn <- function(f) {
+    if (is_null(f)) return(NULL)
+    list(deparse(formals(f)), deparse(body(f)))
+  }
+  rlang::hash(list(
+    sample_fn = fingerprint_fn(spec$sample_fn),
+    joint_fn = fingerprint_fn(spec$joint_fn)
+  ))
+}
+
+#' Refuse a method whose selection probabilities are unknown
+#'
+#' A registered method with probabilities = "unknown" (the strict
+#' default) treats the pik it receives as a selection weight, not an
+#' honored first-order target, so 1/pik design weights would be
+#' systematically biased. samplyr samples are weighted by
+#' construction; such a method cannot produce one.
+#' @noRd
+abort_unknown_probabilities <- function(method,
+                                        call = rlang::caller_env()) {
+  abort_samplyr(
+    c(
+      "Method {.val {method}} declares its selection probabilities
+       unknown, so design weights cannot be computed.",
+      "i" = "samplyr weights samples by 1/probability. A method whose
+             true selection probabilities are not known cannot
+             produce them.",
+      "i" = "Declare {.code probabilities = \"exact\"} or
+             {.code \"approximate\"} at registration if the method
+             honors the {.arg pik} it receives, or draw with sondage
+             directly for an unweighted selection."
+    ),
+    class = "samplyr_error_unknown_probabilities",
+    call = call
+  )
 }
 
 #' Check if method is WOR (built-in or registered)

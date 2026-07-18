@@ -41,6 +41,16 @@ several calls (a stage continuation or a multi-phase pipeline)
 carries a \code{chained} flag in its receipt and cannot be replayed;
 save and replay each phase or stage batch separately.
 
+For a design using a registered custom method, the receipt records a
+fingerprint of the implementation (the formals and body of the
+registered \code{sample_fn} and \code{joint_fn}). Replay refuses when the
+currently registered function differs from the recorded one, since
+identical registry metadata does not imply the same selections.
+The fingerprint normalizes formatting and comments and does not
+cover the function's enclosing environment: a registered function
+that reads from its environment can change behavior without
+changing its fingerprint.
+
 When the design was saved with a frame fingerprint, \code{frame} is
 compared against it before replaying. A differing frame still yields
 a valid sample, but not the recorded one, so the default is to error.

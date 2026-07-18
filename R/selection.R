@@ -1,22 +1,102 @@
+#' Selection trace nodes
+#'
+#' Every selection wrapper returns list(sample, trace). The trace tree
+#' records, for each selection pool, the resolved chance vector and
+#' the selected positions in executed order, captured before the
+#' engine discards them. A pool leaf holds the vectors; split and
+#' clusters nodes record how the frame handed to a wrapper was
+#' partitioned, so pool membership maps back to frame rows by
+#' composing `rows` indices down the tree. Capture is observational:
+#' it never touches the random stream or the selected sample.
+#' @noRd
+trace_pool <- function(
+  N,
+  n_target,
+  chance,
+  chance_kind,
+  order_kind,
+  selected,
+  perm = NULL,
+  cert_rule = integer(0)
+) {
+  list(
+    type = "pool",
+    N = N,
+    n_target = n_target,
+    chance = chance,
+    chance_kind = chance_kind,
+    order_kind = order_kind,
+    perm = perm,
+    selected = selected,
+    cert_rule = cert_rule
+  )
+}
+
+#' One partition of a frame: `groups[[i]]` describes subset i and the
+#' trace node produced on it. `rows` are positions into the frame the
+#' partitioning wrapper received.
+#' @noRd
+trace_split <- function(by, groups) {
+  list(type = "split", by = by, groups = groups)
+}
+
+#' @noRd
+trace_group <- function(key, keys, rows, node) {
+  list(key = key, keys = keys, rows = rows, node = node)
+}
+
+#' A cluster stage: the child node was produced on the one-row-per-
+#' cluster frame; `keys`, `first_rows` and `sizes` are aligned with its
+#' rows and map clusters back to the full frame.
+#' @noRd
+trace_clusters <- function(by, keys, first_rows, sizes, node) {
+  list(
+    type = "clusters",
+    by = by,
+    keys = keys,
+    first_rows = first_rows,
+    sizes = sizes,
+    node = node
+  )
+}
+
+#' Frame columns the cluster contract requires to be constant within
+#' each cluster: the size measure, stratum labels, and balancing or
+#' spreading variables.
+#' @noRd
+cluster_invariant_vars <- function(frame, draw_spec, strata_vars) {
+  intersect(
+    c(
+      draw_spec$mos,
+      strata_vars,
+      draw_spec$bounds %||% character(0),
+      draw_spec$spread %||% character(0)
+    ),
+    names(frame)
+  )
+}
+
+#' @noRd
+abort_cluster_invariants <- function(varying, cluster_vars) {
+  cli_abort(
+    c(
+      "{.val {varying}} must be constant within each cluster defined by {.val {cluster_vars}}.",
+      "i" = "Found clusters where {.val {varying}} varies across rows.",
+      "i" = "Ensure the frame has one consistent value per cluster for these columns."
+    ),
+    call = NULL
+  )
+}
+
 #' @noRd
 sample_clusters <- function(frame, strata_spec, cluster_spec, draw_spec) {
   cluster_vars <- cluster_spec$vars
   groups <- split_row_indices(frame, cluster_vars)
   cluster_indices <- groups$indices
 
-  invariant_vars <- character(0)
-  if (!is_null(draw_spec$mos)) {
-    invariant_vars <- c(invariant_vars, draw_spec$mos)
-  }
-  if (!is_null(strata_spec)) {
-    invariant_vars <- c(invariant_vars, strata_spec$vars)
-  }
-  invariant_vars <- c(
-    invariant_vars,
-    draw_spec$bounds %||% character(0),
-    draw_spec$spread %||% character(0)
+  invariant_vars <- cluster_invariant_vars(
+    frame, draw_spec, strata_spec$vars
   )
-  invariant_vars <- intersect(invariant_vars, names(frame))
 
   if (length(invariant_vars) > 0) {
     check_vars <- c(cluster_vars, invariant_vars)
@@ -26,14 +106,15 @@ sample_clusters <- function(frame, strata_spec, cluster_spec, draw_spec) {
       nrow()
 
     if (n_combos != n_clusters) {
-      varying <- invariant_vars[vapply(invariant_vars, function(v) {
-        nrow(distinct(frame, across(all_of(c(cluster_vars, v))))) != n_clusters
-      }, logical(1))]
-      cli_abort(c(
-        "{.val {varying}} must be constant within each cluster defined by {.val {cluster_vars}}.",
-        "i" = "Found clusters where {.val {varying}} varies across rows.",
-        "i" = "Ensure the frame has one consistent value per cluster for these columns."
-      ), call = NULL)
+      varying <- invariant_vars[vapply(
+        invariant_vars,
+        function(v) {
+          nrow(distinct(frame, across(all_of(c(cluster_vars, v))))) !=
+            n_clusters
+        },
+        logical(1)
+      )]
+      abort_cluster_invariants(varying, cluster_vars)
     }
   }
 
@@ -42,13 +123,27 @@ sample_clusters <- function(frame, strata_spec, cluster_spec, draw_spec) {
 
   if (is_balanced_method(draw_spec) && !is_null(draw_spec$aux)) {
     for (v in draw_spec$aux) {
-      cluster_frame[[v]] <- vapply(cluster_indices, function(idx) {
-        sum(frame[[v]][idx])
-      }, numeric(1))
+      cluster_frame[[v]] <- vapply(
+        cluster_indices,
+        function(idx) {
+          sum(frame[[v]][idx])
+        },
+        numeric(1)
+      )
     }
   }
 
-  sample_units(cluster_frame, strata_spec, draw_spec)
+  res <- sample_units(cluster_frame, strata_spec, draw_spec)
+  list(
+    sample = res$sample,
+    trace = trace_clusters(
+      by = cluster_vars,
+      keys = groups$keys,
+      first_rows = first_rows,
+      sizes = lengths(cluster_indices),
+      node = res$trace
+    )
+  )
 }
 
 
@@ -59,7 +154,8 @@ sample_within_clusters <- function(
   draw_spec,
   cluster_vars
 ) {
-  indices_list <- split_row_indices(frame, cluster_vars)$indices
+  groups <- split_row_indices(frame, cluster_vars)
+  indices_list <- groups$indices
 
   if (
     is_null(strata_spec) &&
@@ -70,11 +166,23 @@ sample_within_clusters <- function(
   ) {
     draw_n <- as.integer(draw_spec$n)
     n_per_group <- rep.int(draw_n, length(indices_list))
-    result <- sample_srswor_by_group_indices(frame, indices_list, n_per_group)
+    res <- sample_srswor_by_group_indices(frame, indices_list, n_per_group)
+    result <- res$sample
     if (nrow(result) > 0) {
       result$.sample_id <- seq_len(nrow(result))
     }
-    return(result)
+    trace_groups <- lapply(seq_along(indices_list), function(i) {
+      trace_group(
+        key = groups$keys[[i]],
+        keys = NULL,
+        rows = indices_list[[i]],
+        node = res$leaves[[i]]
+      )
+    })
+    return(list(
+      sample = result,
+      trace = trace_split(by = cluster_vars, groups = trace_groups)
+    ))
   }
 
   results_list <- lapply(indices_list, function(idxs) {
@@ -82,11 +190,22 @@ sample_within_clusters <- function(
     sample_units(data, strata_spec, draw_spec)
   })
 
-  result <- bind_rows(results_list)
+  result <- bind_rows(lapply(results_list, function(r) r$sample))
   if (nrow(result) > 0) {
     result$.sample_id <- seq_len(nrow(result))
   }
-  result
+  trace_groups <- lapply(seq_along(indices_list), function(i) {
+    trace_group(
+      key = groups$keys[[i]],
+      keys = NULL,
+      rows = indices_list[[i]],
+      node = results_list[[i]]$trace
+    )
+  })
+  list(
+    sample = result,
+    trace = trace_split(by = cluster_vars, groups = trace_groups)
+  )
 }
 
 #' @noRd
@@ -112,13 +231,23 @@ sample_srswor_by_group_indices <- function(frame, indices_list, n_per_group) {
   selected_rows <- vector("list", length(indices_list))
   pik_list <- vector("list", length(indices_list))
   fpc_list <- vector("list", length(indices_list))
+  leaves <- vector("list", length(indices_list))
 
   for (i in seq_along(indices_list)) {
     idxs <- indices_list[[i]]
     N_i <- length(idxs)
-    n_i <- min(as.integer(n_per_group[[i]]), N_i)
+    n_target <- n_per_group[[i]]
+    n_i <- min(as.integer(n_target), N_i)
 
     if (is.na(n_i) || n_i <= 0L || N_i == 0L) {
+      leaves[[i]] <- trace_pool(
+        N = N_i,
+        n_target = n_target,
+        chance = rep.int(0, N_i),
+        chance_kind = "inclusion_probability",
+        order_kind = "input",
+        selected = integer(0)
+      )
       next
     }
 
@@ -126,6 +255,14 @@ sample_srswor_by_group_indices <- function(frame, indices_list, n_per_group) {
     selected_rows[[i]] <- idxs[local_idx]
     pik_list[[i]] <- rep.int(n_i / N_i, n_i)
     fpc_list[[i]] <- rep.int(N_i, n_i)
+    leaves[[i]] <- trace_pool(
+      N = N_i,
+      n_target = n_target,
+      chance = rep.int(n_i / N_i, N_i),
+      chance_kind = "inclusion_probability",
+      order_kind = "input",
+      selected = local_idx
+    )
   }
 
   selected_rows <- unlist(selected_rows, use.names = FALSE)
@@ -133,14 +270,14 @@ sample_srswor_by_group_indices <- function(frame, indices_list, n_per_group) {
     empty <- frame[0, , drop = FALSE]
     empty$.weight <- numeric(0)
     empty$.fpc <- numeric(0)
-    return(empty)
+    return(list(sample = empty, leaves = leaves))
   }
 
   result <- frame[selected_rows, , drop = FALSE]
   pik <- unlist(pik_list, use.names = FALSE)
   result$.weight <- 1 / pik
   result$.fpc <- unlist(fpc_list, use.names = FALSE)
-  result
+  list(sample = result, leaves = leaves)
 }
 
 #' @noRd
@@ -152,7 +289,13 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
   stratum_info <- calculate_stratum_sizes(stratum_info, strata_spec, draw_spec)
 
   if (identical(draw_spec$method, "cube")) {
-    return(draw_balanced_stratified(frame, groups, stratum_info, strata_vars, draw_spec))
+    return(draw_balanced_stratified(
+      frame,
+      groups,
+      stratum_info,
+      strata_vars,
+      draw_spec
+    ))
   }
 
   stratum_keys <- make_group_key(stratum_info, strata_vars)
@@ -178,17 +321,32 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
       function(stratum_key) {
         n_h <- n_lookup[[stratum_key]]
         if (is_null(n_h) || length(n_h) == 0 || is.na(n_h)) {
-          cli_abort("Could not determine sample size for stratum {.val {stratum_key}}",
-                    call = NULL)
+          cli_abort(
+            "Could not determine sample size for stratum {.val {stratum_key}}",
+            call = NULL
+          )
         }
         as.integer(n_h)
       },
       integer(1)
     )
 
-    result <- sample_srswor_by_group_indices(frame, groups$indices, n_per_group)
+    res <- sample_srswor_by_group_indices(frame, groups$indices, n_per_group)
+    result <- res$sample
     result$.sample_id <- seq_len(nrow(result))
-    return(result)
+    trace_groups <- lapply(seq_along(groups$indices), function(i) {
+      idxs <- groups$indices[[i]]
+      trace_group(
+        key = groups$keys[[i]],
+        keys = frame[idxs[1], strata_vars, drop = FALSE],
+        rows = idxs,
+        node = res$leaves[[i]]
+      )
+    })
+    return(list(
+      sample = result,
+      trace = trace_split(by = strata_vars, groups = trace_groups)
+    ))
   }
 
   results_list <- lapply(seq_along(groups$indices), function(i) {
@@ -198,7 +356,9 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
 
     n_h <- n_lookup[[stratum_key]]
     if (is_null(n_h) || length(n_h) == 0 || is.na(n_h)) {
-      cli_abort("Could not determine sample size for stratum {.val {stratum_key}}")
+      cli_abort(
+        "Could not determine sample size for stratum {.val {stratum_key}}"
+      )
     }
 
     N_h <- nrow(data)
@@ -211,7 +371,7 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
       lookup = draw_lookup
     )
 
-    selected <- withCallingHandlers(
+    res <- withCallingHandlers(
       draw_sample(data, n_h, stratum_draw_spec),
       error = function(e) {
         cli_abort(
@@ -220,6 +380,7 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
         )
       }
     )
+    selected <- res$sample
     selected$.weight <- 1 / selected$.pik
     selected$.pik <- NULL
     selected$.fpc <- if (is_multi_hit_method(draw_spec)) {
@@ -227,18 +388,38 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
     } else {
       rep.int(N_h, nrow(selected))
     }
-    selected
+    list(
+      sample = selected,
+      group = trace_group(
+        key = stratum_key,
+        keys = keys,
+        rows = idxs,
+        node = res$trace
+      )
+    )
   })
 
-  result <- bind_rows(results_list)
+  result <- bind_rows(lapply(results_list, function(r) r$sample))
 
   result$.sample_id <- seq_len(nrow(result))
-  result
+  list(
+    sample = result,
+    trace = trace_split(
+      by = strata_vars,
+      groups = lapply(results_list, function(r) r$group)
+    )
+  )
 }
 
 #' Balanced sampling with stratified cube (single call to sondage::balanced_wor)
 #' @noRd
-draw_balanced_stratified <- function(frame, groups, stratum_info, strata_vars, draw_spec) {
+draw_balanced_stratified <- function(
+  frame,
+  groups,
+  stratum_info,
+  strata_vars,
+  draw_spec
+) {
   N <- nrow(frame)
   mos <- draw_spec$mos
   aux_vars <- draw_spec$aux
@@ -276,7 +457,11 @@ draw_balanced_stratified <- function(frame, groups, stratum_info, strata_vars, d
   row_order <- order(strata_int)
   pik_sorted <- pik[row_order]
   strata_sorted <- strata_int[row_order]
-  aux_sorted <- if (!is_null(aux_mat)) aux_mat[row_order, , drop = FALSE] else NULL
+  aux_sorted <- if (!is_null(aux_mat)) {
+    aux_mat[row_order, , drop = FALSE]
+  } else {
+    NULL
+  }
 
   if (!is_null(draw_spec$bounds)) {
     bounds <- compile_count_bounds(
@@ -300,7 +485,33 @@ draw_balanced_stratified <- function(frame, groups, stratum_info, strata_vars, d
   result$.weight <- 1 / pik[original_idx]
   result$.fpc <- fpc_vec[original_idx]
   result$.sample_id <- seq_len(nrow(result))
-  result
+
+  # One pool per stratum: the cube draw is joint, but the strata
+  # constraint fixes each stratum's size, and within-stratum input
+  # order is preserved by the stable sort.
+  sel_flag <- logical(N)
+  sel_flag[original_idx] <- TRUE
+  trace_groups <- lapply(seq_along(groups$indices), function(i) {
+    idxs <- groups$indices[[i]]
+    stratum_key <- groups$keys[[i]]
+    trace_group(
+      key = stratum_key,
+      keys = frame[idxs[1], strata_vars, drop = FALSE],
+      rows = idxs,
+      node = trace_pool(
+        N = length(idxs),
+        n_target = n_lookup[[stratum_key]],
+        chance = pik[idxs],
+        chance_kind = "inclusion_probability",
+        order_kind = "input",
+        selected = which(sel_flag[idxs])
+      )
+    )
+  })
+  list(
+    sample = result,
+    trace = trace_split(by = strata_vars, groups = trace_groups)
+  )
 }
 
 #' Compile bound() markers into sondage linear count constraints
@@ -357,7 +568,13 @@ draw_cube_with_bounds <- function(pik, aux, bounds) {
   res <- withCallingHandlers(
     sondage::balanced_wor(pik, aux = aux, bounds = bounds, method = "cube"),
     warning = function(w) {
-      if (grepl("bound.*relax|relax.*bound", conditionMessage(w), ignore.case = TRUE)) {
+      if (
+        grepl(
+          "bound.*relax|relax.*bound",
+          conditionMessage(w),
+          ignore.case = TRUE
+        )
+      ) {
         abort_samplyr(
           c(
             "Controlled count bounds could not all be satisfied.",
@@ -506,7 +723,8 @@ sample_unstratified <- function(frame, draw_spec) {
     ))
   }
 
-  result <- draw_sample(frame, n, draw_spec)
+  res <- draw_sample(frame, n, draw_spec)
+  result <- res$sample
   result$.weight <- 1 / result$.pik
   result$.pik <- NULL
   result$.fpc <- if (is_multi_hit_method(draw_spec)) {
@@ -515,7 +733,7 @@ sample_unstratified <- function(frame, draw_spec) {
     rep.int(N, nrow(result))
   }
   result$.sample_id <- seq_len(nrow(result))
-  result
+  list(sample = result, trace = res$trace)
 }
 
 #' Handle zero-selection outcomes for random-size methods
@@ -531,12 +749,16 @@ sample_unstratified <- function(frame, draw_spec) {
 #' @noRd
 handle_empty_selection <- function(method_label, on_empty) {
   header <- "{method_label} sampling produced zero selections."
-  switch(on_empty,
-    error = cli_abort(c(
-      header,
-      "i" = "Increase {.arg frac} (or {.arg n}), or use a fixed-size method.",
-      "i" = "Set {.code on_empty = \"warn\"} or {.code \"silent\"} to accept an empty sample (a valid realization of a random-size design; estimates from repeated executions remain unbiased)."
-    ), call = NULL),
+  switch(
+    on_empty,
+    error = cli_abort(
+      c(
+        header,
+        "i" = "Increase {.arg frac} (or {.arg n}), or use a fixed-size method.",
+        "i" = "Set {.code on_empty = \"warn\"} or {.code \"silent\"} to accept an empty sample (a valid realization of a random-size design; estimates from repeated executions remain unbiased)."
+      ),
+      call = NULL
+    ),
     warn = cli_warn(c(
       header,
       "!" = "Returning an empty sample.",
@@ -553,9 +775,16 @@ draw_sample <- function(data, n, draw_spec) {
   method <- draw_spec$method
   mos <- draw_spec$mos
   N <- nrow(data)
+  n_target <- n
 
+  perm <- NULL
+  order_kind <- "input"
   if (!is_null(draw_spec$control)) {
+    data$.__trace_row <- seq_len(N)
     data <- arrange(data, !!!draw_spec$control)
+    perm <- data$.__trace_row
+    data$.__trace_row <- NULL
+    order_kind <- "control"
   }
 
   if (!is_multi_hit_method(draw_spec)) {
@@ -578,7 +807,14 @@ draw_sample <- function(data, n, draw_spec) {
   is_custom <- !is_null(draw_spec$method_type)
 
   if ((method %in% pps_methods || is_custom) && has_certainty) {
-    return(draw_sample_pps_certainty(data, n, draw_spec))
+    return(draw_sample_pps_certainty(
+      data,
+      n,
+      draw_spec,
+      n_target = n_target,
+      order_kind = order_kind,
+      perm = perm
+    ))
   }
 
   pik <- NULL
@@ -615,99 +851,122 @@ draw_sample <- function(data, n, draw_spec) {
     } else {
       mos_vals <- data[[mos]]
       pik <- sondage::inclusion_prob(mos_vals, n)
-      idx <- sondage::unequal_prob_wor(pik, method = sondage_name, prn = prn_vals)$sample
+      idx <- sondage::unequal_prob_wor(
+        pik,
+        method = sondage_name,
+        prn = prn_vals
+      )$sample
       if (length(idx) == 0) {
         handle_empty_selection(method, draw_spec$on_empty %||% "error")
       }
     }
-  } else switch(method,
-    srswor = {
-      idx <- sondage::equal_prob_wor(N, n)$sample
-      pik <- rep(n / N, N)
-    },
-    srswr = {
-      idx <- sondage::equal_prob_wr(N, n)$sample
-      pik <- rep(n / N, N)
-    },
-    systematic = {
-      idx <- sondage::equal_prob_wor(N, n, method = "systematic")$sample
-      pik <- rep(n / N, N)
-    },
-    bernoulli = {
-      frac <- draw_spec$frac %||% (n / N)
-      pik <- rep(frac, N)
-      prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
-      idx <- sondage::equal_prob_wor(N, frac * N, method = "bernoulli", prn = prn_vals)$sample
-      if (length(idx) == 0) {
-        handle_empty_selection("Bernoulli", draw_spec$on_empty %||% "error")
-      }
-    },
-    pps_poisson = {
-      mos_vals <- data[[mos]]
-      frac <- draw_spec$frac %||% (n / N)
-      pik <- frac * mos_vals / sum(mos_vals) * N
-      pik <- pmin(pik, 1)
-      prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
-      idx <- sondage::unequal_prob_wor(pik, method = "poisson", prn = prn_vals)$sample
-      if (length(idx) == 0) {
-        handle_empty_selection("PPS Poisson", draw_spec$on_empty %||% "error")
-      }
-    },
-    pps_brewer = ,
-    pps_systematic = ,
-    pps_cps = ,
-    pps_sampford = ,
-    pps_sps = ,
-    pps_pareto = {
-      mos_vals <- data[[mos]]
-      pik <- sondage::inclusion_prob(mos_vals, n)
-      prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
-      idx <- sondage::unequal_prob_wor(pik, method = sondage_method_name(method), prn = prn_vals)$sample
-    },
-    pps_multinomial = ,
-    pps_chromy = {
-      # Built-in WR methods do not support PRN coordination; `prn_methods`
-      # in R/utils.R rejects it at validation time, so no prn arg is
-      # threaded here. Custom WR methods that declare supports_prn = TRUE
-      # are handled in the `is_custom` branch above.
-      mos_vals <- data[[mos]]
-      pik <- sondage::expected_hits(mos_vals, n)
-      idx <- sondage::unequal_prob_wr(pik, method = sondage_method_name(method))$sample
-    },
-    lpm2 = ,
-    scps = {
-      pik <- if (!is_null(mos)) {
-        sondage::inclusion_prob(data[[mos]], n)
-      } else {
-        rep(n / N, N)
-      }
-      spread_mat <- as.matrix(data[, draw_spec$spread, drop = FALSE])
-      idx <- sondage::balanced_wor(
-        pik,
-        spread = spread_mat,
-        method = method
-      )$sample
-    },
-    cube = {
-      pik <- if (!is_null(mos)) {
-        sondage::inclusion_prob(data[[mos]], n)
-      } else {
-        rep(n / N, N)
-      }
-      aux_mat <- if (!is_null(draw_spec$aux)) {
-        as.matrix(data[, draw_spec$aux, drop = FALSE])
-      } else {
-        NULL
-      }
-      if (!is_null(draw_spec$bounds)) {
-        bounds <- compile_count_bounds(data, pik, draw_spec$bounds)
-        idx <- draw_cube_with_bounds(pik, aux_mat, bounds)$sample
-      } else {
-        idx <- sondage::balanced_wor(pik, aux = aux_mat)$sample
-      }
-    },
-    cli_abort("Unknown sampling method: {.val {method}}")
-  )
+  } else {
+    switch(
+      method,
+      srswor = {
+        idx <- sondage::equal_prob_wor(N, n)$sample
+        pik <- rep(n / N, N)
+      },
+      srswr = {
+        idx <- sondage::equal_prob_wr(N, n)$sample
+        pik <- rep(n / N, N)
+      },
+      systematic = {
+        idx <- sondage::equal_prob_wor(N, n, method = "systematic")$sample
+        pik <- rep(n / N, N)
+      },
+      bernoulli = {
+        frac <- draw_spec$frac %||% (n / N)
+        pik <- rep(frac, N)
+        prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
+        idx <- sondage::equal_prob_wor(
+          N,
+          frac * N,
+          method = "bernoulli",
+          prn = prn_vals
+        )$sample
+        if (length(idx) == 0) {
+          handle_empty_selection("Bernoulli", draw_spec$on_empty %||% "error")
+        }
+      },
+      pps_poisson = {
+        mos_vals <- data[[mos]]
+        frac <- draw_spec$frac %||% (n / N)
+        pik <- frac * mos_vals / sum(mos_vals) * N
+        pik <- pmin(pik, 1)
+        prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
+        idx <- sondage::unequal_prob_wor(
+          pik,
+          method = "poisson",
+          prn = prn_vals
+        )$sample
+        if (length(idx) == 0) {
+          handle_empty_selection("PPS Poisson", draw_spec$on_empty %||% "error")
+        }
+      },
+      pps_brewer = ,
+      pps_systematic = ,
+      pps_cps = ,
+      pps_sampford = ,
+      pps_sps = ,
+      pps_pareto = {
+        mos_vals <- data[[mos]]
+        pik <- sondage::inclusion_prob(mos_vals, n)
+        prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
+        idx <- sondage::unequal_prob_wor(
+          pik,
+          method = sondage_method_name(method),
+          prn = prn_vals
+        )$sample
+      },
+      pps_multinomial = ,
+      pps_chromy = {
+        # Built-in WR methods do not support PRN coordination; `prn_methods`
+        # in R/utils.R rejects it at validation time, so no prn arg is
+        # threaded here. Custom WR methods that declare supports_prn = TRUE
+        # are handled in the `is_custom` branch above.
+        mos_vals <- data[[mos]]
+        pik <- sondage::expected_hits(mos_vals, n)
+        idx <- sondage::unequal_prob_wr(
+          pik,
+          method = sondage_method_name(method)
+        )$sample
+      },
+      lpm2 = ,
+      scps = {
+        pik <- if (!is_null(mos)) {
+          sondage::inclusion_prob(data[[mos]], n)
+        } else {
+          rep(n / N, N)
+        }
+        spread_mat <- as.matrix(data[, draw_spec$spread, drop = FALSE])
+        idx <- sondage::balanced_wor(
+          pik,
+          spread = spread_mat,
+          method = method
+        )$sample
+      },
+      cube = {
+        pik <- if (!is_null(mos)) {
+          sondage::inclusion_prob(data[[mos]], n)
+        } else {
+          rep(n / N, N)
+        }
+        aux_mat <- if (!is_null(draw_spec$aux)) {
+          as.matrix(data[, draw_spec$aux, drop = FALSE])
+        } else {
+          NULL
+        }
+        if (!is_null(draw_spec$bounds)) {
+          bounds <- compile_count_bounds(data, pik, draw_spec$bounds)
+          idx <- draw_cube_with_bounds(pik, aux_mat, bounds)$sample
+        } else {
+          idx <- sondage::balanced_wor(pik, aux = aux_mat)$sample
+        }
+      },
+      cli_abort("Unknown sampling method: {.val {method}}")
+    )
+  }
 
   if (is_multi_hit_method(draw_spec)) {
     result <- data[idx, , drop = FALSE]
@@ -722,11 +981,33 @@ draw_sample <- function(data, n, draw_spec) {
     result$.certainty <- rep.int(FALSE, nrow(result))
   }
 
-  result
+  list(
+    sample = result,
+    trace = trace_pool(
+      N = N,
+      n_target = n_target,
+      chance = pik,
+      chance_kind = if (is_multi_hit_method(draw_spec)) {
+        "expected_hits"
+      } else {
+        "inclusion_probability"
+      },
+      order_kind = order_kind,
+      selected = idx,
+      perm = perm
+    )
+  )
 }
 
 #' @noRd
-draw_sample_pps_certainty <- function(data, n, draw_spec) {
+draw_sample_pps_certainty <- function(
+  data,
+  n,
+  draw_spec,
+  n_target = n,
+  order_kind = "input",
+  perm = NULL
+) {
   method <- draw_spec$method
   mos <- draw_spec$mos
   mos_vals <- data[[mos]]
@@ -767,31 +1048,56 @@ draw_sample_pps_certainty <- function(data, n, draw_spec) {
     certainty_result$.certainty <- TRUE
   }
 
+  # The pool chance vector: certainty units are taken with chance one;
+  # units left unselectable (certainty filled or exceeded the target)
+  # have chance zero.
+  chance <- numeric(N)
+  chance[cert$certainty_idx] <- 1
+  selected <- cert$certainty_idx
+
   prob_result <- NULL
   if (cert$n_remaining > 0 && length(cert$remaining_idx) > 0) {
     remaining_data <- data[cert$remaining_idx, , drop = FALSE]
     remaining_mos <- mos_vals[cert$remaining_idx]
     n_prob <- min(cert$n_remaining, length(cert$remaining_idx))
 
-    prob_result <- draw_pps_method(
+    prob_res <- draw_pps_method(
       data = remaining_data,
       n = n_prob,
       method = method,
       mos_vals = remaining_mos,
       draw_spec = draw_spec
     )
+    prob_result <- prob_res$sample
     prob_result$.certainty <- rep.int(FALSE, nrow(prob_result))
+    chance[cert$remaining_idx] <- prob_res$chance
+    selected <- c(selected, cert$remaining_idx[prob_res$selected])
   }
+
+  trace <- trace_pool(
+    N = N,
+    n_target = n_target,
+    chance = chance,
+    chance_kind = if (is_multi_hit_method(draw_spec)) {
+      "expected_hits"
+    } else {
+      "inclusion_probability"
+    },
+    order_kind = order_kind,
+    selected = selected,
+    perm = perm,
+    cert_rule = cert$certainty_idx
+  )
 
   if (is_null(certainty_result) && is_null(prob_result)) {
     result <- data[integer(0), , drop = FALSE]
     result$.pik <- numeric(0)
     result$.certainty <- logical(0)
-    return(result)
+    return(list(sample = result, trace = trace))
   }
 
   result <- dplyr::bind_rows(certainty_result, prob_result)
-  result
+  list(sample = result, trace = trace)
 }
 
 #' @noRd
@@ -799,11 +1105,14 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
   N <- nrow(data)
 
   if (sum(mos_vals) <= 0) {
-    cli_abort(c(
-      "Cannot use PPS sampling: sum of MOS values is zero.",
-      "i" = "At least one remaining unit must have a positive measure of size.",
-      "i" = "This can happen when certainty selection removes all units with positive MOS."
-    ), call = NULL)
+    cli_abort(
+      c(
+        "Cannot use PPS sampling: sum of MOS values is zero.",
+        "i" = "At least one remaining unit must have a positive measure of size.",
+        "i" = "This can happen when certainty selection removes all units with positive MOS."
+      ),
+      call = NULL
+    )
   }
 
   is_custom <- !is_null(draw_spec$method_type)
@@ -813,42 +1122,64 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
     prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
     if (draw_spec$method_type == "wr") {
       pik <- sondage::expected_hits(mos_vals, n)
-      idx <- sondage::unequal_prob_wr(pik, method = sondage_name, prn = prn_vals)$sample
+      idx <- sondage::unequal_prob_wr(
+        pik,
+        method = sondage_name,
+        prn = prn_vals
+      )$sample
     } else {
       pik <- sondage::inclusion_prob(mos_vals, n)
-      idx <- sondage::unequal_prob_wor(pik, method = sondage_name, prn = prn_vals)$sample
+      idx <- sondage::unequal_prob_wor(
+        pik,
+        method = sondage_name,
+        prn = prn_vals
+      )$sample
       if (length(idx) == 0) {
         handle_empty_selection(method, draw_spec$on_empty %||% "error")
       }
     }
-  } else switch(method,
-    pps_poisson = {
-      frac <- draw_spec$frac %||% (n / N)
-      pik <- frac * mos_vals / sum(mos_vals) * N
-      pik <- pmin(pik, 1)
-      prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
-      idx <- sondage::unequal_prob_wor(pik, method = "poisson", prn = prn_vals)$sample
-      if (length(idx) == 0) {
-        handle_empty_selection("PPS Poisson", draw_spec$on_empty %||% "error")
+  } else {
+    switch(
+      method,
+      pps_poisson = {
+        frac <- draw_spec$frac %||% (n / N)
+        pik <- frac * mos_vals / sum(mos_vals) * N
+        pik <- pmin(pik, 1)
+        prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
+        idx <- sondage::unequal_prob_wor(
+          pik,
+          method = "poisson",
+          prn = prn_vals
+        )$sample
+        if (length(idx) == 0) {
+          handle_empty_selection("PPS Poisson", draw_spec$on_empty %||% "error")
+        }
+      },
+      pps_brewer = ,
+      pps_systematic = ,
+      pps_cps = ,
+      pps_sampford = ,
+      pps_sps = ,
+      pps_pareto = {
+        pik <- sondage::inclusion_prob(mos_vals, n)
+        prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
+        idx <- sondage::unequal_prob_wor(
+          pik,
+          method = sondage_method_name(method),
+          prn = prn_vals
+        )$sample
+      },
+      pps_multinomial = ,
+      pps_chromy = {
+        # Built-in WR methods do not accept PRN; see the note in draw_sample().
+        pik <- sondage::expected_hits(mos_vals, n)
+        idx <- sondage::unequal_prob_wr(
+          pik,
+          method = sondage_method_name(method)
+        )$sample
       }
-    },
-    pps_brewer = ,
-    pps_systematic = ,
-    pps_cps = ,
-    pps_sampford = ,
-    pps_sps = ,
-    pps_pareto = {
-      pik <- sondage::inclusion_prob(mos_vals, n)
-      prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
-      idx <- sondage::unequal_prob_wor(pik, method = sondage_method_name(method), prn = prn_vals)$sample
-    },
-    pps_multinomial = ,
-    pps_chromy = {
-      # Built-in WR methods do not accept PRN; see the note in draw_sample().
-      pik <- sondage::expected_hits(mos_vals, n)
-      idx <- sondage::unequal_prob_wr(pik, method = sondage_method_name(method))$sample
-    }
-  )
+    )
+  }
 
   if (is_multi_hit_method(draw_spec)) {
     result <- data[idx, , drop = FALSE]
@@ -858,7 +1189,7 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
     result <- data[idx, , drop = FALSE]
     result$.pik <- pik[idx]
   }
-  result
+  list(sample = result, chance = pik, selected = idx)
 }
 
 #' @noRd

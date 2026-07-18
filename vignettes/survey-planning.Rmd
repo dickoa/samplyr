@@ -502,6 +502,49 @@ design_effect(delta = 0.15, psu_size = 10)
 
 With an ICC of 0.05 and 10 units per cluster, the design effect is 1.45. An ICC of 0.15 raises it to 2.35. This helps decide the number of clusters and units per cluster during the planning stage.
 
+## Planning the Next Wave
+
+An executed wave records a frame digest: the population counts and the realized allocation the selection resolved. `frame_summary()` returns them as tibbles, and its pool detail is a valid `frame` input for `n_alloc()`. The next wave can therefore be planned from the previous one, without going back to the sampling frame.
+
+```{r}
+wave1 <- sampling_design(title = "Wave 1") |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300) |>
+  execute(ken_enterprises, seed = 71)
+
+pools <- frame_summary(wave1, detail = "pool")
+pools
+```
+
+The digest deliberately records no variances, costs, or intraclass correlations. Those are planning assumptions, not sampling facts, so they stay explicit inputs. With a constant `sd` the allocation is proportional to size; replace it with prior-wave estimates when you have them.
+
+```{r}
+plan_frame <- pools |>
+  transmute(stratum = as.character(region), N, sd = 1)
+
+wave2_alloc <- n_alloc(plan_frame, n = 450)
+
+wave2 <- sampling_design(title = "Wave 2") |>
+  stratify_by(region) |>
+  draw(n = wave2_alloc) |>
+  execute(ken_enterprises, seed = 72)
+wave2
+```
+
+A design file written from an executed sample carries the digest inside its execution receipt, so the same loop works from the file alone. The confidential frame never has to travel with it:
+
+```{r}
+path <- tempfile(fileext = ".json")
+write_design(wave1, path, frame = ken_enterprises)
+
+restored <- read_design(path)
+frame_summary(restored)
+```
+
+```{r, include = FALSE}
+unlink(path)
+```
+
 ## Summary
 
 The typical planning workflow can be:

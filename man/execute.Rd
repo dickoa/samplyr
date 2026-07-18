@@ -4,7 +4,15 @@
 \alias{execute}
 \title{Execute a Sampling Design}
 \usage{
-execute(.data, ..., stages = NULL, seed = NULL, panels = NULL, reps = NULL)
+execute(
+  .data,
+  ...,
+  stages = NULL,
+  seed = NULL,
+  panels = NULL,
+  reps = NULL,
+  frame_digest = c("summary", "full", "none")
+)
 }
 \arguments{
 \item{.data}{A \code{sampling_design} object to start a new execution, or a
@@ -41,6 +49,29 @@ combined with \code{panels} or with stages that use permanent random numbers.
 This is \strong{repeated sample realization} (drawing multiple independent
 samples), not replicate-weight variance estimation. For the latter, see
 \code{\link[=as_svrepdesign]{as_svrepdesign()}}.}
+
+\item{frame_digest}{Controls the frame digest, a compact execution
+manifest recorded with the sample and read by \code{\link[=frame_summary]{frame_summary()}}.
+\code{"summary"} (default) records anonymous population structure:
+selection pools, resolved chances (exact for cluster stages,
+constant or quantile-compressed for element stages), and the
+selected-unit trace. \code{"full"} keeps exact per-unit chances for
+element stages too. \code{"none"} records no digest. When one universe
+frame feeds every stage, later stages also record the pools their
+realization never reached, with chances resolved deterministically
+from the design (\code{chance_status = "design_resolved"}); this gives
+\code{\link[=frame_summary]{frame_summary()}} and downstream digest consumers complete universe
+denominators without the frame. The digest never
+affects selection, weights, or estimation. Design executions
+record a digest, replicated executions share the population
+structure across replicates with replicate-specific traces, and a
+stage continuation extends the digest carried by its input sample
+(an input without a valid digest yields no digest). In a
+replicated multistage execution, later-stage pools depend on each
+replicate's realized parents, so the digest keeps the stage
+prefix shared by all replicates and reports status \code{"partial"}.
+Replicated multi-phase and replicated-continuation executions do
+not record one yet.}
 }
 \value{
 A \code{tbl_sample} object (a data frame subclass with sampling
@@ -162,8 +193,11 @@ Weights compound automatically in multi-phase designs, and
 
 \subsection{Weight Calculation}{
 
-The \code{.weight} column is always the inverse of the inclusion probability.
-For all methods the per-stage weight is \eqn{w_i^{(k)} = 1 / \pi_i^{(k)}}{w_i(k) = 1 / pi_i(k)}:
+The \code{.weight} column is the inverse of the selection chance that
+samplyr resolves for the unit: the first-order inclusion probability
+for without-replacement methods, or the expected number of
+selections for with-replacement methods. The per-stage weight is
+\eqn{w_i^{(k)} = 1 / \pi_i^{(k)}}{w_i(k) = 1 / pi_i(k)}:
 \itemize{
 \item \strong{SRS}: \eqn{w_i = N / n}{w = N/n}, constant for all units.
 \item \strong{Stratified SRS}: \eqn{w_i = N_h / n_h}{w = N_h/n_h} within stratum \eqn{h}.
@@ -175,6 +209,19 @@ For all methods the per-stage weight is \eqn{w_i^{(k)} = 1 / \pi_i^{(k)}}{w_i(k)
 of selections. Each draw is one row; a unit selected \eqn{k} times
 appears \eqn{k} times, each with the same weight.
 }
+
+For every built-in method except \code{"pps_sps"} and \code{"pps_pareto"}, the
+resolved chance equals the design's true first-order inclusion
+probability (or expected hits), so \code{.weight} is the inverse of that
+true probability. The order-sampling pair, and registered methods
+declared \code{probabilities = "approximate"}, honor the resolved chance
+only to a documented approximation: \code{.weight} is then the inverse of
+the target probability, not of the design's true first-order
+inclusion probability. Weighting by the inverse target is standard
+practice for these methods, and the deviation is typically small,
+but it is a bias of the method, not of samplyr. The tier is recorded
+per stage in the frame digest, reported by \code{\link[=frame_summary]{frame_summary()}} as the
+\code{probabilities} column, and flagged by \code{summary()}.
 \subsection{Multi-stage weight compounding}{
 
 In a \eqn{K}-stage design, the overall weight for unit \eqn{i} is the
