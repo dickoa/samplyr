@@ -81,8 +81,19 @@ registered methods declared \code{probabilities = "approximate"}), and
 Allocation is reported as three quantities that only coincide for
 fixed-size designs: \code{n_target} (requested), \code{n_expected} (sum of
 resolved chances), and \code{n_realized} (selected units or
-occurrences). For replicated executions where realized allocation
-varies by replicate, \code{n_realized} may be \code{NA} at the pool level.
+occurrences). For replicated executions, allocation quantities are
+per replicate: when the realized allocation is identical across
+replicates the common value is reported, and when it varies
+(random-size designs) \code{n_realized} and \code{take_rate} are \code{NA} rather
+than a guess. Unit detail spans the stacked replicates:
+\code{is_selected} marks units selected in at least one replicate and
+\code{n_hits} counts occurrences across all replicates, so a
+without-replacement unit can show \code{n_hits > 1}. The per-replicate
+trace is the \code{replicate} column of the digest's selected units.
+A replicated multi-stage execution records only the stage prefix
+shared by every replicate: later-stage pools hang off each
+replicate's own selected parents, so those stages are not part of
+the manifest and \code{frame_summary()} says so.
 
 A digest whose sample was modified after execution (rows, weights,
 or design columns changed) is reported as invalidated and refused:
