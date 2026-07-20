@@ -142,7 +142,7 @@
 #' `systematic` stages are exported with the SRSWOR variance estimator,
 #' the standard approximation for systematic sampling. Depending on the
 #' frame ordering (see the `control` argument of [draw()]), the true
-#' variance can be smaller (favourable ordering) or larger (periodic
+#' variance can be smaller (favorable ordering) or larger (periodic
 #' ordering) than this estimate.
 #'
 #' ## Variance estimation for PPS designs
@@ -165,7 +165,7 @@
 #'
 #' ## Spatial and constrained balanced methods
 #'
-#' Bounded cube, LPM2, and SCPS alter pairwise selection behaviour beyond the
+#' Bounded cube, LPM2, and SCPS alter pairwise selection behavior beyond the
 #' available linearization approximation. [as_svydesign()] therefore refuses
 #' these designs, and [joint_expectation()] does not provide a matrix for them.
 #' Use `as_svrepdesign(type = "subbootstrap")` or `"mrbbootstrap"` for a
@@ -201,7 +201,7 @@
 #' - Single-stage designs that use `cluster_by()` with multiple rows per
 #'   sampled cluster (for example a household listing within sampled EAs)
 #'   raise an error. `survey::poisson_sampling()` treats rows as
-#'   independent and does not honour within-cluster correlation. Use
+#'   independent and does not honor within-cluster correlation. Use
 #'   `as_svrepdesign(type = "subbootstrap")` for these designs.
 #' - Custom methods registered with `fixed_size = FALSE`
 #'   (`sondage::register_method()`) are also random-size, but samplyr
@@ -546,7 +546,7 @@ survey_id_info <- function(
         id_var <- cluster_vars
       } else {
         id_var <- paste0(".", prefix, "id_", stage_idx)
-        df[[id_var]] <- interaction(df[cluster_vars], drop = TRUE)
+        df[[id_var]] <- group_ids(df, cluster_vars)
       }
       id_vars <- c(id_vars, id_var)
       stage_indices <- c(stage_indices, stage_idx)
@@ -587,10 +587,21 @@ survey_id_info <- function(
 #' @noRd
 survey_ids_formula <- function(id_vars) {
   if (length(id_vars) == 0) {
-    stats::as.formula("~1")
+    rlang::new_formula(NULL, 1)
   } else {
-    stats::as.formula(paste("~", paste(id_vars, collapse = " + ")))
+    survey_formula_from_vars(id_vars)
   }
+}
+
+#' Build a one-sided formula without parsing column names as code
+#' @noRd
+survey_formula_from_vars <- function(vars) {
+  if (length(vars) == 0L) {
+    cli_abort("A survey formula requires at least one variable.", call = NULL)
+  }
+  terms <- lapply(vars, rlang::sym)
+  rhs <- Reduce(function(x, y) call("+", x, y), terms)
+  rlang::new_formula(NULL, rhs)
 }
 
 #' Per-stage survey strata terms.
@@ -671,7 +682,7 @@ survey_strata_info <- function(
       terms[i] <- vars
     } else {
       combined <- paste0(".", prefix, "strata_", stage_idx)
-      df[[combined]] <- interaction(df[vars], drop = TRUE)
+      df[[combined]] <- group_ids(df, vars)
       terms[i] <- combined
     }
   }
@@ -692,7 +703,7 @@ survey_strata_info <- function(
   strata_formula <- if (length(terms) == 0) {
     NULL
   } else {
-    stats::as.formula(paste("~", paste(terms, collapse = " + ")))
+    survey_formula_from_vars(terms)
   }
 
   list(
@@ -812,7 +823,7 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
   fpc_formula <- if (length(fpc_vars) == 0) {
     NULL
   } else {
-    stats::as.formula(paste("~", paste(fpc_vars, collapse = " + ")))
+    survey_formula_from_vars(fpc_vars)
   }
 
   list(
@@ -848,7 +859,7 @@ survey_demote_rs_poisson_stage1 <- function(df, fpc, first_idx) {
   fpc$formula <- if (length(fpc$fpc_vars) == 0) {
     NULL
   } else {
-    stats::as.formula(paste("~", paste(fpc$fpc_vars, collapse = " + ")))
+    survey_formula_from_vars(fpc$fpc_vars)
   }
   fpc$has_rs_poisson_stage1 <- FALSE
   list(df = df, fpc = fpc)
@@ -948,7 +959,7 @@ survey_resolve_pps <- function(
       abort_samplyr(
         c(
           "Cannot export a clustered random-size Poisson design with multiple rows per sampled cluster via {.fn as_svydesign}.",
-          "i" = "{.pkg survey}'s {.fn poisson_sampling} estimator treats rows as independent and does not honour within-cluster correlation.",
+          "i" = "{.pkg survey}'s {.fn poisson_sampling} estimator treats rows as independent and does not honor within-cluster correlation.",
           "i" = "Use {.code as_svrepdesign(type = \"subbootstrap\")} for a bootstrap approximation that resamples clusters."
         ),
         class = "samplyr_error_cluster_poisson_export"
@@ -1184,7 +1195,7 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
     fpc2_formula <- if (length(fpc2_vars_renamed) == 0) {
       NULL
     } else {
-      stats::as.formula(paste("~", paste(fpc2_vars_renamed, collapse = " + ")))
+      survey_formula_from_vars(fpc2_vars_renamed)
     }
 
     use_weights <- !is_null(method) && method %in% c("approx", "simple")
@@ -1369,7 +1380,7 @@ build_singlephase_svydesign <- function(
 #' Horvitz-Thompson linearization cannot express in
 #' [survey::svydesign()]. The subbootstrap and mrbbootstrap methods were
 #' developed for fixed-size PPS sampling (Antal and Tille 2011); their
-#' behaviour on random-size Poisson designs, especially at multiple
+#' behavior on random-size Poisson designs, especially at multiple
 #' stages, has weaker theoretical backing and should be treated as an
 #' approximation. In particular, the resampling is fixed-size, so it
 #' does not capture the variance contribution of the random sample
@@ -1487,7 +1498,7 @@ as_svrepdesign.tbl_sample <- function(
 #' so it is available when srvyr is loaded.
 #'
 #' Random-size Poisson designs (`bernoulli`, `pps_poisson`) export to a
-#' `pps` survey design. These are summarised, grouped, and subset like any
+#' `pps` survey design. These are summarized, grouped, and subset like any
 #' other srvyr design, with Horvitz-Thompson Poisson variances.
 #'
 #' @param .data A `tbl_sample` object produced by [execute()].

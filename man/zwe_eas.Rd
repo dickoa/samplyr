@@ -12,11 +12,11 @@ A tibble with 107,250 rows and 12 columns:
 \item{district}{Factor. District name within province (91 districts)}
 \item{ward_pcode}{Character. Ward P-code carried by the source preEA
 product (e.g. "ZW150104")}
-\item{urban_rural}{Factor. Modelled urban/rural classification based on
+\item{urban_rural}{Factor. Modeled urban/rural classification based on
 building density and calibrated to GHS-DUC provincial shares}
 \item{population}{Integer. EA population, calibrated to 2022 Census ward totals}
 \item{households}{Integer. Number of households, calibrated to 2022 Census ward totals}
-\item{buildings}{Integer. Modelled building count from the WorldPop preEA
+\item{buildings}{Integer. Modeled building count from the WorldPop preEA
 product}
 \item{women_15_49}{Integer. Estimated women aged 15-49, from WorldPop
 age-sex grids scaled to census population}
@@ -24,7 +24,7 @@ age-sex grids scaled to census population}
 grids scaled to census population}
 \item{children_under5}{Integer. Estimated children under 5, from WorldPop
 age-sex grids scaled to census population}
-\item{area_km2}{Numeric. EA area in square kilometres}
+\item{area_km2}{Numeric. EA area in square kilometers}
 }
 }
 \source{
@@ -47,7 +47,7 @@ zwe_eas
 }
 \description{
 A derived enumeration area (EA) frame for two-stage demographic, health, and
-child-indicator household surveys. Each row corresponds to one modelled
+child-indicator household surveys. Each row corresponds to one modeled
 WorldPop/GRID3 preEA polygon, and \code{ea_id} preserves the source identifier for
 spatial joins. Population and household counts are disaggregated from
 Zimbabwe's 2022 census ward totals. The frame covers 10 provinces and 91
@@ -66,7 +66,7 @@ This dataset is designed for demonstrating:
 The data structure follows typical two-stage cluster survey frames where
 EAs are nested within districts and provinces. To create a household
 listing for second-stage sampling after selecting EAs, expand each
-selected EA into individual household rows. The preEAs are modelled
+selected EA into individual household rows. The preEAs are modeled
 building-delimited areas rather than official census EAs, and the resulting
 counts should not be used as official small-area statistics.
 

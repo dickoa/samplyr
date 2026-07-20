@@ -18,7 +18,7 @@ test_that("serp returns correct order for 2 variables", {
 
 test_that("serp returns correct order for 3 variables", {
   df <- expand.grid(A = 1:2, B = 1:3, C = 1:2)
-  df$id <- 1:nrow(df)
+  df$id <- seq_len(nrow(df))
 
   result <- df[order(serp(df$A, df$B, df$C)), ]
 
@@ -99,14 +99,19 @@ test_that("serp returns 1 for single row", {
 
 
 test_that("serp errors with no variables", {
-  expect_error(serp(), "At least one variable")
+  expect_error(
+    serp(),
+    "At least one variable",
+    class = "samplyr_error_serp_no_variables"
+  )
 })
 
 
 test_that("serp errors with mismatched lengths", {
   expect_error(
     serp(1:3, 1:5),
-    "same length"
+    "same length",
+    class = "samplyr_error_serp_incompatible_lengths"
   )
 })
 
@@ -154,7 +159,7 @@ test_that("serp composes with other arrange arguments", {
 
 test_that("serp produces correct pattern for 4 variables", {
   df <- expand.grid(A = 1:2, B = 1:2, C = 1:2, D = 1:2)
-  df$id <- 1:nrow(df)
+  df$id <- seq_len(nrow(df))
 
   result <- df[order(serp(df$A, df$B, df$C, df$D)), ]
 

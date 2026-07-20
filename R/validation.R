@@ -695,12 +695,17 @@ digest_frame_drift <- function(digest, design, frame) {
         length(rows)
       }
       if (n_now != pool$N) {
+        parent_label <- if (pos > 1L) {
+          if (length(ancestor_vars) > 1L) {
+            display_path_key(key_of_pool[p])
+          } else {
+            key_of_pool[p]
+          }
+        }
         pool_label <- paste(
           c(
             if (pos > 1L) {
-              paste0(
-                "under ", gsub("\x1f", "/", key_of_pool[p], fixed = TRUE)
-              )
+              paste0("under ", parent_label)
             },
             vapply(
               st$strata %||% character(0),
@@ -794,10 +799,7 @@ digest_chance_drift <- function(digest, design, frame) {
     if (is_null(strata)) {
       rep("", nrow(pools))
     } else {
-      do.call(paste, c(
-        lapply(strata, function(v) as.character(pools[[v]])),
-        sep = "\x1f"
-      ))
+      make_group_key(pools, strata)
     }
   }
   pool_chances <- function(stg, p) {
@@ -840,16 +842,18 @@ digest_chance_drift <- function(digest, design, frame) {
       !is_null(ex) && st$frame_ref == 1L &&
         identical(st$chance_kind, ex$chance_kind)
     ) {
-      rec_key <- paste(
-        rec_parent, strata_label_key(st$pools, st$strata),
-        sep = "\x1f\x1f"
+      rec_key_df <- data.frame(
+        .parent = rec_parent,
+        .stratum = strata_label_key(st$pools, st$strata)
+      )
+      rec_key <- make_group_key(rec_key_df, names(rec_key_df))
+      ex_key_df <- data.frame(
+        .parent = ex_keys[[ex_pos]],
+        .stratum = strata_label_key(ex$pools, ex$strata)
       )
       ex_match <- match(
         rec_key,
-        paste(
-          ex_keys[[ex_pos]], strata_label_key(ex$pools, ex$strata),
-          sep = "\x1f\x1f"
-        )
+        make_group_key(ex_key_df, names(ex_key_df))
       )
       comparable <- !is.na(rec_parent) & !is.na(ex_match) &
         st$pools$chance_status != "unavailable"

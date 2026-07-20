@@ -49,6 +49,25 @@ test_that("print shows a single control variable without c() wrapping", {
   expect_match(txt, "control = cluster")
 })
 
+test_that("compact coverage omits the universe after a WR ancestor", {
+  frame <- data.frame(
+    psu = rep(1:2, each = 5),
+    unit = rep(1:5, 2)
+  )
+  sample <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 3, method = "srswr") |>
+    add_stage() |> draw(n = 2) |>
+    execute(frame, seed = 3)
+
+  header <- tbl_sum(sample)
+  expect_identical(unname(header["Sampling"]), "2 stages | 6 units")
+  expect_false(grepl("/10 units", unname(header["Sampling"]), fixed = TRUE))
+
+  txt <- paste(capture.output(summary(sample)), collapse = "\n")
+  expect_match(txt, "n = 6 | stages = 2/2", fixed = TRUE)
+  expect_false(grepl("n = 6 of 10", txt, fixed = TRUE))
+})
+
 test_that("print shows balanced and spatial declarations compactly", {
   cube <- sampling_design() |>
     draw(

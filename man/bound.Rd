@@ -17,7 +17,7 @@ throws an informative error.
 \description{
 \code{bound()} is a declarative marker used inside the \code{aux} argument of
 \code{\link[=draw]{draw()}} with \code{method = "cube"}. It requests adjacent-integer bounds on
-the realised sample count for every observed category of \code{x}.
+the realized sample count for every observed category of \code{x}.
 }
 \examples{
 sampling_design() |>

@@ -15,7 +15,7 @@ as_tbl_sample(x, ...)
 \arguments{
 \item{x}{A data frame with sampling attributes.}
 
-\item{...}{Not used.}
+\item{...}{Must be empty.}
 }
 \value{
 A \code{tbl_sample}, or an error if \code{x} does not carry the

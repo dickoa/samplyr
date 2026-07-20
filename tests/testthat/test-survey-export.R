@@ -1309,6 +1309,20 @@ test_that("joint_expectation returns matrix for pps_chromy", {
   expect_equal(nrow(mat), n_unique)
 })
 
+test_that("joint_expectation accepts and validates Chromy nsim", {
+  expect_no_error(
+    je <- joint_expectation(fix_pps_chromy, test_frame, nsim = 25L)
+  )
+  expect_true(is.matrix(je[[1]]))
+
+  for (bad in list(0, -1, 2.5, NA_real_, Inf, c(1, 2), "10")) {
+    expect_error(
+      joint_expectation(fix_pps_chromy, test_frame, nsim = bad),
+      "single positive integer"
+    )
+  }
+})
+
 test_that("joint_expectation for pps_multinomial diagonal matches E[n_i^2]", {
   frame <- data.frame(
     id = 1:20,

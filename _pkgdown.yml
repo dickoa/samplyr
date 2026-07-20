@@ -47,12 +47,13 @@ reference:
       - as_survey_rep.tbl_sample
 
   - title: "Diagnostics"
-    desc: "Summarise and inspect sampling results."
+    desc: "Summarize and inspect sampling results."
     contents:
       - summary.tbl_sample
       - frame_summary
       - joint_expectation
       - design_effect
+      - varcomp.tbl_sample
       - effective_n
 
   - title: "Serialization"

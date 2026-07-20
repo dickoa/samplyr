@@ -816,13 +816,14 @@ test_that("an expanded listing is accepted as a continuation frame", {
   )
 })
 
-test_that("a lone user weight column is not sample provenance", {
+test_that("a lone user weight column is reserved but not sample provenance", {
   frame <- data.frame(id = seq_len(20), .weight = rep(1, 20))
 
   expect_false(samplyr:::looks_like_stripped_tbl_sample(frame))
-  expect_no_error(
+  expect_error(
     sampling_design() |>
       draw(n = 5) |>
-      execute(frame, seed = 1)
+      execute(frame, seed = 1),
+    class = "samplyr_error_frame_reserved_names"
   )
 })

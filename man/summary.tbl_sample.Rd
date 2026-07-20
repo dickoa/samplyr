@@ -2,14 +2,14 @@
 % Please edit documentation in R/summary.R
 \name{summary.tbl_sample}
 \alias{summary.tbl_sample}
-\title{Summarise a tbl_sample}
+\title{Summarize a tbl_sample}
 \usage{
 \method{summary}{tbl_sample}(object, ...)
 }
 \arguments{
 \item{object}{A \code{tbl_sample} object produced by \code{\link[=execute]{execute()}}.}
 
-\item{...}{Additional arguments (ignored).}
+\item{...}{Must be empty.}
 }
 \value{
 Invisibly returns \code{object}. Called for its side effect of
@@ -22,8 +22,8 @@ diagnostics.
 }
 \details{
 The header line shows the total sample size (with the universe size
-when the frame digest records a complete denominator), the stages
-executed, and the seed.
+when the frame digest records a complete denominator and the executed
+path has no with-replacement stage), the stages executed, and the seed.
 
 Each stage section has two lines:
 \itemize{

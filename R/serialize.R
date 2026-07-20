@@ -4,7 +4,7 @@
 #' useful for inspection, serialization, or export.
 #'
 #' @param x A `sampling_design` object
-#' @param ... Additional arguments (ignored)
+#' @param ... Must be empty.
 #'
 #' @return A list representation of the design containing:
 #'   - `title`: The design title (if any)
@@ -19,6 +19,7 @@
 #'
 #' @export
 as.list.sampling_design <- function(x, ...) {
+  rlang::check_dots_empty()
   result <- list(
     title = x$title
   )
@@ -1455,30 +1456,12 @@ encode_execution <- function(sample) {
 #' Decode a frame digest read back from a design file
 #'
 #' Rebuilds the digest tables from the row-wise JSON representation,
-#' checks the digest schema version, and validates the result. The
-#' caller wraps this in tryCatch: an unreadable or newer-version digest
-#' drops with a warning, never failing the file read.
+#' checks the digest schema version, and validates the result. Schema
+#' version errors propagate from the caller; other malformed optional
+#' digest content drops with a warning.
 #' @noRd
 decode_frame_digest <- function(x) {
-  version <- x$version
-  if (
-    !is.numeric(version) || length(version) != 1 || is.na(version)
-  ) {
-    abort_samplyr(
-      "The stored frame digest has no valid version field.",
-      class = "samplyr_error_digest_malformed",
-      call = NULL
-    )
-  }
-  if (version > frame_digest_version) {
-    abort_samplyr(
-      "The stored frame digest has schema version {version}; this
-       version of samplyr reads up to {frame_digest_version}.",
-      class = "samplyr_error_digest_version",
-      call = NULL
-    )
-  }
-  # Migration stub: no earlier digest versions exist yet.
+  check_frame_digest_version(x$version)
 
   chr1 <- function(v) {
     if (is_null(v)) NULL else as.character(v)[1]
@@ -1503,7 +1486,8 @@ decode_frame_digest <- function(x) {
   stages <- lapply(x$stages, function(s) {
     strata <- chrs(s$strata)
     pool_spec <- c(
-      pool_id = "int", parent_unit = "int", N = "int",
+      pool_id = "int", parent_unit = "int", parent_occurrence = "int",
+      N = "int",
       n_target = "dbl", n_expected = "dbl", n_realized = "int",
       scope = "chr", chance_status = "chr", chance = "dbl",
       n_descendants = "int",
@@ -1687,6 +1671,9 @@ decode_design_payload <- function(payload, call = caller_env()) {
     execution$frame_digest <- tryCatch(
       decode_frame_digest(execution$frame_digest),
       error = function(e) {
+        if (inherits(e, "samplyr_error_digest_version")) {
+          stop(e)
+        }
         cli_warn(c(
           "The frame digest stored with this design could not be read
            and was dropped.",

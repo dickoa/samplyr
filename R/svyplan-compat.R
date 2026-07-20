@@ -1,8 +1,9 @@
 #' Design Effect and Effective Sample Size
 #'
-#' Re-exported from \pkg{svyplan}. Compute the design effect (DEFF) or
-#' effective sample size from sampling weights. Five methods are available
-#' for two use cases:
+#' These are the \pkg{svyplan} generics re-exported by samplyr. Samplyr adds
+#' `tbl_sample` methods rather than defining competing generics. Compute the
+#' design effect (DEFF) or effective sample size from sampling weights. Five
+#' methods are available for two use cases:
 #'
 #' **After data collection (diagnostic):** assess how much precision was
 #' lost due to the complex design.
@@ -46,13 +47,13 @@
 #'   one of `"kish"` (default), `"henry"`, `"spencer"`, or `"cr"`. For
 #'   planning (no weights): `"cluster"`.
 #'
-#' @return For `"kish"`, `"henry"`, `"spencer"`, and `"cluster"`: a
-#'   numeric scalar. For `"cr"`: a list with `$strata` (data frame of
-#'   per-stratum DEFF values) and `$overall` (numeric scalar).
+#' @return `design_effect()` returns a numeric `svyplan_design_effect` object.
+#'   Use [as.double()] for the overall value and [as.data.frame()] for the
+#'   Chen-Rust decomposition. `effective_n()` returns a numeric scalar.
 #'
 #' @examples
 #' # Kish design effect (default)
-#' set.seed(1)
+#' set.seed(1207)
 #' frame <- data.frame(
 #'   id = 1:200,
 #'   stratum = rep(c("A", "B"), each = 100),
@@ -62,7 +63,7 @@
 #' samp <- sampling_design() |>
 #'   stratify_by(stratum) |>
 #'   draw(n = c(A = 10, B = 40)) |>
-#'   execute(frame, seed = 1)
+#'   execute(frame, seed = 1213)
 #'
 #' design_effect(samp)
 #' effective_n(samp)
@@ -240,7 +241,7 @@ resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
 #'
 #' Uses svyplan's `as.data.frame()` contract for tabular plans and the
 #' design context for multistage ones. A stage is "stage-aware" when it
-#' is clustered or is not the first stage; there, cluster plans hand over
+#' is clustered or is not the first stage. There, cluster plans hand over
 #' the value for that stage (PSU count, then per-cluster take) instead
 #' of a grand total.
 #'
@@ -251,7 +252,7 @@ resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
 #' - `n_multi()` results with domains: data frame keyed on the domain
 #'   columns (requires a matching `stratify_by()`).
 #' - `n_cluster()` results: `as.integer()` returns the integerized
-#'   field design as a stage vector; stage-aware contexts take the
+#'   field design as a stage vector. Stage-aware contexts take the
 #'   value for their stage, a flat single-stage design takes the
 #'   product (operational element total). Per-domain plans expose only
 #'   continuous stages, which are ceiled.
@@ -283,7 +284,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
       }
       abort_samplyr(
         c(
-          "This svyplan allocation covers 2 stages; the design is at stage {stage_index}.",
+          "This svyplan allocation covers 2 stages. The design is at stage {stage_index}.",
           "i" = "Pass an explicit {.arg n} for stages beyond the plan."
         ),
         class = "samplyr_error_svyplan_stage"
@@ -316,7 +317,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
       }
       if (stage_index > n$stages) {
         abort_samplyr(
-          "This svyplan plan covers {n$stages} stages; the design is at stage {stage_index}.",
+          "This svyplan plan covers {n$stages} stages. The design is at stage {stage_index}.",
           class = "samplyr_error_svyplan_stage"
         )
       }
@@ -332,7 +333,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
     if (stage_aware) {
       if (stage_index > length(stages)) {
         abort_samplyr(
-          "This svyplan plan covers {length(stages)} stages; the design is at stage {stage_index}.",
+          "This svyplan plan covers {length(stages)} stages. The design is at stage {stage_index}.",
           class = "samplyr_error_svyplan_stage"
         )
       }
@@ -368,7 +369,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
 #'
 #' The decomposition covers the clustered stages plus the sample rows
 #' as elements: one clustered stage gives 2-stage components, two give
-#' 3-stage. Deeper designs are refused; estimate the top stages and
+#' 3-stage. Deeper designs are refused. Estimate the top stages and
 #' fold the rest into a design effect. With-replacement (WR/PMR)
 #' stages treat each draw as an independent unit, keyed by the
 #' `.draw_k` column as in [as_svydesign()]: a cluster hit twice enters
@@ -388,12 +389,13 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
 #'   `varcomp(x, ~y)`, mirroring the survey.design method.
 #' @param strata Optional one-sided formula naming a column to
 #'   estimate per-stratum components by, when the first stage was not
-#'   stratified. Stage-1 design strata are picked up automatically;
-#'   combining them with `strata` is an error, because per-stratum
+#'   stratified. Stage-1 design strata are picked up automatically.
+#'   Combining them with `strata` is an error, because per-stratum
 #'   components crossed with design strata are ambiguous.
 #'
-#' @return A `svyplan_varcomp` object; pass it as `delta` to
-#'   [svyplan::n_cluster()].
+#' @return A `svyplan_varcomp` object. Pass it as `delta` to
+#'   [svyplan::n_cluster()]. Use [as.data.frame()] to export either the
+#'   one-row unstratified components or the per-stratum component table.
 #'
 #' @examples
 #' # Two-stage sample: 8 of 24 clusters by PPS, 3 persons per cluster
@@ -411,6 +413,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
 #'
 #' vc <- varcomp(sam, ~y)
 #' vc
+#' as.data.frame(vc)
 #'
 #' # Feed the components into next-round cluster planning
 #' svyplan::n_cluster(stage_cost = c(500, 50), delta = vc,
@@ -436,7 +439,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
     abort_samplyr(
       c(
         "{.fn varcomp} does not support two-phase samples.",
-        "i" = "The decomposition assumes nested stages; phase sampling
+        "i" = "The decomposition assumes nested stages. Phase sampling
                is not a stage. Estimate components on each phase
                separately."
       ),
@@ -467,7 +470,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
   k1 <- stages_executed[1]
 
   # Decomposition levels: every executed clustered stage contributes
-  # its (ancestor-qualified) cluster key; the sample rows are the
+  # its (ancestor-qualified) cluster key. The sample rows are the
   # elements below them.
   clustered <- stages_executed[vapply(
     stages_executed,
@@ -479,7 +482,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
       c(
         "{.fn varcomp} needs a clustered sample.",
         "i" = "The decomposition estimates between- and within-cluster
-               components; this sample has no {.fn cluster_by} stage."
+               components. This sample has no {.fn cluster_by} stage."
       ),
       class = "samplyr_error_varcomp_unclustered"
     )
@@ -488,7 +491,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
     abort_samplyr(
       c(
         "{.fn varcomp} decomposes at most 3 stages (2 clustered stages
-         above the elements); this sample has {length(clustered)}.",
+         above the elements). This sample has {length(clustered)}.",
         "i" = "Estimate components for the top stages and fold deeper
                stages into a design effect."
       ),
@@ -534,13 +537,29 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
     )
   }
 
-  # Certainty PSUs have chance 1: no between-PSU variance, and no
-  # place in the share normalization below.
+  spec1 <- design$stages[[k1]]$draw_spec
+  equal_prob <- spec1$method %in% equal_prob_methods ||
+    identical(spec1$method_variance, "srs") ||
+    (is_balanced_method(spec1) && is_null(spec1$mos))
+
+  # Certainty PSUs have inclusion chance 1: no between-PSU variance,
+  # and no place in the share normalization below. The explicit flag
+  # records threshold-based certainty; a realized stage weight near 1
+  # also catches chances capped by the PPS probability calculation.
+  # Restrict the weight check to unequal-probability WOR stages: a
+  # whole-take equal-probability design and a WR expected hit of one
+  # are not certainty PSUs for this decomposition.
   cert_col <- paste0(".certainty_", k1)
-  if (cert_col %in% names(x) && any(x[[cert_col]])) {
+  explicit_certainty <- cert_col %in% names(x) && any(x[[cert_col]])
+  stage1_weight <- x[[paste0(".weight_", k1)]]
+  cert_tol <- sqrt(.Machine$double.eps)
+  weight_certainty <- !equal_prob && is_wor_method(spec1) && any(
+    is.finite(stage1_weight) & abs(stage1_weight - 1) <= cert_tol
+  )
+  if (explicit_certainty || weight_certainty) {
     abort_samplyr(
       c(
-        "The first stage holds certainty selections; {.fn varcomp}
+        "The first stage holds certainty selections. {.fn varcomp}
          covers probability PSUs only.",
         "i" = "Self-representing PSUs contribute no between-PSU
                variance and act as their own strata. Estimate the
@@ -568,7 +587,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
     abort_samplyr(
       c(
         "The first stage is stratified by
-         {.var {design_strata}}; a {.arg strata} argument would cross
+         {.var {design_strata}}. A {.arg strata} argument would cross
          two stratifications.",
         "i" = "Design strata are picked up automatically. For other
                splits, derive per-domain samples and estimate each."
@@ -596,21 +615,17 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
   }
 
   # Stage-1 selection shares. Equal-probability first stages take the
-  # SRS path; unequal-probability first stages derive per-PSU shares
+  # SRS path. Unequal-probability first stages derive per-PSU shares
   # from the stage-1 weights (pi proportional to the one-draw
   # probabilities for fixed-size PPS, Hansen-Hurwitz WR, and Poisson
   # designs, so normalized shares are exact without the frame).
-  spec1 <- design$stages[[k1]]$draw_spec
-  equal_prob <- spec1$method %in% equal_prob_methods ||
-    identical(spec1$method_variance, "srs") ||
-    (is_balanced_method(spec1) && is_null(spec1$mos))
   prob <- NULL
   if (!equal_prob) {
     pi1 <- 1 / x[[paste0(".weight_", k1)]]
     spread_in_psu <- tapply(pi1, psu_key, function(v) diff(range(v)))
     if (any(spread_in_psu > 1e-9 * max(pi1))) {
       abort_samplyr(
-        "Stage-1 weights vary within a first-stage cluster; the design
+        "Stage-1 weights vary within a first-stage cluster. The design
          columns are inconsistent."
       )
     }

@@ -34,14 +34,15 @@ one of \code{"kish"} (default), \code{"henry"}, \code{"spencer"}, or \code{"cr"}
 planning (no weights): \code{"cluster"}.}
 }
 \value{
-For \code{"kish"}, \code{"henry"}, \code{"spencer"}, and \code{"cluster"}: a
-numeric scalar. For \code{"cr"}: a list with \verb{$strata} (data frame of
-per-stratum DEFF values) and \verb{$overall} (numeric scalar).
+\code{design_effect()} returns a numeric \code{svyplan_design_effect} object.
+Use \code{\link[=as.double]{as.double()}} for the overall value and \code{\link[=as.data.frame]{as.data.frame()}} for the
+Chen-Rust decomposition. \code{effective_n()} returns a numeric scalar.
 }
 \description{
-Re-exported from \pkg{svyplan}. Compute the design effect (DEFF) or
-effective sample size from sampling weights. Five methods are available
-for two use cases:
+These are the \pkg{svyplan} generics re-exported by samplyr. Samplyr adds
+\code{tbl_sample} methods rather than defining competing generics. Compute the
+design effect (DEFF) or effective sample size from sampling weights. Five
+methods are available for two use cases:
 }
 \details{
 \strong{After data collection (diagnostic):} assess how much precision was
@@ -81,7 +82,7 @@ convention used by \code{PracTools::deffS()}.
 }
 \examples{
 # Kish design effect (default)
-set.seed(1)
+set.seed(1207)
 frame <- data.frame(
   id = 1:200,
   stratum = rep(c("A", "B"), each = 100),
@@ -91,7 +92,7 @@ frame <- data.frame(
 samp <- sampling_design() |>
   stratify_by(stratum) |>
   draw(n = c(A = 10, B = 40)) |>
-  execute(frame, seed = 1)
+  execute(frame, seed = 1213)
 
 design_effect(samp)
 effective_n(samp)

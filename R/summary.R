@@ -1,19 +1,19 @@
-#' Summarise a tbl_sample
+#' Summarize a tbl_sample
 #'
 #' Produces a compact summary of a sample: one section per executed
 #' stage with a design line and a realization line, followed by weight
 #' diagnostics.
 #'
 #' @param object A `tbl_sample` object produced by [execute()].
-#' @param ... Additional arguments (ignored).
+#' @param ... Must be empty.
 #'
 #' @return Invisibly returns `object`. Called for its side effect of
 #'   printing a summary.
 #'
 #' @details
 #' The header line shows the total sample size (with the universe size
-#' when the frame digest records a complete denominator), the stages
-#' executed, and the seed.
+#' when the frame digest records a complete denominator and the executed
+#' path has no with-replacement stage), the stages executed, and the seed.
 #'
 #' Each stage section has two lines:
 #'
@@ -47,6 +47,7 @@
 #'
 #' @export
 summary.tbl_sample <- function(object, ...) {
+  rlang::check_dots_empty()
   design <- get_design(object)
   stages_executed <- get_stages_executed(object)
   seed <- attr(object, "seed")
@@ -60,7 +61,10 @@ summary.tbl_sample <- function(object, ...) {
   is_replicated <- has_multiple_replicates(object)
   if (is_replicated && anyNA(object$.replicate)) {
     cli::cat_bullet(
-      "{.field .replicate} contains missing values. Replicate reporting disabled.",
+      cli::format_inline(paste0(
+        "{.field .replicate} contains missing values. ",
+        "Replicate reporting disabled."
+      )),
       bullet = "warning"
     )
     is_replicated <- FALSE
@@ -75,7 +79,9 @@ summary.tbl_sample <- function(object, ...) {
   n_total_stages <- length(design$stages)
   universe <- NA_real_
   if (
-    !is_null(digest) && length(digest$stages) >= length(stages_executed)
+    !is_null(digest) &&
+      length(digest$stages) >= length(stages_executed) &&
+      !digest_path_has_expected_hits(digest, stages_executed)
   ) {
     universe <- digest_universe_units(digest)
   }
@@ -197,10 +203,16 @@ summary_design_line <- function(stage_spec) {
   draw <- stage_spec$draw_spec
 
   method <- draw$method
-  is_wr <- method %in% wr_methods || identical(draw$method_type, "wr")
+  replacement_txt <- if (method %in% pmr_methods) {
+    " (minimum replacement)"
+  } else if (is_multi_hit_method(draw)) {
+    " (with replacement)"
+  } else {
+    ""
+  }
   method_txt <- paste0(
     method,
-    if (is_wr) " (with replacement)",
+    replacement_txt,
     if (identical(draw$method_probabilities, "approximate")) {
       " (approximate probabilities)"
     }
@@ -278,7 +290,7 @@ summary_range <- function(v, fmt = function(x) format(x, trim = TRUE)) {
 #' @noRd
 summary_stage_realization <- function(st, is_replicated) {
   pools <- st$pools
-  fmt_f <- function(f) format(round(f, 4), nsmall = 4)
+  fmt_f <- function(f) sprintf("%.4f", f)
   fmt_n <- function(v) format(v, big.mark = ",", trim = TRUE)
 
   # Design-resolved pools are universe context the realization never
@@ -307,11 +319,10 @@ summary_stage_realization <- function(st, is_replicated) {
       varies <- TRUE
     }
   }
-  n_txt <- if (varies) {
-    paste0(summary_range(n_realized), " across replicates")
-  } else {
-    summary_range(n_realized, fmt_n)
-  }
+  n_txt <- summary_range(n_realized, fmt_n)
+  n_scoped_txt <- paste0(
+    n_txt, if (varies) " across replicates" else ""
+  )
 
   single <- nrow(pools) == 1L &&
     is_null(st$strata) &&
@@ -319,10 +330,16 @@ summary_stage_realization <- function(st, is_replicated) {
 
   main <- if (single) {
     if (is_wr) {
-      paste0("n = ", n_txt, " draws (no FPC)")
+      paste0(
+        "n = ", n_txt, " draws",
+        if (varies) " across replicates" else "",
+        " (no FPC)"
+      )
     } else {
-      base <- paste0("N = ", fmt_n(pools$N), ", n = ", n_txt)
-      if (!varies && !anyNA(n_realized) && pools$N > 0) {
+      base <- paste0("N = ", fmt_n(pools$N), ", n = ", n_scoped_txt)
+      if (
+        !varies && !anyNA(n_realized) && !is.na(pools$N) && pools$N > 0
+      ) {
         base <- paste0(base, ", f = ", fmt_f(n_realized / pools$N))
       }
       if (random_size && !anyNA(pools$n_expected)) {
@@ -342,20 +359,21 @@ summary_stage_realization <- function(st, is_replicated) {
       "pools"
     }
     count_txt <- if (any_resolved) {
-      paste0(nrow(pools), "/", n_universe, " ", noun)
+      paste0(fmt_n(nrow(pools)), "/", fmt_n(n_universe), " ", noun)
     } else {
-      paste0(nrow(pools), " ", noun)
+      paste0(fmt_n(nrow(pools)), " ", noun)
     }
     parts <- c(
       paste0("N_h ", summary_range(pools$N, fmt_n)),
-      paste0("n_h ", n_txt)
+      paste0("n_h ", n_scoped_txt)
     )
     if (
-      !is_wr && !varies && !anyNA(n_realized) && all(pools$N > 0)
+      !is_wr && !varies && !anyNA(n_realized) &&
+        !anyNA(pools$N) && all(pools$N > 0)
     ) {
       parts <- c(
         parts,
-        paste0("f_h ", summary_range(round(n_realized / pools$N, 4)))
+        paste0("f_h ", summary_range(n_realized / pools$N, fmt_f))
       )
     }
     if (random_size && !anyNA(pools$n_expected)) {
@@ -457,7 +475,7 @@ summary_stage_realization <- function(st, is_replicated) {
 
 #' Realization line from .fpc columns when no digest is recorded
 #'
-#' f_h = n_h / N_h is the realised sample fraction, not a unit-level
+#' f_h = n_h / N_h is the realized sample fraction, not a unit-level
 #' inclusion probability for unequal-probability designs. WR/PMR
 #' stages have no sampling fraction because their FPC is Inf.
 #' @noRd
@@ -476,8 +494,16 @@ summary_stage_fallback <- function(object_for_alloc, design, stage_spec,
   suffix <- if (is_replicated) " | replicate 1" else ""
 
   # Full identity key for this stage's units
+  ancestor_vars <- intersect(
+    collect_ancestor_cluster_vars(design, stage_idx),
+    names(object_for_alloc)
+  )
+  stage_strata_vars <- if (!is_null(stage_spec$strata)) {
+    intersect(stage_spec$strata$vars, names(object_for_alloc))
+  } else {
+    character(0)
+  }
   if (!is_null(stage_spec$clusters)) {
-    ancestor_vars <- collect_ancestor_cluster_vars(design, stage_idx)
     stage_unit_vars <- unique(c(ancestor_vars, stage_spec$clusters$vars))
     stage_unit_vars <- intersect(stage_unit_vars, names(object_for_alloc))
   } else {
@@ -485,15 +511,28 @@ summary_stage_fallback <- function(object_for_alloc, design, stage_spec,
   }
 
   if (is_wr_stage) {
-    n_drawn <- if (!is_null(stage_unit_vars)) {
-      nrow(dplyr::distinct(
+    draw_col <- paste0(".draw_", stage_idx)
+    if (draw_col %in% names(object_for_alloc)) {
+      occurrence_vars <- unique(c(
+        ancestor_vars, stage_strata_vars, draw_col
+      ))
+      n_selected <- nrow(dplyr::distinct(
+        object_for_alloc, across(all_of(occurrence_vars))
+      ))
+      count_label <- "draws"
+    } else if (!is_null(stage_unit_vars)) {
+      n_selected <- nrow(dplyr::distinct(
         object_for_alloc, across(all_of(stage_unit_vars))
       ))
+      count_label <- "selected clusters"
     } else {
-      nrow(object_for_alloc)
+      n_selected <- nrow(object_for_alloc)
+      count_label <- "selected units"
     }
     cli::cat_bullet(
-      paste0("n = ", n_drawn, " draws (no FPC)", suffix),
+      paste0(
+        "n = ", n_selected, " ", count_label, " (no FPC)", suffix
+      ),
       bullet = "bullet"
     )
   } else if (!is_null(stage_spec$strata)) {

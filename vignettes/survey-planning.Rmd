@@ -214,6 +214,7 @@ vc <- varcomp(
   data = ken_enterprises
 )
 vc
+as.data.frame(vc)
 ```
 
 The `delta` value (measure of homogeneity) feeds directly into `n_cluster()` and `design_effect()`.
@@ -283,7 +284,7 @@ ken_enterprises$rev_stratum <- predict(
 table(ken_enterprises$rev_stratum)
 ```
 
-Use the stratum allocations from `strata_bound()` directly as a named vector for `draw()`. The `as.data.frame()` method exposes the boundary table; this preserves the joint optimization between boundaries and allocation:
+Use the stratum allocations from `strata_bound()` directly as a named vector for `draw()`. The `as.data.frame()` method exposes the boundary table. This preserves the joint optimization between boundaries and allocation:
 
 ```{r}
 n_alloc <- setNames(ceiling(as.data.frame(bounds)$n), labels)
@@ -355,7 +356,7 @@ constraint using cost-weighted (optimal) allocation:
 
 ```{r}
 alloc_frame_cost <- alloc_frame |>
-  mutate(cost = c(120, 200, 150, 130, 80, 100, 90))
+  mutate(unit_cost = c(120, 200, 150, 130, 80, 100, 90))
 
 budget_alloc <- n_alloc(
   alloc_frame_cost,
@@ -364,7 +365,7 @@ budget_alloc <- n_alloc(
   min_n = 20
 )
 budget_alloc
-as.data.frame(budget_alloc)[, c("stratum", "N", "cost", "n_int", "weight")]
+as.data.frame(budget_alloc)[, c("stratum", "N", "unit_cost", "n_int", "weight")]
 ```
 
 ```{r}
@@ -381,11 +382,11 @@ samp_budget |>
 The workhorse of household surveys stratifies by region, samples
 enumeration areas within each region, then households within each EA.
 `n_alloc()` plans this design when the frame carries a `delta_psu`
-column; the whole plan then drives both stages of the samplyr design.
+column. The whole plan then drives both stages of the samplyr design.
 
 Build the planning frame from the EA frame's own aggregates. The
 homogeneity `delta_psu` typically comes from a previous survey round
-(via `varcomp()` with its `strata` argument); here we use a flat 0.05:
+(via `varcomp()` with its `strata` argument). Here we use a flat 0.05:
 
 ```{r}
 frame_bfa <- bfa_eas |>
@@ -440,7 +441,7 @@ eas_selected |>
 Two conventions to keep in mind. First, the meaning of `n` shifts
 across stages: at stage 1 a value is the stratum *total* of PSUs, while
 at stage 2 it is the take *per PSU*. Second, per-stratum values at
-stage 2 need the explicit `stratify_by(region)` shown above; strata do
+stage 2 need the explicit `stratify_by(region)` shown above. Strata do
 not carry over from stage 1, and the second `stratify_by()` only routes
 the takes (every EA lies in one region), so weights are unaffected.
 
@@ -462,8 +463,8 @@ The effective sample size is the number of observations an SRS would need to ach
 
 ### Spencer Method
 
-The Spencer method accounts for the relationship between the outcome variable and the selection probabilities. Pass the outcome as a bare column name. The selection probabilities are extracted automatically
-from `.weight_1`:
+The Spencer method accounts for the relationship between the outcome variable and the selection probabilities. Pass the outcome as a bare column name. The overall selection probabilities are extracted automatically
+from `.weight`:
 
 ```{r}
 design_effect(samp, y = revenue_millions, method = "spencer")
@@ -484,23 +485,22 @@ For stratified or clustered designs, the Chen-Rust (CR) method decomposes the de
 
 ```{r}
 cr <- design_effect(samp, y = revenue_millions, method = "cr")
-cr$strata
-cr$overall
+as.data.frame(cr)
+as.double(cr)
 ```
 
 The `tbl_sample` method extracts stratification and clustering variables from the stored design metadata. You only need to supply the outcome.
 
 ### Cluster Planning
 
-Before collecting data, you can anticipate the design effect for a cluster design using the intraclass correlation coefficient (ICC) and
-cluster size. This uses `svyplan::design_effect()` directly (not through a `tbl_sample`):
+Before collecting data, you can anticipate the design effect for a cluster design using the survey-planning homogeneity measure `delta` and cluster size. This `delta` is not a generic mixed-model ICC. The calculation uses `svyplan::design_effect()` directly, not a `tbl_sample` method:
 
 ```{r}
 design_effect(delta = 0.05, psu_size = 10)
 design_effect(delta = 0.15, psu_size = 10)
 ```
 
-With an ICC of 0.05 and 10 units per cluster, the design effect is 1.45. An ICC of 0.15 raises it to 2.35. This helps decide the number of clusters and units per cluster during the planning stage.
+With a `delta` of 0.05 and 10 units per cluster, the design effect is 1.45. A `delta` of 0.15 raises it to 2.35. This helps decide the number of clusters and units per cluster during the planning stage.
 
 ## Planning the Next Wave
 
@@ -516,7 +516,7 @@ pools <- frame_summary(wave1, detail = "pool")
 pools
 ```
 
-The digest deliberately records no variances, costs, or intraclass correlations. Those are planning assumptions, not sampling facts, so they stay explicit inputs. With a constant `sd` the allocation is proportional to size; replace it with prior-wave estimates when you have them.
+The digest deliberately records no variances, costs, or homogeneity measures. Those are planning assumptions, not sampling facts, so they stay explicit inputs. With a constant `sd` the allocation is proportional to size. Replace it with prior-wave estimates when you have them.
 
 ```{r}
 plan_frame <- pools |>
@@ -564,7 +564,7 @@ The typical planning workflow can be:
 
 All `svyplan` sample size objects work directly with `draw()`, and the
 handoff is stage-aware. `n_alloc()` results become per-stratum
-allocations; their stratified two-stage variant feeds PSU counts to a
+allocations. Their stratified two-stage variant feeds PSU counts to a
 clustered stage 1 and per-cluster takes to stage 2. `n_cluster()`
 results contribute the matching stage value in a clustered design (and
 their operational total in a flat single-stage one). `n_multi()` domain

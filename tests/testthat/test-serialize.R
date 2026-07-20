@@ -321,10 +321,12 @@ test_that("all built-in methods have unique common mappings", {
   expect_identical(anyDuplicated(ids), 0L)
   expect_true(all(vapply(
     dictionary,
-    function(x) all(c(
-      "id", "family", "algorithm", "replacement", "sample_size",
-      "probabilities", "ddi"
-    ) %in% names(x)),
+    function(x) {
+      all(c(
+        "id", "family", "algorithm", "replacement", "sample_size",
+        "probabilities", "ddi"
+      ) %in% names(x))
+    },
     logical(1)
   )))
 

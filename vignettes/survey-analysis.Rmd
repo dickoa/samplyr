@@ -223,7 +223,7 @@ rep_tbl |>
 Replicate export supports single-phase designs. For PPS designs, use `type = "subbootstrap"` or `type = "mrbbootstrap"`. Two-phase designs should use `as_svydesign()` (linearization).
 
 LPM2 and SCPS require a different qualification. Their spatial spreading
-changes pairwise selection behaviour, and samplyr does not currently provide
+changes pairwise selection behavior, and samplyr does not currently provide
 a design-specific linearization estimator or joint inclusion probabilities
 for them. Consequently, `as_svydesign()` refuses these designs.
 `as_svrepdesign(type = "subbootstrap")` provides a generic PPS bootstrap
@@ -259,7 +259,12 @@ $\pi_{kl}$. For WR/PMR stages (`pps_multinomial`, `pps_chromy`), it returns
 joint expected hits $E(n_k n_l)$. Depending on the selection method, these
 quantities are exact or approximate.
 
-It replays the design specification against the original frame, computing quantities per stratum and assembling a block-diagonal matrix.
+It replays the design specification against the original frame, computing
+quantities per stratum or conditional parent occurrence. Blocks and units
+within blocks follow first appearance in the sample. Cross-block entries are
+products of marginal chances. Below a WR parent, every parent draw occurrence
+defines a separate independent child block, even when several draws hit the
+same population cluster.
 
 ```{r}
 sampford_sample <- sampling_design() |>
@@ -301,7 +306,7 @@ The method-specific availability is:
 | `scps`            | Unavailable                  | Spatial bootstrap only |
 
 For bounded cube designs, joint probabilities are also unavailable because
-the count constraints alter pairwise selection behaviour. For LPM2, SCPS, and
+the count constraints alter pairwise selection behavior. For LPM2, SCPS, and
 bounded cube, use the generic bootstrap route described above. For a
 multi-stage PPS design, supplying `pps = ppsmat(...)` represents only the
 stage covered by that matrix; omit `pps` to retain samplyr's full multi-stage

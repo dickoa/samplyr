@@ -41,18 +41,18 @@ NULL
 #'   \item{region}{Factor. Region name (13 regions)}
 #'   \item{province}{Factor. Province name within region (45 provinces)}
 #'   \item{commune}{Factor. Commune name within province (348 communes)}
-#'   \item{urban_rural}{Factor. Modelled urban/rural classification based on
+#'   \item{urban_rural}{Factor. Modeled urban/rural classification based on
 #'     commune population density}
 #'   \item{population}{Integer. WorldPop/GRID3 preEA population estimate,
 #'     informed by the 2019 population census}
-#'   \item{households}{Integer. Modelled household count, derived from
+#'   \item{households}{Integer. Modeled household count, derived from
 #'     population and aggregated EHCVM 2021-2022 household-size parameters}
-#'   \item{area_km2}{Numeric. EA area in square kilometres}
-#'   \item{pop_density}{Numeric. Population per square kilometre, derived from
+#'   \item{area_km2}{Numeric. EA area in square kilometers}
+#'   \item{pop_density}{Numeric. Population per square kilometer, derived from
 #'     population and source polygon area}
 #'   \item{longitude}{Numeric. Longitude of the preEA point-on-surface in WGS 84}
 #'   \item{latitude}{Numeric. Latitude of the preEA point-on-surface in WGS 84}
-#'   \item{remoteness}{Factor. Modelled operational class (Low, Medium, High)
+#'   \item{remoteness}{Factor. Modeled operational class (Low, Medium, High)
 #'     for sampling examples; not an official geographic classification}
 #'   \item{fieldwork_cost}{Integer. Synthetic relative fieldwork cost index;
 #'     not a monetary estimate}
@@ -66,7 +66,7 @@ NULL
 #'   \item Urban/rural stratification
 #'   \item Neyman and optimal allocation using auxiliary variables
 #'   \item Balanced and spatially balanced selection using frame auxiliaries
-#'   \item Operational planning with modelled remoteness and relative costs
+#'   \item Operational planning with modeled remoteness and relative costs
 #' }
 #'
 #' The data structure follows typical household survey sampling frames
@@ -113,7 +113,7 @@ NULL
 #'
 #' @description
 #' Illustrative prior variance of natural-log mean household consumption at EA
-#' level, modelled as if obtained from an earlier household survey. Used for
+#' level, modeled as if obtained from an earlier household survey. Used for
 #' demonstrating Neyman allocation in stratified sampling; the values are
 #' synthetic and are not official estimates for Burkina Faso.
 #'
@@ -179,7 +179,7 @@ NULL
 #'
 #' @description
 #' A derived enumeration area (EA) frame for two-stage demographic, health, and
-#' child-indicator household surveys. Each row corresponds to one modelled
+#' child-indicator household surveys. Each row corresponds to one modeled
 #' WorldPop/GRID3 preEA polygon, and `ea_id` preserves the source identifier for
 #' spatial joins. Population and household counts are disaggregated from
 #' Zimbabwe's 2022 census ward totals. The frame covers 10 provinces and 91
@@ -192,11 +192,11 @@ NULL
 #'   \item{district}{Factor. District name within province (91 districts)}
 #'   \item{ward_pcode}{Character. Ward P-code carried by the source preEA
 #'     product (e.g. "ZW150104")}
-#'   \item{urban_rural}{Factor. Modelled urban/rural classification based on
+#'   \item{urban_rural}{Factor. Modeled urban/rural classification based on
 #'     building density and calibrated to GHS-DUC provincial shares}
 #'   \item{population}{Integer. EA population, calibrated to 2022 Census ward totals}
 #'   \item{households}{Integer. Number of households, calibrated to 2022 Census ward totals}
-#'   \item{buildings}{Integer. Modelled building count from the WorldPop preEA
+#'   \item{buildings}{Integer. Modeled building count from the WorldPop preEA
 #'     product}
 #'   \item{women_15_49}{Integer. Estimated women aged 15-49, from WorldPop
 #'     age-sex grids scaled to census population}
@@ -204,7 +204,7 @@ NULL
 #'     grids scaled to census population}
 #'   \item{children_under5}{Integer. Estimated children under 5, from WorldPop
 #'     age-sex grids scaled to census population}
-#'   \item{area_km2}{Numeric. EA area in square kilometres}
+#'   \item{area_km2}{Numeric. EA area in square kilometers}
 #' }
 #'
 #' @details
@@ -220,7 +220,7 @@ NULL
 #' The data structure follows typical two-stage cluster survey frames where
 #' EAs are nested within districts and provinces. To create a household
 #' listing for second-stage sampling after selecting EAs, expand each
-#' selected EA into individual household rows. The preEAs are modelled
+#' selected EA into individual household rows. The preEAs are modeled
 #' building-delimited areas rather than official census EAs, and the resulting
 #' counts should not be used as official small-area statistics.
 #'

@@ -17,8 +17,20 @@ trace_pool <- function(
   order_kind,
   selected,
   perm = NULL,
-  cert_rule = integer(0)
+  cert_rule = integer(0),
+  trace_mode = "full",
+  compact = TRUE
 ) {
+  if (identical(trace_mode, "none")) {
+    return(NULL)
+  }
+  if (
+    identical(trace_mode, "summary") && compact &&
+      length(chance) > 1L && !anyNA(chance) &&
+      all(chance == chance[[1L]])
+  ) {
+    chance <- chance[[1L]]
+  }
   list(
     type = "pool",
     N = N,
@@ -89,7 +101,13 @@ abort_cluster_invariants <- function(varying, cluster_vars) {
 }
 
 #' @noRd
-sample_clusters <- function(frame, strata_spec, cluster_spec, draw_spec) {
+sample_clusters <- function(
+  frame,
+  strata_spec,
+  cluster_spec,
+  draw_spec,
+  trace_mode = "full"
+) {
   cluster_vars <- cluster_spec$vars
   groups <- split_row_indices(frame, cluster_vars)
   cluster_indices <- groups$indices
@@ -133,16 +151,30 @@ sample_clusters <- function(frame, strata_spec, cluster_spec, draw_spec) {
     }
   }
 
-  res <- sample_units(cluster_frame, strata_spec, draw_spec)
+  inner_trace_mode <- if (identical(trace_mode, "summary")) {
+    "full"
+  } else {
+    trace_mode
+  }
+  res <- sample_units(
+    cluster_frame,
+    strata_spec,
+    draw_spec,
+    trace_mode = inner_trace_mode
+  )
   list(
     sample = res$sample,
-    trace = trace_clusters(
-      by = cluster_vars,
-      keys = groups$keys,
-      first_rows = first_rows,
-      sizes = lengths(cluster_indices),
-      node = res$trace
-    )
+    trace = if (identical(trace_mode, "none")) {
+      NULL
+    } else {
+      trace_clusters(
+        by = cluster_vars,
+        keys = groups$keys,
+        first_rows = first_rows,
+        sizes = lengths(cluster_indices),
+        node = res$trace
+      )
+    }
   )
 }
 
@@ -152,7 +184,8 @@ sample_within_clusters <- function(
   frame,
   strata_spec,
   draw_spec,
-  cluster_vars
+  cluster_vars,
+  trace_mode = "full"
 ) {
   groups <- split_row_indices(frame, cluster_vars)
   indices_list <- groups$indices
@@ -166,54 +199,75 @@ sample_within_clusters <- function(
   ) {
     draw_n <- as.integer(draw_spec$n)
     n_per_group <- rep.int(draw_n, length(indices_list))
-    res <- sample_srswor_by_group_indices(frame, indices_list, n_per_group)
+    res <- sample_srswor_by_group_indices(
+      frame,
+      indices_list,
+      n_per_group,
+      trace_mode = trace_mode
+    )
     result <- res$sample
     if (nrow(result) > 0) {
       result$.sample_id <- seq_len(nrow(result))
     }
-    trace_groups <- lapply(seq_along(indices_list), function(i) {
-      trace_group(
-        key = groups$keys[[i]],
-        keys = NULL,
-        rows = indices_list[[i]],
-        node = res$leaves[[i]]
-      )
-    })
+    trace_groups <- if (identical(trace_mode, "none")) {
+      NULL
+    } else {
+      lapply(seq_along(indices_list), function(i) {
+        trace_group(
+          key = groups$keys[[i]],
+          keys = NULL,
+          rows = indices_list[[i]],
+          node = res$leaves[[i]]
+        )
+      })
+    }
     return(list(
       sample = result,
-      trace = trace_split(by = cluster_vars, groups = trace_groups)
+      trace = if (identical(trace_mode, "none")) {
+        NULL
+      } else {
+        trace_split(by = cluster_vars, groups = trace_groups)
+      }
     ))
   }
 
   results_list <- lapply(indices_list, function(idxs) {
     data <- frame[idxs, , drop = FALSE]
-    sample_units(data, strata_spec, draw_spec)
+    sample_units(data, strata_spec, draw_spec, trace_mode = trace_mode)
   })
 
   result <- bind_rows(lapply(results_list, function(r) r$sample))
   if (nrow(result) > 0) {
     result$.sample_id <- seq_len(nrow(result))
   }
-  trace_groups <- lapply(seq_along(indices_list), function(i) {
-    trace_group(
-      key = groups$keys[[i]],
-      keys = NULL,
-      rows = indices_list[[i]],
-      node = results_list[[i]]$trace
-    )
-  })
+  trace_groups <- if (identical(trace_mode, "none")) {
+    NULL
+  } else {
+    lapply(seq_along(indices_list), function(i) {
+      trace_group(
+        key = groups$keys[[i]],
+        keys = NULL,
+        rows = indices_list[[i]],
+        node = results_list[[i]]$trace
+      )
+    })
+  }
   list(
     sample = result,
-    trace = trace_split(by = cluster_vars, groups = trace_groups)
+    trace = if (identical(trace_mode, "none")) {
+      NULL
+    } else {
+      trace_split(by = cluster_vars, groups = trace_groups)
+    }
   )
 }
 
 #' @noRd
-sample_units <- function(frame, strata_spec, draw_spec) {
+sample_units <- function(frame, strata_spec, draw_spec, trace_mode = "full") {
   if (!is_null(strata_spec)) {
-    sample_stratified(frame, strata_spec, draw_spec)
+    sample_stratified(frame, strata_spec, draw_spec, trace_mode = trace_mode)
   } else {
-    sample_unstratified(frame, draw_spec)
+    sample_unstratified(frame, draw_spec, trace_mode = trace_mode)
   }
 }
 
@@ -227,45 +281,69 @@ is_simple_srswor_draw <- function(draw_spec) {
 }
 
 #' @noRd
-sample_srswor_by_group_indices <- function(frame, indices_list, n_per_group) {
-  selected_rows <- vector("list", length(indices_list))
-  pik_list <- vector("list", length(indices_list))
-  fpc_list <- vector("list", length(indices_list))
-  leaves <- vector("list", length(indices_list))
+sample_srswor_by_group_indices <- function(
+  frame,
+  indices_list,
+  n_per_group,
+  trace_mode = "full"
+) {
+  group_sizes <- lengths(indices_list)
+  n_actual <- pmin(as.integer(n_per_group), group_sizes)
+  n_actual[is.na(n_actual) | n_actual <= 0L] <- 0L
+  ends <- cumsum(n_actual)
+  starts <- ends - n_actual + 1L
+  selected_rows <- integer(sum(n_actual))
+  weights <- numeric(sum(n_actual))
+  fpc <- numeric(sum(n_actual))
+  leaves <- if (identical(trace_mode, "none")) {
+    NULL
+  } else {
+    vector("list", length(indices_list))
+  }
 
   for (i in seq_along(indices_list)) {
     idxs <- indices_list[[i]]
-    N_i <- length(idxs)
+    N_i <- group_sizes[[i]]
     n_target <- n_per_group[[i]]
-    n_i <- min(as.integer(n_target), N_i)
+    n_i <- n_actual[[i]]
 
-    if (is.na(n_i) || n_i <= 0L || N_i == 0L) {
-      leaves[[i]] <- trace_pool(
-        N = N_i,
-        n_target = n_target,
-        chance = rep.int(0, N_i),
-        chance_kind = "inclusion_probability",
-        order_kind = "input",
-        selected = integer(0)
-      )
+    if (n_i == 0L || N_i == 0L) {
+      if (!identical(trace_mode, "none")) {
+        leaves[[i]] <- trace_pool(
+          N = N_i,
+          n_target = n_target,
+          chance = if (identical(trace_mode, "summary")) 0 else numeric(N_i),
+          chance_kind = "inclusion_probability",
+          order_kind = "input",
+          selected = integer(0),
+          trace_mode = trace_mode
+        )
+      }
       next
     }
 
-    local_idx <- sondage::equal_prob_wor(N_i, n_i)$sample
-    selected_rows[[i]] <- idxs[local_idx]
-    pik_list[[i]] <- rep.int(n_i / N_i, n_i)
-    fpc_list[[i]] <- rep.int(N_i, n_i)
-    leaves[[i]] <- trace_pool(
-      N = N_i,
-      n_target = n_target,
-      chance = rep.int(n_i / N_i, N_i),
-      chance_kind = "inclusion_probability",
-      order_kind = "input",
-      selected = local_idx
-    )
+    local_idx <- sample.int(N_i, n_i)
+    out <- seq.int(starts[[i]], ends[[i]])
+    selected_rows[out] <- idxs[local_idx]
+    weights[out] <- N_i / n_i
+    fpc[out] <- N_i
+    if (!identical(trace_mode, "none")) {
+      leaves[[i]] <- trace_pool(
+        N = N_i,
+        n_target = n_target,
+        chance = if (identical(trace_mode, "summary")) {
+          n_i / N_i
+        } else {
+          rep.int(n_i / N_i, N_i)
+        },
+        chance_kind = "inclusion_probability",
+        order_kind = "input",
+        selected = local_idx,
+        trace_mode = trace_mode
+      )
+    }
   }
 
-  selected_rows <- unlist(selected_rows, use.names = FALSE)
   if (length(selected_rows) == 0L) {
     empty <- frame[0, , drop = FALSE]
     empty$.weight <- numeric(0)
@@ -274,14 +352,18 @@ sample_srswor_by_group_indices <- function(frame, indices_list, n_per_group) {
   }
 
   result <- frame[selected_rows, , drop = FALSE]
-  pik <- unlist(pik_list, use.names = FALSE)
-  result$.weight <- 1 / pik
-  result$.fpc <- unlist(fpc_list, use.names = FALSE)
+  result$.weight <- weights
+  result$.fpc <- fpc
   list(sample = result, leaves = leaves)
 }
 
 #' @noRd
-sample_stratified <- function(frame, strata_spec, draw_spec) {
+sample_stratified <- function(
+  frame,
+  strata_spec,
+  draw_spec,
+  trace_mode = "full"
+) {
   strata_vars <- strata_spec$vars
   groups <- split_row_indices(frame, strata_vars)
   stratum_info <- stratum_info_from_groups(frame, strata_vars, groups$indices)
@@ -294,20 +376,20 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
       groups,
       stratum_info,
       strata_vars,
-      draw_spec
+      draw_spec,
+      trace_mode = trace_mode
     ))
   }
-
-  stratum_keys <- make_group_key(stratum_info, strata_vars)
-  n_lookup <- setNames(stratum_info$.n_h, stratum_keys)
-  draw_lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars)
 
   if (!is_multi_hit_method(draw_spec)) {
     capped <- stratum_info$.n_h > stratum_info$.N_h
     if (any(capped)) {
       n_requested <- sum(stratum_info$.n_h)
       n_actual <- sum(pmin(stratum_info$.n_h, stratum_info$.N_h))
-      capped_keys <- stratum_keys[capped]
+      capped_keys <- format_key_labels(
+        stratum_info[capped, , drop = FALSE],
+        strata_vars
+      )
       cli_warn(c(
         "Sample size capped to population in {length(capped_keys)} stratum/strata: {.val {capped_keys}}.",
         "i" = "Requested total: {n_requested}. Actual total: {n_actual}."
@@ -316,45 +398,46 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
   }
 
   if (is_simple_srswor_draw(draw_spec)) {
-    n_per_group <- vapply(
-      groups$keys,
-      function(stratum_key) {
-        n_h <- n_lookup[[stratum_key]]
-        if (is_null(n_h) || length(n_h) == 0 || is.na(n_h)) {
-          cli_abort(
-            "Could not determine sample size for stratum {.val {stratum_key}}",
-            call = NULL
-          )
-        }
-        as.integer(n_h)
-      },
-      integer(1)
-    )
+    n_per_group <- as.integer(stratum_info$.n_h)
 
-    res <- sample_srswor_by_group_indices(frame, groups$indices, n_per_group)
+    res <- sample_srswor_by_group_indices(
+      frame,
+      groups$indices,
+      n_per_group,
+      trace_mode = trace_mode
+    )
     result <- res$sample
     result$.sample_id <- seq_len(nrow(result))
-    trace_groups <- lapply(seq_along(groups$indices), function(i) {
-      idxs <- groups$indices[[i]]
-      trace_group(
-        key = groups$keys[[i]],
-        keys = frame[idxs[1], strata_vars, drop = FALSE],
-        rows = idxs,
-        node = res$leaves[[i]]
-      )
-    })
+    trace_groups <- if (identical(trace_mode, "none")) {
+      NULL
+    } else {
+      lapply(seq_along(groups$indices), function(i) {
+        idxs <- groups$indices[[i]]
+        trace_group(
+          key = groups$keys[[i]],
+          keys = frame[idxs[1], strata_vars, drop = FALSE],
+          rows = idxs,
+          node = res$leaves[[i]]
+        )
+      })
+    }
     return(list(
       sample = result,
-      trace = trace_split(by = strata_vars, groups = trace_groups)
+      trace = if (identical(trace_mode, "none")) {
+        NULL
+      } else {
+        trace_split(by = strata_vars, groups = trace_groups)
+      }
     ))
   }
 
+  draw_lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars)
   results_list <- lapply(seq_along(groups$indices), function(i) {
     idxs <- groups$indices[[i]]
     stratum_key <- groups$keys[[i]]
     data <- frame[idxs, , drop = FALSE]
 
-    n_h <- n_lookup[[stratum_key]]
+    n_h <- stratum_info$.n_h[[i]]
     if (is_null(n_h) || length(n_h) == 0 || is.na(n_h)) {
       cli_abort(
         "Could not determine sample size for stratum {.val {stratum_key}}"
@@ -372,7 +455,7 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
     )
 
     res <- withCallingHandlers(
-      draw_sample(data, n_h, stratum_draw_spec),
+      draw_sample(data, n_h, stratum_draw_spec, trace_mode = trace_mode),
       error = function(e) {
         cli_abort(
           c(conditionMessage(e), "i" = "In stratum {.val {stratum_key}}"),
@@ -390,7 +473,7 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
     }
     list(
       sample = selected,
-      group = trace_group(
+      group = if (identical(trace_mode, "none")) NULL else trace_group(
         key = stratum_key,
         keys = keys,
         rows = idxs,
@@ -404,7 +487,7 @@ sample_stratified <- function(frame, strata_spec, draw_spec) {
   result$.sample_id <- seq_len(nrow(result))
   list(
     sample = result,
-    trace = trace_split(
+    trace = if (identical(trace_mode, "none")) NULL else trace_split(
       by = strata_vars,
       groups = lapply(results_list, function(r) r$group)
     )
@@ -418,7 +501,8 @@ draw_balanced_stratified <- function(
   groups,
   stratum_info,
   strata_vars,
-  draw_spec
+  draw_spec,
+  trace_mode = "full"
 ) {
   N <- nrow(frame)
   mos <- draw_spec$mos
@@ -428,15 +512,10 @@ draw_balanced_stratified <- function(
   fpc_vec <- numeric(N)
   strata_int <- integer(N)
 
-  stratum_keys <- make_group_key(stratum_info, strata_vars)
-  n_lookup <- setNames(stratum_info$.n_h, stratum_keys)
-  N_lookup <- setNames(stratum_info$.N_h, stratum_keys)
-
   for (i in seq_along(groups$indices)) {
     idxs <- groups$indices[[i]]
-    stratum_key <- groups$keys[[i]]
-    n_h <- n_lookup[[stratum_key]]
-    N_h <- N_lookup[[stratum_key]]
+    n_h <- stratum_info$.n_h[[i]]
+    N_h <- stratum_info$.N_h[[i]]
     n_h <- min(n_h, N_h)
 
     if (!is_null(mos)) {
@@ -489,6 +568,10 @@ draw_balanced_stratified <- function(
   # One pool per stratum: the cube draw is joint, but the strata
   # constraint fixes each stratum's size, and within-stratum input
   # order is preserved by the stable sort.
+  if (identical(trace_mode, "none")) {
+    return(list(sample = result, trace = NULL))
+  }
+
   sel_flag <- logical(N)
   sel_flag[original_idx] <- TRUE
   trace_groups <- lapply(seq_along(groups$indices), function(i) {
@@ -500,11 +583,13 @@ draw_balanced_stratified <- function(
       rows = idxs,
       node = trace_pool(
         N = length(idxs),
-        n_target = n_lookup[[stratum_key]],
+        n_target = stratum_info$.n_h[[i]],
         chance = pik[idxs],
         chance_kind = "inclusion_probability",
         order_kind = "input",
-        selected = which(sel_flag[idxs])
+        selected = which(sel_flag[idxs]),
+        trace_mode = trace_mode,
+        compact = FALSE
       )
     )
   })
@@ -587,8 +672,8 @@ draw_cube_with_bounds <- function(pik, aux, bounds) {
       }
     }
   )
-  realised <- colSums(bounds$B[res$sample, , drop = FALSE])
-  violated <- realised < bounds$lower | realised > bounds$upper
+  realized <- colSums(bounds$B[res$sample, , drop = FALSE])
+  violated <- realized < bounds$lower | realized > bounds$upper
   if (any(violated)) {
     abort_samplyr(
       "Controlled count bounds were violated during cube landing.",
@@ -704,7 +789,7 @@ resolve_stratum_draw_spec <- function(
 }
 
 #' @noRd
-sample_unstratified <- function(frame, draw_spec) {
+sample_unstratified <- function(frame, draw_spec, trace_mode = "full") {
   N <- nrow(frame)
   round_method <- draw_spec$round %||% "up"
 
@@ -723,7 +808,7 @@ sample_unstratified <- function(frame, draw_spec) {
     ))
   }
 
-  res <- draw_sample(frame, n, draw_spec)
+  res <- draw_sample(frame, n, draw_spec, trace_mode = trace_mode)
   result <- res$sample
   result$.weight <- 1 / result$.pik
   result$.pik <- NULL
@@ -771,7 +856,7 @@ handle_empty_selection <- function(method_label, on_empty) {
 }
 
 #' @noRd
-draw_sample <- function(data, n, draw_spec) {
+draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
   method <- draw_spec$method
   mos <- draw_spec$mos
   N <- nrow(data)
@@ -813,7 +898,8 @@ draw_sample <- function(data, n, draw_spec) {
       draw_spec,
       n_target = n_target,
       order_kind = order_kind,
-      perm = perm
+      perm = perm,
+      trace_mode = trace_mode
     ))
   }
 
@@ -825,7 +911,11 @@ draw_sample <- function(data, n, draw_spec) {
     if (draw_spec$method_type == "wr") {
       mos_vals <- data[[mos]]
       pik <- sondage::expected_hits(mos_vals, n)
-      idx <- sondage::unequal_prob_wr(pik, method = sondage_name)$sample
+      idx <- sondage::unequal_prob_wr(
+        pik,
+        method = sondage_name,
+        prn = prn_vals
+      )$sample
     } else if (draw_spec$method_type == "balanced") {
       pik <- if (!is_null(mos)) {
         sondage::inclusion_prob(data[[mos]], n)
@@ -994,7 +1084,9 @@ draw_sample <- function(data, n, draw_spec) {
       },
       order_kind = order_kind,
       selected = idx,
-      perm = perm
+      perm = perm,
+      trace_mode = trace_mode,
+      compact = !is_balanced_method(draw_spec)
     )
   )
 }
@@ -1006,7 +1098,8 @@ draw_sample_pps_certainty <- function(
   draw_spec,
   n_target = n,
   order_kind = "input",
-  perm = NULL
+  perm = NULL,
+  trace_mode = "full"
 ) {
   method <- draw_spec$method
   mos <- draw_spec$mos
@@ -1074,20 +1167,26 @@ draw_sample_pps_certainty <- function(
     selected <- c(selected, cert$remaining_idx[prob_res$selected])
   }
 
-  trace <- trace_pool(
-    N = N,
-    n_target = n_target,
-    chance = chance,
-    chance_kind = if (is_multi_hit_method(draw_spec)) {
-      "expected_hits"
-    } else {
-      "inclusion_probability"
-    },
-    order_kind = order_kind,
-    selected = selected,
-    perm = perm,
-    cert_rule = cert$certainty_idx
-  )
+  trace <- if (identical(trace_mode, "none")) {
+    NULL
+  } else {
+    trace_pool(
+      N = N,
+      n_target = n_target,
+      chance = chance,
+      chance_kind = if (is_multi_hit_method(draw_spec)) {
+        "expected_hits"
+      } else {
+        "inclusion_probability"
+      },
+      order_kind = order_kind,
+      selected = selected,
+      perm = perm,
+      cert_rule = cert$certainty_idx,
+      trace_mode = trace_mode,
+      compact = !is_balanced_method(draw_spec)
+    )
+  }
 
   if (is_null(certainty_result) && is_null(prob_result)) {
     result <- data[integer(0), , drop = FALSE]

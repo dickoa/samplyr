@@ -2,13 +2,14 @@
 #'
 #' @name print.samplyr
 #' @param x Object to print
-#' @param ... Additional arguments (ignored)
+#' @param ... Must be empty.
 #' @return Invisibly returns the input object
 NULL
 
 #' @rdname print.samplyr
 #' @export
 print.sampling_design <- function(x, ...) {
+  rlang::check_dots_empty()
   if (!is_null(x$title)) {
     cli::cat_rule(paste0("Sampling Design: ", x$title))
   } else {
@@ -173,6 +174,28 @@ format_control_quos <- function(control_quos) {
   }
 }
 
+#' Whether an executed digest path contains with-replacement chances
+#'
+#' `expected_hits` cannot use a population-unit count as a sample coverage
+#' denominator: draw occurrences may exceed both distinct selected units and
+#' the frame universe. Restrict the check to the stages being reported so a
+#' partial execution is described from its realized path only.
+#' @noRd
+digest_path_has_expected_hits <- function(digest, stage_ids) {
+  if (is_null(digest) || length(digest$stages) == 0L) {
+    return(FALSE)
+  }
+  digest_stage_ids <- vapply(
+    digest$stages, function(st) st$stage_id, integer(1)
+  )
+  stages <- digest$stages[digest_stage_ids %in% stage_ids]
+  any(vapply(
+    stages,
+    function(st) identical(st$chance_kind, "expected_hits"),
+    logical(1)
+  ))
+}
+
 #' Digest-backed coverage line for the tbl_sample header
 #'
 #' At most one line: the stage count and the ultimate-unit coverage,
@@ -191,9 +214,10 @@ digest_coverage_line <- function(x) {
 
   stages <- digest$stages
   k <- length(stages)
+  stages_executed <- get_stages_executed(x)
   # A digest describing fewer stages than were executed (a partial
   # replicated manifest) cannot state the sample's coverage.
-  if (k < length(get_stages_executed(x))) {
+  if (k < length(stages_executed)) {
     return(character(0))
   }
   last <- stages[[k]]
@@ -203,6 +227,18 @@ digest_coverage_line <- function(x) {
     return(character(0))
   }
   realized <- sum(last$pools$n_realized)
+
+  if (digest_path_has_expected_hits(digest, stages_executed)) {
+    noun <- if (identical(last$chance_kind, "expected_hits")) {
+      " draws"
+    } else {
+      " units"
+    }
+    return(c("Sampling" = paste0(
+      k, if (k == 1L) " stage" else " stages",
+      " | ", fmt(realized), noun
+    )))
+  }
 
   total <- digest_universe_units(digest)
   if (is.na(total)) {

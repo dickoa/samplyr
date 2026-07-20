@@ -58,6 +58,54 @@ test_that("the digest round-trips through design JSON", {
     d1$stages[[1]]$selected$key,
     d0$stages[[1]]$selected$key
   )
+  expect_identical(d1$version, 2L)
+})
+
+test_that("a v2 digest round-trips through a design file", {
+  s <- serialize_fixture()
+  path <- withr::local_tempfile(fileext = ".json")
+  expect_invisible(write_design(s, path, frame = test_frame))
+  restored <- read_design(path)
+  digest <- attr(restored, "execution")$frame_digest
+
+  expect_identical(digest$version, 2L)
+  expect_no_error(samplyr:::validate_frame_digest(digest))
+  original <- samplyr:::get_frame_digest(s)
+  expect_identical(digest$status, original$status)
+  expect_identical(length(digest$stages), length(original$stages))
+  expect_equal(
+    lapply(digest$stages, function(stage) stage$pools$n_expected),
+    lapply(original$stages, function(stage) stage$pools$n_expected)
+  )
+})
+
+test_that("WR parent occurrences survive digest serialization", {
+  frame <- data.frame(
+    parent = rep(1:2, each = 5),
+    unit = rep(1:5, 2),
+    parent_mos = rep(c(1, 2), each = 5)
+  )
+  s <- sampling_design() |>
+    add_stage() |> cluster_by(parent) |>
+    draw(n = 3, method = "pps_multinomial", mos = parent_mos) |>
+    add_stage() |> draw(n = 2) |>
+    execute(frame, seed = 7)
+  original <- samplyr:::get_frame_digest(s)
+  path <- withr::local_tempfile(fileext = ".json")
+
+  expect_invisible(write_design(s, path, frame = frame))
+  restored <- read_design(path)
+  digest <- attr(restored, "execution")$frame_digest
+
+  expect_true("parent_occurrence" %in% names(digest$stages[[2]]$pools))
+  expect_identical(
+    digest$stages[[2]]$pools$parent_unit,
+    original$stages[[2]]$pools$parent_unit
+  )
+  expect_identical(
+    digest$stages[[2]]$pools$parent_occurrence,
+    original$stages[[2]]$pools$parent_occurrence
+  )
 })
 
 test_that("quantile distributions and diagnostics round-trip", {
@@ -97,18 +145,77 @@ test_that("a sample without a digest writes a receipt without one", {
   expect_identical(attr(restored, "execution")$seed, 1L)
 })
 
-test_that("a newer-version digest is dropped with a warning on read", {
+test_that("schema v1 is rejected before either pool spelling is decoded", {
   s <- serialize_fixture()
   json <- design_json(s, frame = test_frame)
   payload <- jsonlite::fromJSON(json, simplifyVector = FALSE)
+  payload$execution$frame_digest$version <- 1L
+  new_key <- samplyr:::make_group_key(
+    data.frame(region = "A", cluster = "cl01"),
+    c("region", "cluster")
+  )
+  expect_match(new_key, "^2\\|V")
+  payload$execution$frame_digest$stages[[1]]$selected[[1]]$key <- new_key
+  v1_new_names <- jsonlite::toJSON(
+    payload, auto_unbox = TRUE, na = "null"
+  )
+  err <- expect_error(
+    read_design(v1_new_names),
+    class = "samplyr_error_digest_version"
+  )
+  expect_match(conditionMessage(err), "schema version 1", fixed = TRUE)
+  expect_match(conditionMessage(err), "re-execute", ignore.case = TRUE)
+
+  for (stage in seq_along(payload$execution$frame_digest$stages)) {
+    rows <- payload$execution$frame_digest$stages[[stage]]$pools
+    payload$execution$frame_digest$stages[[stage]]$pools <- lapply(
+      rows,
+      function(row) {
+        row$expected_n <- row$n_expected
+        row$n_expected <- NULL
+        row
+      }
+    )
+  }
+  v1_old_names <- jsonlite::toJSON(
+    payload, auto_unbox = TRUE, na = "null"
+  )
+  expect_error(
+    read_design(v1_old_names),
+    class = "samplyr_error_digest_version"
+  )
+})
+
+test_that("future digest versions fail without returning a partial design", {
+  s <- serialize_fixture()
+  payload <- jsonlite::fromJSON(
+    design_json(s, frame = test_frame), simplifyVector = FALSE
+  )
   payload$execution$frame_digest$version <- 99L
   tampered <- jsonlite::toJSON(payload, auto_unbox = TRUE, na = "null")
-  expect_warning(
-    restored <- read_design(tampered),
-    "frame digest stored with this design could not be read"
+  completed <- FALSE
+  err <- expect_error(
+    {
+      read_design(tampered)
+      completed <- TRUE
+    },
+    class = "samplyr_error_digest_version"
   )
-  expect_null(attr(restored, "execution")$frame_digest)
-  expect_s3_class(restored, "sampling_design")
+  expect_false(completed)
+  expect_match(conditionMessage(err), "newer version", ignore.case = TRUE)
+})
+
+test_that("a malformed stored digest version keeps its malformed class", {
+  s <- serialize_fixture()
+  payload <- jsonlite::fromJSON(
+    design_json(s, frame = test_frame), simplifyVector = FALSE
+  )
+  stored <- payload$execution$frame_digest
+  stored$version <- "two"
+  expect_error(
+    samplyr:::decode_frame_digest(stored),
+    class = "samplyr_error_digest_malformed"
+  )
 })
 
 test_that("validate_frame is silent when the frame matches the digest", {

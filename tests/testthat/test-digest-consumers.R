@@ -122,6 +122,52 @@ test_that("pools under different parents keep distinct lines", {
   expect_equal(fs$n_realized, c(1, 1))
 })
 
+test_that("compound stored keys have a readable display path", {
+  values <- data.frame(
+    first = c("Malmö/7", "", NA, "12:34"),
+    second = c("尾", "x", "z", NA),
+    stringsAsFactors = FALSE
+  )
+  keys <- samplyr:::make_group_key(values, names(values))
+  original <- keys
+  expect_identical(
+    samplyr:::display_path_key(keys),
+    c("Malmö\\/7/尾", "/x", "NA/z", "12:34/NA")
+  )
+  expect_identical(keys, original)
+
+  malformed <- c("2|V3:a", "2|Vx:aN", "2|V1:aNtrailing")
+  displayed <- expect_no_error(samplyr:::display_path_key(malformed))
+  expect_true(all(grepl("^<invalid key 0x", displayed)))
+})
+
+test_that("validate_frame displays compound parents without machine keys", {
+  frame <- data.frame(
+    area = rep(c("Malmö/7", "North"), each = 4),
+    segment = rep(c("09:west", "East"), each = 4),
+    household = seq_len(8)
+  )
+  design <- sampling_design() |>
+    add_stage() |>
+    cluster_by(area, segment) |>
+    draw(n = 2) |>
+    add_stage() |>
+    draw(n = 2)
+  sample <- execute(design, frame, seed = 94)
+  drifted <- frame[-1, ]
+
+  before <- testthat::capture_messages(validate_frame(sample, drifted))
+  stored_key <- samplyr:::get_frame_digest(sample)$stages[[1]]$selected$key
+  samplyr:::display_path_key(stored_key)
+  after <- testthat::capture_messages(validate_frame(sample, drifted))
+  expect_identical(after, before)
+
+  text <- paste(after, collapse = "")
+  expect_match(text, "under Malmö\\/7/09:west", fixed = TRUE)
+  expect_false(grepl("[0-9]+\\|V[0-9]+:", text))
+  expect_false(grepl("V1:|V3:", text))
+})
+
 test_that("frame_summary reports replicated executions per replicate", {
   # Fixed size: allocation identical across replicates, so the common
   # per-replicate value is reported, not the stacked total.

@@ -10,23 +10,28 @@
 #'   one frame. For multi-stage designs with separate frames, provide frames
 #'   in stage order. Passing a `tbl_sample` here while `.data` is a new
 #'   `sampling_design` starts a new sampling phase; it does not continue the
-#'   stages stored in that sample.
+#'   stages stored in that sample. Ordinary input frames must have unique
+#'   names and must not use columns reserved for execution output, such as
+#'   `.weight`, `.sample_id`, `.stage`, `.weight_k`, or `.fpc_k`.
 #' @param stages Integer vector specifying which stage(s) to execute.
 #'   From a `sampling_design`, the vector must start at stage 1; this is how
 #'   an operational workflow stops after its first contiguous batch of stages.
 #'   From a partial `tbl_sample`, it must start at the next unexecuted stage.
 #'   Default (`NULL`) executes all remaining stages.
-#' @param seed Integer random seed for reproducibility.
+#' @param seed Integer random seed for reproducibility, between
+#'   `-.Machine$integer.max` and `.Machine$integer.max`.
 #' @param panels Integer number of rotation groups (panels) to partition the
-#'   sample into. Each panel is a representative subsample created by systematic
-#'   interleaving within strata. The output includes a `.panel` column with
-#'   values 1 through `panels`. Default `NULL` means no panel partitioning.
-#'   Cannot be used together with `reps`.
+#'   sample into for rotation or workload management. Assignment uses
+#'   deterministic systematic interleaving within strata; it is not an
+#'   additional probability-sampling phase. The output includes a `.panel`
+#'   column with values 1 through `panels`. Default `NULL` means no panel
+#'   partitioning. Cannot be used together with `reps`.
 #' @param reps Integer number of independent replicate samples to draw (>= 2),
 #'   or `NULL` (default) for a single sample. When specified, `execute()` draws
 #'   `reps` independent samples from the same frame under the same design and
 #'   returns a single stacked `tbl_sample` with a `.replicate` column (integer
-#'   1 through `reps`). Replicate `r` uses seed `seed + r - 1`. Cannot be
+#'   1 through `reps`). Replicate `r` uses seed `seed + r - 1`; the complete
+#'   sequence must remain within R's supported integer range. Cannot be
 #'   combined with `panels` or with stages that use permanent random numbers.
 #'
 #'   This is **repeated sample realization** (drawing multiple independent
@@ -38,8 +43,9 @@
 #'   selection pools, resolved chances (exact for cluster stages,
 #'   constant or quantile-compressed for element stages), and the
 #'   selected-unit trace. `"full"` keeps exact per-unit chances for
-#'   element stages too. `"none"` records no digest. When one universe
-#'   frame feeds every stage, later stages also record the pools their
+#'   element stages too. `"none"` records no digest and skips trace
+#'   construction for minimum execution overhead. When one universe frame
+#'   feeds every stage, later stages also record the pools their
 #'   realization never reached, with chances resolved deterministically
 #'   from the design (`chance_status = "design_resolved"`); this gives
 #'   [frame_summary()] and downstream digest consumers complete universe
@@ -213,8 +219,8 @@
 #' ## Panel Partitioning
 #'
 #' When `panels` is specified, the sample is partitioned into non-overlapping
-#' rotation groups suitable for rotating panel surveys. Each panel is a
-#' representative subsample created by systematic interleaving within strata.
+#' groups for rotation or workload management using systematic interleaving
+#' within strata.
 #'
 #' Assignment is deterministic (not random): within each stratum, units are
 #' assigned round-robin to panels 1, 2, ..., k. This ensures each panel has
@@ -226,8 +232,10 @@
 #' All units within a PSU inherit the PSU's panel assignment.
 #'
 #' Weights are not adjusted for panel membership. They reflect the full-sample
-#' inclusion probability. When analysing a single panel, multiply weights by
-#' `panels` to obtain per-panel weights.
+#' inclusion probability and are valid for the combined sample. A single panel
+#' does not have a known probability-sampling interpretation merely from this
+#' assignment, so multiplying its weights by `panels` is not generally valid
+#' for population inference.
 #'
 #' @examples
 #' # Basic SRS execution
@@ -343,9 +351,24 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
     }
   }
 
+  for (i in seq_along(frames)) {
+    validate_execute_frame_names(
+      frames[[i]],
+      index = i,
+      allow_generated = is_tbl_sample(.data) || is_tbl_sample(frames[[i]])
+    )
+  }
+
   if (!is_null(seed)) {
-    if (length(seed) != 1 || !is_integerish_numeric(seed)) {
-      cli_abort("{.arg seed} must be a single integer")
+    if (
+      length(seed) != 1L || !is_integerish_numeric(seed) ||
+        seed < -.Machine$integer.max || seed > .Machine$integer.max
+    ) {
+      abort_samplyr(
+        "{.arg seed} must be a single integer between
+         { -.Machine$integer.max } and { .Machine$integer.max }.",
+        class = "samplyr_error_seed_range"
+      )
     }
     seed <- as.integer(seed)
   }
@@ -372,6 +395,20 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
       cli_abort("{.arg reps} must be a single integer >= 2")
     }
     reps <- as.integer(reps)
+  }
+
+  if (
+    !is_null(seed) && !is_null(reps) &&
+      as.double(seed) + as.double(reps) - 1 > .Machine$integer.max
+  ) {
+    abort_samplyr(
+      c(
+        "Replicate seeds exceed the supported integer range.",
+        "i" = "Use {.arg seed} <=
+               { .Machine$integer.max - reps + 1L } for {reps} replicates."
+      ),
+      class = "samplyr_error_seed_overflow"
+    )
   }
 
   if (!is_null(reps) && !is_null(panels)) {
@@ -623,8 +660,13 @@ execute_design <- function(design, frames, stages, seed, panels,
   current_sample <- NULL
   previous_stage_idx <- NULL
   all_prior_cluster_vars <- character(0)
-  stage_traces <- vector("list", length(stages))
-  stage_used_frames <- vector("list", length(stages))
+  collect_trace <- !identical(frame_digest, "none")
+  stage_traces <- if (collect_trace) vector("list", length(stages)) else NULL
+  stage_used_frames <- if (collect_trace) {
+    vector("list", length(stages))
+  } else {
+    NULL
+  }
 
   for (i in seq_along(stages)) {
     stage_idx <- stages[i]
@@ -657,11 +699,14 @@ execute_design <- function(design, frames, stages, seed, panels,
       previous_sample = current_sample,
       previous_stage_spec = prev_stage_for_frame,
       is_final_stage = is_final_stage,
-      all_prior_cluster_vars = all_prior_cluster_vars
+      all_prior_cluster_vars = all_prior_cluster_vars,
+      trace_mode = frame_digest
     )
     current_sample <- step$sample
-    stage_traces[[i]] <- step$trace
-    stage_used_frames[[i]] <- step$frame
+    if (collect_trace) {
+      stage_traces[[i]] <- step$trace
+      stage_used_frames[[i]] <- step$frame
+    }
 
     # A random-size stage with on_empty = "warn"/"silent" can select
     # zero units. Later stages then have nothing to select from: the
@@ -899,9 +944,18 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
     )
   }
 
-  stage_traces <- vector("list", length(stages))
-  stage_used_frames <- vector("list", length(stages))
-  input_frames_used <- vector("list", length(stages))
+  collect_trace <- !identical(frame_digest, "none")
+  stage_traces <- if (collect_trace) vector("list", length(stages)) else NULL
+  stage_used_frames <- if (collect_trace) {
+    vector("list", length(stages))
+  } else {
+    NULL
+  }
+  input_frames_used <- if (collect_trace) {
+    vector("list", length(stages))
+  } else {
+    NULL
+  }
 
   for (i in seq_along(stages)) {
     stage_idx <- stages[i]
@@ -915,7 +969,9 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
     if (length(internal) > 0L) {
       frame <- frame[, setdiff(names(frame), internal), drop = FALSE]
     }
-    input_frames_used[[i]] <- frame
+    if (collect_trace) {
+      input_frames_used[[i]] <- frame
+    }
 
     is_final_stage_of_execution <- (i == length(stages))
     is_final_stage_of_design <- (stage_idx == length(design$stages))
@@ -936,11 +992,14 @@ execute_continuation <- function(sample, frames, stages, seed, panels,
       previous_sample = current_sample,
       previous_stage_spec = prev_stage_for_frame,
       is_final_stage = is_final_stage,
-      all_prior_cluster_vars = all_prior_cluster_vars
+      all_prior_cluster_vars = all_prior_cluster_vars,
+      trace_mode = frame_digest
     )
     current_sample <- step$sample
-    stage_traces[[i]] <- step$trace
-    stage_used_frames[[i]] <- step$frame
+    if (collect_trace) {
+      stage_traces[[i]] <- step$trace
+      stage_used_frames[[i]] <- step$frame
+    }
 
     # See execute_design(): an empty stage ends the selection.
     if (nrow(current_sample) == 0) {
@@ -1278,7 +1337,7 @@ execute_replicated_multiphase <- function(design, frames, stages, seed,
       orig <- frames[[idx]]
       sub <- orig[orig$.replicate == r, ]
       sub$.replicate <- NULL
-      # Restore tbl_sample class so prepare_multiphase_frame recognises it
+      # Restore tbl_sample class so prepare_multiphase_frame recognizes it
       sub <- new_tbl_sample(
         data = sub,
         design = get_design(orig),
@@ -1358,7 +1417,8 @@ execute_single_stage <- function(
   previous_sample,
   previous_stage_spec = NULL,
   is_final_stage = FALSE,
-  all_prior_cluster_vars = character(0)
+  all_prior_cluster_vars = character(0),
+  trace_mode = "full"
 ) {
   strata_spec <- stage_spec$strata
   cluster_spec <- stage_spec$clusters
@@ -1390,25 +1450,41 @@ execute_single_stage <- function(
 
       results_list <- lapply(indices_list, function(idxs) {
         data <- frame[idxs, , drop = FALSE]
-        sample_clusters(data, strata_spec, cluster_spec, draw_spec)
+        sample_clusters(
+          data,
+          strata_spec,
+          cluster_spec,
+          draw_spec,
+          trace_mode = trace_mode
+        )
       })
       result <- bind_rows(lapply(results_list, function(r) r$sample))
       if (nrow(result) > 0) {
         result$.sample_id <- seq_len(nrow(result))
       }
-      stage_trace <- trace_split(
-        by = split_vars,
-        groups = lapply(seq_along(indices_list), function(i) {
-          trace_group(
-            key = split$keys[[i]],
-            keys = NULL,
-            rows = indices_list[[i]],
-            node = results_list[[i]]$trace
-          )
-        })
-      )
+      stage_trace <- if (identical(trace_mode, "none")) {
+        NULL
+      } else {
+        trace_split(
+          by = split_vars,
+          groups = lapply(seq_along(indices_list), function(i) {
+            trace_group(
+              key = split$keys[[i]],
+              keys = NULL,
+              rows = indices_list[[i]],
+              node = results_list[[i]]$trace
+            )
+          })
+        )
+      }
     } else {
-      res <- sample_clusters(frame, strata_spec, cluster_spec, draw_spec)
+      res <- sample_clusters(
+        frame,
+        strata_spec,
+        cluster_spec,
+        draw_spec,
+        trace_mode = trace_mode
+      )
       result <- res$sample
       stage_trace <- res$trace
     }
@@ -1454,12 +1530,18 @@ execute_single_stage <- function(
       frame,
       strata_spec,
       draw_spec,
-      split_vars
+      split_vars,
+      trace_mode = trace_mode
     )
     result <- res$sample
     stage_trace <- res$trace
   } else {
-    res <- sample_units(frame, strata_spec, draw_spec)
+    res <- sample_units(
+      frame,
+      strata_spec,
+      draw_spec,
+      trace_mode = trace_mode
+    )
     result <- res$sample
     stage_trace <- res$trace
   }
@@ -1524,8 +1606,7 @@ assign_panels <- function(result, k, first_stage_spec) {
     # Multi-stage: assign at PSU level, propagate to all units
     cluster_vars <- cluster_spec$vars
     make_key <- function(df) {
-      if (length(cluster_vars) == 1) return(df[[cluster_vars]])
-      do.call(paste, c(df[cluster_vars], list(sep = "\x1f")))
+      make_group_key(df, cluster_vars)
     }
     all_keys <- make_key(result)
     unique_mask <- !duplicated(all_keys)

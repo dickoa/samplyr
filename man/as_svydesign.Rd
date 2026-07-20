@@ -161,7 +161,7 @@ the execution metadata and remains supported.
 \code{systematic} stages are exported with the SRSWOR variance estimator,
 the standard approximation for systematic sampling. Depending on the
 frame ordering (see the \code{control} argument of \code{\link[=draw]{draw()}}), the true
-variance can be smaller (favourable ordering) or larger (periodic
+variance can be smaller (favorable ordering) or larger (periodic
 ordering) than this estimate.
 }
 
@@ -184,7 +184,7 @@ unconstrained cube use the documented high-entropy approximation.
 
 \subsection{Spatial and constrained balanced methods}{
 
-Bounded cube, LPM2, and SCPS alter pairwise selection behaviour beyond the
+Bounded cube, LPM2, and SCPS alter pairwise selection behavior beyond the
 available linearization approximation. \code{\link[=as_svydesign]{as_svydesign()}} therefore refuses
 these designs, and \code{\link[=joint_expectation]{joint_expectation()}} does not provide a matrix for them.
 Use \code{as_svrepdesign(type = "subbootstrap")} or \code{"mrbbootstrap"} for a
@@ -221,7 +221,7 @@ suggesting \code{as_svrepdesign(type = "subbootstrap")}.
 \item Single-stage designs that use \code{cluster_by()} with multiple rows per
 sampled cluster (for example a household listing within sampled EAs)
 raise an error. \code{survey::poisson_sampling()} treats rows as
-independent and does not honour within-cluster correlation. Use
+independent and does not honor within-cluster correlation. Use
 \code{as_svrepdesign(type = "subbootstrap")} for these designs.
 \item Custom methods registered with \code{fixed_size = FALSE}
 (\code{sondage::register_method()}) are also random-size, but samplyr

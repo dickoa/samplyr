@@ -117,6 +117,38 @@ test_that("varying element chances come back as a quantile profile", {
                    ed$stages[[1]]$chance_distribution$n_units)
 })
 
+test_that("ex-ante mixed compact and varying pools preserve pool sizes", {
+  frame <- data.frame(
+    id = seq_len(24),
+    stratum = rep(c("equal", "varying"), each = 12),
+    mos = c(rep(1, 12), seq_len(12))
+  )
+  digest <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = 4, method = "pps_brewer", mos = mos) |>
+    samplyr::build_exante_digest(frame)
+
+  stage <- digest$stages[[1]]
+  counts <- tapply(
+    stage$chance_distribution$n_units,
+    stage$chance_distribution$pool_id,
+    sum
+  )
+  expect_identical(
+    unname(as.integer(counts[as.character(stage$pools$pool_id)])),
+    stage$pools$N
+  )
+  represented <- vapply(
+    split(stage$chance_distribution, stage$chance_distribution$pool_id),
+    function(pool) sum(pool$chance * pool$n_units),
+    numeric(1)
+  )
+  expect_equal(
+    unname(represented[as.character(stage$pools$pool_id)]),
+    stage$pools$n_expected
+  )
+})
+
 test_that("certainty and with-replacement designs resolve ex-ante", {
   frame_cert <- data.frame(
     cluster = rep(sprintf("c%d", 1:5), each = 2),

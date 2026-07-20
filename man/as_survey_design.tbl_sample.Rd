@@ -24,7 +24,7 @@ This method is registered on the \code{\link[srvyr:as_survey_design]{srvyr::as_s
 so it is available when srvyr is loaded.
 
 Random-size Poisson designs (\code{bernoulli}, \code{pps_poisson}) export to a
-\code{pps} survey design. These are summarised, grouped, and subset like any
+\code{pps} survey design. These are summarized, grouped, and subset like any
 other srvyr design, with Horvitz-Thompson Poisson variances.
 }
 \examples{

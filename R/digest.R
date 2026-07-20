@@ -16,7 +16,7 @@ NULL
 
 #' Current frame digest schema version
 #' @noRd
-frame_digest_version <- 1L
+frame_digest_version <- 2L
 
 #' @noRd
 digest_status_values <- c("complete", "partial", "invalidated")
@@ -282,6 +282,41 @@ is_scalar_count <- function(x) {
     abs(x - round(x)) < sqrt(.Machine$double.eps)
 }
 
+#' Require the exact frame digest schema supported by this release
+#' @noRd
+check_frame_digest_version <- function(version) {
+  if (!is_scalar_count(version)) {
+    abort_digest(
+      "The frame digest has no valid {.field version} field.",
+      "malformed"
+    )
+  }
+  if (version == frame_digest_version) {
+    return(invisible(NULL))
+  }
+  if (version < frame_digest_version) {
+    abort_digest(
+      c(
+        "Frame digest schema version {version} is unsupported by this
+         version of samplyr.",
+        "i" = "Use the samplyr version that wrote this artifact to
+               read it.",
+        "i" = "To use the current samplyr, re-execute the original
+               design and save it again."
+      ),
+      "version"
+    )
+  }
+  abort_digest(
+    c(
+      "Frame digest schema version {version} is newer than the
+       supported version {frame_digest_version}.",
+      "i" = "Update samplyr to a newer version to read this artifact."
+    ),
+    "version"
+  )
+}
+
 #' Finite integerish vector with no NA
 #' @noRd
 is_id_vector <- function(x) {
@@ -308,23 +343,7 @@ validate_frame_digest <- function(x, tol = 1e-6, quantile_tol = 0.05) {
   if (!is.list(x)) {
     abort_digest("A frame digest must be a list.", "malformed")
   }
-  version <- x$version
-  if (!is_scalar_count(version)) {
-    abort_digest(
-      "The digest has no valid {.field version} field.",
-      "malformed"
-    )
-  }
-  if (version > frame_digest_version) {
-    abort_digest(
-      c(
-        "The frame digest has schema version {version}, but this
-         version of samplyr supports up to {frame_digest_version}.",
-        "i" = "The digest was recorded by a newer version of samplyr."
-      ),
-      "version"
-    )
-  }
+  check_frame_digest_version(x$version)
   if (!is_scalar_string(x$status) || !x$status %in% digest_status_values) {
     abort_digest(
       "{.field status} must be one of {.val {digest_status_values}}.",
@@ -1220,29 +1239,7 @@ get_frame_digest <- function(x) {
   if (is_null(digest)) {
     return(NULL)
   }
-  version <- digest$version
-  if (!is_scalar_count(version)) {
-    abort_samplyr(
-      "The frame digest on this sample has no valid version field.",
-      class = c(
-        "samplyr_error_digest_malformed",
-        "samplyr_error_digest_invalid"
-      )
-    )
-  }
-  if (version > frame_digest_version) {
-    abort_samplyr(
-      c(
-        "The frame digest has schema version {version}, but this
-         version of samplyr supports up to {frame_digest_version}.",
-        "i" = "The digest was recorded by a newer version of samplyr."
-      ),
-      class = c(
-        "samplyr_error_digest_version",
-        "samplyr_error_digest_invalid"
-      )
-    )
-  }
+  check_frame_digest_version(digest$version)
   if (
     !identical(digest$status, "invalidated") &&
       !sample_realization_status(x)$ok

@@ -196,7 +196,7 @@ test_that("summary: unstratified clustered stage with non-unique IDs", {
 
   s <- execute(design, frame, seed = 2)
 
-  # Both districts selected the same ea — 2 distinct (district, ea) pairs
+  # Both districts selected the same ea: 2 distinct (district, ea) pairs
   n_pairs <- nrow(unique(s[c("district", "ea")]))
   expect_equal(n_pairs, 2)
 
@@ -215,7 +215,7 @@ test_that("summary: unstratified clustered stage with non-unique IDs", {
 
 test_that("summary: stratified clustered stage with non-unique IDs", {
   # Same frame, but stage 2 adds stratify_by(district).
-  # Dedup must still use (district, ea) — strata alone don't help
+  # Dedup must still use (district, ea); strata alone don't help
   # when both branches share the same stage_unit_vars.
   frame <- expand.grid(
     district = c("A", "B"),

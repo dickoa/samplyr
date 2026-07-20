@@ -430,7 +430,7 @@ test_that("bounds saturate correctly (all strata at min or max)", {
 })
 
 test_that("bounds work with equal allocation and many strata", {
-  # Equal allocation with 100 strata — each gets n/100
+  # Equal allocation with 100 strata: each gets n/100
   n_strata <- 100
   frame <- data.frame(
     id = seq_len(n_strata * 50),

@@ -294,7 +294,7 @@ is_tbl_sample <- function(x) {
 #' - `tidyr::pivot_longer()` / `tidyr::pivot_wider()`
 #'
 #' @param x A data frame with sampling attributes.
-#' @param ... Not used.
+#' @param ... Must be empty.
 #'
 #' @return A `tbl_sample`, or an error if `x` does not carry the
 #'   required attributes.
@@ -321,19 +321,24 @@ as_tbl_sample <- function(x, ...) {
 #' @rdname as_tbl_sample
 #' @export
 as_tbl_sample.tbl_sample <- function(x, ...) {
+  rlang::check_dots_empty()
   x
 }
 
 #' @rdname as_tbl_sample
 #' @export
 as_tbl_sample.data.frame <- function(x, ...) {
+  rlang::check_dots_empty()
   design <- attr(x, "design")
   stages <- attr(x, "stages_executed")
   if (is.null(design) || is.null(stages)) {
-    cli_abort(c(
-      "Cannot coerce to {.cls tbl_sample}.",
-      "i" = "The object does not carry the required sampling attributes."
-    ))
+    abort_samplyr(
+      c(
+        "Cannot coerce to {.cls tbl_sample}.",
+        "i" = "The object does not carry the required sampling attributes."
+      ),
+      class = "samplyr_error_tbl_sample_missing_attributes"
+    )
   }
   out <- new_tbl_sample(
     data = x,

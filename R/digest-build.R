@@ -185,8 +185,10 @@ flatten_stage_trace <- function(node, row_map, sizes = NULL) {
 #' Canonical ancestry key strings for frame rows
 #' @noRd
 digest_path_keys <- function(frame, rows, vars) {
-  cols <- lapply(vars, function(v) as.character(frame[[v]][rows]))
-  do.call(paste, c(cols, sep = "\x1f"))
+  if (length(vars) == 1L) {
+    return(as.character(frame[[vars]][rows]))
+  }
+  make_group_key(frame[rows, vars, drop = FALSE], vars)
 }
 
 #' Occurrence counter for a selected-unit vector (1, then 2 for the
@@ -312,7 +314,16 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
     vapply(records, function(r) as.double(r$leaf$n_target), numeric(1))
   }
   pools$n_expected <- vapply(
-    records, function(r) sum(r$leaf$chance), numeric(1)
+    records,
+    function(r) {
+      chance <- r$leaf$chance
+      if (length(chance) == 1L && r$leaf$N > 1L) {
+        chance * r$leaf$N
+      } else {
+        sum(chance)
+      }
+    },
+    numeric(1)
   )
   pools$n_realized <- vapply(
     records, function(r) length(r$leaf$selected), integer(1)
@@ -352,9 +363,7 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
     units <- data.frame(
       unit_id = seq_len(sum(counts)),
       pool_id = rep.int(seq_along(records), counts),
-      unit_order = unlist(
-        lapply(counts, seq_len), use.names = FALSE
-      ),
+      unit_order = sequence(counts),
       chance = chance_all,
       is_certainty = if (identical(chance_kind, "inclusion_probability")) {
         chance_all >= 1 - 1e-9
@@ -381,8 +390,9 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
   chance_distribution <- NULL
   if (identical(storage, "quantiles")) {
     chance_distribution <- digest_quantile_bins(
-      lapply(records, function(r) r$leaf$chance),
-      seq_along(records)
+      chance_by_pool = lapply(records, function(r) r$leaf$chance),
+      pool_ids = seq_along(records),
+      pool_sizes = pools$N
     )
   }
 
@@ -563,27 +573,16 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
     stop("universe frame contains parents the previous stage did not record")
   }
 
-  pool_key <- paste(
-    parent_all,
-    if (!is_null(strata_vars)) {
-      digest_path_keys(frame, seq_len(nrow(frame)), strata_vars)
-    } else {
-      ""
-    },
-    sep = "\x1f"
-  )
-  executed_key <- paste(
-    stage$pools$parent_unit,
-    if (!is_null(strata_vars)) {
-      do.call(paste, c(
-        lapply(strata_vars, function(v) as.character(stage$pools[[v]])),
-        sep = "\x1f"
-      ))
-    } else {
-      ""
-    },
-    sep = "\x1f"
-  )
+  frame_pool_keys <- data.frame(.parent = parent_all)
+  executed_pool_keys <- data.frame(.parent = stage$pools$parent_unit)
+  pool_vars <- ".parent"
+  if (!is_null(strata_vars)) {
+    frame_pool_keys[strata_vars] <- frame[strata_vars]
+    executed_pool_keys[strata_vars] <- stage$pools[strata_vars]
+    pool_vars <- c(pool_vars, strata_vars)
+  }
+  pool_key <- make_group_key(frame_pool_keys, pool_vars)
+  executed_key <- make_group_key(executed_pool_keys, pool_vars)
   groups <- split(
     seq_len(nrow(frame)), factor(pool_key, levels = unique(pool_key))
   )
@@ -805,10 +804,64 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N) {
 #' mean-faithful under heavy skew. Pools with at most 101 units come
 #' back exact (one unit per bin).
 #' @noRd
-digest_quantile_bins <- function(chance_by_pool, pool_ids) {
+digest_quantile_bins <- function(chance_by_pool, pool_ids, pool_sizes) {
+  n_pools <- length(chance_by_pool)
+  if (
+    !is.list(chance_by_pool) ||
+      length(pool_ids) != n_pools ||
+      length(pool_sizes) != n_pools
+  ) {
+    abort_samplyr(
+      "Internal digest invariant failed: chance vectors, pool ids, and
+       pool sizes must have equal lengths.",
+      class = "samplyr_error_internal",
+      call = NULL
+    )
+  }
+  if (
+    !is_integerish_numeric(pool_sizes) ||
+      any(pool_sizes < 0) ||
+      any(pool_sizes > .Machine$integer.max)
+  ) {
+    abort_samplyr(
+      "Internal digest invariant failed: pool sizes must be
+       nonnegative integers.",
+      class = "samplyr_error_internal",
+      call = NULL
+    )
+  }
+
   dist_list <- lapply(seq_along(chance_by_pool), function(i) {
-    ch <- sort(chance_by_pool[[i]])
-    n <- length(ch)
+    ch <- chance_by_pool[[i]]
+    pool_size <- as.integer(pool_sizes[[i]])
+    if (!length(ch) %in% c(1L, pool_size)) {
+      abort_samplyr(
+        "Internal digest invariant failed: pool {pool_ids[[i]]} has
+         {length(ch)} stored chance values for declared size
+         {pool_size}.",
+        class = "samplyr_error_internal",
+        call = NULL
+      )
+    }
+    if (pool_size == 0L) {
+      return(data.frame(
+        pool_id = pool_ids[i][0],
+        quantile = numeric(0),
+        chance = numeric(0),
+        n_units = integer(0)
+      ))
+    }
+    if (length(ch) == 1L && pool_size > 1L) {
+      return(data.frame(
+        pool_id = pool_ids[i],
+        quantile = 0.5,
+        chance = as.double(ch),
+        n_units = pool_size
+      ))
+    }
+
+    ch <- sort(ch)
+    n <- pool_size
     k <- min(101L, n)
     ends <- as.integer(floor(n * seq_len(k) / k))
     starts <- c(1L, ends[-k] + 1L)
@@ -1122,7 +1175,9 @@ build_exante_stage <- function(design, stage_idx, frame,
     }, numeric(1))
   } else if (identical(storage, "quantiles")) {
     chance_distribution <- digest_quantile_bins(
-      chance_by_pool, pools$pool_id
+      chance_by_pool = chance_by_pool,
+      pool_ids = pools$pool_id,
+      pool_sizes = pools$N
     )
   } else {
     counts <- pools$N
@@ -1130,7 +1185,7 @@ build_exante_stage <- function(design, stage_idx, frame,
     units <- data.frame(
       unit_id = seq_len(sum(counts)),
       pool_id = rep.int(pools$pool_id, counts),
-      unit_order = unlist(lapply(counts, seq_len), use.names = FALSE),
+      unit_order = sequence(counts),
       chance = chance_all,
       is_certainty = if (
         identical(chance_kind, "inclusion_probability")

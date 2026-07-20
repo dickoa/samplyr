@@ -23,7 +23,9 @@ stored design.}
 one frame. For multi-stage designs with separate frames, provide frames
 in stage order. Passing a \code{tbl_sample} here while \code{.data} is a new
 \code{sampling_design} starts a new sampling phase; it does not continue the
-stages stored in that sample.}
+stages stored in that sample. Ordinary input frames must have unique
+names and must not use columns reserved for execution output, such as
+\code{.weight}, \code{.sample_id}, \code{.stage}, \code{.weight_k}, or \code{.fpc_k}.}
 
 \item{stages}{Integer vector specifying which stage(s) to execute.
 From a \code{sampling_design}, the vector must start at stage 1; this is how
@@ -31,19 +33,22 @@ an operational workflow stops after its first contiguous batch of stages.
 From a partial \code{tbl_sample}, it must start at the next unexecuted stage.
 Default (\code{NULL}) executes all remaining stages.}
 
-\item{seed}{Integer random seed for reproducibility.}
+\item{seed}{Integer random seed for reproducibility, between
+\code{-.Machine$integer.max} and \code{.Machine$integer.max}.}
 
 \item{panels}{Integer number of rotation groups (panels) to partition the
-sample into. Each panel is a representative subsample created by systematic
-interleaving within strata. The output includes a \code{.panel} column with
-values 1 through \code{panels}. Default \code{NULL} means no panel partitioning.
-Cannot be used together with \code{reps}.}
+sample into for rotation or workload management. Assignment uses
+deterministic systematic interleaving within strata; it is not an
+additional probability-sampling phase. The output includes a \code{.panel}
+column with values 1 through \code{panels}. Default \code{NULL} means no panel
+partitioning. Cannot be used together with \code{reps}.}
 
 \item{reps}{Integer number of independent replicate samples to draw (>= 2),
 or \code{NULL} (default) for a single sample. When specified, \code{execute()} draws
 \code{reps} independent samples from the same frame under the same design and
 returns a single stacked \code{tbl_sample} with a \code{.replicate} column (integer
-1 through \code{reps}). Replicate \code{r} uses seed \code{seed + r - 1}. Cannot be
+1 through \code{reps}). Replicate \code{r} uses seed \code{seed + r - 1}; the complete
+sequence must remain within R's supported integer range. Cannot be
 combined with \code{panels} or with stages that use permanent random numbers.
 
 This is \strong{repeated sample realization} (drawing multiple independent
@@ -56,8 +61,9 @@ manifest recorded with the sample and read by \code{\link[=frame_summary]{frame_
 selection pools, resolved chances (exact for cluster stages,
 constant or quantile-compressed for element stages), and the
 selected-unit trace. \code{"full"} keeps exact per-unit chances for
-element stages too. \code{"none"} records no digest. When one universe
-frame feeds every stage, later stages also record the pools their
+element stages too. \code{"none"} records no digest and skips trace
+construction for minimum execution overhead. When one universe frame
+feeds every stage, later stages also record the pools their
 realization never reached, with chances resolved deterministically
 from the design (\code{chance_status = "design_resolved"}); this gives
 \code{\link[=frame_summary]{frame_summary()}} and downstream digest consumers complete universe
@@ -255,8 +261,8 @@ for the population total.
 \subsection{Panel Partitioning}{
 
 When \code{panels} is specified, the sample is partitioned into non-overlapping
-rotation groups suitable for rotating panel surveys. Each panel is a
-representative subsample created by systematic interleaving within strata.
+groups for rotation or workload management using systematic interleaving
+within strata.
 
 Assignment is deterministic (not random): within each stratum, units are
 assigned round-robin to panels 1, 2, ..., k. This ensures each panel has
@@ -268,8 +274,10 @@ For multi-stage designs, panels are assigned at stage 1 (PSU level).
 All units within a PSU inherit the PSU's panel assignment.
 
 Weights are not adjusted for panel membership. They reflect the full-sample
-inclusion probability. When analysing a single panel, multiply weights by
-\code{panels} to obtain per-panel weights.
+inclusion probability and are valid for the combined sample. A single panel
+does not have a known probability-sampling interpretation merely from this
+assignment, so multiplying its weights by \code{panels} is not generally valid
+for population inference.
 }
 }
 \examples{

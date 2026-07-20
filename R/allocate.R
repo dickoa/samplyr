@@ -17,8 +17,8 @@ round_preserve_total <- function(x, n) {
 
   if (shortfall > 0) {
     # True ORIC (Cont & Heidari 2014): primary sort by fractional remainder
-    # descending; secondary sort by floor(x) descending to break ties in favour
-    # of larger strata, minimising relative rounding error.
+    # descending; secondary sort by floor(x) descending to break ties in favor
+    # of larger strata, minimizing relative rounding error.
     add_indices <- order(remainders, floored, decreasing = TRUE, method = "radix")[seq_len(shortfall)]
     floored[add_indices] <- floored[add_indices] + 1
   }

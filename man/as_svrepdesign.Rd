@@ -56,7 +56,7 @@ This is the package's bootstrap approximation for designs that exact
 Horvitz-Thompson linearization cannot express in
 \code{\link[survey:svydesign]{survey::svydesign()}}. The subbootstrap and mrbbootstrap methods were
 developed for fixed-size PPS sampling (Antal and Tille 2011); their
-behaviour on random-size Poisson designs, especially at multiple
+behavior on random-size Poisson designs, especially at multiple
 stages, has weaker theoretical backing and should be treated as an
 approximation. In particular, the resampling is fixed-size, so it
 does not capture the variance contribution of the random sample

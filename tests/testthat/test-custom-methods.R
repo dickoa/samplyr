@@ -28,6 +28,17 @@ toy_wr_fn <- function(hits, n = NULL, prn = NULL, ...) {
   sample.int(length(hits), size = n, replace = TRUE, prob = hits)
 }
 
+# Deterministic WR test method when PRNs are supplied. The registry owns the
+# interpretation of PRN for custom methods; this simple implementation makes
+# forwarding observable without depending on the ambient RNG stream.
+toy_wr_prn_fn <- function(hits, n = NULL, prn = NULL, ...) {
+  if (is.null(prn)) {
+    prn <- runif(length(hits))
+  }
+  selected <- order(prn)[seq_len(min(n, length(hits)))]
+  rep(selected, length.out = n)
+}
+
 set.seed(20260328)
 custom_frame <- data.frame(
   id = seq_len(100),
@@ -155,6 +166,51 @@ test_that("execute() works with custom WR method", {
   expect_true(".draw_1" %in% names(result))
 })
 
+test_that("custom WR PRN controls non-certainty selection", {
+  on.exit(sondage::unregister_method("test_wr_prn"), add = TRUE)
+  sondage::register_method(
+    "test_wr_prn",
+    "wr",
+    sample_fn = toy_wr_prn_fn,
+    supports_prn = TRUE,
+    probabilities = "exact"
+  )
+  frame <- data.frame(
+    id = seq_len(20),
+    size = rep(1, 20),
+    u = (seq_len(20) - 0.5) / 20
+  )
+  design <- sampling_design() |>
+    draw(n = 8, method = "pps_test_wr_prn", mos = size, prn = u)
+
+  first <- execute(design, frame, seed = 1)
+  second <- execute(design, frame, seed = 999)
+  changed <- frame
+  changed$u <- rev(changed$u)
+  third <- execute(design, changed, seed = 1)
+
+  expect_identical(first$id, second$id)
+  expect_false(identical(first$id, third$id))
+  expect_false(any(first$.certainty_1))
+})
+
+test_that("custom WR methods must declare PRN support", {
+  on.exit(sondage::unregister_method("test_wr_no_prn"), add = TRUE)
+  sondage::register_method(
+    "test_wr_no_prn",
+    "wr",
+    sample_fn = toy_wr_fn,
+    supports_prn = FALSE,
+    probabilities = "exact"
+  )
+
+  expect_error(
+    sampling_design() |>
+      draw(n = 8, method = "pps_test_wr_no_prn", mos = size, prn = prn_col),
+    "permanent random numbers"
+  )
+})
+
 test_that("execute() works with custom random-size PRN method", {
   on.exit(sondage::unregister_method("test_prn"), add = TRUE)
   sondage::register_method(
@@ -224,6 +280,34 @@ test_that("joint_expectation() errors gracefully without joint_fn", {
     execute(custom_frame, seed = 1)
 
   expect_error(joint_expectation(result, custom_frame), "not implemented")
+})
+
+test_that("joint_expectation() forwards nsim to registered WR joint_fn", {
+  on.exit(sondage::unregister_method("test_wr_nsim"), add = TRUE)
+  seen <- new.env(parent = emptyenv())
+  joint_fn <- function(hits, sample_idx = NULL, nsim = 10000L, ...) {
+    seen$nsim <- nsim
+    if (!is.null(sample_idx)) hits <- hits[sample_idx]
+    out <- outer(hits, hits)
+    diag(out) <- hits
+    out
+  }
+  sondage::register_method(
+    "test_wr_nsim",
+    "wr",
+    sample_fn = toy_wr_fn,
+    joint_fn = joint_fn,
+    probabilities = "exact"
+  )
+
+  result <- sampling_design() |>
+    draw(n = 10, method = "pps_test_wr_nsim", mos = size) |>
+    execute(custom_frame, seed = 1, frame_digest = "full")
+
+  expect_no_error(joint_expectation(result, custom_frame, nsim = 37L))
+  expect_identical(seen$nsim, 37L)
+  expect_no_error(joint_expectation(result, nsim = 41L))
+  expect_identical(seen$nsim, 41L)
 })
 
 test_that("as_svydesign() works with custom WOR method", {

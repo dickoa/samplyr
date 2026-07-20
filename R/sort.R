@@ -93,7 +93,10 @@ serp <- function(...) {
   nvars <- length(var_vals)
 
   if (nvars == 0) {
-    cli_abort("At least one variable must be specified for serpentine sorting.")
+    abort_samplyr(
+      "At least one variable must be specified for serpentine sorting.",
+      class = "samplyr_error_serp_no_variables"
+    )
   }
 
   n <- length(var_vals[[1]])
@@ -110,7 +113,10 @@ serp <- function(...) {
 
   lengths <- vapply(var_vals, length, integer(1))
   if (length(unique(lengths)) > 1) {
-    cli_abort("All variables must have the same length.")
+    abort_samplyr(
+      "All variables must have the same length.",
+      class = "samplyr_error_serp_incompatible_lengths"
+    )
   }
 
   ranks <- lapply(var_vals, function(v) {

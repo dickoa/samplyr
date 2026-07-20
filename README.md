@@ -758,21 +758,22 @@ Partition the sample into rotation groups for panel surveys:
 
 ``` r
 panel_sample <- sampling_design() |>
-  stratify_by(region) |>
+  stratify_by(region, alloc = "proportional") |>
   draw(n = 200) |>
   execute(bfa_eas, seed = 1, panels = 4)
 
 table(panel_sample$.panel)
 #> 
-#>   1   2   3   4 
-#> 650 650 650 650
+#>  1  2  3  4 
+#> 56 51 50 43
 ```
 
-Panels are assigned by systematic interleaving within strata. For
-multi-stage designs, panels are assigned at the PSU level and propagated
-to all units. Per-panel analysis is also possible by multiplying the
-weights by the number of panels since the weights reflect the
-full-sample inclusion probability.
+Panels are assigned deterministically by systematic interleaving within
+strata. For multi-stage designs, panels are assigned at the PSU level
+and propagated to all units. They are intended for rotation or workload
+management. The weights remain full-sample weights and are valid for the
+combined sample; multiplying one panel’s weights by the number of panels
+is not generally valid for population inference.
 
 ## Replicated Sampling
 
@@ -793,7 +794,7 @@ table(rep_sample$.replicate)
 ```
 
 Each replicate is an independent draw. Replicate `r` uses seed
-`seed + r - 1`. To analyse a single replicate, filter first:
+`seed + r - 1`. To analyze a single replicate, filter first:
 
 ``` r
 rep1 <- rep_sample |> filter(.replicate == 1)
@@ -847,39 +848,22 @@ Weights compound automatically across phases.
 summary(strata_smpl)
 #> ── Sample Summary ───────────────────────────────────────────────
 #> 
-#> ℹ n = 300 | stages = 1/1 | seed = 12
+#> ℹ n = 300 of 44,570 | stages = 1/1 | seed = 12
 #> 
-#> ── Design: Stage 1 ──────────────────────────────────────────────
-#> • Strata: region (proportional)
-#> • Method: srswor
-#> 
-#> ── Allocation: Stage 1 ──────────────────────────────────────────
-#>   region             N_h    n_h  f_h   
-#>   Boucle du Mouhoun  5009   34   0.0068
-#>   Cascades           2508   17   0.0068
-#>   Centre             3888   26   0.0067
-#>   Centre-Est         2941   20   0.0068
-#>   Centre-Nord        3402   23   0.0068
-#>   Centre-Ouest       3723   25   0.0067
-#>   Centre-Sud         1612   11   0.0068
-#>   Est                5505   37   0.0067
-#>   Hauts-Bassins      4839   32   0.0066
-#>   Nord               2930   20   0.0068
-#>   Plateau-Central    1662   11   0.0066
-#>   Sahel              4144   28   0.0068
-#>   Sud-Ouest          2407   16   0.0066
-#>                      ─────  ───  ──────
-#>   Total              44570  300  0.0067
+#> ── Stage 1 ──────────────────────────────────────────────────────
+#> • srswor, by region (proportional)
+#> • 13 strata: N_h 1,612-5,505, n_h 11-37, f_h 0.0066-0.0068
 #> 
 #> ── Weights ──────────────────────────────────────────────────────
-#> • Range: [146.5, 151.22]
-#> • Mean:  148.57 · CV: 0.01
-#> • DEFF:  1 · n_eff: 300
+#> • Mean 148.57 [146.5, 151.22] | CV 0.01 | DEFF 1 | n_eff 300
 ```
 
-Every execution also records a frame digest, a compact summary of the
-selection pools and chances the design resolved. `frame_summary()`
-returns it as tibbles without needing the frame. The companion package
+By default, each execution records a summary frame digest: a compact
+record of the selection pools and chances the design resolved.
+`frame_summary()` returns it as tibbles without needing the frame. Use
+`frame_digest = "none"` for the lowest execution overhead, or
+`frame_digest = "full"` when downstream work needs exact per-unit
+chances for unequal-probability element stages. The companion package
 samplens, in development, draws the digest as a visual sampling card.
 See `vignette("introduction")` for examples.
 

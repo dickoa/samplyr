@@ -146,6 +146,139 @@ test_that("certainty selections surface in the compressed distribution", {
   expect_identical(st$pools$n_realized, 12L)
 })
 
+test_that("mixed compact and varying PPS pools retain the summary digest", {
+  frame <- data.frame(
+    id = seq_len(24),
+    stratum = rep(c("equal", "varying"), each = 12),
+    mos = c(rep(1, 12), seq_len(12))
+  )
+  design <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = 4, method = "pps_brewer", mos = mos)
+
+  expect_no_warning(
+    sample <- execute(design, frame, seed = 91)
+  )
+  no_digest <- execute(
+    design, frame, seed = 91, frame_digest = "none"
+  )
+  full_digest <- execute(
+    design, frame, seed = 91, frame_digest = "full"
+  )
+  expect_identical(strip_to_data(sample), strip_to_data(no_digest))
+  expect_identical(strip_to_data(sample), strip_to_data(full_digest))
+  expect_identical(attr(sample, "seed"), attr(no_digest, "seed"))
+  expect_identical(attr(sample, "seed"), attr(full_digest, "seed"))
+  expect_identical(
+    digest_of(full_digest)$stages[[1]]$storage,
+    "units"
+  )
+  digest <- digest_of(sample)
+  expect_false(is.null(digest))
+
+  stage <- digest$stages[[1]]
+  expect_identical(stage$storage, "quantiles")
+  counts <- tapply(
+    stage$chance_distribution$n_units,
+    stage$chance_distribution$pool_id,
+    sum
+  )
+  expect_identical(
+    unname(as.integer(counts[as.character(stage$pools$pool_id)])),
+    stage$pools$N
+  )
+
+  equal_pool <- stage$pools$pool_id[stage$pools$stratum == "equal"]
+  equal_dist <- stage$chance_distribution[
+    stage$chance_distribution$pool_id == equal_pool, , drop = FALSE
+  ]
+  expect_identical(nrow(equal_dist), 1L)
+  expect_equal(equal_dist$quantile, 0.5)
+  expect_equal(equal_dist$chance, 1 / 3)
+  expect_identical(equal_dist$n_units, 12L)
+  expect_no_error(samplyr:::validate_frame_digest(digest))
+})
+
+test_that("two-stage mixed household pools retain the summary digest", {
+  frame <- data.frame(
+    village = rep(c("constant", "varying"), each = 6),
+    household = seq_len(12),
+    size = c(rep(10, 6), c(2, 4, 6, 8, 10, 12))
+  )
+  design <- sampling_design() |>
+    add_stage() |>
+    cluster_by(village) |>
+    draw(n = 2) |>
+    add_stage() |>
+    draw(n = 3, method = "pps_brewer", mos = size)
+
+  expect_no_warning(
+    sample <- execute(design, frame, seed = 92)
+  )
+  digest <- digest_of(sample)
+  expect_false(is.null(digest))
+  stage <- digest$stages[[2]]
+  expect_identical(stage$storage, "quantiles")
+  counts <- tapply(
+    stage$chance_distribution$n_units,
+    stage$chance_distribution$pool_id,
+    sum
+  )
+  expect_identical(
+    unname(as.integer(counts[as.character(stage$pools$pool_id)])),
+    stage$pools$N
+  )
+  expect_no_error(frame_summary(sample))
+  expect_no_error(capture.output(summary(sample)))
+  expect_no_error(capture.output(print(sample)))
+  expect_no_warning(validate_frame(sample, frame))
+})
+
+test_that("compact quantile pools preserve expected-hit counts", {
+  frame <- data.frame(
+    id = seq_len(24),
+    stratum = rep(c("equal", "varying"), each = 12),
+    mos = c(rep(1, 12), seq_len(12))
+  )
+  expect_no_warning(
+    sample <- sampling_design() |>
+      stratify_by(stratum) |>
+      draw(n = 5, method = "pps_multinomial", mos = mos) |>
+      execute(frame, seed = 93)
+  )
+  stage <- digest_of(sample)$stages[[1]]
+  expect_identical(stage$storage, "quantiles")
+  expect_identical(stage$chance_kind, "expected_hits")
+  represented <- vapply(
+    split(stage$chance_distribution, stage$chance_distribution$pool_id),
+    function(pool) sum(pool$chance * pool$n_units),
+    numeric(1)
+  )
+  expect_equal(
+    unname(represented[as.character(stage$pools$pool_id)]),
+    stage$pools$n_expected
+  )
+})
+
+test_that("digest quantile bins reject inconsistent pool sizes", {
+  expect_error(
+    samplyr:::digest_quantile_bins(
+      chance_by_pool = list(c(0.1, 0.2)),
+      pool_ids = 1L,
+      pool_sizes = 3L
+    ),
+    class = "samplyr_error_internal"
+  )
+  expect_error(
+    samplyr:::digest_quantile_bins(
+      chance_by_pool = list(0.25, c(0.1, 0.2)),
+      pool_ids = 1L,
+      pool_sizes = 4L
+    ),
+    class = "samplyr_error_internal"
+  )
+})
+
 ## Fixture 4: random-size methods (expected differs from realized)
 
 test_that("random-size stages record no target and the realized size", {

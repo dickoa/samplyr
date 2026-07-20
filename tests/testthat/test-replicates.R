@@ -1,4 +1,4 @@
-# test-replicates.R — Tests for replicated sampling (reps parameter)
+# Tests for replicated sampling (reps parameter)
 
 # --- Basic functionality ---
 
@@ -156,7 +156,7 @@ test_that("reps on continuation is allowed when PRN was on a prior stage", {
   # Stage 1 with PRN, no reps
   stage1 <- execute(design, tf, stages = 1, seed = 1)
 
-  # Continue stage 2 with reps — should work because PRN stage already done
+  # Continue stage 2 with reps; the PRN stage is already done
   result <- execute(stage1, tf, seed = 10, reps = 3)
   expect_equal(sort(unique(result$.replicate)), 1:3)
 })
@@ -240,7 +240,7 @@ test_that("continuation from replicated partial sample auto-loops", {
   stage1 <- execute(design, test_frame, stages = 1, seed = 1, reps = 3)
   expect_equal(sort(unique(stage1$.replicate)), 1:3)
 
-  # Continue — should auto-loop per replicate
+  # Continue, automatically looping over replicates
   result <- execute(stage1, test_frame, seed = 100)
   expect_equal(sort(unique(result$.replicate)), 1:3)
   # Each replicate expanded to units

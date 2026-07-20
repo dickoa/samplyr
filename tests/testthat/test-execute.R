@@ -1027,7 +1027,7 @@ test_that("dropping the sample class does not silently disable provenance", {
 
   phase2 <- execute(phase2_design, ordinary_frame, seed = 123)
 
-  # No compounding — just phase 2 weight (50/20 = 2.5)
+  # No compounding, just phase 2 weight (50/20 = 2.5)
   expect_equal(unique(phase2$.weight), 2.5)
 })
 

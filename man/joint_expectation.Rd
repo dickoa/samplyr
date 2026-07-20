@@ -4,7 +4,7 @@
 \alias{joint_expectation}
 \title{Compute pairwise joint expectations from a sample}
 \usage{
-joint_expectation(x, frame = NULL, stage = NULL)
+joint_expectation(x, frame = NULL, stage = NULL, nsim = 10000L)
 }
 \arguments{
 \item{x}{A \code{tbl_sample} object produced by \code{\link[=execute]{execute()}}.}
@@ -18,6 +18,11 @@ instead.}
 \item{stage}{An integer vector of stage numbers to compute, or
 \code{NULL} (default) to compute all PPS stages.
 Non-PPS stages produce \code{NULL} entries in the returned list.}
+
+\item{nsim}{Positive integer number of simulations used for Chromy's
+pairwise expected hits (default 10000). Also forwarded to registered
+WR \code{joint_fn}s that explicitly declare an \code{nsim} formal. Ignored by
+analytic methods.}
 }
 \value{
 A named list of length equal to the number of executed
@@ -31,9 +36,13 @@ square matrix of joint expected hits
 \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
 \item \code{NULL} for non-PPS stages (SRS, systematic) or stages not
 requested via the \code{stage} argument.
-Dimensions match the number of unique sampled units (or sampled
-clusters for clustered stages). Rows and columns are ordered to
-match the sample.
+Rows and columns represent stage-specific sampled units in first
+appearance order. At a WR stage, repeated hits of the same
+population unit appear once, so dimensions match the number of
+distinct sampled units (or clusters). At a later stage below a WR
+parent, each parent draw occurrence defines a separate conditional
+block, so the same child population identity can appear in more
+than one block.
 }
 }
 \description{
@@ -72,8 +81,17 @@ frame. This ensures first-order quantities match what was computed
 at sampling time, regardless of allocation method.
 
 For stratified or conditional (within-cluster) stages, joint
-quantities are computed independently within each group and
-assembled into a block-diagonal matrix.
+quantities are computed independently within each group. Blocks
+follow their first appearance in the sample, as do units within a
+block. Cross-block entries are products of the corresponding
+marginal chances.
+
+A stage below a WR parent is conditional on each parent draw
+occurrence, not only on the parent's population identity. Repeated
+hits of one parent therefore produce separate independent child
+blocks. Pair the returned matrix with stage-specific identities in
+this order; do not pair it blindly with every sample row when
+descendants duplicate a selected unit.
 \subsection{Exact vs. approximate computation}{
 
 The accuracy of the returned matrix depends on the sampling method.
@@ -83,7 +101,7 @@ require approximation or simulation.
    samplyr method \tab sondage function \tab Quality \cr
    \code{pps_cps} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (Aires' formula via C) \cr
    \code{pps_sampford} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (Sampford design) \cr
-   \code{pps_systematic} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (combinatorial enumeration) \cr
+   \code{pps_systematic} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (circular-interval overlap) \cr
    \code{pps_poisson} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (\eqn{\pi_{kl} = \pi_k \pi_l}{pi_kl = pi_k * pi_l}, independent draws) \cr
    \code{pps_brewer} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate}\eqn{^*} (high-entropy / Hajek-Brewer-Donadio) \cr
    \code{pps_sps} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
@@ -111,7 +129,7 @@ Berger (2004) variance estimator used by \code{survey::svydesign(pps = "brewer")
 joint probabilities are exact by definition.
 
 Bounded cube, LPM2, and SCPS designs are rejected because count constraints
-and spatial spreading alter pairwise selection behaviour beyond the
+and spatial spreading alter pairwise selection behavior beyond the
 available approximation. Use \code{\link[=as_svrepdesign]{as_svrepdesign()}} with \code{type = "subbootstrap"} for a generic bootstrap approximation instead.
 }
 
@@ -125,9 +143,8 @@ available approximation. Use \code{\link[=as_svrepdesign]{as_svrepdesign()}} wit
 For \code{pps_chromy}, the sequential dependence structure does not admit
 a closed-form expression for \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
 sondage uses Monte Carlo simulation (default 10 000 replicates) to
-estimate the pairwise expectations. Increasing \code{nsim} (passed
-through \code{...}) reduces Monte Carlo error at the cost of computation
-time.
+estimate the pairwise expectations. Increasing \code{nsim} reduces Monte
+Carlo error at the cost of computation time.
 }
 
 }

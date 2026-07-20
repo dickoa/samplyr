@@ -29,7 +29,7 @@ valid_builtin_methods <- c(builtin_methods, names(builtin_method_aliases))
 jip_methods <- c(pps_methods, balanced_methods)
 
 # Random-size Poisson methods: independent unit selection with random
-# realised sample size. Variance estimation requires the Horvitz-Thompson
+# realized sample size. Variance estimation requires the Horvitz-Thompson
 # Poisson formula via survey::poisson_sampling(), not the SRSWOR or
 # Brewer estimators used for fixed-size designs.
 rs_poisson_methods <- c("bernoulli", "pps_poisson")
@@ -194,6 +194,57 @@ abort_samplyr <- function(
     call = call,
     .envir = envir
   )
+}
+
+#' Validate names before execute() adds sampling columns
+#' @noRd
+validate_execute_frame_names <- function(
+  frame,
+  index,
+  allow_generated = FALSE,
+  call = rlang::caller_env()
+) {
+  nms <- names(frame)
+  if (anyDuplicated(nms) > 0L) {
+    duplicated_names <- unique(nms[
+      duplicated(nms) | duplicated(nms, fromLast = TRUE)
+    ])
+    abort_samplyr(
+      c(
+        "Frame {index} must have unique column names.",
+        "x" = "Duplicated names: {.field {duplicated_names}}"
+      ),
+      class = "samplyr_error_frame_duplicate_names",
+      call = call
+    )
+  }
+
+  if (allow_generated) {
+    return(invisible(NULL))
+  }
+
+  exact <- c(
+    ".weight", ".fpc", ".pik", ".sample_id", ".stage", ".panel",
+    ".replicate", ".draw", ".certainty", "._prev_phase_weight"
+  )
+  generated <- grepl(
+    "^\\.(weight|fpc|draw|certainty)_[0-9]+$",
+    nms
+  )
+  reserved <- unique(c(intersect(nms, exact), nms[generated]))
+  if (length(reserved) > 0L) {
+    abort_samplyr(
+      c(
+        "Frame {index} uses column names reserved by {.pkg samplyr}.",
+        "x" = "Reserved names: {.field {reserved}}",
+        "i" = "Rename these input columns before calling {.fn execute}."
+      ),
+      class = "samplyr_error_frame_reserved_names",
+      call = call
+    )
+  }
+
+  invisible(NULL)
 }
 
 #' Collect cluster variables from all stages before the given stage

@@ -173,7 +173,7 @@
 #'
 #'   Equivalent to SAS SURVEYSELECT allowing `CERTSIZE=` overflow.
 #'
-#' @param on_empty Behaviour when a random-size method (`bernoulli`,
+#' @param on_empty Behavior when a random-size method (`bernoulli`,
 #'   `pps_poisson`, or a custom method registered with
 #'   `fixed_size = FALSE`) selects zero units in a stratum or the whole
 #'   frame. One of:

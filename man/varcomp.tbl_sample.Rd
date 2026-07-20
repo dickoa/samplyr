@@ -17,13 +17,14 @@ varcomp(x, ...)
 
 \item{strata}{Optional one-sided formula naming a column to
 estimate per-stratum components by, when the first stage was not
-stratified. Stage-1 design strata are picked up automatically;
-combining them with \code{strata} is an error, because per-stratum
+stratified. Stage-1 design strata are picked up automatically.
+Combining them with \code{strata} is an error, because per-stratum
 components crossed with design strata are ambiguous.}
 }
 \value{
-A \code{svyplan_varcomp} object; pass it as \code{delta} to
-\code{\link[svyplan:n_cluster]{svyplan::n_cluster()}}.
+A \code{svyplan_varcomp} object. Pass it as \code{delta} to
+\code{\link[svyplan:n_cluster]{svyplan::n_cluster()}}. Use \code{\link[=as.data.frame]{as.data.frame()}} to export either the
+one-row unstratified components or the per-stratum component table.
 }
 \description{
 Estimate design-based variance components (B, W, delta, k) from a
@@ -48,7 +49,7 @@ stage the SRS path applies. See the Details of
 
 The decomposition covers the clustered stages plus the sample rows
 as elements: one clustered stage gives 2-stage components, two give
-3-stage. Deeper designs are refused; estimate the top stages and
+3-stage. Deeper designs are refused. Estimate the top stages and
 fold the rest into a design effect. With-replacement (WR/PMR)
 stages treat each draw as an independent unit, keyed by the
 \code{.draw_k} column as in \code{\link[=as_svydesign]{as_svydesign()}}: a cluster hit twice enters
@@ -79,6 +80,7 @@ sam <- sampling_design() |>
 
 vc <- varcomp(sam, ~y)
 vc
+as.data.frame(vc)
 
 # Feed the components into next-round cluster planning
 svyplan::n_cluster(stage_cost = c(500, 50), delta = vc,

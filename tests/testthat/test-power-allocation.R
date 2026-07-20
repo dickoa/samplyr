@@ -32,7 +32,6 @@ test_that("power allocation with q = 0 and constant cv matches equal allocation"
   expect_equal(region_counts(power_sample), c(4, 4, 4))
   expect_equal(region_counts(power_sample), region_counts(equal_sample))
 })
-
 test_that("power allocation with q = 1 and constant cv matches proportional allocation", {
   frame <- make_power_test_frame()
 
@@ -107,4 +106,3 @@ test_that("power allocation is invariant to common scaling of cv", {
 
   expect_equal(region_counts(sample_a), region_counts(sample_b))
 })
-

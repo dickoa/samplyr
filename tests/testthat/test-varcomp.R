@@ -26,6 +26,10 @@ test_that("varcomp matches the manual svyplan recipe on 2-stage PPS", {
   s <- two_stage_pps(frame)
   vc <- varcomp(s, ~y)
   expect_s3_class(vc, "svyplan_varcomp")
+  expect_identical(
+    names(as.data.frame(vc)),
+    c("stages", "varb", "varw", "delta", "k", "rel_var")
+  )
 
   pi1 <- 1 / s$.weight_1
   first <- !duplicated(s$cl)
@@ -190,6 +194,53 @@ test_that("certainty PSUs are refused with a precise message", {
   expect_error(varcomp(s, ~y), class = "samplyr_error_varcomp_certainty")
 })
 
+test_that("capped PPS certainty is refused without an explicit flag", {
+  frame <- varcomp_frame(n_clusters = 12)
+  frame$size <- rep(c(1000, rep(1, 11)), each = 5)
+  s <- sampling_design() |>
+    add_stage() |> cluster_by(cl) |>
+    draw(n = 4, method = "pps_brewer", mos = size) |>
+    add_stage() |> draw(n = 3) |>
+    execute(frame, seed = 92)
+
+  dominant <- s$cl == "c01"
+  expect_true(any(dominant))
+  expect_false(any(s$.certainty_1[dominant]))
+  expect_identical(unique(s$.weight_1[dominant]), 1)
+  expect_error(
+    varcomp(s, ~y),
+    class = "samplyr_error_varcomp_certainty"
+  )
+})
+
+test_that("a stage-1 weight within certainty tolerance is refused", {
+  tol <- sqrt(.Machine$double.eps)
+  target_pi <- 1 - tol / 2
+  n_clusters <- 24L
+  n_target <- 8L
+  dominant_mos <- target_pi * (n_clusters - 1) / (n_target - target_pi)
+  frame <- varcomp_frame(n_clusters = n_clusters)
+  frame$size <- rep(c(dominant_mos, rep(1, n_clusters - 1)), each = 5)
+  frame$u <- rep(
+    c(0.5, seq(0.01, 0.99, length.out = n_clusters - 1)),
+    each = 5
+  )
+  s <- sampling_design() |>
+    add_stage() |> cluster_by(cl) |>
+    draw(n = n_target, method = "pps_poisson", mos = size, prn = u) |>
+    add_stage() |> draw(n = 3) |>
+    execute(frame, seed = 93, frame_digest = "none")
+
+  dominant_weight <- unique(s$.weight_1[s$cl == "c01"])
+  expect_length(dominant_weight, 1L)
+  expect_lte(abs(dominant_weight - 1), tol)
+  expect_gt(abs(dominant_weight - 1), 0)
+  expect_error(
+    varcomp(s, ~y),
+    class = "samplyr_error_varcomp_certainty"
+  )
+})
+
 test_that("modified, two-phase, and unclustered samples are refused", {
   frame <- varcomp_frame()
   s <- two_stage_pps(frame)
@@ -248,7 +299,7 @@ test_that("a WR first stage keys PSUs by draw, not by cluster", {
 
 
 test_that("a stratified WR first stage qualifies draw keys by stratum", {
-  # .draw_1 restarts in each stratum pool; the bare index would merge
+  # .draw_1 restarts in each stratum pool. The bare index would merge
   # draws across strata and trip the weight-constancy check.
   frame <- withr::with_seed(3, {
     data.frame(

@@ -43,9 +43,9 @@ test_that("ordinary cube auxiliaries and bound() constraints compose", {
     function(x) sum(pik[balanced_feature_frame$region == x]),
     numeric(1)
   )
-  realised <- as.integer(table(result$region))
-  expect_true(all(realised >= floor(expected)))
-  expect_true(all(realised <= ceiling(expected)))
+  realized <- as.integer(table(result$region))
+  expect_true(all(realized >= floor(expected)))
+  expect_true(all(realized <= ceiling(expected)))
 })
 
 test_that("bound() reproduces the paper's controlled matrix rounding example", {

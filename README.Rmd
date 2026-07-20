@@ -434,14 +434,14 @@ Partition the sample into rotation groups for panel surveys:
 
 ```{r panels}
 panel_sample <- sampling_design() |>
-  stratify_by(region) |>
+  stratify_by(region, alloc = "proportional") |>
   draw(n = 200) |>
   execute(bfa_eas, seed = 1, panels = 4)
 
 table(panel_sample$.panel)
 ```
 
-Panels are assigned by systematic interleaving within strata. For multi-stage designs, panels are assigned at the PSU level and propagated to all units. Per-panel analysis is also possible by multiplying the weights by the number of panels since the weights reflect the full-sample inclusion probability.
+Panels are assigned deterministically by systematic interleaving within strata. For multi-stage designs, panels are assigned at the PSU level and propagated to all units. They are intended for rotation or workload management. The weights remain full-sample weights and are valid for the combined sample; multiplying one panel's weights by the number of panels is not generally valid for population inference.
 
 ## Replicated Sampling
 
@@ -456,7 +456,7 @@ rep_sample <- sampling_design() |>
 table(rep_sample$.replicate)
 ```
 
-Each replicate is an independent draw. Replicate `r` uses seed `seed + r - 1`. To analyse a single replicate, filter first:
+Each replicate is an independent draw. Replicate `r` uses seed `seed + r - 1`. To analyze a single replicate, filter first:
 
 ```{r reps-filter, eval = FALSE}
 rep1 <- rep_sample |> filter(.replicate == 1)
@@ -489,7 +489,13 @@ Weights compound automatically across phases.
 summary(strata_smpl)
 ```
 
-Every execution also records a frame digest, a compact summary of the selection pools and chances the design resolved. `frame_summary()` returns it as tibbles without needing the frame. The companion package samplens, in development, draws the digest as a visual sampling card. See `vignette("introduction")` for examples.
+By default, each execution records a summary frame digest: a compact record of
+the selection pools and chances the design resolved. `frame_summary()` returns
+it as tibbles without needing the frame. Use `frame_digest = "none"` for the
+lowest execution overhead, or `frame_digest = "full"` when downstream work
+needs exact per-unit chances for unequal-probability element stages. The
+companion package samplens, in development, draws the digest as a visual
+sampling card. See `vignette("introduction")` for examples.
 
 ## Validation
 

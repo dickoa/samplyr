@@ -27,6 +27,10 @@
 #' @param stage An integer vector of stage numbers to compute, or
 #'   `NULL` (default) to compute all PPS stages.
 #'   Non-PPS stages produce `NULL` entries in the returned list.
+#' @param nsim Positive integer number of simulations used for Chromy's
+#'   pairwise expected hits (default 10000). Also forwarded to registered
+#'   WR `joint_fn`s that explicitly declare an `nsim` formal. Ignored by
+#'   analytic methods.
 #'
 #' @return A named list of length equal to the number of executed
 #'   stages. Each element is either:
@@ -38,9 +42,13 @@
 #'     \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
 #'   - `NULL` for non-PPS stages (SRS, systematic) or stages not
 #'     requested via the `stage` argument.
-#'   Dimensions match the number of unique sampled units (or sampled
-#'   clusters for clustered stages). Rows and columns are ordered to
-#'   match the sample.
+#'   Rows and columns represent stage-specific sampled units in first
+#'   appearance order. At a WR stage, repeated hits of the same
+#'   population unit appear once, so dimensions match the number of
+#'   distinct sampled units (or clusters). At a later stage below a WR
+#'   parent, each parent draw occurrence defines a separate conditional
+#'   block, so the same child population identity can appear in more
+#'   than one block.
 #'
 #' @details
 #' For each PPS stage, the function:
@@ -57,8 +65,17 @@
 #' at sampling time, regardless of allocation method.
 #'
 #' For stratified or conditional (within-cluster) stages, joint
-#' quantities are computed independently within each group and
-#' assembled into a block-diagonal matrix.
+#' quantities are computed independently within each group. Blocks
+#' follow their first appearance in the sample, as do units within a
+#' block. Cross-block entries are products of the corresponding
+#' marginal chances.
+#'
+#' A stage below a WR parent is conditional on each parent draw
+#' occurrence, not only on the parent's population identity. Repeated
+#' hits of one parent therefore produce separate independent child
+#' blocks. Pair the returned matrix with stage-specific identities in
+#' this order; do not pair it blindly with every sample row when
+#' descendants duplicate a selected unit.
 #'
 #' ## Exact vs. approximate computation
 #'
@@ -72,7 +89,7 @@
 #' |--------------------|-------------------------------|------------------------------------|
 #' | `pps_cps`          | `joint_inclusion_prob()`      | **Exact** (Aires' formula via C)   |
 #' | `pps_sampford`     | `joint_inclusion_prob()`      | **Exact** (Sampford design)        |
-#' | `pps_systematic`   | `joint_inclusion_prob()`      | **Exact** (combinatorial enumeration) |
+#' | `pps_systematic`   | `joint_inclusion_prob()`      | **Exact** (circular-interval overlap) |
 #' | `pps_poisson`      | `joint_inclusion_prob()`      | **Exact** (\eqn{\pi_{kl} = \pi_k \pi_l}{pi_kl = pi_k * pi_l}, independent draws) |
 #' | `pps_brewer`       | `joint_inclusion_prob()`      | **Approximate**\eqn{^*} (high-entropy / Hajek-Brewer-Donadio) |
 #' | `pps_sps`          | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
@@ -99,7 +116,7 @@
 #' joint probabilities are exact by definition.
 #'
 #' Bounded cube, LPM2, and SCPS designs are rejected because count constraints
-#' and spatial spreading alter pairwise selection behaviour beyond the
+#' and spatial spreading alter pairwise selection behavior beyond the
 #' available approximation. Use [as_svrepdesign()] with `type =
 #' "subbootstrap"` for a generic bootstrap approximation instead.
 #'
@@ -113,9 +130,8 @@
 #' For `pps_chromy`, the sequential dependence structure does not admit
 #' a closed-form expression for \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
 #' sondage uses Monte Carlo simulation (default 10 000 replicates) to
-#' estimate the pairwise expectations. Increasing `nsim` (passed
-#' through `...`) reduces Monte Carlo error at the cost of computation
-#' time.
+#' estimate the pairwise expectations. Increasing `nsim` reduces Monte
+#' Carlo error at the cost of computation time.
 #'
 #' ## Limitations
 #'
@@ -160,12 +176,21 @@
 #'   approximation, [survey::ppsmat()] for wrapping joint matrices
 #'
 #' @export
-joint_expectation <- function(x, frame = NULL, stage = NULL) {
+joint_expectation <- function(x, frame = NULL, stage = NULL, nsim = 10000L) {
   if (!inherits(x, "tbl_sample")) {
     cli_abort("{.arg x} must be a {.cls tbl_sample} object.")
   }
   check_single_replicate(x, "joint_expectation")
   check_sample_unmodified(x, "joint_expectation")
+  if (
+    length(nsim) != 1L ||
+      !is_integerish_numeric(nsim) ||
+      nsim < 1 ||
+      nsim > .Machine$integer.max
+  ) {
+    cli_abort("{.arg nsim} must be a single positive integer.")
+  }
+  nsim <- as.integer(nsim)
 
   digest <- NULL
   if (is_null(frame)) {
@@ -239,14 +264,15 @@ joint_expectation <- function(x, frame = NULL, stage = NULL) {
     }
 
     result[[stage_idx]] <- if (is_null(frame)) {
-      compute_stage_jip_digest(digest, design, stage_idx, x)
+      compute_stage_jip_digest(digest, design, stage_idx, x, nsim)
     } else {
       compute_stage_jip(
         x,
         frame,
         design,
         stage_idx,
-        stages_executed
+        stages_executed,
+        nsim
       )
     }
   }
@@ -262,18 +288,22 @@ joint_expectation <- function(x, frame = NULL, stage = NULL) {
 #' independent selections, so the stage matrix is block-diagonal over
 #' pools with cross-pool entries at the product of marginals.
 #'
-#' Row order matches the frame path's "ordered to match the sample"
-#' contract: the sample rows themselves say where each selection
-#' appears (the verified sample_row locator for element stages, the
-#' selected ancestry keys matched against the sample columns for
-#' cluster stages), so blocks are ordered parents-by-sample-order,
-#' strata sorted within a parent, and selections by sample position
-#' within a pool.
+#' Row order matches first appearance in the sample. The sample rows
+#' themselves say where each selection appears (the verified
+#' sample_row locator for element stages, the selected ancestry keys
+#' matched against the sample columns for cluster stages), so blocks
+#' and selections within blocks both follow their minimum sample rank.
 #'
 #' Refuses summarized chance representations rather than turning them
 #' into apparently exact joint probabilities.
 #' @noRd
-compute_stage_jip_digest <- function(digest, design, stage_idx, x) {
+compute_stage_jip_digest <- function(
+  digest,
+  design,
+  stage_idx,
+  x,
+  nsim = 10000L
+) {
   stage_ids <- vapply(digest$stages, function(s) s$stage_id, integer(1))
   pos <- match(stage_idx, stage_ids)
   if (is.na(pos)) {
@@ -318,17 +348,92 @@ compute_stage_jip_digest <- function(digest, design, stage_idx, x) {
   ) {
     sel$.rank <- sel$sample_row
   } else if ("key" %in% names(sel)) {
+    sample_df <- as.data.frame(x)
+    ancestor_vars <- collect_ancestor_cluster_vars(design, stage_idx)
     key_vars <- unique(c(
-      collect_ancestor_cluster_vars(design, stage_idx),
+      ancestor_vars,
       design$stages[[stage_idx]]$clusters$vars
     ))
     if (all(key_vars %in% names(x))) {
       sample_keys <- digest_path_keys(
-        as.data.frame(x), seq_len(nrow(x)), key_vars
+        sample_df, seq_len(nrow(sample_df)), key_vars
       )
-      rank <- match(sel$key, unique(sample_keys))
-      if (!anyNA(rank)) {
-        sel$.rank <- rank
+      prior_stage_ids <- if (stage_idx > 1L) {
+        seq_len(stage_idx - 1L)
+      } else {
+        integer(0)
+      }
+      wr_ancestor_ids <- prior_stage_ids[vapply(
+        prior_stage_ids,
+        function(i) is_multi_hit_method(design$stages[[i]]$draw_spec),
+        logical(1)
+      )]
+      prior_draw_cols <- intersect(
+        paste0(".draw_", wr_ancestor_ids), names(sample_df)
+      )
+      block_vars <- unique(c(ancestor_vars, prior_draw_cols, st$strata))
+      sample_groups <- if (length(block_vars) > 0) {
+        split_row_indices(sample_df, block_vars)$indices
+      } else {
+        list(seq_len(nrow(sample_df)))
+      }
+      trace_pools <- unique(sel$pool_id)
+      group_first_rows <- first_row_indices_by_group(sample_groups)
+      available_groups <- rep(TRUE, length(sample_groups))
+      matched_pool <- FALSE
+
+      for (i in seq_along(trace_pools)) {
+        pid <- trace_pools[[i]]
+        sel_rows <- which(sel$pool_id == pid)
+        pool_keys <- unique(sel$key[sel_rows])
+        candidates <- which(vapply(
+          sample_groups,
+          function(rows) all(pool_keys %in% sample_keys[rows]),
+          logical(1)
+        ))
+        pool_pos <- match(pid, pools$pool_id)
+        if (
+          length(candidates) > 0 &&
+            "parent_occurrence" %in% names(pools) &&
+            length(prior_draw_cols) > 0 &&
+            !is.na(pools$parent_occurrence[[pool_pos]])
+        ) {
+          draw_col <- prior_draw_cols[[length(prior_draw_cols)]]
+          candidates <- candidates[
+            sample_df[[draw_col]][group_first_rows[candidates]] ==
+              pools$parent_occurrence[[pool_pos]]
+          ]
+        }
+        for (stratum in st$strata %||% character(0)) {
+          candidates <- candidates[
+            as.character(sample_df[[stratum]][
+              group_first_rows[candidates]
+            ]) == as.character(pools[[stratum]][[pool_pos]])
+          ]
+        }
+        unused <- candidates[available_groups[candidates]]
+        group_pos <- if (length(unused) > 0) {
+          unused[[1]]
+        } else if (length(candidates) > 0) {
+          candidates[[1]]
+        } else {
+          NA_integer_
+        }
+        if (!is.na(group_pos)) {
+          available_groups[[group_pos]] <- FALSE
+          sample_rows <- sample_groups[[group_pos]]
+          rank <- match(sel$key[sel_rows], sample_keys[sample_rows])
+          if (!anyNA(rank)) {
+            sel$.rank[sel_rows] <- sample_rows[rank]
+            matched_pool <- TRUE
+          }
+        }
+      }
+      if (!matched_pool && anyDuplicated(sel$key) == 0L) {
+        rank <- match(sel$key, sample_keys)
+        if (!anyNA(rank)) {
+          sel$.rank <- rank
+        }
       }
     }
   }
@@ -347,31 +452,10 @@ compute_stage_jip_digest <- function(digest, design, stage_idx, x) {
     )
   }
 
-  # Frame-path block order: parents in sample order, then strata in
-  # sorted key order within a parent.
-  stratum_key <- if (is_null(st$strata)) {
-    rep("", length(sel_pools))
-  } else {
-    do.call(paste, c(
-      lapply(st$strata, function(v) {
-        as.character(pools[[v]][pool_pos])
-      }),
-      sep = "\x01"
-    ))
-  }
   pool_min_rank <- vapply(sel_pools, function(pid) {
     min(sel$.rank[sel$pool_id == pid])
   }, numeric(1))
-  parent <- pools$parent_unit[pool_pos]
-  parent_rank <- if (all(is.na(parent))) {
-    rep(1, length(sel_pools))
-  } else {
-    parent_first <- vapply(unique(parent), function(pu) {
-      min(pool_min_rank[parent == pu])
-    }, numeric(1))
-    parent_first[match(parent, unique(parent))]
-  }
-  block_order <- order(parent_rank, stratum_key)
+  block_order <- order(pool_min_rank)
 
   blocks <- lapply(sel_pools[block_order], function(pid) {
     p <- pools[pools$pool_id == pid, , drop = FALSE]
@@ -392,7 +476,8 @@ compute_stage_jip_digest <- function(digest, design, stage_idx, x) {
       method = draw_spec$method,
       sampled_idx = sampled_idx,
       n = if (is.na(p$n_target)) NULL else as.integer(p$n_target),
-      draw_spec = draw_spec
+      draw_spec = draw_spec,
+      nsim = nsim
     )
   })
 
@@ -406,7 +491,8 @@ compute_stage_jip <- function(
   frame,
   design,
   stage_idx,
-  stages_executed
+  stages_executed,
+  nsim = 10000L
 ) {
   stage_spec <- design$stages[[stage_idx]]
   draw_spec <- stage_spec$draw_spec
@@ -424,39 +510,82 @@ compute_stage_jip <- function(
   sample_df <- as.data.frame(x)
 
   ancestor_vars <- collect_ancestor_cluster_vars(design, stage_idx)
+  stage_pos <- match(stage_idx, stages_executed)
+  prior_stage_ids <- if (stage_pos > 1L) {
+    stages_executed[seq_len(stage_pos - 1L)]
+  } else {
+    integer(0)
+  }
+  wr_ancestor_ids <- prior_stage_ids[vapply(
+    prior_stage_ids,
+    function(i) is_multi_hit_method(design$stages[[i]]$draw_spec),
+    logical(1)
+  )]
+  prior_draw_cols <- intersect(
+    paste0(".draw_", wr_ancestor_ids),
+    names(sample_df)
+  )
 
   if (!is_null(cluster_spec)) {
     cluster_vars <- cluster_spec$vars
-    dedup_vars <- unique(c(ancestor_vars, cluster_vars))
-    frame_keep <- unique(c(dedup_vars, strata_vars, draw_spec$mos))
+    frame_dedup_vars <- unique(c(ancestor_vars, cluster_vars))
+    frame_keep <- unique(c(
+      frame_dedup_vars, strata_vars, draw_spec$mos
+    ))
     effective_frame <- effective_frame |>
       select(all_of(frame_keep)) |>
-      distinct(across(all_of(dedup_vars)), .keep_all = TRUE)
-    sample_keep <- unique(c(dedup_vars, strata_vars))
+      distinct(across(all_of(frame_dedup_vars)), .keep_all = TRUE)
+    sample_dedup_vars <- unique(c(prior_draw_cols, frame_dedup_vars))
+    sample_keep <- unique(c(sample_dedup_vars, strata_vars))
     sample_df <- sample_df |>
       select(all_of(sample_keep)) |>
-      distinct(across(all_of(dedup_vars)), .keep_all = TRUE)
+      distinct(across(all_of(sample_dedup_vars)), .keep_all = TRUE)
   }
 
-  # A later stage selects independently WITHIN each parent cluster:
-  # allocation and first-order chances are conditional per parent, so
-  # the computation must split by ancestry before anything else.
-  # Pooling parents would understate every within-parent chance.
+  # A later stage selects independently within each parent occurrence.
+  # Population ancestry filters the source frame; draw columns from
+  # every prior WR stage distinguish repeated conditional selections
+  # in the realized sample and never participate in frame matching.
   ancestor_split <- intersect(
     ancestor_vars, intersect(names(effective_frame), names(sample_df))
   )
-  if (length(ancestor_split) > 0) {
-    frame_keys <- make_group_key(effective_frame, ancestor_split)
-    sample_keys <- make_group_key(sample_df, ancestor_split)
-    parents <- unique(sample_keys)
-    blocks <- lapply(parents, function(key) {
+  occurrence_split <- unique(c(ancestor_split, prior_draw_cols))
+  if (length(occurrence_split) > 0) {
+    occurrences <- split_row_indices(sample_df, occurrence_split)
+    first_rows <- first_row_indices_by_group(occurrences$indices)
+
+    frame_groups <- NULL
+    frame_group_pos <- NULL
+    if (length(ancestor_split) > 0) {
+      frame_groups <- split_row_indices(effective_frame, ancestor_split)
+      occurrence_parent_keys <- make_group_key(
+        sample_df[first_rows, , drop = FALSE], ancestor_split
+      )
+      frame_group_pos <- match(occurrence_parent_keys, frame_groups$keys)
+      if (anyNA(frame_group_pos)) {
+        cli_abort(
+          "Could not match a sampled parent occurrence to the frame.",
+          call = NULL
+        )
+      }
+    }
+
+    blocks <- lapply(seq_along(occurrences$indices), function(i) {
+      occurrence_frame <- if (length(ancestor_split) > 0) {
+        effective_frame[
+          frame_groups$indices[[frame_group_pos[[i]]]], , drop = FALSE
+        ]
+      } else {
+        effective_frame
+      }
       compute_stage_jip_pool(
-        effective_frame[frame_keys == key, , drop = FALSE],
-        sample_df[sample_keys == key, , drop = FALSE],
+        occurrence_frame,
+        sample_df[occurrences$indices[[i]], , drop = FALSE],
         strata_spec,
         draw_spec,
         cluster_spec,
-        ancestor_vars
+        ancestor_vars,
+        nsim
       )
     })
     return(assemble_block_diagonal(blocks))
@@ -468,7 +597,8 @@ compute_stage_jip <- function(
     strata_spec,
     draw_spec,
     cluster_spec,
-    ancestor_vars
+    ancestor_vars,
+    nsim
   )
 }
 
@@ -480,7 +610,8 @@ compute_stage_jip_pool <- function(
   strata_spec,
   draw_spec,
   cluster_spec,
-  ancestor_vars
+  ancestor_vars,
+  nsim = 10000L
 ) {
   if (!is_null(strata_spec)) {
     compute_stratified_jip(
@@ -489,7 +620,8 @@ compute_stage_jip_pool <- function(
       strata_spec,
       draw_spec,
       cluster_spec,
-      ancestor_cluster_vars = ancestor_vars
+      ancestor_cluster_vars = ancestor_vars,
+      nsim = nsim
     )
   } else {
     n_target <- resolve_unstratified_n(effective_frame, draw_spec)
@@ -500,7 +632,8 @@ compute_stage_jip_pool <- function(
       n_target,
       strata_vars = NULL,
       cluster_spec = cluster_spec,
-      ancestor_cluster_vars = ancestor_vars
+      ancestor_cluster_vars = ancestor_vars,
+      nsim = nsim
     )
   }
 }
@@ -517,7 +650,8 @@ compute_stratified_jip <- function(
   strata_spec,
   draw_spec,
   cluster_spec,
-  ancestor_cluster_vars = character(0)
+  ancestor_cluster_vars = character(0),
+  nsim = 10000L
 ) {
   strata_vars <- strata_spec$vars
 
@@ -532,24 +666,21 @@ compute_stratified_jip <- function(
   )
   draw_lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars)
 
-  frame_group_ids <- make_strata_group_ids(effective_frame, strata_vars)
-  frame_group_rows <- split(seq_len(nrow(effective_frame)), frame_group_ids)
+  frame_groups <- split_row_indices(effective_frame, strata_vars)
+  sample_groups <- split_row_indices(sample_df, strata_vars)
+  frame_group_pos <- match(sample_groups$keys, frame_groups$keys)
+  if (anyNA(frame_group_pos)) {
+    cli_abort(
+      "Could not match a sampled stratum to the frame.",
+      call = NULL
+    )
+  }
 
-  sample_group_rows <- split(
-    seq_len(nrow(sample_df)),
-    make_strata_group_ids(sample_df, strata_vars)
-  )
-  empty_sample <- sample_df[0, , drop = FALSE]
-
-  block_matrices <- lapply(names(frame_group_rows), function(stratum_id) {
-    frame_rows <- frame_group_rows[[stratum_id]]
+  block_matrices <- lapply(seq_along(sample_groups$indices), function(i) {
+    stratum_id <- sample_groups$keys[[i]]
+    frame_rows <- frame_groups$indices[[frame_group_pos[[i]]]]
     group_frame <- effective_frame[frame_rows, , drop = FALSE]
-    sample_rows <- sample_group_rows[[stratum_id]]
-    group_sample <- if (is_null(sample_rows)) {
-      empty_sample
-    } else {
-      sample_df[sample_rows, , drop = FALSE]
-    }
+    group_sample <- sample_df[sample_groups$indices[[i]], , drop = FALSE]
 
     n_h <- n_h_lookup[[stratum_id]]
     if (is_null(n_h) || is.na(n_h)) {
@@ -575,7 +706,8 @@ compute_stratified_jip <- function(
       n_h,
       strata_vars = NULL,
       cluster_spec,
-      ancestor_cluster_vars = ancestor_cluster_vars
+      ancestor_cluster_vars = ancestor_cluster_vars,
+      nsim = nsim
     )
   })
 
@@ -663,7 +795,8 @@ compute_group_jip <- function(
   n_target,
   strata_vars,
   cluster_spec,
-  ancestor_cluster_vars = character(0)
+  ancestor_cluster_vars = character(0),
+  nsim = 10000L
 ) {
   sampled_idx <- match_sampled_units(
     group_frame,
@@ -681,7 +814,8 @@ compute_group_jip <- function(
     frame = group_frame,
     n = n_target,
     draw_spec = draw_spec,
-    sampled_idx = sampled_idx
+    sampled_idx = sampled_idx,
+    nsim = nsim
   )
 }
 
@@ -690,7 +824,13 @@ compute_group_jip <- function(
 #' Reconstructs first-order quantities on the full group, then requests
 #' sampled-only second-order expectations from `sondage`.
 #' @noRd
-compute_joint_matrix <- function(frame, n, draw_spec, sampled_idx) {
+compute_joint_matrix <- function(
+  frame,
+  n,
+  draw_spec,
+  sampled_idx,
+  nsim = 10000L
+) {
   method <- draw_spec$method
   mos_var <- draw_spec$mos
   N <- nrow(frame)
@@ -725,11 +865,13 @@ compute_joint_matrix <- function(frame, n, draw_spec, sampled_idx) {
     identical(draw_spec$method_type, "wr")
   if (is_wr) {
     pik <- sondage::expected_hits(mos_vals, n)
-    return(compute_jeh_by_method(pik, n, method, sampled_idx))
+    return(compute_jeh_by_method(pik, n, method, sampled_idx, nsim))
   }
 
   pik <- compute_stage_pik(method, mos_vals, n, draw_spec, N = N)
-  compute_jip_from_pik(pik, method, sampled_idx, draw_spec = draw_spec)
+  compute_jip_from_pik(
+    pik, method, sampled_idx, draw_spec = draw_spec, nsim = nsim
+  )
 }
 
 #' Compute first-order inclusion/hit expectations for one stage
@@ -781,7 +923,14 @@ compute_stage_pik <- function(method, mos_vals, n, draw_spec, N = length(mos_val
 
 #' Compute sampled joint matrix from first-order probabilities/hits
 #' @noRd
-compute_jip_from_pik <- function(pik, method, sampled_idx, n = NULL, draw_spec = NULL) {
+compute_jip_from_pik <- function(
+  pik,
+  method,
+  sampled_idx,
+  n = NULL,
+  draw_spec = NULL,
+  nsim = 10000L
+) {
   sampled_idx <- as.integer(sampled_idx)
 
   is_wr <- method %in% pps_wr_methods ||
@@ -793,7 +942,7 @@ compute_jip_from_pik <- function(pik, method, sampled_idx, n = NULL, draw_spec =
         call = NULL
       )
     }
-    return(compute_jeh_by_method(pik, n, method, sampled_idx))
+    return(compute_jeh_by_method(pik, n, method, sampled_idx, nsim))
   }
 
   cert_tol <- 1 - sqrt(.Machine$double.eps)
@@ -903,22 +1052,28 @@ compute_jip_by_method <- function(pik, method, sampled_idx, draw_spec = NULL) {
     ),
     class = c("unequal_prob", "wor", "sondage_sample")
   )
-  sondage::joint_inclusion_prob(design, sampled_only = TRUE)
+  unname(sondage::joint_inclusion_prob(design, sampled_only = TRUE))
 }
 
 #' Dispatch to sondage::joint_expected_hits for WR/PMR methods
 #' @noRd
-compute_jeh_by_method <- function(pik, n, method, sampled_idx) {
+compute_jeh_by_method <- function(
+  pik,
+  n,
+  method,
+  sampled_idx,
+  nsim = 10000L
+) {
   sondage_name <- sondage_method_name(method)
 
   sampled_idx <- as.integer(sampled_idx)
-  sampled_sorted <- sort(unique(sampled_idx))
+  sampled_distinct <- unique(sampled_idx)
   hits <- integer(length(pik))
-  hits[sampled_sorted] <- 1L
+  hits[sampled_distinct] <- 1L
 
   design <- structure(
     list(
-      sample = sampled_sorted,
+      sample = sampled_distinct,
       prob = pik / n,
       hits = hits,
       n = as.integer(n),
@@ -928,10 +1083,18 @@ compute_jeh_by_method <- function(pik, n, method, sampled_idx) {
     ),
     class = c("unequal_prob", "wr", "sondage_sample")
   )
-  jeh_sorted <- sondage::joint_expected_hits(design, sampled_only = TRUE)
-
-  reorder_idx <- match(sampled_idx, sampled_sorted)
-  jeh_sorted[reorder_idx, reorder_idx, drop = FALSE]
+  jeh_population_order <- unname(
+    sondage::joint_expected_hits(
+      design, sampled_only = TRUE, nsim = nsim
+    )
+  )
+  population_order <- sort(sampled_distinct)
+  first_appearance_order <- match(sampled_distinct, population_order)
+  jeh_population_order[
+    first_appearance_order,
+    first_appearance_order,
+    drop = FALSE
+  ]
 }
 
 #' Assemble joint matrix separating certainty from stochastic units

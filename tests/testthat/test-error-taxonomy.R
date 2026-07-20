@@ -12,6 +12,13 @@ test_that("selector helpers are rejected at design specification time", {
   )
 })
 
+test_that("tbl_sample restoration errors use a standardized class", {
+  expect_error(
+    as_tbl_sample(data.frame(x = 1)),
+    class = "samplyr_error_tbl_sample_missing_attributes"
+  )
+})
+
 test_that("auxiliary validation errors use standardized classes", {
   expect_error(
     sampling_design() |>

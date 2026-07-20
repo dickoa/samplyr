@@ -24,11 +24,11 @@ library(dplyr)
 
 ## Why Coordinate Samples?
 
-Repeated surveys (business panels, labour force surveys, agricultural censuses) draw fresh samples at regular intervals from the same population.
-Similarly, multiple survey programmes often sample from the same register simultaneously. Two natural questions arise:
+Repeated surveys (business panels, labor force surveys, agricultural censuses) draw fresh samples at regular intervals from the same population.
+Similarly, multiple survey programs often sample from the same register simultaneously. Two natural questions arise:
 
-- **Positive coordination**: How can we maximise overlap between samples to reduce respondent burden and improve change estimates?
-- **Negative coordination**: How can we minimise overlap to spread the burden and maximise cumulative coverage?
+- **Positive coordination**: How can we maximize overlap between samples to reduce respondent burden and improve change estimates?
+- **Negative coordination**: How can we minimize overlap to spread the burden and maximize cumulative coverage?
 
 These questions apply both *temporally* (across waves of the same survey) and *cross-sectionally* (across different surveys on the same frame, known as **collocated sampling**).
 
@@ -80,7 +80,7 @@ round(quantile(frame$pik), 4)
 
 ## Positive Coordination: Maximum Overlap
 
-To maximise overlap between waves, reuse the same PRN values. With sequential Poisson sampling (SPS), two waves drawn from the same frame with identical PRNs produce identical samples.
+To maximize overlap between waves, reuse the same PRN values. With sequential Poisson sampling (SPS), two waves drawn from the same frame with identical PRNs produce identical samples.
 
 ```{r}
 wave1 <- sampling_design() |>
@@ -100,7 +100,7 @@ Perfect overlap. This is useful when the goal is to track the same units over ti
 
 ## Negative Coordination: Minimum Overlap
 
-To minimise overlap, update the PRN values between waves using @tille2006 [§8.2] formula:
+To minimize overlap, update the PRN values between waves using @tille2006 [§8.2] formula:
 
 $$u_k^{(t+1)} = \bigl(u_k^{(t)} - \pi_k\bigr) \bmod 1$$
 
@@ -172,7 +172,7 @@ wave2_ind <- sampling_design() |>
 overlap_ind <- length(intersect(wave1_ind$enterprise_id,
                                 wave2_ind$enterprise_id))
 
-tibble(strategy = c("Positive (same PRN)", "Independent (fresh PRN)", "Negative (Tillé update)"),
+tibble(strategy = c("Positive (same PRN)", "Independent (fresh PRN)", "Negative (Tille update)"),
        overlap = c(overlap_positive, overlap_ind, overlap_negative),
        bound = c(n_wave, round(expected_independent), round(alb))) |>
   mutate(pct = paste0(round(100 * overlap / n_wave), "%"))
@@ -237,7 +237,7 @@ tibble(wave = seq_len(n_waves),
        pct_frame = paste0(round(100 * cumulative / nrow(ken_enterprises), 1), "%"))
 ```
 
-Negative coordination aims to maximise the number of distinct units covered,
+Negative coordination aims to maximize the number of distinct units covered,
 which is valuable for building comprehensive registers or spreading respondent
 burden.
 
@@ -284,7 +284,7 @@ wave_t2 <- sampling_design() |>
 # How many births were selected?
 n_births_selected <- sum(wave_t2$enterprise_id %in% births$enterprise_id)
 n_births_selected
-n_births_selected/n_births
+n_births_selected / n_births
 ```
 
 The coordination mechanism automatically handles frame changes. Surviving units retain their updated PRN values and births start with fresh PRN.
@@ -362,12 +362,12 @@ have zero realized overlap.
 
 ## Collocated Sampling: Coordinating Across Surveys
 
-The examples above coordinate samples from the **same survey** across time (waves). A related problem is coordinating **different surveys** drawn from the same frame at the same time point. This is called *collocated sampling* [@ernst1986; @ohlsson1995] and is common in business survey programmes where a single register serves multiple survey operations.
+The examples above coordinate samples from the **same survey** across time (waves). A related problem is coordinating **different surveys** drawn from the same frame at the same time point. This is called *collocated sampling* [@ernst1986; @ohlsson1995] and is common in business survey programs where a single register serves multiple survey operations.
 
 The mechanism is identical: all surveys share the same PRN column.
 
-- **Positive coordination** (maximise overlap): both surveys use the same PRN. Useful when surveys share common modules or when joint analysis is planned.
-- **Negative coordination** (minimise overlap): one survey uses shifted PRNs ($u' = (u + 0.5) \bmod 1$). Useful when the goal is to spread respondent burden across the register.
+- **Positive coordination** (maximize overlap): both surveys use the same PRN. Useful when surveys share common modules or when joint analysis is planned.
+- **Negative coordination** (minimize overlap): one survey uses shifted PRNs ($u' = (u + 0.5) \bmod 1$). Useful when the goal is to spread respondent burden across the register.
 
 ### Example: Turnover survey and employment survey
 
@@ -428,7 +428,7 @@ overlap_ind
 
 ### Overlap bounds for different surveys
 
-When two surveys have different inclusion probabilities $\pi_k^A$ and $\pi_k^B$, the bounds generalise naturally:
+When two surveys have different inclusion probabilities $\pi_k^A$ and $\pi_k^B$, the bounds generalize naturally:
 
 ```{r}
 pik_a <- inclusion_prob(frame$revenue_millions, 200)
@@ -463,7 +463,7 @@ for (j in seq_len(n_surveys)) {
 }
 ```
 
-This simple shift strategy works well when the surveys have similar $\pi_k$. For more complex programmes (varying burden weights, priority orderings, or dozens of surveys), NSOs use dedicated coordination systems such as the Rivière method [@riviere2001], the Netherlands EDS [@deree1983; @vanhuis1994], or the Swiss method [@graf2014]. These methods track cumulative burden per unit and permute PRNs within microstrata to achieve near-optimal coordination across the full survey programme. See @tille2020 [§8.2.7--8.2.9] for a detailed treatment.
+This simple shift strategy works well when the surveys have similar $\pi_k$. For more complex programs (varying burden weights, priority orderings, or dozens of surveys), NSOs use dedicated coordination systems such as the Rivière method [@riviere2001], the Netherlands EDS [@deree1983; @vanhuis1994], or the Swiss method [@graf2014]. These methods track cumulative burden per unit and permute PRNs within microstrata to achieve near-optimal coordination across the full survey program. See @tille2020 [§8.2.7--8.2.9] for a detailed treatment.
 
 ## Summary
 

@@ -9,7 +9,7 @@
 \arguments{
 \item{x}{A \code{sampling_design} object}
 
-\item{...}{Additional arguments (ignored)}
+\item{...}{Must be empty.}
 }
 \value{
 A list representation of the design containing:

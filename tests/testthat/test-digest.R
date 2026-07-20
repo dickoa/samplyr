@@ -13,7 +13,7 @@ expect_digest_error <- function(digest, what) {
 test_that("constructors produce the documented shape", {
   d <- digest_fixture_constant()
   expect_named(d, c("version", "status", "privacy", "frames", "stages"))
-  expect_identical(d$version, 1L)
+  expect_identical(d$version, 2L)
   expect_identical(d$status, "complete")
   expect_identical(d$privacy$mode, "summary")
   expect_false(d$privacy$stable_keys)
@@ -47,7 +47,11 @@ test_that("validator rejects a missing or malformed version", {
   expect_digest_error(d, "malformed")
 })
 
-test_that("validator rejects a digest from a newer schema version", {
+test_that("validator requires the exact supported schema version", {
+  d <- digest_fixture_constant()
+  d$version <- 1L
+  expect_digest_error(d, "version")
+
   d <- digest_fixture_constant()
   d$version <- 99L
   expect_digest_error(d, "version")
@@ -446,7 +450,7 @@ test_that("get_frame_digest returns NULL without a digest", {
 test_that("set_frame_digest attaches a validated digest", {
   s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_constant())
   d <- samplyr:::get_frame_digest(s)
-  expect_identical(d$version, 1L)
+  expect_identical(d$version, 2L)
   expect_identical(d$status, "complete")
 
   bad <- digest_fixture_constant()
@@ -457,7 +461,15 @@ test_that("set_frame_digest attaches a validated digest", {
   )
 })
 
-test_that("get_frame_digest rejects a digest from a newer samplyr", {
+test_that("get_frame_digest requires the exact supported schema version", {
+  d <- digest_fixture_constant()
+  d$version <- 1L
+  s <- samplyr:::set_frame_digest(fix_srs, d, validate = FALSE)
+  expect_error(
+    samplyr:::get_frame_digest(s),
+    class = "samplyr_error_digest_version"
+  )
+
   d <- digest_fixture_constant()
   d$version <- 99L
   s <- samplyr:::set_frame_digest(fix_srs, d, validate = FALSE)
@@ -617,7 +629,7 @@ test_that("pool detail reports the constant chance where one applies", {
   expect_identical(fs$chance_status, "summarized")
 })
 
-test_that("pool-level take rates honour pool scope", {
+test_that("pool-level take rates honor pool scope", {
   s <- samplyr:::set_frame_digest(
     fix_srs, digest_fixture_units(stage2_scope = "conditional")
   )

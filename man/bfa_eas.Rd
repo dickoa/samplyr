@@ -11,18 +11,18 @@ A tibble with 44,570 rows and 13 columns:
 \item{region}{Factor. Region name (13 regions)}
 \item{province}{Factor. Province name within region (45 provinces)}
 \item{commune}{Factor. Commune name within province (348 communes)}
-\item{urban_rural}{Factor. Modelled urban/rural classification based on
+\item{urban_rural}{Factor. Modeled urban/rural classification based on
 commune population density}
 \item{population}{Integer. WorldPop/GRID3 preEA population estimate,
 informed by the 2019 population census}
-\item{households}{Integer. Modelled household count, derived from
+\item{households}{Integer. Modeled household count, derived from
 population and aggregated EHCVM 2021-2022 household-size parameters}
-\item{area_km2}{Numeric. EA area in square kilometres}
-\item{pop_density}{Numeric. Population per square kilometre, derived from
+\item{area_km2}{Numeric. EA area in square kilometers}
+\item{pop_density}{Numeric. Population per square kilometer, derived from
 population and source polygon area}
 \item{longitude}{Numeric. Longitude of the preEA point-on-surface in WGS 84}
 \item{latitude}{Numeric. Latitude of the preEA point-on-surface in WGS 84}
-\item{remoteness}{Factor. Modelled operational class (Low, Medium, High)
+\item{remoteness}{Factor. Modeled operational class (Low, Medium, High)
 for sampling examples; not an official geographic classification}
 \item{fieldwork_cost}{Integer. Synthetic relative fieldwork cost index;
 not a monetary estimate}
@@ -59,7 +59,7 @@ This dataset is designed for demonstrating:
 \item Urban/rural stratification
 \item Neyman and optimal allocation using auxiliary variables
 \item Balanced and spatially balanced selection using frame auxiliaries
-\item Operational planning with modelled remoteness and relative costs
+\item Operational planning with modeled remoteness and relative costs
 }
 
 The data structure follows typical household survey sampling frames

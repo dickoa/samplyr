@@ -224,7 +224,7 @@ resulting sample has more than \code{n} units.
 
 Equivalent to SAS SURVEYSELECT allowing \verb{CERTSIZE=} overflow.}
 
-\item{on_empty}{Behaviour when a random-size method (\code{bernoulli},
+\item{on_empty}{Behavior when a random-size method (\code{bernoulli},
 \code{pps_poisson}, or a custom method registered with
 \code{fixed_size = FALSE}) selects zero units in a stratum or the whole
 frame. One of:

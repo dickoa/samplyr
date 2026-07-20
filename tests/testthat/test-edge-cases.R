@@ -357,6 +357,24 @@ test_that("partial execution returns correct stages", {
   expect_equal(length(unique(stage1_result$cluster_id)), 3)
 })
 
+test_that("continued execution accepts its generated sampling columns", {
+  frame <- data.frame(
+    cluster_id = rep(1:10, each = 5),
+    unit_id = 1:50
+  )
+  design <- sampling_design() |>
+    add_stage(label = "Clusters") |>
+    cluster_by(cluster_id) |>
+    draw(n = 3, method = "srswr") |>
+    add_stage(label = "Units") |>
+    draw(n = 2)
+
+  stage1 <- execute(design, frame, stages = 1, seed = 42)
+  expect_true(all(c(".weight_1", ".draw_1") %in% names(stage1)))
+  expect_no_error(full <- execute(stage1, frame, seed = 43))
+  expect_true(all(c(".weight_1", ".draw_1", ".weight_2") %in% names(full)))
+})
+
 test_that("all strata get exactly min_n when forced", {
   frame <- data.frame(
     id = 1:100,
@@ -524,11 +542,11 @@ test_that("summarise() on tbl_sample returns regular tibble", {
     draw(n = 20) |>
     execute(frame, seed = 42)
 
-  summarised <- sample |>
+  summarized <- sample |>
     group_by(region) |>
     summarise(mean_x = mean(x), .groups = "drop")
 
-  expect_false(inherits(summarised, "tbl_sample"))
+  expect_false(inherits(summarized, "tbl_sample"))
 })
 
 test_that("left_join() preserves tbl_sample class", {
@@ -569,7 +587,7 @@ test_that("grouped data frame input works", {
   expect_equal(nrow(result), 10)
 })
 
-test_that("frame with .weight column doesn't break sampling", {
+test_that("frame with .weight column is rejected before sampling", {
   frame <- data.frame(
     id = 1:100,
     x = rnorm(100)
@@ -577,10 +595,10 @@ test_that("frame with .weight column doesn't break sampling", {
   frame$.weight <- rnorm(100)
 
   design <- sampling_design() |> draw(n = 10)
-  result <- execute(design, frame, seed = 42)
-
-  # Output .weight should be the sampling weight (N/n = 10)
-  expect_equal(unique(result$.weight), 10)
+  expect_error(
+    execute(design, frame, seed = 42),
+    class = "samplyr_error_frame_reserved_names"
+  )
 })
 
 test_that("unicode stratum names work", {
@@ -736,7 +754,7 @@ test_that("within-cluster sampling respects stratification", {
     draw(n = 1) |>
     execute(frame, seed = 123)
 
-  # 2 clusters × 2 strata × 1 unit = 4 rows
+  # 2 clusters x 2 strata x 1 unit = 4 rows
   expect_equal(nrow(result), 4)
   expect_equal(length(unique(result$cluster)), 2)
 
@@ -763,7 +781,7 @@ test_that("within-cluster stratified proportional allocation works", {
     draw(n = 6) |>
     execute(frame, seed = 42)
 
-  # 2 clusters × 6 units each = 12
+  # 2 clusters x 6 units each = 12
   expect_equal(nrow(result), 12)
 
   # Within each cluster, proportional: X gets ~2, Y gets ~4
@@ -807,7 +825,7 @@ test_that("draw() accepts n from floating-point arithmetic that is near-integer"
   n_val <- 100 * (0.1 + 0.2)
   expect_false(n_val == round(n_val)) # confirms FP issue exists
 
-  # Should NOT error — the value is "integer enough"
+  # Should NOT error: the value is "integer enough"
   design <- sampling_design() |>
     draw(n = n_val)
 
@@ -932,7 +950,7 @@ test_that("execute() errors on MOS with negative values", {
 })
 
 test_that("pps_poisson with certainty uses frac-based pik, not inclusion_prob", {
-  # Frame where one unit dominates — certainty selection triggers
+  # Frame where one unit dominates, so certainty selection triggers
   frame <- data.frame(
     id = 1:10,
     size = c(500, rep(10, 9))
@@ -975,7 +993,7 @@ test_that("WR weights produce correct Hansen-Hurwitz total estimator", {
     execute(frame, seed = 42)
 
   # With replicated rows, sum(weight * y) should equal the HH total estimator:
-  # Ŷ_HH = (1/n) * sum_draws(y_j / p_j) = sum(weight * y)
+  # Y_hat_HH = (1/n) * sum_draws(y_j / p_j) = sum(weight * y)
   # where weight = 1/pik = total_size / (n * size_i) per draw
   expect_equal(nrow(result), n)
   hh_total <- sum(result$.weight * result$y)

@@ -35,7 +35,7 @@ The file format is versioned, human-readable JSON and is diffable in version
 control, so the sampling plan can be inspected without evaluating R code. It
 is currently an experimental, samplyr-native persistence format, not the
 finalized cross-tool interchange standard. Its present guarantee is
-behavioural: a restored design executes identically to the original in a
+behavioral: a restored design executes identically to the original in a
 compatible samplyr environment.
 
 ```{r, eval = FALSE}
@@ -318,7 +318,7 @@ read_design(tampered)
 
 The round-trip contract is **execution equality**. A restored design draws the same sample as the original under the same seed, while the objects themselves may differ in inconsequential ways:
 
-| Aspect                          | Behaviour after a round-trip                                        |
+| Aspect                          | Behavior after a round-trip                                         |
 |:--------------------------------|:---------------------------------------------------------------------|
 | Stages, strata, clusters, draws | Preserved exactly, including all per-stratum vectors and data frames |
 | Whole numbers                   | May switch between integer and double (JSON does not distinguish)    |

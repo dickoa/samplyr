@@ -136,7 +136,7 @@ test_that("replicated executions record empty replicates", {
   expect_true(any(counts == 0L))
 })
 
-test_that("custom random-size WOR methods honour on_empty", {
+test_that("custom random-size WOR methods honor on_empty", {
   on.exit(sondage::unregister_method("always_empty"), add = TRUE)
   sondage::register_method(
     "always_empty", "wor",

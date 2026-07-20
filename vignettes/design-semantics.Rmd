@@ -27,12 +27,12 @@ This vignette documents what each `samplyr` operation assumes, what it computes,
 
 The following table summarizes what `samplyr` assumes and what the user must verify. Each row is expanded in the sections below.
 
-| Assumption                                 | Applies to                 | samplyr behaviour                                                                                    | User must verify                                                                                      |
+| Assumption                                 | Applies to                 | samplyr behavior                                                                                     | User must verify                                                                                      |
 |:-------------------------------------------|:---------------------------|:-----------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------|
 | Strata are exhaustive and disjoint         | `stratify_by()`            | Partitions the frame by unique combinations of strata variables                                      | Strata variables define a valid partition                                                             |
 | Independent sampling across strata         | `stratify_by() |> draw()` | Each stratum sampled with a separate call to `sondage`                                                 | Correct by construction when strata are disjoint                                                      |
 | Cluster variables constant within clusters | `cluster_by()`             | Validated at execution: MOS and strata variables may not vary within a cluster                       | Cluster ID uniquely identifies the group                                                              |
-| Conditional independence across stages     | `add_stage()`              | Stage \(k\) sampling depends only on the set of units selected at stage \(k - 1\)                    | Standard multi-stage assumption; holds unless second-stage frame depends on first-stage randomisation |
+| Conditional independence across stages     | `add_stage()`              | Stage \(k\) sampling depends only on the set of units selected at stage \(k - 1\)                    | Standard multi-stage assumption; holds unless second-stage frame depends on first-stage randomization |
 | FPC stored as population count             | `execute()`                | `.fpc_k` contains \(N_h\) (or cluster count); converted to \(\pi_i\) at survey export for PPS stages | Frame size at execution is treated as the population                                                  |
 | Weights are \(1/\pi_i\), unadjusted        | All methods                | No calibration, trimming, or non-response adjustment                                                 | Downstream adjustment is the analyst's responsibility                                                 |
 | PRN values are iid \(\text{U}(0, 1)\)      | `draw(prn = ...)`          | Validated: strictly in \((0, 1)\), no NAs, numeric                                                   | Independence and uniformity of the PRN column                                                         |
@@ -264,6 +264,13 @@ supported analysis route is `as_svrepdesign(type = "subbootstrap")`, a generic
 PPS bootstrap approximation that does not recreate the constraints or spatial
 algorithm. See `?joint_expectation` for the full method-by-method breakdown.
 
+Rows and columns follow first appearance in the sample. A WR stage contains
+one row per distinct selected population unit rather than one row per draw.
+At a later stage below a WR parent, each parent draw occurrence defines its
+own conditional block; cross-occurrence entries are products of marginal
+conditional chances. Pair the matrix with stage-specific unit identities, not
+blindly with every descendant sample row.
+
 ### 3. With-replacement row structure
 
 For WR methods (`srswr`, `pps_multinomial`), each draw produces one row with `.draw_k` indexing the hit. At export, `.draw_k` becomes the sampling-unit identifier in the `ids` formula, and the FPC is set to \(\infty\). The survey package then uses the Hansen--Hurwitz variance estimator, which is the standard approach for WR designs.
@@ -274,7 +281,7 @@ For WR methods (`srswr`, `pps_multinomial`), each draw produces one row with `.d
 
 ### 5. Panel assignments
 
-The `.panel` column is not passed to survey. Panels are a sample-management concept: deterministic partitions for rotation or workload distribution. The full-sample weights in `.weight` are correct for the combined sample. For per-panel analysis, multiply weights by \(k\) (number of panels): systematic interleaving assigns each selected unit to panels with approximately equal probability \(1/k\), so the per-panel inclusion probability is approximately \(\pi_i / k\) and the per-panel weight is \(k \cdot w_i\).
+The `.panel` column is not passed to survey. Panels are a sample-management concept: deterministic partitions for rotation or workload distribution. The full-sample weights in `.weight` are correct for the combined sample. Deterministic panel assignment is not an additional probability-sampling phase, so a single panel does not automatically have inclusion probability \(\pi_i / k\). Multiplying one panel's weights by \(k\) is therefore not generally valid for population inference.
 
 ### 6. Certainty flag
 
@@ -292,7 +299,7 @@ The `.panel` column is not passed to survey. Panels are a sample-management conc
 - **Clustered designs**: panels are assigned at the PSU level, then propagated to all units within each PSU.
 - **Control sorting**: the `control` argument to `draw()` determines  row order before interleaving, which affects panel composition.
 
-Weights are **not** adjusted. Panels structure the output but do not affect the selection mechanism or inclusion probabilities. Each panel is a representative subsample of the full sample. For per-panel inference, multiply `.weight` by \(k\).
+Weights are **not** adjusted. Panels structure the output but do not affect the selection mechanism or inclusion probabilities. They should be used for rotation or workload management. Analyze the combined sample with the stored weights unless panel assignment has been designed separately as a probability-sampling phase with its own inclusion probabilities and variance method.
 
 ## PRN and sample coordination semantics
 

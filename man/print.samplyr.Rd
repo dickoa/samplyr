@@ -13,7 +13,7 @@
 \arguments{
 \item{x}{Object to print}
 
-\item{...}{Additional arguments (ignored)}
+\item{...}{Must be empty.}
 }
 \value{
 Invisibly returns the input object
