@@ -1284,9 +1284,9 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #'   population hierarchy. Denominators that the recorded scope cannot
 #'   support are `NA`, never invented.
 #' @param detail Resolution of the report: `"stage"` (one row per
-#'   stage), `"pool"` (one row per selection pool), or `"unit"` (one
-#'   row per population unit, only for stages that retained a
-#'   unit-level representation).
+#'   stage), `"pool"` (one row per selection pool and realization), or
+#'   `"unit"` (one row per population unit, only for stages that
+#'   retained a unit-level representation).
 #'
 #' @return A tibble. The `scope` column always states how complete the
 #'   underlying representation is (`"eligible"`, `"universe"`,
@@ -1297,11 +1297,14 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #'   `n_pools`, `N`, `n_target`, `n_expected`, `n_realized`, and
 #'   `take_rate`.
 #'
-#'   For `detail = "pool"`, one row per selection pool with `stage`,
-#'   `pool_id`, `parent_unit`, any stratum label columns, `N`,
-#'   `n_target`, `n_expected`, `n_realized`, `scope`, `chance_status`,
-#'   `chance` (the constant per-unit chance where one applies, `NA`
-#'   otherwise), and `take_rate`. Stratum columns of stages that do not
+#'   For `detail = "pool"`, one row per selection pool and realization
+#'   with `stage`, `pool_id`, `replicate`, `parent_unit`, any stratum
+#'   label columns, `N`, `n_target`, `n_expected`, `n_realized`, `scope`,
+#'   `chance_status`, `chance` (the constant per-unit chance where one
+#'   applies, `NA` otherwise), and `take_rate`. `replicate` is `1` for
+#'   an ordinary execution. In a replicated execution, `pool_id`
+#'   identifies the shared structural pool and the key is `stage`,
+#'   `pool_id`, and `replicate`. Stratum columns of stages that do not
 #'   use them are `NA`.
 #'
 #'   For `detail = "unit"`, one row per population unit of each stage
@@ -1324,14 +1327,33 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #' registered methods declared `probabilities = "approximate"`), and
 #' `NA` for digests recorded before the field existed.
 #'
-#' Allocation is reported as three quantities that only coincide for
-#' fixed-size designs: `n_target` (requested), `n_expected` (sum of
-#' resolved chances), and `n_realized` (selected units or
-#' occurrences). For replicated executions, allocation quantities are
-#' per replicate: when the realized allocation is identical across
-#' replicates the common value is reported, and when it varies
-#' (random-size designs) `n_realized` and `take_rate` are `NA` rather
-#' than a guess. Unit detail spans the stacked replicates:
+#' The allocation columns distinguish three quantities:
+#'
+#' - `n_target` is the nominal count requested by the design, before
+#'   execution-time population limits, probability capping, or
+#'   certainty overflow. For a random-size design specified with
+#'   `frac`, it is `N * frac` and may be fractional.
+#' - `n_expected` is the sum of the final resolved inclusion
+#'   probabilities or expected hits. It can differ from `n_target`
+#'   after probability capping or other feasibility adjustments.
+#' - `n_realized` is the number of selected units or occurrences in
+#'   the realization.
+#'
+#' These quantities often coincide for a feasible fixed-size design.
+#' For Bernoulli and Poisson sampling, `n_realized` varies around
+#' `n_expected`; `n_target` still records the nominal requested
+#' expectation. It is `NA` only when no nominal count can be recovered,
+#' for example from an older digest or a method with unspecified target
+#' semantics.
+#'
+#' Stage detail stays compact for replicated executions: a common
+#' per-replicate realized allocation is reported, while varying
+#' `n_realized` and `take_rate` are `NA`. Pool detail is the drill-down:
+#' it returns one row per pool and replicate with scalar realized
+#' values, even when all replicates happen to agree. Population and
+#' design columns repeat across those rows, so select one replicate
+#' before using a replicated pool table as a next-wave planning frame.
+#' Unit detail spans the stacked replicates:
 #' `is_selected` marks units selected in at least one replicate and
 #' `n_hits` counts occurrences across all replicates, so a
 #' without-replacement unit can show `n_hits > 1`. The per-replicate
@@ -1344,6 +1366,51 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #' A digest whose sample was modified after execution (rows, weights,
 #' or design columns changed) is reported as invalidated and refused:
 #' a stale digest is worse than no digest.
+#'
+#' @examples
+#' frame <- data.frame(
+#'   id = 1:20,
+#'   stratum = rep(c("A", "B"), each = 10)
+#' )
+#'
+#' # Fixed-size allocation: target, expectation, and realization agree.
+#' fixed <- sampling_design() |>
+#'   stratify_by(stratum) |>
+#'   draw(n = 3) |>
+#'   execute(frame, seed = 42)
+#' frame_summary(fixed)
+#' allocation_columns <- c(
+#'   "stage", "pool_id", "replicate", "stratum", "N",
+#'   "n_target", "n_expected", "n_realized", "take_rate"
+#' )
+#' fixed_pools <- frame_summary(fixed, detail = "pool")
+#' print(fixed_pools[allocation_columns], width = Inf)
+#'
+#' # Random-size allocation: one scalar row per pool and replicate.
+#' random_sample <- sampling_design() |>
+#'   stratify_by(stratum) |>
+#'   draw(frac = 0.3, method = "bernoulli", on_empty = "silent") |>
+#'   execute(frame, seed = 42, reps = 3)
+#' random_pools <- frame_summary(random_sample, detail = "pool")
+#' print(random_pools[allocation_columns], width = Inf)
+#'
+#' # Probability capping can make the resolved expectation smaller
+#' # than the nominal target.
+#' pps_frame <- data.frame(id = 1:20, mos = c(100, rep(1, 19)))
+#' capped <- sampling_design() |>
+#'   draw(n = 5, method = "pps_poisson", mos = mos, on_empty = "silent") |>
+#'   execute(pps_frame, seed = 42)
+#' capped_pool <- frame_summary(capped, detail = "pool")
+#' print(
+#'   capped_pool[c("N", "n_target", "n_expected", "n_realized")],
+#'   width = Inf
+#' )
+#'
+#' # Full digests support anonymous unit-level inspection.
+#' full <- sampling_design() |>
+#'   draw(n = 5, method = "pps_brewer", mos = id) |>
+#'   execute(frame, seed = 42, frame_digest = "full")
+#' head(frame_summary(full, detail = "unit"))
 #'
 #' @seealso [execute()], [validate_frame()]
 #' @export
@@ -1401,6 +1468,13 @@ frame_summary <- function(
 
   stages <- digest$stages
   stage_ids <- vapply(stages, function(s) s$stage_id, integer(1))
+  execution <- if (is_tbl_sample(x)) {
+    attr(x, "metadata")
+  } else {
+    attr(x, "execution")
+  }
+  n_reps <- execution$reps %||% 1L
+  replicate_ids <- seq_len(as.integer(n_reps))
 
   # A replicated multi-stage execution records only the stage prefix
   # shared by every replicate: later-stage pools hang off each
@@ -1450,7 +1524,7 @@ frame_summary <- function(
   switch(
     detail,
     stage = frame_summary_stage(stages, scope),
-    pool = frame_summary_pool(stages, scope),
+    pool = frame_summary_pool(stages, scope, replicate_ids),
     unit = frame_summary_unit(stages, explicit = !is_null(stage))
   )
 }
@@ -1515,18 +1589,43 @@ frame_summary_stage <- function(stages, scope) {
 }
 
 #' @noRd
-frame_summary_pool <- function(stages, scope) {
+frame_summary_pool <- function(stages, scope, replicate_ids = 1L) {
   rows <- lapply(stages, function(s) {
     pools <- s$pools
+    n_reps <- length(replicate_ids)
+    pool_rows <- rep(seq_len(nrow(pools)), each = n_reps)
+    row_reps <- rep(replicate_ids, times = nrow(pools))
+
+    # The digest stores one structural pool registry and a stacked,
+    # replicate-qualified selected trace. Materialize the public table
+    # at its natural stage x pool x replicate grain without duplicating
+    # the registry in the serialized artifact.
+    selected <- s$selected
+    if (n_reps == 1L) {
+      n_realized <- as.double(pools$n_realized)
+    } else if (!is_null(selected) && "replicate" %in% names(selected)) {
+      counts <- table(
+        factor(selected$pool_id, levels = pools$pool_id),
+        factor(selected$replicate, levels = replicate_ids)
+      )
+      n_realized <- as.double(as.vector(t(counts)))
+    } else {
+      # Compatibility fallback for an older replicated digest that
+      # retained only a common per-replicate count.
+      n_realized <- rep(as.double(pools$n_realized), each = n_reps)
+    }
+
     supported <- digest_scope_supports(pools$scope, scope)
     if (identical(scope, "eligible")) {
       # A design-resolved pool was never eligible for this
       # realization; its 0/N is not an eligible take rate.
       supported <- supported & pools$chance_status != "design_resolved"
     }
+    supported <- supported[pool_rows]
     take_rate <- ifelse(
-      supported & !is.na(pools$n_realized) & !is.na(pools$N) & pools$N > 0,
-      pools$n_realized / pools$N,
+      supported & !is.na(n_realized) &
+        !is.na(pools$N[pool_rows]) & pools$N[pool_rows] > 0,
+      n_realized / pools$N[pool_rows],
       NA_real_
     )
     chance <- if (
@@ -1537,21 +1636,22 @@ frame_summary_pool <- function(stages, scope) {
       rep(NA_real_, nrow(pools))
     }
     out <- data.frame(
-      stage = rep(s$stage_id, nrow(pools)),
-      pool_id = as.integer(pools$pool_id),
-      parent_unit = as.integer(pools$parent_unit),
-      N = as.double(pools$N),
-      n_target = as.double(pools$n_target),
-      n_expected = as.double(pools$n_expected),
-      n_realized = as.double(pools$n_realized),
-      scope = pools$scope,
-      chance_status = pools$chance_status,
-      chance = chance,
+      stage = rep(s$stage_id, length(pool_rows)),
+      pool_id = as.integer(pools$pool_id[pool_rows]),
+      replicate = as.integer(row_reps),
+      parent_unit = as.integer(pools$parent_unit[pool_rows]),
+      N = as.double(pools$N[pool_rows]),
+      n_target = as.double(pools$n_target[pool_rows]),
+      n_expected = as.double(pools$n_expected[pool_rows]),
+      n_realized = n_realized,
+      scope = pools$scope[pool_rows],
+      chance_status = pools$chance_status[pool_rows],
+      chance = chance[pool_rows],
       take_rate = take_rate
     )
     strata <- s$strata %||% character(0)
     if (length(strata) > 0) {
-      out <- cbind(out, pools[strata])
+      out <- cbind(out, pools[pool_rows, strata, drop = FALSE])
     }
     out
   })

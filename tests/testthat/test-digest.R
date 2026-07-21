@@ -604,6 +604,7 @@ test_that("pool detail reports every pool with its strata", {
   s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_units())
   fs <- frame_summary(s, detail = "pool")
   expect_identical(nrow(fs), 12L)
+  expect_identical(fs$replicate, rep(1L, 12))
   expect_true("stratum" %in% names(fs))
   expect_identical(
     as.character(fs$stratum[fs$stage == 1]),

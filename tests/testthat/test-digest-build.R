@@ -281,13 +281,13 @@ test_that("digest quantile bins reject inconsistent pool sizes", {
 
 ## Fixture 4: random-size methods (expected differs from realized)
 
-test_that("random-size stages record no target and the realized size", {
+test_that("random-size stages keep target, expectation, and realization", {
   s <- sampling_design() |>
     draw(frac = 0.1, method = "bernoulli", on_empty = "silent") |>
     execute(test_frame, seed = 5)
   d <- digest_of(s)
   p <- d$stages[[1]]$pools
-  expect_true(is.na(p$n_target))
+  expect_equal(p$n_target, 12)
   expect_equal(p$n_expected, 12)
   expect_identical(p$n_realized, nrow(s))
   expect_equal(d$stages[[1]]$pools$chance, 0.1)
@@ -297,8 +297,27 @@ test_that("random-size stages record no target and the realized size", {
          on_empty = "silent") |>
     execute(test_frame, seed = 5)
   p2 <- digest_of(s2)$stages[[1]]$pools
-  expect_true(is.na(p2$n_target))
+  expect_equal(p2$n_target, 12)
   expect_identical(p2$n_realized, nrow(s2))
+
+  # A fraction is a nominal expected-count target and need not be an
+  # integer, even though the realized count always is.
+  s3 <- sampling_design() |>
+    draw(frac = 0.085, method = "bernoulli", on_empty = "silent") |>
+    execute(test_frame, seed = 5)
+  p3 <- digest_of(s3)$stages[[1]]$pools
+  expect_equal(p3$n_target, 10.2)
+  expect_equal(p3$n_expected, 10.2)
+
+  # PPS probability capping can prevent the resolved expectation from
+  # reaching the nominal request; retaining both values exposes that.
+  dominant <- data.frame(id = 1:20, mos = c(100, rep(1, 19)))
+  s4 <- sampling_design() |>
+    draw(n = 5, method = "pps_poisson", mos = mos, on_empty = "silent") |>
+    execute(dominant, seed = 5)
+  p4 <- digest_of(s4)$stages[[1]]$pools
+  expect_equal(p4$n_target, 5)
+  expect_lt(p4$n_expected, p4$n_target)
 })
 
 ## Fixture 5: with-replacement methods (expected hits, multiplicity)
@@ -485,7 +504,7 @@ test_that("replicate-varying realized sizes are NA, not a guess", {
   d <- digest_of(r)
   st <- d$stages[[1]]
   expect_true(is.na(st$pools$n_realized))
-  expect_true(is.na(st$pools$n_target))
+  expect_equal(st$pools$n_target, 12)
   # The traces still carry each replicate's realization.
   counts <- table(factor(st$selected$replicate, levels = 1:3))
   expect_identical(
@@ -657,7 +676,7 @@ test_that("custom WR methods record expected hits", {
   expect_true(all(st$selected$occurrence >= 1))
 })
 
-test_that("custom random-size methods record no target", {
+test_that("custom random-size methods retain their nominal target", {
   on.exit(sondage::unregister_method("digest_rand"), add = TRUE)
   # Poisson-type: independent selection against the resolved chances.
   sondage::register_method(
@@ -675,7 +694,7 @@ test_that("custom random-size methods record no target", {
     execute(test_frame, seed = 52)
   d <- digest_of(s)
   p <- d$stages[[1]]$pools
-  expect_true(is.na(p$n_target))
+  expect_equal(p$n_target, 20)
   expect_identical(p$n_realized, nrow(s))
 })
 

@@ -56,7 +56,30 @@ sample <- sampling_design() |>
 summary(sample)
 ```
 
-The allocation table shows the population size ($N_h$), sample size ($n_h$), and sampling fraction ($f_h$) per stratum. The weight diagnostics report the Kish design effect and effective sample size.
+The realization line uses compact sampling notation. Its $N_h$, $n_h$, and
+$f_h$ labels correspond to the `N`, `n_realized`, and `take_rate` columns in
+the pool table:
+
+```{r}
+allocation <- frame_summary(sample, detail = "pool")
+
+allocation |>
+  select(region, replicate, N, n_target, n_expected, n_realized, take_rate)
+```
+
+`n_target` is the nominal allocation requested by the design, `n_expected` is
+the sum of the final resolved selection chances, and `n_realized` is what the
+execution actually selected. They coincide here because this is a feasible
+fixed-size design. For Bernoulli or Poisson sampling, `n_target` records the
+requested expectation, which can differ from both the resolved expectation and
+the random realized count. `take_rate` is `n_realized / N`; it is not a
+unit-level inclusion probability for an unequal-probability design.
+
+Every pool table has a `replicate` column (`1` for an ordinary execution).
+With `execute(reps = ...)`, it contains one row per pool and replicate, so the
+realized variation remains numeric and can be grouped, plotted, or filtered
+without unpacking list columns. The weight diagnostics report the Kish design
+effect and effective sample size.
 
 ## Merging Collected Data
 

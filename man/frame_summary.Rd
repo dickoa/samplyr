@@ -29,9 +29,9 @@ population hierarchy. Denominators that the recorded scope cannot
 support are \code{NA}, never invented.}
 
 \item{detail}{Resolution of the report: \code{"stage"} (one row per
-stage), \code{"pool"} (one row per selection pool), or \code{"unit"} (one
-row per population unit, only for stages that retained a
-unit-level representation).}
+stage), \code{"pool"} (one row per selection pool and realization), or
+\code{"unit"} (one row per population unit, only for stages that
+retained a unit-level representation).}
 }
 \value{
 A tibble. The \code{scope} column always states how complete the
@@ -43,11 +43,14 @@ For \code{detail = "stage"}, one row per stage with \code{stage},
 \code{n_pools}, \code{N}, \code{n_target}, \code{n_expected}, \code{n_realized}, and
 \code{take_rate}.
 
-For \code{detail = "pool"}, one row per selection pool with \code{stage},
-\code{pool_id}, \code{parent_unit}, any stratum label columns, \code{N},
-\code{n_target}, \code{n_expected}, \code{n_realized}, \code{scope}, \code{chance_status},
-\code{chance} (the constant per-unit chance where one applies, \code{NA}
-otherwise), and \code{take_rate}. Stratum columns of stages that do not
+For \code{detail = "pool"}, one row per selection pool and realization
+with \code{stage}, \code{pool_id}, \code{replicate}, \code{parent_unit}, any stratum
+label columns, \code{N}, \code{n_target}, \code{n_expected}, \code{n_realized}, \code{scope},
+\code{chance_status}, \code{chance} (the constant per-unit chance where one
+applies, \code{NA} otherwise), and \code{take_rate}. \code{replicate} is \code{1} for
+an ordinary execution. In a replicated execution, \code{pool_id}
+identifies the shared structural pool and the key is \code{stage},
+\code{pool_id}, and \code{replicate}. Stratum columns of stages that do not
 use them are \code{NA}.
 
 For \code{detail = "unit"}, one row per population unit of each stage
@@ -78,14 +81,34 @@ a documented approximation (\code{"pps_sps"}, \code{"pps_pareto"}, and
 registered methods declared \code{probabilities = "approximate"}), and
 \code{NA} for digests recorded before the field existed.
 
-Allocation is reported as three quantities that only coincide for
-fixed-size designs: \code{n_target} (requested), \code{n_expected} (sum of
-resolved chances), and \code{n_realized} (selected units or
-occurrences). For replicated executions, allocation quantities are
-per replicate: when the realized allocation is identical across
-replicates the common value is reported, and when it varies
-(random-size designs) \code{n_realized} and \code{take_rate} are \code{NA} rather
-than a guess. Unit detail spans the stacked replicates:
+The allocation columns distinguish three quantities:
+\itemize{
+\item \code{n_target} is the nominal count requested by the design, before
+execution-time population limits, probability capping, or
+certainty overflow. For a random-size design specified with
+\code{frac}, it is \code{N * frac} and may be fractional.
+\item \code{n_expected} is the sum of the final resolved inclusion
+probabilities or expected hits. It can differ from \code{n_target}
+after probability capping or other feasibility adjustments.
+\item \code{n_realized} is the number of selected units or occurrences in
+the realization.
+}
+
+These quantities often coincide for a feasible fixed-size design.
+For Bernoulli and Poisson sampling, \code{n_realized} varies around
+\code{n_expected}; \code{n_target} still records the nominal requested
+expectation. It is \code{NA} only when no nominal count can be recovered,
+for example from an older digest or a method with unspecified target
+semantics.
+
+Stage detail stays compact for replicated executions: a common
+per-replicate realized allocation is reported, while varying
+\code{n_realized} and \code{take_rate} are \code{NA}. Pool detail is the drill-down:
+it returns one row per pool and replicate with scalar realized
+values, even when all replicates happen to agree. Population and
+design columns repeat across those rows, so select one replicate
+before using a replicated pool table as a next-wave planning frame.
+Unit detail spans the stacked replicates:
 \code{is_selected} marks units selected in at least one replicate and
 \code{n_hits} counts occurrences across all replicates, so a
 without-replacement unit can show \code{n_hits > 1}. The per-replicate
@@ -98,6 +121,52 @@ the manifest and \code{frame_summary()} says so.
 A digest whose sample was modified after execution (rows, weights,
 or design columns changed) is reported as invalidated and refused:
 a stale digest is worse than no digest.
+}
+\examples{
+frame <- data.frame(
+  id = 1:20,
+  stratum = rep(c("A", "B"), each = 10)
+)
+
+# Fixed-size allocation: target, expectation, and realization agree.
+fixed <- sampling_design() |>
+  stratify_by(stratum) |>
+  draw(n = 3) |>
+  execute(frame, seed = 42)
+frame_summary(fixed)
+allocation_columns <- c(
+  "stage", "pool_id", "replicate", "stratum", "N",
+  "n_target", "n_expected", "n_realized", "take_rate"
+)
+fixed_pools <- frame_summary(fixed, detail = "pool")
+print(fixed_pools[allocation_columns], width = Inf)
+
+# Random-size allocation: one scalar row per pool and replicate.
+random_sample <- sampling_design() |>
+  stratify_by(stratum) |>
+  draw(frac = 0.3, method = "bernoulli", on_empty = "silent") |>
+  execute(frame, seed = 42, reps = 3)
+random_pools <- frame_summary(random_sample, detail = "pool")
+print(random_pools[allocation_columns], width = Inf)
+
+# Probability capping can make the resolved expectation smaller
+# than the nominal target.
+pps_frame <- data.frame(id = 1:20, mos = c(100, rep(1, 19)))
+capped <- sampling_design() |>
+  draw(n = 5, method = "pps_poisson", mos = mos, on_empty = "silent") |>
+  execute(pps_frame, seed = 42)
+capped_pool <- frame_summary(capped, detail = "pool")
+print(
+  capped_pool[c("N", "n_target", "n_expected", "n_realized")],
+  width = Inf
+)
+
+# Full digests support anonymous unit-level inspection.
+full <- sampling_design() |>
+  draw(n = 5, method = "pps_brewer", mos = id) |>
+  execute(frame, seed = 42, frame_digest = "full")
+head(frame_summary(full, detail = "unit"))
+
 }
 \seealso{
 \code{\link[=execute]{execute()}}, \code{\link[=validate_frame]{validate_frame()}}

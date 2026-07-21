@@ -373,6 +373,17 @@ Initial release.
   it with the current version.
 * Restored v2 digests retain the parent occurrence recorded for pools below
   a with-replacement parent stage.
+* `frame_summary(detail = "pool")` now reports one scalar row per selection
+  pool and realization. Its `replicate` column is `1` for ordinary executions
+  and identifies each realization for replicated executions; fixed allocations
+  are no longer conditionally collapsed and varying random-size allocations no
+  longer become `NA` in pool detail. The compact stage detail retains its
+  common-value-or-`NA` behavior.
+* `n_target` now records the nominal requested allocation for random-size
+  designs as well as fixed-size designs. For fraction-based Bernoulli and
+  Poisson sampling this is `N * frac`, before probability capping, and may be
+  fractional. `n_expected` remains the sum of the resolved chances and
+  `n_realized` the observed count.
 
 ## Diagnostics
 
@@ -395,7 +406,9 @@ Initial release.
   are labeled as minimum replacement rather than with replacement.
   The missing-replicate warning now renders the `.replicate` field instead of
   exposing raw cli markup.
-  Per-pool allocation tables live in `frame_summary(detail = "pool")`.
+  Per-pool allocation tables live in `frame_summary(detail = "pool")`. The
+  summary notation maps directly to its columns: N_h to `N`, n_h to
+  `n_realized`, and f_h to `take_rate`.
 * `validate_frame()` checks for missing variables, NA values in key
   columns, and MOS/PRN/auxiliary variable issues before execution.
 * When the frame is itself a `tbl_sample` (phase-2 preparation),

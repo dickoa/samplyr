@@ -1029,7 +1029,16 @@ ea_sample <- sampling_design(title = "EA sample") |>
   execute(bfa_eas, seed = 42)
 
 frame_summary(ea_sample)
+frame_summary(ea_sample, detail = "pool")
 ```
+
+Stage detail is the compact overview. Pool detail exposes the columns behind
+the realization notation in `summary()`: `N_h` maps to `N`, `n_h` to
+`n_realized`, and `f_h` to `take_rate`. It also separates the nominal
+`n_target`, the probability-implied `n_expected`, and the observed
+`n_realized`. Pool tables always identify the realization with `replicate = 1`
+for an ordinary execution and one row per pool and replicate after
+`execute(reps = ...)`.
 
 The digest mode is an explicit performance and downstream-capability choice:
 

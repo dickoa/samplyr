@@ -38,8 +38,14 @@ sampling fraction, not a unit-level inclusion probability for
 unequal-probability designs.
 }
 
-Per-pool detail (one row per parent-by-stratum pool) lives in
-\code{\link[=frame_summary]{frame_summary()}} with \code{detail = "pool"}.
+Per-pool detail (one row per parent-by-stratum pool and realization)
+lives in \code{\link[=frame_summary]{frame_summary()}} with \code{detail = "pool"}. The realization line uses
+compact sampling notation: \code{N_h}, \code{n_h}, and \code{f_h} correspond to
+that table's \code{N}, \code{n_realized}, and \code{take_rate} columns,
+respectively, and \code{take_rate} is \code{n_realized / N}. Here \code{h} indexes
+the displayed selection pools: strata at a first stratified stage
+and parent-by-stratum pools at later stages. For a replicated
+execution, the pool table has one row per \code{pool_id} and \code{replicate}.
 
 \strong{Weights} reports the mean and range, coefficient of variation,
 Kish design effect, and effective sample size on one line.

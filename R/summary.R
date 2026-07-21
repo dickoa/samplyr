@@ -27,8 +27,14 @@
 #'   sampling fraction, not a unit-level inclusion probability for
 #'   unequal-probability designs.
 #'
-#' Per-pool detail (one row per parent-by-stratum pool) lives in
-#' [frame_summary()] with `detail = "pool"`.
+#' Per-pool detail (one row per parent-by-stratum pool and realization)
+#' lives in [frame_summary()] with `detail = "pool"`. The realization line uses
+#' compact sampling notation: `N_h`, `n_h`, and `f_h` correspond to
+#' that table's `N`, `n_realized`, and `take_rate` columns,
+#' respectively, and `take_rate` is `n_realized / N`. Here `h` indexes
+#' the displayed selection pools: strata at a first stratified stage
+#' and parent-by-stratum pools at later stages. For a replicated
+#' execution, the pool table has one row per `pool_id` and `replicate`.
 #'
 #' **Weights** reports the mean and range, coefficient of variation,
 #' Kish design effect, and effective sample size on one line.
@@ -141,7 +147,9 @@ summary.tbl_sample <- function(object, ...) {
     if (!is.na(dpos)) {
       summary_stage_realization(
         digest$stages[[dpos]],
-        is_replicated = is_replicated
+        is_replicated = is_replicated,
+        random_size = stage_spec$draw_spec$method %in% rs_poisson_methods ||
+          isFALSE(stage_spec$draw_spec$method_fixed)
       )
     } else {
       summary_stage_fallback(
@@ -288,7 +296,7 @@ summary_range <- function(v, fmt = function(x) format(x, trim = TRUE)) {
 #' resolution, and the per-pool rows live in frame_summary(). Method
 #' diagnostics (balance, bounds, spatial) follow as their own bullets.
 #' @noRd
-summary_stage_realization <- function(st, is_replicated) {
+summary_stage_realization <- function(st, is_replicated, random_size = NULL) {
   pools <- st$pools
   fmt_f <- function(f) sprintf("%.4f", f)
   fmt_n <- function(v) format(v, big.mark = ",", trim = TRUE)
@@ -302,7 +310,12 @@ summary_stage_realization <- function(st, is_replicated) {
   st$pools <- pools
 
   is_wr <- identical(st$chance_kind, "expected_hits")
-  random_size <- all(is.na(pools$n_target))
+  # The design supplies the authoritative size semantics. The fallback
+  # retains compatibility with older hand-built digests and direct
+  # internal calls made without a design specification.
+  if (is_null(random_size)) {
+    random_size <- all(is.na(pools$n_target))
+  }
 
   # Replicate-varying realized sizes collapse to a range.
   varies <- FALSE

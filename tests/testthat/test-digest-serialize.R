@@ -453,6 +453,27 @@ test_that("frame_summary reads a restored design's receipt digest", {
   expect_error(frame_summary(42), class = "samplyr_error")
 })
 
+test_that("restored pool summaries retain replicate rows", {
+  s <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(frac = 0.1, method = "bernoulli", on_empty = "silent") |>
+    execute(test_frame, seed = 61, reps = 3)
+  restored <- read_design(design_json(s, frame = test_frame))
+
+  from_sample <- frame_summary(s, detail = "pool")
+  from_receipt <- frame_summary(restored, detail = "pool")
+  expect_equal(
+    from_receipt[setdiff(names(from_receipt), "stratum")],
+    from_sample[setdiff(names(from_sample), "stratum")]
+  )
+  expect_identical(
+    as.character(from_receipt$stratum),
+    as.character(from_sample$stratum)
+  )
+  expect_identical(nrow(from_receipt), 12L)
+  expect_identical(from_receipt$replicate, rep(1:3, times = 4))
+})
+
 test_that("the probabilities tier round-trips with the digest", {
   s <- sampling_design() |>
     draw(n = 10, method = "pps_sps", mos = mos) |>

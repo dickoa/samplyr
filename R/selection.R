@@ -860,7 +860,20 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
   method <- draw_spec$method
   mos <- draw_spec$mos
   N <- nrow(data)
-  n_target <- n
+  random_size <- method %in% rs_poisson_methods ||
+    isFALSE(draw_spec$method_fixed)
+  # For random-size designs, `frac` targets an expected count rather
+  # than a fixed cardinality. Preserve that nominal (possibly
+  # fractional) request before probability capping; `n_expected`
+  # records the expectation after the chances have been resolved.
+  n_target <- if (
+    random_size &&
+      is.numeric(draw_spec$frac) && length(draw_spec$frac) == 1L
+  ) {
+    as.double(N * draw_spec$frac)
+  } else {
+    as.double(n)
+  }
 
   perm <- NULL
   order_kind <- "input"

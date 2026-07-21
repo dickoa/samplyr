@@ -169,8 +169,7 @@ test_that("validate_frame displays compound parents without machine keys", {
 })
 
 test_that("frame_summary reports replicated executions per replicate", {
-  # Fixed size: allocation identical across replicates, so the common
-  # per-replicate value is reported, not the stacked total.
+  # Stage detail remains a compact common-per-replicate summary.
   r <- sampling_design() |>
     stratify_by(stratum) |>
     draw(n = 10) |>
@@ -179,24 +178,41 @@ test_that("frame_summary reports replicated executions per replicate", {
   expect_equal(fs$n_realized, 40)
   expect_equal(fs$n_target, 40)
   expect_equal(fs$take_rate, 40 / 120)
-  fp <- frame_summary(r, detail = "pool")
-  expect_equal(fp$n_realized, rep(10L, 4))
-  expect_equal(fp$take_rate, rep(1 / 3, 4))
 
-  # Random size varies by replicate: NA rather than a guess, with the
-  # per-replicate expectation kept.
+  # Pool detail has one scalar row per structural pool and realization,
+  # even when every replicate happens to have the same allocation.
+  fp <- frame_summary(r, detail = "pool")
+  expect_identical(nrow(fp), 12L)
+  expect_identical(fp$replicate, rep(1:3, times = 4))
+  expect_equal(fp$n_realized, rep(10, 12))
+  expect_equal(fp$take_rate, rep(1 / 3, 12))
+  expect_identical(
+    anyDuplicated(fp[c("stage", "pool_id", "replicate")]),
+    0L
+  )
+
+  # Random-size stage detail has no single realized value, while pool
+  # detail exposes every replicate instead of returning a list column.
   b <- sampling_design() |>
     stratify_by(stratum) |>
     draw(frac = 0.1, method = "bernoulli", on_empty = "silent") |>
     execute(test_frame, seed = 5, reps = 3)
   fs <- frame_summary(b)
-  expect_true(is.na(fs$n_target))
+  expect_equal(fs$n_target, 12)
   expect_true(is.na(fs$n_realized))
   expect_true(is.na(fs$take_rate))
   expect_equal(fs$n_expected, 12)
   fp <- frame_summary(b, detail = "pool")
-  expect_true(all(is.na(fp$n_realized)))
-  expect_equal(fp$n_expected, rep(3, 4))
+  expect_identical(nrow(fp), 12L)
+  expect_identical(fp$replicate, rep(1:3, times = 4))
+  expect_equal(fp$n_target, rep(3, 12))
+  expect_equal(fp$n_expected, rep(3, 12))
+  realized <- as.double(as.vector(t(table(
+    factor(b$stratum, levels = unique(test_frame$stratum)),
+    factor(b$.replicate, levels = 1:3)
+  ))))
+  expect_equal(fp$n_realized, realized)
+  expect_equal(fp$take_rate, realized / 30)
 })
 
 test_that("frame_summary unit detail spans the stacked replicates", {

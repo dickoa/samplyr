@@ -237,9 +237,6 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
   chance_kind <- first_leaf$chance_kind
   order_kind <- first_leaf$order_kind
 
-  random_size <- draw_spec$method %in% rs_poisson_methods ||
-    isFALSE(draw_spec$method_fixed)
-
   # A pool with NA chances is recorded as unavailable: sizes and
   # selections are kept, the chance representation is absent rather
   # than invented. No current producer emits NA chances (unknown-probability
@@ -308,11 +305,9 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
     rownames(pools) <- NULL
   }
   pools$N <- vapply(records, function(r) as.integer(r$leaf$N), integer(1))
-  pools$n_target <- if (random_size) {
-    rep(NA_real_, length(records))
-  } else {
-    vapply(records, function(r) as.double(r$leaf$n_target), numeric(1))
-  }
+  pools$n_target <- vapply(
+    records, function(r) as.double(r$leaf$n_target), numeric(1)
+  )
   pools$n_expected <- vapply(
     records,
     function(r) {
@@ -635,9 +630,17 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
     }, numeric(1))
     random_size <- draw_spec$method %in% rs_poisson_methods ||
       isFALSE(draw_spec$method_fixed)
-    n_target <- if (random_size) {
-      rep(NA_real_, length(N_vec))
-    } else if (!is_null(draw_spec$n)) {
+    n_target <- if (
+      random_size && !is.null(draw_spec$n) &&
+        is.numeric(draw_spec$n) && length(draw_spec$n) == 1L
+    ) {
+      rep(as.double(draw_spec$n), length(N_vec))
+    } else if (
+      random_size && !is.null(draw_spec$frac) &&
+        is.numeric(draw_spec$frac) && length(draw_spec$frac) == 1L
+    ) {
+      as.double(N_vec * draw_spec$frac)
+    } else if (!is.null(draw_spec$n)) {
       rep(as.double(draw_spec$n), length(N_vec))
     } else {
       vapply(N_vec, function(N) {
@@ -727,7 +730,16 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N) {
         !method %in% c("bernoulli", "pps_poisson")) {
     n <- round_sample_size(N * frac, draw_spec$round %||% "up")
   }
-  n_target <- if (random_size) NA_real_ else as.double(n)
+  n_target <- if (
+    random_size && !is.null(frac) &&
+      is.numeric(frac) && length(frac) == 1L
+  ) {
+    as.double(N * frac)
+  } else if (!is.null(n)) {
+    as.double(n)
+  } else {
+    NA_real_
+  }
   if (!wr && !is_null(n)) {
     n <- min(n, N)
   }
