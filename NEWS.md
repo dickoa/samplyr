@@ -8,26 +8,24 @@ Initial release.
   `sampling_design()`, `add_stage()`, `stratify_by()`, `cluster_by()`,
   `draw()`, and `execute()`.
 * Designs are reusable across different frames.
-* Public methods whose `...` arguments are reserved now reject unexpected
-  arguments instead of silently ignoring likely misspellings.
-* `serp()` now has one implementation and its input errors use stable
-  `samplyr_error` subclasses.
-* The README and introduction now state the panel-weight limitation,
-  document frame-digest performance choices, and list all built-in methods
-  consistently.
-* Package prose now consistently uses US English.
-* `execute()` now refuses duplicate input names and names reserved for its
-  generated output, such as `.weight`, `.sample_id`, `.draw`, `.certainty`,
-  and `.weight_k`, instead of silently overwriting user columns. Seed and
-  replicate-seed ranges are validated before sampling begins.
+* Methods whose `...` is reserved (`print()`, `summary()`, `as_tbl_sample()`,
+  `write_design()`) reject unexpected arguments rather than ignoring them.
+  In the verbs whose `...` carries data (`execute()`, `stratify_by()`), a
+  misspelled reserved argument is reported by name together with the
+  argument it most likely meant.
+* `serp()` input errors carry stable `samplyr_error` subclasses.
+* `execute()` refuses duplicate input names, and input names reserved for
+  its generated output (`.weight`, `.sample_id`, `.stage`, `.draw`,
+  `.certainty`, and their per-stage forms such as `.weight_1` and
+  `.fpc_1`), rather than overwriting user columns. Seed and replicate-seed
+  ranges are validated before sampling begins.
 
 ## Sampling methods
 
 * Added Sampford fixed-size PPS sampling (`method = "pps_sampford"`) with
   exact joint inclusion probabilities through `joint_expectation()`.
-* Balanced sampling is now an explicit method family: the existing
-  `method = "cube"` is now the canonical cube path (`"balanced"` remains a
-  compatibility alias), while `"lpm2"` and
+* Balanced sampling is an explicit method family: `method = "cube"` is the
+  canonical cube path (`"balanced"` is an alias), while `"lpm2"` and
   `"scps"` provide spatially balanced draws through `spread = c(x, y)`.
 * `bound()` markers inside the cube `aux` specification add hard
   adjacent-integer count constraints, for example
@@ -57,17 +55,16 @@ Initial release.
   names: WOR/WR methods use `pps_<name>`, while balanced methods use
   `balanced_<name>`. Method metadata (type, fixed size, PRN support) flows
   through validation, execution, joint probabilities, and survey export.
-  Custom WR methods that declare PRN support now receive the supplied PRNs
-  during ordinary execution; these PRNs were previously validated but ignored.
+  Custom WR methods that declare PRN support receive the supplied PRNs
+  during ordinary execution.
 * Custom balanced methods (`type = "balanced"`) execute through
   `sondage::balanced_wor()`, may omit `mos` for equal probabilities, and may
   opt into `aux` or `spread` through the registry's `supports_aux` and
   `supports_spread` capabilities. They count toward the two-stage balanced
   limit and export with the built-in cube's variance treatment (Brewer,
   fraction-scale FPC) rather than falling through to SRS.
-* `frac` validation follows a custom method's declared type: custom WR
-  methods accept `frac > 1` like the built-in WR methods (the name-based
-  test previously classified every custom method as WOR and rejected it).
+* `frac` validation follows a custom method's declared type, so custom WR
+  methods accept `frac > 1` like the built-in WR methods.
 * A `variance_family` declared at registration
   (`sondage::register_method(variance_family = )`) drives the survey
   export directly instead of inference from type and fixed size:
@@ -95,6 +92,9 @@ Initial release.
   across stages.
 * Partial execution via `execute(..., stages = 1)` for operational workflows.
 * Two-phase sampling by piping a `tbl_sample` into `execute()`.
+* Earlier-phase weights carry through every stage when a multistage new
+  phase is executed against separate frames in one call. The final weight is
+  the product of the previous-phase weight and every conditional stage weight.
 
 ## Certainty selection
 
@@ -211,11 +211,19 @@ Initial release.
   digest for cluster and constant-chance stages;
   `frame_digest = "full"` for element stages with varying chances);
   summarized chances refuse rather than approximate.
-  WR matrices now contain distinct population units in first-appearance
+  WR matrices contain distinct population units in first-appearance
   order. Repeated WR parent occurrences define separate independent child
   blocks, and stratified blocks also follow first sample appearance. Frame
   and digest computations therefore share dimensions, order, and values for
   repeated-hit designs.
+* Custom methods registered with `fixed_size = FALSE` are random-size;
+  `as_svydesign()` errors rather than applying Brewer's fixed-size
+  approximation (which could report near-zero variance). Pass
+  `pps = survey::poisson_sampling(1 / x$.weight)` for Poisson-type
+  methods, or use `as_svrepdesign(type = "subbootstrap")`.
+
+## Sample integrity
+
 * Modified-sample guard: a `tbl_sample` whose rows were removed, added,
   or duplicated after `execute()`, or whose internal design columns
   (`.weight`, `.fpc_k`, ...) were overwritten, dropped, or renamed
@@ -237,14 +245,11 @@ Initial release.
   population. The same object remains valid as a later-stage listing frame
   when the clean partial sample is used as the continuation input.
 * Passing an intact strict-prefix result back as the frame of its own design
-  now warns even when the sample is pristine. The diagnostic explains that
+  warns even when the sample is pristine. The diagnostic explains that
   this starts a new phase and restarts the design at stage 1, points to the
   stage-continuation
   form, and notes that an intentional new phase remains supported through
   `survey::twophase()`.
-* Earlier-phase weights now carry through every stage when a multistage new
-  phase is executed against separate frames in one call. The final weight is
-  the product of the previous-phase weight and every conditional stage weight.
 * Integrity record: `execute()` stores the row count and an
   order-invariant hash of the protected columns (weights, design
   metadata, and the executed stages' strata/cluster variables). The
@@ -257,29 +262,27 @@ Initial release.
   preserve sample provenance (grouped verbs work and marks flow
   through), `vec_restore()` applies the same rules as the dplyr hooks,
   and base `[` detects same-length row duplication.
-* Custom methods registered with `fixed_size = FALSE` are random-size;
-  `as_svydesign()` now errors instead of applying Brewer's fixed-size
-  approximation (which could report near-zero variance). Pass
-  `pps = survey::poisson_sampling(1 / x$.weight)` for Poisson-type
-  methods, or use `as_svrepdesign(type = "subbootstrap")`.
-
 ## Survey planning
 
-* Samplyr now requires svyplan 0.8.9 or later so installations cannot
-  silently use the earlier 0.8.8 API with the revised planning methods.
-* Samplyr continues to re-export the `design_effect()`, `effective_n()`, and
-  `varcomp()` generics from svyplan, with `tbl_sample` methods registered on
-  those exact generics. `design_effect.tbl_sample()` now follows svyplan's
-  numeric `svyplan_design_effect` contract. Use `as.double()` for the overall
-  value and `as.data.frame()` for the Chen-Rust decomposition. Unstratified
-  `varcomp.tbl_sample()` results now have the same one-row export schema as
-  svyplan results.
-* `design_effect()` and `effective_n()` with `tbl_sample` methods. Five
-  methods: Kish, Henry, Spencer, Chen-Rust, and cluster planning.
-  Auto-extraction of strata, clusters, and selection probabilities from
-  the stored design.
-* `varcomp()` gains a `tbl_sample` method: design-based variance
-  components (B, W, delta, k) estimated from an executed clustered
+* Samplyr re-exports the `design_effect()`, `effective_n()`, and `varcomp()`
+  generics from svyplan and registers `tbl_sample` methods on those exact
+  generics rather than defining competing ones.
+* `design_effect()` and `effective_n()` on a `tbl_sample` report the
+  weighting loss (Kish's design effect) from the `.weight` column: 1 for a
+  self-weighting design, rising with weight variability. Being
+  outcome-independent is what makes the number available from the sample
+  alone, and it is one component of a full design effect rather than a
+  substitute for one. They follow svyplan's numeric `svyplan_deff` contract,
+  so use `as.double()` for the value, and `summary()` labels the token
+  `Kish DEFF` for the same reason. The weighting loss is the only
+  design-effect strategy samplyr offers: svyplan's `design_effect()` is
+  planning-only, and samplyr does not carry estimators its upstream does not
+  define. For a design effect that reflects clustering and stratification,
+  hand the design to survey with `as_svydesign()` and use
+  `svymean(deff = TRUE)`; to anticipate the clustering component before
+  collection, use `svyplan::design_effect()` with `icc` and `n_per_psu`.
+* `varcomp()` has a `tbl_sample` method: design-based variance
+  components (B, W, icc, var_ratio) estimated from an executed clustered
   sample, feeding `svyplan::n_cluster()` for next-round planning. It
   applies the two conventions that are easy to get wrong by hand:
   within-PSU weights (the product of the per-stage weights below
@@ -288,7 +291,7 @@ Initial release.
   (per stratum when stratified). Handles 2- and 3-stage designs with
   SRS, PPS (WOR and WR), and stratified first stages; refuses
   two-phase samples, certainty PSUs, and deeper designs with precise
-  messages. The certainty guard now also recognizes realized PPS stage
+  messages. The certainty guard also recognizes realized PPS stage
   weights effectively equal to one, covering implicit probability capping
   even when no explicit certainty threshold was requested.
 * `draw()` accepts `svyplan` sample size objects (`svyplan_n`, `svyplan_power`,
@@ -299,10 +302,10 @@ Initial release.
   per-domain tables for domain-stratified designs. Consumption goes
   through svyplan's documented coercions (`as.data.frame()`,
   `as.integer()`), so draws use the plan's integerized field design
-  (svyplan >= 0.8.8) rather than per-stage rounding.
-* Clearer `draw()` errors: a named `n` without stage-level
-  stratification, or with crossed stratification variables, now fails at
-  design time with guidance instead of at execution.
+  rather than per-stage rounding.
+* A named `n` without stage-level stratification, or with crossed
+  stratification variables, fails at design time with guidance rather than
+  at execution.
 * Precision analysis (`prec_prop()`, `prec_mean()`, `prec_cluster()`,
   `prec_multi()`), sensitivity analysis (`predict()`), response rate
   adjustment (`resp_rate`), and confidence intervals (`confint()`) on
@@ -318,7 +321,7 @@ Initial release.
   selection; its size scales with pools, clusters, and quantile bins
   rather than frame rows (clusters that are single frame rows make the
   two coincide; `frame_digest = "none"` opts out).
-* `frame_digest = "none"` now skips selection-trace construction entirely.
+* `frame_digest = "none"` skips selection-trace construction entirely.
   Summary traces store constant chances once per pool while retaining full
   vectors for cluster and balanced diagnostics that require unit-level values.
 * The digest keeps a `tbl_sample` intelligible without its frame: the
@@ -331,7 +334,7 @@ Initial release.
   parents are resolved from the design alone (`design_resolved`), so
   coverage is reported against the full universe.
 * Registered methods declare their first-order probability tier with
-  `sondage::register_method(probabilities =)` (sondage >= 0.8.8):
+  `sondage::register_method(probabilities =)`:
   `"exact"` (the design's true first-order inclusion probabilities,
   or expected hits, equal the `pik` handed to the method),
   `"approximate"` (honored to
@@ -352,7 +355,7 @@ Initial release.
   `(approximate probabilities)` flag in `summary()`. For these
   methods `.weight` is the inverse target probability, not the
   inverse of the design's true first-order inclusion probability;
-  the `execute()` weight documentation now says so.
+  the `execute()` weight documentation says so.
 * The digest travels inside execution receipts, so a design restored
   with `read_design()` carries it, and `frame_summary()` accepts such
   designs directly: a shipped design file supports next-wave planning
@@ -365,21 +368,16 @@ Initial release.
   the recorded ones, so a size measure rescaled by a constant factor
   reports unchanged chances while a real shift names the stage. The
   comparison is informational and never fails validation.
-* Frame digest schema v2 is a clean compatibility break. It uses
-  `n_expected` as the pool field and the length-prefixed compound-key
-  encoding. Schema-v1 artifacts are rejected before decoding instead of
-  being silently restored without their digest. Read a v1 artifact with the
-  samplyr version that wrote it, or re-execute the original design and save
-  it with the current version.
-* Restored v2 digests retain the parent occurrence recorded for pools below
-  a with-replacement parent stage.
-* `frame_summary(detail = "pool")` now reports one scalar row per selection
+* The digest carries a schema version. A file written under a schema this
+  version does not understand is rejected before decoding rather than
+  silently restored without its digest.
+* `frame_summary(detail = "pool")` reports one scalar row per selection
   pool and realization. Its `replicate` column is `1` for ordinary executions
-  and identifies each realization for replicated executions; fixed allocations
-  are no longer conditionally collapsed and varying random-size allocations no
-  longer become `NA` in pool detail. The compact stage detail retains its
+  and identifies each realization for replicated executions. Fixed
+  allocations are never collapsed and varying random-size allocations keep
+  their values in pool detail. The compact stage detail retains its
   common-value-or-`NA` behavior.
-* `n_target` now records the nominal requested allocation for random-size
+* `n_target` records the nominal requested allocation for random-size
   designs as well as fixed-size designs. For fraction-based Bernoulli and
   Poisson sampling this is `N * frac`, before probability capping, and may be
   fractional. `n_expected` remains the sum of the resolved chances and
@@ -399,13 +397,9 @@ Initial release.
   When no digest is available, WR draw counts use ancestry-qualified
   `.draw_k` occurrences; without that column, the output explicitly labels
   the fallback as selected clusters or selected units rather than draws.
-  Realization lines apply thousands separators to pool counts, keep sampling
-  fractions in fixed four-decimal notation, and place `draws` before the
-  `across replicates` qualifier. Unknown pool sizes omit the corresponding
-  sampling fractions instead of interrupting the summary, and Chromy stages
-  are labeled as minimum replacement rather than with replacement.
-  The missing-replicate warning now renders the `.replicate` field instead of
-  exposing raw cli markup.
+  Unknown pool sizes omit the corresponding sampling fractions instead of
+  interrupting the summary, and Chromy stages are labeled as minimum
+  replacement rather than with replacement.
   Per-pool allocation tables live in `frame_summary(detail = "pool")`. The
   summary notation maps directly to its columns: N_h to `N`, n_h to
   `n_realized`, and f_h to `take_rate`.

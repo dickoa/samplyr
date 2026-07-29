@@ -11,84 +11,50 @@ design_effect(x = NULL, ...)
 
 effective_n(x = NULL, ...)
 
-\method{design_effect}{tbl_sample}(x, ..., y = NULL, x_cal = NULL, method = "kish")
+\method{design_effect}{tbl_sample}(x, ...)
 
-\method{effective_n}{tbl_sample}(x, ..., y = NULL, x_cal = NULL, method = "kish")
+\method{effective_n}{tbl_sample}(x, ...)
 }
 \arguments{
-\item{x}{A numeric weight vector, a \code{tbl_sample}, or \code{NULL} (for
-the \code{"cluster"} planning method).}
+\item{x}{A \code{tbl_sample}, or a numeric weight vector passed to the svyplan
+method.}
 
-\item{...}{Passed to the svyplan method. For \code{method = "cluster"},
-pass \code{delta} (measure of homogeneity, scalar or \code{svyplan_varcomp})
-and \code{psu_size} (mean cluster size). See \code{\link[svyplan:design_effect]{svyplan::design_effect()}}.}
-
-\item{y}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Outcome variable
-(column name). Required for Henry, Spencer, and CR methods.}
-
-\item{x_cal}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Calibration
-covariate (column name). Required for the Henry method.}
-
-\item{method}{Design effect method. For diagnostic use (with weights):
-one of \code{"kish"} (default), \code{"henry"}, \code{"spencer"}, or \code{"cr"}. For
-planning (no weights): \code{"cluster"}.}
+\item{...}{Passed to the svyplan method.}
 }
 \value{
-\code{design_effect()} returns a numeric \code{svyplan_design_effect} object.
-Use \code{\link[=as.double]{as.double()}} for the overall value and \code{\link[=as.data.frame]{as.data.frame()}} for the
-Chen-Rust decomposition. \code{effective_n()} returns a numeric scalar.
+\code{design_effect()} returns a numeric \code{svyplan_deff} object; use
+\code{\link[=as.double]{as.double()}} for the value. \code{effective_n()} returns a numeric scalar.
 }
 \description{
 These are the \pkg{svyplan} generics re-exported by samplyr. Samplyr adds
-\code{tbl_sample} methods rather than defining competing generics. Compute the
-design effect (DEFF) or effective sample size from sampling weights. Five
-methods are available for two use cases:
+\code{tbl_sample} methods rather than defining competing generics.
 }
 \details{
-\strong{After data collection (diagnostic):} assess how much precision was
-lost due to the complex design.
-\itemize{
-\item \code{"kish"} (default): weights only. Quick, outcome-independent summary.
-\item \code{"henry"}: weights + outcome + calibration covariate. Accounts for
-calibration weighting.
-\item \code{"spencer"}: weights + outcome + selection probabilities. Accounts
-for correlation between weights and the outcome.
-\item \code{"cr"}: weights + outcome + strata/cluster IDs. Full Chen-Rust
-decomposition for multistage stratified designs.
-}
+The \code{tbl_sample} methods report the \strong{weighting loss}: how much precision
+the realized weights cost relative to a self-weighting sample of the same
+size. This is Kish's design effect,
+\eqn{n \sum w_i^2 / (\sum w_i)^2}{n * sum(w^2) / sum(w)^2}, computed from
+the \code{.weight} column, so it equals 1 for a self-weighting design and rises
+with weight variability. It is outcome-independent, which is what makes it
+available from the sample alone.
 
-\strong{Before data collection (planning):} estimate an expected DEFF to
-inflate a simple-random-sample size calculation.
-\itemize{
-\item \code{"cluster"}: uses homogeneity (\code{delta}) and mean cluster size
-(\code{psu_size}) to compute DEFF = 1 + (psu_size - 1) * delta. Pass
-the result to \code{\link[svyplan:n_prop]{svyplan::n_prop()}}, \code{\link[svyplan:n_mean]{svyplan::n_mean()}}, or other
-sizing functions.
-}
-
-The \code{tbl_sample} methods extract what they can from the sample
-metadata. The user only needs to supply column names for variables
-that are not part of the sampling metadata.
-\itemize{
-\item Weights from \code{.weight}
-\item Selection probabilities from \code{1 / .weight} (for Spencer). Spencer
-(2000) derives his DEFF at the unit level, so the required
-probability is the overall inclusion probability
-\eqn{\pi_i = 1/w_i}{pi_i = 1/w_i}, i.e. the product of all per-stage
-inclusion probabilities for multi-stage designs. This matches the
-convention used by \code{PracTools::deffS()}.
-\item Stratification and clustering variables from the stored design (for CR)
-}
+It is one component of a full design effect and not a substitute for one.
+Clustering and stratification also move precision, and neither is visible
+in the weights. To estimate a design effect that reflects them, fit the
+design and ask the estimator: \code{as_svydesign()} then
+\code{survey::svymean(deff = TRUE)}, which is outcome-specific by necessity.
+To \emph{anticipate} the clustering component before collecting data, use
+\code{\link[svyplan:design_effect]{svyplan::design_effect()}} directly with \code{icc} and \code{n_per_psu}.
 }
 \examples{
-# Kish design effect (default)
 set.seed(1207)
 frame <- data.frame(
   id = 1:200,
   stratum = rep(c("A", "B"), each = 100),
-  income = c(rnorm(100, 50, 10), rnorm(100, 80, 15)),
-  x_cal = runif(200, 0.5, 2)
+  income = c(rnorm(100, 50, 10), rnorm(100, 80, 15))
 )
+
+# A disproportionate allocation costs precision through its weights
 samp <- sampling_design() |>
   stratify_by(stratum) |>
   draw(n = c(A = 10, B = 40)) |>
@@ -97,21 +63,21 @@ samp <- sampling_design() |>
 design_effect(samp)
 effective_n(samp)
 
-# Henry (calibration covariate)
-design_effect(samp, y = income, x_cal = x_cal, method = "henry")
+# A proportional allocation is self-weighting, so the loss is 1
+prop_samp <- sampling_design() |>
+  stratify_by(stratum) |>
+  draw(n = c(A = 25, B = 25)) |>
+  execute(frame, seed = 1213)
 
-# Spencer (selection probabilities extracted automatically)
-design_effect(samp, y = income, method = "spencer")
+design_effect(prop_samp)
 
-# Chen-Rust (strata and clusters extracted from design)
-design_effect(samp, y = income, method = "cr")
-
-# Cluster planning (no sample needed)
-design_effect(delta = 0.05, psu_size = 25, method = "cluster")
+# Anticipating the clustering component at the planning stage
+svyplan::design_effect(icc = 0.05, n_per_psu = 25)
 
 }
 \seealso{
 \code{\link[svyplan:design_effect]{svyplan::design_effect()}}, \code{\link[svyplan:effective_n]{svyplan::effective_n()}},
 \code{\link[svyplan:varcomp]{svyplan::varcomp()}}, \code{\link[svyplan:n_cluster]{svyplan::n_cluster()}},
-\code{\link[svyplan:prec_prop]{svyplan::prec_prop()}}, \code{\link[svyplan:prec_mean]{svyplan::prec_mean()}}
+\code{\link[=as_svydesign]{as_svydesign()}} to hand the design to \pkg{survey} for an
+outcome-specific design effect
 }

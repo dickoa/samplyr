@@ -39,7 +39,7 @@ The conversion maps samplyr's design specification to the arguments
 expected by \code{\link[survey:svydesign]{survey::svydesign()}}:
 \itemize{
 \item \strong{Cluster ids} (\code{ids}): one formula term per executed stage.
-Clustered stages use the \code{cluster_by()} variable; when a stage
+Clustered stages use the \code{cluster_by()} variable and when a stage
 clusters by several variables, their combination (which execution
 treats as a single cluster id) is collapsed into one synthesized
 interaction column, because \code{\link[survey:svydesign]{survey::svydesign()}} reads each
@@ -53,9 +53,9 @@ independent unit for Hansen--Hurwitz variance estimation).
 A stage stratified by several variables exports their
 cross-classification as a single synthesized interaction column
 (survey silently ignores extra variables within a stage's term).
-Trailing unstratified stages are omitted; unstratified stages
+Trailing unstratified stages are omitted and unstratified stages
 before a stratified stage get a constant placeholder column.
-\item \strong{Weights} (\code{weights}): the \code{.weight} column -- the compound weight
+\item \strong{Weights} (\code{weights}): the \code{.weight} column i.e. the compound weight
 across all stages (i.e., the product of per-stage weights
 \eqn{w = \prod w_k = \prod 1/\pi_k}{w = prod(1/pi_k)}).
 This is the inverse of the overall inclusion probability and is the
@@ -92,21 +92,20 @@ Operational execution does not change this classification. For example,
 \code{stage1 <- execute(design, psu_frame, stages = 1)} followed by
 \code{sample <- execute(stage1, listing_frame)} remains one multistage design.
 The partial \code{tbl_sample} stores the same design plus the realized PSU
-selection; the final sample records all executed stages and
+selection and the final sample records all executed stages and
 \code{as_svydesign()} calls \code{\link[survey:svydesign]{survey::svydesign()}}, not \code{\link[survey:twophase]{survey::twophase()}}.
 
-A two-phase sample has a different provenance: a \emph{new} phase-2
+A two-phase sample has a different provenance. A \emph{new} phase-2
 \code{sampling_design} is executed with the phase-1 \code{tbl_sample} as its frame,
 for example \code{phase2 <- execute(design2, phase1)}. That execution records a
 previous-phase link, and \code{as_svydesign()} calls \code{\link[survey:twophase]{survey::twophase()}}.
 
-One shape cannot be represented: an unclustered element-sampling
-stage \emph{followed by further stages} is not nested cluster sampling
-(the later selections are conditional on the realized element
-sample, i.e. phase sampling), and \code{as_svydesign()} raises an error.
-Express such designs as two-phase samples instead: execute the element
-stage under its first-phase design, then execute a new second-phase design
-with that sample as its frame. This exports via \code{\link[survey:twophase]{survey::twophase()}}.
+An unclustered element-sampling stage \emph{followed by further stages} is not
+nested cluster sampling (the later selections are conditional on the realized
+element sample, i.e. phase sampling). I can't be represented currently and
+\code{as_svydesign()} raises an error. Express such designs as two-phase samples instead.
+Execute the element stage under its first-phase design, then execute a new
+second-phase design with that sample as its frame. This exports via \code{\link[survey:twophase]{survey::twophase()}}.
 
 Concretely, for a two-stage stratified-cluster design with a final
 element stage, the exported call is equivalent to:
@@ -137,9 +136,9 @@ modifications through routes the dplyr hooks cannot see (base
 assignment, \code{rbind()}, vctrs operations, third-party verbs) are
 also caught, and an overwrite that left every value identical
 passes. Physically dropping out-of-domain
-rows before conversion is not equivalent to domain estimation: the
-point estimate agrees, but the variance is understated because the
-domain sample size is random under the design.
+rows before conversion is not equivalent to domain estimation, in that
+situation the point estimate will be correct, but the variance is
+understated because the domain sample size is random under the design.
 
 For subpopulation estimates, convert the full sample first and then
 subset the design, which applies the proper domain estimator:
@@ -171,14 +170,14 @@ For fixed-size PPS without-replacement stages (\code{pps_brewer},
 \code{pps_systematic}, \code{pps_cps}, \code{pps_sampford}, \code{pps_sps}, \code{pps_pareto}),
 variance is estimated by default using Brewer's approximation (\code{pps = "brewer"} in survey's terminology), which approximates the joint inclusion
 probabilities from the marginal inclusion probabilities. Here Brewer names
-the variance estimator, not the selection algorithm: Sampford selection,
-for example, receives this default treatment. This is the approximation
+the variance estimator, not the selection algorithm e.g Sampford selection
+receives this default treatment. This is the approximation
 described by Berger (2004) and works well for most PPS designs regardless
 of the sampling algorithm used.
 
 For supported methods, you can instead compute joint inclusion
 probabilities using \code{\link[=joint_expectation]{joint_expectation()}} and pass them via \code{pps = survey::ppsmat(joint_matrix)}. The matrix is exact for CPS, Sampford,
-systematic PPS, and Poisson selection; generalized Brewer, SPS, Pareto, and
+systematic PPS, and Poisson selection. Generalized Brewer, SPS, Pareto, and
 unconstrained cube use the documented high-entropy approximation.
 }
 
@@ -254,11 +253,11 @@ A method declared \code{"unsupported"} cannot be linearized at all:
 \subsection{Chromy's sequential PPS method (PMR)}{
 
 \code{pps_chromy} is classified as a \emph{Probability Minimum Replacement}
-(PMR) method -- neither with-replacement nor without-replacement.
+(PMR) method which is neither with-replacement nor without-replacement.
 Each unit receives exactly \eqn{\lfloor E(n_i) \rfloor} or
 \eqn{\lfloor E(n_i) \rfloor + 1} hits, where
 \eqn{E(n_i) = n \cdot \textrm{mos}_i / \sum \textrm{mos}}.
-When all expected hit counts are below 1, this reduces to WOR;
+When all expected hit counts are below 1, this reduces to WOR,
 otherwise large units receive multiple hits.
 
 For variance estimation, Chromy (2009) recommends the
@@ -293,7 +292,7 @@ For stages using with-replacement methods (\code{srswr},
 and the \code{.draw_k} column (sequential draw index) is used as the
 sampling unit identifier for Hansen-Hurwitz variance estimation.
 
-The \code{survey} package is required but not imported -- it must be
+The \code{survey} package is required but not imported. It must be
 installed to use this function.
 }
 }

@@ -25,7 +25,12 @@ in stage order. Passing a \code{tbl_sample} here while \code{.data} is a new
 \code{sampling_design} starts a new sampling phase; it does not continue the
 stages stored in that sample. Ordinary input frames must have unique
 names and must not use columns reserved for execution output, such as
-\code{.weight}, \code{.sample_id}, \code{.stage}, \code{.weight_k}, or \code{.fpc_k}.}
+\code{.weight}, \code{.sample_id}, \code{.stage}, \code{.weight_k}, or \code{.fpc_k}, where \code{k}
+is the stage number (\code{.weight_1}, \code{.fpc_1}, and so on). Frames are
+matched positionally, so any name given here is a label. A label
+resembling one of the arguments below (\code{seedd}, or the singular
+\code{stage}, \code{rep}, \code{panel}) is refused rather than read as a frame,
+because those arguments follow \code{...} and are matched exactly.}
 
 \item{stages}{Integer vector specifying which stage(s) to execute.
 From a \code{sampling_design}, the vector must start at stage 1; this is how

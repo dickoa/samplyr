@@ -196,6 +196,52 @@ abort_samplyr <- function(
   )
 }
 
+#' Find the reserved argument a stray name in `...` was most likely meant to be
+#'
+#' Arguments placed after `...` in a signature must be matched exactly, so a
+#' near miss such as `seedd` or the singular `stage` falls into `...` instead
+#' of raising R's own "unused argument" error. Returns the closest candidate
+#' within `max_dist` edits, or `NULL` when nothing is close enough to name.
+#' @noRd
+suggest_reserved_arg <- function(name, candidates, max_dist = 2L) {
+  if (!is_character(name) || length(name) != 1L || !nzchar(name)) {
+    return(NULL)
+  }
+  if (length(candidates) == 0L) {
+    return(NULL)
+  }
+  distances <- as.integer(utils::adist(name, candidates, ignore.case = TRUE))
+  closest <- which.min(distances)
+  if (distances[closest] > max_dist) {
+    return(NULL)
+  }
+  candidates[[closest]]
+}
+
+#' Message bullets naming a stray argument and its likely intended spelling
+#'
+#' Used by the verbs whose `...` carries data, where a misspelled reserved
+#' argument would otherwise be diagnosed as bad data. The bullets are
+#' formatted here rather than returned as cli templates, because the caller
+#' raises them from a frame where these locals no longer exist.
+#' @noRd
+stray_arg_bullets <- function(name, candidates) {
+  suggestion <- suggest_reserved_arg(name, candidates)
+  advice <- if (!is.null(suggestion)) {
+    cli::format_inline("Did you mean {.arg {suggestion}}?")
+  } else {
+    cli::format_inline(
+      "Named arguments here must be one of {.arg {candidates}}."
+    )
+  }
+  c(
+    "x" = cli::format_inline(
+      "{.arg {name}} is not an argument of this function."
+    ),
+    "i" = advice
+  )
+}
+
 #' Validate names before execute() adds sampling columns
 #' @noRd
 validate_execute_frame_names <- function(

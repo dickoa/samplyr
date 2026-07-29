@@ -180,3 +180,79 @@ test_that("replicate export errors use standardized classes", {
     class = "samplyr_error_svrep_twophase_unsupported"
   )
 })
+
+test_that("a misspelled reserved argument to execute() is named, not misdiagnosed", {
+  frame <- data.frame(id = 1:40, region = rep(c("n", "s"), 20))
+  design <- sampling_design() |> draw(n = 8)
+
+  # Arguments after `...` are matched exactly, so near misses land in `...`.
+  # Reporting them by position would describe the wrong problem.
+  expect_error(
+    execute(design, frame, seedd = 1),
+    class = "samplyr_error_unknown_argument"
+  )
+  expect_error(execute(design, frame, seedd = 1), "Did you mean.*seed")
+
+  # The singular forms are the natural guess given add_stage().
+  expect_error(execute(design, frame, seed = 1, stage = 1), "Did you mean.*stages")
+  expect_error(execute(design, frame, seed = 1, rep = 3), "Did you mean.*reps")
+  expect_error(execute(design, frame, seed = 1, panel = 2), "Did you mean.*panels")
+
+  # A near miss holding a data frame would otherwise pass as an extra frame.
+  expect_error(
+    execute(design, frame, seed = 1, stagess = frame),
+    class = "samplyr_error_unknown_argument"
+  )
+
+  # No close candidate: list them instead of guessing.
+  expect_error(execute(design, frame, junk = 42), "must be one of")
+
+  # An unnamed non-frame keeps its positional diagnosis.
+  expect_error(
+    execute(design, frame, 42),
+    class = "samplyr_error_frame_not_data_frame"
+  )
+})
+
+test_that("execute() still accepts labelled frames and exact arguments", {
+  frame <- data.frame(id = 1:40, ea = rep(1:8, each = 5))
+  hh <- data.frame(ea = rep(1:8, each = 5), hh = 1:40)
+  design <- sampling_design() |> draw(n = 8)
+
+  expect_s3_class(execute(design, listing = frame, seed = 1), "tbl_sample")
+  expect_s3_class(
+    execute(design, frame, seed = 1, frame_digest = "none"),
+    "tbl_sample"
+  )
+
+  multistage <- sampling_design() |>
+    add_stage("a") |> cluster_by(ea) |> draw(n = 3) |>
+    add_stage("b") |> draw(n = 2)
+  expect_s3_class(
+    execute(multistage, ea_frame = frame, hh_frame = hh, seed = 1),
+    "tbl_sample"
+  )
+})
+
+test_that("a misspelled reserved argument to stratify_by() is named", {
+  expect_error(
+    sampling_design() |> stratify_by(region, allocc = "neyman"),
+    class = "samplyr_error_unknown_argument"
+  )
+  expect_error(
+    sampling_design() |> stratify_by(region, allocc = "neyman"),
+    "Did you mean.*alloc"
+  )
+  expect_error(
+    sampling_design() |> stratify_by(region, varianc = 1),
+    "Did you mean.*variance"
+  )
+
+  # A label that resembles no reserved argument is ignored, as before.
+  frame <- data.frame(id = 1:40, region = rep(c("n", "s"), 20))
+  labelled <- sampling_design() |>
+    stratify_by(reg = region) |>
+    draw(n = 8) |>
+    execute(frame, seed = 1)
+  expect_equal(as.list(get_design(labelled))$stages[[1]]$strata$vars, "region")
+})

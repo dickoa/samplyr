@@ -19,7 +19,10 @@ stratify_by(
 \item{.data}{A \code{sampling_design} object (piped from \code{\link[=sampling_design]{sampling_design()}} or
 \code{\link[=add_stage]{add_stage()}}).}
 
-\item{...}{Stratification variables specified as bare column names.}
+\item{...}{Stratification variables specified as bare column names. Any
+name given here is a label and does not rename the variable. A label
+resembling one of the arguments below (\code{allocc}, \code{varianc}) is refused,
+because those arguments follow \code{...} and are matched exactly.}
 
 \item{alloc}{Character string specifying the allocation method. One of:
 \itemize{

@@ -1,65 +1,40 @@
 #' Design Effect and Effective Sample Size
 #'
 #' These are the \pkg{svyplan} generics re-exported by samplyr. Samplyr adds
-#' `tbl_sample` methods rather than defining competing generics. Compute the
-#' design effect (DEFF) or effective sample size from sampling weights. Five
-#' methods are available for two use cases:
+#' `tbl_sample` methods rather than defining competing generics.
 #'
-#' **After data collection (diagnostic):** assess how much precision was
-#' lost due to the complex design.
-#' - `"kish"` (default): weights only. Quick, outcome-independent summary.
-#' - `"henry"`: weights + outcome + calibration covariate. Accounts for
-#'   calibration weighting.
-#' - `"spencer"`: weights + outcome + selection probabilities. Accounts
-#'   for correlation between weights and the outcome.
-#' - `"cr"`: weights + outcome + strata/cluster IDs. Full Chen-Rust
-#'   decomposition for multistage stratified designs.
+#' The `tbl_sample` methods report the **weighting loss**: how much precision
+#' the realized weights cost relative to a self-weighting sample of the same
+#' size. This is Kish's design effect,
+#' \eqn{n \sum w_i^2 / (\sum w_i)^2}{n * sum(w^2) / sum(w)^2}, computed from
+#' the `.weight` column, so it equals 1 for a self-weighting design and rises
+#' with weight variability. It is outcome-independent, which is what makes it
+#' available from the sample alone.
 #'
-#' **Before data collection (planning):** estimate an expected DEFF to
-#' inflate a simple-random-sample size calculation.
-#' - `"cluster"`: uses homogeneity (`delta`) and mean cluster size
-#'   (`psu_size`) to compute DEFF = 1 + (psu_size - 1) * delta. Pass
-#'   the result to [svyplan::n_prop()], [svyplan::n_mean()], or other
-#'   sizing functions.
+#' It is one component of a full design effect and not a substitute for one.
+#' Clustering and stratification also move precision, and neither is visible
+#' in the weights. To estimate a design effect that reflects them, fit the
+#' design and ask the estimator: `as_svydesign()` then
+#' `survey::svymean(deff = TRUE)`, which is outcome-specific by necessity.
+#' To *anticipate* the clustering component before collecting data, use
+#' [svyplan::design_effect()] directly with `icc` and `n_per_psu`.
 #'
-#' The `tbl_sample` methods extract what they can from the sample
-#' metadata. The user only needs to supply column names for variables
-#' that are not part of the sampling metadata.
-#' - Weights from `.weight`
-#' - Selection probabilities from `1 / .weight` (for Spencer). Spencer
-#'   (2000) derives his DEFF at the unit level, so the required
-#'   probability is the overall inclusion probability
-#'   \eqn{\pi_i = 1/w_i}{pi_i = 1/w_i}, i.e. the product of all per-stage
-#'   inclusion probabilities for multi-stage designs. This matches the
-#'   convention used by `PracTools::deffS()`.
-#' - Stratification and clustering variables from the stored design (for CR)
+#' @param x A `tbl_sample`, or a numeric weight vector passed to the svyplan
+#'   method.
+#' @param ... Passed to the svyplan method.
 #'
-#' @param x A numeric weight vector, a `tbl_sample`, or `NULL` (for
-#'   the `"cluster"` planning method).
-#' @param ... Passed to the svyplan method. For `method = "cluster"`,
-#'   pass `delta` (measure of homogeneity, scalar or `svyplan_varcomp`)
-#'   and `psu_size` (mean cluster size). See [svyplan::design_effect()].
-#' @param y <[`data-masking`][dplyr::dplyr_data_masking]> Outcome variable
-#'   (column name). Required for Henry, Spencer, and CR methods.
-#' @param x_cal <[`data-masking`][dplyr::dplyr_data_masking]> Calibration
-#'   covariate (column name). Required for the Henry method.
-#' @param method Design effect method. For diagnostic use (with weights):
-#'   one of `"kish"` (default), `"henry"`, `"spencer"`, or `"cr"`. For
-#'   planning (no weights): `"cluster"`.
-#'
-#' @return `design_effect()` returns a numeric `svyplan_design_effect` object.
-#'   Use [as.double()] for the overall value and [as.data.frame()] for the
-#'   Chen-Rust decomposition. `effective_n()` returns a numeric scalar.
+#' @return `design_effect()` returns a numeric `svyplan_deff` object; use
+#'   [as.double()] for the value. `effective_n()` returns a numeric scalar.
 #'
 #' @examples
-#' # Kish design effect (default)
 #' set.seed(1207)
 #' frame <- data.frame(
 #'   id = 1:200,
 #'   stratum = rep(c("A", "B"), each = 100),
-#'   income = c(rnorm(100, 50, 10), rnorm(100, 80, 15)),
-#'   x_cal = runif(200, 0.5, 2)
+#'   income = c(rnorm(100, 50, 10), rnorm(100, 80, 15))
 #' )
+#'
+#' # A disproportionate allocation costs precision through its weights
 #' samp <- sampling_design() |>
 #'   stratify_by(stratum) |>
 #'   draw(n = c(A = 10, B = 40)) |>
@@ -68,21 +43,21 @@
 #' design_effect(samp)
 #' effective_n(samp)
 #'
-#' # Henry (calibration covariate)
-#' design_effect(samp, y = income, x_cal = x_cal, method = "henry")
+#' # A proportional allocation is self-weighting, so the loss is 1
+#' prop_samp <- sampling_design() |>
+#'   stratify_by(stratum) |>
+#'   draw(n = c(A = 25, B = 25)) |>
+#'   execute(frame, seed = 1213)
 #'
-#' # Spencer (selection probabilities extracted automatically)
-#' design_effect(samp, y = income, method = "spencer")
+#' design_effect(prop_samp)
 #'
-#' # Chen-Rust (strata and clusters extracted from design)
-#' design_effect(samp, y = income, method = "cr")
-#'
-#' # Cluster planning (no sample needed)
-#' design_effect(delta = 0.05, psu_size = 25, method = "cluster")
+#' # Anticipating the clustering component at the planning stage
+#' svyplan::design_effect(icc = 0.05, n_per_psu = 25)
 #'
 #' @seealso [svyplan::design_effect()], [svyplan::effective_n()],
 #'   [svyplan::varcomp()], [svyplan::n_cluster()],
-#'   [svyplan::prec_prop()], [svyplan::prec_mean()]
+#'   [as_svydesign()] to hand the design to \pkg{survey} for an
+#'   outcome-specific design effect
 #'
 #' @name design_effect
 #' @importFrom svyplan design_effect effective_n
@@ -95,146 +70,26 @@ svyplan::effective_n
 
 #' @rdname design_effect
 #' @export
-design_effect.tbl_sample <- function(
-  x,
-  ...,
-  y = NULL,
-  x_cal = NULL,
-  method = "kish"
-) {
-  check_single_replicate(x, "design_effect")
-  check_sample_unmodified(x, "design_effect")
-  w <- x[[".weight"]]
-  if (is.null(w)) {
-    cli_abort("tbl_sample has no {.field .weight} column.")
-  }
-  args <- resolve_deff_args(
-    x,
-    y = enquo(y),
-    x_cal = enquo(x_cal),
-    method = method
-  )
-  design_effect(
-    w,
-    y = args$y,
-    x_cal = args$x_cal,
-    prob = args$prob,
-    strata_id = args$strata_id,
-    cluster_id = args$cluster_id,
-    stages = args$stages,
-    method = method,
-    ...
-  )
+design_effect.tbl_sample <- function(x, ...) {
+  design_effect(weights = sample_weights(x, "design_effect"), ...)
 }
 
 #' @rdname design_effect
 #' @export
-effective_n.tbl_sample <- function(
-  x,
-  ...,
-  y = NULL,
-  x_cal = NULL,
-  method = "kish"
-) {
-  check_single_replicate(x, "effective_n")
-  check_sample_unmodified(x, "effective_n")
+effective_n.tbl_sample <- function(x, ...) {
+  effective_n(weights = sample_weights(x, "effective_n"), ...)
+}
+
+#' Extract the weight column a weighting-loss calculation needs
+#' @noRd
+sample_weights <- function(x, fn) {
+  check_single_replicate(x, fn)
+  check_sample_unmodified(x, fn)
   w <- x[[".weight"]]
   if (is.null(w)) {
     cli_abort("tbl_sample has no {.field .weight} column.")
   }
-  args <- resolve_deff_args(
-    x,
-    y = enquo(y),
-    x_cal = enquo(x_cal),
-    method = method
-  )
-  effective_n(
-    w,
-    y = args$y,
-    x_cal = args$x_cal,
-    prob = args$prob,
-    strata_id = args$strata_id,
-    cluster_id = args$cluster_id,
-    stages = args$stages,
-    method = method,
-    ...
-  )
-}
-
-#' Resolve design_effect arguments from tbl_sample metadata
-#' @noRd
-resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
-  y_val <- if (!quo_is_null(y)) rlang::eval_tidy(y, data = x) else NULL
-  x_cal_val <- if (!quo_is_null(x_cal)) {
-    rlang::eval_tidy(x_cal, data = x)
-  } else {
-    NULL
-  }
-
-  prob_val <- NULL
-  strata_id_val <- NULL
-  cluster_id_val <- NULL
-  stages_val <- NULL
-
-  if (method == "spencer") {
-    # Spencer (2000) is a unit-level approximation: the probability input
-    # is the overall inclusion probability pi_i = 1/w_i, not a stage-1
-    # probability. This matches PracTools::deffS().
-    w_overall <- x[[".weight"]]
-    if (!is.null(w_overall)) {
-      prob_val <- 1 / w_overall
-    }
-  }
-
-  if (method == "cr") {
-    design <- get_design(x)
-    if (!is_null(design)) {
-      stage1 <- design$stages[[1L]]
-      strata_vars <- stage1$strata$vars
-      cluster_vars <- if (!is_null(stage1$clusters)) {
-        stage1$clusters$vars
-      } else {
-        NULL
-      }
-
-      if (!is_null(strata_vars)) {
-        if (length(strata_vars) == 1L) {
-          strata_id_val <- x[[strata_vars[[1L]]]]
-        } else {
-          strata_id_val <- make_group_key(x, strata_vars)
-        }
-        n_strata <- length(unique(strata_id_val))
-        stages_val <- rep(if (!is_null(cluster_vars)) 2L else 1L, n_strata)
-      }
-
-      if (!is_null(cluster_vars)) {
-        if (length(cluster_vars) == 1L) {
-          cluster_id_val <- x[[cluster_vars[[1L]]]]
-        } else {
-          cluster_id_val <- make_group_key(x, cluster_vars)
-        }
-      }
-    }
-
-    if (is.null(strata_id_val) && is.null(cluster_id_val)) {
-      cli_abort(
-        c(
-          "The CR method requires stratification or clustering in the design.",
-          i = "Use {.fn design_effect} with {.arg method = \"kish\"} for unstratified, unclustered designs."
-        ),
-        call = call
-      )
-    }
-  }
-
-  list(
-    y = y_val,
-    x_cal = x_cal_val,
-    prob = prob_val,
-    strata_id = strata_id_val,
-    cluster_id = cluster_id_val,
-    stages = stages_val
-  )
+  w
 }
 
 #' Coerce svyplan objects for draw()
@@ -247,7 +102,7 @@ resolve_deff_args <- function(x, y, x_cal, method, call = caller_env()) {
 #'
 #' - `n_alloc()` results: named per-stratum vector. For stratified
 #'   two-stage plans (cluster mode), stage 1 gets `n_psu_int` and
-#'   stage 2 gets `psu_size_int`, both named by stratum (the jointly
+#'   stage 2 gets `n_per_psu_int`, both named by stratum (the jointly
 #'   integerized field design, svyplan >= 0.8.8).
 #' - `n_multi()` results with domains: data frame keyed on the domain
 #'   columns (requires a matching `stratify_by()`).
@@ -278,7 +133,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
       }
       if (stage_index == 2L) {
         return(stats::setNames(
-          as.integer(detail$psu_size_int),
+          as.integer(detail$n_per_psu_int),
           detail$stratum
         ))
       }
@@ -303,7 +158,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
   }
 
   if (inherits(n, "svyplan_cluster")) {
-    stage_cols <- c("n_psu", "psu_size", "ssu_size")
+    stage_cols <- c("n_psu", "n_per_psu", "n_per_ssu")
     if (!is_null(n$domains)) {
       dom <- as.data.frame(n)
       if (!stage_aware) {
@@ -350,7 +205,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
 
 #' Variance Components from an Executed Sample
 #'
-#' Estimate design-based variance components (B, W, delta, k) from a
+#' Estimate design-based variance components (B, W, icc, k) from a
 #' `tbl_sample`, for planning the next round with
 #' [svyplan::n_cluster()]. The method extracts everything the
 #' estimation needs from the sample's design columns, applying two
@@ -393,7 +248,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
 #'   Combining them with `strata` is an error, because per-stratum
 #'   components crossed with design strata are ambiguous.
 #'
-#' @return A `svyplan_varcomp` object. Pass it as `delta` to
+#' @return A `svyplan_varcomp` object. Pass it as `icc` to
 #'   [svyplan::n_cluster()]. Use [as.data.frame()] to export either the
 #'   one-row unstratified components or the per-stratum component table.
 #'
@@ -416,7 +271,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
 #' as.data.frame(vc)
 #'
 #' # Feed the components into next-round cluster planning
-#' svyplan::n_cluster(stage_cost = c(500, 50), delta = vc,
+#' svyplan::n_cluster(stage_cost = c(500, 50), icc = vc,
 #'                    budget = 100000)
 #'
 #' @seealso [svyplan::varcomp()] for the estimator and its

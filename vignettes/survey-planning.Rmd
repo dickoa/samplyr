@@ -77,13 +77,13 @@ n_rev
 In practice, a survey measures several things at once. `n_multi()` takes the binding constraint across indicators:
 
 ```{r}
-targets <- data.frame(
+indicators <- data.frame(
   name = c("exporter_rate", "mean_revenue"),
   p = c(p_export, NA),
   var = c(NA, rev_var),
   moe = c(0.03, 30)
 )
-n_survey <- n_multi(targets)
+n_survey <- n_multi(indicators)
 n_survey
 ```
 
@@ -96,20 +96,20 @@ samp <- sampling_design() |>
 nrow(samp)
 ```
 
-### Per-domain targets
+### Per-domain requirements
 
 With `domains`, `n_multi()` sizes each reporting domain separately. The
 result hands `draw()` a per-domain table, so the design needs a matching
 `stratify_by()`:
 
 ```{r}
-targets_dom <- data.frame(
+indicators_dom <- data.frame(
   name = "exporter_rate",
   size_class = c("Small", "Medium", "Large"),
   p = c(0.10, 0.22, 0.45),
   cv = 0.10
 )
-n_dom <- n_multi(targets_dom, domains = "size_class")
+n_dom <- n_multi(indicators_dom, domains = "size_class")
 
 samp_dom <- sampling_design() |>
   stratify_by(size_class) |>
@@ -217,16 +217,16 @@ vc
 as.data.frame(vc)
 ```
 
-The `delta` value (measure of homogeneity) feeds directly into `n_cluster()` and `design_effect()`.
+The `icc` value (measure of homogeneity) feeds directly into `n_cluster()` and `design_effect()`.
 
 ### Optimal allocation
 
 ```{r}
 # Minimize cost to achieve CV = 0.10
-n_cluster(stage_cost = c(500, 50), delta = vc, cv = 0.10)
+n_cluster(stage_cost = c(500, 50), icc = vc, cv = 0.10)
 
 # Maximize precision within a budget
-n_cluster(stage_cost = c(500, 50), delta = vc, budget = 30000)
+n_cluster(stage_cost = c(500, 50), icc = vc, budget = 30000)
 ```
 
 The precision-target result is diagnostic: its required number of county PSUs
@@ -241,7 +241,7 @@ design (`as.integer(cl)`, which svyplan re-optimizes to whole units
 rather than rounding each stage up):
 
 ```{r}
-cl <- n_cluster(stage_cost = c(500, 50), delta = vc, budget = 30000)
+cl <- n_cluster(stage_cost = c(500, 50), icc = vc, budget = 30000)
 as.integer(cl)
 
 samp <- sampling_design() |>
@@ -327,7 +327,7 @@ Then compute the allocation. Here we use Neyman allocation targeting 600 units
 with a minimum of 20 per stratum:
 
 ```{r}
-alloc <- n_alloc(alloc_frame, n = 600, alloc = "neyman", min_n = 20)
+alloc <- n_alloc(alloc_frame, n = 600, alloc = "neyman", min_n_stratum = 20)
 alloc
 as.data.frame(alloc)[, c("stratum", "N", "n_int", "weight")]
 ```
@@ -362,7 +362,7 @@ budget_alloc <- n_alloc(
   alloc_frame_cost,
   budget = 50000,
   alloc = "optimal",
-  min_n = 20
+  min_n_stratum = 20
 )
 budget_alloc
 as.data.frame(budget_alloc)[, c("stratum", "N", "unit_cost", "n_int", "weight")]
@@ -381,11 +381,11 @@ samp_budget |>
 
 The workhorse of household surveys stratifies by region, samples
 enumeration areas within each region, then households within each EA.
-`n_alloc()` plans this design when the frame carries a `delta_psu`
+`n_alloc()` plans this design when the frame carries a `icc_psu`
 column. The whole plan then drives both stages of the samplyr design.
 
 Build the planning frame from the EA frame's own aggregates. The
-homogeneity `delta_psu` typically comes from a previous survey round
+homogeneity `icc_psu` typically comes from a previous survey round
 (via `varcomp()` with its `strata` argument). Here we use a flat 0.05:
 
 ```{r}
@@ -399,19 +399,19 @@ frame_bfa <- bfa_eas |>
   mutate(
     stratum = region,
     sd = sqrt(var),
-    delta_psu = 0.05,
+    icc_psu = 0.05,
     cost_ssu = 15
   )
 
 plan_2stage <- n_alloc(
-  frame_bfa[, c("stratum", "N", "sd", "delta_psu", "cost_psu", "cost_ssu")],
+  frame_bfa[, c("stratum", "N", "sd", "icc_psu", "cost_psu", "cost_ssu")],
   n = 6000,
   alloc = "neyman"
 )
-head(as.data.frame(plan_2stage)[, c("stratum", "n_int", "n_psu_int", "psu_size_int")])
+head(as.data.frame(plan_2stage)[, c("stratum", "n_int", "n_psu_int", "n_per_psu_int")])
 ```
 
-Each region gets a whole-unit cluster take (`psu_size_int`) and a
+Each region gets a whole-unit cluster take (`n_per_psu_int`) and a
 number of EAs (`n_psu_int`), integerized together so their product
 stays on target. Execute stage 1 against the EA frame, then stage 2
 within each EA. Note the `cluster_by(ea_id)` even though rows already
@@ -445,62 +445,153 @@ stage 2 need the explicit `stratify_by(region)` shown above. Strata do
 not carry over from stage 1, and the second `stratify_by()` only routes
 the takes (every EA lies in one region), so weights are unaffected.
 
+## Two-Phase Designs
+
+When the variable you care about is expensive to measure but a cheap
+screener can classify units into useful strata, a two-phase design pays
+for the screener out of the savings. `n_twophase()` plans one: a large
+phase-1 sample that classifies, and a stratified subsample of it that
+carries the expensive measurement.
+
+Here a short screening call establishes each enterprise's sector, and the
+full financial interview is taken from a subsample. The phase-2 frame
+describes what that interview costs and how variable revenue is inside
+each sector:
+
+```{r}
+frame_twophase <- ken_enterprises |>
+  summarize(
+    N = n(),
+    sd = sd(revenue_millions),
+    mean = mean(revenue_millions),
+    .by = sector
+  ) |>
+  rename(stratum = sector) |>
+  mutate(unit_cost = c(120, 200, 150, 130, 80, 100, 90))
+
+plan2 <- n_twophase(
+  frame_twophase,
+  phase1_cost = 5,
+  budget = 60000,
+  N = nrow(ken_enterprises)
+)
+plan2
+```
+
+The allocation is a subsampling fraction per stratum. Sectors where
+revenue varies a lot, or where the interview is cheap, are carried into
+phase 2 at a higher rate; `nu = 1` means the screener found so few units
+that all of them are worth interviewing:
+
+```{r}
+as.data.frame(plan2$detail)[, c("stratum", "share", "nu", "n_issued")]
+```
+
+Phase 1 is an ordinary design executed against the frame. Give it a unit
+identifier with `cluster_by()`: the two phases have to share one, or the
+export in the next step cannot link them.
+
+```{r}
+phase1 <- sampling_design() |>
+  cluster_by(enterprise_id) |>
+  draw(n = plan2$operational$n[["n_phase1"]]) |>
+  execute(ken_enterprises, seed = 2026)
+
+phase1 |> count(sector, name = "screened")
+```
+
+Phase 2 is a *new* design executed with the phase-1 sample as its frame.
+Pass the subsampling fractions with `frac`, not fixed counts: `nu` is a
+share of whatever phase 1 actually found in each stratum, and what it
+found is random. A take-all stratum needs the entire realized pool, so a
+fixed count would ask for more units than the screener produced roughly
+half the time.
+
+```{r}
+nu <- setNames(plan2$detail$nu, plan2$detail$stratum)
+
+phase2 <- sampling_design() |>
+  stratify_by(sector) |>
+  cluster_by(enterprise_id) |>
+  draw(frac = nu) |>
+  execute(phase1, seed = 7)
+
+phase2 |> count(sector, name = "interviewed")
+```
+
+Weights compound across the phases, so they still sum to the frame:
+
+```{r}
+c(sum_of_weights = sum(phase2$.weight), frame_size = nrow(ken_enterprises))
+```
+
+`as_svydesign()` recognizes the previous-phase link and exports through
+`survey::twophase()`, so the two-phase variance is computed rather than
+approximated by treating phase 2 as a simple sample:
+
+```{r}
+svy2 <- as_svydesign(phase2)
+class(svy2)
+survey::svymean(~revenue_millions, svy2)
+```
+
+The realized standard error should land near the coefficient of variation
+the plan was built for, but only on average. The planned figure is a
+property of the design; the realized one is an estimate from the single
+sample you drew, and on a skewed outcome it moves a good deal from draw to
+draw. Repeating this design over many seeds gives a spread of realized
+coefficients of variation centred close to the planned one.
+
+```{r}
+est <- survey::svymean(~revenue_millions, svy2)
+c(
+  planned_cv = plan2$cv,
+  realized_cv = as.numeric(survey::SE(est) / coef(est))
+)
+```
+
 ## Design Effects After Sampling
 
-After executing a design, you can evaluate its efficiency using `design_effect()` and `effective_n()`. These are re-exported from
-`svyplan` and work directly on `tbl_sample` objects.
+After executing a design, `design_effect()` and `effective_n()` report what
+the weights cost you. These are re-exported from `svyplan` and work directly
+on `tbl_sample` objects.
 
-### Kish Design Effect
+### Weighting Loss
 
-The Kish design effect measures the loss of precision due to unequal weights. It equals 1 for self-weighting designs:
+The `tbl_sample` methods report the weighting loss: how much precision the
+realized weights cost relative to a self-weighting sample of the same size.
+This is Kish's design effect, computed from `.weight`, so it equals 1 for a
+self-weighting design and rises with weight variability:
 
 ```{r}
 design_effect(samp)
 effective_n(samp)
 ```
 
-The effective sample size is the number of observations an SRS would need to achieve the same precision.
+The effective sample size is the number of observations an SRS would need to
+achieve the same precision.
 
-### Spencer Method
+This is one component of a design effect, not a substitute for one.
+Clustering and stratification also move precision, and neither is visible in
+the weights, so neither can be read off the sample without an outcome. For a
+design effect that reflects them, hand the design to survey and let the
+estimator do it:
 
-The Spencer method accounts for the relationship between the outcome variable and the selection probabilities. Pass the outcome as a bare column name. The overall selection probabilities are extracted automatically
-from `.weight`:
-
-```{r}
-design_effect(samp, y = revenue_millions, method = "spencer")
+```{r, eval = FALSE}
+svy <- as_svydesign(samp)
+survey::svymean(~revenue_millions, svy, deff = TRUE)
 ```
-
-### Henry Method
-
-The Henry method also accounts for a calibration covariate. Both `y` and `x_cal` are column names in the sample:
-
-```{r}
-design_effect(samp, y = revenue_millions, x_cal = employees,
-              method = "henry")
-```
-
-### Chen-Rust Decomposition
-
-For stratified or clustered designs, the Chen-Rust (CR) method decomposes the design effect into weighting (`deff_w`), clustering (`deff_c`), and stratification (`deff_s`) components:
-
-```{r}
-cr <- design_effect(samp, y = revenue_millions, method = "cr")
-as.data.frame(cr)
-as.double(cr)
-```
-
-The `tbl_sample` method extracts stratification and clustering variables from the stored design metadata. You only need to supply the outcome.
 
 ### Cluster Planning
 
-Before collecting data, you can anticipate the design effect for a cluster design using the survey-planning homogeneity measure `delta` and cluster size. This `delta` is not a generic mixed-model ICC. The calculation uses `svyplan::design_effect()` directly, not a `tbl_sample` method:
+Before collecting data, you can anticipate the design effect for a cluster design using the survey-planning homogeneity measure `icc` and cluster size. This `icc` is not a generic mixed-model ICC. The calculation uses `svyplan::design_effect()` directly, not a `tbl_sample` method:
 
 ```{r}
-design_effect(delta = 0.05, psu_size = 10)
-design_effect(delta = 0.15, psu_size = 10)
+design_effect(icc = 0.05, n_per_psu = 10)
+design_effect(icc = 0.15, n_per_psu = 10)
 ```
 
-With a `delta` of 0.05 and 10 units per cluster, the design effect is 1.45. A `delta` of 0.15 raises it to 2.35. This helps decide the number of clusters and units per cluster during the planning stage.
+With an `icc` of 0.05 and 10 units per cluster, the design effect is 1.45. An `icc` of 0.15 raises it to 2.35. This helps decide the number of clusters and units per cluster during the planning stage.
 
 ## Planning the Next Wave
 
@@ -559,8 +650,13 @@ The typical planning workflow can be:
    or power allocation with constraints).
 6. For cluster designs, estimate variance components with `varcomp()` and
    optimize the allocation with `n_cluster()`.
-7. Pass the sample size or allocation to `draw()` and execute the design.
-8. Evaluate the realized design with `design_effect()` and `effective_n()`.
+7. When a cheap screener can classify units into strata that an expensive
+   measurement then subsamples, plan both phases with `n_twophase()`.
+8. Pass the sample size or allocation to `draw()` and execute the design.
+9. Read the realized weighting loss with `design_effect()` and
+   `effective_n()`, and for a design effect that also reflects clustering and
+   stratification, export with `as_svydesign()` and use
+   `survey::svymean(deff = TRUE)`.
 
 All `svyplan` sample size objects work directly with `draw()`, and the
 handoff is stage-aware. `n_alloc()` results become per-stratum
@@ -572,3 +668,10 @@ plans become per-domain tables for a design stratified on the domain
 variables. Scalar objects (`n_prop()`, `n_mean()`, `power_*()`)
 contribute their operational total. The stable tabular form of any plan
 is available via `as.data.frame()` when you need the numbers yourself.
+
+`n_twophase()` is the exception to that handoff, because its allocation is
+a set of subsampling fractions rather than a count. Execute phase 1 as an
+ordinary design, then execute a second design against the phase-1 sample
+with `draw(frac = )` carrying the plan's `nu`. Both phases need a shared
+unit identifier for `as_svydesign()` to link them into a
+`survey::twophase()` object.

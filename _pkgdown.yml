@@ -78,7 +78,7 @@ reference:
       - "`[.tbl_sample`"
 
   - title: "Datasets"
-    desc: "Synthetic survey frames for examples."
+    desc: "Survey frames derived from public data, for learning and testing."
     contents:
       - samplyr-datasets
       - bfa_eas

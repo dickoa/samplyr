@@ -48,7 +48,12 @@ and parent-by-stratum pools at later stages. For a replicated
 execution, the pool table has one row per \code{pool_id} and \code{replicate}.
 
 \strong{Weights} reports the mean and range, coefficient of variation,
-Kish design effect, and effective sample size on one line.
+Kish design effect, and effective sample size on one line. The
+\verb{Kish DEFF} token is the weighting loss alone, as computed by
+\code{\link[=design_effect]{design_effect()}} on the \code{.weight} column. Clustering and
+stratification also move precision and are invisible in the weights,
+so a design effect that reflects them needs \code{\link[=as_svydesign]{as_svydesign()}} and
+\code{survey::svymean(deff = TRUE)}.
 }
 \examples{
 sample <- sampling_design() |>

@@ -22,12 +22,12 @@ Combining them with \code{strata} is an error, because per-stratum
 components crossed with design strata are ambiguous.}
 }
 \value{
-A \code{svyplan_varcomp} object. Pass it as \code{delta} to
+A \code{svyplan_varcomp} object. Pass it as \code{icc} to
 \code{\link[svyplan:n_cluster]{svyplan::n_cluster()}}. Use \code{\link[=as.data.frame]{as.data.frame()}} to export either the
 one-row unstratified components or the per-stratum component table.
 }
 \description{
-Estimate design-based variance components (B, W, delta, k) from a
+Estimate design-based variance components (B, W, icc, k) from a
 \code{tbl_sample}, for planning the next round with
 \code{\link[svyplan:n_cluster]{svyplan::n_cluster()}}. The method extracts everything the
 estimation needs from the sample's design columns, applying two
@@ -83,7 +83,7 @@ vc
 as.data.frame(vc)
 
 # Feed the components into next-round cluster planning
-svyplan::n_cluster(stage_cost = c(500, 50), delta = vc,
+svyplan::n_cluster(stage_cost = c(500, 50), icc = vc,
                    budget = 100000)
 
 }

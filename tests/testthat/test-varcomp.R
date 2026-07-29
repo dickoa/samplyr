@@ -28,7 +28,7 @@ test_that("varcomp matches the manual svyplan recipe on 2-stage PPS", {
   expect_s3_class(vc, "svyplan_varcomp")
   expect_identical(
     names(as.data.frame(vc)),
-    c("stages", "varb", "varw", "delta", "k", "rel_var")
+    c("stages", "varb", "varw", "icc", "var_ratio", "unit_relvar")
   )
 
   pi1 <- 1 / s$.weight_1
@@ -42,7 +42,7 @@ test_that("varcomp matches the manual svyplan recipe on 2-stage PPS", {
   )
   expect_equal(vc$varb, manual$varb, tolerance = 1e-12)
   expect_equal(vc$varw, manual$varw, tolerance = 1e-12)
-  expect_equal(vc$delta, manual$delta, tolerance = 1e-12)
+  expect_equal(vc$icc, manual$icc, tolerance = 1e-12)
   expect_equal(vc$k, manual$k, tolerance = 1e-12)
 })
 
@@ -56,15 +56,15 @@ test_that("a whole-take self-weighting sample recovers frame components", {
   vc <- varcomp(s, ~y)
   vc_frame <- svyplan::varcomp(frame$y, stage_id = list(frame$cl))
   expect_equal(vc$varb, vc_frame$varb, tolerance = 1e-12)
-  expect_equal(vc$delta, vc_frame$delta, tolerance = 1e-12)
+  expect_equal(vc$icc, vc_frame$icc, tolerance = 1e-12)
 })
 
-test_that("mean delta over replicates tracks the population delta", {
+test_that("mean icc over replicates tracks the population icc", {
   frame <- varcomp_frame()
-  truth <- svyplan::varcomp(frame$y, stage_id = list(frame$cl))$delta
+  truth <- svyplan::varcomp(frame$y, stage_id = list(frame$cl))$icc
   deltas <- vapply(seq_len(200), function(r) {
     s <- two_stage_pps(frame, seed = 1000 + r)
-    varcomp(s, ~y)$delta
+    varcomp(s, ~y)$icc
   }, numeric(1))
   mc_se <- stats::sd(deltas) / sqrt(length(deltas))
   expect_lt(abs(mean(deltas) - truth), 1.5 * mc_se + 0.02)
@@ -81,7 +81,7 @@ test_that("an SRS first stage takes the prob = NULL path", {
     s$y, stage_id = list(s$cl), weights = s$.weight_2
   )
   expect_equal(vc$varb, manual$varb, tolerance = 1e-12)
-  expect_equal(vc$delta, manual$delta, tolerance = 1e-12)
+  expect_equal(vc$icc, manual$icc, tolerance = 1e-12)
 })
 
 test_that("3-stage decomposition uses both cluster keys and stage 2-3 weights", {
@@ -113,7 +113,7 @@ test_that("3-stage decomposition uses both cluster keys and stage 2-3 weights", 
     weights = s$.weight_2 * s$.weight_3
   )
   expect_equal(vc$varb, manual$varb, tolerance = 1e-12)
-  expect_equal(vc$delta, manual$delta, tolerance = 1e-12)
+  expect_equal(vc$icc, manual$icc, tolerance = 1e-12)
 })
 
 test_that("stage-1 design strata give per-stratum components with per-stratum shares", {
@@ -147,7 +147,7 @@ test_that("stage-1 design strata give per-stratum components with per-stratum sh
       weights = s$.weight_2[rows]
     )
     expect_equal(
-      tab$delta_psu[tab$stratum == r], manual$delta,
+      tab$icc_psu[tab$stratum == r], manual$icc,
       tolerance = 1e-12
     )
   }
@@ -286,7 +286,7 @@ test_that("a WR first stage keys PSUs by draw, not by cluster", {
     weights = s$.weight_2
   )
   expect_equal(vc$varb, manual$varb, tolerance = 1e-12)
-  expect_equal(vc$delta, manual$delta, tolerance = 1e-12)
+  expect_equal(vc$icc, manual$icc, tolerance = 1e-12)
 
   merged <- svyplan::varcomp(
     s$y,
@@ -294,7 +294,7 @@ test_that("a WR first stage keys PSUs by draw, not by cluster", {
     prob = tapply(pi1, s$cl, unique) / sum(tapply(pi1, s$cl, unique)),
     weights = s$.weight_2
   )
-  expect_false(isTRUE(all.equal(vc$delta, merged$delta)))
+  expect_false(isTRUE(all.equal(vc$icc, merged$icc)))
 })
 
 
@@ -332,7 +332,7 @@ test_that("a stratified WR first stage qualifies draw keys by stratum", {
       weights = s$.weight_2[rows]
     )
     expect_equal(
-      tab$delta_psu[tab$stratum == r], manual$delta,
+      tab$icc_psu[tab$stratum == r], manual$icc,
       tolerance = 1e-12
     )
   }

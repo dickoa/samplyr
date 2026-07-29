@@ -12,7 +12,12 @@
 #'   `sampling_design` starts a new sampling phase; it does not continue the
 #'   stages stored in that sample. Ordinary input frames must have unique
 #'   names and must not use columns reserved for execution output, such as
-#'   `.weight`, `.sample_id`, `.stage`, `.weight_k`, or `.fpc_k`.
+#'   `.weight`, `.sample_id`, `.stage`, `.weight_k`, or `.fpc_k`, where `k`
+#'   is the stage number (`.weight_1`, `.fpc_1`, and so on). Frames are
+#'   matched positionally, so any name given here is a label. A label
+#'   resembling one of the arguments below (`seedd`, or the singular
+#'   `stage`, `rep`, `panel`) is refused rather than read as a frame,
+#'   because those arguments follow `...` and are matched exactly.
 #' @param stages Integer vector specifying which stage(s) to execute.
 #'   From a `sampling_design`, the vector must start at stage 1; this is how
 #'   an operational workflow stops after its first contiguous batch of stages.
@@ -308,11 +313,7 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
     cli_abort("At least one data frame must be provided")
   }
 
-  for (i in seq_along(frames)) {
-    if (!is.data.frame(frames[[i]])) {
-      cli_abort("Argument {i} to {.fn execute} must be a data frame")
-    }
-  }
+  check_execute_dots(frames)
 
   # A class-dropping operation such as tidyr::uncount() can leave both the
   # sample attributes and all generated design columns on an apparently plain
@@ -582,6 +583,62 @@ execute <- function(.data, ..., stages = NULL, seed = NULL, panels = NULL,
   } else {
     run_execution()
   }
+}
+
+#' Check the frames collected by execute()'s dots
+#'
+#' `stages`, `seed`, `panels`, `reps` and `frame_digest` all sit after `...`,
+#' so R matches them exactly and a near miss lands here as an extra frame.
+#' Naming the stray argument beats reporting its position, which describes
+#' the wrong problem.
+#' @noRd
+check_execute_dots <- function(frames, call = rlang::caller_env()) {
+  reserved <- c("stages", "seed", "panels", "reps", "frame_digest")
+  nms <- names(frames) %||% rep("", length(frames))
+
+  for (i in seq_along(frames)) {
+    name <- nms[[i]]
+    named <- nzchar(name)
+
+    if (named && !is.null(suggest_reserved_arg(name, reserved))) {
+      abort_samplyr(
+        c(
+          "{.fn execute} received an unexpected argument.",
+          stray_arg_bullets(name, reserved),
+          "i" = "Frames are passed positionally, in stage order."
+        ),
+        class = "samplyr_error_unknown_argument",
+        call = call
+      )
+    }
+
+    if (!is.data.frame(frames[[i]])) {
+      abort_samplyr(
+        c(
+          if (named) {
+            c(
+              "{.fn execute} received an unexpected argument.",
+              stray_arg_bullets(name, reserved)
+            )
+          } else {
+            c(
+              "Argument {i} to {.fn execute} must be a data frame.",
+              "x" = "Got {.cls {class(frames[[i]])[[1]]}}."
+            )
+          },
+          "i" = "Frames are passed positionally, in stage order."
+        ),
+        class = if (named) {
+          "samplyr_error_unknown_argument"
+        } else {
+          "samplyr_error_frame_not_data_frame"
+        },
+        call = call
+      )
+    }
+  }
+
+  invisible(frames)
 }
 
 #' Capture the implementation state that affects a sample realization

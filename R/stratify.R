@@ -6,7 +6,10 @@
 #'
 #' @param .data A `sampling_design` object (piped from [sampling_design()] or
 #'   [add_stage()]).
-#' @param ... Stratification variables specified as bare column names.
+#' @param ... Stratification variables specified as bare column names. Any
+#'   name given here is a label and does not rename the variable. A label
+#'   resembling one of the arguments below (`allocc`, `varianc`) is refused,
+#'   because those arguments follow `...` and are matched exactly.
 #' @param alloc Character string specifying the allocation method. One of:
 #'   - `NULL` (default): No allocation; `n` in [draw()] is per stratum
 #'   - `"equal"`: Equal allocation across strata
@@ -174,6 +177,8 @@ stratify_by <- function(
     cli_abort("At least one stratification variable must be specified")
   }
 
+  check_stratify_dots(vars_quo)
+
   is_bare_name <- vapply(
     vars_quo,
     function(q) is.symbol(quo_get_expr(q)),
@@ -260,6 +265,39 @@ stratify_by <- function(
   .data$stages[[current]]$strata <- strata_spec
   .data$validated <- FALSE
   .data
+}
+
+#' Catch a misspelled reserved argument before it is read as a variable
+#'
+#' `alloc` and the auxiliary inputs all sit after `...`, so a near miss such
+#' as `allocc` is captured as a stratification variable and then reported as
+#' a bad variable expression. Naming the argument is the useful diagnosis.
+#' Names that resemble no reserved argument are left alone: they are ignored
+#' labels, as in `stratify_by(reg = region)`.
+#' @noRd
+check_stratify_dots <- function(vars_quo, call = rlang::caller_env()) {
+  reserved <- c(
+    "alloc", "variance", "cost", "cv", "importance", "power"
+  )
+  nms <- names(vars_quo) %||% rep("", length(vars_quo))
+
+  for (i in seq_along(vars_quo)) {
+    name <- nms[[i]]
+    if (!nzchar(name) || is.null(suggest_reserved_arg(name, reserved))) {
+      next
+    }
+    abort_samplyr(
+      c(
+        "{.fn stratify_by} received an unexpected argument.",
+        stray_arg_bullets(name, reserved),
+        "i" = "Stratification variables are passed as bare column names."
+      ),
+      class = "samplyr_error_unknown_argument",
+      call = call
+    )
+  }
+
+  invisible(vars_quo)
 }
 
 #' @noRd

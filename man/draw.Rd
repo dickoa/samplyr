@@ -110,7 +110,7 @@ identifies their sampling family. Registered \code{type = "wor"} and
 \code{supports_spread = TRUE} requires coordinates in \code{spread}. These
 capabilities are declared when the method is registered in \code{sondage}.
 
-Sample weights are \code{1 / pik}, where \code{pik} is the chance vector
+Sample weights are \code{1 / pik}, where \code{pik} is the inclusion expectation
 (target inclusion probabilities, or expected hits for \code{type = "wr"}
 methods) that samplyr resolves and hands to the registered method.
 Registered methods state where they sit in the taxonomy with
@@ -129,7 +129,7 @@ replacement its inclusion probabilities differ from \code{pik}, so a
 \item{mos}{Measure of size variable, specified as a bare column name
 (unquoted). Required for built-in PPS methods and registered \code{type = "wor"} or \code{type = "wr"} methods named with the \code{pps_} prefix. Optional
 for \code{cube}, \code{lpm2}, \code{scps}, and registered \code{type = "balanced"} methods
-named with the \code{balanced_} prefix; when omitted, equal inclusion
+named with the \code{balanced_} prefix and when omitted, equal inclusion
 probabilities are used.}
 
 \item{prn}{Permanent random number variable for sample coordination,
@@ -202,8 +202,8 @@ Equivalent to SAS SURVEYSELECT \verb{CERTSIZE=} option.}
 \item{certainty_prop}{For PPS without-replacement methods, units whose MOS proportion
 (MOS_i / sum(MOS)) >= this value are selected with certainty. Can be:
 \itemize{
-\item A scalar between 0 and 1 (exclusive): same threshold for all strata
-\item A data frame: stratum-specific thresholds with stratification columns
+\item A scalar between 0 and 1 (exclusive), same threshold for all strata
+\item A data frame with stratum-specific thresholds with stratification columns
 \itemize{
 \item \code{certainty_prop} column
 }
@@ -211,8 +211,7 @@ Equivalent to SAS SURVEYSELECT \verb{CERTSIZE=} option.}
 
 Uses iterative selection: after removing certainty units, proportions are
 recomputed and the check is repeated until no new units qualify.
-Mutually exclusive with \code{certainty_size}.
-Equivalent to SAS SURVEYSELECT \verb{CERTSIZE=P=} option.}
+Mutually exclusive with \code{certainty_size}.}
 
 \item{certainty_overflow}{Controls behavior when certainty units exceed the
 target sample size \code{n}. One of:
@@ -220,9 +219,7 @@ target sample size \code{n}. One of:
 \item \code{"error"} (default): Stop with an informative error.
 \item \code{"allow"}: Return all certainty units with stage weight 1, even if the
 resulting sample has more than \code{n} units.
-}
-
-Equivalent to SAS SURVEYSELECT allowing \verb{CERTSIZE=} overflow.}
+}}
 
 \item{on_empty}{Behavior when a random-size method (\code{bernoulli},
 \code{pps_poisson}, or a custom method registered with
@@ -262,9 +259,10 @@ analysis.}
 A modified \code{sampling_design} object with selection parameters specified.
 }
 \description{
-\code{draw()} specifies how units are selected: sample size, sampling fraction,
-selection method, and measure of size for PPS sampling. Every stage in a
-sampling design must end with \code{draw()}.
+\code{draw()} specifies how units are selected. Set the sample size, sampling fraction,
+selection method, measure of size for PPS sampling, auxiliary variables
+for balanced sampling and spread for spatially balanced sampling.
+Every stage in a sampling design must end with \code{draw()}.
 }
 \details{
 \subsection{Selection Methods}{

@@ -1,8 +1,9 @@
 #' Specify Selection Parameters
 #'
-#' `draw()` specifies how units are selected: sample size, sampling fraction,
-#' selection method, and measure of size for PPS sampling. Every stage in a
-#' sampling design must end with `draw()`.
+#' `draw()` specifies how units are selected. Set the sample size, sampling fraction,
+#' selection method, measure of size for PPS sampling, auxiliary variables
+#' for balanced sampling and spread for spatially balanced sampling.
+#' Every stage in a sampling design must end with `draw()`.
 #'
 #' @param .data A `sampling_design` object (piped from [sampling_design()],
 #'   [stratify_by()], or [cluster_by()]).
@@ -76,7 +77,7 @@
 #'   `supports_spread = TRUE` requires coordinates in `spread`. These
 #'   capabilities are declared when the method is registered in `sondage`.
 #'
-#'   Sample weights are `1 / pik`, where `pik` is the chance vector
+#'   Sample weights are `1 / pik`, where `pik` is the inclusion expectation
 #'   (target inclusion probabilities, or expected hits for `type = "wr"`
 #'   methods) that samplyr resolves and hands to the registered method.
 #'   Registered methods state where they sit in the taxonomy with
@@ -96,7 +97,7 @@
 #'   (unquoted). Required for built-in PPS methods and registered `type =
 #'   "wor"` or `type = "wr"` methods named with the `pps_` prefix. Optional
 #'   for `cube`, `lpm2`, `scps`, and registered `type = "balanced"` methods
-#'   named with the `balanced_` prefix; when omitted, equal inclusion
+#'   named with the `balanced_` prefix and when omitted, equal inclusion
 #'   probabilities are used.
 #' @param prn Permanent random number variable for sample coordination,
 #'   specified as a bare column name (unquoted). Must be a numeric column
@@ -154,24 +155,22 @@
 #'   and the remaining sample size is reduced accordingly.
 #'   Mutually exclusive with `certainty_prop`.
 #'   Equivalent to SAS SURVEYSELECT `CERTSIZE=` option.
+#'
 #' @param certainty_prop For PPS without-replacement methods, units whose MOS proportion
 #'   (MOS_i / sum(MOS)) >= this value are selected with certainty. Can be:
-#'   - A scalar between 0 and 1 (exclusive): same threshold for all strata
-#'   - A data frame: stratum-specific thresholds with stratification columns
+#'   - A scalar between 0 and 1 (exclusive), same threshold for all strata
+#'   - A data frame with stratum-specific thresholds with stratification columns
 #'     + `certainty_prop` column
 #'
 #'   Uses iterative selection: after removing certainty units, proportions are
 #'   recomputed and the check is repeated until no new units qualify.
 #'   Mutually exclusive with `certainty_size`.
-#'   Equivalent to SAS SURVEYSELECT `CERTSIZE=P=` option.
 #'
 #' @param certainty_overflow Controls behavior when certainty units exceed the
 #'   target sample size `n`. One of:
 #'   - `"error"` (default): Stop with an informative error.
 #'   - `"allow"`: Return all certainty units with stage weight 1, even if the
 #'     resulting sample has more than `n` units.
-#'
-#'   Equivalent to SAS SURVEYSELECT allowing `CERTSIZE=` overflow.
 #'
 #' @param on_empty Behavior when a random-size method (`bernoulli`,
 #'   `pps_poisson`, or a custom method registered with

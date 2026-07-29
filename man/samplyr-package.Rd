@@ -13,7 +13,7 @@ Useful links:
 \itemize{
   \item \url{https://dickoa.gitlab.io/samplyr}
   \item \url{https://gitlab.com/dickoa/samplyr}
-  \item Report bugs at \url{https://gitlab.com/dickoa/samplyr/-/issues}
+  \item Report bugs at \url{https://gitlab.com/dickoa/samplyr/-/work_items}
 }
 
 }

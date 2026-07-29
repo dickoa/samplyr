@@ -37,7 +37,12 @@
 #' execution, the pool table has one row per `pool_id` and `replicate`.
 #'
 #' **Weights** reports the mean and range, coefficient of variation,
-#' Kish design effect, and effective sample size on one line.
+#' Kish design effect, and effective sample size on one line. The
+#' `Kish DEFF` token is the weighting loss alone, as computed by
+#' [design_effect()] on the `.weight` column. Clustering and
+#' stratification also move precision and are invisible in the weights,
+#' so a design effect that reflects them needs [as_svydesign()] and
+#' `survey::svymean(deff = TRUE)`.
 #'
 #' @examples
 #' sample <- sampling_design() |>
@@ -188,10 +193,10 @@ summary.tbl_sample <- function(object, ...) {
               " [", round(min(w), 2), ", ", round(max(w), 2), "]"
             ),
             paste0("CV ", round(cv_w, 2)),
-            paste0("DEFF ", round(design_effect(w), 2)),
+            paste0("Kish DEFF ", round(design_effect(weights = w), 2)),
             paste0(
               "n_eff ",
-              format(round(effective_n(w)), big.mark = ",")
+              format(round(effective_n(weights = w)), big.mark = ",")
             )
           ),
           collapse = " | "

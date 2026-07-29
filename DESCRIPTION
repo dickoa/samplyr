@@ -30,8 +30,8 @@ Imports:
     vctrs (>= 0.5.0),
     dplyr (>= 1.1.0),
     jsonlite,
-    sondage (>= 0.8.8),
-    svyplan (>= 0.8.9),
+    sondage (>= 0.9.0),
+    svyplan (>= 0.9.0),
     withr
 Suggests:
    covr,
@@ -46,7 +46,7 @@ Suggests:
 Config/testthat/edition: 3
 VignetteBuilder: knitr
 URL: https://dickoa.gitlab.io/samplyr, https://gitlab.com/dickoa/samplyr
-BugReports: https://gitlab.com/dickoa/samplyr/-/issues
+BugReports: https://gitlab.com/dickoa/samplyr/-/work_items
 Remotes: gitlab::dickoa/sondage,
     gitlab::dickoa/svyplan
 Config/roxygen2/version: 8.0.0

@@ -45,7 +45,7 @@ test_that("draw accepts svyplan_power from power_mean", {
 })
 
 test_that("draw accepts svyplan_cluster from n_cluster", {
-  cl_obj <- svyplan::n_cluster(stage_cost = c(500, 50), delta = 0.05, budget = 100000)
+  cl_obj <- svyplan::n_cluster(stage_cost = c(500, 50), icc = 0.05, budget = 100000)
   n_int <- prod(as.integer(cl_obj))
   design <- sampling_design() |> draw(n = cl_obj)
   frame <- data.frame(id = seq_len(n_int + 100))
@@ -212,7 +212,7 @@ fix_deff_clust <- sampling_design() |>
 test_that("design_effect dispatches on tbl_sample", {
   deff <- design_effect(fix_deff_disprop)
   expect_type(deff, "double")
-  expect_s3_class(deff, "svyplan_design_effect")
+  expect_s3_class(deff, "svyplan_deff")
   expect_true(deff >= 1)
 })
 
@@ -247,114 +247,6 @@ test_that("design_effect.tbl_sample errors without .weight", {
   expect_error(design_effect(no_weight), "\\.weight")
 })
 
-test_that("Henry accepts y and x_cal as bare column names", {
-  deff_tidy <- design_effect(
-    fix_deff_disprop,
-    y = income,
-    x_cal = census_pop,
-    method = "henry"
-  )
-  deff_vec <- design_effect(
-    fix_deff_disprop$.weight,
-    y = fix_deff_disprop$income,
-    x_cal = fix_deff_disprop$census_pop,
-    method = "henry"
-  )
-  expect_equal(deff_tidy, deff_vec)
-})
-
-test_that("Spencer accepts y as bare column name", {
-  deff <- design_effect(fix_deff_disprop, y = income, method = "spencer")
-  expect_true(is.finite(deff))
-})
-
-test_that("Spencer auto-extracts p from overall .weight", {
-  deff_auto <- design_effect(fix_deff_disprop, y = income, method = "spencer")
-  deff_manual <- design_effect(
-    fix_deff_disprop$.weight,
-    y = fix_deff_disprop$income,
-    prob = 1 / fix_deff_disprop$.weight,
-    method = "spencer"
-  )
-  expect_equal(deff_auto, deff_manual)
-})
-
-test_that("effective_n with Henry uses bare column names", {
-  eff <- effective_n(
-    fix_deff_disprop,
-    y = income,
-    x_cal = census_pop,
-    method = "henry"
-  )
-  expect_true(is.finite(eff))
-  expect_true(eff > 0)
-})
-
-test_that("CR auto-extracts strvar and stages from stratified design", {
-  cr_auto <- design_effect(fix_deff_disprop, y = income, method = "cr")
-  cr_manual <- design_effect(
-    fix_deff_disprop$.weight,
-    y = fix_deff_disprop$income,
-    strata_id = fix_deff_disprop$stratum,
-    stages = c(1L, 1L),
-    method = "cr"
-  )
-  expect_equal(as.double(cr_auto), as.double(cr_manual))
-})
-
-test_that("CR auto-extracts strvar, clvar, stages from stratified clustered design", {
-  cr_auto <- design_effect(fix_deff_strat_clust, y = income, method = "cr")
-  components <- as.data.frame(cr_auto)
-  expect_s3_class(cr_auto, "svyplan_design_effect")
-  expect_true("deff_c" %in% names(components))
-  expect_true("deff_s" %in% names(components))
-  expect_equal(nrow(components), 2)
-})
-
-test_that("CR auto-extracts clvar from unstratified clustered design", {
-  cr_auto <- design_effect(fix_deff_clust, y = income, method = "cr")
-  expect_true("deff_c" %in% names(as.data.frame(cr_auto)))
-})
-
-test_that("CR auto-extraction uses full multi-column cluster key", {
-  set.seed(1201)
-  two_key_frame <- data.frame(
-    id = 1:400,
-    region = rep(c("A", "B"), each = 200),
-    district = rep(rep(1:20, each = 10), 2),
-    income = rnorm(400, 50, 10)
-  )
-
-  two_key_sample <- sampling_design() |>
-    add_stage("psu") |>
-    cluster_by(region, district) |>
-    draw(n = 12) |>
-    add_stage("ssu") |>
-    draw(n = 4) |>
-    execute(two_key_frame, seed = 7)
-
-  cr_auto <- design_effect(two_key_sample, y = income, method = "cr")
-  composite_cluster <- interaction(
-    two_key_sample$region,
-    two_key_sample$district,
-    drop = TRUE
-  )
-  cr_manual <- design_effect(
-    two_key_sample$.weight,
-    y = two_key_sample$income,
-    cluster_id = composite_cluster,
-    method = "cr"
-  )
-
-  expect_equal(as.double(cr_auto), as.double(cr_manual))
-})
-
-test_that("effective_n with CR uses auto-extraction", {
-  eff <- effective_n(fix_deff_strat_clust, y = income, method = "cr")
-  expect_type(eff, "double")
-  expect_true(eff > 0)
-})
-
 test_that("SRSWOR gives deff = 1 and effective_n = n", {
   expect_equal(as.double(design_effect(fix_deff_srs)), 1)
   expect_equal(effective_n(fix_deff_srs), 50)
@@ -375,128 +267,13 @@ test_that("stratified disproportionate Kish deff matches formula", {
   expect_equal(effective_n(fix_deff_disprop), 32)
 })
 
-test_that("CR on stratified without clustering has no deff_c", {
-  cr <- design_effect(fix_deff_disprop, y = income, method = "cr")
-  components <- as.data.frame(cr)
-  expect_true("deff_w" %in% names(components))
-  expect_true("deff_s" %in% names(components))
-  expect_false("deff_c" %in% names(components))
-})
-
-test_that("CR on proportional stratified has deff_w = 1 per stratum", {
-  cr <- design_effect(fix_deff_prop, y = income, method = "cr")
-  expect_true(all(as.data.frame(cr)$deff_w == 1))
-})
-
-test_that("CR on disproportionate stratified has deff_w = 1 per stratum but overall > 1", {
-  cr <- design_effect(fix_deff_disprop, y = income, method = "cr")
-  components <- as.data.frame(cr)
-  # Within each stratum weights are equal, so deff_w = 1
-  expect_true(all(components$deff_w == 1))
-  # But deff_s captures the between-stratum weighting effect
-  expect_true(as.double(cr) > 1)
-})
-
-test_that("CR on clustered with high ICC gives large deff_c", {
-  set.seed(1213)
-  cluster_means <- rnorm(40, 50, 20)
-  hi_frame <- data.frame(
-    id = 1:200,
-    cluster = rep(1:40, each = 5),
-    income = rep(cluster_means, each = 5) + rnorm(200, 0, 2)
-  )
-  samp <- sampling_design() |>
-    add_stage("psu") |>
-    cluster_by(cluster) |>
-    draw(n = 12) |>
-    add_stage("ssu") |>
-    draw(n = 5) |>
-    execute(hi_frame, seed = 1)
-  cr <- design_effect(samp, y = income, method = "cr")
-  components <- as.data.frame(cr)
-  expect_true(components$rho > 0.5)
-  expect_true(components$deff_c > 1.5)
-  expect_equal(components$deff_w, 1)
-})
-
-test_that("CR on clustered with low ICC gives deff_c near 1", {
-  set.seed(1229)
-  lo_frame <- data.frame(
-    id = 1:200,
-    cluster = rep(1:40, each = 5),
-    income = rnorm(200, 50, 20)
-  )
-  samp <- sampling_design() |>
-    add_stage("psu") |>
-    cluster_by(cluster) |>
-    draw(n = 12) |>
-    add_stage("ssu") |>
-    draw(n = 5) |>
-    execute(lo_frame, seed = 1)
-  cr <- design_effect(samp, y = income, method = "cr")
-  components <- as.data.frame(cr)
-  expect_true(abs(components$rho) < 0.3)
-  expect_true(components$deff_c < 1.5)
-})
-
-test_that("CR on stratified + clustered returns full decomposition", {
-  set.seed(1231)
-  cluster_means <- rnorm(40, 50, 15)
-  sc_frame <- data.frame(
-    id = 1:200,
-    stratum = rep(c("A", "B"), each = 100),
-    cluster = rep(1:40, each = 5),
-    income = rep(cluster_means, each = 5) + rnorm(200, 0, 3)
-  )
-  samp <- sampling_design() |>
-    add_stage("psu") |>
-    stratify_by(stratum) |>
-    cluster_by(cluster) |>
-    draw(n = c(A = 10, B = 10)) |>
-    add_stage("ssu") |>
-    draw(n = 3) |>
-    execute(sc_frame, seed = 1)
-  cr <- design_effect(samp, y = income, method = "cr")
-  components <- as.data.frame(cr)
-  expect_true(all(c("deff_w", "deff_c", "deff_s") %in% names(components)))
-  expect_equal(nrow(components), 2)
-  expect_true(all(components$deff_w > 0))
-  expect_true(all(components$deff_c > 0))
-  expect_true(all(components$deff_s > 0))
-  expect_true(all(components$rho_h > 0))
-  eff <- effective_n(samp, y = income, method = "cr")
-  expect_equal(eff, nrow(samp) / as.double(cr))
-})
-
-test_that("Henry returns finite deff on unequal-weight sample", {
-  deff <- design_effect(
-    fix_deff_disprop,
-    y = income,
-    x_cal = census_pop,
-    method = "henry"
-  )
-  expect_true(is.finite(deff))
-})
-
-test_that("Spencer returns finite deff on unequal-weight sample", {
-  deff <- design_effect(fix_deff_disprop, y = income, method = "spencer")
-  expect_true(is.finite(deff))
-})
-
-test_that("CR on unstratified unclustered design gives informative error", {
-  expect_error(
-    design_effect(fix_deff_srs, y = income, method = "cr"),
-    "CR method requires stratification or clustering"
-  )
-})
-
 test_that("summary.tbl_sample reports deff correctly", {
   out <- capture.output(summary(fix_deff_disprop))
   expect_true(any(grepl("DEFF", out)))
 })
 
 test_that("svyplan_cluster feeds both stages of a clustered design", {
-  cl <- svyplan::n_cluster(cv = 0.05, delta = 0.05, rel_var = 1,
+  cl <- svyplan::n_cluster(cv = 0.05, icc = 0.05, unit_relvar = 1,
                            stage_cost = c(500, 50))
   frame <- data.frame(
     ea = rep(sprintf("EA%03d", 1:200), each = 20),
@@ -514,7 +291,7 @@ test_that("svyplan_cluster feeds both stages of a clustered design", {
 })
 
 test_that("svyplan_cluster keeps the operational total in a flat design", {
-  cl <- svyplan::n_cluster(cv = 0.05, delta = 0.05, rel_var = 1,
+  cl <- svyplan::n_cluster(cv = 0.05, icc = 0.05, unit_relvar = 1,
                            stage_cost = c(500, 50))
   total <- prod(as.integer(cl))
   frame <- data.frame(id = seq_len(total + 100))
@@ -523,7 +300,7 @@ test_that("svyplan_cluster keeps the operational total in a flat design", {
 })
 
 test_that("svyplan_cluster errors past its planned stages", {
-  cl <- svyplan::n_cluster(cv = 0.05, delta = 0.05, rel_var = 1,
+  cl <- svyplan::n_cluster(cv = 0.05, icc = 0.05, unit_relvar = 1,
                            stage_cost = c(500, 50))
   expect_error(
     sampling_design() |>
@@ -540,7 +317,7 @@ test_that("stratified two-stage n_alloc plan feeds both stages", {
     N = c(2000, 2000),
     sd = c(14, 16),
     mean = c(58, 62),
-    delta_psu = c(0.04, 0.06),
+    icc_psu = c(0.04, 0.06),
     cost_psu = c(400, 550),
     cost_ssu = c(45, 60)
   )
@@ -566,7 +343,7 @@ test_that("stratified two-stage n_alloc plan feeds both stages", {
     as.integer(table(eas$region)[d$stratum]),
     d$n_psu_int
   )
-  take <- as.integer(d$psu_size_int)
+  take <- as.integer(d$n_per_psu_int)
   expect_equal(
     as.integer(table(res$region)[d$stratum]),
     d$n_psu_int * take
@@ -575,7 +352,7 @@ test_that("stratified two-stage n_alloc plan feeds both stages", {
 
 test_that("n_multi domain plans become per-domain data frames", {
   tg <- data.frame(
-    indicator = "stunting",
+    name = "stunting",
     domain = c("urban", "rural"),
     p = c(0.25, 0.35),
     cv = 0.08
@@ -596,11 +373,11 @@ test_that("n_multi domain plans become per-domain data frames", {
 
 test_that("n_multi_cluster domain plans feed both stages", {
   tg <- data.frame(
-    indicator = "stunting",
+    name = "stunting",
     domain = c("urban", "rural"),
     p = c(0.25, 0.35),
     cv = 0.08,
-    delta_psu = 0.05
+    icc_psu = 0.05
   )
   nm <- svyplan::n_multi_cluster(
     tg,
@@ -644,7 +421,7 @@ test_that("named n with crossed strata errors at draw time", {
 test_that("cluster-mode alloc plan requires cluster_by at stage 1", {
   fr <- data.frame(
     stratum = c("A", "B"), N = c(2000, 2000), sd = c(14, 16),
-    mean = c(58, 62), delta_psu = c(0.04, 0.06),
+    mean = c(58, 62), icc_psu = c(0.04, 0.06),
     cost_psu = c(400, 550), cost_ssu = c(45, 60)
   )
   plan <- svyplan::n_alloc(fr, cv = 0.02)
@@ -657,7 +434,7 @@ test_that("cluster-mode alloc plan requires cluster_by at stage 1", {
 test_that("cluster-mode alloc plan draws PSUs from an EA-level frame", {
   fr <- data.frame(
     stratum = c("North", "South"), N = c(2000, 2000), sd = c(14, 16),
-    mean = c(58, 62), delta_psu = c(0.04, 0.06),
+    mean = c(58, 62), icc_psu = c(0.04, 0.06),
     cost_psu = c(400, 550), cost_ssu = c(45, 60)
   )
   plan <- svyplan::n_alloc(fr, cv = 0.02)
@@ -677,4 +454,57 @@ test_that("cluster-mode alloc plan draws PSUs from an EA-level frame", {
     as.integer(table(res$region)[d$stratum]),
     d$n_psu_int
   )
+})
+
+test_that("an n_twophase() plan drives a two-phase design by subsampling fraction", {
+  frame <- data.frame(
+    stratum = c("A", "B", "C"),
+    N = c(4000, 3000, 3000),
+    sd = c(12, 25, 8),
+    mean = c(40, 70, 35),
+    unit_cost = c(2, 5, 1)
+  )
+  plan <- svyplan::n_twophase(frame, phase1_cost = 1, budget = 20000,
+                              N = sum(frame$N))
+  pop <- data.frame(
+    unit_id = seq_len(sum(frame$N)),
+    stratum = rep(frame$stratum, frame$N)
+  )
+
+  phase1 <- sampling_design() |>
+    cluster_by(unit_id) |>
+    draw(n = plan$operational$n[["n_phase1"]]) |>
+    execute(pop, seed = 11)
+  expect_equal(nrow(phase1), plan$operational$n[["n_phase1"]])
+
+  # nu is a share of what phase 1 found, so phase 2 draws by fraction
+  nu <- setNames(plan$detail$nu, plan$detail$stratum)
+  phase2 <- sampling_design() |>
+    stratify_by(stratum) |>
+    cluster_by(unit_id) |>
+    draw(frac = nu) |>
+    execute(phase1, seed = 12)
+
+  screened <- table(phase1$stratum)[names(nu)]
+  taken <- table(phase2$stratum)[names(nu)]
+  expect_equal(as.integer(taken), as.integer(ceiling(nu * screened)))
+
+  # weights compound across the phases back to the frame
+  expect_equal(sum(phase2$.weight), nrow(pop))
+
+  # and the pair exports as a two-phase design, not a single-phase one
+  des <- as_svydesign(phase2)
+  expect_s3_class(des, "twophase2")
+})
+
+test_that("a two-phase design needs a shared identifier to export", {
+  pop <- data.frame(unit_id = 1:2000, stratum = rep(c("A", "B"), each = 1000))
+  phase1 <- sampling_design() |>
+    draw(n = 400) |>
+    execute(pop, seed = 3)
+  phase2 <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(frac = c(A = 0.5, B = 0.25)) |>
+    execute(phase1, seed = 4)
+  expect_error(as_svydesign(phase2), "shared phase identifiers")
 })
