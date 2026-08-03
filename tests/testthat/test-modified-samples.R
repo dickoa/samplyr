@@ -316,7 +316,7 @@ test_that("domain analysis via survey::subset matches, filtered export blocked",
   )
 })
 
-# Integrity backstop and table-operation matrix (robustness review) ---------
+## Integrity backstop and table-operation matrix (robustness review)
 
 test_that("integrity verification catches untracked modification routes", {
   skip_if_not_installed("survey")

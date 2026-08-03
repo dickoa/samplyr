@@ -17,7 +17,13 @@ as_svrepdesign(x, ...)
 \arguments{
 \item{x}{A \code{tbl_sample} object produced by \code{\link[=execute]{execute()}}.}
 
-\item{...}{Additional arguments passed to \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.}
+\item{...}{Additional arguments passed to \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}} and
+on to the replicate-weight generator it selects, such as \code{replicates},
+\code{fay.rho}, \code{fpctype}, or \code{mse}. Every argument must be named, and its
+name must be one those functions accept: \code{type} follows the \code{...} and so
+is matched exactly, and a near miss such as \code{typ} is reported rather
+than forwarded. \code{design} cannot be given here: it is the
+\code{\link[survey:svydesign]{survey::svydesign()}} object this verb builds from the sample.}
 
 \item{type}{Replicate method passed to \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.
 One of \code{"auto"}, \code{"JK1"}, \code{"JKn"}, \code{"BRR"}, \code{"bootstrap"},
@@ -55,7 +61,7 @@ the variance through replicate weights.
 This is the package's bootstrap approximation for designs that exact
 Horvitz-Thompson linearization cannot express in
 \code{\link[survey:svydesign]{survey::svydesign()}}. The subbootstrap and mrbbootstrap methods were
-developed for fixed-size PPS sampling (Antal and Tille 2011); their
+developed for fixed-size PPS sampling (Antal and Tille 2011). Their
 behavior on random-size Poisson designs, especially at multiple
 stages, has weaker theoretical backing and should be treated as an
 approximation. In particular, the resampling is fixed-size, so it
@@ -67,7 +73,7 @@ available (single-stage designs), prefer \code{\link[=as_svydesign]{as_svydesign
 Bounded cube, LPM2, and SCPS designs likewise have no native,
 design-specific replicate variance estimator in \code{samplyr}.
 \code{as_svrepdesign(type = "subbootstrap")} and \code{"mrbbootstrap"} export a
-generic PPS bootstrap approximation for them; they do not reproduce the
+generic PPS bootstrap approximation for them. They do not reproduce the
 original cube constraints or spatial selection algorithm within each
 replicate. Treat the resulting variance estimates as approximations, not
 as exact variance estimators for those designs.
@@ -87,4 +93,10 @@ survey::svymean(~households, rep_svy)
 \seealso{
 \code{\link[=as_svydesign]{as_svydesign()}} for linearization export,
 \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}} for the underlying conversion
+
+Other survey export:
+\code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},
+\code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
+\code{\link[=as_svydesign]{as_svydesign()}}
 }
+\concept{survey export}

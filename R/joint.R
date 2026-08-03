@@ -15,16 +15,28 @@
 #' constant chances have one, and element stages with varying chances
 #' keep one only under `execute(frame_digest = "full")`. A summarized
 #' representation refuses rather than approximates. With `frame`, the
-#' quantities are replayed against it as before; the frame must be
+#' quantities are replayed against it as before. The frame must be
 #' unchanged since execution ([validate_frame()] reports drift).
 #'
-#' @param x A `tbl_sample` object produced by [execute()].
-#' @param frame The data frame originally passed to [execute()]. Must
-#'   contain the same columns used during sampling (strata variables,
-#'   cluster variables, measure of size). When `NULL` (the default),
-#'   the computation uses the frame digest recorded on the sample
-#'   instead.
-#' @param stage An integer vector of stage numbers to compute, or
+#' A sample drawn from separately supplied stage registers needs either
+#' its intact digest or the ordered list of those registers. One
+#' lower-stage register cannot reconstruct upper-stage joint
+#' quantities: it holds no rows for the population the upper stage
+#' selected from.
+#'
+#' @inheritParams as_svydesign
+#' @param frame The frame originally passed to [execute()]. A data
+#'   frame is the one shared frame. An ordered list of data frames is
+#'   the stage registers, one per executed stage, in the order they
+#'   were supplied to [execute()]. Either way each frame must contain
+#'   the columns its stage sampled on (strata variables, cluster
+#'   variables, measure of size). When `NULL` (the default), the
+#'   computation uses the frame digest recorded on the sample instead.
+#' @param ... These dots are for future extensions and must be empty.
+#'   `stages` and the arguments after it follow `...`, so each must be
+#'   named exactly: the singular `stage` is reported rather than
+#'   prefix-matched.
+#' @param stages An integer vector of stage numbers to compute, or
 #'   `NULL` (default) to compute all PPS stages.
 #'   Non-PPS stages produce `NULL` entries in the returned list.
 #' @param nsim Positive integer number of simulations used for Chromy's
@@ -41,7 +53,8 @@
 #'     square matrix of joint expected hits
 #'     \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
 #'   - `NULL` for non-PPS stages (SRS, systematic) or stages not
-#'     requested via the `stage` argument.
+#'     requested via the `stages` argument.
+#'
 #'   Rows and columns represent stage-specific sampled units in first
 #'   appearance order. At a WR stage, repeated hits of the same
 #'   population unit appear once, so dimensions match the number of
@@ -74,16 +87,16 @@
 #' occurrence, not only on the parent's population identity. Repeated
 #' hits of one parent therefore produce separate independent child
 #' blocks. Pair the returned matrix with stage-specific identities in
-#' this order; do not pair it blindly with every sample row when
+#' this order. Do not pair it blindly with every sample row when
 #' descendants duplicate a selected unit.
 #'
 #' ## Exact vs. approximate computation
 #'
 #' The accuracy of the returned matrix depends on the sampling method.
-#' Some algorithms yield closed-form joint probabilities; others
+#' Some algorithms yield closed-form joint probabilities. Others
 #' require approximation or simulation.
 #'
-#' ### WOR methods (\eqn{\pi_{kl}}{pi_kl})
+#' ## WOR methods (\eqn{\pi_{kl}}{pi_kl})
 #'
 #' | samplyr method     | sondage function              | Quality                            |
 #' |--------------------|-------------------------------|------------------------------------|
@@ -120,7 +133,7 @@
 #' available approximation. Use [as_svrepdesign()] with `type =
 #' "subbootstrap"` for a generic bootstrap approximation instead.
 #'
-#' ### WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})
+#' ## WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})
 #'
 #' | samplyr method     | sondage function              | Quality                            |
 #' |--------------------|-------------------------------|------------------------------------|
@@ -137,13 +150,17 @@
 #'
 #' - The frame-free path requires a digest with exact chances: the
 #'   default summary digest suffices for cluster stages and
-#'   constant-chance element stages; element stages with varying
+#'   constant-chance element stages. Element stages with varying
 #'   chances need `execute(frame_digest = "full")`. Otherwise pass
 #'   the frame.
 #' - When `frame` is supplied it must be unchanged from what was
 #'   passed to [execute()], and units in it must be uniquely
 #'   identifiable within each stratum/cluster group by their column
 #'   values.
+#' - A sample drawn from one register per stage needs all of them, in
+#'   the order they were supplied. One frame is refused with
+#'   `samplyr_error_frame_count` rather than computed from the wrong
+#'   population.
 #' - For WOR designs with certainty selections (\eqn{\pi_i = 1}{pi_i = 1}),
 #'   the joint matrix is decomposed: certainty units are separated
 #'   from the stochastic part, the joint probabilities for
@@ -164,7 +181,7 @@
 #'   execute(bfa_eas, seed = 2025)
 #'
 #' # Compute joint probabilities for stage 1
-#' jip <- joint_expectation(sample, bfa_eas, stage = 1)
+#' jip <- joint_expectation(sample, bfa_eas, stages = 1)
 #'
 #' # Use with survey package for exact variance (WOR stages)
 #' svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
@@ -172,11 +189,44 @@
 #' # Compute all PPS stages at once
 #' jip_all <- joint_expectation(sample, bfa_eas)
 #'
+#' # A sample drawn from one register per stage passes them as a list
+#' regions <- dplyr::distinct(bfa_eas, region, .keep_all = TRUE)
+#' registers <- sampling_design() |>
+#'   add_stage() |>
+#'     cluster_by(region) |>
+#'     draw(n = 3, method = "pps_brewer", mos = households) |>
+#'   add_stage() |>
+#'     draw(n = 12) |>
+#'   execute(regions, bfa_eas, seed = 2025)
+#'
+#' jip_registers <- joint_expectation(registers, list(regions, bfa_eas))
+#'
+#' @references
+#' High-entropy approximation:
+#' \enc{Hájek}{Hajek}, J. (1964). Asymptotic theory of rejective sampling with
+#' varying probabilities from a finite population.
+#' \emph{Annals of Mathematical Statistics}, 35(4), 1491-1523.
+#'
+#' Brewer, K.R.W. and Donadio, M.E. (2003). The high entropy variance of the
+#' Horvitz-Thompson estimator. \emph{Survey Methodology}, 29(2), 189-196.
+#'
+#' Exact Brewer joint probabilities:
+#' Brewer, K.R.W. (2002). \emph{Combined Survey Sampling Inference: Weighing
+#' Basu's Elephants}. Arnold, ch. 9.
+#'
+#' The variance estimator these underlie:
+#' Berger, Y.G. (2004). A simple variance estimator for unequal probability
+#' sampling without replacement. \emph{Journal of Applied Statistics},
+#' 31(3), 305-315.
+#'
 #' @seealso [as_svydesign()] for the default export using Brewer's
 #'   approximation, [survey::ppsmat()] for wrapping joint matrices
 #'
+#' @family diagnostics
 #' @export
-joint_expectation <- function(x, frame = NULL, stage = NULL, nsim = 10000L) {
+joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
+                              nsim = 10000L) {
+  check_keyword_args(enquos(...), c("stages", "nsim"))
   if (!inherits(x, "tbl_sample")) {
     cli_abort("{.arg x} must be a {.cls tbl_sample} object.")
   }
@@ -224,22 +274,15 @@ joint_expectation <- function(x, frame = NULL, stage = NULL, nsim = 10000L) {
   stages_executed <- get_stages_executed(x)
   n_stages <- length(stages_executed)
 
-  if (is_null(stage)) {
-    stages_requested <- stages_executed
+  frames <- NULL
+  if (!is_null(frame)) {
+    frames <- normalize_joint_frames(x, frame, stages_executed)
+  }
+
+  stages_requested <- if (is_null(stages)) {
+    stages_executed
   } else {
-    if (!is_integerish_numeric(stage)) {
-      cli_abort("{.arg stage} must be integer stage number(s).")
-    }
-    stage <- as.integer(stage)
-    invalid <- setdiff(stage, stages_executed)
-    if (length(invalid) > 0) {
-      invalid_str <- paste(invalid, collapse = ", ")
-      executed_str <- paste(stages_executed, collapse = ", ")
-      cli_abort(
-        "Stage {invalid_str} not executed. Executed stages: {executed_str}."
-      )
-    }
-    stages_requested <- stage
+    normalize_stage_selector(stages, stages_executed, what = "executed stages")
   }
 
   result <- vector("list", max(stages_executed))
@@ -268,7 +311,7 @@ joint_expectation <- function(x, frame = NULL, stage = NULL, nsim = 10000L) {
     } else {
       compute_stage_jip(
         x,
-        frame,
+        frames[[match(stage_idx, stages_executed)]],
         design,
         stage_idx,
         stages_executed,
@@ -278,6 +321,58 @@ joint_expectation <- function(x, frame = NULL, stage = NULL, nsim = 10000L) {
   }
 
   result
+}
+
+#' Resolve the frame each executed stage was drawn from
+#'
+#' A data frame is the shared frame every stage used; a list is the ordered
+#' registers, matched to stages the way `execute()` matched them. The frame
+#' mode the sample recorded is what makes a wrong shape reportable: a single
+#' lower register offered for a multi-register sample holds no rows for the
+#' population an upper stage selected from, and would otherwise produce a
+#' plausible matrix computed from the wrong pool.
+#' @noRd
+normalize_joint_frames <- function(x, frame, stages_executed,
+                                   call = caller_env()) {
+  record <- get_frame_schedule(x)
+  n_stages <- length(stages_executed)
+
+  # Shape first, through the grammar every frame-valued verb shares, so an
+  # empty list or a bad member reads the same here as it does in execute().
+  supplied <- normalize_frame_input(frame, call = call)
+  frame <- if (supplied$n_supplied == 1L) supplied$frames[[1]] else frame
+
+  if (is.data.frame(frame)) {
+    if (identical(record$mode, "separate_frames")) {
+      abort_samplyr(
+        c(
+          "This sample was drawn from {record$n_supplied} separately supplied
+           frames, so one frame cannot describe it.",
+          "x" = "A register for one stage holds no rows for the population an
+                 earlier stage selected from.",
+          "i" = "Pass the ordered list of the original frames, or omit
+                 {.arg frame} to use the recorded frame digest."
+        ),
+        class = "samplyr_error_frame_count",
+        call = call
+      )
+    }
+    return(rep(list(frame), n_stages))
+  }
+
+  if (length(frame) != n_stages) {
+    abort_samplyr(
+      c(
+        "This sample executed {n_stages} stage{?s} but {length(frame)}
+         frame{?s} {?was/were} supplied.",
+        "i" = "Supply one frame covering every stage, or the frames originally
+               given to {.fn execute}, in the same order."
+      ),
+      class = "samplyr_error_frame_count",
+      call = call
+    )
+  }
+  frame
 }
 
 #' Compute one stage's sampled joint matrix from the frame digest
@@ -749,8 +844,12 @@ resolve_unstratified_n <- function(frame, draw_spec) {
 
 #' Prepare the effective frame for a given stage
 #'
-#' Stage 1: full frame
-#' Stage k: frame subsetted to selected clusters from stage k-1
+#' Stage 1: the frame as supplied.
+#' Stage k: that stage's frame restricted to the units its parent selected,
+#' through the same transition `execute()` used. A read-only reconstruction:
+#' the linkage is recomputed from the realized sample, nothing is drawn. Going
+#' through `link_stage_frame()` is what lets a normalized register work here,
+#' since it also carries forward the upper-stage strata the register omits.
 #' @noRd
 prepare_stage_frame <- function(
   x,
@@ -764,25 +863,16 @@ prepare_stage_frame <- function(
     return(frame)
   }
 
-  prev_stage_idx <- stages_executed[pos - 1L]
-  prev_stage_spec <- design$stages[[prev_stage_idx]]
-
-  if (!is_null(prev_stage_spec$clusters)) {
-    ancestor_vars <- collect_ancestor_cluster_vars(design, stage_idx)
-    join_vars <- unique(c(ancestor_vars, prev_stage_spec$clusters$vars))
-    sample_df <- as.data.frame(x)
-    join_vars <- intersect(
-      join_vars, intersect(names(frame), names(sample_df))
-    )
-
-    selected_clusters <- sample_df |>
-      distinct(across(all_of(join_vars)))
-
-    frame |>
-      semi_join(selected_clusters, by = join_vars)
-  } else {
-    frame
+  # A design whose parent stage declared no sampling units predates the parent
+  # identity rule and can only have come from one shared frame.
+  if (is_null(design$stages[[stages_executed[pos - 1L]]]$clusters)) {
+    return(frame)
   }
+
+  link_stage_frame(
+    frame, as.data.frame(x), design, stage_idx,
+    frame_index = pos, call = NULL
+  )$frame
 }
 
 #' Compute joint inclusion probabilities within a single group
@@ -945,8 +1035,7 @@ compute_jip_from_pik <- function(
     return(compute_jeh_by_method(pik, n, method, sampled_idx, nsim))
   }
 
-  cert_tol <- 1 - sqrt(.Machine$double.eps)
-  cert_idx <- which(pik >= cert_tol)
+  cert_idx <- which(is_certainty_probability(pik))
 
   if (length(cert_idx) == 0) {
     return(compute_jip_by_method(pik, method, sampled_idx, draw_spec = draw_spec))

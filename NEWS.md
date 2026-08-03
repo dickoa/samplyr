@@ -13,7 +13,93 @@ Initial release.
   In the verbs whose `...` carries data (`execute()`, `stratify_by()`), a
   misspelled reserved argument is reported by name together with the
   argument it most likely meant.
+* Where `...` is forwarded to another package (`as_svydesign()`,
+  `as_svrepdesign()`, `as_survey_design()`), an argument is accepted only
+  if samplyr or the receiving function owns its name. The arguments that
+  follow the `...` are matched exactly, so `nes`, `methodd`, and `typ`
+  used to be forwarded and silently ignored; each is now reported with
+  the name it was meant to be. Positional values are refused there, since
+  they would be matched to whichever argument downstream happened to be
+  free. Every argument the receiving function accepts still forwards,
+  including ones it binds without evaluating, such as `fay.rho` and
+  `fpctype`.
+* On those same paths, the arguments samplyr computes from the sample and
+  supplies itself are refused by name with
+  `samplyr_error_derived_argument`, which carries the argument in its
+  `argument` field. These are `ids`, `strata`, `weights`, `probs`, `fpc`,
+  and `data` for `as_svydesign()`, plus `subset` and `id` on the two-phase
+  path, and `design` for `as_svrepdesign()`. Passing one used to reach
+  survey and fail there with "formal argument matched by multiple actual
+  arguments", naming a call the user never wrote. They are reported
+  before their values are evaluated, and separately from an unknown name,
+  since the name is one survey owns. `pps` is unaffected and remains the
+  documented route to exact joint inclusion probabilities.
+* Arguments that accept a vector of stage numbers are called `stages`
+  everywhere: `validate_frame()`, `joint_expectation()`, and
+  `frame_summary()` all use `stages`, matching `execute()`. In each of
+  them `...` precedes the optional arguments, so `stages` and everything
+  after it is matched exactly rather than by prefix: the singular
+  `stage` is reported together with the name it was meant to be, and a
+  positional value is refused. Stray arguments are read by name without
+  being evaluated, so one whose expression would fail is still
+  diagnosed as the argument it was meant to be.
+* `stages` also means the same thing in all four: a non-empty vector of
+  distinct whole stage numbers drawn from what the verb allows, refused
+  with `samplyr_error_stage_selector` otherwise. Duplicates such as
+  `c(1, 1)` are refused rather than quietly collapsed, since asking for
+  one stage twice is a mistake in whatever computed the vector. Each verb
+  adds its own rules on top: `execute()` a start stage and contiguity,
+  `joint_expectation()` the executed stages, `frame_summary()` the stages
+  its digest records.
+* `draw()`, `design_json()`, and `write_design()` take `...` before their
+  optional arguments, like the verbs above. `draw(design, n, frac)` and
+  `write_design(x, path, frame)` stay positional, because that is what a
+  draw and a save are written as; the fourteen modifiers after them must
+  be named. `draw(design, 2, NULL, "srswor")` used to match `"srswor"` to
+  `min_n` and report an unrelated bounds error.
+* `design_effect()`, `effective_n()` and `varcomp()` on a `tbl_sample`
+  name their contract instead of failing inside the value they were
+  handed. `design_effect(x, y)` reads as "the design effect for `y`" and
+  was reported as `object 'y' not found`; it now says the method takes no
+  outcome, computes the weighting (Kish) design effect from `.weight`
+  alone, and points at `survey::svymean(deff = TRUE)` for an
+  outcome-specific one. Named arguments still forward, so
+  `design_effect(x, icc = , n_per_psu = )` returns the weighting loss
+  multiplied by the anticipated clustering component. `varcomp(x, y)`
+  names the one-sided formula contract and shows the argument it could
+  not evaluate.
+* `stratify_by(region, allocation = "proportional")` suggests `alloc`.
+  An expanded spelling is not a near miss by edit distance, so the
+  suggestion falls back to the longest reserved name the argument starts
+  with. This applies only where the value is already refused for not
+  being a bare column name, so `stratify_by(region, cost_center = urban)`
+  keeps working as the rename it is.
 * `serp()` input errors carry stable `samplyr_error` subclasses.
+* `execute()` takes its frames one per argument, or as a single unnamed
+  list of data frames when the caller already holds them as a value. The
+  two spellings are the same call. Mixing them is refused. Names inside
+  the list are frame labels, so a list member that is not a data frame is
+  reported by frame position and label
+  (`samplyr_error_frame_not_data_frame`); only names on the call's own
+  arguments are read as possible misspelled arguments.
+* Every verb that takes a frame reads it the same way. A data frame and a
+  one-element list of data frames are the same input in `execute()`,
+  `validate_frame()`, `joint_expectation()`, `design_json()`,
+  `write_design()`, and `replay_design()`, and an empty list or a member
+  that is not a data frame is refused by all of them with the same class,
+  naming the frame by position and label.
+* `validate_frame()` runs every check `execute()` runs before it samples,
+  so it can no longer approve a frame execution refuses. It applies
+  duplicate and reserved column names, a dropped `tbl_sample` class,
+  parent identity, ancestry, and the per-stage variable set to a data
+  frame exactly as to a list, and reports each with the class `execute()`
+  reports. Where one frame cannot say whether it is the next stage's
+  register or a hierarchy covering the rest, it requires `stages`, as
+  `execute()` does; a partial sample previously defaulted to the next
+  stage alone.
+* A missing frame column is reported with the role its stage gives it, so
+  a design selecting on `u` says `u` is the PRN variable rather than only
+  that it is absent.
 * `execute()` refuses duplicate input names, and input names reserved for
   its generated output (`.weight`, `.sample_id`, `.stage`, `.draw`,
   `.certainty`, and their per-stage forms such as `.weight_1` and
@@ -80,6 +166,22 @@ Initial release.
   equal, Neyman, optimal, and power.
 * Custom allocation via named vectors or data frames.
 * Minimum and maximum sample size constraints per stratum (`min_n`, `max_n`).
+* Allocation methods preserve their requested total and their own criterion.
+  A stratum too small to hold its share is capped at its population and the
+  surplus is redistributed over the remaining strata in proportion to the
+  method's factors, so a saturated Neyman design stays Neyman. The stratum
+  population bounds the allocation whether or not `max_n` is supplied, and a
+  named rule can therefore be departed from: `"equal"` on populations
+  `(10, 490, 500)` with `n = 300` gives 10/145/145. Reported once per run
+  with class `samplyr_message_allocation_capped`.
+* A request above the frame size allocates every unit rather than failing,
+  and is reported through the shared capping diagnostic described under
+  Diagnostics; bounds that make a request impossible raise
+  `samplyr_error_alloc_min_infeasible` or
+  `samplyr_error_alloc_max_infeasible` rather than adjusting silently.
+* With-replacement and Poisson-multinomial designs are not bounded by the
+  number of distinct units, so `n_h > N_h` is allowed and only `min_n` and
+  `max_n` apply.
 * Compound strata and allocation-table keys use collision-free matching, even
   when values contain punctuation or control characters.
 * Simple stratified SRS uses a preallocated grouped draw path. It preserves the
@@ -90,14 +192,93 @@ Initial release.
 
 * Multi-stage sampling with `add_stage()`. Weights compound automatically
   across stages.
+* A design may be executed against one shared hierarchy or against one
+  frame per stage, and the number of frames is what schedules the stages:
+  `execute(design, hierarchy)` runs every stage against one table, and
+  `execute(design, schools, classes, students)` gives each stage its own
+  register, mapped by position. Any count other than one or one per stage
+  is `samplyr_error_frame_count`. A register is supplied whole; it is
+  restricted to the units its parent stage selected, and the variables
+  earlier stages introduced are carried onto it. Nothing has to be
+  pre-filtered or have upper-stage columns duplicated into it.
+* The three spellings of a multi-stage execution are one implementation:
+  one hierarchy, registers in one call, and a stage continuation
+  (`execute(design, schools, stages = 1)` then
+  `execute(stage1, classes, stages = 2)`) run the same stage transition.
+  Under one shared RNG stream and with `stages` given on every
+  intermediate call they draw the same sample, and that equivalence is a
+  tested invariant rather than an incidental property.
+* **Breaking, for code outside the package.** The internal helpers
+  `subset_frame_to_sample()` and `find_compound_join_vars()` are removed.
+  Both were unexported, so no documented interface changes, but any code
+  reaching them through `:::` will fail. `link_stage_frame()` in
+  `R/stage-link.R` is the single stage transition that replaced them, and
+  it fixes what the old path got wrong: ancestry is no longer weakened to
+  the variables both tables happen to share, so a lower register whose
+  local identifiers repeat under different parents is now linked by full
+  ancestry instead of being silently over-matched.
 * Partial execution via `execute(..., stages = 1)` for operational workflows.
 * Two-phase sampling by piping a `tbl_sample` into `execute()`.
 * Earlier-phase weights carry through every stage when a multistage new
   phase is executed against separate frames in one call. The final weight is
   the product of the previous-phase weight and every conditional stage weight.
+* `validate_frame()` takes the same frames `execute()` does: one data
+  frame for a shared hierarchy, or an ordered list of stage registers.
+  It runs every check execution runs before it draws, and judges each
+  stage against the frame that stage will actually select from, after
+  its register has been linked to its parents and carried their
+  variables. A register that legitimately omits a stratum carried from
+  an earlier stage passes; one whose copy of that stratum disagrees is
+  `samplyr_error_frame_parent_conflict`, as it is at execution.
+  Ancestry values that name no parent are judged on the register as
+  supplied, since linking filters those rows out.
+* Explicit validation is stricter than execution about candidate
+  coverage: a unit reachable at one stage with no rows in the register
+  the next stage samples from is
+  `samplyr_error_frame_incomplete_register`, while `execute()` warns and
+  fails only on a unit it actually selects. Candidacy is bounded by what
+  has been selected, so a continuation is judged only on units the
+  earlier call could reach.
+* A partial `tbl_sample` validates the frames that would continue it,
+  against the units that sample selected, through the same transition
+  the continuation uses. The default scope is every remaining stage, as
+  it is in `execute()`, and where one frame cannot say whether it is the
+  next stage's register or a hierarchy covering the rest, `stages` is
+  required in both. Neither compares the recorded fingerprint or frame
+  digest, which describe the frame the executed stages drew from rather
+  than the register the next stage needs. An ambiguous previous-phase
+  identifier is refused here as it is at execution
+  (`samplyr_error_phase_key_ambiguous`).
+* `joint_expectation(sample, list(...))` reconstructs joint quantities
+  from the original stage registers, linking each through the declared
+  ancestry. A sample drawn from several registers refuses a single
+  frame (`samplyr_error_frame_count`) rather than computing from the
+  wrong population. The frame-free digest path remains the default and
+  is preferred.
+* The two-phase preflight in `validate_frame()` models the compound
+  bridge `as_svydesign()` builds. The phases declare their sampling
+  units independently, so the link is every identifier either phase
+  declares that both samples carry, taken together: a phase 1 by PSU
+  followed by a phase 2 by household and person links on all three. It
+  warns only when nothing can link the phases, or when the identifiers
+  together do not uniquely identify phase-1 rows.
 
 ## Certainty selection
 
+* `.certainty_k` records a resolved inclusion probability of one, whatever
+  produced it: an explicit threshold, capping inside
+  `sondage::inclusion_prob()`, or a balanced design landing on one. Sample,
+  digest, joint-inclusion matrix and survey export all decide it with one
+  predicate and one tolerance, so a unit capped at one is treated exactly
+  like one named by a rule and contributes no variance at its stage. Expected
+  hits from WR/PMR methods are never certainty, even when at least one.
+* Certainty units are placed in a take-all stratum wherever a stage exports
+  under the PPS-WOR (Brewer) treatment, which includes balanced (cube) and
+  custom balanced designs. Random-size designs keep the Poisson treatment and
+  form no take-all stratum. Splitting certainty units out of a user stratum
+  can leave a single probability unit behind, whose within-stratum variance
+  is not estimable; `survey` reports that as a lonely PSU and
+  `options(survey.lonely.psu = "adjust")` is the conservative response.
 * PPS WOR methods support certainty selection via absolute (`certainty_size`)
   or proportional (`certainty_prop`) thresholds, including iterative
   identification for proportional thresholds.
@@ -159,6 +340,29 @@ Initial release.
   multi-phase) or modified after execution are flagged in the receipt
   and warned about at write time; `replay_design()` refuses chained
   receipts rather than replaying only the final call.
+* Receipts record how frames were mapped to stages: the frame mode, how
+  many frames were supplied, their optional labels, and the frame
+  position each executed stage drew from. `write_design(..., frame =)`
+  accepts the same ordered list `execute()` takes and fingerprints each
+  frame separately, and `replay_design(x, list(...))` replays a
+  one-call multi-register execution, reporting a mismatch by frame
+  position and label. Supplying the wrong number of frames is
+  `samplyr_error_replay_frame_count`. Chained and multi-phase receipts
+  are refused: the mapping describes the recorded call only.
+  Files carrying these fields declare format version 2, since a version
+  1 reader would replay them against a single frame; every other file
+  is still written at version 1, and a receipt without the fields is
+  read as the one-frame call it can only have been. The plural fields
+  and version 2 describe genuinely several supplied frames, not the
+  container the caller wrote: one frame passed as `list(frame)` records
+  the singular fingerprint and version 1, identically to `frame`.
+* Serialization refuses a frame count the design could not have been
+  executed with, and, for an executed sample, any count other than the
+  one its receipt records
+  (`samplyr_error_serialization_frame_count`, which inherits
+  `samplyr_error_frame_count`). A file whose fingerprint manifest
+  contradicts its own receipt can no longer be written. The independent
+  check in `replay_design()` remains, for files written elsewhere.
 * Receipts for designs using registered custom methods record an
   implementation fingerprint (formals and body of the registered
   `sample_fn` and `joint_fn`, via `sondage::method_spec()`). Replay
@@ -180,7 +384,11 @@ Initial release.
   against the supplied frame and reports what changed (rows, columns,
   column types, or content). The comparison is informational and never
   fails validation; control it with the `fingerprint` argument
-  (`"inform"`, `"warn"`, or `"ignore"`).
+  (`"inform"`, `"warn"`, or `"ignore"`). One frame and several are
+  compared by the same code, and a count that cannot match is itself
+  reported: a file recording three registers says nothing about one
+  frame, and `replay_design()` reports that rather than silently
+  skipping the comparison.
 
 ## Survey export
 
@@ -198,6 +406,9 @@ Initial release.
   Multi-stage PPS designs use fraction-scale FPCs throughout.
 * `as_svrepdesign()` converts to replicate-weight designs. For PPS and
   balanced designs, `"subbootstrap"` and `"mrbbootstrap"` are supported.
+* `nest` reaches `survey::svydesign()` only, so giving it when exporting a
+  two-phase sample warns (`samplyr_warning_nest_ignored`) rather than
+  appearing to take effect.
 * `as_survey_design()` and `as_survey_rep()` for direct conversion to
   srvyr `tbl_svy` objects.
 * `joint_expectation()` computes pairwise joint inclusion probabilities
@@ -291,9 +502,11 @@ Initial release.
   (per stratum when stratified). Handles 2- and 3-stage designs with
   SRS, PPS (WOR and WR), and stratified first stages; refuses
   two-phase samples, certainty PSUs, and deeper designs with precise
-  messages. The certainty guard also recognizes realized PPS stage
-  weights effectively equal to one, covering implicit probability capping
-  even when no explicit certainty threshold was requested.
+  messages. The certainty guard reads `.certainty_k`, which covers implicit
+  probability capping as well as explicit thresholds. `strata` follows the
+  `...` that carries the outcome formula, so it is matched exactly: `strat
+  = ~region`, or a second positional formula, used to be dropped and return
+  an unstratified decomposition. Both are now refused by name.
 * `draw()` accepts `svyplan` sample size objects (`svyplan_n`, `svyplan_power`,
   `svyplan_cluster`) directly, and the handoff is stage-aware: cluster
   plans contribute the PSU count at a clustered stage 1 and the
@@ -356,6 +569,52 @@ Initial release.
   methods `.weight` is the inverse target probability, not the
   inverse of the design's true first-order inclusion probability;
   the `execute()` weight documentation says so.
+* `frame_summary(design, frame)` previews a design before it is run.
+  Every selection pool is enumerated and every chance resolved from the
+  design and the frame, but nothing is selected: no random numbers are
+  drawn and `.Random.seed` is left as it was, whether or not it existed.
+  The frame is read with the same grammar `execute()` uses, so one
+  shared hierarchy or one register per stage both work. Supplying
+  `frame` always means "preview", so a design restored from a file can
+  be checked against next wave's frame, and a sample can be previewed
+  against a frame other than the one it was drawn from; omitting it
+  reports what the recorded digest says happened.
+* A recorded frame that no stage selects from is refused when a digest
+  claims to be complete (`samplyr_error_digest_frame_ref`). Checking that
+  each stage's frame reference is in range cannot catch a digest whose
+  stages all point at the first of several frames; requiring every frame to
+  be claimed does. A partial digest is exempt: a replicated multi-stage
+  execution keeps the stage prefix common to every replicate and still
+  records the frames the dropped stages used.
+* A preview applies the same checks `execute()` applies before it
+  samples, so it cannot approve a frame execution would refuse:
+  duplicate column names, reserved generated names, and a `tbl_sample`
+  whose class was dropped are all reported with the class `execute()`
+  reports. Each stage also records which supplied frame it would select
+  from, as an executed digest does, and the record it points at describes
+  that register as supplied: a stage selects from its register linked to
+  its parents, which carries their columns, but the fingerprint and roles
+  are the register's own. A preview and an execution of the same registers
+  therefore produce the same frame records.
+* A preview has no realization, so `n_realized` and `take_rate` come
+  back `NA`, as do `is_selected` and `n_hits` at `detail = "unit"`.
+  Every other column and the shape of the table are the same as for a
+  recorded digest, so the two are directly comparable.
+* In a preview, `detail = "pool"` reports one pool per candidate parent
+  with the take that parent would give **if selected**, which is what
+  field planning needs. `detail = "stage"` rolls those up weighted by
+  the probability each parent is selected, so it reports the expected
+  size of the stage: a design taking 10 of 100 clusters and 5 units in
+  each reports 50 at stage 2, not the 500 summed over every candidate.
+  Where per-parent takes vary, the realized size varies around it.
+* A stage below a with-replacement stage cannot be previewed, because
+  the number of times each parent is hit is random
+  (`samplyr_error_exante_unsupported`).
+* `capped` is derived with a tolerance rather than an exact comparison.
+  `n_expected` and `n_target` are equal by construction when nothing
+  capped, but they are computed by different paths at execution and in
+  the preview, and a difference in the last bits made one Neyman
+  stratum report as capped in one and not the other.
 * The digest travels inside execution receipts, so a design restored
   with `read_design()` carries it, and `frame_summary()` accepts such
   designs directly: a shipped design file supports next-wave planning
@@ -403,6 +662,46 @@ Initial release.
   Per-pool allocation tables live in `frame_summary(detail = "pool")`. The
   summary notation maps directly to its columns: N_h to `N`, n_h to
   `n_realized`, and f_h to `take_rate`.
+* Capping diagnostics are classified by what happened, not by which code
+  path detected it. A stage reports each distinct finding once, however many
+  pools capped, however many parent pools it ran inside, and however many
+  replicates ran.
+  - `samplyr_warning_size_capped`: some pools held fewer units than the
+    stage asked for. `frame_summary(detail = "pool")` marks the same pools
+    in its `capped` column.
+  - `samplyr_warning_census`: the stage selected every unit available in the
+    pools it executed, so it contributes no sampling variance. This is a
+    statement about the stage. Above the first stage those pools are the
+    ones a sampled ancestor supplied, and the design as a whole is a census
+    only if every stage is.
+  - `samplyr_warning_nominal_cap`: a random-size method (`bernoulli`,
+    `pps_poisson`, or a registered method declared as random-size) asked for
+    more units than the pool holds. Clamping every chance at one caps the
+    target the stage aims at; it does not select that many units, and the
+    realized size usually lands below the cap.
+  - `samplyr_warning_poisson_shortfall`: a `pps_poisson` pool resolved to an
+    expectation more than 5% below what it could have reached, because
+    dominant units saturated at probability 1. Measured against the reachable
+    target, so a pool whose target the population already reduced is charged
+    only for the further reduction saturation caused; a design reduced both
+    ways gets both warnings. The payload carries `n_requested`,
+    `n_reachable`, `n_expected` and `n_clipped`, and only affected pools are
+    aggregated, so a healthy pool cannot mask a collapsed one.
+  - `samplyr_message_allocation_capped`: a feasible allocation was
+    redistributed past a saturated stratum.
+
+  Every condition carries `stage`, an `operation` naming the detected event,
+  and a `payload` whose fields are stable across detection sites: `pool_keys`,
+  `n_capped`, `n_pools`, `n_requested`, `n_actual`, `n_available`,
+  `n_reachable`, `n_expected`, `n_clipped`, `n_moved`, `n_replicates`, and
+  `varied`. A field the event does not record is `NA` rather than zero. Pool
+  identities are qualified by their parent, so the same stratum capping in
+  three clusters reports as three pools rather than one. Replicates that
+  reach different parents still report once: the pool lists are unioned and
+  the message states that the counts describe one replicate. Replicates are
+  classified before they are merged, so replicates that reach genuinely
+  different outcomes report each one, and every condition names only the
+  pools that produced it.
 * `validate_frame()` checks for missing variables, NA values in key
   columns, and MOS/PRN/auxiliary variable issues before execution.
 * When the frame is itself a `tbl_sample` (phase-2 preparation),

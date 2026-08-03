@@ -1,6 +1,7 @@
-#' Print Methods for samplyr Objects
+#' Print methods for samplyr objects
 #'
 #' @name print.samplyr
+#' @family helpers
 #' @param x Object to print
 #' @param ... Must be empty.
 #' @return Invisibly returns the input object

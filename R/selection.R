@@ -73,8 +73,12 @@ trace_clusters <- function(by, keys, first_rows, sizes, node) {
 }
 
 #' Frame columns the cluster contract requires to be constant within
-#' each cluster: the size measure, stratum labels, and balancing or
-#' spreading variables.
+#' each cluster: the size measure, stratum labels, balancing or spreading
+#' variables, the permanent random number, and any ordering controls.
+#'
+#' A clustered stage selects on one representative row per cluster, so a
+#' column in this set that varies within a cluster makes the result depend on
+#' which descendant row happens to come first.
 #' @noRd
 cluster_invariant_vars <- function(frame, draw_spec, strata_vars) {
   intersect(
@@ -82,7 +86,9 @@ cluster_invariant_vars <- function(frame, draw_spec, strata_vars) {
       draw_spec$mos,
       strata_vars,
       draw_spec$bounds %||% character(0),
-      draw_spec$spread %||% character(0)
+      draw_spec$spread %||% character(0),
+      draw_spec$prn %||% character(0),
+      extract_control_vars(draw_spec$control)
     ),
     names(frame)
   )
@@ -189,6 +195,9 @@ sample_within_clusters <- function(
 ) {
   groups <- split_row_indices(frame, cluster_vars)
   indices_list <- groups$indices
+  # Display labels, not `groups$keys`: the latter is an internal encoding for
+  # more than one clustering variable and has no business in a report.
+  parent_labels <- key_labels(groups$key_df, cluster_vars)
 
   if (
     is_null(strata_spec) &&
@@ -203,7 +212,8 @@ sample_within_clusters <- function(
       frame,
       indices_list,
       n_per_group,
-      trace_mode = trace_mode
+      trace_mode = trace_mode,
+      pool_keys = parent_labels
     )
     result <- res$sample
     if (nrow(result) > 0) {
@@ -231,9 +241,12 @@ sample_within_clusters <- function(
     ))
   }
 
-  results_list <- lapply(indices_list, function(idxs) {
-    data <- frame[idxs, , drop = FALSE]
-    sample_units(data, strata_spec, draw_spec, trace_mode = trace_mode)
+  results_list <- lapply(seq_along(indices_list), function(i) {
+    data <- frame[indices_list[[i]], , drop = FALSE]
+    qualify_pool_events(
+      sample_units(data, strata_spec, draw_spec, trace_mode = trace_mode),
+      parent_labels[[i]]
+    )
   })
 
   result <- bind_rows(lapply(results_list, function(r) r$sample))
@@ -285,11 +298,31 @@ sample_srswor_by_group_indices <- function(
   frame,
   indices_list,
   n_per_group,
-  trace_mode = "full"
+  trace_mode = "full",
+  pool_keys = NULL
 ) {
   group_sizes <- lengths(indices_list)
   n_actual <- pmin(as.integer(n_per_group), group_sizes)
   n_actual[is.na(n_actual) | n_actual <= 0L] <- 0L
+
+  # Reporting is opt-in through `pool_keys` because `sample_stratified()` runs
+  # the same comparison against `.N_h` before calling in, and would otherwise
+  # report each capped stratum twice. Callers that do not pre-check, notably
+  # the unstratified cluster path, pass their keys and let this report.
+  if (!is_null(pool_keys)) {
+    capped <- as.integer(n_per_group) > group_sizes
+    capped[is.na(capped)] <- FALSE
+    if (any(capped)) {
+      signal_population_cap(
+        pool_keys = pool_keys[capped],
+        n_capped = sum(capped),
+        n_pools = length(indices_list),
+        n_requested = sum(as.integer(n_per_group)),
+        n_actual = sum(n_actual),
+        n_available = sum(group_sizes)
+      )
+    }
+  }
   ends <- cumsum(n_actual)
   starts <- ends - n_actual + 1L
   selected_rows <- integer(sum(n_actual))
@@ -368,7 +401,12 @@ sample_stratified <- function(
   groups <- split_row_indices(frame, strata_vars)
   stratum_info <- stratum_info_from_groups(frame, strata_vars, groups$indices)
 
-  stratum_info <- calculate_stratum_sizes(stratum_info, strata_spec, draw_spec)
+  # Only the selection path signals: the digest and joint-replay callers
+  # recompute the same allocation and would repeat the message.
+  stratum_info <- calculate_stratum_sizes(
+    stratum_info, strata_spec, draw_spec,
+    signal = TRUE
+  )
 
   if (identical(draw_spec$method, "cube")) {
     return(draw_balanced_stratified(
@@ -384,16 +422,33 @@ sample_stratified <- function(
   if (!is_multi_hit_method(draw_spec)) {
     capped <- stratum_info$.n_h > stratum_info$.N_h
     if (any(capped)) {
-      n_requested <- sum(stratum_info$.n_h)
-      n_actual <- sum(pmin(stratum_info$.n_h, stratum_info$.N_h))
-      capped_keys <- format_key_labels(
+      # Full list, not the truncated display form: the reporter decides how
+      # many to name, and a caller inspecting the condition wants them all.
+      keys <- format_key_labels(
         stratum_info[capped, , drop = FALSE],
-        strata_vars
+        strata_vars,
+        max_n = Inf
       )
-      cli_warn(c(
-        "Sample size capped to population in {length(capped_keys)} stratum/strata: {.val {capped_keys}}.",
-        "i" = "Requested total: {n_requested}. Actual total: {n_actual}."
-      ))
+      if (is_random_size_method(draw_spec)) {
+        signal_nominal_cap(
+          pool_keys = keys,
+          n_capped = sum(capped),
+          n_pools = nrow(stratum_info),
+          n_requested = sum(stratum_info$.n_h),
+          n_available = sum(pmin(stratum_info$.n_h, stratum_info$.N_h))
+        )
+      } else {
+        signal_population_cap(
+          pool_keys = keys,
+          n_capped = sum(capped),
+          n_pools = nrow(stratum_info),
+          n_requested = sum(stratum_info$.n_h),
+          n_actual = sum(pmin(stratum_info$.n_h, stratum_info$.N_h)),
+          # Every stratum of the stage, not only the capped ones: a stage is
+          # a census when nothing it could reach was left behind.
+          n_available = sum(stratum_info$.N_h)
+        )
+      }
     }
   }
 
@@ -454,14 +509,20 @@ sample_stratified <- function(
       lookup = draw_lookup
     )
 
-    res <- withCallingHandlers(
-      draw_sample(data, n_h, stratum_draw_spec, trace_mode = trace_mode),
-      error = function(e) {
-        cli_abort(
-          c(conditionMessage(e), "i" = "In stratum {.val {stratum_key}}"),
-          call = NULL
-        )
-      }
+    # `draw_sample()` sees one stratum's rows and knows nothing about which
+    # stratum, so events it raises are named here. An outer cluster loop
+    # qualifies again, giving "parent / A".
+    res <- qualify_pool_events(
+      withCallingHandlers(
+        draw_sample(data, n_h, stratum_draw_spec, trace_mode = trace_mode),
+        error = function(e) {
+          cli_abort(
+            c(conditionMessage(e), "i" = "In stratum {.val {stratum_key}}"),
+            call = NULL
+          )
+        }
+      ),
+      key_labels(keys, strata_vars)
     )
     selected <- res$sample
     selected$.weight <- 1 / selected$.pik
@@ -563,6 +624,11 @@ draw_balanced_stratified <- function(
   result <- frame[original_idx, , drop = FALSE]
   result$.weight <- 1 / pik[original_idx]
   result$.fpc <- fpc_vec[original_idx]
+  # The stratified cube returns here rather than through draw_sample(), so it
+  # needs its own certainty assignment. Without it a stratified cube design
+  # carries no .certainty_k at all and the export cannot build the take-all
+  # stratum its PPS-WOR variance treatment requires.
+  result$.certainty <- is_certainty_probability(pik[original_idx])
   result$.sample_id <- seq_len(nrow(result))
 
   # One pool per stratum: the cube draw is joint, but the strata
@@ -802,10 +868,24 @@ sample_unstratified <- function(frame, draw_spec, trace_mode = "full") {
   }
 
   if (!is_multi_hit_method(draw_spec) && n > N) {
-    cli_warn(c(
-      "Requested sample size ({n}) exceeds population size ({N}).",
-      "i" = "Capped at {N} (census)."
-    ))
+    if (is_random_size_method(draw_spec)) {
+      signal_nominal_cap(
+        pool_keys = character(0),
+        n_capped = 1L,
+        n_pools = 1L,
+        n_requested = n,
+        n_available = N
+      )
+    } else {
+      signal_population_cap(
+        pool_keys = character(0),
+        n_capped = 1L,
+        n_pools = 1L,
+        n_requested = n,
+        n_actual = N,
+        n_available = N
+      )
+    }
   }
 
   res <- draw_sample(frame, n, draw_spec, trace_mode = trace_mode)
@@ -995,8 +1075,17 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
       pps_poisson = {
         mos_vals <- data[[mos]]
         frac <- draw_spec$frac %||% (n / N)
-        pik <- frac * mos_vals / sum(mos_vals) * N
-        pik <- pmin(pik, 1)
+        raw_pik <- frac * mos_vals / sum(mos_vals) * N
+        # Counted before the clamp: after it every clipped unit reads exactly
+        # one and is indistinguishable from a unit that landed there.
+        n_clipped <- sum(raw_pik > 1)
+        pik <- pmin(raw_pik, 1)
+        check_poisson_shortfall(
+          pik,
+          n_requested = n_target,
+          n_reachable = min(n_target, N),
+          n_clipped = n_clipped
+        )
         prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
         idx <- sondage::unequal_prob_wor(
           pik,
@@ -1080,8 +1169,17 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
     result$.pik <- pik[idx]
   }
 
-  if (method %in% pps_methods || is_custom) {
-    result$.certainty <- rep.int(FALSE, nrow(result))
+  # Certainty is read off the resolved probability vector, so units capped at
+  # one inside sondage::inclusion_prob() count alongside those matched by an
+  # explicit rule. Balanced methods resolve probabilities the same way and
+  # export under the same variance treatment, so they carry the column too.
+  # Multi-hit .pik holds expected hits, which are never certainty.
+  if (method %in% pps_methods || is_balanced_method(draw_spec) || is_custom) {
+    result$.certainty <- if (is_multi_hit_method(draw_spec)) {
+      rep.int(FALSE, nrow(result))
+    } else {
+      is_certainty_probability(result$.pik)
+    }
   }
 
   list(
@@ -1162,6 +1260,7 @@ draw_sample_pps_certainty <- function(
   selected <- cert$certainty_idx
 
   prob_result <- NULL
+  n_clipped <- 0L
   if (cert$n_remaining > 0 && length(cert$remaining_idx) > 0) {
     remaining_data <- data[cert$remaining_idx, , drop = FALSE]
     remaining_mos <- mos_vals[cert$remaining_idx]
@@ -1175,9 +1274,26 @@ draw_sample_pps_certainty <- function(
       draw_spec = draw_spec
     )
     prob_result <- prob_res$sample
-    prob_result$.certainty <- rep.int(FALSE, nrow(prob_result))
+    # Removing the explicit certainty units shrinks the frame total, so
+    # inclusion_prob() on the remainder can cap a further unit at one.
+    prob_result$.certainty <- is_certainty_probability(prob_result$.pik)
     chance[cert$remaining_idx] <- prob_res$chance
     selected <- c(selected, cert$remaining_idx[prob_res$selected])
+    n_clipped <- prob_res$n_clipped
+  }
+
+  # Checked here rather than inside draw_pps_method(), which sees only the
+  # remainder: the pool's requested, reachable and expected totals all
+  # include the explicit certainty units. Those units sit at chance one by
+  # instruction, so they raise the expectation and are not counted as
+  # clipped -- certainty doing its job makes the check quiet on its own.
+  if (identical(method, "pps_poisson")) {
+    check_poisson_shortfall(
+      chance,
+      n_requested = n_target,
+      n_reachable = min(n_target, N),
+      n_clipped = n_clipped
+    )
   }
 
   trace <- if (identical(trace_mode, "none")) {
@@ -1215,6 +1331,9 @@ draw_sample_pps_certainty <- function(
 #' @noRd
 draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
   N <- nrow(data)
+  # Only PPS Poisson clamps computed chances; every other method here either
+  # honors its target exactly or has no notion of clipping.
+  n_clipped <- 0L
 
   if (sum(mos_vals) <= 0) {
     cli_abort(
@@ -1255,8 +1374,9 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
       method,
       pps_poisson = {
         frac <- draw_spec$frac %||% (n / N)
-        pik <- frac * mos_vals / sum(mos_vals) * N
-        pik <- pmin(pik, 1)
+        raw_pik <- frac * mos_vals / sum(mos_vals) * N
+        n_clipped <- sum(raw_pik > 1)
+        pik <- pmin(raw_pik, 1)
         prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
         idx <- sondage::unequal_prob_wor(
           pik,
@@ -1301,7 +1421,14 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
     result <- data[idx, , drop = FALSE]
     result$.pik <- pik[idx]
   }
-  list(sample = result, chance = pik, selected = idx)
+  # `n_clipped` travels back so the certainty path can report clipping on the
+  # combined pool without counting its explicit certainty units as clipped.
+  list(
+    sample = result,
+    chance = pik,
+    selected = idx,
+    n_clipped = n_clipped
+  )
 }
 
 #' @noRd

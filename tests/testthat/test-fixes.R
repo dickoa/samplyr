@@ -105,23 +105,26 @@ test_that("control sorting preserves correctness for srswor (order-insensitive)"
   expect_equal(unique(result$.weight), nrow(frame) / 100)
 })
 
-test_that("multi-stage non-cluster stratified weights are correct", {
-  # Create a frame where strata have different sizes
+test_that("multi-stage stratified weights differ by stratum", {
+  # Strata of different sizes, so equal allocation gives each stratum a
+  # different stage-1 probability. A stage that another stage samples within
+  # must name its units, so stage 1 clusters on psu.
   frame <- data.frame(
     id = 1:200,
+    psu = rep(1:40, each = 5),
     region = c(rep("North", 50), rep("South", 150)),
     value = rnorm(200)
   )
 
-  # Stage 1: stratified SRS with EQUAL allocation (different probs per stratum)
-  # North: 20/50 = 0.4, South: 20/150 = 0.133
-  # Stage 2: SRS within selected units
+  # Stage 1: 5 of 10 North psus (weight 2), 5 of 30 South psus (weight 6).
+  # Stage 2: 2 of the 5 elements in each selected psu (weight 5/2).
   result <- sampling_design() |>
     add_stage() |>
     stratify_by(region, alloc = "equal") |>
-    draw(n = 40) |>
+    cluster_by(psu) |>
+    draw(n = 10) |>
     add_stage() |>
-    draw(n = 5) |>
+    draw(n = 2) |>
     execute(frame, seed = 42)
 
   # Check that compound weight = product of stage weights
@@ -139,10 +142,11 @@ test_that("multi-stage non-cluster stratified weights are correct", {
   }
 })
 
-test_that("non-cluster path with equal strata still works", {
+test_that("multi-stage path with equal strata still works", {
   # When all strata are equal, old behavior should match new behavior
   frame <- data.frame(
     id = 1:200,
+    psu = rep(1:40, each = 5),
     region = rep(c("North", "South"), each = 100),
     value = rnorm(200)
   )
@@ -150,9 +154,10 @@ test_that("non-cluster path with equal strata still works", {
   result <- sampling_design() |>
     add_stage() |>
     stratify_by(region, alloc = "proportional") |>
-    draw(n = 40) |>
+    cluster_by(psu) |>
+    draw(n = 10) |>
     add_stage() |>
-    draw(n = 5) |>
+    draw(n = 2) |>
     execute(frame, seed = 42)
 
   # Compound weight should be product of stage weights
@@ -659,6 +664,7 @@ test_that("multi-stage stratified then unstratified compounding works", {
   # Regression test for Fix 2
   frame <- data.frame(
     id = 1:300,
+    psu = rep(1:60, each = 5),
     region = rep(c("A", "B", "C"), each = 100),
     value = rnorm(300)
   )
@@ -666,9 +672,10 @@ test_that("multi-stage stratified then unstratified compounding works", {
   result <- sampling_design() |>
     add_stage() |>
     stratify_by(region, alloc = "proportional") |>
-    draw(n = 60) |>
+    cluster_by(psu) |>
+    draw(n = 15) |>
     add_stage() |>
-    draw(n = 5) |>
+    draw(n = 2) |>
     execute(frame, seed = 42)
 
   # Compound weight = product of stage weights

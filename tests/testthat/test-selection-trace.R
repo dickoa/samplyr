@@ -120,12 +120,35 @@ test_that("certainty selection records chance one and the rule positions", {
   expect_true(all(tr$chance[tr$selected] > 0))
   expect_equal(1 / res$sample$.weight, tr$chance[tr$selected])
   expect_identical(res$sample$id, test_frame$id[tr$selected])
-  # The sample's certainty flags match the rule positions.
+  # cert_rule stays explicit-rule provenance; .certainty is the resolved
+  # property. Here the rule catches every probability-one unit, so the two
+  # coincide, but the flag is derived from the chance vector either way.
   expect_identical(
     res$sample$.certainty,
-    tr$selected %in% tr$cert_rule
+    samplyr:::is_certainty_probability(tr$chance[tr$selected])
   )
+  expect_true(all(
+    (tr$selected %in% tr$cert_rule) <= res$sample$.certainty
+  ))
 })
+
+test_that("cert_rule records only explicit-rule units, not capped ones", {
+  # Only unit 1 clears the threshold; units 2 and 3 are capped at one by
+  # the remainder draw. The flag covers all three, the rule only the first.
+  frame <- data.frame(id = seq_len(53), mos = c(1000, 500, 400, rep(10, 50)))
+  d <- sampling_design() |>
+    draw(n = 10, method = "pps_brewer", mos = mos, certainty_size = 900)
+  s <- stage_spec(d)
+  res <- withr::with_seed(
+    1,
+    samplyr:::sample_units(frame, s$strata, s$draw_spec)
+  )
+  tr <- trace_of(res)
+
+  expect_identical(tr$cert_rule, 1L)
+  expect_setequal(res$sample$id[res$sample$.certainty], c(1, 2, 3))
+})
+
 
 test_that("with-replacement traces record expected hits and repeats", {
   d <- sampling_design() |> draw(n = 10, method = "pps_multinomial", mos = mos)

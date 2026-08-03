@@ -4,18 +4,29 @@
 \alias{design_json}
 \title{Convert a sampling design to JSON}
 \usage{
-design_json(x, frame = NULL, pretty = FALSE)
+design_json(x, frame = NULL, ..., pretty = FALSE)
 }
 \arguments{
 \item{x}{A \code{sampling_design}, or a \code{tbl_sample} (the stored design is
 saved along with an execution receipt).}
 
-\item{frame}{Optional sampling frame (data frame). When supplied, a
-fingerprint of the frame (name, dimensions, column types, content
-hash) is stored so the frame can be verified later. The frame data is
-never written. The content hash covers column names, column values,
-and row order; it does not depend on the class of the data frame
-(tibble or data frame) or on the order of its columns.}
+\item{frame}{Optional sampling frame. A data frame is the one frame
+the design was built against. An ordered list of data frames is the
+stage registers, in the order \code{\link[=execute]{execute()}} received them, and each
+is fingerprinted separately. One frame written as a one-element list
+is still one frame and is recorded identically. The number of frames
+must be one the design could be executed with, and for an executed
+sample must be the number its receipt records, so a file cannot say
+it was drawn from one frame and carry fingerprints for three. When
+supplied, a fingerprint (name,
+dimensions, column types, content hash) is stored so the frame can
+be verified later. The frame data is never written. The content
+hash covers column names, column values, and row order. It does not
+depend on the class of the data frame (tibble or data frame) or on
+the order of its columns.}
+
+\item{...}{These dots are for future extensions and must be empty.
+\code{pretty} follows \code{...}, so it is matched exactly and must be named.}
 
 \item{pretty}{Whether to pretty-print the JSON. Defaults to \code{TRUE} for
 files and \code{FALSE} for \code{\link[=design_json]{design_json()}}.}
@@ -46,4 +57,10 @@ identical(
 }
 \seealso{
 \code{\link[=write_design]{write_design()}}, \code{\link[=read_design]{read_design()}}
+
+Other serialization:
+\code{\link[=as.list.sampling_design]{as.list.sampling_design()}},
+\code{\link[=replay_design]{replay_design()}},
+\code{\link[=write_design]{write_design()}}
 }
+\concept{serialization}

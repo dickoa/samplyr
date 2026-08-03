@@ -40,3 +40,14 @@ get_stages_executed(stage1)
 full_sample <- execute(stage1, bfa_eas, seed = 2)
 get_stages_executed(full_sample)
 }
+\seealso{
+Other helpers:
+\code{\link[=as_tbl_sample]{as_tbl_sample()}},
+\code{\link[=bound]{bound()}},
+\code{\link[=get_design]{get_design()}},
+\code{\link[=is_sampling_design]{is_sampling_design()}},
+\code{\link[=is_tbl_sample]{is_tbl_sample()}},
+\code{\link{print.samplyr}},
+\code{\link[=serp]{serp()}}
+}
+\concept{helpers}

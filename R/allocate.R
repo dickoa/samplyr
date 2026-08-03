@@ -71,95 +71,127 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
   a
 }
 
+#' Bounded allocation that preserves the method's own factors
+#'
+#' Solves the continuous problem
+#'
+#'   n_h = clamp(lambda * factor_h, lower_h, upper_h)
+#'
+#' with `lambda` chosen so the unsaturated strata absorb the remaining total,
+#' then integerizes.
+#'
+#' Redistributing in proportion to the factors is what keeps the named
+#' criterion intact once a stratum saturates. Redistributing in proportion to
+#' unused capacity, or by distance from the unconstrained target, silently
+#' turns a Neyman design into something else.
+#'
+#' Data-agnostic on purpose: factors, a total, bounds and a stable order are
+#' the whole interface. Nothing here knows about strata or draw specs.
+#'
+#' The scale is found by solving the monotone equation rather than by freezing
+#' violated constraints as they appear. Freezing is wrong in both directions at
+#' once: raising a stratum to its lower bound takes units away from the free
+#' set, which can release an upper bound that appeared to bind on the
+#' unconstrained targets. Since `g` below is nondecreasing in `lambda`, a
+#' bisection cannot make that mistake.
+#'
 #' @noRd
-apply_bounds <- function(target, n_total, min_n, max_n, N_h) {
-  H <- length(target)
-  adjusted <- target
+allocate_bounded <- function(factors, total, lower, upper) {
+  f <- factors
+  f[!is.finite(f) | f < 0] <- 0
 
-  effective_min <- if (!is_null(min_n)) pmin(rep(min_n, H), N_h) else rep(0, H)
-  effective_max <- if (!is_null(max_n)) pmin(rep(max_n, H), N_h) else N_h
-
-  if (sum(effective_min) > n_total) {
-    cli_abort(c(
-      "Cannot satisfy minimum sample size constraint",
-      "x" = "Minimum allocation requires n >= {sum(effective_min)}",
-      "i" = "Total sample size n = {n_total}"
-    ), call = NULL)
+  # Only the ratios between factors matter, and the search below divides a
+  # bound by a factor. Scaling to a maximum of 1 first keeps that quotient
+  # finite for factors small enough that it would otherwise overflow to Inf
+  # and collapse the bisection interval.
+  f_max <- max(f)
+  if (f_max > 0) {
+    f <- f / f_max
   }
 
-  if (sum(effective_max) < n_total) {
-    cli_abort(c(
-      "Cannot satisfy maximum sample size constraint",
-      "x" = "Maximum allocation allows at most n = {sum(effective_max)}",
-      "i" = "Total sample size n = {n_total}"
-    ), call = NULL)
-  }
+  at_scale <- function(lambda, f, lo, hi) pmin(pmax(lambda * f, lo), hi)
 
-  # Each iteration fixes at least one stratum at its bound or converges,
-  # so H iterations suffices. Previous hardcoded cap of 50 could fail for
-  # designs with many strata.
-  max_iter <- H
-  converged <- FALSE
-
-  for (iter in seq_len(max_iter)) {
-    changed <- FALSE
-
-    below <- adjusted < effective_min
-    if (any(below)) {
-      borrowed <- sum(effective_min[below] - adjusted[below])
-      adjusted[below] <- effective_min[below]
-
-      can_give <- adjusted > effective_min & !below
-      if (any(can_give) && borrowed > 0) {
-        excess_above <- adjusted[can_give] - effective_min[can_give]
-        total_excess <- sum(excess_above)
-        if (total_excess > 0) {
-          reduction <- pmin(
-            borrowed * (excess_above / total_excess),
-            excess_above
-          )
-          adjusted[can_give] <- adjusted[can_give] - reduction
-        }
+  # g(lambda) = sum(at_scale(lambda)) runs from sum(lo) to sum(hi) without
+  # ever decreasing, so bisection finds the scale that hits the total.
+  # NA means the positive factors cannot reach it however large lambda gets.
+  solve_scale <- function(f, total, lo, hi) {
+    if (sum(at_scale(0, f, lo, hi)) >= total) {
+      return(0)
+    }
+    positive <- f > 0
+    if (!any(positive)) {
+      return(NA_real_)
+    }
+    # The scale at which every positive-factor stratum saturates, and so an
+    # upper bracket for the search. A factor small enough against its bound
+    # makes that quotient overflow; such a stratum saturates at no
+    # representable scale, so it cannot bound the bracket. Doubling covers
+    # the case where none of them can.
+    reach <- hi[positive] / f[positive]
+    reach <- reach[is.finite(reach)]
+    top <- if (length(reach) > 0) {
+      max(reach)
+    } else {
+      grow <- total / sum(f[positive])
+      if (!is.finite(grow) || grow <= 0) {
+        grow <- 1
       }
-      changed <- TRUE
-    }
-
-    above <- adjusted > effective_max
-    if (any(above)) {
-      excess <- sum(adjusted[above] - effective_max[above])
-      adjusted[above] <- effective_max[above]
-
-      can_receive <- adjusted < effective_max & !above
-      if (any(can_receive) && excess > 0) {
-        room <- effective_max[can_receive] - adjusted[can_receive]
-        total_room <- sum(room)
-        if (total_room > 0) {
-          addition <- pmin(excess * (room / total_room), room)
-          adjusted[can_receive] <- adjusted[can_receive] + addition
-        }
+      while (is.finite(grow * 2) && sum(at_scale(grow, f, lo, hi)) < total) {
+        grow <- grow * 2
       }
-      changed <- TRUE
+      grow
     }
+    if (sum(at_scale(top, f, lo, hi)) <= total) {
+      return(top)
+    }
+    span <- c(0, top)
+    for (step in seq_len(200L)) {
+      mid <- sum(span) / 2
+      if (sum(at_scale(mid, f, lo, hi)) < total) {
+        span[1] <- mid
+      } else {
+        span[2] <- mid
+      }
+    }
+    sum(span) / 2
+  }
 
-    if (!changed) {
-      converged <- TRUE
-      break
+  lambda <- solve_scale(f, total, lower, upper)
+  alloc <- if (is.na(lambda)) lower else at_scale(lambda, f, lower, upper)
+
+  # Positive factors saturated with units still to place: the criterion is
+  # indifferent among the strata that have room, so level them up equally.
+  if (total - sum(alloc) > sqrt(.Machine$double.eps)) {
+    has_room <- upper > alloc
+    if (any(has_room)) {
+      equal <- as.numeric(has_room)
+      level <- solve_scale(equal, total, alloc, upper)
+      if (!is.na(level)) {
+        alloc <- at_scale(level, equal, alloc, upper)
+      }
     }
   }
 
-  if (!converged) {
-    final_sum <- sum(round(adjusted))
-    cli_warn(c(
-      "Bounds adjustment did not converge in {max_iter} iterations",
-      "!" = "Stratum allocations may not sum exactly to {n_total}",
-      "i" = "Current rounded sum: {final_sum}",
-      "i" = "Consider relaxing {.arg min_n} or {.arg max_n} constraints"
-    ))
-  }
+  n_h <- round_preserve_total_bounded(alloc, total, lower, upper)
 
-  # `effective_max <= N_h` by construction, so the bounded rounder already
-  # respects the population cap; no additional pmin(adjusted, N_h) needed.
-  round_preserve_total_bounded(adjusted, n_total, effective_min, effective_max)
+  lo_int <- as.integer(ceiling(lower))
+  hi_int <- as.integer(floor(upper))
+  if (
+    abs(sum(n_h) - total) > 0.5 ||
+      any(n_h < lo_int) ||
+      any(n_h > hi_int)
+  ) {
+    cli_abort(
+      c(
+        "Internal error: bounded allocation did not satisfy its contract.",
+        "i" = "Requested {total}, allocated {sum(n_h)}.",
+        "i" = "Bounds [{min(lo_int)}, {max(hi_int)}], got
+               [{min(n_h)}, {max(n_h)}]."
+      ),
+      call = NULL
+    )
+  }
+  n_h
 }
 
 #' @noRd
@@ -246,7 +278,12 @@ join_aux_to_strata <- function(
 }
 
 #' @noRd
-calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
+calculate_stratum_sizes <- function(
+  stratum_info,
+  strata_spec,
+  draw_spec,
+  signal = FALSE
+) {
   alloc <- strata_spec$alloc
   n_total <- draw_spec$n
   frac <- draw_spec$frac
@@ -270,12 +307,157 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
     }
   }
 
-  finalize_allocation <- function(target, n_total, N_h) {
-    if (!is_null(min_n) || !is_null(max_n)) {
-      apply_bounds(target, n_total, min_n, max_n, N_h)
+  # Allocation methods differ only in their per-stratum factor: the scaling
+  # to n_total, the validation and the bounds handling are shared. Taking
+  # the factors rather than the scaled targets keeps the criterion available
+  # to the bounds step, which has to know how to redistribute.
+  finalize_allocation <- function(factors, n_total, N_h, alloc_name) {
+    validate_target(n_total * factors / sum(factors), alloc_name)
+
+    # Bounds come from the design's sampling semantics, not from whether the
+    # user typed an argument. A without-replacement stratum cannot yield more
+    # units than it holds, whether or not `max_n` was given. A with-
+    # replacement stratum is not bounded by the number of distinct units at
+    # all; `n_total` stands in for "unbounded" because a stratum can never
+    # take more than the whole sample, and it survives integerization where
+    # Inf would coerce to NA.
+    wr <- is_multi_hit_method(draw_spec)
+    # Random-size methods realize a count around their target rather than
+    # exactly it, so N_h caps the *nominal* target and the realized size can
+    # still fall below it. Calling that a census would be wrong.
+    random_size <- is_random_size_method(draw_spec)
+    structural_max <- if (wr) rep(n_total, H) else N_h
+    upper <- if (is_null(max_n)) {
+      structural_max
     } else {
-      round_preserve_total(target, n_total)
+      pmin(rep(max_n, H), structural_max)
     }
+    lower <- if (is_null(min_n)) rep(0, H) else pmin(rep(min_n, H), upper)
+
+    if (sum(lower) > n_total) {
+      abort_samplyr(
+        c(
+          "Cannot satisfy minimum sample size constraint",
+          "x" = "Minimum allocation requires n >= {sum(lower)}",
+          "i" = "Total sample size n = {n_total}"
+        ),
+        class = "samplyr_error_alloc_min_infeasible",
+        call = NULL
+      )
+    }
+
+    # Requesting more than the frame holds caps rather than fails: it keeps
+    # the behavior selection used to provide. An explicit `max_n` that blocks
+    # the cap is a conflicting instruction and stays an error.
+    # `max_n` only conflicts with the population cap when it actually narrows
+    # it. A generous bound that never binds is not a conflicting instruction.
+    max_narrows <- !is_null(max_n) && any(upper < structural_max)
+
+    # Not named `census`: the same branch runs for random-size methods, where
+    # the target is capped and the realization is still a draw. Whether the
+    # stage ends up a census is decided by the reporter, on the aggregate.
+    population_limited <- FALSE
+    if (sum(upper) < n_total) {
+      if (!wr && !max_narrows) {
+        population_limited <- TRUE
+        requested <- n_total
+        available <- sum(upper)
+        # Signaled, not warned. Allocation resolves the impossible total
+        # before selection sees it, so this is the only site that can report
+        # it, but it reaches the user through the same per-stage aggregation
+        # as every other capping diagnostic.
+        #
+        # Every stratum is named, because every stratum goes to its bound
+        # here: the count and the key list have to agree, and a parent loop
+        # qualifies each key with the pool it came from.
+        if (signal) {
+          keys <- format_key_labels(
+            stratum_info,
+            strata_spec$vars,
+            max_n = Inf
+          )
+          if (random_size) {
+            signal_nominal_cap(
+              pool_keys = keys,
+              n_capped = H,
+              n_pools = H,
+              n_requested = requested,
+              n_available = available
+            )
+          } else {
+            signal_population_cap(
+              pool_keys = keys,
+              n_capped = H,
+              n_pools = H,
+              n_requested = requested,
+              n_actual = available,
+              n_available = sum(structural_max)
+            )
+          }
+        }
+        n_total <- sum(upper)
+      } else {
+        abort_samplyr(
+          c(
+            "Cannot satisfy maximum sample size constraint",
+            "x" = "Maximum allocation allows at most n = {sum(upper)}",
+            "i" = "Total sample size n = {n_total}"
+          ),
+          class = "samplyr_error_alloc_max_infeasible",
+          call = NULL
+        )
+      }
+    }
+
+    n_h <- allocate_bounded(factors, n_total, lower, upper)
+
+    # The user asked for a named rule and receives a departure from it: a
+    # stratum too small to absorb its share is capped and the surplus goes
+    # to the others, so `equal` stops being literally equal. That is worth
+    # saying once per execution. A message rather than a warning, because
+    # nothing went wrong and simulation loops should be able to silence it
+    # with suppressMessages(). Not repeated when the population already
+    # bound the total, which reports on its own, nor for with-replacement
+    # draws, which have no population cap.
+    if (signal && !wr && !population_limited) {
+      # Whether the population bound was active in the solution, not whether
+      # the unconstrained share exceeded it. `min_n` takes units out of the
+      # free set, which can release a bound that looked binding: Neyman
+      # factors (1, 10, 1) on populations (100, 30, 100) with n = 60 and
+      # min_n = 20 allocates 20/20/20, and B never reaches its bound of 30.
+      # This is the trap the solver itself had before it bisected.
+      #
+      # Solving again with only the population component relaxed answers the
+      # question directly, and answers it in whole units, so the count needs
+      # no rounding argument: an integerized allocation is compared with an
+      # integerized allocation.
+      relaxed_upper <- if (is_null(max_n)) {
+        rep(n_total, H)
+      } else {
+        pmin(rep(max_n, H), n_total)
+      }
+      unbounded <- allocate_bounded(factors, n_total, lower, relaxed_upper)
+      capped <- unbounded > n_h
+      if (any(capped)) {
+        moved <- sum(unbounded[capped] - n_h[capped])
+        labels <- format_key_labels(
+          stratum_info[capped, , drop = FALSE],
+          strata_spec$vars,
+          max_n = Inf
+        )
+        # Reported once per stage by execute(), not here: a stratified stage
+        # inside a cluster loop reaches this line once per parent pool.
+        signal_selection_event(
+          "allocation_cap",
+          pool_keys = labels,
+          n_capped = sum(capped),
+          n_pools = H,
+          n_moved = moved
+        )
+      }
+    }
+
+    n_h
   }
 
   strata_ids <- if (length(strata_spec$vars) == 1) {
@@ -398,14 +580,12 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
   } else {
     switch(alloc,
       equal = {
-        target <- rep(n_total / H, H)
-        validate_target(target, alloc)
-        finalize_allocation(target, n_total, stratum_info$.N_h)
+        finalize_allocation(rep(1, H), n_total, stratum_info$.N_h, alloc)
       },
       proportional = {
-        target <- n_total * stratum_info$.N_h / N
-        validate_target(target, alloc)
-        finalize_allocation(target, n_total, stratum_info$.N_h)
+        finalize_allocation(
+          stratum_info$.N_h, n_total, stratum_info$.N_h, alloc
+        )
       },
       power = {
         cv_df <- strata_spec$cv
@@ -459,9 +639,9 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
             class = "samplyr_error_alloc_target_non_finite"
           )
         }
-        target <- n_total * stratum_info$.factor / total_factor
-        validate_target(target, alloc)
-        finalize_allocation(target, n_total, stratum_info$.N_h)
+        finalize_allocation(
+          stratum_info$.factor, n_total, stratum_info$.N_h, alloc
+        )
       },
       neyman = {
         var_df <- strata_spec$variance
@@ -491,9 +671,9 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
             class = "samplyr_error_alloc_target_non_finite"
           )
         }
-        target <- n_total * stratum_info$.factor / total_factor
-        validate_target(target, alloc)
-        finalize_allocation(target, n_total, stratum_info$.N_h)
+        finalize_allocation(
+          stratum_info$.factor, n_total, stratum_info$.N_h, alloc
+        )
       },
       optimal = {
         var_df <- strata_spec$variance
@@ -539,9 +719,9 @@ calculate_stratum_sizes <- function(stratum_info, strata_spec, draw_spec) {
             class = "samplyr_error_alloc_target_non_finite"
           )
         }
-        target <- n_total * stratum_info$.factor / total_factor
-        validate_target(target, alloc)
-        finalize_allocation(target, n_total, stratum_info$.N_h)
+        finalize_allocation(
+          stratum_info$.factor, n_total, stratum_info$.N_h, alloc
+        )
       }
     )
   }

@@ -7,7 +7,7 @@
 \method{dplyr_row_slice}{tbl_sample}(data, i, ...)
 }
 \arguments{
-\item{data}{A tbl_sample object}
+\item{data}{A \code{tbl_sample} object.}
 
 \item{i}{Row locations, as passed by dplyr}
 

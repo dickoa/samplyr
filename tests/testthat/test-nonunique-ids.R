@@ -130,7 +130,7 @@ test_that("joint_expectation: non-unique cluster IDs", {
       draw(n = 3, method = "pps_brewer", mos = pop)
 
   result <- execute(design, frame_jip, seed = 42)
-  jip <- joint_expectation(result, frame_jip, stage = 2)
+  jip <- joint_expectation(result, frame_jip, stages = 2)
 
   # Matrix dims = number of selected (district, ea) pairs
   n_selected <- nrow(dplyr::distinct(result, district, ea))
@@ -208,7 +208,7 @@ test_that("summary: unstratified clustered stage with non-unique IDs", {
   expect_true(any(grepl("2 pools: N_h 3, n_h 1, f_h 0.3333", output,
                         fixed = TRUE)))
   expect_false(any(grepl("0.6667", output, fixed = TRUE)))
-  fs <- frame_summary(s, stage = 2, detail = "pool")
+  fs <- frame_summary(s, stages = 2, detail = "pool")
   expect_equal(fs$N, c(3, 3))
   expect_equal(fs$n_realized, c(1, 1))
 })

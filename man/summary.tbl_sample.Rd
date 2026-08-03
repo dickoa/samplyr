@@ -68,4 +68,12 @@ summary(sample)
 \code{\link[=tbl_sum.tbl_sample]{tbl_sum.tbl_sample()}} for the compact print method,
 \code{\link[=frame_summary]{frame_summary()}} for per-pool allocation tables,
 \code{\link[=as_svydesign]{as_svydesign()}} for exporting to the survey package
+
+Other diagnostics:
+\code{\link{design_effect}},
+\code{\link[=frame_summary]{frame_summary()}},
+\code{\link[=joint_expectation]{joint_expectation()}},
+\code{\link{sample-columns}},
+\code{\link[=varcomp.tbl_sample]{varcomp.tbl_sample()}}
 }
+\concept{diagnostics}

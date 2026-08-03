@@ -2,7 +2,7 @@
 % Please edit documentation in R/serialize.R
 \name{as.list.sampling_design}
 \alias{as.list.sampling_design}
-\title{Convert Sampling Design to List}
+\title{Convert a sampling design to a list}
 \usage{
 \method{as.list}{sampling_design}(x, ...)
 }
@@ -30,3 +30,10 @@ design <- sampling_design(title = "Household Survey") |>
 as.list(design)
 
 }
+\seealso{
+Other serialization:
+\code{\link[=design_json]{design_json()}},
+\code{\link[=replay_design]{replay_design()}},
+\code{\link[=write_design]{write_design()}}
+}
+\concept{serialization}

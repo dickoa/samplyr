@@ -116,7 +116,7 @@ test_that("pools under different parents keep distinct lines", {
   expect_true(any(grepl("2 pools: N_h 3, n_h 1, f_h 0.3333", out,
                         fixed = TRUE)))
   expect_false(any(grepl("0.6667", out, fixed = TRUE)))
-  fs <- frame_summary(s, stage = 2, detail = "pool")
+  fs <- frame_summary(s, stages = 2, detail = "pool")
   expect_identical(nrow(fs), 2L)
   expect_equal(fs$N, c(3, 3))
   expect_equal(fs$n_realized, c(1, 1))
@@ -157,7 +157,7 @@ test_that("validate_frame displays compound parents without machine keys", {
   drifted <- frame[-1, ]
 
   before <- testthat::capture_messages(validate_frame(sample, drifted))
-  stored_key <- samplyr:::get_frame_digest(sample)$stages[[1]]$selected$key
+  stored_key <- samplyr::get_frame_digest(sample)$stages[[1]]$selected$key
   samplyr:::display_path_key(stored_key)
   after <- testthat::capture_messages(validate_frame(sample, drifted))
   expect_identical(after, before)
@@ -230,7 +230,7 @@ test_that("frame_summary unit detail spans the stacked replicates", {
   expect_true(any(fu$n_hits > 1))
 
   # Cross-check against the per-replicate trace.
-  sel <- samplyr:::get_frame_digest(r)$stages[[1]]$selected
+  sel <- samplyr::get_frame_digest(r)$stages[[1]]$selected
   expect_identical(sort(unique(sel$replicate)), 1:3)
   expect_equal(
     sum(fu$n_hits),
@@ -256,11 +256,11 @@ test_that("replicated multi-stage digests report the shared stage prefix", {
   )
   expect_identical(fs$stage, 1L)
   expect_identical(
-    samplyr:::get_frame_digest(r)$status, "partial"
+    samplyr::get_frame_digest(r)$status, "partial"
   )
 
   expect_error(
-    suppressMessages(frame_summary(r, stage = 2)),
+    suppressMessages(frame_summary(r, stages = 2)),
     "replicate-specific"
   )
 

@@ -1,15 +1,141 @@
-#' Specify Selection Parameters
+#' Selection methods
 #'
-#' `draw()` specifies how units are selected. Set the sample size, sampling fraction,
-#' selection method, measure of size for PPS sampling, auxiliary variables
-#' for balanced sampling and spread for spatially balanced sampling.
-#' Every stage in a sampling design must end with `draw()`.
+#' The sixteen selection methods samplyr ships, what each one requires, and
+#' how registered methods extend the set. [draw()] chooses among them with
+#' its `method` argument.
+#'
+#' Sixteen methods are built in, in three families: equal probability, PPS
+#' (probability proportional to size, all requiring `mos`), and balanced.
+#'
+#' | Method | Replacement | Size | `mos` | Other input | Notes |
+#' |--------|-------------|------|-------|-------------|-------|
+#' | `srswor` | Without | Fixed | - | - | The default. Standard SRS |
+#' | `srswr` | With | Fixed | - | - | Allows duplicates |
+#' | `systematic` | Without | Fixed | - | - | Periodic selection |
+#' | `bernoulli` | Without | Random | - | `prn` | Independent trial per unit |
+#' | `pps_systematic` | Without | Fixed | Required | - | Simple, some bias |
+#' | `pps_brewer` | Without | Fixed | Required | - | Fast, joint prob > 0 |
+#' | `pps_cps` | Without | Fixed | Required | - | Highest entropy, exact joint prob |
+#' | `pps_sampford` | Without | Fixed | Required | - | Exact Sampford joint probabilities |
+#' | `pps_poisson` | Without | Random | Required | `prn` | PPS analog of Bernoulli |
+#' | `pps_sps` | Without | Fixed | Required | `prn` | Sequential Poisson |
+#' | `pps_pareto` | Without | Fixed | Required | `prn` | Pareto sampling |
+#' | `pps_multinomial` | With | Fixed | Required | - | Any hit count, Hansen-Hurwitz |
+#' | `pps_chromy` | Min. repl. | Fixed | Required | - | SAS default PPS_SEQ |
+#' | `cube` | Without | Fixed | Optional | `aux` optional | Deville & \enc{Tillé}{Tille} 2004 |
+#' | `lpm2` | Without | Fixed | Optional | `spread` required | Spatial spread |
+#' | `scps` | Without | Fixed | Optional | `spread` required | Spatial spread |
+#'
+#' Every method takes either `n` or `frac`, except `pps_cps`, which requires
+#' `n`. With `frac` the size follows the `round` parameter (ceiling by
+#' default). The `prn` column marks the methods that accept permanent random
+#' numbers for coordination. It is always optional.
+#'
+#' "Min. repl." is probability minimum replacement: `pps_chromy` draws a unit
+#' either \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
+#' times, where \eqn{E} is its expected number of hits, so a unit is never hit
+#' more often than its size warrants.
+#'
+#' ## Fixed vs random sample size
+#'
+#' Where the table says **Fixed**, `n` is the realized sample size. Where it
+#' says **Random**, `n` is the *expected* size: it is converted to
+#' `frac = n / N` (with `N` the stratum or frame size) and the realized count
+#' varies around it.
+#'
+#' For `pps_poisson`, the raw inclusion probabilities are computed as
+#' \eqn{\pi_i = f \cdot x_i / \bar{x}}{pi_i = f * x_i / mean(x)} where
+#' \eqn{f} is `frac` and \eqn{x_i} is the MOS value. Any \eqn{\pi_i > 1}
+#' is clipped to 1, so the expected sample size
+#' \eqn{E[n] = \sum \min(\pi_i, 1)}{E[n] = sum(min(pi_i, 1))} can be less
+#' than \eqn{f \cdot N}{f * N} when large units dominate the MOS
+#' distribution. Use `certainty_size` or `certainty_prop` to handle these
+#' dominant units explicitly.
+#'
+#' This is not silent. `execute()` warns with class
+#' `samplyr_warning_poisson_shortfall` once per stage when a pool's resolved
+#' expectation falls more than 5% below what that pool could reach, naming the
+#' pools affected and how many chances were clipped. The comparison is against
+#' the reachable target rather than the request: a pool asked for more units
+#' than it holds has already had its target reduced by the population, which
+#' `samplyr_warning_nominal_cap` reports, and only the further reduction that
+#' saturation caused is charged here. A design reduced both ways gets both
+#' warnings.
+#'
+#' The shortfall is a gap between the nominal and realized design, not a bias.
+#' Horvitz-Thompson estimates from a saturated Poisson design remain unbiased,
+#' because the weights are the reciprocals of the resolved probabilities.
+#'
+#' When an allocation method is set in [stratify_by()] (`equal`,
+#' `proportional`, `neyman`, `optimal`, `power`), specify total sample size via `n`.
+#' Combining `alloc` with `frac` is not supported.
+#'
+#'
+#' @references
+#' `srswor`, `srswr`, `systematic`, `bernoulli`, `pps_systematic`,
+#' `pps_multinomial`:
+#' Cochran, W.G. (1977). *Sampling Techniques*, 3rd ed. Wiley.
+#'
+#' `pps_brewer`:
+#' Brewer, K.R.W. (1975). A simple procedure for sampling PPS WOR.
+#' *Australian Journal of Statistics*, 17(3), 166-172.
+#'
+#' `pps_cps`:
+#' Hájek, J. (1964). Asymptotic theory of rejective sampling with varying
+#' probabilities from a finite population.
+#' *Annals of Mathematical Statistics*, 35(4), 1491-1523.
+#'
+#' Chen, X.-H., Dempster, A.P. and Liu, J.S. (1994). Weighted finite
+#' population sampling to maximize entropy. *Biometrika*, 81(3), 457-469.
+#'
+#' `pps_poisson`:
+#' Tillé, Y. (2006). *Sampling Algorithms*. Springer.
+#'
+#' `pps_sps`:
+#' Ohlsson, E. (1998). Sequential Poisson sampling.
+#' *Journal of Official Statistics*, 14(2), 149-162.
+#'
+#' `pps_pareto`:
+#' Rosén, B. (1997). Asymptotic theory for order sampling.
+#' *Journal of Statistical Planning and Inference*, 62(2), 135-158.
+#'
+#' `pps_chromy`:
+#' Chromy, J.R. (1979). Sequential sample selection methods.
+#' *Proceedings of the Survey Research Methods Section, ASA*, 401-406.
+#'
+#' `balanced`:
+#' Deville, J.-C. and \enc{Tillé}{Tille}, Y. (2004). Efficient balanced
+#' sampling: the cube method. *Biometrika*, 91(4), 893-912.
+#'
+#' Chauvet, G. (2009). Stratified balanced sampling.
+#' *Survey Methodology*, 35(1), 115-119.
+#'
+#'
+#' @name selection-methods
+#' @family design specification
+#' @seealso [draw()] to set a method on a stage,
+#'   [joint_expectation()] for which methods yield exact second-order
+#'   quantities, [as_svydesign()] for how each family is exported to
+#'   \pkg{survey}
+NULL
+
+#' Specify how units are selected
+#'
+#' `draw()` sets the sample size or sampling fraction, the selection method,
+#' and whatever that method needs: a measure of size for PPS, auxiliary
+#' variables for balanced sampling, coordinates for spatial spread. Every
+#' stage in a sampling design must end with `draw()`.
 #'
 #' @param .data A `sampling_design` object (piped from [sampling_design()],
 #'   [stratify_by()], or [cluster_by()]).
 #' @param n Sample size. For random-size methods (`bernoulli`, `pps_poisson`),
 #'   `n` is the **expected** sample size (converted internally to `frac = n / N`).
-#'   Can be:
+#'   For `pps_poisson` the realized expectation can fall below `n` when large
+#'   units saturate at probability 1. `execute()` warns with class
+#'   `samplyr_warning_poisson_shortfall` when it falls more than 5% short of
+#'   what the pool could reach. See [selection-methods] for the fixed versus
+#'   random distinction, and use `certainty_size` or `certainty_prop` to
+#'   handle dominant units. Can be:
 #'   - A scalar: applies per stratum (if no `alloc`) or as total (if `alloc` specified)
 #'   - A named vector: stratum-specific sizes (for single stratification variable)
 #'   - A data frame: stratum-specific sizes with stratification columns + `n` column
@@ -17,62 +143,61 @@
 #'   - A scalar: same fraction for all strata
 #'   - A named vector: stratum-specific fractions
 #'   - A data frame: stratum-specific fractions with stratification columns + `frac` column
+#'
 #'   Only one of `n` or `frac` should be specified. When the rounded
 #'   stratum sample size (\eqn{N_h \cdot \text{frac}}{N_h * frac}) would
 #'   be zero, it is floored at 1 so every stratum receives at least one
 #'   unit.
+#' @param ... These dots are for future extensions and must be empty.
+#'   `.data`, `n`, and `frac` are what a draw is written as and stay
+#'   positional. Every argument after `...` is matched exactly and must be
+#'   named, so a positional fourth argument is refused rather than taken
+#'   for `min_n`.
 #' @param min_n Minimum sample size per stratum. When an allocation method
 #'   (e.g., Neyman, proportional) would assign fewer than `min_n` units to a
-#'   stratum, that stratum receives `min_n` units instead. The excess is
-#'   redistributed proportionally among strata that were above `min_n`.
-#'   Commonly set to 2 (minimum for variance estimation) or higher for
-#'   reliable subgroup estimates. Only applies when stratification with an
-#'   allocation method is used. Default is `NULL` (no minimum).
+#'   stratum, that stratum is raised to `min_n` and the difference is taken
+#'   from the remaining strata in proportion to the method's own allocation
+#'   factors. Commonly set to 2 (minimum for variance estimation) or higher
+#'   for reliable subgroup estimates. A `min_n` above a stratum's population
+#'   is structurally capped at that population for without-replacement
+#'   designs, which makes the stratum a census. Only applies when
+#'   stratification with an allocation method is used. Default is `NULL`
+#'   (no minimum).
 #' @param max_n Maximum sample size per stratum. When an allocation method
 #'   would assign more than `max_n` units to a stratum, that stratum is
-#'   capped at `max_n` units. The surplus is redistributed proportionally
-#'   among strata that were below `max_n`. Useful for capping dominant strata
-#'   or managing operational constraints. Only applies when stratification
-#'   with an allocation method is used. Default is `NULL` (no maximum).
-#' @param method Character string specifying the selection method. One of:
+#'   capped and the surplus is redistributed over the remaining strata in
+#'   proportion to the method's own allocation factors. Useful for capping
+#'   dominant strata or managing operational constraints.
 #'
-#'   **Equal probability methods:**
-#'   - `"srswor"` (default): Simple random sampling without replacement
-#'   - `"srswr"`: Simple random sampling with replacement
-#'   - `"systematic"`: Systematic (fixed interval) sampling
-#'   - `"bernoulli"`: Independent Bernoulli trials (random sample size)
+#'   Neither bound introduces the population cap. An allocation is always
+#'   capped at the stratum population, so `min_n` and `max_n` narrow a range
+#'   that already exists. See the "Population bounds and redistribution"
+#'   section of [stratify_by()]. For with-replacement methods the number of
+#'   distinct units is not a bound at all, and these arguments are the only
+#'   limits that apply. Only applies when stratification with an allocation
+#'   method is used. Default is `NULL` (no maximum).
 #'
+#'   To see what a bound does to an allocation before drawing anything, pass
+#'   the design and the frame to [frame_summary()]:
+#'   `frame_summary(design, frame, detail = "pool")` reports the per-stratum
+#'   target each bound produces, without selecting or consuming any random
+#'   numbers.
+#' @param method Character string naming the selection method, `"srswor"` by
+#'   default. [selection-methods] lists all sixteen built-ins with what each
+#'   one requires and cites the paper behind each.
 #'
-#'   **PPS methods (require `mos`):**
-#'   - `"pps_systematic"`: PPS systematic sampling
-#'   - `"pps_brewer"`: Generalized Brewer (\enc{Tillé}{Tille}) method
-#'   - `"pps_cps"`: Conditional Poisson sampling (maximum entropy)
-#'   - `"pps_sampford"`: Sampford fixed-size PPS sampling
-#'   - `"pps_poisson"`: PPS Poisson sampling (random sample size)
-#'   - `"pps_sps"`: Sequential Poisson sampling (fixed size, supports `prn`)
-#'   - `"pps_pareto"`: Pareto sampling (fixed size, supports `prn`)
-#'   - `"pps_multinomial"`: PPS multinomial (with replacement, any hit count)
-#'   - `"pps_chromy"`: Chromy's sequential PPS (minimum replacement)
-#'
-#'   **Balanced sampling:**
-#'   - `"cube"`: Balanced sampling via the cube method
-#'     (Deville & \enc{Tillé}{Tille} 2004).
-#'     Uses auxiliary variables (`aux`) to balance the sample so that
-#'     Horvitz-Thompson estimates of auxiliary totals match population totals.
-#'     Supports equal or unequal (`mos`) inclusion probabilities. When
-#'     stratified, uses the stratified cube algorithm (Chauvet 2009). At most
-#'     2 stages may use a balanced-family method. `"balanced"` is retained
-#'     as a compatibility alias for `"cube"`.
-#'   - `"lpm2"`: Local pivotal sampling. Requires spatial coordinates in
-#'     `spread` and does not accept `aux` or `bound()` constraints.
-#'   - `"scps"`: Spatially correlated Poisson sampling. Requires spatial
-#'     coordinates in `spread` and does not accept `aux` or `bound()`.
+#'   `"cube"` uses auxiliary variables (`aux`) to balance the sample so that
+#'   Horvitz-Thompson estimates of auxiliary totals match population totals,
+#'   and supports equal or unequal (`mos`) inclusion probabilities. When
+#'   stratified it uses the stratified cube algorithm (Chauvet 2009). At most
+#'   two stages may use a balanced-family method. `"balanced"` is retained as
+#'   a compatibility alias for `"cube"`.
 #'
 #'   Methods registered with [sondage::register_method()] use a prefix that
 #'   identifies their sampling family. Registered `type = "wor"` and
 #'   `type = "wr"` methods use `"pps_<name>"` (for example,
 #'   `"pps_mymethod"`). Registered `type = "balanced"` methods use
-#'   `"balanced_<name>"`. For the latter, `mos` is optional;
+#'   `"balanced_<name>"`. For the latter, `mos` is optional.
 #'   `supports_aux = TRUE` permits ordinary balancing variables in `aux`, and
 #'   `supports_spread = TRUE` requires coordinates in `spread`. These
 #'   capabilities are declared when the method is registered in `sondage`.
@@ -87,7 +212,7 @@
 #'   (honored to a documented approximation, as Pareto sampling does), or
 #'   `"unknown"` (the default: `pik` is a selection weight only, so the
 #'   weights would be systematically biased). `draw()` refuses `"unknown"`
-#'   methods; declare the method's tier to use it. The classic trap is
+#'   methods. Declare the method's tier to use it. The classic trap is
 #'   `sample(prob = pik)`: with `replace = TRUE` it yields expected hits
 #'   exactly equal to `pik` (a valid `type = "wr"` method), but without
 #'   replacement its inclusion probabilities differ from `pik`, so a
@@ -133,17 +258,15 @@
 #'   a minimum of 1 is enforced per stratum or group.
 #'
 #' @param control <[`data-masking`][dplyr::dplyr_data_masking]> Variables for
-#'   sorting the frame before selection. Control sorting provides implicit
-#'   stratification, which is particularly effective with systematic and
-#'   sequential sampling methods. Can be:
+#'   sorting the frame before selection. Can be:
 #'   - A single variable: `control = region`
 #'   - Multiple variables: `control = c(region, district)`
 #'   - With [serp()] for serpentine sorting: `control = serp(region, district)`
 #'   - With [dplyr::desc()] for descending: `control = c(region, desc(population))`
 #'   - Mixed: `control = c(region, serp(district, commune), desc(size))`
 #'
-#'   When stratification is also specified, control sorting is applied within
-#'   each stratum. See the section "Control Sorting" below for details.
+#'   See the "Control sorting" section for what the ordering buys and how it
+#'   interacts with `stratify_by()`.
 #'
 #' @param certainty_size For PPS without-replacement methods, units with MOS >= this value
 #'   are selected with certainty (probability = 1). Can be:
@@ -187,11 +310,11 @@
 #'   it contributes zero to Horvitz-Thompson totals, so estimates from
 #'   repeated executions remain unbiased. (A fallback that draws a
 #'   substitute unit would need weights from the combined "draw, then
-#'   fall back" design; reusing the SRS or Poisson weights biases HT
+#'   fall back" design. Reusing the SRS or Poisson weights biases HT
 #'   totals upward.) When an empty stage occurs in a multi-stage
 #'   design, later stages have nothing to select from and the result is
 #'   an empty sample. `"warn"` and `"silent"` are intended for
-#'   simulation and replicated runs; check `nrow()` before analyzing a
+#'   simulation and replicated runs. Check `nrow()` before analyzing a
 #'   single realization.
 #'
 #'   A replicated execution that produced empty replicates cannot be
@@ -207,94 +330,14 @@
 #' @return A modified `sampling_design` object with selection parameters specified.
 #'
 #' @details
-#' ## Selection Methods
-#'
-#' ### Equal Probability Methods
-#'
-#' | Method | Replacement | Sample Size | Notes |
-#' |--------|-------------|-------------|-------|
-#' | `srswor` | Without | Fixed | Standard SRS |
-#' | `srswr` | With | Fixed | Allows duplicates |
-#' | `systematic` | Without | Fixed | Periodic selection |
-#' | `bernoulli` | Without | Random | Each unit selected independently |
-#'
-#' ### PPS Methods
-#'
-#' | Method | Replacement | Sample Size | Notes |
-#' |--------|-------------|-------------|-------|
-#' | `pps_systematic` | Without | Fixed | Simple, some bias |
-#' | `pps_brewer` | Without | Fixed | Fast, joint prob > 0 |
-#' | `pps_cps` | Without | Fixed | Highest entropy, joint prob available |
-#' | `pps_sampford` | Without | Fixed | Exact Sampford joint probabilities |
-#' | `pps_poisson` | Without | Random | PPS analog of Bernoulli |
-#' | `pps_sps` | Without | Fixed | Sequential Poisson, supports `prn` |
-#' | `pps_pareto` | Without | Fixed | Pareto sampling, supports `prn` |
-#' | `pps_multinomial` | With | Fixed | Any hit count, Hansen-Hurwitz |
-#' | `pps_chromy` | Min. repl. | Fixed | SAS default PPS_SEQ |
-#'
-#' ### Balanced Sampling
-#'
-#' | Method | Replacement | Sample Size | Notes |
-#' |--------|-------------|-------------|-------|
-#' | `cube` | Without | Fixed | Deville & \enc{Tillé}{Tille} 2004, uses `aux` |
-#' | `lpm2` | Without | Fixed | Spatial spread; requires `spread` |
-#' | `scps` | Without | Fixed | Spatial spread; requires `spread` |
-#'
-#' ## Parameter Requirements
-#'
-#' | Method | `n` | `frac` | `mos` | Extra input |
-#' |--------|-----|--------|-------|-------------|
-#' | `srswor` | Yes | or Yes | -- | -- |
-#' | `srswr` | Yes | or Yes | -- | -- |
-#' | `systematic` | Yes | or Yes | -- | -- |
-#' | `bernoulli` | Expected | or Yes | -- | -- |
-#' | `pps_systematic` | Yes | or Yes | Yes | -- |
-#' | `pps_brewer` | Yes | or Yes | Yes | -- |
-#' | `pps_cps` | Yes | -- | Yes | -- |
-#' | `pps_sampford` | Yes | or Yes | Yes | -- |
-#' | `pps_poisson` | Expected | or Yes | Yes | -- |
-#' | `pps_sps` | Yes | or Yes | Yes | -- |
-#' | `pps_pareto` | Yes | or Yes | Yes | -- |
-#' | `pps_multinomial` | Yes | or Yes | Yes | -- |
-#' | `pps_chromy` | Yes | or Yes | Yes | -- |
-#' | `cube` | Yes | or Yes | Optional | `aux` optional |
-#' | `lpm2` | Yes | or Yes | Optional | `spread` required |
-#' | `scps` | Yes | or Yes | Optional | `spread` required |
-#'
-#' ## Fixed vs Random Sample Size Methods
-#'
-#' Methods with **fixed sample size** (`srswor`, `srswr`, `systematic`, `pps_systematic`,
-#' `pps_brewer`, `pps_cps`, `pps_sampford`, `pps_sps`, `pps_pareto`,
-#' `pps_multinomial`, `pps_chromy`, `cube`, `lpm2`, `scps`)
-#' accept either `n` or `frac`. When `frac`
-#' is provided, the sample size is computed based on the `round` parameter (default: ceiling).
-#'
-#' Methods with **random sample size** (`bernoulli`, `pps_poisson`) accept either
-#' `n` or `frac`. When `n` is provided, it is converted to `frac = n / N` (where
-#' `N` is the stratum or frame size). The resulting sample size is still random:
-#' `n` specifies the **expected** sample size, not a fixed count.
-#'
-#' For `pps_poisson`, the raw inclusion probabilities are computed as
-#' \eqn{\pi_i = f \cdot x_i / \bar{x}}{pi_i = f * x_i / mean(x)} where
-#' \eqn{f} is `frac` and \eqn{x_i} is the MOS value. Any \eqn{\pi_i > 1}
-#' is clipped to 1, so the expected sample size
-#' \eqn{E[n] = \sum \min(\pi_i, 1)}{E[n] = sum(min(pi_i, 1))} can be less
-#' than \eqn{f \cdot N}{f * N} when large units dominate the MOS
-#' distribution. Use `certainty_size` or `certainty_prop` to handle these
-#' dominant units explicitly.
-#'
-#' When an allocation method is set in [stratify_by()] (`equal`,
-#' `proportional`, `neyman`, `optimal`, `power`), specify total sample size via `n`.
-#' Combining `alloc` with `frac` is not supported.
-#'
-#' ## Custom Allocation with Data Frames
+#' ## Custom allocation with data frames
 #'
 #' For stratum-specific sample sizes or rates, pass a data frame to `n` or `frac`.
 #' The data frame must contain:
 #' - All stratification variable columns (matching those in `stratify_by()`)
 #' - An `n` column (for sizes) or `frac` column (for rates)
 #'
-#' ## Certainty Selection
+#' ## Certainty selection
 #'
 #' In PPS without-replacement sampling, very large units can have theoretical
 #' inclusion probabilities exceeding 1. Certainty selection handles this by
@@ -314,10 +357,6 @@
 #' units, which exceeds `n`. In multi-stage designs, the final `.weight` can
 #' still exceed 1 because it compounds all stage weights.
 #'
-#' For stratum-specific thresholds, pass a data frame containing:
-#' - All stratification variable columns
-#' - A `certainty_size` or `certainty_prop` column
-#'
 #' **Certainty with `pps_poisson` and user-supplied `frac`.** For
 #' `pps_poisson`, the probabilistic remainder reuses the user-supplied
 #' `frac` against the *remaining* (non-certainty) units. That is,
@@ -328,66 +367,24 @@
 #' expected total to track `frac * N`, pass an expected `n` instead and
 #' let samplyr derive the remaining fraction as `(n - n_cert) / N_r`.
 #'
-#' ## Control Sorting
+#' ## Control sorting
 #'
 #' Control sorting orders the sampling frame before selection, providing implicit
 #' stratification. This is particularly effective with systematic and sequential
 #' methods (`systematic`, `pps_systematic`, `pps_chromy`), where it ensures the
 #' sample spreads evenly across the sorted variables.
 #'
-#' **Serpentine vs Nested Sorting:**
-#' - **Nested** (default): Standard ascending sort by each variable in order.
-#'   Use `control = c(var1, var2, var3)`.
-#' - **Serpentine**: Alternating direction that minimizes "jumps" between
-#'   adjacent units. Use `control = serp(var1, var2, var3)`.
+#' **Serpentine vs nested sorting.** Nested (the default,
+#' `control = c(var1, var2, var3)`) sorts ascending by each variable in turn.
+#' Serpentine (`control = serp(var1, var2, var3)`) alternates direction at each
+#' hierarchy level, which minimizes the "jumps" between adjacent units and makes
+#' nearby observations more similar. For geographic hierarchies this means the
+#' last district of region 1 is adjacent to the last district of region 2.
 #'
-#' Serpentine sorting makes nearby observations more similar by reversing
-#' direction at each hierarchy level. For geographic hierarchies, this means
-#' the last district of region 1 is adjacent to the last district of region 2.
-#'
-#' **Combining with Explicit Stratification:**
-#' When both `stratify_by()` and `control` are used, sorting is applied within
-#' each stratum. This allows explicit stratification for variance control
-#' combined with implicit stratification for sample spread.
-#'
-#' @references
-#' `srswor`, `srswr`, `systematic`, `bernoulli`, `pps_systematic`,
-#' `pps_multinomial`:
-#' Cochran, W.G. (1977). *Sampling Techniques*, 3rd ed. Wiley.
-#'
-#' `pps_brewer`:
-#' Brewer, K.R.W. (1975). A simple procedure for sampling PPS WOR.
-#' *Australian Journal of Statistics*, 17(3), 166-172.
-#'
-#' `pps_cps`:
-#' Hájek, J. (1964). Asymptotic theory of rejective sampling with varying
-#' probabilities from a finite population.
-#' *Annals of Mathematical Statistics*, 35(4), 1491-1523.
-#'
-#' Chen, X.-H., Dempster, A.P. and Liu, J.S. (1994). Weighted finite
-#' population sampling to maximize entropy. *Biometrika*, 81(3), 457-469.
-#'
-#' `pps_poisson`:
-#' Tillé, Y. (2006). *Sampling Algorithms*. Springer.
-#'
-#' `pps_sps`:
-#' Ohlsson, E. (1998). Sequential Poisson sampling.
-#' *Journal of Official Statistics*, 14(2), 149-162.
-#'
-#' `pps_pareto`:
-#' Rosén, B. (1997). Asymptotic theory for order sampling.
-#' *Journal of Statistical Planning and Inference*, 62(2), 135-158.
-#'
-#' `pps_chromy`:
-#' Chromy, J.R. (1979). Sequential sample selection methods.
-#' *Proceedings of the Survey Research Methods Section, ASA*, 401-406.
-#'
-#' `balanced`:
-#' Deville, J.-C. and \enc{Tillé}{Tille}, Y. (2004). Efficient balanced
-#' sampling: the cube method. *Biometrika*, 91(4), 893-912.
-#'
-#' Chauvet, G. (2009). Stratified balanced sampling.
-#' *Survey Methodology*, 35(1), 115-119.
+#' **Combining with explicit stratification.** When both `stratify_by()` and
+#' `control` are used, sorting is applied within each stratum, giving explicit
+#' stratification for variance control alongside implicit stratification for
+#' sample spread.
 #'
 #' @examples
 #' # Simple random sample of 100 EAs
@@ -498,11 +495,13 @@
 #' [execute()] for running designs,
 #' [serp()] for serpentine sorting
 #'
+#' @family design specification
 #' @export
 draw <- function(
   .data,
   n = NULL,
   frac = NULL,
+  ...,
   min_n = NULL,
   max_n = NULL,
   method = "srswor",
@@ -517,6 +516,18 @@ draw <- function(
   certainty_overflow = "error",
   on_empty = "error"
 ) {
+  # The design, the size, and the share are what a draw is written as, so
+  # they stay positional. The fourteen modifiers after `...` are matched
+  # exactly: a positional fourth argument used to land on `min_n` and be
+  # reported as a bounds error.
+  check_keyword_args(
+    enquos(...),
+    c(
+      "min_n", "max_n", "method", "mos", "prn", "aux", "spread", "round",
+      "control", "certainty_size", "certainty_prop", "certainty_overflow",
+      "on_empty"
+    )
+  )
   if (!is_sampling_design(.data)) {
     cli_abort("{.arg .data} must be a {.cls sampling_design} object")
   }

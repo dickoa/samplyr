@@ -1,4 +1,4 @@
-#' Serpentine Sorting for Implicit Stratification
+#' Serpentine sorting for implicit stratification
 #'
 #' @description
 #' `serp()` implements hierarchic serpentine sorting (also called "snake" sorting),
@@ -29,17 +29,17 @@
 #' 3. If the cumulative group number is even, flipping ranks (descending)
 #' 4. Using multi-column ordering to produce final sort positions
 #'
-#' ## Use with Systematic Sampling
+#' ## Use with systematic sampling
 #'
 #' Serpentine sorting is particularly effective with systematic sampling.
 #' By ordering the frame in a snake-like pattern, a systematic sample
 #' automatically spreads across all regions and sub-regions.
 #'
-#' ## Comparison with Nested Sorting
+#' ## Comparison with nested sorting
 #'
 #' Standard sorting creates large "jumps" at hierarchy boundaries. Serpentine
-#' sorting minimizes these by reversing direction -- the last district of region 1
-#' is adjacent to the last district of region 2.
+#' sorting minimizes these by reversing direction, so the last district of
+#' region 1 is adjacent to the last district of region 2.
 #'
 #' @references
 #' Chromy, J. R. (1979). Sequential sample selection methods.
@@ -87,6 +87,7 @@
 #'   execute(arrange(bfa_eas, urban_rural, serp(region, province)),
 #'                   seed = 1234)
 #'
+#' @family helpers
 #' @export
 serp <- function(...) {
   var_vals <- list(...)

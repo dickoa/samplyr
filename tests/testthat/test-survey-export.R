@@ -529,7 +529,7 @@ test_that("as_svydesign errors without survey package", {
   expect_true(TRUE) # placeholder
 })
 
-# Random-size Poisson methods (bernoulli, pps_poisson) -----------------
+## Random-size Poisson methods (bernoulli, pps_poisson)
 
 test_that("as_svydesign uses poisson_sampling for single-stage bernoulli", {
   skip_if_not_installed("survey")
@@ -775,7 +775,7 @@ test_that("joint_expectation returns list of correct length", {
 })
 
 test_that("joint_expectation stage argument filters correctly", {
-  jip <- joint_expectation(fix_multistage, test_frame, stage = 1)
+  jip <- joint_expectation(fix_multistage, test_frame, stages = 1)
   expect_length(jip, 2)
   expect_true(is.matrix(jip[[1]]))
   expect_null(jip[[2]])
@@ -802,15 +802,23 @@ test_that("joint_expectation diagonal equals marginal pik", {
 
 test_that("joint_expectation errors on invalid stage", {
   expect_error(
-    joint_expectation(fix_srs, test_frame, stage = 2),
-    "not executed"
+    joint_expectation(fix_srs, test_frame, stages = 2),
+    class = "samplyr_error_stage_selector"
+  )
+  expect_error(
+    joint_expectation(fix_srs, test_frame, stages = 2),
+    "Not executed stages: 2"
   )
 })
 
 test_that("joint_expectation requires integer stage values", {
   expect_error(
-    joint_expectation(fix_srs, test_frame, stage = 1.5),
-    "integer stage"
+    joint_expectation(fix_srs, test_frame, stages = 1.5),
+    class = "samplyr_error_stage_selector"
+  )
+  expect_error(
+    joint_expectation(fix_srs, test_frame, stages = 1.5),
+    "whole, finite stage numbers"
   )
 })
 
@@ -829,7 +837,7 @@ test_that("joint_expectation works with ppsmat for survey export", {
 })
 
 test_that("joint_expectation works with proportional allocation", {
-  jip <- joint_expectation(fix_strat_pps, test_frame, stage = 1)
+  jip <- joint_expectation(fix_strat_pps, test_frame, stages = 1)
   mat <- jip[[1]]
 
   expect_true(is.matrix(mat))
@@ -844,7 +852,7 @@ test_that("joint_expectation works with proportional allocation", {
 
 test_that("joint_expectation works with stage vector", {
   # Request both stages via vector
-  jip <- joint_expectation(fix_multistage, test_frame, stage = c(1, 2))
+  jip <- joint_expectation(fix_multistage, test_frame, stages = c(1, 2))
   expect_length(jip, 2)
   expect_true(is.matrix(jip[[1]]))
   # Stage 2 is SRS -- should be NULL
@@ -1383,7 +1391,7 @@ test_that("joint_expectation for stratified pps_multinomial works", {
   expect_equal(mat, t(mat), tolerance = 1e-10)
 })
 
-# Multistage export completeness (July 2026 review) ------------------------
+## Multistage export completeness (July 2026 review)
 #
 # Every executed sampling stage must be represented in the exported ids
 # and fpc formulas, multi-variable cluster_by()/stratify_by() must
@@ -1701,7 +1709,7 @@ test_that("PPS stage 1 with clustered stage 2 exports without fpc scale error", 
   expect_gt(unname(survey::SE(survey::svymean(~y, svy))), 0)
 })
 
-test_that("unclustered element stage before later stages aborts export", {
+test_that("unclustered element stage before later stages is refused", {
   skip_if_not_installed("survey")
 
   frame <- data.frame(
@@ -1710,14 +1718,17 @@ test_that("unclustered element stage before later stages aborts export", {
     y = seq_len(200)
   )
 
-  s <- sampling_design() |>
+  design <- sampling_design() |>
     add_stage() |> draw(n = 100) |>
-    add_stage() |> cluster_by(psu) |> draw(n = 4) |>
-    execute(frame, seed = 5)
+    add_stage() |> cluster_by(psu) |> draw(n = 4)
 
+  # This shape no longer reaches export: execution refuses it, because an
+  # element stage cannot name the units stage 2 would sample within. The
+  # samplyr_error_survey_midstage_element guard in as_svydesign() is kept for
+  # samples deserialized from a version that predates this rule.
   expect_error(
-    as_svydesign(s),
-    class = "samplyr_error_survey_midstage_element"
+    execute(design, frame, seed = 5),
+    class = "samplyr_error_stage_parent_id"
   )
 })
 
@@ -1773,7 +1784,7 @@ test_that("user pps object on a multi-stage sample warns and exports stage 1", {
       draw(n = 8) |>
     execute(frame, seed = 31)
 
-  jip <- joint_expectation(s, frame, stage = 1)[[1]]
+  jip <- joint_expectation(s, frame, stages = 1)[[1]]
   # survey needs the joint matrix at row level for multi-row clusters
   idx <- match(s$psu, sort(unique(s$psu)))
   expect_warning(
@@ -1782,4 +1793,113 @@ test_that("user pps object on a multi-stage sample warns and exports stage 1", {
   )
   expect_s3_class(svy, "survey.design")
   expect_gt(unname(survey::SE(survey::svymean(~y, svy))), 0)
+})
+
+# Resolved certainty and the take-all stratum. A unit whose inclusion
+# probability was capped at one by the PPS calculation is the same
+# statistical object as one named by certainty_size, and must export the
+# same way. The frame is deterministic: units 1-3 cap at one under n = 10.
+cert_export_frame <- function() {
+  frame <- data.frame(id = seq_len(60), mos = c(500, 400, 300, rep(10, 57)))
+  frame$y <- frame$mos * 2 + (frame$id %% 7)
+  frame
+}
+
+test_that("automatic and explicit certainty export identically", {
+  skip_if_not_installed("survey")
+
+  frame <- cert_export_frame()
+  automatic <- sampling_design() |>
+    draw(n = 10, method = "pps_brewer", mos = mos) |>
+    execute(frame, seed = 11)
+  # certainty_size = 250 names exactly the units the calculation caps.
+  explicit <- sampling_design() |>
+    draw(n = 10, method = "pps_brewer", mos = mos, certainty_size = 250) |>
+    execute(frame, seed = 11)
+
+  expect_identical(sort(automatic$id), sort(explicit$id))
+  expect_identical(automatic$.certainty_1, explicit$.certainty_1)
+
+  svy_auto <- as_svydesign(automatic)
+  svy_expl <- as_svydesign(explicit)
+
+  auto_total <- survey::svytotal(~y, svy_auto)
+  expl_total <- survey::svytotal(~y, svy_expl)
+
+  expect_equal(coef(auto_total), coef(expl_total))
+  expect_equal(survey::SE(auto_total), survey::SE(expl_total))
+  expect_equal(survey::degf(svy_auto), survey::degf(svy_expl))
+  expect_identical(svy_auto$call$strata, svy_expl$call$strata)
+})
+
+test_that("PPS-WOR certainty units get a take-all stratum", {
+  skip_if_not_installed("survey")
+
+  sample <- sampling_design() |>
+    draw(n = 10, method = "pps_brewer", mos = mos) |>
+    execute(cert_export_frame(), seed = 11)
+
+  svy <- as_svydesign(sample)
+  expect_equal(deparse(svy$call$strata), "~.cert_stratum")
+  expect_setequal(
+    unique(svy$variables$.cert_stratum),
+    c("certainty", "probability")
+  )
+})
+
+test_that("cube certainty units get a take-all stratum", {
+  skip_if_not_installed("survey")
+
+  frame <- cert_export_frame()
+  frame$x <- rep(c(1, 2), length.out = 60)
+
+  sample <- sampling_design() |>
+    draw(n = 10, method = "cube", mos = mos, aux = c(x)) |>
+    execute(frame, seed = 3)
+
+  # cube is absent from pps_wor_methods but exports under the PPS-WOR
+  # variance treatment, so the name test alone used to miss it.
+  expect_true(any(sample$.certainty_1))
+  expect_equal(deparse(as_svydesign(sample)$call$strata), "~.cert_stratum")
+})
+
+test_that("random-size designs do not acquire a take-all stratum", {
+  skip_if_not_installed("survey")
+
+  # pps_poisson is a pps_wor_method by name but exports under the Poisson
+  # treatment, where a Brewer take-all stratum would be wrong.
+  # Three dominant units by construction: the shortfall is the point of the
+  # fixture, not a finding of this test.
+  sample <- suppressWarnings(
+    sampling_design() |>
+      draw(n = 10, method = "pps_poisson", mos = mos) |>
+      execute(cert_export_frame(), seed = 11)
+  )
+
+  expect_true(any(sample$.certainty_1))
+  expect_null(as_svydesign(sample)$call$strata)
+  expect_false(".cert_stratum" %in% names(as_svydesign(sample)$variables))
+})
+
+test_that("probability-one units do not change the Poisson variance family", {
+  skip_if_not_installed("survey")
+
+  frame <- cert_export_frame()
+  poisson <- suppressWarnings(
+    sampling_design() |>
+      draw(n = 10, method = "pps_poisson", mos = mos) |>
+      execute(frame, seed = 11)
+  )
+  bernoulli <- sampling_design() |>
+    draw(frac = 0.2, method = "bernoulli") |>
+    execute(frame, seed = 11)
+
+  expect_identical(
+    samplyr:::survey_stage_kind(
+      attr(poisson, "design")$stages[[1]]$draw_spec
+    ),
+    "rs_poisson"
+  )
+  expect_s3_class(as_svydesign(poisson), "survey.design")
+  expect_s3_class(as_svydesign(bernoulli), "survey.design")
 })

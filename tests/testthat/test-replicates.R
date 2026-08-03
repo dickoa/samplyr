@@ -1,6 +1,6 @@
 # Tests for replicated sampling (reps parameter)
 
-# --- Basic functionality ---
+## Basic functionality
 
 test_that("reps draws R independent samples with .replicate column", {
   result <- sampling_design() |>
@@ -108,7 +108,7 @@ test_that("nrow equals n_per_rep * reps for fixed-size methods", {
   expect_equal(nrow(result), 60)
 })
 
-# --- Validation ---
+## Validation
 
 test_that("reps must be integer >= 2", {
   design <- sampling_design() |> draw(n = 10)
@@ -131,7 +131,10 @@ test_that("reps + panels is an error", {
 
 test_that("reps + PRN on executed stage is an error", {
   tf <- test_frame
-  tf$prn <- runif(nrow(tf))
+  # PRN identifies a unit across surveys, so a clustered stage needs one
+  # value per cluster rather than one per descendant row.
+  clusters <- unique(tf$cluster)
+  tf$prn <- runif(length(clusters))[match(tf$cluster, clusters)]
 
   design <- sampling_design() |>
     draw(n = 10, method = "pps_pareto", mos = mos, prn = prn)
@@ -144,7 +147,10 @@ test_that("reps + PRN on executed stage is an error", {
 
 test_that("reps on continuation is allowed when PRN was on a prior stage", {
   tf <- test_frame
-  tf$prn <- runif(nrow(tf))
+  # PRN identifies a unit across surveys, so a clustered stage needs one
+  # value per cluster rather than one per descendant row.
+  clusters <- unique(tf$cluster)
+  tf$prn <- runif(length(clusters))[match(tf$cluster, clusters)]
 
   design <- sampling_design() |>
     add_stage("Clusters") |>
@@ -161,7 +167,7 @@ test_that("reps on continuation is allowed when PRN was on a prior stage", {
   expect_equal(sort(unique(result$.replicate)), 1:3)
 })
 
-# --- Multi-stage designs ---
+## Multi-stage designs
 
 test_that("two-stage replicated sampling", {
   result <- sampling_design() |>
@@ -193,7 +199,7 @@ test_that("stratified PPS replicated", {
   expect_equal(nrow(result), 64)
 })
 
-# --- WR/PMR methods ---
+## WR/PMR methods
 
 test_that("reps works with srswr", {
   result <- sampling_design() |>
@@ -225,7 +231,7 @@ test_that(".draw_k values are per-replicate for WR methods", {
   }
 })
 
-# --- Continuation ---
+## Continuation
 
 test_that("continuation from replicated partial sample auto-loops", {
   design <- sampling_design() |>
@@ -309,7 +315,7 @@ test_that("continuation: panels rejected on replicated input", {
   )
 })
 
-# --- Metadata ---
+## Metadata
 
 test_that("metadata records reps count and replicate_seeds", {
   result <- sampling_design() |>
@@ -353,7 +359,7 @@ test_that("stages_executed is correct for replicated continuation", {
   expect_equal(get_stages_executed(result), 1:2)
 })
 
-# --- Method coverage ---
+## Method coverage
 
 test_that("reps works with balanced sampling", {
   result <- sampling_design() |>
@@ -388,7 +394,7 @@ test_that("reps works with certainty selection", {
   expect_equal(sort(unique(result$.replicate)), 1:2)
 })
 
-# --- Survey export guards ---
+## Survey export guards
 
 test_that("as_svydesign errors on replicated sample", {
   result <- sampling_design() |>
@@ -464,7 +470,7 @@ test_that("check_single_replicate errors on NA in .replicate", {
   expect_error(as_svydesign(result), "NA")
 })
 
-# --- Print and summary ---
+## Print and summary
 
 test_that("tbl_sum shows replicate count for multi-replicate", {
   result <- sampling_design() |>
@@ -523,7 +529,7 @@ test_that("summary shows full weight diagnostics for single replicate", {
   expect_no_match(output_text, "omitted")
 })
 
-# --- Bug fix: replicated multi-phase ---
+## Bug fix: replicated multi-phase
 
 test_that("replicated phase-1 passed as frame executes per-replicate", {
   # Phase 1: replicated
@@ -624,14 +630,18 @@ test_that("non-replicated phase-1 with reps on phase-2 still works", {
   expect_equal(nrow(phase2), 15)
 })
 
-# --- Bug fix: stages validation before PRN check ---
+## Bug fix: stages validation before PRN check
 
 test_that("reps with out-of-range stages gives clean user error", {
   design <- sampling_design() |> draw(n = 10)
 
   expect_error(
     execute(design, test_frame, stages = 2, reps = 2),
-    "integers between 1 and 1"
+    class = "samplyr_error_stage_selector"
+  )
+  expect_error(
+    execute(design, test_frame, stages = 2, reps = 2),
+    "Available: 1"
   )
 })
 
@@ -647,11 +657,15 @@ test_that("reps with out-of-range stages on continuation gives clean error", {
 
   expect_error(
     execute(stage1, test_frame, stages = 5, reps = 2),
-    "integers between 1 and 2"
+    class = "samplyr_error_stage_selector"
+  )
+  expect_error(
+    execute(stage1, test_frame, stages = 5, reps = 2),
+    "Available: 1 and 2"
   )
 })
 
-# --- Bug fix: summary/print with corrupted .replicate ---
+## Bug fix: summary/print with corrupted .replicate
 
 test_that("summary handles NA in .replicate gracefully", {
   result <- sampling_design() |>

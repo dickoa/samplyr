@@ -5,18 +5,26 @@
 #' finite population corrections) captured during [execute()].
 #'
 #' @param x A `tbl_sample` object produced by [execute()].
-#' @param ... Additional arguments passed to [survey::svydesign()].
-#'   In particular, you can pass `pps = survey::ppsmat(joint_matrix)`
-#'   to supply exact joint inclusion probabilities instead of the
-#'   default Brewer approximation (see Details).
+#' @param ... Additional arguments passed to [survey::svydesign()], or to
+#'   [survey::twophase()] for a two-phase sample. In particular, you can
+#'   pass `pps = survey::ppsmat(joint_matrix)` to supply exact joint
+#'   inclusion probabilities instead of the default Brewer approximation
+#'   (see Details). Every argument must be named, and its name must be one
+#'   the receiving function accepts: `nest` and `method` follow the `...`
+#'   and so are matched exactly, and a near miss such as `nes` is reported
+#'   rather than forwarded. The design arguments themselves (`ids`, `strata`,
+#'   `weights`, `probs`, `fpc`, `data`, and `subset` for a two-phase sample)
+#'   are derived from the sample and cannot be given here.
 #' @param nest If `TRUE`, relabel cluster ids to enforce nesting within
 #'   strata. Passed to [survey::svydesign()]. Default is `TRUE`, which
-#'   is appropriate for most complex survey designs.
+#'   is appropriate for most complex survey designs. It has no effect on a
+#'   two-phase sample, which is exported with [survey::twophase()]. Giving
+#'   it there raises a warning.
 #' @param method For two-phase samples, the variance method passed to
 #'   [survey::twophase()]. One of `"full"`, `"approx"`, or `"simple"`.
 #'   This argument is only accepted for two-phase samples.
 #'
-#' @return A `survey.design2` object for single-phase and multistage samples,
+#' @return A `survey.design2` object for single-phase and multi-stage samples,
 #'   or a `twophase`/`twophase2` object for two-phase samples.
 #'
 #' @details
@@ -33,7 +41,7 @@
 #'   a synthesized row-identity column so that its sampling variance is
 #'   represented. For WR/PMR stages, the `.draw_k` column is used as
 #'   the sampling unit identifier instead (each draw is treated as an
-#'   independent unit for Hansen--Hurwitz variance estimation).
+#'   independent unit for Hansen-Hurwitz variance estimation).
 #' - **Strata** (`strata`): one term per stage, aligned with `ids`.
 #'   A stage stratified by several variables exports their
 #'   cross-classification as a single synthesized interaction column
@@ -51,14 +59,15 @@
 #'   two encodings are used:
 #'   - **Count scale** (designs without unequal-probability WOR
 #'     stages): `.fpc_k` (the stratum population count \eqn{N_h}) is
-#'     passed for equal-probability WOR stages; a synthetic `Inf`
-#'     column (no correction, Hansen--Hurwitz variance) for WR/PMR
-#'     stages and for random-size Poisson stages after the first.
+#'     passed for equal-probability WOR stages. A synthetic `Inf`
+#'     column (no correction, Hansen-Hurwitz variance) is used for
+#'     WR/PMR stages and for random-size Poisson stages after the first.
 #'   - **Fraction scale** (multi-stage designs with a PPS WOR,
 #'     balanced, or custom WOR stage): every WOR stage passes its
 #'     per-unit stage sampling fraction
-#'     \eqn{1 / w_k = \pi_k}{1/w_k = pi_k}; WR/PMR and later Poisson
+#'     \eqn{1 / w_k = \pi_k}{1/w_k = pi_k}. WR/PMR and later Poisson
 #'     stages pass 0 (no correction).
+#'
 #'   A single-stage PPS WOR design passes \eqn{\pi_i}{pi_i} directly,
 #'   which survey interprets as inclusion probabilities.
 #'
@@ -73,7 +82,7 @@
 #'
 #' Operational execution does not change this classification. For example,
 #' `stage1 <- execute(design, psu_frame, stages = 1)` followed by
-#' `sample <- execute(stage1, listing_frame)` remains one multistage design.
+#' `sample <- execute(stage1, listing_frame)` remains one multi-stage design.
 #' The partial `tbl_sample` stores the same design plus the realized PSU
 #' selection and the final sample records all executed stages and
 #' `as_svydesign()` calls [survey::svydesign()], not [survey::twophase()].
@@ -85,14 +94,14 @@
 #'
 #' An unclustered element-sampling stage *followed by further stages* is not
 #' nested cluster sampling (the later selections are conditional on the realized
-#' element sample, i.e. phase sampling). I can't be represented currently and
+#' element sample, i.e. phase sampling). It can't be represented currently and
 #' `as_svydesign()` raises an error. Express such designs as two-phase samples instead.
 #' Execute the element stage under its first-phase design, then execute a new
 #' second-phase design with that sample as its frame. This exports via [survey::twophase()].
 #'
 #' Concretely, for a two-stage stratified-cluster design with a final
 #' element stage, the exported call is equivalent to:
-#' \preformatted{
+#' ```r
 #' survey::svydesign(
 #'   ids     = ~ ea_id + .id_2,       # stage-1 clusters, stage-2 elements
 #'   strata  = ~ region,              # stage-1 strata
@@ -101,7 +110,7 @@
 #'   data    = sample,
 #'   nest    = TRUE
 #' )
-#' }
+#' ```
 #'
 #' ## Modified samples and domain analysis
 #'
@@ -124,12 +133,12 @@
 #'
 #' For subpopulation estimates, convert the full sample first and then
 #' subset the design, which applies the proper domain estimator:
-#' \preformatted{
+#' ```r
 #' svy <- as_svydesign(sample)
 #' survey::svymean(~y, subset(svy, domain))
 #' # or with srvyr:
 #' as_survey_design(sample) |> filter(domain) |> summarise(...)
-#' }
+#' ```
 #'
 #' Row reordering, one-to-one joins, and adding ordinary data columns
 #' do not mark the sample. Extracting one complete replicate from a
@@ -209,7 +218,7 @@
 #'   this at registration: a method registered with
 #'   `variance_family = "poisson"` asserts independent selections and is
 #'   exported through `poisson_sampling()` exactly like the built-ins
-#'   above. Undeclared methods raise an error; if you know the method is
+#'   above. Undeclared methods raise an error. If you know the method is
 #'   Poisson-type, pass the probabilities explicitly:
 #'   `as_svydesign(x, pps = survey::poisson_sampling(1 / x$.weight))`,
 #'   or use `as_svrepdesign(type = "subbootstrap")`.
@@ -254,14 +263,26 @@
 #'
 #' ## Certainty stratum (take-all units)
 #'
-#' For PPS without-replacement stages that use certainty selection
-#' (`certainty_size` or `certainty_prop`), units with inclusion
-#' probability \eqn{\pi_i = 1}{pi_i = 1} are placed in a separate
-#' take-all stratum. This follows the standard practice from
-#' Cochran (1977, ch. 11) and Sarndal et al. (1992, ch. 3.5):
-#' the take-all stratum contributes zero variance (it is a census)
-#' and does not inflate the degrees of freedom for the probability
-#' stratum.
+#' For stages exported under the PPS without-replacement (Brewer)
+#' treatment, units with inclusion probability \eqn{\pi_i = 1}{pi_i = 1}
+#' are placed in a separate take-all stratum. This covers every route to
+#' probability one, whether a `certainty_size` or `certainty_prop` rule
+#' named the unit or the probability calculation capped it, and it covers
+#' balanced (cube) designs alongside the PPS methods. Random-size designs
+#' (`bernoulli`, `pps_poisson`) keep the Poisson treatment and form no
+#' take-all stratum, even when some probabilities equal one. This follows
+#' the standard practice from Cochran (1977, ch. 11) and Sarndal et al.
+#' (1992, ch. 3.5): the take-all stratum contributes zero variance (it is
+#' a census) and does not inflate the degrees of freedom for the
+#' probability stratum.
+#'
+#' Splitting certainty units out of a user stratum can leave a single
+#' probability unit behind. Such a stratum has no estimable
+#' within-stratum variance, and `survey` signals a lonely PSU rather than
+#' returning a number. This reflects the design: set
+#' `options(survey.lonely.psu = "adjust")` for the conservative
+#' population-mean centering, or collapse the affected strata before
+#' export.
 #'
 #' For stages using with-replacement methods (`srswr`,
 #' `pps_multinomial`), the finite population correction is omitted
@@ -314,7 +335,7 @@
 #' svy <- as_svydesign(sample)
 #'
 #' # Exact: compute joint probabilities from frame
-#' jip <- joint_expectation(sample, bfa_eas, stage = 1)
+#' jip <- joint_expectation(sample, bfa_eas, stages = 1)
 #' svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 #'
 #' @seealso [execute()] for producing tbl_sample objects,
@@ -322,6 +343,7 @@
 #'   [as_survey_design.tbl_sample] for converting directly to a srvyr `tbl_svy`,
 #'   `as_svrepdesign()` for replicate-weight export
 #'
+#' @family survey export
 #' @export
 as_svydesign <- function(x, ...) {
   UseMethod("as_svydesign")
@@ -469,11 +491,136 @@ survey_stage_kind <- function(draw_spec) {
   "equal_wor"
 }
 
-#' Flattened unit-identifier variables across executed stages.
+#' Resolve the variables that match phase-2 rows into the phase-1 data
 #'
-#' Cluster variables and .draw_k columns, in stage order. Used only to
-#' find shared unit identifiers between the phases of a two-phase
-#' sample; formula construction uses survey_id_info().
+#' A two-phase export needs two different things, which are easy to conflate.
+#' The `id` formulas describe how each phase sampled, and the phases declare
+#' them independently: phase 1 by PSU, phase 2 by household, with neither
+#' obliged to redeclare the other's units. Separately, phase-2 observations
+#' have to be matched into the phase-1 table, and that relational bridge is
+#' what this resolves.
+#'
+#' The bridge is drawn from the survey identifiers either phase declared, kept
+#' to those carried by both tables. It must identify a phase-1 row uniquely: a
+#' bridge row may legitimately have many phase-2 descendants, but a
+#' many-to-many match would duplicate observations and silently inflate the
+#' sample. Repeated phase-1 cluster identifiers are not themselves a problem,
+#' which is why the compound bridge rather than the identifiers is checked.
+#' @noRd
+resolve_phase_bridge <- function(phase1_ids, phase2_ids, df1, df2,
+                                 call = caller_env()) {
+  candidates <- unique(c(phase1_ids, phase2_ids))
+  bridge_vars <- candidates[
+    candidates %in% names(df1) & candidates %in% names(df2)
+  ]
+
+  if (length(bridge_vars) == 0) {
+    abort_samplyr(
+      c(
+        "Two-phase conversion needs a variable linking the phases.",
+        "i" = "Neither phase declares a unit identifier that both samples
+               carry.",
+        "i" = "Declare the sampling units with {.fn cluster_by}, and keep the
+               phase-1 identifier on the phase-2 frames."
+      ),
+      class = "samplyr_error_twophase_bridge",
+      call = call
+    )
+  }
+
+  for (var in bridge_vars) {
+    compatible <- tryCatch(
+      {
+        vctrs::vec_ptype2(df1[[var]], df2[[var]])
+        TRUE
+      },
+      error = function(e) FALSE
+    )
+    if (!compatible) {
+      abort_samplyr(
+        c(
+          "{.field {var}} cannot link the phases.",
+          "x" = "Phase 1 holds {.cls {vctrs::vec_ptype_full(df1[[var]])}} and
+                 phase 2 holds {.cls {vctrs::vec_ptype_full(df2[[var]])}}.",
+          "i" = "Give the identifier the same type in both phases."
+        ),
+        class = "samplyr_error_twophase_bridge",
+        call = call
+      )
+    }
+  }
+
+  keys1 <- df1[, bridge_vars, drop = FALSE]
+  keys2 <- df2[, bridge_vars, drop = FALSE]
+
+  # A missing value is not an identity. Phase-2 rows must all name the phase-1
+  # unit they descend from, and a missing key on either side never links.
+  incomplete2 <- !stats::complete.cases(keys2)
+  if (any(incomplete2)) {
+    abort_samplyr(
+      c(
+        "{sum(incomplete2)} phase-2 row{?s} {?has/have} a missing
+         {.field {bridge_vars}}.",
+        "x" = "A row with no identifier cannot be matched to the phase-1
+               sample.",
+        "i" = "Missing values never link two phases."
+      ),
+      class = "samplyr_error_twophase_bridge",
+      call = call
+    )
+  }
+  keys1 <- keys1[stats::complete.cases(keys1), , drop = FALSE]
+
+  # Uniqueness is only required of the phase-1 rows a phase-2 row can reach.
+  # A phase-1 key repeated among rows no phase-2 row matches is irrelevant,
+  # and repeated phase-2 keys are expected: one phase-1 unit may have many
+  # descendants.
+  distinct2 <- unique(keys2)
+  matches <- vctrs::vec_count(
+    vctrs::vec_slice(
+      keys1,
+      !is.na(vctrs::vec_match(keys1, distinct2))
+    ),
+    sort = "none"
+  )
+
+  reachable <- distinct2[
+    !is.na(vctrs::vec_match(distinct2, matches$key)), , drop = FALSE
+  ]
+  if (nrow(reachable) < nrow(distinct2)) {
+    orphans <- distinct2[
+      is.na(vctrs::vec_match(distinct2, matches$key)), , drop = FALSE
+    ]
+    abort_samplyr(
+      c(
+        "{nrow(orphans)} phase-2 {.field {bridge_vars}} value{?s} {?is/are}
+         absent from the phase-1 sample.",
+        "x" = "{.val {format_key_preview(orphans)}}",
+        "i" = "Every phase-2 observation must belong to a phase-1 unit."
+      ),
+      class = "samplyr_error_twophase_bridge",
+      call = call
+    )
+  }
+
+  if (any(matches$count > 1)) {
+    ambiguous <- matches$key[matches$count > 1, , drop = FALSE]
+    abort_samplyr(
+      c(
+        "{.field {bridge_vars}} does not identify phase-1 rows uniquely.",
+        "x" = "{.val {format_key_preview(ambiguous)}} match more than one
+               phase-1 row, so the join would be many-to-many and would
+               duplicate observations.",
+        "i" = "A finer identifier shared by both phases resolves this."
+      ),
+      class = "samplyr_error_twophase_bridge",
+      call = call
+    )
+  }
+
+  bridge_vars
+}
+
 #' @noRd
 survey_key_vars <- function(design, stages_executed, df) {
   vars <- character(0)
@@ -564,9 +711,9 @@ survey_id_info <- function(
                    result (not a continuation of this one).
                    {.fn as_svydesign} then exports via
                    {.fn survey::twophase}.",
-            "i" = "Declare a shared unit identifier with
-                   {.fn cluster_by} in both phase designs so the phases
-                   can be linked at export."
+            "i" = "Each phase declares its own units with {.fn cluster_by};
+                   they need not be the same. Export links the phases on the
+                   phase-1 identifier, so keep it on the phase-2 frames."
           ),
           class = "samplyr_error_survey_midstage_element",
           call = call
@@ -636,14 +783,16 @@ survey_strata_info <- function(
   mode <- match.arg(mode)
   first_stage_idx <- stages_executed[1]
 
+  # A take-all stratum belongs to the PPS-WOR (Brewer) variance treatment
+  # only. Ask survey_stage_kind() rather than testing method names: it also
+  # routes cube and custom balanced designs here, and it keeps random-size
+  # methods out, including pps_poisson, which is a pps_wor_method by name
+  # but exports under the Poisson treatment.
   cert_var <- NULL
   first_draw_spec <- design$stages[[first_stage_idx]]$draw_spec
-  first_method <- first_draw_spec$method
   cert_col <- paste0(".certainty_", first_stage_idx)
   if (
-    (first_method %in%
-      pps_wor_methods ||
-      identical(first_draw_spec$method_type, "wor")) &&
+    identical(survey_stage_kind(first_draw_spec), "pps_wor") &&
       cert_col %in% names(df) &&
       any(df[[cert_col]])
   ) {
@@ -999,6 +1148,64 @@ survey_resolve_pps <- function(
   list(pps = survey::poisson_sampling(pi_vec), df = df, fpc = fpc)
 }
 
+#' Argument names the survey package accepts on the export paths
+#'
+#' The export verbs forward `...` to survey, so a name survey accepts must
+#' pass and everything else must be refused by name rather than silently
+#' forwarded. Each set is the formals of the function named, plus the formals
+#' of the helpers that function forwards its own `...` to, minus the ones
+#' samplyr supplies itself (the `derived_args` sets below). Taken from survey
+#' 4.5; `test-survey-arguments.R` checks them against the installed version.
+#' @noRd
+svydesign_accepted_args <- c(
+  # survey::svydesign() and its default method
+  "variables", "nest", "check.strata", "pps", "calibrate.formula",
+  "variance", "na_weights"
+)
+
+#' @noRd
+twophase_accepted_args <- c(
+  # survey::twophase(), which has no dots of its own. Everything else it
+  # declares is derived, so this is the whole forwardable surface.
+  "method", "pps"
+)
+
+#' @noRd
+svrepdesign_accepted_args <- c(
+  # survey::as.svrepdesign() and its default method
+  "type", "fay.rho", "fpc", "fpctype", "compress", "mse",
+  # the replicate-weight generators its dots reach: brrweights(),
+  # jknweights(), bootweights(), subbootweights(), mrbweights()
+  "match", "small", "large", "hadamard.matrix", "lonely.psu", "replicates",
+  "multicore"
+)
+
+#' Argument names samplyr computes and supplies to survey itself
+#'
+#' Accepting these forwarded the user's value into a `do.call()` whose named
+#' arguments were already fixed, so survey raised "formal argument matched by
+#' multiple actual arguments" from inside a verb the user never called. They
+#' are refused by name instead, before their values are forced.
+#'
+#' `probs` is derived on both paths for the same reason with a different
+#' symptom: `weights = ~.weight` is always supplied, and survey refuses a
+#' design that carries both.
+#'
+#' `pps` is not here. It is extracted from `...` before the `do.call()` on
+#' both paths and is the documented route to an exact PPS variance.
+#' @noRd
+svydesign_derived_args <- c(
+  "ids", "probs", "strata", "weights", "fpc", "data"
+)
+
+#' @noRd
+twophase_derived_args <- c(
+  "id", "strata", "probs", "weights", "fpc", "subset", "data"
+)
+
+#' @noRd
+svrepdesign_derived_args <- "design"
+
 #' @rdname as_svydesign
 #' @export
 as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
@@ -1016,6 +1223,38 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
   )
   prev_phase <- phase_info$prev_phase
   is_twophase <- phase_info$is_twophase
+
+  # The two branches call different survey functions, so what `...` may
+  # legitimately carry differs: `subset` belongs to twophase() alone.
+  check_forwarded_args(
+    enquos(...),
+    owned = c("nest", "method"),
+    accepted = if (is_twophase) {
+      twophase_accepted_args
+    } else {
+      svydesign_accepted_args
+    },
+    derived = if (is_twophase) {
+      twophase_derived_args
+    } else {
+      svydesign_derived_args
+    },
+    forwarded_to = if (is_twophase) "survey::twophase" else "survey::svydesign"
+  )
+
+  # nest reaches survey::svydesign() only, so on a two-phase export it is
+  # accepted and has no effect. Say so rather than appear to honour it.
+  if (is_twophase && !missing(nest)) {
+    cli_warn(
+      c(
+        "{.arg nest} has no effect when exporting a two-phase sample.",
+        "i" = "It is an argument of {.fn survey::svydesign}; a two-phase
+               sample is exported with {.fn survey::twophase}, which nests
+               strata within clusters unconditionally."
+      ),
+      class = "samplyr_warning_nest_ignored"
+    )
+  }
 
   if (is_twophase) {
     method <- if (is_null(method)) {
@@ -1059,29 +1298,12 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
     df2 <- df
     design2 <- design
 
-    key_vars <- intersect(
+    bridge_vars <- resolve_phase_bridge(
       survey_key_vars(design1, stages1, df1),
-      survey_key_vars(design2, stages_executed, df2)
+      survey_key_vars(design2, stages_executed, df2),
+      df1,
+      df2
     )
-
-    if (length(key_vars) == 0) {
-      cli_abort(
-        c(
-          "Two-phase conversion requires shared phase identifiers.",
-          "i" = "Define a unique identifier available in both phases (e.g. via {.fn cluster_by})."
-        )
-      )
-    }
-
-    key_df <- df1[, key_vars, drop = FALSE]
-    if (anyDuplicated(key_df) > 0) {
-      cli_abort(
-        c(
-          "Phase 1 identifiers are not unique.",
-          "i" = "Use a unique unit identifier for two-phase conversion."
-        )
-      )
-    }
 
     # Between-phase subsampling variance is handled by
     # survey::twophase() itself, so unclustered element stages are not
@@ -1155,7 +1377,7 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
 
     phase2_cols_needed <- unique(
       c(
-        key_vars,
+        bridge_vars,
         id_vars2_extra,
         strata2_extra,
         fpc2_vars,
@@ -1175,7 +1397,15 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
     }
 
     df_combined <- df1 |>
-      left_join(df2_join, by = key_vars)
+      left_join(
+        df2_join,
+        by = bridge_vars,
+        # Backstops for what resolve_phase_bridge() already established: a
+        # missing key never links, and no phase-2 row may reach two phase-1
+        # rows.
+        na_matches = "never",
+        relationship = "one-to-many"
+      )
 
     df_combined$.phase2 <- !is.na(df_combined$.weight_phase2)
     if (!any(df_combined$.phase2)) {
@@ -1204,8 +1434,10 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
     )
 
     dots <- list(...)
-    pps_arg <- if (!is_null(dots$pps)) dots$pps else NULL
-    dots$pps <- NULL
+    # [[ not $: `$` on a list matches by prefix, so a forwarded argument
+    # whose name merely starts with "pps" would be read as `pps` here.
+    pps_arg <- dots[["pps"]]
+    dots[["pps"]] <- NULL
 
     fpc2_formula <- if (length(fpc2_vars_renamed) == 0) {
       NULL
@@ -1214,7 +1446,34 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
     }
 
     use_weights <- !is_null(method) && method %in% c("approx", "simple")
-    probs_arg <- if (use_weights) {
+
+    # The full method builds a per-stage covariance, so a probability formula
+    # must have one term per ID stage. A single overall probability makes
+    # survey fail deep inside covariance construction with "replacement has
+    # length zero". Finite population corrections carry the same information
+    # per stage, so where both phases have them survey derives the
+    # probabilities itself.
+    n_id_stages <- max(
+      length(id_info1$id_vars), length(id_vars2)
+    )
+    fpc_covers_stages <- !is_null(fpc1$formula) && !is_null(fpc2_formula)
+
+    if (!use_weights && !fpc_covers_stages && n_id_stages > 1) {
+      abort_samplyr(
+        c(
+          "This two-phase design cannot be exported with
+           {.code method = \"full\"}.",
+          "x" = "It has {n_id_stages} identifier stages but no finite
+                 population correction to derive their per-stage
+                 probabilities from.",
+          "i" = "Use {.code method = \"simple\"} or {.code \"approx\"}, which
+                 use the design weights directly."
+        ),
+        class = "samplyr_error_twophase_stage_probs"
+      )
+    }
+
+    probs_arg <- if (use_weights || fpc_covers_stages) {
       NULL
     } else {
       list(
@@ -1284,7 +1543,8 @@ build_singlephase_svydesign <- function(
   # single-stage in survey: multistage ids are rejected outright.
   # Export the first-stage design in that case, as documented for
   # exact PPS variance estimation.
-  if (!is_null(dots$pps) && length(stages_executed) > 1L) {
+  # [[ not $: `$` on a list matches by prefix.
+  if (!is_null(dots[["pps"]]) && length(stages_executed) > 1L) {
     cli_warn(c(
       "Exact PPS variance ({.arg pps}) is single-stage in {.pkg survey}.",
       "i" = "Exporting the stage-1 design only; later-stage sampling
@@ -1315,14 +1575,14 @@ build_singlephase_svydesign <- function(
     design = design,
     stages_executed = stages_executed,
     fpc = fpc,
-    user_pps = dots$pps,
+    user_pps = dots[["pps"]],
     relax_pps_for_bootstrap = relax_pps_for_bootstrap
   )
   df <- resolved$df
   fpc <- resolved$fpc
   pps_arg <- resolved$pps
 
-  dots$pps <- NULL
+  dots[["pps"]] <- NULL
 
   result <- do.call(
     survey::svydesign,
@@ -1361,11 +1621,17 @@ build_singlephase_svydesign <- function(
 #' converting to a [survey::svydesign()] object via [as_svydesign()],
 #' then converting with [survey::as.svrepdesign()].
 #'
-#' @param x A `tbl_sample` object produced by [execute()].
+#' @inheritParams as_svydesign
 #' @param type Replicate method passed to [survey::as.svrepdesign()].
 #'   One of `"auto"`, `"JK1"`, `"JKn"`, `"BRR"`, `"bootstrap"`,
 #'   `"subbootstrap"`, `"mrbbootstrap"`, or `"Fay"`.
-#' @param ... Additional arguments passed to [survey::as.svrepdesign()].
+#' @param ... Additional arguments passed to [survey::as.svrepdesign()] and
+#'   on to the replicate-weight generator it selects, such as `replicates`,
+#'   `fay.rho`, `fpctype`, or `mse`. Every argument must be named, and its
+#'   name must be one those functions accept: `type` follows the `...` and so
+#'   is matched exactly, and a near miss such as `typ` is reported rather
+#'   than forwarded. `design` cannot be given here: it is the
+#'   [survey::svydesign()] object this verb builds from the sample.
 #'
 #' @return A `svyrep.design` object from the survey package.
 #'
@@ -1394,7 +1660,7 @@ build_singlephase_svydesign <- function(
 #' This is the package's bootstrap approximation for designs that exact
 #' Horvitz-Thompson linearization cannot express in
 #' [survey::svydesign()]. The subbootstrap and mrbbootstrap methods were
-#' developed for fixed-size PPS sampling (Antal and Tille 2011); their
+#' developed for fixed-size PPS sampling (Antal and Tille 2011). Their
 #' behavior on random-size Poisson designs, especially at multiple
 #' stages, has weaker theoretical backing and should be treated as an
 #' approximation. In particular, the resampling is fixed-size, so it
@@ -1406,7 +1672,7 @@ build_singlephase_svydesign <- function(
 #' Bounded cube, LPM2, and SCPS designs likewise have no native,
 #' design-specific replicate variance estimator in `samplyr`.
 #' `as_svrepdesign(type = "subbootstrap")` and `"mrbbootstrap"` export a
-#' generic PPS bootstrap approximation for them; they do not reproduce the
+#' generic PPS bootstrap approximation for them. They do not reproduce the
 #' original cube constraints or spatial selection algorithm within each
 #' replicate. Treat the resulting variance estimates as approximations, not
 #' as exact variance estimators for those designs.
@@ -1423,6 +1689,7 @@ build_singlephase_svydesign <- function(
 #' @seealso [as_svydesign()] for linearization export,
 #'   [survey::as.svrepdesign()] for the underlying conversion
 #'
+#' @family survey export
 #' @export
 as_svrepdesign <- function(x, ...) {
   UseMethod("as_svrepdesign")
@@ -1449,6 +1716,14 @@ as_svrepdesign.tbl_sample <- function(
   rlang::check_installed(
     "survey",
     reason = "to convert a tbl_sample to a replicate-weight survey design."
+  )
+
+  check_forwarded_args(
+    enquos(...),
+    owned = "type",
+    accepted = svrepdesign_accepted_args,
+    derived = svrepdesign_derived_args,
+    forwarded_to = "survey::as.svrepdesign"
   )
 
   survey_validate_phase_support(
@@ -1537,6 +1812,7 @@ as_svrepdesign.tbl_sample <- function(
 #'
 #' @seealso [as_svydesign()] for converting to a survey.design2 object
 #'
+#' @family survey export
 #' @exportS3Method srvyr::as_survey_design
 as_survey_design.tbl_sample <- function(.data, ...) {
   rlang::check_installed(
@@ -1609,6 +1885,7 @@ srvyr_dispatchable_design <- function(x) {
 #'
 #' @seealso `as_svrepdesign()` for survey replicate-weight export
 #'
+#' @family survey export
 #' @exportS3Method srvyr::as_survey_rep
 as_survey_rep.tbl_sample <- function(.data, ...) {
   rlang::check_installed(

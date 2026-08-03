@@ -108,7 +108,7 @@ test_that("PRN validates column existence at execution", {
     sampling_design() |>
       draw(n = 5, method = "pps_sps", mos = size, prn = missing_col) |>
       execute(frame, seed = 1),
-    "not found"
+    class = "samplyr_error_frame_missing_vars"
   )
 })
 
@@ -240,6 +240,10 @@ test_that("validate_frame detects PRN issues", {
 
   # Missing PRN variable
   frame_no_prn <- data.frame(id = 1:10, size = 10:19)
+  expect_error(
+    validate_frame(design, frame_no_prn),
+    class = "samplyr_error_frame_missing_vars"
+  )
   expect_error(validate_frame(design, frame_no_prn), "PRN")
 
   # Non-numeric PRN

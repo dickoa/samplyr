@@ -7,7 +7,7 @@
 get_frame_digest(x)
 }
 \arguments{
-\item{x}{A \code{tbl_sample} produced by \code{\link[=execute]{execute()}}.}
+\item{x}{A \code{tbl_sample} object produced by \code{\link[=execute]{execute()}}.}
 }
 \value{
 The frame digest list, or \code{NULL} when none is recorded.
@@ -31,7 +31,24 @@ change between samplyr releases, so extension packages should pin a
 minimum samplyr version. \code{\link[=frame_summary]{frame_summary()}} is the stable tabular
 interface for everyone else.
 }
+\examples{
+sample <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 20) |>
+  execute(bfa_eas, seed = 1)
+
+digest <- get_frame_digest(sample)
+names(digest)
+digest$status
+
+# NULL for anything that is not an executed sample
+get_frame_digest(bfa_eas)
+}
 \seealso{
 \code{\link[=frame_summary]{frame_summary()}}
+
+Other extension APIs:
+\code{\link[=build_exante_digest]{build_exante_digest()}},
+\code{\link{digest}}
 }
-\keyword{internal}
+\concept{extension APIs}

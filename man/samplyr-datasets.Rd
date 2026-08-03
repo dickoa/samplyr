@@ -2,7 +2,7 @@
 % Please edit documentation in R/datasets.R
 \name{samplyr-datasets}
 \alias{samplyr-datasets}
-\title{Sampling Frames}
+\title{Sampling frames}
 \description{
 The samplyr package includes derived and synthetic sampling frames for
 demonstrating survey sampling designs. The frames represent three common
@@ -20,7 +20,7 @@ health, and child-indicator household surveys, and establishment surveys.
 }
 }
 
-\section{Auxiliary Data}{
+\section{Auxiliary data}{
 
 \itemize{
 \item \link{bfa_eas_variance}: Illustrative prior consumption variances for
@@ -29,4 +29,13 @@ Neyman allocation
 }
 }
 
+\seealso{
+Other datasets:
+\code{\link{bfa_eas}},
+\code{\link{bfa_eas_cost}},
+\code{\link{bfa_eas_variance}},
+\code{\link{ken_enterprises}},
+\code{\link{zwe_eas}}
+}
+\concept{datasets}
 \keyword{datasets}

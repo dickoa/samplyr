@@ -6,9 +6,16 @@
   New submission
 
   The same NOTE reports the `BugReports` URL as possibly invalid and
-  suggests appending `/issues`. The package is hosted on GitLab, whose
-  issue tracker is served at `/-/work_items`; `/-/issues` is the GitHub
-  convention and is not the path GitLab uses. The URL is correct as given.
+  suggests appending `/issues` to it. The package is hosted on GitLab,
+  whose issue tracker is served at `/-/work_items`; the suggested path is
+  the GitHub convention and is not one GitLab serves. The URL is correct
+  as given.
+
+  The NOTE also lists possibly misspelled words in DESCRIPTION. All are
+  correct: Burkina Faso is a country, Deville and Tille (spelled with an
+  acute accent in DESCRIPTION) are the authors of the balanced-sampling
+  method the package implements, and "composable" is used in its ordinary
+  sense.
 
 ## Test environments
 

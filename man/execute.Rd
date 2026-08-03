@@ -2,7 +2,7 @@
 % Please edit documentation in R/execute.R
 \name{execute}
 \alias{execute}
-\title{Execute a Sampling Design}
+\title{Execute a sampling design}
 \usage{
 execute(
   .data,
@@ -22,7 +22,7 @@ stored design.}
 \item{...}{Data frame(s) to sample from. For single-stage designs, provide
 one frame. For multi-stage designs with separate frames, provide frames
 in stage order. Passing a \code{tbl_sample} here while \code{.data} is a new
-\code{sampling_design} starts a new sampling phase; it does not continue the
+\code{sampling_design} starts a new sampling phase. It does not continue the
 stages stored in that sample. Ordinary input frames must have unique
 names and must not use columns reserved for execution output, such as
 \code{.weight}, \code{.sample_id}, \code{.stage}, \code{.weight_k}, or \code{.fpc_k}, where \code{k}
@@ -30,10 +30,18 @@ is the stage number (\code{.weight_1}, \code{.fpc_1}, and so on). Frames are
 matched positionally, so any name given here is a label. A label
 resembling one of the arguments below (\code{seedd}, or the singular
 \code{stage}, \code{rep}, \code{panel}) is refused rather than read as a frame,
-because those arguments follow \code{...} and are matched exactly.}
+because those arguments follow \code{...} and are matched exactly.
+
+A single unnamed list of data frames is read as those frames in that
+order, which is the same call written with a value rather than one
+argument per frame. Write them out when you are typing the call.
+The list is for code that already holds them, such as a loop over
+registers or \code{\link[=replay_design]{replay_design()}}. Mixing the two is refused. Names
+inside the list are frame labels, so a misspelled argument must be
+written outside it to be reported as one.}
 
 \item{stages}{Integer vector specifying which stage(s) to execute.
-From a \code{sampling_design}, the vector must start at stage 1; this is how
+From a \code{sampling_design}, the vector must start at stage 1 and this is how
 an operational workflow stops after its first contiguous batch of stages.
 From a partial \code{tbl_sample}, it must start at the next unexecuted stage.
 Default (\code{NULL}) executes all remaining stages.}
@@ -43,7 +51,7 @@ Default (\code{NULL}) executes all remaining stages.}
 
 \item{panels}{Integer number of rotation groups (panels) to partition the
 sample into for rotation or workload management. Assignment uses
-deterministic systematic interleaving within strata; it is not an
+deterministic systematic interleaving within strata. It is not an
 additional probability-sampling phase. The output includes a \code{.panel}
 column with values 1 through \code{panels}. Default \code{NULL} means no panel
 partitioning. Cannot be used together with \code{reps}.}
@@ -52,8 +60,8 @@ partitioning. Cannot be used together with \code{reps}.}
 or \code{NULL} (default) for a single sample. When specified, \code{execute()} draws
 \code{reps} independent samples from the same frame under the same design and
 returns a single stacked \code{tbl_sample} with a \code{.replicate} column (integer
-1 through \code{reps}). Replicate \code{r} uses seed \code{seed + r - 1}; the complete
-sequence must remain within R's supported integer range. Cannot be
+1 through \code{reps}). Replicate \code{r} uses seed \code{seed + r - 1}. The complete
+sequence must remain within \code{R} supported integer range. Cannot be
 combined with \code{panels} or with stages that use permanent random numbers.
 
 This is \strong{repeated sample realization} (drawing multiple independent
@@ -70,7 +78,7 @@ element stages too. \code{"none"} records no digest and skips trace
 construction for minimum execution overhead. When one universe frame
 feeds every stage, later stages also record the pools their
 realization never reached, with chances resolved deterministically
-from the design (\code{chance_status = "design_resolved"}); this gives
+from the design (\code{chance_status = "design_resolved"}), this gives
 \code{\link[=frame_summary]{frame_summary()}} and downstream digest consumers complete universe
 denominators without the frame. The digest never
 affects selection, weights, or estimation. Design executions
@@ -78,93 +86,71 @@ record a digest, replicated executions share the population
 structure across replicates with replicate-specific traces, and a
 stage continuation extends the digest carried by its input sample
 (an input without a valid digest yields no digest). In a
-replicated multistage execution, later-stage pools depend on each
+replicated multi-stage execution, later-stage pools depend on each
 replicate's realized parents, so the digest keeps the stage
 prefix shared by all replicates and reports status \code{"partial"}.
 Replicated multi-phase and replicated-continuation executions do
 not record one yet.}
 }
 \value{
-A \code{tbl_sample} object (a data frame subclass with sampling
-metadata). Contains the selected units plus:
-\itemize{
-\item \code{.sample_id}: Unique identifier for each sampled unit
-\item \code{.weight}: Sampling weight (1/probability)
-\item \code{.weight_1}, \code{.weight_2}, ...: Per-stage sampling weights
-(\eqn{1/\pi_i^{(k)}}{1/pi_i(k)}) for the stored design. In a
-single-phase multistage sample their product equals \code{.weight}; in a
-multiphase sample \code{.weight} additionally includes earlier-phase
-weights.
-\item \code{.fpc_1}, \code{.fpc_2}, ...: Per-stage finite population correction
-values. The meaning depends on the method and context:
-\itemize{
-\item \strong{Equal-probability WOR} (srswor, systematic): \eqn{N_h} (stratum
-population size), or \eqn{N} if unstratified. The sampling fraction
-\eqn{f = n / N} is derived from this at variance-estimation time.
-\item \strong{PPS WOR} (pps_brewer, pps_cps, etc.): \eqn{N_h} (stratum
-population size), converted to \eqn{\pi_i = 1/w_i}{pi_i = 1/w_i}
-at survey export, because \code{survey::svydesign()} expects inclusion
-probabilities for unequal-probability stages.
-\item \strong{Clustered stages}: the number of clusters in the
-stratum/group, not the number of ultimate units.
-\item \strong{WR / PMR} (srswr, pps_multinomial, pps_chromy): \eqn{\infty}{Inf}.
-With-replacement designs have no finite population correction;
-variance is estimated via the Hansen--Hurwitz formula.
-In a multi-stage design, each stage has its own \code{.fpc_k}. At survey
-export (\code{as_svydesign()}), these are assembled into a multi-level FPC
-formula (e.g., \code{~ .fpc_1 + .fpc_2}).
-}
-\item \code{.draw_1}, \code{.draw_2}, ...: Draw index per stage (WR/PMR methods only).
-Each row represents one independent draw; the draw index identifies
-which with-replacement selection the row came from.
-\item \code{.certainty_1}, \code{.certainty_2}, ...: Whether each unit was a certainty
-selection (PPS methods with certainty thresholds only)
-\item \code{.replicate}: Replicate identifier (only when \code{reps} is specified)
-\item \code{.panel}: Panel assignment (only when \code{panels} is specified)
-\item Stage and stratum identifiers as appropriate
-}
+A \code{tbl_sample}: a data frame subclass carrying the selected rows,
+the design that produced them, and generated columns recording the
+selection. Those are \code{.sample_id}, \code{.weight}, the per-stage \code{.weight_k},
+\code{.fpc_k}, \code{.draw_k} and \code{.certainty_k}, and \code{.replicate} or \code{.panel}
+when \code{reps} or \code{panels} is used. \link{sample-columns} documents what each
+one holds.
 }
 \description{
 \code{execute()} runs a sampling design against one or more data frames,
 producing a sampled dataset with appropriate weights and metadata.
 }
 \details{
-\subsection{Execution Patterns}{
-\subsection{Single-Stage Execution}{
+Every pattern below has a worked example under \strong{Examples}.
+\subsection{Multi-stage with a single frame}{
 
-\preformatted{
-design |> execute(frame, seed = 1)
-}
-}
-
-\subsection{Multi-Stage with Single Frame}{
-
-For hierarchical data where all stages are in one frame:
-\preformatted{
-design |> execute(frame, seed = 2025)
-}
-The frame must contain all clustering variables and represent the stage
-hierarchy correctly. Lower-stage IDs may repeat across different parents;
+For hierarchical data where all stages are in one frame, pass that one
+frame. It must contain all clustering variables and represent the stage
+hierarchy correctly. Lower-stage IDs may repeat across different parents.
 \code{samplyr} resolves them using the full ancestry from earlier stages.
 }
 
-\subsection{Multi-Stage with Multiple Frames}{
+\subsection{Multi-stage with one frame per stage}{
 
-When each stage has its own frame:
-\preformatted{
-design |> execute(frame1, frame2, frame3, seed = 424)
-}
-Frames are matched to stages by position.
+When each stage has its own register, pass one frame per stage.
+Frames map to stages by position, and the number of frames is what
+schedules the stages: one frame is a shared hierarchy covering all of
+them, and one frame per stage gives each its own. Any other count is
+\code{samplyr_error_frame_count}.
+
+Registers are supplied whole. Each is restricted to the units its parent
+stage selected, and the variables earlier stages introduced are carried
+onto it, so a lower register neither has to be pre-filtered nor to
+duplicate the upper stages' stratification columns. A register that
+legitimately omits a carried stratum is fine. One whose own copy of it
+disagrees is an error.
+
+The frames may also be held as a list, which is the same call. Inside that
+list a name is a diagnostic label for the frame, not an argument name.
+Mixing the two spellings in one call is refused.
+
+This form, the single-hierarchy form, and the stage continuation below
+run the same stage transition. Under one shared RNG stream, and with
+\code{stages} given on every intermediate call, all three draw the same
+sample.
 }
 
-\subsection{Partial Execution (Operational Sampling)}{
+\subsection{Partial execution (operational sampling)}{
 
-Execute only specific stages:
-\preformatted{
-selected_eas <- design |> execute(ea_frame, stages = 1, seed = 42)
-# ... fieldwork: listing in selected EAs ...
-sample <- selected_eas |> execute(listing_frame, seed = 43)
-}
+\code{stages} executes only the stages named, returning a partial \code{tbl_sample}.
+Fieldwork then produces the next stage's frame, and passing the partial
+sample back as \code{.data} continues the same design.
+Omitting \code{stages} on the continuation executes every remaining stage.
+Where more than one stage remains and one frame is supplied, that frame
+could be the next stage's register or a hierarchy covering the rest, and
+the two draw different samples. \code{execute()} refuses to guess and asks for
+\code{stages} (\code{samplyr_error_ambiguous_continuation}). \code{\link[=validate_frame]{validate_frame()}}
+applies the same rule, so a frame it approves is one this call accepts.
+
 When the listing frame is derived from a \code{tbl_sample} (e.g. via
 \code{\link[tidyr:uncount]{tidyr::uncount()}} or \code{\link[dplyr:slice]{dplyr::slice()}}), it may carry internal
 columns (\code{.weight}, \code{.fpc_1}, etc.) from the earlier stage. These
@@ -173,7 +159,7 @@ with the metadata carried by the stage-1 result.
 Pass the unmodified stage-1 result as \code{.data} and the expanded listing
 as the frame, as above. Passing the original design as \code{.data} instead
 starts a new execution at stage 1 and treats a \code{tbl_sample} frame as a
-previous sampling phase; it is not a stage continuation. When an intact
+previous sampling phase. It is not a stage continuation. When an intact
 frame is a strict partial result of that same design, \code{execute()} warns
 about this ambiguity but permits it because it is a valid new-phase
 operation and will export through \code{\link[survey:twophase]{survey::twophase()}}.
@@ -185,27 +171,20 @@ such rows as a genuinely unrelated ordinary frame, remove both the sampling
 attributes and the generated sample columns explicitly.
 }
 
-\subsection{Multi-Phase Sampling}{
+\subsection{Multi-phase sampling}{
 
 To start a new phase, use the new phase's design as \code{.data} and pass the
-previous phase's \code{tbl_sample} as its frame:
-\preformatted{
-phase1 <- design1 |> execute(frame, seed = 42)
-# ... add screening data to phase1 ...
-phase2 <- design2 |> execute(phase1_updated, seed = 123)
-}
+previous phase's \code{tbl_sample} as its frame.
 This is distinct from stage continuation: \code{phase1} is a frame for a new
 design, rather than \code{.data} carrying unexecuted stages of the same design.
 Weights compound automatically in multi-phase designs, and
 \code{\link[=as_svydesign]{as_svydesign()}} exports this path through \code{\link[survey:twophase]{survey::twophase()}}.
 }
 
-}
-
-\subsection{Weight Calculation}{
+\subsection{Weight calculation}{
 
 The \code{.weight} column is the inverse of the selection chance that
-samplyr resolves for the unit: the first-order inclusion probability
+samplyr resolves for the unit based on the first-order inclusion probability
 for without-replacement methods, or the expected number of
 selections for with-replacement methods. The per-stage weight is
 \eqn{w_i^{(k)} = 1 / \pi_i^{(k)}}{w_i(k) = 1 / pi_i(k)}:
@@ -217,7 +196,7 @@ selections for with-replacement methods. The per-stage weight is
 \code{sondage::inclusion_prob()}. Varies across units.
 \item \strong{WR / PMR}: \eqn{w_i = 1 / E(n_i)}{w_i = 1/E(n_i)} where
 \eqn{E(n_i) = n \cdot p_i}{E(n_i) = n * p_i} is the expected number
-of selections. Each draw is one row; a unit selected \eqn{k} times
+of selections. Each draw is one row. A unit selected \eqn{k} times
 appears \eqn{k} times, each with the same weight.
 }
 
@@ -233,6 +212,8 @@ practice for these methods, and the deviation is typically small,
 but it is a bias of the method, not of samplyr. The tier is recorded
 per stage in the frame digest, reported by \code{\link[=frame_summary]{frame_summary()}} as the
 \code{probabilities} column, and flagged by \code{summary()}.
+}
+
 \subsection{Multi-stage weight compounding}{
 
 In a \eqn{K}-stage design, the overall weight for unit \eqn{i} is the
@@ -256,14 +237,12 @@ as its frame, the phase-1 inclusion probability is already reflected in
 the input weights.
 The final \code{.weight} is the product of phase-1 and phase-2 weights:
 \deqn{w_i = w_i^{(\text{phase 1})} \times w_i^{(\text{phase 2} \mid \text{phase 1})}}
-This ensures the Horvitz--Thompson estimator
+This ensures the Horvitz-Thompson estimator
 \eqn{\hat{Y} = \sum_S w_i \, y_i}{Y-hat = sum(w_i * y_i)} is unbiased
 for the population total.
 }
 
-}
-
-\subsection{Panel Partitioning}{
+\subsection{Panel partitioning}{
 
 When \code{panels} is specified, the sample is partitioned into non-overlapping
 groups for rotation or workload management using systematic interleaving
@@ -283,6 +262,19 @@ inclusion probability and are valid for the combined sample. A single panel
 does not have a known probability-sampling interpretation merely from this
 assignment, so multiplying its weights by \code{panels} is not generally valid
 for population inference.
+}
+
+\subsection{When a design cannot be realized as written}{
+
+A pool holding fewer units than the stage asks for is selected whole,
+which makes the design non-self-weighting. \code{execute()} reports this, and
+four related outcomes, as classed conditions carrying a \code{payload}.
+
+\code{frame_digest} defaults to \code{"summary"}, so the ordinary way to read
+capping after the fact is the \code{capped} column of
+\code{frame_summary(sample, detail = "pool")}. See \link{execution-conditions} for
+the five classes, their payload fields, and how to capture one when no
+digest is kept.
 }
 }
 \examples{
@@ -325,6 +317,41 @@ design <- sampling_design() |>
 selected_eas <- execute(design, bfa_eas, stages = 1, seed = 2)
 nrow(selected_eas)  # Number of selected EAs
 
+# Continuation: the listing produced by fieldwork becomes the next frame,
+# and the partial sample is passed back as `.data`
+listing <- selected_eas |>
+  dplyr::slice(rep(seq_len(dplyr::n()), each = 20)) |>
+  dplyr::mutate(hh_id = dplyr::row_number())
+sample <- selected_eas |> execute(listing, seed = 43)
+nrow(sample)  # 12 households in each selected EA
+
+# One frame per stage ----------------------------------------
+# Frames map to stages by position: a district register, then an EA register
+districts <- dplyr::distinct(zwe_eas, province, district)
+two_stage <- sampling_design() |>
+  add_stage(label = "Districts") |>
+    cluster_by(district) |>
+    draw(n = 8) |>
+  add_stage(label = "EAs") |>
+    draw(n = 3)
+sample <- two_stage |> execute(districts, zwe_eas, seed = 424)
+length(unique(sample$district))  # 8 districts, 3 EAs each
+
+# The same call with the frames held as a list
+registers <- list(districts, zwe_eas)
+same <- two_stage |> execute(registers, seed = 424)
+identical(sample$.sample_id, same$.sample_id)
+
+# Multi-phase --------------------------------------------------
+# The previous phase's sample is the new phase's frame
+phase1 <- sampling_design() |>
+  draw(n = 200) |>
+  execute(bfa_eas, seed = 42)
+phase2 <- sampling_design() |>
+  draw(n = 50) |>
+  execute(phase1, seed = 123)
+nrow(phase2)  # weights compound across both phases
+
 # Replicated sampling: 5 independent draws
 sample <- sampling_design() |>
   draw(n = 100) |>
@@ -341,6 +368,14 @@ table(sample$.panel)  # ~50 per panel
 }
 \seealso{
 \code{\link[=sampling_design]{sampling_design()}} for creating designs,
-\code{\link[=is_tbl_sample]{is_tbl_sample()}} for testing results,
+\link{frame-input-grammar} for the frame forms every verb accepts,
+\link{sample-columns} for what the generated columns hold,
+\link{execution-conditions} for what \code{execute()} signals when a design cannot
+be realized as written,
 \code{\link[=get_design]{get_design()}} for extracting metadata
+
+Other execution:
+\code{\link{execution-conditions}},
+\code{\link[=validate_frame]{validate_frame()}}
 }
+\concept{execution}

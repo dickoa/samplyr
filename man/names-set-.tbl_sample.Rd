@@ -7,7 +7,7 @@
 \method{names}{tbl_sample}(x) <- value
 }
 \arguments{
-\item{x}{A tbl_sample object}
+\item{x}{A \code{tbl_sample} object.}
 
 \item{value}{New column names}
 }

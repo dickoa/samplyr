@@ -91,7 +91,23 @@ When an allocation method is specified, the total sample size \(n\) is distribut
 | `"optimal"`      | \(n_h \propto N_h \, S_h / \sqrt{C_h}\) | `variance`, `cost` |
 | `"power"`        | \(n_h \propto \text{CV}_h \cdot X_h^q\) | `cv`, `importance` |
 
-Fractional allocations are rounded to integers using largest-remainder (Hare--Niemeyer) rounding that preserves \(\sum n_h = n\). When `min_n` or `max_n` bounds are active, iterative clamping redistributes the excess or deficit until convergence.
+Each formula gives a *factor* \(w_h\); the allocation is the solution of
+
+\[
+n_h = \operatorname{clamp}(\lambda w_h, \; \ell_h, \; u_h), \qquad
+\ell_h = \min(\texttt{min\_n}, N_h), \qquad
+u_h = \min(\texttt{max\_n}, N_h)
+\]
+
+with \(\lambda\) chosen so that \(\sum_h n_h = n\). The population size \(N_h\) is an upper bound whether or not `max_n` was supplied, so a fixed-size without-replacement design satisfies \(0 \le n_h \le N_h\) and \(\sum_h n_h = n\) for every feasible request.
+
+Saturated strata are fixed at their bound and removed from the problem, then \(\lambda\) is recomputed over the strata still free. Redistribution therefore follows the same factors \(w_h\) the method is defined by, which is what keeps a Neyman allocation Neyman after a stratum saturates: redistributing in proportion to unused capacity instead would silently change the criterion. When every free stratum has \(w_h = 0\) the criterion cannot distinguish them and the remainder is split equally in stratum order.
+
+One consequence is worth stating plainly: a named rule can be departed from when a stratum is too small to hold its share. With populations \((10, 490, 500)\) and \(n = 300\), `"equal"` yields 10/145/145, not 100/100/100. `execute()` reports this once per run.
+
+The constrained real-valued targets are then rounded with largest-remainder (Hare--Niemeyer) rounding that preserves \(\sum n_h = n\) and stays inside every bound.
+
+With-replacement and Poisson-multinomial designs draw units repeatedly, so \(N_h\) is not a bound on the number of draws and only `min_n` and `max_n` apply. Per-stratum sizes supplied directly, rather than through `alloc`, are instructions and are never redistributed.
 
 ### `cluster_by()`: define the sampling unit
 
@@ -158,7 +174,24 @@ When `prn` is specified, the permanent random numbers are passed through to `son
 3. The selection algorithm from `draw()` is invoked via `sondage`.
 4. The `.weight`, `.fpc`, `.draw`, and `.certainty` columns are computed and suffixed with the stage number.
 
-**Partial execution.** `execute(design, psu_frame, stages = 1)` runs only the first stage and returns a `tbl_sample`. That object stores both the unchanged design and the realized PSU selection. Use it as the first argument of the later call and supply the new listing as the frame: `execute(psu_sample, listing_frame)`. Execution resumes at the next unexecuted stage, carries forward the PSU weights and FPC, and remains one multistage design. The `stages` argument may select any initial contiguous batch beginning at stage 1; on a partial `tbl_sample`, it may select the next contiguous batch. Omitting it executes all remaining stages.
+**One frame or one per stage.** The number of frames schedules the stages. `execute(design, hierarchy)` runs every stage against one table, and `execute(design, schools, classes, students)` gives each stage its own register, mapped by position. Any other count is refused. A register is supplied whole: samplyr restricts it to the units its parent stage selected and carries onto it the variables earlier stages introduced, so a class register needs neither pre-filtering to the sampled schools nor a copy of the school-level stratification column. A register that omits such a carried variable is fine; one whose own copy of it disagrees with the parent is an error. The frames may equally be held as a value, `execute(design, list(schools, classes, students))`, which is the same call; a name on a list element is a diagnostic label for that frame.
+
+**Partial execution.** `execute(design, psu_frame, stages = 1)` runs only the first stage and returns a `tbl_sample`. That object stores both the unchanged design and the realized PSU selection. Use it as the first argument of the later call and supply the new listing as the frame: `execute(psu_sample, listing_frame)`. Execution resumes at the next unexecuted stage, carries forward the PSU weights and FPC, and remains one multi-stage design. The `stages` argument may select any initial contiguous batch beginning at stage 1; on a partial `tbl_sample`, it may select the next contiguous batch. Omitting it executes all remaining stages, unless more than one stage remains and a single frame is supplied: that frame could be the next stage's register or a hierarchy covering the rest, and the two draw different samples, so `execute()` asks for `stages` rather than guessing.
+
+**The three spellings are one implementation.** A three-stage design executed against one hierarchy, against three registers in a single call, or stage by stage as a continuation runs the same stage transition each time. All three draw the same sample, provided the continuation runs under a single RNG stream and names `stages` on every intermediate call:
+
+```r
+one_call     <- execute(design, schools, classes, students, seed = 7)
+hierarchical <- execute(design, hierarchy, seed = 7)
+
+continued <- withr::with_seed(7, {
+  s1 <- execute(design, schools, stages = 1)
+  s2 <- execute(s1, classes, stages = 2)
+  execute(s2, students, stages = 3)
+})
+```
+
+Note where the seed goes. One seed wraps the whole chain; the individual calls take none. Seeding each call separately is a different and equally valid RNG boundary, but it is not this equivalence and will select different units. The equivalence is a tested invariant rather than an incidental property, which is what makes a continuation safe to interleave with fieldwork: the sample is the one the single call would have drawn.
 
 **Two-phase sampling.** A new phase starts with a new design: `execute(design2, phase1_sample)`. Here the phase-1 `tbl_sample` is the frame argument, not the execution object. samplyr records a previous-phase link and compounds the phase-1 and phase-2 weights multiplicatively. The conditional phase-2 weight is computed at survey export time. Thus `execute(psu_sample, listing_frame)` means “continue this design's stages,” whereas `execute(new_design, prior_sample)` means “sample a new phase.”
 
@@ -192,6 +225,8 @@ two_stage <- sampling_design() |>
 all.equal(two_stage$.weight,
           two_stage$.weight_1 * two_stage$.weight_2)
 ```
+
+The warning is the design meeting the frame: Bulawayo is a single-district province, so a take of two districts selects the one that exists. `execute()` reports every pool it could not fill, once per stage, because a capped pool makes the design non-self-weighting. The weights above still compound exactly; Bulawayo's first-stage weight is simply 1.
 
 **Two-phase.** When a new phase-2 design is executed with the phase-1 `tbl_sample` as its frame, the phase-1 weight is stored internally and multiplied into the final `.weight`. The conditional phase-2 weight \(w_{\text{cond}} = w_{\text{overall}} / w_{\text{phase 1}}\) is computed during survey export for use with `survey::twophase()`.
 

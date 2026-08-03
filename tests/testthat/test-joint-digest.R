@@ -2,9 +2,9 @@
 # frame path exactly wherever the digest keeps exact chances, and fail
 # explicitly when exact chances are unavailable.
 
-expect_jip_paths_equal <- function(s, frame, stage = NULL) {
-  from_digest <- joint_expectation(s, stage = stage)
-  from_frame <- joint_expectation(s, frame, stage = stage)
+expect_jip_paths_equal <- function(s, frame, stages = NULL) {
+  from_digest <- joint_expectation(s, stages = stages)
+  from_frame <- joint_expectation(s, frame, stages = stages)
   expect_equal(from_digest, from_frame, tolerance = 1e-10)
   invisible(from_digest)
 }
@@ -103,7 +103,7 @@ test_that("both paths give per-parent conditional stage-2 chances", {
     draw(n = 3, method = "pps_brewer", mos = pop) |>
     execute(frame_jip, seed = 42)
 
-  jip <- expect_jip_paths_equal(s, frame_jip, stage = 2)
+  jip <- expect_jip_paths_equal(s, frame_jip, stages = 2)
   # The stage-2 chances are conditional per parent district: the
   # diagonal must reproduce the executed weights, not the pooled
   # approximation that merged both districts into one draw.
@@ -135,8 +135,8 @@ test_that("WR parent occurrences define separate child-stage blocks", {
   sample_df <- as.data.frame(s)
   expect_lt(dplyr::n_distinct(sample_df$psu), 3L)
   expect_identical(dplyr::n_distinct(sample_df$.draw_1), 3L)
-  from_frame <- joint_expectation(s, frame, stage = 2)[[2]]
-  from_digest <- joint_expectation(s, stage = 2)[[2]]
+  from_frame <- joint_expectation(s, frame, stages = 2)[[2]]
+  from_digest <- joint_expectation(s, stages = 2)[[2]]
   expect_identical(dim(from_frame), c(nrow(s), nrow(s)))
   expect_identical(dim(from_digest), c(nrow(s), nrow(s)))
   expect_equal(from_frame, from_digest, tolerance = 1e-9)
@@ -171,8 +171,8 @@ test_that("a single-hit WR parent preserves its child-stage matrix", {
     draw(n = 2, method = "pps_brewer", mos = unit_mos) |>
     execute(frame, seed = 31, frame_digest = "full")
 
-  from_frame <- joint_expectation(s, frame, stage = 2)[[2]]
-  from_digest <- joint_expectation(s, stage = 2)[[2]]
+  from_frame <- joint_expectation(s, frame, stages = 2)[[2]]
+  from_digest <- joint_expectation(s, stages = 2)[[2]]
   expect_identical(dim(from_frame), c(2L, 2L))
   expect_equal(from_frame, from_digest, tolerance = 1e-9)
   expect_equal(diag(from_frame), 1 / s$.weight_2, tolerance = 1e-9)
@@ -205,8 +205,8 @@ test_that("nested WR ancestry uses every prior draw column", {
     sample_df, region, psu, .draw_1, .draw_2
   )
   expect_identical(nrow(occurrences), 9L)
-  from_frame <- joint_expectation(s, frame, stage = 3)[[3]]
-  from_digest <- joint_expectation(s, stage = 3)[[3]]
+  from_frame <- joint_expectation(s, frame, stages = 3)[[3]]
+  from_digest <- joint_expectation(s, stages = 3)[[3]]
   expect_identical(dim(from_frame), c(nrow(s), nrow(s)))
   expect_identical(dim(from_digest), c(nrow(s), nrow(s)))
   expect_equal(from_frame, from_digest, tolerance = 1e-9)
@@ -245,8 +245,8 @@ test_that("clustered children deduplicate within each WR parent occurrence", {
   expect_identical(nrow(selected_children), 6L)
   expect_gt(nrow(sample_df), nrow(selected_children))
 
-  from_frame <- joint_expectation(s, frame, stage = 2)[[2]]
-  from_digest <- joint_expectation(s, stage = 2)[[2]]
+  from_frame <- joint_expectation(s, frame, stages = 2)[[2]]
+  from_digest <- joint_expectation(s, stages = 2)[[2]]
   expect_identical(dim(from_frame), c(6L, 6L))
   expect_equal(from_frame, from_digest, tolerance = 1e-9)
   expect_equal(
@@ -307,8 +307,8 @@ test_that("compound strata below parents follow first sample appearance", {
     draw(n = 2, method = "pps_brewer", mos = mos) |>
     execute(frame, seed = 22, frame_digest = "full")
 
-  from_frame <- joint_expectation(s, frame, stage = 2)[[2]]
-  from_digest <- joint_expectation(s, stage = 2)[[2]]
+  from_frame <- joint_expectation(s, frame, stages = 2)[[2]]
+  from_digest <- joint_expectation(s, stages = 2)[[2]]
   expect_equal(from_frame, from_digest, tolerance = 1e-9)
   expect_equal(diag(from_frame), 1 / s$.weight_2, tolerance = 1e-9)
   first_stratum_by_parent <- dplyr::distinct(
@@ -453,9 +453,9 @@ test_that("twelve non-WR design shapes retain frame-digest parity", {
       case[[1]], case[[2]], seed = 100, frame_digest = "full"
     )
     from_frame <- joint_expectation(
-      sample, case[[2]], stage = case[[3]]
+      sample, case[[2]], stages = case[[3]]
     )
-    from_digest <- joint_expectation(sample, stage = case[[3]])
+    from_digest <- joint_expectation(sample, stages = case[[3]])
     expect_equal(
       from_digest,
       from_frame,
@@ -483,4 +483,25 @@ test_that("missing or invalidated digests refuse the frame-free path", {
     draw(n = 10, method = "pps_brewer", mos = mos) |>
     execute(test_frame, seed = 19, frame_digest = "none")
   expect_error(joint_expectation(s_none), class = "samplyr_error_no_digest")
+})
+
+test_that("automatic certainty drives the joint-matrix decomposition", {
+  # Units 1-3 cap at probability one with no explicit rule. The joint
+  # matrix must decompose on the resolved flags, not on rule membership.
+  frame <- data.frame(id = seq_len(60), mos = c(500, 400, 300, rep(10, 57)))
+
+  s <- sampling_design() |>
+    draw(n = 10, method = "pps_brewer", mos = mos) |>
+    execute(frame, seed = 11, frame_digest = "full")
+
+  cert <- s$.certainty_1
+  pik <- 1 / s$.weight
+  J <- joint_expectation(s, stages = 1)$stage_1
+
+  expect_equal(sum(cert), 3L)
+  expect_true(all(J[cert, cert] == 1))
+  expect_equal(diag(J), pik)
+  for (i in which(cert)) {
+    expect_equal(as.vector(J[i, !cert]), pik[!cert])
+  }
 })

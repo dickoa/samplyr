@@ -3,7 +3,7 @@
 \docType{data}
 \name{ken_enterprises}
 \alias{ken_enterprises}
-\title{Synthetic Kenya Establishment Frame}
+\title{Synthetic Kenya establishment frame}
 \format{
 A tibble with 17,004 rows and 9 columns:
 \describe{
@@ -79,5 +79,13 @@ sampling_design() |>
 }
 \seealso{
 \code{\link[=stratify_by]{stratify_by()}}, \code{\link[=draw]{draw()}}, \code{\link[=execute]{execute()}}
+
+Other datasets:
+\code{\link{bfa_eas}},
+\code{\link{bfa_eas_cost}},
+\code{\link{bfa_eas_variance}},
+\code{\link{samplyr-datasets}},
+\code{\link{zwe_eas}}
 }
+\concept{datasets}
 \keyword{datasets}

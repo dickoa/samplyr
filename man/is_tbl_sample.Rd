@@ -15,3 +15,19 @@ Logical
 \description{
 Test if object is a tbl_sample
 }
+\examples{
+sample <- sampling_design() |> draw(n = 20) |> execute(bfa_eas, seed = 1)
+is_tbl_sample(sample)
+is_tbl_sample(bfa_eas)
+}
+\seealso{
+Other helpers:
+\code{\link[=as_tbl_sample]{as_tbl_sample()}},
+\code{\link[=bound]{bound()}},
+\code{\link[=get_design]{get_design()}},
+\code{\link[=get_stages_executed]{get_stages_executed()}},
+\code{\link[=is_sampling_design]{is_sampling_design()}},
+\code{\link{print.samplyr}},
+\code{\link[=serp]{serp()}}
+}
+\concept{helpers}

@@ -10,7 +10,10 @@ build_exante_digest(design, frame, call = rlang::caller_env())
 \item{design}{A complete \code{sampling_design} (a \code{draw()} at every
 stage).}
 
-\item{frame}{The sampling frame the design targets.}
+\item{frame}{The sampling frame the design targets: one data frame for a
+shared hierarchy, or an ordered list of stage registers, as \code{\link[=execute]{execute()}}
+takes them. Frames are read and checked with the same grammar
+\code{execute()} applies, so a frame this accepts is one execution accepts.}
 
 \item{call}{Environment reported as the error call.}
 }
@@ -39,7 +42,21 @@ The list structure of the returned digest is internal and
 versioned: it may change between samplyr releases, so extension
 packages should pin a minimum samplyr version.
 }
+\examples{
+design <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300)
+
+# Resolved from the frame alone: nothing is drawn, no seed is consumed
+digest <- build_exante_digest(design, bfa_eas)
+digest$status
+digest$stages[[1]]$scope
+}
 \seealso{
 \code{\link[=get_frame_digest]{get_frame_digest()}}, \code{\link[=frame_summary]{frame_summary()}}
+
+Other extension APIs:
+\code{\link{digest}},
+\code{\link[=get_frame_digest]{get_frame_digest()}}
 }
-\keyword{internal}
+\concept{extension APIs}

@@ -1,4 +1,4 @@
-#' Sampling Frames
+#' Sampling frames
 #'
 #' @description
 #' The samplyr package includes derived and synthetic sampling frames for
@@ -15,7 +15,7 @@
 #'   \item [ken_enterprises]: Establishment survey frame (Kenya, 17,004 establishments)
 #' }
 #'
-#' @section Auxiliary Data:
+#' @section Auxiliary data:
 #' \itemize{
 #'   \item [bfa_eas_variance]: Illustrative prior consumption variances for
 #'     Neyman allocation
@@ -23,11 +23,12 @@
 #' }
 #'
 #' @name samplyr-datasets
+#' @family datasets
 #' @keywords datasets
 NULL
 
 
-#' Burkina Faso Enumeration Areas
+#' Burkina Faso enumeration areas
 #'
 #' @description
 #' A derived enumeration area (EA) frame for household budget and
@@ -106,10 +107,11 @@ NULL
 #'   draw(n = 3, method = "pps_brewer", mos = households) |>
 #'   execute(bfa_eas, seed = 3)
 #'
+#' @family datasets
 "bfa_eas"
 
 
-#' Stratum Variances for Burkina Faso EAs
+#' Stratum variances for Burkina Faso EAs
 #'
 #' @description
 #' Illustrative prior variance of natural-log mean household consumption at EA
@@ -139,10 +141,11 @@ NULL
 #'   draw(n = 200) |>
 #'   execute(bfa_eas, seed = 2)
 #'
+#' @family datasets
 "bfa_eas_variance"
 
 
-#' Stratum Costs for Burkina Faso EAs
+#' Stratum costs for Burkina Faso EAs
 #'
 #' @description
 #' Mean synthetic relative fieldwork cost per EA by region for [bfa_eas]. Used
@@ -172,10 +175,11 @@ NULL
 #'   draw(n = 200) |>
 #'   execute(bfa_eas, seed = 1)
 #'
+#' @family datasets
 "bfa_eas_cost"
 
 
-#' Zimbabwe Enumeration Areas for Demographic, Health, and Child-Indicator Surveys
+#' Zimbabwe enumeration areas for demographic, health, and child-indicator surveys
 #'
 #' @description
 #' A derived enumeration area (EA) frame for two-stage demographic, health, and
@@ -224,11 +228,11 @@ NULL
 #' building-delimited areas rather than official census EAs, and the resulting
 #' counts should not be used as official small-area statistics.
 #'
-#' \preformatted{
+#' ```r
 #' # After stage 1 selection:
 #' listing <- selected[rep(seq_len(nrow(selected)), selected$households), ]
 #' listing$hh_id <- seq_len(nrow(listing))
-#' }
+#' ```
 #'
 #' @source
 #' \itemize{
@@ -274,10 +278,11 @@ NULL
 #' smpl <- execute(design, listing, seed = 1234)
 #' smpl
 #'
+#' @family datasets
 "zwe_eas"
 
 
-#' Synthetic Kenya Establishment Frame
+#' Synthetic Kenya establishment frame
 #'
 #' @description
 #' A synthetic establishment frame covering 47 counties, 6 regions, 7 sectors,
@@ -349,4 +354,5 @@ NULL
 #'   draw(frac = c(Small = 0.02, Medium = 0.10, Large = 0.50)) |>
 #'   execute(ken_enterprises, seed = 1960)
 #'
+#' @family datasets
 "ken_enterprises"

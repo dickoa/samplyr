@@ -1,4 +1,4 @@
-#' Convert Sampling Design to List
+#' Convert a sampling design to a list
 #'
 #' Converts a sampling design object to a plain list representation,
 #' useful for inspection, serialization, or export.
@@ -17,6 +17,7 @@
 #'
 #' as.list(design)
 #'
+#' @family serialization
 #' @export
 as.list.sampling_design <- function(x, ...) {
   rlang::check_dots_empty()
@@ -115,7 +116,7 @@ as.list.sampling_design <- function(x, ...) {
   result
 }
 
-# Design files -----------------------------------------------------------
+## Design files
 
 # On-disk format: a versioned JSON envelope.
 #
@@ -128,6 +129,13 @@ as.list.sampling_design <- function(x, ...) {
 #   "execution": { "seed": ..., "stages_executed": [...], ... },
 #   "tools": { "samplyr": {...} }
 # }
+#
+# One frame records "frame.fingerprint"; separately supplied stage frames
+# record "frame.fingerprints", an array in the order they were given.
+# "execution.frames" records how those frames were mapped to stages: the mode,
+# how many were supplied, their optional diagnostic labels, and the frame
+# position each executed stage drew from. A receipt without it came from one
+# frame, which is how files written before the field are read.
 #
 # Per-stratum values (n, frac, min_n, max_n, certainty_*, variance, cost,
 # cv, importance) use a natural, unambiguous JSON encoding:
@@ -142,7 +150,12 @@ as.list.sampling_design <- function(x, ...) {
 # namespaced samplyr/R metadata needed for exact reconstruction.
 
 design_format_id <- "samplyr/design"
-design_format_version <- 1L
+# The highest version this samplyr reads. Files are written at the lowest
+# version that carries their content without being misread: a reader that does
+# not know the frame-mode fields would replay a multi-register receipt against
+# one frame and get a different sample, so those files declare version 2, while
+# everything else stays readable by a version 1 reader.
+design_format_version <- 2L
 method_vocabulary_id <- "samplyr/common-sampling-method"
 method_vocabulary_version <- 1L
 
@@ -163,7 +176,7 @@ method_vocabulary_version <- 1L
 #' ## Lifecycle
 #'
 #' The serialization interface and its samplyr-native file format are
-#' experimental. They support samplyr persistence and replay; they are not a
+#' experimental. They support samplyr persistence and replay. They are not a
 #' finalized cross-tool survey-sampling interchange standard. The structure
 #' may change while that separate specification is developed.
 #'
@@ -193,9 +206,9 @@ method_vocabulary_version <- 1L
 #' reproducible when the same frame, compatible package implementations, and
 #' any recorded custom methods are available. Running
 #' `replay_design(read_design(path), frame)` then obtains the same
-#' `tbl_sample` -- the same rows in the same order, including `.panel` and
-#' `.replicate` assignments -- with only the execution timestamp differing.
-#' The sampled rows themselves are not stored; use a data format (CSV,
+#' `tbl_sample` (the same rows in the same order, including `.panel` and
+#' `.replicate` assignments) with only the execution timestamp differing.
+#' The sampled rows themselves are not stored. Use a data format (CSV,
 #' parquet) for those.
 #'
 #' Receipts describe one [execute()] call. A sample built by several
@@ -203,15 +216,23 @@ method_vocabulary_version <- 1L
 #' `chained` in the receipt and `write_design()` warns: replaying the
 #' final call alone cannot reproduce it, so save and replay each phase
 #' or stage batch separately. A sample whose rows or design columns were
-#' modified after execution is likewise flagged (`modified`); its
+#' modified after execution is likewise flagged (`modified`). Its
 #' receipt describes the original execution, not the modified object.
+#'
+#' The receipt also records how frames were mapped to stages: the frame
+#' mode, how many frames were supplied, their optional labels, and the
+#' frame position each executed stage drew from. This is what a
+#' `chained` receipt describes too, for its final call only, so the
+#' mapping never implies that a chained sample can be replayed. A
+#' receipt written before these fields existed is read as the one-frame
+#' call it can only have been.
 #'
 #' ## Control expressions
 #'
 #' `draw(control = ...)` expressions are stored as declarative JSON terms,
 #' not R code. Each term records an ordering type (`"ascending"`,
 #' `"descending"`, or `"serpentine"`) and its variables. Only bare column
-#' names, `dplyr::desc()`, and [serp()] can be represented;
+#' names, `dplyr::desc()`, and [serp()] can be represented.
 #' `write_design()` errors on anything else.
 #'
 #' ## Declarative and implementation metadata
@@ -227,17 +248,27 @@ method_vocabulary_version <- 1L
 #'   saved along with an execution receipt).
 #' @param path File path to write to. Conventionally with a `.json`
 #'   extension.
-#' @param frame Optional sampling frame (data frame). When supplied, a
-#'   fingerprint of the frame (name, dimensions, column types, content
-#'   hash) is stored so the frame can be verified later. The frame data is
-#'   never written. The content hash covers column names, column values,
-#'   and row order; it does not depend on the class of the data frame
-#'   (tibble or data frame) or on the order of its columns.
+#' @param frame Optional sampling frame. A data frame is the one frame
+#'   the design was built against. An ordered list of data frames is the
+#'   stage registers, in the order [execute()] received them, and each
+#'   is fingerprinted separately. One frame written as a one-element list
+#'   is still one frame and is recorded identically. The number of frames
+#'   must be one the design could be executed with, and for an executed
+#'   sample must be the number its receipt records, so a file cannot say
+#'   it was drawn from one frame and carry fingerprints for three. When
+#'   supplied, a fingerprint (name,
+#'   dimensions, column types, content hash) is stored so the frame can
+#'   be verified later. The frame data is never written. The content
+#'   hash covers column names, column values, and row order. It does not
+#'   depend on the class of the data frame (tibble or data frame) or on
+#'   the order of its columns.
+#' @param ... These dots are for future extensions and must be empty.
+#'   `pretty` follows `...`, so it is matched exactly and must be named.
 #' @param pretty Whether to pretty-print the JSON. Defaults to `TRUE` for
 #'   files and `FALSE` for [design_json()].
 #'
 #' @return `write_design()` returns `x` invisibly. `read_design()` returns
-#'   a `sampling_design`; any frame information and execution receipt in
+#'   a `sampling_design`. Any frame information and execution receipt in
 #'   the file are attached as the `"frame_info"` and `"execution"`
 #'   attributes.
 #'
@@ -270,12 +301,14 @@ method_vocabulary_version <- 1L
 #'   [design_json()] for in-memory JSON, [validate_frame()] for
 #'   checking a frame against a design, [get_design()] for extracting the
 #'   design from a sample.
+#' @family serialization
 #' @export
-write_design <- function(x, path, frame = NULL, pretty = TRUE) {
+write_design <- function(x, path, frame = NULL, ..., pretty = TRUE) {
+  check_keyword_args(enquos(...), "pretty")
   if (!is_character(path) || length(path) != 1) {
     cli_abort("{.arg path} must be a single file path")
   }
-  frame_label <- frame_arg_label(enquo(frame))
+  frame_label <- frame_label_for(enquo(frame), frame)
   json <- build_design_json(
     x,
     frame = frame,
@@ -312,9 +345,11 @@ write_design <- function(x, path, frame = NULL, pretty = TRUE) {
 #'   execute(design, bfa_eas, seed = 7)$ea_id
 #' )
 #' @seealso [write_design()], [read_design()]
+#' @family serialization
 #' @export
-design_json <- function(x, frame = NULL, pretty = FALSE) {
-  frame_label <- frame_arg_label(enquo(frame))
+design_json <- function(x, frame = NULL, ..., pretty = FALSE) {
+  check_keyword_args(enquos(...), "pretty")
+  frame_label <- frame_label_for(enquo(frame), frame)
   build_design_json(
     x,
     frame = frame,
@@ -392,15 +427,25 @@ read_design <- function(file) {
 #' When the design was saved with a frame fingerprint, `frame` is
 #' compared against it before replaying. A differing frame still yields
 #' a valid sample, but not the recorded one, so the default is to error.
-#' After replaying, the row count is checked against the receipt's
+#' Several frames are compared one by one and reported by position and
+#' recorded label, so a mismatch names the register that moved. After
+#' replaying, the row count is checked against the receipt's
 #' `n_selected` as a final consistency check.
+#'
+#' A sample drawn from one register per stage is replayed by passing
+#' those registers back as a list, in the same order. The receipt
+#' records how many frames the call was given, so supplying the wrong
+#' number is `samplyr_error_replay_frame_count` rather than a sample
+#' drawn from the wrong pools.
 #'
 #' @param x A `sampling_design` carrying an execution receipt, as
 #'   returned by [read_design()] for a file written from a
 #'   `tbl_sample`. A `tbl_sample` is also accepted and is replayed from
 #'   its own metadata, which is useful for verifying reproducibility
 #'   without a file round trip.
-#' @param frame The sampling frame the receipt refers to.
+#' @param frame The sampling frame the receipt refers to: a data frame
+#'   for a one-frame call, or the ordered list of stage frames for a
+#'   call that supplied one register per stage.
 #' @param fingerprint How to respond when `frame` differs from the
 #'   fingerprint stored in the design file: `"error"` (default), `"warn"`,
 #'   `"inform"`, or `"ignore"`.
@@ -420,10 +465,27 @@ read_design <- function(file) {
 #' identical(replayed$ea_id, sample$ea_id)
 #' identical(replayed$.panel, sample$.panel)
 #'
+#' # One register per stage replays from the same ordered list
+#' regions <- dplyr::distinct(bfa_eas, region)
+#' two_stage <- sampling_design() |>
+#'   add_stage(label = "Regions") |>
+#'     cluster_by(region) |>
+#'     draw(n = 3) |>
+#'   add_stage(label = "EAs") |>
+#'     draw(n = 5)
+#'
+#' registers <- execute(two_stage, regions, bfa_eas, seed = 4)
+#' write_design(registers, path, frame = list(regions, bfa_eas))
+#' identical(
+#'   replay_design(read_design(path), list(regions, bfa_eas))$ea_id,
+#'   registers$ea_id
+#' )
+#'
 #' unlink(path)
 #' @seealso [write_design()] and [read_design()] for the receipt
 #'   round trip, [validate_frame()] for checking a frame against a
 #'   design before executing.
+#' @family serialization
 #' @export
 replay_design <- function(
   x,
@@ -435,11 +497,15 @@ replay_design <- function(
   if (is_tbl_sample(x)) {
     design <- get_design(x)
     receipt <- encode_execution(x)
+    frame_record <- get_frame_schedule(x)
     frame_info <- NULL
     execution_environment <- attr(x, "metadata")$execution_environment
   } else if (is_sampling_design(x)) {
     design <- x
     receipt <- attr(x, "execution")
+    frame_record <- frame_record_or_default(
+      receipt$frames, as.integer(unlist(receipt$stages_executed))
+    )
     frame_info <- attr(x, "frame_info")
     execution_environment <- attr(
       x,
@@ -491,12 +557,14 @@ replay_design <- function(
   check_replay_custom_methods(design)
   check_replay_environment(execution_environment)
 
-  fp <- frame_info$fingerprint
-  if (!is_null(fp) && !identical(fingerprint, "ignore")) {
-    diffs <- fingerprint_differences(fp, frame)
+  frames <- normalize_replay_frames(frame_record, frame)
+
+  if (!identical(fingerprint, "ignore")) {
+    diffs <- fingerprint_diffs(frame_info, frames)
     if (length(diffs) > 0) {
       msg <- c(
-        "{.arg frame} differs from the frame recorded with the design:",
+        "{.arg frame} differs from the
+         {cli::qty(length(frames))}frame{?s} recorded with the design:",
         setNames(diffs, rep("*", length(diffs))),
         "i" = "The replay yields a valid sample from this frame, but
                not the recorded one."
@@ -529,7 +597,7 @@ replay_design <- function(
     execution_environment$rng,
     execute(
       design,
-      frame,
+      frames,
       stages = stages,
       seed = as.integer(seed),
       panels = panels,
@@ -547,6 +615,36 @@ replay_design <- function(
   }
 
   result
+}
+
+#' Require the replay to supply the frames the recorded call was given
+#'
+#' A receipt from separately supplied registers cannot be replayed against one
+#' frame: the stages would all draw from it and select different units. The
+#' count is checked before any fingerprint so the caller learns the shape is
+#' wrong rather than that three frames' worth of content disagrees.
+#' @noRd
+normalize_replay_frames <- function(record, frame, call = caller_env()) {
+  frames <- as_frame_list(frame, call = call)
+  if (length(frames) == record$n_supplied) {
+    return(frames)
+  }
+  abort_samplyr(
+    c(
+      "The receipt records {record$n_supplied} supplied frame{?s};
+       {length(frames)} {?was/were} given.",
+      "x" = "Frames map to stages by position, so replay needs the same
+             frames in the same order.",
+      if (identical(record$mode, "separate_frames")) c(
+        "i" = "This sample was drawn from one register per stage:
+               {.code replay_design(x, list(<frame 1>, ...))}."
+      ) else c(
+        "i" = "This sample was drawn from one frame covering every stage."
+      )
+    ),
+    class = "samplyr_error_replay_frame_count",
+    call = call
+  )
 }
 
 #' Verify that registered methods required by a restored design are present
@@ -714,7 +812,7 @@ with_replay_rng <- function(rng, code, call = caller_env()) {
   force(code)
 }
 
-# Encoding ----------------------------------------------------------------
+## Encoding
 
 #' @noRd
 build_design_json <- function(x, frame, frame_label, pretty, call = caller_env()) {
@@ -791,9 +889,20 @@ design_payload <- function(
   }
   validate_sampling_design(design, call = call)
   check_controls_serializable(design, call = call)
+
+  # Fingerprints record which frames the design was written against. A count
+  # the design could not have been executed with, or one contradicting the
+  # receipt of a sample that already was, describes a call that never
+  # happened. Refused here so the contradictory file is never created.
+  if (!is_null(frame)) {
+    supplied <- normalize_frame_input(frame, call = call)
+    check_serialization_frame_count(
+      x, design, supplied$n_supplied, call = call
+    )
+  }
   if (
     is_tbl_sample(x) && is_null(frame) &&
-      is_null(attr(design, "portable_frame_info")$fingerprint)
+      is_null(recorded_fingerprints(attr(design, "portable_frame_info")))
   ) {
     cli_warn(c(
       "{.arg x} is being saved without a frame fingerprint.",
@@ -817,6 +926,7 @@ design_payload <- function(
   )
   payload$frame <- encode_frame_info(design, frame, frame_label)
   payload$execution <- execution
+  payload$format_version <- required_format_version(payload)
   payload$tools <- attr(design, "design_tools") %||% list()
   payload$tools$samplyr <- encode_samplyr_metadata(
     design,
@@ -827,7 +937,25 @@ design_payload <- function(
   payload
 }
 
-# Sampling method vocabulary -----------------------------------------------
+#' The lowest format version that cannot be misread
+#'
+#' Additive fields alone do not justify a bump: an older reader ignores them
+#' and loses only detail. These two do, because an older reader would take a
+#' multi-register file for a one-frame file and replay it against a single
+#' frame, producing a different sample without saying so.
+#' @noRd
+required_format_version <- function(payload) {
+  if (
+    !is_null(payload$frame[["fingerprints"]]) ||
+      identical(payload$execution$frames$mode, "separate_frames")
+  ) {
+    2L
+  } else {
+    1L
+  }
+}
+
+## Sampling method vocabulary
 
 # The common identifiers are intentionally implementation-neutral. DDI's
 # Sampling Procedure vocabulary supplies the broader standard classification;
@@ -1095,7 +1223,7 @@ encode_value <- function(x) {
   I(x)
 }
 
-# Control expressions ------------------------------------------------------
+## Control expressions
 
 #' @noRd
 check_controls_serializable <- function(design, call = caller_env()) {
@@ -1235,7 +1363,7 @@ control_eval_env <- function() {
   )
 }
 
-# Frame information --------------------------------------------------------
+## Frame information
 
 #' @noRd
 frame_arg_label <- function(frame_quo) {
@@ -1243,6 +1371,58 @@ frame_arg_label <- function(frame_quo) {
     return(NULL)
   }
   as_label(frame_quo)
+}
+
+#' The label, or labels, of whatever shape `frame` was given in
+#'
+#' The expression is read before `frame` is looked at: forcing the argument
+#' first leaves `enquo()` with the value rather than the call that produced it,
+#' and every label would be lost.
+#' @noRd
+frame_label_for <- function(frame_quo, frame) {
+  expr <- quo_get_expr(frame_quo)
+  if (is_null(frame) || is.data.frame(frame)) {
+    if (is_null(expr)) {
+      return(NULL)
+    }
+    return(as_label(expr))
+  }
+  frame_arg_labels(expr, frame)
+}
+
+#' One diagnostic label per supplied frame
+#'
+#' Labels are presentation only, so they are taken wherever they read best:
+#' the list's own names first, then the expression each element was written as,
+#' which is usually the register's variable name.
+#' @noRd
+frame_arg_labels <- function(expr, frames) {
+  n <- length(frames)
+  labels <- names(frames) %||% rep("", n)
+  if (
+    is.call(expr) && is.symbol(expr[[1]]) &&
+      identical(as.character(expr[[1]]), "list") && length(expr) == n + 1L
+  ) {
+    args <- as.list(expr)[-1]
+    arg_names <- names(args) %||% rep("", n)
+    for (i in seq_len(n)) {
+      if (!nzchar(labels[i])) {
+        labels[i] <- if (nzchar(arg_names[i])) {
+          arg_names[i]
+        } else {
+          as_label(args[[i]])
+        }
+      }
+    }
+  }
+  labels[!nzchar(labels)] <- NA_character_
+  labels
+}
+
+#' A data frame is one frame; a list is the ordered stage frames
+#' @noRd
+as_frame_list <- function(frame, call = caller_env()) {
+  normalize_frame_input(frame, call = call)$frames
 }
 
 #' @noRd
@@ -1253,10 +1433,15 @@ encode_frame_info <- function(design, frame, frame_label) {
   }
   info <- list(required_variables = design_requirements(design))
   if (!is_null(frame)) {
-    if (!is.data.frame(frame)) {
-      cli_abort("{.arg frame} must be a data frame")
+    frames <- as_frame_list(frame)
+    # Cardinality, not the caller's container: one frame written as
+    # `list(frame)` is still one frame, and the plural field would otherwise
+    # force format version 2 on a file any version 1 reader can read.
+    if (length(frames) == 1L) {
+      info$fingerprint <- portable_frame_fingerprint(frames[[1]])
+    } else {
+      info$fingerprints <- lapply(frames, portable_frame_fingerprint)
     }
-    info$fingerprint <- portable_frame_fingerprint(frame)
   }
   info
 }
@@ -1284,7 +1469,16 @@ encode_samplyr_metadata <- function(
     )
   )
   if (!is_null(frame)) {
-    out$frame <- samplyr_frame_fingerprint(frame, frame_label)
+    # Same rule as encode_frame_info(): one supplied frame has one
+    # representation, whichever container the caller wrote it in.
+    frames <- as_frame_list(frame)
+    out$frame <- if (length(frames) == 1L) {
+      samplyr_frame_fingerprint(frames[[1]], frame_label[1])
+    } else {
+      list(frames = lapply(seq_along(frames), function(i) {
+        samplyr_frame_fingerprint(frames[[i]], frame_label[i])
+      }))
+    }
   } else {
     out$frame <- attr(design, "design_tools")$samplyr$frame
   }
@@ -1371,7 +1565,7 @@ portable_column_type <- function(x) {
 #' @noRd
 samplyr_frame_fingerprint <- function(frame, frame_label) {
   out <- list()
-  if (!is_null(frame_label)) {
+  if (!is_null(frame_label) && !is.na(frame_label)) {
     out$source <- list(kind = "r_expression", value = frame_label)
   }
   out$columns <- lapply(names(frame), function(col) {
@@ -1409,7 +1603,7 @@ frame_content_hash <- function(frame, columns = NULL) {
   rlang::hash(cols)
 }
 
-# Execution receipts -------------------------------------------------------
+## Execution receipts
 
 #' @noRd
 encode_execution <- function(sample) {
@@ -1432,6 +1626,11 @@ encode_execution <- function(sample) {
   if (!is_null(meta$panels)) {
     receipt$panels <- as.integer(meta$panels)
   }
+  receipt$frames <- encode_frame_schedule(
+    frame_record_or_default(
+      meta$frame_schedule, get_stages_executed(sample)
+    )
+  )
   # A sample produced by more than one execute() call (stage
   # continuation or multi-phase) cannot be reproduced by replaying the
   # final call alone; the receipt records only that call.
@@ -1451,6 +1650,47 @@ encode_execution <- function(sample) {
     receipt$frame_digest <- digest
   }
   receipt
+}
+
+#' How the recorded call mapped frames to stages
+#'
+#' Written for every executed sample so a reader never has to infer the mapping,
+#' though a receipt without it is read as the one-frame call it can only have
+#' been.
+#' @noRd
+encode_frame_schedule <- function(record) {
+  out <- list(
+    mode = record$mode,
+    count = as.integer(record$n_supplied),
+    stages = I(as.integer(record$stages)),
+    stage_frame_index = I(as.integer(record$stage_frame_index))
+  )
+  if (!is_null(record$labels)) {
+    out$labels <- I(as.character(record$labels))
+  }
+  out
+}
+
+#' @noRd
+decode_frame_schedule <- function(x) {
+  if (is_null(x)) {
+    return(NULL)
+  }
+  labels <- NULL
+  if (!is_null(x$labels)) {
+    labels <- vapply(
+      x$labels,
+      function(l) if (is_null(l)) NA_character_ else as.character(l)[1],
+      character(1)
+    )
+  }
+  list(
+    mode = decode_chr(x$mode),
+    n_supplied = as.integer(x$count),
+    labels = labels,
+    stages = as.integer(unlist(x$stages)),
+    stage_frame_index = as.integer(unlist(x$stage_frame_index))
+  )
 }
 
 #' Decode a frame digest read back from a design file
@@ -1601,7 +1841,7 @@ decode_digest_table <- function(rows, spec) {
   as.data.frame(out, check.names = FALSE)
 }
 
-# Decoding ----------------------------------------------------------------
+## Decoding
 
 #' @noRd
 decode_design_payload <- function(payload, call = caller_env()) {
@@ -1683,6 +1923,7 @@ decode_design_payload <- function(payload, call = caller_env()) {
       }
     )
   }
+  execution$frames <- decode_frame_schedule(execution$frames)
   attr(design, "execution") <- execution
   design
 }
@@ -1847,10 +2088,32 @@ decode_frame_info <- function(
   frame,
   tool_frame = NULL
 ) {
-  if (is_null(frame$fingerprint)) {
+  if (!is_null(frame[["fingerprints"]])) {
+    tool_frames <- tool_frame$frames %||% list()
+    return(list(
+      required_variables = frame$required_variables,
+      fingerprints = lapply(seq_along(frame[["fingerprints"]]), function(i) {
+        decode_frame_fingerprint(
+          frame[["fingerprints"]][[i]],
+          if (length(tool_frames) >= i) tool_frames[[i]] else NULL
+        )
+      })
+    ))
+  }
+  if (is_null(frame[["fingerprint"]])) {
     return(frame)
   }
-  portable <- frame$fingerprint
+  list(
+    required_variables = frame$required_variables,
+    fingerprint = decode_frame_fingerprint(frame[["fingerprint"]], tool_frame)
+  )
+}
+
+#' @noRd
+decode_frame_fingerprint <- function(
+  portable,
+  tool_frame = NULL
+) {
   tool_columns <- tool_frame$columns %||% list()
   class_by_name <- setNames(
     lapply(tool_columns, function(x) decode_chr(x$class)),
@@ -1877,10 +2140,7 @@ decode_frame_info <- function(
   if (!is_null(hash$value)) {
     fingerprint$hash <- decode_chr(hash$value)
   }
-  list(
-    required_variables = frame$required_variables,
-    fingerprint = fingerprint
-  )
+  fingerprint
 }
 
 #' @noRd

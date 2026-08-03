@@ -360,7 +360,7 @@ test_that("summary() shows WR label for custom WR method", {
   expect_true(any(grepl("with replacement", out)))
 })
 
-# --- Random-size custom WOR methods (fixed_size = FALSE) ---
+## Random-size custom WOR methods (fixed_size = FALSE)
 
 # Poisson-type selection: independent Bernoulli trials against pik
 toy_random_wor_fn <- function(pik, n = NULL, prn = NULL, ...) {
@@ -436,7 +436,7 @@ test_that("custom random-size WOR supports the subbootstrap escape hatch", {
   expect_s3_class(rep_design, "svyrep.design")
 })
 
-# --- Custom balanced (cube-like) methods, type = "balanced" ---
+## Custom balanced (cube-like) methods, type = "balanced"
 
 # Delegates to the default cube algorithm; same RNG path as built-in
 toy_balanced_fn <- function(pik, aux = NULL, ...) {
@@ -693,7 +693,7 @@ test_that("frac > 1 follows the declared type, not the method name", {
   expect_gt(nrow(s_builtin), nrow(custom_frame))
 })
 
-# --- Declared variance_family (sondage register_method) ---
+## Declared variance_family (sondage register_method)
 
 test_that("draw() carries a declared variance_family into the draw_spec", {
   on.exit(sondage::unregister_method("test_pois"), add = TRUE)

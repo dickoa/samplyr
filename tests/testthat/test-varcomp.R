@@ -194,7 +194,7 @@ test_that("certainty PSUs are refused with a precise message", {
   expect_error(varcomp(s, ~y), class = "samplyr_error_varcomp_certainty")
 })
 
-test_that("capped PPS certainty is refused without an explicit flag", {
+test_that("capped PPS certainty is refused like explicit certainty", {
   frame <- varcomp_frame(n_clusters = 12)
   frame$size <- rep(c(1000, rep(1, 11)), each = 5)
   s <- sampling_design() |>
@@ -203,9 +203,12 @@ test_that("capped PPS certainty is refused without an explicit flag", {
     add_stage() |> draw(n = 3) |>
     execute(frame, seed = 92)
 
+  # The dominant cluster is capped at probability one by the PPS
+  # calculation, with no threshold supplied. It is a certainty PSU, and
+  # the flag records it the same way it records an explicit rule.
   dominant <- s$cl == "c01"
   expect_true(any(dominant))
-  expect_false(any(s$.certainty_1[dominant]))
+  expect_true(all(s$.certainty_1[dominant]))
   expect_identical(unique(s$.weight_1[dominant]), 1)
   expect_error(
     varcomp(s, ~y),
@@ -213,7 +216,11 @@ test_that("capped PPS certainty is refused without an explicit flag", {
   )
 })
 
-test_that("a stage-1 weight within certainty tolerance is refused", {
+test_that("a probability just below one is not certainty", {
+  # Certainty is an exactness test. A design can legitimately place a PSU at
+  # pi = 1 - 7.45e-9, and that is a probability PSU with a real (if tiny)
+  # between-PSU contribution, not a self-representing one. The decomposition
+  # stays numerically stable there, so varcomp proceeds rather than refusing.
   tol <- sqrt(.Machine$double.eps)
   target_pi <- 1 - tol / 2
   n_clusters <- 24L
@@ -235,10 +242,11 @@ test_that("a stage-1 weight within certainty tolerance is refused", {
   expect_length(dominant_weight, 1L)
   expect_lte(abs(dominant_weight - 1), tol)
   expect_gt(abs(dominant_weight - 1), 0)
-  expect_error(
-    varcomp(s, ~y),
-    class = "samplyr_error_varcomp_certainty"
-  )
+
+  expect_false(any(s$.certainty_1))
+  components <- varcomp(s, ~y)
+  expect_true(all(is.finite(unlist(components[c("varb", "varw", "icc")]))))
+  expect_gt(components$varb, 0)
 })
 
 test_that("modified, two-phase, and unclustered samples are refused", {

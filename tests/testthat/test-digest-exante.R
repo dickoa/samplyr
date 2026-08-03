@@ -180,12 +180,19 @@ test_that("realization-dependent designs are refused", {
     class = "samplyr_error_exante_unsupported"
   )
 
+  # An unclustered non-final stage has no identity to link stage 2 to, so
+  # the design cannot be executed at all. The preview refuses it with the
+  # class execution refuses it with, not a preview-specific reason.
   element_parent <- sampling_design() |>
     add_stage() |> draw(n = 50) |>
     add_stage() |> draw(n = 10)
   expect_error(
     samplyr::build_exante_digest(element_parent, test_frame),
-    class = "samplyr_error_exante_unsupported"
+    class = "samplyr_error_stage_parent_id"
+  )
+  expect_error(
+    execute(element_parent, test_frame, seed = 1),
+    class = "samplyr_error_stage_parent_id"
   )
 
   expect_error(
@@ -237,7 +244,8 @@ test_that("the synthetic three-stage design resolves ex-ante", {
 
   # The executed digest's universe expansion resolves the same
   # chances the ex-ante digest resolves.
-  s <- design |> execute(frame, seed = 7)
+  # Same capped stage-3 pool as the executed-digest fixture.
+  s <- suppressWarnings(design |> execute(frame, seed = 7))
   ed <- samplyr::get_frame_digest(s)
   expect_equal(
     sort(d$stages[[2]]$units$chance),
@@ -291,4 +299,294 @@ test_that("the ex-ante digest records the probabilities tier", {
   d <- samplyr::build_exante_digest(design, test_frame)
   expect_identical(d$stages[[1]]$probabilities, "approximate")
   expect_identical(d$stages[[2]]$probabilities, "exact")
+})
+
+## frame_summary(design, frame): the ex-ante preview
+
+test_that("a preview reports what the design would do, without drawing", {
+  design <- exante_two_stage()
+  preview <- frame_summary(design, test_frame, detail = "stage")
+  recorded <- frame_summary(
+    execute(design, test_frame, seed = 8), detail = "stage"
+  )
+
+  expect_s3_class(preview, "tbl_df")
+  expect_identical(names(preview), names(recorded))
+  expect_identical(vapply(preview, class, character(1)),
+                   vapply(recorded, class, character(1)))
+  expect_equal(preview$N, recorded$N)
+  expect_equal(preview$n_target, recorded$n_target)
+  expect_equal(preview$n_expected, recorded$n_expected)
+
+  # No realization exists, so these are NA rather than a measured zero.
+  expect_true(all(is.na(preview$n_realized)))
+  expect_true(all(is.na(preview$take_rate)))
+  expect_false(anyNA(recorded$n_realized))
+
+  # The same holds at the other two detail levels, and the shapes still
+  # match the recorded report column for column.
+  pool_preview <- frame_summary(design, test_frame, detail = "pool")
+  pool_recorded <- frame_summary(
+    execute(design, test_frame, seed = 8), detail = "pool"
+  )
+  expect_identical(names(pool_preview), names(pool_recorded))
+  expect_true(all(is.na(pool_preview$n_realized)))
+  expect_true(all(is.na(pool_preview$take_rate)))
+  expect_false(anyNA(pool_recorded$n_realized))
+
+  unit_preview <- frame_summary(design, test_frame, detail = "unit")
+  unit_recorded <- frame_summary(
+    execute(design, test_frame, seed = 8), detail = "unit"
+  )
+  expect_identical(names(unit_preview), names(unit_recorded))
+  expect_true(nrow(unit_preview) > 0)
+  expect_true(all(is.na(unit_preview$is_selected)))
+  expect_true(all(is.na(unit_preview$n_hits)))
+  expect_false(anyNA(unit_recorded$is_selected))
+})
+
+test_that("a preview draws nothing and leaves the RNG alone", {
+  design <- exante_two_stage()
+
+  # No withr::with_seed() here: it restores the stream and would hide an
+  # advance. The seed is read directly before and after.
+  set.seed(99)
+  invisible(stats::runif(1))
+  before <- .Random.seed
+  invisible(frame_summary(design, test_frame, detail = "pool"))
+  expect_identical(before, .Random.seed)
+
+  # And when no seed existed at all, none is created.
+  if (exists(".Random.seed", envir = globalenv())) {
+    rm(".Random.seed", envir = globalenv())
+  }
+  invisible(frame_summary(design, test_frame, detail = "pool"))
+  expect_false(exists(".Random.seed", envir = globalenv()))
+
+  # The inputs are left as they were.
+  frame_before <- test_frame
+  design_before <- design
+  invisible(frame_summary(design, test_frame))
+  expect_identical(frame_before, test_frame)
+  expect_identical(design_before, design)
+})
+
+test_that("a multistage stage row is the expected size, not the candidate total", {
+  frame <- data.frame(
+    cl = rep(sprintf("c%03d", seq_len(100)), each = 20),
+    id = seq_len(2000)
+  )
+  design <- sampling_design() |>
+    cluster_by(cl) |>
+    draw(n = 10) |>
+    add_stage() |>
+    draw(n = 5)
+
+  preview <- frame_summary(design, frame, detail = "stage")
+  sample <- execute(design, frame, seed = 1)
+
+  # 10 of 100 clusters, 5 each. Every candidate parent has a pool, so the
+  # unweighted total would be 500; the design draws 50.
+  expect_identical(preview$n_pools, c(1L, 100L))
+  expect_equal(preview$n_target, c(10, 50))
+  expect_equal(preview$N, c(100, 200))
+  expect_identical(nrow(sample), 50L)
+  expect_equal(preview$n_target, frame_summary(sample, detail = "stage")$n_target)
+
+  # The per-pool table stays conditional on the parent: what a selected
+  # cluster would give, which is what field planning needs.
+  pools <- frame_summary(design, frame, detail = "pool")
+  expect_identical(nrow(pools[pools$stage == 2, ]), 100L)
+  expect_equal(unique(pools$n_target[pools$stage == 2]), 5)
+})
+
+test_that("the preview weights three stages through the ancestry", {
+  frame <- data.frame(
+    cl = rep(sprintf("c%03d", seq_len(100)), each = 20),
+    hh = rep(sprintf("h%04d", seq_len(400)), each = 5),
+    id = seq_len(2000)
+  )
+  design <- sampling_design() |>
+    cluster_by(cl) |> draw(n = 10) |>
+    add_stage() |> cluster_by(hh) |> draw(n = 2) |>
+    add_stage() |> draw(n = 3)
+
+  preview <- frame_summary(design, frame, detail = "stage")
+  # 0.1 * 0.5 * 1200 candidate takes = 60.
+  expect_equal(preview$n_target, c(10, 20, 60))
+  expect_identical(nrow(execute(design, frame, seed = 5)), 60L)
+})
+
+test_that("the preview cannot accept a frame execute() refuses", {
+  # The preview is a third preflight; it must apply the same executable
+  # layer as execute() and validate_frame(), or it does not describe what
+  # execution would do.
+  design <- sampling_design() |> draw(n = 1)
+
+  duplicated_names <- data.frame(a = 1:3, b = 4:6)
+  names(duplicated_names) <- c("a", "a")
+  reserved <- data.frame(a = 1:3, .weight = 1)
+  stripped <- execute(
+    sampling_design() |> draw(n = 2), data.frame(a = 1:10), seed = 1
+  )
+  class(stripped) <- c("tbl_df", "tbl", "data.frame")
+
+  cases <- list(
+    samplyr_error_frame_duplicate_names = duplicated_names,
+    samplyr_error_frame_reserved_names = reserved,
+    samplyr_error_stripped_sample_frame = stripped
+  )
+  for (class in names(cases)) {
+    expect_error(frame_summary(design, cases[[class]]), class = class)
+    expect_error(
+      samplyr::build_exante_digest(design, cases[[class]]), class = class
+    )
+    expect_error(execute(design, cases[[class]], seed = 1), class = class)
+  }
+
+  # An intact previous-phase sample is a legitimate frame, not a stripped
+  # one, and still previews.
+  phase1 <- execute(sampling_design() |> draw(n = 8), test_frame, seed = 1)
+  expect_s3_class(
+    frame_summary(sampling_design() |> draw(n = 2), phase1), "tbl_df"
+  )
+})
+
+test_that("each stage records the frame it would select from", {
+  # Hardcoding frame_ref = 1 made a three-register digest claim every stage
+  # read the first register, while carrying three frame records.
+  registers <- list(mf_schools(), mf_classes(), mf_students())
+  digest <- samplyr::build_exante_digest(mf_design(), registers)
+
+  expect_length(digest$frames, 3L)
+  expect_identical(
+    vapply(digest$stages, `[[`, integer(1), "frame_ref"), 1:3
+  )
+  expect_identical(
+    vapply(digest$frames, `[[`, integer(1), "n_rows"),
+    vapply(registers, nrow, integer(1))
+  )
+  # Each stage's referenced record is the register it was given.
+  for (k in seq_along(digest$stages)) {
+    ref <- digest$stages[[k]]$frame_ref
+    expect_identical(digest$frames[[ref]]$n_rows, nrow(registers[[k]]))
+  }
+
+  # Row counts alone cannot tell the register apart from the linked frame the
+  # stage selects from, because linking carries columns without changing the
+  # count. The record is the register as supplied, so its fingerprint is the
+  # register's.
+  expect_identical(
+    vapply(digest$frames, `[[`, character(1), "fingerprint_exact"),
+    vapply(registers, samplyr:::frame_content_hash, character(1))
+  )
+
+  # The executed digest agrees, which is what makes the two comparable.
+  executed <- get_frame_digest(
+    execute(mf_design(), mf_schools(), mf_classes(), mf_students(), seed = 7)
+  )
+  expect_identical(
+    vapply(executed$stages, `[[`, integer(1), "frame_ref"),
+    vapply(digest$stages, `[[`, integer(1), "frame_ref")
+  )
+  # fingerprint_exact is the key a continuation merges registries on, so the
+  # two digests describing one set of registers must agree on it, and on the
+  # roles read off those registers.
+  expect_identical(
+    vapply(digest$frames, `[[`, character(1), "fingerprint_exact"),
+    vapply(executed$frames, `[[`, character(1), "fingerprint_exact")
+  )
+  expect_identical(
+    lapply(digest$frames, `[[`, "roles"),
+    lapply(executed$frames, `[[`, "roles")
+  )
+
+  # One shared hierarchy is one record, referenced by every stage. The three
+  # stages read the same supplied table, so deduplication must still collapse
+  # them even though their linked frames differ.
+  hierarchy <- mf_hierarchy()
+  shared <- samplyr::build_exante_digest(mf_design(), hierarchy)
+  expect_length(shared$frames, 1L)
+  expect_identical(
+    vapply(shared$stages, `[[`, integer(1), "frame_ref"), rep(1L, 3)
+  )
+  expect_identical(
+    shared$frames[[1]]$fingerprint_exact,
+    samplyr:::frame_content_hash(hierarchy)
+  )
+  expect_identical(
+    shared$frames[[1]]$fingerprint_exact,
+    get_frame_digest(
+      execute(mf_design(), hierarchy, seed = 7)
+    )$frames[[1]]$fingerprint_exact
+  )
+})
+
+test_that("the preview takes registers as well as one hierarchy", {
+  design <- exante_two_stage()
+  hierarchy <- frame_summary(design, test_frame, detail = "stage")
+  listed <- frame_summary(design, list(test_frame), detail = "stage")
+  expect_identical(as.data.frame(hierarchy), as.data.frame(listed))
+
+  # A genuine one-register-per-stage list, not the singleton spelling of a
+  # shared hierarchy: the two must agree pool for pool.
+  registers <- frame_summary(
+    mf_design(), list(mf_schools(), mf_classes(), mf_students()),
+    detail = "pool"
+  )
+  shared <- frame_summary(mf_design(), mf_hierarchy(), detail = "pool")
+  expect_identical(as.data.frame(registers), as.data.frame(shared))
+
+  # The frame grammar is the shared one.
+  expect_error(
+    frame_summary(design, list()),
+    class = "samplyr_error_frame_count"
+  )
+  expect_error(
+    frame_summary(design, list(test_frame, 42)),
+    class = "samplyr_error_frame_not_data_frame"
+  )
+})
+
+test_that("frame decides preview, whatever x already carries", {
+  design <- exante_two_stage()
+  sample <- execute(design, test_frame, seed = 8)
+
+  # An executed sample previewed against a frame reports expectations.
+  expect_true(all(is.na(frame_summary(sample, test_frame)$n_realized)))
+  # Without a frame it reports what happened.
+  expect_false(anyNA(frame_summary(sample)$n_realized))
+
+  # An unexecuted design without a frame still says it has no digest, and
+  # now says what to do about it.
+  bare <- sampling_design() |> draw(n = 5)
+  err <- expect_error(frame_summary(bare), class = "samplyr_error_no_digest")
+  expect_match(cli::ansi_strip(conditionMessage(err)), "frame")
+})
+
+test_that("capped agrees between the preview and the execution", {
+  # n_expected and n_target are computed by different paths and differ in
+  # the last bits; an exact `<` reported one Neyman stratum as capped in
+  # the preview and not in the execution.
+  # This is the reproduction: Neyman over bfa_eas leaves n_expected and
+  # n_target differing by ~7e-15 in the "Est" stratum, which an exact `<`
+  # called capped in the preview and not capped in the execution.
+  design <- sampling_design() |>
+    stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
+    draw(n = 300)
+  preview <- frame_summary(design, bfa_eas, detail = "pool")
+  recorded <- frame_summary(
+    execute(design, bfa_eas, seed = 3), detail = "pool"
+  )
+  expect_identical(preview$capped, recorded$capped)
+  expect_false(any(preview$capped))
+
+  # A pool that genuinely cannot supply its target is still reported.
+  short <- data.frame(stratum = c(rep("A", 5), rep("B", 200)))
+  capped <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = c(A = 20, B = 50))
+  pools <- frame_summary(capped, short, detail = "pool")
+  expect_identical(pools$capped[order(as.character(pools$stratum))],
+                   c(TRUE, FALSE))
 })

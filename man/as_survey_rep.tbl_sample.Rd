@@ -35,4 +35,10 @@ rep_tbl |>
 }
 \seealso{
 \code{as_svrepdesign()} for survey replicate-weight export
+
+Other survey export:
+\code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},
+\code{\link[=as_svrepdesign]{as_svrepdesign()}},
+\code{\link[=as_svydesign]{as_svydesign()}}
 }
+\concept{survey export}

@@ -3,7 +3,7 @@
 \name{varcomp.tbl_sample}
 \alias{varcomp.tbl_sample}
 \alias{varcomp}
-\title{Variance Components from an Executed Sample}
+\title{Variance components from an executed sample}
 \usage{
 varcomp(x, ...)
 
@@ -13,7 +13,10 @@ varcomp(x, ...)
 \item{x}{A \code{tbl_sample} with at least one executed clustered stage.}
 
 \item{...}{The outcome as a one-sided formula, e.g.
-\code{varcomp(x, ~y)}, mirroring the survey.design method.}
+\code{varcomp(x, ~y)}, mirroring the survey.design method. Nothing else
+belongs here: \code{strata} follows the \code{...} and so is matched exactly, so
+a near miss such as \code{strat} or a second positional formula is reported
+rather than silently dropped.}
 
 \item{strata}{Optional one-sided formula naming a column to
 estimate per-stratum components by, when the first stage was not
@@ -90,4 +93,12 @@ svyplan::n_cluster(stage_cost = c(500, 50), icc = vc,
 \seealso{
 \code{\link[svyplan:varcomp]{svyplan::varcomp()}} for the estimator and its
 conventions, \code{\link[svyplan:n_cluster]{svyplan::n_cluster()}} for planning with the result
+
+Other diagnostics:
+\code{\link{design_effect}},
+\code{\link[=frame_summary]{frame_summary()}},
+\code{\link[=joint_expectation]{joint_expectation()}},
+\code{\link{sample-columns}},
+\code{\link[=summary.tbl_sample]{summary.tbl_sample()}}
 }
+\concept{diagnostics}

@@ -1,4 +1,4 @@
-#' Frame Digest Internals
+#' Frame digest internals
 #'
 #' The frame digest is a compact, versioned execution manifest
 #' attached to executed samples under `metadata$frame_digest`: frames,
@@ -11,7 +11,18 @@
 #' with the frame; `execute(frame_digest = "none")` opts out.
 #'
 #' @name digest
-#' @keywords internal
+#' @family extension APIs
+#' @examples
+#' sample <- sampling_design() |>
+#'   stratify_by(region) |>
+#'   draw(n = 20) |>
+#'   execute(bfa_eas, seed = 1)
+#'
+#' # frame_summary() is the stable tabular view of the same manifest
+#' frame_summary(sample, detail = "stage")
+#'
+#' # get_frame_digest() returns the raw list for extension packages
+#' str(get_frame_digest(sample), max.level = 1)
 NULL
 
 #' Current frame digest schema version
@@ -390,6 +401,31 @@ validate_frame_digest <- function(x, tol = 1e-6, quantile_tol = 0.05) {
     )
     prev <- stages[[pos]]
   }
+
+  # Each stage's frame_ref being in range is checked per stage; that alone
+  # let every stage of a three-register digest point at the first record
+  # while records 2 and 3 sat unreferenced. In a complete digest the
+  # registry is built from the frames its stages were given, so a record no
+  # stage claims means the references are wrong.
+  #
+  # A partial digest is the exception, and legitimately so: a replicated
+  # multi-stage execution keeps only the stage prefix common to every
+  # replicate, and the frames of the dropped stages stay recorded. Pruning
+  # them would renumber every `frame_ref` and throw away the provenance of
+  # what the execution actually ran against.
+  referenced <- vapply(stages, function(s) as.integer(s$frame_ref), integer(1))
+  orphaned <- setdiff(frame_ids, referenced)
+  if (length(orphaned) > 0 && identical(x$status, "complete")) {
+    abort_digest(
+      c(
+        "Every recorded frame must be the frame of some stage.",
+        "x" = "Recorded but claimed by no stage: {.val {orphaned}}.",
+        "i" = "Stage frame references: {.val {referenced}}."
+      ),
+      "frame_ref"
+    )
+  }
+
   invisible(x)
 }
 
@@ -889,7 +925,10 @@ validate_digest_units <- function(stage, pools, tol) {
   if (stage$chance_kind == "inclusion_probability") {
     known <- !chance_na
     declared <- units$is_certainty[known]
-    implied <- units$chance[known] >= 1 - tol
+    # The certainty predicate, not the caller's general `tol`: this field
+    # records the same property the sample and the joint matrix record, and
+    # a looser reading here would let the three disagree.
+    implied <- is_certainty_probability(units$chance[known])
     if (anyNA(declared) || any(declared != implied)) {
       abort_digest(
         "Stage {id}: {.field is_certainty} must be TRUE exactly for
@@ -1226,10 +1265,22 @@ validate_digest_selected <- function(stage, pools, units) {
 #' minimum samplyr version. [frame_summary()] is the stable tabular
 #' interface for everyone else.
 #'
-#' @param x A `tbl_sample` produced by [execute()].
+#' @param x A `tbl_sample` object produced by [execute()].
 #' @return The frame digest list, or `NULL` when none is recorded.
+#' @family extension APIs
 #' @seealso [frame_summary()]
-#' @keywords internal
+#' @examples
+#' sample <- sampling_design() |>
+#'   stratify_by(region) |>
+#'   draw(n = 20) |>
+#'   execute(bfa_eas, seed = 1)
+#'
+#' digest <- get_frame_digest(sample)
+#' names(digest)
+#' digest$status
+#'
+#' # NULL for anything that is not an executed sample
+#' get_frame_digest(bfa_eas)
 #' @export
 get_frame_digest <- function(x) {
   if (!is_tbl_sample(x)) {
@@ -1274,8 +1325,20 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #'   frame digest, or a `sampling_design` restored by [read_design()]
 #'   whose file was written from an executed sample: the execution
 #'   receipt carries the digest, so a shipped design file supports
-#'   next-wave planning without the frame or the sample.
-#' @param stage An integer vector of stage numbers to report, or
+#'   next-wave planning without the frame or the sample. With `frame`,
+#'   any complete `sampling_design` will do.
+#' @param frame Optional frame to preview the design against: one data
+#'   frame for a shared hierarchy, or an ordered list of stage
+#'   registers, as [execute()] takes them. When supplied, the report
+#'   describes what the design *would* do on that frame rather than
+#'   what it did, and no sampling is performed: no random numbers are
+#'   drawn and `.Random.seed` is left as it was. See "Previewing a
+#'   design" below.
+#' @param ... These dots are for future extensions and must be empty.
+#'   `stages` and the arguments after it follow `...`, so each must be
+#'   named exactly: the singular `stage` is reported rather than
+#'   prefix-matched.
+#' @param stages An integer vector of stage numbers to report, or
 #'   `NULL` (default) for all recorded stages.
 #' @param scope Denominator basis for population sizes and take rates.
 #'   With `"eligible"` (default), denominators cover the units that
@@ -1301,11 +1364,29 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #'   with `stage`, `pool_id`, `replicate`, `parent_unit`, any stratum
 #'   label columns, `N`, `n_target`, `n_expected`, `n_realized`, `scope`,
 #'   `chance_status`, `chance` (the constant per-unit chance where one
-#'   applies, `NA` otherwise), and `take_rate`. `replicate` is `1` for
-#'   an ordinary execution. In a replicated execution, `pool_id`
+#'   applies, `NA` otherwise), `take_rate`, and `capped`. `replicate` is
+#'   `1` for an ordinary execution. In a replicated execution, `pool_id`
 #'   identifies the shared structural pool and the key is `stage`,
 #'   `pool_id`, and `replicate`. Stratum columns of stages that do not
 #'   use them are `NA`.
+#'
+#'   `capped` marks a pool that held fewer units than the stage asked
+#'   for. It is always `FALSE` on a random-size stage, which realizes a
+#'   count around its target rather than running out of units, and `NA`
+#'   where the target fell short but the design recording which kind of
+#'   stage it is was not available.
+#'
+#'   `capped` is a statement about selection: it marks a pool that could
+#'   not supply the executable target it was given. A stratum whose
+#'   target an allocation method had already reduced to the stratum
+#'   population is therefore `FALSE`, because `n_target` records the
+#'   post-redistribution target and the pool delivered it in full. That
+#'   event is reported by `execute()` instead, as a message of class
+#'   `samplyr_message_allocation_capped` or, when the stage ends up
+#'   taking everything within reach, `samplyr_warning_census`. The
+#'   digest does not retain the pre-redistribution allocation target,
+#'   so the distinction is available from the conditions rather than
+#'   from this table.
 #'
 #'   For `detail = "unit"`, one row per population unit of each stage
 #'   that stored units, with `stage`, `pool_id`, `unit_id`,
@@ -1367,6 +1448,38 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #' or design columns changed) is reported as invalidated and refused:
 #' a stale digest is worse than no digest.
 #'
+#' @section Previewing a design:
+#' With `frame`, the report is resolved from the design and the frame
+#' without drawing: every selection pool is enumerated and every chance
+#' resolved, but nothing is selected. This makes an allocation
+#' inspectable before it is committed to, and lets a design restored from
+#' a file be checked against next wave's frame.
+#'
+#' Because there is no realization, `n_realized` and `take_rate` are `NA`,
+#' as are `is_selected` and `n_hits` at `detail = "unit"`. Every other
+#' column, and the shape of the table, is the same as for a recorded
+#' digest, so the two are directly comparable.
+#'
+#' At `detail = "pool"`, a stage below a clustered stage reports one pool
+#' per *candidate* parent, and its `n_target` is what that stage would
+#' take **given that parent is selected**. This is what field planning
+#' needs: how many households to list in a selected cluster.
+#'
+#' At `detail = "stage"`, those conditional pools are rolled up weighted
+#' by the probability each parent is selected, so the row reports the
+#' **expected** size of the stage rather than the total across every
+#' candidate. A design taking 10 of 100 clusters and 5 units in each
+#' reports `n_target = 50` at stage 2, not 500. For a design whose stage
+#' sizes are fixed this is also the exact size; where per-parent takes
+#' vary (`frac` over unequal clusters, for instance) the realized size
+#' varies around it.
+#'
+#' Not every design can be previewed. A stage below a with-replacement
+#' stage is refused, because the number of times each parent is hit is
+#' random, and so is a design whose non-final stage selects elements,
+#' which cannot be executed either
+#' (`samplyr_error_exante_unsupported`, `samplyr_error_stage_parent_id`).
+#'
 #' @examples
 #' frame <- data.frame(
 #'   id = 1:20,
@@ -1385,6 +1498,18 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #' )
 #' fixed_pools <- frame_summary(fixed, detail = "pool")
 #' print(fixed_pools[allocation_columns], width = Inf)
+#'
+#' # The same report before anything is drawn: pass the frame instead.
+#' # Nothing is selected and no random numbers are used, so an allocation
+#' # can be checked before it is committed to.
+#' planned <- sampling_design() |>
+#'   stratify_by(stratum) |>
+#'   draw(n = 3)
+#' frame_summary(planned, frame)
+#' print(
+#'   frame_summary(planned, frame, detail = "pool")[allocation_columns],
+#'   width = Inf
+#' )
 #'
 #' # Random-size allocation: one scalar row per pool and replicate.
 #' random_sample <- sampling_design() |>
@@ -1413,20 +1538,51 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #' head(frame_summary(full, detail = "unit"))
 #'
 #' @seealso [execute()], [validate_frame()]
+#' @family diagnostics
 #' @export
 frame_summary <- function(
   x,
-  stage = NULL,
+  frame = NULL,
+  ...,
+  stages = NULL,
   scope = c("eligible", "universe"),
   detail = c("stage", "pool", "unit")
 ) {
+  check_keyword_args(enquos(...), c("stages", "scope", "detail"))
   scope <- match.arg(scope)
   detail <- match.arg(detail)
+
+  # A frame means "what would this design do", whatever `x` already carries.
+  # Resolving the design from `x` first lets an executed sample or a restored
+  # design be previewed against a different frame, which is the next-wave
+  # planning case.
+  exante <- !is_null(frame)
+  if (exante) {
+    design <- if (is_tbl_sample(x)) {
+      get_design(x)
+    } else if (is_sampling_design(x)) {
+      x
+    } else {
+      abort_samplyr(
+        "{.arg x} must be a {.cls sampling_design} or a {.cls tbl_sample}."
+      )
+    }
+    digest <- build_exante_digest(design, frame)
+    return(frame_summary_report(
+      x, digest, stages, scope, detail, exante = TRUE
+    ))
+  }
+
   if (is_tbl_sample(x)) {
     digest <- get_frame_digest(x)
     if (is_null(digest)) {
       abort_samplyr(
-        "No frame digest is recorded on this sample.",
+        c(
+          "No frame digest is recorded on this sample.",
+          "i" = "It was executed with {.code frame_digest = \"none\"}.",
+          "i" = "Pass {.arg frame} to report what the design would do
+                 instead of what it did."
+        ),
         class = "samplyr_error_no_digest"
       )
     }
@@ -1441,7 +1597,9 @@ frame_summary <- function(
           "This design carries no execution receipt with a frame
            digest.",
           "i" = "Only designs restored by {.fn read_design} from a
-                 file written from an executed sample carry one."
+                 file written from an executed sample carry one.",
+          "i" = "Pass {.arg frame} to report what this design would do
+                 against it, without executing."
         ),
         class = "samplyr_error_no_digest"
       )
@@ -1466,9 +1624,24 @@ frame_summary <- function(
     )
   }
 
-  stages <- digest$stages
-  stage_ids <- vapply(stages, function(s) s$stage_id, integer(1))
-  execution <- if (is_tbl_sample(x)) {
+  frame_summary_report(x, digest, stages, scope, detail, exante = FALSE)
+}
+
+#' Select the requested stages and format one digest at the requested detail
+#'
+#' Shared by the recorded and the ex-ante paths so a preview and a post-hoc
+#' summary cannot drift in shape. `exante` is passed rather than inferred: an
+#' ex-ante digest is `status = "complete"` with no selected trace and every
+#' pool design-resolved, which a partial or empty realization can also
+#' resemble, and only the caller knows which it built.
+#' @noRd
+frame_summary_report <- function(x, digest, stages, scope, detail,
+                                 exante = FALSE) {
+  stage_records <- digest$stages
+  stage_ids <- vapply(stage_records, function(s) s$stage_id, integer(1))
+  execution <- if (exante) {
+    list()
+  } else if (is_tbl_sample(x)) {
     attr(x, "metadata")
   } else {
     attr(x, "execution")
@@ -1480,13 +1653,13 @@ frame_summary <- function(
   # shared by every replicate: later-stage pools hang off each
   # replicate's own selected parents. Say so instead of silently
   # reporting fewer stages than were executed.
-  dropped <- if (is_tbl_sample(x)) {
+  dropped <- if (!exante && is_tbl_sample(x)) {
     setdiff(get_stages_executed(x), stage_ids)
   } else {
     integer(0)
   }
-  replicated <- is_tbl_sample(x) && has_multiple_replicates(x)
-  if (length(dropped) > 0 && is_null(stage)) {
+  replicated <- !exante && is_tbl_sample(x) && has_multiple_replicates(x)
+  if (length(dropped) > 0 && is_null(stages)) {
     cli::cli_inform(c(
       "The digest records {cli::qty(length(stage_ids))} stage{?s}
        {.val {stage_ids}} of the {length(get_stages_executed(x))}
@@ -1500,32 +1673,38 @@ frame_summary <- function(
     ))
   }
 
-  if (!is_null(stage)) {
-    if (!is_id_vector(stage) || length(stage) == 0) {
-      abort_samplyr("{.arg stage} must be a vector of stage numbers.")
-    }
-    stage <- as.integer(stage)
-    unknown <- setdiff(stage, stage_ids)
-    if (length(unknown) > 0) {
+  if (!is_null(stages)) {
+    unknown <- if (is.numeric(stages)) setdiff(stages, stage_ids) else integer()
+    if (length(unknown) > 0 && replicated && any(unknown %in% dropped)) {
       abort_samplyr(
         c(
-          "Stage {.val {unknown}} not recorded in the frame digest.",
+          "{.arg stages} names {cli::qty(length(unknown))}stage{?s}
+           {.val {unknown}}, which {?is/are} not recorded in the frame
+           digest.",
           "i" = "Recorded stages: {.val {stage_ids}}.",
-          "i" = if (replicated && any(unknown %in% dropped)) {
-            "Later stages are replicate-specific, execute with
-             {.code reps = 1} for a full-depth digest."
-          }
-        )
+          "i" = "Later stages are replicate-specific, execute with
+                 {.code reps = 1} for a full-depth digest."
+        ),
+        class = "samplyr_error_stage_selector"
       )
     }
-    stages <- stages[stage_ids %in% stage]
+    stages <- normalize_stage_selector(
+      stages, stage_ids, what = "stages recorded in the frame digest"
+    )
+    stage_records <- stage_records[stage_ids %in% stages]
   }
 
   switch(
     detail,
-    stage = frame_summary_stage(stages, scope),
-    pool = frame_summary_pool(stages, scope, replicate_ids),
-    unit = frame_summary_unit(stages, explicit = !is_null(stage))
+    stage = frame_summary_stage(stage_records, scope, exante = exante),
+    pool = frame_summary_pool(
+      stage_records, scope, replicate_ids,
+      random_size = stage_random_size(x, stage_records),
+      exante = exante
+    ),
+    unit = frame_summary_unit(
+      stage_records, explicit = !is_null(stages), exante = exante
+    )
   )
 }
 
@@ -1548,23 +1727,81 @@ digest_scope_supports <- function(recorded, basis) {
   }
 }
 
+#' Probability that each pool of each stage is reached
+#'
+#' An ex-ante digest enumerates a pool for every candidate parent, because no
+#' selection has happened. Summing allocation quantities over all of them
+#' answers a question nobody asked: with 10 of 100 clusters taking 5 each, the
+#' unweighted total is 500, while the design draws 50. Weighting each pool by
+#' the probability its parent is selected gives 50, which is what a stage roll
+#' -up means ex ante.
+#'
+#' This is the faithful extension of the post-hoc rule rather than a new one.
+#' There, allocation quantities sum over the pools the execution reached;
+#' here, over the pools it is expected to reach.
+#'
+#' The chain is a join, not a re-derivation: stage k's `units` table carries
+#' the conditional chance of each unit, and stage k+1's `pools$parent_unit`
+#' names the unit it hangs from. Every parent stage is a cluster stage (an
+#' element parent is refused when the digest is built) and cluster stages
+#' always retain their units, so the chain is always available.
+#'
+#' @return One numeric vector per stage, aligned with that stage's pools.
 #' @noRd
-frame_summary_stage <- function(stages, scope) {
-  rows <- lapply(stages, function(s) {
+exante_pool_weights <- function(stages) {
+  weights <- vector("list", length(stages))
+  parent_pi <- NULL
+  for (k in seq_along(stages)) {
+    s <- stages[[k]]
+    pools <- s$pools
+    w <- if (is_null(parent_pi)) {
+      rep(1, nrow(pools))
+    } else {
+      # [[ on a named vector, and an unmatched parent weighs nothing.
+      matched <- parent_pi[as.character(pools$parent_unit)]
+      ifelse(is.na(matched), 0, matched)
+    }
+    weights[[k]] <- w
+
+    # Carry to the next stage: each unit's own chance times its pool's.
+    parent_pi <- if (is_null(s$units)) {
+      NULL
+    } else {
+      pool_w <- w[match(s$units$pool_id, pools$pool_id)]
+      stats::setNames(s$units$chance * pool_w, s$units$unit_id)
+    }
+  }
+  weights
+}
+
+#' @noRd
+frame_summary_stage <- function(stages, scope, exante = FALSE) {
+  pool_weights <- if (exante) exante_pool_weights(stages) else NULL
+  rows <- lapply(seq_along(stages), function(stage_pos) {
+    s <- stages[[stage_pos]]
     pools <- s$pools
     # Design-resolved pools cover parents the execution never reached:
     # part of the universe, but not eligible for this realization.
     # Allocation quantities are conditional on the parent, so they sum
     # only over the executed pools under either basis.
-    executed <- pools$chance_status != "design_resolved"
+    # Post hoc, allocation quantities sum over the pools the execution
+    # reached. Ex ante there are none: every pool is design-resolved, so
+    # they sum over the pools it is expected to reach, each weighted by the
+    # probability its parent is selected.
+    w <- if (is_null(pool_weights)) {
+      as.numeric(pools$chance_status != "design_resolved")
+    } else {
+      pool_weights[[stage_pos]]
+    }
     N <- if (identical(scope, "universe")) {
       if (identical(s$scope, "universe")) sum_or_na(pools$N) else NA_real_
     } else if (digest_scope_supports(s$scope, scope)) {
-      sum_or_na(pools$N[executed])
+      sum_or_na(pools$N * w)
     } else {
       NA_real_
     }
-    n_realized <- sum_or_na(pools$n_realized[executed])
+    # A preview has no realization to report or to divide by.
+    n_realized <- if (exante) NA_real_ else sum_or_na(pools$n_realized * w)
     take_rate <- if (!is.na(N) && N > 0 && !is.na(n_realized)) {
       n_realized / N
     } else {
@@ -1579,8 +1816,8 @@ frame_summary_stage <- function(stages, scope) {
       storage = s$storage,
       n_pools = nrow(pools),
       N = N,
-      n_target = sum_or_na(pools$n_target[executed]),
-      n_expected = sum_or_na(pools$n_expected[executed]),
+      n_target = sum_or_na(pools$n_target * w),
+      n_expected = sum_or_na(pools$n_expected * w),
       n_realized = n_realized,
       take_rate = take_rate
     )
@@ -1588,9 +1825,57 @@ frame_summary_stage <- function(stages, scope) {
   as_tibble(do.call(rbind, rows))
 }
 
+#' Which stages draw a random number of units
+#'
+#' `capped` compares the executable target with the population, and on a
+#' random-size stage that comparison means something else entirely: a Poisson
+#' pool reading `n_target = 40`, `n_expected = 21.3` has not run out of units,
+#' it realizes around its target by construction. The design is the only place
+#' that records which it is.
+#'
+#' A digest travels on its own and can be attached to a sample whose design is
+#' shallower than the stages it records, so a stage the design does not reach
+#' is unknown rather than an error.
 #' @noRd
-frame_summary_pool <- function(stages, scope, replicate_ids = 1L) {
-  rows <- lapply(stages, function(s) {
+stage_random_size <- function(x, stages) {
+  design <- if (is_tbl_sample(x)) {
+    get_design(x)
+  } else if (is_sampling_design(x)) {
+    x
+  } else {
+    NULL
+  }
+  design_stages <- design$stages %||% list()
+
+  vapply(
+    stages,
+    function(s) {
+      id <- s$stage_id
+      if (id < 1L || id > length(design_stages)) {
+        return(NA)
+      }
+      spec <- design_stages[[id]]$draw_spec
+      if (is_null(spec)) {
+        return(NA)
+      }
+      isTRUE(spec$method %in% rs_poisson_methods) ||
+        identical(spec$method_fixed, FALSE)
+    },
+    logical(1)
+  )
+}
+
+#' @noRd
+frame_summary_pool <- function(
+  stages,
+  scope,
+  replicate_ids = 1L,
+  random_size = NULL,
+  exante = FALSE
+) {
+  rows <- lapply(seq_along(stages), function(stage_idx) {
+    s <- stages[[stage_idx]]
+    rs <- if (is_null(random_size)) NA else random_size[[stage_idx]]
     pools <- s$pools
     n_reps <- length(replicate_ids)
     pool_rows <- rep(seq_len(nrow(pools)), each = n_reps)
@@ -1601,7 +1886,10 @@ frame_summary_pool <- function(stages, scope, replicate_ids = 1L) {
     # at its natural stage x pool x replicate grain without duplicating
     # the registry in the serialized artifact.
     selected <- s$selected
-    if (n_reps == 1L) {
+    if (exante) {
+      # Nothing has been selected yet: 0 would assert a measured zero.
+      n_realized <- rep(NA_real_, length(pool_rows))
+    } else if (n_reps == 1L) {
       n_realized <- as.double(pools$n_realized)
     } else if (!is_null(selected) && "replicate" %in% names(selected)) {
       counts <- table(
@@ -1647,7 +1935,16 @@ frame_summary_pool <- function(stages, scope, replicate_ids = 1L) {
       scope = pools$scope[pool_rows],
       chance_status = pools$chance_status[pool_rows],
       chance = chance[pool_rows],
-      take_rate = take_rate
+      take_rate = take_rate,
+      # Derived, not stored: `n_expected` already records the post-cap target,
+      # it agrees between the ex-ante preview and the executed digest, and it
+      # is a property of the design rather than of the draw. Adding a boolean
+      # to the serialized schema would not be worth a version bump.
+      capped = capped_from_shortfall(
+        as.double(pools$n_expected[pool_rows]),
+        as.double(pools$n_target[pool_rows]),
+        rs
+      )
     )
     strata <- s$strata %||% character(0)
     if (length(strata) > 0) {
@@ -1658,8 +1955,44 @@ frame_summary_pool <- function(stages, scope, replicate_ids = 1L) {
   as_tibble(bind_rows(rows))
 }
 
+#' Read a target shortfall as a population cap, given what is known about the
+#' stage's size
+#'
+#' On a fixed-size stage a target the design could not honor is a cap. On a
+#' random-size stage the same shortfall is the design's own arithmetic. When
+#' the design is not available to say which, only the absence of a shortfall
+#' is determinable, so a shortfall reports `NA` rather than guessing.
+#' Scale-aware tolerance for comparing two allocation quantities
+#'
+#' Relative to the target, because a stratum taking 40,000 units carries more
+#' floating-point noise than one taking 4. Floored so a zero target still has
+#' a usable tolerance.
 #' @noRd
-frame_summary_unit <- function(stages, explicit) {
+shortfall_tolerance <- function(n_target) {
+  eps <- sqrt(.Machine$double.eps)
+  eps * pmax(1, abs(n_target))
+}
+
+#' @noRd
+capped_from_shortfall <- function(n_expected, n_target, random_size) {
+  # Tolerant, not exact. The two quantities are equal by construction when
+  # nothing capped, but they are computed by different paths at execution and
+  # in the ex-ante preview, and the difference lands in the last bits: a
+  # Neyman allocation over bfa_eas differs by 7e-15 in one stratum, which an
+  # exact `<` reports as capped in the preview and not capped in the
+  # execution. A shortfall that matters is never that small.
+  shortfall <- n_expected < n_target - shortfall_tolerance(n_target)
+  if (isTRUE(random_size)) {
+    return(rep(FALSE, length(shortfall)))
+  }
+  if (is.na(random_size)) {
+    return(ifelse(shortfall, NA, FALSE))
+  }
+  shortfall
+}
+
+#' @noRd
+frame_summary_unit <- function(stages, explicit, exante = FALSE) {
   has_units <- vapply(
     stages,
     function(s) identical(s$storage, "units"),
@@ -1704,8 +2037,9 @@ frame_summary_unit <- function(stages, explicit) {
       chance = as.double(units$chance),
       is_certainty = units$is_certainty,
       n_descendants = n_descendants,
-      is_selected = hits > 0L,
-      n_hits = hits
+      # A preview has no realization: NA, not a measured FALSE / 0.
+      is_selected = if (exante) NA else hits > 0L,
+      n_hits = if (exante) NA_integer_ else hits
     )
   })
   if (length(rows) == 0) {

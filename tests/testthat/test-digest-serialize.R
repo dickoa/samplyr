@@ -12,7 +12,7 @@ serialize_fixture <- function(seed = 8) {
 
 test_that("the digest round-trips through design JSON", {
   s <- serialize_fixture()
-  d0 <- samplyr:::get_frame_digest(s)
+  d0 <- samplyr::get_frame_digest(s)
   restored <- read_design(design_json(s, frame = test_frame))
   d1 <- attr(restored, "execution")$frame_digest
 
@@ -70,7 +70,7 @@ test_that("a v2 digest round-trips through a design file", {
 
   expect_identical(digest$version, 2L)
   expect_no_error(samplyr:::validate_frame_digest(digest))
-  original <- samplyr:::get_frame_digest(s)
+  original <- samplyr::get_frame_digest(s)
   expect_identical(digest$status, original$status)
   expect_identical(length(digest$stages), length(original$stages))
   expect_equal(
@@ -90,7 +90,7 @@ test_that("WR parent occurrences survive digest serialization", {
     draw(n = 3, method = "pps_multinomial", mos = parent_mos) |>
     add_stage() |> draw(n = 2) |>
     execute(frame, seed = 7)
-  original <- samplyr:::get_frame_digest(s)
+  original <- samplyr::get_frame_digest(s)
   path <- withr::local_tempfile(fileext = ".json")
 
   expect_invisible(write_design(s, path, frame = frame))
@@ -112,7 +112,7 @@ test_that("quantile distributions and diagnostics round-trip", {
   s <- sampling_design() |>
     draw(n = 20, method = "cube", mos = mos, aux = c(y, bound(stratum))) |>
     execute(test_frame, seed = 62)
-  d0 <- samplyr:::get_frame_digest(s)
+  d0 <- samplyr::get_frame_digest(s)
   d1 <- attr(
     read_design(suppressWarnings(design_json(s))), "execution"
   )$frame_digest
@@ -494,4 +494,20 @@ test_that("the probabilities tier round-trips with the digest", {
   expect_null(d_old$stages[[1]]$probabilities)
   fs_old <- samplyr:::frame_summary_stage(d_old$stages, "eligible")
   expect_identical(fs_old$probabilities, NA_character_)
+})
+
+test_that("resolved certainty survives write_design and replay", {
+  frame <- data.frame(id = seq_len(60), mos = c(500, 400, 300, rep(10, 57)))
+
+  s <- sampling_design() |>
+    draw(n = 10, method = "pps_brewer", mos = mos) |>
+    execute(frame, seed = 11, frame_digest = "full")
+
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(s, path, frame = frame)
+  restored <- read_design(path)
+
+  replayed <- replay_design(restored, frame)
+  expect_identical(replayed$.certainty_1, s$.certainty_1)
+  expect_setequal(replayed$id[replayed$.certainty_1], c(1, 2, 3))
 })

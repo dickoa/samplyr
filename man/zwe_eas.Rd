@@ -3,7 +3,7 @@
 \docType{data}
 \name{zwe_eas}
 \alias{zwe_eas}
-\title{Zimbabwe Enumeration Areas for Demographic, Health, and Child-Indicator Surveys}
+\title{Zimbabwe enumeration areas for demographic, health, and child-indicator surveys}
 \format{
 A tibble with 107,250 rows and 12 columns:
 \describe{
@@ -70,11 +70,10 @@ selected EA into individual household rows. The preEAs are modeled
 building-delimited areas rather than official census EAs, and the resulting
 counts should not be used as official small-area statistics.
 
-\preformatted{
-# After stage 1 selection:
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{# After stage 1 selection:
 listing <- selected[rep(seq_len(nrow(selected)), selected$households), ]
 listing$hh_id <- seq_len(nrow(listing))
-}
+}\if{html}{\out{</div>}}
 }
 \examples{
 # Explore the data
@@ -106,5 +105,13 @@ smpl
 }
 \seealso{
 \code{\link[=add_stage]{add_stage()}}, \code{\link[=cluster_by]{cluster_by()}}, \code{\link[=execute]{execute()}}
+
+Other datasets:
+\code{\link{bfa_eas}},
+\code{\link{bfa_eas_cost}},
+\code{\link{bfa_eas_variance}},
+\code{\link{ken_enterprises}},
+\code{\link{samplyr-datasets}}
 }
+\concept{datasets}
 \keyword{datasets}

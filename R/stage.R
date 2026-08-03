@@ -1,7 +1,7 @@
-#' Define a New Stage in Multi-Stage Designs
+#' Define a new stage in multi-stage designs
 #'
 #' `add_stage()` opens a new stage context in multi-stage sampling designs.
-#' It acts as a delimiter between stages, not a wrapper -- each stage's
+#' It acts as a delimiter between stages, not a wrapper. Each stage's
 #' specification follows `add_stage()` using the same verbs.
 #'
 #' @param .data A `sampling_design` object.
@@ -11,7 +11,7 @@
 #' @return A modified `sampling_design` object with a new stage context.
 #'
 #' @details
-#' ## Multi-Stage Design Structure
+#' ## Multi-stage design structure
 #'
 #' In multi-stage designs, sampling proceeds hierarchically:
 #' 1. **Stage 1**: Select primary sampling units (PSUs), e.g., schools
@@ -23,17 +23,17 @@
 #' - Clustering ([cluster_by()])
 #' - Selection method and sample size ([draw()])
 #'
-#' ## Design Patterns
+#' ## Design patterns
 #'
 #' **Pattern 1: Single-stage (no explicit `add_stage()`):**
-#' \preformatted{
+#' ```r
 #' sampling_design() |>
 #'   stratify_by(...) |>
 #'   draw(...)
-#' }
+#' ```
 #'
 #' **Pattern 2: Multi-stage (explicit stages):**
-#' \preformatted{
+#' ```r
 #' sampling_design() |>
 #'   add_stage(label = "Stage 1") |>
 #'     cluster_by(...) |>
@@ -43,9 +43,9 @@
 #'     draw(...) |>
 #'   add_stage(label = "Stage 3") |>
 #'     draw(...)
-#' }
+#' ```
 #'
-#' ## Validation Rules
+#' ## Validation rules
 #'
 #' - Each stage must end with [draw()] before the next `add_stage()` or [execute()]
 #' - Empty stages (stage followed immediately by stage) are not allowed
@@ -110,6 +110,7 @@
 #' [draw()] for completing stages,
 #' [execute()] for running multi-stage designs
 #'
+#' @family design specification
 #' @export
 add_stage <- function(.data, label = NULL) {
   if (!is_sampling_design(.data)) {

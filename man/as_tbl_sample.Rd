@@ -37,7 +37,7 @@ operations that remove, add, or duplicate rows, or overwrite
 internal design columns (\code{.weight}, \code{.fpc_k}, ...), mark the sample
 as modified. Design-based computations (\code{\link[=as_svydesign]{as_svydesign()}},
 \code{\link[=joint_expectation]{joint_expectation()}}, \code{\link[=design_effect]{design_effect()}}) reject modified samples;
-see the Domain analysis section of \code{\link[=as_svydesign]{as_svydesign()}}. Restoring the
+see the "Modified samples and domain analysis" section of \code{\link[=as_svydesign]{as_svydesign()}}. Restoring the
 class with \code{as_tbl_sample()} does not clear the mark: the data is
 re-verified against the integrity record stored at execution, so a
 stripped, altered, and restored object is detected.
@@ -50,7 +50,7 @@ Use \code{as_tbl_sample()} to restore it:
 \item \code{as.data.frame()}
 }
 
-For an operational multistage listing, keep the unmodified partial sample
+For an operational multi-stage listing, keep the unmodified partial sample
 as the first argument to \code{\link[=execute]{execute()}} and pass the expanded plain object only
 as its frame; restoring the listing itself is not required. A plain object
 that still carries sample provenance is rejected as the frame of a fresh
@@ -59,8 +59,8 @@ design execution, because that would rerun stage 1.
 Other operations strip both class and attributes and are
 not recoverable. Use dplyr alternatives instead:
 \itemize{
-\item \code{base::merge()} -- use \code{dplyr::left_join()} etc.
-\item \code{base::cbind()} -- use \code{dplyr::bind_cols()}
+\item \code{base::merge()}: use \code{dplyr::left_join()} etc.
+\item \code{base::cbind()}: use \code{dplyr::bind_cols()}
 \item \code{tidyr::pivot_longer()} / \code{tidyr::pivot_wider()}
 }
 }
@@ -80,3 +80,14 @@ is_tbl_sample(plain)
 restored <- as_tbl_sample(plain)
 is_tbl_sample(restored)
 }
+\seealso{
+Other helpers:
+\code{\link[=bound]{bound()}},
+\code{\link[=get_design]{get_design()}},
+\code{\link[=get_stages_executed]{get_stages_executed()}},
+\code{\link[=is_sampling_design]{is_sampling_design()}},
+\code{\link[=is_tbl_sample]{is_tbl_sample()}},
+\code{\link{print.samplyr}},
+\code{\link[=serp]{serp()}}
+}
+\concept{helpers}

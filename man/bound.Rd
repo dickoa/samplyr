@@ -2,7 +2,7 @@
 % Please edit documentation in R/helpers.R
 \name{bound}
 \alias{bound}
-\title{Controlled Count Bounds for Balanced Sampling}
+\title{Controlled count bounds for balanced sampling}
 \usage{
 bound(x)
 }
@@ -28,3 +28,14 @@ sampling_design() |>
   )
 
 }
+\seealso{
+Other helpers:
+\code{\link[=as_tbl_sample]{as_tbl_sample()}},
+\code{\link[=get_design]{get_design()}},
+\code{\link[=get_stages_executed]{get_stages_executed()}},
+\code{\link[=is_sampling_design]{is_sampling_design()}},
+\code{\link[=is_tbl_sample]{is_tbl_sample()}},
+\code{\link{print.samplyr}},
+\code{\link[=serp]{serp()}}
+}
+\concept{helpers}

@@ -7,7 +7,7 @@
 \method{dplyr_col_modify}{tbl_sample}(data, cols)
 }
 \arguments{
-\item{data}{A tbl_sample object}
+\item{data}{A \code{tbl_sample} object.}
 
 \item{cols}{Named list of modified columns, as passed by dplyr}
 }

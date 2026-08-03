@@ -6,7 +6,9 @@
 \usage{
 frame_summary(
   x,
-  stage = NULL,
+  frame = NULL,
+  ...,
+  stages = NULL,
   scope = c("eligible", "universe"),
   detail = c("stage", "pool", "unit")
 )
@@ -16,9 +18,23 @@ frame_summary(
 frame digest, or a \code{sampling_design} restored by \code{\link[=read_design]{read_design()}}
 whose file was written from an executed sample: the execution
 receipt carries the digest, so a shipped design file supports
-next-wave planning without the frame or the sample.}
+next-wave planning without the frame or the sample. With \code{frame},
+any complete \code{sampling_design} will do.}
 
-\item{stage}{An integer vector of stage numbers to report, or
+\item{frame}{Optional frame to preview the design against: one data
+frame for a shared hierarchy, or an ordered list of stage
+registers, as \code{\link[=execute]{execute()}} takes them. When supplied, the report
+describes what the design \emph{would} do on that frame rather than
+what it did, and no sampling is performed: no random numbers are
+drawn and \code{.Random.seed} is left as it was. See "Previewing a
+design" below.}
+
+\item{...}{These dots are for future extensions and must be empty.
+\code{stages} and the arguments after it follow \code{...}, so each must be
+named exactly: the singular \code{stage} is reported rather than
+prefix-matched.}
+
+\item{stages}{An integer vector of stage numbers to report, or
 \code{NULL} (default) for all recorded stages.}
 
 \item{scope}{Denominator basis for population sizes and take rates.
@@ -47,11 +63,29 @@ For \code{detail = "pool"}, one row per selection pool and realization
 with \code{stage}, \code{pool_id}, \code{replicate}, \code{parent_unit}, any stratum
 label columns, \code{N}, \code{n_target}, \code{n_expected}, \code{n_realized}, \code{scope},
 \code{chance_status}, \code{chance} (the constant per-unit chance where one
-applies, \code{NA} otherwise), and \code{take_rate}. \code{replicate} is \code{1} for
-an ordinary execution. In a replicated execution, \code{pool_id}
+applies, \code{NA} otherwise), \code{take_rate}, and \code{capped}. \code{replicate} is
+\code{1} for an ordinary execution. In a replicated execution, \code{pool_id}
 identifies the shared structural pool and the key is \code{stage},
 \code{pool_id}, and \code{replicate}. Stratum columns of stages that do not
 use them are \code{NA}.
+
+\code{capped} marks a pool that held fewer units than the stage asked
+for. It is always \code{FALSE} on a random-size stage, which realizes a
+count around its target rather than running out of units, and \code{NA}
+where the target fell short but the design recording which kind of
+stage it is was not available.
+
+\code{capped} is a statement about selection: it marks a pool that could
+not supply the executable target it was given. A stratum whose
+target an allocation method had already reduced to the stratum
+population is therefore \code{FALSE}, because \code{n_target} records the
+post-redistribution target and the pool delivered it in full. That
+event is reported by \code{execute()} instead, as a message of class
+\code{samplyr_message_allocation_capped} or, when the stage ends up
+taking everything within reach, \code{samplyr_warning_census}. The
+digest does not retain the pre-redistribution allocation target,
+so the distinction is available from the conditions rather than
+from this table.
 
 For \code{detail = "unit"}, one row per population unit of each stage
 that stored units, with \code{stage}, \code{pool_id}, \code{unit_id},
@@ -122,6 +156,40 @@ A digest whose sample was modified after execution (rows, weights,
 or design columns changed) is reported as invalidated and refused:
 a stale digest is worse than no digest.
 }
+\section{Previewing a design}{
+
+With \code{frame}, the report is resolved from the design and the frame
+without drawing: every selection pool is enumerated and every chance
+resolved, but nothing is selected. This makes an allocation
+inspectable before it is committed to, and lets a design restored from
+a file be checked against next wave's frame.
+
+Because there is no realization, \code{n_realized} and \code{take_rate} are \code{NA},
+as are \code{is_selected} and \code{n_hits} at \code{detail = "unit"}. Every other
+column, and the shape of the table, is the same as for a recorded
+digest, so the two are directly comparable.
+
+At \code{detail = "pool"}, a stage below a clustered stage reports one pool
+per \emph{candidate} parent, and its \code{n_target} is what that stage would
+take \strong{given that parent is selected}. This is what field planning
+needs: how many households to list in a selected cluster.
+
+At \code{detail = "stage"}, those conditional pools are rolled up weighted
+by the probability each parent is selected, so the row reports the
+\strong{expected} size of the stage rather than the total across every
+candidate. A design taking 10 of 100 clusters and 5 units in each
+reports \code{n_target = 50} at stage 2, not 500. For a design whose stage
+sizes are fixed this is also the exact size; where per-parent takes
+vary (\code{frac} over unequal clusters, for instance) the realized size
+varies around it.
+
+Not every design can be previewed. A stage below a with-replacement
+stage is refused, because the number of times each parent is hit is
+random, and so is a design whose non-final stage selects elements,
+which cannot be executed either
+(\code{samplyr_error_exante_unsupported}, \code{samplyr_error_stage_parent_id}).
+}
+
 \examples{
 frame <- data.frame(
   id = 1:20,
@@ -140,6 +208,18 @@ allocation_columns <- c(
 )
 fixed_pools <- frame_summary(fixed, detail = "pool")
 print(fixed_pools[allocation_columns], width = Inf)
+
+# The same report before anything is drawn: pass the frame instead.
+# Nothing is selected and no random numbers are used, so an allocation
+# can be checked before it is committed to.
+planned <- sampling_design() |>
+  stratify_by(stratum) |>
+  draw(n = 3)
+frame_summary(planned, frame)
+print(
+  frame_summary(planned, frame, detail = "pool")[allocation_columns],
+  width = Inf
+)
 
 # Random-size allocation: one scalar row per pool and replicate.
 random_sample <- sampling_design() |>
@@ -170,4 +250,12 @@ head(frame_summary(full, detail = "unit"))
 }
 \seealso{
 \code{\link[=execute]{execute()}}, \code{\link[=validate_frame]{validate_frame()}}
+
+Other diagnostics:
+\code{\link{design_effect}},
+\code{\link[=joint_expectation]{joint_expectation()}},
+\code{\link{sample-columns}},
+\code{\link[=summary.tbl_sample]{summary.tbl_sample()}},
+\code{\link[=varcomp.tbl_sample]{varcomp.tbl_sample()}}
 }
+\concept{diagnostics}

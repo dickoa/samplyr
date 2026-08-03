@@ -5,7 +5,7 @@
 \alias{effective_n}
 \alias{design_effect.tbl_sample}
 \alias{effective_n.tbl_sample}
-\title{Design Effect and Effective Sample Size}
+\title{Design effect and effective sample size}
 \usage{
 design_effect(x = NULL, ...)
 
@@ -19,7 +19,9 @@ effective_n(x = NULL, ...)
 \item{x}{A \code{tbl_sample}, or a numeric weight vector passed to the svyplan
 method.}
 
-\item{...}{Passed to the svyplan method.}
+\item{...}{Passed to the svyplan method: the planning arguments \code{icc},
+\code{n_per_psu}, \code{n_per_ssu} and \code{var_ratio} are the useful ones here. Every
+argument must be named; svyplan reports any name it does not recognize.}
 }
 \value{
 \code{design_effect()} returns a numeric \code{svyplan_deff} object; use
@@ -43,8 +45,10 @@ Clustering and stratification also move precision, and neither is visible
 in the weights. To estimate a design effect that reflects them, fit the
 design and ask the estimator: \code{as_svydesign()} then
 \code{survey::svymean(deff = TRUE)}, which is outcome-specific by necessity.
-To \emph{anticipate} the clustering component before collecting data, use
-\code{\link[svyplan:design_effect]{svyplan::design_effect()}} directly with \code{icc} and \code{n_per_psu}.
+To \emph{anticipate} the clustering component before collecting data, name the
+planning arguments in the same call: \code{design_effect(x, icc = , n_per_psu = )} forwards them to \code{\link[svyplan:design_effect]{svyplan::design_effect()}} and returns the weighting
+loss multiplied by the anticipated clustering component. Positional
+arguments are refused, since these methods take no outcome variable.
 }
 \examples{
 set.seed(1207)
@@ -71,8 +75,9 @@ prop_samp <- sampling_design() |>
 
 design_effect(prop_samp)
 
-# Anticipating the clustering component at the planning stage
-svyplan::design_effect(icc = 0.05, n_per_psu = 25)
+# Anticipating the clustering component: the weighting loss above,
+# multiplied by the clustering component the planning arguments imply
+design_effect(samp, icc = 0.05, n_per_psu = 25)
 
 }
 \seealso{
@@ -80,4 +85,12 @@ svyplan::design_effect(icc = 0.05, n_per_psu = 25)
 \code{\link[svyplan:varcomp]{svyplan::varcomp()}}, \code{\link[svyplan:n_cluster]{svyplan::n_cluster()}},
 \code{\link[=as_svydesign]{as_svydesign()}} to hand the design to \pkg{survey} for an
 outcome-specific design effect
+
+Other diagnostics:
+\code{\link[=frame_summary]{frame_summary()}},
+\code{\link[=joint_expectation]{joint_expectation()}},
+\code{\link{sample-columns}},
+\code{\link[=summary.tbl_sample]{summary.tbl_sample()}},
+\code{\link[=varcomp.tbl_sample]{varcomp.tbl_sample()}}
 }
+\concept{diagnostics}

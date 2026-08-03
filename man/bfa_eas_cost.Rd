@@ -3,7 +3,7 @@
 \docType{data}
 \name{bfa_eas_cost}
 \alias{bfa_eas_cost}
-\title{Stratum Costs for Burkina Faso EAs}
+\title{Stratum costs for Burkina Faso EAs}
 \format{
 A tibble with 13 rows and 2 columns:
 \describe{
@@ -38,5 +38,13 @@ sampling_design() |>
 }
 \seealso{
 \link{bfa_eas}, \link{bfa_eas_variance}, \code{\link[=stratify_by]{stratify_by()}}
+
+Other datasets:
+\code{\link{bfa_eas}},
+\code{\link{bfa_eas_variance}},
+\code{\link{ken_enterprises}},
+\code{\link{samplyr-datasets}},
+\code{\link{zwe_eas}}
 }
+\concept{datasets}
 \keyword{datasets}

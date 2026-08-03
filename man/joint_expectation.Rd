@@ -4,18 +4,25 @@
 \alias{joint_expectation}
 \title{Compute pairwise joint expectations from a sample}
 \usage{
-joint_expectation(x, frame = NULL, stage = NULL, nsim = 10000L)
+joint_expectation(x, frame = NULL, ..., stages = NULL, nsim = 10000L)
 }
 \arguments{
 \item{x}{A \code{tbl_sample} object produced by \code{\link[=execute]{execute()}}.}
 
-\item{frame}{The data frame originally passed to \code{\link[=execute]{execute()}}. Must
-contain the same columns used during sampling (strata variables,
-cluster variables, measure of size). When \code{NULL} (the default),
-the computation uses the frame digest recorded on the sample
-instead.}
+\item{frame}{The frame originally passed to \code{\link[=execute]{execute()}}. A data
+frame is the one shared frame. An ordered list of data frames is
+the stage registers, one per executed stage, in the order they
+were supplied to \code{\link[=execute]{execute()}}. Either way each frame must contain
+the columns its stage sampled on (strata variables, cluster
+variables, measure of size). When \code{NULL} (the default), the
+computation uses the frame digest recorded on the sample instead.}
 
-\item{stage}{An integer vector of stage numbers to compute, or
+\item{...}{These dots are for future extensions and must be empty.
+\code{stages} and the arguments after it follow \code{...}, so each must be
+named exactly: the singular \code{stage} is reported rather than
+prefix-matched.}
+
+\item{stages}{An integer vector of stage numbers to compute, or
 \code{NULL} (default) to compute all PPS stages.
 Non-PPS stages produce \code{NULL} entries in the returned list.}
 
@@ -35,7 +42,9 @@ probabilities \eqn{\pi_{kl}}{pi_kl}, usable with
 square matrix of joint expected hits
 \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
 \item \code{NULL} for non-PPS stages (SRS, systematic) or stages not
-requested via the \code{stage} argument.
+requested via the \code{stages} argument.
+}
+
 Rows and columns represent stage-specific sampled units in first
 appearance order. At a WR stage, repeated hits of the same
 population unit appear once, so dimensions match the number of
@@ -43,7 +52,6 @@ distinct sampled units (or clusters). At a later stage below a WR
 parent, each parent draw occurrence defines a separate conditional
 block, so the same child population identity can appear in more
 than one block.
-}
 }
 \description{
 Reconstructs the second-order design quantities for PPS stages. For
@@ -62,8 +70,14 @@ representation: cluster stages always have one, element stages with
 constant chances have one, and element stages with varying chances
 keep one only under \code{execute(frame_digest = "full")}. A summarized
 representation refuses rather than approximates. With \code{frame}, the
-quantities are replayed against it as before; the frame must be
+quantities are replayed against it as before. The frame must be
 unchanged since execution (\code{\link[=validate_frame]{validate_frame()}} reports drift).
+
+A sample drawn from separately supplied stage registers needs either
+its intact digest or the ordered list of those registers. One
+lower-stage register cannot reconstruct upper-stage joint
+quantities: it holds no rows for the population the upper stage
+selected from.
 
 For each PPS stage, the function:
 \enumerate{
@@ -90,13 +104,15 @@ A stage below a WR parent is conditional on each parent draw
 occurrence, not only on the parent's population identity. Repeated
 hits of one parent therefore produce separate independent child
 blocks. Pair the returned matrix with stage-specific identities in
-this order; do not pair it blindly with every sample row when
+this order. Do not pair it blindly with every sample row when
 descendants duplicate a selected unit.
 \subsection{Exact vs. approximate computation}{
 
 The accuracy of the returned matrix depends on the sampling method.
-Some algorithms yield closed-form joint probabilities; others
+Some algorithms yield closed-form joint probabilities. Others
 require approximation or simulation.
+}
+
 \subsection{WOR methods (\eqn{\pi_{kl}}{pi_kl})}{\tabular{lll}{
    samplyr method \tab sondage function \tab Quality \cr
    \code{pps_cps} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (Aires' formula via C) \cr
@@ -147,19 +163,21 @@ estimate the pairwise expectations. Increasing \code{nsim} reduces Monte
 Carlo error at the cost of computation time.
 }
 
-}
-
 \subsection{Limitations}{
 \itemize{
 \item The frame-free path requires a digest with exact chances: the
 default summary digest suffices for cluster stages and
-constant-chance element stages; element stages with varying
+constant-chance element stages. Element stages with varying
 chances need \code{execute(frame_digest = "full")}. Otherwise pass
 the frame.
 \item When \code{frame} is supplied it must be unchanged from what was
 passed to \code{\link[=execute]{execute()}}, and units in it must be uniquely
 identifiable within each stratum/cluster group by their column
 values.
+\item A sample drawn from one register per stage needs all of them, in
+the order they were supplied. One frame is refused with
+\code{samplyr_error_frame_count} rather than computed from the wrong
+population.
 \item For WOR designs with certainty selections (\eqn{\pi_i = 1}{pi_i = 1}),
 the joint matrix is decomposed: certainty units are separated
 from the stochastic part, the joint probabilities for
@@ -183,16 +201,54 @@ sample <- sampling_design() |>
   execute(bfa_eas, seed = 2025)
 
 # Compute joint probabilities for stage 1
-jip <- joint_expectation(sample, bfa_eas, stage = 1)
+jip <- joint_expectation(sample, bfa_eas, stages = 1)
 
 # Use with survey package for exact variance (WOR stages)
 svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 
 # Compute all PPS stages at once
 jip_all <- joint_expectation(sample, bfa_eas)
+
+# A sample drawn from one register per stage passes them as a list
+regions <- dplyr::distinct(bfa_eas, region, .keep_all = TRUE)
+registers <- sampling_design() |>
+  add_stage() |>
+    cluster_by(region) |>
+    draw(n = 3, method = "pps_brewer", mos = households) |>
+  add_stage() |>
+    draw(n = 12) |>
+  execute(regions, bfa_eas, seed = 2025)
+
+jip_registers <- joint_expectation(registers, list(regions, bfa_eas))
 \dontshow{\}) # examplesIf}
+}
+\references{
+High-entropy approximation:
+\enc{Hájek}{Hajek}, J. (1964). Asymptotic theory of rejective sampling with
+varying probabilities from a finite population.
+\emph{Annals of Mathematical Statistics}, 35(4), 1491-1523.
+
+Brewer, K.R.W. and Donadio, M.E. (2003). The high entropy variance of the
+Horvitz-Thompson estimator. \emph{Survey Methodology}, 29(2), 189-196.
+
+Exact Brewer joint probabilities:
+Brewer, K.R.W. (2002). \emph{Combined Survey Sampling Inference: Weighing
+Basu's Elephants}. Arnold, ch. 9.
+
+The variance estimator these underlie:
+Berger, Y.G. (2004). A simple variance estimator for unequal probability
+sampling without replacement. \emph{Journal of Applied Statistics},
+31(3), 305-315.
 }
 \seealso{
 \code{\link[=as_svydesign]{as_svydesign()}} for the default export using Brewer's
 approximation, \code{\link[survey:ppsmat]{survey::ppsmat()}} for wrapping joint matrices
+
+Other diagnostics:
+\code{\link{design_effect}},
+\code{\link[=frame_summary]{frame_summary()}},
+\code{\link{sample-columns}},
+\code{\link[=summary.tbl_sample]{summary.tbl_sample()}},
+\code{\link[=varcomp.tbl_sample]{varcomp.tbl_sample()}}
 }
+\concept{diagnostics}

@@ -2,7 +2,7 @@
 % Please edit documentation in R/digest.R
 \name{digest}
 \alias{digest}
-\title{Frame Digest Internals}
+\title{Frame digest internals}
 \description{
 The frame digest is a compact, versioned execution manifest
 attached to executed samples under \code{metadata$frame_digest}: frames,
@@ -14,4 +14,21 @@ Cluster stages keep one unit row per cluster for downstream
 linkage, so a stage whose clusters are single frame rows grows
 with the frame; \code{execute(frame_digest = "none")} opts out.
 }
-\keyword{internal}
+\examples{
+sample <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 20) |>
+  execute(bfa_eas, seed = 1)
+
+# frame_summary() is the stable tabular view of the same manifest
+frame_summary(sample, detail = "stage")
+
+# get_frame_digest() returns the raw list for extension packages
+str(get_frame_digest(sample), max.level = 1)
+}
+\seealso{
+Other extension APIs:
+\code{\link[=build_exante_digest]{build_exante_digest()}},
+\code{\link[=get_frame_digest]{get_frame_digest()}}
+}
+\concept{extension APIs}

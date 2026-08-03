@@ -1,3 +1,58 @@
+#' Columns generated on an executed sample
+#'
+#' [execute()] returns a `tbl_sample`: the selected rows of the frame plus a
+#' set of generated columns recording how each row was selected. `k` is the
+#' stage index, so a two-stage design carries `.weight_1` and `.weight_2`.
+#' The literal names `.weight_k` and `.fpc_k` are not themselves reserved.
+#'
+#' The generated columns are:
+#'   - `.sample_id`: Unique identifier for each sampled unit
+#'   - `.weight`: Sampling weight (1/probability)
+#'   - `.weight_1`, `.weight_2`, ...: Per-stage sampling weights
+#'     (\eqn{1/\pi_i^{(k)}}{1/pi_i(k)}) for the stored design. In a
+#'     single-phase multi-stage sample their product equals `.weight`. In a
+#'     multi-phase sample `.weight` additionally includes earlier-phase
+#'     weights.
+#'   - `.fpc_1`, `.fpc_2`, ...: Per-stage finite population correction
+#'     values. The meaning depends on the method and context:
+#'     - **Equal-probability WOR** (srswor, systematic): \eqn{N_h} (stratum
+#'       population size), or \eqn{N} if unstratified. The sampling fraction
+#'       \eqn{f = n / N} is derived from this at variance-estimation time.
+#'     - **PPS WOR** (pps_brewer, pps_cps, etc.): \eqn{N_h} (stratum
+#'       population size), converted to \eqn{\pi_i = 1/w_i}{pi_i = 1/w_i}
+#'       at survey export, because `survey::svydesign()` expects inclusion
+#'       probabilities for unequal-probability stages.
+#'     - **Clustered stages**: the number of clusters in the
+#'       stratum/group, not the number of ultimate units.
+#'     - **WR / PMR** (srswr, pps_multinomial, pps_chromy): \eqn{\infty}{Inf}.
+#'       With-replacement designs have no finite population correction.
+#'       Variance is estimated via the Hansen-Hurwitz formula.
+#'
+#'     In a multi-stage design, each stage has its own `.fpc_k`. At survey
+#'     export (`as_svydesign()`), these are assembled into a multi-level FPC
+#'     formula (e.g., `~ .fpc_1 + .fpc_2`).
+#'   - `.draw_1`, `.draw_2`, ...: Draw index per stage (WR/PMR methods only).
+#'     Each row represents one independent draw. The draw index identifies
+#'     which with-replacement selection the row came from.
+#'   - `.certainty_1`, `.certainty_2`, ...: Whether the unit's resolved
+#'     inclusion probability is one, so that it is self-representing and
+#'     contributes no variance at that stage. TRUE whether the probability
+#'     came from a `certainty_size`/`certainty_prop` rule or was capped at one
+#'     by the probability calculation. Present for unequal-probability and
+#'     balanced stages. Always FALSE for WR/PMR stages, where the recorded
+#'     chance is an expected hit rather than a probability.
+#'   - `.replicate`: Replicate identifier (only when `reps` is specified)
+#'   - `.panel`: Panel assignment (only when `panels` is specified)
+#'   - Stage and stratum identifiers as appropriate
+#'
+#'
+#' @name sample-columns
+#' @family diagnostics
+#' @seealso [execute()] which produces them, [frame_summary()] for the
+#'   population structure behind them, [as_svydesign()] for how they are
+#'   translated for \pkg{survey}
+NULL
+
 #' Create a new sampling_design object
 #'
 #' Low-level constructor for sampling_design objects. Users should use
@@ -49,6 +104,11 @@ validate_sampling_design <- function(x, call = caller_env()) {
 #'
 #' @param x Object to test
 #' @return Logical
+#' @family helpers
+#' @examples
+#' design <- sampling_design() |> draw(n = 20)
+#' is_sampling_design(design)
+#' is_sampling_design(bfa_eas)
 #' @export
 is_sampling_design <- function(x) {
   inherits(x, "sampling_design")
@@ -249,6 +309,11 @@ new_tbl_sample <- function(
 #'
 #' @param x Object to test
 #' @return Logical
+#' @family helpers
+#' @examples
+#' sample <- sampling_design() |> draw(n = 20) |> execute(bfa_eas, seed = 1)
+#' is_tbl_sample(sample)
+#' is_tbl_sample(bfa_eas)
 #' @export
 is_tbl_sample <- function(x) {
   inherits(x, "tbl_sample")
@@ -270,7 +335,7 @@ is_tbl_sample <- function(x) {
 #' internal design columns (`.weight`, `.fpc_k`, ...), mark the sample
 #' as modified. Design-based computations ([as_svydesign()],
 #' [joint_expectation()], [design_effect()]) reject modified samples;
-#' see the Domain analysis section of [as_svydesign()]. Restoring the
+#' see the "Modified samples and domain analysis" section of [as_svydesign()]. Restoring the
 #' class with `as_tbl_sample()` does not clear the mark: the data is
 #' re-verified against the integrity record stored at execution, so a
 #' stripped, altered, and restored object is detected.
@@ -281,7 +346,7 @@ is_tbl_sample <- function(x) {
 #' - `tibble::as_tibble()`
 #' - `as.data.frame()`
 #'
-#' For an operational multistage listing, keep the unmodified partial sample
+#' For an operational multi-stage listing, keep the unmodified partial sample
 #' as the first argument to [execute()] and pass the expanded plain object only
 #' as its frame; restoring the listing itself is not required. A plain object
 #' that still carries sample provenance is rejected as the frame of a fresh
@@ -289,8 +354,8 @@ is_tbl_sample <- function(x) {
 #'
 #' Other operations strip both class and attributes and are
 #' not recoverable. Use dplyr alternatives instead:
-#' - `base::merge()` -- use `dplyr::left_join()` etc.
-#' - `base::cbind()` -- use `dplyr::bind_cols()`
+#' - `base::merge()`: use `dplyr::left_join()` etc.
+#' - `base::cbind()`: use `dplyr::bind_cols()`
 #' - `tidyr::pivot_longer()` / `tidyr::pivot_wider()`
 #'
 #' @param x A data frame with sampling attributes.
@@ -313,6 +378,7 @@ is_tbl_sample <- function(x) {
 #' # as_tbl_sample() restores it
 #' restored <- as_tbl_sample(plain)
 #' is_tbl_sample(restored)
+#' @family helpers
 #' @export
 as_tbl_sample <- function(x, ...) {
   UseMethod("as_tbl_sample")
@@ -379,6 +445,7 @@ as_tbl_sample.data.frame <- function(x, ...) {
 #'
 #' # The returned object is the original sampling_design
 #' is_sampling_design(get_design(sample))
+#' @family helpers
 #' @export
 get_design <- function(x) {
   if (!is_tbl_sample(x)) {
@@ -416,6 +483,7 @@ get_design <- function(x) {
 #'
 #' full_sample <- execute(stage1, bfa_eas, seed = 2)
 #' get_stages_executed(full_sample)
+#' @family helpers
 #' @export
 get_stages_executed <- function(x) {
   if (!is_tbl_sample(x)) {
@@ -486,10 +554,20 @@ as_grouped_sample <- function(out, template) {
 #' do not use the dplyr extension generics, so explicit methods are
 #' required (see the dplyr extending documentation).
 #'
-#' @param .data A tbl_sample object
+#' @param .data A `tbl_sample` object.
 #' @param ... Grouping variables, passed to [dplyr::group_by()]
 #' @param .add,.drop Passed to [dplyr::group_by()]
 #' @return A grouped tbl_sample
+#' @examples
+#' sample <- sampling_design() |>
+#'   stratify_by(region) |>
+#'   draw(n = 20) |>
+#'   execute(bfa_eas, seed = 1)
+#'
+#' # Grouping keeps the sample class and its provenance
+#' grouped <- dplyr::group_by(sample, region)
+#' is_tbl_sample(grouped)
+#' dplyr::summarise(grouped, n = dplyr::n())
 #' @export
 #' @keywords internal
 group_by.tbl_sample <- function(
@@ -508,7 +586,7 @@ group_by.tbl_sample <- function(
 }
 
 #' @rdname group_by.tbl_sample
-#' @param x A grouped tbl_sample object
+#' @param x A grouped `tbl_sample` object.
 #' @export
 #' @keywords internal
 ungroup.tbl_sample <- function(x, ...) {
@@ -606,7 +684,7 @@ vec_restore.tbl_sample <- function(x, to, ...) {
 #' not. The location check catches same-length changes (for example
 #' `slice(c(1, 1, 3:n))`) that a row-count comparison would miss.
 #'
-#' @param data A tbl_sample object
+#' @param data A `tbl_sample` object.
 #' @param i Row locations, as passed by dplyr
 #' @param ... Additional arguments passed to the default method
 #' @return A tbl_sample, marked as modified if the row set changed
@@ -638,7 +716,7 @@ dplyr_row_slice.tbl_sample <- function(data, i, ...) {
 #' so renamed internal columns are caught here. Renaming `.weight_1`
 #' away breaks the export exactly like dropping it.
 #'
-#' @param x A tbl_sample object
+#' @param x A `tbl_sample` object.
 #' @param value New column names
 #' @return A tbl_sample, marked as modified if an internal design
 #'   column was renamed
@@ -662,7 +740,7 @@ dplyr_row_slice.tbl_sample <- function(data, i, ...) {
 #' so the result is marked as modified. Adding or changing ordinary
 #' data columns is unaffected.
 #'
-#' @param data A tbl_sample object
+#' @param data A `tbl_sample` object.
 #' @param cols Named list of modified columns, as passed by dplyr
 #' @return A tbl_sample, marked as modified if a design column changed
 #' @export
@@ -697,7 +775,7 @@ dplyr_col_modify.tbl_sample <- function(data, cols) {
 #' [dplyr::filter()] and [dplyr::select()] (see
 #' [dplyr_reconstruct.tbl_sample()]).
 #'
-#' @param x A tbl_sample object
+#' @param x A `tbl_sample` object.
 #' @param i Row index
 #' @param j Column index
 #' @param ... Additional arguments passed to the default method

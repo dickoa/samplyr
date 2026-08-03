@@ -15,7 +15,7 @@ test_frame <- data.frame(
   y = rnorm(120)
 )
 
-# --- Pre-computed fixtures (executed once at test load) ---
+## Pre-computed fixtures (executed once at test load)
 
 # Stratified proportional, n = 40 (10 per stratum)
 fix_strat_prop <- sampling_design() |>

@@ -361,7 +361,7 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
       unit_order = sequence(counts),
       chance = chance_all,
       is_certainty = if (identical(chance_kind, "inclusion_probability")) {
-        chance_all >= 1 - 1e-9
+        is_certainty_probability(chance_all)
       } else {
         rep(NA, sum(counts))
       }
@@ -688,7 +688,13 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
       pool_id = next_pool + i - 1L,
       unit_order = seq_len(N),
       chance = resolved$chance,
-      is_certainty = resolved$chance >= 1 - 1e-9,
+      is_certainty = if (
+        identical(stage$chance_kind, "inclusion_probability")
+      ) {
+        is_certainty_probability(resolved$chance)
+      } else {
+        rep(NA, N)
+      },
       n_descendants = n_desc
     )
     new_reg <- c(new_reg, setNames(ids, child_keys[first_of]))
@@ -917,11 +923,23 @@ digest_quantile_bins <- function(chance_by_pool, pool_ids, pool_sizes) {
 #'
 #' @param design A complete `sampling_design` (a `draw()` at every
 #'   stage).
-#' @param frame The sampling frame the design targets.
+#' @param frame The sampling frame the design targets: one data frame for a
+#'   shared hierarchy, or an ordered list of stage registers, as [execute()]
+#'   takes them. Frames are read and checked with the same grammar
+#'   `execute()` applies, so a frame this accepts is one execution accepts.
 #' @param call Environment reported as the error call.
 #' @return An ex-ante frame digest list.
+#' @family extension APIs
 #' @seealso [get_frame_digest()], [frame_summary()]
-#' @keywords internal
+#' @examples
+#' design <- sampling_design() |>
+#'   stratify_by(region, alloc = "proportional") |>
+#'   draw(n = 300)
+#'
+#' # Resolved from the frame alone: nothing is drawn, no seed is consumed
+#' digest <- build_exante_digest(design, bfa_eas)
+#' digest$status
+#' digest$stages[[1]]$scope
 #' @export
 build_exante_digest <- function(design, frame,
                                 call = rlang::caller_env()) {
@@ -941,15 +959,49 @@ build_exante_digest <- function(design, frame,
       call = call
     )
   }
-  if (!is.data.frame(frame)) {
-    abort_samplyr(
-      "{.arg frame} must be a data frame.",
-      call = call
-    )
+  # One shared hierarchy or one register per stage, read through the grammar
+  # every frame-valued verb shares. The schedule then walks the registers the
+  # way an execution would, treating every candidate as selected: that walk is
+  # what an ex-ante digest is, so it is borrowed rather than reimplemented.
+  # On a single hierarchy it returns the frame unchanged for every stage.
+  supplied <- normalize_frame_input(frame, call = call)
+  # The same executable layer execute() and validate_frame() run. A preview
+  # that accepts a frame execution refuses does not describe what execution
+  # would do, which is the whole promise. A design is always the starting
+  # point here, so a dropped sample class is refused as it is in execute();
+  # an intact previous-phase sample is a legitimate frame and passes.
+  check_frames_executable(
+    supplied$frames,
+    labels = supplied$labels,
+    allow_generated = FALSE,
+    allow_stripped = FALSE,
+    require_rows = FALSE,
+    call = call
+  )
+  schedule <- stage_frame_schedule(
+    design, supplied$frames, stages = NULL, executed = NULL, call = call
+  )
+  stage_frames <- effective_register_frames(schedule, design, call = call)
+  effective_frames_by_stage <- vector("list", length(stages_spec))
+  frame_index_by_stage <- integer(length(stages_spec))
+  for (i in seq_along(schedule$entries)) {
+    stage <- schedule$entries[[i]]$stage
+    effective_frames_by_stage[[stage]] <- stage_frames[[i]]
+    frame_index_by_stage[[stage]] <- schedule$entries[[i]]$frame_index
   }
-  for (spec in stages_spec) {
-    validate_frame_vars(frame, spec, call = call)
-  }
+
+  # Two frames per stage, and the registry takes the supplied one. The
+  # effective frame carries the columns its parents contribute, so
+  # fingerprinting it would describe a table the caller never handed over and
+  # no executed digest ever records: an ex-ante record would then never match
+  # its executed counterpart, which is what makes the two comparable. The
+  # effective frames resolve pools, below, and nothing else here.
+  input_frames_by_stage <- supplied$frames[frame_index_by_stage]
+
+  # Built before the stage loop: each stage records which supplied frame it
+  # selected from, exactly as an executed digest does. Hardcoding 1 made a
+  # three-register digest claim every stage read the first register.
+  frames_reg <- build_digest_frames(design, input_frames_by_stage)
 
   stages_out <- vector("list", length(stages_spec))
   pool_keys <- vector("list", length(stages_spec))
@@ -957,19 +1009,10 @@ build_exante_digest <- function(design, frame,
   for (stage_idx in seq_along(stages_spec)) {
     if (stage_idx > 1L) {
       prev <- stages_spec[[stage_idx - 1L]]
-      if (is_null(prev$clusters)) {
-        abort_samplyr(
-          c(
-            "Stage {stage_idx} cannot be resolved ex-ante.",
-            "x" = "Stage {stage_idx - 1L} selects elements, so the
-                   rows that feed stage {stage_idx} depend on the
-                   realization.",
-            "i" = "Execute the design and plot the sample instead."
-          ),
-          class = "samplyr_error_exante_unsupported",
-          call = call
-        )
-      }
+      # An unclustered non-final stage is refused earlier, by the shared
+      # schedule: it has no identity to link the next stage to, so the
+      # design cannot execute either, and it gets the class execution
+      # gives it rather than a preview-specific reason.
       if (is_multi_hit_method(prev$draw_spec)) {
         abort_samplyr(
           c(
@@ -988,7 +1031,10 @@ build_exante_digest <- function(design, frame,
     # gives (allocation coverage, invariance) and pass through; plain
     # stops from the chance resolvers are wrapped with the stage.
     built <- tryCatch(
-      build_exante_stage(design, stage_idx, frame, registry),
+      build_exante_stage(
+        design, stage_idx, effective_frames_by_stage[[stage_idx]], registry,
+        frame_ref = frames_reg$ref[[stage_idx]]
+      ),
       error = function(e) {
         if (inherits(e, "samplyr_error")) {
           stop(e)
@@ -1009,9 +1055,6 @@ build_exante_digest <- function(design, frame,
     pool_keys[[stage_idx]] <- built$pool_keys
   }
 
-  frames_reg <- build_digest_frames(
-    design, rep(list(frame), length(stages_spec))
-  )
   digest <- new_frame_digest(
     frames = frames_reg$records,
     stages = stages_out,
@@ -1029,7 +1072,7 @@ build_exante_digest <- function(design, frame,
 #' One ex-ante stage record: every pool enumerated, chances resolved
 #' @noRd
 build_exante_stage <- function(design, stage_idx, frame,
-                               parent_registry) {
+                               parent_registry, frame_ref = 1L) {
   spec <- design$stages[[stage_idx]]
   draw_spec <- spec$draw_spec
   strata_spec <- spec$strata
@@ -1202,7 +1245,7 @@ build_exante_stage <- function(design, stage_idx, frame,
       is_certainty = if (
         identical(chance_kind, "inclusion_probability")
       ) {
-        chance_all >= 1 - 1e-9
+        is_certainty_probability(chance_all)
       } else {
         rep(NA, sum(counts))
       },
@@ -1218,7 +1261,7 @@ build_exante_stage <- function(design, stage_idx, frame,
 
   stage <- new_digest_stage(
     stage_id = stage_idx,
-    frame_ref = 1L,
+    frame_ref = as.integer(frame_ref),
     unit_level = if (is_cluster) "cluster" else "element",
     scope = "universe",
     chance_kind = chance_kind,

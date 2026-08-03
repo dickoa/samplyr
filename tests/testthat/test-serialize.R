@@ -62,7 +62,7 @@ test_that("as.list records scalar frac, control, and non-default on_empty", {
   expect_equal(draw$on_empty, "warn")
 })
 
-# write_design() / read_design() / design_json() -------------------------
+## write_design() / read_design() / design_json()
 
 test_that("a simple design round-trips through a file", {
   design <- sampling_design(title = "Simple") |>
@@ -121,7 +121,7 @@ test_that("a complex multi-stage design round-trips faithfully", {
       method = "pps_brewer",
       mos = mos,
       min_n = 1,
-      control = c(desc(mos), y)
+      control = c(desc(mos), stratum)
     ) |>
     add_stage(label = "Units") |>
     draw(n = 2, on_empty = "warn")
@@ -552,7 +552,7 @@ test_that("write_design() validates its inputs", {
   )
 })
 
-# Complete receipts and replay_design() (review issue 4) --------------------
+## Complete receipts and replay_design() (review issue 4)
 
 # The replay contract: full equality of the materialized sample except
 # the execution timestamp.

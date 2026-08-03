@@ -2,7 +2,7 @@
 % Please edit documentation in R/cluster.R
 \name{cluster_by}
 \alias{cluster_by}
-\title{Define Sampling Units (Clusters)}
+\title{Define sampling units (clusters)}
 \usage{
 cluster_by(.data, ...)
 }
@@ -24,9 +24,9 @@ subgroups to sample \emph{within}, \code{cluster_by()} defines units to sample
 \emph{as a whole}.
 }
 \details{
-\code{cluster_by()} is purely structural -- it defines \emph{what} to sample, not \emph{how}.
+\code{cluster_by()} is purely structural. It defines \emph{what} to sample, not \emph{how}.
 The selection method and sample size are specified in \code{\link[=draw]{draw()}}.
-\subsection{Cluster vs. Stratification}{
+\subsection{Cluster vs. stratification}{
 \itemize{
 \item \strong{Stratification} (\code{\link[=stratify_by]{stratify_by()}}): Sample \emph{within} each group; all
 groups represented in the sample
@@ -35,7 +35,7 @@ groups appear in sample
 }
 }
 
-\subsection{Multi-Stage Designs}{
+\subsection{Multi-stage designs}{
 
 In multi-stage designs, each stage typically has its own clustering variable:
 \itemize{
@@ -57,7 +57,7 @@ cluster variable to be globally unique on its own, they should provide a
 globally unique ID or include multiple columns in \code{cluster_by()}.
 }
 }
-\section{Order of Operations}{
+\section{Order of operations}{
 
 In a single stage, the typical order is:
 \enumerate{
@@ -107,4 +107,12 @@ sampling_design() |>
 \code{\link[=stratify_by]{stratify_by()}} for stratification,
 \code{\link[=draw]{draw()}} for specifying selection,
 \code{\link[=add_stage]{add_stage()}} for multi-stage designs
+
+Other design specification:
+\code{\link[=add_stage]{add_stage()}},
+\code{\link[=draw]{draw()}},
+\code{\link[=sampling_design]{sampling_design()}},
+\code{\link{selection-methods}},
+\code{\link[=stratify_by]{stratify_by()}}
 }
+\concept{design specification}

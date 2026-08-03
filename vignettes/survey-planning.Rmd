@@ -540,7 +540,7 @@ the plan was built for, but only on average. The planned figure is a
 property of the design; the realized one is an estimate from the single
 sample you drew, and on a skewed outcome it moves a good deal from draw to
 draw. Repeating this design over many seeds gives a spread of realized
-coefficients of variation centred close to the planned one.
+coefficients of variation centered close to the planned one.
 
 ```{r}
 est <- survey::svymean(~revenue_millions, svy2)

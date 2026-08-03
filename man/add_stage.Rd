@@ -2,7 +2,7 @@
 % Please edit documentation in R/stage.R
 \name{add_stage}
 \alias{add_stage}
-\title{Define a New Stage in Multi-Stage Designs}
+\title{Define a new stage in multi-stage designs}
 \usage{
 add_stage(.data, label = NULL)
 }
@@ -17,11 +17,11 @@ A modified \code{sampling_design} object with a new stage context.
 }
 \description{
 \code{add_stage()} opens a new stage context in multi-stage sampling designs.
-It acts as a delimiter between stages, not a wrapper -- each stage's
+It acts as a delimiter between stages, not a wrapper. Each stage's
 specification follows \code{add_stage()} using the same verbs.
 }
 \details{
-\subsection{Multi-Stage Design Structure}{
+\subsection{Multi-stage design structure}{
 
 In multi-stage designs, sampling proceeds hierarchically:
 \enumerate{
@@ -38,18 +38,18 @@ Each stage can have its own:
 }
 }
 
-\subsection{Design Patterns}{
+\subsection{Design patterns}{
 
 \strong{Pattern 1: Single-stage (no explicit \code{add_stage()}):}
-\preformatted{
-sampling_design() |>
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{sampling_design() |>
   stratify_by(...) |>
   draw(...)
-}
+}\if{html}{\out{</div>}}
 
 \strong{Pattern 2: Multi-stage (explicit stages):}
-\preformatted{
-sampling_design() |>
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{sampling_design() |>
   add_stage(label = "Stage 1") |>
     cluster_by(...) |>
     draw(...) |>
@@ -58,10 +58,10 @@ sampling_design() |>
     draw(...) |>
   add_stage(label = "Stage 3") |>
     draw(...)
-}
+}\if{html}{\out{</div>}}
 }
 
-\subsection{Validation Rules}{
+\subsection{Validation rules}{
 \itemize{
 \item Each stage must end with \code{\link[=draw]{draw()}} before the next \code{add_stage()} or \code{\link[=execute]{execute()}}
 \item Empty stages (stage followed immediately by stage) are not allowed
@@ -132,4 +132,12 @@ nrow(selected_eas)
 \code{\link[=sampling_design]{sampling_design()}} for creating designs,
 \code{\link[=draw]{draw()}} for completing stages,
 \code{\link[=execute]{execute()}} for running multi-stage designs
+
+Other design specification:
+\code{\link[=cluster_by]{cluster_by()}},
+\code{\link[=draw]{draw()}},
+\code{\link[=sampling_design]{sampling_design()}},
+\code{\link{selection-methods}},
+\code{\link[=stratify_by]{stratify_by()}}
 }
+\concept{design specification}

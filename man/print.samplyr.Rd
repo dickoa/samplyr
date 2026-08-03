@@ -4,7 +4,7 @@
 \alias{print.samplyr}
 \alias{print.sampling_design}
 \alias{tbl_sum.tbl_sample}
-\title{Print Methods for samplyr Objects}
+\title{Print methods for samplyr objects}
 \usage{
 \method{print}{sampling_design}(x, ...)
 
@@ -19,5 +19,16 @@
 Invisibly returns the input object
 }
 \description{
-Print Methods for samplyr Objects
+Print methods for samplyr objects
 }
+\seealso{
+Other helpers:
+\code{\link[=as_tbl_sample]{as_tbl_sample()}},
+\code{\link[=bound]{bound()}},
+\code{\link[=get_design]{get_design()}},
+\code{\link[=get_stages_executed]{get_stages_executed()}},
+\code{\link[=is_sampling_design]{is_sampling_design()}},
+\code{\link[=is_tbl_sample]{is_tbl_sample()}},
+\code{\link[=serp]{serp()}}
+}
+\concept{helpers}

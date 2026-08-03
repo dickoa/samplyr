@@ -1,4 +1,4 @@
-#' Create a Sampling Design
+#' Create a sampling design
 #'
 #' `sampling_design()` is the entry point for creating survey sampling
 #' specifications. It creates an empty design object that can be built
@@ -23,15 +23,15 @@
 #' The design specification is frame-independent: it describes *how* to sample,
 #' not *what* to sample from.
 #'
-#' @section Design Flow:
+#' @section Design flow:
 #' A typical design workflow follows this pattern:
-#' \preformatted{
+#' ```r
 #' sampling_design() |>
 #'   stratify_by(...) |>
 #'   cluster_by(...) |>
 #'   draw(...) |>
 #'   execute(frame)
-#' }
+#' ```
 #'
 #' @examples
 #' # Simple random sample of 100 EAs
@@ -64,6 +64,7 @@
 #' [add_stage()] for multi-stage designs,
 #' [execute()] for running designs
 #'
+#' @family design specification
 #' @export
 sampling_design <- function(title = NULL) {
   if (!is_null(title) && !is_character(title)) {

@@ -2,7 +2,7 @@
 % Please edit documentation in R/design.R
 \name{sampling_design}
 \alias{sampling_design}
-\title{Create a Sampling Design}
+\title{Create a sampling design}
 \usage{
 sampling_design(title = NULL)
 }
@@ -33,16 +33,16 @@ plan from its execution. This allows designs to be:
 The design specification is frame-independent: it describes \emph{how} to sample,
 not \emph{what} to sample from.
 }
-\section{Design Flow}{
+\section{Design flow}{
 
 A typical design workflow follows this pattern:
-\preformatted{
-sampling_design() |>
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{sampling_design() |>
   stratify_by(...) |>
   cluster_by(...) |>
   draw(...) |>
   execute(frame)
-}
+}\if{html}{\out{</div>}}
 }
 
 \examples{
@@ -76,4 +76,12 @@ sampling_design(title = "Zimbabwe Household Health Survey") |>
 \code{\link[=draw]{draw()}} for specifying selection parameters,
 \code{\link[=add_stage]{add_stage()}} for multi-stage designs,
 \code{\link[=execute]{execute()}} for running designs
+
+Other design specification:
+\code{\link[=add_stage]{add_stage()}},
+\code{\link[=cluster_by]{cluster_by()}},
+\code{\link[=draw]{draw()}},
+\code{\link{selection-methods}},
+\code{\link[=stratify_by]{stratify_by()}}
 }
+\concept{design specification}

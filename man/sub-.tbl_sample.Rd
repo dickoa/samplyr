@@ -7,7 +7,7 @@
 \method{[}{tbl_sample}(x, i, j, ..., drop = FALSE)
 }
 \arguments{
-\item{x}{A tbl_sample object}
+\item{x}{A \code{tbl_sample} object.}
 
 \item{i}{Row index}
 

@@ -36,7 +36,17 @@ test_that("validate_frame accepts a valid stage selector", {
     add_stage() |>
     draw(n = 1)
 
-  expect_true(validate_frame(design, good_frame, stage = 1))
+  # A cluster-level MOS must be constant within the cluster. `good_frame` has
+  # a per-row `size`, which execute() refuses, so a frame validated here is
+  # one execution would accept.
+  cluster_frame <- good_frame
+  cluster_frame$size <- rep(c(10, 20, 30, 40), each = 5)
+
+  expect_true(validate_frame(design, cluster_frame, stages = 1))
+  expect_error(
+    validate_frame(design, good_frame, stages = 1),
+    class = "samplyr_error_frame_cluster_invariant"
+  )
 })
 
 test_that("validate_frame detects a missing stratification variable", {
@@ -46,7 +56,11 @@ test_that("validate_frame detects a missing stratification variable", {
 
   expect_error(
     validate_frame(design, good_frame),
-    "missing stratification variable"
+    class = "samplyr_error_frame_missing_vars"
+  )
+  expect_error(
+    validate_frame(design, good_frame),
+    "stratification variable"
   )
 })
 
@@ -57,7 +71,11 @@ test_that("validate_frame detects a missing cluster variable", {
 
   expect_error(
     validate_frame(design, good_frame),
-    "missing cluster variable"
+    class = "samplyr_error_frame_missing_vars"
+  )
+  expect_error(
+    validate_frame(design, good_frame),
+    "cluster variable"
   )
 })
 
@@ -68,7 +86,11 @@ test_that("validate_frame detects MOS problems", {
   # missing
   missing_mos <- sampling_design() |>
     draw(n = 2, method = "pps_brewer", mos = zzz)
-  expect_error(validate_frame(missing_mos, good_frame), "missing MOS variable")
+  expect_error(
+    validate_frame(missing_mos, good_frame),
+    class = "samplyr_error_frame_missing_vars"
+  )
+  expect_error(validate_frame(missing_mos, good_frame), "MOS variable")
 
   # non-numeric
   type_mos <- sampling_design() |>
@@ -104,11 +126,15 @@ test_that("validate_frame detects a missing control variable", {
 
   expect_error(
     validate_frame(design, good_frame),
-    "missing control variable"
+    class = "samplyr_error_frame_missing_vars"
+  )
+  expect_error(
+    validate_frame(design, good_frame),
+    "control variable"
   )
 })
 
-# Fingerprint comparison for designs restored with read_design() ---------
+## Fingerprint comparison for designs restored with read_design()
 
 fp_design <- sampling_design() |>
   stratify_by(region) |>
@@ -196,7 +222,7 @@ test_that("designs without a fingerprint validate as before", {
   expect_no_message(validate_frame(no_fp, good_frame[-1, ]))
 })
 
-# Two-phase linkage pre-flight -----------------------------------------------
+## Two-phase linkage pre-flight
 #
 # When the frame is a tbl_sample (phase-2 preparation), validate_frame()
 # warns about linkage problems that would otherwise only fail at
@@ -225,10 +251,55 @@ test_that("phase-2 design with shared unique id passes silently", {
   expect_true(validate_frame(phase2_design, phase1))
 })
 
-test_that("phase-2 design without shared identifiers warns", {
+test_that("phases that declare different units are linkable", {
+  # Phase 1 samples PSUs, phase 2 samples households and people. Neither
+  # redeclares the other's unit, and the bridge is their compound, so
+  # requiring the two declarations to intersect would reject a design that
+  # exports correctly.
+  frame <- data.frame(
+    psu = rep(1:8, each = 6), hh = rep(1:24, each = 2),
+    id = seq_len(48), y = 1
+  )
+  phase1 <- sampling_design() |>
+    cluster_by(psu) |>
+    draw(n = 4) |>
+    execute(frame, seed = 1)
+
+  phase2_design <- sampling_design() |>
+    add_stage() |> cluster_by(hh) |> draw(n = 3) |>
+    add_stage() |> cluster_by(id) |> draw(n = 1)
+
+  expect_no_warning(validate_frame(phase2_design, phase1))
+
+  skip_if_not_installed("survey")
+  expect_s3_class(
+    as_svydesign(execute(phase2_design, phase1, seed = 3)), "twophase2"
+  )
+})
+
+test_that("a phase-2 design that declares no unit still links through phase 1", {
+  # Phase 2 samples elements. Phase 1's identifier is on every phase-2 row,
+  # which is all the bridge needs.
   frame <- data.frame(id = 1:100, x = rnorm(100))
   phase1 <- sampling_design() |>
     cluster_by(id) |>
+    draw(n = 40) |>
+    execute(frame, seed = 1)
+
+  phase2_design <- sampling_design() |>
+    draw(n = 10)
+
+  expect_no_warning(validate_frame(phase2_design, phase1))
+
+  skip_if_not_installed("survey")
+  expect_s3_class(
+    as_svydesign(execute(phase2_design, phase1, seed = 2)), "twophase2"
+  )
+})
+
+test_that("a design warns when neither phase declares a unit", {
+  frame <- data.frame(id = 1:100, x = rnorm(100))
+  phase1 <- sampling_design() |>
     draw(n = 40) |>
     execute(frame, seed = 1)
 
@@ -241,6 +312,13 @@ test_that("phase-2 design without shared identifiers warns", {
   )
   # validation still passes
   expect_true(suppressWarnings(validate_frame(phase2_design, phase1)))
+
+  # The warning is true: the export it predicts does fail.
+  skip_if_not_installed("survey")
+  expect_error(
+    as_svydesign(execute(phase2_design, phase1, seed = 2)),
+    class = "samplyr_error_twophase_bridge"
+  )
 })
 
 test_that("phase-2 design with non-unique phase-1 keys warns", {

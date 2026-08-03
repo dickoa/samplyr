@@ -172,6 +172,14 @@ ms_sample <- sampling_design() |>
 
 svy_ms <- as_svydesign(ms_sample)
 svy_ms
+```
+
+Two things about this frame surface here, and they are separate. First, the capping warning: Bulawayo holds a single district, so a take of two selects it whole. That is reported once per stage, and it is why the province contributes no first-stage variance.
+
+Second, certainty. Harare and Bulawayo each contain a district large enough that its inclusion probability resolves to 1. Those districts are self-representing, so they go into a take-all stratum that contributes no variance. That split leaves Harare with a single probability district, and a stratum holding one probability PSU has no estimable within-stratum variance. `survey` reports this rather than returning a number, so the design needs a rule for it. Centering on the population mean is the conservative choice.
+
+```{r}
+options(survey.lonely.psu = "adjust")
 svymean(~households, svy_ms)
 ```
 
@@ -297,7 +305,7 @@ sampford_sample <- sampling_design() |>
   execute(bfa_eas, seed = 2025)
 
 # Sampford joint inclusion probabilities are exact.
-jip <- joint_expectation(sampford_sample, bfa_eas, stage = 1)
+jip <- joint_expectation(sampford_sample, bfa_eas, stages = 1)
 
 # Use the exact matrix for single-stage PPS variance estimation.
 svy_exact <- as_svydesign(
@@ -311,22 +319,12 @@ svy_brewer <- as_svydesign(sampford_sample)
 svymean(~households, svy_brewer)
 ```
 
-The method-specific availability is:
-
-| samplyr method    | `joint_expectation()` result | Precision or status |
-|:------------------|:-----------------------------|:--------------------|
-| `pps_brewer`      | $\pi_{kl}$                   | Approximate          |
-| `pps_sampford`    | $\pi_{kl}$                   | Exact                |
-| `pps_systematic`  | $\pi_{kl}$                   | Exact                |
-| `pps_cps`         | $\pi_{kl}$                   | Exact                |
-| `pps_poisson`     | $\pi_{kl}$                   | Exact                |
-| `pps_sps`         | $\pi_{kl}$                   | Approximate          |
-| `pps_pareto`      | $\pi_{kl}$                   | Approximate          |
-| `pps_multinomial` | $E(n_k n_l)$                 | Exact                |
-| `pps_chromy`      | $E(n_k n_l)$                 | Approximate          |
-| `cube`            | $\pi_{kl}$                   | Approximate when unconstrained |
-| `lpm2`            | Unavailable                  | Spatial bootstrap only |
-| `scps`            | Unavailable                  | Spatial bootstrap only |
+Which methods yield exact rather than approximate second-order quantities,
+and which yield none at all, is tabulated in `?joint_expectation`. In outline:
+`pps_sampford`, `pps_systematic`, `pps_cps` and `pps_poisson` are exact;
+`pps_brewer`, `pps_sps`, `pps_pareto` and unconstrained `cube` use the
+high-entropy approximation; `lpm2` and `scps` have none, because spatial
+spreading is not represented.
 
 For bounded cube designs, joint probabilities are also unavailable because
 the count constraints alter pairwise selection behavior. For LPM2, SCPS, and

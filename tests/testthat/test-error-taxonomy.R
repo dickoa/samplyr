@@ -214,7 +214,7 @@ test_that("a misspelled reserved argument to execute() is named, not misdiagnose
   )
 })
 
-test_that("execute() still accepts labelled frames and exact arguments", {
+test_that("execute() still accepts labeled frames and exact arguments", {
   frame <- data.frame(id = 1:40, ea = rep(1:8, each = 5))
   hh <- data.frame(ea = rep(1:8, each = 5), hh = 1:40)
   design <- sampling_design() |> draw(n = 8)
@@ -250,9 +250,9 @@ test_that("a misspelled reserved argument to stratify_by() is named", {
 
   # A label that resembles no reserved argument is ignored, as before.
   frame <- data.frame(id = 1:40, region = rep(c("n", "s"), 20))
-  labelled <- sampling_design() |>
+  labeled <- sampling_design() |>
     stratify_by(reg = region) |>
     draw(n = 8) |>
     execute(frame, seed = 1)
-  expect_equal(as.list(get_design(labelled))$stages[[1]]$strata$vars, "region")
+  expect_equal(as.list(get_design(labeled))$stages[[1]]$strata$vars, "region")
 })

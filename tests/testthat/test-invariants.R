@@ -62,10 +62,11 @@ test_that("continuation matches single-run when downstream stage is deterministi
     add_stage(label = "Units") |>
       draw(n = 9999)
 
-  full_run <- execute(design, frame, seed = 202)
+  # `n = 9999` is the take-everything idiom, so every stage-2 pool caps.
+  full_run <- suppressWarnings(execute(design, frame, seed = 202))
 
   stage1 <- execute(design, frame, stages = 1, seed = 202)
-  continued <- execute(stage1, frame, seed = 999)
+  continued <- suppressWarnings(execute(stage1, frame, seed = 999))
 
   full_norm <- full_run |>
     dplyr::arrange(unit_id) |>

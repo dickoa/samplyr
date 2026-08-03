@@ -2,7 +2,7 @@
 % Please edit documentation in R/stratify.R
 \name{stratify_by}
 \alias{stratify_by}
-\title{Define Stratification}
+\title{Define stratification}
 \usage{
 stratify_by(
   .data,
@@ -32,7 +32,17 @@ because those arguments follow \code{...} and are matched exactly.}
 \item \code{"neyman"}: Neyman optimal allocation (requires \code{variance})
 \item \code{"optimal"}: Cost-variance optimal allocation (requires \code{variance} and \code{cost})
 \item \code{"power"}: Power allocation (requires \code{cv} and \code{importance})
-}}
+}
+
+Every method is capped at the stratum population: a stratum is never
+allocated more units than it holds, and the surplus is redistributed
+across the strata with room left, in proportion to the same factors the
+method uses. A named rule can therefore be departed from when a stratum
+is too small to absorb its share, so \code{"equal"} on populations
+\eqn{(10, 490, 500)} with \code{n = 300} gives 10/145/145 rather than
+100/100/100. \code{execute()} reports this once per stage with a message of
+class \code{samplyr_message_allocation_capped}, however many parent pools or
+replicates the stage runs over.}
 
 \item{variance}{Stratum variances for Neyman or optimal allocation.
 Either a data frame with columns for all stratification variables plus
@@ -70,31 +80,68 @@ methods for a sampling design. Stratification ensures representation from
 all subgroups defined by the stratification variables.
 }
 \details{
-\subsection{Allocation Methods}{
+\subsection{Allocation methods}{
 
 When no \code{alloc} is specified, the \code{n} parameter in \code{\link[=draw]{draw()}} is interpreted
 as the sample size \emph{per stratum}. When an \code{alloc} method is specified,
 \code{n} becomes the \emph{total} sample size to be distributed according to the
 allocation method.
-\subsection{Equal Allocation}{
+}
+
+\subsection{Population bounds and redistribution}{
+
+For an allocation method the realized sizes satisfy
+\eqn{\sum_h n_h = n}{sum(n_h) = n} and
+\eqn{0 \le n_h \le N_h}{0 <= n_h <= N_h} whenever the request is feasible.
+The population size is an upper bound in its own right, so \code{min_n} and
+\code{max_n} add user bounds on top of a cap that is always present rather than
+introducing one.
+
+Saturated strata are fixed at their bound and removed from the problem,
+then the remaining total is reallocated over the remaining strata using the
+method's own factors (\eqn{N_h} for proportional,
+\eqn{N_h \sqrt{S_h^2}}{N_h * sqrt(var_h)} for Neyman, and so on). This
+keeps the stated criterion intact after saturation. When the free strata
+all carry zero factors the criterion is indifferent between them, and the
+remainder is split equally in stratum order.
+
+Requesting more than the frame holds allocates every unit rather than
+failing. \code{execute()} reports it through the same per-stage diagnostic as
+every other population cap, so a stage that ends up taking everything it
+could reach warns with class \code{samplyr_warning_census}, and a random-size
+method in the same position warns with \code{samplyr_warning_nominal_cap}.
+Bounds that make the request impossible are errors rather than silent
+adjustments, with classes \code{samplyr_error_alloc_min_infeasible} and
+\code{samplyr_error_alloc_max_infeasible}.
+
+With-replacement and Poisson-multinomial designs draw units repeatedly, so
+the number of distinct units is not an upper bound on the number of draws.
+For those methods only \code{min_n} and \code{max_n} bind.
+
+Per-stratum sizes given directly, through a scalar or named \code{n}, a \code{frac},
+or a data frame, are instructions rather than a total to distribute. They
+are never redistributed; selection caps an impossible one and reports it.
+}
+
+\subsection{Equal allocation}{
 
 Each stratum receives n/H units, where H is the number of strata.
 }
 
-\subsection{Proportional Allocation}{
+\subsection{Proportional allocation}{
 
 Each stratum receives \eqn{n \times N_h/N}{n * N_h/N} units, where \eqn{N_h} is the stratum
 population size and N is the total population size.
 }
 
-\subsection{Neyman Allocation}{
+\subsection{Neyman allocation}{
 
 Minimizes variance for fixed sample size. Each stratum receives:
 \eqn{n \times (N_h \times S_h) / \sum(N_h \times S_h)}{n * (N_h * S_h) / sum(N_h * S_h)}
 where S_h is the stratum standard deviation.
 }
 
-\subsection{Optimal Allocation}{
+\subsection{Optimal allocation}{
 
 Minimizes variance for fixed cost (or cost for fixed variance).
 Each stratum receives:
@@ -102,21 +149,21 @@ Each stratum receives:
 where C_h is the per-unit cost in stratum h.
 }
 
-\subsection{Power Allocation}{
+\subsection{Power allocation}{
 
 Power allocation (Bankier, 1988) is a compromise allocation:
 \eqn{n_h \propto C_h \times X_h^q}, where \eqn{C_h} is stratum CV, \eqn{X_h}
 is a stratum importance measure, and \eqn{q \in [0, 1]}.
 }
 
-\subsection{Custom Allocation}{
+\subsection{Custom allocation}{
 
 For custom stratum-specific sample sizes or rates, pass a data frame
 directly to the \code{n} or \code{frac} argument in \code{\link[=draw]{draw()}}. The data frame must
 contain columns for all stratification variables plus an \code{n} or \code{frac} column.
 }
 
-\subsection{Auxiliary Input Formats (\code{variance}, \code{cost}, \code{cv}, \code{importance})}{
+\subsection{Auxiliary input formats (\code{variance}, \code{cost}, \code{cv}, \code{importance})}{
 \itemize{
 \item With \strong{one} stratification variable, you may use a named vector
 (e.g., \code{variance = c(A = 1.2, B = 0.8)}).
@@ -124,10 +171,8 @@ contain columns for all stratification variables plus an \code{n} or \code{frac}
 containing all stratification columns plus the value column.
 }
 }
-
 }
-}
-\section{Data Frame Requirements}{
+\section{Data frame requirements}{
 
 Auxiliary data frames (\code{variance}, \code{cost}) must contain:
 \itemize{
@@ -204,4 +249,12 @@ sampling_design() |>
 \code{\link[=sampling_design]{sampling_design()}} for creating designs,
 \code{\link[=draw]{draw()}} for specifying sample sizes,
 \code{\link[=cluster_by]{cluster_by()}} for cluster sampling
+
+Other design specification:
+\code{\link[=add_stage]{add_stage()}},
+\code{\link[=cluster_by]{cluster_by()}},
+\code{\link[=draw]{draw()}},
+\code{\link[=sampling_design]{sampling_design()}},
+\code{\link{selection-methods}}
 }
+\concept{design specification}

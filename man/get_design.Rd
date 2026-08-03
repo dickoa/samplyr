@@ -38,3 +38,14 @@ get_design(sample)
 # The returned object is the original sampling_design
 is_sampling_design(get_design(sample))
 }
+\seealso{
+Other helpers:
+\code{\link[=as_tbl_sample]{as_tbl_sample()}},
+\code{\link[=bound]{bound()}},
+\code{\link[=get_stages_executed]{get_stages_executed()}},
+\code{\link[=is_sampling_design]{is_sampling_design()}},
+\code{\link[=is_tbl_sample]{is_tbl_sample()}},
+\code{\link{print.samplyr}},
+\code{\link[=serp]{serp()}}
+}
+\concept{helpers}

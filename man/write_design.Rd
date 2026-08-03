@@ -5,7 +5,7 @@
 \alias{read_design}
 \title{Write a sampling design to a file}
 \usage{
-write_design(x, path, frame = NULL, pretty = TRUE)
+write_design(x, path, frame = NULL, ..., pretty = TRUE)
 
 read_design(file)
 }
@@ -16,12 +16,23 @@ saved along with an execution receipt).}
 \item{path}{File path to write to. Conventionally with a \code{.json}
 extension.}
 
-\item{frame}{Optional sampling frame (data frame). When supplied, a
-fingerprint of the frame (name, dimensions, column types, content
-hash) is stored so the frame can be verified later. The frame data is
-never written. The content hash covers column names, column values,
-and row order; it does not depend on the class of the data frame
-(tibble or data frame) or on the order of its columns.}
+\item{frame}{Optional sampling frame. A data frame is the one frame
+the design was built against. An ordered list of data frames is the
+stage registers, in the order \code{\link[=execute]{execute()}} received them, and each
+is fingerprinted separately. One frame written as a one-element list
+is still one frame and is recorded identically. The number of frames
+must be one the design could be executed with, and for an executed
+sample must be the number its receipt records, so a file cannot say
+it was drawn from one frame and carry fingerprints for three. When
+supplied, a fingerprint (name,
+dimensions, column types, content hash) is stored so the frame can
+be verified later. The frame data is never written. The content
+hash covers column names, column values, and row order. It does not
+depend on the class of the data frame (tibble or data frame) or on
+the order of its columns.}
+
+\item{...}{These dots are for future extensions and must be empty.
+\code{pretty} follows \code{...}, so it is matched exactly and must be named.}
 
 \item{pretty}{Whether to pretty-print the JSON. Defaults to \code{TRUE} for
 files and \code{FALSE} for \code{\link[=design_json]{design_json()}}.}
@@ -32,7 +43,7 @@ remote files. Download the file first and read the local copy.}
 }
 \value{
 \code{write_design()} returns \code{x} invisibly. \code{read_design()} returns
-a \code{sampling_design}; any frame information and execution receipt in
+a \code{sampling_design}. Any frame information and execution receipt in
 the file are attached as the \code{"frame_info"} and \code{"execution"}
 attributes.
 }
@@ -51,7 +62,7 @@ never the frame data itself.
 \subsection{Lifecycle}{
 
 The serialization interface and its samplyr-native file format are
-experimental. They support samplyr persistence and replay; they are not a
+experimental. They support samplyr persistence and replay. They are not a
 finalized cross-tool survey-sampling interchange standard. The structure
 may change while that separate specification is developed.
 }
@@ -84,9 +95,9 @@ Together with the frame fingerprint this makes a single-call sample
 reproducible when the same frame, compatible package implementations, and
 any recorded custom methods are available. Running
 \code{replay_design(read_design(path), frame)} then obtains the same
-\code{tbl_sample} -- the same rows in the same order, including \code{.panel} and
-\code{.replicate} assignments -- with only the execution timestamp differing.
-The sampled rows themselves are not stored; use a data format (CSV,
+\code{tbl_sample} (the same rows in the same order, including \code{.panel} and
+\code{.replicate} assignments) with only the execution timestamp differing.
+The sampled rows themselves are not stored. Use a data format (CSV,
 parquet) for those.
 
 Receipts describe one \code{\link[=execute]{execute()}} call. A sample built by several
@@ -94,8 +105,16 @@ calls (a stage continuation or a multi-phase pipeline) is flagged as
 \code{chained} in the receipt and \code{write_design()} warns: replaying the
 final call alone cannot reproduce it, so save and replay each phase
 or stage batch separately. A sample whose rows or design columns were
-modified after execution is likewise flagged (\code{modified}); its
+modified after execution is likewise flagged (\code{modified}). Its
 receipt describes the original execution, not the modified object.
+
+The receipt also records how frames were mapped to stages: the frame
+mode, how many frames were supplied, their optional labels, and the
+frame position each executed stage drew from. This is what a
+\code{chained} receipt describes too, for its final call only, so the
+mapping never implies that a chained sample can be replayed. A
+receipt written before these fields existed is read as the one-frame
+call it can only have been.
 }
 
 \subsection{Control expressions}{
@@ -103,7 +122,7 @@ receipt describes the original execution, not the modified object.
 \code{draw(control = ...)} expressions are stored as declarative JSON terms,
 not R code. Each term records an ordering type (\code{"ascending"},
 \code{"descending"}, or \code{"serpentine"}) and its variables. Only bare column
-names, \code{dplyr::desc()}, and \code{\link[=serp]{serp()}} can be represented;
+names, \code{dplyr::desc()}, and \code{\link[=serp]{serp()}} can be represented.
 \code{write_design()} errors on anything else.
 }
 
@@ -148,4 +167,10 @@ unlink(path)
 \code{\link[=design_json]{design_json()}} for in-memory JSON, \code{\link[=validate_frame]{validate_frame()}} for
 checking a frame against a design, \code{\link[=get_design]{get_design()}} for extracting the
 design from a sample.
+
+Other serialization:
+\code{\link[=as.list.sampling_design]{as.list.sampling_design()}},
+\code{\link[=design_json]{design_json()}},
+\code{\link[=replay_design]{replay_design()}}
 }
+\concept{serialization}

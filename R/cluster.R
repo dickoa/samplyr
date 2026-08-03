@@ -1,4 +1,4 @@
-#' Define Sampling Units (Clusters)
+#' Define sampling units (clusters)
 #'
 #' `cluster_by()` specifies the sampling units (PSUs/clusters) for cluster
 #' or multi-stage sampling designs. Unlike [stratify_by()], which defines
@@ -14,17 +14,17 @@
 #' @return A modified `sampling_design` object with clustering specified.
 #'
 #' @details
-#' `cluster_by()` is purely structural -- it defines *what* to sample, not *how*.
+#' `cluster_by()` is purely structural. It defines *what* to sample, not *how*.
 #' The selection method and sample size are specified in [draw()].
 #'
-#' ## Cluster vs. Stratification
+#' ## Cluster vs. stratification
 #'
 #' - **Stratification** ([stratify_by()]): Sample *within* each group; all
 #'   groups represented in the sample
 #' - **Clustering** (`cluster_by()`): Sample *groups as units*; only selected
 #'   groups appear in sample
 #'
-#' ## Multi-Stage Designs
+#' ## Multi-stage designs
 #'
 #' In multi-stage designs, each stage typically has its own clustering variable:
 #' - Stage 1: Select schools (`cluster_by(school_id)`)
@@ -43,7 +43,7 @@
 #' cluster variable to be globally unique on its own, they should provide a
 #' globally unique ID or include multiple columns in `cluster_by()`.
 #'
-#' @section Order of Operations:
+#' @section Order of operations:
 #' In a single stage, the typical order is:
 #' 1. `stratify_by()` (optional) - define strata
 #' 2. `cluster_by()` (optional) - define sampling units
@@ -89,6 +89,7 @@
 #' [draw()] for specifying selection,
 #' [add_stage()] for multi-stage designs
 #'
+#' @family design specification
 #' @export
 cluster_by <- function(.data, ...) {
   if (!is_sampling_design(.data)) {

@@ -45,4 +45,10 @@ svy |>
 }
 \seealso{
 \code{\link[=as_svydesign]{as_svydesign()}} for converting to a survey.design2 object
+
+Other survey export:
+\code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
+\code{\link[=as_svrepdesign]{as_svrepdesign()}},
+\code{\link[=as_svydesign]{as_svydesign()}}
 }
+\concept{survey export}

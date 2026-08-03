@@ -2,12 +2,13 @@
 % Please edit documentation in R/draw.R
 \name{draw}
 \alias{draw}
-\title{Specify Selection Parameters}
+\title{Specify how units are selected}
 \usage{
 draw(
   .data,
   n = NULL,
   frac = NULL,
+  ...,
   min_n = NULL,
   max_n = NULL,
   method = "srswor",
@@ -29,7 +30,12 @@ draw(
 
 \item{n}{Sample size. For random-size methods (\code{bernoulli}, \code{pps_poisson}),
 \code{n} is the \strong{expected} sample size (converted internally to \code{frac = n / N}).
-Can be:
+For \code{pps_poisson} the realized expectation can fall below \code{n} when large
+units saturate at probability 1. \code{execute()} warns with class
+\code{samplyr_warning_poisson_shortfall} when it falls more than 5\% short of
+what the pool could reach. See \link{selection-methods} for the fixed versus
+random distinction, and use \code{certainty_size} or \code{certainty_prop} to
+handle dominant units. Can be:
 \itemize{
 \item A scalar: applies per stratum (if no \code{alloc}) or as total (if \code{alloc} specified)
 \item A named vector: stratum-specific sizes (for single stratification variable)
@@ -41,71 +47,66 @@ Can be:
 \item A scalar: same fraction for all strata
 \item A named vector: stratum-specific fractions
 \item A data frame: stratum-specific fractions with stratification columns + \code{frac} column
+}
+
 Only one of \code{n} or \code{frac} should be specified. When the rounded
 stratum sample size (\eqn{N_h \cdot \text{frac}}{N_h * frac}) would
 be zero, it is floored at 1 so every stratum receives at least one
-unit.
-}}
+unit.}
+
+\item{...}{These dots are for future extensions and must be empty.
+\code{.data}, \code{n}, and \code{frac} are what a draw is written as and stay
+positional. Every argument after \code{...} is matched exactly and must be
+named, so a positional fourth argument is refused rather than taken
+for \code{min_n}.}
 
 \item{min_n}{Minimum sample size per stratum. When an allocation method
 (e.g., Neyman, proportional) would assign fewer than \code{min_n} units to a
-stratum, that stratum receives \code{min_n} units instead. The excess is
-redistributed proportionally among strata that were above \code{min_n}.
-Commonly set to 2 (minimum for variance estimation) or higher for
-reliable subgroup estimates. Only applies when stratification with an
-allocation method is used. Default is \code{NULL} (no minimum).}
+stratum, that stratum is raised to \code{min_n} and the difference is taken
+from the remaining strata in proportion to the method's own allocation
+factors. Commonly set to 2 (minimum for variance estimation) or higher
+for reliable subgroup estimates. A \code{min_n} above a stratum's population
+is structurally capped at that population for without-replacement
+designs, which makes the stratum a census. Only applies when
+stratification with an allocation method is used. Default is \code{NULL}
+(no minimum).}
 
 \item{max_n}{Maximum sample size per stratum. When an allocation method
 would assign more than \code{max_n} units to a stratum, that stratum is
-capped at \code{max_n} units. The surplus is redistributed proportionally
-among strata that were below \code{max_n}. Useful for capping dominant strata
-or managing operational constraints. Only applies when stratification
-with an allocation method is used. Default is \code{NULL} (no maximum).}
+capped and the surplus is redistributed over the remaining strata in
+proportion to the method's own allocation factors. Useful for capping
+dominant strata or managing operational constraints.
 
-\item{method}{Character string specifying the selection method. One of:
+Neither bound introduces the population cap. An allocation is always
+capped at the stratum population, so \code{min_n} and \code{max_n} narrow a range
+that already exists. See the "Population bounds and redistribution"
+section of \code{\link[=stratify_by]{stratify_by()}}. For with-replacement methods the number of
+distinct units is not a bound at all, and these arguments are the only
+limits that apply. Only applies when stratification with an allocation
+method is used. Default is \code{NULL} (no maximum).
 
-\strong{Equal probability methods:}
-\itemize{
-\item \code{"srswor"} (default): Simple random sampling without replacement
-\item \code{"srswr"}: Simple random sampling with replacement
-\item \code{"systematic"}: Systematic (fixed interval) sampling
-\item \code{"bernoulli"}: Independent Bernoulli trials (random sample size)
-}
+To see what a bound does to an allocation before drawing anything, pass
+the design and the frame to \code{\link[=frame_summary]{frame_summary()}}:
+\code{frame_summary(design, frame, detail = "pool")} reports the per-stratum
+target each bound produces, without selecting or consuming any random
+numbers.}
 
-\strong{PPS methods (require \code{mos}):}
-\itemize{
-\item \code{"pps_systematic"}: PPS systematic sampling
-\item \code{"pps_brewer"}: Generalized Brewer (\enc{Tillé}{Tille}) method
-\item \code{"pps_cps"}: Conditional Poisson sampling (maximum entropy)
-\item \code{"pps_sampford"}: Sampford fixed-size PPS sampling
-\item \code{"pps_poisson"}: PPS Poisson sampling (random sample size)
-\item \code{"pps_sps"}: Sequential Poisson sampling (fixed size, supports \code{prn})
-\item \code{"pps_pareto"}: Pareto sampling (fixed size, supports \code{prn})
-\item \code{"pps_multinomial"}: PPS multinomial (with replacement, any hit count)
-\item \code{"pps_chromy"}: Chromy's sequential PPS (minimum replacement)
-}
+\item{method}{Character string naming the selection method, \code{"srswor"} by
+default. \link{selection-methods} lists all sixteen built-ins with what each
+one requires and cites the paper behind each.
 
-\strong{Balanced sampling:}
-\itemize{
-\item \code{"cube"}: Balanced sampling via the cube method
-(Deville & \enc{Tillé}{Tille} 2004).
-Uses auxiliary variables (\code{aux}) to balance the sample so that
-Horvitz-Thompson estimates of auxiliary totals match population totals.
-Supports equal or unequal (\code{mos}) inclusion probabilities. When
-stratified, uses the stratified cube algorithm (Chauvet 2009). At most
-2 stages may use a balanced-family method. \code{"balanced"} is retained
-as a compatibility alias for \code{"cube"}.
-\item \code{"lpm2"}: Local pivotal sampling. Requires spatial coordinates in
-\code{spread} and does not accept \code{aux} or \code{bound()} constraints.
-\item \code{"scps"}: Spatially correlated Poisson sampling. Requires spatial
-coordinates in \code{spread} and does not accept \code{aux} or \code{bound()}.
-}
+\code{"cube"} uses auxiliary variables (\code{aux}) to balance the sample so that
+Horvitz-Thompson estimates of auxiliary totals match population totals,
+and supports equal or unequal (\code{mos}) inclusion probabilities. When
+stratified it uses the stratified cube algorithm (Chauvet 2009). At most
+two stages may use a balanced-family method. \code{"balanced"} is retained as
+a compatibility alias for \code{"cube"}.
 
 Methods registered with \code{\link[sondage:register_method]{sondage::register_method()}} use a prefix that
 identifies their sampling family. Registered \code{type = "wor"} and
 \code{type = "wr"} methods use \code{"pps_<name>"} (for example,
 \code{"pps_mymethod"}). Registered \code{type = "balanced"} methods use
-\code{"balanced_<name>"}. For the latter, \code{mos} is optional;
+\code{"balanced_<name>"}. For the latter, \code{mos} is optional.
 \code{supports_aux = TRUE} permits ordinary balancing variables in \code{aux}, and
 \code{supports_spread = TRUE} requires coordinates in \code{spread}. These
 capabilities are declared when the method is registered in \code{sondage}.
@@ -120,7 +121,7 @@ first-order inclusion probabilities, or expected hits, equal
 (honored to a documented approximation, as Pareto sampling does), or
 \code{"unknown"} (the default: \code{pik} is a selection weight only, so the
 weights would be systematically biased). \code{draw()} refuses \code{"unknown"}
-methods; declare the method's tier to use it. The classic trap is
+methods. Declare the method's tier to use it. The classic trap is
 \code{sample(prob = pik)}: with \code{replace = TRUE} it yields expected hits
 exactly equal to \code{pik} (a valid \code{type = "wr"} method), but without
 replacement its inclusion probabilities differ from \code{pik}, so a
@@ -170,9 +171,7 @@ rate. When \code{n} is specified directly, no rounding occurs. After rounding,
 a minimum of 1 is enforced per stratum or group.}
 
 \item{control}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Variables for
-sorting the frame before selection. Control sorting provides implicit
-stratification, which is particularly effective with systematic and
-sequential sampling methods. Can be:
+sorting the frame before selection. Can be:
 \itemize{
 \item A single variable: \code{control = region}
 \item Multiple variables: \code{control = c(region, district)}
@@ -181,8 +180,8 @@ sequential sampling methods. Can be:
 \item Mixed: \code{control = c(region, serp(district, commune), desc(size))}
 }
 
-When stratification is also specified, control sorting is applied within
-each stratum. See the section "Control Sorting" below for details.}
+See the "Control sorting" section for what the ordering buys and how it
+interacts with \code{stratify_by()}.}
 
 \item{certainty_size}{For PPS without-replacement methods, units with MOS >= this value
 are selected with certainty (probability = 1). Can be:
@@ -238,11 +237,11 @@ An empty selection is a valid realization of a random-size design:
 it contributes zero to Horvitz-Thompson totals, so estimates from
 repeated executions remain unbiased. (A fallback that draws a
 substitute unit would need weights from the combined "draw, then
-fall back" design; reusing the SRS or Poisson weights biases HT
+fall back" design. Reusing the SRS or Poisson weights biases HT
 totals upward.) When an empty stage occurs in a multi-stage
 design, later stages have nothing to select from and the result is
 an empty sample. \code{"warn"} and \code{"silent"} are intended for
-simulation and replicated runs; check \code{nrow()} before analyzing a
+simulation and replicated runs. Check \code{nrow()} before analyzing a
 single realization.
 
 A replicated execution that produced empty replicates cannot be
@@ -259,99 +258,13 @@ analysis.}
 A modified \code{sampling_design} object with selection parameters specified.
 }
 \description{
-\code{draw()} specifies how units are selected. Set the sample size, sampling fraction,
-selection method, measure of size for PPS sampling, auxiliary variables
-for balanced sampling and spread for spatially balanced sampling.
-Every stage in a sampling design must end with \code{draw()}.
+\code{draw()} sets the sample size or sampling fraction, the selection method,
+and whatever that method needs: a measure of size for PPS, auxiliary
+variables for balanced sampling, coordinates for spatial spread. Every
+stage in a sampling design must end with \code{draw()}.
 }
 \details{
-\subsection{Selection Methods}{
-\subsection{Equal Probability Methods}{\tabular{llll}{
-   Method \tab Replacement \tab Sample Size \tab Notes \cr
-   \code{srswor} \tab Without \tab Fixed \tab Standard SRS \cr
-   \code{srswr} \tab With \tab Fixed \tab Allows duplicates \cr
-   \code{systematic} \tab Without \tab Fixed \tab Periodic selection \cr
-   \code{bernoulli} \tab Without \tab Random \tab Each unit selected independently \cr
-}
-
-}
-
-\subsection{PPS Methods}{\tabular{llll}{
-   Method \tab Replacement \tab Sample Size \tab Notes \cr
-   \code{pps_systematic} \tab Without \tab Fixed \tab Simple, some bias \cr
-   \code{pps_brewer} \tab Without \tab Fixed \tab Fast, joint prob > 0 \cr
-   \code{pps_cps} \tab Without \tab Fixed \tab Highest entropy, joint prob available \cr
-   \code{pps_sampford} \tab Without \tab Fixed \tab Exact Sampford joint probabilities \cr
-   \code{pps_poisson} \tab Without \tab Random \tab PPS analog of Bernoulli \cr
-   \code{pps_sps} \tab Without \tab Fixed \tab Sequential Poisson, supports \code{prn} \cr
-   \code{pps_pareto} \tab Without \tab Fixed \tab Pareto sampling, supports \code{prn} \cr
-   \code{pps_multinomial} \tab With \tab Fixed \tab Any hit count, Hansen-Hurwitz \cr
-   \code{pps_chromy} \tab Min. repl. \tab Fixed \tab SAS default PPS_SEQ \cr
-}
-
-}
-
-\subsection{Balanced Sampling}{\tabular{llll}{
-   Method \tab Replacement \tab Sample Size \tab Notes \cr
-   \code{cube} \tab Without \tab Fixed \tab Deville & \enc{Tillé}{Tille} 2004, uses \code{aux} \cr
-   \code{lpm2} \tab Without \tab Fixed \tab Spatial spread; requires \code{spread} \cr
-   \code{scps} \tab Without \tab Fixed \tab Spatial spread; requires \code{spread} \cr
-}
-
-}
-
-}
-
-\subsection{Parameter Requirements}{\tabular{lllll}{
-   Method \tab \code{n} \tab \code{frac} \tab \code{mos} \tab Extra input \cr
-   \code{srswor} \tab Yes \tab or Yes \tab -- \tab -- \cr
-   \code{srswr} \tab Yes \tab or Yes \tab -- \tab -- \cr
-   \code{systematic} \tab Yes \tab or Yes \tab -- \tab -- \cr
-   \code{bernoulli} \tab Expected \tab or Yes \tab -- \tab -- \cr
-   \code{pps_systematic} \tab Yes \tab or Yes \tab Yes \tab -- \cr
-   \code{pps_brewer} \tab Yes \tab or Yes \tab Yes \tab -- \cr
-   \code{pps_cps} \tab Yes \tab -- \tab Yes \tab -- \cr
-   \code{pps_sampford} \tab Yes \tab or Yes \tab Yes \tab -- \cr
-   \code{pps_poisson} \tab Expected \tab or Yes \tab Yes \tab -- \cr
-   \code{pps_sps} \tab Yes \tab or Yes \tab Yes \tab -- \cr
-   \code{pps_pareto} \tab Yes \tab or Yes \tab Yes \tab -- \cr
-   \code{pps_multinomial} \tab Yes \tab or Yes \tab Yes \tab -- \cr
-   \code{pps_chromy} \tab Yes \tab or Yes \tab Yes \tab -- \cr
-   \code{cube} \tab Yes \tab or Yes \tab Optional \tab \code{aux} optional \cr
-   \code{lpm2} \tab Yes \tab or Yes \tab Optional \tab \code{spread} required \cr
-   \code{scps} \tab Yes \tab or Yes \tab Optional \tab \code{spread} required \cr
-}
-
-}
-
-\subsection{Fixed vs Random Sample Size Methods}{
-
-Methods with \strong{fixed sample size} (\code{srswor}, \code{srswr}, \code{systematic}, \code{pps_systematic},
-\code{pps_brewer}, \code{pps_cps}, \code{pps_sampford}, \code{pps_sps}, \code{pps_pareto},
-\code{pps_multinomial}, \code{pps_chromy}, \code{cube}, \code{lpm2}, \code{scps})
-accept either \code{n} or \code{frac}. When \code{frac}
-is provided, the sample size is computed based on the \code{round} parameter (default: ceiling).
-
-Methods with \strong{random sample size} (\code{bernoulli}, \code{pps_poisson}) accept either
-\code{n} or \code{frac}. When \code{n} is provided, it is converted to \code{frac = n / N} (where
-\code{N} is the stratum or frame size). The resulting sample size is still random:
-\code{n} specifies the \strong{expected} sample size, not a fixed count.
-
-For \code{pps_poisson}, the raw inclusion probabilities are computed as
-\eqn{\pi_i = f \cdot x_i / \bar{x}}{pi_i = f * x_i / mean(x)} where
-\eqn{f} is \code{frac} and \eqn{x_i} is the MOS value. Any \eqn{\pi_i > 1}
-is clipped to 1, so the expected sample size
-\eqn{E[n] = \sum \min(\pi_i, 1)}{E[n] = sum(min(pi_i, 1))} can be less
-than \eqn{f \cdot N}{f * N} when large units dominate the MOS
-distribution. Use \code{certainty_size} or \code{certainty_prop} to handle these
-dominant units explicitly.
-
-When an allocation method is set in \code{\link[=stratify_by]{stratify_by()}} (\code{equal},
-\code{proportional}, \code{neyman}, \code{optimal}, \code{power}), specify total sample size via \code{n}.
-Combining \code{alloc} with \code{frac} is not supported.
-}
-
-\subsection{Custom Allocation with Data Frames}{
+\subsection{Custom allocation with data frames}{
 
 For stratum-specific sample sizes or rates, pass a data frame to \code{n} or \code{frac}.
 The data frame must contain:
@@ -361,7 +274,7 @@ The data frame must contain:
 }
 }
 
-\subsection{Certainty Selection}{
+\subsection{Certainty selection}{
 
 In PPS without-replacement sampling, very large units can have theoretical
 inclusion probabilities exceeding 1. Certainty selection handles this by
@@ -381,12 +294,6 @@ this case. The resulting sample size will be the number of certainty
 units, which exceeds \code{n}. In multi-stage designs, the final \code{.weight} can
 still exceed 1 because it compounds all stage weights.
 
-For stratum-specific thresholds, pass a data frame containing:
-\itemize{
-\item All stratification variable columns
-\item A \code{certainty_size} or \code{certainty_prop} column
-}
-
 \strong{Certainty with \code{pps_poisson} and user-supplied \code{frac}.} For
 \code{pps_poisson}, the probabilistic remainder reuses the user-supplied
 \code{frac} against the \emph{remaining} (non-certainty) units. That is,
@@ -398,29 +305,24 @@ expected total to track \code{frac * N}, pass an expected \code{n} instead and
 let samplyr derive the remaining fraction as \code{(n - n_cert) / N_r}.
 }
 
-\subsection{Control Sorting}{
+\subsection{Control sorting}{
 
 Control sorting orders the sampling frame before selection, providing implicit
 stratification. This is particularly effective with systematic and sequential
 methods (\code{systematic}, \code{pps_systematic}, \code{pps_chromy}), where it ensures the
 sample spreads evenly across the sorted variables.
 
-\strong{Serpentine vs Nested Sorting:}
-\itemize{
-\item \strong{Nested} (default): Standard ascending sort by each variable in order.
-Use \code{control = c(var1, var2, var3)}.
-\item \strong{Serpentine}: Alternating direction that minimizes "jumps" between
-adjacent units. Use \code{control = serp(var1, var2, var3)}.
-}
+\strong{Serpentine vs nested sorting.} Nested (the default,
+\code{control = c(var1, var2, var3)}) sorts ascending by each variable in turn.
+Serpentine (\code{control = serp(var1, var2, var3)}) alternates direction at each
+hierarchy level, which minimizes the "jumps" between adjacent units and makes
+nearby observations more similar. For geographic hierarchies this means the
+last district of region 1 is adjacent to the last district of region 2.
 
-Serpentine sorting makes nearby observations more similar by reversing
-direction at each hierarchy level. For geographic hierarchies, this means
-the last district of region 1 is adjacent to the last district of region 2.
-
-\strong{Combining with Explicit Stratification:}
-When both \code{stratify_by()} and \code{control} are used, sorting is applied within
-each stratum. This allows explicit stratification for variance control
-combined with implicit stratification for sample spread.
+\strong{Combining with explicit stratification.} When both \code{stratify_by()} and
+\code{control} are used, sorting is applied within each stratum, giving explicit
+stratification for variance control alongside implicit stratification for
+sample spread.
 }
 }
 \examples{
@@ -526,49 +428,18 @@ sampling_design() |>
   execute(bfa_eas, seed = 424)
 
 }
-\references{
-\code{srswor}, \code{srswr}, \code{systematic}, \code{bernoulli}, \code{pps_systematic},
-\code{pps_multinomial}:
-Cochran, W.G. (1977). \emph{Sampling Techniques}, 3rd ed. Wiley.
-
-\code{pps_brewer}:
-Brewer, K.R.W. (1975). A simple procedure for sampling PPS WOR.
-\emph{Australian Journal of Statistics}, 17(3), 166-172.
-
-\code{pps_cps}:
-Hájek, J. (1964). Asymptotic theory of rejective sampling with varying
-probabilities from a finite population.
-\emph{Annals of Mathematical Statistics}, 35(4), 1491-1523.
-
-Chen, X.-H., Dempster, A.P. and Liu, J.S. (1994). Weighted finite
-population sampling to maximize entropy. \emph{Biometrika}, 81(3), 457-469.
-
-\code{pps_poisson}:
-Tillé, Y. (2006). \emph{Sampling Algorithms}. Springer.
-
-\code{pps_sps}:
-Ohlsson, E. (1998). Sequential Poisson sampling.
-\emph{Journal of Official Statistics}, 14(2), 149-162.
-
-\code{pps_pareto}:
-Rosén, B. (1997). Asymptotic theory for order sampling.
-\emph{Journal of Statistical Planning and Inference}, 62(2), 135-158.
-
-\code{pps_chromy}:
-Chromy, J.R. (1979). Sequential sample selection methods.
-\emph{Proceedings of the Survey Research Methods Section, ASA}, 401-406.
-
-\code{balanced}:
-Deville, J.-C. and \enc{Tillé}{Tille}, Y. (2004). Efficient balanced
-sampling: the cube method. \emph{Biometrika}, 91(4), 893-912.
-
-Chauvet, G. (2009). Stratified balanced sampling.
-\emph{Survey Methodology}, 35(1), 115-119.
-}
 \seealso{
 \code{\link[=sampling_design]{sampling_design()}} for creating designs,
 \code{\link[=stratify_by]{stratify_by()}} for stratification,
 \code{\link[=cluster_by]{cluster_by()}} for clustering,
 \code{\link[=execute]{execute()}} for running designs,
 \code{\link[=serp]{serp()}} for serpentine sorting
+
+Other design specification:
+\code{\link[=add_stage]{add_stage()}},
+\code{\link[=cluster_by]{cluster_by()}},
+\code{\link[=sampling_design]{sampling_design()}},
+\code{\link{selection-methods}},
+\code{\link[=stratify_by]{stratify_by()}}
 }
+\concept{design specification}

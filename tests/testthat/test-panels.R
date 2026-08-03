@@ -56,7 +56,8 @@ test_that("stratified panels have equal representation per stratum", {
       stratify_by(region) |>
       draw(n = 100) |>
       execute(frame, seed = 42, panels = 4),
-    "capped to population"
+    # Every stratum is taken whole: 4 x 50 requested 100 each.
+    class = "samplyr_warning_census"
   )
 
   # Each panel should have equal count per stratum
@@ -122,7 +123,9 @@ test_that("clustered panels support mixed desc() and serp() control ordering", {
     region = rep(c("A", "A", "A", "A", "B", "B", "B", "B"), each = 2),
     district = rep(c(1, 2, 3, 4, 1, 2, 3, 4), each = 2),
     score = rep(c(10, 20, 30, 40, 50, 60, 70, 80), each = 2),
-    ssu = 1:16
+    # A clustered stage orders whole clusters, so a control variable has to
+    # be constant within one.
+    ssu = rep(1:8, each = 2)
   )
 
   desc_first <- sampling_design() |>

@@ -2,8 +2,8 @@
 % Please edit documentation in R/utils.R
 \name{utils}
 \alias{utils}
-\title{Internal Utility Functions}
+\title{Internal utility functions}
 \description{
-Internal Utility Functions
+Internal utility functions
 }
 \keyword{internal}

@@ -110,12 +110,14 @@ test_that("execute() validates incomplete design", {
 test_that("execute() validates required variables", {
   frame <- data.frame(id = 1:100, x = rnorm(100))
 
+  # A missing column does not depend on any draw, so this is caught before
+  # sampling starts and the message names the frame and the stage.
   expect_error(
     sampling_design() |>
       stratify_by(region) |>
       draw(n = 10) |>
       execute(frame, seed = 42),
-    "not found"
+    class = "samplyr_error_frame_missing_vars"
   )
 })
 
@@ -744,15 +746,33 @@ test_that("continuation with stages = c(2, 3) after stage 1 works", {
   expect_equal(get_stages_executed(s23), 1:3)
 })
 
-test_that("continuation with stages = NULL picks up remaining stages", {
+test_that("continuation with stages = 2:3 picks up the remaining stages", {
   design <- three_stage_design()
   frame <- three_stage_frame()
 
   s1 <- execute(design, frame, stages = 1, seed = 42)
-  s_rest <- execute(s1, frame, seed = 2)
+  s_rest <- execute(s1, frame, stages = 2:3, seed = 2)
 
   expect_s3_class(s_rest, "tbl_sample")
   expect_equal(get_stages_executed(s_rest), 1:3)
+})
+
+test_that("continuation with one frame and several stages left is refused", {
+  # One frame cannot say whether it is a register for the next stage or a
+  # hierarchy covering all of them, and guessing samples the wrong register.
+  design <- three_stage_design()
+  frame <- three_stage_frame()
+
+  s1 <- execute(design, frame, stages = 1, seed = 42)
+
+  expect_error(
+    execute(s1, frame, seed = 2),
+    class = "samplyr_error_ambiguous_continuation"
+  )
+
+  # With one stage left there is nothing to disambiguate.
+  s2 <- execute(s1, frame, stages = 2, seed = 2)
+  expect_s3_class(execute(s2, frame, seed = 3), "tbl_sample")
 })
 
 test_that("chained continuation 1 -> 2 -> 3 works", {
@@ -776,7 +796,7 @@ test_that("execute(design) with stages = c(2, 1) is sorted to c(1, 2) and works"
   expect_equal(get_stages_executed(result), c(1L, 2L))
 })
 
-test_that("subset_frame_to_sample errors when no join keys exist", {
+test_that("a design with no linkable stages is refused before sampling", {
   frame <- data.frame(id = 1:100)
 
   design <- sampling_design() |>
@@ -784,9 +804,11 @@ test_that("subset_frame_to_sample errors when no join keys exist", {
     add_stage() |>
     draw(n = 10)
 
+  # Neither stage names a unit, so stage 2 has nothing to sample within.
+  # This is caught statically, not at the join.
   expect_error(
     execute(design, frame, seed = 123),
-    "No design-driven columns"
+    class = "samplyr_error_stage_parent_id"
   )
 })
 

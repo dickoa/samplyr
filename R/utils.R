@@ -1,4 +1,4 @@
-#' Internal Utility Functions
+#' Internal utility functions
 #'
 #' @name utils
 #' @keywords internal
@@ -33,6 +33,13 @@ jip_methods <- c(pps_methods, balanced_methods)
 # Poisson formula via survey::poisson_sampling(), not the SRSWOR or
 # Brewer estimators used for fixed-size designs.
 rs_poisson_methods <- c("bernoulli", "pps_poisson")
+
+# A PPS Poisson pool realizing below 95% of what it could have reached is
+# reported. One rule, no special cases: a 5% shortfall on a target of 40
+# delivers about 38 in expectation, which is a real gap between the nominal
+# and realized design. Mild saturation stays well under it, since one unit
+# clipped from 1.05 to 1 on a target of 40 is a 0.125% shortfall.
+poisson_shortfall_tolerance <- 0.95
 
 # Built-in methods whose true first-order inclusion probabilities equal
 # the target pik only to a documented approximation (Rosen's order
@@ -160,6 +167,18 @@ is_multi_hit_method <- function(draw_spec) {
   method %in% multi_hit_methods
 }
 
+#' Check if a method draws a random number of units
+#'
+#' A random-size method realizes a count around its target rather than exactly
+#' it, so a target above the population caps the *nominal* target while the
+#' realized size can still land below it. Every diagnostic that reads a
+#' shortfall as running out of units has to exclude these.
+#' @noRd
+is_random_size_method <- function(draw_spec) {
+  draw_spec$method %in% rs_poisson_methods ||
+    identical(draw_spec$method_fixed, FALSE)
+}
+
 #' Check if a method belongs to the balanced family
 #' @noRd
 is_balanced_method <- function(draw_spec) {
@@ -181,15 +200,622 @@ is_integerish_numeric <- function(x, tol = sqrt(.Machine$double.eps)) {
     all(abs(x - round(x)) <= tol)
 }
 
+#' Resolved certainty: an inclusion probability numerically equal to one
+#'
+#' Certainty is a property of the resolved probability, not of how that
+#' probability arose. An explicit `certainty_size`/`certainty_prop` rule,
+#' capping inside `sondage::inclusion_prob()`, and a balanced design landing
+#' on one are the same statistical object: the unit is self-representing and
+#' contributes no variance at its stage.
+#'
+#' Vectorized and elementwise, so the sample, digest, joint matrix and survey
+#' export all decide certainty the same way. Callers must pass inclusion
+#' probabilities: expected hits from WR/PMR methods are never certainty, even
+#' when at least one.
+#'
+#' The tolerance is deliberately tight, and much tighter than the
+#' `sqrt(.Machine$double.eps)` used for approximate-equality tests elsewhere.
+#' This is an exactness test, not an approximate one: every producer of a
+#' probability-one unit assigns the value rather than converging on it
+#' (`pmin(pik, 1)`, an explicit rule, `sondage::inclusion_prob()` capping), so
+#' the deviation to absorb is a few eps at most. The error to avoid is the
+#' other one: a design probability legitimately just below one, say
+#' 1 - 1e-8, must not be read as certainty, because that would drop a real
+#' variance contribution and understate the standard error.
+#' @noRd
+is_certainty_probability <- function(p, tol = 100 * .Machine$double.eps) {
+  is.finite(p) & p >= 1 - tol
+}
+
+#' Report a per-pool selection diagnostic, aggregate it later
+#'
+#' Selection leaves know one pool at a time. A stratified stage inside a
+#' cluster loop runs the same leaf once per parent, and a replicated execution
+#' runs the whole design once per replicate, so a diagnostic emitted where it
+#' is detected fires once per pool per replicate. Leaves signal instead, and
+#' `execute()` emits one aggregated condition per stage.
+#'
+#' The envelope is deliberately generic. `operation` names what happened, the
+#' payload fields belong to that operation, and the collector groups on
+#' `operation` and `stage`. The Poisson shortfall diagnostic routes through the
+#' same mechanism.
+#' @noRd
+signal_selection_event <- function(operation, ..., stage = NA_integer_) {
+  rlang::signal(
+    message = "",
+    class = "samplyr_condition_selection_event",
+    operation = operation,
+    stage = stage,
+    payload = list(...)
+  )
+}
+
+#' Report a fixed-size target the pool population could not supply
+#'
+#' `n_available` is the population of every pool the stage executed, not only
+#' the capped ones. The reporter needs it to tell a stage that exhausted
+#' everything it could reach from one that merely ran short in places, and
+#' that comparison has to hold after aggregation across pools, parents and
+#' replicates.
+#' @noRd
+signal_population_cap <- function(
+  pool_keys,
+  n_capped,
+  n_pools,
+  n_requested,
+  n_actual,
+  n_available
+) {
+  signal_selection_event(
+    "population_cap",
+    pool_keys = pool_keys,
+    n_capped = n_capped,
+    n_pools = n_pools,
+    n_requested = n_requested,
+    n_actual = n_actual,
+    n_available = n_available
+  )
+}
+
+#' @noRd
+signal_nominal_cap <- function(
+  pool_keys,
+  n_capped,
+  n_pools,
+  n_requested,
+  n_available
+) {
+  signal_selection_event(
+    "nominal_cap",
+    pool_keys = pool_keys,
+    n_capped = n_capped,
+    n_pools = n_pools,
+    n_requested = n_requested,
+    n_available = n_available
+  )
+}
+
+#' Collect selection events raised inside one stage and re-signal with the
+#' stage index attached
+#'
+#' `expr` is a promise and is forced under the handler. Leaves have no way to
+#' know which stage they are running in, and threading the index through every
+#' selection signature would touch six functions to carry one integer, so the
+#' stage is attached here, at the one place that knows it.
+#'
+#' Re-signaling happens after the handler has been removed, so the events
+#' reach the outer collector in `execute()` rather than this one.
+#' Tag selection events with the replicate that produced them
+#'
+#' Replicates re-run the whole design, so the same pool caps in every one of
+#' them. Aggregating without the tag would either report a replicated execution
+#' once per replicate or merge genuinely distinct pools of the same stage into
+#' one event. The tag lets the reporter aggregate within a replicate and
+#' deduplicate across replicates.
+#' @noRd
+tag_replicate_events <- function(expr, replicate) {
+  events <- list()
+  result <- withCallingHandlers(
+    expr,
+    samplyr_condition_selection_event = function(cnd) {
+      events[[length(events) + 1L]] <<- cnd
+      rlang::cnd_muffle(cnd)
+    }
+  )
+  for (cnd in events) {
+    rlang::signal(
+      message = "",
+      class = "samplyr_condition_selection_event",
+      operation = cnd$operation,
+      stage = cnd$stage,
+      replicate = replicate,
+      payload = cnd$payload
+    )
+  }
+  result
+}
+
+#' @noRd
+collect_stage_events <- function(expr, stage) {
+  events <- list()
+  result <- withCallingHandlers(
+    expr,
+    samplyr_condition_selection_event = function(cnd) {
+      events[[length(events) + 1L]] <<- cnd
+      rlang::cnd_muffle(cnd)
+    }
+  )
+  for (cnd in events) {
+    rlang::signal(
+      message = "",
+      class = "samplyr_condition_selection_event",
+      operation = cnd$operation,
+      stage = stage,
+      payload = cnd$payload
+    )
+  }
+  result
+}
+
+#' Report a PPS Poisson pool that cannot reach the size it was asked for
+#'
+#' Measured against `n_reachable`, not against the request. A pool asked for
+#' more units than it holds has already had its target clamped by the
+#' population, and that reduction is `nominal_cap`'s to report; charging the
+#' same units to saturation as well would be double counting.
+#'
+#' What is left is the reduction saturation alone caused: dominant units whose
+#' chances clip at one absorb the target while the pool still has room. Both
+#' conditions can be right about one stage, and then both fire: 20 requested
+#' from a pool of 10 that resolves to 8.54 has been reduced twice, 20 -> 10 by
+#' the population and 10 -> 8.54 by saturation. With uniform sizes the same
+#' pool resolves to exactly 10 and only `nominal_cap` fires.
+#'
+#' @param pik The whole pool's resolved chances, including any explicit
+#'   certainty units. A check that sees only the probabilistic remainder
+#'   cannot state the pool's totals.
+#' @param n_clipped Units whose *computed* chance exceeded one. Explicit
+#'   certainty units are selected deliberately at one and are not clipping.
+#' @noRd
+check_poisson_shortfall <- function(
+  pik,
+  n_requested,
+  n_reachable,
+  n_clipped,
+  pool_keys = character(0)
+) {
+  # Direct `pik` leaves `n` optional: with no declared target there is
+  # nothing to fall short of.
+  if (is_null(n_requested) || is.na(n_reachable) || n_reachable <= 0) {
+    return(invisible(NULL))
+  }
+  n_expected <- sum(pik)
+  if (n_expected >= n_reachable * poisson_shortfall_tolerance) {
+    return(invisible(NULL))
+  }
+  signal_selection_event(
+    "poisson_shortfall",
+    pool_keys = pool_keys,
+    n_pools = 1L,
+    n_requested = as.double(n_requested),
+    n_reachable = as.double(n_reachable),
+    n_expected = as.double(n_expected),
+    n_clipped = as.integer(n_clipped)
+  )
+  invisible(NULL)
+}
+
+#' Name the parent pool an event came from
+#'
+#' A stage running inside a cluster loop sees one parent's rows at a time and
+#' labels its pools from the variables it can see, so the same stratum in three
+#' parents produces the same label three times. Aggregation then deduplicates
+#' three genuinely distinct pools into one, and the report names one pool while
+#' counting three.
+#'
+#' Qualifying at the loop is what keeps the leaves data-agnostic: no selection
+#' function has to carry an ancestry it never uses. Same capture-then-resignal
+#' shape as `collect_stage_events()`, so the re-signaled event leaves this
+#' handler rather than being caught by it.
+#' @noRd
+qualify_pool_events <- function(expr, parent_key) {
+  events <- list()
+  result <- withCallingHandlers(
+    expr,
+    samplyr_condition_selection_event = function(cnd) {
+      events[[length(events) + 1L]] <<- cnd
+      rlang::cnd_muffle(cnd)
+    }
+  )
+  for (cnd in events) {
+    payload <- cnd$payload
+    keys <- payload$pool_keys
+    # A stage with no pools of its own is identified by its parent alone.
+    payload$pool_keys <- if (length(keys) == 0L) {
+      parent_key
+    } else {
+      paste(parent_key, keys, sep = " / ")
+    }
+    rlang::signal(
+      message = "",
+      class = "samplyr_condition_selection_event",
+      operation = cnd$operation,
+      stage = cnd$stage,
+      replicate = cnd$replicate,
+      payload = payload
+    )
+  }
+  result
+}
+
+#' Collect every selection event of an execution and report each once
+#'
+#' The single point where per-pool events become user-facing conditions.
+#'
+#' Aggregation runs at two levels. Within a replicate the per-pool events of a
+#' stage become one aggregate, whose totals are what the user should read: a
+#' replicate is one realization of the design. Across replicates those
+#' aggregates collapse to a single report, because ten replicates of one design
+#' are one finding, not ten.
+#'
+#' Collapsing cannot require the aggregates to match. A replicated multi-stage
+#' design reaches different parents in different replicates, so the same stage
+#' legitimately names different pools each time. Hashing the whole aggregate
+#' therefore emitted one warning per distinct pool set, which is the spam this
+#' machinery exists to prevent. The pool lists are unioned instead, and the
+#' report says the counts describe one replicate whenever they varied.
+#' @noRd
+report_selection_events <- function(expr) {
+  events <- list()
+  result <- withCallingHandlers(
+    expr,
+    samplyr_condition_selection_event = function(cnd) {
+      events[[length(events) + 1L]] <<- cnd
+      rlang::cnd_muffle(cnd)
+    }
+  )
+
+  if (length(events) == 0L) {
+    return(result)
+  }
+
+  stage_of <- vapply(
+    events,
+    function(cnd) {
+      paste(cnd$operation, cnd$stage %||% NA_integer_, sep = "|")
+    },
+    character(1)
+  )
+  # A literal token rather than NA: an unreplicated execution has no replicate
+  # id, and `NA == NA` would match no event at all.
+  replicate_of <- vapply(
+    events,
+    function(cnd) {
+      if (is_null(cnd$replicate)) "none" else as.character(cnd$replicate)
+    },
+    character(1)
+  )
+
+  for (key in unique(stage_of)) {
+    in_stage <- stage_of == key
+    group <- events[in_stage]
+    first <- group[[1]]
+
+    per_replicate <- lapply(
+      unique(replicate_of[in_stage]),
+      function(rep_id) {
+        summarize_selection_events(group[replicate_of[in_stage] == rep_id])
+      }
+    )
+
+    # Classify each replicate before merging any of them. The reading is a
+    # property of one realization: a replicate that drew only small clusters
+    # exhausted them, and one that drew a large cluster did not. Merging first
+    # would let whichever replicate reported earliest name the class for the
+    # rest, and would file pools from a census under "capped".
+    outcome_of <- vapply(
+      per_replicate,
+      function(x) selection_event_outcome(first$operation, x),
+      character(1)
+    )
+
+    for (outcome in unique(outcome_of)) {
+      report_selection_outcome(
+        outcome,
+        first$stage,
+        merge_replicate_aggregates(per_replicate[outcome_of == outcome])
+      )
+    }
+  }
+
+  result
+}
+
+#' The public reading of one replicate's aggregate
+#'
+#' `population_cap` has two readings and the aggregate decides which: an
+#' allocation site sees its own strata, a cluster leaf sees one parent's pools,
+#' and neither can tell whether the stage as a whole came up empty-handed.
+#' Every other operation reads one way.
+#' @noRd
+selection_event_outcome <- function(operation, x) {
+  if (identical(operation, "population_cap") && is_stage_census(x)) {
+    return("census")
+  }
+  if (identical(operation, "population_cap")) {
+    return("size_capped")
+  }
+  operation
+}
+
+#' @noRd
+report_selection_outcome <- function(outcome, stage, x) {
+  switch(
+    outcome,
+    census = warn_census(stage, x),
+    size_capped = warn_size_capped(stage, x),
+    nominal_cap = warn_nominal_capped(stage, x),
+    poisson_shortfall = warn_poisson_shortfall(stage, x),
+    allocation_cap = inform_allocation_capped(stage, x),
+    cli_abort(
+      "Internal error: unhandled selection outcome {.val {outcome}}.",
+      call = NULL
+    )
+  )
+}
+
+#' @noRd
+summarize_selection_events <- function(group) {
+  field <- function(name) {
+    lapply(group, function(cnd) cnd$payload[[name]])
+  }
+  # Absent is not zero. An operation that never records a realized count would
+  # otherwise ship `n_actual = 0` in its public payload, which reads as a
+  # measurement rather than as a field this event does not carry.
+  total <- function(name) {
+    values <- unlist(field(name))
+    if (length(values) == 0L) {
+      return(NA_real_)
+    }
+    sum(values)
+  }
+
+  keys <- unique(unlist(field("pool_keys")))
+  list(
+    pool_keys = keys,
+    n_capped = total("n_capped"),
+    n_pools = total("n_pools"),
+    n_requested = total("n_requested"),
+    n_actual = total("n_actual"),
+    n_available = total("n_available"),
+    n_reachable = total("n_reachable"),
+    n_expected = total("n_expected"),
+    n_clipped = total("n_clipped"),
+    n_moved = total("n_moved")
+  )
+}
+
+#' Collapse one stage's per-replicate aggregates into the single report
+#'
+#' Counts come from the first replicate rather than from a sum, because the
+#' user reads them as the size of one realization: ten replicates capping the
+#' same three pools capped three pools, not thirty. Pool identities are unioned,
+#' since a replicate that reached a different parent found a real pool that the
+#' others did not.
+#'
+#' `varied` records that those two facts came apart, so the report can stop
+#' implying that its counts describe the list it prints.
+#' @noRd
+merge_replicate_aggregates <- function(per_replicate) {
+  out <- per_replicate[[1]]
+  out$n_replicates <- length(per_replicate)
+  if (length(per_replicate) == 1L) {
+    out$varied <- FALSE
+    return(out)
+  }
+
+  keys <- unique(unlist(lapply(per_replicate, function(x) x$pool_keys)))
+  compared <- lapply(per_replicate, function(x) x[names(x) != "pool_keys"])
+  out$varied <- !all(vapply(
+    compared[-1],
+    function(x) identical(x, compared[[1]]),
+    logical(1)
+  )) ||
+    !all(vapply(
+      per_replicate[-1],
+      function(x) setequal(x$pool_keys, per_replicate[[1]]$pool_keys),
+      logical(1)
+    ))
+  out$pool_keys <- keys
+  out
+}
+
+#' Did this stage select every unit it could reach?
+#'
+#' Stage-local by construction. A second-stage take that exhausts every
+#' selected cluster satisfies this while the design as a whole still sampled,
+#' so the claim is about the stage and its wording has to stay there.
+#'
+#' Counting saturated pools would not do: `equal` allocation on populations
+#' (1, 100) with `n = 102` has one stratum over its share before
+#' redistribution and both strata taken whole after it.
+#' @noRd
+is_stage_census <- function(x) {
+  isTRUE(!is.na(x$n_actual) && !is.na(x$n_available) &&
+    x$n_actual >= x$n_available)
+}
+
+#' Name a few pools and count the rest
+#'
+#' A capped design can have hundreds of pools, so the message names enough to
+#' start an investigation and points at the digest for the full list.
+#' @noRd
+format_pool_sample <- function(keys, max_shown = 5L) {
+  if (length(keys) == 0L) {
+    return(NULL)
+  }
+  if (length(keys) <= max_shown) {
+    return(cli::format_inline("{.val {keys}}"))
+  }
+  # The count takes the place of the final list item, so the shown keys are
+  # joined without cli's trailing "and": ".., "c005", and 35 more", not
+  # ".., and "c005", and 35 more". cli's own truncation is not used because it
+  # renders a non-ASCII ellipsis and drops the count.
+  shown <- cli::cli_vec(
+    keys[seq_len(max_shown)],
+    style = list("vec-last" = ", ")
+  )
+  hidden <- length(keys) - max_shown
+  cli::format_inline("{.val {shown}}, and {hidden} more")
+}
+
+#' Render the pool list, and say so when replicates disagreed
+#'
+#' When the pools varied across replicates the printed list is a union while
+#' the counts describe one realization. Labeling it as such is what keeps the
+#' two from reading as the same measurement.
+#' @noRd
+pool_lines <- function(x, label) {
+  pools <- format_pool_sample(x$pool_keys)
+  if (is_null(pools)) {
+    return(NULL)
+  }
+  if (isTRUE(x$varied)) {
+    return(c(
+      "i" = cli::format_inline("{label} across replicates: {pools}."),
+      "i" = cli::format_inline(
+        "Counts describe one of {x$n_replicates} replicate{?s} reporting
+         this; the pools reached varied."
+      )
+    ))
+  }
+  c("i" = cli::format_inline("{label}: {pools}."))
+}
+
+#' @noRd
+warn_size_capped <- function(stage, x) {
+  cli_warn(
+    c(
+      "Stage {stage}: sample size exceeded the pool population in
+       {x$n_capped} of {x$n_pools} pool{?s}.",
+      "x" = "Requested {x$n_requested} unit{?s}, selected {x$n_actual}.",
+      pool_lines(x, "Capped pools"),
+      "i" = "Inspect with {.code frame_summary(sample, detail = \"pool\")} and
+             the {.field capped} column."
+    ),
+    class = "samplyr_warning_size_capped",
+    stage = stage,
+    operation = "population_cap",
+    payload = x
+  )
+}
+
+#' Report a stage that took every unit within reach
+#'
+#' Stage-local, and the wording carries that: the stage exhausted the pools it
+#' executed, which above stage one are the pools a sampled ancestor handed it.
+#' Such a stage contributes no variance of its own, and it does not make the
+#' design a census.
+#' @noRd
+warn_census <- function(stage, x) {
+  cli_warn(
+    c(
+      "Stage {stage}: selected every unit available in the pools it
+       executed.",
+      "x" = "Requested {x$n_requested} unit{?s}, selected all
+             {x$n_actual} available.",
+      pool_lines(x, "Exhausted pools"),
+      "i" = "This stage contributes no sampling variance. Earlier stages are
+             unaffected: the design as a whole is a census only if every
+             stage is."
+    ),
+    class = "samplyr_warning_census",
+    stage = stage,
+    operation = "population_cap",
+    payload = x
+  )
+}
+
+#' Report a nominal target above the pool population on a random-size stage
+#'
+#' Deliberately not the population-cap wording. A Poisson or Bernoulli stage
+#' asked for more units than the pool holds has its per-unit chances clamped at
+#' 1, which caps the target it aims at; it has not selected that many units,
+#' and the realized count is a draw that usually lands below the cap. Naming a
+#' selected count here would state a number the sample does not contain.
+#' @noRd
+warn_nominal_capped <- function(stage, x) {
+  cli_warn(
+    c(
+      "Stage {stage}: target sample size exceeded the pool population in
+       {x$n_capped} of {x$n_pools} pool{?s}.",
+      "x" = "Requested {x$n_requested} unit{?s}, nominal target capped at
+             {x$n_available}.",
+      pool_lines(x, "Capped pools"),
+      "i" = "This is a random-size design: the realized size can still fall
+             below the capped target."
+    ),
+    class = "samplyr_warning_nominal_cap",
+    stage = stage,
+    operation = "nominal_cap",
+    payload = x
+  )
+}
+
+#' Report PPS Poisson pools that saturated below their reachable target
+#'
+#' Only the affected pools are aggregated, because they are the only ones that
+#' signaled. A stage total would let a large pool meeting its target hide a
+#' small one that collapsed, which is the case most worth reporting.
+#' @noRd
+warn_poisson_shortfall <- function(stage, x) {
+  cli_warn(
+    c(
+      "Stage {stage}: PPS Poisson expected sample size fell short of the
+       reachable target in {x$n_pools} pool{?s}.",
+      "x" = "Reachable {round(x$n_reachable, 1)} unit{?s}, expected
+             {round(x$n_expected, 1)}.",
+      "x" = "{x$n_clipped} unit{?s} ha{?s/ve} an inclusion probability
+             clipped at 1.",
+      pool_lines(x, "Affected pools"),
+      "i" = "Handle dominant units explicitly with {.arg certainty_size} or
+             {.arg certainty_prop}.",
+      "i" = "See the {.val pps_poisson} section of {.fn draw}."
+    ),
+    class = "samplyr_warning_poisson_shortfall",
+    stage = stage,
+    operation = "poisson_shortfall",
+    payload = x
+  )
+}
+
+#' @noRd
+inform_allocation_capped <- function(stage, x) {
+  cli_inform(
+    c(
+      "Allocation capped at the stratum population in {x$n_capped} of
+       {x$n_pools} strata.",
+      pool_lines(x, "Capped strata"),
+      "i" = "{x$n_moved} unit{?s} redistributed across the remaining strata."
+    ),
+    class = "samplyr_message_allocation_capped",
+    stage = stage,
+    operation = "allocation_cap",
+    payload = x
+  )
+}
+
 #' @noRd
 abort_samplyr <- function(
   message,
   class = NULL,
   call = rlang::caller_env(),
-  envir = parent.frame()
+  envir = parent.frame(),
+  ...
 ) {
   cli_abort(
     message,
+    ...,
     class = c(class, "samplyr_error"),
     call = call,
     .envir = envir
@@ -203,7 +829,8 @@ abort_samplyr <- function(
 #' of raising R's own "unused argument" error. Returns the closest candidate
 #' within `max_dist` edits, or `NULL` when nothing is close enough to name.
 #' @noRd
-suggest_reserved_arg <- function(name, candidates, max_dist = 2L) {
+suggest_reserved_arg <- function(name, candidates, max_dist = 2L,
+                                 prefix = FALSE) {
   if (!is_character(name) || length(name) != 1L || !nzchar(name)) {
     return(NULL)
   }
@@ -212,10 +839,26 @@ suggest_reserved_arg <- function(name, candidates, max_dist = 2L) {
   }
   distances <- as.integer(utils::adist(name, candidates, ignore.case = TRUE))
   closest <- which.min(distances)
-  if (distances[closest] > max_dist) {
+  if (distances[closest] <= max_dist) {
+    return(candidates[[closest]])
+  }
+  if (!prefix) {
     return(NULL)
   }
-  candidates[[closest]]
+  # An expansion of the argument name is not a near miss by edit distance:
+  # `allocation` is five edits from `alloc`. Enable this only where a name
+  # is already known to be wrong, so a guess can add advice but never
+  # reclassify a legitimate argument.
+  starts <- vapply(
+    candidates,
+    function(cand) startsWith(tolower(name), tolower(cand)),
+    logical(1)
+  )
+  if (!any(starts)) {
+    return(NULL)
+  }
+  matches <- candidates[starts]
+  matches[[which.max(nchar(matches))]]
 }
 
 #' Message bullets naming a stray argument and its likely intended spelling
@@ -242,14 +885,182 @@ stray_arg_bullets <- function(name, candidates) {
   )
 }
 
+#' Refuse anything that lands in a `...` reserved for nothing
+#'
+#' A function whose optional arguments follow `...` matches them exactly, so a
+#' near miss such as the singular `stage` falls into `...` rather than raising
+#' R's "unused argument" error. That is the point of the placement: partial
+#' matching would otherwise accept `stage`, and `st`, without ever teaching the
+#' name, and would break the day an argument sharing that prefix is added.
+#'
+#' @param dots The caller's `...`, captured with `enquos()`. Quosures, not
+#'   values: a stray argument is diagnosed by its name, so forcing it would
+#'   let its expression fail first and replace this message with its own.
+#' @param candidates The arguments that follow `...`, for suggestions.
+#' @noRd
+check_keyword_args <- function(dots, candidates, call = rlang::caller_env()) {
+  if (length(dots) == 0L) {
+    return(invisible(NULL))
+  }
+  nms <- names(dots) %||% rep("", length(dots))
+
+  named <- which(nzchar(nms))
+  if (length(named) > 0) {
+    abort_samplyr(
+      c(
+        "This function received an unexpected argument.",
+        stray_arg_bullets(nms[[named[[1]]]], candidates)
+      ),
+      class = "samplyr_error_unknown_argument",
+      call = call
+    )
+  }
+
+  abort_samplyr(
+    c(
+      "{length(dots)} argument{?s} {?was/were} passed positionally where only
+       named arguments are accepted.",
+      "i" = "{.arg {candidates}} follow{?s/} {.code ...}, so each must be
+             given by name."
+    ),
+    class = "samplyr_error_unnamed_argument",
+    call = call
+  )
+}
+
+#' Refuse names that belong to nobody in a `...` that is forwarded onward
+#'
+#' A function whose optional arguments follow a `...` matches them exactly, so
+#' a near miss such as `nes` for `nest` is forwarded to the downstream package
+#' instead of raising R's "unused argument" error. Where the `...` is reserved
+#' `check_keyword_args()` refuses everything; here it carries arguments that
+#' legitimately belong to someone else, so only names neither side accepts are
+#' refused.
+#'
+#' [rlang::check_dots_used()] is the usual tool and does not work on this path.
+#' It reports an argument the downstream function binds but never forces as
+#' unused, which rejects valid calls: `as_svrepdesign(x, type = "Fay",
+#' fay.rho = 0.3)` returns a design, and `check_dots_used()` refuses it. The
+#' accepted names are therefore listed explicitly.
+#'
+#' A positional value is refused outright. The forwarded arguments are spliced
+#' into a call whose named arguments are already fixed, so an unnamed one is
+#' matched to whichever formal happens to be free.
+#'
+#' `derived` names a third category between the two. The downstream function
+#' declares the argument, but the caller computes it from the sample and its
+#' design and supplies it itself, so a user value collides in the eventual
+#' `do.call()` rather than reaching the estimator. Reporting it as unknown
+#' would be wrong: the name is known, it is the ownership that is not the
+#' user's. One class carries them all, with the name in the `argument` field,
+#' so a caller can handle the category without a taxonomy per argument.
+#'
+#' @param dots The caller's `...`, captured with `enquos()`. Quosures, not
+#'   values: a stray argument is diagnosed by its name, so forcing it would let
+#'   its expression fail first and replace this message with its own.
+#' @param owned The arguments the caller itself owns, for suggestions.
+#' @param accepted The argument names the downstream function accepts.
+#' @param derived The argument names the caller supplies itself, refused with
+#'   their own class. Never listed in `accepted`, but still a candidate for a
+#'   spelling suggestion, since `strat` means `strata` whether or not `strata`
+#'   can be given; such a suggestion says the name is derived rather than
+#'   offering it as a fix.
+#' @param forwarded_to The downstream function, unquoted for `{.fn}`.
+#' @noRd
+check_forwarded_args <- function(
+  dots,
+  owned,
+  accepted,
+  derived = character(0),
+  forwarded_to,
+  call = rlang::caller_env()
+) {
+  if (length(dots) == 0L) {
+    return(invisible(NULL))
+  }
+  nms <- names(dots) %||% rep("", length(dots))
+
+  unnamed <- sum(!nzchar(nms))
+  if (unnamed > 0) {
+    abort_samplyr(
+      c(
+        "{unnamed} argument{?s} {?was/were} passed positionally into
+         {.code ...}.",
+        "i" = "{.code ...} is forwarded to {.fn {forwarded_to}}, where a
+               positional value is matched to whichever argument is still
+               free.",
+        "i" = "Give every argument after the sample by name."
+      ),
+      class = "samplyr_error_unnamed_argument",
+      call = call
+    )
+  }
+
+  known <- c(owned, accepted)
+  stray <- setdiff(nms, known)
+  if (length(stray) == 0L) {
+    return(invisible(NULL))
+  }
+
+  # Reported on the first stray name in call order, whichever category it
+  # falls into, so the two branches cannot disagree about which argument
+  # the message is about.
+  if (stray[[1]] %in% derived) {
+    abort_samplyr(
+      c(
+        "{.arg {stray[[1]]}} cannot be supplied here.",
+        "i" = "samplyr derives {.arg {stray[[1]]}} from the executed sample
+               and its design.",
+        "i" = "It cannot be overridden through {.code ...}."
+      ),
+      class = "samplyr_error_derived_argument",
+      call = call,
+      argument = stray[[1]]
+    )
+  }
+
+  # Derived names are candidates for the suggestion even though they are not
+  # accepted: `strat` means `strata` whether or not `strata` can be given, and
+  # answering a near miss with the generic advice leaves the user to guess.
+  # `known` is listed first so it wins a distance tie.
+  suggestion <- suggest_reserved_arg(stray[[1]], c(known, derived))
+  advice <- if (!is_null(suggestion) && suggestion %in% derived) {
+    cli::format_inline(
+      "Did you mean {.arg {suggestion}}? samplyr derives it from the executed
+       sample and its design, so it cannot be given here either."
+    )
+  } else if (!is_null(suggestion)) {
+    cli::format_inline("Did you mean {.arg {suggestion}}?")
+  } else {
+    cli::format_inline(
+      "{.code ...} is forwarded to {.fn {forwarded_to}}; the arguments owned
+       here are {.arg {owned}}."
+    )
+  }
+  abort_samplyr(
+    c(
+      "This function received an unexpected argument.",
+      "x" = cli::format_inline(
+        "{.arg {stray[[1]]}} is not an argument of this function or of
+         {.fn {forwarded_to}}."
+      ),
+      "i" = advice
+    ),
+    class = "samplyr_error_unknown_argument",
+    call = call
+  )
+}
+
 #' Validate names before execute() adds sampling columns
 #' @noRd
 validate_execute_frame_names <- function(
   frame,
   index,
+  label = "",
   allow_generated = FALSE,
   call = rlang::caller_env()
 ) {
+  token <- sentence_frame_token(index, label)
   nms <- names(frame)
   if (anyDuplicated(nms) > 0L) {
     duplicated_names <- unique(nms[
@@ -257,7 +1068,7 @@ validate_execute_frame_names <- function(
     ])
     abort_samplyr(
       c(
-        "Frame {index} must have unique column names.",
+        "{token} must have unique column names.",
         "x" = "Duplicated names: {.field {duplicated_names}}"
       ),
       class = "samplyr_error_frame_duplicate_names",
@@ -281,7 +1092,7 @@ validate_execute_frame_names <- function(
   if (length(reserved) > 0L) {
     abort_samplyr(
       c(
-        "Frame {index} uses column names reserved by {.pkg samplyr}.",
+        "{token} uses column names reserved by {.pkg samplyr}.",
         "x" = "Reserved names: {.field {reserved}}",
         "i" = "Rename these input columns before calling {.fn execute}."
       ),
@@ -660,17 +1471,29 @@ check_sample_unmodified <- function(x, fn_name, call = caller_env()) {
   )
 }
 
+#' Label each row of a key table
+#'
+#' One label per row, in row order. `format_key_labels()` deduplicates on top
+#' of this; callers holding a table of already-distinct groups need the
+#' positional correspondence instead.
+#' @noRd
+key_labels <- function(df, vars) {
+  if (nrow(df) == 0) {
+    return(character(0))
+  }
+  do.call(
+    paste,
+    c(df[, vars, drop = FALSE], list(sep = "/"))
+  )
+}
+
 #' @noRd
 format_key_labels <- function(df, vars, max_n = 8L) {
   if (nrow(df) == 0) {
     return(character(0))
   }
 
-  labels <- do.call(
-    paste,
-    c(df[, vars, drop = FALSE], list(sep = "/"))
-  )
-  labels <- unique(labels)
+  labels <- unique(key_labels(df, vars))
 
   if (length(labels) <= max_n) {
     return(labels)

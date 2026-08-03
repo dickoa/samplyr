@@ -7,7 +7,7 @@
 #' @importFrom rlang caller_env
 #' @importFrom rlang is_null is_character
 #' @importFrom rlang as_label
-#' @importFrom cli cli_abort cli_warn
+#' @importFrom cli cli_abort cli_warn cli_inform
 #' @importFrom stats setNames
 #' @importFrom tibble as_tibble
 #' @importFrom dplyr mutate select group_by arrange

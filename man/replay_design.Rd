@@ -13,7 +13,9 @@ returned by \code{\link[=read_design]{read_design()}} for a file written from a
 its own metadata, which is useful for verifying reproducibility
 without a file round trip.}
 
-\item{frame}{The sampling frame the receipt refers to.}
+\item{frame}{The sampling frame the receipt refers to: a data frame
+for a one-frame call, or the ordered list of stage frames for a
+call that supplied one register per stage.}
 
 \item{fingerprint}{How to respond when \code{frame} differs from the
 fingerprint stored in the design file: \code{"error"} (default), \code{"warn"},
@@ -54,8 +56,16 @@ changing its fingerprint.
 When the design was saved with a frame fingerprint, \code{frame} is
 compared against it before replaying. A differing frame still yields
 a valid sample, but not the recorded one, so the default is to error.
-After replaying, the row count is checked against the receipt's
+Several frames are compared one by one and reported by position and
+recorded label, so a mismatch names the register that moved. After
+replaying, the row count is checked against the receipt's
 \code{n_selected} as a final consistency check.
+
+A sample drawn from one register per stage is replayed by passing
+those registers back as a list, in the same order. The receipt
+records how many frames the call was given, so supplying the wrong
+number is \code{samplyr_error_replay_frame_count} rather than a sample
+drawn from the wrong pools.
 }
 \examples{
 sample <- sampling_design() |>
@@ -70,10 +80,32 @@ replayed <- replay_design(read_design(path), bfa_eas)
 identical(replayed$ea_id, sample$ea_id)
 identical(replayed$.panel, sample$.panel)
 
+# One register per stage replays from the same ordered list
+regions <- dplyr::distinct(bfa_eas, region)
+two_stage <- sampling_design() |>
+  add_stage(label = "Regions") |>
+    cluster_by(region) |>
+    draw(n = 3) |>
+  add_stage(label = "EAs") |>
+    draw(n = 5)
+
+registers <- execute(two_stage, regions, bfa_eas, seed = 4)
+write_design(registers, path, frame = list(regions, bfa_eas))
+identical(
+  replay_design(read_design(path), list(regions, bfa_eas))$ea_id,
+  registers$ea_id
+)
+
 unlink(path)
 }
 \seealso{
 \code{\link[=write_design]{write_design()}} and \code{\link[=read_design]{read_design()}} for the receipt
 round trip, \code{\link[=validate_frame]{validate_frame()}} for checking a frame against a
 design before executing.
+
+Other serialization:
+\code{\link[=as.list.sampling_design]{as.list.sampling_design()}},
+\code{\link[=design_json]{design_json()}},
+\code{\link[=write_design]{write_design()}}
 }
+\concept{serialization}

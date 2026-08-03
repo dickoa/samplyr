@@ -2,7 +2,7 @@
 % Please edit documentation in R/sort.R
 \name{serp}
 \alias{serp}
-\title{Serpentine Sorting for Implicit Stratification}
+\title{Serpentine sorting for implicit stratification}
 \usage{
 serp(...)
 }
@@ -42,18 +42,18 @@ The algorithm builds a composite sort key by:
 }
 }
 
-\subsection{Use with Systematic Sampling}{
+\subsection{Use with systematic sampling}{
 
 Serpentine sorting is particularly effective with systematic sampling.
 By ordering the frame in a snake-like pattern, a systematic sample
 automatically spreads across all regions and sub-regions.
 }
 
-\subsection{Comparison with Nested Sorting}{
+\subsection{Comparison with nested sorting}{
 
 Standard sorting creates large "jumps" at hierarchy boundaries. Serpentine
-sorting minimizes these by reversing direction -- the last district of region 1
-is adjacent to the last district of region 2.
+sorting minimizes these by reversing direction, so the last district of
+region 1 is adjacent to the last district of region 2.
 }
 }
 \examples{
@@ -103,4 +103,14 @@ Chromy, J. R., & Williams, R. L. (1980). SAS sample selection macros.
 }
 \seealso{
 \code{\link[dplyr:arrange]{dplyr::arrange()}}, \code{\link[dplyr:desc]{dplyr::desc()}}
+
+Other helpers:
+\code{\link[=as_tbl_sample]{as_tbl_sample()}},
+\code{\link[=bound]{bound()}},
+\code{\link[=get_design]{get_design()}},
+\code{\link[=get_stages_executed]{get_stages_executed()}},
+\code{\link[=is_sampling_design]{is_sampling_design()}},
+\code{\link[=is_tbl_sample]{is_tbl_sample()}},
+\code{\link{print.samplyr}}
 }
+\concept{helpers}

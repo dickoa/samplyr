@@ -3,7 +3,7 @@
 \docType{data}
 \name{bfa_eas}
 \alias{bfa_eas}
-\title{Burkina Faso Enumeration Areas}
+\title{Burkina Faso enumeration areas}
 \format{
 A tibble with 44,570 rows and 13 columns:
 \describe{
@@ -85,5 +85,13 @@ sampling_design() |>
 \seealso{
 \link{bfa_eas_variance} for Neyman allocation,
 \link{bfa_eas_cost} for optimal allocation
+
+Other datasets:
+\code{\link{bfa_eas_cost}},
+\code{\link{bfa_eas_variance}},
+\code{\link{ken_enterprises}},
+\code{\link{samplyr-datasets}},
+\code{\link{zwe_eas}}
 }
+\concept{datasets}
 \keyword{datasets}

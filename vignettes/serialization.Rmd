@@ -179,13 +179,33 @@ The **fingerprint** block is written when you pass the frame to `write_design()`
 ```{r}
 write_design(design, path, frame = bfa_eas)
 
-fingerprint <- attr(read_design(path), "frame_info")$fingerprint
+fingerprint <- attr(read_design(path), "frame_info")[["fingerprint"]]
 fingerprint$name
 fingerprint$nrow
 fingerprint$hash
 ```
 
 The hash covers the column names, the column values, and the row order. It does not depend on whether the frame is a tibble or a plain data frame, or on the order of its columns. Frames that differ only in those respects are the same population.
+
+A design executed against one register per stage records one fingerprint per register, under `fingerprints`, in the order the registers were supplied. Extract either with `[[` rather than `$`: `fingerprint` is a prefix of `fingerprints`, so `$fingerprint` on a multi-register file silently returns the whole list.
+
+```{r}
+regions <- distinct(bfa_eas, region)
+
+registers <- sampling_design() |>
+  add_stage(label = "Regions") |>
+    cluster_by(region) |>
+    draw(n = 3) |>
+  add_stage(label = "EAs") |>
+    draw(n = 5) |>
+  execute(regions, bfa_eas, seed = 4)
+
+write_design(registers, path, frame = list(regions, bfa_eas))
+
+lengths(attr(read_design(path), "frame_info")["fingerprints"])
+```
+
+`replay_design()` takes the registers back in the same order, and reports a mismatch by frame position and recorded label. Supplying the wrong number of frames is refused rather than replayed against the wrong pools.
 
 To verify a frame months later, pass it to `validate_frame()` together with the restored design. The check is silent when the frame matches the stored fingerprint. If the frame has been revised since the design was written, it explains what changed and still runs the variable checks, because a design remains executable on any compatible frame:
 
@@ -327,6 +347,8 @@ The round-trip contract is **execution equality**. A restored design draws the s
 | Builder state                   | Not stored; the design is revalidated on read                        |
 
 Files carry a `format_version` so that future versions of `samplyr` can read (and migrate) files written today. `read_design()` reports a clear error when a file was written by a newer version than the installed one.
+
+A file is written at the lowest version that carries its content without being misread. Version 2 is used only when the file records one register per stage, because a version 1 reader would replay it against a single frame and produce a different sample without saying so. Everything else is still written at version 1 and stays readable by older samplyr.
 
 ```{r, include = FALSE}
 unlink(path)

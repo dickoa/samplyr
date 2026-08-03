@@ -2,7 +2,7 @@
 # the executed selection exactly, and collecting it must not change
 # the sample.
 
-digest_of <- function(x) samplyr:::get_frame_digest(x)
+digest_of <- function(x) samplyr::get_frame_digest(x)
 
 # Pure data comparison: everything except execution-time metadata
 # (executed_at differs between runs; the digest itself is the object
@@ -292,10 +292,12 @@ test_that("random-size stages keep target, expectation, and realization", {
   expect_identical(p$n_realized, nrow(s))
   expect_equal(d$stages[[1]]$pools$chance, 0.1)
 
-  s2 <- sampling_design() |>
-    draw(frac = 0.1, method = "pps_poisson", mos = mos,
-         on_empty = "silent") |>
-    execute(test_frame, seed = 5)
+  s2 <- suppressWarnings(
+    sampling_design() |>
+      draw(frac = 0.1, method = "pps_poisson", mos = mos,
+           on_empty = "silent") |>
+      execute(test_frame, seed = 5)
+  )
   p2 <- digest_of(s2)$stages[[1]]$pools
   expect_equal(p2$n_target, 12)
   expect_identical(p2$n_realized, nrow(s2))
@@ -312,9 +314,11 @@ test_that("random-size stages keep target, expectation, and realization", {
   # PPS probability capping can prevent the resolved expectation from
   # reaching the nominal request; retaining both values exposes that.
   dominant <- data.frame(id = 1:20, mos = c(100, rep(1, 19)))
-  s4 <- sampling_design() |>
-    draw(n = 5, method = "pps_poisson", mos = mos, on_empty = "silent") |>
-    execute(dominant, seed = 5)
+  s4 <- suppressWarnings(
+    sampling_design() |>
+      draw(n = 5, method = "pps_poisson", mos = mos, on_empty = "silent") |>
+      execute(dominant, seed = 5)
+  )
   p4 <- digest_of(s4)$stages[[1]]$pools
   expect_equal(p4$n_target, 5)
   expect_lt(p4$n_expected, p4$n_target)
@@ -418,22 +422,24 @@ test_that("full mode keeps exact unit chances for element PPS stages", {
   expect_equal(sort(sel_chance), sort(1 / s$.weight), tolerance = 1e-10)
 })
 
-test_that("element-stage parents are absent by design", {
-  # Stage 1 selects elements (no clusters); stage-2 pools cannot
-  # reference an identifiable parent unit.
+test_that("an element stage cannot be a parent stage", {
+  # Stage 1 selects elements, so a following stage would have no identifiable
+  # parent unit to sample within. The design is refused before it can produce
+  # a digest whose stage-2 pools have no parent.
   frame <- data.frame(
     id = 1:200,
     region = rep(c("North", "South"), each = 100),
     value = 1
   )
-  s <- sampling_design() |>
+  design <- sampling_design() |>
     add_stage() |> stratify_by(region, alloc = "proportional") |>
     draw(n = 40) |>
-    add_stage() |> draw(n = 5) |>
-    execute(frame, seed = 12)
-  d <- digest_of(s)
-  expect_false(is.null(d))
-  expect_true(all(is.na(d$stages[[2]]$pools$parent_unit)))
+    add_stage() |> draw(n = 5)
+
+  expect_error(
+    execute(design, frame, seed = 12),
+    class = "samplyr_error_stage_parent_id"
+  )
 })
 
 ## Fixture 8: on_empty designs (empty pools stay present)
@@ -963,7 +969,9 @@ test_that("spatial stages record coordinate metadata, not coordinates", {
 
 test_that("the synthetic three-stage design yields the expected scope chain", {
   frame <- synth_three_stage_frame()
-  s <- synth_three_stage_design() |> execute(frame, seed = 7)
+  # One stage-3 village holds fewer units than the take, so this fixture
+  # caps a pool by construction. Not what this test is about.
+  s <- suppressWarnings(synth_three_stage_design() |> execute(frame, seed = 7))
 
   n_districts <- length(unique(frame$district))
   n_villages <- length(unique(frame$village))
@@ -1041,7 +1049,7 @@ test_that("digest stages record the probabilities tier", {
     draw(n = 6, method = "pps_sps", mos = mos) |>
     add_stage("Units") |> draw(n = 3) |>
     execute(test_frame, seed = 21)
-  d <- samplyr:::get_frame_digest(s)
+  d <- samplyr::get_frame_digest(s)
   expect_identical(d$stages[[1]]$probabilities, "approximate")
   expect_identical(d$stages[[2]]$probabilities, "exact")
 

@@ -200,7 +200,7 @@ final_sample
 ```
 
 `selected_eas` still contains `design` plus the realized stage-1 selection.
-Using it as the first argument continues that same multistage design; the
+Using it as the first argument continues that same multi-stage design; the
 expanded listing is only the candidate frame for stage 2. Starting from a new
 design with a prior `tbl_sample` as its frame instead denotes a new sampling
 phase.
@@ -214,36 +214,19 @@ call is supported as a new sampling phase, but it is not stage continuation.
 
 ## Selection Methods
 
-### Equal Probability
+Sixteen methods ship in three families:
 
-| Method       | Sample Size | Description                                          |
-|--------------|-------------|------------------------------------------------------|
-| `srswor`     | Fixed       | Simple random sampling without replacement (default) |
-| `srswr`      | Fixed       | Simple random sampling with replacement              |
-| `systematic` | Fixed       | Systematic sampling                                  |
-| `bernoulli`  | Random      | Bernoulli sampling                                   |
+- **Equal probability**: `srswor` (the default), `srswr`, `systematic`,
+  `bernoulli`
+- **PPS**, all requiring a measure of size: `pps_brewer`, `pps_systematic`,
+  `pps_cps`, `pps_sampford`, `pps_poisson`, `pps_sps`, `pps_pareto`,
+  `pps_multinomial`, `pps_chromy`
+- **Balanced**: `cube`, plus the spatial `lpm2` and `scps`
 
-### Probability Proportional to Size (PPS)
-
-| Method            | Sample Size | Description                   |
-|-------------------|-------------|-------------------------------|
-| `pps_brewer`      | Fixed       | Brewer's method (recommended) |
-| `pps_systematic`  | Fixed       | PPS systematic                |
-| `pps_cps`         | Fixed       | Conditional Poisson sampling  |
-| `pps_sampford`    | Fixed       | Sampford sampling             |
-| `pps_poisson`     | Random      | PPS Poisson (PRN) |
-| `pps_sps`         | Fixed       | Sequential Poisson sampling (PRN) |
-| `pps_pareto`      | Fixed       | Pareto piPS sampling (PRN)        |
-| `pps_multinomial` | Fixed       | PPS with replacement          |
-| `pps_chromy`      | Fixed       | PPS with minimum replacement  |
-
-### Balanced Sampling
-
-| Method     | Sample Size | Description                                      |
-|------------|-------------|--------------------------------------------------|
-| `cube`     | Fixed       | Cube method (Deville & Tillé 2004), uses `aux`   |
-| `lpm2`     | Fixed       | Local pivotal sampling, requires `spread`        |
-| `scps`     | Fixed       | Spatially correlated Poisson, requires `spread`  |
+`?selection-methods` is the reference: which take `n` or `frac`, which need
+`mos`, `aux` or `spread`, which have a random rather than fixed sample size,
+which accept permanent random numbers, and the paper behind each. Custom
+methods registered with `sondage::register_method()` are used the same way.
 
 ## Allocation Methods
 
@@ -301,187 +284,51 @@ sample <- sampling_design() |>
 sample
 ```
 
-## Sample Coordination (PRN)
+## Beyond the Basics
 
-Permanent random numbers enable coordinated sampling across survey waves. Assign a stable uniform random number to each frame unit, then pass it via `prn`:
+The verbs above cover most designs. These capabilities work the same way and
+are documented where they are taught in depth:
 
-```{r prn, eval = FALSE}
-frame$prn <- runif(nrow(frame))
+| Capability | How | Where |
+|---|---|---|
+| Balanced sampling | `draw(method = "cube", aux = ...)`, with `bound()` for hard count constraints | `vignette("introduction")` |
+| Spatially balanced | `draw(method = "lpm2" or "scps", spread = c(lon, lat))` | `?selection-methods` |
+| Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across waves | `vignette("sampling-coordination")` |
+| Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `vignette("introduction")` |
+| Panel rotation | `execute(panels = 4)` | `vignette("design-semantics")` |
+| Replicated draws | `execute(reps = 5)` | `?execute` |
+| Two-phase | pipe a `tbl_sample` into a new design's `execute()` | `vignette("survey-analysis")` |
 
-# Wave 1: sequential Poisson sampling with PRN
-wave1 <- sampling_design() |>
-  draw(n = 500, method = "pps_sps", mos = size, prn = prn) |>
-  execute(frame, seed = 10)
-
-# Wave 2: same PRN -> high overlap (positive coordination)
-wave2 <- sampling_design() |>
-  draw(n = 500, method = "pps_sps", mos = size, prn = prn) |>
-  execute(frame, seed = 20)
-```
-
-PRN is supported for `bernoulli`, `pps_poisson`, `pps_sps`, and `pps_pareto`.
-
-## Balanced Sampling
-
-The cube method (Deville & Tillé 2004) produces samples whose Horvitz-Thompson estimates of auxiliary totals match the population totals, improving precision:
-
-```{r balanced}
-# Balanced sample using population and area as auxiliary variables
-balanced_smpl <- sampling_design() |>
+```{r beyond, eval = FALSE}
+# Balanced on auxiliary totals, PPS on size
+sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300, method = "cube", mos = households,
        aux = c(population, area_km2)) |>
   execute(bfa_eas, seed = 24)
 
-balanced_smpl
+# Four rotation groups, five independent replicates
+execute(design, bfa_eas, seed = 1, panels = 4)
+execute(design, bfa_eas, seed = 42, reps = 5)
 ```
-
-The `aux` parameter accepts bare column names. When combined with `mos`, inclusion probabilities are proportional to size while the sample remains balanced on the auxiliary variables. A `bound()` marker adds hard adjacent-integer count constraints for each observed category:
-
-```{r balanced-bounds, eval = FALSE}
-controlled_smpl <- sampling_design() |>
-  draw(
-    n = 300,
-    method = "cube",
-    mos = households,
-    aux = c(population, bound(region), bound(urban_rural))
-  ) |>
-  execute(bfa_eas, seed = 24)
-```
-
-For spatially balanced sampling, choose `lpm2` or `scps` explicitly and provide coordinates through `spread`:
-
-```{r spatial-balanced, eval = FALSE}
-spatial_smpl <- sampling_design() |>
-  draw(
-    n = 300,
-    method = "lpm2",
-    mos = households,
-    spread = c(longitude, latitude)
-  ) |>
-  execute(bfa_eas, seed = 24)
-```
-
-Spatial methods cannot be combined with cube auxiliaries or `bound()` constraints. Stratified cube designs use the stratified cube algorithm (Chauvet 2009) in a single call. Balanced-family methods are supported for up to 2 stages.
-
-## Custom Sampling Methods
-
-Methods registered with `sondage::register_method()` use a family prefix in `draw()`. Registered `type = "wor"` and `type = "wr"` methods use `pps_<name>` and require `mos`. Registered `type = "balanced"` methods use `balanced_<name>` and may omit `mos` for equal probabilities. A balanced method can declare `supports_aux = TRUE` to receive `aux`, or `supports_spread = TRUE` to require and receive `spread` coordinates.
-
-For example, to use the elimination procedure of Tillé (1996) from the sampling package:
-
-```{r custom-method}
-# Wrap sampling::UPtille to return selected indices
-tille_fn <- function(pik, n = NULL, prn = NULL, ...) {
-  which(as.logical(sampling::UPtille(pik)))
-}
-
-# Joint inclusion probabilities, restricted to the sampled units
-tille_joint_fn <- function(pik, sample_idx = NULL, ...) {
-  pi2 <- sampling::UPtillepi2(pik)
-  if (!is.null(sample_idx))
-    pi2 <- pi2[sample_idx, sample_idx, drop = FALSE]
-  pi2
-}
-
-# Register with both sampling and joint probability functions.
-# UPtille honors the pik it receives, so declare probabilities =
-# "exact"; draw() refuses methods left at the strict "unknown" default.
-sondage::register_method(
-  "tille", type = "wor",
-  sample_fn = tille_fn,
-  joint_fn = tille_joint_fn,
-  probabilities = "exact"
-)
-
-# Use it like any built-in method
-sample_tille <- sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 300, method = "pps_tille", mos = households) |>
-  execute(bfa_eas, seed = 1)
-
-sample_tille
-
-# Clean up
-sondage::unregister_method("tille")
-```
-
-Custom methods flow through the full pipeline: stratification, multi-stage designs, certainty selection, survey export, and joint probabilities. Providing a `joint_fn` enables exact variance estimation via `joint_expectation()` and `survey::ppsmat()`. See `?sondage::register_method` for the full contract.
 
 ## Survey Export
 
-Convert samples to `survey` or `srvyr` objects for analysis:
+Convert to `survey` or `srvyr` for estimation:
 
 ```{r survey-export, eval = FALSE}
 svy <- as_svydesign(sample)
 survey::svymean(~y, svy)
 
-# Exact or high-entropy joint inclusion probabilities
-jip <- joint_expectation(sample, frame, stage = 1)
-svy_exact <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
+as_survey_design(sample) |> dplyr::summarise(mean_y = srvyr::survey_mean(y))
 ```
 
-By default `as_svydesign()` uses Brewer variance approximation. For tighter variance estimates, `joint_expectation()` computes pairwise joint inclusion probabilities from the original frame. The result is
-exact for CPS, Sampford, systematic, and Poisson methods. Brewer, SPS, Pareto,
-and cube sampling use an O(N^2) high-entropy approximation; exact recursive
-formulas for some of these designs are usually O(N^3) and impractical for large
-frames. Joint probabilities are unavailable for bounded cube, LPM2, and SCPS
-designs. See `?joint_expectation` for the full method-by-method breakdown.
+`as_svydesign()` uses the Brewer variance approximation by default.
+`joint_expectation()` computes exact pairwise joint inclusion probabilities
+where the method supports them, for tighter variance estimates. See
+`vignette("survey-analysis")` for domain estimation, replicate weights, and the
+method-by-method breakdown.
 
-## Panel Partitioning
-
-Partition the sample into rotation groups for panel surveys:
-
-```{r panels}
-panel_sample <- sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 200) |>
-  execute(bfa_eas, seed = 1, panels = 4)
-
-table(panel_sample$.panel)
-```
-
-Panels are assigned deterministically by systematic interleaving within strata. For multi-stage designs, panels are assigned at the PSU level and propagated to all units. They are intended for rotation or workload management. The weights remain full-sample weights and are valid for the combined sample; multiplying one panel's weights by the number of panels is not generally valid for population inference.
-
-## Replicated Sampling
-
-Draw multiple independent samples from the same frame and design with `reps`. This is useful for simulation studies, variance estimation via repeated sampling, or quality control:
-
-```{r reps}
-rep_sample <- sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 300) |>
-  execute(bfa_eas, seed = 42, reps = 5)
-
-table(rep_sample$.replicate)
-```
-
-Each replicate is an independent draw. Replicate `r` uses seed `seed + r - 1`. To analyze a single replicate, filter first:
-
-```{r reps-filter, eval = FALSE}
-rep1 <- rep_sample |> filter(.replicate == 1)
-as_svydesign(rep1)
-```
-
-## Two-Phase Sampling
-
-Pipe a `tbl_sample` into `execute()` for multi-phase designs:
-
-```{r two-phase}
-# Phase 1: large screening sample
-phase1 <- sampling_design() |>
-  draw(n = 500) |>
-  execute(bfa_eas, seed = 1)
-
-# Phase 2: subsample from phase 1
-phase2 <- sampling_design() |>
-  draw(n = 50) |>
-  execute(phase1, seed = 2)
-
-phase2
-```
-
-Weights compound automatically across phases.
 
 ## Diagnostics
 
@@ -496,6 +343,26 @@ lowest execution overhead, or `frame_digest = "full"` when downstream work
 needs exact per-unit chances for unequal-probability element stages. The
 companion package samplens, in development, draws the digest as a visual
 sampling card. See `vignette("introduction")` for examples.
+
+`execute()` also reports when the frame could not deliver what the design
+asked for. A pool holding fewer units than the stage requested is selected
+whole, which makes the design non-self-weighting, so this is a warning rather
+than a silent adjustment. Each finding is reported once per stage, however
+many pools were affected and however many replicates ran:
+
+| Condition | Meaning |
+|---|---|
+| `samplyr_warning_size_capped` | Some pools held fewer units than requested |
+| `samplyr_warning_census` | The stage selected every unit within reach, so it contributes no sampling variance |
+| `samplyr_warning_nominal_cap` | A random-size method asked for more units than the pool holds |
+| `samplyr_warning_poisson_shortfall` | Dominant units saturated a `pps_poisson` stage below its reachable target |
+| `samplyr_message_allocation_capped` | A feasible allocation was redistributed past a saturated stratum |
+
+`frame_digest` defaults to `"summary"`, so the usual way to read capping is the
+`capped` column of `frame_summary(sample, detail = "pool")`. Each condition also
+carries the affected pools and the counts behind them in a `payload`, which is
+what remains under `frame_digest = "none"`. See `?execution-conditions` for
+the payload contract and for how to capture one.
 
 ## Validation
 

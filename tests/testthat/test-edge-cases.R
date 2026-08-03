@@ -168,7 +168,8 @@ test_that("sample size capped at stratum population with warning", {
       stratify_by(region) |>
       draw(n = 10) |>
       execute(frame, seed = 42),
-    "capped to population"
+    # Both strata are taken whole, so the stage exhausts the frame.
+    class = "samplyr_warning_census"
   )
 
   # A should have 5 (all available), B should have 10
@@ -183,7 +184,7 @@ test_that("unstratified n > N warns and caps", {
     result <- sampling_design() |>
       draw(n = 20) |>
       execute(frame, seed = 42),
-    "exceeds population size"
+    class = "samplyr_warning_census"
   )
 
   expect_equal(nrow(result), 10)
@@ -214,7 +215,7 @@ test_that("stratified capping warning reports correct totals", {
       stratify_by(region) |>
       draw(n = 10) |>
       execute(frame, seed = 42),
-    "Requested total: 30.*Actual total: 25"
+    "Requested 30 units, selected 25"
   )
 
   expect_equal(nrow(result), 25)
@@ -426,10 +427,14 @@ test_that("min_n capped at stratum population", {
     region = c(rep("A", 3), rep("B", 22))
   )
 
-  result <- sampling_design() |>
-    stratify_by(region, alloc = "equal") |>
-    draw(n = 15, min_n = 5) |>
-    execute(frame, seed = 42)
+  # A is capped at its population of 3 and the surplus goes to B, which
+  # reports itself; the message has its own tests in test-bounds.R.
+  result <- suppressMessages(
+    sampling_design() |>
+      stratify_by(region, alloc = "equal") |>
+      draw(n = 15, min_n = 5) |>
+      execute(frame, seed = 42)
+  )
 
   expect_equal(sum(result$region == "A"), 3)
   expect_equal(sum(result$region == "B"), 12)
@@ -1042,17 +1047,21 @@ test_that("joint_expectation errors when frame rows are not uniquely identified"
   )
 })
 
-test_that("subset_frame_to_sample warns when no design-driven keys available", {
-  # Two-stage design with no strata or clusters at either stage
-  # This is pathological but should warn rather than silently guess
+test_that("a stage with no design-driven key is refused, not guessed", {
+  # Two-stage design with no strata or clusters at either stage. This used to
+  # fall back to guessing a key from shared columns; it is now refused before
+  # sampling, so no join is ever reached with an unresolved key.
   frame <- data.frame(id = 1:50, value = rnorm(50))
 
-  # Can't easily trigger the fallback with standard designs since
+  design <- sampling_design() |>
+    draw(n = 20) |>
+    add_stage() |>
+    draw(n = 5)
 
-  # single-stage designs don't call subset_frame_to_sample.
-  # Test indirectly: verify that designs with strata at previous stage
-  # use those strata as keys.
-  expect_true(TRUE) # structural test - the real protection is the warning
+  expect_error(
+    execute(design, frame, seed = 1),
+    class = "samplyr_error_stage_parent_id"
+  )
 })
 
 test_that("summary() handles single-row sample without NA", {
@@ -1450,7 +1459,7 @@ test_that("validate_frame() requires integer stage values", {
   frame <- data.frame(id = 1:10)
 
   expect_error(
-    validate_frame(design, frame, stage = 1.5),
+    validate_frame(design, frame, stages = 1.5),
     "stage"
   )
 })

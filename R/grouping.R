@@ -148,15 +148,19 @@ split_row_indices <- function(df, vars) {
   loc <- vec_group_loc(key_df)
 
   if (nrow(loc) == 0L) {
-    return(list(keys = character(), indices = list()))
+    return(list(keys = character(), key_df = loc$key, indices = list()))
   }
 
   # vec_group_loc returns groups in first-appearance order,
   # so no reordering is needed.
   keys <- make_group_key(loc$key, vars)
 
+  # `keys` is an internal identity: for more than one variable it is a
+  # length-prefixed encoding, which is not something to show anyone. `key_df`
+  # keeps the values so callers that report a group can build a label.
   list(
     keys = keys,
+    key_df = loc$key,
     indices = loc$loc
   )
 }

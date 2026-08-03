@@ -56,6 +56,7 @@
 #'   [frame_summary()] for per-pool allocation tables,
 #'   [as_svydesign()] for exporting to the survey package
 #'
+#' @family diagnostics
 #' @export
 summary.tbl_sample <- function(object, ...) {
   rlang::check_dots_empty()

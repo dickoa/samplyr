@@ -506,5 +506,10 @@ test_that("a two-phase design needs a shared identifier to export", {
     stratify_by(stratum) |>
     draw(frac = c(A = 0.5, B = 0.25)) |>
     execute(phase1, seed = 4)
-  expect_error(as_svydesign(phase2), "shared phase identifiers")
+  # Neither phase declares a unit identifier, so there is nothing to build a
+  # cross-phase bridge from.
+  expect_error(
+    as_svydesign(phase2),
+    class = "samplyr_error_twophase_bridge"
+  )
 })

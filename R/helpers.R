@@ -1,4 +1,4 @@
-#' Controlled Count Bounds for Balanced Sampling
+#' Controlled count bounds for balanced sampling
 #'
 #' `bound()` is a declarative marker used inside the `aux` argument of
 #' [draw()] with `method = "cube"`. It requests adjacent-integer bounds on
@@ -18,6 +18,7 @@
 #'     aux = c(income, bound(region), bound(urban_rural))
 #'   )
 #'
+#' @family helpers
 #' @export
 bound <- function(x) {
   cli_abort(

@@ -375,7 +375,39 @@ sample |>
   count(region)
 ```
 
-When a stratum's population is smaller than `min_n`, the entire stratum is selected (capped at population size).
+Bounds interact with the allocation method, so it is often easier to check what they produce before drawing anything. Pass the design and the frame to `frame_summary()`: it resolves the allocation without selecting, so no random numbers are used and no sample is created.
+
+```{r}
+planned <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300, min_n = 20, max_n = 55)
+
+frame_summary(planned, bfa_eas, detail = "pool")[, c("region", "N", "n_target")]
+```
+
+`min_n = 20` is doing the work here: the smaller regions are raised to 20 and the surplus comes off the larger ones, while `max_n = 55` never binds because no stratum was allocated that many. These are the counts the design will draw, which is why they match the executed sample above.
+
+When a stratum's population is smaller than `min_n`, the entire stratum is selected. For a without-replacement design `min_n` is structurally capped at the stratum population, so it can never ask for more units than exist.
+
+**The population is always a bound**, whether or not you set `max_n`. A stratum too small to hold its allocated share is capped at its population and the surplus goes to the strata with room left. Because that redistribution follows the allocation method's own factors, the criterion survives; but a named rule can still be departed from:
+
+```{r}
+small_frame <- data.frame(
+  id = 1:1000,
+  stratum = rep(c("tiny", "mid", "big"), times = c(10, 490, 500))
+)
+
+# "equal" would give 100 each, but `tiny` holds only 10 units.
+sampling_design() |>
+  stratify_by(stratum, alloc = "equal") |>
+  draw(n = 300) |>
+  execute(small_frame, seed = 7) |>
+  count(stratum)
+```
+
+The requested total of 300 is delivered in full; what changed is that `tiny` contributes 10 rather than 100, and the missing 90 are split between the other two. `execute()` says so once per run, and the message can be silenced with `suppressMessages()` inside simulation loops.
+
+Requesting more units than the frame holds is treated as a census, with a warning. Bounds that make a request arithmetically impossible are errors rather than silent adjustments.
 
 **Custom allocation** lets you specify exact sample sizes or rates per stratum by passing a data frame to `draw()`.
 
@@ -467,19 +499,11 @@ bind_rows(
 
 ### PPS Methods
 
-`samplyr` supports several PPS methods:
-
-| Method            | Description                                                           |
-|-------------------|-----------------------------------------------------------------------|
-| `pps_brewer`      | Brewer's method - fast with good properties (recommended)             |
-| `pps_systematic`  | PPS systematic - simple but can have periodicity issues               |
-| `pps_cps`         | Conditional Poisson sampling (maximum entropy)                        |
-| `pps_sampford`    | Sampford fixed-size PPS sampling                                      |
-| `pps_poisson`     | PPS Poisson - random sample size (accepts `n` or `frac`; supports `prn`) |
-| `pps_sps`         | Sequential Poisson sampling (supports `prn`)                          |
-| `pps_pareto`      | Pareto sampling (supports `prn`)                                      |
-| `pps_multinomial` | PPS with replacement                                                  |
-| `pps_chromy`      | Chromy's sequential PPS / minimum replacement                         |
+`pps_brewer` is a good default: it is fast and has well-behaved joint
+inclusion probabilities. Eight more PPS methods are available, differing in
+whether the sample size is fixed or random, whether exact second-order
+quantities are available, and whether they support permanent random numbers
+for coordination. See `?selection-methods` for the full comparison.
 
 ### Certainty Selection
 
@@ -778,6 +802,8 @@ sample_eas2 |>
   count(province, district)
 ```
 
+Bulawayo holds one district, so a take of two per province cannot be filled there and `execute()` says so. This is the ordinary case for a national frame with an urban province: the stratum is selected whole rather than sampled, which is why the warning names the pool. Read the affected pools programmatically from the condition, or from `frame_summary(sample, detail = "pool")` and its `capped` column.
+
 ---
 
 ## Operational Multi-Stage Sampling
@@ -1040,15 +1066,9 @@ the realization notation in `summary()`: `N_h` maps to `N`, `n_h` to
 for an ordinary execution and one row per pool and replicate after
 `execute(reps = ...)`.
 
-The digest mode is an explicit performance and downstream-capability choice:
-
-- `frame_digest = "summary"` is the default and keeps compact pool and chance
-  summaries.
-- `frame_digest = "none"` skips digest and selection-trace construction for
-  the lowest execution overhead.
-- `frame_digest = "full"` retains exact per-unit chances for
-  unequal-probability element stages. Use it when `joint_expectation()` must
-  work later without the original frame.
+The digest mode is an explicit performance and downstream-capability choice
+between `"summary"` (the default), `"none"` and `"full"`. See the
+`frame_digest` argument in `?execute` for what each retains and costs.
 
 The companion package samplens, in development, draws the digest as a visual sampling card.
 
@@ -1056,59 +1076,19 @@ The companion package samplens, in development, draws the digest as a visual sam
 
 ## Method Reference
 
-### Selection Methods
+The reference tables live on the help pages, which are the maintained copies:
 
-| Method            | Sample Size | Replacement                                                    | Notes                                        |
-|-------------------|-------------|----------------------------------------------------------------|----------------------------------------------|
-| `srswor`          | Fixed       | No                                                             | Default, general purpose                     |
-| `srswr`           | Fixed       | Yes                                                            | Bootstrap, rare populations                  |
-| `systematic`      | Fixed       | No                                                             | Ordered frames                               |
-| `bernoulli`       | Random      | No                                                             | Simple field protocols                       |
-| `pps_brewer`      | Fixed       | No                                                             | Recommended PPS method                       |
-| `pps_systematic`  | Fixed       | No                                                             | Simple PPS                                   |
-| `pps_cps`         | Fixed       | No                                                             | Maximum entropy, exact joint inclusion probs |
-| `pps_sampford`    | Fixed       | No                                                             | Sampford PPS, exact joint inclusion probs    |
-| `pps_poisson`     | Random      | No                                                             | PPS with random size                         |
-| `pps_sps`         | Fixed       | No                                                             | Sequential Poisson, supports PRN             |
-| `pps_pareto`      | Fixed       | No                                                             | Pareto sampling, supports PRN                |
-| `pps_multinomial` | Fixed       | Yes                                                            | PPS with replacement                         |
-| `pps_chromy`      | Fixed       | PMR.^[Probability Minimum Replacement based on expected hits.] | Chromy's sequential PPS                      |
-| `cube`            | Fixed       | No                                                             | Cube method, balances on `aux` variables     |
-| `lpm2`            | Fixed       | No                                                             | Local pivotal, requires `spread`              |
-| `scps`            | Fixed       | No                                                             | Spatially correlated Poisson, requires `spread` |
+- `?selection-methods` for all sixteen methods: fixed versus random sample
+  size, replacement, which extra input each needs, PRN support, and the paper
+  behind each.
+- `?stratify_by` for the allocation methods (`equal`, `proportional`,
+  `neyman`, `optimal`, `power`) and what auxiliary input each requires.
+- `?draw` for `min_n` and `max_n`, which apply only with an allocation method,
+  and for `round` (`"up"` the default and matching SAS, `"down"`,
+  `"nearest"`).
 
-### Allocation Methods
-
-| Method         | Description                           | Requirements                             |
-|----------------|---------------------------------------|------------------------------------------|
-| (none)         | n per stratum                         |                                          |
-| `equal`        | Same n per stratum                    |                                          |
-| `proportional` | n ∝ stratum size                      |                                          |
-| `neyman`       | Minimize variance                     | `variance` data frame                    |
-| `optimal`      | Minimize variance/cost                | `variance` + `cost` data frames          |
-| `power`        | Compromise: \(n_h \propto C_h X_h^q\) | `cv` + `importance` (+ optional `power`) |
-
-For custom stratum-specific sizes or rates, pass a data frame directly to `n` or `frac` in `draw()`.
-When `alloc` is specified, use `n` (not `frac`).
-
-### Sample Size Bounds
-
-| Argument | Description                                                        |
-|----------|--------------------------------------------------------------------|
-| `min_n`  | Minimum sample size per stratum (for variance estimation, set ≥ 2) |
-| `max_n`  | Maximum sample size per stratum (to cap dominant strata)           |
-
-These only apply when using allocation methods (`equal`, `proportional`, `neyman`, `optimal`, `power`).
-
-### Rounding Methods
-
-| Value       | Description                              |
-|-------------|------------------------------------------|
-| `"up"`      | Round up (ceiling), default, matches SAS |
-| `"down"`    | Round down (floor)                       |
-| `"nearest"` | Standard mathematical rounding           |
-
-These apply when using `frac` to specify sampling rates. When computed sample size < 1, it is always rounded up to 1.
+For custom stratum-specific sizes or rates, pass a data frame directly to `n`
+or `frac` in `draw()`. When `alloc` is specified, use `n`, not `frac`.
 
 ---
 

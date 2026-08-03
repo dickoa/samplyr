@@ -37,6 +37,16 @@ reference:
     contents:
       - execute
       - validate_frame
+      - execution-conditions
+
+  - title: "Reference topics"
+    desc: >
+      Cross-cutting contracts several functions share. Each is the canonical
+      description; the function pages link here rather than restate it.
+    contents:
+      - selection-methods
+      - sample-columns
+      - frame-input-grammar
 
   - title: "Survey Export"
     desc: "Convert samples to survey/srvyr objects for analysis."
@@ -76,6 +86,15 @@ reference:
       - get_stages_executed
       - print.samplyr
       - "`[.tbl_sample`"
+
+  - title: "Extension API"
+    desc: >
+      For packages built on the frame digest. The digest list structure is
+      internal and versioned, so pin a minimum samplyr version.
+    contents:
+      - digest
+      - get_frame_digest
+      - build_exante_digest
 
   - title: "Datasets"
     desc: "Survey frames derived from public data, for learning and testing."

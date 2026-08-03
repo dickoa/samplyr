@@ -1,4 +1,4 @@
-#' Design Effect and Effective Sample Size
+#' Design effect and effective sample size
 #'
 #' These are the \pkg{svyplan} generics re-exported by samplyr. Samplyr adds
 #' `tbl_sample` methods rather than defining competing generics.
@@ -16,12 +16,17 @@
 #' in the weights. To estimate a design effect that reflects them, fit the
 #' design and ask the estimator: `as_svydesign()` then
 #' `survey::svymean(deff = TRUE)`, which is outcome-specific by necessity.
-#' To *anticipate* the clustering component before collecting data, use
-#' [svyplan::design_effect()] directly with `icc` and `n_per_psu`.
+#' To *anticipate* the clustering component before collecting data, name the
+#' planning arguments in the same call: `design_effect(x, icc = , n_per_psu =
+#' )` forwards them to [svyplan::design_effect()] and returns the weighting
+#' loss multiplied by the anticipated clustering component. Positional
+#' arguments are refused, since these methods take no outcome variable.
 #'
 #' @param x A `tbl_sample`, or a numeric weight vector passed to the svyplan
 #'   method.
-#' @param ... Passed to the svyplan method.
+#' @param ... Passed to the svyplan method: the planning arguments `icc`,
+#'   `n_per_psu`, `n_per_ssu` and `var_ratio` are the useful ones here. Every
+#'   argument must be named; svyplan reports any name it does not recognize.
 #'
 #' @return `design_effect()` returns a numeric `svyplan_deff` object; use
 #'   [as.double()] for the value. `effective_n()` returns a numeric scalar.
@@ -51,14 +56,16 @@
 #'
 #' design_effect(prop_samp)
 #'
-#' # Anticipating the clustering component at the planning stage
-#' svyplan::design_effect(icc = 0.05, n_per_psu = 25)
+#' # Anticipating the clustering component: the weighting loss above,
+#' # multiplied by the clustering component the planning arguments imply
+#' design_effect(samp, icc = 0.05, n_per_psu = 25)
 #'
 #' @seealso [svyplan::design_effect()], [svyplan::effective_n()],
 #'   [svyplan::varcomp()], [svyplan::n_cluster()],
 #'   [as_svydesign()] to hand the design to \pkg{survey} for an
 #'   outcome-specific design effect
 #'
+#' @family diagnostics
 #' @name design_effect
 #' @importFrom svyplan design_effect effective_n
 #' @export
@@ -71,13 +78,54 @@ svyplan::effective_n
 #' @rdname design_effect
 #' @export
 design_effect.tbl_sample <- function(x, ...) {
+  check_weighting_deff_dots(enquos(...), "design_effect")
   design_effect(weights = sample_weights(x, "design_effect"), ...)
 }
 
 #' @rdname design_effect
 #' @export
 effective_n.tbl_sample <- function(x, ...) {
+  check_weighting_deff_dots(enquos(...), "effective_n")
   effective_n(weights = sample_weights(x, "effective_n"), ...)
+}
+
+#' Refuse a positional argument to the weighting-loss verbs
+#'
+#' `design_effect(x, y)` is the natural first thing to try, and it reads as
+#' "the design effect for `y`". These methods take no outcome: the weighting
+#' loss is computed from `.weight` alone, which is what makes it available
+#' without one. Unguarded, the outcome is forwarded to svyplan and forced
+#' there, so the user is told `object 'y' not found`.
+#'
+#' Only positional values are refused. Named arguments legitimately forward
+#' to svyplan's planning components, and svyplan rejects the names it does
+#' not know, so re-checking them here would duplicate a check that already
+#' exists and would have to track svyplan's releases.
+#'
+#' @param dots The caller's `...`, captured with `enquos()`; the names are
+#'   read without forcing the values.
+#' @noRd
+check_weighting_deff_dots <- function(dots, fn, call = rlang::caller_env()) {
+  nms <- names(dots) %||% rep("", length(dots))
+  unnamed <- sum(!nzchar(nms))
+  if (unnamed == 0L) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "{.fn {fn}} takes no outcome variable.",
+      "x" = "{unnamed} argument{?s} {?was/were} passed positionally.",
+      "i" = "It reports the weighting (Kish) design effect, computed from
+             the {.field .weight} column alone.",
+      "i" = "For an outcome-specific design effect, export the sample with
+             {.fn as_svydesign} and use
+             {.code survey::svymean(deff = TRUE)}.",
+      "i" = "To add an anticipated clustering component, name the planning
+             arguments: {.code {fn}(x, icc = , n_per_psu = )}."
+    ),
+    class = "samplyr_error_unnamed_argument",
+    call = call
+  )
 }
 
 #' Extract the weight column a weighting-loss calculation needs
@@ -95,7 +143,7 @@ sample_weights <- function(x, fn) {
 #' Coerce svyplan objects for draw()
 #'
 #' Uses svyplan's `as.data.frame()` contract for tabular plans and the
-#' design context for multistage ones. A stage is "stage-aware" when it
+#' design context for multi-stage ones. A stage is "stage-aware" when it
 #' is clustered or is not the first stage. There, cluster plans hand over
 #' the value for that stage (PSU count, then per-cluster take) instead
 #' of a grand total.
@@ -203,7 +251,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
   n
 }
 
-#' Variance Components from an Executed Sample
+#' Variance components from an executed sample
 #'
 #' Estimate design-based variance components (B, W, icc, k) from a
 #' `tbl_sample`, for planning the next round with
@@ -241,7 +289,10 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
 #'
 #' @param x A `tbl_sample` with at least one executed clustered stage.
 #' @param ... The outcome as a one-sided formula, e.g.
-#'   `varcomp(x, ~y)`, mirroring the survey.design method.
+#'   `varcomp(x, ~y)`, mirroring the survey.design method. Nothing else
+#'   belongs here: `strata` follows the `...` and so is matched exactly, so
+#'   a near miss such as `strat` or a second positional formula is reported
+#'   rather than silently dropped.
 #' @param strata Optional one-sided formula naming a column to
 #'   estimate per-stratum components by, when the first stage was not
 #'   stratified. Stage-1 design strata are picked up automatically.
@@ -283,7 +334,60 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
 #' @export
 svyplan::varcomp
 
+#' Refuse anything in varcomp()'s dots but the outcome formula
+#'
+#' `varcomp()` inherits its `...` from the generic, where the outcome is
+#' positional, and forwards nothing. Its own `strata` follows the `...` and is
+#' therefore matched exactly, so `strat = ~region` lands in `...`, is ignored,
+#' and a stratified decomposition comes back unstratified with no sign that
+#' anything was dropped.
+#'
+#' @param dots The caller's `...`, captured with `enquos()`; names are read
+#'   without forcing the values.
+#' @noRd
+check_varcomp_dots <- function(dots, call = rlang::caller_env()) {
+  nms <- names(dots) %||% rep("", length(dots))
+
+  named <- which(nzchar(nms))
+  if (length(named) > 0) {
+    suggestion <- suggest_reserved_arg(nms[[named[[1]]]], "strata")
+    advice <- if (!is_null(suggestion)) {
+      cli::format_inline("Did you mean {.arg {suggestion}}?")
+    } else {
+      cli::format_inline(
+        "{.fn varcomp} takes the outcome formula, then {.arg strata} by name."
+      )
+    }
+    abort_samplyr(
+      c(
+        "{.fn varcomp} received an unexpected argument.",
+        "x" = cli::format_inline(
+          "{.arg {nms[[named[[1]]]]}} is not an argument of {.fn varcomp}."
+        ),
+        "i" = advice
+      ),
+      class = "samplyr_error_unknown_argument",
+      call = call
+    )
+  }
+
+  if (length(dots) > 1L) {
+    abort_samplyr(
+      c(
+        "{.fn varcomp} takes one outcome formula, not {length(dots)}.",
+        "i" = "To estimate components by stratum, name the argument:
+               {.code varcomp(x, ~y, strata = ~region)}."
+      ),
+      class = "samplyr_error_unnamed_argument",
+      call = call
+    )
+  }
+
+  invisible(NULL)
+}
+
 #' @rdname varcomp.tbl_sample
+#' @family diagnostics
 #' @export
 varcomp.tbl_sample <- function(x, ..., strata = NULL) {
   check_single_replicate(x, "varcomp")
@@ -302,11 +406,41 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
     )
   }
 
-  dots <- list(...)
+  quos <- enquos(...)
+  check_varcomp_dots(quos)
+
+  # Forced deliberately, not by accident. The outcome may legitimately be
+  # written as a symbol holding a formula, so its expression cannot decide;
+  # but a bare `varcomp(x, y)` then fails inside R with "object 'y' not
+  # found", which describes neither the contract nor the mistake. The label
+  # is taken from the unforced expression, so the message can show it.
+  outcome_label <- if (length(quos) >= 1) as_label(quos[[1]]) else ""
+  # Captured here: inside the handler, caller_env() is the handler frame and
+  # the error would be reported against `value[[3L]](cond)`.
+  vc_frame <- environment()
+  dots <- tryCatch(
+    list(...),
+    error = function(e) {
+      abort_samplyr(
+        c(
+          "{.fn varcomp} takes the outcome as a one-sided formula:
+           {.code varcomp(x, ~y)}.",
+          "x" = "{.code {outcome_label}} could not be evaluated:
+                 {conditionMessage(e)}",
+          "i" = "A bare column name is not a formula. Write
+                 {.code ~{outcome_label}}."
+        ),
+        class = "samplyr_error_varcomp_formula",
+        call = vc_frame
+      )
+    }
+  )
+
   fml <- if (length(dots) >= 1) dots[[1]] else NULL
   if (!inherits(fml, "formula") || length(fml) != 2L) {
     abort_samplyr(
-      "Pass the outcome as a one-sided formula: {.code varcomp(x, ~y)}."
+      "Pass the outcome as a one-sided formula: {.code varcomp(x, ~y)}.",
+      class = "samplyr_error_varcomp_formula"
     )
   }
   y_name <- all.vars(fml)
@@ -397,21 +531,14 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
     identical(spec1$method_variance, "srs") ||
     (is_balanced_method(spec1) && is_null(spec1$mos))
 
-  # Certainty PSUs have inclusion chance 1: no between-PSU variance,
-  # and no place in the share normalization below. The explicit flag
-  # records threshold-based certainty; a realized stage weight near 1
-  # also catches chances capped by the PPS probability calculation.
-  # Restrict the weight check to unequal-probability WOR stages: a
-  # whole-take equal-probability design and a WR expected hit of one
-  # are not certainty PSUs for this decomposition.
+  # Certainty PSUs have inclusion chance 1: no between-PSU variance, and no
+  # place in the share normalization below. The flag records every resolved
+  # probability-one unit, whether it matched an explicit threshold or was
+  # capped by the probability calculation, so the column is the whole test.
+  # It is absent for whole-take equal-probability designs and carries FALSE
+  # for a WR expected hit of one; neither is a certainty PSU here.
   cert_col <- paste0(".certainty_", k1)
-  explicit_certainty <- cert_col %in% names(x) && any(x[[cert_col]])
-  stage1_weight <- x[[paste0(".weight_", k1)]]
-  cert_tol <- sqrt(.Machine$double.eps)
-  weight_certainty <- !equal_prob && is_wor_method(spec1) && any(
-    is.finite(stage1_weight) & abs(stage1_weight - 1) <= cert_tol
-  )
-  if (explicit_certainty || weight_certainty) {
+  if (cert_col %in% names(x) && any(x[[cert_col]])) {
     abort_samplyr(
       c(
         "The first stage holds certainty selections. {.fn varcomp}

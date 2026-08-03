@@ -2,23 +2,39 @@
 % Please edit documentation in R/validation.R
 \name{validate_frame}
 \alias{validate_frame}
-\title{Validate a Frame Against a Design}
+\title{Validate a frame against a design}
 \usage{
 validate_frame(
   design,
   frame,
-  stage = NULL,
+  ...,
+  stages = NULL,
   fingerprint = c("inform", "warn", "ignore")
 )
 }
 \arguments{
-\item{design}{A \code{sampling_design} object, or an executed
-\code{tbl_sample}: its stored design is validated and its frame digest
-(when present) is compared against \code{frame}.}
+\item{design}{A \code{sampling_design} object, or a \code{tbl_sample}. A fully
+executed sample validates its stored design and compares its frame
+digest (when present) against \code{frame}. A partial sample validates
+the frame that would continue it, against the units it selected.}
 
-\item{frame}{A data frame to validate}
+\item{frame}{A data frame to validate, or an ordered list of stage
+frames: one per stage, in the order \code{\link[=execute]{execute()}} would receive them.
+Each entry may itself be hierarchical. A data frame and a
+one-element list are the same input, as they are in \code{\link[=execute]{execute()}},
+and every check here is one \code{\link[=execute]{execute()}} runs before it samples: a
+frame this accepts is a frame execution accepts.}
 
-\item{stage}{Which stage(s) to validate against. Default validates all stages.}
+\item{...}{These dots are for future extensions and must be empty.
+\code{stages} and the arguments after it follow \code{...}, so each must be
+named exactly: the singular \code{stage} is reported rather than
+prefix-matched.}
+
+\item{stages}{Which stage(s) to validate against. Defaults to all
+stages, and for a partial \code{tbl_sample} to every remaining stage,
+matching \code{\link[=execute]{execute()}}. Where one frame cannot say whether it is the
+next stage's register or a hierarchy covering the rest, \code{stages} is
+required, again as in \code{\link[=execute]{execute()}}.}
 
 \item{fingerprint}{How to report differences between \code{frame} and
 what was recorded earlier: the frame fingerprint stored in a
@@ -60,15 +76,57 @@ recomputed from \code{frame} at every stage the digest can anchor
 (stage 1 over the universe; later stages under the recorded
 parents). The report says where the frame drifted, not merely that
 it did.
+\subsection{Ordered stage frames}{
+
+A data frame means one hierarchy. A list means separately supplied
+stage frames, and \code{validate_frame()} then checks everything
+\code{\link[=execute]{execute()}} checks before it draws: the frame count, the columns
+each stage selects on, cluster-level variables that must be constant
+within a unit, ancestry types that must be joinable, and ancestry
+values that name no parent.
+
+It also checks candidate coverage, and is stricter there than
+execution: a unit reachable at one stage with no rows in the
+register the next stage samples from is
+\code{samplyr_error_frame_incomplete_register}. \code{\link[=execute]{execute()}} only warns,
+because the sample it happens to draw may never need that unit. The
+two agree on realized parents, which fail in both.
+}
+
+\subsection{Continuing a partial sample}{
+
+When \code{design} is a \code{tbl_sample} with stages left to run,
+\code{validate_frame()} checks the supplied frames against the units that
+sample actually selected, through the same transition the
+continuation would use: complete ancestry, joinable key types, no
+missing parent identifiers, and a row for every selected parent. It
+accepts the same shapes \code{\link[=execute]{execute()}} does, so one register per
+remaining stage works here as it does there. The recorded fingerprint
+and frame digest are not compared, because they describe the frame
+the executed stages drew from rather than the register the next stage
+needs.
+}
+
+\subsection{Preparing a second phase}{
 
 When \code{frame} is itself a \code{tbl_sample} (that is, the design is being
 prepared as phase 2 of a two-phase sample), \code{validate_frame()} also
-pre-flights the two-phase export requirements: the design and the
-phase-1 sample must share unit identifiers declared with
-\code{\link[=cluster_by]{cluster_by()}}, and those identifiers must uniquely identify the
-phase-1 rows. Problems are reported as warnings rather than errors,
-because selection and weighting work without linkage; only
-\code{\link[=as_svydesign]{as_svydesign()}} needs it.
+pre-flights the two-phase export requirements. The phases declare
+their sampling units independently, so the link is the compound of
+every identifier either phase declares with \code{\link[=cluster_by]{cluster_by()}} that both
+samples carry, which is the bridge \code{\link[=as_svydesign]{as_svydesign()}} builds. It warns
+when neither phase declares an identifier the phase-1 sample carries,
+and when the identifiers together do not uniquely identify phase-1
+rows. Problems are reported as warnings rather than errors, because
+selection and weighting work without linkage; only \code{\link[=as_svydesign]{as_svydesign()}}
+needs it.
+
+A previous-phase sample also carries identifiers that later stages
+must keep. One that varies inside a sampling unit cannot be carried,
+and is refused here for the same reason \code{\link[=execute]{execute()}} refuses it: a
+clustered stage keeps one representative row, so by the time anything
+downstream looks, the disagreement is gone.
+}
 }
 \examples{
 # Create a design requiring region stratification and PPS by household count
@@ -96,7 +154,16 @@ multi_design <- sampling_design() |>
     draw(n = 10)
 
 # Validate stage 1 only
-validate_frame(multi_design, zwe_frame, stage = 1)
+validate_frame(multi_design, zwe_frame, stages = 1)
+
+# One register per stage: a list, in the order execute() receives them
+districts <- zwe_frame |>
+  dplyr::distinct(district, district_hh)
+validate_frame(multi_design, list(districts, zwe_eas))
+
+# A partial sample validates the register that would continue it
+stage1 <- execute(multi_design, districts, stages = 1, seed = 5)
+validate_frame(stage1, zwe_eas)
 
 # Designs restored from a file also check the stored frame fingerprint
 path <- tempfile(fileext = ".json")
@@ -111,3 +178,9 @@ validate_frame(restored, bfa_eas[-1, ])
 unlink(path)
 
 }
+\seealso{
+Other execution:
+\code{\link[=execute]{execute()}},
+\code{\link{execution-conditions}}
+}
+\concept{execution}

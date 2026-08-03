@@ -10,13 +10,13 @@
 \method{ungroup}{tbl_sample}(x, ...)
 }
 \arguments{
-\item{.data}{A tbl_sample object}
+\item{.data}{A \code{tbl_sample} object.}
 
 \item{...}{Grouping variables, passed to \code{\link[dplyr:group_by]{dplyr::group_by()}}}
 
 \item{.add, .drop}{Passed to \code{\link[dplyr:group_by]{dplyr::group_by()}}}
 
-\item{x}{A grouped tbl_sample object}
+\item{x}{A grouped \code{tbl_sample} object.}
 }
 \value{
 A grouped tbl_sample
@@ -26,5 +26,16 @@ Grouping does not change rows or design columns, so a grouped
 sample keeps its clean/modified state. \code{group_by()} and \code{ungroup()}
 do not use the dplyr extension generics, so explicit methods are
 required (see the dplyr extending documentation).
+}
+\examples{
+sample <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 20) |>
+  execute(bfa_eas, seed = 1)
+
+# Grouping keeps the sample class and its provenance
+grouped <- dplyr::group_by(sample, region)
+is_tbl_sample(grouped)
+dplyr::summarise(grouped, n = dplyr::n())
 }
 \keyword{internal}
