@@ -47,6 +47,5 @@ Config/testthat/edition: 3
 VignetteBuilder: knitr
 URL: https://dickoa.gitlab.io/samplyr, https://gitlab.com/dickoa/samplyr
 BugReports: https://gitlab.com/dickoa/samplyr/-/work_items
-Remotes: gitlab::dickoa/sondage,
-    gitlab::dickoa/svyplan
+Remotes: gitlab::dickoa/svyplan
 Config/roxygen2/version: 8.0.0
