@@ -56,6 +56,11 @@ than \eqn{f \cdot N}{f * N} when large units dominate the MOS
 distribution. Use \code{certainty_size} or \code{certainty_prop} to handle these
 dominant units explicitly.
 
+Declaring certainty units does more than remove them. The remainder is
+re-resolved over the reduced target and the reduced MOS total, so the
+surviving chances rise and the expectation returns to the target. That is a
+different design from the clipped one, not a repair of it.
+
 This is not silent. \code{execute()} warns with class
 \code{samplyr_warning_poisson_shortfall} once per stage when a pool's resolved
 expectation falls more than 5\% below what that pool could reach, naming the

@@ -36,7 +36,7 @@ The **permanent random number** (PRN) technique, introduced by @brewer1972 and d
 
 `samplyr` supports PRN-based coordination for four selection methods: `bernoulli`, `pps_poisson`, `pps_sps`, and `pps_pareto`.
 
-`pps_poisson` keeps $\pi_i$ dependent only on unit $i$ and the frame total, which is what makes coordination stable across waves. The cost is that a unit large enough to reach $\pi_i > 1$ has its chance clipped to 1, and the expected sample size falls below the target. On a business register this is the ordinary case, since revenue is heavily skewed. `execute()` reports it with a warning of class `samplyr_warning_poisson_shortfall`; handle the dominant units explicitly with `certainty_size` or `certainty_prop`. See `?draw`.
+`pps_poisson` keeps $\pi_i$ dependent only on unit $i$ and the frame total, which is what makes coordination stable across waves. The cost is that a unit large enough to reach $\pi_i > 1$ has its chance clipped to 1, and the expected sample size falls below the target. On a business register this is the ordinary case, since revenue is heavily skewed. `execute()` reports it with a warning of class `samplyr_warning_poisson_shortfall`; handle the dominant units explicitly with `certainty_size` or `certainty_prop`. Note that this re-resolves the remaining units over a smaller MOS total, so their $\pi_i$ rise and now depend on which units were declared certain. Accepting the shortfall is what keeps $\pi_i$ a function of unit $i$ and the frame total alone. See `?draw`.
 
 ## Setup
 

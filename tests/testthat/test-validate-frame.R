@@ -185,14 +185,21 @@ test_that("validate_frame reports removed, added, and retyped columns", {
   modified$extra <- 1
   modified$size <- as.character(modified$size)
 
-  msgs <- capture.output(
+  # Matched on the condition, not through `capture.output(type = "message")`:
+  # a reporter already holds message sinks, so a sink-based capture returns
+  # empty and the assertions match testthat's own progress output instead.
+  expect_message(
     validate_frame(fp_restored, modified),
-    type = "message"
+    "\"y\" no longer present"
   )
-  text <- paste(msgs, collapse = " ")
-  expect_match(text, "\"y\" no longer present")
-  expect_match(text, "new column \"extra\"")
-  expect_match(text, "size \\(character instead of numeric\\)")
+  expect_message(
+    validate_frame(fp_restored, modified),
+    "new column \"extra\""
+  )
+  expect_message(
+    validate_frame(fp_restored, modified),
+    "size \\(character instead of numeric\\)"
+  )
 })
 
 test_that("validate_frame reports content-only changes", {

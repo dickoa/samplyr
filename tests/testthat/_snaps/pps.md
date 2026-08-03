@@ -8,5 +8,5 @@
       x Reachable 40 units, expected 6.9.
       x 3 units have an inclusion probability clipped at 1.
       i Handle dominant units explicitly with `certainty_size` or `certainty_prop`.
-      i See the "pps_poisson" section of `draw()`.
+      i See `?selection-methods` for the "pps_poisson" contract.
 
