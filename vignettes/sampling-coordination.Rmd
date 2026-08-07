@@ -100,6 +100,8 @@ overlap_positive
 
 Perfect overlap. This is useful when the goal is to track the same units over time, for example measuring quarterly changes in revenue within a fixed panel.
 
+Overlap is harder to keep when the *design* changes rather than the frame. Reusing PRNs preserves overlap only while strata and inclusion probabilities stay put; a redesign moves both, and maximizing the retained sample under new strata and new probabilities is a separate problem with its own literature [@kishscott1971; @hidiroglou1991].
+
 ## Negative Coordination: Minimum Overlap
 
 To minimize overlap, update the PRN values between waves using @tille2006 [§8.2] formula:
@@ -179,6 +181,239 @@ tibble(strategy = c("Positive (same PRN)", "Independent (fresh PRN)", "Negative 
        bound = c(n_wave, round(expected_independent), round(alb))) |>
   mutate(pct = paste0(round(100 * overlap / n_wave), "%"))
 ```
+
+## Longitudinal Designs
+
+Coordination is a mechanism; what you point it at is a design. @smith2009
+identify five broad types of longitudinal survey design. Four of them need
+nothing beyond the verbs used so far. This section maps them onto `samplyr`
+and states the limits that the code cannot show you.
+
+### Vocabulary
+
+Longitudinal work overloads words that already mean something specific in a
+sampling design. In `samplyr`:
+
+| Term            | Meaning                                                |
+|:----------------|:-------------------------------------------------------|
+| stage           | selection within units selected at an earlier stage     |
+| phase           | probability subsampling from an earlier sample          |
+| frame           | a source covering a target population                   |
+| wave            | a programme or calendar occasion                        |
+| panel           | a randomized rotation, reserve, or workload group       |
+| cohort          | a sample's entry batch or refreshment vintage           |
+| unit identity   | the substantive entity followed across occasions        |
+
+Four consequences follow. A wave is not a stage: `add_stage()` selects within
+what an earlier stage selected, whereas a wave revisits units already
+selected. A panel group is not a refreshment cohort: `panels` partitions one
+draw, a cohort is a separate draw. Repeated observation of every eligible unit
+adds no selection probability, so interviewing a fixed panel five times does
+not change `.weight`. And response, attrition and tracing failure are not
+selection operations; they belong to the estimation layer.
+
+The printed token is `.panel`. There is deliberately no `.wave` column:
+`samplyr` realizes designs against frames and does not model time.
+
+### Defining the longitudinal population
+
+Before choosing a design, decide which population the estimates are about
+[@smith2009, sec. 2.3.1]. There are three answers and they lead to different
+designs:
+
+- **Static**: the population as of wave 1. Deaths occur, births cannot enter.
+  Population information is fixed for all waves, so weighting is
+  straightforward, and the natural design is a fixed panel. The risk is that
+  readers take the results for the third option.
+- **Intersection**: units present at every wave. Both births and deaths are
+  excluded, auxiliary totals are hard to construct, and the definition changes
+  whenever a wave is added.
+- **Union**: units present at any wave. This suits a genuinely dynamic
+  population, requires a design that introduces births, and is what most
+  household panels use. Adding a wave changes the population and may require
+  revising earlier estimates.
+
+This is a declaration, not a computation, so it is not an argument to any
+verb. It is what determines whether you need births at all, and therefore
+which design below applies.
+
+### The five designs
+
+| Design                  | What it is                                                                          | In `samplyr`                                                                                                                                                                                                     |
+|:------------------------|:------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Fixed panel             | The same units on every occasion; no additions after wave 1                          | One `execute()`. Waves 2 to *T* are repeated measurement on the same `tbl_sample`; the base selection weight does not change because another interview happened.                                                    |
+| Fixed panel plus births | A fixed panel with a sample of recent entrants added at each occasion                | The original `execute()`, plus a separate `execute()` against an entrant register for each refreshment cohort. The components stay separate objects until their target population and estimator are defined.        |
+| Repeated panel          | A series of panels, each representing an equivalent population defined at a later time | Reuse the same frame-independent `sampling_design` in a fresh `execute(design, frame_j, seed = seed_j)`. Not `replay_design()`, which reproduces one recorded execution and refuses a changed frame.                |
+| Rotating panel          | A fixed proportion of units replaced at each occasion                                | `execute(panels = k)` for the start-up partition; the replenishment is ordinary repeated execution. See below, because this is the one that is easy to overclaim.                                                    |
+| Split panel             | A panel plus a fresh cross-sectional sample at each occasion [@kish1987, pp. 181--183] | Two independent executions kept as separate objects. In the *P* = 1 variation a subset of units is included on every occasion, so longitudinal estimates are possible for that stratum; those units already carry `.certainty_k`.                                             |
+
+A rotating panel is a repeated panel whose overlap pattern is fixed and
+usually balanced, which is what allows the live groups to be combined for a
+cross-sectional estimate [@kaltoncitro1993]. Labour force surveys in many
+countries use one [@steel1997].
+
+### What `panels` builds, and what it does not
+
+A real rotating panel replenishes itself: at each entry time it draws a fresh
+group from the population as it stands then, so the live groups carry
+different population vintages [@lynn2012, sec. 3]. That is exactly what makes
+them combinable.
+
+`execute(panels = k)` partitions **one** execution against **one** frame.
+Every group comes from the same frame vintage, and no entrant can appear in
+any of them. Over a long horizon that cannot represent the cross-sectional
+population at later waves.
+
+Where the partition is exactly right is start-up. The "immediate start"
+option draws the full sample in year 1 and subdivides it into groups
+designated to remain for one, two, three, ... years, with a fresh group added
+each year thereafter; it is preferred to a gradual start because it delivers
+the full sample size from year 1. So the coherent shape is:
+
+```text
+year 1     execute(design, frame, panels = k)     start-up partition
+year 2+    execute(design, frame_vintage_t)       one fresh group per period
+```
+
+`panels` builds the start-up partition and the workload rotation over a frozen
+master. Steady-state replenishment is ordinary repeated execution against
+successive frame vintages, which is what the rest of this vignette does.
+
+Combining the live groups is then not a matter of pooling weights. A unit that
+entered the population between periods 1 and 2 could not have been drawn into
+group 1, so the combined sample under-represents joiners unless their
+probabilities are corrected. For an initial sample and a later one
+[@lynn2012, sec. 8.1]:
+
+```text
+stayers   P ~= n1/N1 + n2/N2      small-fraction approximation
+leavers   P = n1/N1
+joiners   P = n2/N2
+w = 1/P
+```
+
+This is still an inverse inclusion probability, so it stays inside the
+single-frame estimator. What it needs is data `samplyr` cannot invent: for
+each unit, whether it was eligible for each earlier draw. That comes from
+survey questions establishing population membership at the earlier date, and
+it is easy to forget to ask them. Supply it as a column on the frame; two
+execution receipts cannot reveal it.
+
+One practical note: `panels` composes with PRN coordination. The conflict
+check in `execute()` is against `reps`, not `prn`, so a PRN-rotated draw can
+also be partitioned into workload groups.
+
+### Scheduling the groups
+
+Declaring *when* each group is live turns the partition into a rotation you
+can materialize. Pass `panels` a data frame with `panel` and `wave` columns
+and an optional logical `active` column instead of a count. Here four groups
+rotate two at a time, so each group is live for two consecutive occasions:
+
+```{r}
+rotation <- data.frame(
+  panel  = rep(1:4, times = 4),
+  wave   = rep(1:4, each = 4),
+  active = c(TRUE,  TRUE,  FALSE, FALSE,
+             FALSE, TRUE,  TRUE,  FALSE,
+             FALSE, FALSE, TRUE,  TRUE,
+             TRUE,  FALSE, FALSE, TRUE)
+)
+
+master <- sampling_design() |>
+  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
+  execute(frame, seed = 7, panels = rotation)
+
+table(master$.panel)
+```
+
+The schedule is read at the draw, not only later: the fewest panels any wave
+activates sets the assignment block size, so a schedule that keeps two of
+four groups live blocks more finely than one that keeps a single group live.
+
+`execute(master, wave = t)` then realizes one occasion:
+
+```{r}
+wave_2 <- execute(master, wave = 2)
+
+c(master = nrow(master), wave_2 = nrow(wave_2))
+table(rotating = !wave_2$.certainty_1)
+```
+
+Two of four groups is a little under half the master, plus every certainty
+unit: `pps_sps` on a skewed register resolves the largest enterprises to
+$\pi_k = 1$, and a permanent unit is in the sample at every occasion.
+
+Activation is a probability subsample, not a filter, so the wave carries
+weights that estimate the same population total the master does:
+
+```{r}
+c(master = sum(master$.weight), wave_2 = sum(wave_2$.weight))
+```
+
+They are close rather than equal, which is the point: the activation is a
+second sampling phase and its estimator is unbiased, not exact.
+
+The factor applied to each weight is the inverse of the unit's activation
+probability, which is its block's frozen quota for the active panels over the
+block size. That is exact, and it is generally not the nominal `k / r`
+implied by counting groups: a block that took the remainder carries a
+different quota, and its units carry a different factor. Certainty units are
+activated with probability one and their weights are untouched.
+
+Two limits are worth stating plainly. A materialized wave cannot yet be
+exported to `survey`: the activation is a second phase, and carrying it
+through `twophase()` is not implemented, so `as_svydesign()` refuses rather
+than exporting the wave as though it were a single-phase design. And a wave
+cannot be replayed, because it is derived from a recorded execution rather
+than being one; save and replay the master instead.
+
+Finally, the schedule states which groups are live when. It does not
+replenish the sample: every group still comes from the frame vintage the
+master was drawn from, which is the scoping point above.
+
+### Attaching later waves to the sample
+
+A `tbl_sample` records the selection. Joining later-wave responses one to one,
+in wide form, preserves that: one row per selected unit, design columns
+untouched. Reshaping to one row per unit-wave does not. Duplicated unit-wave
+rows are repeated measurements of one selected unit, not independently sampled
+observations, and exporting them with `as_svydesign()` would count each unit
+once per interview. Export the wide form, or reshape after export.
+
+### Limits to state before fieldwork
+
+**Transient stratifiers.** `sampling_design()` stores stratification variables
+as names and resolves them at execution, so re-executing a design against a
+later frame vintage re-classifies units. For a repeated panel that is correct,
+since each panel represents the population as of its own time. For a fixed
+panel it is wrong: a unit must keep its wave-1 stratum. Unequal sampling
+fractions across a classification that units drift out of can improve
+precision initially and reduce it after several waves [@smith2009, sec.
+2.4.4].
+
+**The sampling unit and the followed unit may differ, deliberately.** The
+standard device for avoiding movers is a sampling unit that cannot move: a
+labour force survey that samples addresses balances movers out against movers
+in. Such a design is balanced for cross-sectional estimates and for *net*
+change, but not for *gross* change [@smith2009, sec. 2.3.5]. `cluster_by()`
+expresses it and needs nothing new. The caveat matters because a
+dwelling-based rotating panel quietly fails the analysis most people want a
+panel for. It also constrains the frame: an address found vacant at one wave
+stays in the sample for later waves, so the frame must not be filtered to
+occupied units between waves.
+
+**Entrant coverage is a property of the frame, not of the draw.** `samplyr`
+can draw from a supplied entrant register. It cannot establish that the
+register covers the entrant flow, or that it covers it promptly enough for
+short-lived entrants to be represented at all.
+
+**Sampling that depends on the existing sample is out of scope.** Adding
+household members reached through an existing sample member gives selection
+probabilities that cannot be known from the design, and model-based approaches
+with untestable assumptions are required [@lynn2012, sec. 8.1]. Attrition,
+measurement error and imputation are likewise estimation-layer problems:
+`samplyr` produces design weights only.
 
 ## Multi-Wave Rotation
 
@@ -289,7 +524,7 @@ n_births_selected
 n_births_selected / n_births
 ```
 
-The coordination mechanism automatically handles frame changes. Surviving units retain their updated PRN values and births start with fresh PRN.
+The PRN mechanism carries coordination across this revision: surviving units keep their updated values and births enter with fresh ones. That is the whole of what it does. It does not establish that the revised frame covers the entrant flow, that an identifier still refers to the same entity it did last wave, or that PRN values survived whatever process rebuilt the register. Those are properties of frame construction, and a coordinated draw against a re-keyed or incomplete frame is coordinated with respect to the wrong population. `validate_frame()` checks that the columns the design needs are present and usable; continuity of the register is yours to verify.
 
 ## Using Pareto Sampling
 

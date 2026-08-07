@@ -232,6 +232,7 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
   }
   check_single_replicate(x, "joint_expectation")
   check_sample_unmodified(x, "joint_expectation")
+  check_no_materialized_wave(x, "joint_expectation")
   if (
     length(nsim) != 1L ||
       !is_integerish_numeric(nsim) ||

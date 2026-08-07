@@ -288,13 +288,59 @@ Initial release.
 
 ## Panel partitioning
 
-* `execute(..., panels = k)` assigns units to `k` panels via systematic
-  within-stratum interleaving.
+* `execute(..., panels = k)` assigns units to `k` panels by randomized fixed
+  quota inside frozen ordered blocks. Each first-stage selection stratum is an
+  assignment pool cut into consecutive blocks of `2k` units; every block
+  carries a fixed quota per panel and its labels are permuted within the
+  block. Each unit therefore carries each panel with probability `1/k`, and
+  panel sizes within a pool differ by at most one.
+* Blocking preserves the `control` order of `draw()`: units adjacent in that
+  order share a block, so every panel inherits the same spread over it.
 * Multi-stage designs assign panels at PSU level and propagate to all units.
-* Panel labels are deterministic rotation or workload groups, not an
-  additional probability-sampling phase. Full-sample weights remain valid for
+  Under a with-replacement first stage the assignment unit is the realized
+  draw, so one population cluster drawn twice may carry two panels.
+* Certainty units are labelled from their own pools and consume no rotating
+  quota.
+* The frozen block sizes and the realized block-by-panel quotas are recorded
+  with the sample and written by `write_design()`, since a subset of panels is
+  a simple random subsample without replacement of the block quota rather than
+  of `1/k`.
+* Panels are assigned once. `.panel` is carried forward by a stage
+  continuation, and redeclaring `panels` on a sample that already carries an
+  assignment raises `samplyr_error_panels_already_assigned`.
+* Panel labels are rotation or workload groups, not an additional
+  probability-sampling phase. Full-sample weights remain valid for
   the combined sample; multiplying one panel's weights by the number of panels
   is not generally valid for population inference.
+
+## Rotation schedules and waves
+
+* `panels` also accepts a rotation schedule: a data frame with `panel` and
+  `wave` columns and an optional logical `active` column, where a combination
+  left out is inactive. It declares the panel count and is stored with the
+  sample. A schedule naming only its active rows is completed to the full
+  panel-by-wave grid before it is recorded.
+* A schedule sets the assignment block size. Where the leanest wave activates
+  `r` of the `k` panels, blocks are `k * ceiling(2 / r)` rather than the
+  scalar worst case `2k`, which keeps more of the assignment order while still
+  leaving two units per block in the take.
+* `execute(master, wave = t)` materializes one precommitted occasion of a
+  scheduled master. It activates the panels declared active at `t` and
+  multiplies `.weight` by the inverse of the activation probability, which is
+  the block's frozen quota for those panels over the block size. Permanent
+  certainty units are activated at every wave with probability one.
+* A materialized wave is a sample in its own right with its own integrity
+  record, not a filtered master. `execute(master, wave = t)` takes no other
+  execution input: a frame, `seed`, `stages`, `panels` or `reps` alongside
+  `wave` is an error, as is a master that is modified, incomplete, unscheduled
+  or already materialized.
+* The receipt records the wave, the active panels, the per-block take and
+  activation probability, and a schedule digest. Survey export
+  (`as_svydesign()`, `as_svrepdesign()`, srvyr) and `joint_expectation()`
+  refuse a materialized wave with `samplyr_error_wave_export_unsupported`:
+  the weights are exact, but carrying the activation through as a second
+  phase is not implemented, and exporting the wave as single-phase would
+  understate its variance.
 
 ## Replicated sampling
 
@@ -473,6 +519,7 @@ Initial release.
   preserve sample provenance (grouped verbs work and marks flow
   through), `vec_restore()` applies the same rules as the dplyr hooks,
   and base `[` detects same-length row duplication.
+
 ## Survey planning
 
 * Samplyr re-exports the `design_effect()`, `effective_n()`, and `varcomp()`
@@ -729,7 +776,11 @@ Initial release.
 * Introduction: full tutorial covering SRS through multi-stage PPS designs.
 * Design semantics: assumptions, weight formulas, and method properties.
 * Survey analysis: export to survey/srvyr, joint probabilities, two-phase.
-* Sampling coordination: PRN workflows, positive/negative coordination.
+* Sampling coordination: PRN workflows, positive/negative coordination, and
+  a longitudinal design taxonomy covering the vocabulary, the choice of
+  longitudinal population, the five design types and how each is expressed,
+  what `panels` builds and what it does not, and the limits that belong to
+  the frame rather than the draw.
 * Survey planning: svyplan integration, sample size, precision, design effects.
 * Validation: deterministic invariants and Monte Carlo coverage checks on
   synthetic populations.

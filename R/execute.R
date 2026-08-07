@@ -146,12 +146,27 @@ NULL
 #'   Default (`NULL`) executes all remaining stages.
 #' @param seed Integer random seed for reproducibility, between
 #'   `-.Machine$integer.max` and `.Machine$integer.max`.
-#' @param panels Integer number of rotation groups (panels) to partition the
-#'   sample into for rotation or workload management. Assignment uses
-#'   deterministic systematic interleaving within strata. It is not an
-#'   additional probability-sampling phase. The output includes a `.panel`
-#'   column with values 1 through `panels`. Default `NULL` means no panel
-#'   partitioning. Cannot be used together with `reps`.
+#' @param panels Rotation groups (panels) to partition the sample into for
+#'   rotation or workload management, as either an integer count or a
+#'   rotation schedule. Assignment is a randomized fixed-quota partition
+#'   within the first-stage selection strata: every unit carries each panel
+#'   with probability `1 / panels`. It is not an additional
+#'   probability-sampling phase. The output includes a `.panel` column with
+#'   values 1 through the panel count. Default `NULL` means no panel
+#'   partitioning. Cannot be used together with `reps`, and cannot be
+#'   redeclared on a sample that already carries an assignment.
+#'
+#'   A schedule is a data frame with an integer `panel` column, an integer
+#'   `wave` column and an optional logical `active` column; a combination
+#'   left out is inactive. It declares the panel count and, through the
+#'   fewest panels any wave activates, the assignment block size. Only a
+#'   sample drawn with a schedule can be materialized by `wave`.
+#' @param wave Integer wave of a scheduled master to materialize, or `NULL`
+#'   (default). `execute(master, wave = t)` activates the panels the stored
+#'   schedule declares active at `t` and compounds the exact activation
+#'   factor into `.weight`. It takes no other execution input: no frame, no
+#'   `seed`, `stages`, `panels` or `reps`, since a wave selects units the
+#'   master already assigned.
 #' @param reps Integer number of independent replicate samples to draw (>= 2),
 #'   or `NULL` (default) for a single sample. When specified, `execute()` draws
 #'   `reps` independent samples from the same frame under the same design and
@@ -324,23 +339,88 @@ NULL
 #' ## Panel partitioning
 #'
 #' When `panels` is specified, the sample is partitioned into non-overlapping
-#' groups for rotation or workload management using systematic interleaving
-#' within strata.
+#' groups for rotation or workload management.
 #'
-#' Assignment is deterministic (not random): within each stratum, units are
-#' assigned round-robin to panels 1, 2, ..., k. This ensures each panel has
-#' approximately equal representation from every stratum. The quality of panel
-#' balance benefits from `control` sorting in `draw()`, which determines the
-#' order of units before interleaving.
+#' Assignment is randomized with fixed quotas. Within each first-stage
+#' selection stratum the assignment units are ordered, cut into consecutive
+#' blocks of `2 * panels`, given a fixed quota per panel inside each block,
+#' and permuted within their block. Every unit therefore carries each panel
+#' with probability `1 / panels`, and panel sizes within a stratum differ by
+#' at most one.
+#'
+#' Blocking is what preserves order. Units adjacent in the `control` order of
+#' `draw()` fall in the same block, so every panel inherits the same spread
+#' over that order. A stratum holding fewer than `2 * panels` units is a
+#' single block: still assigned, simply with no block-level order structure
+#' left to preserve.
 #'
 #' For multi-stage designs, panels are assigned at stage 1 (PSU level).
-#' All units within a PSU inherit the PSU's panel assignment.
+#' All units within a PSU inherit the PSU's panel assignment. Under a
+#' with-replacement stage 1 the assignment unit is the realized draw, the
+#' unit the estimator uses, so one population cluster drawn twice may carry
+#' two different panels.
+#'
+#' Certainty units are labelled from their own pools and consume no rotating
+#' quota. A certainty unit is in the sample at every occasion, so a schedule
+#' that rotated it out would sample the very units the certainty stratum
+#' exists to enumerate.
+#'
+#' Panels are assigned once. `.panel` is carried forward by a stage
+#' continuation, and redeclaring `panels` on a sample that already carries an
+#' assignment is an error.
+#'
+#' ## Rotation schedules and waves
+#'
+#' Passing a schedule to `panels` instead of a count declares which panels are
+#' active at which occasion, and lets `execute(master, wave = t)` materialize
+#' one of them:
+#'
+#' ```r
+#' schedule <- data.frame(
+#'   panel  = rep(1:4, times = 3),
+#'   wave   = rep(1:3, each = 4),
+#'   active = c(TRUE, TRUE, FALSE, FALSE,
+#'              FALSE, TRUE, TRUE, FALSE,
+#'              FALSE, FALSE, TRUE, TRUE)
+#' )
+#' master <- execute(design, frame, seed = 1, panels = schedule)
+#' wave_2 <- execute(master, wave = 2)
+#' ```
+#'
+#' The schedule is read at the master draw, not only at materialization,
+#' because the block size follows from it. A schedule whose leanest wave
+#' activates `r` of the `k` panels blocks at `k * ceiling(2 / r)` rather than
+#' at the worst case `2k`, which keeps more of the assignment order while
+#' still leaving two units per block in the take.
+#'
+#' Materializing wave `t` selects the panels declared active at `t` and
+#' multiplies `.weight` by the inverse of the activation probability. That
+#' probability is the block's frozen quota for the active panels over the
+#' block size, so it is exact rather than nominal, and it is generally not
+#' `k / r`. Permanent certainty units are activated at every wave with
+#' probability one and their weights are untouched.
+#'
+#' A materialized wave is a sample in its own right, with its own integrity
+#' record: it is not a filtered master, and `frame_summary()` and the weight
+#' diagnostics work on it. Two things it cannot yet do are export to survey,
+#' because the activation phase is not yet carried through `twophase()`, and
+#' replay, because a wave is derived from a recorded execution rather than
+#' being one. Both refuse rather than answering approximately.
+#'
+#' The schedule states which groups are live when. It does not replenish the
+#' sample: every panel comes from the frame vintage the master was drawn
+#' from. Steady-state replenishment is a fresh `execute()` against a later
+#' frame. See `vignette("sampling-coordination")`.
 #'
 #' Weights are not adjusted for panel membership. They reflect the full-sample
-#' inclusion probability and are valid for the combined sample. A single panel
-#' does not have a known probability-sampling interpretation merely from this
-#' assignment, so multiplying its weights by `panels` is not generally valid
-#' for population inference.
+#' inclusion probability and are valid for the combined sample. Taking a
+#' subset of the panels is a simple random subsample without replacement
+#' within each block, but its conditional probability is the block's realized
+#' quota over the block size, not `1 / panels`, so multiplying one panel's
+#' weights by `panels` is not generally valid for population inference. The
+#' block sizes and realized quotas are recorded with the sample and written
+#' to the design file by [write_design()], because they, not `1 / panels`,
+#' are what such a subset has to be computed against.
 #'
 #' ## When a design cannot be realized as written
 #'
@@ -459,6 +539,7 @@ execute <- function(
   seed = NULL,
   panels = NULL,
   reps = NULL,
+  wave = NULL,
   frame_digest = c("summary", "full", "none")
 ) {
   frame_digest <- match.arg(frame_digest)
@@ -471,6 +552,23 @@ execute <- function(
   dots <- list(...)
 
   execution_environment <- capture_execution_environment()
+
+  # A wave is materialized from a stored schedule rather than drawn from a
+  # frame, so it leaves before frame normalization. Its guards refuse every
+  # other execution input rather than quietly ignoring it.
+  if (!is_null(wave)) {
+    return(materialize_wave(
+      .data,
+      wave,
+      frames = dots,
+      stages = stages,
+      seed = seed,
+      panels = panels,
+      reps = reps,
+      execution_environment = execution_environment
+    ))
+  }
+
   supplied <- normalize_execute_frames(dots)
   frames <- supplied$frames
 
@@ -506,17 +604,7 @@ execute <- function(
     seed <- as.integer(seed)
   }
 
-  if (!is_null(panels)) {
-    if (
-      !is.numeric(panels) ||
-        length(panels) != 1 ||
-        !is_integerish_numeric(panels) ||
-        panels < 2
-    ) {
-      cli_abort("{.arg panels} must be a single integer >= 2")
-    }
-    panels <- as.integer(panels)
-  }
+  panels <- normalize_panel_input(panels)
 
   if (!is_null(reps)) {
     if (
@@ -775,7 +863,7 @@ execute <- function(
 #' as a misspelled argument.
 #' @noRd
 check_execute_dot_names <- function(dots, call = rlang::caller_env()) {
-  reserved <- c("stages", "seed", "panels", "reps", "frame_digest")
+  reserved <- c("stages", "seed", "panels", "reps", "wave", "frame_digest")
   nms <- names(dots) %||% rep("", length(dots))
 
   for (i in seq_along(dots)) {
@@ -856,7 +944,7 @@ check_execute_dots <- function(
   collected = FALSE,
   call = rlang::caller_env()
 ) {
-  reserved <- c("stages", "seed", "panels", "reps", "frame_digest")
+  reserved <- c("stages", "seed", "panels", "reps", "wave", "frame_digest")
   nms <- names(frames) %||% rep("", length(frames))
 
   for (i in seq_along(frames)) {
@@ -1024,12 +1112,16 @@ execute_design <- function(
     previous_stage_idx <- stage_idx
   }
 
+  panel_assignment <- NULL
   if (!is_null(panels) && nrow(current_sample) > 0) {
-    current_sample <- assign_panels(
+    assigned <- assign_panels(
       current_sample,
       panels,
-      design$stages[[stages[1]]]
+      design$stages[[stages[1]]],
+      stages[1]
     )
+    current_sample <- assigned$sample
+    panel_assignment <- assigned$record
   }
 
   if (
@@ -1073,7 +1165,8 @@ execute_design <- function(
     metadata = list(
       n_selected = nrow(current_sample),
       executed_at = Sys.time(),
-      panels = panels,
+      panels = panels$k,
+      panel_assignment = panel_assignment,
       prev_phase = prev_phase,
       execution_environment = execution_environment,
       integrity = sample_integrity_record(current_sample, design, stages),
@@ -1216,9 +1309,27 @@ execute_continuation <- function(
   stages <- schedule$stages
   frames <- schedule_frames(schedule)
 
-  phase_link_vars <- phase_link_vars_of(attr(sample, "metadata")$prev_phase)
+  parent_meta <- attr(sample, "metadata")
+  phase_link_vars <- phase_link_vars_of(parent_meta$prev_phase)
 
   current_sample <- as.data.frame(sample)
+  # Panels are assigned once, at the draw that creates them. A continuation
+  # carries `.panel` forward, so redeclaring `panels` would overwrite an
+  # assignment whose pools and quotas are already frozen in the receipt.
+  if (!is_null(panels) && ".panel" %in% names(current_sample)) {
+    abort_samplyr(
+      c(
+        "{.arg panels} cannot be declared on a sample that already carries a
+         panel assignment.",
+        "x" = "Panels are assigned once and carried forward by later
+               stages.",
+        "i" = "Continue without {.arg panels} to keep the assignment
+               recorded with the master draw."
+      ),
+      class = "samplyr_error_panels_already_assigned",
+      call = call
+    )
+  }
   last_executed_stage <- max(executed)
   previous_stage_idx <- last_executed_stage
   all_prior_cluster_vars <- collect_ancestor_cluster_vars(design, stages[1])
@@ -1297,13 +1408,17 @@ execute_continuation <- function(
     previous_stage_idx <- stage_idx
   }
 
+  panel_assignment <- parent_meta$panel_assignment
   if (!is_null(panels) && nrow(current_sample) > 0) {
     first_stage_idx <- c(executed, stages)[1]
-    current_sample <- assign_panels(
+    assigned <- assign_panels(
       current_sample,
       panels,
-      design$stages[[first_stage_idx]]
+      design$stages[[first_stage_idx]],
+      first_stage_idx
     )
+    current_sample <- assigned$sample
+    panel_assignment <- assigned$record
   }
 
   digest <- NULL
@@ -1342,14 +1457,15 @@ execute_continuation <- function(
     metadata = list(
       n_selected = nrow(current_sample),
       executed_at = Sys.time(),
-      panels = panels,
+      panels = panels$k %||% parent_meta$panels,
+      panel_assignment = panel_assignment,
       frame_digest = digest,
-      continued_from = attr(sample, "metadata"),
+      continued_from = parent_meta,
       # A stage continuation remains in the same phase. If that phase was
       # itself sampled from an earlier phase, retain the phase link so survey
       # export does not mistake the completed multistage phase for a
       # single-phase design.
-      prev_phase = attr(sample, "metadata")$prev_phase,
+      prev_phase = parent_meta$prev_phase,
       execution_environment = execution_environment,
       integrity = sample_integrity_record(
         current_sample,
@@ -1981,75 +2097,6 @@ find_carry_forward_cols <- function(previous_sample) {
     intersect(".panel", nms),
     intersect("._prev_phase_weight", nms)
   )
-}
-
-#' Assign panel labels by systematic interleaving within strata
-#' @noRd
-assign_panels <- function(result, k, first_stage_spec) {
-  strata_spec <- first_stage_spec$strata
-  cluster_spec <- first_stage_spec$clusters
-  control_quos <- first_stage_spec$draw_spec$control
-
-  if (!is_null(cluster_spec)) {
-    # Multi-stage: assign at PSU level, propagate to all units
-    cluster_vars <- cluster_spec$vars
-    make_key <- function(df) {
-      make_group_key(df, cluster_vars)
-    }
-    all_keys <- make_key(result)
-    unique_mask <- !duplicated(all_keys)
-    psu_data <- result[unique_mask, , drop = FALSE]
-    psu_data <- apply_panel_control_order(
-      psu_data,
-      strata_spec = strata_spec,
-      control_quos = control_quos
-    )
-    psu_keys <- make_key(psu_data)
-    n_psu <- nrow(psu_data)
-
-    if (!is_null(strata_spec)) {
-      groups <- split_row_indices(psu_data, strata_spec$vars)
-      psu_panel <- integer(n_psu)
-      for (idxs in groups$indices) {
-        psu_panel[idxs] <- rep_len(seq_len(k), length(idxs))
-      }
-    } else {
-      psu_panel <- rep_len(seq_len(k), n_psu)
-    }
-
-    result$.panel <- psu_panel[match(all_keys, psu_keys)]
-  } else if (!is_null(strata_spec)) {
-    groups <- split_row_indices(result, strata_spec$vars)
-    result$.panel <- integer(nrow(result))
-    for (idxs in groups$indices) {
-      result$.panel[idxs] <- rep_len(seq_len(k), length(idxs))
-    }
-  } else {
-    result$.panel <- rep_len(seq_len(k), nrow(result))
-  }
-  result
-}
-
-#' Apply control sorting to panel assignment units
-#' @noRd
-apply_panel_control_order <- function(
-  df,
-  strata_spec = NULL,
-  control_quos = NULL
-) {
-  if (is_null(control_quos) || length(control_quos) == 0 || nrow(df) <= 1) {
-    return(df)
-  }
-
-  if (is_null(strata_spec)) {
-    return(arrange(df, !!!control_quos))
-  }
-
-  groups <- split_row_indices(df, strata_spec$vars)
-  ordered <- lapply(groups$indices, function(idxs) {
-    arrange(df[idxs, , drop = FALSE], !!!control_quos)
-  })
-  bind_rows(ordered)
 }
 
 #' Compound weights by joining on shared variables

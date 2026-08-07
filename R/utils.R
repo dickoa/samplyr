@@ -1425,6 +1425,33 @@ sample_realization_status <- function(x) {
   list(ok = FALSE, mods = mods)
 }
 
+#' Refuse a materialized wave where the activation phase is not yet carried
+#'
+#' A wave's `.weight` is correct: the activation factor is exact. What is not
+#' yet built is the export of the activation as a second phase, so exporting
+#' the wave as though it were a single-phase design would understate its
+#' variance. Refusing is the only reading that is not silently wrong.
+#' @noRd
+check_no_materialized_wave <- function(x, fn_name, call = caller_env()) {
+  wave <- attr(x, "metadata")$wave
+  if (is_null(wave)) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "{.fn {fn_name}} does not yet support a materialized wave.",
+      "x" = "This sample realizes wave {wave$wave}, whose activation is a
+             second phase that the export path does not carry.",
+      "i" = "The weights in {.field .weight} already include the exact
+             activation factor and are valid for estimating totals.",
+      "i" = "Export the master instead:
+             {.code as_svydesign(master)}."
+    ),
+    class = "samplyr_error_wave_export_unsupported",
+    call = call
+  )
+}
+
 #' Check that a tbl_sample still matches its executed realization
 #' @noRd
 check_sample_unmodified <- function(x, fn_name, call = caller_env()) {

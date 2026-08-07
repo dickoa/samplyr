@@ -48,48 +48,58 @@ export(stratify_by)
 export(validate_frame)
 export(varcomp)
 export(write_design)
-importFrom(cli,cli_abort)
-importFrom(cli,cli_inform)
-importFrom(cli,cli_warn)
-importFrom(dplyr,across)
-importFrom(dplyr,all_of)
-importFrom(dplyr,arrange)
-importFrom(dplyr,bind_rows)
-importFrom(dplyr,distinct)
-importFrom(dplyr,dplyr_col_modify)
-importFrom(dplyr,dplyr_reconstruct)
-importFrom(dplyr,dplyr_row_slice)
-importFrom(dplyr,group_by)
-importFrom(dplyr,inner_join)
-importFrom(dplyr,left_join)
-importFrom(dplyr,mutate)
-importFrom(dplyr,n)
-importFrom(dplyr,row_number)
-importFrom(dplyr,select)
-importFrom(dplyr,semi_join)
-importFrom(dplyr,summarise)
-importFrom(dplyr,ungroup)
+importFrom(cli,
+  cli_abort,
+  cli_inform,
+  cli_warn
+)
+importFrom(dplyr,
+  across,
+  all_of,
+  arrange,
+  bind_rows,
+  distinct,
+  dplyr_col_modify,
+  dplyr_reconstruct,
+  dplyr_row_slice,
+  group_by,
+  inner_join,
+  left_join,
+  mutate,
+  n,
+  row_number,
+  select,
+  semi_join,
+  summarise,
+  ungroup
+)
 importFrom(pillar,tbl_sum)
-importFrom(rlang,"!!!")
-importFrom(rlang,"!!")
-importFrom(rlang,"%||%")
-importFrom(rlang,.data)
-importFrom(rlang,as_label)
-importFrom(rlang,caller_env)
-importFrom(rlang,enquo)
-importFrom(rlang,enquos)
-importFrom(rlang,is_call)
-importFrom(rlang,is_character)
-importFrom(rlang,is_null)
-importFrom(rlang,new_quosure)
-importFrom(rlang,quo_get_env)
-importFrom(rlang,quo_get_expr)
+importFrom(rlang,
+  "!!!",
+  "!!",
+  "%||%",
+  .data,
+  as_label,
+  caller_env,
+  enquo,
+  enquos,
+  is_call,
+  is_character,
+  is_null,
+  new_quosure,
+  quo_get_env,
+  quo_get_expr
+)
 importFrom(stats,setNames)
-importFrom(svyplan,design_effect)
-importFrom(svyplan,effective_n)
-importFrom(svyplan,varcomp)
+importFrom(svyplan,
+  design_effect,
+  effective_n,
+  varcomp
+)
 importFrom(tibble,as_tibble)
-importFrom(vctrs,vec_as_location)
-importFrom(vctrs,vec_group_loc)
-importFrom(vctrs,vec_restore)
+importFrom(vctrs,
+  vec_as_location,
+  vec_group_loc,
+  vec_restore
+)
 importFrom(withr,with_seed)

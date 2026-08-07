@@ -587,11 +587,10 @@ replay_design <- function(
     stages <- NULL
   }
   reps <- if (!is_null(receipt$reps)) as.integer(receipt$reps) else NULL
-  panels <- if (!is_null(receipt$panels)) {
-    as.integer(receipt$panels)
-  } else {
-    NULL
-  }
+  # A scheduled master is replayed with its schedule, not with the panel
+  # count: the block size follows from the schedule, so the count alone
+  # reproduces different labels.
+  panels <- decode_panel_argument(receipt)
 
   result <- with_replay_rng(
     execution_environment$rng,
@@ -1626,15 +1625,26 @@ encode_execution <- function(sample) {
   if (!is_null(meta$panels)) {
     receipt$panels <- as.integer(meta$panels)
   }
+  if (!is_null(meta$panel_assignment)) {
+    receipt$panel_assignment <- encode_panel_assignment(meta$panel_assignment)
+  }
   receipt$frames <- encode_frame_schedule(
     frame_record_or_default(
       meta$frame_schedule, get_stages_executed(sample)
     )
   )
+  if (!is_null(meta$wave)) {
+    receipt$wave <- encode_wave(meta$wave)
+  }
   # A sample produced by more than one execute() call (stage
-  # continuation or multi-phase) cannot be reproduced by replaying the
-  # final call alone; the receipt records only that call.
-  if (!is_null(meta$continued_from) || !is_null(meta$prev_phase)) {
+  # continuation, multi-phase, or a wave materialized from a master)
+  # cannot be reproduced by replaying the final call alone; the receipt
+  # records only that call.
+  if (
+    !is_null(meta$continued_from) ||
+      !is_null(meta$prev_phase) ||
+      !is_null(meta$materialized_from)
+  ) {
     receipt$chained <- TRUE
   }
   # Rows or design columns changed after execution: the receipt
@@ -1650,6 +1660,102 @@ encode_execution <- function(sample) {
     receipt$frame_digest <- digest
   }
   receipt
+}
+
+#' The frozen panel assignment
+#'
+#' Replay reproduces `.panel` from the seed, so the values themselves are not
+#' written. What is written is what the values cannot be recomputed from: the
+#' algorithm and its version, the assignment-unit identities in pool order,
+#' the block sizes, and the realized block-by-panel quotas. Those are the
+#' denominators a later activation of a subset of panels is computed against.
+#' @noRd
+encode_panel_assignment <- function(record) {
+  list(
+    algorithm = record$algorithm,
+    version = as.integer(record$version),
+    panels = as.integer(record$panels),
+    block_size = as.integer(record$block_size),
+    r_min = as.integer(record$r_min),
+    unit = record$unit,
+    key_vars = I(as.character(record$key_vars)),
+    control_ordered = isTRUE(record$control_ordered),
+    certainty = record$certainty,
+    # The schedule is an input to the draw, not a derived fact: the block
+    # size follows from it, so replay cannot reproduce `.panel` without it.
+    schedule = if (!is_null(record$schedule)) {
+      data.frame(
+        wave = as.integer(record$schedule$wave),
+        panel = as.integer(record$schedule$panel),
+        active = as.logical(record$schedule$active)
+      )
+    },
+    pools = lapply(record$pools, function(pool) {
+      out <- list()
+      if (!is_null(pool$stratum)) {
+        out$stratum <- lapply(pool$stratum, function(v) as.character(v)[1])
+      }
+      out$class <- pool$class
+      out$size <- as.integer(pool$size)
+      out$keys <- I(as.character(pool$keys))
+      out$blocks <- I(as.integer(pool$blocks))
+      out$quotas <- lapply(
+        seq_len(nrow(pool$quotas)),
+        function(b) I(as.integer(pool$quotas[b, ]))
+      )
+      out
+    })
+  )
+}
+
+#' Rebuild the `panels` argument a receipt recorded
+#'
+#' Reads back the same shape the original call was given: a schedule when the
+#' master declared one, otherwise the panel count. A receipt written before
+#' schedules existed carries only the count, which is what it was executed
+#' with.
+#' @noRd
+decode_panel_argument <- function(receipt) {
+  if (is_null(receipt$panels)) {
+    return(NULL)
+  }
+  schedule <- receipt$panel_assignment$schedule
+  if (is_null(schedule) || length(schedule) == 0) {
+    return(as.integer(receipt$panels))
+  }
+  if (!is.data.frame(schedule)) {
+    schedule <- do.call(rbind, lapply(schedule, as.data.frame))
+  }
+  data.frame(
+    wave = as.integer(schedule$wave),
+    panel = as.integer(schedule$panel),
+    active = as.logical(schedule$active)
+  )
+}
+
+#' The wave a materialized sample realizes
+#'
+#' The activation probabilities are recorded per block rather than per unit:
+#' a unit's probability is its block's, and the block a unit belongs to is
+#' already recoverable from the assignment record.
+#' @noRd
+encode_wave <- function(record) {
+  list(
+    wave = as.integer(record$wave),
+    active_panels = I(as.integer(record$active_panels)),
+    schedule_digest = record$schedule_digest,
+    pools = lapply(record$pools, function(pool) {
+      out <- list()
+      if (!is_null(pool$stratum)) {
+        out$stratum <- lapply(pool$stratum, function(v) as.character(v)[1])
+      }
+      out$class <- pool$class
+      out$blocks <- I(as.integer(pool$blocks))
+      out$take <- I(as.integer(pool$take))
+      out$probability <- I(as.numeric(pool$probability))
+      out
+    })
+  )
 }
 
 #' How the recorded call mapped frames to stages

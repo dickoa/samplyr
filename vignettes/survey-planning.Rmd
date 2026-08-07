@@ -582,6 +582,12 @@ svy <- as_svydesign(samp)
 survey::svymean(~revenue_millions, svy, deff = TRUE)
 ```
 
+Neither figure is a longitudinal design effect. @skinnervieira2005 found
+design effects for regression coefficients estimated on longitudinal samples
+that *grow* with the number of occasions analysed, so a cross-sectional design
+effect understates the longitudinal one and should not be carried over as a
+planning input for a panel.
+
 ### Cluster Planning
 
 Before collecting data, you can anticipate the design effect for a cluster design using the survey-planning homogeneity measure `icc` and cluster size. This `icc` is not a generic mixed-model ICC. The calculation uses `svyplan::design_effect()` directly, not a `tbl_sample` method:

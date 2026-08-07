@@ -1211,6 +1211,7 @@ svrepdesign_derived_args <- "design"
 as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
   check_single_replicate(x, "as_svydesign")
   check_sample_unmodified(x, "as_svydesign")
+  check_no_materialized_wave(x, "as_svydesign")
   rlang::check_installed(
     "survey",
     reason = "to convert a tbl_sample to a survey design object."
@@ -1713,6 +1714,7 @@ as_svrepdesign.tbl_sample <- function(
 ) {
   check_single_replicate(x, "as_svrepdesign")
   check_sample_unmodified(x, "as_svrepdesign")
+  check_no_materialized_wave(x, "as_svrepdesign")
   rlang::check_installed(
     "survey",
     reason = "to convert a tbl_sample to a replicate-weight survey design."

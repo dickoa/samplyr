@@ -11,6 +11,7 @@ execute(
   seed = NULL,
   panels = NULL,
   reps = NULL,
+  wave = NULL,
   frame_digest = c("summary", "full", "none")
 )
 }
@@ -49,12 +50,21 @@ Default (\code{NULL}) executes all remaining stages.}
 \item{seed}{Integer random seed for reproducibility, between
 \code{-.Machine$integer.max} and \code{.Machine$integer.max}.}
 
-\item{panels}{Integer number of rotation groups (panels) to partition the
-sample into for rotation or workload management. Assignment uses
-deterministic systematic interleaving within strata. It is not an
-additional probability-sampling phase. The output includes a \code{.panel}
-column with values 1 through \code{panels}. Default \code{NULL} means no panel
-partitioning. Cannot be used together with \code{reps}.}
+\item{panels}{Rotation groups (panels) to partition the sample into for
+rotation or workload management, as either an integer count or a
+rotation schedule. Assignment is a randomized fixed-quota partition
+within the first-stage selection strata: every unit carries each panel
+with probability \code{1 / panels}. It is not an additional
+probability-sampling phase. The output includes a \code{.panel} column with
+values 1 through the panel count. Default \code{NULL} means no panel
+partitioning. Cannot be used together with \code{reps}, and cannot be
+redeclared on a sample that already carries an assignment.
+
+A schedule is a data frame with an integer \code{panel} column, an integer
+\code{wave} column and an optional logical \code{active} column; a combination
+left out is inactive. It declares the panel count and, through the
+fewest panels any wave activates, the assignment block size. Only a
+sample drawn with a schedule can be materialized by \code{wave}.}
 
 \item{reps}{Integer number of independent replicate samples to draw (>= 2),
 or \code{NULL} (default) for a single sample. When specified, \code{execute()} draws
@@ -67,6 +77,13 @@ combined with \code{panels} or with stages that use permanent random numbers.
 This is \strong{repeated sample realization} (drawing multiple independent
 samples), not replicate-weight variance estimation. For the latter, see
 \code{\link[=as_svrepdesign]{as_svrepdesign()}}.}
+
+\item{wave}{Integer wave of a scheduled master to materialize, or \code{NULL}
+(default). \code{execute(master, wave = t)} activates the panels the stored
+schedule declares active at \code{t} and compounds the exact activation
+factor into \code{.weight}. It takes no other execution input: no frame, no
+\code{seed}, \code{stages}, \code{panels} or \code{reps}, since a wave selects units the
+master already assigned.}
 
 \item{frame_digest}{Controls the frame digest, a compact execution
 manifest recorded with the sample and read by \code{\link[=frame_summary]{frame_summary()}}.
@@ -245,23 +262,88 @@ for the population total.
 \subsection{Panel partitioning}{
 
 When \code{panels} is specified, the sample is partitioned into non-overlapping
-groups for rotation or workload management using systematic interleaving
-within strata.
+groups for rotation or workload management.
 
-Assignment is deterministic (not random): within each stratum, units are
-assigned round-robin to panels 1, 2, ..., k. This ensures each panel has
-approximately equal representation from every stratum. The quality of panel
-balance benefits from \code{control} sorting in \code{draw()}, which determines the
-order of units before interleaving.
+Assignment is randomized with fixed quotas. Within each first-stage
+selection stratum the assignment units are ordered, cut into consecutive
+blocks of \code{2 * panels}, given a fixed quota per panel inside each block,
+and permuted within their block. Every unit therefore carries each panel
+with probability \code{1 / panels}, and panel sizes within a stratum differ by
+at most one.
+
+Blocking is what preserves order. Units adjacent in the \code{control} order of
+\code{draw()} fall in the same block, so every panel inherits the same spread
+over that order. A stratum holding fewer than \code{2 * panels} units is a
+single block: still assigned, simply with no block-level order structure
+left to preserve.
 
 For multi-stage designs, panels are assigned at stage 1 (PSU level).
-All units within a PSU inherit the PSU's panel assignment.
+All units within a PSU inherit the PSU's panel assignment. Under a
+with-replacement stage 1 the assignment unit is the realized draw, the
+unit the estimator uses, so one population cluster drawn twice may carry
+two different panels.
+
+Certainty units are labelled from their own pools and consume no rotating
+quota. A certainty unit is in the sample at every occasion, so a schedule
+that rotated it out would sample the very units the certainty stratum
+exists to enumerate.
+
+Panels are assigned once. \code{.panel} is carried forward by a stage
+continuation, and redeclaring \code{panels} on a sample that already carries an
+assignment is an error.
+}
+
+\subsection{Rotation schedules and waves}{
+
+Passing a schedule to \code{panels} instead of a count declares which panels are
+active at which occasion, and lets \code{execute(master, wave = t)} materialize
+one of them:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{schedule <- data.frame(
+  panel  = rep(1:4, times = 3),
+  wave   = rep(1:3, each = 4),
+  active = c(TRUE, TRUE, FALSE, FALSE,
+             FALSE, TRUE, TRUE, FALSE,
+             FALSE, FALSE, TRUE, TRUE)
+)
+master <- execute(design, frame, seed = 1, panels = schedule)
+wave_2 <- execute(master, wave = 2)
+}\if{html}{\out{</div>}}
+
+The schedule is read at the master draw, not only at materialization,
+because the block size follows from it. A schedule whose leanest wave
+activates \code{r} of the \code{k} panels blocks at \code{k * ceiling(2 / r)} rather than
+at the worst case \verb{2k}, which keeps more of the assignment order while
+still leaving two units per block in the take.
+
+Materializing wave \code{t} selects the panels declared active at \code{t} and
+multiplies \code{.weight} by the inverse of the activation probability. That
+probability is the block's frozen quota for the active panels over the
+block size, so it is exact rather than nominal, and it is generally not
+\code{k / r}. Permanent certainty units are activated at every wave with
+probability one and their weights are untouched.
+
+A materialized wave is a sample in its own right, with its own integrity
+record: it is not a filtered master, and \code{frame_summary()} and the weight
+diagnostics work on it. Two things it cannot yet do are export to survey,
+because the activation phase is not yet carried through \code{twophase()}, and
+replay, because a wave is derived from a recorded execution rather than
+being one. Both refuse rather than answering approximately.
+
+The schedule states which groups are live when. It does not replenish the
+sample: every panel comes from the frame vintage the master was drawn
+from. Steady-state replenishment is a fresh \code{execute()} against a later
+frame. See \code{vignette("sampling-coordination")}.
 
 Weights are not adjusted for panel membership. They reflect the full-sample
-inclusion probability and are valid for the combined sample. A single panel
-does not have a known probability-sampling interpretation merely from this
-assignment, so multiplying its weights by \code{panels} is not generally valid
-for population inference.
+inclusion probability and are valid for the combined sample. Taking a
+subset of the panels is a simple random subsample without replacement
+within each block, but its conditional probability is the block's realized
+quota over the block size, not \code{1 / panels}, so multiplying one panel's
+weights by \code{panels} is not generally valid for population inference. The
+block sizes and realized quotas are recorded with the sample and written
+to the design file by \code{\link[=write_design]{write_design()}}, because they, not \code{1 / panels},
+are what such a subset has to be computed against.
 }
 
 \subsection{When a design cannot be realized as written}{

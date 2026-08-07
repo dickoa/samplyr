@@ -33,7 +33,7 @@ The following table summarizes what `samplyr` assumes and what the user must ver
 | Independent sampling across strata         | `stratify_by() |> draw()` | Each stratum sampled with a separate call to `sondage`                                                 | Correct by construction when strata are disjoint                                                      |
 | Cluster variables constant within clusters | `cluster_by()`             | Validated at execution: MOS and strata variables may not vary within a cluster                       | Cluster ID uniquely identifies the group                                                              |
 | Conditional independence across stages     | `add_stage()`              | Stage \(k\) sampling depends only on the set of units selected at stage \(k - 1\)                    | Standard multi-stage assumption; holds unless second-stage frame depends on first-stage randomization |
-| FPC stored as population count             | `execute()`                | `.fpc_k` contains \(N_h\) (or cluster count); converted to \(\pi_i\) at survey export for PPS stages | Frame size at execution is treated as the population                                                  |
+| FPC stored as population count             | `execute()`                | `.fpc_k` contains \(N_h\) (or cluster count); converted to \(\pi_i\) at survey export for PPS stages | Frame size at execution is treated as the population, which is one of several definitions in a population that changes between waves |
 | Weights are \(1/\pi_i\), unadjusted        | All methods                | No calibration, trimming, or non-response adjustment                                                 | Downstream adjustment is the analyst's responsibility                                                 |
 | PRN values are iid \(\text{U}(0, 1)\)      | `draw(prn = ...)`          | Validated: strictly in \((0, 1)\), no NAs, numeric                                                   | Independence and uniformity of the PRN column                                                         |
 
@@ -245,6 +245,8 @@ population sizes. `samplyr` stores \(N_h\) uniformly for all methods, then at ex
 
 For WR and PMR methods, a synthetic column filled with `Inf` is created. The survey package interprets this as "no finite population correction," which gives the Hansen--Hurwitz variance estimator.
 
+**The population the correction refers to.** `samplyr` treats the frame as executed as the population, so \(N_h\) is counted from the frame the stage drew from. That is one convention among several. Where the sampling fraction is not negligible and the population itself changes between occasions, the finite population correction matters more and admits several competing definitions, particularly for measures of change across coordinated or overlapping samples [@tam1984; @laniel1988; @nordberg2000; @berger2004change]. `samplyr` does not choose among them for you: it records the frame size it saw, and a different convention has to be imposed downstream.
+
 ## Independence across stages
 
 `samplyr` assumes that the stage-\(k\) selection mechanism depends on stage \(k - 1\) only through the **set** of selected clusters, not through
@@ -316,7 +318,7 @@ For WR methods (`srswr`, `pps_multinomial`), each draw produces one row with `.d
 
 ### 5. Panel assignments
 
-The `.panel` column is not passed to survey. Panels are a sample-management concept: deterministic partitions for rotation or workload distribution. The full-sample weights in `.weight` are correct for the combined sample. Deterministic panel assignment is not an additional probability-sampling phase, so a single panel does not automatically have inclusion probability \(\pi_i / k\). Multiplying one panel's weights by \(k\) is therefore not generally valid for population inference.
+The `.panel` column is not passed to survey. Panels are a sample-management concept: randomized fixed-quota partitions for rotation or workload distribution. The full-sample weights in `.weight` are correct for the combined sample. Panel assignment is not an additional probability-sampling phase, so a single panel does not automatically have inclusion probability \(\pi_i / k\); conditional on the frozen quotas it is the block's realized quota over the block size. Multiplying one panel's weights by \(k\) is therefore not generally valid for population inference.
 
 ### 6. Certainty flag
 
@@ -328,11 +330,14 @@ The `.panel` column is not passed to survey. Panels are a sample-management conc
 
 ## Panel partitioning semantics
 
-`execute(..., panels = k)` partitions the sample into \(k\) non-overlapping rotation groups via deterministic systematic interleaving:
+`execute(..., panels = k)` partitions the sample into \(k\) non-overlapping rotation groups by randomized fixed quota inside frozen ordered blocks:
 
-- **Stratified designs**: within each stratum, units are assigned panels \(1, 2, \ldots, k, 1, 2, \ldots\) in row order (round-robin).
-- **Clustered designs**: panels are assigned at the PSU level, then propagated to all units within each PSU.
-- **Control sorting**: the `control` argument to `draw()` determines  row order before interleaving, which affects panel composition.
+- **Assignment pools**: each first-stage selection stratum is a pool, cut into consecutive blocks of \(2k\) assignment units. Every block carries a fixed quota per panel and its labels are permuted within the block, so each unit carries each panel with probability \(1/k\) and panel sizes within a pool differ by at most one.
+- **Clustered designs**: panels are assigned at the PSU level, then propagated to all units within each PSU. Under a with-replacement first stage the assignment unit is the realized draw, so one population cluster drawn twice may carry two panels.
+- **Control sorting**: the `control` argument to `draw()` orders the units before they are cut into blocks, so every panel inherits the same spread over that order.
+- **Certainty units**: labelled from their own pools. A certainty unit is in the sample at every occasion and consumes no rotating quota.
+
+The block sizes and the realized block-by-panel quotas are recorded with the sample and written by `write_design()`, because activating a subset of the panels is a simple random subsample without replacement of the block quota, not of \(1/k\).
 
 Weights are **not** adjusted. Panels structure the output but do not affect the selection mechanism or inclusion probabilities. They should be used for rotation or workload management. Analyze the combined sample with the stored weights unless panel assignment has been designed separately as a probability-sampling phase with its own inclusion probabilities and variance method.
 
