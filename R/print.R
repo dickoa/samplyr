@@ -345,3 +345,80 @@ tbl_sum.tbl_sample <- function(x, ...) {
 
   result
 }
+
+#' @rdname print.samplyr
+#' @export
+print.rotation_program <- function(x, ...) {
+  rlang::check_dots_empty()
+  cli::cat_rule("Rotation Program")
+
+  n_cohorts <- length(x$cohorts)
+  n_waves <- length(x$waves)
+  cat("\n")
+  cli::cat_bullet(
+    paste0(
+      n_cohorts, plural_suffix(n_cohorts, " cohort"),
+      " over ", n_waves, plural_suffix(n_waves, " wave")
+    ),
+    bullet = "info"
+  )
+
+  schedule <- x$schedule
+  for (nm in names(x$cohorts)) {
+    rows <- schedule[schedule$cohort == nm, , drop = FALSE]
+    live <- sort(unique(rows$wave[rows$active]))
+    n_panels <- x$panels[[nm]]
+    cli::cat_bullet(
+      paste0(
+        nm, ": ", nrow(x$cohorts[[nm]]), " rows, ",
+        n_panels, plural_suffix(n_panels, " panel"),
+        ", enters at wave ", x$entry_wave[[nm]],
+        ", live at ", plural_suffix(length(live), "wave"), " ",
+        paste(live, collapse = ", ")
+      ),
+      bullet = "bullet"
+    )
+  }
+  cat("\n")
+  invisible(x)
+}
+
+#' @rdname print.samplyr
+#' @export
+print.rotation_wave <- function(x, ...) {
+  rlang::check_dots_empty()
+  cli::cat_rule(paste("Rotation Wave", attr(x, "wave")))
+  cat("\n")
+
+  if (length(x) == 0) {
+    cli::cat_bullet("No cohort is live at this wave.", bullet = "info")
+    cat("\n")
+    return(invisible(x))
+  }
+
+  for (nm in names(x)) {
+    panels <- attr(x[[nm]], "metadata")$wave$active_panels
+    cli::cat_bullet(
+      paste0(
+        nm, ": ", nrow(x[[nm]]), " rows, ",
+        plural_suffix(length(panels), "panel"), " ",
+        paste(panels, collapse = ", ")
+      ),
+      bullet = "bullet"
+    )
+  }
+  # Load-bearing rather than decorative: the components are separately
+  # weighted and row-binding them does not produce a combined sample.
+  cli::cat_bullet(
+    "Weights are valid within a cohort and are not combined.",
+    bullet = "info"
+  )
+  cat("\n")
+  invisible(x)
+}
+
+#' Append a plural "s" to a word, optionally after a count
+#' @noRd
+plural_suffix <- function(n, word) {
+  paste0(word, if (n == 1) "" else "s")
+}

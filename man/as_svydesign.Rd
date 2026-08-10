@@ -7,7 +7,13 @@
 \usage{
 as_svydesign(x, ...)
 
-\method{as_svydesign}{tbl_sample}(x, ..., nest = TRUE, method = NULL)
+\method{as_svydesign}{tbl_sample}(
+  x,
+  ...,
+  nest = TRUE,
+  method = NULL,
+  systematic_variance = c("warn", "approximate", "error")
+)
 }
 \arguments{
 \item{x}{A \code{tbl_sample} object produced by \code{\link[=execute]{execute()}}.}
@@ -32,6 +38,17 @@ it there raises a warning.}
 \item{method}{For two-phase samples, the variance method passed to
 \code{\link[survey:twophase]{survey::twophase()}}. One of \code{"full"}, \code{"approx"}, or \code{"simple"}.
 This argument is only accepted for two-phase samples.}
+
+\item{systematic_variance}{What to do about the simple random sampling
+variance approximation used for equal-probability \code{systematic} stages.
+\code{"warn"} (default) applies it and warns once per call, naming every
+affected stage; \code{"approximate"} applies it silently, for a caller who has
+acknowledged it; \code{"error"} refuses. Census stages are exempt, since a
+stage that took everything within reach contributes no variance, and
+\code{pps_systematic} is unaffected, having its own treatment. The choice and
+the affected stages are recorded on the returned object in the
+\code{"samplyr_systematic_variance"} attribute. \code{\link[=as_svrepdesign]{as_svrepdesign()}} takes the
+same argument for its own approximation of these stages.}
 }
 \value{
 A \code{survey.design2} object for single-phase and multi-stage samples,
@@ -109,6 +126,26 @@ A two-phase sample has a different provenance. A \emph{new} phase-2
 for example \code{phase2 <- execute(design2, phase1)}. That execution records a
 previous-phase link, and \code{as_svydesign()} calls \code{\link[survey:twophase]{survey::twophase()}}.
 
+A materialized wave, \code{execute(master, wave = t)}, is the other two-phase
+provenance. Its second phase is the panel activation rather than an
+executed design: within a frozen block the master took a simple random
+sample without replacement of the realized quota, so the blocks are the
+phase-2 strata and their sizes the phase-2 population counts. The master
+is retained as the first phase and supplies the rows the wave did not
+keep, which \code{\link[survey:twophase]{survey::twophase()}} needs to build that phase. Columns added
+to the wave for analysis are carried into the exported design; columns the
+master already has keep the master's values.
+
+The activation is exact, but the first phase is only as expressible as
+\code{\link[survey:twophase]{survey::twophase()}} allows, which takes no \code{pps} specification there. A
+wave of a master with unequal inclusion probabilities is therefore refused
+rather than exported with a with-replacement approximation: \verb{pps_*}
+methods, \code{cube}, first-stage \code{pps_poisson}, and the spatial methods, whose
+variance family is unsupported at either phase. Waves of equal-probability
+masters export, stratified, clustered, multistage and with-replacement
+alike. \code{as_svrepdesign()} does not build replicate weights for any
+two-phase sample, a wave included.
+
 An unclustered element-sampling stage \emph{followed by further stages} is not
 nested cluster sampling (the later selections are conditional on the realized
 element sample, i.e. phase sampling). It can't be represented currently and
@@ -171,6 +208,42 @@ the standard approximation for systematic sampling. Depending on the
 frame ordering (see the \code{control} argument of \code{\link[=draw]{draw()}}), the true
 variance can be smaller (favorable ordering) or larger (periodic
 ordering) than this estimate.
+
+The size of that gap is worth stating, because it is not always small. A
+systematic design with interval \eqn{k}{k} has only \eqn{k}{k} distinct
+samples per stratum, so its variance for one particular frame is a fixed
+quantity that need not sit near the SRSWOR value. Measured over repeated
+draws, 90 per stratum from 1800 with an interval of 20
+(\code{dev/experiments/systematic-export-margins.R} in the package sources):\tabular{lll}{
+   frame order \tab reported / true variance \tab coverage of a 95\% interval \cr
+   random \tab 0.73 \tab 90.2\% \cr
+   ordered by a trend \tab 1.76 \tab 100.0\% \cr
+   period equal to the interval \tab 0.0006 \tab 9.8\% \cr
+}
+
+
+A favourable ordering is therefore conservative, which is the usual reason
+for choosing one, and a frame whose structure resonates with the sampling
+interval is not merely imprecise but reports intervals that almost never
+cover. Even an unstructured ordering is not guaranteed close. Where the
+frame may carry periodicity, prefer a randomized order or a design whose
+variance is estimable, and treat the exported standard error for a
+systematic stage as an approximation whose direction depends on the frame.
+
+Because a returned \code{survey.design} carries no sign that its variance model
+is approximate, the export says so once: see \code{systematic_variance}. The
+approximation is still supplied, since one systematic sample generally does
+not identify its own design variance, and refusing would leave the caller
+with nothing.
+
+Replicate weights are no way around this. \code{\link[=as_svrepdesign]{as_svrepdesign()}} takes the same
+\code{systematic_variance} argument, because no replicate type on offer
+reconstructs a systematic sample's random start or its dependence on frame
+order; each resamples the realized sample as though its units had been
+drawn independently within strata. Requesting a particular type is
+therefore not an acknowledgement, and does not silence the condition. The
+figures in the table above were measured for the linearization export and
+are not a measurement of the replicate one.
 }
 
 \subsection{Variance estimation for PPS designs}{
@@ -374,6 +447,7 @@ Assisted Survey Sampling}. Springer.
 Other survey export:
 \code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},
 \code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
-\code{\link[=as_svrepdesign]{as_svrepdesign()}}
+\code{\link[=as_svrepdesign]{as_svrepdesign()}},
+\code{\link[=stack_waves]{stack_waves()}}
 }
 \concept{survey export}

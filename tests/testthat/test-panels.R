@@ -156,13 +156,18 @@ test_that("panel blocking supports mixed desc() and serp() control ordering", {
   pool_keys <- function(x) {
     lapply(attr(x, "metadata")$panel_assignment$pools, function(p) p$keys)
   }
+  region_keys <- function(region, psus) {
+    samplyr:::make_group_key(
+      data.frame(region = region, psu = psus), c("region", "psu")
+    )
+  }
   expect_identical(
     pool_keys(desc_first),
-    list(c("4", "3", "2", "1"), c("8", "7", "6", "5"))
+    list(region_keys("A", 4:1), region_keys("B", 8:5))
   )
   expect_identical(
     pool_keys(asc_first),
-    list(c("1", "2", "3", "4"), c("5", "6", "7", "8"))
+    list(region_keys("A", 1:4), region_keys("B", 5:8))
   )
 
   for (pool in attr(desc_first, "metadata")$panel_assignment$pools) {
@@ -363,8 +368,9 @@ test_that("the receipt records the frozen blocks and quotas", {
 
   record <- attr(result, "metadata")$panel_assignment
   expect_identical(record$algorithm, "blocked_random_quota")
-  expect_identical(record$version, 1L)
+  expect_identical(record$version, 3L)
   expect_identical(record$panels, 4L)
+  expect_identical(record$assignment_stage, 1L)
   expect_identical(record$block_size, 8L)
   expect_identical(record$unit, "element")
   expect_identical(record$key_vars, ".sample_id")
@@ -477,7 +483,7 @@ test_that("PSU certainty is pooled at PSU level", {
     execute(frame, seed = 6, panels = 2)
 
   record <- attr(result, "metadata")$panel_assignment
-  expect_identical(record$unit, "psu")
+  expect_identical(record$unit, "cluster")
   expect_identical(
     vapply(record$pools, function(p) p$class, character(1)),
     c("rotating", "certainty")
@@ -627,4 +633,429 @@ test_that("panels does not alter weights", {
     execute(frame, seed = 42, panels = 4)
 
   expect_equal(with_panels$.weight, without_panels$.weight)
+})
+
+## The assignment context
+#
+# Panel assignment is described by six things that all follow from which
+# stage owns it. Stage 1 exercises only the stage-1 answers, so the context
+# is tested directly at the stages a public argument cannot yet select.
+
+ctx_frame <- function() {
+  frame <- expand.grid(
+    person = 1:2, hh = 1:6, psu = sprintf("P%d", 1:6),
+    KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE
+  )
+  frame <- frame[order(frame$psu, frame$hh, frame$person), ]
+  frame$psu_stratum <- ifelse(frame$psu %in% c("P1", "P2", "P3"), "urban", "rural")
+  frame$hh_stratum <- ifelse(frame$hh <= 3, "small", "large")
+  frame$mos <- rep(seq(10, 60, by = 10), each = 2, times = 6)
+  frame$psu_mos <- rep(seq(100, 600, by = 100), each = 12)
+  frame$y <- seq_len(nrow(frame))
+  rownames(frame) <- NULL
+  frame
+}
+
+ctx_lower_stages <- function(design) {
+  design |>
+    add_stage() |>
+    stratify_by(hh_stratum) |>
+    cluster_by(hh) |>
+    draw(n = 1) |>
+    add_stage() |>
+    draw(n = 1)
+}
+
+ctx_design <- function() {
+  ctx_lower_stages(
+    sampling_design() |>
+      add_stage() |>
+      stratify_by(psu_stratum) |>
+      cluster_by(psu) |>
+      draw(n = 2)
+  )
+}
+
+ctx_design_multihit <- function() {
+  ctx_lower_stages(
+    sampling_design() |>
+      add_stage() |>
+      stratify_by(psu_stratum) |>
+      cluster_by(psu) |>
+      draw(n = 2, method = "pps_multinomial", mos = psu_mos)
+  )
+}
+
+test_that("an ancestor occurrence path is empty at the first stage", {
+  design <- ctx_design()
+  sample <- execute(design, ctx_frame(), seed = 11)
+
+  expect_identical(
+    samplyr:::collect_ancestor_occurrence_vars(design, 1L, sample),
+    character(0)
+  )
+})
+
+test_that("a without-replacement ancestor contributes its cluster only", {
+  design <- ctx_design()
+  sample <- execute(design, ctx_frame(), seed = 11)
+
+  expect_identical(
+    samplyr:::collect_ancestor_occurrence_vars(design, 2L, sample),
+    "psu"
+  )
+  # Stage 3 sits below both, and stage 2 is clustered as well.
+  expect_identical(
+    samplyr:::collect_ancestor_occurrence_vars(design, 3L, sample),
+    c("psu", "hh")
+  )
+})
+
+test_that("a multi-hit ancestor contributes its strata, cluster and draw", {
+  design <- ctx_design_multihit()
+  sample <- execute(design, ctx_frame(), seed = 12)
+  expect_true(".draw_1" %in% names(sample))
+
+  # The draw index restarts inside every stratum, so the stratum is what
+  # makes it name an occurrence.
+  expect_identical(
+    samplyr:::collect_ancestor_occurrence_vars(design, 2L, sample),
+    c("psu_stratum", "psu", ".draw_1")
+  )
+})
+
+test_that("an ancestor that has lost its draw index is refused", {
+  design <- ctx_design_multihit()
+  sample <- execute(design, ctx_frame(), seed = 12)
+  sample$.draw_1 <- NULL
+
+  # Reading the ancestor as without replacement instead would merge two
+  # conditional populations of descendants into one.
+  expect_error(
+    samplyr:::collect_ancestor_occurrence_vars(design, 2L, sample),
+    class = "samplyr_error_panel_missing_identity"
+  )
+})
+
+test_that("an assignment stage that has lost its draw index is refused", {
+  design <- ctx_design_multihit()
+  sample <- execute(design, ctx_frame(), seed = 12)
+  sample$.draw_1 <- NULL
+
+  expect_error(
+    samplyr:::panel_assignment_context(design, 1L, sample),
+    class = "samplyr_error_panel_missing_identity"
+  )
+})
+
+test_that("a public execution cannot assign over collapsed occurrences", {
+  # The reachable form: a with-replacement first stage, its draw column
+  # dropped, and panels declared on the continuation. This used to warn only
+  # that the sample was modified and then assign one panel to occurrences
+  # that were selected separately.
+  frame <- data.frame(
+    psu = rep(sprintf("P%d", 1:8), each = 5),
+    unit = rep(1:5, times = 8),
+    mos = rep(seq(10, 80, by = 10), each = 5),
+    y = seq_len(40)
+  )
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |>
+    draw(n = 5, method = "pps_multinomial", mos = mos) |>
+    add_stage() |> draw(n = 2)
+
+  stage1 <- execute(design, frame, stages = 1, seed = 4)
+  expect_gt(
+    nrow(unique(as.data.frame(stage1)[c("psu", ".draw_1")])),
+    length(unique(stage1$psu))
+  )
+  stage1$.draw_1 <- NULL
+
+  expect_error(
+    suppressWarnings(execute(stage1, frame, stages = 2, seed = 5, panels = 2)),
+    class = "samplyr_error_panel_missing_identity"
+  )
+})
+
+test_that("a missing cluster or stratum column is the same refusal", {
+  design <- ctx_design()
+  sample <- execute(design, ctx_frame(), seed = 11)
+
+  without_cluster <- sample
+  without_cluster$psu <- NULL
+  expect_error(
+    samplyr:::panel_assignment_context(design, 2L, without_cluster),
+    class = "samplyr_error_panel_missing_identity"
+  )
+
+  without_stratum <- sample
+  without_stratum$hh_stratum <- NULL
+  expect_error(
+    samplyr:::panel_assignment_context(design, 2L, without_stratum),
+    class = "samplyr_error_panel_missing_identity"
+  )
+})
+
+test_that("the declared-ancestor helper keeps its own contract", {
+  design <- ctx_design_multihit()
+
+  # It takes no sample and names no draw column: validation and linkage call
+  # it before an execution exists.
+  expect_identical(samplyr:::collect_ancestor_cluster_vars(design, 1L), character(0))
+  expect_identical(samplyr:::collect_ancestor_cluster_vars(design, 2L), "psu")
+  expect_identical(samplyr:::collect_ancestor_cluster_vars(design, 3L), c("psu", "hh"))
+})
+
+test_that("the context resolves a lower stage's key, pools and certainty", {
+  design <- ctx_design()
+  sample <- execute(design, ctx_frame(), seed = 11)
+  context <- samplyr:::panel_assignment_context(design, 2L, sample)
+
+  expect_identical(context$stage_num, 2L)
+  expect_true(context$clustered)
+  expect_false(context$multi_hit)
+  expect_identical(context$ancestor_vars, "psu")
+  # The household is identified inside the PSU occurrence it sits in, and
+  # qualified by its own selection stratum.
+  expect_identical(context$key_vars, c("psu", "hh_stratum", "hh"))
+  # Pools are the household strata within each realized PSU.
+  expect_identical(context$pool_vars, c("psu", "hh_stratum"))
+  expect_identical(context$certainty_col, ".certainty_2")
+  expect_identical(context$unit, "cluster")
+})
+
+test_that("the context takes the draw index of a multi-hit assignment stage", {
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 2) |>
+    add_stage() |> stratify_by(hh_stratum) |> cluster_by(hh) |>
+    draw(n = 2, method = "pps_multinomial", mos = mos) |>
+    add_stage() |> draw(n = 1)
+  sample <- execute(design, ctx_frame(), seed = 13)
+  context <- samplyr:::panel_assignment_context(design, 2L, sample)
+
+  expect_true(context$multi_hit)
+  expect_identical(
+    context$key_vars, c("psu", "hh_stratum", "hh", ".draw_2")
+  )
+  expect_identical(context$pool_vars, c("psu", "hh_stratum"))
+})
+
+test_that("a terminal unclustered stage is keyed on the sample row", {
+  design <- ctx_design()
+  sample <- execute(design, ctx_frame(), seed = 11)
+  context <- samplyr:::panel_assignment_context(design, 3L, sample)
+
+  expect_false(context$clustered)
+  expect_identical(context$key_vars, ".sample_id")
+  expect_identical(context$unit, "element")
+  # The ancestry is still what a pool is built from, even though the key
+  # does not need it.
+  expect_identical(context$pool_vars, c("psu", "hh"))
+})
+
+test_that("the context and the record it produced agree at stage 1", {
+  frame <- data.frame(
+    stratum = rep(c("A", "B"), each = 30),
+    cluster = rep(sprintf("c%02d", 1:12), each = 5),
+    unit = rep(1:5, times = 12),
+    y = seq_len(60)
+  )
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(cluster) |> draw(n = 4) |>
+    add_stage() |> draw(n = 2)
+  sample <- execute(design, frame, seed = 202, panels = 4)
+
+  context <- samplyr:::panel_assignment_context(design, 1L, sample)
+  record <- attr(sample, "metadata")$panel_assignment
+
+  expect_identical(record$key_vars, context$key_vars)
+  expect_identical(record$unit, context$unit)
+  expect_identical(record$control_ordered, length(context$control) > 0L)
+  expect_identical(
+    lapply(record$pools, function(p) names(p$stratum)),
+    rep(list(context$pool_vars), length(record$pools))
+  )
+})
+
+
+## Lower-stage construction
+#
+# The context computing the right variable lists at a lower stage is a
+# separate question from whether assignment built from that context pools,
+# orders and marks the right units. No public argument selects a lower stage
+# yet, so these drive the internals directly. Wave propagation is not covered
+# here.
+
+# Two PSUs, four households in each, two people in each household. Households
+# are stratified inside the PSU, so a stage-2 pool is a proper subset of a
+# PSU and a stage-3 pool is a proper subset of a household.
+ctx_lower_design <- function() {
+  sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 2) |>
+    add_stage() |> stratify_by(hh_stratum) |> cluster_by(hh) |> draw(n = 2) |>
+    add_stage() |> draw(n = 2)
+}
+
+ctx_assign <- function(design, sample, stage_num, panels = 2) {
+  samplyr:::assign_panels(
+    as.data.frame(sample),
+    samplyr:::normalize_panel_input(panels),
+    samplyr:::panel_assignment_context(design, stage_num, sample)
+  )
+}
+
+test_that("stage-2 pools are the parent occurrence crossed with its strata", {
+  design <- ctx_lower_design()
+  sample <- execute(design, ctx_frame(), seed = 11)
+  pools <- ctx_assign(design, sample, 2L)$record$pools
+
+  # Two PSUs each holding a small and a large household stratum: four pools,
+  # not two and not one.
+  expect_length(pools, 4L)
+  expect_identical(
+    lapply(pools, function(p) names(p$stratum)),
+    rep(list(c("psu", "hh_stratum")), 4L)
+  )
+  selected_psus <- sort(unique(sample$psu))
+  expect_identical(
+    sort(vapply(pools, function(p) {
+      paste(p$stratum$psu, p$stratum$hh_stratum)
+    }, character(1))),
+    sort(paste(rep(selected_psus, each = 2), c("large", "small")))
+  )
+
+  # No pool crosses a parent. Every key is the pool's own PSU paired with a
+  # household of that PSU's realized selection.
+  data <- as.data.frame(sample)
+  for (pool in pools) {
+    in_pool <- data[
+      data$psu == pool$stratum$psu &
+        data$hh_stratum == pool$stratum$hh_stratum, ,
+      drop = FALSE
+    ]
+    expect_identical(
+      sort(pool$keys),
+      sort(samplyr:::make_group_key(
+        unique(in_pool[c("psu", "hh_stratum", "hh")]),
+        c("psu", "hh_stratum", "hh")
+      ))
+    )
+  }
+})
+
+test_that("stage-2 assignment rotates households inside a retained parent", {
+  design <- ctx_lower_design()
+  sample <- execute(design, ctx_frame(), seed = 11)
+  data <- ctx_assign(design, sample, 2L)$sample
+
+  # The point of a lower assignment stage: one PSU carries more than one
+  # panel, which stage-1 assignment can never produce.
+  by_psu <- tapply(data$.panel, data$psu, function(x) length(unique(x)))
+  expect_true(all(by_psu > 1L))
+  # Every person of one household still carries that household's panel.
+  by_hh <- tapply(
+    data$.panel, paste(data$psu, data$hh), function(x) length(unique(x))
+  )
+  expect_true(all(by_hh == 1L))
+})
+
+test_that("certainty at the assignment stage decides permanence, not below", {
+  frame <- ctx_frame()
+  # One household in every PSU is large enough to be selected for sure.
+  frame$hh_mos <- ifelse(frame$hh == 1L, 400, 10)
+
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 2) |>
+    add_stage() |> cluster_by(hh) |>
+    draw(n = 3, method = "pps_systematic", mos = hh_mos) |>
+    add_stage() |> draw(n = 1)
+  sample <- execute(design, frame, seed = 21)
+  expect_true(any(sample$.certainty_2))
+
+  # Stage 2 reads `.certainty_2`, so the self-representing household is a
+  # permanent pool of its own.
+  at_2 <- ctx_assign(design, sample, 2L)$record$pools
+  expect_true(any(vapply(at_2, function(p) {
+    identical(p$class, "certainty")
+  }, logical(1))))
+  expect_true(any(vapply(at_2, function(p) {
+    identical(p$class, "rotating")
+  }, logical(1))))
+
+  # Stage 3 reads `.certainty_3`, which no stage produced. A certainty
+  # household does not make the people inside it permanent.
+  at_3 <- ctx_assign(design, sample, 3L)$record$pools
+  expect_true(all(vapply(at_3, function(p) {
+    identical(p$class, "rotating")
+  }, logical(1))))
+})
+
+test_that("the assignment stage's own control order fixes the key order", {
+  frame <- ctx_frame()
+  # Non-monotone in the household identifier, so an order that follows it
+  # can only have come from the stage-2 control.
+  frame$hh_score <- (frame$hh * 7L) %% 6L
+
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 2, control = psu) |>
+    add_stage() |> cluster_by(hh) |> draw(n = 4, control = hh_score) |>
+    add_stage() |> draw(n = 1)
+  sample <- execute(design, frame, seed = 31)
+  pools <- ctx_assign(design, sample, 2L)$record$pools
+
+  data <- as.data.frame(sample)
+  for (pool in pools) {
+    in_psu <- data[data$psu == pool$stratum$psu, , drop = FALSE]
+    households <- unique(in_psu[c("hh", "hh_score")])
+    expect_identical(
+      pool$keys,
+      samplyr:::make_group_key(
+        data.frame(
+          psu = pool$stratum$psu,
+          hh = households$hh[order(households$hh_score, households$hh)]
+        ),
+        c("psu", "hh")
+      )
+    )
+  }
+})
+
+test_that("a terminal stage pools within its complete ancestry", {
+  design <- ctx_lower_design()
+  sample <- execute(design, ctx_frame(), seed = 11)
+  record <- ctx_assign(design, sample, 3L)$record
+  data <- as.data.frame(sample)
+
+  expect_identical(record$key_vars, ".sample_id")
+  expect_identical(record$unit, "element")
+  # One pool per realized household: not one per PSU, and not one overall.
+  expect_length(record$pools, nrow(unique(data[c("psu", "hh")])))
+  expect_identical(
+    lapply(record$pools, function(p) names(p$stratum)),
+    rep(list(c("psu", "hh")), length(record$pools))
+  )
+  expect_identical(
+    sum(vapply(record$pools, function(p) p$size, integer(1))),
+    nrow(data)
+  )
+})
+
+test_that("a stage stratified by its own parent names that parent once", {
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 3) |>
+    add_stage() |> stratify_by(psu) |> cluster_by(hh) |> draw(n = 2) |>
+    add_stage() |> draw(n = 1)
+  sample <- execute(design, ctx_frame(), seed = 41)
+  context <- samplyr:::panel_assignment_context(design, 2L, sample)
+
+  # The ancestry and the stage's own strata both name the PSU. A repeated
+  # column would reach the record as an invented `psu.1` field.
+  expect_identical(context$pool_vars, "psu")
+  expect_identical(context$key_vars, c("psu", "hh"))
+
+  pools <- ctx_assign(design, sample, 2L)$record$pools
+  expect_identical(
+    lapply(pools, function(p) names(p$stratum)),
+    rep(list("psu"), length(pools))
+  )
 })

@@ -1903,3 +1903,311 @@ test_that("probability-one units do not change the Poisson variance family", {
   expect_s3_class(as_svydesign(poisson), "survey.design")
   expect_s3_class(as_svydesign(bernoulli), "survey.design")
 })
+
+test_that("a two-phase export represents every phase-1 stage", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = seq_len(400),
+    psu = rep(seq_len(40), each = 10),
+    value = seq_len(400) / 400
+  )
+
+  # Phase 1 selects clusters and then elements within them. The element stage
+  # is unclustered, so it contributes neither an identifier nor a correction
+  # term unless one is synthesized for it.
+  phase1 <- sampling_design() |>
+    add_stage() |>
+    cluster_by(psu) |>
+    draw(n = 16) |>
+    add_stage() |>
+    draw(n = 5) |>
+    execute(frame, seed = 7)
+
+  phase2 <- sampling_design() |>
+    cluster_by(id) |>
+    draw(n = 20) |>
+    execute(phase1, seed = 8)
+
+  svy <- as_svydesign(phase2)
+  total <- survey::svytotal(~value, svy)
+
+  expect_equal(
+    unname(stats::weights(svy)),
+    unname(as.data.frame(phase2)$.weight)
+  )
+  expect_equal(
+    unname(coef(total)),
+    sum(as.data.frame(phase2)$.weight * as.data.frame(phase2)$value)
+  )
+
+  # Against a twophase() call written by hand, stating both phase-1 stages.
+  # The weights alone do not detect a dropped stage's variance, so the
+  # standard error is compared too.
+  reference_data <- as.data.frame(phase1)
+  reference_data$.elem <- seq_len(nrow(reference_data))
+  reference_data$.in_phase2 <- reference_data$id %in% as.data.frame(phase2)$id
+  reference_data$.p2_fpc <- nrow(reference_data)
+  reference <- survey::twophase(
+    id = list(~ psu + .elem, ~id),
+    strata = list(NULL, NULL),
+    fpc = list(~ .fpc_1 + .fpc_2, ~.p2_fpc),
+    subset = ~.in_phase2,
+    data = reference_data,
+    method = "full"
+  )
+  reference_total <- survey::svytotal(~value, reference)
+
+  expect_equal(unname(coef(total)), unname(coef(reference_total)))
+  expect_equal(unname(survey::SE(total)), unname(survey::SE(reference_total)))
+
+  # The phase-1 design carries one identifier stage per executed stage.
+  expect_equal(ncol(svy$phase1$full$cluster), 2L)
+})
+
+test_that("a systematic stage says its variance is approximated", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = seq_len(400),
+    region = rep(c("North", "South"), each = 200),
+    mos = 1 + seq_len(400) %% 9
+  )
+  systematic <- sampling_design() |>
+    add_stage("Households") |>
+    stratify_by(region) |>
+    draw(n = 50, method = "systematic") |>
+    execute(frame, seed = 1)
+
+  expect_warning(
+    result <- as_svydesign(systematic),
+    class = "samplyr_warning_systematic_variance"
+  )
+  # The stage is named, so a reader knows which one to think about, and the
+  # estimator being approximated is the linearization one.
+  svy_warning <- conditionMessage(
+    tryCatch(as_svydesign(systematic), warning = function(w) w)
+  )
+  expect_match(svy_warning, "Households")
+  expect_match(svy_warning, "simple random sampling")
+
+  # Acknowledged, and refused.
+  expect_no_warning(
+    as_svydesign(systematic, systematic_variance = "approximate")
+  )
+  expect_error(
+    as_svydesign(systematic, systematic_variance = "error"),
+    class = "samplyr_error_systematic_variance"
+  )
+
+  # The decision is inspectable afterwards.
+  recorded <- attr(result, "samplyr_systematic_variance")
+  expect_identical(recorded$approximation, "srswor")
+  expect_identical(recorded$acknowledged, "warn")
+  expect_match(recorded$stages, "Households")
+})
+
+test_that("replicate weights say they do not reproduce a systematic stage", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = seq_len(400),
+    region = rep(c("North", "South"), each = 200),
+    mos = 1 + seq_len(400) %% 9
+  )
+  systematic <- sampling_design() |>
+    add_stage("Households") |>
+    stratify_by(region) |>
+    draw(n = 50, method = "systematic") |>
+    execute(frame, seed = 1)
+
+  expect_warning(
+    result <- as_svrepdesign(systematic, type = "JKn"),
+    class = "samplyr_warning_systematic_variance"
+  )
+  # The condition describes the replicate estimator, not the linearization
+  # one, and does not carry the linearization's measured margins.
+  rep_warning <- conditionMessage(
+    tryCatch(as_svrepdesign(systematic, type = "JKn"),
+             warning = function(w) w)
+  )
+  expect_match(rep_warning, "Households")
+  expect_match(rep_warning, "replicate weights")
+  expect_false(grepl("simple random sampling", rep_warning, fixed = TRUE))
+  expect_false(grepl("0.0006", rep_warning, fixed = TRUE))
+
+  # Naming a type is not an acknowledgement, whichever type it is.
+  for (type in c("auto", "bootstrap", "subbootstrap", "mrbbootstrap")) {
+    expect_warning(
+      as_svrepdesign(systematic, type = type),
+      class = "samplyr_warning_systematic_variance"
+    )
+  }
+
+  # Only the acknowledgement silences it, and "error" refuses.
+  expect_no_warning(
+    as_svrepdesign(systematic, type = "JKn",
+                   systematic_variance = "approximate")
+  )
+  expect_error(
+    as_svrepdesign(systematic, type = "JKn", systematic_variance = "error"),
+    class = "samplyr_error_systematic_variance"
+  )
+
+  # The decision is inspectable afterwards, and names this export's estimator.
+  recorded <- attr(result, "samplyr_systematic_variance")
+  expect_identical(recorded$approximation, "generic_replicates")
+  expect_identical(recorded$acknowledged, "warn")
+  expect_match(recorded$stages, "Households")
+})
+
+test_that("the replicate warning is confined to what it approximates", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = seq_len(400),
+    region = rep(c("North", "South"), each = 200),
+    mos = 1 + seq_len(400) %% 9
+  )
+
+  # Equal probability but not systematic.
+  expect_no_warning(as_svrepdesign(
+    sampling_design() |> stratify_by(region) |> draw(n = 50) |>
+      execute(frame, seed = 1),
+    type = "JKn"
+  ))
+
+  # A systematic stage that took everything within reach contributes no
+  # variance for the replicates to misstate. The second stage keeps the
+  # export non-degenerate, which a jackknife needs.
+  clustered <- data.frame(
+    id = seq_len(400),
+    psu = rep(seq_len(40), each = 10)
+  )
+  census_stage <- suppressWarnings(
+    sampling_design() |>
+      add_stage("PSUs") |>
+      cluster_by(psu) |>
+      draw(n = 40, method = "systematic") |>
+      add_stage("Elements") |>
+      draw(n = 5) |>
+      execute(clustered, seed = 1)
+  )
+  # survey drops post-first-stage corrections here and says so. Only its
+  # warnings are muffled, so the class under test would still surface.
+  without_survey_warnings <- function(expr) {
+    withCallingHandlers(expr, warning = function(w) {
+      if (!inherits(w, "samplyr_warning_systematic_variance")) {
+        invokeRestart("muffleWarning")
+      }
+    })
+  }
+  expect_no_warning(
+    without_survey_warnings(as_svrepdesign(census_stage, type = "JK1")),
+    class = "samplyr_warning_systematic_variance"
+  )
+  # The muffler is not what makes that pass: it lets the class through.
+  expect_warning(
+    without_survey_warnings(as_svrepdesign(
+      sampling_design() |> cluster_by(psu) |>
+        draw(n = 20, method = "systematic") |>
+        execute(clustered, seed = 1),
+      type = "JK1"
+    )),
+    class = "samplyr_warning_systematic_variance"
+  )
+
+  # An export with no systematic stage records no approximation.
+  plain <- as_svrepdesign(
+    sampling_design() |> stratify_by(region) |> draw(n = 50) |>
+      execute(frame, seed = 1),
+    type = "JKn"
+  )
+  expect_null(attr(plain, "samplyr_systematic_variance")$approximation)
+})
+
+test_that("the replicate refusal comes before the conversion", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = seq_len(400),
+    region = rep(c("North", "South"), each = 200)
+  )
+  # Unstratified, so survey::as.svrepdesign() refuses "JKn" on its own. Which
+  # error arrives says which check ran first.
+  unstratified <- sampling_design() |>
+    draw(n = 50, method = "systematic") |>
+    execute(frame, seed = 1)
+  # The default warns on the way past, which is not what this asserts.
+  expect_error(
+    suppressWarnings(as_svrepdesign(unstratified, type = "JKn")),
+    class = "samplyr_error_svrep_conversion_failed"
+  )
+  expect_error(
+    as_svrepdesign(unstratified, type = "JKn", systematic_variance = "error"),
+    class = "samplyr_error_systematic_variance"
+  )
+
+  # `systematic_variance` follows the dots, so a near miss is reported as a
+  # stray argument rather than partial-matched or forwarded to survey.
+  systematic <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 50, method = "systematic") |>
+    execute(frame, seed = 1)
+  expect_error(
+    as_svrepdesign(systematic, type = "JKn", systematic_varianc = "error"),
+    class = "samplyr_error_unknown_argument"
+  )
+  expect_error(
+    as_svrepdesign(systematic, type = "JKn", systematic_variance = "nonsense"),
+    "should be one of"
+  )
+})
+
+test_that("the systematic warning is confined to what it approximates", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = seq_len(400),
+    region = rep(c("North", "South"), each = 200),
+    mos = 1 + seq_len(400) %% 9
+  )
+
+  # An equal-probability design that is not systematic.
+  expect_no_warning(as_svydesign(
+    sampling_design() |> stratify_by(region) |> draw(n = 50) |>
+      execute(frame, seed = 1)
+  ))
+
+  # pps_systematic has its own variance treatment.
+  expect_no_warning(as_svydesign(
+    sampling_design() |> draw(n = 50, method = "pps_systematic", mos = mos) |>
+      execute(frame, seed = 1)
+  ))
+
+  # A census stage contributes no variance for the approximation to misstate.
+  expect_no_warning(as_svydesign(
+    sampling_design() |> stratify_by(region) |> draw(n = 200, method = "systematic") |>
+      execute(frame, seed = 1)
+  ))
+})
+
+test_that("a systematic phase one is named even though the sample is not", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = seq_len(400),
+    psu = rep(seq_len(40), each = 10),
+    region = rep(c("North", "South"), each = 200)
+  )
+  phase1 <- sampling_design() |>
+    cluster_by(psu) |>
+    draw(n = 20, method = "systematic") |>
+    execute(frame, seed = 1)
+  phase2 <- sampling_design() |>
+    cluster_by(id) |>
+    draw(n = 30) |>
+    execute(phase1, seed = 2)
+
+  # The approximation enters through a design the sample itself does not hold.
+  warning_text <- conditionMessage(
+    tryCatch(as_svydesign(phase2), warning = function(w) w)
+  )
+  expect_match(warning_text, "phase 1")
+  expect_no_warning(
+    as_svydesign(phase2, systematic_variance = "approximate")
+  )
+})

@@ -181,6 +181,7 @@ unlink(path)
 \seealso{
 Other execution:
 \code{\link[=execute]{execute()}},
-\code{\link{execution-conditions}}
+\code{\link{execution-conditions}},
+\code{\link[=rotation_program]{rotation_program()}}
 }
 \concept{execution}

@@ -424,6 +424,16 @@ read_design <- function(file) {
 #' that reads from its environment can change behavior without
 #' changing its fingerprint.
 #'
+#' A panelized receipt carries a panel assignment record, and it is read
+#' before any panel argument is decoded from it. A record naming an
+#' assignment algorithm or a schema version this samplyr does not know is
+#' `samplyr_error_panel_record_unsupported` rather than a replay under the
+#' current law. A record that does not carry what the version it states
+#' requires, or that is not a set of named fields at all, is
+#' `samplyr_error_panel_record_malformed` rather than a repaired one: the
+#' assignment stage decides what the assignment units are, so filling in a
+#' missing one would replay a different assignment of the same sample.
+#'
 #' When the design was saved with a frame fingerprint, `frame` is
 #' compared against it before replaying. A differing frame still yields
 #' a valid sample, but not the recorded one, so the default is to error.
@@ -587,10 +597,25 @@ replay_design <- function(
     stages <- NULL
   }
   reps <- if (!is_null(receipt$reps)) as.integer(receipt$reps) else NULL
+  # Every panel argument below is decoded from the assignment record, so the
+  # record is read under the law it names before any of them looks at it. A
+  # receipt naming an algorithm or a version this build does not know states a
+  # law its fields were written under and this one cannot reproduce, and
+  # decoding those fields anyway would replay them as though it could.
+  record <- prepare_panel_record(receipt$panel_assignment, "A replay")
   # A scheduled master is replayed with its schedule, not with the panel
   # count: the block size follows from the schedule, so the count alone
   # reproduces different labels.
-  panels <- decode_panel_argument(receipt)
+  panels <- decode_panel_argument(receipt, record)
+  # The policy is an input to the draw, like the schedule: a master promoted
+  # under "permanent" would otherwise replay under the default and be refused,
+  # or worse, replay as a different assignment. It is meaningful only with a
+  # schedule, which is the only shape that carries a policy.
+  small_pool <- decode_small_pool_argument(record, panels)
+  # Also an input to the draw: which stage was assigned decides what the
+  # assignment units are, so replaying without it would assign the same
+  # sample differently rather than fail.
+  panel_stage <- decode_panel_stage_argument(record)
 
   result <- with_replay_rng(
     execution_environment$rng,
@@ -600,6 +625,8 @@ replay_design <- function(
       stages = stages,
       seed = as.integer(seed),
       panels = panels,
+      panel_stage = panel_stage,
+      small_pool = small_pool,
       reps = reps
     )
   )
@@ -842,7 +869,7 @@ design_payload <- function(
   execution <- NULL
   execution_environment <- NULL
   if (is_tbl_sample(x)) {
-    execution <- encode_execution(x)
+    execution <- encode_execution(x, call = call)
     execution_environment <- attr(x, "metadata")$execution_environment
     if (is_null(execution$seed)) {
       cli_warn(c(
@@ -1604,8 +1631,12 @@ frame_content_hash <- function(frame, columns = NULL) {
 
 ## Execution receipts
 
+#' @param call The public call the receipt is being written for, so a record
+#'   this build cannot write out is reported against `write_design()`,
+#'   `design_json()` or `replay_design()` rather than against an internal
+#'   encoder.
 #' @noRd
-encode_execution <- function(sample) {
+encode_execution <- function(sample, call = caller_env()) {
   meta <- attr(sample, "metadata") %||% list()
   receipt <- list()
   receipt$seed <- attr(sample, "seed")
@@ -1626,7 +1657,10 @@ encode_execution <- function(sample) {
     receipt$panels <- as.integer(meta$panels)
   }
   if (!is_null(meta$panel_assignment)) {
-    receipt$panel_assignment <- encode_panel_assignment(meta$panel_assignment)
+    receipt$panel_assignment <- encode_panel_assignment(
+      meta$panel_assignment,
+      call = call
+    )
   }
   receipt$frames <- encode_frame_schedule(
     frame_record_or_default(
@@ -1640,11 +1674,7 @@ encode_execution <- function(sample) {
   # continuation, multi-phase, or a wave materialized from a master)
   # cannot be reproduced by replaying the final call alone; the receipt
   # records only that call.
-  if (
-    !is_null(meta$continued_from) ||
-      !is_null(meta$prev_phase) ||
-      !is_null(meta$materialized_from)
-  ) {
+  if (!is_null(meta$continued_from) || !is_null(meta$prev_phase)) {
     receipt$chained <- TRUE
   }
   # Rows or design columns changed after execution: the receipt
@@ -1669,18 +1699,36 @@ encode_execution <- function(sample) {
 #' algorithm and its version, the assignment-unit identities in pool order,
 #' the block sizes, and the realized block-by-panel quotas. Those are the
 #' denominators a later activation of a subset of panels is computed against.
+#'
+#' The record is read here under the version it states, exactly as a reader
+#' reads it. A writer that filled in a field the record does not carry would
+#' produce a well-formed file describing an assignment nothing recorded: a
+#' stage-less record used to be written out as stage 1, and then replayed as a
+#' first-stage assignment of a sample that was not assigned at the first
+#' stage.
 #' @noRd
-encode_panel_assignment <- function(record) {
+encode_panel_assignment <- function(record, call = caller_env()) {
+  record <- prepare_panel_record(record, "An execution receipt", call = call)
   list(
     algorithm = record$algorithm,
     version = as.integer(record$version),
     panels = as.integer(record$panels),
+    # Which stage the units belong to. A version-1 or version-2 record could
+    # only mean the first executed stage, and preparation has already stated
+    # that; a version-3 record states it itself or is refused above. There is
+    # nothing left here to fall back to.
+    assignment_stage = record$assignment_stage,
     block_size = as.integer(record$block_size),
     r_min = as.integer(record$r_min),
     unit = record$unit,
     key_vars = I(as.character(record$key_vars)),
+    # A pool is the assignment stage's strata inside a realized ancestor
+    # occurrence, so the columns are not recoverable from the key alone.
+    # Empty for an unstratified stage 1, which is one pool over everything.
+    pool_vars = I(as.character(record$pool_vars %||% character(0))),
     control_ordered = isTRUE(record$control_ordered),
     certainty = record$certainty,
+    small_pool_policy = record$small_pool_policy %||% "error",
     # The schedule is an input to the draw, not a derived fact: the block
     # size follows from it, so replay cannot reproduce `.panel` without it.
     schedule = if (!is_null(record$schedule)) {
@@ -1696,6 +1744,13 @@ encode_panel_assignment <- function(record) {
         out$stratum <- lapply(pool$stratum, function(v) as.character(v)[1])
       }
       out$class <- pool$class
+      # Selection status and activation status are separate facts: a pool too
+      # small to rotate is permanent without being selection-certain.
+      out$activation <- pool$activation %||%
+        if (identical(pool$class, "certainty")) "permanent" else "rotating"
+      if (!is.na(pool$permanent_reason %||% NA_character_)) {
+        out$permanent_reason <- pool$permanent_reason
+      }
       out$size <- as.integer(pool$size)
       out$keys <- I(as.character(pool$keys))
       out$blocks <- I(as.integer(pool$blocks))
@@ -1708,6 +1763,47 @@ encode_panel_assignment <- function(record) {
   )
 }
 
+#' The assignment stage a receipt recorded
+#'
+#' `NULL` for a first-stage assignment, which is what omitting the argument
+#' replays. Anything else has to be passed back explicitly: replay re-executes
+#' the design, and an execution given no `panel_stage` assigns from the first
+#' stage, so a lower-stage master would otherwise replay as a different
+#' assignment of the same sample rather than failing.
+#'
+#' @param record The prepared assignment record. Its stage is a whole number of
+#'   1 or more under every readable version, so there is nothing to test here
+#'   but whether it is the first: a version-1 or version-2 record means stage 1
+#'   whatever it carries, and a version-3 record that does not state a stage was
+#'   refused before this was called.
+#' @noRd
+decode_panel_stage_argument <- function(record) {
+  stage <- record$assignment_stage
+  if (is_null(stage) || stage <= 1L) {
+    return(NULL)
+  }
+  stage
+}
+
+#' The small-pool policy a scheduled receipt recorded
+#'
+#' `NULL` unless the receipt both carries a schedule and names a policy. A
+#' version-1 receipt names none because it applied none, so omitting the
+#' argument replays it under today's default. That is a stricter rule than it
+#' was drawn under, which is the intended direction: an assignment that would
+#' now be refused should not be reproduced in silence.
+#' @noRd
+decode_small_pool_argument <- function(record, panels) {
+  if (!is.data.frame(panels)) {
+    return(NULL)
+  }
+  policy <- record$small_pool_policy
+  if (is_null(policy) || identical(policy, "error")) {
+    return(NULL)
+  }
+  as.character(policy)[1]
+}
+
 #' Rebuild the `panels` argument a receipt recorded
 #'
 #' Reads back the same shape the original call was given: a schedule when the
@@ -1715,11 +1811,11 @@ encode_panel_assignment <- function(record) {
 #' schedules existed carries only the count, which is what it was executed
 #' with.
 #' @noRd
-decode_panel_argument <- function(receipt) {
+decode_panel_argument <- function(receipt, record) {
   if (is_null(receipt$panels)) {
     return(NULL)
   }
-  schedule <- receipt$panel_assignment$schedule
+  schedule <- record$schedule
   if (is_null(schedule) || length(schedule) == 0) {
     return(as.integer(receipt$panels))
   }
@@ -1750,6 +1846,14 @@ encode_wave <- function(record) {
         out$stratum <- lapply(pool$stratum, function(v) as.character(v)[1])
       }
       out$class <- pool$class
+      # Why the pool activated as it did, not just that it did: a permanent
+      # pool reads take == blocks either way, and only these say whether that
+      # is selection certainty or a pool too small to rotate.
+      out$activation <- pool$activation %||%
+        if (identical(pool$class, "certainty")) "permanent" else "rotating"
+      if (!is.na(pool$permanent_reason %||% NA_character_)) {
+        out$permanent_reason <- pool$permanent_reason
+      }
       out$blocks <- I(as.integer(pool$blocks))
       out$take <- I(as.integer(pool$take))
       out$probability <- I(as.numeric(pool$probability))

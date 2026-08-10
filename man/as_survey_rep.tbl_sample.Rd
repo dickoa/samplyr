@@ -39,6 +39,7 @@ rep_tbl |>
 Other survey export:
 \code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},
 \code{\link[=as_svrepdesign]{as_svrepdesign()}},
-\code{\link[=as_svydesign]{as_svydesign()}}
+\code{\link[=as_svydesign]{as_svydesign()}},
+\code{\link[=stack_waves]{stack_waves()}}
 }
 \concept{survey export}

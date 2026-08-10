@@ -1117,6 +1117,47 @@ collect_ancestor_cluster_vars <- function(design, stage_idx) {
   unique(vars)
 }
 
+#' Identity of the realized ancestor occurrence a stage's units sit inside
+#'
+#' `collect_ancestor_cluster_vars()` answers a different question and keeps
+#' answering it: it names the cluster variables an ancestor *declares*, which
+#' is what validation, linkage and the frame digest need before an execution
+#' exists and before any `.draw_k` column could. This one names what
+#' identifies an ancestor occurrence in a sample that has already been drawn.
+#'
+#' A with-replacement ancestor selected twice produces two independent
+#' conditional populations of descendants, so its draw index belongs to the
+#' identity. The index restarts inside every selection pool, so it identifies
+#' an occurrence only once the pool does: the ancestor's strata qualify it,
+#' the same way the survey export qualifies the draw index it keys on.
+#'
+#' @param sample The realized sample. An ancestor that declared a
+#'   with-replacement method must carry its draw index: a sample that has lost
+#'   it cannot express the occurrences, and reading the ancestor as without
+#'   replacement instead would merge two conditional populations.
+#' @noRd
+collect_ancestor_occurrence_vars <- function(design, stage_idx, sample,
+                                             call = caller_env()) {
+  if (stage_idx <= 1L) {
+    return(character(0))
+  }
+  vars <- character(0)
+  for (i in seq_len(stage_idx - 1L)) {
+    spec <- design$stages[[i]]
+    draw_col <- paste0(".draw_", i)
+    if (is_multi_hit_method(spec$draw_spec)) {
+      if (!draw_col %in% names(sample)) {
+        abort_panel_missing_identity(i, draw_col, occurrence = TRUE,
+                                     call = call)
+      }
+      vars <- c(vars, spec$strata$vars, spec$clusters$vars, draw_col)
+    } else if (!is_null(spec$clusters)) {
+      vars <- c(vars, spec$clusters$vars)
+    }
+  }
+  unique(vars)
+}
+
 #' @noRd
 find_duplicate_key_rows <- function(df, vars) {
   key_df <- df[, vars, drop = FALSE]
@@ -1425,12 +1466,13 @@ sample_realization_status <- function(x) {
   list(ok = FALSE, mods = mods)
 }
 
-#' Refuse a materialized wave where the activation phase is not yet carried
+#' Refuse a materialized wave where the joint probabilities are not yet built
 #'
-#' A wave's `.weight` is correct: the activation factor is exact. What is not
-#' yet built is the export of the activation as a second phase, so exporting
-#' the wave as though it were a single-phase design would understate its
-#' variance. Refusing is the only reading that is not silently wrong.
+#' A wave's first-order probabilities are exact and [as_svydesign()] carries
+#' the activation as a second phase. What is not built is the second-order
+#' pair: the joint probability of two units both surviving the activation,
+#' which within a block is `a (a - 1) / {m (m - 1)}` and across blocks the
+#' product of their takes.
 #' @noRd
 check_no_materialized_wave <- function(x, fn_name, call = caller_env()) {
   wave <- attr(x, "metadata")$wave
@@ -1439,13 +1481,14 @@ check_no_materialized_wave <- function(x, fn_name, call = caller_env()) {
   }
   abort_samplyr(
     c(
-      "{.fn {fn_name}} does not yet support a materialized wave.",
-      "x" = "This sample realizes wave {wave$wave}, whose activation is a
-             second phase that the export path does not carry.",
-      "i" = "The weights in {.field .weight} already include the exact
-             activation factor and are valid for estimating totals.",
-      "i" = "Export the master instead:
-             {.code as_svydesign(master)}."
+      "{.fn {fn_name}} does not take a materialized wave.",
+      "x" = "This sample realizes wave {wave$wave}, which is an activation
+             of a master rather than a selection of its own.",
+      "i" = "For how two waves overlap, ask the master, which can also be
+             asked about waves it has not materialized:
+             {.code joint_expectation(master, waves = c({wave$wave}, s))}.",
+      "i" = "For the master's own joint probabilities:
+             {.code joint_expectation(master, frame)}."
     ),
     class = "samplyr_error_wave_export_unsupported",
     call = call

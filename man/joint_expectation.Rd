@@ -4,7 +4,14 @@
 \alias{joint_expectation}
 \title{Compute pairwise joint expectations from a sample}
 \usage{
-joint_expectation(x, frame = NULL, ..., stages = NULL, nsim = 10000L)
+joint_expectation(
+  x,
+  frame = NULL,
+  ...,
+  stages = NULL,
+  waves = NULL,
+  nsim = 10000L
+)
 }
 \arguments{
 \item{x}{A \code{tbl_sample} object produced by \code{\link[=execute]{execute()}}.}
@@ -26,14 +33,22 @@ prefix-matched.}
 \code{NULL} (default) to compute all PPS stages.
 Non-PPS stages produce \code{NULL} entries in the returned list.}
 
+\item{waves}{Two wave numbers of a scheduled master, which selects
+activation mode: the result describes how those two occasions of the
+rotation overlap rather than how the master was selected. Give the same
+wave twice for the joint expectation within one wave. \code{NULL} (default)
+keeps the stage behavior. Mutually exclusive with \code{stages}, \code{frame} and
+\code{nsim}, none of which activation mode uses.}
+
 \item{nsim}{Positive integer number of simulations used for Chromy's
 pairwise expected hits (default 10000). Also forwarded to registered
 WR \code{joint_fn}s that explicitly declare an \code{nsim} formal. Ignored by
 analytic methods.}
 }
 \value{
-A named list of length equal to the number of executed
-stages. Each element is either:
+With \code{waves}, a tibble with one row per block of the frozen
+assignment; see "Activation mode" below. Otherwise a named list of
+length equal to the number of executed stages. Each element is either:
 \itemize{
 \item For PPS WOR stages: a square matrix of joint inclusion
 probabilities \eqn{\pi_{kl}}{pi_kl}, usable with
@@ -163,6 +178,60 @@ estimate the pairwise expectations. Increasing \code{nsim} reduces Monte
 Carlo error at the cost of computation time.
 }
 
+\subsection{Activation mode}{
+
+\code{joint_expectation(master, waves = c(t, s))} answers a different question
+from the stage modes above. A scheduled master assigned every unit to a
+panel at its draw and froze the block-by-panel quotas, so how two occasions
+of the rotation overlap is already determined and needs neither the frame
+nor a simulation. It is read from the record.
+
+Conditional on the frozen quotas, the panels inside a block of \code{m}
+assignment units are an arrangement of that block's labels. Writing
+\eqn{a_t}{a_t} and \eqn{a_s}{a_s} for the units the panels active at each
+wave take from the block, and \eqn{a_\cap}{a_and} for those active at both:
+
+\deqn{P(i \in W_t) = a_t / m}{P(i in W_t) = a_t / m}
+\deqn{P(i \in W_t, i \in W_s) = a_\cap / m}{P(i in W_t and W_s) = a_and / m}
+\deqn{P(i \in W_t, j \in W_s) = \frac{a_t a_s - a_\cap}{m (m - 1)}}{P(i in W_t, j in W_s) = (a_t a_s - a_and) / (m (m - 1))}
+
+for units \eqn{i \neq j}{i != j} of one block, and the product of the
+marginals for units of different blocks, whose arrangements are drawn
+independently. The within-wave case is the third expression at \code{t == s}.
+
+The result is one row per block, and stays small at any sample size. Within
+a block the joints take only two values, and across blocks they factorize
+as products of the marginals, so every entry of the full matrix is
+recoverable from this table. It is the conditional covariance kernel, not
+the joint-probability matrix, that is block-diagonal: across blocks the
+joint is \eqn{p_i p_j}{p_i p_j}, which is generally not zero, while the
+covariance is.
+
+\code{pool}, \code{stratum}, \code{class} and \code{block} identify the block; \code{units} is
+\eqn{m}{m}; \code{take_1}, \code{take_2} and \code{take_both} are the three takes;
+\code{prob_1} and \code{prob_2} are the marginals; \code{joint_same} and \code{joint_distinct}
+are the two joint expectations. \code{has_pair} is \code{FALSE} for a block of one
+unit, where no distinct pair exists and \code{joint_distinct} is \code{NA} rather
+than zero.
+
+Quotas are frequently unequal, because a pool that is not a multiple of the
+block size gives one block an extra unit, so these are read from the record
+rather than derived from the panel count. A certainty block is permanent
+and takes every unit at every wave, which makes \code{joint_distinct} exactly
+one.
+
+\strong{What this states, and what it does not.} These are joint expectations of
+the activation indicators, conditional on the phase-1 units and on the
+frozen quotas. They are not the unconditional joint inclusion probabilities
+of the complete two-phase design, which also carry the master's own
+pairwise term. How the two combine for a variance of change is not settled
+here; \code{\link[=as_svydesign]{as_svydesign()}} carries the activation as a second phase for
+ordinary totals.
+
+Activation mode takes a master, not a materialized wave, so a pair of waves
+neither of which has been materialized can be asked for.
+}
+
 \subsection{Limitations}{
 \itemize{
 \item The frame-free path requires a digest with exact chances: the
@@ -221,6 +290,29 @@ registers <- sampling_design() |>
 
 jip_registers <- joint_expectation(registers, list(regions, bfa_eas))
 \dontshow{\}) # examplesIf}
+# Activation mode: how far two occasions of a rotation overlap. Four
+# panels rotate two at a time, so each is live for two consecutive waves.
+rotation <- data.frame(
+  panel = rep(1:4, times = 4),
+  wave = rep(1:4, each = 4),
+  active = c(
+    TRUE, TRUE, FALSE, FALSE,
+    FALSE, TRUE, TRUE, FALSE,
+    FALSE, FALSE, TRUE, TRUE,
+    TRUE, FALSE, FALSE, TRUE
+  )
+)
+
+master <- sampling_design() |>
+  draw(n = 40) |>
+  execute(bfa_eas, seed = 2025, panels = rotation)
+
+# Waves 1 and 2 share one panel of the two each activates.
+joint_expectation(master, waves = c(1, 2))
+
+# The same wave twice gives the joint expectation within one wave.
+joint_expectation(master, waves = c(2, 2))
+
 }
 \references{
 High-entropy approximation:

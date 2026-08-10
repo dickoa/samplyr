@@ -296,18 +296,49 @@ Initial release.
   panel sizes within a pool differ by at most one.
 * Blocking preserves the `control` order of `draw()`: units adjacent in that
   order share a block, so every panel inherits the same spread over it.
-* Multi-stage designs assign panels at PSU level and propagate to all units.
-  Under a with-replacement first stage the assignment unit is the realized
-  draw, so one population cluster drawn twice may carry two panels.
+* Multi-stage designs assign panels at the first stage by default and
+  propagate to all units. Under a with-replacement stage the assignment unit
+  is the realized draw, so one population cluster drawn twice may carry two
+  panels.
+* `execute(..., panel_stage = s)` moves the assignment to another stage.
+  Every later stage still inherits its ancestor's panel, so assigning at
+  stage 1 rotates whole primary units while assigning lower down rotates
+  units inside parents that stay in the survey: the address-panel design, in
+  which selected areas are retained and households rotate within them. The
+  stage must be one the execution completes, and it is accepted only
+  alongside `panels`; `samplyr_error_panel_stage_value`,
+  `samplyr_error_panel_stage_not_applicable` and
+  `samplyr_error_panel_stage_unexecuted` report the three ways it can be
+  wrong, all of them before any random number is drawn.
+* An assignment pool is then the stage's own strata inside each realized
+  parent occurrence, never crossing a parent, so pools are smaller than
+  first-stage pools and `small_pool` binds more often. Selection certainty
+  counts only at the assignment stage: a certainty primary unit does not make
+  its households permanent.
+* Assigning below the first stage is not a default. Holding the parent fixed
+  while its members rotate can bias cross-sectional estimates over time, and a
+  unit that cannot move between parents is balanced for net change but not for
+  gross change.
+* An assignment unit is identified by its realized ancestor occurrence, its
+  own selection strata, its cluster variables, and its own draw index when the
+  stage selects with replacement. A sample that has lost any of those columns
+  is refused with `samplyr_error_panel_missing_identity` rather than assigned
+  over a coarser identity.
 * Certainty units are labelled from their own pools and consume no rotating
   quota.
 * The frozen block sizes and the realized block-by-panel quotas are recorded
   with the sample and written by `write_design()`, since a subset of panels is
   a simple random subsample without replacement of the block quota rather than
-  of `1/k`.
+  of `1/k`. The record is version 3, and states the assignment stage, the
+  columns its pools are built from, and whether its units are clusters, draw
+  occurrences or elements.
 * Panels are assigned once. `.panel` is carried forward by a stage
   continuation, and redeclaring `panels` on a sample that already carries an
-  assignment raises `samplyr_error_panels_already_assigned`.
+  assignment raises `samplyr_error_panels_already_assigned`. An assignment is
+  the record and the `.panel` column together, so either one alone is enough
+  for a sample to count as assigned, and a sample carrying one without the
+  other is refused with `samplyr_error_panel_assignment_incomplete` whether or
+  not new panels are supplied.
 * Panel labels are rotation or workload groups, not an additional
   probability-sampling phase. Full-sample weights remain valid for
   the combined sample; multiplying one panel's weights by the number of panels
@@ -324,6 +355,30 @@ Initial release.
   `r` of the `k` panels, blocks are `k * ceiling(2 / r)` rather than the
   scalar worst case `2k`, which keeps more of the assignment order while still
   leaving two units per block in the take.
+* `execute(..., small_pool = )` governs what happens when a rotation schedule
+  would leave a pool with no unit to activate. A pool of `m` assignment units
+  leaves `panels - m` panels empty, so a wave activating `r` of them selects
+  nothing from that pool when `m <= panels - r`; those units then have
+  conditional inclusion probability zero in that wave rather than a small
+  weight, so the wave's estimator is biased. The default refuses the
+  assignment with `samplyr_error_panel_small_pool`, before any panel label is
+  drawn, naming every affected pool. `small_pool = "permanent"` instead
+  activates those pools at every wave with probability one, which is exact,
+  and warns with `samplyr_warning_panel_small_pool` because it changes the
+  operational design: wave sizes, overlap and repeated interviewing all
+  increase. The policy governs positivity only; a pool with a positive but
+  single active unit is still assigned and still carries no within-block
+  variance estimate.
+* The assignment record separates how a pool was selected from whether its
+  units rotate. `class` remains the master's selection status, and a new
+  `activation` field says `"rotating"` or `"permanent"`, with
+  `permanent_reason` naming `"selection_certainty"` or `"small_pool"`. A
+  promoted pool is permanent without being selection-certain, and
+  `joint_expectation(waves = )` gains an `activation` column for the same
+  reason. This separation is what took the record to version 2, and the
+  assignment stage later took it to version 3. Versions 1 and 2 are read as
+  what they were, and a version-1 record whose schedule strands a pool is
+  refused when a wave is materialized rather than silently dropping it.
 * `execute(master, wave = t)` materializes one precommitted occasion of a
   scheduled master. It activates the panels declared active at `t` and
   multiplies `.weight` by the inverse of the activation probability, which is
@@ -331,16 +386,124 @@ Initial release.
   certainty units are activated at every wave with probability one.
 * A materialized wave is a sample in its own right with its own integrity
   record, not a filtered master. `execute(master, wave = t)` takes no other
-  execution input: a frame, `seed`, `stages`, `panels` or `reps` alongside
-  `wave` is an error, as is a master that is modified, incomplete, unscheduled
+  execution input: a frame, `seed`, `stages`, `panels`, `small_pool` or
+  `reps` alongside `wave` is an error, as is a master that is modified, incomplete, unscheduled
   or already materialized.
 * The receipt records the wave, the active panels, the per-block take and
-  activation probability, and a schedule digest. Survey export
-  (`as_svydesign()`, `as_svrepdesign()`, srvyr) and `joint_expectation()`
-  refuse a materialized wave with `samplyr_error_wave_export_unsupported`:
-  the weights are exact, but carrying the activation through as a second
-  phase is not implemented, and exporting the wave as single-phase would
-  understate its variance.
+  activation probability, and a schedule digest.
+* A materialized wave retains the master as its first phase, so
+  `as_svydesign()` and srvyr export it through `survey::twophase()` with the
+  activation as the second phase: the frozen blocks are the phase-2 strata
+  and their sizes the phase-2 population counts. `method` is the only choice
+  the export takes, and no method is ever selected as a silent fallback for
+  another. `joint_expectation()` still refuses a materialized wave
+  (`samplyr_error_wave_export_unsupported`) and points at the master, which
+  answers the same question for any pair of declared waves:
+  `joint_expectation(master, waves = c(t, s))`.
+* `survey::twophase()` takes no `pps` specification at phase 1, so a wave of
+  a master with unequal inclusion probabilities is refused
+  (`samplyr_error_wave_phase1_pps`) rather than exported with the
+  with-replacement approximation. Waves of equal-probability masters export,
+  stratified, clustered, multistage and with-replacement alike. A method
+  whose variance family is unsupported refuses at either phase
+  (`samplyr_error_custom_random_wor_export`).
+* A wave whose stored first phase is not the realization it was activated
+  from is refused (`samplyr_error_wave_master_mismatch`), and one carrying no
+  first phase at all is refused with an instruction to materialize it again
+  (`samplyr_error_wave_no_master`). `.sample_id` is a row position rather
+  than an identity, so the check is against the master's integrity record.
+* `stack_waves()` verifies that two or more materialized waves come from one
+  executed master and stacks them into a plain long table, one row per
+  observed unit-wave, for handing to an inference layer that estimates change
+  across waves. Row-binding waves by hand does not reproduce the checks: two
+  executions of one design carry identical `.sample_id` values, so waves of
+  different masters stack silently, and a wave edited after execution keeps a
+  correct provenance record while its rows no longer match it.
+* Four generated columns carry the contract. `master_id` is a master-local
+  key, not a population identity and not generally a primary sampling unit: a
+  clustered design's own cluster variable is carried through and is what a
+  consumer's `PSU` argument wants. `design_weight` is samplyr's exact design
+  weight including the activation factor, and is not a final weight, since
+  nothing here is adjusted for nonresponse or calibrated. A data column of any
+  of those four names is refused rather than silently renamed
+  (`samplyr_error_stack_waves_columns`); `execute()` cannot catch them,
+  because none is a reserved samplyr name.
+* The result is an ordinary tibble, never a `tbl_sample`: it holds several
+  realizations and repeats the unit key on purpose. samplyr's internal
+  columns are dropped, stage-specific quantities among them, and waves
+  carrying different analysis columns stack by column union rather than
+  refusing.
+* `joint_expectation(master, waves = c(t, s))` states how two occasions of a
+  rotation overlap, exactly, from the quotas the master froze at its draw.
+  Conditional on those quotas a block's panels are an arrangement of its
+  labels, so a unit is active at both waves with probability `a_both / m` and
+  two units of one block with probability `(a_t a_s - a_both) / {m (m - 1)}`,
+  where the takes are read from the record rather than assumed equal. Units
+  of different blocks are independent. The within-wave case is the same
+  expression at `t == s`.
+* The result is one row per block. Within a block the joints take only two
+  values and across blocks they factorize as products of the marginals, so
+  the table is a complete statement of the full matrix. It is the conditional
+  covariance kernel that is block-diagonal, not the joint-probability matrix,
+  whose cross-block entries are generally non-zero. A block of one unit has
+  no distinct pair, so `has_pair` is `FALSE` there and its pairwise
+  expectation is `NA` rather than zero. A permanent pool is certain at every
+  wave and needs no special case in the arithmetic.
+* Activation mode takes a master and a pair of declared waves, including a
+  pair neither of which has been materialized. It uses nothing else, so
+  `frame`, `stages` and `nsim` alongside `waves` are an error
+  (`samplyr_error_joint_activation_arguments`) rather than arguments without
+  effect, and a materialized wave is still refused, now pointing at the
+  master call. These are joint expectations of the activation indicators,
+  conditional on the phase-1 units and the frozen quotas; they are not the
+  unconditional joint inclusion probabilities of the two-phase design.
+
+## Rotation programs
+
+* `rotation_program()` links the cohorts of a rotating panel that
+  replenishes. A start-up master drawn against one frame vintage and a
+  refreshment cohort drawn against each later vintage are separate
+  executions; the program records which samples make up the panel, when each
+  entered, and which components are live at each occasion.
+* A cohort may be *partitioned*, drawn with `panels` so that it carries
+  `.panel` and a frozen assignment, or *whole*, drawn without them. A whole
+  cohort has one implicit panel covering all its rows, and activating it is
+  not a subsample, so its weights are unchanged.
+* `entry_wave` is declared, never inferred from the schedule. A cohort may be
+  drawn early and held in reserve, so its first active wave need not be its
+  entry, and entry is what anchors which population vintage a cohort
+  represents.
+* The program schedule adds a `cohort` column to the panel-by-wave grid; for
+  a one-cohort program it may be omitted. It is completed to the full grid
+  only once the registry is known, because a cohort's available panels come
+  from its own receipt. Activity need not be contiguous, since a 4-8-4
+  rotation deliberately leaves and re-enters.
+* A schedule that activates fewer panels of a cohort than the `r_min` its
+  block size was frozen for is refused at construction with
+  `samplyr_error_program_block_size`. Such an activation still has computable
+  weights but leaves under two units per block, so it carries no within-block
+  variance estimate, and the schedule is where the mistake was made.
+* `execute(program, wave = t)` returns a collection of samples with separate
+  receipts, one per live cohort, each carrying its own exact activation
+  factor. `as.data.frame()` on the collection row-binds it with a `.cohort`
+  column for fieldwork, and returns a plain data frame, which is what stops it
+  reaching `as_svydesign()` as though it were one sample.
+* Weights are valid within a cohort and are not combined across cohorts. A
+  program records when its cohorts are live, not how they relate: whether a
+  unit could have been drawn into more than one depends on its population
+  membership at each vintage, the chance it would have had in a draw it was
+  not selected into, and how the draws depend on one another. The last is not
+  recoverable from inclusion probabilities at all, since two executions with
+  identical marginals may be independent or identical. Overlap is therefore
+  unknown rather than assumed absent. A refreshment cohort drawn from an
+  entrant register is the case where the analyst knows it is absent, and there
+  the component weights are already the right ones.
+* Schedule defects now carry one condition class per defect kind rather than
+  one per entry point, so a gap, a duplicate row or a non-logical `active`
+  column is reported as `samplyr_error_schedule_gap`,
+  `samplyr_error_schedule_duplicates` or `samplyr_error_schedule_active`
+  whether it reached samplyr through `panels` or through
+  `rotation_program()`. The message names whichever argument carried it.
 
 ## Replicated sampling
 
@@ -409,6 +572,41 @@ Initial release.
   `samplyr_error_frame_count`). A file whose fingerprint manifest
   contradicts its own receipt can no longer be written. The independent
   check in `replay_design()` remains, for files written elsewhere.
+* A panel assignment record is read under the version it states, and in that
+  order: the algorithm and version first, then what that version leaves
+  implicit, then whether the record carries what that version requires. A
+  record naming an algorithm or a version this build does not know is refused
+  with `samplyr_error_panel_record_unsupported` rather than taken apart under
+  a law it was not written under.
+* Every path that reads a record reads it that way, and so does every path
+  that writes one. `replay_design()` reads it before decoding any panel
+  argument; `execute(master, wave = )` and `joint_expectation(waves = )` read
+  it before asking whether it declares any waves, so an unreadable record is
+  no longer reported as one that declares none; `as_svydesign()` reads it
+  before building the phase-2 units, blocks and probabilities out of its
+  quotas; `stack_waves()` and `rotation_program()` read it before taking a
+  panel count, an `r_min` or a block size from it, so a program is refused
+  where it is declared rather than at its first wave. `write_design()`,
+  `design_json()` and `replay_design()` read it before writing a receipt,
+  because a writer that fills in a field the record does not carry produces a
+  well-formed file describing an assignment nothing recorded. Each refusal
+  names the call that was made.
+* A version-3 record must state `assignment_stage` as one whole stage number
+  of 1 or more, name `unit` as one of `cluster`, `occurrence` or `element`,
+  and list `key_vars` and `pool_vars` as distinct column names. A record
+  numbered 3 that does not is refused with
+  `samplyr_error_panel_record_malformed` rather than filled in, since version
+  3 is the version where those are written down and inventing one would state
+  an assignment the file does not record. An empty `pool_vars` is not a
+  missing one: it is the single pool of an unstratified first-stage
+  assignment. Versions 1 and 2 mean the first stage because it is the only
+  stage they could assign, so an `assignment_stage` on a record numbered 1 or
+  2 is ignored rather than read as a lower-stage assignment.
+* A file carrying a bare value where the assignment record belongs is refused
+  with `samplyr_error_panel_record_malformed`, naming what it carries. A JSON
+  scalar parses to a length-one vector rather than to a set of named fields,
+  and reading a field off one previously surfaced base R's complaint about the
+  `$` operator instead of a statement about the artifact.
 * Receipts for designs using registered custom methods record an
   implementation fingerprint (formals and body of the registered
   `sample_fn` and `joint_fn`, via `sondage::method_spec()`). Replay
@@ -450,6 +648,51 @@ Initial release.
   collision-free integer term per stage, and certainty strata combine with
   user strata. Formula construction supports non-syntactic column names.
   Multi-stage PPS designs use fraction-scale FPCs throughout.
+* A two-phase export now represents every stage of its first phase. A final
+  unclustered stage gets a synthesized identifier there, as it already did in
+  single-phase export, so its variance contribution is present rather than
+  absent from a design still described as `method = "full"`. Phase 2 is
+  unchanged: its stages describe the subsampling `survey::twophase()` links
+  across the phases itself.
+* Relatedly, a two-phase export derives each phase's inclusion probabilities
+  from its finite population correction only where the correction states all
+  of them. It does not when a stage contributed no identifier term, nor when
+  a term is infinite, which is what a with-replacement stage has instead of a
+  population count. Those phases now pass their own weights, which are exact.
+  Previously a first phase of clusters and then elements exported with only
+  its cluster stage's probability, halving the weights and any total
+  estimated from them.
+* `as_svydesign()` and `as_svrepdesign()` gain `systematic_variance`, and say
+  once per call when they are approximating the variance of an
+  equal-probability `systematic` stage. One systematic sample generally does
+  not identify its own design variance, so the approximation is supplied as
+  before and neither export is refused; what changes is that a returned
+  design no longer carries an approximate variance model with nothing to show
+  for it. `"warn"` is the default and names every affected stage in one
+  condition of class `samplyr_warning_systematic_variance`; `"approximate"`
+  accepts the approximation silently; `"error"` refuses it. Census stages are
+  exempt, `pps_systematic` is unaffected, a systematic stage in a first phase
+  is named as such, and the choice is recorded on the returned object in the
+  `"samplyr_systematic_variance"` attribute.
+* The two exports approximate such a stage by different means, and each
+  condition names the one in use. `as_svydesign()` substitutes the simple
+  random sampling variance estimator. `as_svrepdesign()` builds generic
+  replicate weights, which resample the realized sample rather than redraw a
+  random start against the frame in its original order, so no replicate type
+  reproduces the selection mechanism. Requesting a particular `type` is
+  therefore not an acknowledgement and does not silence the condition; only
+  `systematic_variance` does. The measured margins below are the
+  linearization export's and are not claimed for the replicate one.
+* The documented approximation for equal-probability `systematic` stages now
+  states its size. The SRSWOR variance estimator is the standard treatment and
+  its direction was already recorded, smaller under a favourable ordering and
+  larger under a periodic one, but not its magnitude: measured over repeated
+  draws at an interval of 20, the reported variance is 0.73 of the truth on a
+  randomly ordered frame with 90.2% interval coverage, 1.76 under a trend, and
+  0.0006 where the frame's period matches the sampling interval, where 95%
+  intervals cover 9.8% of the time. A systematic design with interval `k` has
+  only `k` distinct samples per stratum, so its variance for one frame need
+  not sit near the SRSWOR value even when the ordering is unstructured.
 * `as_svrepdesign()` converts to replicate-weight designs. For PPS and
   balanced designs, `"subbootstrap"` and `"mrbbootstrap"` are supported.
 * `nest` reaches `survey::svydesign()` only, so giving it when exporting a

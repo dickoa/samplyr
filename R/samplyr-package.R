@@ -4,10 +4,10 @@
 ## usethis namespace: start
 #' @importFrom rlang .data !! !!! enquo enquos %||%
 #' @importFrom rlang quo_get_expr quo_get_env is_call new_quosure
-#' @importFrom rlang caller_env
+#' @importFrom rlang caller_env current_env
 #' @importFrom rlang is_null is_character
 #' @importFrom rlang as_label
-#' @importFrom cli cli_abort cli_warn cli_inform
+#' @importFrom cli cli_abort cli_warn cli_inform qty
 #' @importFrom stats setNames
 #' @importFrom tibble as_tibble
 #' @importFrom dplyr mutate select group_by arrange

@@ -114,6 +114,7 @@ frame problems before executing
 
 Other execution:
 \code{\link[=execute]{execute()}},
+\code{\link[=rotation_program]{rotation_program()}},
 \code{\link[=validate_frame]{validate_frame()}}
 }
 \concept{execution}

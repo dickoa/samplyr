@@ -11,7 +11,8 @@ as_svrepdesign(x, ...)
   x,
   ...,
   type = c("auto", "JK1", "JKn", "BRR", "bootstrap", "subbootstrap", "mrbbootstrap",
-    "Fay")
+    "Fay"),
+  systematic_variance = c("warn", "approximate", "error")
 )
 }
 \arguments{
@@ -28,6 +29,16 @@ than forwarded. \code{design} cannot be given here: it is the
 \item{type}{Replicate method passed to \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.
 One of \code{"auto"}, \code{"JK1"}, \code{"JKn"}, \code{"BRR"}, \code{"bootstrap"},
 \code{"subbootstrap"}, \code{"mrbbootstrap"}, or \code{"Fay"}.}
+
+\item{systematic_variance}{What to do about the generic replicate weights
+built for equal-probability \code{systematic} stages. \code{"warn"} (default) builds
+them and warns once per call, naming every affected stage;
+\code{"approximate"} builds them silently, for a caller who has acknowledged
+the approximation; \code{"error"} refuses. Naming a \code{type} is not an
+acknowledgement, since no type reproduces systematic selection. Census
+stages are exempt and \code{pps_systematic} is unaffected, as in
+\code{\link[=as_svydesign]{as_svydesign()}}. The choice and the affected stages are recorded on the
+returned object in the \code{"samplyr_systematic_variance"} attribute.}
 }
 \value{
 A \code{svyrep.design} object from the survey package.
@@ -78,6 +89,19 @@ original cube constraints or spatial selection algorithm within each
 replicate. Treat the resulting variance estimates as approximations, not
 as exact variance estimators for those designs.
 }
+
+\subsection{Equal-probability systematic sampling}{
+
+Equal-probability \code{systematic} stages are in the same position, for every
+replicate type rather than for a subset of them. A jackknife or bootstrap
+replicate perturbs the realized sample; it does not redraw a random start
+against the frame in the order the frame was in, which is what generates a
+systematic sample's variance. Frame ordering or periodicity can therefore
+make the resulting standard errors too small or too large, in the same
+direction that ordering moves the true variance. See \code{systematic_variance},
+and \code{\link[=as_svydesign]{as_svydesign()}} for how large the analogous gap was measured to be
+under linearization.
+}
 }
 \examples{
 \dontshow{if (requireNamespace("survey", quietly = TRUE)) withAutoprint(\{ # examplesIf}
@@ -97,6 +121,7 @@ survey::svymean(~households, rep_svy)
 Other survey export:
 \code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},
 \code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
-\code{\link[=as_svydesign]{as_svydesign()}}
+\code{\link[=as_svydesign]{as_svydesign()}},
+\code{\link[=stack_waves]{stack_waves()}}
 }
 \concept{survey export}

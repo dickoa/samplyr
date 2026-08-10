@@ -361,16 +361,349 @@ implied by counting groups: a block that took the remainder carries a
 different quota, and its units carry a different factor. Certainty units are
 activated with probability one and their weights are untouched.
 
-Two limits are worth stating plainly. A materialized wave cannot yet be
-exported to `survey`: the activation is a second phase, and carrying it
-through `twophase()` is not implemented, so `as_svydesign()` refuses rather
-than exporting the wave as though it were a single-phase design. And a wave
-cannot be replayed, because it is derived from a recorded execution rather
-than being one; save and replay the master instead.
+A wave is a two-phase sample and exports as one. It retains the master as its
+first phase, and `as_svydesign()` passes the activation to `twophase()` as the
+second: the blocks become the phase-2 strata and their frozen sizes the
+phase-2 population counts, which is what makes the subsampling variance exact
+rather than assumed. `method` is the only choice the export takes, `"full"` by
+default with `"simple"` and `"approx"` available where their assumptions hold,
+and none of them is ever selected as a silent fallback for another.
+
+```{r}
+equal_master <- sampling_design() |>
+  draw(n = n_wave) |>
+  execute(frame, seed = 7, panels = rotation)
+
+equal_wave <- execute(equal_master, wave = 2)
+
+class(as_svydesign(equal_wave))
+```
+
+The master drawn above is a different case. `twophase()` accepts no `pps`
+specification at its first phase, so a master with unequal inclusion
+probabilities has no exact linearization there, and `as_svydesign(wave_2)`
+refuses with that reason rather than returning the with-replacement
+approximation unannounced. The activation weights stay exact and estimate
+totals correctly; it is the variance that has no exact form. The master's own
+export is unaffected, and so is any wave of an equal-probability master,
+clustered or multistage.
+
+### Which unit rotates
+
+By default the assignment belongs to the first stage, so a clustered design
+rotates whole primary units and every unit below inherits its ancestor's
+group. `panel_stage` moves it to another stage. That is what expresses the
+address-panel design of chapter 2, section 2.3.4: the selected areas stay in
+the survey while the addresses inside them rotate.
+
+```{r}
+addresses <- data.frame(
+  ea      = rep(sprintf("EA%02d", 1:40), each = 12),
+  address = rep(1:12, times = 40)
+)
+
+area_panel <- sampling_design() |>
+  add_stage() |> cluster_by(ea) |> draw(n = 12) |>
+  add_stage() |> cluster_by(address) |> draw(n = 8) |>
+  execute(addresses, seed = 11, panels = rotation, panel_stage = 2)
+
+# Panels per selected area: every area carries all four.
+table(tapply(area_panel$.panel, area_panel$ea, function(x) length(unique(x))))
+```
+
+Every area is in every wave, and half its addresses turn over between
+consecutive occasions:
+
+```{r}
+area_wave <- execute(area_panel, wave = 2)
+
+c(areas_in_master = length(unique(area_panel$ea)),
+  areas_in_wave   = length(unique(area_wave$ea)),
+  addresses_in_wave = nrow(area_wave))
+```
+
+Two things change with the assignment stage, and both matter operationally. A
+pool becomes the assignment stage's strata *inside* each realized parent, so
+pools are as small as the within-parent take rather than as large as a
+stratum; `small_pool` therefore binds far more often, and a design with fewer
+than `panels - r` addresses per area is refused rather than silently leaving
+areas out of some wave. And selection certainty counts only at the assignment
+stage, in both directions: a certainty area does not make its addresses
+permanent, and a certainty selection *below* the address does not keep that
+address in every wave. A person selected with probability one inside a
+rotating address leaves the survey with the address, which is a property of
+the design rather than a defect to work around.
+
+This is not a better default, and it should not be adopted as one. Holding the
+parent fixed while its members rotate can bias cross-sectional estimates over
+time [@smith2009, sec. 2.3.4]. A sampling unit that cannot move between
+parents is balanced for cross-sectional estimates and for net change, but not
+for gross change. And the frame has an operational consequence that is easy to
+get wrong: a vacant address found at one wave stays in the sample for later
+waves, so the frame must not be filtered to occupied units between waves.
+
+### How much two occasions share
+
+How far two waves overlap is fixed at the master's draw, so it can be asked
+before either has been materialized:
+
+```{r}
+joint_expectation(master, waves = c(1, 2))
+```
+
+One row per block. `prob_1` and `prob_2` are the chances a unit of that block
+is live at each wave, `joint_same` the chance it is live at both, and
+`joint_distinct` the chance that two different units of the block are live at
+one wave each. Take the same wave twice, `waves = c(2, 2)`, for the joint
+expectation within a single wave.
+
+These follow from the frozen quotas rather than from counting groups. In a
+block of `m` assignment units where the panels live at the two waves take
+$a_t$ and $a_s$ units and those live at both take $a_\cap$:
+
+$$P(i \in W_t,\, j \in W_s) = \frac{a_t a_s - a_\cap}{m(m-1)}, \qquad i \neq j$$
+
+with $a_\cap / m$ for a single unit at both waves. Units in different blocks
+are independent. A block that took the remainder carries different quotas and
+therefore different values, which is why these are read from the record.
+
+Aggregating `take_both` against `take_1` gives the overlap proportion the
+rotation literature quotes: the US CPS 4-8-4 pattern gives 75% from one month
+to the next and 50% a year apart, and an in-for-15 rotation 93% and 20%.
+Reproducing those figures needs the two spells of the 4-8-4 declared with a
+finite life rather than cycled, because a group that returns to its first
+spell keeps 7 of 8 groups month to month instead of 6.
+
+**Say which overlap you mean.** Three qualifiers are needed before the number
+is interpretable, and the same design honestly reports 0.75, 0.53 or 0.33
+depending on which was intended:
+
+- **reference set**: the units the design selected, or the units that
+  responded. `samplyr` knows the first exactly. The second needs response
+  records, which it does not have.
+- **direction**: which wave is the denominator. Where the waves differ in
+  size, an asymmetric schedule gives 0.50 forward and 0.33 reversed.
+- **measure**: units counted, or weighted. A `pps_sps` master with permanent
+  certainty units reports 0.75 by count and 0.53 by weight, because those
+  units are live at every wave while carrying weight one.
+
+Written out, the count-based directional quantity is
+
+$$g_{\text{design}}(t \to s) = \frac{\#(\text{selected at both } t \text{ and } s)}{\#(\text{selected at } t)} = \frac{\sum_b a_{\cap b}}{\sum_b a_{tb}}$$
+
+This is the $g$ that appears in the rotation literature [@bergerpriam2016].
+It is **not** the $k$ of the resampling shortcut in @cantydavison1999, which
+is the responding overlap: they warn explicitly that the realized proportion
+should be used there rather than the theoretical one, and the difference is
+nonresponse.
+
+Under `samplyr`'s frozen-activation contract the scheduled and the selected
+overlap coincide exactly. A rotating unit is live at both waves precisely when
+its panel lies in both active sets, and a permanent certainty unit is live at
+every wave whatever its panel, so in both cases the realized count is
+determined rather than random. That is a property of the contract rather than
+of rotation in general: an operation that drew again at wave time, or
+subsampled for attrition, would separate them.
+
+These are conditional on the units the master selected and on the frozen
+quotas. They are not the unconditional joint inclusion probabilities of the
+whole two-phase design, which also carry the master's own pairwise term.
+
+One limit remains. A wave cannot be replayed, because it is derived from a
+recorded execution rather than being one; save and replay the master instead.
 
 Finally, the schedule states which groups are live when. It does not
 replenish the sample: every group still comes from the frame vintage the
 master was drawn from, which is the scoping point above.
+
+### Estimating change across waves
+
+Two waves exported separately give two variances and no covariance, and the
+covariance is most of the answer. `stack_waves()` performs the structural half
+of the handoff: it verifies that the waves come from one executed master and
+returns a plain long table for an inference layer.
+
+```{r}
+tab <- stack_waves(
+  execute(equal_master, wave = 1),
+  execute(equal_master, wave = 2)
+)
+
+dim(tab)
+names(tab)[1:4]
+```
+
+Two of those names carry the contract. `design_weight` is the exact design
+weight including the activation factor, and is **not** a final weight: nothing
+here is adjusted for nonresponse or calibrated, so a routine asking for
+`w_final` is asking for something the analysis must supply. `master_id`
+matches units across waves of one master and means nothing outside it; in
+particular it is not a primary sampling unit, and a clustered design's own
+cluster variable is carried through for that.
+
+Verification is the reason to prefer this to `rbind()`. Two executions of one
+design produce the same `.sample_id` values, so waves of *different* masters
+stack silently even when the two frames share no unit at all, and the result
+matches units that were never the same unit.
+
+#### Two ways to get the variance of change wrong
+
+Write $V_\Delta = V_t + V_s - 2\rho\sqrt{V_t V_s}$. Both mistakes are
+common and they fail in opposite directions.
+
+Treating the waves as independent sets $\rho = 0$. That is conservative, and
+at high overlap it is severely so: on a 93% rotation it returns **thirteen
+times** the correct variance, so intervals are more than three times too wide
+and real changes go undetected.
+
+Inserting a correlation that is slightly too high is the dangerous one,
+because the error is amplified. To first order
+
+$$\text{RB}(\hat V_\Delta) \approx \frac{-2\rho\sqrt{V_t V_s}}{V_\Delta}\,\text{RB}(\hat\rho)$$
+
+which is $\rho/(\rho-1)$ when the two waves have equal variances. At
+$\rho = 0.93$ that multiplier is $-13.3$: a correlation **1% too high**
+understates the variance by 13%. The multiplier is a property of the
+correlation and the margins, not of the overlap, so it should be computed for
+the design in hand rather than read off a rotation pattern.
+
+The classical shortcut of taking the correlation from the matched sample and
+combining it with the full-sample variances [@kish1965] fails this way at
+every overlap, because it omits the factor $g$: it estimates how correlated a
+*unit* is with itself over time, where what is wanted is how correlated the
+two *estimators* are. It returned 14% of the correct variance in our
+simulations, with 95% intervals covering 50% of the time.
+
+#### Which route to use
+
+| Route | Needs | Behaviour |
+|---|---|---|
+| Berger--Priam form B [@bergerpriam2016] | Union sample, wave indicators, design strata when stratified, design weights | Calibrated from 7% to 93% overlap in the fixtures measured here: equal-probability masters, small wave fractions, randomized selection |
+| Berger--Priam form A | The same | Anti-conservative at high overlap: 78% of the variance, 89.5% coverage |
+| `vardpoor::vardchanges()` | A calibrated `w_final`, stable PSU | Reproduces form A exactly, and inherits its behaviour |
+| Independence | Nothing | Conservative; badly inefficient at high overlap |
+| Matched-sample correlation | The common sample | Not recommended at any overlap |
+
+All of these are approximate. Their consistency arguments assume a negligible
+sampling fraction and a high-entropy master, and the two assumptions do not
+behave alike here.
+
+**The sampling fraction matters, and the number is smaller than it sounds.**
+What counts is the fraction of the population in a *wave*, not in the master,
+and a rotation that keeps half its panels live puts half the master in each
+wave. Form B returns the right variance with nominal coverage at wave
+fractions of 2.5% and 5%. By 10% it returns 88% of the variance, by 15% its
+coverage is falling, and at 25% it returns 72% at 90% coverage. Form A is
+worse throughout.
+
+The mechanism is that the correlation construction carries no finite
+population correction while the correlation it estimates does: the true value
+falls as the fraction grows, the estimate stays put, and the resulting
+positive bias is amplified.
+
+In this high-overlap, equal-probability fixture, performance was calibrated
+through a 5% wave fraction, showed measurable degradation at 10%, and was
+clearly anti-conservative at 25%. **These are empirical landmarks, not
+universal cut-offs**: one population and one rotation cannot establish a
+threshold for a design you have not measured.
+
+**A systematic master is outside the validated guarantee**, and its failures
+are worth understanding because of how they present.
+
+Two things combine in any reported variance: the correlation, and the marginal
+variances. `samplyr` exports a systematic master through the
+equal-probability path, so those margins are the simple-random ones and are
+approximate for that design. The two errors can point in opposite directions
+and hide each other.
+
+They do. On a randomly ordered frame the correlation component is already
+displaced, 1.13 of the truth against 1.02 for simple random selection, while
+the reported variances look alike. Order the frame by a trend and the
+correlation component is 12% **anti**-conservative while the complete
+procedure is 29% **conservative**, the marginal approximation having
+overcompensated in the other direction. Give the outcome a period equal to the
+sampling interval and the correlation is under-estimated by 0.11 with the two
+waves almost perfectly correlated, yet the reported variance is 1.04 of the
+truth at 96% coverage.
+
+That last number looks healthy and is healthy only by cancellation, and the
+cancellation is enormous. Measured on the same fixture without any wave
+structure at all, a single systematic sample of a periodic frame has a true
+variance about **1,700 times** the one `as_svydesign()` reports, and its 95%
+intervals cover **10%** of the time. The change estimate looks fine because
+that error and the correlation error run opposite ways and very nearly cancel.
+
+So a reported number that looks right is not evidence that either component
+is, and the marginal variances of a systematic master deserve their own
+attention: see `?as_svydesign`.
+
+None of these routes has been validated here for multiple cohorts,
+nonresponse, calibration, or unequal-probability masters.
+
+#### A worked route
+
+Form B estimates the correlation from the common sample and multiplies by the
+overlap, which is the factor the classical shortcut omits. The marginal
+variances come from `samplyr`; only the correlation needs fitting, and that is
+one call to `lm()`.
+
+**This is the unstratified form**, which is what the master below uses. A
+stratified master needs the stratified specification of @bergerpriam2016
+[§4.1]: wave-specific stratum indicators and their interactions in place of
+the bare wave indicators. Form B additionally requires the common-sample
+fraction to be **the same** in every stratum, since it applies a single factor
+`g`, and unequal quotas can break that.
+
+```{r}
+w1 <- execute(equal_master, wave = 1)
+w2 <- execute(equal_master, wave = 2)
+w1$measure <- w1$revenue_millions
+w2$measure <- w2$revenue_millions * 1.03
+
+tab <- stack_waves(w1, w2)
+
+# Marginal variances: samplyr's per-wave export.
+v1 <- survey::SE(survey::svytotal(~measure, as_svydesign(w1)))^2
+v2 <- survey::SE(survey::svytotal(~measure, as_svydesign(w2)))^2
+
+# The union, with each wave's weighted measure zero-filled outside it.
+ids <- union(tab$master_id[tab$wave == 1], tab$master_id[tab$wave == 2])
+at <- function(w) match(ids, tab$master_id[tab$wave == w])
+y <- function(w) {
+  i <- at(w)
+  ifelse(is.na(i), 0,
+         (tab$measure * tab$design_weight)[tab$wave == w][i])
+}
+common <- !is.na(at(1)) & !is.na(at(2))
+g <- sum(common) / sum(!is.na(at(1)))
+
+# Form B: the common-sample residual correlation, times g. The model is the
+# paper's own -- wave indicators, their interaction, and no intercept.
+z1 <- as.integer(!is.na(at(1)))
+z2 <- as.integer(!is.na(at(2)))
+fit <- stats::lm(cbind(ifelse(common, y(1), 0), ifelse(common, y(2), 0)) ~
+                   -1 + z1 * z2)
+V <- stats::estVar(fit)
+rho <- V[1, 2] / sqrt(V[1, 1] * V[2, 2]) * g
+
+c(overlap = g, correlation = rho,
+  se_change = sqrt(v1 + v2 - 2 * rho * sqrt(v1 * v2)),
+  se_if_independent = sqrt(v1 + v2))
+```
+
+The two standard errors differ by the covariance, which is the quantity two
+separate exports cannot supply.
+
+The measure here is perfectly correlated across the two waves, and the
+estimator correlation comes out at the overlap itself. Do not read that as a
+rule. The overlap is the main driver, which is why a rotation keeping half its
+sample will not usually produce an estimator correlation much above a half
+however stable the measure is, and why reaching the amplified region takes a
+**high-overlap** design rather than merely a persistent one. But the two waves
+also share the master's own selection variation, so the correlation can sit
+**above** the overlap times the within-unit correlation: with 7% overlap and a
+near-perfectly correlated measure it was measured at 0.15, not 0.07. Compute
+it rather than predicting it.
 
 ### Attaching later waves to the sample
 

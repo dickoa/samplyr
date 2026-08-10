@@ -53,6 +53,16 @@ cover the function's enclosing environment: a registered function
 that reads from its environment can change behavior without
 changing its fingerprint.
 
+A panelized receipt carries a panel assignment record, and it is read
+before any panel argument is decoded from it. A record naming an
+assignment algorithm or a schema version this samplyr does not know is
+\code{samplyr_error_panel_record_unsupported} rather than a replay under the
+current law. A record that does not carry what the version it states
+requires, or that is not a set of named fields at all, is
+\code{samplyr_error_panel_record_malformed} rather than a repaired one: the
+assignment stage decides what the assignment units are, so filling in a
+missing one would replay a different assignment of the same sample.
+
 When the design was saved with a frame fingerprint, \code{frame} is
 compared against it before replaying. A differing frame still yields
 a valid sample, but not the recorded one, so the default is to error.

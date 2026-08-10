@@ -295,7 +295,7 @@ are documented where they are taught in depth:
 | Spatially balanced | `draw(method = "lpm2" or "scps", spread = c(lon, lat))` | `?selection-methods` |
 | Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across waves | `vignette("sampling-coordination")` |
 | Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `vignette("introduction")` |
-| Panel rotation | `execute(panels = 4)` | `vignette("design-semantics")` |
+| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `vignette("sampling-coordination")` |
 | Replicated draws | `execute(reps = 5)` | `?execute` |
 | Two-phase | pipe a `tbl_sample` into a new design's `execute()` | `vignette("survey-analysis")` |
 
@@ -310,6 +310,9 @@ sampling_design() |>
 # Four rotation groups, five independent replicates
 execute(design, bfa_eas, seed = 1, panels = 4)
 execute(design, bfa_eas, seed = 42, reps = 5)
+
+# Areas stay in the survey while the households inside them rotate
+execute(two_stage_design, frame, seed = 1, panels = 4, panel_stage = 2)
 ```
 
 ## Survey Export

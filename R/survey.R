@@ -20,6 +20,16 @@
 #'   is appropriate for most complex survey designs. It has no effect on a
 #'   two-phase sample, which is exported with [survey::twophase()]. Giving
 #'   it there raises a warning.
+#' @param systematic_variance What to do about the simple random sampling
+#'   variance approximation used for equal-probability `systematic` stages.
+#'   `"warn"` (default) applies it and warns once per call, naming every
+#'   affected stage; `"approximate"` applies it silently, for a caller who has
+#'   acknowledged it; `"error"` refuses. Census stages are exempt, since a
+#'   stage that took everything within reach contributes no variance, and
+#'   `pps_systematic` is unaffected, having its own treatment. The choice and
+#'   the affected stages are recorded on the returned object in the
+#'   `"samplyr_systematic_variance"` attribute. [as_svrepdesign()] takes the
+#'   same argument for its own approximation of these stages.
 #' @param method For two-phase samples, the variance method passed to
 #'   [survey::twophase()]. One of `"full"`, `"approx"`, or `"simple"`.
 #'   This argument is only accepted for two-phase samples.
@@ -92,6 +102,26 @@
 #' for example `phase2 <- execute(design2, phase1)`. That execution records a
 #' previous-phase link, and `as_svydesign()` calls [survey::twophase()].
 #'
+#' A materialized wave, `execute(master, wave = t)`, is the other two-phase
+#' provenance. Its second phase is the panel activation rather than an
+#' executed design: within a frozen block the master took a simple random
+#' sample without replacement of the realized quota, so the blocks are the
+#' phase-2 strata and their sizes the phase-2 population counts. The master
+#' is retained as the first phase and supplies the rows the wave did not
+#' keep, which [survey::twophase()] needs to build that phase. Columns added
+#' to the wave for analysis are carried into the exported design; columns the
+#' master already has keep the master's values.
+#'
+#' The activation is exact, but the first phase is only as expressible as
+#' [survey::twophase()] allows, which takes no `pps` specification there. A
+#' wave of a master with unequal inclusion probabilities is therefore refused
+#' rather than exported with a with-replacement approximation: `pps_*`
+#' methods, `cube`, first-stage `pps_poisson`, and the spatial methods, whose
+#' variance family is unsupported at either phase. Waves of equal-probability
+#' masters export, stratified, clustered, multistage and with-replacement
+#' alike. `as_svrepdesign()` does not build replicate weights for any
+#' two-phase sample, a wave included.
+#'
 #' An unclustered element-sampling stage *followed by further stages* is not
 #' nested cluster sampling (the later selections are conditional on the realized
 #' element sample, i.e. phase sampling). It can't be represented currently and
@@ -152,6 +182,42 @@
 #' frame ordering (see the `control` argument of [draw()]), the true
 #' variance can be smaller (favorable ordering) or larger (periodic
 #' ordering) than this estimate.
+#'
+#' The size of that gap is worth stating, because it is not always small. A
+#' systematic design with interval \eqn{k}{k} has only \eqn{k}{k} distinct
+#' samples per stratum, so its variance for one particular frame is a fixed
+#' quantity that need not sit near the SRSWOR value. Measured over repeated
+#' draws, 90 per stratum from 1800 with an interval of 20
+#' (`dev/experiments/systematic-export-margins.R` in the package sources):
+#'
+#' | frame order | reported / true variance | coverage of a 95% interval |
+#' |---|---|---|
+#' | random | 0.73 | 90.2% |
+#' | ordered by a trend | 1.76 | 100.0% |
+#' | period equal to the interval | 0.0006 | 9.8% |
+#'
+#' A favourable ordering is therefore conservative, which is the usual reason
+#' for choosing one, and a frame whose structure resonates with the sampling
+#' interval is not merely imprecise but reports intervals that almost never
+#' cover. Even an unstructured ordering is not guaranteed close. Where the
+#' frame may carry periodicity, prefer a randomized order or a design whose
+#' variance is estimable, and treat the exported standard error for a
+#' systematic stage as an approximation whose direction depends on the frame.
+#'
+#' Because a returned `survey.design` carries no sign that its variance model
+#' is approximate, the export says so once: see `systematic_variance`. The
+#' approximation is still supplied, since one systematic sample generally does
+#' not identify its own design variance, and refusing would leave the caller
+#' with nothing.
+#'
+#' Replicate weights are no way around this. [as_svrepdesign()] takes the same
+#' `systematic_variance` argument, because no replicate type on offer
+#' reconstructs a systematic sample's random start or its dependence on frame
+#' order; each resamples the realized sample as though its units had been
+#' drawn independently within strata. Requesting a particular type is
+#' therefore not an acknowledgement, and does not silence the condition. The
+#' figures in the table above were measured for the linearization export and
+#' are not a measurement of the replicate one.
 #'
 #' ## Variance estimation for PPS designs
 #'
@@ -407,6 +473,604 @@ survey_validate_phase_support <- function(
   phase_info
 }
 
+## The systematic variance approximation
+
+# `systematic` selection generally does not identify its own design variance
+# from one sample, which is why exporting it with the SRSWOR estimator is
+# standard practice. What is not defensible is returning an ordinary
+# survey.design silently: nothing downstream then records that the variance
+# model is an approximation, and the approximation can fail badly rather than
+# merely conservatively. On a frame whose period matches the sampling interval
+# the reported variance was measured at 0.0006 of the truth, with 95%
+# intervals covering 9.8% of the time.
+#
+# Replicate weights are in the same position for a different reason: a generic
+# resampler perturbs the realized sample without reproducing the random start
+# or the frame order that produced it, so it estimates the variance of a
+# design that was not run.
+#
+# So the approximation is still supplied by either export, and the caller is
+# told once.
+
+#' Equal-probability systematic stages whose variance is being approximated
+#'
+#' `pps_systematic` is excluded: its treatment is Brewer's, with its own
+#' semantics. A census stage is excluded too, since a stage that took
+#' everything within reach contributes no variance for the approximation to
+#' get wrong.
+#' @noRd
+systematic_approximated_stages <- function(design, stages_executed, df,
+                                           phase = NULL) {
+  affected <- vapply(stages_executed, function(stage_idx) {
+    method <- design$stages[[stage_idx]]$draw_spec$method
+    if (!identical(method, "systematic")) {
+      return(FALSE)
+    }
+    weight_col <- paste0(".weight_", stage_idx)
+    if (!weight_col %in% names(df)) {
+      return(TRUE)
+    }
+    # A sampling fraction of one at every unit: no variance to approximate.
+    !isTRUE(all.equal(unname(df[[weight_col]]), rep(1, nrow(df))))
+  }, logical(1))
+
+  lapply(stages_executed[affected], function(stage_idx) {
+    label <- design$stages[[stage_idx]]$label
+    list(
+      stage = stage_idx,
+      phase = phase,
+      name = if (is_null(label)) {
+        paste("stage", stage_idx)
+      } else {
+        paste0("stage ", stage_idx, " (", label, ")")
+      }
+    )
+  })
+}
+
+#' Tell the caller once, unless they have said they know
+#'
+#' The two exports approximate a systematic stage by different means, so the
+#' condition names the estimator actually in use. What they share is the
+#' cause, the argument that settles it, and the condition class.
+#' @noRd
+check_systematic_variance <- function(
+  stages,
+  choice,
+  approximation = c("srswor", "generic_replicates"),
+  fn_name = "as_svydesign",
+  call = caller_env()
+) {
+  if (length(stages) == 0 || identical(choice, "approximate")) {
+    return(invisible(NULL))
+  }
+  approximation <- match.arg(approximation)
+  named <- vapply(stages, function(s) {
+    if (is_null(s$phase)) s$name else paste0(s$name, ", phase ", s$phase)
+  }, character(1))
+
+  estimator <- if (identical(approximation, "srswor")) {
+    c(
+      "x" = "{.fn {fn_name}} is using a simple random sampling variance
+             approximation for {cli::qty(length(named))}{?it/them}.",
+      "i" = "Frame ordering or periodicity can make standard errors far too
+             small or too large. A frame whose period matches the sampling
+             interval has been measured at 0.0006 of the true variance, with
+             95% intervals covering 9.8% of the time. See
+             {.help as_svydesign}."
+    )
+  } else {
+    c(
+      "x" = "{.fn {fn_name}} is building generic replicate weights for
+             {cli::qty(length(named))}{?it/them}. They resample the realized
+             sample and do not reproduce the systematic selection mechanism
+             or its dependence on frame order.",
+      "i" = "Frame ordering or periodicity can make the resulting standard
+             errors too small or too large. The size of that gap has been
+             measured for the linearization export only: see
+             {.help as_svydesign}."
+    )
+  }
+
+  bullets <- c(
+    "{cli::qty(length(named))}{?A stage/Stages} of this design used
+     equal-probability systematic sampling: {named}.",
+    estimator,
+    "i" = "Use {.code systematic_variance = \"approximate\"} to accept the
+           approximation, or {.code \"error\"} to refuse it."
+  )
+
+  if (identical(choice, "error")) {
+    abort_samplyr(
+      bullets,
+      class = "samplyr_error_systematic_variance",
+      call = call
+    )
+  }
+  cli_warn(bullets, class = "samplyr_warning_systematic_variance")
+  invisible(NULL)
+}
+
+#' Leave the decision on the exported object
+#'
+#' A survey design object carries no sign of which variance model produced it,
+#' so what was approximated and whether the caller had said they knew is
+#' recorded where a later reader can find it.
+#' @noRd
+record_systematic_variance <- function(result, stages, choice, approximation) {
+  attr(result, "samplyr_systematic_variance") <- list(
+    approximation = if (length(stages) > 0) approximation else NULL,
+    stages = vapply(stages, function(s) s$name, character(1)),
+    acknowledged = choice
+  )
+  result
+}
+
+## Export of a materialized wave
+
+# A wave is a two-phase sample whose second phase is the panel activation.
+# Phase 1 is the master, exported the way any first phase is. Phase 2 is not
+# an executed design: the units were assigned when the master was drawn, so
+# its identifiers, strata and population counts come from the frozen
+# assignment record rather than from a sampling_design. Within a block the
+# activation is a simple random sample without replacement of the realized
+# quota, which is what makes the phase exact.
+
+#' @noRd
+survey_is_activation <- function(phase_info) {
+  identical(phase_info$prev_phase$transition, "panel_activation")
+}
+
+#' A wave must carry the master it was activated from
+#'
+#' [survey::twophase()] builds the first-phase design from every phase-1 row
+#' and marks the active ones with `subset`, so the master's rows are needed
+#' and nothing can reconstruct the units the wave did not keep.
+#' @noRd
+check_wave_carries_master <- function(
+  x,
+  phase_info,
+  fn_name,
+  call = caller_env()
+) {
+  metadata <- attr(x, "metadata")
+  if (is_null(metadata$wave) || survey_is_activation(phase_info)) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "{.fn {fn_name}} needs the master this wave was activated from.",
+      "x" = "This sample realizes wave {metadata$wave$wave} but carries no
+             link to it.",
+      "i" = "The master is the first phase of the export, so materialize the
+             wave again from it:
+             {.code execute(master, wave = {metadata$wave$wave})}."
+    ),
+    class = "samplyr_error_wave_no_master",
+    call = call
+  )
+}
+
+#' Which master designs an activation can be exported on top of
+#'
+#' [survey::twophase()] takes no `pps` specification at phase 1, so a master
+#' whose units carry unequal inclusion probabilities has no exact
+#' linearization there. Dropping the specification would return the
+#' with-replacement approximation without saying so.
+#' @noRd
+check_activation_phase1_supported <- function(
+  design,
+  stages_executed,
+  fpc,
+  call = caller_env()
+) {
+  kinds <- vapply(
+    stages_executed,
+    function(i) survey_stage_kind(design$stages[[i]]$draw_spec),
+    character(1)
+  )
+
+  if (any(kinds == "unsupported")) {
+    methods <- vapply(
+      stages_executed[kinds == "unsupported"],
+      function(i) design$stages[[i]]$draw_spec$method,
+      character(1)
+    )
+    abort_samplyr(
+      c(
+        "Cannot export a wave of a master drawn with
+         method{?s} {.val {methods}}.",
+        "i" = "No linearization variance estimator is available for this
+               method and its declared constraints, at either phase.",
+        "i" = "Export the master itself with
+               {.code as_svrepdesign(type = \"subbootstrap\")} for a
+               bootstrap approximation of its own variance."
+      ),
+      class = "samplyr_error_custom_random_wor_export",
+      call = call
+    )
+  }
+
+  if (identical(fpc$scale, "count")) {
+    return(invisible(NULL))
+  }
+
+  methods <- vapply(
+    stages_executed,
+    function(i) design$stages[[i]]$draw_spec$method,
+    character(1)
+  )
+  abort_samplyr(
+    c(
+      "Cannot export a wave of a master drawn with
+       method{?s} {.val {unique(methods)}}.",
+      "x" = "{.fn survey::twophase} takes no {.arg pps} specification at
+             phase 1, so the master's unequal inclusion probabilities have no
+             exact treatment there.",
+      "i" = "The activation weights in {.field .weight} are exact and
+             estimate totals correctly; it is the variance that has no exact
+             form.",
+      "i" = "Export the master itself for its own exact variance:
+             {.code as_svydesign(master)}."
+    ),
+    class = "samplyr_error_wave_phase1_pps",
+    call = call
+  )
+}
+
+#' The phase-1 sample must be the realization the activation was computed on
+#'
+#' Two executions of one design produce the same `.sample_id` values, because
+#' those are row positions, so a substituted master of the same shape would
+#' pass every structural check while supplying different non-active rows.
+#' @noRd
+check_wave_master_identity <- function(metadata, master, call = caller_env()) {
+  recorded <- metadata$wave$master_digest
+  if (
+    is_null(recorded) || identical(recorded, wave_source_digest(master))
+  ) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "This wave was activated from a different realization.",
+      "x" = "The sample held as its first phase is not the one wave
+             {metadata$wave$wave} was computed against.",
+      "i" = "Materialize the wave again from the master it belongs to."
+    ),
+    class = "samplyr_error_wave_master_mismatch",
+    call = call
+  )
+}
+
+#' Phase-2 columns of an activation, from the frozen assignment record
+#'
+#' The block a unit sits in, the block's size in assignment units, and the
+#' conditional probability the recorded quotas give it. `active` comes from
+#' the wave's own rows rather than from recomputing the panel test, so the
+#' exported subset is the sample the user holds.
+#' @noRd
+activation_phase2_columns <- function(df1, x, metadata, call = caller_env()) {
+  # The keys, blocks and quotas below are this algorithm's and this schema's,
+  # so the record is read under the version it states before any of them is
+  # used. An export is where a misread record becomes a design object that
+  # looks estimable, which is the worst place to discover the law was never
+  # checked.
+  record <- prepare_panel_record(
+    metadata$panel_assignment,
+    "A survey export",
+    call = call
+  )
+  wave_pools <- metadata$wave$pools
+
+  cols <- list(
+    unit = free_column_name(df1, ".activation_unit"),
+    block = free_column_name(df1, ".activation_block"),
+    block_n = free_column_name(df1, ".activation_block_N"),
+    prob = free_column_name(df1, ".activation_prob"),
+    weight = free_column_name(df1, ".activation_weight"),
+    active = free_column_name(df1, ".active"),
+    prob1 = free_column_name(df1, ".prob_1")
+  )
+
+  keys <- make_group_key(df1, record$key_vars)
+  block <- rep(NA_character_, nrow(df1))
+  block_n <- rep(NA_real_, nrow(df1))
+  prob <- rep(NA_real_, nrow(df1))
+
+  for (p in seq_along(record$pools)) {
+    pool <- record$pools[[p]]
+    at <- match(keys, pool$keys)
+    rows <- which(!is.na(at))
+    b <- rep(seq_along(pool$blocks), pool$blocks)[at[rows]]
+    block[rows] <- paste(p, b, sep = ".")
+    block_n[rows] <- pool$blocks[b]
+    prob[rows] <- wave_pools[[p]]$probability[b]
+  }
+
+  if (anyNA(block)) {
+    abort_samplyr(
+      c(
+        "The assignment record does not cover every row of the master.",
+        "x" = "{sum(is.na(block))} row{?s} belong{?s/} to no assignment
+               pool.",
+        "i" = "Materialize the wave again from the master."
+      ),
+      class = "samplyr_error_wave_master_mismatch",
+      call = call
+    )
+  }
+
+  df1[[cols$unit]] <- group_ids(df1, record$key_vars)
+  df1[[cols$block]] <- block
+  df1[[cols$block_n]] <- block_n
+  df1[[cols$active]] <- df1$.sample_id %in% x$.sample_id
+  df1[[cols$prob]] <- ifelse(df1[[cols$active]], prob, NA_real_)
+  df1[[cols$weight]] <- ifelse(df1[[cols$active]], 1 / prob, NA_real_)
+  df1[[cols$prob1]] <- 1 / df1$.weight
+
+  check_activation_take(df1, cols, call = call)
+
+  list(df = df1, cols = cols)
+}
+
+#' The realized take must be the take the record froze
+#'
+#' Counting the active assignment units of each block reproduces `a_bt`, so a
+#' wave whose rows do not belong to the master it names is caught here rather
+#' than silently exported against the wrong first phase.
+#' @noRd
+check_activation_take <- function(df1, cols, call = caller_env()) {
+  units <- !duplicated(df1[[cols$unit]])
+  by_block <- split(
+    data.frame(
+      active = df1[[cols$active]][units],
+      n = df1[[cols$block_n]][units],
+      p = df1[[cols$prob]][units]
+    ),
+    df1[[cols$block]][units]
+  )
+  bad <- vapply(
+    by_block,
+    function(b) {
+      take <- sum(b$active)
+      expected <- unique(b$p[b$active])
+      length(expected) > 1L ||
+        (take > 0L && !isTRUE(all.equal(take / b$n[1], expected)))
+    },
+    logical(1)
+  )
+  if (any(bad)) {
+    abort_samplyr(
+      c(
+        "The active rows do not match the activation the master recorded.",
+        "x" = "{sum(bad)} block{?s} {?has/have} a realized take that is not
+               the frozen quota.",
+        "i" = "This wave and the master it carries describe different
+               executions. Materialize it again from the master."
+      ),
+      class = "samplyr_error_wave_master_mismatch",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' Can a phase's inclusion probabilities be read off its correction?
+#'
+#' [survey::twophase()] derives each phase's weights from its finite
+#' population correction when no probability is given, so the correction has
+#' to state every stage's probability. It does not when a stage contributed no
+#' term, which is what an unclustered stage does at a phase (it carries no
+#' identifier there), and it does not when a term is infinite, which is what a
+#' with-replacement stage has instead of a population count. In both cases the
+#' phase's own weight is the exact probability and is passed instead.
+#' @noRd
+fpc_states_all_probabilities <- function(
+  df,
+  formula,
+  fpc_vars,
+  stage_indices,
+  stages_executed
+) {
+  # survey_fpc_info() falls back to the first executed stage when no stage
+  # contributed an identifier, which is what a lone unclustered stage does:
+  # there the one term does state the one probability.
+  covered <- if (length(stage_indices) == 0) {
+    stages_executed[1]
+  } else {
+    stage_indices
+  }
+  !is_null(formula) &&
+    length(covered) == length(stages_executed) &&
+    all(vapply(
+      fpc_vars,
+      function(v) all(is.finite(df[[v]])),
+      logical(1)
+    ))
+}
+
+#' The `method = "full"` covariance needs one probability per stage
+#'
+#' Shared with the generic two-phase path: a single overall probability makes
+#' survey fail inside covariance construction rather than report anything.
+#' @noRd
+check_twophase_stage_probs <- function(
+  n_id_stages,
+  use_weights,
+  fpc_covers_stages,
+  call = caller_env()
+) {
+  if (use_weights || fpc_covers_stages || n_id_stages <= 1) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "This two-phase design cannot be exported with
+       {.code method = \"full\"}.",
+      "x" = "It has {n_id_stages} identifier stages but no finite
+             population correction to derive their per-stage
+             probabilities from.",
+      "i" = "Use {.code method = \"simple\"} or {.code \"approx\"}, which
+             use the design weights directly."
+    ),
+    class = "samplyr_error_twophase_stage_probs",
+    call = call
+  )
+}
+
+#' Does the activation retain every unit with certainty?
+#'
+#' Read from the realized per-block activation probabilities rather than from
+#' the pool classes, so it covers every route to an identity: all pools
+#' permanent, and a wave that activates every panel. A record with no pools
+#' states nothing and is not treated as an identity.
+#' @noRd
+activation_is_identity <- function(metadata) {
+  pools <- metadata$wave$pools
+  if (is_null(pools) || length(pools) == 0L) {
+    return(FALSE)
+  }
+  probability <- unlist(lapply(pools, function(pool) pool$probability))
+  length(probability) > 0L && all(probability == 1)
+}
+
+#' Export a materialized wave through survey::twophase()
+#' @noRd
+build_activation_twophase <- function(
+  x,
+  prev_phase,
+  method,
+  dots,
+  call = caller_env()
+) {
+  master <- prev_phase$sample
+  design1 <- prev_phase$design %||% get_design(master)
+  stages1 <- prev_phase$stages %||% get_stages_executed(master)
+  metadata <- attr(x, "metadata")
+
+  # A cohort drawn whole has one implicit panel covering all its rows, so
+  # activating it is not a subsample: there is no second phase to carry.
+  #
+  # An activation whose every probability is one is the same situation reached
+  # by a different route: every unit of the master is retained with certainty,
+  # so the conditional phase-2 variance is exactly zero and the design's
+  # variance is the master's alone. It arises when every pool is permanent,
+  # whether by selection certainty or by small-pool promotion, and when a
+  # wave activates every panel. Representing it as two phases is not merely
+  # redundant, it is a different design from the one that was drawn, and
+  # survey can fail outright on it: an identity phase 2 over singleton
+  # phase-1 strata aborts inside `twophase()` with a subscript error.
+  if (is_null(metadata$panel_assignment) || activation_is_identity(metadata)) {
+    return(build_singlephase_svydesign(
+      x,
+      dots = dots,
+      nest = TRUE,
+      relax_pps_for_bootstrap = FALSE
+    ))
+  }
+
+  check_wave_master_identity(metadata, master, call = call)
+
+  df1 <- as.data.frame(master)
+
+  id_info <- survey_id_info(
+    design1,
+    stages1,
+    df1,
+    synthesize_unclustered = TRUE,
+    prefix = "p1_"
+  )
+  df1 <- id_info$df
+  strata1 <- survey_strata_info(
+    df1,
+    design1,
+    stages1,
+    mode = "first_stage",
+    prefix = "p1_"
+  )
+  df1 <- strata1$df
+  fpc1 <- survey_fpc_info(df1, design1, stages1, id_info$stage_indices)
+  df1 <- fpc1$df
+
+  check_activation_phase1_supported(design1, stages1, fpc1, call = call)
+
+  phase2 <- activation_phase2_columns(df1, x, metadata, call = call)
+  df1 <- phase2$df
+  cols <- phase2$cols
+
+  # Variables the analysis added to the wave. Columns the master already
+  # carries keep the master's values: they are the phase-1 sample's own.
+  carried <- setdiff(names(as.data.frame(x)), names(df1))
+  if (length(carried) > 0) {
+    at <- match(df1$.sample_id, x$.sample_id)
+    for (nm in carried) {
+      df1[[nm]] <- as.data.frame(x)[[nm]][at]
+    }
+  }
+
+  pps_arg <- dots[["pps"]]
+  dots[["pps"]] <- NULL
+
+  use_weights <- !is_null(method) && method %in% c("approx", "simple")
+  n_id_stages <- max(length(id_info$id_vars), 1L)
+  # Phase 2 always states its correction, so only the master can fail to.
+  fpc_covers_stages <- fpc_states_all_probabilities(
+    df1,
+    fpc1$formula,
+    fpc1$fpc_vars,
+    id_info$stage_indices,
+    stages1
+  )
+  check_twophase_stage_probs(
+    n_id_stages,
+    use_weights,
+    fpc_covers_stages,
+    call = call
+  )
+
+  probs_arg <- if (use_weights || fpc_covers_stages) {
+    NULL
+  } else {
+    list(
+      survey_formula_from_vars(cols$prob1),
+      survey_formula_from_vars(cols$prob)
+    )
+  }
+  weights_arg <- if (use_weights) {
+    list(
+      stats::as.formula("~.weight"),
+      survey_formula_from_vars(cols$weight)
+    )
+  } else {
+    NULL
+  }
+
+  do.call(
+    survey::twophase,
+    c(
+      list(
+        id = list(
+          survey_ids_formula(id_info$id_vars),
+          survey_formula_from_vars(cols$unit)
+        ),
+        strata = list(
+          strata1$formula,
+          survey_formula_from_vars(cols$block)
+        ),
+        probs = probs_arg,
+        weights = weights_arg,
+        fpc = list(fpc1$formula, survey_formula_from_vars(cols$block_n)),
+        subset = survey_formula_from_vars(cols$active),
+        data = df1,
+        method = method,
+        pps = pps_arg
+      ),
+      dots
+    )
+  )
+}
+
 #' Classify a stage's selection method for variance export.
 #'
 #' Single source of truth for the method-combination matrix: every
@@ -658,10 +1322,20 @@ survey_key_vars <- function(design, stages_executed, df) {
 #'   element stage followed by further stages cannot be expressed as
 #'   nested cluster sampling and aborts.
 #'
-#' `synthesize_unclustered = FALSE` keeps the legacy behavior of
-#' skipping unclustered WOR stages. It is used by the two-phase path,
-#' where survey::twophase() handles between-phase subsampling variance
-#' itself.
+#' `synthesize_unclustered = FALSE` skips unclustered WOR stages. Only
+#' phase 2 of a two-phase export uses it: its stages describe the
+#' subsampling that survey::twophase() links across the phases itself.
+#' Phase 1 synthesizes, because its stages are internal to that phase
+#' and dropping one drops its variance contribution while leaving the
+#' export claiming `method = "full"`.
+#'
+#' No reachable design exercises the phase-2 case. It would need a
+#' phase 2 of two or more stages whose last one is unclustered, and a
+#' bridge that resolves: the bridge needs a row-unique identifier from
+#' one of the phases, phase 2 does not declare one when its last stage
+#' is unclustered, and when phase 1 declares one instead,
+#' `check_phase_key_invariance()` refuses the execution because that
+#' identifier is not constant within phase 2's own clusters.
 #'
 #' `prefix` disambiguates synthesized column names when two designs
 #' share one data frame (two-phase export).
@@ -1208,10 +1882,13 @@ svrepdesign_derived_args <- "design"
 
 #' @rdname as_svydesign
 #' @export
-as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
+as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
+                                   systematic_variance = c("warn",
+                                                           "approximate",
+                                                           "error")) {
+  systematic_variance <- match.arg(systematic_variance)
   check_single_replicate(x, "as_svydesign")
   check_sample_unmodified(x, "as_svydesign")
-  check_no_materialized_wave(x, "as_svydesign")
   rlang::check_installed(
     "survey",
     reason = "to convert a tbl_sample to a survey design object."
@@ -1222,14 +1899,16 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
     allow_twophase = TRUE,
     fn_name = "as_svydesign"
   )
+  check_wave_carries_master(x, phase_info, "as_svydesign")
   prev_phase <- phase_info$prev_phase
   is_twophase <- phase_info$is_twophase
+  is_activation <- survey_is_activation(phase_info)
 
   # The two branches call different survey functions, so what `...` may
   # legitimately carry differs: `subset` belongs to twophase() alone.
   check_forwarded_args(
     enquos(...),
-    owned = c("nest", "method"),
+    owned = c("nest", "method", "systematic_variance"),
     accepted = if (is_twophase) {
       twophase_accepted_args
     } else {
@@ -1274,6 +1953,46 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
 
   df <- as.data.frame(x)
 
+  # Every design contributing to the export is examined, not only this
+  # sample's: a two-phase or activation export can carry a systematic first
+  # phase whose approximation the caller never sees named.
+  systematic_stages <- systematic_approximated_stages(
+    design, stages_executed, df,
+    phase = if (is_twophase) 2L else NULL
+  )
+  if (is_twophase) {
+    previous <- prev_phase$sample
+    systematic_stages <- c(
+      systematic_approximated_stages(
+        prev_phase$design %||% get_design(previous),
+        prev_phase$stages %||% get_stages_executed(previous),
+        as.data.frame(previous),
+        phase = 1L
+      ),
+      systematic_stages
+    )
+  }
+  check_systematic_variance(
+    systematic_stages,
+    systematic_variance,
+    approximation = "srswor"
+  )
+
+  record_systematic <- function(result) {
+    record_systematic_variance(
+      result, systematic_stages, systematic_variance, "srswor"
+    )
+  }
+
+  if (is_activation) {
+    return(record_systematic(build_activation_twophase(
+      x,
+      prev_phase = prev_phase,
+      method = method,
+      dots = list(...)
+    )))
+  }
+
   if (is_twophase) {
     phase1 <- prev_phase$sample
     # The phase-2 sample itself is clean (checked above), but the
@@ -1313,7 +2032,7 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
       design1,
       stages1,
       df1,
-      synthesize_unclustered = FALSE,
+      synthesize_unclustered = TRUE,
       prefix = "p1_"
     )
     df1 <- id_info1$df
@@ -1457,22 +2176,24 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
     n_id_stages <- max(
       length(id_info1$id_vars), length(id_vars2)
     )
-    fpc_covers_stages <- !is_null(fpc1$formula) && !is_null(fpc2_formula)
-
-    if (!use_weights && !fpc_covers_stages && n_id_stages > 1) {
-      abort_samplyr(
-        c(
-          "This two-phase design cannot be exported with
-           {.code method = \"full\"}.",
-          "x" = "It has {n_id_stages} identifier stages but no finite
-                 population correction to derive their per-stage
-                 probabilities from.",
-          "i" = "Use {.code method = \"simple\"} or {.code \"approx\"}, which
-                 use the design weights directly."
-        ),
-        class = "samplyr_error_twophase_stage_probs"
+    fpc_covers_stages <- fpc_states_all_probabilities(
+      df_combined,
+      fpc1$formula,
+      fpc1$fpc_vars,
+      id_info1$stage_indices,
+      stages1
+    ) &&
+      fpc_states_all_probabilities(
+        # Phase-2 columns are absent on the rows phase 2 did not reach, which
+        # is what `subset` already says. Only the phase-2 rows are read.
+        df_combined[df_combined$.phase2, , drop = FALSE],
+        fpc2_formula,
+        fpc2_vars_renamed,
+        id_info2$stage_indices,
+        stages_executed
       )
-    }
+
+    check_twophase_stage_probs(n_id_stages, use_weights, fpc_covers_stages)
 
     probs_arg <- if (use_weights || fpc_covers_stages) {
       NULL
@@ -1509,14 +2230,14 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL) {
       )
     )
 
-    result
+    record_systematic(result)
   } else {
-    build_singlephase_svydesign(
+    record_systematic(build_singlephase_svydesign(
       x,
       dots = list(...),
       nest = nest,
       relax_pps_for_bootstrap = FALSE
-    )
+    ))
   }
 }
 
@@ -1633,6 +2354,15 @@ build_singlephase_svydesign <- function(
 #'   is matched exactly, and a near miss such as `typ` is reported rather
 #'   than forwarded. `design` cannot be given here: it is the
 #'   [survey::svydesign()] object this verb builds from the sample.
+#' @param systematic_variance What to do about the generic replicate weights
+#'   built for equal-probability `systematic` stages. `"warn"` (default) builds
+#'   them and warns once per call, naming every affected stage;
+#'   `"approximate"` builds them silently, for a caller who has acknowledged
+#'   the approximation; `"error"` refuses. Naming a `type` is not an
+#'   acknowledgement, since no type reproduces systematic selection. Census
+#'   stages are exempt and `pps_systematic` is unaffected, as in
+#'   [as_svydesign()]. The choice and the affected stages are recorded on the
+#'   returned object in the `"samplyr_systematic_variance"` attribute.
 #'
 #' @return A `svyrep.design` object from the survey package.
 #'
@@ -1678,6 +2408,18 @@ build_singlephase_svydesign <- function(
 #' replicate. Treat the resulting variance estimates as approximations, not
 #' as exact variance estimators for those designs.
 #'
+#' ## Equal-probability systematic sampling
+#'
+#' Equal-probability `systematic` stages are in the same position, for every
+#' replicate type rather than for a subset of them. A jackknife or bootstrap
+#' replicate perturbs the realized sample; it does not redraw a random start
+#' against the frame in the order the frame was in, which is what generates a
+#' systematic sample's variance. Frame ordering or periodicity can therefore
+#' make the resulting standard errors too small or too large, in the same
+#' direction that ordering moves the true variance. See `systematic_variance`,
+#' and [as_svydesign()] for how large the analogous gap was measured to be
+#' under linearization.
+#'
 #' @examplesIf requireNamespace("survey", quietly = TRUE)
 #' sample <- sampling_design() |>
 #'   stratify_by(region, alloc = "proportional") |>
@@ -1710,11 +2452,12 @@ as_svrepdesign.tbl_sample <- function(
     "subbootstrap",
     "mrbbootstrap",
     "Fay"
-  )
+  ),
+  systematic_variance = c("warn", "approximate", "error")
 ) {
+  systematic_variance <- match.arg(systematic_variance)
   check_single_replicate(x, "as_svrepdesign")
   check_sample_unmodified(x, "as_svrepdesign")
-  check_no_materialized_wave(x, "as_svrepdesign")
   rlang::check_installed(
     "survey",
     reason = "to convert a tbl_sample to a replicate-weight survey design."
@@ -1722,7 +2465,7 @@ as_svrepdesign.tbl_sample <- function(
 
   check_forwarded_args(
     enquos(...),
-    owned = "type",
+    owned = c("type", "systematic_variance"),
     accepted = svrepdesign_accepted_args,
     derived = svrepdesign_derived_args,
     forwarded_to = "survey::as.svrepdesign"
@@ -1758,6 +2501,19 @@ as_svrepdesign.tbl_sample <- function(
     ))
   }
 
+  # No replicate type reproduces a systematic stage, so asking for one is not
+  # itself an acknowledgement. Checked before the conversion, so `"error"`
+  # refuses rather than building weights it then throws away.
+  systematic_stages <- systematic_approximated_stages(
+    design, get_stages_executed(x), as.data.frame(x)
+  )
+  check_systematic_variance(
+    systematic_stages,
+    systematic_variance,
+    approximation = "generic_replicates",
+    fn_name = "as_svrepdesign"
+  )
+
   svydesign_obj <- build_singlephase_svydesign(
     x,
     dots = list(),
@@ -1765,7 +2521,7 @@ as_svrepdesign.tbl_sample <- function(
     relax_pps_for_bootstrap = type %in% pps_safe_types
   )
 
-  tryCatch(
+  result <- tryCatch(
     survey::as.svrepdesign(design = svydesign_obj, type = type, ...),
     error = function(e) {
       abort_samplyr(
@@ -1776,6 +2532,10 @@ as_svrepdesign.tbl_sample <- function(
         class = "samplyr_error_svrep_conversion_failed"
       )
     }
+  )
+
+  record_systematic_variance(
+    result, systematic_stages, systematic_variance, "generic_replicates"
   )
 }
 

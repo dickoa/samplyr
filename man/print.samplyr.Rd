@@ -4,11 +4,17 @@
 \alias{print.samplyr}
 \alias{print.sampling_design}
 \alias{tbl_sum.tbl_sample}
+\alias{print.rotation_program}
+\alias{print.rotation_wave}
 \title{Print methods for samplyr objects}
 \usage{
 \method{print}{sampling_design}(x, ...)
 
 \method{tbl_sum}{tbl_sample}(x, ...)
+
+\method{print}{rotation_program}(x, ...)
+
+\method{print}{rotation_wave}(x, ...)
 }
 \arguments{
 \item{x}{Object to print}

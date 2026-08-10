@@ -350,6 +350,8 @@ Files carry a `format_version` so that future versions of `samplyr` can read (an
 
 A file is written at the lowest version that carries its content without being misread. Version 2 is used only when the file records one register per stage, because a version 1 reader would replay it against a single frame and produce a different sample without saying so. Everything else is still written at version 1 and stays readable by older samplyr.
 
+A panelized receipt carries a second version, its own: the panel assignment record states the algorithm that drew the labels and the schema version its fields were written under. That stamp is read before the fields are, because the fields mean what that version says they mean. A record naming an algorithm or a version this samplyr does not know is refused rather than decoded, and a record numbered 3 that does not state its assignment stage, its unit type and its key and pool columns is refused as malformed rather than filled in: the stage decides what the assignment units are, so guessing it would replay a different assignment of the same sample instead of failing. A file carrying a bare value where the record belongs is refused the same way, since a record is a set of named fields and a value that states no algorithm and no version says nothing about how the labels were drawn. Records written by earlier versions are read as what they are, and their assignment stage comes from their version, which could only ever be the first stage.
+
 ```{r, include = FALSE}
 unlink(path)
 ```

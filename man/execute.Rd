@@ -10,6 +10,8 @@ execute(
   stages = NULL,
   seed = NULL,
   panels = NULL,
+  panel_stage = NULL,
+  small_pool = NULL,
   reps = NULL,
   wave = NULL,
   frame_digest = c("summary", "full", "none")
@@ -53,8 +55,8 @@ Default (\code{NULL}) executes all remaining stages.}
 \item{panels}{Rotation groups (panels) to partition the sample into for
 rotation or workload management, as either an integer count or a
 rotation schedule. Assignment is a randomized fixed-quota partition
-within the first-stage selection strata: every unit carries each panel
-with probability \code{1 / panels}. It is not an additional
+within the assignment stage's selection strata: every unit carries each
+panel with probability \code{1 / panels}. It is not an additional
 probability-sampling phase. The output includes a \code{.panel} column with
 values 1 through the panel count. Default \code{NULL} means no panel
 partitioning. Cannot be used together with \code{reps}, and cannot be
@@ -65,6 +67,46 @@ A schedule is a data frame with an integer \code{panel} column, an integer
 left out is inactive. It declares the panel count and, through the
 fewest panels any wave activates, the assignment block size. Only a
 sample drawn with a schedule can be materialized by \code{wave}.}
+
+\item{panel_stage}{Stage whose selected units are assigned to panels, as a
+single stage number, or \code{NULL} (the default) for the first executed
+stage. Accepted only alongside \code{panels}, and the stage must be one the
+execution completes. Every later stage inherits its ancestor's panel, so
+assigning at stage 1 rotates whole primary units while assigning lower
+down rotates units inside parents that stay in the survey: the
+address-panel design, in which selected areas are retained and households
+rotate within them.
+
+Pools are then the assignment stage's strata inside each realized parent,
+so they are smaller than first-stage pools and \code{small_pool} matters more.
+Selection certainty counts only at the assignment stage, in both
+directions: a certainty primary unit does not make its households
+permanent, and a certainty selection below the assignment stage does not
+keep its household in every wave. A stage that selects with replacement
+assigns realized draw occurrences, so one population unit selected twice
+may take two different panels; a parent selected twice likewise gives two
+separate populations of households, and a household reached under both
+hits is assigned once for each.
+
+Assigning below the first stage is not a default and should not be
+treated as one. Holding the parent fixed while its members rotate can
+bias cross-sectional estimates over time, and a unit that cannot move
+between parents is balanced for net change but not for gross change.}
+
+\item{small_pool}{What to do when a rotation schedule would leave a pool
+with no unit to activate, as \code{"error"} (the default, reached by \code{NULL})
+or \code{"permanent"}. A pool of \code{m} units leaves \code{panels - m} panels empty,
+so a wave activating \code{r} of them selects nothing from that pool when
+\code{m <= panels - r}. Those units then have inclusion probability zero in
+that wave rather than a small weight, so the wave's estimator is biased.
+\code{"error"} refuses such an assignment, before any panel is drawn, and
+names the pools. \code{"permanent"} instead activates them at every wave with
+probability one, warning that it has done so, which is exact but changes
+the operational design: wave sizes, overlap and repeated interviewing all
+increase. Meaningful only with a schedule, since a panel count declares
+no wave to protect. This governs positivity only: a pool with a positive
+but single active unit is still assigned, and is still marked as carrying
+no within-block variance estimate.}
 
 \item{reps}{Integer number of independent replicate samples to draw (>= 2),
 or \code{NULL} (default) for a single sample. When specified, \code{execute()} draws
@@ -82,8 +124,8 @@ samples), not replicate-weight variance estimation. For the latter, see
 (default). \code{execute(master, wave = t)} activates the panels the stored
 schedule declares active at \code{t} and compounds the exact activation
 factor into \code{.weight}. It takes no other execution input: no frame, no
-\code{seed}, \code{stages}, \code{panels} or \code{reps}, since a wave selects units the
-master already assigned.}
+\code{seed}, \code{stages}, \code{panels}, \code{small_pool} or \code{reps}, since a wave selects
+units the master already assigned, under the policy the master froze.}
 
 \item{frame_digest}{Controls the frame digest, a compact execution
 manifest recorded with the sample and read by \code{\link[=frame_summary]{frame_summary()}}.
@@ -264,29 +306,37 @@ for the population total.
 When \code{panels} is specified, the sample is partitioned into non-overlapping
 groups for rotation or workload management.
 
-Assignment is randomized with fixed quotas. Within each first-stage
-selection stratum the assignment units are ordered, cut into consecutive
-blocks of \code{2 * panels}, given a fixed quota per panel inside each block,
-and permuted within their block. Every unit therefore carries each panel
-with probability \code{1 / panels}, and panel sizes within a stratum differ by
-at most one.
+Assignment is randomized with fixed quotas. Within each selection stratum
+of the assignment stage the assignment units are ordered, cut into
+consecutive blocks of \code{2 * panels}, given a fixed quota per panel inside
+each block, and permuted within their block. Every unit therefore carries
+each panel with probability \code{1 / panels}, and panel sizes within a pool
+differ by at most one.
 
 Blocking is what preserves order. Units adjacent in the \code{control} order of
-\code{draw()} fall in the same block, so every panel inherits the same spread
-over that order. A stratum holding fewer than \code{2 * panels} units is a
-single block: still assigned, simply with no block-level order structure
-left to preserve.
+the assignment stage's \code{draw()} fall in the same block, so every panel
+inherits the same spread over that order. A pool holding fewer than
+\code{2 * panels} units is a single block: still assigned, simply with no
+block-level order structure left to preserve.
 
-For multi-stage designs, panels are assigned at stage 1 (PSU level).
-All units within a PSU inherit the PSU's panel assignment. Under a
-with-replacement stage 1 the assignment unit is the realized draw, the
-unit the estimator uses, so one population cluster drawn twice may carry
-two different panels.
+For multi-stage designs, panels are assigned at stage 1 by default, and
+every unit below inherits its ancestor's panel. \code{panel_stage} moves the
+assignment to another stage, which is what expresses a design that retains
+its primary units and rotates the units inside them. A pool is then the
+assignment stage's strata inside each realized parent and never crosses a
+parent. Under a with-replacement assignment stage the assignment unit is
+the realized draw, the unit the estimator uses, so one population cluster
+drawn twice may carry two different panels.
 
 Certainty units are labelled from their own pools and consume no rotating
 quota. A certainty unit is in the sample at every occasion, so a schedule
 that rotated it out would sample the very units the certainty stratum
-exists to enumerate.
+exists to enumerate. Certainty counts only at the assignment stage, in both
+directions: a certainty primary unit does not make the units below it
+permanent when \code{panel_stage} names a lower stage, and a certainty selection
+at a stage below the assignment stage does not keep its assignment unit in
+every wave. A unit selected with probability one inside a rotating parent
+is absent from the waves that parent sits out.
 
 Panels are assigned once. \code{.panel} is carried forward by a stage
 continuation, and redeclaring \code{panels} on a sample that already carries an
@@ -325,10 +375,11 @@ probability one and their weights are untouched.
 
 A materialized wave is a sample in its own right, with its own integrity
 record: it is not a filtered master, and \code{frame_summary()} and the weight
-diagnostics work on it. Two things it cannot yet do are export to survey,
-because the activation phase is not yet carried through \code{twophase()}, and
-replay, because a wave is derived from a recorded execution rather than
-being one. Both refuse rather than answering approximately.
+diagnostics work on it. It retains the master as its first phase, so
+\code{\link[=as_svydesign]{as_svydesign()}} exports it through \code{\link[survey:twophase]{survey::twophase()}} with the
+activation as the second phase. What it cannot do is replay, because a wave
+is derived from a recorded execution rather than being one; that refuses
+rather than answering approximately.
 
 The schedule states which groups are live when. It does not replenish the
 sample: every panel comes from the frame vintage the master was drawn
@@ -458,6 +509,7 @@ be realized as written,
 
 Other execution:
 \code{\link{execution-conditions}},
+\code{\link[=rotation_program]{rotation_program()}},
 \code{\link[=validate_frame]{validate_frame()}}
 }
 \concept{execution}

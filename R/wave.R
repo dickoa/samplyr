@@ -25,6 +25,8 @@ materialize_wave <- function(
   stages,
   seed,
   panels,
+  panel_stage = NULL,
+  small_pool = NULL,
   reps,
   execution_environment,
   call = caller_env()
@@ -35,42 +37,125 @@ materialize_wave <- function(
     stages = stages,
     seed = seed,
     panels = panels,
+    panel_stage = panel_stage,
+    small_pool = small_pool,
     reps = reps,
     call = call
   )
   wave <- check_wave_declared(wave, record$schedule, call = call)
 
-  activation <- wave_activation(master, record, wave)
-  data <- as.data.frame(master)[activation$keep, , drop = FALSE]
+  schedule <- record$schedule
+  active <- schedule$panel[schedule$wave == wave & schedule$active]
+
+  build_wave_sample(
+    source = master,
+    record = record,
+    wave = wave,
+    activation = activate_cohort(master, record, active, call = call),
+    schedule_digest = rlang::hash(record$schedule),
+    execution_environment = execution_environment
+  )
+}
+
+#' Build the sample one activation realizes
+#'
+#' Shared by the single-master route and by each cohort of a rotation
+#' program, which differ only in where the active panel set comes from.
+#' @noRd
+build_wave_sample <- function(
+  source,
+  record,
+  wave,
+  activation,
+  schedule_digest,
+  execution_environment,
+  extra = list()
+) {
+  data <- as.data.frame(source)[activation$keep, , drop = FALSE]
   data$.weight <- data$.weight * activation$factor[activation$keep]
   rownames(data) <- NULL
 
-  design <- get_design(master)
-  stages_executed <- get_stages_executed(master)
+  design <- get_design(source)
+  stages_executed <- get_stages_executed(source)
 
   new_tbl_sample(
     data = data,
     design = design,
     stages_executed = stages_executed,
-    seed = attr(master, "seed"),
-    metadata = list(
-      n_selected = nrow(data),
-      executed_at = Sys.time(),
-      panels = record$panels,
-      panel_assignment = record,
-      wave = list(
-        wave = wave,
-        active_panels = activation$active,
-        schedule_digest = rlang::hash(record$schedule),
-        pools = activation$pools
-      ),
-      # The master's own metadata, kept whole. A wave is derived from one
-      # recorded execution and cannot be replayed as a call of its own.
-      materialized_from = attr(master, "metadata"),
-      execution_environment = execution_environment,
-      integrity = sample_integrity_record(data, design, stages_executed)
+    seed = attr(source, "seed"),
+    metadata = c(
+      list(
+        n_selected = nrow(data),
+        executed_at = Sys.time(),
+        panels = record$panels,
+        panel_assignment = record,
+        wave = c(
+          list(
+            wave = wave,
+            active_panels = activation$active,
+            schedule_digest = schedule_digest,
+            pools = activation$pools,
+            # Which realization the activation was computed against. The
+            # phase-1 link is what an export reads its non-active rows from,
+            # and `.sample_id` is a row position rather than an identity, so
+            # a substituted sample of the same shape would otherwise line up.
+            master_digest = wave_source_digest(source)
+          ),
+          extra
+        ),
+        # Activation is a probability subsample of a realized sample, so the
+        # sample it came from is retained the way an ordinary second phase
+        # retains its first. `transition` says which kind of phase this is:
+        # activation selects units the source already assigned rather than
+        # executing a new design against it, so the generic phase-2
+        # reconstruction does not apply to it.
+        prev_phase = list(
+          transition = "panel_activation",
+          sample = source,
+          design = design,
+          stages = stages_executed
+        ),
+        execution_environment = execution_environment,
+        integrity = sample_integrity_record(data, design, stages_executed)
+      )
     )
   )
+}
+
+#' Fingerprint of the realization a wave was activated from
+#'
+#' This has to identify the REALIZATION, not the design. The integrity record
+#' alone does not: it covers the protected design columns, so two executions
+#' of one design with one seed against frames of the same shape produce the
+#' same record even when the frames share no population unit at all. Stacking
+#' waves of those two masters would match row 7 of one to row 7 of the other,
+#' which is exactly the hazard the fingerprint exists to catch.
+#'
+#' Every input is therefore metadata written once at execution and never
+#' altered afterwards, so the fingerprint is frozen at the realization rather
+#' than recomputed from whatever the object currently holds. That distinction
+#' is the whole design:
+#'
+#' - the **stored** frame digest separates populations, and is read as a raw
+#'   field rather than through [get_frame_digest()], which validates the
+#'   schema version and would otherwise make wave materialization fail on a
+#'   digest it could merely not read;
+#' - `executed_at` and the seed separate two executions against one frame;
+#' - the integrity record separates two realizations of one design.
+#'
+#' Hashing the master's current data would do the job too, and would also be
+#' wrong: attaching an analysis column to a master, or reordering its rows,
+#' leaves `sample_realization_status()` satisfied by design, and must not
+#' invent a new realization.
+#' @noRd
+wave_source_digest <- function(source) {
+  metadata <- attr(source, "metadata")
+  rlang::hash(list(
+    integrity = metadata$integrity,
+    frame_digest = metadata$frame_digest,
+    executed_at = metadata$executed_at,
+    seed = attr(source, "seed")
+  ))
 }
 
 #' Guards for the wave route
@@ -85,6 +170,8 @@ check_wave_call <- function(
   stages,
   seed,
   panels,
+  panel_stage = NULL,
+  small_pool = NULL,
   reps,
   call = caller_env()
 ) {
@@ -106,6 +193,11 @@ check_wave_call <- function(
     if (!is_null(stages)) "stages",
     if (!is_null(seed)) "seed",
     if (!is_null(panels)) "panels",
+    # The assignment stage and the small-pool policy were both resolved when
+    # the master was drawn and are recorded with the assignment, so a wave
+    # cannot revisit either.
+    if (!is_null(panel_stage)) "panel_stage",
+    if (!is_null(small_pool)) "small_pool",
     if (!is_null(reps)) "reps"
   )
   if (length(supplied) > 0) {
@@ -153,7 +245,14 @@ check_wave_call <- function(
     )
   }
 
+  # Whether a record declares waves is a fact about its fields, so the law
+  # those fields were written under is established first. Otherwise a record
+  # this build cannot read is reported as one that declares no waves, which
+  # names the wrong problem and suggests redrawing with a schedule.
   record <- metadata$panel_assignment
+  if (!is_null(record)) {
+    record <- prepare_panel_record(record, "An activation", call = call)
+  }
   if (is_null(record) || is_null(record$schedule)) {
     abort_samplyr(
       c(
@@ -195,17 +294,30 @@ check_wave_declared <- function(wave, schedule, call = caller_env()) {
   as.integer(wave)
 }
 
-#' Which rows a wave activates, and at what conditional probability
+#' Which rows an activation keeps, and at what conditional probability
 #'
+#' @param record The cohort's assignment record, or `NULL` for a cohort drawn
+#'   whole. A cohort that was never partitioned has one implicit panel
+#'   comprising all its rows, and activating it is not a subsample, so its
+#'   factor is one.
 #' @return `keep`, a row mask; `factor`, the weight multiplier for the kept
 #'   rows; `active`, the activated panels; and `pools`, the per-block
 #'   activation record.
 #' @noRd
-wave_activation <- function(master, record, wave) {
-  schedule <- record$schedule
-  active <- schedule$panel[schedule$wave == wave & schedule$active]
+activate_cohort <- function(sample, record, active, call = caller_env()) {
+  record <- prepare_panel_record(record, "An activation", call = call)
+  if (is_null(record)) {
+    n <- nrow(sample)
+    live <- length(active) > 0L
+    return(list(
+      keep = rep(live, n),
+      factor = rep(1, n),
+      active = if (live) 1L else integer(0),
+      pools = list()
+    ))
+  }
 
-  data <- as.data.frame(master)
+  data <- as.data.frame(sample)
   keys <- make_group_key(data, record$key_vars)
   panel <- data$.panel
 
@@ -218,15 +330,38 @@ wave_activation <- function(master, record, wave) {
     at <- match(keys, pool$keys)
     rows <- which(!is.na(at))
 
-    if (identical(pool$class, "certainty")) {
+    if (identical(pool$activation, "permanent")) {
       # Permanent by policy: in the sample at every wave, and outside the
-      # randomized quota denominator.
+      # randomized quota denominator. Selection certainty is one reason a
+      # pool is permanent; a pool too small to rotate is the other, and the
+      # arithmetic is the same for both.
       keep[rows] <- TRUE
       factor[rows] <- 1
       take <- pool$blocks
       probability <- rep(1, length(pool$blocks))
     } else {
       take <- as.integer(rowSums(pool$quotas[, active, drop = FALSE]))
+      # A backstop for records drawn before positivity was checked. Version 2
+      # settles this at the draw, either by refusing or by promoting the pool,
+      # so nothing written by this build reaches here with a zero take. A
+      # version-1 record carries no such guarantee, and a block nobody can
+      # activate has inclusion probability zero rather than a small weight.
+      if (any(take == 0L)) {
+        abort_samplyr(
+          c(
+            "This wave cannot be materialized: some units have no chance of
+             being selected for it.",
+            "x" = "Pool {.val {describe_pool_stratum(pool)}} has
+                   {sum(take == 0L)} block{?s} with no active unit in this
+                   wave.",
+            "i" = "The master was drawn before this check existed. Redraw it
+                   with fewer panels, more panels active per wave, a larger
+                   take per pool, or {.code small_pool = \"permanent\"}."
+          ),
+          class = "samplyr_error_panel_small_pool",
+          call = call
+        )
+      }
       probability <- take / pool$blocks
       block_of_unit <- rep(seq_along(pool$blocks), pool$blocks)
       block <- block_of_unit[at[rows]]
@@ -238,6 +373,8 @@ wave_activation <- function(master, record, wave) {
     pools[[p]] <- list(
       stratum = pool$stratum,
       class = pool$class,
+      activation = pool$activation,
+      permanent_reason = pool$permanent_reason,
       blocks = pool$blocks,
       take = take,
       probability = probability

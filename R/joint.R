@@ -39,13 +39,20 @@
 #' @param stages An integer vector of stage numbers to compute, or
 #'   `NULL` (default) to compute all PPS stages.
 #'   Non-PPS stages produce `NULL` entries in the returned list.
+#' @param waves Two wave numbers of a scheduled master, which selects
+#'   activation mode: the result describes how those two occasions of the
+#'   rotation overlap rather than how the master was selected. Give the same
+#'   wave twice for the joint expectation within one wave. `NULL` (default)
+#'   keeps the stage behavior. Mutually exclusive with `stages`, `frame` and
+#'   `nsim`, none of which activation mode uses.
 #' @param nsim Positive integer number of simulations used for Chromy's
 #'   pairwise expected hits (default 10000). Also forwarded to registered
 #'   WR `joint_fn`s that explicitly declare an `nsim` formal. Ignored by
 #'   analytic methods.
 #'
-#' @return A named list of length equal to the number of executed
-#'   stages. Each element is either:
+#' @return With `waves`, a tibble with one row per block of the frozen
+#'   assignment; see "Activation mode" below. Otherwise a named list of
+#'   length equal to the number of executed stages. Each element is either:
 #'   - For PPS WOR stages: a square matrix of joint inclusion
 #'     probabilities \eqn{\pi_{kl}}{pi_kl}, usable with
 #'     [survey::ppsmat()] for exact variance estimation.
@@ -146,6 +153,59 @@
 #' estimate the pairwise expectations. Increasing `nsim` reduces Monte
 #' Carlo error at the cost of computation time.
 #'
+#' ## Activation mode
+#'
+#' `joint_expectation(master, waves = c(t, s))` answers a different question
+#' from the stage modes above. A scheduled master assigned every unit to a
+#' panel at its draw and froze the block-by-panel quotas, so how two occasions
+#' of the rotation overlap is already determined and needs neither the frame
+#' nor a simulation. It is read from the record.
+#'
+#' Conditional on the frozen quotas, the panels inside a block of `m`
+#' assignment units are an arrangement of that block's labels. Writing
+#' \eqn{a_t}{a_t} and \eqn{a_s}{a_s} for the units the panels active at each
+#' wave take from the block, and \eqn{a_\cap}{a_and} for those active at both:
+#'
+#' \deqn{P(i \in W_t) = a_t / m}{P(i in W_t) = a_t / m}
+#' \deqn{P(i \in W_t, i \in W_s) = a_\cap / m}{P(i in W_t and W_s) = a_and / m}
+#' \deqn{P(i \in W_t, j \in W_s) = \frac{a_t a_s - a_\cap}{m (m - 1)}}{P(i in W_t, j in W_s) = (a_t a_s - a_and) / (m (m - 1))}
+#'
+#' for units \eqn{i \neq j}{i != j} of one block, and the product of the
+#' marginals for units of different blocks, whose arrangements are drawn
+#' independently. The within-wave case is the third expression at `t == s`.
+#'
+#' The result is one row per block, and stays small at any sample size. Within
+#' a block the joints take only two values, and across blocks they factorize
+#' as products of the marginals, so every entry of the full matrix is
+#' recoverable from this table. It is the conditional covariance kernel, not
+#' the joint-probability matrix, that is block-diagonal: across blocks the
+#' joint is \eqn{p_i p_j}{p_i p_j}, which is generally not zero, while the
+#' covariance is.
+#'
+#' `pool`, `stratum`, `class` and `block` identify the block; `units` is
+#' \eqn{m}{m}; `take_1`, `take_2` and `take_both` are the three takes;
+#' `prob_1` and `prob_2` are the marginals; `joint_same` and `joint_distinct`
+#' are the two joint expectations. `has_pair` is `FALSE` for a block of one
+#' unit, where no distinct pair exists and `joint_distinct` is `NA` rather
+#' than zero.
+#'
+#' Quotas are frequently unequal, because a pool that is not a multiple of the
+#' block size gives one block an extra unit, so these are read from the record
+#' rather than derived from the panel count. A certainty block is permanent
+#' and takes every unit at every wave, which makes `joint_distinct` exactly
+#' one.
+#'
+#' **What this states, and what it does not.** These are joint expectations of
+#' the activation indicators, conditional on the phase-1 units and on the
+#' frozen quotas. They are not the unconditional joint inclusion probabilities
+#' of the complete two-phase design, which also carry the master's own
+#' pairwise term. How the two combine for a variance of change is not settled
+#' here; [as_svydesign()] carries the activation as a second phase for
+#' ordinary totals.
+#'
+#' Activation mode takes a master, not a materialized wave, so a pair of waves
+#' neither of which has been materialized can be asked for.
+#'
 #' ## Limitations
 #'
 #' - The frame-free path requires a digest with exact chances: the
@@ -201,6 +261,30 @@
 #'
 #' jip_registers <- joint_expectation(registers, list(regions, bfa_eas))
 #'
+#' @examples
+#' # Activation mode: how far two occasions of a rotation overlap. Four
+#' # panels rotate two at a time, so each is live for two consecutive waves.
+#' rotation <- data.frame(
+#'   panel = rep(1:4, times = 4),
+#'   wave = rep(1:4, each = 4),
+#'   active = c(
+#'     TRUE, TRUE, FALSE, FALSE,
+#'     FALSE, TRUE, TRUE, FALSE,
+#'     FALSE, FALSE, TRUE, TRUE,
+#'     TRUE, FALSE, FALSE, TRUE
+#'   )
+#' )
+#'
+#' master <- sampling_design() |>
+#'   draw(n = 40) |>
+#'   execute(bfa_eas, seed = 2025, panels = rotation)
+#'
+#' # Waves 1 and 2 share one panel of the two each activates.
+#' joint_expectation(master, waves = c(1, 2))
+#'
+#' # The same wave twice gives the joint expectation within one wave.
+#' joint_expectation(master, waves = c(2, 2))
+#'
 #' @references
 #' High-entropy approximation:
 #' \enc{Hájek}{Hajek}, J. (1964). Asymptotic theory of rejective sampling with
@@ -225,14 +309,27 @@
 #' @family diagnostics
 #' @export
 joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
-                              nsim = 10000L) {
-  check_keyword_args(enquos(...), c("stages", "nsim"))
+                              waves = NULL, nsim = 10000L) {
+  check_keyword_args(enquos(...), c("stages", "waves", "nsim"))
   if (!inherits(x, "tbl_sample")) {
     cli_abort("{.arg x} must be a {.cls tbl_sample} object.")
   }
   check_single_replicate(x, "joint_expectation")
   check_sample_unmodified(x, "joint_expectation")
   check_no_materialized_wave(x, "joint_expectation")
+
+  # Activation mode. The frozen record answers it, so nothing the stage mode
+  # needs is used, and supplying any of it is an error rather than an
+  # argument quietly without effect.
+  if (!is_null(waves)) {
+    check_activation_mode_arguments(
+      frame = frame,
+      stages = stages,
+      nsim_supplied = !missing(nsim)
+    )
+    return(activation_joint_expectation(x, waves))
+  }
+
   if (
     length(nsim) != 1L ||
       !is_integerish_numeric(nsim) ||
@@ -381,8 +478,9 @@ normalize_joint_frames <- function(x, frame, stages_executed,
 #' The digest records, per selection pool, the exact resolved chance
 #' vector and the selected positions, which is everything the joint
 #' computation needs: no frame access, no allocation replay. Pools are
-#' independent selections, so the stage matrix is block-diagonal over
-#' pools with cross-pool entries at the product of marginals.
+#' independent selections, so cross-pool entries of the stage matrix are
+#' products of the marginals. The covariance is block-diagonal over pools;
+#' the joint matrix itself is not.
 #'
 #' Row order matches first appearance in the sample. The sample rows
 #' themselves say where each selection appears (the verified
@@ -738,7 +836,8 @@ compute_stage_jip_pool <- function(
 #'
 #' Replays `calculate_stratum_sizes()` against the frame to recover
 #' the exact target n_h per stratum, then computes joint matrices per
-#' stratum and assembles a block-diagonal.
+#' stratum and assembles them, with cross-stratum entries at the product
+#' of the marginals.
 #' @noRd
 compute_stratified_jip <- function(
   effective_frame,
