@@ -26,7 +26,7 @@ check-release:
         cmake
     - mkdir -p $R_LIBS_USER
     # Install package dependencies including vignette builders
-    - Rscript -e "install.packages(c('pak', 'rcmdcheck'), repos = 'https://cloud.r-project.org')"
+    - Rscript -e "install.packages(c('pak', 'rcmdcheck', 'sondage'), repos = 'https://cloud.r-project.org')"
     - Rscript -e 'pak::local_install_dev_deps(dependencies = TRUE, upgrade = FALSE)'
   script:
     - Rscript -e "rcmdcheck::rcmdcheck(args = c('--no-manual', '--as-cran'), error_on = 'error')"
@@ -44,7 +44,7 @@ check-devel:
         qpdf
         cmake
     - mkdir -p $R_LIBS_USER
-    - Rscript -e "install.packages(c('pak', 'rcmdcheck'), repos = 'https://cloud.r-project.org')"
+    - Rscript -e "install.packages(c('pak', 'rcmdcheck', 'sondage'), repos = 'https://cloud.r-project.org')"
     - Rscript -e 'pak::local_install_dev_deps(dependencies = TRUE, upgrade = FALSE)'
   script:
     - Rscript -e "rcmdcheck::rcmdcheck(args = c('--no-manual', '--as-cran'), error_on = 'error')"
@@ -64,7 +64,7 @@ coverage:
         git
         cmake
     - mkdir -p $R_LIBS_USER
-    - Rscript -e "install.packages(c('pak', 'covr', 'xml2', 'rcmdcheck'), repos = 'https://cloud.r-project.org')"
+    - Rscript -e "install.packages(c('pak', 'covr', 'xml2', 'rcmdcheck', 'sondage'), repos = 'https://cloud.r-project.org')"
     - Rscript -e 'pak::local_install_dev_deps(dependencies = TRUE, upgrade = FALSE)'
   script:
     - Rscript -e "covr::codecov(quiet = FALSE, token = Sys.getenv('CODECOV_TOKEN'))"
@@ -93,7 +93,7 @@ pages:
         libjpeg-dev
         cmake
     - mkdir -p $R_LIBS_USER
-    - Rscript -e "install.packages(c('pak', 'pkgdown', 'bslib', 'rmarkdown', 'fs'), repos='https://cloud.r-project.org')"
+    - Rscript -e "install.packages(c('pak', 'pkgdown', 'bslib', 'rmarkdown', 'fs', 'sondage'), repos='https://cloud.r-project.org')"
     - Rscript -e 'pak::local_install_dev_deps(dependencies = TRUE)'
   script:
     - Rscript -e "pkgdown::build_site()"
