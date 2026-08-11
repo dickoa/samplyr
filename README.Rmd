@@ -13,7 +13,7 @@ knitr::opts_chunk$set(
 )
 ```
 
-# samplyr
+# samplyr <img src="man/figures/samplyr_hex.gif" align="right" width="140" alt="samplyr hex sticker, animating a sampling design being built up one verb at a time" />
 
 <!-- badges: start -->
 [![CRAN status](https://www.r-pkg.org/badges/version/samplyr)](https://CRAN.R-project.org/package=samplyr)
@@ -295,7 +295,7 @@ are documented where they are taught in depth:
 | Spatially balanced | `draw(method = "lpm2" or "scps", spread = c(lon, lat))` | `?selection-methods` |
 | Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across waves | `vignette("sampling-coordination")` |
 | Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `vignette("introduction")` |
-| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `vignette("sampling-coordination")` |
+| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `vignette("rotating-panels")` |
 | Replicated draws | `execute(reps = 5)` | `?execute` |
 | Two-phase | pipe a `tbl_sample` into a new design's `execute()` | `vignette("survey-analysis")` |
 

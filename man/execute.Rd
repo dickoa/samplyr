@@ -384,7 +384,7 @@ rather than answering approximately.
 The schedule states which groups are live when. It does not replenish the
 sample: every panel comes from the frame vintage the master was drawn
 from. Steady-state replenishment is a fresh \code{execute()} against a later
-frame. See \code{vignette("sampling-coordination")}.
+frame. See \code{vignette("rotating-panels")}.
 
 Weights are not adjusted for panel membership. They reflect the full-sample
 inclusion probability and are valid for the combined sample. Taking a

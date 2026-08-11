@@ -16,12 +16,12 @@ knitr::opts_chunk$set(
 
 ## Why this vignette
 
-This vignette validates `samplyr` on synthetic finite populations with known truths. It uses two complementary layers:
+This vignette runs a set of smoke tests for `samplyr` on synthetic finite populations with known truths. It uses two complementary layers:
 
 1. Deterministic checks on design metadata and invariants.
 2. Monte Carlo checks for estimator bias, standard-error calibration, and 95% CI coverage.
 
-The goal is not to benchmark speed. The goal is to show statistical correctness.
+The goal is not to benchmark speed, and it is not a proof of correctness. A run at `R = 199` can detect a design that is plainly wrong; it cannot establish that one is right. What a pass says is that the package behaved consistently with correctness on these three designs at this replication count, which is the level of assurance a smoke test provides. The scale of the Monte Carlo uncertainty is reported below so the bands can be read for what they are.
 
 ## Synthetic population with known properties
 
@@ -105,18 +105,24 @@ strat_weight_by_stratum <- strat_sample |>
   summarise(weight_sum = sum(.weight), .by = stratum) |>
   left_join(stratum_sizes, by = "stratum")
 
+# all(logical(0)) is TRUE, so the certainty check has to establish that the
+# set it quantifies over is non-empty before it means anything.
+n_certainty <- sum(pps_two_stage$.certainty_1)
+
 checks <- tibble(
   check = c(
     "SRS: sum(weights) = N",
     "Stratified SRS: sum_h weights_h = N_h",
     "Two-stage PPS: .weight = .weight_1 * .weight_2",
+    "Two-stage PPS: the certainty_size threshold selected some PSUs",
     "Two-stage PPS certainty: certainty PSUs have .weight_1 = 1"
   ),
   pass = c(
     isTRUE(all.equal(sum(srs_sample$.weight), truth$N)),
     isTRUE(all(abs(strat_weight_by_stratum$weight_sum - strat_weight_by_stratum$N_h) < 1e-8)),
     isTRUE(all.equal(pps_two_stage$.weight, pps_two_stage$.weight_1 * pps_two_stage$.weight_2, tolerance = 1e-10)),
-    all(pps_two_stage$.weight_1[pps_two_stage$.certainty_1] == 1)
+    n_certainty > 0,
+    n_certainty > 0 && all(pps_two_stage$.weight_1[pps_two_stage$.certainty_1] == 1)
   )
 )
 
@@ -125,14 +131,19 @@ checks
 
 These are structural, non-random checks. If they fail, the design object is wrong before analysis begins.
 
+The fourth row is not decoration. `all()` over an empty set returns `TRUE`, so a certainty check written without it would pass on a design in which `certainty_size = 390` happened to select nothing at all, and the pass would say nothing about certainty handling.
+
 ## Layer 2: Monte Carlo validation
 
 Below we repeatedly sample from the same finite population and analyze with `survey`.
 For each design we report:
 
 - `rel_bias_pct`: relative bias of \(\hat{\bar{Y}}\),
+- `bias_z`: the same bias divided by its own Monte Carlo standard error,
 - `se_ratio`: empirical SD of estimates divided by mean estimated SE,
 - `coverage_95`: fraction of 95% CIs covering the true finite-population mean.
+
+`rel_bias_pct` and `bias_z` measure the same thing on different scales, and only the second is comparable across designs. The true mean here is near 200, so a 2% relative bias is about 4 units, which is large next to the Monte Carlo noise: relative bias against a large mean is a generous criterion. `bias_z` divides by the Monte Carlo standard error of the estimated bias, so a value near zero says the bias is not distinguishable from simulation noise, and a value past 2 or 3 says it is, whatever the units of `y` happen to be.
 
 This vignette fixes Monte Carlo replication at `R = 199`.
 
@@ -157,6 +168,7 @@ evaluate_design <- function(design_fn, population, true_mean, R = 199L, seed_ini
   tibble(R = R,
          bias = mean(est - true_mean),
          rel_bias_pct = 100 * mean(est - true_mean) / true_mean,
+         bias_z = mean(est - true_mean) / (sd(est) / sqrt(R)),
          emp_sd = sd(est),
          mean_se = mean(se),
          se_ratio = sd(est) / mean(se),
@@ -207,6 +219,8 @@ mc_results <- bind_rows(
 mc_results
 ```
 
+The third design's first stage is `pps_brewer`, and `as_svydesign()` exports it with Brewer's approximation to the joint inclusion probabilities. Its `mean_se` is therefore an approximate quantity, and `se_ratio` for that row compares the empirical spread against an approximation rather than against an exact variance. The first two rows have no such caveat.
+
 ## Interpreting the results
 
 For this short validation, practical acceptance bands are:
@@ -215,7 +229,13 @@ For this short validation, practical acceptance bands are:
 - `0.85 <= se_ratio <= 1.15`,
 - `0.90 <= coverage_95 <= 0.98`.
 
-Coverage has Monte Carlo uncertainty. At nominal 95% coverage, the Monte Carlo standard error is approximately \(\sqrt{0.95 \times 0.05 / R}\). With `R = 199`, this is about 1.5 percentage points.
+The last two are Monte Carlo widths rather than statistical thresholds, and both work out to about three Monte Carlo standard errors at `R = 199`.
+
+At nominal 95% coverage the Monte Carlo standard error of the coverage estimate is \(\sqrt{0.95 \times 0.05 / R}\), which is about 1.5 percentage points at `R = 199`. The band 0.90 to 0.98 is roughly that either side of 0.95, a little wider below than above.
+
+The empirical SD in `se_ratio` is itself estimated from `R` draws, with a relative standard error of about \(1 / \sqrt{2(R - 1)}\), which is 5% at `R = 199`. The band 0.85 to 1.15 is three of those.
+
+Reading the bands this way is what makes them a judgement rather than two magic numbers: a `se_ratio` of 1.12 is inside the band because a correct design will land there often at this replication count, not because a 12% error would be acceptable in a real estimate.
 
 ```{r}
 acceptance <- mc_results |>
@@ -237,9 +257,11 @@ tibble(
 )
 ```
 
-If these checks hold across core designs, we have strong evidence that:
+A pass across these three designs says that:
 
-1. `samplyr` design metadata is internally consistent,
-2. exported `survey` designs reproduce correct design-based inference on known finite populations.
+1. the deterministic invariants on `samplyr` design metadata hold exactly, which is a proof for the sample drawn and not a Monte Carlo result;
+2. nothing in the exported `survey` designs is far enough from correct design-based inference for `R = 199` to detect.
 
-In this vignette, `R` is fixed at 199 as a practical default. If you need higher confidence when interpreting package accuracy, rerun the same validation with a larger `R`.
+The second is the weaker claim, and it is the one that matters here. The acceptance bands are about three Monte Carlo standard errors wide, so a bias or a variance error smaller than that will pass unnoticed. A pass is consistent with correctness rather than evidence for it.
+
+`R` is fixed at 199 as a practical default so the vignette builds quickly. Rerunning with a larger `R` narrows every band above in proportion to \(1/\sqrt{R}\) and is what to do when the question is how large a residual error the run can rule out.

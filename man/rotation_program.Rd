@@ -128,7 +128,7 @@ execute(program, wave = 2)
 }
 \seealso{
 \code{\link[=execute]{execute()}} for drawing a master and materializing a wave,
-\code{vignette("sampling-coordination")} for the design taxonomy this fits
+\code{vignette("rotating-panels")} for the design taxonomy this fits
 into.
 
 Other execution:

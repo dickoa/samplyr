@@ -457,7 +457,7 @@ NULL
 #' The schedule states which groups are live when. It does not replenish the
 #' sample: every panel comes from the frame vintage the master was drawn
 #' from. Steady-state replenishment is a fresh `execute()` against a later
-#' frame. See `vignette("sampling-coordination")`.
+#' frame. See `vignette("rotating-panels")`.
 #'
 #' Weights are not adjusted for panel membership. They reflect the full-sample
 #' inclusion probability and are valid for the combined sample. Taking a

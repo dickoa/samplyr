@@ -15,6 +15,7 @@ articles:
     contents:
       - survey-analysis
       - sampling-coordination
+      - rotating-panels
   - title: "Sharing and Reproducibility"
     contents:
       - serialization

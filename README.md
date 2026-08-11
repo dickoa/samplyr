@@ -1,7 +1,7 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-# samplyr
+# samplyr <img src="man/figures/samplyr_hex.gif" align="right" width="140" alt="samplyr hex sticker, animating a sampling design being built up one verb at a time" />
 
 <!-- badges: start -->
 
@@ -103,21 +103,21 @@ design <- sampling_design(title = "Gambia bed nets") |>
   add_stage() |>
     draw(n = 6)
 design
-#> ── Sampling Design: Gambia bed nets ───────────────────────────────────────
+#> ── Sampling Design: Gambia bed nets ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> 
 #> ℹ 3 stages
 #> 
-#> ── Stage 1 ────────────────────────────────────────────────────────────────
+#> ── Stage 1 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Strata: region
 #> • Cluster: district
 #> • Draw: n = 5 (per stratum), method = pps_brewer, mos = population
 #> 
-#> ── Stage 2 ────────────────────────────────────────────────────────────────
+#> ── Stage 2 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Strata: phc
 #> • Cluster: village
 #> • Draw: n = 2 (per stratum), method = pps_brewer, mos = population
 #> 
-#> ── Stage 3 ────────────────────────────────────────────────────────────────
+#> ── Stage 3 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Draw: n = 6, method = srswor
 ```
 
@@ -533,7 +533,7 @@ and are documented where they are taught in depth:
 | Spatially balanced | `draw(method = "lpm2" or "scps", spread = c(lon, lat))` | `?selection-methods` |
 | Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across waves | `vignette("sampling-coordination")` |
 | Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `vignette("introduction")` |
-| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `vignette("sampling-coordination")` |
+| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `vignette("rotating-panels")` |
 | Replicated draws | `execute(reps = 5)` | `?execute` |
 | Two-phase | pipe a `tbl_sample` into a new design’s `execute()` | `vignette("survey-analysis")` |
 
@@ -574,15 +574,15 @@ replicate weights, and the method-by-method breakdown.
 
 ``` r
 summary(strata_smpl)
-#> ── Sample Summary ─────────────────────────────────────────────────────────
+#> ── Sample Summary ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> 
 #> ℹ n = 300 of 44,570 | stages = 1/1 | seed = 12
 #> 
-#> ── Stage 1 ────────────────────────────────────────────────────────────────
+#> ── Stage 1 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • srswor, by region (proportional)
 #> • 13 strata: N_h 1,612-5,505, n_h 11-37, f_h 0.0066-0.0068
 #> 
-#> ── Weights ────────────────────────────────────────────────────────────────
+#> ── Weights ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Mean 148.57 [146.5, 151.22] | CV 0.01 | Kish DEFF 1 | n_eff 300
 ```
 

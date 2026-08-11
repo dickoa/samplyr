@@ -137,7 +137,7 @@
 #' execute(program, wave = 2)
 #'
 #' @seealso [execute()] for drawing a master and materializing a wave,
-#'   `vignette("sampling-coordination")` for the design taxonomy this fits
+#'   `vignette("rotating-panels")` for the design taxonomy this fits
 #'   into.
 #' @family execution
 #' @export

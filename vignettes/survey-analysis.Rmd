@@ -33,7 +33,7 @@ In a typical survey, sampling is one step in a longer process:
 
 `samplyr` handles step 1. For steps 3 and 4, it provides bridge functions that convert a `tbl_sample` into `survey` design objects. The `tbl_sample` carries all the information that `survey::svydesign()` needs (strata, cluster ids, weights, finite population corrections), so the conversion is automatic.
 
-Because `tbl_sample` is a tibble subclass, standard dplyr operations like `left_join()` preserve the sampling metadata. This makes step 3 straightforward: join your collected data by unit identifier and the result is still a valid `tbl_sample`.
+Because `tbl_sample` is a tibble subclass, standard dplyr operations like `left_join()` preserve the sampling metadata. This makes step 3 straightforward: join your collected data by unit identifier and the result is still a valid `tbl_sample`. The condition is that the join is one to one on the sampled units. A join that duplicates rows changes the row set, and the sample is then marked modified; see "Domain (Subpopulation) Analysis" below for what that means for the export.
 
 This vignette covers sample diagnostics (before fieldwork), the merge step, and integration with `survey` and `srvyr` for estimation.
 
@@ -58,7 +58,7 @@ summary(sample)
 
 The realization line uses compact sampling notation. Its $N_h$, $n_h$, and
 $f_h$ labels correspond to the `N`, `n_realized`, and `take_rate` columns in
-the pool table:
+the pool table.
 
 ```{r}
 allocation <- frame_summary(sample, detail = "pool")
@@ -83,7 +83,7 @@ effect and effective sample size.
 
 ## Merging Collected Data
 
-After fieldwork, you have collected data (survey responses, measurements) for the selected units. Join it into the `tbl_sample` by a shared identifier. The `tbl_sample` class and its design metadata are preserved through the join.
+After fieldwork, you have collected data (survey responses, measurements) for the selected units. Join it into the `tbl_sample` by a shared identifier, one row of collected data per selected unit. The `tbl_sample` class and its design metadata are preserved through a join that does not change the row set.
 
 ```{r}
 # Simulate household-budget outcomes collected after selecting the EAs.
@@ -153,7 +153,9 @@ svymean(~households, svy_cluster)
 
 ### Multi-stage design
 
-For multi-stage designs, every executed stage maps to one term of the `id` formula, with a matching finite population correction. A final stage without `cluster_by()` gets a synthesized element identifier. Strata are exported per stage, so the result is exact multi-stage linearization [@sarndal1992, ch. 4.3].
+For multi-stage designs, every executed stage maps to one term of the `id` formula, with a matching finite population correction. A final stage without `cluster_by()` gets a synthesized element identifier. Strata are exported per stage, so `survey` applies the full multi-stage linearization [@sarndal1992, ch. 4.3] rather than collapsing the design to its first stage.
+
+The linearization is exact for the design it is given, but each stage still carries whatever variance approximation its selection method uses. The design below has a `pps_brewer` first stage, so its first-stage term uses Brewer's approximation to \(\pi_{kl}\), as described above. Stage-by-stage exactness is a property of the method, not of the export.
 
 ```{r}
 data(zwe_eas)
@@ -176,11 +178,15 @@ svy_ms
 
 Two things about this frame surface here, and they are separate. First, the capping warning: Bulawayo holds a single district, so a take of two selects it whole. That is reported once per stage, and it is why the province contributes no first-stage variance.
 
-Second, certainty. Harare and Bulawayo each contain a district large enough that its inclusion probability resolves to 1. Those districts are self-representing, so they go into a take-all stratum that contributes no variance. That split leaves Harare with a single probability district, and a stratum holding one probability PSU has no estimable within-stratum variance. `survey` reports this rather than returning a number, so the design needs a rule for it. Centering on the population mean is the conservative choice.
+Second, certainty. Harare and Bulawayo each contain a district large enough that its inclusion probability resolves to 1. Those districts are self-representing, so they go into a take-all stratum that contributes no variance. That split leaves Harare with a single probability district, and a stratum holding one probability PSU has no estimable within-stratum variance. `survey` reports this rather than returning a number, so the design needs a rule for it. Centering the lone PSU on the population mean rather than its own stratum mean is the conservative choice, in that it contributes a variance term instead of none.
+
+`survey.lonely.psu` is a global option. Set it for the call rather than for the session, so a later analysis in the same script does not inherit a rule that was chosen for this design.
 
 ```{r}
-options(survey.lonely.psu = "adjust")
-svymean(~households, svy_ms)
+withr::with_options(
+  list(survey.lonely.psu = "adjust"),
+  svymean(~households, svy_ms)
+)
 ```
 
 ## Domain (Subpopulation) Analysis
@@ -202,7 +208,7 @@ variance [@sarndal1992, ch. 5.8]. `survey::subset()` keeps the full
 design structure and applies the correct domain estimator.
 
 For this reason a filtered `tbl_sample` is marked as modified and
-`as_svydesign()` refuses it:
+`as_svydesign()` refuses it.
 
 ```{r, error=TRUE}
 urban_only <- sample_with_data |>
@@ -241,11 +247,10 @@ rep_svy <- as_svrepdesign(sample, type = "auto")
 svymean(~households, rep_svy)
 ```
 
-You can also export directly to a `srvyr` replicate design:
+You can also export directly to a `srvyr` replicate design, with `srvyr`
+already attached from the domain example above.
 
-```{r}
-library(srvyr)
-
+```{r, eval=requireNamespace("srvyr", quietly = TRUE)}
 rep_tbl <- as_survey_rep(sample, type = "auto")
 rep_tbl |>
   summarise(mean_hh = survey_mean(households, vartype = "se"))
@@ -283,12 +288,18 @@ svymean(~households, spatial_rep)
 
 ## Variance with Joint Expectations
 
-The Brewer approximation works well in practice, but
-`joint_expectation()` can reconstruct second-order quantities directly for
-supported methods. For WOR stages, it returns joint inclusion probabilities
+Brewer's approximation is what `as_svydesign()` supplies by default for
+fixed-size PPS-WOR stages. When the exact second-order quantities are wanted
+instead, `joint_expectation()` reconstructs them directly for supported
+methods. For WOR stages, it returns joint inclusion probabilities
 $\pi_{kl}$. For WR/PMR stages (`pps_multinomial`, `pps_chromy`), it returns
 joint expected hits $E(n_k n_l)$. Depending on the selection method, these
 quantities are exact or approximate.
+
+`vignette("validation")` runs a two-stage `pps_brewer` design against a
+synthetic population with a known mean and compares the empirical spread of the
+estimates with the standard errors this default produces, which is the
+approximation being checked rather than assumed.
 
 It replays the design specification against the original frame, computing
 quantities per stratum or conditional parent occurrence. Blocks and units
@@ -335,7 +346,7 @@ linearization with the default stage-level approximation.
 
 ## End-to-End Workflow
 
-A complete workflow from design to estimates:
+A complete workflow from design to estimates.
 
 ```{r}
 # 1. Define the design
@@ -371,4 +382,4 @@ svymean(~consumption_per_capita, svy)
 confint(svymean(~consumption_per_capita, svy))
 ```
 
-## Reference
+## References

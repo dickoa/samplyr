@@ -36,7 +36,12 @@ The **permanent random number** (PRN) technique, introduced by @brewer1972 and d
 
 `samplyr` supports PRN-based coordination for four selection methods: `bernoulli`, `pps_poisson`, `pps_sps`, and `pps_pareto`.
 
-`pps_poisson` keeps $\pi_i$ dependent only on unit $i$ and the frame total, which is what makes coordination stable across waves. The cost is that a unit large enough to reach $\pi_i > 1$ has its chance clipped to 1, and the expected sample size falls below the target. On a business register this is the ordinary case, since revenue is heavily skewed. `execute()` reports it with a warning of class `samplyr_warning_poisson_shortfall`; handle the dominant units explicitly with `certainty_size` or `certainty_prop`. Note that this re-resolves the remaining units over a smaller MOS total, so their $\pi_i$ rise and now depend on which units were declared certain. Accepting the shortfall is what keeps $\pi_i$ a function of unit $i$ and the frame total alone. See `?draw`.
+Coordination controls *which units* successive samples share. It says nothing
+about how a survey that revisits its units is designed, scheduled or analysed
+over time; that is `vignette("rotating-panels")`, which covers the five
+longitudinal designs, `execute(panels = )` and `execute(wave = )`,
+`rotation_program()`, and estimating change across waves. The two mechanisms
+compose and are otherwise independent.
 
 ## Setup
 
@@ -51,7 +56,7 @@ data(ken_enterprises)
 glimpse(ken_enterprises)
 ```
 
-Each enterprise has a `revenue_millions` column that serves as our measure of size for PPS sampling. We target $n = 200$ enterprises per wave.
+Each enterprise has a `revenue_millions` column that serves as our measure of size for PPS sampling. We target 200 enterprises per wave.
 
 ```{r}
 n_wave <- 200
@@ -68,10 +73,81 @@ frame <- ken_enterprises |>
   mutate(u = runif(n()))
 ```
 
-### Computing inclusion probabilities
+## Positive Coordination: Maximum Overlap
 
-Coordination requires knowing each unit's first-order inclusion probability $\pi_k$. For PPS without replacement, `sondage::inclusion_prob()` computes
-these from the measure of size and sample size. This must be done on the **full frame**, not just the sample.
+Begin with the simplest design that accepts a PRN. Under `bernoulli` a unit is
+selected exactly when its permanent random number falls below the sampling
+fraction, and nothing else enters the rule. Two waves that reuse the same `u` at
+the same fraction therefore select the same units, whichever seed each is given.
+
+```{r}
+f <- n_wave / nrow(frame)
+
+bern_a <- sampling_design() |>
+  draw(frac = f, method = "bernoulli", prn = u) |>
+  execute(frame, seed = 42)
+
+bern_b <- sampling_design() |>
+  draw(frac = f, method = "bernoulli", prn = u) |>
+  execute(frame, seed = 123)
+
+c(wave1 = nrow(bern_a), wave2 = nrow(bern_b),
+  overlap = length(intersect(bern_a$enterprise_id, bern_b$enterprise_id)))
+```
+
+Perfect overlap. This is what a survey wants when the goal is to track the same
+units over time, for example measuring quarterly changes in revenue within a
+fixed panel. Note that the waves are not exactly 200 units: `bernoulli` fixes
+each unit's chance of selection and lets the realized size vary. That is the
+trade the fixed-size methods reverse, and we return to it below.
+
+## Negative Coordination: Minimum Overlap
+
+To minimize overlap, subtract each unit's inclusion probability from its PRN
+between waves and wrap the result back into $(0,1)$ [@tille2020, sec. 8.2.4]:
+
+$$u_k^{(t+1)} = \bigl(u_k^{(t)} - \pi_k\bigr) \bmod 1$$
+
+Under `bernoulli` this rule is exactly true, and the reason is worth seeing
+once. A unit is selected when $u_k < \pi_k$ and not otherwise, so the selected
+units are precisely those occupying the interval $[0, \pi_k)$. Subtracting
+$\pi_k$ moves that interval to the top of $(0,1)$ and slides everyone else down
+by the same amount. A unit selected at wave $t$ therefore cannot be selected at
+wave $t+1$ unless its two probabilities together exceed 1. Tillé derives the
+update this way and concludes that the resulting negative coordination is
+optimal [@tille2020, sec. 8.2.4].
+
+Here every unit shares the same probability `f`, far below 0.5, so the two waves
+come out disjoint.
+
+```{r}
+bern1 <- sampling_design() |>
+  draw(frac = f, method = "bernoulli", prn = u) |>
+  execute(frame, seed = 1)
+
+frame_bern <- frame |> mutate(u = (u - f) %% 1)
+
+bern2 <- sampling_design() |>
+  draw(frac = f, method = "bernoulli", prn = u) |>
+  execute(frame_bern, seed = 1)
+
+c(wave1 = nrow(bern1), wave2 = nrow(bern2),
+  overlap = length(intersect(bern1$enterprise_id, bern2$enterprise_id)))
+```
+
+That is the whole mechanism. Everything below keeps this update and changes the
+selection method underneath it.
+
+## Unequal Probabilities and a Fixed Sample Size
+
+A business register is skewed, and a survey of one usually wants large
+enterprises selected more often, plus a sample size it can staff. Each of those
+two wishes costs something the Bernoulli story had for free.
+
+Selecting with probability proportional to size gives every unit its own
+first-order inclusion probability $\pi_k$. `sondage::inclusion_prob()` computes
+these from the measure of size and the sample size, on the **full frame** rather
+than on a sample.
 
 ```{r}
 frame <- frame |>
@@ -80,9 +156,46 @@ frame <- frame |>
 round(quantile(frame$pik), 4)
 ```
 
-## Positive Coordination: Maximum Overlap
+What `pik` means depends on the method it is handed to. Under `bernoulli` and
+`pps_poisson` a unit is selected exactly when $u_k < \pi_k$, as above, so
+$\pi_k$ is its inclusion probability. `pps_sps` and `pps_pareto` are order
+sampling designs [@rosen1997a; @ohlsson1998]: they fix the sample size, and they
+pay for it in the marginals. There $\pi_k$ is the **target** inclusion
+probability supplied to the algorithm, and Tillé states the consequence plainly
+-- "the sample size is fixed but the inclusion probabilities are not exactly
+satisfied" [@tille2020, sec. 5.11]. The realized probability approaches the
+target as $n$ and $N$ grow, and `samplyr` records the distinction by placing both
+methods in the `"approximate"` probabilities tier.
 
-To maximize overlap between waves, reuse the same PRN values. With sequential Poisson sampling (SPS), two waves drawn from the same frame with identical PRNs produce identical samples.
+Every bound and benchmark computed from `pik` below inherits that. For
+`bernoulli` and `pps_poisson` they are exact; for `pps_sps` and `pps_pareto` they
+are approximations whose error is the gap between target and realized
+probability.
+
+The other route keeps the probabilities exact and gives up the fixed size.
+`pps_poisson` keeps $\pi_i$ dependent only on unit $i$ and the frame total, which
+is what makes coordination stable across waves.
+
+The cost is that a unit large enough to reach $\pi_i > 1$ has its chance clipped
+to 1, and the expected sample size falls below the target. On a business
+register this is the ordinary case, since revenue is heavily skewed.
+`execute()` reports it with a warning of class
+`samplyr_warning_poisson_shortfall`.
+
+Handle the dominant units explicitly with `certainty_size` or `certainty_prop`
+if the shortfall is unacceptable, but note the trade. Declaring units certain
+re-resolves the remaining ones over a smaller MOS total, so their $\pi_i$ rise
+and now depend on which units were declared certain. Accepting the shortfall
+instead is what keeps $\pi_i$ a function of unit $i$ and the frame total alone.
+See `?draw`.
+
+The examples that follow use `pps_sps`, sequential Poisson sampling, which is the
+fixed-size choice.
+
+### Reusing PRNs under a fixed-size method
+
+Positive coordination carries over unchanged: two waves drawn from the same frame
+with identical PRNs produce identical samples.
 
 ```{r}
 wave1 <- sampling_design() |>
@@ -98,17 +211,16 @@ overlap_positive <- length(intersect(wave1$enterprise_id,
 overlap_positive
 ```
 
-Perfect overlap. This is useful when the goal is to track the same units over time, for example measuring quarterly changes in revenue within a fixed panel.
+Overlap is harder to keep when the *design* changes rather than the frame. Reusing PRNs preserves overlap only while strata and inclusion probabilities stay put; a redesign moves both, and maximizing the retained sample under new strata and new probabilities is a separate problem with its own literature [@kishscott1971; @hidiroglou1991]. @tille2020 [§8.2.5] gives a textbook treatment of the Kish and Scott substitution method.
 
-Overlap is harder to keep when the *design* changes rather than the frame. Reusing PRNs preserves overlap only while strata and inclusion probabilities stay put; a redesign moves both, and maximizing the retained sample under new strata and new probabilities is a separate problem with its own literature [@kishscott1971; @hidiroglou1991].
+### The same update under a fixed-size method
 
-## Negative Coordination: Minimum Overlap
-
-To minimize overlap, update the PRN values between waves using @tille2006 [§8.2] formula:
-
-$$u_k^{(t+1)} = \bigl(u_k^{(t)} - \pi_k\bigr) \bmod 1$$
-
-Selected units (those with small $u_k$) get pushed to the high end of $(0,1)$, making them unlikely to be selected again. Non-selected units shift downward, increasing their chance of selection.
+`pps_sps` orders units by $u_k / \pi_k$ and takes the first $n$, so the shift no
+longer reproduces the Bernoulli argument: the key depends on the random number
+and the target together, and a large unit with a small key can survive a shift
+that would have pushed a Bernoulli unit clear. The update remains the standard
+construction for order sampling [@ohlsson1995], and it works well, but its
+guarantee is Bernoulli's and not `pps_sps`'s.
 
 ```{r}
 # Wave 1
@@ -129,32 +241,39 @@ overlap_negative <- length(intersect(wave1$enterprise_id, wave2$enterprise_id))
 overlap_negative
 ```
 
-### Why isn't the overlap zero?
+## Why isn't the overlap zero?
 
 Not all overlap can be eliminated. Units with large $\pi_k$ (big enterprises)
 are selected in almost every wave because their inclusion probability is close
-to or equal to 1. The **Anticipated Lower Bound** (ALB) for expected overlap is:
+to or equal to 1. The **Absolute Lower Bound** (ALB) on the *expected* overlap
+is
 
 $$\text{ALB} = \sum_{k=1}^{N} \max(0,\; 2\pi_k - 1)$$
 
-Only units with $\pi_k > 0.5$ contribute to forced overlap.
+and the Absolute Upper Bound is $\text{AUB} = \sum_k \min(\pi_k^{(1)},
+\pi_k^{(2)})$, here $n$ [@tille2020, sec. 8.2.3]. Only units with $\pi_k > 0.5$
+contribute to forced overlap. Tillé attaches a caveat that explains the output
+below: except in some very special cases, like simple random sampling, ALB and
+AUB cannot be reached.
 
 ```{r}
 alb <- sum(pmax(0, 2 * frame$pik - 1))
 expected_independent <- sum(frame$pik^2)
 
-tibble(x = c("ALB (expected lower bound)",
-             "Observed overlap",
-             "Expected if independent",
-             "AUB (expected upper bound)"),
-       y = c(round(alb), overlap_negative,
-             round(expected_independent), n_wave))
+tibble(quantity  = c("ALB, absolute lower bound",
+                     "Expected overlap if independent",
+                     "AUB, absolute upper bound"),
+       benchmark = c(round(alb), round(expected_independent), n_wave))
 ```
 
-The negative coordination brings the realized overlap near the anticipated
-lower-bound benchmark, well below what independent sampling would produce. The
-ALB applies to expected overlap across repeated coordinated draws; one realized
-overlap can fall on either side of its rounded value.
+The realized overlap of `r overlap_negative` is far below what independent
+sampling would produce, and it is also a little below the ALB. That is not a
+contradiction, and the three reasons are worth separating. The benchmarks bound
+an *expectation* over repeated coordinated draws, so a single realized overlap
+can fall on either side. The bounds are not targets the method aims at and are
+generally not attainable in either direction. And because `pps_sps` is order
+sampling, the $\pi_k$ these benchmarks are built from are targets rather than
+realized probabilities, so the benchmarks themselves are approximate.
 
 ## Comparison: Three Strategies
 
@@ -176,577 +295,21 @@ wave2_ind <- sampling_design() |>
 overlap_ind <- length(intersect(wave1_ind$enterprise_id,
                                 wave2_ind$enterprise_id))
 
-tibble(strategy = c("Positive (same PRN)", "Independent (fresh PRN)", "Negative (Tille update)"),
-       overlap = c(overlap_positive, overlap_ind, overlap_negative),
-       bound = c(n_wave, round(expected_independent), round(alb))) |>
-  mutate(pct = paste0(round(100 * overlap / n_wave), "%"))
+tibble(strategy = c("Positive (same PRN)",
+                    "Independent (fresh PRN)",
+                    "Negative (Tille update)"),
+       realized_overlap = c(overlap_positive, overlap_ind, overlap_negative),
+       benchmark = c(n_wave, round(expected_independent), round(alb)),
+       benchmark_is = c("AUB", "expectation", "ALB")) |>
+  mutate(pct_of_wave = paste0(round(100 * realized_overlap / n_wave), "%"))
 ```
 
-## Longitudinal Designs
-
-Coordination is a mechanism; what you point it at is a design. @smith2009
-identify five broad types of longitudinal survey design. Four of them need
-nothing beyond the verbs used so far. This section maps them onto `samplyr`
-and states the limits that the code cannot show you.
-
-### Vocabulary
-
-Longitudinal work overloads words that already mean something specific in a
-sampling design. In `samplyr`:
-
-| Term            | Meaning                                                |
-|:----------------|:-------------------------------------------------------|
-| stage           | selection within units selected at an earlier stage     |
-| phase           | probability subsampling from an earlier sample          |
-| frame           | a source covering a target population                   |
-| wave            | a programme or calendar occasion                        |
-| panel           | a randomized rotation, reserve, or workload group       |
-| cohort          | a sample's entry batch or refreshment vintage           |
-| unit identity   | the substantive entity followed across occasions        |
-
-Four consequences follow. A wave is not a stage: `add_stage()` selects within
-what an earlier stage selected, whereas a wave revisits units already
-selected. A panel group is not a refreshment cohort: `panels` partitions one
-draw, a cohort is a separate draw. Repeated observation of every eligible unit
-adds no selection probability, so interviewing a fixed panel five times does
-not change `.weight`. And response, attrition and tracing failure are not
-selection operations; they belong to the estimation layer.
-
-The printed token is `.panel`. There is deliberately no `.wave` column:
-`samplyr` realizes designs against frames and does not model time.
-
-### Defining the longitudinal population
-
-Before choosing a design, decide which population the estimates are about
-[@smith2009, sec. 2.3.1]. There are three answers and they lead to different
-designs:
-
-- **Static**: the population as of wave 1. Deaths occur, births cannot enter.
-  Population information is fixed for all waves, so weighting is
-  straightforward, and the natural design is a fixed panel. The risk is that
-  readers take the results for the third option.
-- **Intersection**: units present at every wave. Both births and deaths are
-  excluded, auxiliary totals are hard to construct, and the definition changes
-  whenever a wave is added.
-- **Union**: units present at any wave. This suits a genuinely dynamic
-  population, requires a design that introduces births, and is what most
-  household panels use. Adding a wave changes the population and may require
-  revising earlier estimates.
-
-This is a declaration, not a computation, so it is not an argument to any
-verb. It is what determines whether you need births at all, and therefore
-which design below applies.
-
-### The five designs
-
-| Design                  | What it is                                                                          | In `samplyr`                                                                                                                                                                                                     |
-|:------------------------|:------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Fixed panel             | The same units on every occasion; no additions after wave 1                          | One `execute()`. Waves 2 to *T* are repeated measurement on the same `tbl_sample`; the base selection weight does not change because another interview happened.                                                    |
-| Fixed panel plus births | A fixed panel with a sample of recent entrants added at each occasion                | The original `execute()`, plus a separate `execute()` against an entrant register for each refreshment cohort. The components stay separate objects until their target population and estimator are defined.        |
-| Repeated panel          | A series of panels, each representing an equivalent population defined at a later time | Reuse the same frame-independent `sampling_design` in a fresh `execute(design, frame_j, seed = seed_j)`. Not `replay_design()`, which reproduces one recorded execution and refuses a changed frame.                |
-| Rotating panel          | A fixed proportion of units replaced at each occasion                                | `execute(panels = k)` for the start-up partition; the replenishment is ordinary repeated execution. See below, because this is the one that is easy to overclaim.                                                    |
-| Split panel             | A panel plus a fresh cross-sectional sample at each occasion [@kish1987, pp. 181--183] | Two independent executions kept as separate objects. In the *P* = 1 variation a subset of units is included on every occasion, so longitudinal estimates are possible for that stratum; those units already carry `.certainty_k`.                                             |
-
-A rotating panel is a repeated panel whose overlap pattern is fixed and
-usually balanced, which is what allows the live groups to be combined for a
-cross-sectional estimate [@kaltoncitro1993]. Labour force surveys in many
-countries use one [@steel1997].
-
-### What `panels` builds, and what it does not
-
-A real rotating panel replenishes itself: at each entry time it draws a fresh
-group from the population as it stands then, so the live groups carry
-different population vintages [@lynn2012, sec. 3]. That is exactly what makes
-them combinable.
-
-`execute(panels = k)` partitions **one** execution against **one** frame.
-Every group comes from the same frame vintage, and no entrant can appear in
-any of them. Over a long horizon that cannot represent the cross-sectional
-population at later waves.
-
-Where the partition is exactly right is start-up. The "immediate start"
-option draws the full sample in year 1 and subdivides it into groups
-designated to remain for one, two, three, ... years, with a fresh group added
-each year thereafter; it is preferred to a gradual start because it delivers
-the full sample size from year 1. So the coherent shape is:
-
-```text
-year 1     execute(design, frame, panels = k)     start-up partition
-year 2+    execute(design, frame_vintage_t)       one fresh group per period
-```
-
-`panels` builds the start-up partition and the workload rotation over a frozen
-master. Steady-state replenishment is ordinary repeated execution against
-successive frame vintages, which is what the rest of this vignette does.
-
-Combining the live groups is then not a matter of pooling weights. A unit that
-entered the population between periods 1 and 2 could not have been drawn into
-group 1, so the combined sample under-represents joiners unless their
-probabilities are corrected. For an initial sample and a later one
-[@lynn2012, sec. 8.1]:
-
-```text
-stayers   P ~= n1/N1 + n2/N2      small-fraction approximation
-leavers   P = n1/N1
-joiners   P = n2/N2
-w = 1/P
-```
-
-This is still an inverse inclusion probability, so it stays inside the
-single-frame estimator. What it needs is data `samplyr` cannot invent: for
-each unit, whether it was eligible for each earlier draw. That comes from
-survey questions establishing population membership at the earlier date, and
-it is easy to forget to ask them. Supply it as a column on the frame; two
-execution receipts cannot reveal it.
-
-One practical note: `panels` composes with PRN coordination. The conflict
-check in `execute()` is against `reps`, not `prn`, so a PRN-rotated draw can
-also be partitioned into workload groups.
-
-### Scheduling the groups
-
-Declaring *when* each group is live turns the partition into a rotation you
-can materialize. Pass `panels` a data frame with `panel` and `wave` columns
-and an optional logical `active` column instead of a count. Here four groups
-rotate two at a time, so each group is live for two consecutive occasions:
-
-```{r}
-rotation <- data.frame(
-  panel  = rep(1:4, times = 4),
-  wave   = rep(1:4, each = 4),
-  active = c(TRUE,  TRUE,  FALSE, FALSE,
-             FALSE, TRUE,  TRUE,  FALSE,
-             FALSE, FALSE, TRUE,  TRUE,
-             TRUE,  FALSE, FALSE, TRUE)
-)
-
-master <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
-  execute(frame, seed = 7, panels = rotation)
-
-table(master$.panel)
-```
-
-The schedule is read at the draw, not only later: the fewest panels any wave
-activates sets the assignment block size, so a schedule that keeps two of
-four groups live blocks more finely than one that keeps a single group live.
-
-`execute(master, wave = t)` then realizes one occasion:
-
-```{r}
-wave_2 <- execute(master, wave = 2)
-
-c(master = nrow(master), wave_2 = nrow(wave_2))
-table(rotating = !wave_2$.certainty_1)
-```
-
-Two of four groups is a little under half the master, plus every certainty
-unit: `pps_sps` on a skewed register resolves the largest enterprises to
-$\pi_k = 1$, and a permanent unit is in the sample at every occasion.
-
-Activation is a probability subsample, not a filter, so the wave carries
-weights that estimate the same population total the master does:
-
-```{r}
-c(master = sum(master$.weight), wave_2 = sum(wave_2$.weight))
-```
-
-They are close rather than equal, which is the point: the activation is a
-second sampling phase and its estimator is unbiased, not exact.
-
-The factor applied to each weight is the inverse of the unit's activation
-probability, which is its block's frozen quota for the active panels over the
-block size. That is exact, and it is generally not the nominal `k / r`
-implied by counting groups: a block that took the remainder carries a
-different quota, and its units carry a different factor. Certainty units are
-activated with probability one and their weights are untouched.
-
-A wave is a two-phase sample and exports as one. It retains the master as its
-first phase, and `as_svydesign()` passes the activation to `twophase()` as the
-second: the blocks become the phase-2 strata and their frozen sizes the
-phase-2 population counts, which is what makes the subsampling variance exact
-rather than assumed. `method` is the only choice the export takes, `"full"` by
-default with `"simple"` and `"approx"` available where their assumptions hold,
-and none of them is ever selected as a silent fallback for another.
-
-```{r}
-equal_master <- sampling_design() |>
-  draw(n = n_wave) |>
-  execute(frame, seed = 7, panels = rotation)
-
-equal_wave <- execute(equal_master, wave = 2)
-
-class(as_svydesign(equal_wave))
-```
-
-The master drawn above is a different case. `twophase()` accepts no `pps`
-specification at its first phase, so a master with unequal inclusion
-probabilities has no exact linearization there, and `as_svydesign(wave_2)`
-refuses with that reason rather than returning the with-replacement
-approximation unannounced. The activation weights stay exact and estimate
-totals correctly; it is the variance that has no exact form. The master's own
-export is unaffected, and so is any wave of an equal-probability master,
-clustered or multistage.
-
-### Which unit rotates
-
-By default the assignment belongs to the first stage, so a clustered design
-rotates whole primary units and every unit below inherits its ancestor's
-group. `panel_stage` moves it to another stage. That is what expresses the
-address-panel design of chapter 2, section 2.3.4: the selected areas stay in
-the survey while the addresses inside them rotate.
-
-```{r}
-addresses <- data.frame(
-  ea      = rep(sprintf("EA%02d", 1:40), each = 12),
-  address = rep(1:12, times = 40)
-)
-
-area_panel <- sampling_design() |>
-  add_stage() |> cluster_by(ea) |> draw(n = 12) |>
-  add_stage() |> cluster_by(address) |> draw(n = 8) |>
-  execute(addresses, seed = 11, panels = rotation, panel_stage = 2)
-
-# Panels per selected area: every area carries all four.
-table(tapply(area_panel$.panel, area_panel$ea, function(x) length(unique(x))))
-```
-
-Every area is in every wave, and half its addresses turn over between
-consecutive occasions:
-
-```{r}
-area_wave <- execute(area_panel, wave = 2)
-
-c(areas_in_master = length(unique(area_panel$ea)),
-  areas_in_wave   = length(unique(area_wave$ea)),
-  addresses_in_wave = nrow(area_wave))
-```
-
-Two things change with the assignment stage, and both matter operationally. A
-pool becomes the assignment stage's strata *inside* each realized parent, so
-pools are as small as the within-parent take rather than as large as a
-stratum; `small_pool` therefore binds far more often, and a design with fewer
-than `panels - r` addresses per area is refused rather than silently leaving
-areas out of some wave. And selection certainty counts only at the assignment
-stage, in both directions: a certainty area does not make its addresses
-permanent, and a certainty selection *below* the address does not keep that
-address in every wave. A person selected with probability one inside a
-rotating address leaves the survey with the address, which is a property of
-the design rather than a defect to work around.
-
-This is not a better default, and it should not be adopted as one. Holding the
-parent fixed while its members rotate can bias cross-sectional estimates over
-time [@smith2009, sec. 2.3.4]. A sampling unit that cannot move between
-parents is balanced for cross-sectional estimates and for net change, but not
-for gross change. And the frame has an operational consequence that is easy to
-get wrong: a vacant address found at one wave stays in the sample for later
-waves, so the frame must not be filtered to occupied units between waves.
-
-### How much two occasions share
-
-How far two waves overlap is fixed at the master's draw, so it can be asked
-before either has been materialized:
-
-```{r}
-joint_expectation(master, waves = c(1, 2))
-```
-
-One row per block. `prob_1` and `prob_2` are the chances a unit of that block
-is live at each wave, `joint_same` the chance it is live at both, and
-`joint_distinct` the chance that two different units of the block are live at
-one wave each. Take the same wave twice, `waves = c(2, 2)`, for the joint
-expectation within a single wave.
-
-These follow from the frozen quotas rather than from counting groups. In a
-block of `m` assignment units where the panels live at the two waves take
-$a_t$ and $a_s$ units and those live at both take $a_\cap$:
-
-$$P(i \in W_t,\, j \in W_s) = \frac{a_t a_s - a_\cap}{m(m-1)}, \qquad i \neq j$$
-
-with $a_\cap / m$ for a single unit at both waves. Units in different blocks
-are independent. A block that took the remainder carries different quotas and
-therefore different values, which is why these are read from the record.
-
-Aggregating `take_both` against `take_1` gives the overlap proportion the
-rotation literature quotes: the US CPS 4-8-4 pattern gives 75% from one month
-to the next and 50% a year apart, and an in-for-15 rotation 93% and 20%.
-Reproducing those figures needs the two spells of the 4-8-4 declared with a
-finite life rather than cycled, because a group that returns to its first
-spell keeps 7 of 8 groups month to month instead of 6.
-
-**Say which overlap you mean.** Three qualifiers are needed before the number
-is interpretable, and the same design honestly reports 0.75, 0.53 or 0.33
-depending on which was intended:
-
-- **reference set**: the units the design selected, or the units that
-  responded. `samplyr` knows the first exactly. The second needs response
-  records, which it does not have.
-- **direction**: which wave is the denominator. Where the waves differ in
-  size, an asymmetric schedule gives 0.50 forward and 0.33 reversed.
-- **measure**: units counted, or weighted. A `pps_sps` master with permanent
-  certainty units reports 0.75 by count and 0.53 by weight, because those
-  units are live at every wave while carrying weight one.
-
-Written out, the count-based directional quantity is
-
-$$g_{\text{design}}(t \to s) = \frac{\#(\text{selected at both } t \text{ and } s)}{\#(\text{selected at } t)} = \frac{\sum_b a_{\cap b}}{\sum_b a_{tb}}$$
-
-This is the $g$ that appears in the rotation literature [@bergerpriam2016].
-It is **not** the $k$ of the resampling shortcut in @cantydavison1999, which
-is the responding overlap: they warn explicitly that the realized proportion
-should be used there rather than the theoretical one, and the difference is
-nonresponse.
-
-Under `samplyr`'s frozen-activation contract the scheduled and the selected
-overlap coincide exactly. A rotating unit is live at both waves precisely when
-its panel lies in both active sets, and a permanent certainty unit is live at
-every wave whatever its panel, so in both cases the realized count is
-determined rather than random. That is a property of the contract rather than
-of rotation in general: an operation that drew again at wave time, or
-subsampled for attrition, would separate them.
-
-These are conditional on the units the master selected and on the frozen
-quotas. They are not the unconditional joint inclusion probabilities of the
-whole two-phase design, which also carry the master's own pairwise term.
-
-One limit remains. A wave cannot be replayed, because it is derived from a
-recorded execution rather than being one; save and replay the master instead.
-
-Finally, the schedule states which groups are live when. It does not
-replenish the sample: every group still comes from the frame vintage the
-master was drawn from, which is the scoping point above.
-
-### Estimating change across waves
-
-Two waves exported separately give two variances and no covariance, and the
-covariance is most of the answer. `stack_waves()` performs the structural half
-of the handoff: it verifies that the waves come from one executed master and
-returns a plain long table for an inference layer.
-
-```{r}
-tab <- stack_waves(
-  execute(equal_master, wave = 1),
-  execute(equal_master, wave = 2)
-)
-
-dim(tab)
-names(tab)[1:4]
-```
-
-Two of those names carry the contract. `design_weight` is the exact design
-weight including the activation factor, and is **not** a final weight: nothing
-here is adjusted for nonresponse or calibrated, so a routine asking for
-`w_final` is asking for something the analysis must supply. `master_id`
-matches units across waves of one master and means nothing outside it; in
-particular it is not a primary sampling unit, and a clustered design's own
-cluster variable is carried through for that.
-
-Verification is the reason to prefer this to `rbind()`. Two executions of one
-design produce the same `.sample_id` values, so waves of *different* masters
-stack silently even when the two frames share no unit at all, and the result
-matches units that were never the same unit.
-
-#### Two ways to get the variance of change wrong
-
-Write $V_\Delta = V_t + V_s - 2\rho\sqrt{V_t V_s}$. Both mistakes are
-common and they fail in opposite directions.
-
-Treating the waves as independent sets $\rho = 0$. That is conservative, and
-at high overlap it is severely so: on a 93% rotation it returns **thirteen
-times** the correct variance, so intervals are more than three times too wide
-and real changes go undetected.
-
-Inserting a correlation that is slightly too high is the dangerous one,
-because the error is amplified. To first order
-
-$$\text{RB}(\hat V_\Delta) \approx \frac{-2\rho\sqrt{V_t V_s}}{V_\Delta}\,\text{RB}(\hat\rho)$$
-
-which is $\rho/(\rho-1)$ when the two waves have equal variances. At
-$\rho = 0.93$ that multiplier is $-13.3$: a correlation **1% too high**
-understates the variance by 13%. The multiplier is a property of the
-correlation and the margins, not of the overlap, so it should be computed for
-the design in hand rather than read off a rotation pattern.
-
-The classical shortcut of taking the correlation from the matched sample and
-combining it with the full-sample variances [@kish1965] fails this way at
-every overlap, because it omits the factor $g$: it estimates how correlated a
-*unit* is with itself over time, where what is wanted is how correlated the
-two *estimators* are. It returned 14% of the correct variance in our
-simulations, with 95% intervals covering 50% of the time.
-
-#### Which route to use
-
-| Route | Needs | Behaviour |
-|---|---|---|
-| Berger--Priam form B [@bergerpriam2016] | Union sample, wave indicators, design strata when stratified, design weights | Calibrated from 7% to 93% overlap in the fixtures measured here: equal-probability masters, small wave fractions, randomized selection |
-| Berger--Priam form A | The same | Anti-conservative at high overlap: 78% of the variance, 89.5% coverage |
-| `vardpoor::vardchanges()` | A calibrated `w_final`, stable PSU | Reproduces form A exactly, and inherits its behaviour |
-| Independence | Nothing | Conservative; badly inefficient at high overlap |
-| Matched-sample correlation | The common sample | Not recommended at any overlap |
-
-All of these are approximate. Their consistency arguments assume a negligible
-sampling fraction and a high-entropy master, and the two assumptions do not
-behave alike here.
-
-**The sampling fraction matters, and the number is smaller than it sounds.**
-What counts is the fraction of the population in a *wave*, not in the master,
-and a rotation that keeps half its panels live puts half the master in each
-wave. Form B returns the right variance with nominal coverage at wave
-fractions of 2.5% and 5%. By 10% it returns 88% of the variance, by 15% its
-coverage is falling, and at 25% it returns 72% at 90% coverage. Form A is
-worse throughout.
-
-The mechanism is that the correlation construction carries no finite
-population correction while the correlation it estimates does: the true value
-falls as the fraction grows, the estimate stays put, and the resulting
-positive bias is amplified.
-
-In this high-overlap, equal-probability fixture, performance was calibrated
-through a 5% wave fraction, showed measurable degradation at 10%, and was
-clearly anti-conservative at 25%. **These are empirical landmarks, not
-universal cut-offs**: one population and one rotation cannot establish a
-threshold for a design you have not measured.
-
-**A systematic master is outside the validated guarantee**, and its failures
-are worth understanding because of how they present.
-
-Two things combine in any reported variance: the correlation, and the marginal
-variances. `samplyr` exports a systematic master through the
-equal-probability path, so those margins are the simple-random ones and are
-approximate for that design. The two errors can point in opposite directions
-and hide each other.
-
-They do. On a randomly ordered frame the correlation component is already
-displaced, 1.13 of the truth against 1.02 for simple random selection, while
-the reported variances look alike. Order the frame by a trend and the
-correlation component is 12% **anti**-conservative while the complete
-procedure is 29% **conservative**, the marginal approximation having
-overcompensated in the other direction. Give the outcome a period equal to the
-sampling interval and the correlation is under-estimated by 0.11 with the two
-waves almost perfectly correlated, yet the reported variance is 1.04 of the
-truth at 96% coverage.
-
-That last number looks healthy and is healthy only by cancellation, and the
-cancellation is enormous. Measured on the same fixture without any wave
-structure at all, a single systematic sample of a periodic frame has a true
-variance about **1,700 times** the one `as_svydesign()` reports, and its 95%
-intervals cover **10%** of the time. The change estimate looks fine because
-that error and the correlation error run opposite ways and very nearly cancel.
-
-So a reported number that looks right is not evidence that either component
-is, and the marginal variances of a systematic master deserve their own
-attention: see `?as_svydesign`.
-
-None of these routes has been validated here for multiple cohorts,
-nonresponse, calibration, or unequal-probability masters.
-
-#### A worked route
-
-Form B estimates the correlation from the common sample and multiplies by the
-overlap, which is the factor the classical shortcut omits. The marginal
-variances come from `samplyr`; only the correlation needs fitting, and that is
-one call to `lm()`.
-
-**This is the unstratified form**, which is what the master below uses. A
-stratified master needs the stratified specification of @bergerpriam2016
-[§4.1]: wave-specific stratum indicators and their interactions in place of
-the bare wave indicators. Form B additionally requires the common-sample
-fraction to be **the same** in every stratum, since it applies a single factor
-`g`, and unequal quotas can break that.
-
-```{r}
-w1 <- execute(equal_master, wave = 1)
-w2 <- execute(equal_master, wave = 2)
-w1$measure <- w1$revenue_millions
-w2$measure <- w2$revenue_millions * 1.03
-
-tab <- stack_waves(w1, w2)
-
-# Marginal variances: samplyr's per-wave export.
-v1 <- survey::SE(survey::svytotal(~measure, as_svydesign(w1)))^2
-v2 <- survey::SE(survey::svytotal(~measure, as_svydesign(w2)))^2
-
-# The union, with each wave's weighted measure zero-filled outside it.
-ids <- union(tab$master_id[tab$wave == 1], tab$master_id[tab$wave == 2])
-at <- function(w) match(ids, tab$master_id[tab$wave == w])
-y <- function(w) {
-  i <- at(w)
-  ifelse(is.na(i), 0,
-         (tab$measure * tab$design_weight)[tab$wave == w][i])
-}
-common <- !is.na(at(1)) & !is.na(at(2))
-g <- sum(common) / sum(!is.na(at(1)))
-
-# Form B: the common-sample residual correlation, times g. The model is the
-# paper's own -- wave indicators, their interaction, and no intercept.
-z1 <- as.integer(!is.na(at(1)))
-z2 <- as.integer(!is.na(at(2)))
-fit <- stats::lm(cbind(ifelse(common, y(1), 0), ifelse(common, y(2), 0)) ~
-                   -1 + z1 * z2)
-V <- stats::estVar(fit)
-rho <- V[1, 2] / sqrt(V[1, 1] * V[2, 2]) * g
-
-c(overlap = g, correlation = rho,
-  se_change = sqrt(v1 + v2 - 2 * rho * sqrt(v1 * v2)),
-  se_if_independent = sqrt(v1 + v2))
-```
-
-The two standard errors differ by the covariance, which is the quantity two
-separate exports cannot supply.
-
-The measure here is perfectly correlated across the two waves, and the
-estimator correlation comes out at the overlap itself. Do not read that as a
-rule. The overlap is the main driver, which is why a rotation keeping half its
-sample will not usually produce an estimator correlation much above a half
-however stable the measure is, and why reaching the amplified region takes a
-**high-overlap** design rather than merely a persistent one. But the two waves
-also share the master's own selection variation, so the correlation can sit
-**above** the overlap times the within-unit correlation: with 7% overlap and a
-near-perfectly correlated measure it was measured at 0.15, not 0.07. Compute
-it rather than predicting it.
-
-### Attaching later waves to the sample
-
-A `tbl_sample` records the selection. Joining later-wave responses one to one,
-in wide form, preserves that: one row per selected unit, design columns
-untouched. Reshaping to one row per unit-wave does not. Duplicated unit-wave
-rows are repeated measurements of one selected unit, not independently sampled
-observations, and exporting them with `as_svydesign()` would count each unit
-once per interview. Export the wide form, or reshape after export.
-
-### Limits to state before fieldwork
-
-**Transient stratifiers.** `sampling_design()` stores stratification variables
-as names and resolves them at execution, so re-executing a design against a
-later frame vintage re-classifies units. For a repeated panel that is correct,
-since each panel represents the population as of its own time. For a fixed
-panel it is wrong: a unit must keep its wave-1 stratum. Unequal sampling
-fractions across a classification that units drift out of can improve
-precision initially and reduce it after several waves [@smith2009, sec.
-2.4.4].
-
-**The sampling unit and the followed unit may differ, deliberately.** The
-standard device for avoiding movers is a sampling unit that cannot move: a
-labour force survey that samples addresses balances movers out against movers
-in. Such a design is balanced for cross-sectional estimates and for *net*
-change, but not for *gross* change [@smith2009, sec. 2.3.5]. `cluster_by()`
-expresses it and needs nothing new. The caveat matters because a
-dwelling-based rotating panel quietly fails the analysis most people want a
-panel for. It also constrains the frame: an address found vacant at one wave
-stays in the sample for later waves, so the frame must not be filtered to
-occupied units between waves.
-
-**Entrant coverage is a property of the frame, not of the draw.** `samplyr`
-can draw from a supplied entrant register. It cannot establish that the
-register covers the entrant flow, or that it covers it promptly enough for
-short-lived entrants to be represented at all.
-
-**Sampling that depends on the existing sample is out of scope.** Adding
-household members reached through an existing sample member gives selection
-probabilities that cannot be known from the design, and model-based approaches
-with untestable assumptions are required [@lynn2012, sec. 8.1]. Attrition,
-measurement error and imputation are likewise estimation-layer problems:
-`samplyr` produces design weights only.
+The `benchmark` column is a property of the $\pi_k$ alone, not something the
+method was aiming at: the two bounds hold for *any* coordination scheme on these
+probabilities, and only the independent row's benchmark is an expectation the
+strategy is supposed to reproduce. Positive coordination attains the AUB here
+because reusing the PRNs makes the two samples identical, which is the special
+case where a bound is reached.
 
 ## Multi-Wave Rotation
 
@@ -784,13 +347,12 @@ dimnames(overlap_mat) <- rep(list(paste("Wave", seq_len(n_waves))), 2)
 overlap_mat
 ```
 
-Consecutive waves have low overlap around the anticipated lower-bound
-benchmark. Non-consecutive waves show varying overlap as the rotation cycle
-progresses.
+Consecutive waves have low overlap, near the absolute lower bound. Non-consecutive
+waves show varying overlap as the rotation cycle progresses.
 
 ### Cumulative coverage
 
-After $T$ waves, how many distinct enterprises have been surveyed?
+After five waves, how many distinct enterprises have been surveyed?
 
 ```{r}
 cumulative <- integer(n_waves)
@@ -815,8 +377,11 @@ burden.
 
 Real business registers change between waves. New enterprises (**births**) enter the frame; closed enterprises (**deaths**) leave it.
 
-- **Deaths**: Simply remove them from the frame. Their PRN values are
-  discarded. No special treatment needed.
+- **Deaths**: Remove them from the frame. Their PRN values are discarded, and
+  the next cross-sectional draw needs nothing further. This holds because the
+  target here is the population at each wave. When the target is longitudinal
+  the same event is attrition, which is an estimation-layer problem rather than
+  a frame operation; see `vignette("rotating-panels")`.
 - **Births**: Assign fresh $U(0,1)$ values. These new units enter the
   coordination cycle at a random position.
 
@@ -861,7 +426,14 @@ The PRN mechanism carries coordination across this revision: surviving units kee
 
 ## Using Pareto Sampling
 
-The `pps_pareto` method also supports PRN-based coordination. In theory, Pareto sampling has maximum entropy among fixed-size PPS designs that use PRNs, making it particularly well-suited for coordination.
+The `pps_pareto` method also supports PRN-based coordination. Two properties
+recommend it here. It reaches a fixed sample size, and within the class of order
+designs with fixed shape parameters it minimises the variance estimator
+[@rosen1997b; @tille2020, sec. 5.11]. That is a minimum-variance result inside
+order sampling, not a maximum-entropy result across fixed-size PPS designs: the
+maximum-entropy fixed-size design is conditional Poisson, which `samplyr` ships
+as `pps_cps` and which does not take a PRN. Pareto's own targets remain
+approximate, as with `pps_sps`.
 
 ```{r}
 set.seed(12345)
@@ -926,9 +498,10 @@ overlap_str
 ```
 
 With smaller within-stratum $\pi_k$ values (all below 0.5), the ALB is zero:
-no overlap is forced by certainty or near-certainty units. This is an expected
-lower bound, however, not a guarantee that one randomized pair of samples will
-have zero realized overlap.
+no overlap is forced by certainty or near-certainty units. It is a lower bound
+on the *expected* overlap, not a guarantee that one randomized pair of samples
+will have zero realized overlap, and it is computed from `pps_pareto`'s target
+probabilities rather than its realized ones.
 
 ## Collocated Sampling: Coordinating Across Surveys
 
@@ -937,12 +510,19 @@ The examples above coordinate samples from the **same survey** across time (wave
 The mechanism is identical: all surveys share the same PRN column.
 
 - **Positive coordination** (maximize overlap): both surveys use the same PRN. Useful when surveys share common modules or when joint analysis is planned.
-- **Negative coordination** (minimize overlap): one survey uses shifted PRNs ($u' = (u + 0.5) \bmod 1$). Useful when the goal is to spread respondent burden across the register.
+- **Negative coordination** (minimize overlap): one survey uses shifted PRNs, `(u + 0.5) %% 1`. Useful when the goal is to spread respondent burden across the register.
+
+The half-turn shift is a construction, not a rule the design guarantees. Under
+`bernoulli` it is exact for equal probabilities: the two surveys select from
+$[0, \pi^A)$ and from an interval starting at 0.5, which are disjoint whenever
+$\pi^A + \pi^B \le 1$. Under order sampling with different measures of size it
+is a heuristic that works well when the two surveys are of similar size and
+their $\pi_k$ are similar, and degrades as they diverge.
 
 ### Example: Turnover survey and employment survey
 
 Suppose a statistical agency runs two surveys on the same business register:
-a revenue survey ($n = 200$, PPS on `revenue_millions`) and an employment survey ($n = 150$, PPS on `employees`). The surveys have different sample sizes, different measures of size, and different stratification, but they share the same frame and the same PRN column.
+a revenue survey of 200 units, PPS on `revenue_millions`, and an employment survey of 150 units, PPS on `employees`. The surveys have different sample sizes, different measures of size, and different stratification, but they share the same frame and the same PRN column.
 
 ```{r}
 set.seed(123)
@@ -965,7 +545,7 @@ overlap_pos <- length(intersect(survey_a$enterprise_id,
 overlap_pos
 ```
 
-For negative coordination, shift the PRN by 0.5:
+For negative coordination, shift the PRN by 0.5.
 
 ```{r}
 # Survey B with negative coordination
@@ -981,7 +561,7 @@ overlap_neg <- length(intersect(survey_a$enterprise_id,
 overlap_neg
 ```
 
-Compare with independent sampling (fresh PRNs):
+Compare with independent sampling, drawn on fresh PRNs.
 
 ```{r}
 frame_ind <- frame |>
@@ -998,7 +578,7 @@ overlap_ind
 
 ### Overlap bounds for different surveys
 
-When two surveys have different inclusion probabilities $\pi_k^A$ and $\pi_k^B$, the bounds generalize naturally:
+When two surveys have different inclusion probabilities $\pi_k^A$ and $\pi_k^B$, the bounds generalize naturally.
 
 ```{r}
 pik_a <- inclusion_prob(frame$revenue_millions, 200)
@@ -1008,9 +588,12 @@ alb_ab <- sum(pmax(0, pik_a + pik_b - 1))
 aub_ab <- sum(pmin(pik_a, pik_b))
 exp_ind <- sum(pik_a * pik_b)
 
-tibble(strategy = c("Positive (same PRN)", "Independent (fresh PRN)", "Negative (shifted PRN)"),
-       overlap = c(overlap_pos, overlap_ind, overlap_neg),
-       bound = c(round(aub_ab), round(exp_ind), round(alb_ab)))
+tibble(strategy = c("Positive (same PRN)",
+                    "Independent (fresh PRN)",
+                    "Negative (shifted PRN)"),
+       realized_overlap = c(overlap_pos, overlap_ind, overlap_neg),
+       benchmark = c(round(aub_ab), round(exp_ind), round(alb_ab)),
+       benchmark_is = c("AUB", "expectation", "ALB"))
 ```
 
 Because `revenue_millions` and `employees` are correlated (large firms have both high revenue and many employees), the overlap under positive coordination
@@ -1018,7 +601,7 @@ is substantial. Negative coordination via PRN shift effectively spreads the burd
 
 ### Scaling to more than two surveys
 
-For $K$ surveys, shift each survey's PRN by $j/K$ for $j = 0, \ldots, K-1$:
+Across a programme of `K` surveys, survey `j` shifts its PRN by `j/K`.
 
 ```{r, eval = FALSE}
 # Negative coordination across 4 surveys
@@ -1033,14 +616,16 @@ for (j in seq_len(n_surveys)) {
 }
 ```
 
-This simple shift strategy works well when the surveys have similar $\pi_k$. For more complex programs (varying burden weights, priority orderings, or dozens of surveys), NSOs use dedicated coordination systems such as the Rivière method [@riviere2001], the Netherlands EDS [@deree1983; @vanhuis1994], or the Swiss method [@graf2014]. These methods track cumulative burden per unit and permute PRNs within microstrata to achieve near-optimal coordination across the full survey program. See @tille2020 [§8.2.7--8.2.9] for a detailed treatment.
+Like the half-turn, the `j/K` shift is a construction whose behaviour depends on
+the surveys resembling each other; it carries no optimality claim across a
+programme of unequal surveys. For more complex programs (varying burden weights, priority orderings, or dozens of surveys), NSOs use dedicated coordination systems such as the Rivière method [@riviere2001], the Netherlands EDS [@deree1983; @vanhuis1994], or the Swiss method [@graf2014]. These methods track cumulative burden per unit and permute PRNs within microstrata, which lets them coordinate across a whole survey programme rather than a pair of surveys at a time. See @tille2020 [§8.2.7--8.2.9] for a detailed treatment.
 
 ## Summary
 
 The PRN coordination workflow in `samplyr` is:
 
 1. **Assign PRNs** once: `mutate(u = runif(n()))`
-2. **Compute $\pi_k$** on the full frame: `mutate(pik = inclusion_prob(mos, n))`
+2. **Compute the inclusion probabilities** on the full frame: `mutate(pik = inclusion_prob(mos, n))`
 3. **Draw the sample**: `sampling_design() |> draw(method = "pps_sps", prn = u) |> execute(frame)`
 4. **Update or shift PRNs**:
    - Temporal negative coordination (waves): `mutate(u = (u - pik) %% 1)`
@@ -1048,10 +633,15 @@ The PRN coordination workflow in `samplyr` is:
    - Cross-survey negative coordination: shift by `(u + 0.5) %% 1`
    - Cross-survey positive coordination: reuse same `u`
 
-| Goal            | PRN update            | Expected overlap                      |
-|-----------------|-----------------------|---------------------------------------|
-| Maximum overlap | None (reuse)          | $\sum \min(\pi_k^A, \pi_k^B)$         |
-| Independent     | Fresh $U(0,1)$        | $\sum \pi_k^A \cdot \pi_k^B$          |
-| Minimum overlap | Shift or Tillé update | $\sum \max(0, \pi_k^A + \pi_k^B - 1)$ |
+| Goal            | PRN update            | Benchmark for the expected overlap    | What it is  |
+|-----------------|-----------------------|---------------------------------------|-------------|
+| Maximum overlap | None (reuse)          | $\sum \min(\pi_k^A, \pi_k^B)$         | AUB         |
+| Independent     | Fresh $U(0,1)$        | $\sum \pi_k^A \cdot \pi_k^B$          | expectation |
+| Minimum overlap | Shift or Tillé update | $\sum \max(0, \pi_k^A + \pi_k^B - 1)$ | ALB         |
 
-## Reference
+The two bounds hold for any coordination scheme on these probabilities and are
+generally not attainable; only the middle row is an expectation its strategy
+reproduces. Under `pps_sps` and `pps_pareto` all three are computed from target
+rather than realized inclusion probabilities.
+
+## References
