@@ -712,7 +712,7 @@ test_that("every recorded frame must be claimed by a stage", {
   # records 2 and 3 sat unreferenced: the digest then said stage 3 selected
   # from a 4-row frame when it selected from a 24-row one.
   registers <- list(mf_schools(), mf_classes(), mf_students())
-  digest <- samplyr::build_exante_digest(mf_design(), registers)
+  digest <- samplyr::exante_digest(mf_design(), registers)
   expect_no_error(samplyr:::validate_frame_digest(digest))
 
   broken <- digest
@@ -734,7 +734,7 @@ test_that("every recorded frame must be claimed by a stage", {
   # A shared hierarchy is one record referenced by every stage.
   expect_no_error(
     samplyr:::validate_frame_digest(
-      samplyr::build_exante_digest(mf_design(), mf_hierarchy())
+      samplyr::exante_digest(mf_design(), mf_hierarchy())
     )
   )
 })
@@ -745,7 +745,7 @@ test_that("a partial digest may record frames its dropped stages used", {
   # pruning them would renumber every frame_ref and lose the provenance of
   # what the execution ran against. That is not the defect above.
   registers <- list(mf_schools(), mf_classes(), mf_students())
-  digest <- samplyr::build_exante_digest(mf_design(), registers)
+  digest <- samplyr::exante_digest(mf_design(), registers)
 
   trimmed <- digest
   trimmed$stages <- trimmed$stages[1:2]

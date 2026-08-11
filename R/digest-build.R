@@ -937,11 +937,11 @@ digest_quantile_bins <- function(chance_by_pool, pool_ids, pool_sizes) {
 #'   draw(n = 300)
 #'
 #' # Resolved from the frame alone: nothing is drawn, no seed is consumed
-#' digest <- build_exante_digest(design, bfa_eas)
+#' digest <- exante_digest(design, bfa_eas)
 #' digest$status
 #' digest$stages[[1]]$scope
 #' @export
-build_exante_digest <- function(design, frame,
+exante_digest <- function(design, frame,
                                 call = rlang::caller_env()) {
   stages_spec <- design$stages
   incomplete <- length(stages_spec) == 0 ||

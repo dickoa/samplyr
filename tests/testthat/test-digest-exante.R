@@ -12,7 +12,7 @@ exante_two_stage <- function() {
 
 test_that("the ex-ante digest resolves what execution would resolve", {
   design <- exante_two_stage()
-  d <- samplyr::build_exante_digest(design, test_frame)
+  d <- samplyr::exante_digest(design, test_frame)
   expect_identical(d$status, "complete")
   expect_identical(length(d$stages), 2L)
   expect_identical(d$frames[[1]]$n_rows, 120L)
@@ -70,7 +70,7 @@ test_that("stratum allocation and per-stratum sizes are replayed", {
   d_alloc <- sampling_design() |>
     stratify_by(stratum, alloc = "proportional") |>
     draw(n = 40) |>
-    samplyr::build_exante_digest(test_frame)
+    samplyr::exante_digest(test_frame)
   st <- d_alloc$stages[[1]]
   expect_identical(st$storage, "constant")
   expect_equal(st$pools$n_target, rep(10, 4))
@@ -82,7 +82,7 @@ test_that("stratum allocation and per-stratum sizes are replayed", {
   d_named <- sampling_design() |>
     stratify_by(stratum) |>
     draw(n = c(A = 5, B = 10, C = 15, D = 20)) |>
-    samplyr::build_exante_digest(test_frame)
+    samplyr::exante_digest(test_frame)
   pools <- d_named$stages[[1]]$pools
   expect_equal(
     pools$n_target[match(c("A", "B", "C", "D"),
@@ -94,14 +94,14 @@ test_that("stratum allocation and per-stratum sizes are replayed", {
     stratify_by(stratum) |>
     draw(n = data.frame(stratum = c("A", "B", "C", "D"),
                         n = c(4, 6, 8, 12))) |>
-    samplyr::build_exante_digest(test_frame)
+    samplyr::exante_digest(test_frame)
   expect_equal(sum(d_df$stages[[1]]$pools$n_target), 30)
 })
 
 test_that("varying element chances come back as a quantile profile", {
   design <- sampling_design() |>
     draw(n = 10, method = "pps_brewer", mos = mos)
-  d <- samplyr::build_exante_digest(design, test_frame)
+  d <- samplyr::exante_digest(design, test_frame)
   st <- d$stages[[1]]
   expect_identical(st$storage, "quantiles")
   expect_identical(unique(st$pools$chance_status), "design_resolved")
@@ -126,7 +126,7 @@ test_that("ex-ante mixed compact and varying pools preserve pool sizes", {
   digest <- sampling_design() |>
     stratify_by(stratum) |>
     draw(n = 4, method = "pps_brewer", mos = mos) |>
-    samplyr::build_exante_digest(frame)
+    samplyr::exante_digest(frame)
 
   stage <- digest$stages[[1]]
   counts <- tapply(
@@ -157,14 +157,14 @@ test_that("certainty and with-replacement designs resolve ex-ante", {
   d <- sampling_design() |>
     cluster_by(cluster) |>
     draw(n = 2, method = "pps_systematic", mos = mos) |>
-    samplyr::build_exante_digest(frame_cert)
+    samplyr::exante_digest(frame_cert)
   u <- d$stages[[1]]$units
   expect_identical(u$is_certainty, c(TRUE, FALSE, FALSE, FALSE, FALSE))
   expect_equal(sum(u$chance), 2, tolerance = 1e-9)
 
   d_wr <- sampling_design() |>
     draw(n = 15, method = "pps_multinomial", mos = mos) |>
-    samplyr::build_exante_digest(test_frame)
+    samplyr::exante_digest(test_frame)
   st <- d_wr$stages[[1]]
   expect_identical(st$chance_kind, "expected_hits")
   expect_equal(sum(st$pools$n_expected), 15, tolerance = 1e-9)
@@ -176,7 +176,7 @@ test_that("realization-dependent designs are refused", {
     draw(n = 4, method = "pps_multinomial", mos = mos) |>
     add_stage() |> draw(n = 2)
   expect_error(
-    samplyr::build_exante_digest(wr_parent, test_frame),
+    samplyr::exante_digest(wr_parent, test_frame),
     class = "samplyr_error_exante_unsupported"
   )
 
@@ -187,7 +187,7 @@ test_that("realization-dependent designs are refused", {
     add_stage() |> draw(n = 50) |>
     add_stage() |> draw(n = 10)
   expect_error(
-    samplyr::build_exante_digest(element_parent, test_frame),
+    samplyr::exante_digest(element_parent, test_frame),
     class = "samplyr_error_stage_parent_id"
   )
   expect_error(
@@ -196,14 +196,14 @@ test_that("realization-dependent designs are refused", {
   )
 
   expect_error(
-    samplyr::build_exante_digest(sampling_design(), test_frame),
+    samplyr::exante_digest(sampling_design(), test_frame),
     class = "samplyr_error_exante_unsupported"
   )
 
   missing_col <- sampling_design() |>
     draw(n = 5, method = "pps_brewer", mos = not_there)
   expect_error(
-    samplyr::build_exante_digest(missing_col, test_frame),
+    samplyr::exante_digest(missing_col, test_frame),
     "not_there"
   )
 })
@@ -215,7 +215,7 @@ test_that("a phase-2 design resolves ex-ante over a phase-1 sample", {
   d <- sampling_design() |>
     stratify_by(stratum, alloc = "proportional") |>
     draw(n = 20) |>
-    samplyr::build_exante_digest(phase1)
+    samplyr::exante_digest(phase1)
   st <- d$stages[[1]]
   expect_identical(d$frames[[1]]$n_rows, 60L)
   expect_equal(sum(st$pools$N), 60L)
@@ -225,7 +225,7 @@ test_that("a phase-2 design resolves ex-ante over a phase-1 sample", {
 test_that("the synthetic three-stage design resolves ex-ante", {
   frame <- synth_three_stage_frame()
   design <- synth_three_stage_design()
-  d <- samplyr::build_exante_digest(design, frame)
+  d <- samplyr::exante_digest(design, frame)
 
   expect_identical(
     nrow(d$stages[[1]]$units), length(unique(frame$district))
@@ -278,7 +278,7 @@ test_that("probability declarations gate the ex-ante digest", {
 
   d <- sampling_design() |>
     draw(n = 10, method = "pps_exante_exact", mos = mos) |>
-    samplyr::build_exante_digest(test_frame)
+    samplyr::exante_digest(test_frame)
   dist <- d$stages[[1]]$chance_distribution
   expect_equal(sum(dist$chance * dist$n_units), 10, tolerance = 1e-9)
 
@@ -296,7 +296,7 @@ test_that("the ex-ante digest records the probabilities tier", {
     add_stage("Clusters") |> cluster_by(cluster) |>
     draw(n = 6, method = "pps_pareto", mos = mos) |>
     add_stage("Units") |> draw(n = 3)
-  d <- samplyr::build_exante_digest(design, test_frame)
+  d <- samplyr::exante_digest(design, test_frame)
   expect_identical(d$stages[[1]]$probabilities, "approximate")
   expect_identical(d$stages[[2]]$probabilities, "exact")
 })
@@ -439,7 +439,7 @@ test_that("the preview cannot accept a frame execute() refuses", {
   for (class in names(cases)) {
     expect_error(frame_summary(design, cases[[class]]), class = class)
     expect_error(
-      samplyr::build_exante_digest(design, cases[[class]]), class = class
+      samplyr::exante_digest(design, cases[[class]]), class = class
     )
     expect_error(execute(design, cases[[class]], seed = 1), class = class)
   }
@@ -456,7 +456,7 @@ test_that("each stage records the frame it would select from", {
   # Hardcoding frame_ref = 1 made a three-register digest claim every stage
   # read the first register, while carrying three frame records.
   registers <- list(mf_schools(), mf_classes(), mf_students())
-  digest <- samplyr::build_exante_digest(mf_design(), registers)
+  digest <- samplyr::exante_digest(mf_design(), registers)
 
   expect_length(digest$frames, 3L)
   expect_identical(
@@ -505,7 +505,7 @@ test_that("each stage records the frame it would select from", {
   # stages read the same supplied table, so deduplication must still collapse
   # them even though their linked frames differ.
   hierarchy <- mf_hierarchy()
-  shared <- samplyr::build_exante_digest(mf_design(), hierarchy)
+  shared <- samplyr::exante_digest(mf_design(), hierarchy)
   expect_length(shared$frames, 1L)
   expect_identical(
     vapply(shared$stages, `[[`, integer(1), "frame_ref"), rep(1L, 3)

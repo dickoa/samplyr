@@ -48,7 +48,7 @@ get_frame_digest(bfa_eas)
 \code{\link[=frame_summary]{frame_summary()}}
 
 Other extension APIs:
-\code{\link[=build_exante_digest]{build_exante_digest()}},
-\code{\link{digest}}
+\code{\link{digest}},
+\code{\link[=exante_digest]{exante_digest()}}
 }
 \concept{extension APIs}

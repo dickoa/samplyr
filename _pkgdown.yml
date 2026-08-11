@@ -39,6 +39,15 @@ reference:
       - validate_frame
       - execution-conditions
 
+  - title: "Panels and Rotation"
+    desc: >
+      Longitudinal designs: split an executed master into panels, materialize
+      the wave each panel is scheduled for, and assemble the waves.
+    contents:
+      - rotation_program
+      - stack_waves
+      - as.data.frame.rotation_wave
+
   - title: "Reference topics"
     desc: >
       Cross-cutting contracts several functions share. Each is the canonical
@@ -94,7 +103,7 @@ reference:
     contents:
       - digest
       - get_frame_digest
-      - build_exante_digest
+      - exante_digest
 
   - title: "Datasets"
     desc: "Survey frames derived from public data, for learning and testing."

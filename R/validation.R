@@ -1064,7 +1064,7 @@ digest_frame_drift <- function(digest, design, frame) {
 digest_chance_drift <- function(digest, design, frame) {
   none <- list(diffs = character(0), n_compared = 0L)
   exante <- tryCatch(
-    build_exante_digest(design, frame),
+    exante_digest(design, frame),
     error = function(e) NULL
   )
   if (is_null(exante)) {

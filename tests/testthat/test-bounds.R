@@ -852,7 +852,7 @@ test_that("a saturating allocation replays identically everywhere", {
 
   expect_equal(frame_summary(sample, detail = "pool")$n_target, realized)
   expect_equal(
-    samplyr::build_exante_digest(design, frame)$stages[[1]]$pools$n_target,
+    samplyr::exante_digest(design, frame)$stages[[1]]$pools$n_target,
     realized
   )
 })

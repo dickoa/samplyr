@@ -1567,7 +1567,7 @@ frame_summary <- function(
         "{.arg x} must be a {.cls sampling_design} or a {.cls tbl_sample}."
       )
     }
-    digest <- build_exante_digest(design, frame)
+    digest <- exante_digest(design, frame)
     return(frame_summary_report(
       x, digest, stages, scope, detail, exante = TRUE
     ))

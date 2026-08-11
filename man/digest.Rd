@@ -28,7 +28,7 @@ str(get_frame_digest(sample), max.level = 1)
 }
 \seealso{
 Other extension APIs:
-\code{\link[=build_exante_digest]{build_exante_digest()}},
+\code{\link[=exante_digest]{exante_digest()}},
 \code{\link[=get_frame_digest]{get_frame_digest()}}
 }
 \concept{extension APIs}
