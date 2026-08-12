@@ -23,8 +23,8 @@
 #' @param systematic_variance What to do about the simple random sampling
 #'   variance approximation used for equal-probability `systematic` stages.
 #'   `"warn"` (default) applies it and warns once per call, naming every
-#'   affected stage; `"approximate"` applies it silently, for a caller who has
-#'   acknowledged it; `"error"` refuses. Census stages are exempt, since a
+#'   affected stage. `"approximate"` applies it silently for a caller who has
+#'   acknowledged it, while `"error"` refuses. Census stages are exempt, since a
 #'   stage that took everything within reach contributes no variance, and
 #'   `pps_systematic` is unaffected, having its own treatment. The choice and
 #'   the affected stages are recorded on the returned object in the
@@ -85,8 +85,9 @@
 #'
 #' Every executed sampling stage is represented in the exported design:
 #' one `ids` term, one `fpc` term, and (when stratified) one `strata`
-#' term per stage, so [survey::svydesign()] performs exact multi-stage
-#' linearization (Sarndal et al. 1992, ch. 4.3). In particular, a
+#' term per stage, so [survey::svydesign()] represents the multi-stage
+#' structure in its linearization (Sarndal et al. 1992, ch. 4.3). Exactness
+#' still depends on the variance treatment available for each method. A
 #' design whose first stage is a census of PSUs correctly attributes
 #' all variance to the later stages.
 #'
@@ -109,7 +110,7 @@
 #' phase-2 strata and their sizes the phase-2 population counts. The master
 #' is retained as the first phase and supplies the rows the wave did not
 #' keep, which [survey::twophase()] needs to build that phase. Columns added
-#' to the wave for analysis are carried into the exported design; columns the
+#' to the wave for analysis are carried into the exported design. Columns the
 #' master already has keep the master's values.
 #'
 #' The activation is exact, but the first phase is only as expressible as
@@ -158,8 +159,9 @@
 #' also caught, and an overwrite that left every value identical
 #' passes. Physically dropping out-of-domain
 #' rows before conversion is not equivalent to domain estimation, in that
-#' situation the point estimate will be correct, but the variance is
-#' understated because the domain sample size is random under the design.
+#' situation the point estimate can agree, but its variance estimate is
+#' generally wrong and is often too small because the domain sample size is
+#' random under the design.
 #'
 #' For subpopulation estimates, convert the full sample first and then
 #' subset the design, which applies the proper domain estimator:
@@ -187,8 +189,7 @@
 #' systematic design with interval \eqn{k}{k} has only \eqn{k}{k} distinct
 #' samples per stratum, so its variance for one particular frame is a fixed
 #' quantity that need not sit near the SRSWOR value. Measured over repeated
-#' draws, 90 per stratum from 1800 with an interval of 20
-#' (`dev/experiments/systematic-export-margins.R` in the package sources):
+#' draws, 90 per stratum from 1800 with an interval of 20:
 #'
 #' | frame order | reported / true variance | coverage of a 95% interval |
 #' |---|---|---|
@@ -213,7 +214,7 @@
 #' Replicate weights are no way around this. [as_svrepdesign()] takes the same
 #' `systematic_variance` argument, because no replicate type on offer
 #' reconstructs a systematic sample's random start or its dependence on frame
-#' order; each resamples the realized sample as though its units had been
+#' order. Each resamples the realized sample as though its units had been
 #' drawn independently within strata. Requesting a particular type is
 #' therefore not an acknowledgement, and does not silence the condition. The
 #' figures in the table above were measured for the linearization export and
@@ -228,8 +229,8 @@
 #' probabilities from the marginal inclusion probabilities. Here Brewer names
 #' the variance estimator, not the selection algorithm e.g Sampford selection
 #' receives this default treatment. This is the approximation
-#' described by Berger (2004) and works well for most PPS designs regardless
-#' of the sampling algorithm used.
+#' described by Berger (2004). Its accuracy depends on the sampling design and
+#' population. It is not an exact substitute for joint inclusion probabilities.
 #'
 #' For supported methods, you can instead compute joint inclusion
 #' probabilities using [joint_expectation()] and pass them via `pps =
@@ -751,11 +752,7 @@ check_wave_master_identity <- function(metadata, master, call = caller_env()) {
 #' exported subset is the sample the user holds.
 #' @noRd
 activation_phase2_columns <- function(df1, x, metadata, call = caller_env()) {
-  # The keys, blocks and quotas below are this algorithm's and this schema's,
-  # so the record is read under the version it states before any of them is
-  # used. An export is where a misread record becomes a design object that
-  # looks estimable, which is the worst place to discover the law was never
-  # checked.
+  # Validate the recorded assignment law before deriving design columns.
   record <- prepare_panel_record(
     metadata$panel_assignment,
     "A survey export",
@@ -949,18 +946,8 @@ build_activation_twophase <- function(
   stages1 <- prev_phase$stages %||% get_stages_executed(master)
   metadata <- attr(x, "metadata")
 
-  # A cohort drawn whole has one implicit panel covering all its rows, so
-  # activating it is not a subsample: there is no second phase to carry.
-  #
-  # An activation whose every probability is one is the same situation reached
-  # by a different route: every unit of the master is retained with certainty,
-  # so the conditional phase-2 variance is exactly zero and the design's
-  # variance is the master's alone. It arises when every pool is permanent,
-  # whether by selection certainty or by small-pool promotion, and when a
-  # wave activates every panel. Representing it as two phases is not merely
-  # redundant, it is a different design from the one that was drawn, and
-  # survey can fail outright on it: an identity phase 2 over singleton
-  # phase-1 strata aborts inside `twophase()` with a subscript error.
+  # An identity activation has no second-phase variance. Exporting it through
+  # twophase() also fails when phase-1 strata are singletons.
   if (is_null(metadata$panel_assignment) || activation_is_identity(metadata)) {
     return(build_singlephase_svydesign(
       x,
@@ -1073,30 +1060,11 @@ build_activation_twophase <- function(
 
 #' Classify a stage's selection method for variance export.
 #'
-#' Single source of truth for the method-combination matrix: every
-#' export decision (FPC encoding, pps argument, replicate-type warning)
-#' derives from this kind rather than re-testing method constants.
-#'
-#' - "wr": with-replacement or PMR selection. Hansen-Hurwitz variance,
-#'   no finite-population correction.
-#' - "rs_poisson": random-size independent-selection WOR (bernoulli,
-#'   pps_poisson, or a custom WOR method registered with
-#'   fixed_size = FALSE). Poisson linearization at stage 1 (built-ins
-#'   only; see survey_resolve_pps), WR treatment at later stages.
-#' - "pps_wor": fixed-size unequal-probability WOR (PPS methods,
-#'   balanced, custom fixed-size WOR). Brewer approximation.
-#' - "equal_wor": equal-probability fixed-size WOR (srswor,
-#'   systematic). Count-scale FPC, SRS-style variance.
-#' - "unsupported": the method declares that no linearization
-#'   treatment is valid (variance_family = "unsupported").
-#'   survey_resolve_pps() refuses as_svydesign() and points to
-#'   replicate methods; the bootstrap escape demotes its FPC.
+#' Centralizes the `wr`, `rs_poisson`, `pps_wor`, `equal_wor`, and
+#' `unsupported` families used by FPC, PPS, and replicate decisions.
 #' @noRd
 survey_stage_kind <- function(draw_spec) {
-  # Built-in controlled and spatially balanced designs do not have a valid
-  # linearization family in v1. Keep this classification here, alongside all
-  # other built-in method rules; method_variance remains metadata supplied by
-  # registered methods.
+  # Controlled and spatially balanced methods lack a supported linearization.
   if (
     !is_null(draw_spec$bounds) ||
       draw_spec$method %in% spatial_balanced_methods
@@ -1104,11 +1072,7 @@ survey_stage_kind <- function(draw_spec) {
     return("unsupported")
   }
 
-  # A variance family declared at registration (sondage
-  # register_method(variance_family = )) overrides inference from
-  # type/fixed: the method author knows the estimator, samplyr can
-  # only guess. Unknown values (a newer sondage) fall through to the
-  # inference below.
+  # A registered variance family overrides inference from method metadata.
   if (!is_null(draw_spec$method_variance)) {
     kind <- switch(
       draw_spec$method_variance,
@@ -1136,7 +1100,7 @@ survey_stage_kind <- function(draw_spec) {
   }
   if (identical(draw_spec$method_type, "wor")) {
     # Custom WOR methods: fixed-size follows the Brewer (PPS-WOR)
-    # strategy; random-size follows the Poisson strategy.
+    # strategy. Random-size follows the Poisson strategy.
     if (identical(draw_spec$method_fixed, FALSE)) {
       return("rs_poisson")
     }
@@ -1157,19 +1121,8 @@ survey_stage_kind <- function(draw_spec) {
 
 #' Resolve the variables that match phase-2 rows into the phase-1 data
 #'
-#' A two-phase export needs two different things, which are easy to conflate.
-#' The `id` formulas describe how each phase sampled, and the phases declare
-#' them independently: phase 1 by PSU, phase 2 by household, with neither
-#' obliged to redeclare the other's units. Separately, phase-2 observations
-#' have to be matched into the phase-1 table, and that relational bridge is
-#' what this resolves.
-#'
-#' The bridge is drawn from the survey identifiers either phase declared, kept
-#' to those carried by both tables. It must identify a phase-1 row uniquely: a
-#' bridge row may legitimately have many phase-2 descendants, but a
-#' many-to-many match would duplicate observations and silently inflate the
-#' sample. Repeated phase-1 cluster identifiers are not themselves a problem,
-#' which is why the compound bridge rather than the identifiers is checked.
+#' Uses identifiers shared by both phases and requires a unique phase-1 match.
+#' phase-2 descendants may repeat that bridge.
 #' @noRd
 resolve_phase_bridge <- function(phase1_ids, phase2_ids, df1, df2,
                                  call = caller_env()) {
@@ -1303,42 +1256,9 @@ survey_key_vars <- function(design, stages_executed, df) {
 
 #' Per-stage survey sampling-unit identifiers.
 #'
-#' Builds exactly one id term per represented executed stage, in
-#' execution order. survey::svydesign() reads each term of the `ids`
-#' formula as one sampling stage, so the number of terms must match the
-#' number of represented stages:
-#'
-#' - Multi-hit (WR/PMR) stages use the .draw_k column: one row per
-#'   draw, each draw an independent unit.
-#' - Clustered stages use the cluster variable directly, or a
-#'   synthesized interaction column when cluster_by() has several
-#'   variables. Execution treats the combination as a single-stage
-#'   cluster id; listing the variables as separate formula terms would
-#'   make survey read them as extra sampling stages.
-#' - Unclustered WOR stages are element-sampling stages. The final
-#'   executed stage gets a synthesized row-identity column so its
-#'   sampling variance is represented (a single-stage design keeps
-#'   ids = ~1, which survey treats identically). An unclustered
-#'   element stage followed by further stages cannot be expressed as
-#'   nested cluster sampling and aborts.
-#'
-#' `synthesize_unclustered = FALSE` skips unclustered WOR stages. Only
-#' phase 2 of a two-phase export uses it: its stages describe the
-#' subsampling that survey::twophase() links across the phases itself.
-#' Phase 1 synthesizes, because its stages are internal to that phase
-#' and dropping one drops its variance contribution while leaving the
-#' export claiming `method = "full"`.
-#'
-#' No reachable design exercises the phase-2 case. It would need a
-#' phase 2 of two or more stages whose last one is unclustered, and a
-#' bridge that resolves: the bridge needs a row-unique identifier from
-#' one of the phases, phase 2 does not declare one when its last stage
-#' is unclustered, and when phase 1 declares one instead,
-#' `check_phase_key_invariance()` refuses the execution because that
-#' identifier is not constant within phase 2's own clusters.
-#'
-#' `prefix` disambiguates synthesized column names when two designs
-#' share one data frame (two-phase export).
+#' Builds one ID term per represented stage. Multi-hit stages use draw IDs,
+#' clustered stages use cluster keys, and terminal element stages may receive
+#' synthesized row IDs. `prefix` separates two-phase columns.
 #' @noRd
 survey_id_info <- function(
   design,
@@ -1426,25 +1346,9 @@ survey_formula_from_vars <- function(vars) {
 
 #' Per-stage survey strata terms.
 #'
-#' survey::svydesign() reads each term of the `strata` formula as the
-#' strata for the corresponding sampling stage; extra variables in one
-#' stage's term are silently ignored. Each stage therefore contributes
-#' at most ONE term: a single stratification variable is used directly,
-#' while several variables (or a certainty stratum combined with user
-#' strata) are collapsed into a synthesized interaction column.
-#'
-#' In "multistage" mode, terms are positionally aligned with the ids
-#' formula (id_stage_indices). Unstratified stages between stratified
-#' ones get a constant placeholder column (a single stratum);
-#' trailing unstratified stages are dropped, which survey pads as
-#' unstratified.
-#'
-#' In "first_stage" mode (two-phase export), only the first executed
-#' stage's strata are used, matching survey::twophase() expectations.
-#'
-#' The certainty stratum applies to the first executed stage: WOR
-#' take-all units form a separate stratum that contributes zero
-#' variance.
+#' Builds one term per represented stage, collapsing multi-column strata to an
+#' interaction and inserting placeholders for positional alignment. Two-phase
+#' mode keeps only the first stage.
 #' @noRd
 survey_strata_info <- function(
   df,
@@ -1457,11 +1361,7 @@ survey_strata_info <- function(
   mode <- match.arg(mode)
   first_stage_idx <- stages_executed[1]
 
-  # A take-all stratum belongs to the PPS-WOR (Brewer) variance treatment
-  # only. Ask survey_stage_kind() rather than testing method names: it also
-  # routes cube and custom balanced designs here, and it keeps random-size
-  # methods out, including pps_poisson, which is a pps_wor_method by name
-  # but exports under the Poisson treatment.
+  # Certainty handling follows the resolved variance family, not method names.
   cert_var <- NULL
   first_draw_spec <- design$stages[[first_stage_idx]]$draw_spec
   cert_col <- paste0(".certainty_", first_stage_idx)
@@ -1508,7 +1408,7 @@ survey_strata_info <- function(
     }
   }
 
-  # Trailing unstratified stages are dropped from the formula; interior
+  # Trailing unstratified stages are dropped from the formula. Interior
   # gaps get a single-stratum placeholder to keep terms aligned with
   # the ids formula.
   last_stratified <- max(c(0L, which(!is.na(terms))))
@@ -1536,23 +1436,9 @@ survey_strata_info <- function(
 
 #' Per-stage FPC terms.
 #'
-#' Builds exactly one fpc term per represented stage, positionally
-#' aligned with the ids formula. Two encodings are used, because
-#' survey::svydesign() requires every fpc term on the same scale
-#' (all population counts >= 1, or all sampling fractions <= 1):
-#'
-#' - Count scale (default): the .fpc_k population count for
-#'   equal-probability WOR stages, Inf (no correction) for WR/PMR
-#'   stages and for random-size Poisson stages after the first.
-#' - Fraction scale: used whenever a stage passes per-unit inclusion
-#'   probabilities (PPS WOR, balanced, custom WOR, first-stage
-#'   random-size Poisson) in a design with more than one represented
-#'   stage. Each WOR stage passes its per-unit stage sampling
-#'   fraction 1/.weight_k (equal to pi_k); WR/PMR and later Poisson
-#'   stages pass 0 (no correction).
-#'
-#' A single represented pi-scale stage keeps the legacy "pi" encoding
-#' (one .fpc_pi_k term).
+#' Aligns one term per ID stage. Uses counts by default, a common fraction
+#' scale in multi-stage PPS designs, and the legacy probability scale for one
+#' represented PPS stage.
 #' @noRd
 survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
   fpc_stage_indices <- if (length(id_stage_indices) == 0) {
@@ -1660,13 +1546,13 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
 #' Demote a stage-1 random-size Poisson FPC to Inf.
 #'
 #' Used by the bootstrap escape hatch when survey::svydesign() cannot
-#' represent exact multi-stage Poisson linearization. The demoted design
-#' carries no finite-population correction at the Poisson stage; the
+#' represent a stage-1 Poisson PPS specification in a multi-stage object.
+#' The demoted design carries no finite-population correction at that stage.
 #' bootstrap resampler supplies the variance instead.
 #' @noRd
 survey_demote_rs_poisson_stage1 <- function(df, fpc, first_idx) {
   pi_col <- paste0(".fpc_pi_", first_idx)
-  # On the fraction scale, "no correction" is a sampling fraction of 0;
+  # On the fraction scale, "no correction" is a sampling fraction of 0.
   # on the count/pi scales it is an infinite population.
   if (identical(fpc$scale, "fraction")) {
     inf_col <- paste0(".fpc_f0_", first_idx)
@@ -1712,7 +1598,7 @@ survey_resolve_pps <- function(
 
   # Stages whose method declares variance_family = "unsupported": no
   # linearization treatment is valid, whatever the selection metadata
-  # looks like. as_svydesign() refuses; the bootstrap escape demotes a
+  # looks like. as_svydesign() refuses. The bootstrap escape demotes a
   # stage-1 pi FPC (later-stage unsupported FPCs are already Inf/0).
   unsupported_idx <- stages_executed[vapply(
     stages_executed,
@@ -1788,13 +1674,7 @@ survey_resolve_pps <- function(
     }
   }
 
-  # Custom random-size WOR methods (registered with fixed_size = FALSE)
-  # reach this point classified as rs_poisson, but
-  # survey::poisson_sampling() is only valid when selections are
-  # independent across units. Built-in Poisson methods qualify, and so
-  # do custom methods whose author declared variance_family =
-  # "poisson" (the declaration asserts independence). Undeclared
-  # custom methods still error.
+  # Only methods declaring independent Poisson selections use this estimator.
   is_declared_poisson <- identical(
     stage_spec$draw_spec$method_variance,
     "poisson"
@@ -1829,7 +1709,7 @@ survey_resolve_pps <- function(
 #' forwarded. Each set is the formals of the function named, plus the formals
 #' of the helpers that function forwards its own `...` to, minus the ones
 #' samplyr supplies itself (the `derived_args` sets below). Taken from survey
-#' 4.5; `test-survey-arguments.R` checks them against the installed version.
+#' 4.5. `test-survey-arguments.R` checks them against the installed version.
 #' @noRd
 svydesign_accepted_args <- c(
   # survey::svydesign() and its default method
@@ -2167,12 +2047,8 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
 
     use_weights <- !is_null(method) && method %in% c("approx", "simple")
 
-    # The full method builds a per-stage covariance, so a probability formula
-    # must have one term per ID stage. A single overall probability makes
-    # survey fail deep inside covariance construction with "replacement has
-    # length zero". Finite population corrections carry the same information
-    # per stage, so where both phases have them survey derives the
-    # probabilities itself.
+    # The full method needs one probability term per ID stage unless the FPCs
+    # supply the same information.
     n_id_stages <- max(
       length(id_info1$id_vars), length(id_vars2)
     )
@@ -2261,17 +2137,14 @@ build_singlephase_svydesign <- function(
   stages_executed <- get_stages_executed(x)
   df <- as.data.frame(x)
 
-  # A user-supplied pps object (ppsmat, poisson_sampling, HR) is
-  # single-stage in survey: multistage ids are rejected outright.
-  # Export the first-stage design in that case, as documented for
-  # exact PPS variance estimation.
+  # User-supplied PPS objects are single-stage in survey.
   # [[ not $: `$` on a list matches by prefix.
   if (!is_null(dots[["pps"]]) && length(stages_executed) > 1L) {
     cli_warn(c(
       "Exact PPS variance ({.arg pps}) is single-stage in {.pkg survey}.",
       "i" = "Exporting the stage-1 design only; later-stage sampling
              variance is not represented.",
-      "i" = "Omit {.arg pps} for exact multi-stage linearization with
+      "i" = "Omit {.arg pps} for multi-stage linearization with
              Brewer's approximation at the PPS stage."
     ))
     stages_executed <- stages_executed[1]
@@ -2356,9 +2229,9 @@ build_singlephase_svydesign <- function(
 #'   [survey::svydesign()] object this verb builds from the sample.
 #' @param systematic_variance What to do about the generic replicate weights
 #'   built for equal-probability `systematic` stages. `"warn"` (default) builds
-#'   them and warns once per call, naming every affected stage;
+#'   them and warns once per call, naming every affected stage.
 #'   `"approximate"` builds them silently, for a caller who has acknowledged
-#'   the approximation; `"error"` refuses. Naming a `type` is not an
+#'   the approximation, while `"error"` refuses. Naming a `type` is not an
 #'   acknowledgement, since no type reproduces systematic selection. Census
 #'   stages are exempt and `pps_systematic` is unaffected, as in
 #'   [as_svydesign()]. The choice and the affected stages are recorded on the
@@ -2412,7 +2285,7 @@ build_singlephase_svydesign <- function(
 #'
 #' Equal-probability `systematic` stages are in the same position, for every
 #' replicate type rather than for a subset of them. A jackknife or bootstrap
-#' replicate perturbs the realized sample; it does not redraw a random start
+#' replicate perturbs the realized sample. It does not redraw a random start
 #' against the frame in the order the frame was in, which is what generates a
 #' systematic sample's variance. Frame ordering or periodicity can therefore
 #' make the resulting standard errors too small or too large, in the same
@@ -2598,20 +2471,8 @@ as_survey_design.tbl_sample <- function(.data, ...) {
 
 #' Make a survey design object dispatchable by srvyr's as_survey_design
 #'
-#' Random-size Poisson methods (`bernoulli`, `pps_poisson`) export through
-#' [survey::poisson_sampling()], which yields an object of class
-#' `c("pps", "survey.design")`. This trips srvyr in two ways: srvyr only
-#' registers an `as_survey_design` method for `survey.design2` (so the
-#' generic finds no method and errors), and its grouped path subsets the
-#' design with `[`, which dispatches to the old `[.survey.design` method
-#' that fails on `pps` objects.
-#'
-#' A `pps` design is built on the same internals as `survey.design2`, so
-#' we insert that class tag just before `survey.design`. The generic then
-#' finds srvyr's method, and `[` dispatches to the working
-#' `[.survey.design2` method, which enables grouped srvyr verbs. `pps`
-#' stays first, so survey's unequal-probability variance methods still
-#' dispatch correctly.
+#' Adds `survey.design2` behind `pps` so srvyr finds its converter and subset
+#' method while survey retains PPS dispatch.
 #' @noRd
 srvyr_dispatchable_design <- function(x) {
   if (inherits(x, "pps") && !inherits(x, "survey.design2")) {

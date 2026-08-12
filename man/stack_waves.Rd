@@ -22,14 +22,14 @@ several realizations and repeats the unit key on purpose.
 \description{
 Verifies that two or more materialized waves come from one executed master
 and stacks them into a plain long table, one row per active master row per
-wave. This is the structural handoff to an inference layer; which estimator
+wave. This is the structural handoff to an inference layer. Which estimator
 of change is appropriate, and under what conditions, is a separate question
 that depends on the design and the overlap. See
 \code{vignette("rotating-panels")}.
 
 Row-binding waves by hand does not reproduce the checks this performs. Two
 executions of one design produce identical \code{.sample_id} values, so waves of
-\emph{different} masters stack without complaint; and a wave edited after
+\emph{different} masters stack without complaint. A wave edited after
 execution keeps a correct provenance record while its rows no longer match
 it. Both are refused here.
 }
@@ -64,7 +64,7 @@ are dropped, stage-specific quantities such as \code{.fpc_1} among them.
 
 \subsection{What it does not do}{
 
-It does not compute a covariance, a correlation or a variance of change;
+It does not compute a covariance, a correlation, or a variance of change.
 those belong to the inference layer, and which estimator is appropriate
 depends on the overlap and the design. It does not reshape outcomes: attach
 each wave's measurement under a common name before stacking. It does not

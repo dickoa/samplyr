@@ -1,10 +1,10 @@
 ---
-title: "Sampling Coordination with Permanent Random Numbers"
+title: "Coordinate Samples with Permanent Random Numbers"
 output: rmarkdown::html_vignette
 bibliography: references.bib
 link-citations: true
 vignette: >
-  %\VignetteIndexEntry{Sampling Coordination with Permanent Random Numbers}
+  %\VignetteIndexEntry{Coordinate Samples with Permanent Random Numbers}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -22,626 +22,282 @@ library(sondage)
 library(dplyr)
 ```
 
-## Why Coordinate Samples?
+## What coordination does
 
-Repeated surveys (business panels, labor force surveys, agricultural censuses) draw fresh samples at regular intervals from the same population.
-Similarly, multiple survey programs often sample from the same register simultaneously. Two natural questions arise:
+When several samples use the same register, we can deliberately control how
+much they overlap. Positive coordination keeps more of the same units. This can
+help with estimates of change, but it concentrates repeated response burden on
+those units. Negative coordination does the opposite. It spreads response
+burden and increases the number of distinct units covered.
 
-- **Positive coordination**: How can we maximize overlap between samples to reduce respondent burden and improve change estimates?
-- **Negative coordination**: How can we minimize overlap to spread the burden and maximize cumulative coverage?
+Permanent random numbers, or PRNs, provide a practical way to coordinate
+samples. Each frame unit receives one random number between zero and one. The
+number stays with the unit and is reused or updated for later selections. This
+approach has a long history in business surveys [@brewer1972; @ohlsson1995].
 
-These questions apply both *temporally* (across waves of the same survey) and *cross-sectionally* (across different surveys on the same frame, known as **collocated sampling**).
+This article starts with Bernoulli sampling because its coordination rule is
+exact and easy to see. It then shows the fixed-size PPS workflow commonly used
+for business surveys. `samplyr` accepts PRNs with `bernoulli`, `pps_poisson`,
+`pps_sps`, and `pps_pareto`.
 
-The **permanent random number** (PRN) technique, introduced by @brewer1972 and developed by @ohlsson1995 and @cotton1992, answers both questions with a single mechanism: attach a stable $U(0,1)$ value to each frame unit and update it between waves.
+Coordination is not the same as a longitudinal design. A PRN controls overlap
+between draws. A longitudinal plan also decides how long units remain in the
+sample, how many units enter at each wave, and how change will be estimated.
+See `vignette("rotating-panels")` for that workflow.
 
-`samplyr` supports PRN-based coordination for four selection methods: `bernoulli`, `pps_poisson`, `pps_sps`, and `pps_pareto`.
+## Prepare the register
 
-Coordination controls *which units* successive samples share. It says nothing
-about how a survey that revisits its units is designed, scheduled or analysed
-over time; that is `vignette("rotating-panels")`, which covers the five
-longitudinal designs, `execute(panels = )` and `execute(wave = )`,
-`rotation_program()`, and estimating change across waves. The two mechanisms
-compose and are otherwise independent.
-
-## Setup
-
-We use `ken_enterprises`, a synthetic business register with 17,004 enterprises.
+We use the synthetic `ken_enterprises` register and target about 200
+enterprises per wave.
 
 ```{r}
-library(samplyr)
-library(sondage)
-library(dplyr)
-
 data(ken_enterprises)
-glimpse(ken_enterprises)
-```
 
-Each enterprise has a `revenue_millions` column that serves as our measure of size for PPS sampling. We target 200 enterprises per wave.
+set.seed(1)
+frame <- ken_enterprises |>
+  mutate(prn = runif(n()))
 
-```{r}
 n_wave <- 200
 ```
 
-### Assigning permanent random numbers
+In production, store `prn` in the register rather than recreating it in every
+sampling script. A stable identifier and a stable PRN are both needed for
+coordination to survive register updates.
 
-Every frame unit gets a $U(0,1)$ value drawn once and stored permanently in the register. These values are reused or updated across waves.
+## The simplest positive coordination
+
+Under Bernoulli sampling, a unit is selected when its PRN is below the sampling
+fraction. Reusing both the PRN and the fraction therefore selects the same
+units. The realized sample size can vary around the target.
 
 ```{r}
-set.seed(1)
+fraction <- n_wave / nrow(frame)
 
-frame <- ken_enterprises |>
-  mutate(u = runif(n()))
+design_bernoulli <- sampling_design() |>
+  draw(frac = fraction, method = "bernoulli", prn = prn)
+
+wave_1 <- execute(design_bernoulli, frame, seed = 10)
+wave_2 <- execute(design_bernoulli, frame, seed = 20)
+
+tibble(
+  size_wave_1 = nrow(wave_1),
+  size_wave_2 = nrow(wave_2),
+  overlap = length(intersect(wave_1$enterprise_id, wave_2$enterprise_id))
+)
 ```
 
-## Positive Coordination: Maximum Overlap
+The seeds differ, but the samples do not. Once a supported method receives a
+PRN, selection is determined by the PRN values and the design.
 
-Begin with the simplest design that accepts a PRN. Under `bernoulli` a unit is
-selected exactly when its permanent random number falls below the sampling
-fraction, and nothing else enters the rule. Two waves that reuse the same `u` at
-the same fraction therefore select the same units, whichever seed each is given.
+## The simplest negative coordination
+
+For a second Bernoulli wave, subtract the inclusion probability from each PRN
+and wrap the result back into the unit interval [@ohlsson1995].
 
 ```{r}
-f <- n_wave / nrow(frame)
+frame_wave_2 <- frame |>
+  mutate(prn = (prn - fraction) %% 1)
 
-bern_a <- sampling_design() |>
-  draw(frac = f, method = "bernoulli", prn = u) |>
-  execute(frame, seed = 42)
+wave_2_negative <- execute(design_bernoulli, frame_wave_2, seed = 20)
 
-bern_b <- sampling_design() |>
-  draw(frac = f, method = "bernoulli", prn = u) |>
-  execute(frame, seed = 123)
-
-c(wave1 = nrow(bern_a), wave2 = nrow(bern_b),
-  overlap = length(intersect(bern_a$enterprise_id, bern_b$enterprise_id)))
+tibble(
+  size_wave_1 = nrow(wave_1),
+  size_wave_2 = nrow(wave_2_negative),
+  overlap = length(intersect(
+    wave_1$enterprise_id,
+    wave_2_negative$enterprise_id
+  ))
+)
 ```
 
-Perfect overlap. This is what a survey wants when the goal is to track the same
-units over time, for example measuring quarterly changes in revenue within a
-fixed panel. Note that the waves are not exactly 200 units: `bernoulli` fixes
-each unit's chance of selection and lets the realized size vary. That is the
-trade the fixed-size methods reverse, and we return to it below.
+Here the two samples are disjoint. That conclusion is exact for this equal-
+probability Bernoulli example because twice the sampling fraction is below
+one. More generally, high-probability units may have to appear in both samples.
 
-## Negative Coordination: Minimum Overlap
+The important operational rule is simple: update PRNs on the full frame, not
+only on the selected rows. Otherwise the next draw no longer follows the
+intended sampling design.
 
-To minimize overlap, subtract each unit's inclusion probability from its PRN
-between waves and wrap the result back into $(0,1)$ [@tille2020, sec. 8.2.4]:
+## A fixed-size PPS sample
 
-$$u_k^{(t+1)} = \bigl(u_k^{(t)} - \pi_k\bigr) \bmod 1$$
+Business surveys often need a fixed sample size and want large enterprises to
+be selected more often. Sequential Poisson sampling (`pps_sps`) provides that
+combination and supports PRNs [@ohlsson1998].
 
-Under `bernoulli` this rule is exactly true, and the reason is worth seeing
-once. A unit is selected when $u_k < \pi_k$ and not otherwise, so the selected
-units are precisely those occupying the interval $[0, \pi_k)$. Subtracting
-$\pi_k$ moves that interval to the top of $(0,1)$ and slides everyone else down
-by the same amount. A unit selected at wave $t$ therefore cannot be selected at
-wave $t+1$ unless its two probabilities together exceed 1. Tillé derives the
-update this way and concludes that the resulting negative coordination is
-optimal [@tille2020, sec. 8.2.4].
-
-Here every unit shares the same probability `f`, far below 0.5, so the two waves
-come out disjoint.
+First compute each unit's target inclusion probability on the full frame.
 
 ```{r}
-bern1 <- sampling_design() |>
-  draw(frac = f, method = "bernoulli", prn = u) |>
-  execute(frame, seed = 1)
-
-frame_bern <- frame |> mutate(u = (u - f) %% 1)
-
-bern2 <- sampling_design() |>
-  draw(frac = f, method = "bernoulli", prn = u) |>
-  execute(frame_bern, seed = 1)
-
-c(wave1 = nrow(bern1), wave2 = nrow(bern2),
-  overlap = length(intersect(bern1$enterprise_id, bern2$enterprise_id)))
-```
-
-That is the whole mechanism. Everything below keeps this update and changes the
-selection method underneath it.
-
-## Unequal Probabilities and a Fixed Sample Size
-
-A business register is skewed, and a survey of one usually wants large
-enterprises selected more often, plus a sample size it can staff. Each of those
-two wishes costs something the Bernoulli story had for free.
-
-Selecting with probability proportional to size gives every unit its own
-first-order inclusion probability $\pi_k$. `sondage::inclusion_prob()` computes
-these from the measure of size and the sample size, on the **full frame** rather
-than on a sample.
-
-```{r}
-frame <- frame |>
+frame_pps <- frame |>
   mutate(pik = inclusion_prob(revenue_millions, n_wave))
 
-round(quantile(frame$pik), 4)
+summary(frame_pps$pik)
 ```
 
-What `pik` means depends on the method it is handed to. Under `bernoulli` and
-`pps_poisson` a unit is selected exactly when $u_k < \pi_k$, as above, so
-$\pi_k$ is its inclusion probability. `pps_sps` and `pps_pareto` are order
-sampling designs [@rosen1997a; @ohlsson1998]: they fix the sample size, and they
-pay for it in the marginals. There $\pi_k$ is the **target** inclusion
-probability supplied to the algorithm, and Tillé states the consequence plainly
--- "the sample size is fixed but the inclusion probabilities are not exactly
-satisfied" [@tille2020, sec. 5.11]. The realized probability approaches the
-target as $n$ and $N$ grow, and `samplyr` records the distinction by placing both
-methods in the `"approximate"` probabilities tier.
-
-Every bound and benchmark computed from `pik` below inherits that. For
-`bernoulli` and `pps_poisson` they are exact; for `pps_sps` and `pps_pareto` they
-are approximations whose error is the gap between target and realized
-probability.
-
-The other route keeps the probabilities exact and gives up the fixed size.
-`pps_poisson` keeps $\pi_i$ dependent only on unit $i$ and the frame total, which
-is what makes coordination stable across waves.
-
-The cost is that a unit large enough to reach $\pi_i > 1$ has its chance clipped
-to 1, and the expected sample size falls below the target. On a business
-register this is the ordinary case, since revenue is heavily skewed.
-`execute()` reports it with a warning of class
-`samplyr_warning_poisson_shortfall`.
-
-Handle the dominant units explicitly with `certainty_size` or `certainty_prop`
-if the shortfall is unacceptable, but note the trade. Declaring units certain
-re-resolves the remaining ones over a smaller MOS total, so their $\pi_i$ rise
-and now depend on which units were declared certain. Accepting the shortfall
-instead is what keeps $\pi_i$ a function of unit $i$ and the frame total alone.
-See `?draw`.
-
-The examples that follow use `pps_sps`, sequential Poisson sampling, which is the
-fixed-size choice.
-
-### Reusing PRNs under a fixed-size method
-
-Positive coordination carries over unchanged: two waves drawn from the same frame
-with identical PRNs produce identical samples.
+Then declare the design once and execute it.
 
 ```{r}
-wave1 <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
-  execute(frame, seed = 42)
+design_pps <- sampling_design() |>
+  draw(
+    n = n_wave,
+    method = "pps_sps",
+    mos = revenue_millions,
+    prn = prn
+  )
 
-wave2 <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
-  execute(frame, seed = 123)
+pps_wave_1 <- execute(design_pps, frame_pps, seed = 1)
 
-overlap_positive <- length(intersect(wave1$enterprise_id,
-                                     wave2$enterprise_id))
-overlap_positive
+frame_pps_2 <- frame_pps |>
+  mutate(prn = (prn - pik) %% 1)
+
+pps_wave_2 <- execute(design_pps, frame_pps_2, seed = 1)
+
+tibble(
+  size_wave_1 = nrow(pps_wave_1),
+  size_wave_2 = nrow(pps_wave_2),
+  overlap = length(intersect(
+    pps_wave_1$enterprise_id,
+    pps_wave_2$enterprise_id
+  ))
+)
 ```
 
-Overlap is harder to keep when the *design* changes rather than the frame. Reusing PRNs preserves overlap only while strata and inclusion probabilities stay put; a redesign moves both, and maximizing the retained sample under new strata and new probabilities is a separate problem with its own literature [@kishscott1971; @hidiroglou1991]. @tille2020 [§8.2.5] gives a textbook treatment of the Kish and Scott substitution method.
+The update encourages negative coordination, but the exact Bernoulli argument
+does not carry over to `pps_sps`. Sequential Poisson sampling orders all units
+and fixes the sample size. Its supplied `pik` values are targets rather than
+exact first-order inclusion probabilities. The approximation improves for
+large populations and samples [@rosen1997a; @ohlsson1998]. The same distinction
+applies to `pps_pareto`.
 
-### The same update under a fixed-size method
+If exact first-order probabilities matter more than a fixed realized size, use
+`pps_poisson`. Its sample size is random. Very large measures of size can also
+produce certainty units or reduce the expected sample size after probabilities
+are capped at one. `execute()` reports that case. See `?draw` for the certainty
+options.
 
-`pps_sps` orders units by $u_k / \pi_k$ and takes the first $n$, so the shift no
-longer reproduces the Bernoulli argument: the key depends on the random number
-and the target together, and a large unit with a small key can survive a shift
-that would have pushed a Bernoulli unit clear. The update remains the standard
-construction for order sampling [@ohlsson1995], and it works well, but its
-guarantee is Bernoulli's and not `pps_sps`'s.
+## Repeat the update across waves
 
-```{r}
-# Wave 1
-wave1 <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
-  execute(frame, seed = 1)
-
-# Update PRNs on the full frame
-frame <- frame |>
-  mutate(u = (u - pik) %% 1)
-
-# Wave 2
-wave2 <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
-  execute(frame, seed = 1)
-
-overlap_negative <- length(intersect(wave1$enterprise_id, wave2$enterprise_id))
-overlap_negative
-```
-
-## Why isn't the overlap zero?
-
-Not all overlap can be eliminated. Units with large $\pi_k$ (big enterprises)
-are selected in almost every wave because their inclusion probability is close
-to or equal to 1. The **Absolute Lower Bound** (ALB) on the *expected* overlap
-is
-
-$$\text{ALB} = \sum_{k=1}^{N} \max(0,\; 2\pi_k - 1)$$
-
-and the Absolute Upper Bound is $\text{AUB} = \sum_k \min(\pi_k^{(1)},
-\pi_k^{(2)})$, here $n$ [@tille2020, sec. 8.2.3]. Only units with $\pi_k > 0.5$
-contribute to forced overlap. Tillé attaches a caveat that explains the output
-below: except in some very special cases, like simple random sampling, ALB and
-AUB cannot be reached.
-
-```{r}
-alb <- sum(pmax(0, 2 * frame$pik - 1))
-expected_independent <- sum(frame$pik^2)
-
-tibble(quantity  = c("ALB, absolute lower bound",
-                     "Expected overlap if independent",
-                     "AUB, absolute upper bound"),
-       benchmark = c(round(alb), round(expected_independent), n_wave))
-```
-
-The realized overlap of `r overlap_negative` is far below what independent
-sampling would produce, and it is also a little below the ALB. That is not a
-contradiction, and the three reasons are worth separating. The benchmarks bound
-an *expectation* over repeated coordinated draws, so a single realized overlap
-can fall on either side. The bounds are not targets the method aims at and are
-generally not attainable in either direction. And because `pps_sps` is order
-sampling, the $\pi_k$ these benchmarks are built from are targets rather than
-realized probabilities, so the benchmarks themselves are approximate.
-
-## Comparison: Three Strategies
-
-```{r}
-# Independent sampling: fresh PRNs for wave 2
-set.seed(1)
-frame_ind <- ken_enterprises |>
-  mutate(u1 = runif(n()),
-         u2 = runif(n()))
-
-wave1_ind <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u1) |>
-  execute(frame_ind, seed = 1)
-
-wave2_ind <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u2) |>
-  execute(frame_ind, seed = 1)
-
-overlap_ind <- length(intersect(wave1_ind$enterprise_id,
-                                wave2_ind$enterprise_id))
-
-tibble(strategy = c("Positive (same PRN)",
-                    "Independent (fresh PRN)",
-                    "Negative (Tille update)"),
-       realized_overlap = c(overlap_positive, overlap_ind, overlap_negative),
-       benchmark = c(n_wave, round(expected_independent), round(alb)),
-       benchmark_is = c("AUB", "expectation", "ALB")) |>
-  mutate(pct_of_wave = paste0(round(100 * realized_overlap / n_wave), "%"))
-```
-
-The `benchmark` column is a property of the $\pi_k$ alone, not something the
-method was aiming at: the two bounds hold for *any* coordination scheme on these
-probabilities, and only the independent row's benchmark is an expectation the
-strategy is supposed to reproduce. Positive coordination attains the AUB here
-because reusing the PRNs makes the two samples identical, which is the special
-case where a bound is reached.
-
-## Multi-Wave Rotation
-
-In practice, surveys run for many waves. The PRN update is applied after each wave, rotating units through the sample.
+For a stable frame, a short loop is enough. Each sample uses the current PRN,
+then every frame unit receives its next PRN.
 
 ```{r}
 set.seed(2026)
 
-frame <- ken_enterprises |>
-  mutate(u = runif(n()),
-         pik = inclusion_prob(revenue_millions, n_wave))
-
-n_waves <- 5
-waves <- vector("list", n_waves)
-
-for (t in seq_len(n_waves)) {
-  waves[[t]] <- sampling_design() |>
-    draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
-    execute(frame, seed = 1)
-
-  # Update PRNs for next wave
-  frame <- frame |>
-    mutate(u = (u - pik) %% 1)
-}
-```
-
-### Pairwise overlap matrix
-
-```{r}
-ids <- lapply(waves, `[[`, "enterprise_id")
-
-overlap_mat <- outer(ids, ids, Vectorize(\(a, b) length(intersect(a, b))))
-dimnames(overlap_mat) <- rep(list(paste("Wave", seq_len(n_waves))), 2)
-
-overlap_mat
-```
-
-Consecutive waves have low overlap, near the absolute lower bound. Non-consecutive
-waves show varying overlap as the rotation cycle progresses.
-
-### Cumulative coverage
-
-After five waves, how many distinct enterprises have been surveyed?
-
-```{r}
-cumulative <- integer(n_waves)
-seen <- character(0)
-
-for (t in seq_len(n_waves)) {
-  seen <- union(seen, waves[[t]]$enterprise_id)
-  cumulative[t] <- length(seen)
-}
-
-tibble(wave = seq_len(n_waves),
-       new_units = c(n_wave, diff(cumulative)),
-       cumulative = cumulative,
-       pct_frame = paste0(round(100 * cumulative / nrow(ken_enterprises), 1), "%"))
-```
-
-Negative coordination aims to maximize the number of distinct units covered,
-which is valuable for building comprehensive registers or spreading respondent
-burden.
-
-## Handling Births and Deaths
-
-Real business registers change between waves. New enterprises (**births**) enter the frame; closed enterprises (**deaths**) leave it.
-
-- **Deaths**: Remove them from the frame. Their PRN values are discarded, and
-  the next cross-sectional draw needs nothing further. This holds because the
-  target here is the population at each wave. When the target is longitudinal
-  the same event is attrition, which is an estimation-layer problem rather than
-  a frame operation; see `vignette("rotating-panels")`.
-- **Births**: Assign fresh $U(0,1)$ values. These new units enter the
-  coordination cycle at a random position.
-
-```{r}
-# Simulate: remove 200 enterprises (deaths), add 500 new ones (births)
-set.seed(123)
-n_births <- 500
-
-# Deaths: remove a random subset
-deaths <- sample(frame$enterprise_id, 200)
-frame_t2 <- frame |>
-  filter(!enterprise_id %in% deaths)
-
-# Births: new enterprises with fresh PRNs
-# Sample complete donor records so county-region pairs and business attributes
-# remain internally coherent.
-births <- ken_enterprises |>
-  slice_sample(n = n_births, replace = TRUE) |>
+frame_many <- ken_enterprises |>
   mutate(
-    enterprise_id = paste0("NEW_", sprintf("%05d", seq_len(n_births))),
-    u = runif(n_births)
+    prn = runif(n()),
+    pik = inclusion_prob(revenue_millions, n_wave)
   )
 
-frame_t2 <- bind_rows(frame_t2, births)
+n_waves <- 4
+waves <- vector("list", n_waves)
 
-# Recompute inclusion probabilities on the new frame
-frame_t2 <- frame_t2 |>
-  mutate(pik = inclusion_prob(revenue_millions, n_wave))
+for (wave in seq_len(n_waves)) {
+  waves[[wave]] <- execute(design_pps, frame_many, seed = 1)
+  frame_many <- frame_many |>
+    mutate(prn = (prn - pik) %% 1)
+}
 
-# Draw wave from updated frame
-wave_t2 <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
-  execute(frame_t2, seed = 1)
-
-# How many births were selected?
-n_births_selected <- sum(wave_t2$enterprise_id %in% births$enterprise_id)
-n_births_selected
-n_births_selected / n_births
+ids <- lapply(waves, `[[`, "enterprise_id")
+overlap <- outer(
+  ids,
+  ids,
+  Vectorize(\(x, y) length(intersect(x, y)))
+)
+dimnames(overlap) <- rep(list(paste("Wave", seq_len(n_waves))), 2)
+overlap
 ```
 
-The PRN mechanism carries coordination across this revision: surviving units keep their updated values and births enter with fresh ones. That is the whole of what it does. It does not establish that the revised frame covers the entrant flow, that an identifier still refers to the same entity it did last wave, or that PRN values survived whatever process rebuilt the register. Those are properties of frame construction, and a coordinated draw against a re-keyed or incomplete frame is coordinated with respect to the wrong population. `validate_frame()` checks that the columns the design needs are present and usable; continuity of the register is yours to verify.
+The matrix is descriptive. There is no general promise that adjacent fixed-
+size PPS samples will be disjoint or that a later pair will have a particular
+overlap.
 
-## Using Pareto Sampling
+## Stratified samples
 
-The `pps_pareto` method also supports PRN-based coordination. Two properties
-recommend it here. It reaches a fixed sample size, and within the class of order
-designs with fixed shape parameters it minimises the variance estimator
-[@rosen1997b; @tille2020, sec. 5.11]. That is a minimum-variance result inside
-order sampling, not a maximum-entropy result across fixed-size PPS designs: the
-maximum-entropy fixed-size design is conditional Poisson, which `samplyr` ships
-as `pps_cps` and which does not take a PRN. Pareto's own targets remain
-approximate, as with `pps_sps`.
-
-```{r}
-set.seed(12345)
-
-frame <- ken_enterprises |>
-  mutate(u = runif(n()),
-         pik = inclusion_prob(revenue_millions, n_wave))
-
-wave1_par <- sampling_design() |>
-  draw(n = n_wave, method = "pps_pareto", mos = revenue_millions, prn = u) |>
-  execute(frame, seed = 1)
-
-frame <- frame |> mutate(u = (u - pik) %% 1)
-
-wave2_par <- sampling_design() |>
-  draw(n = n_wave, method = "pps_pareto", mos = revenue_millions, prn = u) |>
-  execute(frame, seed = 1)
-
-overlap_par <- length(intersect(wave1_par$enterprise_id,
-                                wave2_par$enterprise_id))
-
-overlap_par
-alb <- round(sum(pmax(0, 2 * frame$pik - 1)))
-alb
-```
-
-## Stratified Coordination
-
-When the design is stratified, inclusion probabilities must be computed **within each stratum**. The PRN update is then applied globally. The per-stratum $\pi_k$ values ensure correct rotation within each group.
+Compute `pik` within the same strata used by the design. The PRN update itself
+still applies to every row.
 
 ```{r}
 set.seed(1980)
 
-frame <- ken_enterprises |>
-  mutate(u = runif(n()))
+frame_stratified <- ken_enterprises |>
+  mutate(prn = runif(n())) |>
+  mutate(
+    pik = inclusion_prob(revenue_millions, 50),
+    .by = size_class
+  )
 
-# Compute within-stratum pik
-frame <- frame |>
-  mutate(pik = inclusion_prob(revenue_millions, 50),
-         .by = size_class)
-
-max_pik <- max(frame$pik)
-max_pik
-alb <- round(sum(pmax(0, 2 * frame$pik - 1)))
-alb
-
-wave1_str <- sampling_design() |>
+design_stratified <- sampling_design() |>
   stratify_by(size_class) |>
-  draw(n = 50, method = "pps_pareto", mos = revenue_millions, prn = u) |>
-  execute(frame, seed = 1)
+  draw(
+    n = 50,
+    method = "pps_sps",
+    mos = revenue_millions,
+    prn = prn
+  )
 
-frame <- frame |> mutate(u = (u - pik) %% 1)
+stratified_wave_1 <- execute(design_stratified, frame_stratified, seed = 1)
 
-wave2_str <- sampling_design() |>
-  stratify_by(size_class) |>
-  draw(n = 50, method = "pps_pareto", mos = revenue_millions, prn = u) |>
-  execute(frame, seed = 1)
+frame_stratified_2 <- frame_stratified |>
+  mutate(prn = (prn - pik) %% 1)
 
-overlap_str <- length(intersect(wave1_str$enterprise_id,
-                                wave2_str$enterprise_id))
-overlap_str
+stratified_wave_2 <- execute(
+  design_stratified,
+  frame_stratified_2,
+  seed = 1
+)
+
+length(intersect(
+  stratified_wave_1$enterprise_id,
+  stratified_wave_2$enterprise_id
+))
 ```
 
-With smaller within-stratum $\pi_k$ values (all below 0.5), the ALB is zero:
-no overlap is forced by certainty or near-certainty units. It is a lower bound
-on the *expected* overlap, not a guarantee that one randomized pair of samples
-will have zero realized overlap, and it is computed from `pps_pareto`'s target
-probabilities rather than its realized ones.
+If allocations, strata, or measures of size change, recompute the probabilities
+before updating the PRNs. Reusing a PRN still coordinates the draws, but it does
+not by itself maximize retention under a redesigned sample [@kishscott1971].
 
-## Collocated Sampling: Coordinating Across Surveys
+## Births, deaths, and register maintenance
 
-The examples above coordinate samples from the **same survey** across time (waves). A related problem is coordinating **different surveys** drawn from the same frame at the same time point. This is called *collocated sampling* [@ernst1986; @ohlsson1995] and is common in business survey programs where a single register serves multiple survey operations.
+For a cross-sectional survey, surviving units keep their PRNs, births receive
+fresh independent PRNs, and units no longer in the target population leave the
+frame. Recompute inclusion probabilities after the register changes.
 
-The mechanism is identical: all surveys share the same PRN column.
+These steps do not solve longitudinal attrition. If the target follows a fixed
+cohort, a closed enterprise or a nonrespondent needs an analysis rule as well
+as a frame update. PRNs also cannot detect identifier reuse, duplicate units,
+or incomplete coverage. Those are register-quality checks.
 
-- **Positive coordination** (maximize overlap): both surveys use the same PRN. Useful when surveys share common modules or when joint analysis is planned.
-- **Negative coordination** (minimize overlap): one survey uses shifted PRNs, `(u + 0.5) %% 1`. Useful when the goal is to spread respondent burden across the register.
+## Coordination across surveys
 
-The half-turn shift is a construction, not a rule the design guarantees. Under
-`bernoulli` it is exact for equal probabilities: the two surveys select from
-$[0, \pi^A)$ and from an interval starting at 0.5, which are disjoint whenever
-$\pi^A + \pi^B \le 1$. Under order sampling with different measures of size it
-is a heuristic that works well when the two surveys are of similar size and
-their $\pi_k$ are similar, and degrades as they diverge.
-
-### Example: Turnover survey and employment survey
-
-Suppose a statistical agency runs two surveys on the same business register:
-a revenue survey of 200 units, PPS on `revenue_millions`, and an employment survey of 150 units, PPS on `employees`. The surveys have different sample sizes, different measures of size, and different stratification, but they share the same frame and the same PRN column.
-
-```{r}
-set.seed(123)
-
-frame <- ken_enterprises |>
-  mutate(u = runif(n()))
-
-# Survey A: revenue survey (PPS on revenue_millions)
-survey_a <- sampling_design() |>
-  draw(n = 200, method = "pps_sps", mos = revenue_millions, prn = u) |>
-  execute(frame, seed = 1)
-
-# Survey B: employment survey (PPS on employees), positive coordination
-survey_b <- sampling_design() |>
-  draw(n = 150, method = "pps_sps", mos = employees, prn = u) |>
-  execute(frame, seed = 1)
-
-overlap_pos <- length(intersect(survey_a$enterprise_id,
-                                survey_b$enterprise_id))
-overlap_pos
-```
-
-For negative coordination, shift the PRN by 0.5.
-
-```{r}
-# Survey B with negative coordination
-frame_neg <- frame |>
-  mutate(u_neg = (u + 0.5) %% 1)
-
-survey_b_neg <- sampling_design() |>
-  draw(n = 150, method = "pps_sps", mos = employees, prn = u_neg) |>
-  execute(frame_neg, seed = 1)
-
-overlap_neg <- length(intersect(survey_a$enterprise_id,
-                                survey_b_neg$enterprise_id))
-overlap_neg
-```
-
-Compare with independent sampling, drawn on fresh PRNs.
-
-```{r}
-frame_ind <- frame |>
-  mutate(u_fresh = runif(n()))
-
-survey_b_ind <- sampling_design() |>
-  draw(n = 150, method = "pps_sps", mos = employees, prn = u_fresh) |>
-  execute(frame_ind, seed = 1)
-
-overlap_ind <- length(intersect(survey_a$enterprise_id,
-                                survey_b_ind$enterprise_id))
-overlap_ind
-```
-
-### Overlap bounds for different surveys
-
-When two surveys have different inclusion probabilities $\pi_k^A$ and $\pi_k^B$, the bounds generalize naturally.
-
-```{r}
-pik_a <- inclusion_prob(frame$revenue_millions, 200)
-pik_b <- inclusion_prob(frame$employees, 150)
-
-alb_ab <- sum(pmax(0, pik_a + pik_b - 1))
-aub_ab <- sum(pmin(pik_a, pik_b))
-exp_ind <- sum(pik_a * pik_b)
-
-tibble(strategy = c("Positive (same PRN)",
-                    "Independent (fresh PRN)",
-                    "Negative (shifted PRN)"),
-       realized_overlap = c(overlap_pos, overlap_ind, overlap_neg),
-       benchmark = c(round(aub_ab), round(exp_ind), round(alb_ab)),
-       benchmark_is = c("AUB", "expectation", "ALB"))
-```
-
-Because `revenue_millions` and `employees` are correlated (large firms have both high revenue and many employees), the overlap under positive coordination
-is substantial. Negative coordination via PRN shift effectively spreads the burden.
-
-### Scaling to more than two surveys
-
-Across a programme of `K` surveys, survey `j` shifts its PRN by `j/K`.
+Different surveys using the same register can share a PRN column. Reusing the
+same PRN tends to increase overlap. A half-turn shift is a simple way to seek
+less overlap.
 
 ```{r, eval = FALSE}
-# Negative coordination across 4 surveys
-n_surveys <- 4
-for (j in seq_len(n_surveys)) {
-  frame_j <- frame |>
-    mutate(u_j = (u + (j - 1) / n_surveys) %% 1)
-
-  samples[[j]] <- sampling_design() |>
-    draw(n = n_j, method = "pps_sps", mos = mos_j, prn = u_j) |>
-    execute(frame_j, seed = 1)
-}
+frame_for_second_survey <- frame |>
+  mutate(prn_second = (prn + 0.5) %% 1)
 ```
 
-Like the half-turn, the `j/K` shift is a construction whose behaviour depends on
-the surveys resembling each other; it carries no optimality claim across a
-programme of unequal surveys. For more complex programs (varying burden weights, priority orderings, or dozens of surveys), NSOs use dedicated coordination systems such as the Rivière method [@riviere2001], the Netherlands EDS [@deree1983; @vanhuis1994], or the Swiss method [@graf2014]. These methods track cumulative burden per unit and permute PRNs within microstrata, which lets them coordinate across a whole survey programme rather than a pair of surveys at a time. See @tille2020 [§8.2.7--8.2.9] for a detailed treatment.
+For equal-probability Bernoulli samples, separated intervals give an exact
+result when their sampling fractions fit without overlap. For fixed-size PPS
+samples with different sizes, strata, or size measures, the half-turn is only
+a heuristic. Large survey programmes generally need a dedicated coordination
+system rather than repeated ad hoc shifts [@ohlsson1995; @riviere2001].
 
-## Summary
+## A practical checklist
 
-The PRN coordination workflow in `samplyr` is:
+1. Add one stable PRN column to the full register.
+2. Compute inclusion probabilities on the full selection pool, within strata
+   when the design is stratified.
+3. Pass the PRN column to a supported method.
+4. Keep the PRN for positive coordination, or update it for negative
+   coordination.
+5. Save the updated full frame before the next wave.
+6. Recompute probabilities whenever the frame or design changes.
 
-1. **Assign PRNs** once: `mutate(u = runif(n()))`
-2. **Compute the inclusion probabilities** on the full frame: `mutate(pik = inclusion_prob(mos, n))`
-3. **Draw the sample**: `sampling_design() |> draw(method = "pps_sps", prn = u) |> execute(frame)`
-4. **Update or shift PRNs**:
-   - Temporal negative coordination (waves): `mutate(u = (u - pik) %% 1)`
-   - Temporal positive coordination: keep `u` unchanged
-   - Cross-survey negative coordination: shift by `(u + 0.5) %% 1`
-   - Cross-survey positive coordination: reuse same `u`
-
-| Goal            | PRN update            | Benchmark for the expected overlap    | What it is  |
-|-----------------|-----------------------|---------------------------------------|-------------|
-| Maximum overlap | None (reuse)          | $\sum \min(\pi_k^A, \pi_k^B)$         | AUB         |
-| Independent     | Fresh $U(0,1)$        | $\sum \pi_k^A \cdot \pi_k^B$          | expectation |
-| Minimum overlap | Shift or Tillé update | $\sum \max(0, \pi_k^A + \pi_k^B - 1)$ | ALB         |
-
-The two bounds hold for any coordination scheme on these probabilities and are
-generally not attainable; only the middle row is an expectation its strategy
-reproduces. Under `pps_sps` and `pps_pareto` all three are computed from target
-rather than realized inclusion probabilities.
+Start with the Bernoulli example if you are learning the mechanism. Move to
+`pps_sps` only when you need both unequal selection probabilities and an exact
+realized sample size. Use `vignette("rotating-panels")` when the requirement is
+a controlled entry-and-exit schedule rather than simply more or less overlap.
 
 ## References

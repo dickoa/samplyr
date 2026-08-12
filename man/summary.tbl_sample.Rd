@@ -29,7 +29,7 @@ Each stage section has two lines:
 \itemize{
 \item the design: method (with with-replacement and
 approximate-probabilities qualifiers), measure of size, cluster
-and stratification variables, and balancing declarations;
+and stratification variables, and balancing declarations.
 \item the realization: population and sample sizes with the sampling
 fraction. Stages with several selection pools report ranges
 (\code{N_h}, \code{n_h}, \code{f_h}) and, for later stages, how many of the

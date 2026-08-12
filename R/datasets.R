@@ -54,8 +54,8 @@ NULL
 #'   \item{longitude}{Numeric. Longitude of the preEA point-on-surface in WGS 84}
 #'   \item{latitude}{Numeric. Latitude of the preEA point-on-surface in WGS 84}
 #'   \item{remoteness}{Factor. Modeled operational class (Low, Medium, High)
-#'     for sampling examples; not an official geographic classification}
-#'   \item{fieldwork_cost}{Integer. Synthetic relative fieldwork cost index;
+#'     for sampling examples. It is not an official geographic classification}
+#'   \item{fieldwork_cost}{Integer. Synthetic relative fieldwork cost index.
 #'     not a monetary estimate}
 #' }
 #'
@@ -116,7 +116,7 @@ NULL
 #' @description
 #' Illustrative prior variance of natural-log mean household consumption at EA
 #' level, modeled as if obtained from an earlier household survey. Used for
-#' demonstrating Neyman allocation in stratified sampling; the values are
+#' demonstrating Neyman allocation in stratified sampling. The values are
 #' synthetic and are not official estimates for Burkina Faso.
 #'
 #' @format A tibble with 13 rows and 2 columns:

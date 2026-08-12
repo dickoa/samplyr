@@ -1,4 +1,4 @@
-## Acceptance coverage for dev/API-CONSISTENCY-REVIEW-AND-REPAIR-PLAN.md.
+## API consistency acceptance coverage.
 ## Every block states a contract that must hold at a public boundary; the
 ## reproductions in the plan are kept alongside the assertions they came from.
 

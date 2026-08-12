@@ -130,7 +130,7 @@ as.list.sampling_design <- function(x, ...) {
 #   "tools": { "samplyr": {...} }
 # }
 #
-# One frame records "frame.fingerprint"; separately supplied stage frames
+# One frame records "frame.fingerprint". Separately supplied stage frames
 # record "frame.fingerprints", an array in the order they were given.
 # "execution.frames" records how those frames were mapped to stages: the mode,
 # how many were supplied, their optional diagnostic labels, and the frame
@@ -367,7 +367,7 @@ read_design <- function(file) {
   if (!is_character(file) || length(file) != 1) {
     cli_abort("{.arg file} must be a single file path or JSON string")
   }
-  # jsonlite::fromJSON() downloads URL-shaped strings; reading a design
+  # jsonlite::fromJSON() downloads URL-shaped strings. Reading a design
   # must never touch the network, so refuse them before handing off.
   if (!grepl("^[[:space:]]*[{[]", file)) {
     if (grepl("^[A-Za-z][A-Za-z0-9+.-]+://", file)) {
@@ -411,7 +411,7 @@ read_design <- function(file) {
 #'
 #' Receipts record a single [execute()] call. A sample produced by
 #' several calls (a stage continuation or a multi-phase pipeline)
-#' carries a `chained` flag in its receipt and cannot be replayed;
+#' carries a `chained` flag in its receipt and cannot be replayed.
 #' save and replay each phase or stage batch separately.
 #'
 #' For a design using a registered custom method, the receipt records a
@@ -597,24 +597,15 @@ replay_design <- function(
     stages <- NULL
   }
   reps <- if (!is_null(receipt$reps)) as.integer(receipt$reps) else NULL
-  # Every panel argument below is decoded from the assignment record, so the
-  # record is read under the law it names before any of them looks at it. A
-  # receipt naming an algorithm or a version this build does not know states a
-  # law its fields were written under and this one cannot reproduce, and
-  # decoding those fields anyway would replay them as though it could.
+  # Validate the recorded assignment law before decoding replay arguments.
   record <- prepare_panel_record(receipt$panel_assignment, "A replay")
   # A scheduled master is replayed with its schedule, not with the panel
   # count: the block size follows from the schedule, so the count alone
   # reproduces different labels.
   panels <- decode_panel_argument(receipt, record)
-  # The policy is an input to the draw, like the schedule: a master promoted
-  # under "permanent" would otherwise replay under the default and be refused,
-  # or worse, replay as a different assignment. It is meaningful only with a
-  # schedule, which is the only shape that carries a policy.
+  # The small-pool policy is part of scheduled assignment replay.
   small_pool <- decode_small_pool_argument(record, panels)
-  # Also an input to the draw: which stage was assigned decides what the
-  # assignment units are, so replaying without it would assign the same
-  # sample differently rather than fail.
+  # The assignment stage determines the units that receive panel labels.
   panel_stage <- decode_panel_stage_argument(record)
 
   result <- with_replay_rng(
@@ -984,7 +975,7 @@ required_format_version <- function(payload) {
 ## Sampling method vocabulary
 
 # The common identifiers are intentionally implementation-neutral. DDI's
-# Sampling Procedure vocabulary supplies the broader standard classification;
+# Sampling Procedure vocabulary supplies the broader standard classification.
 # algorithm-level distinctions such as Brewer, Sampford, and cube are retained
 # by the common identifier and properties because DDI does not distinguish all
 # of them.
@@ -1445,7 +1436,7 @@ frame_arg_labels <- function(expr, frames) {
   labels
 }
 
-#' A data frame is one frame; a list is the ordered stage frames
+#' A data frame is one frame. A list is the ordered stage frames
 #' @noRd
 as_frame_list <- function(frame, call = caller_env()) {
   normalize_frame_input(frame, call = call)$frames
@@ -1672,7 +1663,7 @@ encode_execution <- function(sample, call = caller_env()) {
   }
   # A sample produced by more than one execute() call (stage
   # continuation, multi-phase, or a wave materialized from a master)
-  # cannot be reproduced by replaying the final call alone; the receipt
+  # cannot be reproduced by replaying the final call alone. The receipt
   # records only that call.
   if (!is_null(meta$continued_from) || !is_null(meta$prev_phase)) {
     receipt$chained <- TRUE
@@ -1715,7 +1706,7 @@ encode_panel_assignment <- function(record, call = caller_env()) {
     panels = as.integer(record$panels),
     # Which stage the units belong to. A version-1 or version-2 record could
     # only mean the first executed stage, and preparation has already stated
-    # that; a version-3 record states it itself or is refused above. There is
+    # that. A version-3 record states it itself or is refused above. There is
     # nothing left here to fall back to.
     assignment_stage = record$assignment_stage,
     block_size = as.integer(record$block_size),
@@ -1907,7 +1898,7 @@ decode_frame_schedule <- function(x) {
 #'
 #' Rebuilds the digest tables from the row-wise JSON representation,
 #' checks the digest schema version, and validates the result. Schema
-#' version errors propagate from the caller; other malformed optional
+#' version errors propagate from the caller. Other malformed optional
 #' digest content drops with a warning.
 #' @noRd
 decode_frame_digest <- function(x) {
@@ -2020,7 +2011,7 @@ decode_frame_digest <- function(x) {
 #' Rebuild one digest table from row-wise JSON
 #'
 #' `spec` names the known columns and their types ("int", "dbl",
-#' "chr", "lgl"). Columns absent from every row stay absent; JSON
+#' "chr", "lgl"). Columns absent from every row stay absent. JSON
 #' nulls become typed NA.
 #' @noRd
 decode_digest_table <- function(rows, spec) {

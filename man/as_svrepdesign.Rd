@@ -32,9 +32,9 @@ One of \code{"auto"}, \code{"JK1"}, \code{"JKn"}, \code{"BRR"}, \code{"bootstrap
 
 \item{systematic_variance}{What to do about the generic replicate weights
 built for equal-probability \code{systematic} stages. \code{"warn"} (default) builds
-them and warns once per call, naming every affected stage;
+them and warns once per call, naming every affected stage.
 \code{"approximate"} builds them silently, for a caller who has acknowledged
-the approximation; \code{"error"} refuses. Naming a \code{type} is not an
+the approximation, while \code{"error"} refuses. Naming a \code{type} is not an
 acknowledgement, since no type reproduces systematic selection. Census
 stages are exempt and \code{pps_systematic} is unaffected, as in
 \code{\link[=as_svydesign]{as_svydesign()}}. The choice and the affected stages are recorded on the
@@ -94,7 +94,7 @@ as exact variance estimators for those designs.
 
 Equal-probability \code{systematic} stages are in the same position, for every
 replicate type rather than for a subset of them. A jackknife or bootstrap
-replicate perturbs the realized sample; it does not redraw a random start
+replicate perturbs the realized sample. It does not redraw a random start
 against the frame in the order the frame was in, which is what generates a
 systematic sample's variance. Frame ordering or periodicity can therefore
 make the resulting standard errors too small or too large, in the same

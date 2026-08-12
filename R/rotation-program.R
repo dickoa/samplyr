@@ -1,29 +1,5 @@
 ## Rotation programs
 
-# A rotating panel that replenishes spans more than one execution: a start-up
-# master drawn from one frame vintage, and a refreshment cohort drawn from
-# each later vintage. `rotation_program()` is the registry that links them and
-# says which components are live when.
-#
-# Three things it deliberately does not do. It does not infer a cohort's entry
-# from its first active wave, because a cohort may be drawn early and held in
-# reserve, and because entry is what anchors a cohort's population vintage on
-# the wave axis. It does not renumber or rewrite the cohorts, whose receipts
-# stay exactly as their own executions wrote them: a cohort number is a fact
-# about a program, not about an execution. And it does not combine weights
-# across cohorts.
-#
-# The last of those is a statement about knowledge, not about caution. A
-# union weight needs three things a registry cannot hold: whether a unit was
-# in the population at each vintage, what chance it would have had in a draw
-# it was not selected into, and how the draws depend on one another. The last
-# is not recoverable from inclusion probabilities at all, since two
-# executions with identical marginals can be independent or identical. It is
-# also not enough to keep one row per unit: two frame vintages may disagree
-# about that unit's auxiliary values, and under a with-replacement design
-# repeated occurrences of one unit are legitimate draw occurrences rather
-# than duplicates.
-
 #' Link the cohorts of a replenishing rotating panel
 #'
 #' @description
@@ -40,7 +16,7 @@
 #' `cohorts` is a named list of executed samples. A cohort may be
 #' *partitioned*, drawn with `panels` so that it carries `.panel` and a frozen
 #' assignment, or *whole*, drawn without `panels`. A whole cohort has one
-#' implicit panel numbered 1 covering all its rows; activating it is not a
+#' implicit panel numbered 1 covering all its rows. Activating it is not a
 #' subsample, so its weights are unchanged.
 #'
 #' ## Entry waves
@@ -54,7 +30,7 @@
 #' ## Schedule
 #'
 #' `schedule` is a data frame with `cohort` (a name from `cohorts`), integer
-#' `panel`, integer `wave`, and an optional logical `active`; a combination
+#' `panel`, integer `wave`, and an optional logical `active`. A combination
 #' left out is inactive. For a one-cohort program the `cohort` column may be
 #' omitted. Waves are numbered from 1 without gaps. Activity need not be
 #' contiguous: a 4-8-4 rotation deliberately leaves and re-enters.

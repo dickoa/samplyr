@@ -40,7 +40,7 @@ It warns when recorded R or package versions differ.
 
 Receipts record a single \code{\link[=execute]{execute()}} call. A sample produced by
 several calls (a stage continuation or a multi-phase pipeline)
-carries a \code{chained} flag in its receipt and cannot be replayed;
+carries a \code{chained} flag in its receipt and cannot be replayed.
 save and replay each phase or stage batch separately.
 
 For a design using a registered custom method, the receipt records a

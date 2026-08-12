@@ -21,7 +21,7 @@ library(samplyr)
 library(dplyr)
 ```
 
-This vignette documents what each `samplyr` operation assumes, what it computes, and what is preserved or lost at `survey` export. The contracts stated here are asserted; `vignette("validation")` checks them against synthetic populations with known truths, and reports what a run at that replication count can and cannot establish.
+This vignette documents what each `samplyr` operation assumes, what it computes, and what is preserved or lost at `survey` export. The contracts stated here are asserted. `vignette("validation")` checks them against synthetic populations with known truths and reports what a run at that replication count can and cannot establish.
 
 ## Assumptions at a glance
 
@@ -32,8 +32,8 @@ The following table summarizes what `samplyr` assumes and what the user must ver
 | Strata are exhaustive and disjoint         | `stratify_by()`            | Partitions the frame by unique combinations of strata variables                                      | Strata variables define a valid partition                                                             |
 | Independent sampling across strata         | `stratify_by() |> draw()` | Each stratum sampled with a separate call to `sondage`                                                 | Correct by construction when strata are disjoint                                                      |
 | Cluster variables constant within clusters | `cluster_by()`             | Validated at execution: MOS and strata variables may not vary within a cluster                       | Cluster ID uniquely identifies the group                                                              |
-| Conditional independence across stages     | `add_stage()`              | Stage \(k\) sampling depends only on the set of units selected at stage \(k - 1\)                    | Standard multi-stage assumption; holds unless second-stage frame depends on first-stage randomization |
-| FPC stored as population count             | `execute()`                | `.fpc_k` contains \(N_h\) (or cluster count); converted to \(\pi_i\) at survey export for PPS stages | Frame size at execution is treated as the population, which is one of several definitions in a population that changes between waves |
+| Conditional independence across stages     | `add_stage()`              | Stage \(k\) sampling depends only on the set of units selected at stage \(k - 1\)                    | Standard multi-stage assumption that fails if a later frame depends on earlier randomization |
+| FPC stored as population count             | `execute()`                | `.fpc_k` contains \(N_h\) or a cluster count and is converted to \(\pi_i\) at survey export for PPS stages | Frame size at execution is treated as the population, one of several definitions when a population changes between waves |
 | Weights are \(1/\pi_i\), unadjusted        | All methods                | No calibration, trimming, or non-response adjustment                                                 | Downstream adjustment is the analyst's responsibility                                                 |
 | PRN values are iid \(\text{U}(0, 1)\)      | `draw(prn = ...)`          | Validated: strictly in \((0, 1)\), no NAs, numeric                                                   | Independence and uniformity of the PRN column                                                         |
 
@@ -91,7 +91,7 @@ When an allocation method is specified, the total sample size \(n\) is distribut
 | `"optimal"`      | \(n_h \propto N_h \, S_h / \sqrt{C_h}\) | `variance`, `cost` |
 | `"power"`        | \(n_h \propto \text{CV}_h \cdot X_h^q\) | `cv`, `importance` |
 
-Each formula gives a *factor* \(w_h\); the allocation is the solution of
+Each formula gives a *factor* \(w_h\). The allocation is the solution of
 
 \[
 n_h = \operatorname{clamp}(\lambda w_h, \; \ell_h, \; u_h), \qquad
@@ -135,7 +135,7 @@ $$
 
 Fixed-size for `srswor` and `systematic` and random-size for `bernoulli`. Systematic sampling induces implicit stratification by row order. Use `control` to specify the sort variable.
 
-**PPS without replacement** (`pps_brewer`, `pps_systematic`, `pps_cps`,
+**PPS methods** (`pps_brewer`, `pps_systematic`, `pps_cps`,
 `pps_sampford`, `pps_poisson`, `pps_sps`, `pps_pareto`):
 
 $$
@@ -151,22 +151,22 @@ of the marginals: the quantity above is the **target** inclusion probability
 handed to the algorithm, and the realized inclusion probability is close to it
 but not equal, approaching it as \(n\) and \(N\) grow [@tille2020, sec. 5.11;
 @rosen1997a]. Both sit in the `"approximate"` probabilities tier. Everywhere
-below that reads \(\pi_i\) off `.weight` inherits that distinction; the other
+below that reads \(\pi_i\) off `.weight` inherits that distinction. The other
 five methods satisfy it exactly.
 
 **With-replacement and PMR** (`srswr`, `pps_multinomial`, `pps_chromy`):
 
-The quantity of interest is the expected number of hits \(E(n_i) = n \, \text{mos}_i / \sum \text{mos}\). Each draw is an independent selection; if unit \(i\) is selected \(k\) times, `samplyr` creates \(k\) rows with a `.draw` column indexing each hit. The weight per draw is \(w_i = 1 / p_i\), where \(p_i\) is the single-draw selection probability. No finite population correction applies (FPC = \(\infty\)).
+The quantity of interest is the expected number of hits \(E(n_i) = n \, \text{mos}_i / \sum \text{mos}\). Each draw is an independent selection. If unit \(i\) is selected \(k\) times, `samplyr` creates \(k\) rows with a `.draw` column indexing each hit. The weight per draw is \(w_i = 1 / p_i\), where \(p_i\) is the single-draw selection probability. No finite population correction applies (FPC = \(\infty\)).
 
 Chromy's sequential PPS (`pps_chromy`) is classified as *probability minimum replacement* (PMR): each unit receives \(\lfloor E(n_i) \rfloor\) or \(\lceil E(n_i) \rceil\) hits. When all \(E(n_i) < 1\), this reduces to WOR.
 
 **Balanced and spatially balanced sampling** (`cube`, `lpm2`, `scps`):
 
-The cube method [@devilletille2004] selects a fixed-size sample that satisfies (or nearly satisfies) the balancing equations $\sum_{i \in S} a_{ij} / \pi_i = \sum_{i \in U} a_{ij}$ for auxiliary variables $a_j$ specified via `aux`. Without `mos`, $\pi_i = n/N$ (equal probability); with `mos`, $\pi_i$ is computed by `sondage::inclusion_prob()`. A `bound()` marker adds hard adjacent-integer category-count constraints.
+The cube method [@devilletille2004] selects a fixed-size sample that satisfies (or nearly satisfies) the balancing equations $\sum_{i \in S} a_{ij} / \pi_i = \sum_{i \in U} a_{ij}$ for auxiliary variables $a_j$ specified via `aux`. Without `mos`, $\pi_i = n/N$ and probabilities are equal. With `mos`, $\pi_i$ is computed by `sondage::inclusion_prob()`. A `bound()` marker adds hard adjacent-integer category-count constraints.
 
 When stratified, the stratified cube algorithm [@chauvet2009] runs flight phases per stratum, then a global flight phase, then per-stratum landing phases.
 
-LPM2 and SCPS instead use the coordinates supplied through `spread`; they do not accept cube auxiliaries or count bounds. At most 2 stages may use a balanced-family method. PRN and certainty selection are not supported.
+LPM2 and SCPS instead use the coordinates supplied through `spread`. They do not accept cube auxiliaries or count bounds. At most 2 stages may use a balanced-family method. PRN and certainty selection are not supported.
 
 **PRN-compatible methods** (`bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`):
 
@@ -187,13 +187,13 @@ When `prn` is specified, the permanent random numbers are passed through to `son
 3. The selection algorithm from `draw()` is invoked via `sondage`.
 4. The `.weight`, `.fpc`, `.draw`, and `.certainty` columns are computed and suffixed with the stage number.
 
-**One frame or one per stage.** The number of frames schedules the stages. `execute(design, hierarchy)` runs every stage against one table, and `execute(design, schools, classes, students)` gives each stage its own register, mapped by position. Any other count is refused. The frames may equally be held as a value, `execute(design, list(schools, classes, students))`, which is the same call; a name on a list element is a diagnostic label for that frame.
+**One frame or one per stage.** The number of frames schedules the stages. `execute(design, hierarchy)` runs every stage against one table, and `execute(design, schools, classes, students)` gives each stage its own register, mapped by position. Any other count is refused. The frames may equally be held as a value with `execute(design, list(schools, classes, students))`. A name on a list element is a diagnostic label for that frame.
 
-A register is supplied whole. samplyr restricts it to the units its parent stage selected and carries onto it the variables earlier stages introduced, so a class register needs neither pre-filtering to the sampled schools nor a copy of the school-level stratification column. A register that omits such a carried variable is fine; one whose own copy of it disagrees with the parent is an error.
+A register is supplied whole. samplyr restricts it to the units its parent stage selected and carries onto it the variables earlier stages introduced, so a class register needs neither pre-filtering to the sampled schools nor a copy of the school-level stratification column. A register that omits such a carried variable is fine. One whose own copy disagrees with the parent is an error.
 
 **Partial execution.** `execute(design, psu_frame, stages = 1)` runs only the first stage and returns a `tbl_sample`. That object stores both the unchanged design and the realized PSU selection. Use it as the first argument of the later call and supply the new listing as the frame: `execute(psu_sample, listing_frame)`. Execution resumes at the next unexecuted stage, carries forward the PSU weights and FPC, and remains one multi-stage design.
 
-The `stages` argument may select any initial contiguous batch beginning at stage 1; on a partial `tbl_sample`, it may select the next contiguous batch. Omitting it executes all remaining stages, with one exception. If more than one stage remains and a single frame is supplied, that frame could be the next stage's register or a hierarchy covering the rest. The two draw different samples, so `execute()` asks for `stages` rather than guessing.
+The `stages` argument may select any initial contiguous batch beginning at stage 1 and on a partial `tbl_sample`, it may select the next contiguous batch. Omitting it executes all remaining stages, with one exception. If more than one stage remains and a single frame is supplied, that frame could be the next stage's register or a hierarchy covering the rest. The two draw different samples, so `execute()` asks for `stages` rather than guessing.
 
 **The three spellings are one implementation.** A three-stage design executed against one hierarchy, against three registers in a single call, or stage by stage as a continuation runs the same stage transition each time. All three draw the same sample, provided the continuation runs under a single RNG stream and names `stages` on every intermediate call:
 
@@ -208,7 +208,7 @@ continued <- withr::with_seed(7, {
 })
 ```
 
-Note where the seed goes. One seed wraps the whole chain; the individual calls take none. Seeding each call separately is a different and equally valid RNG boundary, but it is not this equivalence and will select different units. The equivalence is a tested invariant rather than an incidental property, which is what makes a continuation safe to interleave with fieldwork: the sample is the one the single call would have drawn.
+Note where the seed goes. One seed wraps the whole chain, and the individual calls take none. Seeding each call separately is a different and equally valid RNG boundary, but it is not this equivalence and will select different units. The equivalence is a tested invariant rather than an incidental property. The continued sample is therefore the one the single call would have drawn.
 
 **Two-phase sampling.** A new phase starts with a new design: `execute(design2, phase1_sample)`. Here the phase-1 `tbl_sample` is the frame argument, not the execution object. samplyr records a previous-phase link and compounds the phase-1 and phase-2 weights multiplicatively. The conditional phase-2 weight is computed at survey export time. Thus `execute(psu_sample, listing_frame)` means “continue this design's stages,” whereas `execute(new_design, prior_sample)` means “sample a new phase.”
 
@@ -236,14 +236,14 @@ two_stage <- sampling_design() |>
     draw(n = 2, method = "srswor") |>
   add_stage("EAs") |>
     draw(n = 5, method = "srswor") |>
-  execute(zwe_eas, seed = 42)
+  execute(zwe_eas, seed = 123456)
 
 # Compound weight equals the product of per-stage weights
 all.equal(two_stage$.weight,
           two_stage$.weight_1 * two_stage$.weight_2)
 ```
 
-The warning is the design meeting the frame: Bulawayo is a single-district province, so a take of two districts selects the one that exists. `execute()` reports every pool it could not fill, once per stage, because a capped pool makes the design non-self-weighting. The weights above still compound exactly; Bulawayo's first-stage weight is simply 1.
+The warning is the design meeting the frame. Bulawayo is a single-district province, so a take of two districts selects the one that exists. `execute()` reports every pool it could not fill, once per stage, because a capped pool makes the design non-self-weighting. The weights above still compound exactly and Bulawayo's first-stage weight is simply 1.
 
 **Two-phase.** When a new phase-2 design is executed with the phase-1 `tbl_sample` as its frame, the phase-1 weight is stored internally and multiplied into the final `.weight`. The conditional phase-2 weight \(w_{\text{cond}} = w_{\text{overall}} / w_{\text{phase 1}}\) is computed during survey export for use with `survey::twophase()`.
 
@@ -288,7 +288,7 @@ nested in it contribute nothing beyond the between-draw variability, which the
 Hansen--Hurwitz estimator already captures.
 
 Bounded cube, LPM2, and SCPS do not currently have supported linearization
-estimators; they use the generic bootstrap approximation described below.
+estimators. They use the generic bootstrap approximation described below.
 
 ## What is lost at survey export
 
@@ -332,7 +332,7 @@ method-by-method breakdown.
 Rows and columns follow first appearance in the sample. A WR stage contains
 one row per distinct selected population unit rather than one row per draw.
 At a later stage below a WR parent, each parent draw occurrence defines its
-own conditional block; cross-occurrence entries are products of marginal
+own conditional block. Cross-occurrence entries are products of marginal
 conditional chances. Pair the matrix with stage-specific unit identities, not
 blindly with every descendant sample row.
 
@@ -346,7 +346,7 @@ For WR methods (`srswr`, `pps_multinomial`), each draw produces one row with `.d
 
 ### 5. Panel assignments
 
-The `.panel` column is not passed to survey. Panels are a sample-management concept: randomized fixed-quota partitions for rotation or workload distribution. The full-sample weights in `.weight` are correct for the combined sample. Panel assignment is not an additional probability-sampling phase, so a single panel does not automatically have inclusion probability \(\pi_i / k\); conditional on the frozen quotas it is the block's realized quota over the block size. Multiplying one panel's weights by \(k\) is therefore not generally valid for population inference.
+The `.panel` column is not passed to survey. Panels are randomized fixed-quota partitions for rotation or workload distribution. The full-sample weights in `.weight` are correct for the combined sample. Panel assignment is not an additional probability-sampling phase, so a single panel does not automatically have inclusion probability \(\pi_i / k\). Conditional on the frozen quotas, its probability is the block's realized quota over the block size. Multiplying one panel's weights by \(k\) is therefore not generally valid for population inference.
 
 ### 6. Certainty flag
 
@@ -360,23 +360,23 @@ The `.panel` column is not passed to survey. Panels are a sample-management conc
 
 There are two distinct operations here and they have different statistical
 status. **Partitioning** (`panels = k` with no schedule) splits one execution
-into \(k\) groups for rotation or workload; it does not change any inclusion
+into \(k\) groups for rotation or workload. It does not change any inclusion
 probability and does not change `.weight`. **Wave activation** (a scheduled
 `panels` plus `execute(wave = t)`) selects a subset of those groups, and that
 *is* a second sampling phase with its own inclusion probability and its own
-weight factor. The rules below are the partitioning rules; activation is
+weight factor. The rules below are the partitioning rules, while activation is
 covered under "Wave activation" after them.
 
 Neither operation replenishes the sample. A programme that draws refreshment
 cohorts against later frame vintages is a registry of separate executions, not
-a partition of one; see `rotation_program()` and
+a partition of one. See `rotation_program()` and
 `vignette("rotating-panels")`.
 
 `execute(..., panels = k)` partitions the sample into \(k\) non-overlapping rotation groups by randomized fixed quota inside frozen ordered blocks:
 
-- **Assignment pools**: each selection stratum of the assignment stage is a pool, cut into consecutive blocks of \(k \lceil 2 / r_{\min} \rceil\) assignment units, where \(r_{\min}\) is the fewest panels any declared wave activates. Without a schedule \(r_{\min} = 1\) and the block is \(2k\); a schedule keeping two of four panels live blocks at 4 rather than 8. The rule is that the take of \(r_{\min}\) panels must leave at least two units per block, which is the smallest take carrying a within-block variance estimate. Every block carries a fixed quota per panel and its labels are permuted within the block, so each unit carries each panel with probability \(1/k\) and panel sizes within a pool differ by at most one.
+- **Assignment pools**: each selection stratum of the assignment stage is a pool, cut into consecutive blocks of \(k \lceil 2 / r_{\min} \rceil\) assignment units, where \(r_{\min}\) is the fewest panels any declared wave activates. Without a schedule, \(r_{\min} = 1\) and the block is \(2k\). A schedule keeping two of four panels live blocks at 4 rather than 8. The take of \(r_{\min}\) panels must leave at least two units per block, which is the smallest take carrying a within-block variance estimate. Every block carries a fixed quota per panel and its labels are permuted within the block, so each unit carries each panel with probability \(1/k\) and panel sizes within a pool differ by at most one.
 - **Clustered designs**: panels are assigned at the assignment stage's cluster or occurrence level, then propagated to every unit below. By default that stage is the first, so a PSU carries one panel and all its members inherit it. Under a with-replacement stage the assignment unit is the realized draw, so one population cluster drawn twice may carry two panels.
-- **Which stage assigns**: `panel_stage` moves the assignment to another stage, and every later stage still inherits its ancestor's panel. Assigning at stage 1 rotates whole primary units; assigning lower down rotates units inside parents that stay in the survey, which is the address-panel design.
+- **Which stage assigns**: `panel_stage` moves the assignment to another stage, and every later stage still inherits its ancestor's panel. Assigning at stage 1 rotates whole primary units. Assigning lower down rotates units inside parents that stay in the survey, which is the address-panel design.
 - **What moving it costs**: a pool becomes the stage's own strata inside each realized parent and never crosses a parent, so pools are smaller and `small_pool` binds more often. Selection certainty then counts only at the assignment stage, in both directions: a certainty primary unit does not make its households permanent, and a certainty selection below the assignment stage does not keep its household in every wave.
 - **Control sorting**: the `control` argument to `draw()` orders the units before they are cut into blocks, so every panel inherits the same spread over that order.
 - **Certainty units**: labelled from their own pools. A certainty unit is in the sample at every occasion and consumes no rotating quota.
@@ -397,6 +397,10 @@ This is why the block sizes and realized block-by-panel quotas are recorded with
 
 `samplyr` passes permanent random numbers through to `sondage` without transformation. PRN-compatible methods (`bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`) produce a deterministic selection given the PRN values. When PRN is supplied, the `seed` argument to `execute()` does not affect selection.
 
-Positive and negative coordination across survey waves is a user-level workflow, not a package feature. `samplyr` provides the infrastructure (PRN passthrough, panel partitioning, tidy output) and the user implements the update rule. See `vignette("sampling-coordination")` for the recommended workflow, including the negative-coordination formula \(u_{\text{new}} = (u - \pi) \bmod 1\) [@tille2020, sec. 8.2.4].
+Positive and negative coordination across survey waves is a user-level
+workflow, not a package feature. `samplyr` passes PRNs to the selection method,
+the user manages their persistence and update. See
+`vignette("sampling-coordination")`, including the negative-coordination update
+\(u_{\text{new}} = (u - \pi) \bmod 1\) [@ohlsson1995].
 
 ## References

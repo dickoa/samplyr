@@ -157,7 +157,7 @@ NULL
 #'   redeclared on a sample that already carries an assignment.
 #'
 #'   A schedule is a data frame with an integer `panel` column, an integer
-#'   `wave` column and an optional logical `active` column; a combination
+#'   `wave` column and an optional logical `active` column. A combination
 #'   left out is inactive. It declares the panel count and, through the
 #'   fewest panels any wave activates, the assignment block size. Only a
 #'   sample drawn with a schedule can be materialized by `wave`.
@@ -177,7 +177,7 @@ NULL
 #'   permanent, and a certainty selection below the assignment stage does not
 #'   keep its household in every wave. A stage that selects with replacement
 #'   assigns realized draw occurrences, so one population unit selected twice
-#'   may take two different panels; a parent selected twice likewise gives two
+#'   may take two different panels. A parent selected twice likewise gives two
 #'   separate populations of households, and a household reached under both
 #'   hits is assigned once for each.
 #'
@@ -451,7 +451,7 @@ NULL
 #' diagnostics work on it. It retains the master as its first phase, so
 #' [as_svydesign()] exports it through [survey::twophase()] with the
 #' activation as the second phase. What it cannot do is replay, because a wave
-#' is derived from a recorded execution rather than being one; that refuses
+#' is derived from a recorded execution rather than being one. That refuses
 #' rather than answering approximately.
 #'
 #' The schedule states which groups are live when. It does not replenish the
@@ -808,20 +808,12 @@ execute <- function(
         ))
       }
     }
-    # Empty replicates leave no rows in a stacked sample, so without
-    # the check_no_empty_replicates() guard the replicate machinery
-    # would silently skip them and condition every downstream result on
-    # nonempty realizations.
+    # Empty replicates otherwise disappear from the stacked sample.
     if (is_tbl_sample(.data)) {
       warn_if_modified(.data, "input")
       check_no_empty_replicates(.data, blocked = "stages")
     } else {
-      # When .data is a design, a tbl_sample frame is the prior phase's
-      # sample and its provenance matters. In a continuation
-      # (.data is a tbl_sample) the frames are listing frames whose
-      # sample provenance is stripped anyway (e.g. the documented
-      # row-expansion household listing), so marks on them are
-      # irrelevant.
+      # Prior-phase sample frames retain provenance. Listing frames do not.
       for (f in frames) {
         if (is_tbl_sample(f)) {
           warn_if_modified(f, "frame")
@@ -1564,7 +1556,7 @@ execute_continuation <- function(
 
   digest <- NULL
   if (!identical(frame_digest, "none")) {
-    # Merge only onto a prior digest that still describes its sample;
+    # Merge only onto a prior digest that still describes its sample.
     # a continuation cannot manufacture the manifest of stages it did
     # not observe.
     prior <- get_frame_digest(sample)
@@ -1658,7 +1650,7 @@ find_empty_replicates <- function(sample) {
 #' Check that a tbl_sample entering execution has no empty replicates
 #'
 #' A verified single-replicate extraction (filter(.replicate == r) of a
-#' complete nonempty replicate) is a standalone sample; empty siblings
+#' complete nonempty replicate) is a standalone sample. Empty siblings
 #' recorded in the parent metadata are irrelevant to it.
 #' @noRd
 check_no_empty_replicates <- function(x, blocked, call = caller_env()) {
@@ -1888,7 +1880,7 @@ execute_replicated_multiphase <- function(
   call = caller_env()
 ) {
   # Only the first supplied frame may be a previous phase, so there is exactly
-  # one replicated source. The schedule may point several stages at it; those
+  # one replicated source. The schedule may point several stages at it. Those
   # entries are aliases of that one sample, not independent frames.
   supplied <- vector("list", schedule$n_supplied)
   for (entry in schedule$entries) {
@@ -1932,7 +1924,7 @@ execute_replicated_multiphase <- function(
   for (i in seq_along(rep_ids)) {
     r <- rep_ids[i]
 
-    # Prevalidated above; the schedule remaps this one subset to every stage
+    # Prevalidated above. The schedule remaps this one subset to every stage
     # that draws on it.
     rep_frames <- supplied
     rep_frames[[1]] <- replicate_frames[[i]]
@@ -2245,7 +2237,7 @@ find_carry_forward_cols <- function(previous_sample) {
 compound_by_join <- function(result, previous_sample, join_vars, carry_cols) {
   carry_cols_to_select <- setdiff(carry_cols, join_vars)
 
-  # `.prev_weight` is a name a frame may legitimately carry; colliding with it
+  # `.prev_weight` is a name a frame may legitimately carry. Colliding with it
   # surfaced as an internal dplyr error.
   prev_weight <- free_column_name(result, ".prev_weight")
 
@@ -2378,11 +2370,7 @@ prepare_multiphase_frame <- function(frame) {
 
 #' @noRd
 samplyr_internal_cols <- function(x) {
-  # Internal tbl_sample metadata columns. When a tbl_sample is reused as
-  # a frame (continuation or new-phase execute), these are stripped so
-  # they do not collide with new-stage metadata or leak into downstream
-  # samples as ordinary data columns. `.panel` is included because panel
-  # labels are post-hoc sample metadata, not frame attributes.
+  # Strip sample metadata before a tbl_sample is reused as a frame.
   grep(samplyr_internal_col_pattern, names(x), value = TRUE)
 }
 
@@ -2399,7 +2387,7 @@ validate_design_complete <- function(design, call = rlang::caller_env()) {
       label <- stage$label %||% paste("Stage", i)
       cli_abort("{.val {label}} is incomplete: missing {.fn draw}", call = call)
     }
-    # draw() refuses these at design time; a design restored from a
+    # draw() refuses these at design time. A design restored from a
     # file bypasses draw(), so execution re-checks.
     if (identical(stage$draw_spec$method_probabilities, "unknown")) {
       abort_unknown_probabilities(stage$draw_spec$method, call = call)
@@ -2493,7 +2481,7 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
       )
     }
     # Only warn about zero MOS when there is a non-zero remainder to
-    # sample from; an all-zero MOS is handled by the harder PPS error
+    # sample from. An all-zero MOS is handled by the harder PPS error
     # raised later in draw_sample() / draw_pps_method().
     if (any(mos_vals == 0) && sum(mos_vals) > 0) {
       n_zero <- sum(mos_vals == 0)

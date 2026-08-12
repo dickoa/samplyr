@@ -42,8 +42,8 @@ This argument is only accepted for two-phase samples.}
 \item{systematic_variance}{What to do about the simple random sampling
 variance approximation used for equal-probability \code{systematic} stages.
 \code{"warn"} (default) applies it and warns once per call, naming every
-affected stage; \code{"approximate"} applies it silently, for a caller who has
-acknowledged it; \code{"error"} refuses. Census stages are exempt, since a
+affected stage. \code{"approximate"} applies it silently for a caller who has
+acknowledged it, while \code{"error"} refuses. Census stages are exempt, since a
 stage that took everything within reach contributes no variance, and
 \code{pps_systematic} is unaffected, having its own treatment. The choice and
 the affected stages are recorded on the returned object in the
@@ -109,8 +109,9 @@ which survey interprets as inclusion probabilities.
 
 Every executed sampling stage is represented in the exported design:
 one \code{ids} term, one \code{fpc} term, and (when stratified) one \code{strata}
-term per stage, so \code{\link[survey:svydesign]{survey::svydesign()}} performs exact multi-stage
-linearization (Sarndal et al. 1992, ch. 4.3). In particular, a
+term per stage, so \code{\link[survey:svydesign]{survey::svydesign()}} represents the multi-stage
+structure in its linearization (Sarndal et al. 1992, ch. 4.3). Exactness
+still depends on the variance treatment available for each method. A
 design whose first stage is a census of PSUs correctly attributes
 all variance to the later stages.
 
@@ -133,7 +134,7 @@ sample without replacement of the realized quota, so the blocks are the
 phase-2 strata and their sizes the phase-2 population counts. The master
 is retained as the first phase and supplies the rows the wave did not
 keep, which \code{\link[survey:twophase]{survey::twophase()}} needs to build that phase. Columns added
-to the wave for analysis are carried into the exported design; columns the
+to the wave for analysis are carried into the exported design. Columns the
 master already has keep the master's values.
 
 The activation is exact, but the first phase is only as expressible as
@@ -183,8 +184,9 @@ assignment, \code{rbind()}, vctrs operations, third-party verbs) are
 also caught, and an overwrite that left every value identical
 passes. Physically dropping out-of-domain
 rows before conversion is not equivalent to domain estimation, in that
-situation the point estimate will be correct, but the variance is
-understated because the domain sample size is random under the design.
+situation the point estimate can agree, but its variance estimate is
+generally wrong and is often too small because the domain sample size is
+random under the design.
 
 For subpopulation estimates, convert the full sample first and then
 subset the design, which applies the proper domain estimator:
@@ -213,8 +215,7 @@ The size of that gap is worth stating, because it is not always small. A
 systematic design with interval \eqn{k}{k} has only \eqn{k}{k} distinct
 samples per stratum, so its variance for one particular frame is a fixed
 quantity that need not sit near the SRSWOR value. Measured over repeated
-draws, 90 per stratum from 1800 with an interval of 20
-(\code{dev/experiments/systematic-export-margins.R} in the package sources):\tabular{lll}{
+draws, 90 per stratum from 1800 with an interval of 20:\tabular{lll}{
    frame order \tab reported / true variance \tab coverage of a 95\% interval \cr
    random \tab 0.73 \tab 90.2\% \cr
    ordered by a trend \tab 1.76 \tab 100.0\% \cr
@@ -239,7 +240,7 @@ with nothing.
 Replicate weights are no way around this. \code{\link[=as_svrepdesign]{as_svrepdesign()}} takes the same
 \code{systematic_variance} argument, because no replicate type on offer
 reconstructs a systematic sample's random start or its dependence on frame
-order; each resamples the realized sample as though its units had been
+order. Each resamples the realized sample as though its units had been
 drawn independently within strata. Requesting a particular type is
 therefore not an acknowledgement, and does not silence the condition. The
 figures in the table above were measured for the linearization export and
@@ -254,8 +255,8 @@ variance is estimated by default using Brewer's approximation (\code{pps = "brew
 probabilities from the marginal inclusion probabilities. Here Brewer names
 the variance estimator, not the selection algorithm e.g Sampford selection
 receives this default treatment. This is the approximation
-described by Berger (2004) and works well for most PPS designs regardless
-of the sampling algorithm used.
+described by Berger (2004). Its accuracy depends on the sampling design and
+population. It is not an exact substitute for joint inclusion probabilities.
 
 For supported methods, you can instead compute joint inclusion
 probabilities using \code{\link[=joint_expectation]{joint_expectation()}} and pass them via \code{pps = survey::ppsmat(joint_matrix)}. The matrix is exact for CPS, Sampford,

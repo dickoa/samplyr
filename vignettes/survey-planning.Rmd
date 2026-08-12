@@ -1,10 +1,10 @@
 ---
-title: "Survey Planning with svyplan"
+title: "Plan a Sample with svyplan"
 output: rmarkdown::html_vignette
 bibliography: references.bib
 link-citations: true
 vignette: >
-  %\VignetteIndexEntry{Survey Planning with svyplan}
+  %\VignetteIndexEntry{Plan a Sample with svyplan}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -22,794 +22,321 @@ library(svyplan)
 library(dplyr)
 ```
 
-## Overview
+## From a precision target to a draw
 
-Before drawing a sample, you need to answer two questions: how many units to select, and how to divide them across strata. The `svyplan` package provides tools for both. `samplyr` integrates with `svyplan` so that planning results flow directly into `draw()` and `execute()`.
+Planning answers how many units to issue and how to distribute them. Selection
+then applies that plan to a frame. `svyplan` owns the first calculation and
+`samplyr` owns the second.
 
-The three packages form a pipeline:
-
-- **svyplan** determines sample sizes, evaluates precision, and computes strata boundaries (planning).
-- **samplyr** specifies and executes the sampling design (selection).
-- **sondage** provides the low-level sampling algorithms (engine).
-
-This vignette uses the `ken_enterprises` dataset, a synthetic frame of 17,004 Kenyan establishments with revenue, employee counts, and export status.
+We use the synthetic `ken_enterprises` frame. Suppose the main estimate is the
+proportion of exporting enterprises, with a margin of error of three percentage
+points at 95 percent confidence.
 
 ```{r}
 data(ken_enterprises)
-glimpse(ken_enterprises)
-```
 
-## Sample Size for a Proportion
-
-Suppose we want to estimate the proportion of exporting firms. For this
-demonstration, we use the proportion in the synthetic frame as the planning
-value. We want a margin of error of 3 percentage points at 95% confidence.
-
-```{r}
 p_export <- mean(ken_enterprises$exporter)
-round(p_export, 3)
-
-n_export <- n_prop(p = p_export, moe = 0.03)
-n_export
+target <- n_prop(p = p_export, moe = 0.03)
+target
 ```
 
-The result is a `svyplan_n` object. You can pass it directly to `draw()`.
+The result is a `svyplan_n` object. `draw()` reads its planned sample size
+directly.
 
 ```{r}
-samp <- sampling_design() |>
-  draw(n = n_export) |>
+sample <- sampling_design(title = "Enterprise survey") |>
+  draw(n = target) |>
   execute(ken_enterprises, seed = 1)
-nrow(samp)
+
+nrow(sample)
 ```
 
-## Sample Size for a Mean
+Use a plausible planning value from earlier rounds or a pilot when the true
+population value is unknown. For a proportion, `p = 0.5` is the conservative
+choice under the ordinary Wald variance because it maximizes `p * (1 - p)`.
 
-We also want to estimate mean revenue with a margin of error of 30 million KES. We compute the population variance from the frame.
+## Means, response, and design effects
+
+For a mean, supply the population variance or a prior estimate of it.
 
 ```{r}
-rev_var <- var(ken_enterprises$revenue_millions)
-n_rev <- n_mean(var = rev_var, moe = 30)
-n_rev
+revenue_target <- n_mean(
+  var = var(ken_enterprises$revenue_millions),
+  moe = 30
+)
+revenue_target
 ```
 
-## Multiple Indicators
+Expected nonresponse increases the number issued. Here the target remains the
+same, but only 85 percent of issued units are expected to respond.
 
-In practice, a survey measures several things at once. `n_multi()` takes the binding constraint across indicators.
+```{r}
+response_target <- n_prop(
+  p = p_export,
+  moe = 0.03,
+  resp_rate = 0.85
+)
+
+c(
+  full_response = as.integer(target),
+  issued_at_85_percent = as.integer(response_target)
+)
+```
+
+`deff` expresses the variance relative to simple random sampling under the
+planning model. It can reflect clustering, unequal weights, or another design
+feature, but the value should match the estimand being planned.
+
+```{r}
+n_prop(p = p_export, moe = 0.03, deff = 1.5, resp_rate = 0.85)
+```
+
+A cross-sectional design effect does not automatically describe a change or a
+pooled longitudinal estimate. Correlation across occasions can help one
+estimand and hurt another.
+
+## Read the calculation in reverse
+
+The `prec_*()` functions evaluate a sample size rather than solving for it.
+
+```{r}
+prec_prop(p = p_export, n = 600)
+prec_mean(
+  var = var(ken_enterprises$revenue_millions),
+  n = 300,
+  mu = mean(ken_enterprises$revenue_millions)
+)
+```
+
+This is useful when budget fixes the take. `confint()` gives the corresponding
+planning interval, while `predict()` can compare supported assumptions such as
+response rates and design effects.
+
+```{r}
+plan <- n_prop(p = p_export, moe = 0.03, deff = 1.5)
+
+predict(
+  plan,
+  expand.grid(
+    deff = c(1, 1.5, 2),
+    resp_rate = c(0.8, 0.9, 1)
+  )
+)
+```
+
+## Several indicators or domains
+
+`n_multi()` finds the binding requirement across several means and
+proportions.
 
 ```{r}
 indicators <- data.frame(
   name = c("exporter_rate", "mean_revenue"),
   p = c(p_export, NA),
-  var = c(NA, rev_var),
+  var = c(NA, var(ken_enterprises$revenue_millions)),
   moe = c(0.03, 30)
 )
-n_survey <- n_multi(indicators)
-n_survey
+
+multi_target <- n_multi(indicators)
+multi_target
 ```
 
-The sample size is driven by whichever indicator requires the most units. Pass it to `draw()` like any other sample size.
+A domain-specific plan needs enough observations within every reporting
+domain. When `n_multi()` returns a domain table, the sampling design needs a
+matching `stratify_by()` so those counts have an operational meaning.
 
 ```{r}
-samp <- sampling_design() |>
-  draw(n = n_survey) |>
-  execute(ken_enterprises, seed = 2)
-nrow(samp)
-```
-
-### Per-domain requirements
-
-With `domains`, `n_multi()` sizes each reporting domain separately. The
-result hands `draw()` a per-domain table, so the design needs a matching
-`stratify_by()`.
-
-```{r}
-indicators_dom <- data.frame(
+domain_indicators <- data.frame(
   name = "exporter_rate",
   size_class = c("Small", "Medium", "Large"),
   p = c(0.10, 0.22, 0.45),
   cv = 0.10
 )
-n_dom <- n_multi(indicators_dom, domains = "size_class")
 
-samp_dom <- sampling_design() |>
+domain_target <- n_multi(domain_indicators, domains = "size_class")
+
+domain_sample <- sampling_design() |>
   stratify_by(size_class) |>
-  draw(n = n_dom) |>
+  draw(n = domain_target) |>
   execute(ken_enterprises, seed = 2)
-table(samp_dom$size_class)
+
+count(domain_sample, size_class, name = "n_sampled")
 ```
 
-## Power Analysis
+## Allocate a total across strata
 
-If the goal is to detect a difference (for example, comparing exporter rates between two regions), `power_prop()` gives the required per-group sample size.
-
-```{r}
-n_power <- power_prop(p1 = p_export, p2 = p_export + 0.08, power = 0.8)
-n_power
-```
-
-This also works directly with `draw()`.
+When strata are already defined, `n_alloc()` distributes a total using the
+chosen planning criterion. This example uses Neyman allocation for mean
+revenue, with at least 20 enterprises in every sector.
 
 ```{r}
-samp <- sampling_design() |>
-  draw(n = n_power) |>
-  execute(ken_enterprises, seed = 3)
-nrow(samp)
-```
-
-## Response Rate Adjustment
-
-The sizing, precision and power functions take a `resp_rate` argument. The sample size is inflated by `1 / resp_rate` to account for expected non-response.
-
-```{r}
-n_prop(p = p_export, moe = 0.03, resp_rate = 0.85)
-```
-
-The net sample size (after non-response) matches the original target. The same argument works in `n_mean()`, `n_cluster()`, `n_change()`, `n_panel()`, `n_twophase()`, `n_pooled()`, `n_alloc()`, every `prec_*()` function, `power_mean()`, `power_prop()`, `power_did()`, `strata_bound()` and `effective_n()`. `n_cluster()` and `prec_cluster()` additionally take `resp_rate_psu` and `resp_rate_ssu` for non-response at whole clusters.
-
-Two groups do not take it as an argument, for different reasons:
-
-- The multi-indicator functions `n_multi()`, `n_multi_cluster()`, `prec_multi()` and `prec_multi_cluster()` read `resp_rate` as a *column* of the indicator data frame, so each indicator can carry its own rate. Passing it as an argument is an error.
-- `varcomp()`, `design_effect()`, `design_overlap()` and `design_df()` describe design structure rather than size anything, so there is nothing for a response rate to inflate.
-
-## Precision Analysis
-
-Given a fixed sample size, how precise will the estimates be? The `prec_*()` functions are the inverse of `n_*()`.
-
-```{r}
-prec_prop(p = p_export, n = 600)
-```
-
-```{r}
-prec_mean(var = rev_var, n = 300, mu = mean(ken_enterprises$revenue_millions))
-```
-
-### Round-trip between size and precision
-
-All `n_*()` and `prec_*()` functions are S3 generics. Pass a precision result to `n_*()` to recover the sample size, or a sample size result to `prec_*()` to compute the achieved precision.
-
-```{r}
-s <- n_prop(p = p_export, moe = 0.03)
-p <- prec_prop(s)
-p
-
-# Recover the original n
-n_prop(p)
-```
-
-You can override a parameter on the way back.
-
-```{r}
-n_prop(p, cv = 0.10)
-```
-
-### Confidence intervals
-
-`confint()` extracts the expected confidence interval from any sample size or precision object.
-
-```{r}
-confint(s)
-confint(p, level = 0.99)
-```
-
-## Sensitivity Analysis
-
-How sensitive is a sample size to assumptions about the design effect or response rate? The `predict()` method evaluates any svyplan result at new parameter combinations.
-
-```{r}
-x <- n_prop(p = p_export, moe = 0.03, deff = 1.5)
-predict(x, expand.grid(
-  deff = c(1.0, 1.5, 2.0, 2.5),
-  resp_rate = c(0.8, 0.9, 1.0)
-))
-```
-
-This works for all svyplan object types: sample size, precision, cluster, and power.
-
-## Multistage Cluster Planning
-
-For cluster designs, `n_cluster()` finds the optimal allocation across stages given costs and the degree of clustering.
-
-### Variance components
-
-If a frame with cluster identifiers is available, `varcomp()` estimates the between-cluster and within-cluster variance components.
-
-```{r}
-vc <- varcomp(
-  revenue_millions ~ county,
-  data = ken_enterprises
-)
-vc
-as.data.frame(vc)
-```
-
-The `icc` value (measure of homogeneity) feeds directly into `n_cluster()` and `design_effect()`.
-
-### Optimal allocation
-
-```{r}
-# Minimize cost to achieve CV = 0.10
-n_cluster(stage_cost = c(500, 50), icc = vc, cv = 0.10)
-
-# Maximize precision within a budget
-n_cluster(stage_cost = c(500, 50), icc = vc, budget = 30000)
-```
-
-The precision-target result is diagnostic: its required number of county PSUs
-far exceeds the 47 available in this frame, so a 10% CV is infeasible under
-these assumptions. The budget-constrained result is feasible and is the plan
-used below.
-
-A cluster plan feeds a two-stage design directly. In a design with
-`cluster_by()`, `draw(n = cl)` hands stage 1 the number of PSUs and
-stage 2 the per-cluster take, using the plan's integerized field
-design (`as.integer(cl)`, which svyplan re-optimizes to whole units
-rather than rounding each stage up).
-
-```{r}
-cl <- n_cluster(stage_cost = c(500, 50), icc = vc, budget = 30000)
-as.integer(cl)
-
-samp <- sampling_design() |>
-  cluster_by(county) |>
-  draw(n = cl) |>
-  add_stage() |>
-  draw(n = cl) |>
-  execute(ken_enterprises, seed = 5)
-length(unique(samp$county))
-nrow(samp)
-```
-
-In a flat, unclustered single-stage design the same object contributes
-its operational element total (`prod(as.integer(cl))`) instead, for
-sizing an element sample.
-
-## Stratification Boundaries
-
-Enterprise surveys typically stratify by size. Rather than using predefined size classes, `strata_bound()` searches for boundaries on a continuous variable. The `"cumrootf"` method is the Dalenius-Hodges approximation: it equalizes the cumulative square root of the frequency across strata, which reduces the variance of the stratified estimator relative to arbitrary cut points. It is an approximation and a heuristic, not an exact joint optimum over boundaries and allocation, and it does not guarantee the minimum achievable CV for a given number of strata. `strata_bound()` also offers `"lh"`, `"geo"` and `"kozak"`, which search the same problem differently.
-
-```{r}
-bounds <- strata_bound(
-  ken_enterprises$revenue_millions,
-  n_strata = 4,
-  method = "cumrootf",
-  cv = 0.05
-)
-bounds
-```
-
-The result includes jointly optimized boundaries and stratum sample sizes. The `predict()` method assigns each frame unit to a stratum.
-
-```{r}
-labels <- paste0("S", 1:4)
-ken_enterprises$rev_stratum <- predict(
-  bounds,
-  ken_enterprises$revenue_millions,
-  labels = labels
-)
-table(ken_enterprises$rev_stratum)
-```
-
-Use the stratum allocations from `strata_bound()` directly as a named vector for `draw()`. The `as.data.frame()` method exposes the boundary table. This preserves the joint optimization between boundaries and allocation.
-
-```{r}
-strata_n <- setNames(ceiling(as.data.frame(bounds)$n), labels)
-strata_n
-```
-
-```{r}
-samp <- sampling_design() |>
-  stratify_by(rev_stratum) |>
-  draw(n = strata_n) |>
-  execute(ken_enterprises, seed = 4)
-samp |>
-  count(rev_stratum, name = "n_sampled")
-```
-
-Note that the boundaries and allocation are coupled. `strata_bound()` searches for them together against the target CV, so the boundaries it returns are the ones that suit the allocation it returns. Using `strata_bound()` for boundaries but a different allocation in `samplyr` (for example, proportional instead of Neyman) breaks that pairing, and the CV the search reported no longer describes the design you execute. If you need a different allocation method, compute boundaries and allocation separately.
-
-## Stratified Allocation
-
-When strata are defined by administrative or domain boundaries rather than
-optimal boundaries from `strata_bound()`, use `n_alloc()` to compute the
-allocation. It supports Neyman, proportional, optimal (cost-weighted), and
-power allocation with optional constraints on minimum stratum size.
-
-First, summarize the frame to get stratum population sizes and variabilities.
-
-```{r}
-alloc_frame <- ken_enterprises |>
-  summarize(
+allocation_frame <- ken_enterprises |>
+  summarise(
     N = n(),
     sd = sd(revenue_millions),
-    mean = mean(revenue_millions),
     .by = sector
   ) |>
-  rename(stratum = sector)
-alloc_frame
-```
+  transmute(stratum = sector, N, sd)
 
-Then compute the allocation. Here we use Neyman allocation targeting 600 units
-with a minimum of 20 per stratum.
-
-```{r}
-alloc <- n_alloc(alloc_frame, n = 600, alloc = "neyman", min_n_stratum = 20)
-alloc
-as.data.frame(alloc)[, c("stratum", "N", "n_int", "weight")]
-```
-
-The result passes directly to `draw()`. The per-stratum allocations are
-matched by stratum name to the values of the stratification variable.
-
-```{r}
-samp <- sampling_design() |>
-  stratify_by(sector) |>
-  draw(n = alloc) |>
-  execute(ken_enterprises, seed = 10)
-samp |>
-  count(sector, name = "n_sampled")
-```
-
-Because `n_alloc()` already provides per-stratum sizes, do not combine it
-with `alloc` in `stratify_by()`. The two allocation mechanisms are
-mutually exclusive: either let `svyplan` allocate (via `n_alloc()`) or let
-`samplyr` allocate (via `alloc` in `stratify_by()`), but not both.
-
-### Budget-constrained allocation
-
-When field costs vary across strata, `n_alloc()` can optimize under a budget
-constraint using cost-weighted (optimal) allocation.
-
-```{r}
-alloc_frame_cost <- alloc_frame |>
-  mutate(unit_cost = c(120, 200, 150, 130, 80, 100, 90))
-
-budget_alloc <- n_alloc(
-  alloc_frame_cost,
-  budget = 50000,
-  alloc = "optimal",
+allocation <- n_alloc(
+  allocation_frame,
+  n = 600,
+  alloc = "neyman",
   min_n_stratum = 20
 )
-budget_alloc
-as.data.frame(budget_alloc)[, c("stratum", "N", "unit_cost", "n_int", "weight")]
+
+as.data.frame(allocation)[, c("stratum", "N", "n_int", "weight")]
 ```
 
+The result maps its stratum names to the values used by `stratify_by()`.
+
 ```{r}
-samp_budget <- sampling_design() |>
+allocated_sample <- sampling_design(title = "Allocated enterprise survey") |>
   stratify_by(sector) |>
-  draw(n = budget_alloc) |>
-  execute(ken_enterprises, seed = 11)
-samp_budget |>
-  count(sector, name = "n_sampled")
+  draw(n = allocation) |>
+  execute(ken_enterprises, seed = 3)
+
+count(allocated_sample, sector, name = "n_sampled")
 ```
 
-## Stratified Two-Stage Designs
+Do not also request an allocation in `stratify_by()`. Either `svyplan` supplies
+the stratum takes or `samplyr` computes them, not both.
 
-The workhorse of household surveys stratifies by region, samples
-enumeration areas within each region, then households within each EA.
-`n_alloc()` plans this design when the frame carries a `icc_psu`
-column. The whole plan then drives both stages of the samplyr design.
+Neyman allocation minimizes the planned variance for the variable represented
+by `sd`, subject to the stated constraints. A cost-weighted allocation adds the
+declared costs. Neither choice is automatically optimal for other variables or
+domains.
 
-Build the planning frame from the EA frame's own aggregates. The
-homogeneity `icc_psu` typically comes from a previous survey round
-(via `varcomp()` with its `strata` argument). Here we use a flat 0.05.
+## Plan a clustered design
 
-```{r}
-frame_bfa <- bfa_eas |>
-  summarise(
-    N = sum(households),
-    cost_psu = round(mean(fieldwork_cost)),
-    .by = region
-  ) |>
-  left_join(bfa_eas_variance, by = "region") |>
-  mutate(
-    stratum = region,
-    sd = sqrt(var),
-    icc_psu = 0.05,
-    cost_ssu = 15
-  )
-
-plan_2stage <- n_alloc(
-  frame_bfa[, c("stratum", "N", "sd", "icc_psu", "cost_psu", "cost_ssu")],
-  n = 6000,
-  alloc = "neyman"
-)
-head(as.data.frame(plan_2stage)[, c("stratum", "n_int", "n_psu_int", "n_per_psu_int")])
-```
-
-Each region gets a whole-unit cluster take (`n_per_psu_int`) and a
-number of EAs (`n_psu_int`), integerized together so their product
-stays on target. Execute stage 1 against the EA frame, then stage 2
-within each EA. Note the `cluster_by(ea_id)` even though rows already
-are EAs: it declares the cluster structure the plan assumes.
-
-```{r}
-design_2stage <- sampling_design() |>
-  stratify_by(region) |>
-  cluster_by(ea_id) |>
-  draw(n = plan_2stage) |>
-  add_stage() |>
-  stratify_by(region) |>
-  draw(n = plan_2stage)
-
-eas_selected <- execute(design_2stage, bfa_eas, stages = 1, seed = 7)
-nrow(eas_selected)
-```
-
-Stage 2 runs later as a continuation, once households have been listed
-in the selected EAs (the listing must carry the `region` column).
-
-```{r, eval = FALSE}
-eas_selected |>
-  execute(household_listing, seed = 8)
-```
-
-Two conventions to keep in mind. First, the meaning of `n` shifts
-across stages: at stage 1 a value is the stratum *total* of PSUs, while
-at stage 2 it is the take *per PSU*. Second, per-stratum values at
-stage 2 need the explicit `stratify_by(region)` shown above. Strata do
-not carry over from stage 1, and the second `stratify_by()` only routes
-the takes (every EA lies in one region), so weights are unaffected.
-
-## Two-Phase Designs
-
-When the variable you care about is expensive to measure but a cheap
-screener can classify units into useful strata, a two-phase design pays
-for the screener out of the savings. `n_twophase()` plans one: a large
-phase-1 sample that classifies, and a stratified subsample of it that
-carries the expensive measurement.
-
-Here a short screening call establishes each enterprise's sector, and the
-full financial interview is taken from a subsample. The phase-2 frame
-describes what that interview costs and how variable revenue is inside
-each sector.
-
-```{r}
-frame_twophase <- ken_enterprises |>
-  summarize(
-    N = n(),
-    sd = sd(revenue_millions),
-    mean = mean(revenue_millions),
-    .by = sector
-  ) |>
-  rename(stratum = sector) |>
-  mutate(unit_cost = c(120, 200, 150, 130, 80, 100, 90))
-
-plan2 <- n_twophase(
-  frame_twophase,
-  phase1_cost = 5,
-  budget = 60000,
-  N = nrow(ken_enterprises)
-)
-plan2
-```
-
-The allocation is a subsampling fraction per stratum. Sectors where
-revenue varies a lot, or where the interview is cheap, are carried into
-phase 2 at a higher rate; `nu = 1` means the screener found so few units
-that all of them are worth interviewing.
-
-```{r}
-as.data.frame(plan2$detail)[, c("stratum", "share", "nu", "n_issued")]
-```
-
-Phase 1 is an ordinary design executed against the frame. Give it a unit
-identifier with `cluster_by()`: the two phases have to share one, or the
-export in the next step cannot link them.
-
-```{r}
-phase1 <- sampling_design() |>
-  cluster_by(enterprise_id) |>
-  draw(n = plan2$operational$n[["n_phase1"]]) |>
-  execute(ken_enterprises, seed = 2026)
-
-phase1 |> count(sector, name = "screened")
-```
-
-Phase 2 is a *new* design executed with the phase-1 sample as its frame.
-Pass the subsampling fractions with `frac`, not fixed counts: `nu` is a
-share of whatever phase 1 actually found in each stratum, and what it
-found is random. A take-all stratum needs the entire realized pool, so a
-fixed count would ask for more units than the screener produced roughly
-half the time.
-
-```{r}
-nu <- setNames(plan2$detail$nu, plan2$detail$stratum)
-
-phase2 <- sampling_design() |>
-  stratify_by(sector) |>
-  cluster_by(enterprise_id) |>
-  draw(frac = nu) |>
-  execute(phase1, seed = 7)
-
-phase2 |> count(sector, name = "interviewed")
-```
-
-Weights compound across the phases, so they still sum to the frame.
-
-```{r}
-c(sum_of_weights = sum(phase2$.weight), frame_size = nrow(ken_enterprises))
-```
-
-`as_svydesign()` recognizes the previous-phase link and exports through
-`survey::twophase()`, so the two-phase variance is computed rather than
-approximated by treating phase 2 as a simple sample.
-
-```{r}
-svy2 <- as_svydesign(phase2)
-class(svy2)
-survey::svymean(~revenue_millions, svy2)
-```
-
-The realized standard error should land near the coefficient of variation
-the plan was built for, but only on average. The planned figure is a
-property of the design; the realized one is an estimate from the single
-sample you drew, and on a skewed outcome it moves a good deal from draw to
-draw. Repeating this design over many seeds gives a spread of realized
-coefficients of variation centered close to the planned one.
-
-```{r}
-est <- survey::svymean(~revenue_millions, svy2)
-c(
-  planned_cv = plan2$cv,
-  realized_cv = as.numeric(survey::SE(est) / coef(est))
-)
-```
-
-## Design Effects After Sampling
-
-After executing a design, `design_effect()` and `effective_n()` report what
-the weights cost you. These are re-exported from `svyplan` and work directly
-on `tbl_sample` objects.
-
-### Weighting Loss
-
-The `tbl_sample` methods report the weighting loss: how much precision the
-realized weights cost relative to a self-weighting sample of the same size.
-This is Kish's design effect, computed from `.weight`, so it equals 1 for a
-self-weighting design and rises with weight variability.
-
-```{r}
-design_effect(samp)
-effective_n(samp)
-```
-
-The effective sample size is the number of observations an SRS would need to
-achieve the same precision *if unequal weighting were the only thing costing
-precision*. It is Kish's weight-only equivalent, and it holds under his
-assumptions: an outcome uncorrelated with the weights, and no clustering.
-
-This is one component of a design effect, not a substitute for one.
-Clustering and stratification also move precision, and neither is visible in
-the weights, so neither can be read off the sample without an outcome. For a
-design effect that reflects them, hand the design to survey and let the
-estimator do it.
-
-```{r, eval = FALSE}
-svy <- as_svydesign(samp)
-survey::svymean(~revenue_millions, svy, deff = TRUE)
-```
-
-Neither figure is a longitudinal design effect. @skinnervieira2005 report
-design effects for regression coefficients on longitudinal samples that grow
-with the number of occasions analysed. That is evidence from one study that a
-cross-sectional design effect can understate the longitudinal one, not an
-established property of panels in general, so treat it as a reason to measure
-rather than as a multiplier to apply.
-
-### Cluster Planning
-
-Before collecting data, you can anticipate the design effect for a cluster design using the survey-planning homogeneity measure `icc` and cluster size. This `icc` is not a generic mixed-model ICC. The calculation uses `svyplan::design_effect()` directly, not a `tbl_sample` method.
+Clustering usually increases variance because units in the same cluster are
+similar. For a one-stage approximation with equal cluster size, the familiar
+design effect is determined by the homogeneity measure `icc` and the take per
+cluster.
 
 ```{r}
 design_effect(icc = 0.05, n_per_psu = 10)
-design_effect(icc = 0.15, n_per_psu = 10)
 ```
 
-Both follow from `1 + (n_per_psu - 1) * icc`, printed above. Raising the `icc` at a fixed cluster size raises the design effect roughly in proportion, which is what makes the trade-off between more clusters and more units per cluster a planning decision rather than a cost calculation.
-
-## Repeated and rotating surveys
-
-Everything above sizes a single occasion. A survey that runs repeatedly is
-usually sized for something else, the precision of a *change*, and that depends
-on how much of the sample the two occasions share. Overlap and the correlation
-across it are therefore planning inputs, not results.
-
-### Overlap from the rotation pattern
-
-`design_overlap()` turns a rotation schedule into the overlap between occasions,
-by lag, before any frame exists. A design that keeps each group in sample for
-two consecutive occasions shares half its sample from one occasion to the next.
+`n_cluster()` can trade the number of clusters against the number of units per
+cluster under declared costs and homogeneity. Its result is optimal only under
+that planning model.
 
 ```{r}
-overlap_1 <- design_overlap("2")[[1]]
-overlap_1
+cluster_plan <- n_cluster(
+  stage_cost = c(500, 50),
+  icc = 0.05,
+  budget = 30000
+)
+
+cluster_plan
+as.integer(cluster_plan)
 ```
 
-`vignette("rotating-panels")` covers the schedule notation, and what a realized
-master delivers against this nominal figure once certainty units are in it.
+In a two-stage `samplyr` design, the cluster plan supplies the stage-1 cluster
+count and the within-cluster take. See `?n_cluster` for the feasibility checks
+and `vignette("introduction")` for multistage execution.
 
-### The precision of a change
+## Plan a repeated survey
 
-`n_change()` sizes an occasion against a target on the change. Given no
-overlap it reduces to the ordinary two-sample answer.
+A repeated survey often needs precision for a change. That calculation depends
+on how much of the responding sample appears at both occasions and how strongly
+the outcome is associated within those shared units.
+
+`design_overlap()` computes issued-sample overlap from a rotation schedule. A
+cohort interviewed on four consecutive occasions produces 75 percent overlap
+between adjacent steady-state samples.
 
 ```{r}
-n_change(p = c(p_export, p_export + 0.05), moe = 0.02)
+membership <- design_overlap("4")
+membership[1]
 ```
 
-Declaring the overlap and the correlation across it is what buys a panel its
-advantage on change.
+At complete response, this issued overlap can be passed directly to
+`n_change()`. Below complete response, convert it to the expected overlap among
+respondents under a stated response-persistence assumption.
 
 ```{r}
-n_change(p = c(p_export, p_export + 0.05), moe = 0.02,
-         overlap = overlap_1, overlap_cor = 0.6)
+change_target <- n_change(
+  p = c(p_export, p_export + 0.05),
+  moe = 0.02,
+  overlap = membership[1],
+  overlap_cor = 0.6
+)
+
+change_target
 ```
 
-Roughly 1,800 units per occasion instead of 2,600, because a positive
-covariance between the occasions removes part of the variance of the
-difference. The printed line reports that share directly, so the saving is
-attributable rather than asserted.
+`overlap_cor` is an outcome assumption, not another name for membership
+overlap. Use prior rounds or a sensitivity range rather than deriving it from
+the rotation pattern.
 
-`prec_change()` is the same relation read the other way, from a fixed size to
-the precision it delivers.
+## Recruit a rotating panel
 
-```{r}
-prec_change(var = rev_var, n = 1500, overlap = overlap_1, overlap_cor = 0.6)
-```
-
-Setting `overlap_cor = 0` recovers the independent-samples answer in one
-argument. That is the calculation a repeated survey gets wrong when it plans
-each occasion as though it were unrelated to the last.
-
-`overlap_cor` is an assumption supplied before fieldwork, not a measurement.
-Its counterpart afterwards is estimating the correlation from the realized
-waves, which `vignette("rotating-panels")` covers. The two sit on opposite
-sides of data collection and neither substitutes for the other.
-
-### Recruiting under attrition
-
-Overlap assumes the units come back. `n_panel()` sizes recruitment against the
-retention actually expected, so the target holds at the wave it is required at
-rather than at wave 1.
+`n_panel()` translates a cross-sectional responding target into recruitment
+under initial response and conditional retention.
 
 ```{r}
 panel_plan <- n_panel(
   n_prop(p = p_export, moe = 0.03),
   retention = c(0.90, 0.95, 0.95),
   resp_rate = 0.80,
-  design = "rotating"
+  design = "rotating",
+  start = "immediate"
 )
+
 panel_plan
 ```
 
-The per-wave table shows where the loss falls, which is what decides whether
-the answer is more recruitment or better retention.
+A rotating `svyplan_panel` contains several counts because start-up and later
+intakes are different operations.
 
 ```{r}
-as.data.frame(panel_plan)[, c("wave", "retention", "n_resp", "moe", "cv")]
+fieldwork_counts <- c(
+  startup = ceiling(panel_plan$n_in_sample),
+  intake_each_occasion = ceiling(panel_plan$n_entrants),
+  expected_respondents = panel_plan$n_resp
+)
+
+fieldwork_counts
 ```
 
-### A panel plan is not a sample size
+Use `startup` for the immediate start-up master and partition it into four
+cohort ages. Use `intake_each_occasion` for every later refreshment draw.
+`draw(n = panel_plan)` is intentionally unsupported because it cannot know
+which operation the caller means.
 
-A `svyplan_n` carries one number, so `draw(n = )` takes it directly. A
-`svyplan_panel` carries three, and they answer different operational questions.
+`n_panel()` treats retention as an unbroken chain. It does not yet turn a
+gapped life such as 4-8-4 into a recruitment and reserve-cohort plan. It also
+does not estimate attrition, adjust nonresponse weights, or combine cohort
+weights. Those are separate design and analysis decisions.
 
-```{r}
-c(entrants  = panel_plan$n_entrants,
-  in_sample = panel_plan$n_in_sample,
-  responding = panel_plan$n_resp)
-```
+The complete execution handoff is in `vignette("rotating-panels")`.
 
-`n_entrants` is what to recruit each occasion, `n_in_sample` the caseload
-carried across all live cohorts, and `n_resp` what survives to be analysed.
+## What planning does not decide
 
-The sizing and allocation classes hand off to `draw()` directly, as the rest of
-this vignette does. `svyplan_panel` does not: samplyr has no handoff for it in
-this release, so `draw(n = panel_plan)` fails the ordinary numeric check on `n`
-rather than reporting anything about panels. Pass the field the operation needs.
+Planning results depend on their inputs. Before treating a number as a field
+requirement, record:
 
-```{r}
-sampling_design() |>
-  draw(n = ceiling(panel_plan$n_entrants)) |>
-  execute(ken_enterprises, seed = 9) |>
-  nrow()
-```
+- the estimand and reporting domains
+- the source of variances, proportions, and homogeneity assumptions
+- whether the count means issued units or expected respondents
+- the response and retention model
+- the design effect and the estimand it describes
+- the rounding rule and any finite-frame limit
 
-Choose that field deliberately rather than coercing the object. `as.integer()`
-on a panel plan resolves to the entrants figure, which is right for sizing an
-intake and wrong for sizing a wave's fieldwork.
+`svyplan` does not choose a sampling algorithm or validate a register.
+`samplyr` does not decide the precision target. Keeping that boundary explicit
+makes it possible to revisit assumptions without silently changing the
+selection design.
 
-### Planning the next wave
+## Next steps
 
-An executed wave records a frame digest: the population counts and the realized allocation the selection resolved. `frame_summary()` returns them as tibbles, and its pool detail is a valid `frame` input for `n_alloc()`. The next wave can therefore be planned from the previous one, without going back to the sampling frame.
-
-```{r}
-wave1 <- sampling_design(title = "Wave 1") |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 300) |>
-  execute(ken_enterprises, seed = 71)
-
-pools <- frame_summary(wave1, detail = "pool")
-pools
-```
-
-The digest deliberately records no variances, costs, or homogeneity measures. Those are planning assumptions, not sampling facts, so they stay explicit inputs. With a constant `sd` the allocation is proportional to size. Replace it with prior-wave estimates when you have them.
-
-```{r}
-plan_frame <- pools |>
-  transmute(stratum = as.character(region), N, sd = 1)
-
-wave2_alloc <- n_alloc(plan_frame, n = 450)
-
-wave2 <- sampling_design(title = "Wave 2") |>
-  stratify_by(region) |>
-  draw(n = wave2_alloc) |>
-  execute(ken_enterprises, seed = 72)
-wave2
-```
-
-A design file written from an executed sample carries the digest inside its execution receipt, so the same loop works from the file alone. The confidential frame never has to travel with it.
-
-```{r}
-path <- tempfile(fileext = ".json")
-write_design(wave1, path, frame = ken_enterprises)
-
-restored <- read_design(path)
-frame_summary(restored)
-```
-
-```{r, include = FALSE}
-unlink(path)
-```
-
-## Summary
-
-The typical planning workflow can be:
-
-1. Determine sample size with `n_prop()`, `n_mean()`, `n_multi()`, or
-   `power_prop()` / `power_mean()`.
-2. Evaluate precision at the chosen *n* with `prec_prop()`, `prec_mean()`.
-3. Run sensitivity analysis with `predict()` to check robustness.
-4. Optionally create stratification boundaries with `strata_bound()` and
-   assign strata with `predict()`.
-5. Allocate across strata with `n_alloc()` (Neyman, proportional, optimal,
-   or power allocation with constraints).
-6. For cluster designs, estimate variance components with `varcomp()` and
-   optimize the allocation with `n_cluster()`.
-7. When a cheap screener can classify units into strata that an expensive
-   measurement then subsamples, plan both phases with `n_twophase()`.
-8. For a survey that repeats, size the change rather than the level:
-   `design_overlap()` for what the rotation shares, `n_change()` and
-   `prec_change()` for the precision that buys, and `n_panel()` for
-   recruitment under attrition.
-9. Pass the sample size or allocation to `draw()` and execute the design. What
-   each kind of plan contributes to which stage is set out below.
-10. Read the realized weighting loss with `design_effect()` and
-    `effective_n()`, and for a design effect that also reflects clustering and
-    stratification, export with `as_svydesign()` and use
-    `survey::svymean(deff = TRUE)`.
-
-The `svyplan` sizing and allocation objects work directly with `draw()`, and
-the handoff is stage-aware. `n_alloc()` results become per-stratum
-allocations. Their stratified two-stage variant feeds PSU counts to a
-clustered stage 1 and per-cluster takes to stage 2. `n_cluster()`
-results contribute the matching stage value in a clustered design (and
-their operational total in a flat single-stage one). `n_multi()` domain
-plans become per-domain tables for a design stratified on the domain
-variables. Scalar objects (`n_prop()`, `n_mean()`, `power_*()`)
-contribute their operational total. The stable tabular form of any plan
-is available via `as.data.frame()` when you need the numbers yourself.
-
-`n_twophase()` is the exception to that handoff, because its allocation is
-a set of subsampling fractions rather than a count. Execute phase 1 as an
-ordinary design, then execute a second design against the phase-1 sample
-with `draw(frac = )` carrying the plan's `nu`. Both phases need a shared
-unit identifier for `as_svydesign()` to link them into a
-`survey::twophase()` object.
-
-`n_panel()` is outside the handoff for a different reason: samplyr has no
-conversion for a `svyplan_panel` in this release. A panel plan carries three
-counts rather than one, so pass whichever of `n_entrants`, `n_in_sample` or
-`n_resp` the operation calls for.
+- Use `vignette("introduction")` to execute an ordinary or multistage design.
+- Use `vignette("rotating-panels")` for the longitudinal fieldwork handoff.
+- Use `vignette("survey-analysis")` after data collection.
+- Consult the svyplan reference pages for power, two-phase designs,
+  stratification boundaries, pooled estimates, and detailed sensitivity
+  analysis.
 
 ## References

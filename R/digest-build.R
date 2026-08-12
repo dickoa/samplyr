@@ -108,7 +108,7 @@ build_digest_frames <- function(design, input_frames) {
     )
   }
 
-  # A single frame recycled across stages is the common case;
+  # A single frame recycled across stages is the common case.
   # identical() short-circuits on pointer equality, so the content
   # hash is computed once per distinct object.
   hashes <- character(length(input_frames))
@@ -146,7 +146,7 @@ build_digest_frames <- function(design, input_frames) {
       n_rows = nrow(frame),
       roles = roles,
       # The frame supplied to the first executed stage is taken as the
-      # population; frames first supplied for a later stage cover the
+      # population. Frames first supplied for a later stage cover the
       # realized parents only.
       scope = if (pos == 1L) "universe" else "eligible"
     )
@@ -219,7 +219,7 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
   }
 
   # Executed order per pool: the leaf's chance/selected vectors are in
-  # executed order; perm maps them back to input-order rows.
+  # executed order. perm maps them back to input-order rows.
   for (i in seq_along(records)) {
     r <- records[[i]]
     perm <- r$leaf$perm
@@ -240,7 +240,7 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
   # A pool with NA chances is recorded as unavailable: sizes and
   # selections are kept, the chance representation is absent rather
   # than invented. No current producer emits NA chances (unknown-probability
-  # methods are refused at draw); this is schema-level hardening.
+  # methods are refused at draw). This is schema-level hardening.
   unavailable <- vapply(
     records, function(r) anyNA(r$leaf$chance), logical(1)
   )
@@ -526,11 +526,11 @@ attach_sample_rows <- function(stages, design, sample) {
 #' same formulas the selection engine applies. Resolution refuses,
 #' by erroring, whenever the design's chance for a pool cannot be
 #' known without running it (per-stratum allocation tables, control
-#' ordering, non-constant element chances); the caller then keeps the
+#' ordering or non-constant element chances). The caller then keeps the
 #' eligible-only stage.
 #'
 #' Resolved pools carry chance_status "design_resolved", scope
-#' "universe", and n_realized 0; the stage scope becomes "universe".
+#' "universe", and n_realized 0. The stage scope becomes "universe".
 #' @noRd
 expand_stage_universe <- function(design, stage_idx, stage, frame,
                                   parent_registry, registry) {
@@ -959,17 +959,9 @@ exante_digest <- function(design, frame,
       call = call
     )
   }
-  # One shared hierarchy or one register per stage, read through the grammar
-  # every frame-valued verb shares. The schedule then walks the registers the
-  # way an execution would, treating every candidate as selected: that walk is
-  # what an ex-ante digest is, so it is borrowed rather than reimplemented.
-  # On a single hierarchy it returns the frame unchanged for every stage.
+  # Reuse the execution frame grammar and schedule for the ex-ante walk.
   supplied <- normalize_frame_input(frame, call = call)
-  # The same executable layer execute() and validate_frame() run. A preview
-  # that accepts a frame execution refuses does not describe what execution
-  # would do, which is the whole promise. A design is always the starting
-  # point here, so a dropped sample class is refused as it is in execute();
-  # an intact previous-phase sample is a legitimate frame and passes.
+  # Apply the same executable-frame checks as execute() and validate_frame().
   check_frames_executable(
     supplied$frames,
     labels = supplied$labels,
@@ -990,12 +982,7 @@ exante_digest <- function(design, frame,
     frame_index_by_stage[[stage]] <- schedule$entries[[i]]$frame_index
   }
 
-  # Two frames per stage, and the registry takes the supplied one. The
-  # effective frame carries the columns its parents contribute, so
-  # fingerprinting it would describe a table the caller never handed over and
-  # no executed digest ever records: an ex-ante record would then never match
-  # its executed counterpart, which is what makes the two comparable. The
-  # effective frames resolve pools, below, and nothing else here.
+  # Fingerprint supplied frames. Effective frames include inherited columns.
   input_frames_by_stage <- supplied$frames[frame_index_by_stage]
 
   # Built before the stage loop: each stage records which supplied frame it
@@ -1028,7 +1015,7 @@ exante_digest <- function(design, frame,
       }
     }
     # samplyr conditions are the same informative errors execution
-    # gives (allocation coverage, invariance) and pass through; plain
+    # gives (allocation coverage, invariance) and pass through. Plain
     # stops from the chance resolvers are wrapped with the stage.
     built <- tryCatch(
       build_exante_stage(
@@ -1173,7 +1160,7 @@ build_exante_stage <- function(design, stage_idx, frame,
         stratum_key = skey,
         lookup = lookup
       )
-      # The allocation-resolved n_h drives the chance; a per-stratum
+      # The allocation-resolved n_h drives the chance. A per-stratum
       # frac (already resolved above) prevails for the fraction-driven
       # methods, exactly as at draw time.
       pool_spec$n <- as.double(info$.n_h[match(skey, info_keys)])
@@ -1402,7 +1389,7 @@ merge_replicated_digests <- function(digests) {
 
 #' Append continuation stages to a prior digest
 #'
-#' The prior manifest is immutable; the continuation appends new frame
+#' The prior manifest is immutable. The continuation appends new frame
 #' records (content-deduplicated against the prior registry) and new
 #' stage manifests. Pools of the first new stage link to the prior
 #' last stage's units through the ancestry keys stored with its

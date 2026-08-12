@@ -21,10 +21,10 @@ method.}
 
 \item{...}{Passed to the svyplan method: the planning arguments \code{icc},
 \code{n_per_psu}, \code{n_per_ssu} and \code{var_ratio} are the useful ones here. Every
-argument must be named; svyplan reports any name it does not recognize.}
+argument must be named. svyplan reports any name it does not recognize.}
 }
 \value{
-\code{design_effect()} returns a numeric \code{svyplan_deff} object; use
+\code{design_effect()} returns a numeric \code{svyplan_deff} object. Use
 \code{\link[=as.double]{as.double()}} for the value. \code{effective_n()} returns a numeric scalar.
 }
 \description{

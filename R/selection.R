@@ -3,7 +3,7 @@
 #' Every selection wrapper returns list(sample, trace). The trace tree
 #' records, for each selection pool, the resolved chance vector and
 #' the selected positions in executed order, captured before the
-#' engine discards them. A pool leaf holds the vectors; split and
+#' engine discards them. A pool leaf holds the vectors. Split and
 #' clusters nodes record how the frame handed to a wrapper was
 #' partitioned, so pool membership maps back to frame rows by
 #' composing `rows` indices down the tree. Capture is observational:
@@ -58,7 +58,7 @@ trace_group <- function(key, keys, rows, node) {
 }
 
 #' A cluster stage: the child node was produced on the one-row-per-
-#' cluster frame; `keys`, `first_rows` and `sizes` are aligned with its
+#' cluster frame. `keys`, `first_rows` and `sizes` are aligned with its
 #' rows and map clusters back to the full frame.
 #' @noRd
 trace_clusters <- function(by, keys, first_rows, sizes, node) {
@@ -908,7 +908,7 @@ sample_unstratified <- function(frame, draw_spec, trace_mode = "full") {
 #' valid outcome of a Bernoulli/Poisson design: it contributes zero to
 #' Horvitz-Thompson totals, which is what keeps the estimator unbiased
 #' over repeated realizations. (An earlier fallback drew one unit by
-#' SRS with weight N; those weights were conditional on the branch
+#' SRS with weight N. Those weights were conditional on the branch
 #' reached, not inverse inclusion probabilities of the combined design,
 #' and biased HT totals upward by N * (1 - p)^N.)
 #' @noRd
@@ -944,7 +944,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
     isFALSE(draw_spec$method_fixed)
   # For random-size designs, `frac` targets an expected count rather
   # than a fixed cardinality. Preserve that nominal (possibly
-  # fractional) request before probability capping; `n_expected`
+  # fractional) request before probability capping. `n_expected`
   # records the expectation after the chances have been resolved.
   n_target <- if (
     random_size &&
@@ -1113,7 +1113,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
       },
       pps_multinomial = ,
       pps_chromy = {
-        # Built-in WR methods do not support PRN coordination; `prn_methods`
+        # Built-in WR methods do not support PRN coordination. `prn_methods`
         # in R/utils.R rejects it at validation time, so no prn arg is
         # threaded here. Custom WR methods that declare supports_prn = TRUE
         # are handled in the `is_custom` branch above.
@@ -1169,11 +1169,8 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
     result$.pik <- pik[idx]
   }
 
-  # Certainty is read off the resolved probability vector, so units capped at
-  # one inside sondage::inclusion_prob() count alongside those matched by an
-  # explicit rule. Balanced methods resolve probabilities the same way and
-  # export under the same variance treatment, so they carry the column too.
-  # Multi-hit .pik holds expected hits, which are never certainty.
+  # Resolve certainty from final probabilities. Expected multi-hit counts are
+  # not certainty indicators.
   if (method %in% pps_methods || is_balanced_method(draw_spec) || is_custom) {
     result$.certainty <- if (is_multi_hit_method(draw_spec)) {
       rep.int(FALSE, nrow(result))
@@ -1252,7 +1249,7 @@ draw_sample_pps_certainty <- function(
     certainty_result$.certainty <- TRUE
   }
 
-  # The pool chance vector: certainty units are taken with chance one;
+  # The pool chance vector: certainty units are taken with chance one, and
   # units left unselectable (certainty filled or exceeded the target)
   # have chance zero.
   chance <- numeric(N)
@@ -1282,11 +1279,8 @@ draw_sample_pps_certainty <- function(
     n_clipped <- prob_res$n_clipped
   }
 
-  # Checked here rather than inside draw_pps_method(), which sees only the
-  # remainder: the pool's requested, reachable and expected totals all
-  # include the explicit certainty units. Those units sit at chance one by
-  # instruction, so they raise the expectation and are not counted as
-  # clipped -- certainty doing its job makes the check quiet on its own.
+  # Check the whole pool because requested and expected totals include
+  # explicit certainty units.
   if (identical(method, "pps_poisson")) {
     check_poisson_shortfall(
       chance,
@@ -1331,7 +1325,7 @@ draw_sample_pps_certainty <- function(
 #' @noRd
 draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
   N <- nrow(data)
-  # Only PPS Poisson clamps computed chances; every other method here either
+  # Only PPS Poisson clamps computed chances. Every other method here either
   # honors its target exactly or has no notion of clipping.
   n_clipped <- 0L
 
@@ -1403,7 +1397,7 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
       },
       pps_multinomial = ,
       pps_chromy = {
-        # Built-in WR methods do not accept PRN; see the note in draw_sample().
+        # Built-in WR methods do not accept PRN. See the note in draw_sample().
         pik <- sondage::expected_hits(mos_vals, n)
         idx <- sondage::unequal_prob_wr(
           pik,

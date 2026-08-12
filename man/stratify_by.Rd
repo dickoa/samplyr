@@ -26,7 +26,7 @@ because those arguments follow \code{...} and are matched exactly.}
 
 \item{alloc}{Character string specifying the allocation method. One of:
 \itemize{
-\item \code{NULL} (default): No allocation; \code{n} in \code{\link[=draw]{draw()}} is per stratum
+\item \code{NULL} (default): No allocation. \code{n} in \code{\link[=draw]{draw()}} is per stratum
 \item \code{"equal"}: Equal allocation across strata
 \item \code{"proportional"}: Proportional to stratum size
 \item \code{"neyman"}: Neyman optimal allocation (requires \code{variance})
@@ -120,7 +120,7 @@ For those methods only \code{min_n} and \code{max_n} bind.
 
 Per-stratum sizes given directly, through a scalar or named \code{n}, a \code{frac},
 or a data frame, are instructions rather than a total to distribute. They
-are never redistributed; selection caps an impossible one and reports it.
+are never redistributed. Selection caps an impossible one and reports it.
 }
 
 \subsection{Equal allocation}{

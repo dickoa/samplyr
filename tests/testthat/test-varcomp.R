@@ -1,5 +1,5 @@
 # varcomp.tbl_sample: design-based variance components from an
-# executed sample (dev/dev-notes-varcomp-tbl-sample.md).
+# executed sample.
 
 varcomp_frame <- function(n_clusters = 24, per = 5, seed = 99) {
   withr::with_seed(seed, {

@@ -1,20 +1,8 @@
 ## Wave materialization
 
-# `execute(master, wave = t)` realizes one precommitted occasion of a
-# scheduled master. It selects the panels the stored schedule declares active
-# at `t`, and compounds the activation factor into `.weight`.
-#
-# The activation is a probability subsample, not a filter. Within block `b` of
-# an assignment pool the master froze quotas `q_bg`, so activating the panel
-# set `A` takes `a_b = sum(q_bg for g in A)` of the block's `m_b` units, and
-# does so as a simple random sample without replacement. The unit's
-# conditional probability is therefore `a_b / m_b`, and the factor applied to
-# its weight is the inverse. Permanent certainty units are activated at every
-# wave with probability one and are not part of any block's take.
-#
-# The schedule is read from the receipt the master wrote, never recomputed
-# against a later frame vintage: a stratifier a unit can drift out of would
-# otherwise change `m_b` between the draw and the wave.
+# A wave is a probability subsample using the schedule and block quotas frozen
+# in the master receipt. Its activation chance is a_b / m_b. Certainty units
+# remain active with probability one.
 
 #' Materialize one scheduled wave of a rotating master
 #' @noRd
@@ -103,12 +91,7 @@ build_wave_sample <- function(
           ),
           extra
         ),
-        # Activation is a probability subsample of a realized sample, so the
-        # sample it came from is retained the way an ordinary second phase
-        # retains its first. `transition` says which kind of phase this is:
-        # activation selects units the source already assigned rather than
-        # executing a new design against it, so the generic phase-2
-        # reconstruction does not apply to it.
+        # Retain the master as phase 1. Activation is not a new design execution.
         prev_phase = list(
           transition = "panel_activation",
           sample = source,
@@ -124,29 +107,9 @@ build_wave_sample <- function(
 
 #' Fingerprint of the realization a wave was activated from
 #'
-#' This has to identify the REALIZATION, not the design. The integrity record
-#' alone does not: it covers the protected design columns, so two executions
-#' of one design with one seed against frames of the same shape produce the
-#' same record even when the frames share no population unit at all. Stacking
-#' waves of those two masters would match row 7 of one to row 7 of the other,
-#' which is exactly the hazard the fingerprint exists to catch.
-#'
-#' Every input is therefore metadata written once at execution and never
-#' altered afterwards, so the fingerprint is frozen at the realization rather
-#' than recomputed from whatever the object currently holds. That distinction
-#' is the whole design:
-#'
-#' - the **stored** frame digest separates populations, and is read as a raw
-#'   field rather than through [get_frame_digest()], which validates the
-#'   schema version and would otherwise make wave materialization fail on a
-#'   digest it could merely not read;
-#' - `executed_at` and the seed separate two executions against one frame;
-#' - the integrity record separates two realizations of one design.
-#'
-#' Hashing the master's current data would do the job too, and would also be
-#' wrong: attaching an analysis column to a master, or reordering its rows,
-#' leaves `sample_realization_status()` satisfied by design, and must not
-#' invent a new realization.
+#' Uses metadata frozen at execution so later analysis columns or row order do
+#' not change identity. Frame, execution, seed, and integrity metadata jointly
+#' distinguish realizations.
 #' @noRd
 wave_source_digest <- function(source) {
   metadata <- attr(source, "metadata")
@@ -300,8 +263,8 @@ check_wave_declared <- function(wave, schedule, call = caller_env()) {
 #'   whole. A cohort that was never partitioned has one implicit panel
 #'   comprising all its rows, and activating it is not a subsample, so its
 #'   factor is one.
-#' @return `keep`, a row mask; `factor`, the weight multiplier for the kept
-#'   rows; `active`, the activated panels; and `pools`, the per-block
+#' @return A list with `keep`, the row mask, `factor`, the weight multiplier
+#'   for kept rows, `active`, the activated panels, and `pools`, the per-block
 #'   activation record.
 #' @noRd
 activate_cohort <- function(sample, record, active, call = caller_env()) {
@@ -331,21 +294,14 @@ activate_cohort <- function(sample, record, active, call = caller_env()) {
     rows <- which(!is.na(at))
 
     if (identical(pool$activation, "permanent")) {
-      # Permanent by policy: in the sample at every wave, and outside the
-      # randomized quota denominator. Selection certainty is one reason a
-      # pool is permanent; a pool too small to rotate is the other, and the
-      # arithmetic is the same for both.
+      # Permanent pools stay outside the randomized quota denominator.
       keep[rows] <- TRUE
       factor[rows] <- 1
       take <- pool$blocks
       probability <- rep(1, length(pool$blocks))
     } else {
       take <- as.integer(rowSums(pool$quotas[, active, drop = FALSE]))
-      # A backstop for records drawn before positivity was checked. Version 2
-      # settles this at the draw, either by refusing or by promoting the pool,
-      # so nothing written by this build reaches here with a zero take. A
-      # version-1 record carries no such guarantee, and a block nobody can
-      # activate has inclusion probability zero rather than a small weight.
+      # Backstop for older records that did not enforce positive activation.
       if (any(take == 0L)) {
         abort_samplyr(
           c(

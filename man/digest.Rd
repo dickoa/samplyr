@@ -12,7 +12,7 @@ data frames whose size scales with selection pools, retained
 cluster units, and quantile bins rather than with frame rows.
 Cluster stages keep one unit row per cluster for downstream
 linkage, so a stage whose clusters are single frame rows grows
-with the frame; \code{execute(frame_digest = "none")} opts out.
+with the frame. \code{execute(frame_digest = "none")} opts out.
 }
 \examples{
 sample <- sampling_design() |>

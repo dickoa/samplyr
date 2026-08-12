@@ -876,7 +876,7 @@ validate_draw_df <- function(
     if (any(values <= 0)) {
       cli_abort("{.arg frac} values must be positive", call = call)
     }
-    # The declared type is the truth for custom methods; the name test
+    # The declared type is the truth for custom methods. The name test
     # only classifies built-ins (a custom name is never in the method
     # vectors, so the name test alone would call every custom method
     # WOR and wrongly reject frac > 1 for custom WR methods).

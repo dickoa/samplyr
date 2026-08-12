@@ -33,7 +33,7 @@ all of them.
 \code{cohorts} is a named list of executed samples. A cohort may be
 \emph{partitioned}, drawn with \code{panels} so that it carries \code{.panel} and a frozen
 assignment, or \emph{whole}, drawn without \code{panels}. A whole cohort has one
-implicit panel numbered 1 covering all its rows; activating it is not a
+implicit panel numbered 1 covering all its rows. Activating it is not a
 subsample, so its weights are unchanged.
 }
 
@@ -49,7 +49,7 @@ represents, which is what any later cross-vintage weighting depends on.
 \subsection{Schedule}{
 
 \code{schedule} is a data frame with \code{cohort} (a name from \code{cohorts}), integer
-\code{panel}, integer \code{wave}, and an optional logical \code{active}; a combination
+\code{panel}, integer \code{wave}, and an optional logical \code{active}. A combination
 left out is inactive. For a one-cohort program the \code{cohort} column may be
 omitted. Waves are numbered from 1 without gaps. Activity need not be
 contiguous: a 4-8-4 rotation deliberately leaves and re-enters.

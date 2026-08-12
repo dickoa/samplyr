@@ -36,7 +36,7 @@ Preserving the class does not mean the sample remains analyzable:
 operations that remove, add, or duplicate rows, or overwrite
 internal design columns (\code{.weight}, \code{.fpc_k}, ...), mark the sample
 as modified. Design-based computations (\code{\link[=as_svydesign]{as_svydesign()}},
-\code{\link[=joint_expectation]{joint_expectation()}}, \code{\link[=design_effect]{design_effect()}}) reject modified samples;
+\code{\link[=joint_expectation]{joint_expectation()}}, \code{\link[=design_effect]{design_effect()}}) reject modified samples.
 see the "Modified samples and domain analysis" section of \code{\link[=as_svydesign]{as_svydesign()}}. Restoring the
 class with \code{as_tbl_sample()} does not clear the mark: the data is
 re-verified against the integrity record stored at execution, so a
@@ -52,7 +52,7 @@ Use \code{as_tbl_sample()} to restore it:
 
 For an operational multi-stage listing, keep the unmodified partial sample
 as the first argument to \code{\link[=execute]{execute()}} and pass the expanded plain object only
-as its frame; restoring the listing itself is not required. A plain object
+as its frame. Restoring the listing itself is not required. A plain object
 that still carries sample provenance is rejected as the frame of a fresh
 design execution, because that would rerun stage 1.
 

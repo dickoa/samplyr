@@ -8,7 +8,7 @@
 #' cluster units, and quantile bins rather than with frame rows.
 #' Cluster stages keep one unit row per cluster for downstream
 #' linkage, so a stage whose clusters are single frame rows grows
-#' with the frame; `execute(frame_digest = "none")` opts out.
+#' with the frame. `execute(frame_digest = "none")` opts out.
 #'
 #' @name digest
 #' @family extension APIs
@@ -114,7 +114,7 @@ digest_reserved_pool_cols <- c(
 #' Build one frame registry record
 #'
 #' The digest constructors are light-weight builders for the execution
-#' hot path. They shape and coerce; the full invariant matrix lives in
+#' hot path. They shape and coerce, while the full invariant matrix lives in
 #' validate_frame_digest(), which runs once on the assembled digest.
 #'
 #' @param frame_id Integer identifier, unique within the digest.
@@ -147,44 +147,8 @@ new_digest_frame <- function(
 
 #' Build one stage manifest record
 #'
-#' @param stage_id Integer stage identifier, unique within the digest.
-#' @param frame_ref frame_id of the frame this stage selected from.
-#' @param unit_level What one selection unit is at this stage, for
-#'   example "cluster" or "element".
-#' @param scope Completeness of the recorded population representation.
-#' @param chance_kind "inclusion_probability" (without replacement) or
-#'   "expected_hits" (with replacement / multiplicity based).
-#' @param probabilities "exact" when the recorded chances equal the
-#'   design's true first-order chances, "approximate" when the method
-#'   honors them as a target to a documented approximation, or NULL
-#'   when the tier is not recorded (digests written before the field).
-#' @param order_kind How unit order was determined: "input", "control",
-#'   "method", or "conventional".
-#' @param storage Resolution of the population representation:
-#'   "constant", "units", or "quantiles".
-#' @param pools Data frame, one row per selection pool (full parent
-#'   ancestry x stage strata). Required columns: pool_id, parent_unit,
-#'   N, n_target, n_expected, n_realized, scope, chance_status.
-#'   Optional: chance (constant storage only), n_descendants, plus the
-#'   stratum label columns named by `strata`.
-#' @param units Data frame, one anonymous row per population unit.
-#'   Present iff storage is "units". Columns: unit_id, pool_id,
-#'   unit_order, chance, is_certainty; optional n_descendants.
-#' @param chance_distribution Data frame of compressed chance
-#'   quantiles. Present iff storage is "quantiles". Columns: pool_id,
-#'   quantile, chance; optional n_units (units per bin, summing to the
-#'   pool size, which makes the weighted mean reproduce n_expected
-#'   exactly).
-#' @param selected Selected-unit trace: one row per selected
-#'   occurrence. Required columns: pool_id, unit_id, occurrence;
-#'   optional replicate, unit_order, sample_row, and key (full
-#'   ancestry key of a selected cluster, derivable from the sample
-#'   rows; continuations use it to link later pools to this stage's
-#'   units). NULL when nothing was selected at this stage.
-#' @param strata Character vector naming the stratum label columns in
-#'   `pools`, or NULL when the stage is unstratified.
-#' @param diagnostics Optional named list of method diagnostics
-#'   (balance, bounds, spatial).
+#' `storage` determines whether probabilities are constant, unit-level, or
+#' quantile summaries. `selected` holds the optional selected-unit trace.
 #' @noRd
 new_digest_stage <- function(
   stage_id,
@@ -402,17 +366,8 @@ validate_frame_digest <- function(x, tol = 1e-6, quantile_tol = 0.05) {
     prev <- stages[[pos]]
   }
 
-  # Each stage's frame_ref being in range is checked per stage; that alone
-  # let every stage of a three-register digest point at the first record
-  # while records 2 and 3 sat unreferenced. In a complete digest the
-  # registry is built from the frames its stages were given, so a record no
-  # stage claims means the references are wrong.
-  #
-  # A partial digest is the exception, and legitimately so: a replicated
-  # multi-stage execution keeps only the stage prefix common to every
-  # replicate, and the frames of the dropped stages stay recorded. Pruning
-  # them would renumber every `frame_ref` and throw away the provenance of
-  # what the execution actually ran against.
+  # Complete digests cannot contain unreferenced frames. Partial digests may
+  # retain frames from stages omitted from the common replicated prefix.
   referenced <- vapply(stages, function(s) as.integer(s$frame_ref), integer(1))
   orphaned <- setdiff(frame_ids, referenced)
   if (length(orphaned) > 0 && identical(x$status, "complete")) {
@@ -1392,7 +1347,7 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #'   that stored units, with `stage`, `pool_id`, `unit_id`,
 #'   `unit_order`, `chance`, `is_certainty`, `n_descendants`,
 #'   `is_selected`, and `n_hits`. Stages that stored only a constant or a
-#'   chance distribution contribute no rows; requesting such a stage
+#'   chance distribution contribute no rows. Requesting such a stage
 #'   explicitly is an error rather than a silently empty result.
 #'
 #' @details
@@ -1422,7 +1377,7 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #'
 #' These quantities often coincide for a feasible fixed-size design.
 #' For Bernoulli and Poisson sampling, `n_realized` varies around
-#' `n_expected`; `n_target` still records the nominal requested
+#' `n_expected`. `n_target` still records the nominal requested
 #' expectation. It is `NA` only when no nominal count can be recovered,
 #' for example from an older digest or a method with unspecified target
 #' semantics.
@@ -1470,7 +1425,7 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #' **expected** size of the stage rather than the total across every
 #' candidate. A design taking 10 of 100 clusters and 5 units in each
 #' reports `n_target = 50` at stage 2, not 500. For a design whose stage
-#' sizes are fixed this is also the exact size; where per-parent takes
+#' sizes are fixed this is also the exact size. Where per-parent takes
 #' vary (`frac` over unequal clusters, for instance) the realized size
 #' varies around it.
 #'
@@ -1737,7 +1692,7 @@ digest_scope_supports <- function(recorded, basis) {
 #' -up means ex ante.
 #'
 #' This is the faithful extension of the post-hoc rule rather than a new one.
-#' There, allocation quantities sum over the pools the execution reached;
+#' There, allocation quantities sum over the pools the execution reached.
 #' here, over the pools it is expected to reach.
 #'
 #' The chain is a join, not a re-derivation: stage k's `units` table carries
@@ -1780,14 +1735,8 @@ frame_summary_stage <- function(stages, scope, exante = FALSE) {
   rows <- lapply(seq_along(stages), function(stage_pos) {
     s <- stages[[stage_pos]]
     pools <- s$pools
-    # Design-resolved pools cover parents the execution never reached:
-    # part of the universe, but not eligible for this realization.
-    # Allocation quantities are conditional on the parent, so they sum
-    # only over the executed pools under either basis.
-    # Post hoc, allocation quantities sum over the pools the execution
-    # reached. Ex ante there are none: every pool is design-resolved, so
-    # they sum over the pools it is expected to reach, each weighted by the
-    # probability its parent is selected.
+    # Ex-ante pools are weighted by parent selection, while post-hoc pools count
+    # only parents reached by the execution.
     w <- if (is_null(pool_weights)) {
       as.numeric(pools$chance_status != "design_resolved")
     } else {
@@ -1906,7 +1855,7 @@ frame_summary_pool <- function(
     supported <- digest_scope_supports(pools$scope, scope)
     if (identical(scope, "eligible")) {
       # A design-resolved pool was never eligible for this
-      # realization; its 0/N is not an eligible take rate.
+      # realization. Its 0/N is not an eligible take rate.
       supported <- supported & pools$chance_status != "design_resolved"
     }
     supported <- supported[pool_rows]
@@ -1975,12 +1924,7 @@ shortfall_tolerance <- function(n_target) {
 
 #' @noRd
 capped_from_shortfall <- function(n_expected, n_target, random_size) {
-  # Tolerant, not exact. The two quantities are equal by construction when
-  # nothing capped, but they are computed by different paths at execution and
-  # in the ex-ante preview, and the difference lands in the last bits: a
-  # Neyman allocation over bfa_eas differs by 7e-15 in one stratum, which an
-  # exact `<` reports as capped in the preview and not capped in the
-  # execution. A shortfall that matters is never that small.
+  # Execution and ex-ante resolution can differ at floating-point precision.
   shortfall <- n_expected < n_target - shortfall_tolerance(n_target)
   if (isTRUE(random_size)) {
     return(rep(FALSE, length(shortfall)))

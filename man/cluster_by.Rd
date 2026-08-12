@@ -28,9 +28,9 @@ subgroups to sample \emph{within}, \code{cluster_by()} defines units to sample
 The selection method and sample size are specified in \code{\link[=draw]{draw()}}.
 \subsection{Cluster vs. stratification}{
 \itemize{
-\item \strong{Stratification} (\code{\link[=stratify_by]{stratify_by()}}): Sample \emph{within} each group; all
+\item \strong{Stratification} (\code{\link[=stratify_by]{stratify_by()}}): Sample \emph{within} each group. All
 groups represented in the sample
-\item \strong{Clustering} (\code{cluster_by()}): Sample \emph{groups as units}; only selected
+\item \strong{Clustering} (\code{cluster_by()}): Sample \emph{groups as units}. Only selected
 groups appear in sample
 }
 }

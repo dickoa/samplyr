@@ -1,6 +1,6 @@
 # Normalized stage registers and stage-continuation linkage.
 #
-# Fixtures live in helper-multiframe.R. See dev/multiframe-stage-register-plan.md
+# Fixtures live in helper-multiframe.R.
 # for the contract these tests enforce.
 
 ## T0. Golden equivalence

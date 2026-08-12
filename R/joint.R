@@ -51,7 +51,7 @@
 #'   analytic methods.
 #'
 #' @return With `waves`, a tibble with one row per block of the frozen
-#'   assignment; see "Activation mode" below. Otherwise a named list of
+#'   assignment. See "Activation mode" below. Otherwise a named list of
 #'   length equal to the number of executed stages. Each element is either:
 #'   - For PPS WOR stages: a square matrix of joint inclusion
 #'     probabilities \eqn{\pi_{kl}}{pi_kl}, usable with
@@ -182,9 +182,9 @@
 #' joint is \eqn{p_i p_j}{p_i p_j}, which is generally not zero, while the
 #' covariance is.
 #'
-#' `pool`, `stratum`, `class` and `block` identify the block; `units` is
-#' \eqn{m}{m}; `take_1`, `take_2` and `take_both` are the three takes;
-#' `prob_1` and `prob_2` are the marginals; `joint_same` and `joint_distinct`
+#' `pool`, `stratum`, `class` and `block` identify the block. `units` is
+#' \eqn{m}{m}. `take_1`, `take_2` and `take_both` are the three takes.
+#' `prob_1` and `prob_2` are the marginals. `joint_same` and `joint_distinct`
 #' are the two joint expectations. `has_pair` is `FALSE` for a block of one
 #' unit, where no distinct pair exists and `joint_distinct` is `NA` rather
 #' than zero.
@@ -200,7 +200,7 @@
 #' frozen quotas. They are not the unconditional joint inclusion probabilities
 #' of the complete two-phase design, which also carry the master's own
 #' pairwise term. How the two combine for a variance of change is not settled
-#' here; [as_svydesign()] carries the activation as a second phase for
+#' here. [as_svydesign()] carries the activation as a second phase for
 #' ordinary totals.
 #'
 #' Activation mode takes a master, not a materialized wave, so a pair of waves
@@ -423,7 +423,7 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
 
 #' Resolve the frame each executed stage was drawn from
 #'
-#' A data frame is the shared frame every stage used; a list is the ordered
+#' A data frame is the shared frame every stage used. A list is the ordered
 #' registers, matched to stages the way `execute()` matched them. The frame
 #' mode the sample recorded is what makes a wrong shape reportable: a single
 #' lower register offered for a multi-register sample holds no rows for the
@@ -479,7 +479,7 @@ normalize_joint_frames <- function(x, frame, stages_executed,
 #' vector and the selected positions, which is everything the joint
 #' computation needs: no frame access, no allocation replay. Pools are
 #' independent selections, so cross-pool entries of the stage matrix are
-#' products of the marginals. The covariance is block-diagonal over pools;
+#' products of the marginals. The covariance is block-diagonal over pools.
 #' the joint matrix itself is not.
 #'
 #' Row order matches first appearance in the sample. The sample rows
@@ -533,7 +533,7 @@ compute_stage_jip_digest <- function(
   pools <- st$pools
 
   # Sample-position rank of every selected occurrence: sample_row is
-  # the verified element locator; cluster selections match their
+  # the verified element locator. Cluster selections match their
   # ancestry keys against the sample columns. Trace order is the
   # fallback when neither anchor is available.
   sel$.rank <- seq_len(nrow(sel))
@@ -737,7 +737,7 @@ compute_stage_jip <- function(
   }
 
   # A later stage selects independently within each parent occurrence.
-  # Population ancestry filters the source frame; draw columns from
+  # Population ancestry filters the source frame. Draw columns from
   # every prior WR stage distinguish repeated conditional selections
   # in the realized sample and never participate in frame matching.
   ancestor_split <- intersect(

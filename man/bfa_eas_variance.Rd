@@ -22,7 +22,7 @@ bfa_eas_variance
 \description{
 Illustrative prior variance of natural-log mean household consumption at EA
 level, modeled as if obtained from an earlier household survey. Used for
-demonstrating Neyman allocation in stratified sampling; the values are
+demonstrating Neyman allocation in stratified sampling. The values are
 synthetic and are not official estimates for Burkina Faso.
 }
 \examples{

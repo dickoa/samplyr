@@ -26,9 +26,9 @@
 #'   method.
 #' @param ... Passed to the svyplan method: the planning arguments `icc`,
 #'   `n_per_psu`, `n_per_ssu` and `var_ratio` are the useful ones here. Every
-#'   argument must be named; svyplan reports any name it does not recognize.
+#'   argument must be named. svyplan reports any name it does not recognize.
 #'
-#' @return `design_effect()` returns a numeric `svyplan_deff` object; use
+#' @return `design_effect()` returns a numeric `svyplan_deff` object. Use
 #'   [as.double()] for the value. `effective_n()` returns a numeric scalar.
 #'
 #' @examples
@@ -102,7 +102,7 @@ effective_n.tbl_sample <- function(x, ...) {
 #' not know, so re-checking them here would duplicate a check that already
 #' exists and would have to track svyplan's releases.
 #'
-#' @param dots The caller's `...`, captured with `enquos()`; the names are
+#' @param dots The caller's `...`, captured with `enquos()`. The names are
 #'   read without forcing the values.
 #' @noRd
 check_weighting_deff_dots <- function(dots, fn, call = rlang::caller_env()) {
@@ -342,7 +342,7 @@ svyplan::varcomp
 #' and a stratified decomposition comes back unstratified with no sign that
 #' anything was dropped.
 #'
-#' @param dots The caller's `...`, captured with `enquos()`; names are read
+#' @param dots The caller's `...`, captured with `enquos()`. Names are read
 #'   without forcing the values.
 #' @noRd
 check_varcomp_dots <- function(dots, call = rlang::caller_env()) {
@@ -409,11 +409,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
   quos <- enquos(...)
   check_varcomp_dots(quos)
 
-  # Forced deliberately, not by accident. The outcome may legitimately be
-  # written as a symbol holding a formula, so its expression cannot decide;
-  # but a bare `varcomp(x, y)` then fails inside R with "object 'y' not
-  # found", which describes neither the contract nor the mistake. The label
-  # is taken from the unforced expression, so the message can show it.
+  # Force dots here so a positional outcome gets a contract error, not lookup.
   outcome_label <- if (length(quos) >= 1) as_label(quos[[1]]) else ""
   # Captured here: inside the handler, caller_env() is the handler frame and
   # the error would be reported against `value[[3L]](cond)`.
@@ -488,12 +484,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
     )
   }
   stage_key <- function(k) {
-    # Multi-hit (WR/PMR) stages: each draw is an independent unit for
-    # Hansen-Hurwitz treatment, so the draw index is the key, exactly
-    # as in as_svydesign(). Keying by the cluster variable would merge
-    # repeated hits of one cluster: its estimated size doubles while
-    # its selection share counts once. The draw index restarts per
-    # pool, so qualify it by the stage strata and ancestors.
+    # WR/PMR occurrences are keyed by draw index, qualified by their pool.
     draw_col <- paste0(".draw_", k)
     if (is_multi_hit_method(design$stages[[k]]$draw_spec) &&
         draw_col %in% names(x)) {
@@ -531,12 +522,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
     identical(spec1$method_variance, "srs") ||
     (is_balanced_method(spec1) && is_null(spec1$mos))
 
-  # Certainty PSUs have inclusion chance 1: no between-PSU variance, and no
-  # place in the share normalization below. The flag records every resolved
-  # probability-one unit, whether it matched an explicit threshold or was
-  # capped by the probability calculation, so the column is the whole test.
-  # It is absent for whole-take equal-probability designs and carries FALSE
-  # for a WR expected hit of one; neither is a certainty PSU here.
+  # Certainty PSUs contribute no between-PSU component and are not normalized.
   cert_col <- paste0(".certainty_", k1)
   if (cert_col %in% names(x) && any(x[[cert_col]])) {
     abort_samplyr(
@@ -596,11 +582,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
     strata_vec <- x[[s_name]]
   }
 
-  # Stage-1 selection shares. Equal-probability first stages take the
-  # SRS path. Unequal-probability first stages derive per-PSU shares
-  # from the stage-1 weights (pi proportional to the one-draw
-  # probabilities for fixed-size PPS, Hansen-Hurwitz WR, and Poisson
-  # designs, so normalized shares are exact without the frame).
+  # Recover unequal-probability stage-1 shares from stage weights.
   prob <- NULL
   if (!equal_prob) {
     pi1 <- 1 / x[[paste0(".weight_", k1)]]

@@ -52,7 +52,7 @@
 #' further: the role-scoped fingerprint (analysis columns added later
 #' do not trigger it), the frame size, and per-pool population sizes
 #' recomputed from `frame` at every stage the digest can anchor
-#' (stage 1 over the universe; later stages under the recorded
+#' (stage 1 over the universe and later stages under the recorded
 #' parents). The report says where the frame drifted, not merely that
 #' it did.
 #'
@@ -96,7 +96,7 @@
 #' when neither phase declares an identifier the phase-1 sample carries,
 #' and when the identifiers together do not uniquely identify phase-1
 #' rows. Problems are reported as warnings rather than errors, because
-#' selection and weighting work without linkage; only [as_svydesign()]
+#' selection and weighting work without linkage. Only [as_svydesign()]
 #' needs it.
 #'
 #' A previous-phase sample also carries identifiers that later stages
@@ -414,7 +414,7 @@ check_register_cluster_invariants <- function(design, entry,
 #' Every value check one stage makes against one frame
 #'
 #' Split out so the shared-frame form and the ordered-register form apply the
-#' same checks; a register form differs only in which frame each stage is
+#' same checks. A register form differs only in which frame each stage is
 #' judged against.
 #' @noRd
 stage_frame_issues <- function(stage_spec, frame, stage_idx) {
@@ -702,12 +702,12 @@ check_phase_linkage <- function(design, frame) {
     get_stages_executed(frame),
     frame
   )
-  # The design is not executed yet, so .draw_k columns cannot participate;
+  # The design is not executed yet, so .draw_k columns cannot participate.
   # its user-declared cluster variables are what it will contribute.
   phase2_ids <- unlist(lapply(design$stages, function(s) s$clusters$vars))
 
   # Only the phase-1 side is knowable now. A phase-2 identifier the phase-1
-  # sample also carries is already part of the bridge; one it does not is
+  # sample also carries is already part of the bridge. One it does not is
   # carried onto phase-2 rows at execution and cannot be judged here.
   bridge <- intersect(unique(c(phase1_ids, phase2_ids)), names(frame))
 
@@ -830,7 +830,7 @@ report_validation_issues <- function(issues) {
 #' frame digest recorded at execution: the role-scoped fingerprint,
 #' the frame size, and per-pool population sizes recomputed from the
 #' frame at every stage the digest can anchor (stage 1 over the
-#' universe; later stages under the recorded parents). Informational,
+#' universe and later stages under the recorded parents). Informational,
 #' like the fingerprint check: a drifted frame remains executable.
 #' @noRd
 check_digest_drift <- function(digest, design, frame, fingerprint) {
@@ -863,7 +863,8 @@ check_digest_drift <- function(digest, design, frame, fingerprint) {
   invisible(NULL)
 }
 
-#' @return Character vector of drift descriptions; empty = no drift.
+#' @return Character vector of drift descriptions. It is empty when there is
+#'   no drift.
 #' @noRd
 digest_frame_drift <- function(digest, design, frame) {
   rec <- digest$frames[[1]]
@@ -916,7 +917,7 @@ digest_frame_drift <- function(digest, design, frame) {
   }
 
   # Identical role content at identical size: the pool structure is
-  # unchanged by construction; skip the per-stage recount.
+  # unchanged by construction, so skip the per-stage recount.
   if (roles_match && rec$n_rows == nrow(frame)) {
     return(diffs)
   }
@@ -1023,11 +1024,7 @@ digest_frame_drift <- function(digest, design, frame) {
     )
   }
 
-  # Chance drift: resolve the chances the design would use on this
-  # frame (the ex-ante digest) and compare them to the recorded ones.
-  # This is sharper than the role-scoped fingerprint: a size measure
-  # rescaled by a constant factor changes the bytes but not one
-  # selection chance.
+  # Compare resolved chances as well as role-scoped frame fingerprints.
   chance <- digest_chance_drift(digest, design, frame)
   all_diffs <- c(diffs, pool_diffs, chance$diffs)
   if (
@@ -1049,11 +1046,11 @@ digest_frame_drift <- function(digest, design, frame) {
 #' resolution over a frame
 #'
 #' Pools are lined up by parent ancestry key (recorded side: the
-#' selected-trace keys; ex-ante side: the keys the builder retains)
+#' selected-trace keys, while the ex-ante side uses the keys the builder retains)
 #' plus stratum labels, so only pools the recorded digest can anchor
 #' are compared: stage-1 pools always, later pools under selected
 #' parents. Each side's retained representation is expanded to a
-#' sorted chance vector; pools whose sizes differ are left to the
+#' sorted chance vector. Pools whose sizes differ are left to the
 #' recount. Designs the ex-ante builder refuses (with-replacement or
 #' element-level parents) skip the comparison silently: the
 #' structural checks have already run.
@@ -1250,7 +1247,8 @@ recorded_fingerprints <- function(frame_info) {
 #' anything about one frame, and silently skipping the comparison would let a
 #' replay certify a sample it never checked.
 #'
-#' @return Character vector of differences; empty when everything matches.
+#' @return Character vector of differences. It is empty when everything
+#'   matches.
 #' @noRd
 fingerprint_diffs <- function(frame_info, frames) {
   recorded <- recorded_fingerprints(frame_info)

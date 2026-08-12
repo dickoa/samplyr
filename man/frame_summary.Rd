@@ -91,7 +91,7 @@ For \code{detail = "unit"}, one row per population unit of each stage
 that stored units, with \code{stage}, \code{pool_id}, \code{unit_id},
 \code{unit_order}, \code{chance}, \code{is_certainty}, \code{n_descendants},
 \code{is_selected}, and \code{n_hits}. Stages that stored only a constant or a
-chance distribution contribute no rows; requesting such a stage
+chance distribution contribute no rows. Requesting such a stage
 explicitly is an error rather than a silently empty result.
 }
 \description{
@@ -130,7 +130,7 @@ the realization.
 
 These quantities often coincide for a feasible fixed-size design.
 For Bernoulli and Poisson sampling, \code{n_realized} varies around
-\code{n_expected}; \code{n_target} still records the nominal requested
+\code{n_expected}. \code{n_target} still records the nominal requested
 expectation. It is \code{NA} only when no nominal count can be recovered,
 for example from an older digest or a method with unspecified target
 semantics.
@@ -179,7 +179,7 @@ by the probability each parent is selected, so the row reports the
 \strong{expected} size of the stage rather than the total across every
 candidate. A design taking 10 of 100 clusters and 5 units in each
 reports \code{n_target = 50} at stage 2, not 500. For a design whose stage
-sizes are fixed this is also the exact size; where per-parent takes
+sizes are fixed this is also the exact size. Where per-parent takes
 vary (\code{frac} over unequal clusters, for instance) the realized size
 varies around it.
 

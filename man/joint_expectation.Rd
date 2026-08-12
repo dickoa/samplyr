@@ -47,7 +47,7 @@ analytic methods.}
 }
 \value{
 With \code{waves}, a tibble with one row per block of the frozen
-assignment; see "Activation mode" below. Otherwise a named list of
+assignment. See "Activation mode" below. Otherwise a named list of
 length equal to the number of executed stages. Each element is either:
 \itemize{
 \item For PPS WOR stages: a square matrix of joint inclusion
@@ -207,9 +207,9 @@ the joint-probability matrix, that is block-diagonal: across blocks the
 joint is \eqn{p_i p_j}{p_i p_j}, which is generally not zero, while the
 covariance is.
 
-\code{pool}, \code{stratum}, \code{class} and \code{block} identify the block; \code{units} is
-\eqn{m}{m}; \code{take_1}, \code{take_2} and \code{take_both} are the three takes;
-\code{prob_1} and \code{prob_2} are the marginals; \code{joint_same} and \code{joint_distinct}
+\code{pool}, \code{stratum}, \code{class} and \code{block} identify the block. \code{units} is
+\eqn{m}{m}. \code{take_1}, \code{take_2} and \code{take_both} are the three takes.
+\code{prob_1} and \code{prob_2} are the marginals. \code{joint_same} and \code{joint_distinct}
 are the two joint expectations. \code{has_pair} is \code{FALSE} for a block of one
 unit, where no distinct pair exists and \code{joint_distinct} is \code{NA} rather
 than zero.
@@ -225,7 +225,7 @@ the activation indicators, conditional on the phase-1 units and on the
 frozen quotas. They are not the unconditional joint inclusion probabilities
 of the complete two-phase design, which also carry the master's own
 pairwise term. How the two combine for a variance of change is not settled
-here; \code{\link[=as_svydesign]{as_svydesign()}} carries the activation as a second phase for
+here. \code{\link[=as_svydesign]{as_svydesign()}} carries the activation as a second phase for
 ordinary totals.
 
 Activation mode takes a master, not a materialized wave, so a pair of waves

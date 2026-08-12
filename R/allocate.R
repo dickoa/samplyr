@@ -17,7 +17,7 @@ round_preserve_total <- function(x, n) {
 
   if (shortfall > 0) {
     # True ORIC (Cont & Heidari 2014): primary sort by fractional remainder
-    # descending; secondary sort by floor(x) descending to break ties in favor
+    # descending. Sort by floor(x) second to break ties in favor
     # of larger strata, minimizing relative rounding error.
     add_indices <- order(remainders, floored, decreasing = TRUE, method = "radix")[seq_len(shortfall)]
     floored[add_indices] <- floored[add_indices] + 1
@@ -43,11 +43,8 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
   a <- pmin(a, hi)
   shortfall <- n - sum(a)
 
-  # Distribute shortfall by priority: strata furthest below their ideal
-  # target (largest x_h - a_h) receive +1 first. When the shortfall exceeds
-  # the number of eligible strata (possible after aggressive clamping),
-  # iterate until resolved. Feasibility (sum(lo) <= n <= sum(hi)) guarantees
-  # termination.
+  # Give increments first to strata furthest below target. Feasibility
+  # guarantees termination.
   while (shortfall > 0L) {
     eligible <- which(a < hi)
     if (length(eligible) == 0L) break
@@ -73,37 +70,15 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
 
 #' Bounded allocation that preserves the method's own factors
 #'
-#' Solves the continuous problem
-#'
-#'   n_h = clamp(lambda * factor_h, lower_h, upper_h)
-#'
-#' with `lambda` chosen so the unsaturated strata absorb the remaining total,
-#' then integerizes.
-#'
-#' Redistributing in proportion to the factors is what keeps the named
-#' criterion intact once a stratum saturates. Redistributing in proportion to
-#' unused capacity, or by distance from the unconstrained target, silently
-#' turns a Neyman design into something else.
-#'
-#' Data-agnostic on purpose: factors, a total, bounds and a stable order are
-#' the whole interface. Nothing here knows about strata or draw specs.
-#'
-#' The scale is found by solving the monotone equation rather than by freezing
-#' violated constraints as they appear. Freezing is wrong in both directions at
-#' once: raising a stratum to its lower bound takes units away from the free
-#' set, which can release an upper bound that appeared to bind on the
-#' unconstrained targets. Since `g` below is nondecreasing in `lambda`, a
-#' bisection cannot make that mistake.
+#' Solves `n_h = clamp(lambda * factor_h, lower_h, upper_h)` by bisection, then
+#' integerizes while preserving the total.
 #'
 #' @noRd
 allocate_bounded <- function(factors, total, lower, upper) {
   f <- factors
   f[!is.finite(f) | f < 0] <- 0
 
-  # Only the ratios between factors matter, and the search below divides a
-  # bound by a factor. Scaling to a maximum of 1 first keeps that quotient
-  # finite for factors small enough that it would otherwise overflow to Inf
-  # and collapse the bisection interval.
+  # Scaling factors to 1 avoids overflow while preserving their ratios.
   f_max <- max(f)
   if (f_max > 0) {
     f <- f / f_max
@@ -122,11 +97,7 @@ allocate_bounded <- function(factors, total, lower, upper) {
     if (!any(positive)) {
       return(NA_real_)
     }
-    # The scale at which every positive-factor stratum saturates, and so an
-    # upper bracket for the search. A factor small enough against its bound
-    # makes that quotient overflow; such a stratum saturates at no
-    # representable scale, so it cannot bound the bracket. Doubling covers
-    # the case where none of them can.
+    # Finite saturation scales bracket the search. Otherwise double the bound.
     reach <- hi[positive] / f[positive]
     reach <- reach[is.finite(reach)]
     top <- if (length(reach) > 0) {
@@ -307,24 +278,13 @@ calculate_stratum_sizes <- function(
     }
   }
 
-  # Allocation methods differ only in their per-stratum factor: the scaling
-  # to n_total, the validation and the bounds handling are shared. Taking
-  # the factors rather than the scaled targets keeps the criterion available
-  # to the bounds step, which has to know how to redistribute.
+  # Keep unscaled factors available for redistribution at the bounds.
   finalize_allocation <- function(factors, n_total, N_h, alloc_name) {
     validate_target(n_total * factors / sum(factors), alloc_name)
 
-    # Bounds come from the design's sampling semantics, not from whether the
-    # user typed an argument. A without-replacement stratum cannot yield more
-    # units than it holds, whether or not `max_n` was given. A with-
-    # replacement stratum is not bounded by the number of distinct units at
-    # all; `n_total` stands in for "unbounded" because a stratum can never
-    # take more than the whole sample, and it survives integerization where
-    # Inf would coerce to NA.
+    # WOR is bounded by N_h. WR uses n_total as an integer-safe upper bound.
     wr <- is_multi_hit_method(draw_spec)
-    # Random-size methods realize a count around their target rather than
-    # exactly it, so N_h caps the *nominal* target and the realized size can
-    # still fall below it. Calling that a census would be wrong.
+    # For random-size methods this caps the target, not the realization.
     random_size <- is_random_size_method(draw_spec)
     structural_max <- if (wr) rep(n_total, H) else N_h
     upper <- if (is_null(max_n)) {
@@ -346,11 +306,7 @@ calculate_stratum_sizes <- function(
       )
     }
 
-    # Requesting more than the frame holds caps rather than fails: it keeps
-    # the behavior selection used to provide. An explicit `max_n` that blocks
-    # the cap is a conflicting instruction and stays an error.
-    # `max_n` only conflicts with the population cap when it actually narrows
-    # it. A generous bound that never binds is not a conflicting instruction.
+    # An explicit max_n conflicts only when it narrows the population cap.
     max_narrows <- !is_null(max_n) && any(upper < structural_max)
 
     # Not named `census`: the same branch runs for random-size methods, where
@@ -362,14 +318,7 @@ calculate_stratum_sizes <- function(
         population_limited <- TRUE
         requested <- n_total
         available <- sum(upper)
-        # Signaled, not warned. Allocation resolves the impossible total
-        # before selection sees it, so this is the only site that can report
-        # it, but it reaches the user through the same per-stage aggregation
-        # as every other capping diagnostic.
-        #
-        # Every stratum is named, because every stratum goes to its bound
-        # here: the count and the key list have to agree, and a parent loop
-        # qualifies each key with the pool it came from.
+        # Report all strata because each reaches its bound here.
         if (signal) {
           keys <- format_key_labels(
             stratum_info,
@@ -411,26 +360,10 @@ calculate_stratum_sizes <- function(
 
     n_h <- allocate_bounded(factors, n_total, lower, upper)
 
-    # The user asked for a named rule and receives a departure from it: a
-    # stratum too small to absorb its share is capped and the surplus goes
-    # to the others, so `equal` stops being literally equal. That is worth
-    # saying once per execution. A message rather than a warning, because
-    # nothing went wrong and simulation loops should be able to silence it
-    # with suppressMessages(). Not repeated when the population already
-    # bound the total, which reports on its own, nor for with-replacement
-    # draws, which have no population cap.
+    # Report redistribution once when population bounds change the named rule.
     if (signal && !wr && !population_limited) {
-      # Whether the population bound was active in the solution, not whether
-      # the unconstrained share exceeded it. `min_n` takes units out of the
-      # free set, which can release a bound that looked binding: Neyman
-      # factors (1, 10, 1) on populations (100, 30, 100) with n = 60 and
-      # min_n = 20 allocates 20/20/20, and B never reaches its bound of 30.
-      # This is the trap the solver itself had before it bisected.
-      #
-      # Solving again with only the population component relaxed answers the
-      # question directly, and answers it in whole units, so the count needs
-      # no rounding argument: an integerized allocation is compared with an
-      # integerized allocation.
+      # Re-solve without population bounds. min_n can release an apparently
+      # binding cap, so the unconstrained target alone is not enough.
       relaxed_upper <- if (is_null(max_n)) {
         rep(n_total, H)
       } else {

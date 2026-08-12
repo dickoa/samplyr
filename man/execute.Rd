@@ -63,7 +63,7 @@ partitioning. Cannot be used together with \code{reps}, and cannot be
 redeclared on a sample that already carries an assignment.
 
 A schedule is a data frame with an integer \code{panel} column, an integer
-\code{wave} column and an optional logical \code{active} column; a combination
+\code{wave} column and an optional logical \code{active} column. A combination
 left out is inactive. It declares the panel count and, through the
 fewest panels any wave activates, the assignment block size. Only a
 sample drawn with a schedule can be materialized by \code{wave}.}
@@ -84,7 +84,7 @@ directions: a certainty primary unit does not make its households
 permanent, and a certainty selection below the assignment stage does not
 keep its household in every wave. A stage that selects with replacement
 assigns realized draw occurrences, so one population unit selected twice
-may take two different panels; a parent selected twice likewise gives two
+may take two different panels. A parent selected twice likewise gives two
 separate populations of households, and a household reached under both
 hits is assigned once for each.
 
@@ -378,7 +378,7 @@ record: it is not a filtered master, and \code{frame_summary()} and the weight
 diagnostics work on it. It retains the master as its first phase, so
 \code{\link[=as_svydesign]{as_svydesign()}} exports it through \code{\link[survey:twophase]{survey::twophase()}} with the
 activation as the second phase. What it cannot do is replay, because a wave
-is derived from a recorded execution rather than being one; that refuses
+is derived from a recorded execution rather than being one. That refuses
 rather than answering approximately.
 
 The schedule states which groups are live when. It does not replenish the

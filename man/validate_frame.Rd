@@ -73,7 +73,7 @@ design file written from one), the structural comparison goes
 further: the role-scoped fingerprint (analysis columns added later
 do not trigger it), the frame size, and per-pool population sizes
 recomputed from \code{frame} at every stage the digest can anchor
-(stage 1 over the universe; later stages under the recorded
+(stage 1 over the universe and later stages under the recorded
 parents). The report says where the frame drifted, not merely that
 it did.
 \subsection{Ordered stage frames}{
@@ -118,7 +118,7 @@ samples carry, which is the bridge \code{\link[=as_svydesign]{as_svydesign()}} b
 when neither phase declares an identifier the phase-1 sample carries,
 and when the identifiers together do not uniquely identify phase-1
 rows. Problems are reported as warnings rather than errors, because
-selection and weighting work without linkage; only \code{\link[=as_svydesign]{as_svydesign()}}
+selection and weighting work without linkage. Only \code{\link[=as_svydesign]{as_svydesign()}}
 needs it.
 
 A previous-phase sample also carries identifiers that later stages

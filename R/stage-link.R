@@ -155,7 +155,7 @@ check_register_key_types <- function(design, schedule, call = caller_env()) {
 #'
 #' Not an execution rule. A row with a missing parent key cannot match a
 #' complete selected key, so execution filters it out like any other unrelated
-#' row; if it was the only row representing a selected parent, the coverage
+#' row. If it was the only row representing a selected parent, the coverage
 #' check reports that instead. Supplying several frames says nothing about the
 #' granularity of their rows, so it cannot be grounds for rejecting them.
 #'
@@ -190,7 +190,7 @@ check_parent_key_na <- function(frame, parent_vars, design, stage_idx,
 check_realized_parent_coverage <- function(frame, previous_sample, parent_vars,
                                            design, stage_idx, frame_index,
                                            frame_label, call = caller_env()) {
-  # Draw occurrences repeat a with-replacement parent; coverage is a property
+  # Draw occurrences repeat a with-replacement parent. Coverage is a property
   # of the population key, so multiplicity is collapsed first.
   selected <- unique(previous_sample[, parent_vars, drop = FALSE])
   available <- unique(frame[, parent_vars, drop = FALSE])
@@ -577,7 +577,7 @@ scan_incomplete_registers <- function(schedule, design,
     parent_vars <- collect_ancestor_cluster_vars(design, stage_idx)
     child <- entries[[i]]$frame
 
-    # A missing column is a hard error at the transition; skip it here so the
+    # A missing column is a hard error at the transition. Skip it here so the
     # warning never pre-empts the better message.
     if (length(parent_vars) == 0 ||
           !all(parent_vars %in% names(child)) ||

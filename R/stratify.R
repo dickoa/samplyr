@@ -11,7 +11,7 @@
 #'   resembling one of the arguments below (`allocc`, `varianc`) is refused,
 #'   because those arguments follow `...` and are matched exactly.
 #' @param alloc Character string specifying the allocation method. One of:
-#'   - `NULL` (default): No allocation; `n` in [draw()] is per stratum
+#'   - `NULL` (default): No allocation. `n` in [draw()] is per stratum
 #'   - `"equal"`: Equal allocation across strata
 #'   - `"proportional"`: Proportional to stratum size
 #'   - `"neyman"`: Neyman optimal allocation (requires `variance`)
@@ -92,7 +92,7 @@
 #'
 #' Per-stratum sizes given directly, through a scalar or named `n`, a `frac`,
 #' or a data frame, are instructions rather than a total to distribute. They
-#' are never redistributed; selection caps an impossible one and reports it.
+#' are never redistributed. Selection caps an impossible one and reports it.
 #'
 #' ## Equal allocation
 #' Each stratum receives n/H units, where H is the number of strata.

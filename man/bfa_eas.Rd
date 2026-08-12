@@ -23,8 +23,8 @@ population and source polygon area}
 \item{longitude}{Numeric. Longitude of the preEA point-on-surface in WGS 84}
 \item{latitude}{Numeric. Latitude of the preEA point-on-surface in WGS 84}
 \item{remoteness}{Factor. Modeled operational class (Low, Medium, High)
-for sampling examples; not an official geographic classification}
-\item{fieldwork_cost}{Integer. Synthetic relative fieldwork cost index;
+for sampling examples. It is not an official geographic classification}
+\item{fieldwork_cost}{Integer. Synthetic relative fieldwork cost index.
 not a monetary estimate}
 }
 }

@@ -19,7 +19,7 @@
 #'
 #' - the design: method (with with-replacement and
 #'   approximate-probabilities qualifiers), measure of size, cluster
-#'   and stratification variables, and balancing declarations;
+#'   and stratification variables, and balancing declarations.
 #' - the realization: population and sample sizes with the sampling
 #'   fraction. Stages with several selection pools report ranges
 #'   (`N_h`, `n_h`, `f_h`) and, for later stages, how many of the
@@ -298,7 +298,7 @@ summary_range <- function(v, fmt = function(x) format(x, trim = TRUE)) {
 #' One bullet: pool counts (reached/universe for later stages), size
 #' and fraction ranges, and short qualifiers (certainty count,
 #' replicate scope). Pools sharing a stratum label under different
-#' parents are never merged; ranges span the full parent x strata
+#' parents are never merged. Ranges span the full parent x strata
 #' resolution, and the per-pool rows live in frame_summary(). Method
 #' diagnostics (balance, bounds, spatial) follow as their own bullets.
 #' @noRd
@@ -308,7 +308,7 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL) {
   fmt_n <- function(v) format(v, big.mark = ",", trim = TRUE)
 
   # Design-resolved pools are universe context the realization never
-  # reached; the count contrast (reached/universe) carries that.
+  # reached. The count contrast (reached/universe) carries that.
   resolved <- pools$chance_status == "design_resolved"
   n_universe <- nrow(pools)
   any_resolved <- any(resolved)
@@ -370,7 +370,7 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL) {
       base
     }
   } else {
-    # First-stage pools are the strata themselves; later-stage pools
+    # First-stage pools are the strata themselves. Later-stage pools
     # split parents by strata, so "pools" is the accurate noun.
     noun <- if (!is_null(st$strata) && all(is.na(pools$parent_unit))) {
       "strata"
@@ -430,7 +430,7 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL) {
     suffix <- c(suffix, "per replicate")
   }
   # Without design-resolved universe context the denominators cover
-  # only what this realization reached; say so instead of implying
+  # only what this realization reached. Say so instead of implying
   # universe coverage.
   if (!any_resolved && identical(st$scope, "eligible")) {
     suffix <- c(suffix, "eligible units under realized parents")

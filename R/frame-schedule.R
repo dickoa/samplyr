@@ -36,7 +36,7 @@ frame_token <- function(frame_index, frame_label = NULL) {
 #' `joint_expectation()` and `frame_summary()`, so it is validated the same
 #' way in all four: a non-empty vector of distinct whole stage numbers drawn
 #' from what the caller allows. Each verb then layers its own rules on the
-#' canonical result. Execution adds a start stage and contiguity;
+#' canonical result. Execution adds a start stage and contiguity.
 #' `joint_expectation()` and `frame_summary()` restrict `allowed` to what they
 #' can answer for.
 #'
@@ -294,11 +294,7 @@ build_frame_schedule <- function(design, frames, stages, executed = NULL,
     )
   }
 
-  # Scheduling and provenance only. No name implies anything about the
-  # granularity of the rows: a frame may hold one row per unit of its stage or
-  # any finer level, and cluster_by() is what identifies the sampling unit.
-  # A single frame for a single stage is reused by nothing, so it is neither
-  # shared nor separate.
+  # This records scheduling only. cluster_by() defines the sampling unit.
   mode <- if (n_frames > 1L) {
     "separate_frames"
   } else if (n_stages > 1L) {
@@ -379,7 +375,7 @@ role_bullets <- function(vars) {
 #' still validated at the stage itself, where the linked frame is known.
 #'
 #' Prior-stage strata are exempt: they may legitimately be absent from a later
-#' frame and arrive by carry-forward. A `tbl_sample` frame is not exempt; it is
+#' frame and arrive by carry-forward. A `tbl_sample` frame is not exempt. It is
 #' checked against the schema that survives once its generated columns are
 #' stripped, which is what the stage will actually see.
 #' @noRd

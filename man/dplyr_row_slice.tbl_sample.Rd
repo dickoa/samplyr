@@ -19,7 +19,7 @@ A tbl_sample, marked as modified if the row set changed
 \description{
 filter(), slice(), arrange(), and friends funnel through
 dplyr_row_slice(). Row removal or duplication is recorded on the
-result (see \code{\link[=dplyr_reconstruct.tbl_sample]{dplyr_reconstruct.tbl_sample()}}); a pure reordering is
+result (see \code{\link[=dplyr_reconstruct.tbl_sample]{dplyr_reconstruct.tbl_sample()}}). A pure reordering is
 not. The location check catches same-length changes (for example
 \code{slice(c(1, 1, 3:n))}) that a row-count comparison would miss.
 }

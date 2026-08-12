@@ -19,9 +19,9 @@
 #'
 #' ## Cluster vs. stratification
 #'
-#' - **Stratification** ([stratify_by()]): Sample *within* each group; all
+#' - **Stratification** ([stratify_by()]): Sample *within* each group. All
 #'   groups represented in the sample
-#' - **Clustering** (`cluster_by()`): Sample *groups as units*; only selected
+#' - **Clustering** (`cluster_by()`): Sample *groups as units*. Only selected
 #'   groups appear in sample
 #'
 #' ## Multi-stage designs

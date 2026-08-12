@@ -1,8 +1,8 @@
 ---
-title: "Saving and Sharing Designs"
+title: "Save and Replay a Design"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Saving and Sharing Designs}
+  %\VignetteIndexEntry{Save and Replay a Design}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -19,37 +19,29 @@ library(samplyr)
 library(dplyr)
 ```
 
-## Overview
+## What the file contains
 
-A `samplyr` design is a frame-independent specification. It describes *how* to sample, not *what* to sample from. That makes a design a natural artifact to save, version, reuse, and share alongside the survey protocol, in a git repository, or with a collaborator who will execute it on the confidential frame you cannot send.
+A `sampling_design` describes how to sample without embedding the confidential
+frame. Saving it creates a versioned JSON recipe that can be inspected,
+reviewed, and executed later.
 
-Three functions cover this workflow:
+Three functions cover the workflow.
 
-| Function         | Purpose                                                        |
-|:-----------------|:---------------------------------------------------------------|
-| `write_design()` | Save a design (or an executed sample's design) to a JSON file  |
-| `read_design()`  | Restore a design from a file or JSON string                    |
-| `design_json()`  | Render the same format as an in-memory string (databases, APIs) |
+| Function | Role |
+|:--|:--|
+| `write_design()` | Write a design or execution receipt to JSON |
+| `read_design()` | Restore a design from a file or JSON string |
+| `design_json()` | Return the same JSON in memory |
 
-The file format is versioned, human-readable JSON and is diffable in version
-control, so the sampling plan can be inspected without evaluating R code. It
-is currently an experimental, samplyr-native persistence format, not the
-finalized cross-tool interchange standard. Its present guarantee is
-behavioral: a restored design executes identically to the original in a
-compatible samplyr environment.
+The format is native to `samplyr` and remains experimental. It is not a
+finalized cross-tool interchange standard.
 
-```{r, eval = FALSE}
-execute(read_design("plan.json"), frame, seed = 1)
-# is identical to
-execute(design, frame, seed = 1)
-```
-
-## Saving a design
-
-Any design can be written, from a simple SRS to a multi-stage PPS plan with control sorting.
+## Save and restore a design
 
 ```{r}
-design <- sampling_design(title = "BFA EA Survey") |>
+data(bfa_eas)
+
+design <- sampling_design(title = "Burkina Faso EA survey") |>
   stratify_by(region, alloc = "proportional") |>
   draw(
     n = 300,
@@ -59,315 +51,171 @@ design <- sampling_design(title = "BFA EA Survey") |>
 
 path <- tempfile(fileext = ".json")
 write_design(design, path)
-```
 
-The file is plain JSON.
-
-```{r, comment = ""}
-cat(readLines(path), sep = "\n")
-```
-
-Everything the design holds is written out in full, including per-stratum allocations, auxiliary data frames for Neyman or optimal allocation, and certainty thresholds. What the round trip guarantees is execution equality, not object identity; the table under "What round-trips, and what does not" gives the exact contract.
-
-```{r}
-design_named <- sampling_design() |>
-  stratify_by(urban_rural) |>
-  draw(n = c(Urban = 120, Rural = 180))
-
-cat(design_json(design_named, pretty = TRUE))
-```
-
-Scalars are written as JSON numbers, named vectors as objects, and data-frame specifications as arrays of rows. The three shapes are unambiguous, so files can be written or edited by other tools without special type annotations.
-
-## Declarative design and samplyr metadata
-
-The JSON separates declarative design content from implementation metadata.
-`design`, `frame`, and `execution` avoid executable R expressions, while
-`tools.samplyr` retains exact method names, R classes, frame hashes, and replay
-environment details. A samplyr file records both an internal semantic method
-descriptor and its exact native spelling:
-
-```json
-"method": {
-  "id": "generalized_brewer_probability_proportional_to_size",
-  "family": "probability_proportional_to_size",
-  "algorithm": "generalized_brewer",
-  "replacement": "without_replacement",
-  "sample_size": "fixed",
-  "probabilities": "unequal",
-  "standards": [{
-    "vocabulary": "DDI SamplingProcedure",
-    "version": "1.1.4",
-    "code": "Probability"
-  }]
-}
-```
-
-```json
-"tools": {
-  "samplyr": {
-    "design": {
-      "stages": [{"method": {"name": "pps_brewer"}}]
-    }
-  }
-}
-```
-
-The internal vocabulary distinguishes the built-in algorithms and links them
-to the broader [DDI Sampling Procedure controlled vocabulary](https://rdf-vocabulary.ddialliance.org/ddi-cv/SamplingProcedure/1.1.4/SamplingProcedure.html).
-It is useful for inspecting samplyr files, but it is not presented as the
-finalized external method vocabulary. `read_design()` can restore a recognized
-internal method without a `tools.samplyr` block.
-
-Custom methods use the identifier `tool_specific`, and the same method must be
-registered through `sondage::register_method()` before replay. The file records
-a fingerprint of the registered implementation, the formals and body of
-`sample_fn` and `joint_fn`. Replay refuses a function that differs from the
-recorded one even when its registry metadata matches.
-
-The complete, machine-readable dictionary ships as `schema/sampling-methods-v1.json` inside the installed package. Its identifier and version are declared in each document's `schema.method_vocabulary` block.
-
-Unknown tool namespaces are retained when a design is read and written again,
-but preservation alone is not a claim of cross-tool design equivalence.
-
-## Reading a design back
-
-`read_design()` restores a `sampling_design` that behaves exactly like the original.
-
-```{r}
 restored <- read_design(path)
 restored
 ```
 
-```{r}
-s_original <- execute(design, bfa_eas, seed = 123)
-s_restored <- execute(restored, bfa_eas, seed = 123)
+Under the same compatible implementation, frame, and seed, the restored design
+executes like the original.
 
-identical(s_original$ea_id, s_restored$ea_id)
-identical(s_original$.weight, s_restored$.weight)
+```{r}
+original_sample <- execute(design, bfa_eas, seed = 123)
+restored_sample <- execute(restored, bfa_eas, seed = 123)
+
+identical(original_sample$ea_id, restored_sample$ea_id)
+identical(original_sample$.weight, restored_sample$.weight)
 ```
 
-`read_design()` also accepts a JSON string directly, which pairs with `design_json()` when designs are stored in a database or sent over an API rather than as files.
+Execution equality is the contract. Incidental R storage details can differ.
+For example, JSON does not distinguish integers from whole-valued doubles and
+restored data-frame specifications are tibbles.
+
+`design_json()` is useful when the document belongs in a database or API.
 
 ```{r}
 json <- design_json(design)
-identical(
-  execute(read_design(json), bfa_eas, seed = 7)$ea_id,
-  execute(design, bfa_eas, seed = 7)$ea_id
-)
+names(jsonlite::fromJSON(json))
 ```
 
-## Frame requirements and fingerprints
+## Requirements and frame fingerprints
 
-We made the design files frame-independent, so the frame data is never written. Two derived blocks describe the frame instead.
-
-The **requirements** block is always recorded. It lists the columns each stage needs, tagged by role (stratification, clustering, measure of size, PRN, auxiliary, and control sorting), so that a candidate frame can be checked before execution.
+Every file records the variables needed by each stage and their roles. These
+requirements allow a candidate frame to be checked before selection.
 
 ```{r}
-info <- attr(restored, "frame_info")
-
-bind_rows(info$required_variables)
+frame_info <- attr(restored, "frame_info")
+bind_rows(frame_info$required_variables)
 ```
 
-This complements `validate_frame()`, which performs the full check against an actual frame.
-
-```{r}
-validate_frame(restored, bfa_eas)
-```
-
-The **fingerprint** block is written when you pass the frame to `write_design()`. Its common part records dimensions and portable column types such as `integer`, `categorical`, and `date`. R-specific details (the expression used for the frame, native R classes, and the `rlang::hash()` content hash) are isolated in `tools.samplyr.frame`. Together they are enough for samplyr to verify the exact frame without shipping any data, while another tool can still use the structural metadata.
+Passing a frame to `write_design()` adds a fingerprint without writing the
+frame data.
 
 ```{r}
 write_design(design, path, frame = bfa_eas)
 
-fingerprint <- attr(read_design(path), "frame_info")[["fingerprint"]]
+with_frame <- read_design(path)
+fingerprint <- attr(with_frame, "frame_info")[["fingerprint"]]
+
 fingerprint$name
 fingerprint$nrow
 fingerprint$hash
 ```
 
-The hash covers the column names, the column values, and the row order. It does not depend on whether the frame is a tibble or a plain data frame, or on the order of its columns. Frames that differ only in those respects are the same population.
+The hash covers column names, values, and row order. It ignores whether the
+object is a tibble and ignores column order. It is an integrity check, not a
+proof that the register has good coverage, stable identifiers, or the correct
+target-population definition.
 
-A design executed against one register per stage records one fingerprint per register, under `fingerprints`, in the order the registers were supplied. Extract either with `[[` rather than `$`: `fingerprint` is a prefix of `fingerprints`, so `$fingerprint` on a multi-register file silently returns the whole list.
-
-```{r}
-regions <- distinct(bfa_eas, region)
-
-registers <- sampling_design() |>
-  add_stage(label = "Regions") |>
-    cluster_by(region) |>
-    draw(n = 3) |>
-  add_stage(label = "EAs") |>
-    draw(n = 5) |>
-  execute(regions, bfa_eas, seed = 4)
-
-write_design(registers, path, frame = list(regions, bfa_eas))
-
-lengths(attr(read_design(path), "frame_info")["fingerprints"])
-```
-
-`replay_design()` takes the registers back in the same order, and reports a mismatch by frame position and recorded label. Supplying the wrong number of frames is refused rather than replayed against the wrong pools.
-
-To verify a frame months later, pass it to `validate_frame()` together with the restored design. The check is silent when the frame matches the stored fingerprint. If the frame has been revised since the design was written, it explains what changed and still runs the variable checks, because a design remains executable on any compatible frame.
+`validate_frame()` reports structural or probability-relevant drift while
+still checking whether the revised frame can execute the design.
 
 ```{r}
-validate_frame(read_design(path), bfa_eas[-(1:10), ])
+validate_frame(with_frame, bfa_eas[-(1:10), ])
 ```
 
-Set `fingerprint = "warn"` to escalate the message to a warning, or `"ignore"` to skip the comparison entirely.
+A compatible but changed frame can run a new selection. It cannot reproduce
+the old one. `replay_design()` therefore refuses a fingerprint mismatch by
+default.
 
-## Execution receipts
+For a design with one register per stage, the file records one fingerprint per
+register in supplied order. Replay requires the same number and ordering of
+registers.
 
-Passing an executed `tbl_sample` to `write_design()` saves the design together
-with an execution receipt: every `execute()` argument that affects the result
-(the seed, executed stages, and `panels` or `reps` when used), plus the number
-of selected units and execution timestamp. `tools.samplyr.execution` records
-the execution-time R and package versions and the RNG configuration.
+## Save an execution receipt
+
+Writing a `tbl_sample` adds the arguments that determined its execution. These
+include the seed, executed stages, panel or replicate request, selected count,
+timestamp, package versions, and RNG configuration.
 
 ```{r}
 sample <- execute(design, bfa_eas, seed = 2026, panels = 4)
-
 write_design(sample, path, frame = bfa_eas)
 
-receipt <- attr(read_design(path), "execution")
+saved <- read_design(path)
+receipt <- attr(saved, "execution")
+
 receipt$seed
-unlist(receipt$stages_executed)
 receipt$panels
 receipt$n_selected
 ```
 
-Together with the frame fingerprint, the receipt makes the sample exactly reproducible. `replay_design()` passes the recorded arguments back to `execute()`, so nothing has to be reconstructed by hand.
+Replay is exact when the recorded frame content, method implementation,
+package behavior, and registered custom methods remain compatible.
 
 ```{r}
-replayed <- replay_design(read_design(path), bfa_eas)
-```
+replayed <- replay_design(saved, bfa_eas)
 
-The contract is full equality of the materialized sample when the same frame,
-compatible package implementations, and any required registered custom
-methods are available. `replay_design()` restores the recorded RNG
-configuration for execution and then restores the caller's RNG state. The
-replayed `tbl_sample` has the same rows in the same order, the same weights and
-design columns, and the same `.panel` and `.replicate` assignments; only the
-execution timestamp differs.
-
-```{r}
 identical(replayed$ea_id, sample$ea_id)
 identical(replayed$.weight, sample$.weight)
 identical(replayed$.panel, sample$.panel)
 ```
 
-`replay_design()` first compares the frame against the stored fingerprint and
-errors by default if it differs. Use `fingerprint = "warn"`, `"inform"`, or
-`"ignore"` only when you intentionally accept that the result will not be the
-recorded sample. It also warns when the recorded R or package versions differ
-and checks the replayed row count against the receipt.
+The execution timestamp is new. The selected rows, their order, design
+columns, panels, and replicate assignments are reproduced.
 
-Two situations fall outside the single-call contract, and `write_design()` warns about both. A sample built by several `execute()` calls (a stage continuation or a multi-phase pipeline) is flagged as `chained` in its receipt: the receipt records only the final call, so `replay_design()` refuses it. Save and replay each phase or stage batch separately. A sample whose rows or design columns were modified after execution is flagged as `modified`: its receipt describes the original execution, not the modified object.
+The selected records themselves are not stored in the JSON recipe. Save them
+with an ordinary data format and keep the design document beside them as an
+audit artifact.
 
-The sampled rows themselves are not stored, because a design file is a *recipe*, not a dataset. Save the selected units with the usual data tools (`write.csv()`, arrow, ...) and keep the design file next to them as the audit trail.
+## Replay boundaries
 
-## Drift detection with the execution digest
+The receipt describes one `execute()` call. A stage continuation or
+multi-phase pipeline uses several calls, so its final receipt is marked
+`chained` and cannot replay the whole pipeline. Save and replay each stage
+batch or phase separately.
 
-The receipt also carries a frame digest: the pool sizes and selection chances that execution resolved, with no unit identifiers. `validate_frame()` uses it to answer a question a fingerprint cannot: does a candidate frame still imply the recorded sample?
+A modified sample is also outside the contract. If rows or design columns
+changed after execution, the receipt still describes the original selection.
 
-A fingerprint only says that bytes changed. The digest comparison says what the change means for the design. Rescaling a size measure changes every byte of the column but not one inclusion probability, and the message says so.
+A materialized panel wave is derived from its master and is not independently
+replayable. Save the master. A `rotation_program()` is a registry rather than
+a sampling design, so archive each cohort execution and the schedule used to
+rebuild the registry.
 
-```{r}
-pps_sample <- sampling_design(title = "EA PPS") |>
-  stratify_by(region) |>
-  cluster_by(ea_id) |>
-  draw(n = 25, method = "pps_brewer", mos = households) |>
-  execute(bfa_eas, seed = 7)
+For PRN-coordinated samples, archive each executed sample and the versioned
+register containing stable identifiers and PRNs. Those artifacts audit sample
+selection. They do not preserve fieldwork outcomes, response histories, or
+later register maintenance.
 
-rescaled <- bfa_eas |>
-  mutate(households = households * 10)
+## Format and safety
 
-validate_frame(pps_sample, rescaled)
-```
+The JSON stores declarative method descriptors alongside `samplyr` metadata.
+Built-in methods use a versioned vocabulary. A custom method is recorded as
+tool-specific and must be registered with the same implementation before
+replay.
 
-Shifting sizes for some units does change the chances the design would resolve today, and the message points at the stage.
-
-```{r}
-shifted <- bfa_eas |>
-  mutate(households = ifelse(
-    province == "Soum", households + 500, households
-  ))
-
-validate_frame(pps_sample, shifted)
-```
-
-Structural drift is reported the same way: removing or adding units names each affected pool with its recorded and current sizes. All of this is informational. A drifted frame remains executable; it just no longer reproduces the recorded sample, so replaying or extending the sample on it would give a different result.
-
-## Control expressions and safety
-
-`draw(control = ...)` accepts R expressions, but a design file represents their meaning as plain data. Each control term has a type and an explicit array of variables:
-
-```json
-"control": [
-  {
-    "type": "serpentine",
-    "variables": ["province", "commune"]
-  }
-]
-```
-
-The three types are `ascending` for a bare column name, `descending` for
-`desc()`, and `serpentine` for `serp()`. This declarative grammar can be
-inspected without parsing R source code. `write_design()` refuses expressions
-outside this grammar rather than writing a file that would not round-trip.
+Control sorting is serialized as a restricted data structure for ascending,
+descending, and serpentine terms. The reader rebuilds those terms without
+parsing arbitrary R code. `write_design()` refuses expressions outside that
+grammar.
 
 ```{r, error = TRUE}
-odd_design <- sampling_design() |>
+unsupported_control <- sampling_design() |>
   draw(n = 50, control = c(population / households))
 
-design_json(odd_design)
+design_json(unsupported_control)
 ```
 
-The reader validates the type and variables as data and constructs the
-restricted expression directly; it does not parse them as R code. An unknown
-type is rejected, even in a file received from a third party.
+Files carry a `format_version`. A reader refuses newer versions it does not
+understand and validates the fields required by older versions. Unknown tool
+namespaces are retained when a file is read and written again, but preservation
+does not imply cross-tool statistical equivalence.
 
-```{r, error = TRUE}
-payload <- jsonlite::fromJSON(design_json(design), simplifyVector = FALSE)
-payload$design$stages[[1]]$draw$control[[1]]$type <- "unknown"
-tampered <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
+## Archive checklist
 
-read_design(tampered)
-```
+Keep these artifacts together:
 
-## What round-trips, and what does not
+1. the executed sample data
+2. the design JSON and execution receipt
+3. the exact frame vintage or an access-controlled reference to it
+4. stable identifiers and PRNs when coordination is used
+5. custom method definitions and package versions
+6. schedules linking separately executed longitudinal cohorts
 
-The round-trip contract is **execution equality**. A restored design draws the same sample as the original under the same seed, while the objects themselves may differ in inconsequential ways:
-
-| Aspect                          | Behavior after a round-trip                                         |
-|:--------------------------------|:---------------------------------------------------------------------|
-| Stages, strata, clusters, draws | Preserved exactly, including all per-stratum vectors and data frames |
-| Whole numbers                   | May switch between integer and double (JSON does not distinguish)    |
-| Data-frame specifications       | Returned as tibbles; factor columns become character                 |
-| Control expressions             | Rebuilt from declarative JSON terms into equivalent quosures         |
-| Builder state                   | Not stored; the design is revalidated on read                        |
-
-Files carry a `format_version` so that future versions of `samplyr` can read (and migrate) files written today. `read_design()` reports a clear error when a file was written by a newer version than the installed one.
-
-A file is written at the lowest version that carries its content without being misread. Version 2 is used only when the file records one register per stage, because a version 1 reader would replay it against a single frame and produce a different sample without saying so. Everything else is still written at version 1 and stays readable by older samplyr.
-
-A panelized receipt carries a second version, its own. The panel assignment record states the algorithm that drew the labels and the schema version its fields were written under, and that stamp is read before the fields are, because the fields mean what the version says they mean. Five rules follow:
-
-- A record naming an algorithm this samplyr does not know is refused rather than decoded.
-- A record naming a schema version this samplyr does not know is refused the same way.
-- A record numbered 3 that does not state its assignment stage, its unit type, and its key and pool columns is refused as malformed rather than filled in. The stage decides what the assignment units are, so guessing it would replay a different assignment of the same sample instead of failing.
-- A file carrying a bare value where the record belongs is refused, since a record is a set of named fields and a value that states no algorithm and no version says nothing about how the labels were drawn.
-- Records written by earlier versions are read as what they are. Their assignment stage comes from their version, which could only ever be the first stage.
-
-A `rotation_program()` is not serializable in this release: `write_design()` accepts a `sampling_design` or a `tbl_sample` and refuses anything else. Archive each cohort's own executed sample instead, together with the schedule that links them, and rebuild the program from those on read.
+Use `vignette("design-semantics")` for the detailed design contract and
+`vignette("rotating-panels")` for cohort-specific persistence rules.
 
 ```{r, include = FALSE}
 unlink(path)
 ```
-
-## Where serialization fits
-
-- `vignette("design-semantics")` explains the frame-independence that makes designs portable in the first place.
-- `validate_frame()` (see `vignette("introduction")`) checks any candidate frame against a design's requirements before execution.
-- For coordinated samples across waves (see `vignette("sampling-coordination")`), archiving each wave's design file together with the PRN frame gives a complete, replayable history of the sample selection.
-- For a rotating panel (see `vignette("rotating-panels")`), archive the master, not its waves: a wave is derived from a recorded execution rather than being one. A `rotation_program()` is a registry and is not itself serializable, so archive each cohort's sample and the schedule that links them.

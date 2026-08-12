@@ -1,10 +1,10 @@
 ---
-title: "Rotating Panels and Longitudinal Designs"
+title: "Plan and Run a Rotating Panel"
 output: rmarkdown::html_vignette
 bibliography: references.bib
 link-citations: true
 vignette: >
-  %\VignetteIndexEntry{Rotating Panels and Longitudinal Designs}
+  %\VignetteIndexEntry{Plan and Run a Rotating Panel}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -18,723 +18,288 @@ knitr::opts_chunk$set(
 
 ```{r setup, message = FALSE, echo = FALSE}
 library(samplyr)
-library(sondage)
 library(svyplan)
 library(dplyr)
 ```
 
-## What this vignette covers
+## Start with the fieldwork question
 
-A longitudinal survey visits the same units more than once. @smith2009 identify
-five broad types of longitudinal design, and four of them need nothing beyond
-the verbs in `vignette("introduction")`. The fifth, the rotating panel, is what
-`execute(panels = )` and `execute(wave = )` are for.
+A longitudinal survey observes some units more than once. A rotating panel
+replaces part of the sample at regular intervals, so it can support both
+cross-sectional estimates and estimates of change.
 
-This vignette maps the five designs onto `samplyr`, shows what the panel
-machinery builds and what it does not, and states the limits the code cannot
-show you. Sample coordination with permanent random numbers is a separate
-mechanism that answers a separate question; see
-`vignette("sampling-coordination")` for it. The two compose, and one note below
-says how.
+This article follows one small design from planning to selection. Each cohort
+is interviewed twice. At a steady state, half of one occasion's issued sample
+also appears at the next occasion. The example is deliberately simple and
+avoids permanent random numbers, unequal-probability sampling, and a choice of
+longitudinal variance estimator until the basic workflow is clear.
 
-## Setup
+Two packages have different jobs here. `svyplan` converts precision, response,
+retention, and overlap assumptions into fieldwork numbers. `samplyr` selects
+the start-up and refreshment samples and records which panels are active.
 
-The examples use `ken_enterprises`, a synthetic business register, with a
-permanent random number attached so the master can be drawn by `pps_sps`.
+## Choose the kind of repeated survey
+
+These common designs should not be treated as interchangeable
+[@smith2009; @lynn2012].
+
+| Design | What happens | Basic implementation |
+|:--|:--|:--|
+| Fixed panel | One sample is interviewed repeatedly | Run `execute()` once and join later responses to the selected units |
+| Fixed panel with entrants | The original panel is kept and new population entrants are added | Draw the original sample and each entrant cohort separately |
+| Repeated cross-section | A fresh population sample is drawn on every occasion | Reuse the design with a new frame and seed |
+| Rotating panel | Several cohorts are live and one is replaced regularly | Use a start-up partition, then draw one refreshment cohort per occasion |
+| Split panel | A continuing panel and a fresh cross-section run together | Keep the two samples and their estimators distinct |
+
+Before choosing among them, state the target population. A fixed wave-1
+population cannot represent later births. A cross-sectional target at each
+occasion needs refreshed frame coverage. `samplyr` cannot infer that choice
+from the data.
+
+## Plan a two-occasion rotation
+
+`design_overlap()` describes the time a cohort spends in and out of sample.
+The string `"2"` means that a cohort is interviewed on two consecutive
+occasions and then leaves.
+
+```{r rotation-chart, fig.width = 7, fig.height = 3.6, fig.alt = "Rotation chart for cohorts interviewed on two consecutive occasions."}
+library(svyplan)
+overlap_plan <- design_overlap("2")
+overlap_plan[1]
+plot(overlap_plan, type = "schedule", start = "immediate")
+```
+
+This is issued-sample overlap. Below full response, the overlap among
+respondents may differ because response can persist across occasions.
+
+Next, define the responding sample needed for a proportion and allow for
+response at recruitment and retention into the second interview.
 
 ```{r}
-library(samplyr)
-library(sondage)
-library(svyplan)
-library(dplyr)
+precision_target <- n_prop(p = 0.5, moe = 0.08)
 
+panel_plan <- n_panel(
+  precision_target,
+  retention = 0.90,
+  resp_rate = 0.80,
+  design = "rotating",
+  start = "immediate"
+)
+
+panel_plan
+```
+
+The two numbers needed for selection are explicit in the result.
+
+```{r}
+selection_sizes <- c(
+  startup = ceiling(panel_plan$n_in_sample),
+  intake_each_occasion = ceiling(panel_plan$n_entrants)
+)
+selection_sizes
+```
+
+`startup` is the number issued across the two cohorts present at the first
+occasion. `intake_each_occasion` is the fresh cohort added later. They are not
+two names for the same sample size.
+
+`n_panel()` uses the response and retention rates supplied by the planner. It
+does not estimate attrition, adjust weights for nonresponse, or guarantee that
+every realized occasion reaches the target. Its optional `assurance` argument
+can add a probability-of-reaching-target calculation when that is needed.
+
+## Draw and partition the start-up sample
+
+The immediate start contains two cohort ages. The younger half is active on
+occasions 1 and 2. The older half is active only on occasion 1, because it is
+already at its second interview.
+
+```{r}
+library(dplyr)
 data(ken_enterprises)
 
-n_wave <- 200
-
-set.seed(1)
-frame <- ken_enterprises |>
-  mutate(u = runif(n()))
-```
-
-## Vocabulary
-
-Longitudinal work overloads words that already mean something specific in a
-sampling design. In `samplyr`:
-
-| Term            | Meaning                                                |
-|:----------------|:-------------------------------------------------------|
-| stage           | selection within units selected at an earlier stage     |
-| phase           | probability subsampling from an earlier sample          |
-| frame           | a source covering a target population                   |
-| wave            | a programme or calendar occasion                        |
-| panel           | a randomized rotation, reserve, or workload group       |
-| cohort          | a sample's entry batch or refreshment vintage           |
-| unit identity   | the substantive entity followed across occasions        |
-
-Four consequences follow. A wave is not a stage: `add_stage()` selects within
-what an earlier stage selected, whereas a wave revisits units already
-selected. A panel group is not a refreshment cohort: `panels` partitions one
-draw, a cohort is a separate draw. Repeated observation of every eligible unit
-adds no selection probability, so interviewing a fixed panel five times does
-not change `.weight`. And response, attrition and tracing failure are not
-selection operations; they belong to the estimation layer.
-
-The printed token is `.panel`. There is deliberately no `.wave` column:
-`samplyr` realizes designs against frames and does not model time.
-
-## Defining the longitudinal population
-
-Before choosing a design, decide which population the estimates are about
-[@smith2009, sec. 2.3.1]. There are three answers and they lead to different
-designs:
-
-- **Static**: the population as of wave 1. Deaths occur, births cannot enter.
-  Population information is fixed for all waves, so weighting is
-  straightforward, and the natural design is a fixed panel. The risk is that
-  readers take the results for the third option.
-- **Intersection**: units present at every wave. Both births and deaths are
-  excluded, auxiliary totals are hard to construct, and the definition changes
-  whenever a wave is added.
-- **Union**: units present at any wave. This suits a genuinely dynamic
-  population, requires a design that introduces births, and is what most
-  household panels use. Adding a wave changes the population and may require
-  revising earlier estimates.
-
-This is a declaration, not a computation, so it is not an argument to any
-verb. It is what determines whether you need births at all, and therefore
-which design below applies.
-
-## The five designs
-
-| Design                  | What it is                                                                          | In `samplyr`                                                                                                                                                                                                     |
-|:------------------------|:------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Fixed panel             | The same units on every occasion; no additions after wave 1                          | One `execute()`. Waves 2 to *T* are repeated measurement on the same `tbl_sample`; the base selection weight does not change because another interview happened.                                                    |
-| Fixed panel plus births | A fixed panel with a sample of recent entrants added at each occasion                | The original `execute()`, plus a separate `execute()` against an entrant register for each refreshment cohort. The components stay separate objects until their target population and estimator are defined.        |
-| Repeated panel          | A series of panels, each representing an equivalent population defined at a later time | Reuse the same frame-independent `sampling_design` in a fresh `execute(design, frame_j, seed = seed_j)`. Not `replay_design()`, which reproduces one recorded execution and refuses a changed frame.                |
-| Rotating panel          | A fixed proportion of units replaced at each occasion                                | `execute(panels = k)` for the start-up partition; the replenishment is ordinary repeated execution. See below, because this is the one that is easy to overclaim.                                                    |
-| Split panel             | A panel plus a fresh cross-sectional sample at each occasion [@kish1987, pp. 181--183] | Two independent executions kept as separate objects. In the *P* = 1 variation a subset of units is included on every occasion, so longitudinal estimates are possible for that stratum; those units already carry `.certainty_k`.                                             |
-
-A rotating panel is a repeated panel whose overlap pattern is fixed and
-usually balanced, which is what allows the live groups to be combined for a
-cross-sectional estimate [@kaltoncitro1993]. Labour force surveys in many
-countries use one [@steel1997].
-
-## What `panels` builds, and what it does not
-
-A real rotating panel replenishes itself: at each entry time it draws a fresh
-group from the population as it stands then, so the live groups carry
-different population vintages [@lynn2012, sec. 3]. That is exactly what makes
-them combinable.
-
-`execute(panels = k)` partitions **one** execution against **one** frame.
-Every group comes from the same frame vintage, and no entrant can appear in
-any of them. Over a long horizon that cannot represent the cross-sectional
-population at later waves.
-
-Where the partition is exactly right is start-up. The "immediate start"
-option draws the full sample in year 1 and subdivides it into groups
-designated to remain for one, two, three, ... years, with a fresh group added
-each year thereafter; @kaltoncitro1993 prefer it to a gradual start because it
-delivers the full sample size from year 1 rather than filling up over the
-rotation cycle. So the coherent shape is:
-
-```text
-year 1     execute(design, frame, panels = k)     start-up partition
-year 2+    execute(design, frame_vintage_t)       one fresh group per period
-```
-
-`panels` builds the start-up partition and the workload rotation over a frozen
-master. Steady-state replenishment is ordinary repeated execution against
-successive frame vintages, and `rotation_program()` is what links the resulting
-executions into one programme; see below.
-
-`design_overlap()` describes such a programme from its schedule alone,
-before any frame exists, and draws it. Here each group is live for two
-consecutive occasions, which is the pattern used throughout this vignette.
-
-```{r rotation-chart, fig.width = 7, fig.height = 3.6, fig.alt = "Rotation chart for a design keeping each group in sample for two consecutive periods, started immediately. Seven samples enter on successive periods, two are live in every period, and the steady state is reached at period 1."}
-plot(design_overlap("2"), type = "schedule", start = "immediate")
-```
-
-The chart is the whole programme, not one execution. Two groups are live in
-every period and the steady state is reached immediately, which is the property
-@kaltoncitro1993 prefer it for. `execute(panels = k)` builds the first column of
-that picture and nothing to its right; every later column is a fresh execution
-against a later vintage, which is what `rotation_program()` registers.
-
-Combining the live groups is then not a matter of pooling weights. A unit that
-entered the population between periods 1 and 2 could not have been drawn into
-group 1, so the combined sample under-represents joiners unless their
-probabilities are corrected. For an initial sample and a later one
-[@lynn2012, sec. 8.1]:
-
-```text
-stayers   P ~= n1/N1 + n2/N2      small-fraction approximation
-leavers   P = n1/N1
-joiners   P = n2/N2
-w = 1/P
-```
-
-This is still an inverse inclusion probability, so it stays inside the
-single-frame estimator. What it needs is data `samplyr` cannot invent: for
-each unit, whether it was eligible for each earlier draw. That comes from
-survey questions establishing population membership at the earlier date, and
-it is easy to forget to ask them. Supply it as a column on the frame; two
-execution receipts cannot reveal it.
-
-One practical note: `panels` composes with PRN coordination. The conflict
-check in `execute()` is against `reps`, not `prn`, so a PRN-rotated draw can
-also be partitioned into workload groups. See
-`vignette("sampling-coordination")` for the coordination side.
-
-## Scheduling the groups
-
-Declaring *when* each group is live turns the partition into a rotation you
-can materialize. Pass `panels` a data frame with `panel` and `wave` columns
-and an optional logical `active` column instead of a count. Here four groups
-rotate two at a time, so each group is live for two consecutive occasions.
-
-```{r}
-rotation <- data.frame(
-  panel  = rep(1:4, times = 4),
-  wave   = rep(1:4, each = 4),
-  active = c(TRUE,  TRUE,  FALSE, FALSE,
-             FALSE, TRUE,  TRUE,  FALSE,
-             FALSE, FALSE, TRUE,  TRUE,
-             TRUE,  FALSE, FALSE, TRUE)
+startup_schedule <- data.frame(
+  panel = c(1, 2, 1, 2),
+  wave = c(1, 1, 2, 2),
+  active = c(TRUE, TRUE, TRUE, FALSE)
 )
 
-master <- sampling_design() |>
-  draw(n = n_wave, method = "pps_sps", mos = revenue_millions, prn = u) |>
-  execute(frame, seed = 7, panels = rotation)
+base_design <- sampling_design() |>
+  draw(n = selection_sizes[["startup"]])
 
-table(master$.panel)
-```
-
-The schedule is read at the draw, not only later: the fewest panels any wave
-activates sets the assignment block size, so a schedule that keeps two of
-four groups live blocks more finely than one that keeps a single group live.
-
-`execute(master, wave = t)` then realizes one occasion.
-
-```{r}
-wave_2 <- execute(master, wave = 2)
-
-c(master = nrow(master), wave_2 = nrow(wave_2))
-table(rotating = !wave_2$.certainty_1)
-```
-
-Two of four groups is a little under half the master, plus every certainty
-unit: `pps_sps` on a skewed register resolves the largest enterprises to
-$\pi_k = 1$, and a permanent unit is in the sample at every occasion.
-
-Activation is a probability subsample, not a filter, so the wave carries
-weights that estimate the same population total the master does.
-
-```{r}
-c(master = sum(master$.weight), wave_2 = sum(wave_2$.weight))
-```
-
-They are close rather than equal, which is the point: the activation is a
-second sampling phase and its estimator is unbiased, not exact.
-
-The factor applied to each weight is the inverse of the unit's activation
-probability, which is its block's frozen quota for the active panels over the
-block size. That is exact, and it is generally not the nominal `k / r`
-implied by counting groups: a block that took the remainder carries a
-different quota, and its units carry a different factor. Certainty units are
-activated with probability one and their weights are untouched.
-
-A wave is a two-phase sample and exports as one. It retains the master as its
-first phase, and `as_svydesign()` passes the activation to `twophase()` as the
-second: the blocks become the phase-2 strata and their frozen sizes the
-phase-2 population counts, which is what makes the subsampling variance exact
-rather than assumed. `method` is the only choice the export takes, `"full"` by
-default with `"simple"` and `"approx"` available where their assumptions hold,
-and none of them is ever selected as a silent fallback for another.
-
-```{r}
-equal_master <- sampling_design() |>
-  draw(n = n_wave) |>
-  execute(frame, seed = 7, panels = rotation)
-
-equal_wave <- execute(equal_master, wave = 2)
-
-class(as_svydesign(equal_wave))
-```
-
-The master drawn above is a different case. `twophase()` accepts no `pps`
-specification at its first phase, so a master with unequal inclusion
-probabilities has no exact linearization there, and `as_svydesign(wave_2)`
-refuses with that reason rather than returning the with-replacement
-approximation unannounced. The activation weights stay exact and estimate
-totals correctly; it is the variance that has no exact form. The master's own
-export is unaffected, and so is any wave of an equal-probability master,
-clustered or multistage.
-
-## Which unit rotates
-
-By default the assignment belongs to the first stage, so a clustered design
-rotates whole primary units and every unit below inherits its ancestor's
-group. `panel_stage` moves it to another stage. That is what expresses the
-address-panel design [@smith2009, sec. 2.3.4]: the selected areas stay in the
-survey while the addresses inside them rotate.
-
-```{r}
-addresses <- data.frame(
-  ea      = rep(sprintf("EA%02d", 1:40), each = 12),
-  address = rep(1:12, times = 40)
+startup <- execute(
+  base_design,
+  ken_enterprises,
+  seed = 7,
+  panels = startup_schedule
 )
 
-area_panel <- sampling_design() |>
-  add_stage() |> cluster_by(ea) |> draw(n = 12) |>
-  add_stage() |> cluster_by(address) |> draw(n = 8) |>
-  execute(addresses, seed = 11, panels = rotation, panel_stage = 2)
-
-# Panels per selected area: every area carries all four.
-table(tapply(area_panel$.panel, area_panel$ea, function(x) length(unique(x))))
+count(startup, .panel)
 ```
 
-Every area is in every wave, and half its addresses turn over between
-consecutive occasions.
+The word `panel` here means a randomized workload or rotation group. The
+partition does not draw future entrants and does not create later frame
+vintages. It only organizes this one executed sample.
+
+Materialize an occasion from the recorded schedule with `execute(wave = )`.
 
 ```{r}
-area_wave <- execute(area_panel, wave = 2)
+startup_wave_1 <- execute(startup, wave = 1)
+startup_wave_2 <- execute(startup, wave = 2)
 
-c(areas_in_master = length(unique(area_panel$ea)),
-  areas_in_wave   = length(unique(area_wave$ea)),
-  addresses_in_wave = nrow(area_wave))
+c(
+  wave_1 = nrow(startup_wave_1),
+  wave_2 = nrow(startup_wave_2)
+)
 ```
 
-Two things change with the assignment stage, and both matter operationally.
-
-**Pools shrink, so `small_pool` binds far more often.** A pool becomes the
-assignment stage's strata *inside* each realized parent, so pools are as small
-as the within-parent take rather than as large as a stratum. A pool holding
-`panels - r_min` assignment units **or fewer** is refused, rather than silently
-leaving areas out of some wave. Here `r_min` is the fewest panels any declared
-wave activates, the same quantity that sets the block size above: with four
-panels and two live per wave, the refusal is at two addresses per area or fewer.
-
-**Selection certainty counts only at the assignment stage, in both
-directions.** A certainty area does not make its addresses permanent, and a
-certainty selection *below* the address does not keep that address in every
-wave. A person selected with probability one inside a rotating address leaves
-the survey with the address, which is a property of the design rather than a
-defect to work around.
-
-This is not a better default, and it should not be adopted as one. Holding the
-parent fixed while its members rotate can bias cross-sectional estimates over
-time [@smith2009, sec. 2.3.4]. A sampling unit that cannot move between
-parents is balanced for cross-sectional estimates and for net change, but not
-for gross change. And the frame has an operational consequence that is easy to
-get wrong: a vacant address found at one wave stays in the sample for later
-waves, so the frame must not be filtered to occupied units between waves.
-
-## How much two occasions share
-
-How far two waves overlap is fixed at the master's draw, so it can be asked
-before either has been materialized.
+Wave activation is a probability subsample, not a row filter. The resulting
+object carries an activation factor in its weight and can be exported as a
+two-phase survey design.
 
 ```{r}
-overlap_12 <- joint_expectation(master, waves = c(1, 2))
-overlap_12
+class(as_svydesign(startup_wave_2))
 ```
 
-One row per block, carrying counts and probabilities side by side. `units` is
-the block size; `take_1`, `take_2` and `take_both` are the frozen quotas, the
-number of the block's units live at the first wave, at the second, and at both.
-`prob_1` and `prob_2` are those quotas as chances for a single unit,
-`joint_same` the chance it is live at both, and `joint_distinct` the chance that
-two different units of the block are live at one wave each. `pool`, `stratum`,
-`class` and `activation` identify where the block came from and whether it
-rotates. Take the same wave twice, `waves = c(2, 2)`, for the joint expectation
-within a single wave.
+Certainty units, unequal-probability masters, and multistage designs need more
+care in variance estimation. The panel assignment remains valid, but not every
+master-and-activation combination has an exact representation in
+`survey::twophase()`. `as_svydesign()` refuses unsupported cases rather than
+silently replacing their variance estimator.
 
-These follow from the frozen quotas rather than from counting groups. In a
-block of `m` assignment units where the panels live at the two waves take
-$a_t$ and $a_s$ units and those live at both take $a_\cap$:
+## Add a refreshment cohort
 
-$$P(i \in W_t,\, j \in W_s) = \frac{a_t a_s - a_\cap}{m(m-1)}, \qquad i \neq j$$
+At occasion 2, the older start-up cohort has left and a fresh cohort enters.
+For a dynamic population, that cohort should be drawn from the frame vintage
+and eligibility definition specified by the survey design.
 
-with $a_\cap / m$ for a single unit at both waves. Units in different blocks
-are independent. A block that took the remainder carries different quotas and
-therefore different values, which is why these are read from the record.
-
-Aggregating `take_both` against `take_1` gives the overlap proportion the
-rotation literature quotes. `design_overlap()` computes the same proportion
-from the schedule alone, so the two can be compared.
-
-### What the pattern implies
-
-The literature figures are properties of the pattern, not of any master. The US
-CPS rotates each group four months in, eight out and four in again.
+The synthetic example below creates a separate entrant register. Its distinct
+identifiers make the cohort frames disjoint by construction.
 
 ```{r}
-cps <- design_overlap("4-8-4")
-cps[c(1, 12)]
-
-design_overlap("15")[c(1, 12)]
-```
-
-Three quarters of the sample is retained one month later and half of it one
-year later, against 93% and 20% for an in-for-15 rotation. The lag-12 return is
-the point of the design, and the profile shows it better than the two numbers
-do.
-
-```{r overlap-profile, fig.width = 7, fig.height = 3.6, fig.alt = "Overlap by lag for the 4-8-4 rotation. Overlap falls from 0.75 at lag 1 to zero at lags 4 through 8, then returns to a second peak of 0.50 at lag 12 before decaying again."}
-plot(cps, type = "overlap")
-```
-
-The notation carries the distinction that makes those figures reproducible.
-`"4-8-4"` names spell lengths, in then out then in; `"1-1-0-0-1-1"` names one
-flag per occasion. A string of all ones can be read either way, and it is
-refused rather than guessed.
-
-```{r, error = TRUE}
-design_overlap("1-1-1-1")
-```
-
-That is why a 4-8-4 has to be declared with a finite life rather than cycled: a
-group that returns to its first spell keeps seven of eight groups month to
-month instead of six.
-
-### What this master delivers
-
-The design in this vignette keeps each group live for two consecutive
-occasions, so its schedule is `"2"`. Its nominal overlap and what the master
-actually delivers are not the same number.
-
-```{r}
-nominal  <- design_overlap("2")[[1]]
-realized <- sum(overlap_12$take_both) / sum(overlap_12$take_1)
-
-c(nominal = nominal, realized = round(realized, 4))
-```
-
-The gap is the permanent block. Most rotating blocks hold four assignment units
-and put two in each wave and one in both, and the few remainder blocks carry
-their own quotas, but the rotating blocks together still come to exactly one
-half. The block holding the certainty units is live in full at every wave and
-contributes one, which is what lifts the total.
-
-```{r}
-overlap_12 |>
-  summarise(blocks = n(), units = sum(units),
-            take_1 = sum(take_1), take_both = sum(take_both),
-            .by = activation)
-```
-
-A schedule cannot know this, because certainty is a property of the draw rather
-than of the pattern. `design_overlap()` is the planning quantity, available
-before there is a frame; `joint_expectation()` is what this realized master
-records. Quote the first when sizing a design and the second when describing
-one that exists.
-
-**Say which overlap you mean.** Three qualifiers are needed before the number
-is interpretable. The figures below are illustrative rather than computed from
-any design shown here: they stand for a single asymmetric master under which
-0.75, 0.53 and 0.33 are all correct answers, differing only in which question
-is being asked.
-
-- **reference set**: the units the design selected, or the units that
-  responded. `samplyr` knows the first exactly. The second needs response
-  records, which it does not have.
-- **direction**: which wave is the denominator. Where the waves differ in
-  size, an asymmetric schedule gives 0.50 forward and 0.33 reversed.
-- **measure**: units counted, or weighted. A `pps_sps` master with permanent
-  certainty units reports 0.75 by count and 0.53 by weight, because those
-  units are live at every wave while carrying weight one.
-
-Written out, the count-based directional quantity is
-
-$$g_{\text{design}}(t \to s) = \frac{\#(\text{selected at both } t \text{ and } s)}{\#(\text{selected at } t)} = \frac{\sum_b a_{\cap b}}{\sum_b a_{tb}}$$
-
-This is the $g$ that appears in the rotation literature [@bergerpriam2016].
-It is **not** the $k$ of the resampling shortcut in @cantydavison1999, which
-is the responding overlap: they warn explicitly that the realized proportion
-should be used there rather than the theoretical one, and the difference is
-nonresponse.
-
-Under `samplyr`'s frozen-activation contract the scheduled and the selected
-overlap coincide exactly. A rotating unit is live at both waves precisely when
-its panel lies in both active sets, and a permanent certainty unit is live at
-every wave whatever its panel, so in both cases the realized count is
-determined rather than random. That is a property of the contract rather than
-of rotation in general: an operation that drew again at wave time, or
-subsampled for attrition, would separate them.
-
-These are conditional on the units the master selected and on the frozen
-quotas. They are not the unconditional joint inclusion probabilities of the
-whole two-phase design, which also carry the master's own pairwise term.
-
-One limit remains. A wave cannot be replayed, because it is derived from a
-recorded execution rather than being one; save and replay the master instead.
-
-Finally, the schedule states which groups are live when. It does not
-replenish the sample: every group still comes from the frame vintage the
-master was drawn from, which is the scoping point above. Replenishment is the
-next section.
-
-## Replenishing across vintages
-
-A rotating panel that replenishes is not one execution. It is a start-up master
-against the first frame vintage, then one refreshment cohort against each later
-one. `rotation_program()` is the registry that links those executions and says
-which components are live at each occasion.
-
-```{r}
-startup <- sampling_design() |>
-  draw(n = n_wave) |>
-  execute(frame, seed = 7, panels = rotation)
-
-# A refreshment cohort drawn from an entrant register: units that joined the
-# population after the master's vintage, so no unit can be on both frames.
 set.seed(99)
+
 entrants <- ken_enterprises |>
-  slice_sample(n = 900) |>
-  mutate(enterprise_id = paste0("NEW_", sprintf("%04d", seq_len(900))))
+  slice_sample(n = 500, replace = TRUE) |>
+  mutate(
+    enterprise_id = paste0("NEW_", sprintf("%04d", row_number()))
+  )
 
-intake_2 <- sampling_design() |>
-  draw(n = 60) |>
-  execute(entrants, seed = 8)
+intake_design <- sampling_design() |>
+  draw(n = selection_sizes[["intake_each_occasion"]])
 
+intake_2 <- execute(intake_design, entrants, seed = 8)
+```
+
+`rotation_program()` records how separately executed cohorts fit into one
+fieldwork programme.
+
+```{r}
 program <- rotation_program(
   cohorts = list(startup = startup, intake_2 = intake_2),
   entry_wave = c(startup = 1, intake_2 = 2),
-  schedule = rbind(
-    transform(rotation, cohort = "startup"),
-    data.frame(cohort = "intake_2", panel = 1, wave = 1:4,
-               active = c(FALSE, TRUE, TRUE, TRUE))
+  schedule = bind_rows(
+    mutate(startup_schedule, cohort = "startup"),
+    data.frame(
+      cohort = "intake_2",
+      panel = 1,
+      wave = 1:3,
+      active = c(FALSE, TRUE, TRUE)
+    )
   )
 )
-program
+
+occasion_2 <- execute(program, wave = 2)
+occasion_2
 ```
 
-`entry_wave` is declared rather than inferred from the schedule. A cohort can
-be drawn early and held in reserve, so its first active wave is not necessarily
-its entry, and entry is what anchors which population vintage the cohort
-represents.
+The result is a collection with one component per live cohort. It is not
+automatically row-bound and its weights are not combined. The correct combined
+estimator depends on who was eligible for each cohort. Disjoint entrant frames
+are simpler. Refreshment draws from the whole population can give a unit more
+than one chance of selection and require a union-probability or multiple-frame
+estimator.
 
-`execute(program, wave = t)` materializes one occasion across every live cohort.
+For a longer run, repeat the intake step once per occasion and extend the
+programme schedule. The planned value `panel_plan$n_entrants` is the steady-
+state intake for each of those draws.
+
+## Check overlap in an executed master
+
+`svyplan::design_overlap()` reports overlap from the planned schedule.
+`samplyr::joint_expectation()` reports what an executed master records,
+including any block-size remainders or permanent certainty units.
 
 ```{r}
-wave_2_program <- execute(program, wave = 2)
-wave_2_program
+executed_overlap <- joint_expectation(startup, waves = c(1, 2))
+
+c(
+  planned = overlap_plan[1],
+  executed = sum(executed_overlap$take_both) / sum(executed_overlap$take_1))
 ```
 
-The result is a collection with one member per live cohort, each keeping its own
-receipt and its own exact activation factor. **It is not row-bound and its
-weights are not combined**, and that is a statement about what the registry
-knows rather than caution. Whether a unit could have been drawn into more than
-one cohort depends on facts no receipt carries: whether it was in the population
-at each vintage, what chance it would have had in a draw it was not selected
-into, and whether the draws were independent. Two executions with identical
-inclusion probabilities can be independent or identical, and nothing stored
-tells them apart.
+Be explicit about the denominator when wave sizes differ. Also say whether
+the overlap counts issued units or respondents. `samplyr` knows the first, but
+response data are needed for the second.
 
-The case where the analyst does know is the one above. An **entrant register**
-holds only units that joined since the previous vintage, so the cohorts are
-disjoint by construction, every unit belongs to exactly one, and the component
-weights are already right for the combined live set. A refresher drawn from the
-*whole* population at a later vintage is the other case: a unit present at both
-times had two chances of selection, and combining then needs a union
-probability, which is a multiple-frame problem rather than a scheduling one and
-is out of scope for `samplyr`.
+## Attach responses without changing the design
 
-A program is a registry, so `write_design()` does not accept one. Archive each
-cohort's executed sample and the schedule that links them, and rebuild the
-program on read; see `vignette("serialization")`.
+A `tbl_sample` records selection. Later responses can be joined one-to-one by
+a stable unit identifier while the sample remains one row per selected unit.
+Duplicating a selected row once per interview and exporting that long table as
+a new survey design would count the unit as though it had been sampled more
+than once.
 
-## Estimating change across waves
-
-Two waves exported separately give two variances and no covariance, and the
-covariance is most of the answer. `stack_waves()` performs the structural half
-of the handoff: it verifies that the waves come from one executed master and
-returns a plain long table for an inference layer.
+For two waves derived from the same master, `stack_waves()` checks their common
+origin and returns a long table for a longitudinal analysis package.
 
 ```{r}
-tab <- stack_waves(
-  execute(equal_master, wave = 1),
-  execute(equal_master, wave = 2)
-)
-
-dim(tab)
-names(tab)[1:4]
+wave_table <- stack_waves(startup_wave_1, startup_wave_2)
+names(wave_table)[1:4]
 ```
 
-Two of those names carry the contract. `design_weight` is the exact design
-weight including the activation factor, and is **not** a final weight: nothing
-here is adjusted for nonresponse or calibrated, so a routine asking for
-`w_final` is asking for something the analysis must supply. `master_id`
-matches units across waves of one master and means nothing outside it; in
-particular it is not a primary sampling unit, and a clustered design's own
-cluster variable is carried through for that.
+`design_weight` is the design weight, including activation. It is not a final
+nonresponse-adjusted or calibrated weight. `master_id` links the same selected
+unit across these waves. It is not a cluster identifier.
 
-Verification is the reason to prefer this to `rbind()`. Two executions of one
-design produce the same `.sample_id` values, so waves of *different* masters
-stack silently even when the two frames share no unit at all, and the result
-matches units that were never the same unit.
+Two separate cross-sectional variance estimates do not contain the covariance
+needed for a variance of change. The appropriate longitudinal estimator
+depends on the design, response process, calibration, and available joint
+inclusion information. `stack_waves()` validates the handoff but deliberately
+does not choose that estimator.
 
-### Choosing a variance-of-change route
+## Where PRNs fit
 
-Write $V_\Delta = V_t + V_s - 2\rho\sqrt{V_t V_s}$. The two marginal variances
-come from `samplyr`'s per-wave export; the correlation is the part that has to
-be estimated, and it is where the routes differ.
+Permanent random numbers control overlap between separate draws. Panel
+schedules control how long an already selected cohort remains active. A survey
+may use both, but neither substitutes for the other. Start with this article
+when the fieldwork rule is “keep each cohort for two occasions.” Use
+`vignette("sampling-coordination")` when the rule is “make the next draw share
+more or fewer units with the current draw.”
 
-| Route | Needs | Behaviour |
-|---|---|---|
-| Berger--Priam form B [@bergerpriam2016] | Union sample, wave indicators, design strata when stratified, design weights | The recommended route. Calibrated from 7% to 93% overlap in the fixtures measured here |
-| Berger--Priam form A | The same | Anti-conservative at high overlap |
-| `vardpoor::vardchanges()` | A calibrated `w_final`, stable PSU | Reproduces form A exactly, and inherits its behaviour |
-| Independence | Nothing | Conservative while the omitted covariance is positive, which under a rotation it is; badly inefficient at high overlap |
-| Matched-sample correlation [@kish1965] | The common sample | Not recommended at any overlap |
+## Limits to decide before fieldwork
 
-The last row is the one worth naming, because it looks right and is not. Taking
-the correlation from the matched sample and combining it with the full-sample
-variances omits the overlap factor $g$: it measures how correlated a *unit* is
-with itself over time, where what is wanted is how correlated the two
-*estimators* are.
+- State whether estimates refer to the wave-1 population, units present at
+  every occasion, or the population at each occasion.
+- Keep wave-1 strata fixed for a fixed panel. Re-executing a design against a
+  new frame instead reclassifies units using that frame.
+- Decide whether the sampled unit is also the followed unit. For example,
+  rotating addresses while areas remain fixed has different longitudinal
+  properties from rotating whole areas.
+- Verify entrant coverage and identifier continuity in the frame. A sampling
+  function cannot establish either one.
+- Plan nonresponse adjustment, calibration, attrition treatment, and the
+  variance of change in the analysis layer.
 
-Form B is the recommended route, and it is one call to `lm()` once the union
-sample is assembled. Use the unstratified form below only for an unstratified
-master; a stratified one needs the stratified specification of @bergerpriam2016
-[§4.1], wave-specific stratum indicators and their interactions in place of the
-bare wave indicators, and it additionally requires the common-sample fraction to
-be the same in every stratum, since a single $g$ is applied.
+## The short workflow
 
-```{r}
-w1 <- execute(equal_master, wave = 1)
-w2 <- execute(equal_master, wave = 2)
-w1$measure <- w1$revenue_millions
-w2$measure <- w2$revenue_millions * 1.03
-
-tab <- stack_waves(w1, w2)
-
-# Marginal variances: samplyr's per-wave export.
-v1 <- survey::SE(survey::svytotal(~measure, as_svydesign(w1)))^2
-v2 <- survey::SE(survey::svytotal(~measure, as_svydesign(w2)))^2
-
-# The union, with each wave's weighted measure zero-filled outside it.
-ids <- union(tab$master_id[tab$wave == 1], tab$master_id[tab$wave == 2])
-at <- function(w) match(ids, tab$master_id[tab$wave == w])
-y <- function(w) {
-  i <- at(w)
-  ifelse(is.na(i), 0,
-         (tab$measure * tab$design_weight)[tab$wave == w][i])
-}
-common <- !is.na(at(1)) & !is.na(at(2))
-g <- sum(common) / sum(!is.na(at(1)))
-
-# Form B: the common-sample residual correlation, times g. The model is the
-# paper's own -- wave indicators, their interaction, and no intercept.
-z1 <- as.integer(!is.na(at(1)))
-z2 <- as.integer(!is.na(at(2)))
-fit <- stats::lm(cbind(ifelse(common, y(1), 0), ifelse(common, y(2), 0)) ~
-                   -1 + z1 * z2)
-V <- stats::estVar(fit)
-rho <- V[1, 2] / sqrt(V[1, 1] * V[2, 2]) * g
-
-c(overlap = g, correlation = rho,
-  se_change = sqrt(v1 + v2 - 2 * rho * sqrt(v1 * v2)),
-  se_if_independent = sqrt(v1 + v2))
-```
-
-The two standard errors differ by the covariance, which is the quantity two
-separate exports cannot supply.
-
-Compute the correlation rather than predicting it from the overlap. The measure
-here is perfectly correlated across waves and the estimator correlation comes
-out at the overlap itself, but that is a coincidence of this example: the two
-waves also share the master's own selection variation, so the correlation can
-sit above the overlap times the within-unit correlation.
-
-### Where these routes stop being calibrated
-
-All of them are approximate, and their consistency arguments assume a negligible
-sampling fraction and a high-entropy master. Four limits are worth knowing
-before the numbers are used, each measured on one population and one rotation
-and therefore an empirical landmark rather than a threshold:
-
-- **The wave fraction, not the master fraction, is what counts.** A rotation
-  keeping half its panels live puts half the master in each wave. Form B was
-  calibrated through a 5% wave fraction, showed measurable degradation at 10%,
-  and was clearly anti-conservative at 25%. The mechanism is that the
-  correlation construction carries no finite population correction while the
-  correlation it estimates does.
-- **A systematic master is outside the validated guarantee.** Its marginal
-  variances are exported through the equal-probability path and are approximate
-  for that design, so a reported change variance combines two errors that can
-  point in opposite directions and cancel. A plausible-looking number is not
-  evidence that either component is right; see `?as_svydesign`.
-- **Sensitivity runs the wrong way.** A correlation slightly too high understates
-  the variance by a multiplier of $\rho/(\rho - 1)$ at equal marginal variances,
-  which is about $-13$ at $\rho = 0.93$. The multiplier is a property of the
-  correlation and the margins, not of the rotation pattern, so compute it for
-  the design in hand.
-- **Nothing here is validated for multiple cohorts, nonresponse, calibration, or
-  unequal-probability masters.**
-
-The measurements behind these landmarks, with their fixtures, are recorded in
-`dev/t1-2b-variance-of-change-plan.md` in the package sources.
-
-## Attaching later waves to the sample
-
-A `tbl_sample` records the selection. Joining later-wave responses one to one,
-in wide form, preserves that: one row per selected unit, design columns
-untouched. Reshaping to one row per unit-wave does not. Duplicated unit-wave
-rows are repeated measurements of one selected unit, not independently sampled
-observations, and exporting them with `as_svydesign()` would count each unit
-once per interview. Export the wide form, or reshape after export.
-
-## Limits to state before fieldwork
-
-**Transient stratifiers.** `sampling_design()` stores stratification variables
-as names and resolves them at execution, so re-executing a design against a
-later frame vintage re-classifies units. For a repeated panel that is correct,
-since each panel represents the population as of its own time. For a fixed
-panel it is wrong: a unit must keep its wave-1 stratum. Unequal sampling
-fractions across a classification that units drift out of can improve
-precision initially and reduce it after several waves [@smith2009, sec.
-2.4.4].
-
-**The sampling unit and the followed unit may differ, deliberately.** The
-standard device for avoiding movers is a sampling unit that cannot move: a
-labour force survey that samples addresses balances movers out against movers
-in. Such a design is balanced for cross-sectional estimates and for *net*
-change, but not for *gross* change [@smith2009, sec. 2.3.5]. `cluster_by()`
-expresses it and needs nothing new. The caveat matters because a
-dwelling-based rotating panel quietly fails the analysis most people want a
-panel for. It also constrains the frame: an address found vacant at one wave
-stays in the sample for later waves, so the frame must not be filtered to
-occupied units between waves.
-
-**Entrant coverage is a property of the frame, not of the draw.** `samplyr`
-can draw from a supplied entrant register. It cannot establish that the
-register covers the entrant flow, or that it covers it promptly enough for
-short-lived entrants to be represented at all.
-
-**Sampling that depends on the existing sample is out of scope.** Adding
-household members reached through an existing sample member gives selection
-probabilities that cannot be known from the design, and model-based approaches
-with untestable assumptions are required [@lynn2012, sec. 8.1]. Attrition,
-measurement error and imputation are likewise estimation-layer problems:
-`samplyr` produces design weights only.
-
-## Where this fits
-
-- `vignette("sampling-coordination")` covers permanent random numbers, the
-  separate mechanism for controlling overlap between samples. It composes with
-  the panel machinery here but answers a different question.
-- `vignette("design-semantics")` states the panel partitioning contract: block
-  sizes, which stage assigns, and why weights are unchanged without a schedule.
-- `vignette("survey-analysis")` covers exporting a wave to `survey` and `srvyr`.
-- `vignette("serialization")` covers archiving a master, and what a
-  `rotation_program()` cannot store.
-- `vignette("survey-planning")` sizes a repeated survey before it runs:
-  `design_overlap()` for what the rotation shares, `prec_change()` for the
-  precision that buys, and `n_panel()` for recruitment under attrition. It is
-  the before-fieldwork counterpart to the change estimation above.
+1. Use `design_overlap()` to describe the cohort life.
+2. Use `n_panel()` to obtain `n_in_sample` and `n_entrants`.
+3. Draw the start-up sample and partition it with `panels`.
+4. Materialize scheduled occasions with `execute(wave = )`.
+5. Draw each refreshment cohort against its intended frame vintage.
+6. Register the cohorts with `rotation_program()`.
+7. Export components with their own designs and use a longitudinal inference
+   method suited to the survey.
 
 ## References

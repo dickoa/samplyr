@@ -1,10 +1,10 @@
 ---
-title: "Survey Analysis with samplyr"
+title: "Analyze a samplyr Sample"
 output: rmarkdown::html_vignette
 bibliography: references.bib
 link-citations: true
 vignette: >
-  %\VignetteIndexEntry{Survey Analysis with samplyr}
+  %\VignetteIndexEntry{Analyze a samplyr Sample}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -22,33 +22,24 @@ library(dplyr)
 library(survey)
 ```
 
-## Overview
+## From selection to estimation
 
-In a typical survey, sampling is one step in a longer process:
+The usual workflow has four parts. Select the sample, collect outcomes, join
+them to the selected units, and export the result to `survey` or `srvyr`.
 
-1. **Design and execute** the sample using `samplyr` to select units from a sampling frame.
-2. **Collect data** in the field on the selected units.
-3. **Merge** the collected data back into the sample, preserving the design metadata (strata, clusters, weights, FPC).
-4. **Analyze** using the `survey` or `srvyr` package for design-based inference.
+`samplyr` records the strata, clusters, weights, and finite population
+corrections during selection. A safe one-to-one join preserves that metadata.
+An operation that adds, removes, or duplicates sampled rows changes the
+realization and prevents export.
 
-`samplyr` handles step 1. For steps 3 and 4, it provides bridge functions that convert a `tbl_sample` into `survey` design objects. The `tbl_sample` carries all the information that `survey::svydesign()` needs (strata, cluster ids, weights, finite population corrections), so the conversion is automatic.
+## Inspect the sample before fieldwork
 
-Because `tbl_sample` is a tibble subclass, standard dplyr operations like `left_join()` preserve the sampling metadata. This makes step 3 straightforward: join your collected data by unit identifier and the result is still a valid `tbl_sample`. The condition is that the join is one to one on the sampled units. A join that duplicates rows changes the row set, and the sample is then marked modified; see "Domain (Subpopulation) Analysis" below for what that means for the export.
-
-This vignette covers sample diagnostics (before fieldwork), the merge step, and integration with `survey` and `srvyr` for estimation.
-
-## Sample Diagnostics
-
-After executing a design, `summary()` gives a concise overview: one design line and one realization line per stage, then weight diagnostics. This is what you check before going to the field to verify the sample looks right. Per-pool allocation tables are in `frame_summary(detail = "pool")`.
+We begin with a stratified sample of enumeration areas.
 
 ```{r}
-library(samplyr)
-library(dplyr)
-library(survey)
-
 data(bfa_eas)
 
-sample <- sampling_design() |>
+sample <- sampling_design(title = "Burkina Faso EA survey") |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
   execute(bfa_eas, seed = 1)
@@ -56,178 +47,107 @@ sample <- sampling_design() |>
 summary(sample)
 ```
 
-The realization line uses compact sampling notation. Its $N_h$, $n_h$, and
-$f_h$ labels correspond to the `N`, `n_realized`, and `take_rate` columns in
-the pool table.
+`frame_summary()` exposes the same realization at pool level.
 
 ```{r}
-allocation <- frame_summary(sample, detail = "pool")
-
-allocation |>
-  select(region, replicate, N, n_target, n_expected, n_realized, take_rate)
+frame_summary(sample, detail = "pool") |>
+  select(region, N, n_target, n_expected, n_realized, take_rate)
 ```
 
-`n_target` is the nominal allocation requested by the design, `n_expected` is
-the sum of the final resolved selection chances, and `n_realized` is what the
-execution actually selected. They coincide here because this is a feasible
-fixed-size design. For Bernoulli or Poisson sampling, `n_target` records the
-requested expectation, which can differ from both the resolved expectation and
-the random realized count. `take_rate` is `n_realized / N`; it is not a
-unit-level inclusion probability for an unequal-probability design.
+For this feasible fixed-size design, the target, expectation, and realized
+take coincide. Under Bernoulli or Poisson selection the realized count is
+random. Under unequal-probability selection, `take_rate` describes the
+realized pool count and is not a unit-level inclusion probability.
 
-Every pool table has a `replicate` column (`1` for an ordinary execution).
-With `execute(reps = ...)`, it contains one row per pool and replicate, so the
-realized variation remains numeric and can be grouped, plotted, or filtered
-without unpacking list columns. The weight diagnostics report the Kish design
-effect and effective sample size.
+## Join collected outcomes
 
-## Merging Collected Data
-
-After fieldwork, you have collected data (survey responses, measurements) for the selected units. Join it into the `tbl_sample` by a shared identifier, one row of collected data per selected unit. The `tbl_sample` class and its design metadata are preserved through a join that does not change the row set.
+The frame need not contain the survey outcomes. Join one collected record to
+each sampled unit using a stable identifier.
 
 ```{r}
-# Simulate household-budget outcomes collected after selecting the EAs.
-# These outcomes are not variables on the sampling frame.
-set.seed(1)
-log_consumption <- rnorm(
-  nrow(sample),
-  mean = 11 + 0.25 * (sample$urban_rural == "Urban") -
-    0.12 * (sample$remoteness == "High"),
-  sd = 0.65
-)
+library(dplyr)
+set.seed(2)
+
 collected <- tibble(
   ea_id = sample$ea_id,
-  consumption_per_capita = round(exp(log_consumption)),
-  below_consumption_threshold = as.integer(log_consumption < 11)
+  consumption_per_capita = round(rlnorm(
+    nrow(sample),
+    meanlog = 11,
+    sdlog = 0.65
+  )),
+  below_threshold = rbinom(nrow(sample), size = 1, prob = 0.25)
 )
 
-# Merge into the sample
 sample_with_data <- sample |>
   left_join(collected, by = "ea_id")
 
-# Still a tbl_sample with all design metadata intact
 class(sample_with_data)
 ```
 
-The merged object can now be exported to `survey` for design-based analysis of the collected variables.
+The result remains a `tbl_sample` because the join is one to one and leaves
+the selected rows intact. Check key uniqueness before joining when collected
+data can contain repeated visits, roster members, or duplicate submissions.
 
-## Exporting to the survey Package
+## Export to survey
 
-`as_svydesign()` converts a `tbl_sample` into a `survey::svydesign()` object. It automatically maps strata, clusters, weights, and finite population corrections from the sampling metadata.
-
-### Stratified design
+`as_svydesign()` maps the recorded design to a `survey` object.
 
 ```{r}
+library(survey)
 svy <- as_svydesign(sample_with_data)
 svy
+```
 
-# Estimate collected variables
+The collected variables can now be analyzed with standard `survey` functions.
+
+```{r}
 svymean(~consumption_per_capita, svy)
-svymean(~below_consumption_threshold, svy)
-
-# Frame variables are still available for validation
+svymean(~below_threshold, svy)
 svytotal(~population, svy)
 ```
 
-### Cluster design with PPS
+For a multistage sample, every represented stage contributes its sampling-unit
+and finite-population terms. This preserves the stage structure. It does not
+turn an approximate stage variance treatment into an exact one.
 
-For fixed-size PPS without-replacement designs (`pps_brewer`,
-`pps_systematic`, `pps_cps`, `pps_sampford`, `pps_sps`, and `pps_pareto`),
-`as_svydesign()` uses Brewer's variance approximation by default. Here
-"Brewer" names the variance approximation used by `survey`, not the selection
-algorithm: a Sampford sample, for example, still receives this default unless
-you supply its exact joint inclusion probabilities.
+Fixed-size PPS methods use Brewer's approximation by default. In that phrase,
+Brewer names the `survey` variance approximation and not necessarily the
+selection algorithm. The approximation's accuracy depends on the population
+and design. Exact joint inclusion probabilities can be supplied for methods
+that provide them.
 
-```{r}
-data(bfa_eas)
+Equal-probability systematic sampling uses an SRS-style variance approximation.
+Its direction depends on frame ordering. `as_svydesign()` warns unless the
+caller explicitly accepts or refuses that approximation through
+`systematic_variance`.
 
-cluster_sample <- sampling_design() |>
-  cluster_by(ea_id) |>
-  draw(n = 50, method = "pps_brewer", mos = households) |>
-  execute(bfa_eas, seed = 2)
+## Estimate a domain correctly
 
-svy_cluster <- as_svydesign(cluster_sample)
-svy_cluster
-svymean(~households, svy_cluster)
-```
-
-### Multi-stage design
-
-For multi-stage designs, every executed stage maps to one term of the `id` formula, with a matching finite population correction. A final stage without `cluster_by()` gets a synthesized element identifier. Strata are exported per stage, so `survey` applies the full multi-stage linearization [@sarndal1992, ch. 4.3] rather than collapsing the design to its first stage.
-
-The linearization is exact for the design it is given, but each stage still carries whatever variance approximation its selection method uses. The design below has a `pps_brewer` first stage, so its first-stage term uses Brewer's approximation to \(\pi_{kl}\), as described above. Stage-by-stage exactness is a property of the method, not of the export.
-
-```{r}
-data(zwe_eas)
-
-zwe_frame <- zwe_eas |>
-  mutate(district_hh = sum(households), .by = district)
-
-ms_sample <- sampling_design() |>
-  add_stage(label = "Districts") |>
-    stratify_by(province) |>
-    cluster_by(district) |>
-    draw(n = 2, method = "pps_brewer", mos = district_hh) |>
-  add_stage(label = "EAs") |>
-    draw(n = 3) |>
-  execute(zwe_frame, seed = 3)
-
-svy_ms <- as_svydesign(ms_sample)
-svy_ms
-```
-
-Two things about this frame surface here, and they are separate. First, the capping warning: Bulawayo holds a single district, so a take of two selects it whole. That is reported once per stage, and it is why the province contributes no first-stage variance.
-
-Second, certainty. Harare and Bulawayo each contain a district large enough that its inclusion probability resolves to 1. Those districts are self-representing, so they go into a take-all stratum that contributes no variance. That split leaves Harare with a single probability district, and a stratum holding one probability PSU has no estimable within-stratum variance. `survey` reports this rather than returning a number, so the design needs a rule for it. Centering the lone PSU on the population mean rather than its own stratum mean is the conservative choice, in that it contributes a variance term instead of none.
-
-`survey.lonely.psu` is a global option. Set it for the call rather than for the session, so a later analysis in the same script does not inherit a rule that was chosen for this design.
-
-```{r}
-withr::with_options(
-  list(survey.lonely.psu = "adjust"),
-  svymean(~households, svy_ms)
-)
-```
-
-## Domain (Subpopulation) Analysis
-
-To estimate for a subpopulation, convert the full sample first and
-subset the survey design. Do not filter the `tbl_sample` rows before
-converting.
+Convert the complete sample first, then subset the survey design.
 
 ```{r}
 urban_svy <- subset(svy, urban_rural == "Urban")
 svymean(~consumption_per_capita, urban_svy)
 ```
 
-The distinction matters for variance. Dropping out-of-domain rows
-before conversion produces the same point estimate but understates the
-standard error, because the number of sampled units falling in the
-domain is itself random and that variation is part of the design
-variance [@sarndal1992, ch. 5.8]. `survey::subset()` keeps the full
-design structure and applies the correct domain estimator.
+Filtering the `tbl_sample` first treats the observed domain sample as fixed.
+The point estimate can agree, but the variance estimate is generally wrong and
+is often too small because domain membership is random under the design
+[@sarndal1992, ch. 5.8].
 
-For this reason a filtered `tbl_sample` is marked as modified and
-`as_svydesign()` refuses it.
-
-```{r, error=TRUE}
-urban_only <- sample_with_data |>
+```{r, error = TRUE}
+urban_rows <- sample_with_data |>
   filter(urban_rural == "Urban")
 
-as_svydesign(urban_only)
+as_svydesign(urban_rows)
 ```
 
-The same rule applies to any operation that removes, adds, or
-duplicates rows, or that drops, renames, or overwrites internal design
-columns such as `.weight` or `.fpc_1` (a `select()` that keeps only
-`.weight` would silently lose the finite population correction).
-One-to-one joins (as in the merge above), row reordering, and column
-reordering are unaffected. Extracting a single complete replicate with
-`filter(.replicate == r)` from a replicated execution remains
-supported.
+One-to-one joins, row reordering, and new ordinary columns remain supported.
+Changing the row set or an internal column such as `.weight` or `.fpc_1` does
+not.
 
-With srvyr, the same domain analysis reads naturally as a pipeline:
-convert first, then filter the design object.
+With `srvyr`, use the same order. Convert first and then filter the survey
+object.
 
 ```{r, eval=requireNamespace("srvyr", quietly = TRUE)}
 library(srvyr)
@@ -235,78 +155,30 @@ library(srvyr)
 sample_with_data |>
   as_survey_design() |>
   filter(urban_rural == "Urban") |>
-  summarise(mean_consumption = survey_mean(consumption_per_capita))
+  summarise(
+    mean_consumption = survey_mean(consumption_per_capita)
+  )
 ```
 
-## Replicate-Weight Export
+## Replicate weights and PPS variance
 
-For replicate-based variance estimation (jackknife/BRR/bootstrap), use `as_svrepdesign()`. This converts a `tbl_sample` to `svydesign`, then to `svyrep.design` using `survey::as.svrepdesign()`.
+For a supported single-phase design, `as_svrepdesign()` creates replicate
+weights through `survey::as.svrepdesign()`.
 
 ```{r}
-rep_svy <- as_svrepdesign(sample, type = "auto")
-svymean(~households, rep_svy)
+replicate_design <- as_svrepdesign(sample, type = "auto")
+svymean(~households, replicate_design)
 ```
 
-You can also export directly to a `srvyr` replicate design, with `srvyr`
-already attached from the domain example above.
+Replicate methods are not automatic proofs of exactness. Generic PPS
+bootstraps do not recreate spatial selection, hard cube constraints, or a
+random Poisson sample size. `as_svydesign()` and `as_svrepdesign()` report or
+refuse combinations that cannot be represented under their documented
+contracts. See their reference pages before selecting a variance route for an
+advanced design.
 
-```{r, eval=requireNamespace("srvyr", quietly = TRUE)}
-rep_tbl <- as_survey_rep(sample, type = "auto")
-rep_tbl |>
-  summarise(mean_hh = survey_mean(households, vartype = "se"))
-```
-
-Replicate export supports single-phase designs. For PPS designs, use `type = "subbootstrap"` or `type = "mrbbootstrap"`. Two-phase designs should use `as_svydesign()` (linearization).
-
-LPM2 and SCPS require a different qualification. Their spatial spreading
-changes pairwise selection behavior, and samplyr does not currently provide
-a design-specific linearization estimator or joint inclusion probabilities
-for them. Consequently, `as_svydesign()` refuses these designs.
-`as_svrepdesign(type = "subbootstrap")` provides a generic PPS bootstrap
-approximation, but it does not reproduce the spatial selection algorithm
-inside each replicate and should not be described as exact.
-
-```{r}
-spatial_frame <- slice_head(bfa_eas, n = 500)
-
-spatial_sample <- sampling_design() |>
-  draw(
-    n = 40,
-    method = "lpm2",
-    spread = c(longitude, latitude)
-  ) |>
-  execute(spatial_frame, seed = 7)
-
-# Use method = "scps" for spatially correlated Poisson sampling.
-spatial_rep <- as_svrepdesign(
-  spatial_sample,
-  type = "subbootstrap",
-  replicates = 20
-)
-svymean(~households, spatial_rep)
-```
-
-## Variance with Joint Expectations
-
-Brewer's approximation is what `as_svydesign()` supplies by default for
-fixed-size PPS-WOR stages. When the exact second-order quantities are wanted
-instead, `joint_expectation()` reconstructs them directly for supported
-methods. For WOR stages, it returns joint inclusion probabilities
-$\pi_{kl}$. For WR/PMR stages (`pps_multinomial`, `pps_chromy`), it returns
-joint expected hits $E(n_k n_l)$. Depending on the selection method, these
-quantities are exact or approximate.
-
-`vignette("validation")` runs a two-stage `pps_brewer` design against a
-synthetic population with a known mean and compares the empirical spread of the
-estimates with the standard errors this default produces, which is the
-approximation being checked rather than assumed.
-
-It replays the design specification against the original frame, computing
-quantities per stratum or conditional parent occurrence. Blocks and units
-within blocks follow first appearance in the sample. Cross-block entries are
-products of marginal chances. Below a WR parent, every parent draw occurrence
-defines a separate independent child block, even when several draws hit the
-same population cluster.
+For supported PPS methods, `joint_expectation()` reconstructs exact or
+approximate second-order quantities according to the method.
 
 ```{r}
 sampford_sample <- sampling_design() |>
@@ -315,71 +187,37 @@ sampford_sample <- sampling_design() |>
   draw(n = 5, method = "pps_sampford", mos = households) |>
   execute(bfa_eas, seed = 2025)
 
-# Sampford joint inclusion probabilities are exact.
-jip <- joint_expectation(sampford_sample, bfa_eas, stages = 1)
+joints <- joint_expectation(sampford_sample, bfa_eas, stages = 1)
 
-# Use the exact matrix for single-stage PPS variance estimation.
-svy_exact <- as_svydesign(
+exact_pps_design <- as_svydesign(
   sampford_sample,
-  pps = ppsmat(jip[[1]])
-)
-svymean(~households, svy_exact)
-
-# The default export instead uses the generic Brewer approximation.
-svy_brewer <- as_svydesign(sampford_sample)
-svymean(~households, svy_brewer)
-```
-
-Which methods yield exact rather than approximate second-order quantities,
-and which yield none at all, is tabulated in `?joint_expectation`. In outline:
-`pps_sampford`, `pps_systematic`, `pps_cps` and `pps_poisson` are exact;
-`pps_brewer`, `pps_sps`, `pps_pareto` and unconstrained `cube` use the
-high-entropy approximation; `lpm2` and `scps` have none, because spatial
-spreading is not represented.
-
-For bounded cube designs, joint probabilities are also unavailable because
-the count constraints alter pairwise selection behavior. For LPM2, SCPS, and
-bounded cube, use the generic bootstrap route described above. For a
-multi-stage PPS design, supplying `pps = ppsmat(...)` represents only the
-stage covered by that matrix; omit `pps` to retain samplyr's full multi-stage
-linearization with the default stage-level approximation.
-
-## End-to-End Workflow
-
-A complete workflow from design to estimates.
-
-```{r}
-# 1. Define the design
-design <- sampling_design(title = "Burkina Faso EA Survey") |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 300)
-
-# 2. Validate the frame
-validate_frame(design, bfa_eas)
-
-# 3. Draw the sample
-ea_sample <- execute(design, bfa_eas, seed = 2026)
-
-# 4. Inspect before fieldwork
-summary(ea_sample)
-
-# 5. Collect data (simulated here)
-set.seed(99)
-field_data <- tibble(
-  ea_id = ea_sample$ea_id,
-  consumption_per_capita = round(
-    rlnorm(nrow(ea_sample), meanlog = 11, sdlog = 0.65)
-  )
+  pps = ppsmat(joints[[1]])
 )
 
-# 6. Merge collected data
-ea_sample <- ea_sample |>
-  left_join(field_data, by = "ea_id")
-
-# 7. Export and analyze
-svy <- as_svydesign(ea_sample)
-svymean(~consumption_per_capita, svy)
-confint(svymean(~consumption_per_capita, svy))
+svymean(~households, exact_pps_design)
 ```
+
+The Sampford matrix above is exact. CPS, systematic PPS, and Poisson selection
+also have exact second-order calculations in the supported cases.
+Generalized Brewer, SPS, Pareto, and unconstrained cube use the documented
+high-entropy approximation. Spatial methods and bounded cube do not provide a
+joint matrix. `?joint_expectation` is the authoritative method table.
+
+A user-supplied `pps` matrix describes one stage. For a multistage design,
+supplying it exports only the represented PPS stage. Omit it when the intended
+analysis is the full multistage linearization with the default stage-level
+variance treatment.
+
+## Analysis checklist
+
+1. Inspect the selected counts and weights before fieldwork.
+2. Verify that collected-data keys are unique at the sampled-unit level.
+3. Join outcomes without changing the selected row set.
+4. Convert the complete sample to a survey design.
+5. Define domains on the converted design.
+6. State every variance approximation used by an advanced selection method.
+
+Use `vignette("serialization")` to archive the selection and
+`vignette("design-semantics")` for the detailed export contracts.
 
 ## References

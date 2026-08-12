@@ -239,7 +239,7 @@ new_draw_spec <- function(
   method_implementation = NULL
 ) {
   method <- canonical_method_name(method, method_type)
-  # Built-in tiers are known here; registered methods carry theirs from
+  # Built-in tiers are known here. Registered methods carry theirs from
   # sondage::method_spec(). Designs read from files that predate the
   # field pick the tier up on reconstruction.
   method_probabilities <- method_probabilities %||%
@@ -334,7 +334,7 @@ is_tbl_sample <- function(x) {
 #' operations that remove, add, or duplicate rows, or overwrite
 #' internal design columns (`.weight`, `.fpc_k`, ...), mark the sample
 #' as modified. Design-based computations ([as_svydesign()],
-#' [joint_expectation()], [design_effect()]) reject modified samples;
+#' [joint_expectation()], [design_effect()]) reject modified samples.
 #' see the "Modified samples and domain analysis" section of [as_svydesign()]. Restoring the
 #' class with `as_tbl_sample()` does not clear the mark: the data is
 #' re-verified against the integrity record stored at execution, so a
@@ -348,7 +348,7 @@ is_tbl_sample <- function(x) {
 #'
 #' For an operational multi-stage listing, keep the unmodified partial sample
 #' as the first argument to [execute()] and pass the expanded plain object only
-#' as its frame; restoring the listing itself is not required. A plain object
+#' as its frame. Restoring the listing itself is not required. A plain object
 #' that still carries sample provenance is rejected as the frame of a fresh
 #' design execution, because that would rerun stage 1.
 #'
@@ -532,7 +532,7 @@ dplyr_reconstruct.tbl_sample <- function(data, template) {
 #' Attach sample provenance to a grouped data frame
 #'
 #' `tbl_sample` is placed ahead of `grouped_df` so samplyr's methods
-#' (ungroup, the dplyr hooks, `[`) dispatch first; grouped verbs still
+#' (ungroup, the dplyr hooks, `[`) dispatch first. Grouped verbs still
 #' reach the `grouped_df` methods through NextMethod().
 #' @noRd
 as_grouped_sample <- function(out, template) {
@@ -610,7 +610,7 @@ ungroup.tbl_sample <- function(x, ...) {
 #' - Row count changed: mark "rows".
 #' - Internal design column missing: mark "columns".
 #'
-#' Marks give immediate feedback; the integrity record in
+#' Marks give immediate feedback. The integrity record in
 #' metadata$integrity remains the authoritative check at the analysis
 #' boundary (sample_realization_status()).
 #' @noRd
@@ -619,7 +619,7 @@ restore_tbl_sample <- function(data, template) {
     return(demote_to_tibble(data))
   }
   if (inherits(data, "grouped_df")) {
-    # Grouped results keep their grouping structure; provenance is
+    # Grouped results keep their grouping structure. Provenance is
     # attached on top (tbl_sample ahead of grouped_df in the class).
     out <- as_grouped_sample(data, template)
   } else {
@@ -659,7 +659,7 @@ demote_to_tibble <- function(data) {
 #' Restore a tbl_sample after vctrs operations
 #'
 #' vctrs restores attributes from a prototype after operations like
-#' [vctrs::vec_rbind()]; the default restoration copies them blindly,
+#' [vctrs::vec_rbind()]. The default restoration copies them blindly,
 #' which previously produced a "clean" doubled realization from
 #' `vec_rbind(sample, sample)`. Routing through the shared restore
 #' helper applies the same demotion and marking rules as the dplyr
@@ -680,7 +680,7 @@ vec_restore.tbl_sample <- function(x, to, ...) {
 #'
 #' filter(), slice(), arrange(), and friends funnel through
 #' dplyr_row_slice(). Row removal or duplication is recorded on the
-#' result (see [dplyr_reconstruct.tbl_sample()]); a pure reordering is
+#' result (see [dplyr_reconstruct.tbl_sample()]). A pure reordering is
 #' not. The location check catches same-length changes (for example
 #' `slice(c(1, 1, 3:n))`) that a row-count comparison would miss.
 #'
@@ -784,7 +784,7 @@ dplyr_col_modify.tbl_sample <- function(data, cols) {
 #' @method [ tbl_sample
 #' @export
 `[.tbl_sample` <- function(x, i, j, ..., drop = FALSE) {
-  # x[i, ] and x[i, j] pass three or more index arguments; x[i] (column
+  # x[i, ] and x[i, j] pass three or more index arguments. x[i] (column
   # subsetting) passes two. Captured before NextMethod() consumes them.
   matrix_style <- (nargs() - !missing(drop)) >= 3L
   result <- NextMethod()
@@ -799,7 +799,7 @@ dplyr_col_modify.tbl_sample <- function(data, cols) {
       nrow(result) == nrow(x)
   ) {
     # Same-length row subsets can still duplicate and drop rows
-    # (x[c(1, 1, 3:n), ]); the row-count check in the restore helper
+    # (x[c(1, 1, 3:n), ]). The row-count check in the restore helper
     # cannot see that, so inspect the locations directly.
     loc <- tryCatch(
       vctrs::vec_as_location(i, n = nrow(x)),

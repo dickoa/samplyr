@@ -43,7 +43,7 @@ poisson_shortfall_tolerance <- 0.95
 
 # Built-in methods whose true first-order inclusion probabilities equal
 # the target pik only to a documented approximation (Rosen's order
-# sampling). Every other built-in is exact; sondage::method_spec()
+# sampling). Every other built-in is exact. sondage::method_spec()
 # reports the same tiers.
 approx_probability_methods <- c("pps_sps", "pps_pareto")
 
@@ -102,7 +102,7 @@ builtin_method_probabilities <- function(method) {
 #' Hash of the formals and body of the registered sample_fn and
 #' joint_fn (sondage >= 0.8.8 exposes them in method_spec()).
 #' Deparsing the language objects normalizes formatting and drops
-#' comments, so re-registering the same code fingerprints identically;
+#' comments, so re-registering the same code fingerprints identically.
 #' the enclosing environment is not covered. NULL for built-ins and
 #' for specs without functions.
 #' @noRd
@@ -124,7 +124,7 @@ method_implementation_hash <- function(spec) {
 #' default) treats the pik it receives as a selection weight, not an
 #' honored first-order target, so 1/pik design weights would be
 #' systematically biased. samplyr samples are weighted by
-#' construction; such a method cannot produce one.
+#' construction. Such a method cannot produce one.
 #' @noRd
 abort_unknown_probabilities <- function(method,
                                         call = rlang::caller_env()) {
@@ -147,7 +147,7 @@ abort_unknown_probabilities <- function(method,
 
 #' Check if method is WOR (built-in or registered)
 #'
-#' Balanced (cube) selection is without replacement; custom balanced
+#' Balanced (cube) selection is without replacement. Custom balanced
 #' methods carry method_type "balanced" and must count as WOR just
 #' like the built-in `cube` method does through the name test.
 #' @noRd
@@ -202,26 +202,9 @@ is_integerish_numeric <- function(x, tol = sqrt(.Machine$double.eps)) {
 
 #' Resolved certainty: an inclusion probability numerically equal to one
 #'
-#' Certainty is a property of the resolved probability, not of how that
-#' probability arose. An explicit `certainty_size`/`certainty_prop` rule,
-#' capping inside `sondage::inclusion_prob()`, and a balanced design landing
-#' on one are the same statistical object: the unit is self-representing and
-#' contributes no variance at its stage.
-#'
-#' Vectorized and elementwise, so the sample, digest, joint matrix and survey
-#' export all decide certainty the same way. Callers must pass inclusion
-#' probabilities: expected hits from WR/PMR methods are never certainty, even
-#' when at least one.
-#'
-#' The tolerance is deliberately tight, and much tighter than the
-#' `sqrt(.Machine$double.eps)` used for approximate-equality tests elsewhere.
-#' This is an exactness test, not an approximate one: every producer of a
-#' probability-one unit assigns the value rather than converging on it
-#' (`pmin(pik, 1)`, an explicit rule, `sondage::inclusion_prob()` capping), so
-#' the deviation to absorb is a few eps at most. The error to avoid is the
-#' other one: a design probability legitimately just below one, say
-#' 1 - 1e-8, must not be read as certainty, because that would drop a real
-#' variance contribution and understate the standard error.
+#' Callers pass inclusion probabilities, never expected hits. The tight
+#' tolerance absorbs floating-point noise without treating probabilities just
+#' below one as self-representing.
 #' @noRd
 is_certainty_probability <- function(p, tol = 100 * .Machine$double.eps) {
   is.finite(p) & p >= 1 - tol
@@ -295,23 +278,7 @@ signal_nominal_cap <- function(
   )
 }
 
-#' Collect selection events raised inside one stage and re-signal with the
-#' stage index attached
-#'
-#' `expr` is a promise and is forced under the handler. Leaves have no way to
-#' know which stage they are running in, and threading the index through every
-#' selection signature would touch six functions to carry one integer, so the
-#' stage is attached here, at the one place that knows it.
-#'
-#' Re-signaling happens after the handler has been removed, so the events
-#' reach the outer collector in `execute()` rather than this one.
 #' Tag selection events with the replicate that produced them
-#'
-#' Replicates re-run the whole design, so the same pool caps in every one of
-#' them. Aggregating without the tag would either report a replicated execution
-#' once per replicate or merge genuinely distinct pools of the same stage into
-#' one event. The tag lets the reporter aggregate within a replicate and
-#' deduplicate across replicates.
 #' @noRd
 tag_replicate_events <- function(expr, replicate) {
   events <- list()
@@ -335,6 +302,7 @@ tag_replicate_events <- function(expr, replicate) {
   result
 }
 
+#' Attach a stage to selection events raised by its leaves
 #' @noRd
 collect_stage_events <- function(expr, stage) {
   events <- list()
@@ -359,23 +327,9 @@ collect_stage_events <- function(expr, stage) {
 
 #' Report a PPS Poisson pool that cannot reach the size it was asked for
 #'
-#' Measured against `n_reachable`, not against the request. A pool asked for
-#' more units than it holds has already had its target clamped by the
-#' population, and that reduction is `nominal_cap`'s to report; charging the
-#' same units to saturation as well would be double counting.
-#'
-#' What is left is the reduction saturation alone caused: dominant units whose
-#' chances clip at one absorb the target while the pool still has room. Both
-#' conditions can be right about one stage, and then both fire: 20 requested
-#' from a pool of 10 that resolves to 8.54 has been reduced twice, 20 -> 10 by
-#' the population and 10 -> 8.54 by saturation. With uniform sizes the same
-#' pool resolves to exactly 10 and only `nominal_cap` fires.
-#'
-#' @param pik The whole pool's resolved chances, including any explicit
-#'   certainty units. A check that sees only the probabilistic remainder
-#'   cannot state the pool's totals.
-#' @param n_clipped Units whose *computed* chance exceeded one. Explicit
-#'   certainty units are selected deliberately at one and are not clipping.
+#' Measures saturation against the population-reachable take so it does not
+#' duplicate the nominal-cap diagnostic. `pik` includes certainty units.
+#' `n_clipped` does not.
 #' @noRd
 check_poisson_shortfall <- function(
   pik,
@@ -407,16 +361,7 @@ check_poisson_shortfall <- function(
 
 #' Name the parent pool an event came from
 #'
-#' A stage running inside a cluster loop sees one parent's rows at a time and
-#' labels its pools from the variables it can see, so the same stratum in three
-#' parents produces the same label three times. Aggregation then deduplicates
-#' three genuinely distinct pools into one, and the report names one pool while
-#' counting three.
-#'
-#' Qualifying at the loop is what keeps the leaves data-agnostic: no selection
-#' function has to carry an ancestry it never uses. Same capture-then-resignal
-#' shape as `collect_stage_events()`, so the re-signaled event leaves this
-#' handler rather than being caught by it.
+#' Qualifies otherwise identical leaf-pool labels by their realized parent.
 #' @noRd
 qualify_pool_events <- function(expr, parent_key) {
   events <- list()
@@ -450,20 +395,8 @@ qualify_pool_events <- function(expr, parent_key) {
 
 #' Collect every selection event of an execution and report each once
 #'
-#' The single point where per-pool events become user-facing conditions.
-#'
-#' Aggregation runs at two levels. Within a replicate the per-pool events of a
-#' stage become one aggregate, whose totals are what the user should read: a
-#' replicate is one realization of the design. Across replicates those
-#' aggregates collapse to a single report, because ten replicates of one design
-#' are one finding, not ten.
-#'
-#' Collapsing cannot require the aggregates to match. A replicated multi-stage
-#' design reaches different parents in different replicates, so the same stage
-#' legitimately names different pools each time. Hashing the whole aggregate
-#' therefore emitted one warning per distinct pool set, which is the spam this
-#' machinery exists to prevent. The pool lists are unioned instead, and the
-#' report says the counts describe one replicate whenever they varied.
+#' Aggregates pools within a replicate and unions their labels across
+#' replicates before emitting user-facing conditions.
 #' @noRd
 report_selection_events <- function(expr) {
   events <- list()
@@ -508,11 +441,7 @@ report_selection_events <- function(expr) {
       }
     )
 
-    # Classify each replicate before merging any of them. The reading is a
-    # property of one realization: a replicate that drew only small clusters
-    # exhausted them, and one that drew a large cluster did not. Merging first
-    # would let whichever replicate reported earliest name the class for the
-    # rest, and would file pools from a census under "capped".
+    # Classify before merging because exhaustion is replicate-specific.
     outcome_of <- vapply(
       per_replicate,
       function(x) selection_event_outcome(first$operation, x),
@@ -740,7 +669,7 @@ warn_census <- function(stage, x) {
 #'
 #' Deliberately not the population-cap wording. A Poisson or Bernoulli stage
 #' asked for more units than the pool holds has its per-unit chances clamped at
-#' 1, which caps the target it aims at; it has not selected that many units,
+#' 1, which caps the target it aims at. It has not selected that many units,
 #' and the realized count is a draw that usually lands below the cap. Naming a
 #' selected count here would state a number the sample does not contain.
 #' @noRd
@@ -931,42 +860,9 @@ check_keyword_args <- function(dots, candidates, call = rlang::caller_env()) {
 
 #' Refuse names that belong to nobody in a `...` that is forwarded onward
 #'
-#' A function whose optional arguments follow a `...` matches them exactly, so
-#' a near miss such as `nes` for `nest` is forwarded to the downstream package
-#' instead of raising R's "unused argument" error. Where the `...` is reserved
-#' `check_keyword_args()` refuses everything; here it carries arguments that
-#' legitimately belong to someone else, so only names neither side accepts are
-#' refused.
-#'
-#' [rlang::check_dots_used()] is the usual tool and does not work on this path.
-#' It reports an argument the downstream function binds but never forces as
-#' unused, which rejects valid calls: `as_svrepdesign(x, type = "Fay",
-#' fay.rho = 0.3)` returns a design, and `check_dots_used()` refuses it. The
-#' accepted names are therefore listed explicitly.
-#'
-#' A positional value is refused outright. The forwarded arguments are spliced
-#' into a call whose named arguments are already fixed, so an unnamed one is
-#' matched to whichever formal happens to be free.
-#'
-#' `derived` names a third category between the two. The downstream function
-#' declares the argument, but the caller computes it from the sample and its
-#' design and supplies it itself, so a user value collides in the eventual
-#' `do.call()` rather than reaching the estimator. Reporting it as unknown
-#' would be wrong: the name is known, it is the ownership that is not the
-#' user's. One class carries them all, with the name in the `argument` field,
-#' so a caller can handle the category without a taxonomy per argument.
-#'
-#' @param dots The caller's `...`, captured with `enquos()`. Quosures, not
-#'   values: a stray argument is diagnosed by its name, so forcing it would let
-#'   its expression fail first and replace this message with its own.
-#' @param owned The arguments the caller itself owns, for suggestions.
-#' @param accepted The argument names the downstream function accepts.
-#' @param derived The argument names the caller supplies itself, refused with
-#'   their own class. Never listed in `accepted`, but still a candidate for a
-#'   spelling suggestion, since `strat` means `strata` whether or not `strata`
-#'   can be given; such a suggestion says the name is derived rather than
-#'   offering it as a fix.
-#' @param forwarded_to The downstream function, unquoted for `{.fn}`.
+#' Reject unnamed, misspelled, and caller-derived arguments before forwarding.
+#' Explicit accepted names avoid forcing downstream arguments merely to check
+#' whether they were used.
 #' @noRd
 check_forwarded_args <- function(
   dots,
@@ -1119,22 +1015,8 @@ collect_ancestor_cluster_vars <- function(design, stage_idx) {
 
 #' Identity of the realized ancestor occurrence a stage's units sit inside
 #'
-#' `collect_ancestor_cluster_vars()` answers a different question and keeps
-#' answering it: it names the cluster variables an ancestor *declares*, which
-#' is what validation, linkage and the frame digest need before an execution
-#' exists and before any `.draw_k` column could. This one names what
-#' identifies an ancestor occurrence in a sample that has already been drawn.
-#'
-#' A with-replacement ancestor selected twice produces two independent
-#' conditional populations of descendants, so its draw index belongs to the
-#' identity. The index restarts inside every selection pool, so it identifies
-#' an occurrence only once the pool does: the ancestor's strata qualify it,
-#' the same way the survey export qualifies the draw index it keys on.
-#'
-#' @param sample The realized sample. An ancestor that declared a
-#'   with-replacement method must carry its draw index: a sample that has lost
-#'   it cannot express the occurrences, and reading the ancestor as without
-#'   replacement instead would merge two conditional populations.
+#' Adds draw indices for with-replacement ancestors and qualifies them by their
+#' selection pools. The realized sample must still carry those indices.
 #' @noRd
 collect_ancestor_occurrence_vars <- function(design, stage_idx, sample,
                                              call = caller_env()) {
@@ -1357,7 +1239,7 @@ apply_integrity_marks <- function(x) {
 #' "columns" (an internal design column was overwritten or dropped),
 #' or "values" (protected values changed through an untracked route,
 #' detected by integrity verification). The marks accumulate in
-#' `metadata$modified` and give immediate feedback;
+#' `metadata$modified` and give immediate feedback.
 #' check_sample_unmodified() treats the integrity record as
 #' authoritative at the analysis boundary.
 #' @noRd
@@ -1545,7 +1427,7 @@ check_sample_unmodified <- function(x, fn_name, call = caller_env()) {
 #' Label each row of a key table
 #'
 #' One label per row, in row order. `format_key_labels()` deduplicates on top
-#' of this; callers holding a table of already-distinct groups need the
+#' of this. Callers holding a table of already-distinct groups need the
 #' positional correspondence instead.
 #' @noRd
 key_labels <- function(df, vars) {

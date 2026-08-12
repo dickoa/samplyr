@@ -1,32 +1,14 @@
 ## Joint expectations of the activation
 
-# `joint_expectation(master, waves = c(t, s))` states how two occasions of a
-# rotation overlap, exactly, from the record the master froze at its draw.
-#
-# Conditional on the frozen quotas, the panels inside a block are an
-# arrangement of that block's label multiset, so for a block of `m`
-# assignment units with takes `a_t` and `a_s` and intersection take
-# `a_both = sum(q_bg for g in A_t and A_s)`:
+# Conditional on frozen quotas, for a block of m assignment units:
 #
 #   P(i active at t)                     = a_t / m
 #   P(i active at t and at s)            = a_both / m
 #   P(i active at t, j active at s)      = (a_t a_s - a_both) / {m (m - 1)}
 #
-# for units i != j of one block, and the product of the marginals for units of
-# different blocks, whose position permutations are drawn independently. The
-# same-wave case is the third expression at `t == s`, which is why one
-# implementation answers both questions.
-#
-# Two properties are worth knowing rather than rediscovering. Quotas are
-# routinely unequal, because the spread-tail rule gives one block an extra
-# unit whenever a pool is not a multiple of the block size, so `q_bg` is
-# always read from the record and never assumed flat. And a certainty block
-# takes every unit at every wave, so `a_t = a_s = a_both = m` and the third
-# expression is exactly one; permanence needs no branch in the arithmetic.
-#
-# What this states is conditional on the phase-1 units and on the frozen
-# quotas. It is not the unconditional joint inclusion probability of the
-# two-phase design, which also carries the master's own pairwise term.
+# Cross-block expectations are products of marginals. Quotas always come from
+# the record. Certainty blocks reduce to one without a separate branch.
+# These are conditional activation moments, not full two-phase joint chances.
 
 #' Arguments the activation mode does not use
 #'

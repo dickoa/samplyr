@@ -1,31 +1,8 @@
 ## Panel assignment
 
-# `execute(panels = k)` partitions a realized sample into k operational
-# groups. The partition is a randomized fixed-quota assignment inside frozen
-# ordered micro-pools: within every first-stage selection stratum the
-# assignment units are ordered, cut into consecutive blocks, given fixed
-# per-panel quotas, and permuted within each block.
-#
-# The construction has two exact probability statements at different
-# conditioning levels, and they answer different questions. Before the
-# pool-level identity permutation is fixed, every unit has marginal
-# probability 1/k of carrying any given panel. Once it is fixed, activating a
-# set of panels takes a simple random sample without replacement of the
-# realized quota from each block, so within block `b` a unit's conditional
-# probability is `q_bg / m_b` and a pair's is
-# `q_bg (q_bg - 1) / {m_b (m_b - 1)}`. The block sizes and the block-by-panel
-# quotas are therefore recorded with the sample: they, not 1/k, are what a
-# later activation is computed from.
-#
-# Certainty units are labelled from their own pools. They are permanent, so
-# they consume no rotating quota.
-#
-# `panels` takes either a count or a rotation schedule. A count carries no
-# information about how few panels a later wave will activate, so it uses the
-# worst case block size 2k. A schedule states it, and the block size follows
-# `r_min`, the fewest panels any declared wave activates: finer blocks retain
-# more of the assignment order, and the take stays large enough for a
-# within-block variance estimate.
+# Panels are randomized fixed-quota assignments inside ordered blocks.
+# Activation uses the recorded block quotas, not the marginal 1/k assignment.
+# Certainty units are permanent. Schedules size blocks from their leanest wave.
 
 #' Normalize the `panels` argument to a count and an optional schedule
 #'
@@ -387,11 +364,7 @@ panel_assignment_context <- function(design, stage_num, sample,
                                      call = caller_env()) {
   spec <- design$stages[[stage_num]]
   draw_col <- paste0(".draw_", stage_num)
-  # Declared and realized are separate questions. A stage that selects with
-  # replacement assigns draw occurrences, and a sample no longer carrying its
-  # draw index cannot express them: reading the stage as without replacement
-  # instead would collapse two occurrences of one cluster into one unit and
-  # assign it a single panel.
+  # With-replacement panel units are draw occurrences, so they need draw IDs.
   multi_hit <- is_multi_hit_method(spec$draw_spec)
   if (multi_hit && !draw_col %in% names(sample)) {
     abort_panel_missing_identity(stage_num, draw_col, occurrence = TRUE,
@@ -408,23 +381,8 @@ panel_assignment_context <- function(design, stage_num, sample,
     clustered = clustered,
     multi_hit = multi_hit,
     ancestor_vars = ancestors,
-    # A clustered stage is identified by its cluster, qualified by the
-    # occurrence it sits in, by its own selection strata, and by its own draw
-    # index when one population unit can be selected twice. A terminal
-    # unclustered stage assigns rows, and a row is identified by `.sample_id`
-    # whatever the method was.
-    #
-    # The strata are there because a draw index restarts inside every
-    # selection pool, so a stage's own strata are what make its index name an
-    # occurrence. They are unconditional rather than added only alongside an
-    # index: the alternative makes the key depend on the clustered-selection
-    # invariant that a stratum is constant within a cluster label, which is
-    # enforced in another file and for another purpose.
-    #
-    # Both lists are composed from sources that can name the same column: a
-    # stage stratified by its own parent contributes that parent twice. They
-    # are canonical, first occurrence kept, because a repeated column would
-    # otherwise reach the record as an invented `psu.1` field.
+    # Strata qualify draw indices because they restart in each selection pool.
+    # unique() prevents duplicate ancestor/stratum columns in stored keys.
     key_vars = if (clustered) {
       unique(c(
         ancestors, spec$strata$vars, spec$clusters$vars,
@@ -439,11 +397,7 @@ panel_assignment_context <- function(design, stage_num, sample,
     pool_vars = unique(c(ancestors, spec$strata$vars)),
     certainty_col = paste0(".certainty_", stage_num),
     control = spec$draw_spec$control,
-    # The vocabulary describes the sampling law, not which column implements
-    # the key. A stage that can select one population unit twice assigns
-    # occurrences whether it is clustered or not, and a terminal
-    # with-replacement stage is one of those even though `.sample_id` is the
-    # safest thing to locate its rows by.
+    # The unit label follows the sampling law, not its key column.
     unit = if (multi_hit) {
       "occurrence"
     } else if (clustered) {
@@ -594,8 +548,8 @@ supported_panel_record_versions <- c(1L, 2L, 3L)
 #'
 #' The three steps are ordered rather than independent. Which law the record
 #' was written under decides what its fields mean, so the algorithm and version
-#' are established first; normalization then fills in what that version left
-#' implicit; and only then is the record checked against what that version
+#' are established first. Normalization then fills in what that version left
+#' implicit, and only then is the record checked against what that version
 #' requires. A reader that validated first would be checking fields whose
 #' meaning it had not yet established, and one that decoded first would be
 #' interpreting them.
@@ -763,7 +717,7 @@ check_panel_record_fields <- function(record, what, call = caller_env()) {
   }
 
   # Distinguished from `key_vars` by what an empty list means. No column is a
-  # complete identity, so an empty `key_vars` names nothing; no column is a
+  # complete identity, so an empty `key_vars` names nothing. No column is a
   # complete pool division, which is one pool holding every unit, and that is
   # what an unstratified first-stage assignment is. Absent is neither.
   if (!valid_record_columns(record$pool_vars, allow_none = TRUE)) {
@@ -909,7 +863,7 @@ describe_record_value <- function(value) {
 #' smallest, so a pool that survives `r_min` survives every declared wave.
 #'
 #' Selection certainty and activation permanence are recorded separately.
-#' `class` says how the master selected the pool; `activation` says whether
+#' `class` says how the master selected the pool. `activation` says whether
 #' its units rotate. A promoted pool is not selection-certain, and anything
 #' reading the record must branch on `activation`.
 #' @noRd
@@ -1004,34 +958,8 @@ describe_pool_stratum <- function(pool) {
 
 #' Fill in what an earlier record version left implicit
 #'
-#' Version 1 predates the separation of selection certainty from activation
-#' permanence, and it recorded no small-pool policy because it applied none:
-#' positivity was unchecked, not defaulted to refusal. Reading the missing
-#' field as `"error"` is therefore an interpretation rather than a recovery,
-#' and it is the safe one, since it is what this build would have written for
-#' an assignment it did not promote. It does not make the record safe: a
-#' version-1 assignment can already contain a stranded pool, which is why
-#' `activate_cohort()` checks the realized take rather than trusting the
-#' policy field.
-#'
-#' Versions 1 and 2 could only assign from the first executed stage, so their
-#' assignment stage is set from the version and not read from the record. A
-#' version-1 or version-2 record carrying an `assignment_stage` field is
-#' carrying a field its version does not have: the number is tolerated and
-#' ignored, because the version owns the meaning and reading a later version's
-#' field out of an earlier version's record would let stage-aware semantics
-#' arrive under a number that never expressed them.
-#'
-#' Their `unit` value is left exactly as written. The vocabulary changed at
-#' version 3 and an older record cannot always be translated into it: an
-#' unclustered with-replacement assignment recorded `"element"` and keyed on
-#' `.sample_id`, so nothing in the record says whether the stage was multi-hit.
-#' Version 3 is where the vocabulary is authoritative, and rewriting an older
-#' value would be inventing one.
-#'
-#' Nothing here fills in a version-3 field. Version 3 states its stage, unit
-#' and column lists, so a missing one is a malformed record rather than an
-#' implicit one, and `check_panel_record_fields()` refuses it.
+#' Versions 1 and 2 assign from stage 1 and lack a small-pool policy. Their
+#' older unit vocabulary is preserved. Version 3 fields must be explicit.
 #' @noRd
 normalize_panel_record <- function(record) {
   if (is_null(record)) {

@@ -17,7 +17,7 @@ Initial release.
   `as_svrepdesign()`, `as_survey_design()`), an argument is accepted only
   if samplyr or the receiving function owns its name. The arguments that
   follow the `...` are matched exactly, so `nes`, `methodd`, and `typ`
-  used to be forwarded and silently ignored; each is now reported with
+  used to be forwarded and silently ignored. Each is now reported with
   the name it was meant to be. Positional values are refused there, since
   they would be matched to whichever argument downstream happened to be
   free. Every argument the receiving function accepts still forwards,
@@ -54,13 +54,13 @@ Initial release.
 * `draw()`, `design_json()`, and `write_design()` take `...` before their
   optional arguments, like the verbs above. `draw(design, n, frac)` and
   `write_design(x, path, frame)` stay positional, because that is what a
-  draw and a save are written as; the fourteen modifiers after them must
+  draw and a save are written. The fourteen modifiers after them must
   be named. `draw(design, 2, NULL, "srswor")` used to match `"srswor"` to
   `min_n` and report an unrelated bounds error.
 * `design_effect()`, `effective_n()` and `varcomp()` on a `tbl_sample`
   name their contract instead of failing inside the value they were
   handed. `design_effect(x, y)` reads as "the design effect for `y`" and
-  was reported as `object 'y' not found`; it now says the method takes no
+  was reported as `object 'y' not found`. It now says the method takes no
   outcome, computes the weighting (Kish) design effect from `.weight`
   alone, and points at `survey::svymean(deff = TRUE)` for an
   outcome-specific one. Named arguments still forward, so
@@ -80,7 +80,7 @@ Initial release.
   two spellings are the same call. Mixing them is refused. Names inside
   the list are frame labels, so a list member that is not a data frame is
   reported by frame position and label
-  (`samplyr_error_frame_not_data_frame`); only names on the call's own
+  (`samplyr_error_frame_not_data_frame`). Only names on the call's own
   arguments are read as possible misspelled arguments.
 * Every verb that takes a frame reads it the same way. A data frame and a
   one-element list of data frames are the same input in `execute()`,
@@ -95,7 +95,7 @@ Initial release.
   frame exactly as to a list, and reports each with the class `execute()`
   reports. Where one frame cannot say whether it is the next stage's
   register or a hierarchy covering the rest, it requires `stages`, as
-  `execute()` does; a partial sample previously defaulted to the next
+  `execute()` does. A partial sample previously defaulted to the next
   stage alone.
 * A missing frame column is reported with the role its stage gives it, so
   a design selecting on `u` says `u` is the PRN variable rather than only
@@ -129,7 +129,7 @@ Initial release.
 * Random-size methods (`bernoulli`, `pps_poisson`) accept `n` (expected size)
   or `frac` (sampling fraction).
 * Zero selections from a random-size method error by default
-  (`on_empty = "error"`); `"warn"` and `"silent"` accept the empty
+  (`on_empty = "error"). `"warn"` and `"silent"` accept the empty
   realization, which contributes zero to Horvitz-Thompson totals and keeps
   estimates from repeated executions unbiased. Custom methods registered
   with `fixed_size = FALSE` honor `on_empty` the same way. A replicated
@@ -176,7 +176,7 @@ Initial release.
   with class `samplyr_message_allocation_capped`.
 * A request above the frame size allocates every unit rather than failing,
   and is reported through the shared capping diagnostic described under
-  Diagnostics; bounds that make a request impossible raise
+  Diagnostics. Bounds that make a request impossible raise
   `samplyr_error_alloc_min_infeasible` or
   `samplyr_error_alloc_max_infeasible` rather than adjusting silently.
 * With-replacement and Poisson-multinomial designs are not bounded by the
@@ -197,7 +197,7 @@ Initial release.
   `execute(design, hierarchy)` runs every stage against one table, and
   `execute(design, schools, classes, students)` gives each stage its own
   register, mapped by position. Any count other than one or one per stage
-  is `samplyr_error_frame_count`. A register is supplied whole; it is
+  is `samplyr_error_frame_count`. A register is supplied whole and is
   restricted to the units its parent stage selected, and the variables
   earlier stages introduced are carried onto it. Nothing has to be
   pre-filtered or have upper-stage columns duplicated into it.

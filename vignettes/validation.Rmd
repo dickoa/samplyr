@@ -21,7 +21,7 @@ This vignette runs a set of smoke tests for `samplyr` on synthetic finite popula
 1. Deterministic checks on design metadata and invariants.
 2. Monte Carlo checks for estimator bias, standard-error calibration, and 95% CI coverage.
 
-The goal is not to benchmark speed, and it is not a proof of correctness. A run at `R = 199` can detect a design that is plainly wrong; it cannot establish that one is right. What a pass says is that the package behaved consistently with correctness on these three designs at this replication count, which is the level of assurance a smoke test provides. The scale of the Monte Carlo uncertainty is reported below so the bands can be read for what they are.
+The goal is not to benchmark speed, and it is not a proof of correctness. A run at `R = 199` can detect a design that is plainly wrong. It cannot establish that one is right. A pass says that the package behaved consistently with correctness on these three designs at this replication count. That is the level of assurance a smoke test provides. The scale of the Monte Carlo uncertainty is reported below so the bands can be read for what they are.
 
 ## Synthetic population with known properties
 
@@ -259,7 +259,7 @@ tibble(
 
 A pass across these three designs says that:
 
-1. the deterministic invariants on `samplyr` design metadata hold exactly, which is a proof for the sample drawn and not a Monte Carlo result;
+1. the deterministic invariants on `samplyr` design metadata hold exactly, which is a proof for the sample drawn and not a Monte Carlo result
 2. nothing in the exported `survey` designs is far enough from correct design-based inference for `R = 199` to detect.
 
 The second is the weaker claim, and it is the one that matters here. The acceptance bands are about three Monte Carlo standard errors wide, so a bias or a variance error smaller than that will pass unnoticed. A pass is consistent with correctness rather than evidence for it.

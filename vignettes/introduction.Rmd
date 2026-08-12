@@ -1,10 +1,10 @@
 ---
-title: "Introduction to samplyr"
+title: "Get Started with samplyr"
 output: rmarkdown::html_vignette
 bibliography: references.bib
 link-citations: true
 vignette: >
-  %\VignetteIndexEntry{Introduction to samplyr}
+  %\VignetteIndexEntry{Get Started with samplyr}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -21,1139 +21,260 @@ library(samplyr)
 library(dplyr)
 ```
 
-## Overview
+## The basic workflow
 
-`samplyr` provides a tidy grammar for specifying and executing survey sampling designs. The package is built around a minimal set of composable verbs that handle stratified, clustered, and multi-stage sampling.
+`samplyr` separates a sampling design from the frame on which it runs. You
+describe the design first, validate or inspect it, and then execute it against
+one or more frames.
 
-For the statistical semantics and assumptions underlying each operation, see `vignette("design-semantics")`. This vignette takes the sample size as given; `vignette("survey-planning")` covers how to arrive at one, and how an allocation computed there is handed to `draw()`.
-
-The core idea is that sampling code should read like its English description.
-
-```{r, eval = FALSE}
-library(samplyr)
-library(dplyr)
-
-# "Stratify by region, proportionally allocate 500 samples, execute"
-sampling_design(title = "My sampling design") |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 500) |>
-  execute(frame, seed = 1)
-```
-
-To see how this works in practice, consider a real survey design from @lohr2022 (Example 7.1), based on a 1991 study of bed net use in rural Gambia [@dalessandro1994]:
-
-> Malaria morbidity can be reduced by using bed nets impregnated with insecticide, but this is only effective if the bed nets are in widespread use. In 1991, a nationwide survey was designed to estimate the prevalence of bed net use in rural areas of the Gambia (D'Alessandro et al., 1994).
->
-> The sampling frame consisted of all rural villages of fewer than 3,000 people. The villages were **stratified by three geographic regions** (eastern, central, and western) and by **whether the village had a public health clinic (PHC)** or not. In each region **five districts were chosen with probability proportional to the district population**. In each district **four villages were chosen, again with probability proportional to census population**: two PHC villages and two non-PHC villages. Finally, **six compounds were chosen** more or less randomly from each village.
-
-In `samplyr`, this three-stage stratified cluster design translates directly into code:
-
-```{r}
-design <- sampling_design(title = "Gambia bed nets") |>
-  add_stage() |>
-    stratify_by(region) |>
-    cluster_by(district) |>
-    draw(n = 5, method = "pps_brewer", mos = population) |>
-  add_stage() |>
-    stratify_by(phc) |>
-    cluster_by(village) |>
-    draw(n = 2, method = "pps_brewer", mos = population) |>
-  add_stage() |>
-    draw(n = 6)
-design
-```
-
-And you can then use `execute` to get your sample.
-
-```{r, eval = FALSE}
-sampling_design(title = "Gambia bed net") |>
-  add_stage() |>
-    stratify_by(region) |>
-    cluster_by(district) |>
-    draw(n = 5, method = "pps_brewer", mos = population) |>
-  add_stage() |>
-    stratify_by(phc) |>
-    cluster_by(village) |>
-    draw(n = 2, method = "pps_brewer", mos = population) |>
-  add_stage() |>
-    draw(n = 6) |>
-  execute(frame, seed = 1991)
-
-# or
-execute(design, frame, seed = 1991)
-```
-
-The `samplyr` code mirrors the verbal description verb for verb.
-
-## The Grammar
-
-`samplyr` uses 5 verbs and 1 modifier:
-
-| Function | Purpose |
-|----------|---------|
-| `sampling_design()` | Create a new sampling design |
-| `stratify_by()` | Define stratification variables and allocation |
-| `cluster_by()` | Define cluster/PSU variable |
-| `draw()` | Specify sample size, method |
-| `execute()` | Run the design on a frame |
-| `add_stage()` | Delimit stages in multi-stage designs |
-
-## Deferred Column Resolution
-
-`stratify_by()` and `cluster_by()` accept bare column names and store
-them in the design object. Column names are validated only when
-a frame is available (`execute()`, `as_svydesign()`), which
-keeps design specification separate from execution.
-
-```{r, eval = FALSE}
-design <- sampling_design(title = "Stratified cluster sampling") |>
-  stratify_by(region, alloc = "proportional") |>
-  cluster_by(ea_id) |>
-  draw(n = 200)
-
-sample <- execute(design, bfa_eas, seed = 101)
-```
-
-## Example Data
-
-We'll use the `bfa_eas` dataset throughout this vignette. It is an enumeration area frame for Burkina Faso, with 44,570 EAs across 13 regions.
+The smallest complete example is a simple random sample without replacement.
 
 ```{r}
 data(bfa_eas)
 
-bfa_eas |>
-  glimpse()
-```
-
----
-
-## Simple Random Sampling
-
-The most basic design selects n units at random from the frame.
-
-```{r}
-design <- sampling_design(title = "Simple Random Sampling") |>
+design <- sampling_design(title = "Burkina Faso EA sample") |>
   draw(n = 100)
-design
-```
 
-The `sampling_design` object stores design metadata and can be reused.
-
-```{r}
 sample <- execute(design, bfa_eas, seed = 24)
-nrow(sample)
+sample
 ```
 
-The result includes the original columns plus sampling metadata: `.weight` (sampling weight), `.weight_1`, `.weight_2`, etc. (per-stage weights). For with-replacement methods, `.draw_1`, `.draw_2`, etc. number each independent draw.
+The frame has one row per enumeration area. The result keeps its frame columns
+and adds the design information needed for analysis.
 
 ```{r}
+library(dplyr)
 sample |>
   as_tibble() |>
-  select(ea_id, region, urban_rural, .weight, .weight_1)
+  select(ea_id, region, households, .weight, .weight_1) |>
+  slice_head(n = 6)
 ```
 
-### Selection Methods
+`.weight` is the overall design weight. In a one-stage sample it equals
+`.weight_1`. A multistage sample also carries one weight column per stage and
+multiplies them into `.weight`.
 
-The `method` argument controls how units are selected. By default, `samplyr` uses simple random sampling without replacement (`srswor`).
+## The design grammar
 
-Systematic sampling selects units at fixed intervals, which can improve precision when the frame is ordered.
+Six functions cover the ordinary workflow.
+
+| Function | Role |
+|:--|:--|
+| `sampling_design()` | Start a reusable design |
+| `stratify_by()` | Divide a stage into sampling strata |
+| `cluster_by()` | Name the units selected as clusters |
+| `draw()` | Choose the size and selection method |
+| `add_stage()` | Start another sampling stage |
+| `execute()` | Run the design against its frame or frames |
+
+Column names are stored in the design and resolved when a frame is supplied.
+This lets the same design be validated and reused against compatible frame
+vintages.
 
 ```{r}
-sample_sys <- sampling_design(title = "Systematic") |>
-  draw(n = 100, method = "systematic") |>
-  execute(bfa_eas, seed = 2021)
-sample_sys
+stratified_design <- sampling_design(title = "Stratified EA sample") |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 260)
+
+validate_frame(stratified_design, bfa_eas)
 ```
 
-Sampling with replacement allows the same unit to be selected multiple times, useful for bootstrap procedures.
+`validate_frame()` returns invisibly when the required columns and values are
+usable. It reports problems before selection begins.
+
+## Stratified sampling
+
+Stratification samples independently within groups. Here `n = 260` is a total
+allocated across regions in proportion to their frame sizes.
 
 ```{r}
-sample_wr <- sampling_design(title = "SRS WR") |>
-  draw(n = 100, method = "srswr") |>
-  execute(bfa_eas, seed = 123)
-sample_wr
+stratified_sample <- execute(stratified_design, bfa_eas, seed = 25)
+
+stratified_sample |>
+  count(region, name = "n_sampled")
 ```
 
-### Using Sampling Fractions
+If `stratify_by()` has no allocation rule, a scalar `n` is interpreted per
+stratum. You can also pass a named vector or a `svyplan::n_alloc()` result to
+`draw()` when each stratum needs its own take.
 
-Instead of a fixed sample size, you can specify a sampling fraction with `frac`.
+Use equal allocation when comparable precision within each stratum is the
+goal. Use proportional allocation for a self-weighting element design when
+the other design features permit it. Neyman and cost-weighted allocations
+need prior variability or cost information and optimize the criterion supplied
+for that planning variable. They are not universal optima for every outcome
+and domain.
+
+Sample-size bounds can protect small reporting domains.
 
 ```{r}
-sample <- sampling_design() |>
-  draw(frac = 0.05) |>
-  execute(bfa_eas, seed = 1789)
-nrow(sample)
+bounded_design <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 260, min_n = 12, max_n = 30)
+
+bounded_sample <- execute(bounded_design, bfa_eas, seed = 26)
+bounded_sample |>
+  count(region, name = "n_sampled")
 ```
 
-Bernoulli sampling selects each unit independently with the specified probability. This gives a random sample size, which can simplify field protocols.
+For without-replacement sampling, the population of a stratum remains a hard
+upper bound. If a requested allocation cannot be reached, `execute()` reports
+the affected pools and uses the attainable take.
+
+## Cluster and PPS sampling
+
+`cluster_by()` changes the sampling unit. The next example selects enumeration
+areas with probability related to their household counts.
 
 ```{r}
-sample <- sampling_design() |>
-  draw(frac = 0.05, method = "bernoulli") |>
-  execute(bfa_eas, seed = 1960)
-nrow(sample)
+pps_design <- sampling_design(title = "PPS EA sample") |>
+  cluster_by(ea_id) |>
+  draw(n = 80, method = "pps_brewer", mos = households)
+
+pps_sample <- execute(pps_design, bfa_eas, seed = 27)
+nrow(pps_sample)
 ```
 
-### Rounding Behavior
+`mos` is the measure of size. A large measure gives a unit a larger selection
+probability. If a resolved probability reaches one, that unit is selected with
+certainty and contributes no variance at that stage. Certainty at one stage
+does not make the final multistage weight equal to one.
 
-When using `frac`, the computed sample size (N × frac) must be rounded to an
-integer, and the `round` argument decides how. The default `"up"` rounds up,
-which matches SAS SURVEYSELECT and never returns fewer units than the fraction
-asks for. `"down"` rounds down, giving the largest sample that stays within the
-fraction. `"nearest"` applies standard mathematical rounding.
+`pps_brewer` is one fixed-size PPS method. Method choice also depends on the
+second-order information required for variance estimation, whether a random
+sample size is acceptable, and whether permanent random numbers are needed.
+The comparison is in `?selection-methods`.
 
-```{r}
-# Frame of 105 units, frac = 0.1 -> 10.5
-frame_105 <- head(bfa_eas, 105)
+## A two-stage sample
 
-# Default: rounds up to 11
-nrow(sampling_design() |> draw(frac = 0.1) |> execute(frame_105, seed = 3))
-
-# Round down to 10
-nrow(sampling_design() |> draw(frac = 0.1, round = "down") |> execute(frame_105, seed = 3))
-
-# Round to nearest (10)
-nrow(sampling_design() |> draw(frac = 0.1, round = "nearest") |> execute(frame_105, seed = 3))
-```
-
----
-
-## Stratified Sampling
-
-Stratification partitions the frame into non-overlapping groups (strata) and samples from each. This ensures representation from all subgroups and often improves precision.
-
-### Per-Stratum Sample Size
-
-Without an allocation method, `n` specifies the sample size within each stratum.
+Multistage designs select units within units chosen earlier. This small example
+selects EAs first and then households from a separate listing frame.
 
 ```{r}
-sample <- sampling_design() |>
-  stratify_by(region) |>
+ea_frame <- bfa_eas |>
+  slice_head(n = 200)
+
+household_frame <- data.frame(
+  ea_id = rep(ea_frame$ea_id, each = 12),
+  household_id = sequence(rep(12, nrow(ea_frame))),
+  outcome = rnorm(12 * nrow(ea_frame))
+)
+
+two_stage_design <- sampling_design(title = "EA and household sample") |>
+  cluster_by(ea_id) |>
   draw(n = 20) |>
-  execute(bfa_eas, seed = 123)
-
-sample |>
-  count(region)
-```
-
-### Allocation Methods
-
-With an allocation method, `n` becomes the total sample size to distribute across strata. Allocation methods are defined for total sample-size allocation, so `draw(frac = ...)` is not supported when `alloc` is set.
-
-**Proportional allocation** distributes the sample proportionally to stratum sizes, ensuring the sample mirrors the population structure.
-
-```{r}
-sample <- sampling_design(title = "Proportional Allocation") |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 300) |>
-  execute(bfa_eas, seed = 42)
-
-sample |>
-  count(region) |>
-  mutate(pct = n / sum(n))
-```
-
-**Equal allocation** assigns the same sample size to each stratum, regardless of population size. It is the usual choice when the strata are themselves the domains of interest: for a difference between two stratum means with equal stratum variances, an equal split of a fixed total minimizes the variance of that difference. It is not a general optimum, and it costs precision on estimates for the population as a whole, where a large stratum is then under-sampled relative to its share.
-
-```{r}
-sample <- sampling_design(title = "Equal Allocation") |>
-  stratify_by(region, alloc = "equal") |>
-  draw(n = 160) |>
-  execute(bfa_eas, seed = 2026)
-
-sample |>
-  count(region)
-```
-
-**Neyman allocation** minimizes the variance of the estimated total for *one* variable, by allocating more sample to strata with higher variability in that variable. It requires prior information about the stratum variances, and the allocation it produces is optimal for the variable those variances describe. A survey estimating several variables, or estimating for domains that cut across the strata, has no single Neyman allocation; the usual practice is to pick the variable that drives the design and check what the choice costs the others.
-Use explicit stratification variable names when passing `variance`.
-
-```{r}
-data(bfa_eas_variance)
-
-bfa_eas_variance
-
-sample <- sampling_design(title = "Neyman Allocation") |>
-  stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
-  draw(n = 300) |>
-  execute(bfa_eas, seed = 12345)
-
-sample |>
-  count(region)
-```
-
-**Optimal allocation** extends Neyman allocation by also accounting for differential costs across strata. It minimizes the variance of that same single-variable total for a fixed budget, or the cost for a fixed precision on it. The single-variable caveat above carries over unchanged.
-Use explicit stratification variable names when passing `variance`/`cost`.
-
-```{r}
-data(bfa_eas_cost)
-
-bfa_eas_cost
-
-sample <- sampling_design(title = "Optimal Allocation") |>
-  stratify_by(region, alloc = "optimal",
-              variance = bfa_eas_variance,
-              cost = bfa_eas_cost) |>
-  draw(n = 300) |>
-  execute(bfa_eas, seed = 9876)
-
-sample |>
-  count(region)
-```
-
-**Power allocation** [@bankier1988] uses \(n_h \propto C_h X_h^q\), where `cv` supplies \(C_h\), `importance` supplies \(X_h\), and `power` is \(q \in [0, 1]\).
-
-```{r}
-cv_df <- data.frame(
-  region = levels(bfa_eas$region),
-  cv = c(0.40, 0.35, 0.12, 0.20, 0.30, 0.18,
-         0.15, 0.38, 0.22, 0.32, 0.17, 0.45, 0.25)
-)
-
-importance_df <- data.frame(
-  region = levels(bfa_eas$region),
-  importance = c(60, 40, 120, 70, 80, 65,
-                 50, 55, 90, 75, 45, 35, 30)
-)
-
-sample <- sampling_design(title = "Power Allocation") |>
-  stratify_by(
-    region,
-    alloc = "power",
-    cv = cv_df,
-    importance = importance_df,
-    power = 0.5
-  ) |>
-  draw(n = 300) |>
-  execute(bfa_eas, seed = 777)
-
-sample |>
-  count(region)
-```
-
-### Sample Size Bounds
-
-When using allocation methods, you can constrain stratum sample sizes with `min_n` and `max_n` in `draw()`.
-
-**Minimum sample size** ensures every stratum gets at least the specified number of units. The usual reason to set it is variance estimation, which needs at least two *probability* primary units per variance stratum. That is not simply `n >= 2` everywhere: certainty units form their own take-all stratum and contribute no variance, a stratum selected whole is a census, and a stratum left with one probability unit is the lonely-PSU case, which `survey` reports rather than silently estimating. `vignette("survey-analysis")` works through all three. Setting `min_n` is also useful when you need reliable subgroup estimates.
-
-```{r}
-# Neyman allocation with minimum 20 per stratum
-sample <- sampling_design() |>
-  stratify_by(region, alloc = "neyman", variance = bfa_eas_variance) |>
-  draw(n = 300, min_n = 20) |>
-  execute(bfa_eas, seed = 1)
-
-sample |>
-  count(region)
-```
-
-**Maximum sample size** caps large strata to prevent them from dominating the sample. This is useful when operational constraints limit how many units you can handle in any one stratum.
-
-```{r}
-# Proportional allocation but cap at 55 per stratum
-sample <- sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 300, max_n = 55) |>
-  execute(bfa_eas, seed = 40)
-
-sample |>
-  count(region)
-```
-
-**Both bounds together** create a feasible range for each stratum.
-
-```{r}
-sample <- sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 300, min_n = 20, max_n = 55) |>
-  execute(bfa_eas, seed = 2003)
-
-sample |>
-  count(region)
-```
-
-Bounds interact with the allocation method, so it is often easier to check what they produce before drawing anything. Pass the design and the frame to `frame_summary()`: it resolves the allocation without selecting, so no random numbers are used and no sample is created.
-
-```{r}
-planned <- sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 300, min_n = 20, max_n = 55)
-
-frame_summary(planned, bfa_eas, detail = "pool")[, c("region", "N", "n_target")]
-```
-
-`min_n = 20` is doing the work here: the smaller regions are raised to 20 and the surplus comes off the larger ones, while `max_n = 55` never binds because no stratum was allocated that many. These are the counts the design will draw, which is why they match the executed sample above.
-
-When a stratum's population is smaller than `min_n`, the entire stratum is selected. For a without-replacement design `min_n` is structurally capped at the stratum population, so it can never ask for more units than exist.
-
-**The population is always a bound**, whether or not you set `max_n`. A stratum too small to hold its allocated share is capped at its population and the surplus goes to the strata with room left. Because that redistribution follows the allocation method's own factors, the criterion survives; but a named rule can still be departed from.
-
-```{r}
-small_frame <- data.frame(
-  id = 1:1000,
-  stratum = rep(c("tiny", "mid", "big"), times = c(10, 490, 500))
-)
-
-# "equal" would give 100 each, but `tiny` holds only 10 units.
-sampling_design() |>
-  stratify_by(stratum, alloc = "equal") |>
-  draw(n = 300) |>
-  execute(small_frame, seed = 7) |>
-  count(stratum)
-```
-
-The requested total of 300 is delivered in full; what changed is that `tiny` contributes 10 rather than 100, and the missing 90 are split between the other two. `execute()` says so once per run, and the message can be silenced with `suppressMessages()` inside simulation loops.
-
-Requesting more units than the frame holds is treated as a census, with a warning. Bounds that make a request arithmetically impossible are errors rather than silent adjustments.
-
-**Custom allocation** lets you specify exact sample sizes or rates per stratum by passing a data frame to `draw()`.
-
-```{r}
-sizes_df <- data.frame(
-  region = levels(bfa_eas$region),
-  n = c(20, 12, 25, 18, 22, 16, 14, 15, 20, 18, 12, 10, 8)
-)
-
-sample <- sampling_design() |>
-  stratify_by(region) |>
-  draw(n = sizes_df) |>
-  execute(bfa_eas, seed = 101)
-
-sample |>
-  count(region)
-```
-
-### Multiple Stratification Variables
-
-You can stratify by multiple variables to create crossed strata. Here we stratify by both region and urban/rural status.
-
-```{r}
-sample <- sampling_design() |>
-  stratify_by(region, urban_rural, alloc = "proportional") |>
-  draw(n = 300) |>
-  execute(bfa_eas, seed = 42)
-
-sample |>
-  count(region, urban_rural) |>
-  head(10)
-```
-
----
-
-## Cluster Sampling
-
-Cluster sampling selects groups (clusters) rather than individual units. This is practical when a complete list of individuals isn't available or when travel costs make dispersed sampling expensive.
-
-Use `cluster_by()` to specify the cluster identifier. All units within selected clusters are included.
-
-```{r}
-sample <- sampling_design() |>
-  cluster_by(ea_id) |>
-  draw(n = 50) |>
-  execute(bfa_eas, seed = 120)
-
-sample |>
-  summarise(
-    n_clusters = n_distinct(ea_id),
-    n_units = n()
-  )
-```
-
----
-
-## PPS Sampling
-
-Probability Proportional to Size (PPS) sampling selects units with probability proportional to a size measure. This is standard for cluster sampling where clusters vary in size.
-
-Use the `mos` argument to specify the measure of size variable. Here we select EAs with probability proportional to their household count.
-
-```{r}
-sample_pps <- sampling_design() |>
-  cluster_by(ea_id) |>
-  draw(n = 50, method = "pps_brewer", mos = households) |>
-  execute(bfa_eas, seed = 365)
-
-sample_pps |>
-  summarise(
-    mean_hh = mean(households),
-    median_hh = median(households)
-  )
-```
-
-Compared to simple random sampling, PPS tends to select larger clusters.
-
-```{r}
-sample_srs <- sampling_design() |>
-  cluster_by(ea_id) |>
-  draw(n = 50) |>
-  execute(bfa_eas, seed = 42)
-
-bind_rows(
-  sample_pps |> summarise(method = "PPS", mean_hh = mean(households)),
-  sample_srs |> summarise(method = "SRS", mean_hh = mean(households))
-)
-```
-
-### PPS Methods
-
-`pps_brewer` is a good default: it is fast and has well-behaved joint
-inclusion probabilities. Eight more PPS methods are available, differing in
-whether the sample size is fixed or random, whether exact second-order
-quantities are available, and whether they support permanent random numbers
-for coordination. See `?selection-methods` for the full comparison.
-
-### Certainty Selection
-
-In PPS sampling, the size share \(n \cdot \text{mos}_i / \sum_j \text{mos}_j\) can exceed 1 for a very large unit. That share is not yet a probability, and no probability can exceed 1. Certainty selection resolves it by taking those units with probability 1 and sampling the rest from what is left.
-
-Use `certainty_size` for an absolute threshold or `certainty_prop` for a proportional one.
-
-```{r}
-sample_cert <- sampling_design(title = "Certainty selection") |>
-  draw(n = 50, method = "pps_brewer", mos = households,
-       certainty_size = 800) |>
-  execute(bfa_eas, seed = 123)
-
-# How many EAs with more than 800 households
-filter(bfa_eas, households > 800)
-
-# Check which units were selected with certainty
-count(sample_cert, .certainty_1)
-```
-
-With `certainty_prop`, units whose MOS proportion exceeds the threshold are taken with certainty. The process is iterative: after removing certainty units, proportions are recomputed.
-
-```{r}
-sample_certp <- sampling_design() |>
-  stratify_by(region) |>
-  draw(n = 50, method = "pps_systematic", mos = households,
-       certainty_prop = 0.05) |>
-  execute(bfa_eas, seed = 12345)
-
-# How many EAs with more than 5% of the total hh by region
-bfa_eas |>
-  mutate(mosprop = households / sum(households),
-         .by = region) |>
-  filter(mosprop >= 0.05)
-
-filter(sample_certp, .certainty_1)
-```
-
-### Permanent Random Numbers (PRN)
-
-Some PPS methods support permanent random numbers for sample coordination across survey waves. Assign a stable U(0,1) value to each frame unit, then pass it via `prn`.
-
-```{r}
-set.seed(1)
-bfa_eas$prn <- runif(nrow(bfa_eas))
-
-sample_prn <- sampling_design(title = "Samples coordination with PRN") |>
-  cluster_by(ea_id) |>
-  draw(n = 50, method = "pps_sps", mos = households, prn = prn) |>
-  execute(bfa_eas, seed = 1)
-sample_prn
-```
-
-Because the PRN values are stable, re-executing the same design on the same frame produces highly overlapping samples (positive coordination). PRN is supported for `bernoulli`, `pps_poisson`, `pps_sps`, and `pps_pareto`. You can learn more about coordination with permanent random numbers in the following vignette `vignette("sampling-coordination")`.
-
----
-
-## Control Sorting and Serpentine Ordering
-
-Control sorting orders the frame before selection, providing implicit stratification. This is effective with systematic and sequential methods, where it ensures the sample spreads evenly across the sorted variables.
-
-```{r}
-# Nested sorting: standard ascending order
-sample_sort <- sampling_design() |>
-  draw(n = 100, method = "systematic",
-       control = c(region, province)) |>
-  execute(bfa_eas, seed = 98765)
-sample_sort
-```
-
-`serp()` implements serpentine (snake) sorting, which alternates direction at each level of the hierarchy. This minimizes jumps at boundaries, matching SAS PROC SURVEYSELECT's `SORT=SERP`.
-
-```{r}
-# Serpentine sorting
-sample_serp <- sampling_design() |>
-  draw(n = 100, method = "systematic",
-       control = serp(region, province)) |>
-  execute(bfa_eas, seed = 1)
-sample_serp
-```
-
-Control sorting can be combined with explicit stratification. The sorting is then applied within each stratum.
-
-```{r}
-sample_serp2 <- sampling_design() |>
-  stratify_by(urban_rural) |>
-  draw(n = 100, method = "systematic",
-       control = serp(region, province)) |>
-  execute(bfa_eas, seed = 2)
-sample_serp2
-```
-
----
-
-## Balanced Sampling
-
-Balanced sampling selects a sample whose Horvitz-Thompson estimates of auxiliary totals match (or nearly match) the population totals. The variance of the estimated total for a study variable then depends on the part of that variable the auxiliaries do not explain, so the precision gain is largest for variables a linear combination of the auxiliaries predicts well and small for variables it does not. `samplyr` implements the cube method [@devilletille2004] via `method = "cube"`. The older `method = "balanced"` spelling remains a compatibility alias, but designs are stored and printed with the canonical `"cube"` name.
-
-Specify auxiliary variables with `aux`. Without `mos`, inclusion probabilities are equal; with `mos`, they are proportional to size.
-
-```{r}
-# Equal-probability balanced sample
-balanced_eq <- sampling_design() |>
-  draw(n = 100, method = "cube",
-       aux = c(population, households)) |>
-  execute(bfa_eas, seed = 42)
-balanced_eq
-```
-
-The balancing property means the HT estimate of auxiliary totals is close to the true total.
-
-```{r}
-pop_total <- sum(bfa_eas$population)
-ht_total <- sum(balanced_eq$population * balanced_eq$.weight)
-c(population = pop_total, ht_estimate = ht_total)
-```
-
-Balanced sampling combines naturally with stratification. When stratified, `samplyr` calls the stratified cube algorithm [@chauvet2009] in a single pass, preserving the allocation computed by `stratify_by()`.
-
-```{r}
-# Stratified PPS balanced sample
-balanced_strat <- sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 300, method = "cube", mos = households,
-       aux = c(population, area_km2)) |>
-  execute(bfa_eas, seed = 1960)
-balanced_strat
-```
-
-When used with `cluster_by()`, auxiliary values are automatically aggregated (summed) to the cluster level before selection.
-
-### Controlled category counts
-
-Place `bound()` around a categorical variable inside `aux` to require its realized sample count to be either the floor or ceiling of the expected count. Bare auxiliary variables and count bounds can be used together.
-
-```{r, eval = FALSE}
-controlled <- sampling_design() |>
-  draw(
-    n = 300,
-    method = "cube",
-    mos = households,
-    aux = c(population, bound(region), bound(urban_rural))
-  ) |>
-  execute(bfa_eas, seed = 1960)
-```
-
-`bound(region)` controls each observed region margin separately. Use separate `bound()` calls to control several margins. If the cube landing step cannot satisfy every requested bound, execution fails rather than silently relaxing a constraint.
-
-### Spatially balanced sampling
-
-LPM2 and SCPS spread the sample through a coordinate space. Select the algorithm explicitly and pass finite numeric coordinates through `spread`.
-
-```{r, eval = FALSE}
-spatial <- sampling_design() |>
-  draw(
-    n = 300,
-    method = "lpm2",
-    mos = households,
-    spread = c(longitude, latitude)
-  ) |>
-  execute(bfa_eas, seed = 1960)
-```
-
-Use `method = "scps"` for spatially correlated Poisson sampling. Spatial methods cannot be combined with cube auxiliaries or `bound()` constraints. Linearized survey export and joint inclusion probabilities are unavailable for bounded cube, LPM2, and SCPS designs. `as_svrepdesign(type = "subbootstrap")` provides a generic PPS bootstrap approximation: it is not a native design-specific variance estimator and does not recreate the bounds or spatial algorithm inside each replicate.
-
-Balanced-family sampling supports up to 2 stages. At stage 1, element-level auxiliary variables are aggregated to PSU totals; at stage 2, the method runs on the element-level frame within each selected PSU.
-
----
-
----
-
-## Multi-Stage Sampling
-
-Multi-stage designs sample in stages: first select primary sampling units (PSUs), then sample within them. This is the standard approach for large-scale surveys when a complete frame of ultimate units isn't available upfront.
-
-Use `add_stage()` to delimit each stage of the design.
-
-### Two-Stage Design
-
-For this example, we'll use `zwe_eas` to demonstrate a two-stage design: first select districts as PSUs, then sample EAs within selected districts.
-
-```{r}
-data(zwe_eas)
-
-# First, let's see the structure: EAs nested within districts
-zwe_eas |>
-  count(province, district) |>
-  head(10)
-```
-
-We need to create a measure of size for districts. Here we'll use total households per district.
-
-```{r}
-# Add district-level households as MOS
-zwe_frame <- zwe_eas |>
-  mutate(district_hh = sum(households),
-         .by = district)
-```
-
-Now we can run a two-stage design: select 10 districts with PPS, then sample 5 EAs within each.
-
-```{r}
-twostage_design <- sampling_design(title = "Two-stage cluster sampling") |>
-  add_stage(label = "Districts") |>
-    cluster_by(district) |>
-    draw(n = 10, method = "pps_brewer", mos = district_hh) |>
-  add_stage(label = "EAs") |>
+  add_stage() |>
   draw(n = 5)
-twostage_design
-```
 
-Let's apply it to the frame.
-
-```{r}
-sample_eas <- execute(twostage_design,
-                      zwe_frame, seed = 3)
-
-sample_eas |>
-  summarise(n_districts = n_distinct(district),
-            n_eas = n())
-```
-
-### Stratified Multi-Stage Design
-
-Combining stratification with multi-stage sampling is standard for national surveys. Here we stratify by province (which is constant within districts), then select districts and EAs within each stratum.
-
-```{r}
-sample_eas2 <- sampling_design(title = "Stratified two-stage cluster sampling") |>
-  add_stage(label = "Districts") |>
-    stratify_by(province) |>
-    cluster_by(district) |>
-    draw(n = 2, method = "pps_brewer", mos = district_hh) |>
-  add_stage(label = "EAs") |>
-    draw(n = 3) |>
-  execute(zwe_frame, seed = 4)
-
-sample_eas2 |>
-  count(province, district)
-```
-
-Bulawayo holds one district, so a take of two per province cannot be filled there and `execute()` says so. This is the ordinary case for a national frame with an urban province: the stratum is selected whole rather than sampled, which is why the warning names the pool. Read the affected pools programmatically from the condition, or from `frame_summary(sample, detail = "pool")` and its `capped` column.
-
----
-
-## Operational Multi-Stage Sampling
-
-In practice, multi-stage surveys often execute stages at different times. After selecting PSUs, field teams may need to conduct listing or other operations before the second stage can proceed.
-
-The `stages` argument lets you execute only specific stages.
-
-```{r}
-design <- sampling_design() |>
-  add_stage(label = "EA") |>
-    stratify_by(urban_rural) |>
-    cluster_by(ea_id) |>
-    draw(n = 10, method = "pps_brewer", mos = households) |>
-  add_stage(label = "HH") |>
-    draw(n = 5)
-
-# Execute stage 1 only
-selected_eas <- execute(design, zwe_eas, stages = 1, seed = 1)
-selected_eas
-```
-
-Once the EAs are selected, households are listed in each of them.
-
-```{r}
-selected_eas_list <- selected_eas |>
-  slice(rep(seq_len(n()), households)) |>
-  mutate(hh_id = row_number())
-head(selected_eas_list)
-```
-
-You can also use `tidyr::uncount()` for the listing step.
-
-```{r}
-selected_eas_list <- selected_eas |>
-  tidyr::uncount(weights = households, .id = "hh_id", .remove = FALSE)
-```
-
-After fieldwork or preparation is complete, execute the remaining stages
-by piping the stage-1 result into `execute()` with the listing frame.
-This continuation pattern preserves the full design metadata needed for
-survey export.
-
-```{r}
-final_sample <- selected_eas |>
-  execute(selected_eas_list, seed = 2)
-final_sample
-```
-
-> **Note:** All dplyr verbs (`mutate()`, `filter()`, `*_join()`, etc.) preserve the
-> `tbl_sample` class automatically. Operations that change the row set
-> (removing, adding, or duplicating rows) or that drop, rename, or
-> overwrite internal design columns such as `.weight` or `.fpc_1` keep
-> the class but mark the sample as
-> modified: it still works as data, but `as_svydesign()` and other
-> design-based computations refuse it, because the stored design no
-> longer describes the rows. For subpopulation estimates, export first
-> and subset the survey design (see the survey analysis vignette).
-> Extracting one complete replicate with `filter(.replicate == r)` stays
-> fully supported. If you manipulate a sample with base R functions
-> like `merge()` or `cbind()`, both the class and its attributes are lost. Prefer the
-> dplyr equivalents (`left_join()`, `bind_cols()`). See `?as_tbl_sample` for the full
-> list.
-
-### A Self-Weighting Design
-
-Many household surveys want every household in a domain to have the same
-inclusion probability `f`. Equal probabilities give equal weights, which
-simplifies analysis and keeps weight variation from inflating the
-variance. The classic recipe selects EAs with PPS on a household count,
-then samples households within each selected EA at a rate that
-compensates for the first stage. The product of the two stages is
-constant by construction: `pi1 * frac = f`.
-
-```{r}
-domain <- zwe_eas |> filter(province == "Bulawayo")
-
-m <- 30                                # EAs to select
-b <- 5                                 # target household take per EA
-f <- b * m / sum(domain$households)    # overall household rate
-
-pi1 <- sondage::inclusion_prob(domain$households, m)
-rates <- tibble(ea_id = domain$ea_id, frac = f / pi1)
-```
-
-`sondage::inclusion_prob()` computes the same first-stage probabilities
-the EA stage will use, including certainty truncation when a large EA
-reaches `pik = 1` (a certainty EA simply gets `frac = f`). The rate table
-covers every EA in the domain because the design is written before stage
-1 runs; the household stage only consults the EAs that were selected.
-
-Choosing `f = b * m / M` makes the expected take `b` households in every
-EA whose `pik` is below 1. It does not do so in a certainty EA. There
-`pik = 1`, so the rate collapses to `frac = f` and the expected take is
-`f * h`, which is `b` only when the EA holds exactly `M / m` households.
-The self-weighting property still holds -- every household carries `1/f`
-either way, which is the point of the construction -- but the workload is
-no longer `b` per EA, and a certainty EA large enough to reach `pik = 1`
-will typically be asked for many more. Size the certainty EAs separately
-if a fixed field workload matters. The domain below has no certainty EA,
-so the take is `b` throughout.
-
-Set `round = "nearest"` so the realized take stays at `b` instead of
-being rounded up.
-
-```{r}
-design_sw <- sampling_design("Self-weighting household survey") |>
-  add_stage(label = "EA") |>
-    cluster_by(ea_id) |>
-    draw(n = m, method = "pps_systematic", mos = households) |>
-  add_stage(label = "HH") |>
-    stratify_by(ea_id) |>
-    draw(frac = rates, round = "nearest")
-```
-
-`stratify_by(ea_id)` at the household stage makes each selected EA its
-own stratum, which is what lets the sampling rate vary by EA. Execution
-follows the same listing pattern as above.
-
-```{r}
-eas_sw <- execute(design_sw, domain, stages = 1, seed = 101)
-listing_sw <- eas_sw |>
-  tidyr::uncount(households, .id = "hh_no", .remove = FALSE)
-
-hh_sw <- eas_sw |> execute(listing_sw, seed = 102)
-
-range(hh_sw$.weight)
-1 / f
-```
-
-Every household carries the same weight `1/f`.
-
-Why a compensating rate instead of a fixed take of `b` households
-(`draw(n = b)`)? With a fixed take the design is self-weighting only when
-the listing finds exactly the household count used as the measure of
-size. Fresh listings differ from census counts. The compensating rate
-keeps the weights centered on `1/f` whatever the listing finds; only the
-rounding of small takes moves them. A fixed take passes listing changes
-straight into the weights.
-
-```{r}
-set.seed(7)
-fresh_counts <- eas_sw |>
-  mutate(listed = pmax(1L, as.integer(round(households * runif(n(), 0.85, 1.35)))))
-listing_fresh <- fresh_counts |>
-  tidyr::uncount(listed, .id = "hh_no", .remove = FALSE)
-
-hh_fresh <- eas_sw |> execute(listing_fresh, seed = 103)
-
-range(hh_fresh$.weight) * f    # stays near 1
-```
-
-Feasibility requires `f <= pi1` in every EA, so that `frac <= 1`. Very
-small EAs can violate this. The standard fixes are to merge small EAs
-with a neighbor before sampling, or to cap their rate with
-`frac = pmin(1, f / pi1)` and accept a weight above `1/f` in those EAs.
-
----
-
-## Replicated Sampling
-
-The `reps` parameter in `execute()` draws multiple independent samples from the same frame under the same design. The output is a single stacked `tbl_sample` with a `.replicate` column identifying each replicate. This is useful for simulation studies, repeated-sampling variance estimation, or quality control.
-
-```{r}
-rep_sample <- sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 300) |>
-  execute(bfa_eas, seed = 42, reps = 5)
-
-rep_sample |>
-  count(.replicate)
-```
-
-Each replicate is a fully independent draw. Replicate `r` uses seed `seed + r - 1`, so the first replicate matches a standalone execution with the same seed.
-
-```{r}
-standalone <- sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 300) |>
-  execute(bfa_eas, seed = 42)
-
-rep1 <- rep_sample |> filter(.replicate == 1)
-identical(sort(rep1$ea_id), sort(standalone$ea_id))
-```
-
-Replicated sampling also works with multi-stage designs. When continuing from a replicated partial execution, each replicate is continued independently.
-
-```{r}
-design <- sampling_design() |>
-  add_stage(label = "Districts") |>
-    cluster_by(district) |>
-    draw(n = 10, method = "pps_brewer", mos = district_hh) |>
-  add_stage(label = "EAs") |>
-    draw(n = 5)
-
-stage1 <- execute(design, zwe_frame, stages = 1, seed = 1, reps = 3)
-final <- execute(stage1, zwe_frame, seed = 100)
-
-final |>
-  summarise(n_districts = n_distinct(district), n_eas = n(),
-            .by = .replicate)
-```
-
-Survey export functions require a single replicate. Filter first.
-
-```{r, eval = FALSE}
-one_rep <- rep_sample |> filter(.replicate == 1)
-svy <- as_svydesign(one_rep)
-```
-
-Note: `reps` cannot be combined with `panels` or with stages that use permanent random numbers (PRN). PRN produces identical samples across replicates, so coordination across waves should use an explicit loop with different PRN vectors instead.
-
----
-
-## Working with Results
-
-### Accessing the Design
-
-The sampling design is attached to the result and can be retrieved with `get_design()`.
-
-```{r}
-sample <- sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 200) |>
-  execute(bfa_eas, seed = 2024)
-
-design <- get_design(sample)
-design
-```
-
-and accessing element of the design
-
-```{r}
-design$stages[[1]]$strata$vars
-```
-
-### Weight Diagnostics
-
-The `summary()` method reports weight diagnostics including Kish's effective sample size and design effect due to unequal weighting. For the full design
-effect (including clustering and stratification), use `survey::svymean()` with `deff = TRUE` after converting with `as_svydesign()`.
-
-```{r}
-summary(sample)
-```
-
-### The Frame Digest
-
-Every execution records a summary frame digest by default: a compact record of
-the selection pools and chances the design resolved, with no original unit
-identifiers. The `n/N` line in the printed header and the per-stage realization
-lines in `summary()` come from it, and `frame_summary()` returns it as tibbles.
-The original frame is not needed.
-
-```{r}
-ea_sample <- sampling_design(title = "EA sample") |>
-  stratify_by(region) |>
-  cluster_by(ea_id) |>
-  draw(n = 25, method = "pps_brewer", mos = households) |>
-  execute(bfa_eas, seed = 42)
-
-frame_summary(ea_sample)
-frame_summary(ea_sample, detail = "pool")
-```
-
-Stage detail is the compact overview. Pool detail exposes the columns behind
-the realization notation in `summary()`: `N_h` maps to `N`, `n_h` to
-`n_realized`, and `f_h` to `take_rate`. It also separates the nominal
-`n_target`, the probability-implied `n_expected`, and the observed
-`n_realized`. Pool tables always identify the realization with `replicate = 1`
-for an ordinary execution and one row per pool and replicate after
-`execute(reps = ...)`.
-
-The digest mode is an explicit performance and downstream-capability choice
-between `"summary"` (the default), `"none"` and `"full"`. See the
-`frame_digest` argument in `?execute` for what each retains and costs.
-
-The companion package samplens, in development, draws the digest as a visual sampling card.
-
----
-
-## Method Reference
-
-The reference tables live on the help pages, which are the maintained copies:
-
-- `?selection-methods` for all sixteen methods: fixed versus random sample
-  size, replacement, which extra input each needs, PRN support, and the paper
-  behind each.
-- `?stratify_by` for the allocation methods (`equal`, `proportional`,
-  `neyman`, `optimal`, `power`) and what auxiliary input each requires.
-- `?draw` for `min_n` and `max_n`, which apply only with an allocation method,
-  and for `round` (`"up"` the default and matching SAS, `"down"`,
-  `"nearest"`).
-
-For custom stratum-specific sizes or rates, pass a data frame directly to `n`
-or `frac` in `draw()`. When `alloc` is specified, use `n`, not `frac`.
-
----
-
-## Custom Sampling Methods
-
-Methods registered with `sondage::register_method()` use a family prefix in `draw()`. Registered `type = "wor"` and `type = "wr"` methods use `pps_<name>` and require `mos`. Registered `type = "balanced"` methods use `balanced_<name>` and may omit `mos` for equal probabilities. A balanced method can declare `supports_aux = TRUE` to receive `aux`, or `supports_spread = TRUE` to require and receive `spread` coordinates.
-
-For example, the elimination procedure of @tille1996 is available in the sampling package. We can register it as a custom method along with its exact joint inclusion probabilities.
-
-```{r custom-method}
-# Wrap sampling::UPtille to return selected indices
-tille_fn <- function(pik, n = NULL, prn = NULL, ...) {
-  which(as.logical(sampling::UPtille(pik)))
-}
-
-# Joint inclusion probabilities, restricted to the sampled units
-tille_joint_fn <- function(pik, sample_idx = NULL, ...) {
-  pi2 <- sampling::UPtillepi2(pik)
-  if (!is.null(sample_idx))
-    pi2 <- pi2[sample_idx, sample_idx, drop = FALSE]
-  pi2
-}
-
-sondage::register_method(
-  "tille", type = "wor",
-  sample_fn = tille_fn,
-  joint_fn = tille_joint_fn,
-  probabilities = "exact"
+household_sample <- execute(
+  two_stage_design,
+  ea_frame,
+  household_frame,
+  seed = 28
+)
+
+c(
+  eas = n_distinct(household_sample$ea_id),
+  households = nrow(household_sample)
 )
 ```
 
-Once registered, the method works like any built-in PPS method.
-
-```{r custom-method-execute}
-set.seed(1)
-frame <- bfa_eas[sample(seq_len(nrow(bfa_eas)), 500), ]
-
-sample_tille <- sampling_design() |>
-  stratify_by(region, alloc = "proportional") |>
-  draw(n = 50, method = "pps_tille", mos = households) |>
-  execute(frame, seed = 1)
-
-sample_tille
-```
-
-Because we provided a `joint_fn`, exact variance estimation is available via `joint_expectation()`.
-
-```{r custom-method-joint, eval = requireNamespace("survey", quietly = TRUE)}
-jip <- joint_expectation(sample_tille, frame)
-svy <- as_svydesign(sample_tille, pps = survey::ppsmat(jip$stage_1))
-survey::svymean(~population, svy)
-```
-
-```{r custom-method-cleanup, echo = FALSE}
-sondage::unregister_method("tille")
-```
-
-Custom methods flow through the full pipeline: stratification, certainty selection, multi-stage designs, survey export, and summary diagnostics. See `?sondage::register_method` for the full contract including WR methods and PRN support.
-
-### Declaring the probabilities tier
-
-samplyr weights every sample by `1 / pik`, the chance vector it resolves and
-hands to the registered method. Those weights, and the chances the frame digest
-records, are only valid when the method honors `pik` as its first-order target.
-Registered methods state which is the case with `probabilities`:
-
-- `"exact"`: the design's true first-order inclusion probabilities equal `pik`.
-  UPtille above is one of these.
-- `"approximate"`: they are honored to a documented approximation. Both built-in
-  order sampling methods sit here. `pps_pareto` and `pps_sps` fix the sample
-  size and treat `pik` as a target the realized design approaches rather than
-  attains.
-- `"unknown"` (the default): `pik` is a selection weight only.
-
-`draw()` refuses `"unknown"` methods rather than produce biased weights, so
-declaring the tier is part of registering a method for samplyr.
-
-The classic trap the default protects against is `sample(prob = pik)`. It yields
-expected hits exactly equal to `pik` with replacement, but its without-replacement
-inclusion probabilities differ from `pik`, so a WOR wrapper's tier really is
-unknown.
-
----
-
-## Best Practices
-
-Set a seed on every execution, so the sample can be drawn again. Give each stage
-a label, since that is what the printed design and the execution receipt carry.
-Run `validate_frame()` against the frame before executing, rather than
-discovering a missing column partway through a multi-stage design. Read the
-weight distribution with `summary()` on the result.
+Frames are mapped to stages by position. `samplyr` restricts the household
+listing to the selected EAs, then compounds the conditional stage weights.
 
 ```{r}
-design <- sampling_design(title = "National Health Survey 2024") |>
-  add_stage(label = "Enumeration Areas") |>
-    stratify_by(region, urban_rural) |>
-    cluster_by(ea_id) |>
-    draw(n = 5, method = "pps_brewer", mos = households) |>
-  add_stage(label = "Households") |>
-    draw(n = 20)
-
-print(design)
+household_sample |>
+  select(ea_id, household_id, .weight_1, .weight_2, .weight) |>
+  slice_head(n = 6)
 ```
 
-### Frame Validation
+When later listings become available only after stage 1 fieldwork, execute the
+same design in steps. Pass `stages = 1` for the first selection, then continue
+from that unmodified partial sample.
 
-Use `validate_frame()` to check that a frame has all the variables a design requires before executing.
+```{r}
+selected_eas <- execute(two_stage_design, ea_frame, stages = 1, seed = 28)
+continued_sample <- execute(selected_eas, household_frame)
 
-```{r, error = TRUE}
-# This passes
-validate_frame(design, bfa_eas)
-
-# This fails with a clear message
-bad_frame <- data.frame(id = 1:100, value = rnorm(100))
-validate_frame(design, bad_frame)
+identical(household_sample$household_id, continued_sample$household_id)
 ```
+
+One seed around the single-call execution covers the whole random sequence.
+The continuation stores the required RNG state, so the two routes agree.
+
+## Fractions, replacement, and ordering
+
+`draw()` also accepts `frac`. Fixed-size methods convert the fraction to an
+integer take, while Bernoulli sampling keeps a random realized size.
+
+```{r}
+fraction_sample <- sampling_design() |>
+  draw(frac = 0.01) |>
+  execute(bfa_eas, seed = 29)
+
+nrow(fraction_sample)
+```
+
+With-replacement methods may select the same population unit several times.
+Their samples carry `.draw_1`, `.draw_2`, and later-stage equivalents so every
+draw occurrence remains distinct.
+
+Systematic and sequential methods depend on frame order. Use `control` when an
+explicit ordering is part of the design. Their variance properties depend on
+that ordering, so an SRS variance approximation for systematic selection need
+not be conservative.
+
+## Inspecting the result
+
+A `tbl_sample` is a tibble with a design and an execution receipt attached.
+Ordinary one-to-one joins and new analysis columns preserve it. Removing or
+duplicating rows changes the realized sample and prevents survey export.
+
+```{r}
+summary(stratified_sample)
+```
+
+`frame_summary()` reports what the execution resolved in each selection pool.
+
+```{r}
+frame_summary(stratified_sample, detail = "pool") |>
+  select(stage, region, N, n_target, n_realized) |>
+  slice_head(n = 6)
+```
+
+For domain estimates, convert the complete sample first and subset the survey
+design afterwards. See `vignette("survey-analysis")` for that workflow.
+
+## Where the specialized methods live
+
+The getting-started path does not require every selection family.
+
+| Need | Next reference |
+|:--|:--|
+| Choose a sample size or allocation | `vignette("survey-planning")` |
+| Export weights and estimate domains | `vignette("survey-analysis")` |
+| Coordinate repeated samples with PRNs | `vignette("sampling-coordination")` |
+| Build a rotating panel | `vignette("rotating-panels")` |
+| Understand probability and variance contracts | `vignette("design-semantics")` |
+| Save or replay a design | `vignette("serialization")` |
+
+Balanced sampling, spatially balanced sampling, custom methods, hard balance
+constraints, replicate execution, and detailed joint-probability calculations
+remain available through `?selection-methods` and the statistical-contract
+article. They are useful tools, but they are not prerequisites for drawing a
+valid first sample.
+
+## A compact checklist
+
+1. Make sure one row represents the unit selected at the current stage.
+2. Declare strata, clusters, and selection methods in their sampling order.
+3. Validate the design against the intended frame vintage.
+4. Use a recorded seed when the selection must be reproducible.
+5. Keep the returned design columns unchanged.
+6. Archive the executed sample and its frame provenance.
+
+The next article for most users is `vignette("survey-planning")` when the take
+is not yet known, or `vignette("survey-analysis")` when data collection is
+complete.
 
 ## References

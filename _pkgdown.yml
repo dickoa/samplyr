@@ -7,21 +7,19 @@ articles:
   - title: "Getting Started"
     contents:
       - introduction
-  - title: "Statistical Foundations"
-    contents:
-      - design-semantics
-      - validation
-  - title: "Analysis and Coordination"
-    contents:
+      - survey-planning
       - survey-analysis
+  - title: "Repeated Surveys"
+    contents:
       - sampling-coordination
       - rotating-panels
   - title: "Sharing and Reproducibility"
     contents:
       - serialization
-  - title: "Survey Planning"
+  - title: "Advanced Statistical Foundations"
     contents:
-      - survey-planning
+      - design-semantics
+      - validation
 
 reference:
   - title: "Design Specification"
