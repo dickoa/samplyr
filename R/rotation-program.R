@@ -21,11 +21,11 @@
 #'
 #' ## Entry waves
 #'
-#' `entry_wave` names the occasion at which each cohort's vintage enters the
-#' program. It is declared, never inferred from the schedule: a cohort may
-#' be drawn early and held in reserve, so its first active wave is not
-#' necessarily its entry. Entry is also what anchors which population a cohort
-#' represents, which is what any later cross-vintage weighting depends on.
+#' With a data-frame schedule, `entry_wave` names the occasion at which each
+#' cohort's vintage enters the program. It is declared rather than inferred
+#' from first activity because a cohort may be drawn early and held in reserve.
+#' An `svyplan_schedule` already records every entry occasion, so it supplies
+#' this field and redundant `entry_wave` input is refused.
 #'
 #' ## Schedule
 #'
@@ -38,6 +38,11 @@
 #' The schedule is completed to the full grid only after the registry is
 #' known, because a cohort's available panels come from its own receipt rather
 #' than from the schedule.
+#'
+#' An `svyplan_schedule` registers the program as of `through`. Exactly the
+#' startup and intake cohorts entering by that occasion must be supplied.
+#' Later cohorts remain planned but unfielded. The executed receipts determine
+#' realized panel and issue counts, which are checked against the plan.
 #'
 #' ## What a wave returns
 #'
@@ -73,9 +78,12 @@
 #' @param cohorts A named list of executed `tbl_sample` objects, one per
 #'   cohort. Each must be complete, unmodified and a single replicate.
 #' @param entry_wave Integer vector of entry occasions, named to match
-#'   `cohorts`.
+#'   `cohorts`. Required with a data-frame `schedule` and omitted with an
+#'   `svyplan_schedule`.
 #' @param schedule A data frame declaring which components are active at which
-#'   wave, as described in Details.
+#'   wave, or an `svyplan_schedule` from [svyplan::design_schedule()].
+#' @param through Last occasion to register from an `svyplan_schedule`.
+#'   Required for that route and unused with a data-frame schedule.
 #'
 #' @return A `rotation_program`.
 #'
@@ -117,14 +125,42 @@
 #'   into.
 #' @family execution
 #' @export
-rotation_program <- function(cohorts, entry_wave, schedule) {
+rotation_program <- function(cohorts, entry_wave = NULL, schedule = NULL,
+                             through = NULL) {
   call <- current_env()
   cohorts <- check_cohort_registry(cohorts)
   panels <- vapply(
     cohorts, function(x) cohort_panel_count(x, call = call), integer(1)
   )
-  entry_wave <- check_entry_waves(entry_wave, names(cohorts))
-  schedule <- normalize_program_schedule(schedule, panels, entry_wave)
+  if (is_svyplan_schedule(schedule)) {
+    if (!is_null(entry_wave)) {
+      abort_samplyr(
+        c(
+          "{.arg entry_wave} is supplied by the {.cls svyplan_schedule}.",
+          "i" = "Remove the redundant argument."
+        ),
+        class = "samplyr_error_program_plan_argument",
+        call = call
+      )
+    }
+    plan <- normalize_plan_program(
+      schedule, cohorts, panels, through, call = call
+    )
+    entry_wave <- plan$entry_wave
+    schedule <- plan$schedule
+  } else {
+    if (!is_null(through)) {
+      abort_samplyr(
+        "{.arg through} is used only with an {.cls svyplan_schedule}.",
+        class = "samplyr_error_program_plan_argument",
+        call = call
+      )
+    }
+    entry_wave <- check_entry_waves(entry_wave, names(cohorts), call = call)
+    schedule <- normalize_program_schedule(
+      schedule, panels, entry_wave, call = call
+    )
+  }
   check_program_block_sizes(schedule, cohorts)
 
   structure(
@@ -137,6 +173,99 @@ rotation_program <- function(cohorts, entry_wave, schedule) {
     ),
     class = "rotation_program"
   )
+}
+
+#' Translate and reconcile a planning schedule
+#' @noRd
+normalize_plan_program <- function(plan, cohorts, panels, through,
+                                   call = caller_env()) {
+  check_svyplan_schedule(plan, call = call)
+  ok <- is.numeric(through) && length(through) == 1L && !is.na(through) &&
+    is_integerish_numeric(through) && through >= 1 && through <= plan$horizon
+  if (!ok) {
+    abort_samplyr(
+      "{.arg through} must be one whole occasion from 1 to {plan$horizon}.",
+      class = "samplyr_error_program_through",
+      call = call
+    )
+  }
+  through <- as.integer(through)
+
+  components <- plan$components
+  components <- components[components$entry_wave <= through, , drop = FALSE]
+  required <- components$cohort
+  supplied <- names(cohorts)
+  missing <- setdiff(required, supplied)
+  extra <- setdiff(supplied, required)
+  unknown <- setdiff(extra, plan$components$cohort)
+  future <- setdiff(extra, unknown)
+  if (length(missing) > 0L || length(extra) > 0L) {
+    abort_samplyr(
+      c(
+        "The cohort registry must match the plan through occasion {through}.",
+        "x" = if (length(missing) > 0L) "Missing: {missing}." else NULL,
+        "x" = if (length(future) > 0L) "Not due yet: {future}." else NULL,
+        "x" = if (length(unknown) > 0L) "Not in the plan: {unknown}." else NULL
+      ),
+      class = "samplyr_error_program_plan_cohorts",
+      call = call
+    )
+  }
+
+  at <- match(supplied, components$cohort)
+  planned_panels <- components$panels[at]
+  if (!identical(unname(panels), unname(planned_panels))) {
+    abort_samplyr(
+      c(
+        "The executed cohorts do not have the panel counts in the plan.",
+        "x" = "Planned: {setNames(planned_panels, supplied)}.",
+        "x" = "Executed: {panels}."
+      ),
+      class = "samplyr_error_program_plan_panels",
+      call = call
+    )
+  }
+
+  selected <- vapply(
+    cohorts,
+    function(x) cohort_issue_count(x, call = call),
+    numeric(1)
+  )
+  planned_issue <- components$operational_issue[at]
+  mismatch <- selected != planned_issue
+  if (any(mismatch)) {
+    cohort <- supplied[which(mismatch)[1L]]
+    abort_samplyr(
+      c(
+        "The executed cohort size does not match the operational plan.",
+        "x" = "Cohort {.val {cohort}} planned {planned_issue[mismatch][1L]}
+               units and selected {selected[mismatch][1L]}."
+      ),
+      class = "samplyr_error_program_plan_count",
+      call = call
+    )
+  }
+
+  entry_wave <- as.integer(components$entry_wave[at])
+  names(entry_wave) <- supplied
+  translated <- plan$schedule[
+    plan$schedule$wave <= through & plan$schedule$cohort %in% supplied,
+    c("cohort", "panel", "wave", "active")
+  ]
+  translated <- normalize_program_schedule(
+    translated, panels, entry_wave, call = call
+  )
+  list(entry_wave = entry_wave, schedule = translated)
+}
+
+#' Count the assignment units represented by a cohort receipt
+#' @noRd
+cohort_issue_count <- function(sample, call = caller_env()) {
+  record <- cohort_assignment(sample, "A rotation program", call = call)
+  if (is_null(record)) {
+    return(as.double(attr(sample, "metadata")$n_selected))
+  }
+  sum(vapply(record$pools, function(pool) pool$size, numeric(1)))
 }
 
 #' @noRd
@@ -430,7 +559,7 @@ normalize_program_schedule <- function(
       c(
         "Every declared wave must have at least one active component.",
         "x" = "Nothing is active at wave {idle}.",
-        "i" = "A single cohort may be dormant at a wave; the program may
+        "i" = "A single cohort may be dormant at a wave, but the program may
                not."
       ),
       class = "samplyr_error_schedule_idle_wave",

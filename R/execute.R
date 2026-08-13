@@ -147,8 +147,9 @@ NULL
 #' @param seed Integer random seed for reproducibility, between
 #'   `-.Machine$integer.max` and `.Machine$integer.max`.
 #' @param panels Rotation groups (panels) to partition the sample into for
-#'   rotation or workload management, as either an integer count or a
-#'   rotation schedule. Assignment is a randomized fixed-quota partition
+#'   rotation or workload management, as an integer count, a rotation
+#'   schedule, or an `svyplan_schedule` from
+#'   [svyplan::design_schedule()]. Assignment is a randomized fixed-quota partition
 #'   within the assignment stage's selection strata: every unit carries each
 #'   panel with probability `1 / panels`. It is not an additional
 #'   probability-sampling phase. The output includes a `.panel` column with
@@ -161,6 +162,11 @@ NULL
 #'   left out is inactive. It declares the panel count and, through the
 #'   fewest panels any wave activates, the assignment block size. Only a
 #'   sample drawn with a schedule can be materialized by `wave`.
+#'
+#'   For an `svyplan_schedule`, `execute()` extracts the startup activity and
+#'   checks its panel parameters before assignment. A gradual launch has one
+#'   whole startup cohort and needs no partition. Permanent activation is not
+#'   part of this automatic route.
 #' @param panel_stage Stage whose selected units are assigned to panels, as a
 #'   single stage number, or `NULL` (the default) for the first executed
 #'   stage. Accepted only alongside `panels`, and the stage must be one the
@@ -198,7 +204,8 @@ NULL
 #'   increase. Meaningful only with a schedule, since a panel count declares
 #'   no wave to protect. This governs positivity only: a pool with a positive
 #'   but single active unit is still assigned, and is still marked as carrying
-#'   no within-block variance estimate.
+#'   no within-block variance estimate. An `svyplan_schedule` refuses
+#'   `"permanent"` because its overlap describes a fully rotating life.
 #' @param wave Integer wave of a scheduled master to materialize, or `NULL`
 #'   (default). `execute(master, wave = t)` activates the panels the stored
 #'   schedule declares active at `t` and compounds the exact activation
@@ -755,16 +762,10 @@ execute <- function(
     previous_sample = if (is_tbl_sample(.data)) as.data.frame(.data) else NULL
   )
 
-  # The panels path aborts from assign_panels(), several frames below this
-  # one and behind the local run_execution() closure, so caller_env() at any
-  # intermediate level names an internal helper. Capture the public frame here
-  # and thread it, so every small-pool diagnostic reads `execute()`.
+  # Keep panel diagnostics at the execute() call.
   user_call <- current_env()
 
   run_execution <- function() {
-    # A modified tbl_sample (rows or design columns changed after its
-    # own execute()) is accepted as input, but its weights and design
-    # metadata are taken at face value for the new selection.
     warn_if_modified <- function(obj, role) {
       status <- sample_realization_status(obj)
       same_partial_design <-
@@ -776,7 +777,7 @@ execute <- function(
       stage_hint <- if (same_partial_design) {
         c(
           "i" = "Passing a partial result as a frame starts a new sampling
-                 phase and restarts the design at stage 1; it does not
+                 phase and restarts the design at stage 1. It does not
                  continue with only the remaining stages.",
           "i" = "For operational multistage sampling, continue from the
                  unmodified partial sample and pass the listing as its frame:

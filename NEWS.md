@@ -129,7 +129,7 @@ Initial release.
 * Random-size methods (`bernoulli`, `pps_poisson`) accept `n` (expected size)
   or `frac` (sampling fraction).
 * Zero selections from a random-size method error by default
-  (`on_empty = "error"). `"warn"` and `"silent"` accept the empty
+  (`on_empty = "error"`). `"warn"` and `"silent"` accept the empty
   realization, which contributes zero to Horvitz-Thompson totals and keeps
   estimates from repeated executions unbiased. Custom methods registered
   with `fixed_size = FALSE` honor `on_empty` the same way. A replicated
@@ -460,6 +460,17 @@ Initial release.
 
 ## Rotation programs
 
+* `execute(..., panels = plan)` now accepts an `svyplan_schedule` and freezes
+  its startup activity at the draw. Immediate launches use the planned panel
+  partition. A gradual launch has one whole startup cohort and does not gain a
+  synthetic panel record. The plan-aware route refuses permanent small pools
+  and selection-certainty activation because the plan describes rotating
+  membership.
+* `rotation_program()` accepts the same planning object with `through`, derives
+  cohort entry occasions, translates the fielded prefix, and checks planned
+  panel and issue counts against the executed receipts. The data-frame route
+  keeps its existing `entry_wave` contract, and redundant entry input with a
+  planning object is refused.
 * `rotation_program()` links the cohorts of a rotating panel that
   replenishes. A start-up master drawn against one frame vintage and a
   refreshment cohort drawn against each later vintage are separate

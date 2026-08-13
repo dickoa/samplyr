@@ -254,13 +254,19 @@ membership[1]
 
 At complete response, this issued overlap can be passed directly to
 `n_change()`. Below complete response, convert it to the expected overlap among
-respondents under a stated response-persistence assumption.
+respondents under a stated response-persistence assumption. For illustration,
+assume response is independent between occasions at rate 0.80. A shared issued
+unit then responds again with probability 0.80, so respondent overlap is issued
+overlap multiplied by that rate.
 
 ```{r}
+change_response_rate <- 0.80
+respondent_overlap <- membership[1] * change_response_rate
+
 change_target <- n_change(
   p = c(p_export, p_export + 0.05),
   moe = 0.02,
-  overlap = membership[1],
+  overlap = respondent_overlap,
   overlap_cor = 0.6
 )
 
@@ -292,9 +298,11 @@ A rotating `svyplan_panel` contains several counts because start-up and later
 intakes are different operations.
 
 ```{r}
+intake_n <- ceiling(panel_plan$n_entrants)
+
 fieldwork_counts <- c(
-  startup = ceiling(panel_plan$n_in_sample),
-  intake_each_occasion = ceiling(panel_plan$n_entrants),
+  startup = panel_plan$n_cohorts * intake_n,
+  intake_each_occasion = intake_n,
   expected_respondents = panel_plan$n_resp
 )
 

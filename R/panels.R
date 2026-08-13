@@ -19,6 +19,14 @@ normalize_panel_input <- function(panels, panel_stage = NULL,
     return(NULL)
   }
   stage <- normalize_panel_stage(panel_stage, call = call)
+  if (is_svyplan_schedule(panels)) {
+    return(normalize_plan_panels(
+      panels,
+      stage = stage,
+      small_pool = small_pool,
+      call = call
+    ))
+  }
   if (is.data.frame(panels)) {
     spec <- normalize_panel_schedule(panels, call = call)
     spec$small_pool <- normalize_small_pool(small_pool, call = call)
@@ -49,6 +57,70 @@ normalize_panel_input <- function(panels, panel_stage = NULL,
   )
 }
 
+#' Translate the startup partition from a planning schedule
+#' @noRd
+normalize_plan_panels <- function(plan, stage, small_pool,
+                                  call = caller_env()) {
+  check_svyplan_schedule(plan, "panels", call = call)
+  policy <- normalize_small_pool(small_pool, call = call)
+  if (identical(policy, "permanent")) {
+    abort_samplyr(
+      c(
+        "{.arg small_pool} cannot be {.val permanent} with an
+         {.cls svyplan_schedule}.",
+        "i" = "The planning schedule describes a rotating cohort life.
+               Permanent activation has a different overlap contract."
+      ),
+      class = "samplyr_error_plan_permanent",
+      call = call
+    )
+  }
+
+  expected <- plan$panel_parameters
+  if (identical(expected$k, 1L)) {
+    check_small_pool_applicable(
+      small_pool,
+      has_schedule = FALSE,
+      has_panels = FALSE,
+      call = call
+    )
+    check_panel_stage_applicable(stage, call = call)
+    return(NULL)
+  }
+
+  startup <- plan$schedule[plan$schedule$cohort == "startup", ]
+  tail <- plan$tail_commitments[
+    plan$tail_commitments$cohort == "startup",
+    ,
+    drop = FALSE
+  ]
+  if (nrow(tail) > 0L) {
+    tail$active <- TRUE
+    startup <- rbind(
+      startup[c("panel", "wave", "active")],
+      tail[c("panel", "wave", "active")]
+    )
+  }
+  last_active <- max(startup$wave[startup$active])
+  startup <- startup[startup$wave <= last_active,
+                     c("panel", "wave", "active")]
+  spec <- normalize_panel_schedule(startup, min_panels = 1L, call = call)
+  same <- identical(spec$k, expected$k) &&
+    identical(spec$r_min, expected$r_min) &&
+    identical(spec$block_size, expected$block_width)
+  if (!same) {
+    abort_samplyr(
+      "The {.cls svyplan_schedule} panel parameters do not match its startup schedule.",
+      class = "samplyr_error_svyplan_schedule",
+      call = call
+    )
+  }
+  spec$small_pool <- "error"
+  spec$stage <- stage
+  spec$from_plan <- TRUE
+  spec
+}
+
 #' Which stage owns the panel assignment
 #'
 #' A stage number, not a label: numbers are the selectors every other
@@ -73,7 +145,7 @@ normalize_panel_stage <- function(panel_stage, call = caller_env()) {
       c(
         "{.arg panel_stage} must be a single stage number of 1 or more.",
         "i" = "It names the stage whose selected units are assigned to
-               panels; every later stage inherits the assignment."
+               panels, and every later stage inherits the assignment."
       ),
       class = "samplyr_error_panel_stage_value",
       call = call
@@ -158,7 +230,7 @@ normalize_small_pool <- function(small_pool, call = caller_env()) {
       c(
         "{.arg small_pool} must be {.val error} or {.val permanent}.",
         "i" = "{.val error} refuses an assignment whose schedule would leave
-               a pool with no active unit; {.val permanent} activates such a
+               a pool with no active unit. {.val permanent} activates such a
                pool at every wave instead."
       ),
       class = "samplyr_error_small_pool_value",
@@ -197,7 +269,8 @@ check_small_pool_applicable <- function(small_pool, has_schedule, has_panels,
 #' names only the active rows, so a reader never has to know which convention
 #' the caller used.
 #' @noRd
-normalize_panel_schedule <- function(schedule, call = caller_env()) {
+normalize_panel_schedule <- function(schedule, min_panels = 2L,
+                                     call = caller_env()) {
   missing <- setdiff(c("panel", "wave"), names(schedule))
   if (length(missing) > 0) {
     abort_samplyr(
@@ -250,9 +323,9 @@ normalize_panel_schedule <- function(schedule, call = caller_env()) {
   n_waves <- max(wave)
   check_schedule_contiguous(panel, k, "panel", call = call)
   check_schedule_contiguous(wave, n_waves, "wave", call = call)
-  if (k < 2L) {
+  if (k < min_panels) {
     abort_samplyr(
-      "A {.arg panels} schedule must declare at least 2 panels.",
+      "A {.arg panels} schedule must declare at least {min_panels} panels.",
       class = "samplyr_error_schedule_size",
       call = call
     )
@@ -588,7 +661,7 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
         "{what} is computed from the panel assignment, and this sample's
          assignment record is not a record.",
         "x" = "The receipt carries {shown} where the assignment belongs.",
-        "i" = "An assignment record is a set of named fields; a bare value
+        "i" = "An assignment record is a set of named fields. A bare value
                states neither the algorithm it was made under nor the version
                that fixes what its fields mean."
       ),
@@ -625,7 +698,7 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
       c(
         "{what} is computed from the panel assignment, and this sample's
          assignment record is newer than this version of samplyr.",
-        "x" = "The record is version {version}; this build reads
+        "x" = "The record is version {version}. This build reads
                {supported_panel_record_versions}.",
         "i" = "Install a samplyr new enough to have written it."
       ),
@@ -651,7 +724,7 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
     c(
       "{what} is computed from the panel assignment, and this sample's
        assignment record does not state a version this build can read.",
-      "x" = "The record states {shown}; this build reads
+      "x" = "The record states {shown}. This build reads
              {supported_panel_record_versions}.",
       "i" = "The version fixes which probability law a block's quotas encode,
              so an unrecognized one cannot be read as the current one."
@@ -800,7 +873,7 @@ abort_panel_record_malformed <- function(
     c(
       "{what} is computed from the panel assignment, and this sample's
        assignment record does not carry the version it states.",
-      "x" = paste0("A version-3 panel assignment ", requirement, "; this
+      "x" = paste0("A version-3 panel assignment ", requirement, ". This
              record states {shown}."),
       "i" = "The version fixes which fields the record carries and what they
              mean, so a record numbered 3 is read as version 3 rather than
@@ -882,6 +955,24 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
     pool
   })
 
+  certain <- vapply(
+    pools,
+    function(pool) identical(pool$activation, "permanent"),
+    logical(1)
+  )
+  if (isTRUE(spec$from_plan) && any(certain)) {
+    abort_samplyr(
+      c(
+        "An {.cls svyplan_schedule} cannot assign selection-certainty units
+         to its rotating panels.",
+        "i" = "Execute this design with an explicit panel schedule until
+               certainty-aware overlap planning is supported."
+      ),
+      class = "samplyr_error_plan_permanent",
+      call = call
+    )
+  }
+
   # Without a schedule there is no wave to protect, so nothing is short.
   if (is_null(spec$schedule)) {
     return(pools)
@@ -911,8 +1002,8 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
       c(
         "A rotation schedule must leave every pool a unit to activate.",
         "x" = "{qty(n_short)}{n_short} pool{?s} hold{?s/} at most
-               {threshold} unit{?s} against {spec$k} panels, with as few as
-               {spec$r_min} active at a wave, so some wave would select none
+               {threshold} unit{?s} against {spec$k} panels and
+               {.field r_min} = {spec$r_min}, so some wave would select none
                of {qty(n_short)}{?it/them}: {.val {labels}}.",
         "i" = "Use fewer panels, activate more panels per wave, take more
                units per pool, or set {.code small_pool = \"permanent\"} to

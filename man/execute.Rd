@@ -53,8 +53,9 @@ Default (\code{NULL}) executes all remaining stages.}
 \code{-.Machine$integer.max} and \code{.Machine$integer.max}.}
 
 \item{panels}{Rotation groups (panels) to partition the sample into for
-rotation or workload management, as either an integer count or a
-rotation schedule. Assignment is a randomized fixed-quota partition
+rotation or workload management, as an integer count, a rotation
+schedule, or an \code{svyplan_schedule} from
+\code{\link[svyplan:design_schedule]{svyplan::design_schedule()}}. Assignment is a randomized fixed-quota partition
 within the assignment stage's selection strata: every unit carries each
 panel with probability \code{1 / panels}. It is not an additional
 probability-sampling phase. The output includes a \code{.panel} column with
@@ -66,7 +67,12 @@ A schedule is a data frame with an integer \code{panel} column, an integer
 \code{wave} column and an optional logical \code{active} column. A combination
 left out is inactive. It declares the panel count and, through the
 fewest panels any wave activates, the assignment block size. Only a
-sample drawn with a schedule can be materialized by \code{wave}.}
+sample drawn with a schedule can be materialized by \code{wave}.
+
+For an \code{svyplan_schedule}, \code{execute()} extracts the startup activity and
+checks its panel parameters before assignment. A gradual launch has one
+whole startup cohort and needs no partition. Permanent activation is not
+part of this automatic route.}
 
 \item{panel_stage}{Stage whose selected units are assigned to panels, as a
 single stage number, or \code{NULL} (the default) for the first executed
@@ -106,7 +112,8 @@ the operational design: wave sizes, overlap and repeated interviewing all
 increase. Meaningful only with a schedule, since a panel count declares
 no wave to protect. This governs positivity only: a pool with a positive
 but single active unit is still assigned, and is still marked as carrying
-no within-block variance estimate.}
+no within-block variance estimate. An \code{svyplan_schedule} refuses
+\code{"permanent"} because its overlap describes a fully rotating life.}
 
 \item{reps}{Integer number of independent replicate samples to draw (>= 2),
 or \code{NULL} (default) for a single sample. When specified, \code{execute()} draws

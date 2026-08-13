@@ -140,6 +140,26 @@ sample_weights <- function(x, fn) {
   w
 }
 
+#' Is this the schedule class samplyr consumes directly?
+#' @noRd
+is_svyplan_schedule <- function(x) {
+  inherits(x, "svyplan_schedule")
+}
+
+#' Check the supported planning schema
+#' @noRd
+check_svyplan_schedule <- function(x, arg = "schedule",
+                                   call = caller_env()) {
+  if (!is_svyplan_schedule(x) || !identical(x$schema_version, 1L)) {
+    abort_samplyr(
+      "{.arg {arg}} must be an {.cls svyplan_schedule} with schema version 1.",
+      class = "samplyr_error_svyplan_schedule",
+      call = call
+    )
+  }
+  invisible(x)
+}
+
 #' Coerce svyplan objects for draw()
 #'
 #' Uses svyplan's `as.data.frame()` contract for tabular plans and the

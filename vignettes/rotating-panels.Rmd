@@ -87,14 +87,25 @@ panel_plan <- n_panel(
 )
 
 panel_plan
+
+fieldwork_plan <- design_schedule(
+  panel_plan,
+  overlap_plan,
+  horizon = 3,
+  horizon_policy = "continuing",
+  refreshment = "entrant_register",
+  rounding = "ceiling"
+)
 ```
 
 The two numbers needed for selection are explicit in the result.
 
 ```{r}
+intake_n <- ceiling(panel_plan$n_entrants)
+
 selection_sizes <- c(
-  startup = ceiling(panel_plan$n_in_sample),
-  intake_each_occasion = ceiling(panel_plan$n_entrants)
+  startup = panel_plan$n_cohorts * intake_n,
+  intake_each_occasion = intake_n
 )
 selection_sizes
 ```
@@ -110,19 +121,16 @@ can add a probability-of-reaching-target calculation when that is needed.
 
 ## Draw and partition the start-up sample
 
-The immediate start contains two cohort ages. The younger half is active on
-occasions 1 and 2. The older half is active only on occasion 1, because it is
-already at its second interview.
+The immediate start contains two panels recruited together at occasion 1, and
+both are then at their first interview. One panel is recruited into a
+two-interview life and is active on occasions 1 and 2. The other is recruited
+into a one-interview life and is active only on occasion 1. They differ in life
+length, not in how far they have already progressed through the retention
+chain.
 
 ```{r}
 library(dplyr)
 data(ken_enterprises)
-
-startup_schedule <- data.frame(
-  panel = c(1, 2, 1, 2),
-  wave = c(1, 1, 2, 2),
-  active = c(TRUE, TRUE, TRUE, FALSE)
-)
 
 base_design <- sampling_design() |>
   draw(n = selection_sizes[["startup"]])
@@ -131,15 +139,16 @@ startup <- execute(
   base_design,
   ken_enterprises,
   seed = 7,
-  panels = startup_schedule
+  panels = fieldwork_plan
 )
 
 count(startup, .panel)
 ```
 
-The word `panel` here means a randomized workload or rotation group. The
-partition does not draw future entrants and does not create later frame
-vintages. It only organizes this one executed sample.
+Passing the plan here lets samplyr extract the startup panels and freeze their
+full activity schedule when the sample is drawn. The partition does not draw
+future entrants or create later frame vintages. It only organizes this one
+executed sample.
 
 Materialize an occasion from the recorded schedule with `execute(wave = )`.
 
@@ -161,11 +170,12 @@ two-phase survey design.
 class(as_svydesign(startup_wave_2))
 ```
 
-Certainty units, unequal-probability masters, and multistage designs need more
-care in variance estimation. The panel assignment remains valid, but not every
-master-and-activation combination has an exact representation in
-`survey::twophase()`. `as_svydesign()` refuses unsupported cases rather than
-silently replacing their variance estimator.
+Certainty units and permanent small pools do not follow the overlap declared by
+this automatic route, so it refuses them. They can still use an explicit
+data-frame panel schedule when their operational and inference treatment has
+been decided. Unequal-probability and multistage designs also need care in
+variance estimation. `as_svydesign()` refuses unsupported combinations rather
+than silently replacing their variance estimator.
 
 ## Add a refreshment cohort
 
@@ -197,16 +207,8 @@ fieldwork programme.
 ```{r}
 program <- rotation_program(
   cohorts = list(startup = startup, intake_2 = intake_2),
-  entry_wave = c(startup = 1, intake_2 = 2),
-  schedule = bind_rows(
-    mutate(startup_schedule, cohort = "startup"),
-    data.frame(
-      cohort = "intake_2",
-      panel = 1,
-      wave = 1:3,
-      active = c(FALSE, TRUE, TRUE)
-    )
-  )
+  schedule = fieldwork_plan,
+  through = 2
 )
 
 occasion_2 <- execute(program, wave = 2)
@@ -220,15 +222,17 @@ are simpler. Refreshment draws from the whole population can give a unit more
 than one chance of selection and require a union-probability or multiple-frame
 estimator.
 
-For a longer run, repeat the intake step once per occasion and extend the
-programme schedule. The planned value `panel_plan$n_entrants` is the steady-
-state intake for each of those draws.
+For a longer run, increase `horizon` when creating `fieldwork_plan`, repeat the
+intake step once per occasion, and register the cohorts through the latest
+fielded occasion. The planned value `panel_plan$n_entrants` is the steady-state
+intake for each draw.
 
 ## Check overlap in an executed master
 
 `svyplan::design_overlap()` reports overlap from the planned schedule.
 `samplyr::joint_expectation()` reports what an executed master records,
-including any block-size remainders or permanent certainty units.
+including block-size remainders. For manually scheduled designs, it also
+handles permanent certainty units.
 
 ```{r}
 executed_overlap <- joint_expectation(startup, waves = c(1, 2))

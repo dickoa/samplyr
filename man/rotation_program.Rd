@@ -4,17 +4,21 @@
 \alias{rotation_program}
 \title{Link the cohorts of a replenishing rotating panel}
 \usage{
-rotation_program(cohorts, entry_wave, schedule)
+rotation_program(cohorts, entry_wave = NULL, schedule = NULL, through = NULL)
 }
 \arguments{
 \item{cohorts}{A named list of executed \code{tbl_sample} objects, one per
 cohort. Each must be complete, unmodified and a single replicate.}
 
 \item{entry_wave}{Integer vector of entry occasions, named to match
-\code{cohorts}.}
+\code{cohorts}. Required with a data-frame \code{schedule} and omitted with an
+\code{svyplan_schedule}.}
 
 \item{schedule}{A data frame declaring which components are active at which
-wave, as described in Details.}
+wave, or an \code{svyplan_schedule} from \code{\link[svyplan:design_schedule]{svyplan::design_schedule()}}.}
+
+\item{through}{Last occasion to register from an \code{svyplan_schedule}.
+Required for that route and unused with a data-frame schedule.}
 }
 \value{
 A \code{rotation_program}.
@@ -39,11 +43,11 @@ subsample, so its weights are unchanged.
 
 \subsection{Entry waves}{
 
-\code{entry_wave} names the occasion at which each cohort's vintage enters the
-program. It is declared, never inferred from the schedule: a cohort may
-be drawn early and held in reserve, so its first active wave is not
-necessarily its entry. Entry is also what anchors which population a cohort
-represents, which is what any later cross-vintage weighting depends on.
+With a data-frame schedule, \code{entry_wave} names the occasion at which each
+cohort's vintage enters the program. It is declared rather than inferred
+from first activity because a cohort may be drawn early and held in reserve.
+An \code{svyplan_schedule} already records every entry occasion, so it supplies
+this field and redundant \code{entry_wave} input is refused.
 }
 
 \subsection{Schedule}{
@@ -57,6 +61,11 @@ contiguous: a 4-8-4 rotation deliberately leaves and re-enters.
 The schedule is completed to the full grid only after the registry is
 known, because a cohort's available panels come from its own receipt rather
 than from the schedule.
+
+An \code{svyplan_schedule} registers the program as of \code{through}. Exactly the
+startup and intake cohorts entering by that occasion must be supplied.
+Later cohorts remain planned but unfielded. The executed receipts determine
+realized panel and issue counts, which are checked against the plan.
 }
 
 \subsection{What a wave returns}{
