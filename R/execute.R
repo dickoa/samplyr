@@ -731,6 +731,7 @@ execute <- function(
     executed <- NULL
     validate_design_complete(design)
   } else if (is_tbl_sample(.data)) {
+    check_weight_contract_execute(.data, "execute")
     design <- get_design(.data)
     executed <- get_stages_executed(.data)
   } else {
@@ -2352,6 +2353,7 @@ prepare_multiphase_frame <- function(frame) {
   if (!is_tbl_sample(frame)) {
     return(list(frame = frame, prev_phase = NULL))
   }
+  check_weight_contract_execute(frame, "execute")
 
   prev_phase_sample <- frame
   prev_phase <- list(

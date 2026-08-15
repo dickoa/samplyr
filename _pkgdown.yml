@@ -47,6 +47,27 @@ reference:
       - stack_waves
       - as.data.frame.rotation_wave
 
+  - title: "Indirect Sampling and Overlapping Frames"
+    desc: >
+      Estimate for a population other than the one that was sampled, by
+      following links to it or by combining frames that overlap on it. Both
+      transform an executed sample and neither changes the draw.
+    contents:
+      - share_weights
+      - complete_links
+      - weighted_links
+      - complete_weighted_links
+      - extend_links
+      - stack_frames
+      - overlap_probabilities
+      - overlap_weights
+      - exante_probabilities
+      - exante_overlaps
+      - as.data.frame.frame_stack
+      - summary.frame_stack
+      - as_svydesign.frame_stack
+      - as_svrepdesign.frame_stack
+
   - title: "Reference topics"
     desc: >
       Cross-cutting contracts several functions share. Each is the canonical

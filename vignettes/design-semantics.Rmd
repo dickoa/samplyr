@@ -53,7 +53,9 @@ Throughout this vignette:
 - \(\pi_i^{(k \mid S^{(k-1)})}\): conditional inclusion probability of unit
   \(i\) at stage \(k\), given the set \(S^{(k-1)}\) selected at stage \(k - 1\).
 
-`samplyr` produces **design weights only**. Calibration, trimming, and non-response adjustment are out of scope and belong in the estimation layer (`survey`, `srvyr`, or similar).
+`execute()` produces **design weights only**. Calibration, trimming, and non-response adjustment are out of scope and belong in the estimation layer (`survey`, `srvyr`, or similar).
+
+One declared transformation departs from that, and says so in the object it returns: `share_weights()` produces **estimation weights** for a population other than the one that was sampled. Its semantics, and the contract that keeps the two kinds of weight apart, are the subject of a section below.
 
 ## What each verb means
 
@@ -289,6 +291,176 @@ Hansen--Hurwitz estimator already captures.
 
 Bounded cube, LPM2, and SCPS do not currently have supported linearization
 estimators. They use the generic bootstrap approximation described below.
+
+## Weights for a population other than the one sampled
+
+Two situations produce a weight for units that were never in the frame. Both
+are transformations of an executed sample and neither changes the draw.
+
+### Links to a second population
+
+`share_weights()` is the generalized weight share method
+[@lavallee2007]. A sample is selected from population \(U^A\), and estimates
+are wanted for a second population \(U^B\) linked to it: children through
+their parents, establishments through their enterprises, persons through their
+dwellings. Every target unit \(k\) in a reached cluster \(i\) receives
+
+$$
+w_i = \sum_j \frac{I(j \in S^A)}{\pi_j} \frac{L_{ji}}{L_i},
+$$
+
+the source weights carried across the links and divided by the **population**
+number of links to that cluster. Assigning one weight per cluster is what makes
+unit-level and cluster-level estimates of the same total agree.
+
+Two properties of that formula decide the whole API.
+
+The first is that \(\pi_j\) is needed only for units actually **selected**
+[@lavallee2007, section 2.2.2], which is exactly what `.weight` already holds.
+That is why this is a post-execute transformation rather than a sixth verb.
+
+The second is that \(L_i\) sums over the whole of \(U^A\), **not over the
+sample**. Counting a supplied link table therefore asserts that the table is a
+complete population register, and getting that wrong understates every weight
+whose links are only partly recorded. The assertion has no default: either name
+a column holding the population multiplicity, or state it with
+`complete_links()`.
+
+```{r gwsm}
+dwellings <- data.frame(dwelling_id = 1:200)
+
+dwelling_sample <- sampling_design() |>
+  draw(n = 20) |>
+  execute(dwellings, seed = 1)
+
+people <- data.frame(
+  person_id = 1:400,
+  dwelling_id = rep(1:200, each = 2)
+)
+links <- data.frame(
+  dwelling_id = rep(1:200, each = 2),
+  person_id = 1:400
+)
+
+people_sample <- share_weights(
+  dwelling_sample,
+  targets = people,
+  links = links,
+  by = c(dwelling_id = "dwelling_id"),
+  to = c(person_id = "person_id"),
+  within = dwelling_id,
+  multiplicity = complete_links()
+)
+
+# Each person is linked to the one dwelling they live in, so the target
+# weight is the source weight and the totals agree.
+c(
+  dwellings = sum(dwelling_sample$.weight),
+  people = sum(people_sample$.weight)
+)
+```
+
+The target cluster is never inferred, because the three ways of setting it
+produce three different weights: a bare column is the ordinary clustered
+method, `NULL` makes every target unit its own cluster, and `extend_links()`
+eliminates clusters by extending the links across them
+[@lavallee2007, section 5.3].
+
+Links need not be counted. `weighted_links()` replaces the 0/1 indicator with
+a non-negative importance, which costs no theory as long as each target cluster
+totals more than zero [@lavallee2007, section 4.5]. Counting is the case where
+every link counts for one, and the two are one implementation rather than two.
+
+### The weight contract
+
+A shared weight is an estimation weight. It is not \(1/\pi\) for anything,
+because the target units have no inclusion probabilities of their own, and the
+design the object still carries describes the selection of the **source**
+population. So the result records which kind of weight it holds, and every
+statistical consumer states what it does about that record rather than treating
+the sample as ordinary.
+
+| Consumer | On a shared weight |
+|---|---|
+| `design_effect()`, `effective_n()` | Supported. They read `.weight` and nothing else |
+| `as_svrepdesign()` | Supported. It replicates the source design |
+| The data-manipulation methods | Preserve the record |
+| `as_svydesign()` | Supported. It exports the source-target contributions |
+| `joint_expectation()`, `varcomp()` | Refuse |
+| A further `execute()`, and the panel verbs | Refuse |
+
+Each refusal has its own condition class and all of them are also catchable as
+`samplyr_error_weight_contract`. Neither `as_tbl_sample()` nor an ordinary
+dplyr reconstruction can launder an estimation weight back into a design-weight
+sample.
+
+### Where the coverage finding fires
+
+A target cluster with no link to the source population can never be surveyed,
+and the estimator understates totals by exactly its share. `share_weights()`
+records that finding and does **not** warn about it, which departs on purpose
+from the convention that a condition fires where it arises.
+
+The reason is the composed case. A transformation cannot know whether its
+result will stand alone or become one component of a design over several
+frames, and there a cluster one frame cannot reach is the entire reason the
+second frame exists. So the warning fires where the estimate is formed:
+`as_svrepdesign()` reports it for a single transformation, and for a
+`stack_frames()` collection it is evaluated over the union of the frames and
+fires once, naming only the clusters no frame reaches.
+
+One component's silence about a cluster counts as coverage only if that
+component was describing the same target clusters. Where that cannot be
+established the union is reported as not established, rather than guessed.
+
+There are two variance routes, and each is correct for a different reason.
+
+`as_svrepdesign()` replicates the **source** design and applies the recorded
+operator inside every replicate, so the target rows are never resampled.
+Sharing after replication is a different, and wrong, number.
+
+`as_svydesign()` exports the **source-target contributions**: one row per
+link, weighted by the recorded coefficient times the source unit's design
+weight. The identity behind it is that the weight share total is the
+Horvitz-Thompson total of a variable derived on the source units,
+
+$$
+\sum_i w_i y_i = \sum_j \frac{I(j \in S)}{\pi_j} z_j,
+\qquad z_j = \sum_i \frac{L_{ji}}{L_i} y_i,
+$$
+
+and `z` depends on whatever is being analyzed, so it cannot be formed in
+advance. Expanding the contributions lets `survey` form it inside each
+sampling unit instead. That is exact for any link structure, with no condition
+on how many source units reach a target.
+
+An unequal-probability or random-size source design is refused there. Both
+take their variance from a structure indexed by the rows of the source sample,
+and those rows stop being the sampled units once each appears once per
+contribution.
+
+### Frames that overlap on one population
+
+The second situation is two registers of the same population, each incomplete.
+`stack_frames()` collects samples selected independently from them, and the
+theory turns out to be the same one: the multiplicity estimator for overlapping
+frames **is** the weight share method with the standardized link matrix, since
+the number of links to a unit is the number of frames containing it
+[@lohr2021, section 3.2; @mecatti2007].
+
+What a stack records is which frames each sampled unit belongs to. What it does
+**not** do is composite the weights, because which compositing factor is
+appropriate depends on the estimand and on the design effects, so it is an
+estimation-time choice. `theta = NULL` at export is the multiplicity
+estimator, giving every frame reaching a unit an equal share; an explicit
+`theta` is Hartley's constant factor [@hartley1962] and belongs to the first
+frame of the stack.
+
+A stack also does not assert that the frames together cover the target
+population. That is an assumption about the registers, not something the call
+can establish, which is why the verb is not named after their union. See
+`vignette("survey-analysis")` for the two export routes and what each one can
+carry.
 
 ## What is lost at survey export
 

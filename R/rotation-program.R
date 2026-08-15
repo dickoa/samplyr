@@ -332,6 +332,7 @@ check_cohort_registry <- function(cohorts, call = caller_env()) {
     }
     check_single_replicate(sample, "rotation_program", call = call)
     check_sample_unmodified(sample, "rotation_program", call = call)
+    check_weight_contract_panel(sample, "rotation_program", call = call)
 
     metadata <- attr(sample, "metadata")
     if (!is_null(metadata$wave)) {

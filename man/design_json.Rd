@@ -7,8 +7,9 @@
 design_json(x, frame = NULL, ..., pretty = FALSE)
 }
 \arguments{
-\item{x}{A \code{sampling_design}, or a \code{tbl_sample} (the stored design is
-saved along with an execution receipt).}
+\item{x}{A \code{sampling_design}, a \code{tbl_sample} (the stored design is saved
+along with an execution receipt), a \code{frame_stack}, or a sample carrying
+shared weights.}
 
 \item{frame}{Optional sampling frame. A data frame is the one frame
 the design was built against. An ordered list of data frames is the
@@ -23,7 +24,11 @@ dimensions, column types, content hash) is stored so the frame can
 be verified later. The frame data is never written. The content
 hash covers column names, column values, and row order. It does not
 depend on the class of the data frame (tibble or data frame) or on
-the order of its columns.}
+the order of its columns. For a \code{frame_stack}, a list \strong{named} by
+component, holding what each component was drawn from. Matched by name
+rather than position, since a list in the wrong order would fingerprint
+each component against another's register. For a shared-weight sample,
+the register the source selection was drawn from.}
 
 \item{...}{These dots are for future extensions and must be empty.
 \code{pretty} follows \code{...}, so it is matched exactly and must be named.}

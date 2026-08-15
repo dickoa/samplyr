@@ -25,7 +25,7 @@ population and source polygon area}
 \item{remoteness}{Factor. Modeled operational class (Low, Medium, High)
 for sampling examples. It is not an official geographic classification}
 \item{fieldwork_cost}{Integer. Synthetic relative fieldwork cost index.
-not a monetary estimate}
+It is not a monetary estimate}
 }
 }
 \source{

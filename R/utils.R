@@ -103,7 +103,7 @@ builtin_method_probabilities <- function(method) {
 #' joint_fn (sondage >= 0.8.8 exposes them in method_spec()).
 #' Deparsing the language objects normalizes formatting and drops
 #' comments, so re-registering the same code fingerprints identically.
-#' the enclosing environment is not covered. NULL for built-ins and
+#' The enclosing environment is not covered. NULL for built-ins and
 #' for specs without functions.
 #' @noRd
 method_implementation_hash <- function(spec) {
@@ -1412,12 +1412,26 @@ check_sample_unmodified <- function(x, fn_name, call = caller_env()) {
     )
   }
 
+  # A transformed sample cannot be told to run a second phase or to export
+  # through as_svydesign(): both are refused for shared weights. Advice that
+  # names them would send the user to another refusal.
+  advice <- if (identical(sample_weight_contract(x), "shared")) {
+    c(
+      "i" = "This sample's weights were shared with a linked target population, and the recorded transformation addresses its rows by position.",
+      "i" = "Share weights again from the source sample rather than repairing this one: {.code share_weights(source, ...)}."
+    )
+  } else {
+    c(
+      "i" = "For domain (subpopulation) analysis, convert the full sample first, then subset the design: {.code subset(as_svydesign(full_sample), condition)}, or with srvyr: {.code as_survey_design(full_sample) |> filter(condition)}.",
+      "i" = "To subsample an executed sample, run a second phase: {.code sampling_design() |> draw(...) |> execute(full_sample)}."
+    )
+  }
+
   abort_samplyr(
     c(
       "{.fn {fn_name}} requires a sample that still matches its executed design.",
       bullets,
-      "i" = "For domain (subpopulation) analysis, convert the full sample first, then subset the design: {.code subset(as_svydesign(full_sample), condition)}, or with srvyr: {.code as_survey_design(full_sample) |> filter(condition)}.",
-      "i" = "To subsample an executed sample, run a second phase: {.code sampling_design() |> draw(...) |> execute(full_sample)}."
+      advice
     ),
     class = "samplyr_error_modified_sample",
     call = call

@@ -316,6 +316,7 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
   }
   check_single_replicate(x, "joint_expectation")
   check_sample_unmodified(x, "joint_expectation")
+  check_weight_contract_joint(x, "joint_expectation")
   check_no_materialized_wave(x, "joint_expectation")
 
   # Activation mode. The frozen record answers it, so nothing the stage mode
@@ -480,7 +481,7 @@ normalize_joint_frames <- function(x, frame, stages_executed,
 #' computation needs: no frame access, no allocation replay. Pools are
 #' independent selections, so cross-pool entries of the stage matrix are
 #' products of the marginals. The covariance is block-diagonal over pools.
-#' the joint matrix itself is not.
+#' The joint matrix itself is not.
 #'
 #' Row order matches first appearance in the sample. The sample rows
 #' themselves say where each selection appears (the verified

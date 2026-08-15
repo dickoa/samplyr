@@ -287,6 +287,7 @@ digest_universe_units <- function(digest) {
 #' @export
 tbl_sum.tbl_sample <- function(x, ...) {
   design <- get_design(x)
+  share <- attr(x, "metadata")$weight_share
   dims <- paste(nrow(x), "\u00d7", ncol(x))
   if (!is_null(design$title)) {
     first <- c("A tbl_sample" = paste0(dims, " | ", design$title))
@@ -330,15 +331,33 @@ tbl_sum.tbl_sample <- function(x, ...) {
 
   if (".weight" %in% names(x) && nrow(x) > 0) {
     w <- x$.weight
+    # A transformed sample's rows are target units and its weights are
+    # estimation weights, so the header says which kind these are rather than
+    # leaving them to read as design weights.
+    kind <- if (is_null(share)) "" else "shared, "
     result <- c(
       result,
       "Weights" = paste0(
+        kind,
         round(mean(w), 2),
         " [",
         round(min(w), 2),
         ", ",
         round(max(w), 2),
         "]"
+      )
+    )
+  }
+
+  # The recorded design describes selection from the source population, not
+  # these rows. Naming the source is what keeps the stage line above from
+  # reading as a description of the target sample.
+  if (!is_null(share)) {
+    result <- c(
+      result,
+      "Shared from" = paste0(
+        nrow(share$source_sample), " sampled row",
+        if (nrow(share$source_sample) == 1L) "" else "s"
       )
     )
   }
@@ -414,6 +433,177 @@ print.rotation_wave <- function(x, ...) {
     bullet = "info"
   )
   cat("\n")
+  invisible(x)
+}
+
+#' @rdname print.samplyr
+#' @export
+print.frame_stack <- function(x, ...) {
+  rlang::check_dots_empty()
+  cli::cat_rule("Frame Stack")
+  cat("\n")
+
+  membership <- attr(x, "membership")
+  cli::cat_bullet(
+    cli::format_inline(paste0(
+      "{length(x)} frames over key {.field {attr(x, 'key')}}"
+    )),
+    bullet = "info"
+  )
+
+  for (nm in names(x)) {
+    seed <- attr(x[[nm]], "seed")
+    cli::cat_bullet(
+      cli::format_inline(paste0(
+        nm, ": {nrow(x[[nm]])} rows, {.field {membership[[nm]]}}",
+        if (is_null(seed)) ", no seed" else ", seed {seed}"
+      )),
+      bullet = "bullet"
+    )
+  }
+  overlaps <- attr(x, "overlaps")
+  if (!is_null(overlaps)) {
+    cli::cat_bullet(
+      cli::format_inline(if (is_null(overlaps$cols)) {
+        "Overlap {overlaps$scale} resolved from the registers"
+      } else {
+        "Overlaps declared as {overlaps$scale}: {.field {overlaps$cols}}"
+      }),
+      bullet = "info"
+    )
+  }
+  # Load-bearing rather than decorative: a unit listed in two frames is on two
+  # rows carrying two different design weights, and which compositing factor
+  # reconciles them is an estimation-time choice.
+  cli::cat_bullet(
+    "Weights are each frame's own and are not composited here.",
+    bullet = "info"
+  )
+  cat("\n")
+  invisible(x)
+}
+
+#' @rdname print.samplyr
+#' @export
+print.shared_sample_design <- function(x, ...) {
+  rlang::check_dots_empty()
+  cli::cat_rule("Shared Weight Design")
+  cat("\n")
+
+  spec <- attr(x, "transformation")
+  # One source line per message. cli::format_inline() keeps a string's own
+  # newlines and indentation, so a wrapped literal prints wrapped.
+  cli::cat_bullet(
+    cli::format_inline(paste0(
+      "Source keyed by {.field {names(spec$by)}}, ",
+      "targets keyed by {.field {names(spec$to)}}"
+    )),
+    bullet = "info"
+  )
+  cli::cat_bullet(
+    cli::format_inline(switch(
+      spec$within$mode,
+      cluster = "Links grouped within {.field {spec$within$col}}",
+      extended = "Links extended across {.field {spec$within$col}}",
+      singleton = "Each target unit its own cluster"
+    )),
+    bullet = "bullet"
+  )
+  cli::cat_bullet(
+    cli::format_inline(switch(
+      spec$multiplicity$mode,
+      complete_links = "Denominator counted from the supplied links",
+      weighted_links = paste0(
+        "Denominator {.field {spec$multiplicity$col}} ",
+        "over {.field {spec$multiplicity$total_col}}"
+      ),
+      complete_weighted_links = paste0(
+        "Denominator {.field {spec$multiplicity$col}}, ",
+        "summed over the supplied links"
+      )
+    )),
+    bullet = "bullet"
+  )
+  # The reason this object is not the sample: what it needs and does not have.
+  cli::cat_bullet(
+    paste0(
+      "Replay with the source register, the links and the targets ",
+      "to rebuild the sample."
+    ),
+    bullet = "info"
+  )
+  cat("\n")
+  invisible(x)
+}
+
+#' @rdname print.samplyr
+#' @export
+print.frame_stack_design <- function(x, ...) {
+  rlang::check_dots_empty()
+  cli::cat_rule("Frame Stack Design")
+  cat("\n")
+
+  membership <- attr(x, "membership")
+  cli::cat_bullet(
+    cli::format_inline(paste0(
+      "{length(x)} frames over key {.field {attr(x, 'key')}}"
+    )),
+    bullet = "info"
+  )
+
+  for (nm in names(x)) {
+    receipt <- attr(x[[nm]], "execution")
+    seed <- receipt$seed
+    cli::cat_bullet(
+      cli::format_inline(paste0(
+        nm, ": {.field {membership[[nm]]}}",
+        if (is_null(seed)) ", no seed" else ", seed {seed}"
+      )),
+      bullet = "bullet"
+    )
+  }
+  overlaps <- attr(x, "overlaps")
+  if (!is_null(overlaps)) {
+    cli::cat_bullet(
+      cli::format_inline(
+        "Overlaps declared as {overlaps$scale}: {.field {overlaps$cols}}"
+      ),
+      bullet = "info"
+    )
+  }
+  # The counterpart of the frame_stack note. There are no rows here at all,
+  # so the thing to say is what it takes to get them.
+  cli::cat_bullet(
+    "Replay each component against its register to rebuild the collection.",
+    bullet = "info"
+  )
+  cat("\n")
+  invisible(x)
+}
+
+#' @rdname print.samplyr
+#' @export
+print.samplyr_overlap_spec <- function(x, ...) {
+  rlang::check_dots_empty()
+  cli::cat_bullet(
+    cli::format_inline(
+      "Overlap {x$scale}, by frame: {.field {x$cols}}"
+    ),
+    bullet = "info"
+  )
+  invisible(x)
+}
+
+#' @rdname print.samplyr
+#' @export
+print.samplyr_exante_overlap_spec <- function(x, ...) {
+  rlang::check_dots_empty()
+  # format_inline() keeps the whitespace it is given, so this stays on one
+  # line however long it is.
+  cli::cat_bullet(
+    cli::format_inline("Overlap {x$scale} to resolve from {length(x$frames)} register{?s}, keyed by {.field {unname(x$by)}}"),
+    bullet = "info"
+  )
   invisible(x)
 }
 

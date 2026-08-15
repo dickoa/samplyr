@@ -173,6 +173,110 @@ replayable. Save the master. A `rotation_program()` is a registry rather than
 a sampling design, so archive each cohort execution and the schedule used to
 rebuild the registry.
 
+A sample carrying shared weights from `share_weights()` has a format of its
+own, `samplyr/shared-sample`. It records the source selection and the
+transformation's arguments, and nothing else. The links and the target
+register are supplied again at replay, the way a frame is, so the file
+contains no target unit and no link:
+
+```{r}
+households <- data.frame(hh = paste0("h", 1:20))
+people <- data.frame(
+  person = paste0("p", 1:40),
+  hh = rep(paste0("h", 1:20), each = 2)
+)
+
+shared <- share_weights(
+  sampling_design() |> draw(n = 8) |> execute(households, seed = 3),
+  targets = people,
+  links = people,
+  by = c(hh = "hh"),
+  to = c(person = "person"),
+  within = hh,
+  multiplicity = complete_links()
+)
+
+shared_path <- tempfile(fileext = ".json")
+write_design(shared, shared_path, frame = households)
+read_design(shared_path)
+```
+
+Replaying it takes the register, the links and the targets. The source
+selection is re-executed, then the transformation is re-applied:
+
+```{r}
+rebuilt <- replay_design(
+  read_design(shared_path),
+  frame = households,
+  links = people,
+  targets = people
+)
+identical(rebuilt$.weight, shared$.weight)
+```
+
+Because the links and the targets are not in the file, they cannot be checked
+before use. The file instead records what the source selection and the result
+hashed to, and replay is checked against both, so a mismatch says which input
+was wrong. A source that does not reproduce means the register is wrong; a
+result that does not means the links or the targets are.
+
+`saveRDS()` preserves the object whole, though it records an R object rather
+than a design another tool can read, and it does embed the link structure
+that the JSON format deliberately leaves out.
+
+A `stack_frames()` collection has a format of its own, `samplyr/frame-stack`,
+because it is one selection per component rather than one in total. Give
+`frame` as a list named by component, and each component is fingerprinted
+against its own register:
+
+```{r}
+population <- data.frame(
+  person_id = 1:400,
+  has_landline = rep(c(TRUE, FALSE), times = c(250, 150)),
+  has_cell = rep(c(FALSE, TRUE), times = c(100, 300))
+)
+landline_frame <- population[population$has_landline, ]
+cell_frame <- population[population$has_cell, ]
+
+frames <- stack_frames(
+  landline = sampling_design() |>
+    draw(n = 50) |>
+    execute(landline_frame, seed = 1),
+  cell = sampling_design() |>
+    draw(n = 60) |>
+    execute(cell_frame, seed = 2),
+  membership = c(landline = "has_landline", cell = "has_cell"),
+  key = person_id
+)
+
+path <- tempfile(fileext = ".json")
+write_design(frames, path, frame = list(landline = landline_frame,
+                                        cell = cell_frame))
+
+restored <- read_design(path)
+restored
+```
+
+`read_design()` returns the components' designs and receipts rather than the
+collection, which needs the registers. `replay_design()` supplies them and
+stacks the results:
+
+```{r}
+replayed <- replay_design(
+  restored,
+  frame = list(landline = landline_frame, cell = cell_frame)
+)
+identical(as.data.frame(replayed), as.data.frame(frames))
+```
+
+Two things a collection cannot carry are refused rather than dropped, because
+either loss would return a collection that looks complete and estimates
+differently: overlaps from `exante_overlaps()`, which resolve to one chance
+per selected unit when the collection is formed, and a component carrying
+shared weights, which a collection has nowhere to put a link table for.
+Overlaps declared with `overlap_probabilities()` or `overlap_weights()` name
+columns of the components and travel with the file.
+
 For PRN-coordinated samples, archive each executed sample and the versioned
 register containing stable identifiers and PRNs. Those artifacts audit sample
 selection. They do not preserve fieldwork outcomes, response histories, or

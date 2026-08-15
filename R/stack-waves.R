@@ -47,7 +47,7 @@
 #' ## What it does not do
 #'
 #' It does not compute a covariance, a correlation, or a variance of change.
-#' those belong to the inference layer, and which estimator is appropriate
+#' Those belong to the inference layer, and which estimator is appropriate
 #' depends on the overlap and the design. It does not reshape outcomes: attach
 #' each wave's measurement under a common name before stacking. It does not
 #' span cohorts of a [rotation_program()], because identity across frame
@@ -106,6 +106,7 @@ stack_waves_provenance <- function(wave, call = caller_env()) {
   metadata <- attr(wave, "metadata")
   check_single_replicate(wave, "stack_waves", call = call)
   check_sample_unmodified(wave, "stack_waves", call = call)
+  check_weight_contract_panel(wave, "stack_waves", call = call)
 
   # A component of a rotation program is an ordinary wave object, so nothing
   # structural distinguishes it. Spanning cohorts needs its own contract:
@@ -206,7 +207,11 @@ check_stack_waves_inputs <- function(waves, call = caller_env()) {
     abort_samplyr(
       c(
         "{.fn stack_waves} takes materialized waves.",
-        "x" = "Argument{?s} {bad} {?is/are} not one.",
+        # cli takes the quantity from the last value it interpolated, and
+        # `bad` is a vector of positions rather than a count. Both plurals
+        # have to be told what they count, and the second has to be told
+        # again, because interpolating `bad` resets the quantity to it.
+        "x" = "{cli::qty(length(bad))}Argument{?s} {bad}{cli::qty(length(bad))} {?is/are} not one.",
         "i" = "A wave comes from {.code execute(master, wave = t)}."
       ),
       class = "samplyr_error_stack_waves_input",

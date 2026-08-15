@@ -208,6 +208,102 @@ supplying it exports only the represented PPS stage. Omit it when the intended
 analysis is the full multistage linearization with the default stage-level
 variance treatment.
 
+## Frames that overlap on one population
+
+Two registers of the same population, each incomplete: a landline frame and a
+cell frame, an area frame and a list frame. The samples are selected
+independently, one design and one seed each, and everything the feature
+contains happens after that.
+
+`stack_frames()` records which frames each sampled unit belongs to. Every
+component has to carry every frame's membership column, not only its own,
+because a unit selected from frame A has to say whether it was also listed in
+frame B, and that is the information the compositing needs.
+
+```{r frames}
+population <- data.frame(
+  person_id = 1:600,
+  spend = round(stats::rlnorm(600, log(120), 0.4), 2),
+  in_landline = rep(c(TRUE, FALSE), times = c(400, 200)),
+  in_cell = rep(c(FALSE, TRUE), times = c(150, 450))
+)
+
+frames <- stack_frames(
+  landline = sampling_design() |>
+    draw(n = 80) |>
+    execute(population[population$in_landline, ], seed = 1),
+  cell = sampling_design() |>
+    draw(n = 120) |>
+    execute(population[population$in_cell, ], seed = 2),
+  membership = c(landline = "in_landline", cell = "in_cell"),
+  key = person_id
+)
+
+summary(frames)
+```
+
+The domain counts are rows, not distinct people. Someone listed in both frames
+and selected from both appears twice, once per frame that selected them, and
+that is exactly the double count a composite weight has to resolve.
+
+### Two export routes
+
+`as_svydesign()` hands the stack to `survey::multiframe()`. Each component is
+exported on its own, so it keeps its strata, clusters and variance treatment,
+and the compositing sits on top.
+
+```{r frames-linearized}
+svytotal(~spend, as_svydesign(frames))
+```
+
+`theta = NULL`, the default, is the multiplicity estimator: a unit reached by
+both frames contributes half its weight through each. An explicit `theta` is
+Hartley's constant factor [@hartley1962], and it belongs to the **first** frame
+of the stack, so reversing the components and wanting the same estimator means
+asking for `1 - theta`.
+
+```{r frames-hartley}
+svytotal(~spend, as_svydesign(frames, theta = 0.74))
+```
+
+`samplyr` never forwards a missing `theta` to `survey`. Left unset there, it
+defaults to the ratio of the frames' mean sampling weights, which is a
+data-dependent stand-in for frame size over sample size rather than a neutral
+choice.
+
+The replicate route builds one system per frame and combines them in blocks: in
+a replicate column belonging to one frame, only that frame varies and every
+other stays at its full-sample weight. The combined variance is then the sum of
+the frames' own contributions, which is what independent selection from each
+frame gives.
+
+```{r frames-replicate}
+svytotal(~spend, as_svrepdesign(frames, type = "bootstrap", replicates = 100))
+```
+
+The two routes are not interchangeable, and the differences are the reason to
+know which one you are on.
+
+| | `as_svydesign()` | `as_svrepdesign()` |
+|---|---|---|
+| Number of frames | Two. `survey::multiframe()` composites two | Any number |
+| Compositing | Multiplicity, or Hartley with a stated `theta` | The same, with `theta` above two frames refused |
+| A component with shared weights | Refused | Supported |
+| Replicate methods | Not applicable | May differ between frames; `type = "auto"` picks one per component |
+
+The two-frame limit belongs to the export and is stated there, not at the
+design layer: `stack_frames()` records any number, exactly as `execute()`
+chains any number of phases while the two-phase export stops at two.
+
+### Where the theory comes from
+
+The multiplicity estimator for overlapping frames is the generalized weight
+share method with the standardized link matrix, because the number of links to
+a unit is the number of frames containing it [@lohr2021, section 3.2;
+@mecatti2007]. That is why a stack composed of frames and a sample whose
+weights were shared through a link table are handled by one mechanism rather
+than two, and why `vignette("design-semantics")` documents them together.
+
 ## Analysis checklist
 
 1. Inspect the selected counts and weights before fieldwork.
@@ -216,8 +312,12 @@ variance treatment.
 4. Convert the complete sample to a survey design.
 5. Define domains on the converted design.
 6. State every variance approximation used by an advanced selection method.
+7. Where the estimates combine frames, say which compositing factor was used
+   and which frame an explicit `theta` was applied to.
 
 Use `vignette("serialization")` to archive the selection and
-`vignette("design-semantics")` for the detailed export contracts.
+`vignette("design-semantics")` for the detailed export contracts, the weight
+share method, and the contract separating design weights from estimation
+weights.
 
 ## References

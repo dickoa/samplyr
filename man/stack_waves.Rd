@@ -65,7 +65,7 @@ are dropped, stage-specific quantities such as \code{.fpc_1} among them.
 \subsection{What it does not do}{
 
 It does not compute a covariance, a correlation, or a variance of change.
-those belong to the inference layer, and which estimator is appropriate
+Those belong to the inference layer, and which estimator is appropriate
 depends on the overlap and the design. It does not reshape outcomes: attach
 each wave's measurement under a common name before stacking. It does not
 span cohorts of a \code{\link[=rotation_program]{rotation_program()}}, because identity across frame

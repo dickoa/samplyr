@@ -10,8 +10,9 @@ write_design(x, path, frame = NULL, ..., pretty = TRUE)
 read_design(file)
 }
 \arguments{
-\item{x}{A \code{sampling_design}, or a \code{tbl_sample} (the stored design is
-saved along with an execution receipt).}
+\item{x}{A \code{sampling_design}, a \code{tbl_sample} (the stored design is saved
+along with an execution receipt), a \code{frame_stack}, or a sample carrying
+shared weights.}
 
 \item{path}{File path to write to. Conventionally with a \code{.json}
 extension.}
@@ -29,7 +30,11 @@ dimensions, column types, content hash) is stored so the frame can
 be verified later. The frame data is never written. The content
 hash covers column names, column values, and row order. It does not
 depend on the class of the data frame (tibble or data frame) or on
-the order of its columns.}
+the order of its columns. For a \code{frame_stack}, a list \strong{named} by
+component, holding what each component was drawn from. Matched by name
+rather than position, since a list in the wrong order would fingerprint
+each component against another's register. For a shared-weight sample,
+the register the source selection was drawn from.}
 
 \item{...}{These dots are for future extensions and must be empty.
 \code{pretty} follows \code{...}, so it is matched exactly and must be named.}
@@ -43,9 +48,10 @@ remote files. Download the file first and read the local copy.}
 }
 \value{
 \code{write_design()} returns \code{x} invisibly. \code{read_design()} returns
-a \code{sampling_design}. Any frame information and execution receipt in
-the file are attached as the \code{"frame_info"} and \code{"execution"}
-attributes.
+a \code{sampling_design}, a \code{frame_stack_design} for a frame collection file,
+or a \code{shared_sample_design} for a shared-weight sample file. Any frame
+information and execution receipt in the file are attached as the
+\code{"frame_info"} and \code{"execution"} attributes.
 }
 \description{
 \code{write_design()} saves a sampling design (or the design carried by an
@@ -134,6 +140,54 @@ descriptor. The \code{tools.samplyr} block records exact method names, R classes
 the R-derived frame hash, and execution environment needed to rebuild and
 replay the native object. These descriptors are not a finalized external
 method vocabulary.
+}
+
+\subsection{Frame collections}{
+
+A \code{frame_stack} from \code{\link[=stack_frames]{stack_frames()}} is written as \code{samplyr/frame-stack},
+its own format. Each component entry is a complete \code{samplyr/design}
+document plus the two fields that make it a component: its name, and the
+column saying which frames its units belong to. The collection's key and
+any overlaps declared with \code{\link[=overlap_probabilities]{overlap_probabilities()}} or
+\code{\link[=overlap_weights]{overlap_weights()}} are recorded alongside. Give \code{frame} as a list keyed by
+component name, since the components are separate selections with separate
+registers.
+
+\code{\link[=read_design]{read_design()}} returns the components' designs and receipts rather than
+the collection, which needs the registers; \code{\link[=replay_design]{replay_design()}} executes each
+against its register and stacks the results.
+}
+
+\subsection{Shared-weight samples}{
+
+A sample carrying shared weights from \code{\link[=share_weights]{share_weights()}} is written as
+\code{samplyr/shared-sample}, its own format. It records the source selection
+and the transformation's arguments, and nothing else: the links and the
+target register are supplied again to \code{\link[=replay_design]{replay_design()}}, the way a frame
+is, so no unit-level data and no linkage is written.
+
+Two integrity records travel with it, and replay is checked against both.
+A source that does not reproduce means \code{frame} is not the register selected
+from; a result that does not means \code{links} or \code{targets} is not the table
+the transformation was built from.
+}
+
+\subsection{What the format does not carry}{
+
+A design and one execution receipt per component, and nothing beyond them.
+Frame data, target data and link tables are never written. So what cannot
+be described that way is refused rather than written in part:
+\itemize{
+\item a collection whose overlaps come from \code{\link[=exante_overlaps]{exante_overlaps()}}. Those resolve
+to one chance per selected unit when the collection is formed, which is
+unit-level data, and the request that produced them is not kept.
+\item a shared-weight sample used as a component of a collection. A component
+entry is a design document, and a collection replays from one register
+per component with nowhere to put a link table.
+}
+
+Serialize the sample on its own, or the collection without them, and
+rebuild afterwards. \code{saveRDS()} preserves any of these objects whole.
 }
 }
 \examples{

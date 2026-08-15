@@ -335,7 +335,9 @@ is_tbl_sample <- function(x) {
 #' internal design columns (`.weight`, `.fpc_k`, ...), mark the sample
 #' as modified. Design-based computations ([as_svydesign()],
 #' [joint_expectation()], [design_effect()]) reject modified samples.
-#' see the "Modified samples and domain analysis" section of [as_svydesign()]. Restoring the
+#' [as_svydesign()] documents what the check covers, and why dropping
+#' out-of-domain rows before conversion is not domain estimation.
+#' Restoring the
 #' class with `as_tbl_sample()` does not clear the mark: the data is
 #' re-verified against the integrity record stored at execution, so a
 #' stripped, altered, and restored object is detected.

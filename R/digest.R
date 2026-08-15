@@ -1693,7 +1693,7 @@ digest_scope_supports <- function(recorded, basis) {
 #'
 #' This is the faithful extension of the post-hoc rule rather than a new one.
 #' There, allocation quantities sum over the pools the execution reached.
-#' here, over the pools it is expected to reach.
+#' Here, over the pools it is expected to reach.
 #'
 #' The chain is a join, not a re-derivation: stage k's `units` table carries
 #' the conditional chance of each unit, and stage k+1's `pools$parent_unit`

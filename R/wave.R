@@ -178,6 +178,7 @@ check_wave_call <- function(
 
   check_single_replicate(master, "execute", call = call)
   check_sample_unmodified(master, "execute", call = call)
+  check_weight_contract_panel(master, "execute", call = call)
 
   metadata <- attr(master, "metadata")
   if (!is_null(metadata$wave)) {

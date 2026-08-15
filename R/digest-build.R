@@ -1056,10 +1056,18 @@ exante_digest <- function(design, frame,
   digest
 }
 
-#' One ex-ante stage record: every pool enumerated, chances resolved
+#' Every pool of one ex-ante stage, with its exact per-unit chances
+#'
+#' Split out of `build_exante_stage()` so the resolution has one
+#' implementation. The digest summarizes what this returns, sometimes into
+#' quantile bins; `exante_probabilities()` keeps the vector. A second copy of
+#' the pool construction and the allocation would drift from the first.
+#'
+#' Each pool also carries the frame rows its units cover and, for each of
+#' those rows, which unit it belongs to. A clustered stage resolves one chance
+#' per cluster, and every row of that cluster carries it.
 #' @noRd
-build_exante_stage <- function(design, stage_idx, frame,
-                               parent_registry, frame_ref = 1L) {
+resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
   spec <- design$stages[[stage_idx]]
   draw_spec <- spec$draw_spec
   strata_spec <- spec$strata
@@ -1099,7 +1107,8 @@ build_exante_stage <- function(design, stage_idx, frame,
   }
 
   pools_acc <- list()
-  add_pool <- function(parent, urows, pool_spec, n_desc, keys) {
+  add_pool <- function(parent, urows, pool_spec, n_desc, keys,
+                       rows = urows, row_units = seq_along(urows)) {
     mos_vals <- if (!is_null(draw_spec$mos)) {
       frame[[draw_spec$mos]][urows]
     }
@@ -1111,7 +1120,9 @@ build_exante_stage <- function(design, stage_idx, frame,
       n_target = resolved$n_target,
       chance = resolved$chance,
       n_desc = n_desc,
-      keys = keys
+      keys = keys,
+      rows = rows,
+      row_units = row_units
     )
   }
 
@@ -1134,7 +1145,11 @@ build_exante_stage <- function(design, stage_idx, frame,
     }
 
     if (is_null(strata_vars)) {
-      add_pool(parent_ids[g], unit_rows, draw_spec, n_desc, unit_keys)
+      add_pool(
+        parent_ids[g], unit_rows, draw_spec, n_desc, unit_keys,
+        rows = rows,
+        row_units = if (is_cluster) match(ckeys, unit_keys) else seq_along(rows)
+      )
       next
     }
 
@@ -1164,14 +1179,46 @@ build_exante_stage <- function(design, stage_idx, frame,
       # frac (already resolved above) prevails for the fraction-driven
       # methods, exactly as at draw time.
       pool_spec$n <- as.double(info$.n_h[match(skey, info_keys)])
+      pool_keys <- if (is_null(unit_keys)) NULL else unit_keys[sgroups[[s]]]
+      pool_rows <- if (is_cluster) rows[ckeys %in% pool_keys] else urows
       add_pool(
         parent_ids[g], urows,
         pool_spec,
         if (is_null(n_desc)) NULL else n_desc[sgroups[[s]]],
-        if (is_null(unit_keys)) NULL else unit_keys[sgroups[[s]]]
+        pool_keys,
+        rows = pool_rows,
+        row_units = if (is_cluster) {
+          match(ckeys[ckeys %in% pool_keys], pool_keys)
+        } else {
+          seq_along(pool_rows)
+        }
       )
     }
   }
+
+  list(
+    pools = pools_acc,
+    draw_spec = draw_spec,
+    strata_vars = strata_vars,
+    ancestor_vars = ancestor_vars,
+    is_cluster = is_cluster,
+    wr = wr
+  )
+}
+
+#' One ex-ante stage record: every pool enumerated, chances resolved
+#' @noRd
+build_exante_stage <- function(design, stage_idx, frame,
+                               parent_registry, frame_ref = 1L) {
+  resolved <- resolve_exante_pools(
+    design, stage_idx, frame, parent_registry
+  )
+  pools_acc <- resolved$pools
+  draw_spec <- resolved$draw_spec
+  strata_vars <- resolved$strata_vars
+  ancestor_vars <- resolved$ancestor_vars
+  is_cluster <- resolved$is_cluster
+  wr <- resolved$wr
 
   n_pools <- length(pools_acc)
   first_rows <- vapply(pools_acc, function(p) p$first_row, integer(1))

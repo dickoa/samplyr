@@ -386,6 +386,31 @@ For stages using with-replacement methods (\code{srswr},
 \code{pps_multinomial}), the finite population correction is omitted
 and the \code{.draw_k} column (sequential draw index) is used as the
 sampling unit identifier for Hansen-Hurwitz variance estimation.
+}
+
+\subsection{A shared estimation weight}{
+
+A sample from \code{\link[=share_weights]{share_weights()}} carries weights for a population other
+than the one that was selected, so it is exported as its \strong{source-target
+contributions}: one row per link, weighted by the recorded coefficient
+times the source unit's design weight. The generalized weight share total
+is the Horvitz-Thompson total of a variable derived on the source units,
+and expanding the contributions is what lets \code{survey} form that variable
+inside each sampling unit for whatever is being analyzed. It is exact for
+any link structure, with no condition on how many source units reach a
+target.
+
+The rows of the result are contributions rather than target units, so
+there are more of them than the transformation returned. No estimate is
+affected: a total sums the same terms, and a mean's denominator is the
+estimated size of the target population either way.
+
+An unequal-probability or random-size source design is refused on this
+route. Both take their variance from a structure indexed by the rows of
+the source sample, and those rows are no longer the sampled units once
+each appears per contribution. Use \code{as_svrepdesign()} there, which
+replicates the source design and applies the sharing inside every
+replicate.
 
 The \code{survey} package is required but not imported. It must be
 installed to use this function.
@@ -443,7 +468,8 @@ Assisted Survey Sampling}. Springer.
 \code{\link[=execute]{execute()}} for producing tbl_sample objects,
 \code{\link[survey:svydesign]{survey::svydesign()}} for the underlying function,
 \link{as_survey_design.tbl_sample} for converting directly to a srvyr \code{tbl_svy},
-\code{as_svrepdesign()} for replicate-weight export
+\code{as_svrepdesign()} for replicate-weight export,
+\code{\link[=as_svydesign.frame_stack]{as_svydesign.frame_stack()}} for overlapping frames
 
 Other survey export:
 \code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},

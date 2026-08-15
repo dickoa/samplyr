@@ -37,7 +37,9 @@ operations that remove, add, or duplicate rows, or overwrite
 internal design columns (\code{.weight}, \code{.fpc_k}, ...), mark the sample
 as modified. Design-based computations (\code{\link[=as_svydesign]{as_svydesign()}},
 \code{\link[=joint_expectation]{joint_expectation()}}, \code{\link[=design_effect]{design_effect()}}) reject modified samples.
-see the "Modified samples and domain analysis" section of \code{\link[=as_svydesign]{as_svydesign()}}. Restoring the
+\code{\link[=as_svydesign]{as_svydesign()}} documents what the check covers, and why dropping
+out-of-domain rows before conversion is not domain estimation.
+Restoring the
 class with \code{as_tbl_sample()} does not clear the mark: the data is
 re-verified against the integrity record stored at execution, so a
 stripped, altered, and restored object is detected.

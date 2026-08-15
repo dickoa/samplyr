@@ -412,6 +412,7 @@ check_varcomp_dots <- function(dots, call = rlang::caller_env()) {
 varcomp.tbl_sample <- function(x, ..., strata = NULL) {
   check_single_replicate(x, "varcomp")
   check_sample_unmodified(x, "varcomp")
+  check_weight_contract_varcomp(x, "varcomp")
 
   metadata <- attr(x, "metadata") %||% list()
   if (!is_null(metadata$prev_phase)) {

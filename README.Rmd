@@ -298,6 +298,8 @@ are documented where they are taught in depth:
 | Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `vignette("rotating-panels")` |
 | Replicated draws | `execute(reps = 5)` | `?execute` |
 | Two-phase | pipe a `tbl_sample` into a new design's `execute()` | `vignette("survey-analysis")` |
+| Indirect sampling | `share_weights()`, to estimate for a population linked to the one that was sampled | `vignette("design-semantics")` |
+| Overlapping frames | `stack_frames()`, for two registers of one population | `vignette("survey-analysis")` |
 
 ```{r beyond, eval = FALSE}
 # Balanced on auxiliary totals, PPS on size
@@ -331,6 +333,10 @@ as_survey_design(sample) |> dplyr::summarise(mean_y = srvyr::survey_mean(y))
 where the method supports them, for tighter variance estimates. See
 `vignette("survey-analysis")` for domain estimation, replicate weights, and the
 method-by-method breakdown.
+
+Both export verbs also take a `stack_frames()` collection, compositing
+overlapping frames through `survey::multiframe()` or through a combined
+replicate design that varies one frame at a time.
 
 
 ## Diagnostics

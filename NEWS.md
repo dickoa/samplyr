@@ -644,6 +644,207 @@ Initial release.
   reported: a file recording three registers says nothing about one
   frame, and `replay_design()` reports that rather than silently
   skipping the comparison.
+* A sample carrying shared weights from `share_weights()` is written as
+  `samplyr/shared-sample`, a format of its own. It records the source
+  selection and the transformation's arguments and nothing else: the links
+  and the target register are supplied again to `replay_design(links =,
+  targets =)`, the way a frame is, so no unit-level data and no linkage is
+  ever written. This is possible because the transformation record already
+  carries its own call declaratively. `read_design()` returns a
+  `shared_sample_design`; `replay_design()` re-executes the source selection
+  against the register, re-applies the transformation to the supplied tables,
+  and reproduces the sample exactly. A live shared sample replays too.
+* Replaying one is checked against two integrity records the file carries, so
+  a mismatch says which input was wrong: a source that does not reproduce
+  means `frame` is not the register selected from, and a result that does not
+  means `links` or `targets` is not the table the transformation was built
+  from. `links` and `targets` are refused where nothing uses them, since
+  accepting them would return an untransformed sample to someone who believes
+  a transformation had been re-applied.
+* A `frame_stack()` collection is written as `samplyr/frame-stack`, a format
+  of its own rather than an optional block in a design file, so a reader
+  that does not know collections refuses one outright instead of taking its
+  first component for the whole thing. Each component entry is a complete
+  `samplyr/design` document plus its name and its membership column, which
+  is what lets the component encoder and decoder be the design ones
+  unchanged. The key and any overlaps declared with
+  `overlap_probabilities()` or `overlap_weights()` travel with it. `frame`
+  is a list named by component, matched by name rather than position.
+  `read_design()` returns a `frame_stack_design` carrying the components'
+  designs and receipts; `replay_design()` executes each against its register
+  and stacks the results, reproducing the collection exactly. It also takes
+  a live `frame_stack`.
+* Two things a collection cannot carry are refused rather than dropped, since
+  either loss would return a collection that looks complete and estimates
+  differently: overlaps from `exante_overlaps()`, which resolve to one chance
+  per selected unit and whose originating request is not kept, and a
+  component carrying shared weights, which a collection has nowhere to put a
+  link table for.
+
+## Indirect sampling
+
+* `share_weights()` applies the generalized weight share method (Lavallee
+  2007): a sample of one population becomes a weighted sample of a second
+  population linked to it, so children can be estimated through their
+  parents, establishments through their enterprises, or persons through
+  their dwellings. The rows of the result are units of the target
+  population. Nothing about selection changes: the method needs inclusion
+  probabilities only for the units actually selected, which is what
+  `.weight` already holds, so this is a transformation of an executed
+  sample rather than a sixth verb.
+* The denominator has no default and is where the statistical content
+  sits. It is the number of links summed over the whole source
+  population, not over the sample, so counting a supplied link table
+  asserts that the table is a complete register. That assertion is the
+  classic source of bias in the method and has to be made at the call
+  site: either name a column of the target register holding the
+  population multiplicity, or state it with `complete_links()`.
+* `weighted_links()` replaces the 0/1 link indicator with a non-negative
+  importance, which Lavallee section 4.5 shows costs no theory as long as
+  each target cluster totals more than zero. Counting is the case where
+  every link counts for one, and the two paths are one implementation: a
+  `weighted_links()` call with every importance set to one reproduces
+  `complete_links()` exactly. `complete_weighted_links()` is the
+  corresponding assertion about the importance total.
+* The target cluster is never inferred. Give a bare column for the
+  ordinary clustered method, `NULL` to make every target unit its own
+  cluster, or `extend_links()` to eliminate clusters by extending the
+  links across them. The three produce three different weights, which is
+  why guessing is not an option.
+* A shared weight is an estimation weight, not a design weight, and the
+  result records which it carries. Every statistical consumer states what
+  it does about that contract rather than treating the sample as
+  ordinary: `design_effect()` and `effective_n()` read `.weight` and are
+  supported; the data-manipulation methods preserve the record;
+  `as_svydesign()`, `joint_expectation()`, `varcomp()`, a further
+  `execute()` and the panel verbs each refuse with their own condition
+  class, all of them also catchable as
+  `samplyr_error_weight_contract`. Neither `as_tbl_sample()` nor an
+  ordinary dplyr reconstruction can launder an estimation weight back
+  into a design-weight sample.
+* `as_svrepdesign()` is one variance route, and the ordering is what
+  makes it correct: the recorded operator is applied **inside every
+  replicate**, so the replication happens on the source design and the
+  target rows are never resampled. Sharing after replication is a
+  different and wrong number.
+* `as_svydesign()` is the other, and it exports the **source-target
+  contributions**: one row per link, weighted by the recorded coefficient
+  times the source unit's design weight. The generalized weight share
+  total is the Horvitz-Thompson total of a variable derived on the source
+  units, and expanding the contributions is what lets survey form that
+  variable inside each sampling unit for whatever is being analyzed. It is
+  exact for any link structure, with no condition on how many source units
+  reach a target. The rows of the result are contributions rather than
+  target units, which changes no estimate: a total sums the same terms and
+  a mean's denominator is the estimated size of the target population
+  either way.
+* An unequal-probability or random-size source design is refused on the
+  linearized route, because both take their variance from a structure
+  indexed by the rows of the source sample and those rows stop being the
+  sampled units once each appears per contribution. A stack of frames is
+  refused there too: `survey::multiframe()` reads one selection
+  probability per row, and a contribution is not one.
+* A target cluster with no link to the source population can never be
+  reached, and the estimator understates totals by exactly its share.
+  That is Lavallee's Constraint 2.1 and it is detectable only when the
+  target register claims to enumerate the population. A target unit
+  inside a reached cluster with no link of its own is a different thing
+  and is correct: it receives its cluster's weight, and producing a
+  weight for exactly those units is one of the reasons to use the method.
+* The finding is recorded at the transformation and warned about where
+  the estimate is formed, with `samplyr_warning_unlinked_cluster` at
+  `as_svrepdesign()`. That is a deliberate departure from the convention
+  that a condition fires where it arises, and the reason is the composed
+  case: `share_weights()` cannot know whether its result will stand
+  alone or become one component of a design over several frames, where a
+  cluster one frame cannot reach is the entire reason the second frame
+  exists. A warning there would be wrong by construction.
+* For a `stack_frames()` collection the finding is evaluated over the
+  union and fires once, naming only the clusters no frame reaches. The
+  components' own findings are muffled. A component's silence about a
+  cluster counts as coverage only when it was describing the same target
+  clusters, which the record establishes with a fingerprint of the
+  cluster set rather than assuming; where it cannot, the union is
+  reported as not established rather than guessed. `summary()` states
+  whichever of those the collection has.
+
+## Overlapping frames
+
+* `stack_frames()` collects samples selected independently from two or
+  more frames that overlap on one target population, such as a landline
+  frame and a cell frame, or an area frame and a list frame. The result
+  is a `frame_stack`: a collection that keeps its components and their
+  receipts apart, not a row-bound table. Row-binding them would
+  double-count every unit listed in two frames.
+* Membership is declared as a mapping from frame name to column, and
+  every component must carry every frame's column, because a unit
+  selected from frame A has to say whether it was also listed in frame B.
+  Membership columns must be logical: integer `0` and `1` are refused
+  rather than read, since numeric overlap information is a different
+  input on a different scale.
+* `as.data.frame()` gives the row-bound inspection view with `.frame`,
+  the component a row came from, and `.domain`, the set of frames the
+  unit belongs to. Domain labels join the frame names in C-locale byte
+  order, so they do not depend on the order the frames were stacked or on
+  the session collation. Statistical code reads the membership columns
+  and never parses the label back.
+* Two components carrying the same recorded seed warn. Distinct seeds are
+  not evidence that the samples were selected independently; the warning
+  detects one recorded common-random-number mistake and nothing more. No
+  other package is positioned to catch it, because no other package
+  records the seeds.
+* `as_svydesign()` exports a stack through `survey::multiframe()`. Each
+  component is exported on its own, so it keeps its strata, clusters and
+  variance treatment, and the compositing sits on top. `theta = NULL` is
+  the multiplicity estimator, resolved by samplyr and passed on as a
+  number: survey reads a missing `theta` as the ratio of the frames' mean
+  sampling weights, which is a data-dependent heuristic rather than a
+  neutral default. An explicit `theta` is Hartley's constant factor and
+  belongs to the first frame of the stack, so reversing the components
+  and wanting the same estimator means `1 - theta`.
+* `as_svrepdesign()` builds one replicate system per frame and combines
+  them in blocks: in a replicate column belonging to one frame, only that
+  frame varies and every other stays at its full-sample weight. So the
+  combined variance is the sum of the frames' own contributions, which is
+  what independent selection from each frame gives. Unlike the linearized
+  route it takes any number of frames, takes a component whose weights
+  were shared from another population, and lets each frame use the
+  replicate method that suits its own design.
+* The compositing factor is chosen at export rather than stored on the
+  stack, because which one is appropriate depends on the estimand and on
+  the design effects. `stack_frames()` also does not assert that the
+  frames together cover the target population: that is an assumption
+  about the registers, not something the call can establish, which is why
+  the verb is not named after their union.
+* `exante_probabilities()` gives the probability a design would assign each
+  unit of a register, computed from the design rather than observed from a
+  sample, drawing no random numbers. It compounds across stages, so a
+  two-stage probability is the cluster's chance times the chance within it,
+  and it uses the same allocation and chance resolvers execution does: a
+  sample's own weights reproduce these numbers exactly. It refuses a
+  with-replacement stage, where the quantity is an expected number of hits
+  rather than an inclusion probability, and a design given one register per
+  stage, since the compounding runs along the rows of one register.
+* `exante_overlaps()` applies that to a whole stack: instead of naming
+  columns that already hold each unit's chance in every frame, it names the
+  registers and samplyr resolves the chances from each component's own
+  design. This is what the expected estimator needs and what a sample alone
+  cannot supply, the chance a unit would have had in a frame it was not
+  selected from. The frame digest cannot serve: it is a reporting and privacy
+  structure that may store a varying chance vector as quantile bins, keyed by
+  an internal unit id, so `frame_summary(detail = "unit")` returns no rows at
+  all for an unequal-probability element design.
+* Whether the chances are stated or resolved, the value samplyr can check
+  against reality is the one a frame gives its own units, and it does: a
+  frame's own chance must equal the design weight the execution produced. A
+  register that is not the population a design drew from is caught there.
+* Limits stated rather than discovered downstream: `survey::multiframe()`
+  composites two frames, so a larger stack is refused at the linearized
+  export and not at the design layer, exactly as `execute()` chains any
+  number of phases while the two-phase export stops at two. Above two
+  frames an explicit `theta` is refused as well, because the compositing
+  factors are then per domain rather than per frame and one number is not
+  a partial statement of that.
 
 ## Survey export
 
@@ -1035,6 +1236,9 @@ Initial release.
   longitudinal population, the five design types and how each is expressed,
   what `panels` builds and what it does not, and the limits that belong to
   the frame rather than the draw.
+* Rotating panels: partitioning an executed master into panels, the rotation
+  schedule, materializing the wave a panel is scheduled for, rotation
+  programs across frame vintages, and stacking waves for an inference layer.
 * Survey planning: svyplan integration, sample size, precision, design effects.
 * Validation: deterministic invariants and Monte Carlo coverage checks on
   synthetic populations.

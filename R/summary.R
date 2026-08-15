@@ -122,6 +122,14 @@ summary.tbl_sample <- function(object, ...) {
     bullet = "info"
   )
 
+  # Everything below this point is read off the recorded design, which
+  # describes the selection the weights were shared from and not the rows
+  # being summarized. Said once, here, rather than qualified stage by stage.
+  share <- attr(object, "metadata")$weight_share
+  if (!is_null(share)) {
+    summary_weight_share_note(object, share)
+  }
+
   object_for_alloc <- if (is_replicated) {
     object[object$.replicate == min(object$.replicate), ]
   } else {
@@ -603,3 +611,177 @@ summary_stage_fallback <- function(object_for_alloc, design, stage_spec,
 
   invisible(NULL)
 }
+
+#' What a transformed sample has to say before its design is described
+#'
+#' The coverage counts are stated as facts rather than as a warning. Whether
+#' an unreachable target cluster is a defect depends on whether this object
+#' will stand alone or become one component of a multiple-frame design, so the
+#' warning belongs at the analysis boundary and the summary reports.
+#' @noRd
+summary_weight_share_note <- function(object, share) {
+  cov <- share$coverage
+  mode_txt <- switch(
+    share$within_mode,
+    cluster = paste0("clustered on ", share$target_cluster),
+    singleton = "one unit per cluster",
+    extended = paste0("clusters eliminated over ", share$target_cluster)
+  )
+  # Single-line templates: format_inline() keeps the whitespace it is given,
+  # so a wrapped string would print its own indentation.
+  cli::cat_bullet(
+    cli::format_inline(
+      "Weights were shared from {nrow(share$source_sample)} sampled row{?s}; the stages below describe that selection, not these rows."
+    ),
+    bullet = "info"
+  )
+  cli::cat_bullet(
+    cli::format_inline(
+      "Links: {mode_txt} | {cov$n_reached_clusters} of {cov$n_target_clusters} target cluster{?s} reached"
+    ),
+    bullet = "info"
+  )
+  if (cov$n_unlinked_units > 0) {
+    cli::cat_bullet(
+      cli::format_inline(
+        "{cov$n_unlinked_units} returned unit{?s} ha{?s/ve} no link of {?its/their} own and carr{?ies/y} the cluster's weight."
+      ),
+      bullet = "info"
+    )
+  }
+  if (identical(cov$target_scope, "population")) {
+    n_orphan <- length(cov$orphan_clusters)
+    cli::cat_bullet(
+      cli::format_inline(
+        "{n_orphan} target cluster{?s} cannot be reached from this frame."
+      ),
+      bullet = if (n_orphan > 0) "warning" else "info"
+    )
+  } else {
+    cli::cat_bullet(
+      "Coverage of the target population is not established: `targets` is a roster of reached clusters.",
+      bullet = "info"
+    )
+  }
+  cat("\n")
+}
+
+#' Summarize a frame stack
+#'
+#' Reports the components, their membership columns and seeds, and how the
+#' sampled rows fall across the domains: the frame sets units belong to. A
+#' domain holding no rows is not shown, because absence from a sample is not
+#' evidence that the domain is empty in the population.
+#'
+#' The counts are rows, not distinct units. A unit listed in two frames and
+#' selected from both appears twice, once per frame that selected it, which is
+#' exactly the double count a composite weight has to resolve.
+#'
+#' @param object A `frame_stack` produced by [stack_frames()].
+#' @param ... Must be empty.
+#'
+#' @return Invisibly returns `object`. Called for its side effect of
+#'   printing a summary.
+#'
+#' @examples
+#' population <- data.frame(
+#'   person_id = 1:60,
+#'   in_landline = rep(c(TRUE, FALSE), times = c(40, 20)),
+#'   in_cell = rep(c(FALSE, TRUE), times = c(10, 50))
+#' )
+#'
+#' frames <- stack_frames(
+#'   landline = sampling_design() |>
+#'     draw(n = 10) |>
+#'     execute(population[population$in_landline, ], seed = 1),
+#'   cell = sampling_design() |>
+#'     draw(n = 12) |>
+#'     execute(population[population$in_cell, ], seed = 2),
+#'   membership = c(landline = "in_landline", cell = "in_cell"),
+#'   key = person_id
+#' )
+#'
+#' summary(frames)
+#'
+#' @family multiple frames
+#' @export
+summary.frame_stack <- function(object, ...) {
+  rlang::check_dots_empty()
+  membership <- attr(object, "membership")
+  n_rows <- sum(vapply(object, nrow, integer(1)))
+
+  cli::cat_rule("Frame Stack Summary")
+  cat("\n")
+  cli::cat_bullet(
+    cli::format_inline(
+      "{length(object)} frames | {n_rows} rows | key {.field {attr(object, 'key')}}"
+    ),
+    bullet = "info"
+  )
+
+  cat("\n")
+  cli::cat_line(cli::style_bold("Frames"))
+  for (nm in names(object)) {
+    seed <- attr(object[[nm]], "seed")
+    cli::cat_bullet(
+      cli::format_inline(paste0(
+        nm, ": {nrow(object[[nm]])} rows | {.field {membership[[nm]]}}",
+        if (is_null(seed)) " | no seed" else " | seed {seed}"
+      )),
+      bullet = "bullet"
+    )
+  }
+
+  counts <- frame_domain_counts(object)
+  cat("\n")
+  cli::cat_line(cli::style_bold("Domains"))
+  for (label in names(counts)) {
+    cli::cat_bullet(
+      cli::format_inline("{label}: {counts[[label]]} rows"),
+      bullet = "bullet"
+    )
+  }
+
+  coverage <- stack_share_coverage(object)
+  if (!identical(coverage$status, "not_applicable")) {
+    cat("\n")
+    cli::cat_line(cli::style_bold("Coverage"))
+    n_orphan <- length(coverage$clusters)
+    cli::cat_bullet(
+      # format_inline() keeps the whitespace it is given, so each of these
+      # stays on one line however long it is.
+      cli::format_inline(switch(
+        coverage$status,
+        known = coverage_known_line,
+        incompatible = coverage_incompatible_line,
+        coverage_unknown_line
+      )),
+      bullet = if (identical(coverage$status, "known") && n_orphan > 0) {
+        "warning"
+      } else {
+        "info"
+      }
+    )
+  }
+
+  cat("\n")
+  cli::cat_bullet(
+    "A unit listed in two frames is counted once per frame that selected it.",
+    bullet = "info"
+  )
+  cat("\n")
+  invisible(object)
+}
+
+#' Single-line templates for the coverage a collection can state
+#'
+#' Kept out of the switch so each stays on one line: `format_inline()` keeps
+#' the whitespace it is given, and a wrapped string prints its own indent.
+#' @noRd
+coverage_known_line <- "{n_orphan} target cluster{?s} cannot be reached from any frame."
+
+#' @noRd
+coverage_incompatible_line <- "The frames describe different target populations, so coverage over their union is not established."
+
+#' @noRd
+coverage_unknown_line <- "Coverage over the union of the frames is not established."

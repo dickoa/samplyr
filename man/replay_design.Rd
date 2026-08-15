@@ -4,7 +4,13 @@
 \alias{replay_design}
 \title{Replay an execution receipt}
 \usage{
-replay_design(x, frame, fingerprint = c("error", "warn", "inform", "ignore"))
+replay_design(
+  x,
+  frame,
+  fingerprint = c("error", "warn", "inform", "ignore"),
+  links = NULL,
+  targets = NULL
+)
 }
 \arguments{
 \item{x}{A \code{sampling_design} carrying an execution receipt, as
@@ -20,9 +26,17 @@ call that supplied one register per stage.}
 \item{fingerprint}{How to respond when \code{frame} differs from the
 fingerprint stored in the design file: \code{"error"} (default), \code{"warn"},
 \code{"inform"}, or \code{"ignore"}.}
+
+\item{links, targets}{The link table and the target register, for a
+shared-weight sample only. Both are required there and refused
+elsewhere, since accepting them where nothing uses them would return an
+untransformed sample to someone who believes a transformation was
+re-applied. Supply the tables the transformation was built from; the
+result is checked against the integrity the file records.}
 }
 \value{
-The replayed \code{tbl_sample}.
+The replayed \code{tbl_sample}, or the rebuilt \code{frame_stack} for a
+frame collection.
 }
 \description{
 Re-executes a design exactly as recorded in its execution receipt,
@@ -41,7 +55,24 @@ It warns when recorded R or package versions differ.
 Receipts record a single \code{\link[=execute]{execute()}} call. A sample produced by
 several calls (a stage continuation or a multi-phase pipeline)
 carries a \code{chained} flag in its receipt and cannot be replayed.
-save and replay each phase or stage batch separately.
+Save and replay each phase or stage batch separately.
+
+A sample carrying shared weights replays in two steps: the source selection
+is re-executed against \code{frame}, then the recorded transformation is
+re-applied to the \code{links} and \code{targets} given here. Those two are not in
+the file, by design, so they cannot be checked before use; the file instead
+records what the source and the result hashed to, and replay is checked
+against both. A source that does not reproduce means \code{frame} is wrong, and
+a result that does not means \code{links} or \code{targets} is. Both a file and a
+live shared sample are accepted.
+
+A frame collection replays component by component and is stacked again
+afterwards, so \code{frame} is a list named by component. Both a collection read
+back from a file and a live \code{frame_stack} are accepted. Every component is
+checked before any of them runs, since replaying re-executes each
+selection. The collection is rebuilt through \code{\link[=stack_frames]{stack_frames()}} rather than
+by restoring its attributes, so a register that has stopped carrying the
+membership column, or whose key is no longer unique, is reported as that.
 
 For a design using a registered custom method, the receipt records a
 fingerprint of the implementation (the formals and body of the

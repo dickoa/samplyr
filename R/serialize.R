@@ -159,6 +159,27 @@ design_format_version <- 2L
 method_vocabulary_id <- "samplyr/common-sampling-method"
 method_vocabulary_version <- 1L
 
+# A frame collection gets its own format identifier rather than an optional
+# block inside a design file. A reader that does not know the collection would
+# otherwise take the first component for the whole thing and replay one frame's
+# sample as if it were the estimate, which is the failure the version rule
+# exists to prevent. An unknown identifier is refused outright instead.
+#
+# Each component entry is a complete samplyr/design document plus the two
+# fields that make it a component: its `name` and the `membership` column
+# saying which frames its units belong to. So the component encoder and decoder
+# are the design ones, unchanged.
+frame_stack_format_id <- "samplyr/frame-stack"
+frame_stack_format_version <- 1L
+
+# A shared-weight sample is recorded as the source selection plus the
+# transformation's arguments, and nothing else. The links and the target
+# register are supplied again at replay, the way a frame is, so no unit-level
+# data and no linkage is ever written. What makes that possible is that the
+# transformation record already carries its own call declaratively.
+shared_sample_format_id <- "samplyr/shared-sample"
+shared_sample_format_version <- 1L
+
 #' Write a sampling design to a file
 #'
 #' @description
@@ -244,8 +265,53 @@ method_vocabulary_version <- 1L
 #' replay the native object. These descriptors are not a finalized external
 #' method vocabulary.
 #'
-#' @param x A `sampling_design`, or a `tbl_sample` (the stored design is
-#'   saved along with an execution receipt).
+#' ## Frame collections
+#'
+#' A `frame_stack` from [stack_frames()] is written as `samplyr/frame-stack`,
+#' its own format. Each component entry is a complete `samplyr/design`
+#' document plus the two fields that make it a component: its name, and the
+#' column saying which frames its units belong to. The collection's key and
+#' any overlaps declared with [overlap_probabilities()] or
+#' [overlap_weights()] are recorded alongside. Give `frame` as a list keyed by
+#' component name, since the components are separate selections with separate
+#' registers.
+#'
+#' [read_design()] returns the components' designs and receipts rather than
+#' the collection, which needs the registers; [replay_design()] executes each
+#' against its register and stacks the results.
+#'
+#' ## Shared-weight samples
+#'
+#' A sample carrying shared weights from [share_weights()] is written as
+#' `samplyr/shared-sample`, its own format. It records the source selection
+#' and the transformation's arguments, and nothing else: the links and the
+#' target register are supplied again to [replay_design()], the way a frame
+#' is, so no unit-level data and no linkage is written.
+#'
+#' Two integrity records travel with it, and replay is checked against both.
+#' A source that does not reproduce means `frame` is not the register selected
+#' from; a result that does not means `links` or `targets` is not the table
+#' the transformation was built from.
+#'
+#' ## What the format does not carry
+#'
+#' A design and one execution receipt per component, and nothing beyond them.
+#' Frame data, target data and link tables are never written. So what cannot
+#' be described that way is refused rather than written in part:
+#'
+#' * a collection whose overlaps come from [exante_overlaps()]. Those resolve
+#'   to one chance per selected unit when the collection is formed, which is
+#'   unit-level data, and the request that produced them is not kept.
+#' * a shared-weight sample used as a component of a collection. A component
+#'   entry is a design document, and a collection replays from one register
+#'   per component with nowhere to put a link table.
+#'
+#' Serialize the sample on its own, or the collection without them, and
+#' rebuild afterwards. `saveRDS()` preserves any of these objects whole.
+#'
+#' @param x A `sampling_design`, a `tbl_sample` (the stored design is saved
+#'   along with an execution receipt), a `frame_stack`, or a sample carrying
+#'   shared weights.
 #' @param path File path to write to. Conventionally with a `.json`
 #'   extension.
 #' @param frame Optional sampling frame. A data frame is the one frame
@@ -261,16 +327,21 @@ method_vocabulary_version <- 1L
 #'   be verified later. The frame data is never written. The content
 #'   hash covers column names, column values, and row order. It does not
 #'   depend on the class of the data frame (tibble or data frame) or on
-#'   the order of its columns.
+#'   the order of its columns. For a `frame_stack`, a list **named** by
+#'   component, holding what each component was drawn from. Matched by name
+#'   rather than position, since a list in the wrong order would fingerprint
+#'   each component against another's register. For a shared-weight sample,
+#'   the register the source selection was drawn from.
 #' @param ... These dots are for future extensions and must be empty.
 #'   `pretty` follows `...`, so it is matched exactly and must be named.
 #' @param pretty Whether to pretty-print the JSON. Defaults to `TRUE` for
 #'   files and `FALSE` for [design_json()].
 #'
 #' @return `write_design()` returns `x` invisibly. `read_design()` returns
-#'   a `sampling_design`. Any frame information and execution receipt in
-#'   the file are attached as the `"frame_info"` and `"execution"`
-#'   attributes.
+#'   a `sampling_design`, a `frame_stack_design` for a frame collection file,
+#'   or a `shared_sample_design` for a shared-weight sample file. Any frame
+#'   information and execution receipt in the file are attached as the
+#'   `"frame_info"` and `"execution"` attributes.
 #'
 #' @examples
 #' design <- sampling_design(title = "Household Survey") |>
@@ -313,7 +384,8 @@ write_design <- function(x, path, frame = NULL, ..., pretty = TRUE) {
     x,
     frame = frame,
     frame_label = frame_label,
-    pretty = pretty
+    pretty = pretty,
+    fn_name = "write_design"
   )
   writeLines(json, path, useBytes = TRUE)
   invisible(x)
@@ -354,7 +426,8 @@ design_json <- function(x, frame = NULL, ..., pretty = FALSE) {
     x,
     frame = frame,
     frame_label = frame_label,
-    pretty = pretty
+    pretty = pretty,
+    fn_name = "design_json"
   )
 }
 
@@ -391,7 +464,13 @@ read_design <- function(file) {
       )
     }
   )
-  decode_design_payload(payload)
+  if (identical(payload$format, frame_stack_format_id)) {
+    decode_frame_stack_payload(payload)
+  } else if (identical(payload$format, shared_sample_format_id)) {
+    decode_shared_sample_payload(payload)
+  } else {
+    decode_design_payload(payload)
+  }
 }
 
 #' Replay an execution receipt
@@ -412,7 +491,24 @@ read_design <- function(file) {
 #' Receipts record a single [execute()] call. A sample produced by
 #' several calls (a stage continuation or a multi-phase pipeline)
 #' carries a `chained` flag in its receipt and cannot be replayed.
-#' save and replay each phase or stage batch separately.
+#' Save and replay each phase or stage batch separately.
+#'
+#' A sample carrying shared weights replays in two steps: the source selection
+#' is re-executed against `frame`, then the recorded transformation is
+#' re-applied to the `links` and `targets` given here. Those two are not in
+#' the file, by design, so they cannot be checked before use; the file instead
+#' records what the source and the result hashed to, and replay is checked
+#' against both. A source that does not reproduce means `frame` is wrong, and
+#' a result that does not means `links` or `targets` is. Both a file and a
+#' live shared sample are accepted.
+#'
+#' A frame collection replays component by component and is stacked again
+#' afterwards, so `frame` is a list named by component. Both a collection read
+#' back from a file and a live `frame_stack` are accepted. Every component is
+#' checked before any of them runs, since replaying re-executes each
+#' selection. The collection is rebuilt through [stack_frames()] rather than
+#' by restoring its attributes, so a register that has stopped carrying the
+#' membership column, or whose key is no longer unique, is reported as that.
 #'
 #' For a design using a registered custom method, the receipt records a
 #' fingerprint of the implementation (the formals and body of the
@@ -459,8 +555,15 @@ read_design <- function(file) {
 #' @param fingerprint How to respond when `frame` differs from the
 #'   fingerprint stored in the design file: `"error"` (default), `"warn"`,
 #'   `"inform"`, or `"ignore"`.
+#' @param links,targets The link table and the target register, for a
+#'   shared-weight sample only. Both are required there and refused
+#'   elsewhere, since accepting them where nothing uses them would return an
+#'   untransformed sample to someone who believes a transformation was
+#'   re-applied. Supply the tables the transformation was built from; the
+#'   result is checked against the integrity the file records.
 #'
-#' @return The replayed `tbl_sample`.
+#' @return The replayed `tbl_sample`, or the rebuilt `frame_stack` for a
+#'   frame collection.
 #'
 #' @examples
 #' sample <- sampling_design() |>
@@ -500,10 +603,20 @@ read_design <- function(file) {
 replay_design <- function(
   x,
   frame,
-  fingerprint = c("error", "warn", "inform", "ignore")
+  fingerprint = c("error", "warn", "inform", "ignore"),
+  links = NULL,
+  targets = NULL
 ) {
   fingerprint <- match.arg(fingerprint)
 
+  if (is_frame_stack(x) || is_frame_stack_design(x)) {
+    check_replay_link_args(links, targets, "a frame collection")
+    return(replay_frame_stack(x, frame, fingerprint))
+  }
+  if (is_shared_sample_design(x) || is_shared_weight_sample(x)) {
+    return(replay_shared_sample(x, frame, fingerprint, links, targets))
+  }
+  check_replay_link_args(links, targets, "an ordinary sample or design")
   if (is_tbl_sample(x)) {
     design <- get_design(x)
     receipt <- encode_execution(x)
@@ -832,13 +945,39 @@ with_replay_rng <- function(rng, code, call = caller_env()) {
 ## Encoding
 
 #' @noRd
-build_design_json <- function(x, frame, frame_label, pretty, call = caller_env()) {
-  payload <- design_payload(
-    x,
-    frame = frame,
-    frame_label = frame_label,
-    call = call
-  )
+build_design_json <- function(
+  x,
+  frame,
+  frame_label,
+  pretty,
+  fn_name,
+  call = caller_env()
+) {
+  payload <- if (is_shared_weight_sample(x)) {
+    shared_sample_payload(
+      x,
+      frame = frame,
+      frame_label = frame_label,
+      fn_name = fn_name,
+      call = call
+    )
+  } else if (is_frame_stack(x)) {
+    frame_stack_payload(
+      x,
+      frame = frame,
+      frame_label = frame_label,
+      fn_name = fn_name,
+      call = call
+    )
+  } else {
+    design_payload(
+      x,
+      frame = frame,
+      frame_label = frame_label,
+      fn_name = fn_name,
+      call = call
+    )
+  }
   jsonlite::toJSON(
     payload,
     auto_unbox = TRUE,
@@ -850,16 +989,505 @@ build_design_json <- function(x, frame, frame_label, pretty, call = caller_env()
   )
 }
 
+#' Refuse link arguments where they describe nothing
+#'
+#' Accepting and ignoring them would let a user replay an ordinary sample
+#' while believing a transformation was re-applied, and get an untransformed
+#' result that looks like the one they asked for.
+#' @noRd
+check_replay_link_args <- function(links, targets, subject,
+                                   call = caller_env()) {
+  given <- c("links", "targets")[c(!is_null(links), !is_null(targets))]
+  if (length(given) == 0) {
+    return(invisible(NULL))
+  }
+  # qty() on both bullets. Interpolating a vector sets cli's quantity for the
+  # bullet it appears in and no further, so the second one needs its own.
+  abort_samplyr(
+    c(
+      "{cli::qty(length(given))}{.arg {given}} {?is/are} not used when
+       replaying {subject}.",
+      "i" = "{cli::qty(length(given))}{?It describes/They describe} a
+             {.fn share_weights} transformation, and this object carries
+             none."
+    ),
+    class = "samplyr_error_replay_argument",
+    call = call
+  )
+}
+
+#' Replay a shared-weight sample from its source and its recorded call
+#'
+#' Two steps and two checkpoints. The source selection is re-executed against
+#' `frame` and checked against the integrity the transformation recorded for
+#' it, so a register that has changed is reported as that. Then the
+#' transformation is re-applied to the supplied links and targets and the
+#' result is checked against its own recorded integrity, which is what catches
+#' a link table or a target register that is not the one used originally.
+#'
+#' It goes back through `share_weights()` rather than replaying the stored
+#' operator. The operator addresses rows by position, so replaying it would
+#' assume the supplied tables match a layout nothing has checked; re-running
+#' the verb holds the inputs to every rule the first call was held to.
+#' @noRd
+replay_shared_sample <- function(x, frame, fingerprint, links, targets,
+                                 call = caller_env()) {
+  spec <- if (is_shared_sample_design(x)) {
+    attr(x, "transformation")
+  } else {
+    record <- attr(x, "metadata")$weight_share
+    check_weight_share_record_writable(record, "replay_design", call = call)
+    c(record$call[c("by", "to", "within", "multiplicity", "target_scope")],
+      record[c("source_integrity", "result_integrity")])
+  }
+  if (is_null(links) || is_null(targets)) {
+    abort_samplyr(
+      c(
+        "{.arg links} and {.arg targets} must both be given to replay a
+         shared-weight sample.",
+        "i" = "The file records the selection and the transformation's
+               arguments. The link table and the target register are supplied
+               here, the way {.arg frame} is, so that neither is written into
+               it.",
+        "i" = "Supply the same tables the transformation was built from. The
+               result is checked against the integrity the file records."
+      ),
+      class = "samplyr_error_replay_argument",
+      call = call
+    )
+  }
+
+  source_design <- if (is_shared_sample_design(x)) {
+    # The class sits in front of sampling_design, so strip it before handing
+    # back to the ordinary replay path.
+    structure(x, class = setdiff(class(x), "shared_sample_design"))
+  } else {
+    attr(x, "metadata")$weight_share$source_sample
+  }
+  source_sample <- replay_design(source_design, frame, fingerprint = fingerprint)
+  check_replayed_integrity(
+    verify_sample_integrity(source_sample, spec$source_integrity),
+    spec$source_integrity, "source", call = call
+  )
+
+  result <- rlang::inject(share_weights(
+    source_sample,
+    targets = targets,
+    links = links,
+    by = spec$by,
+    to = spec$to,
+    within = !!decode_within_marker(spec$within),
+    multiplicity = !!decode_multiplicity_marker(spec$multiplicity),
+    target_scope = spec$target_scope
+  ))
+  check_replayed_integrity(
+    verify_sample_integrity(result, spec$result_integrity),
+    spec$result_integrity, "result", call = call
+  )
+  result
+}
+
+#' The `within` and `multiplicity` markers, rebuilt as expressions
+#'
+#' `share_weights()` takes these as a bare column and as a marker call, so
+#' they go back as the expressions they were written as rather than as the
+#' strings they are stored as.
+#' @noRd
+decode_within_marker <- function(within) {
+  switch(
+    within$mode,
+    singleton = NULL,
+    cluster = rlang::sym(within$col),
+    extended = rlang::call2("extend_links", rlang::sym(within$col)),
+    cli_abort("Unknown {.arg within} mode {.val {within$mode}}")
+  )
+}
+
+#' @noRd
+decode_multiplicity_marker <- function(multiplicity) {
+  switch(
+    multiplicity$mode,
+    complete_links = rlang::call2("complete_links"),
+    weighted_links = rlang::call2(
+      "weighted_links",
+      rlang::sym(multiplicity$col),
+      total = rlang::sym(multiplicity$total_col)
+    ),
+    complete_weighted_links = rlang::call2(
+      "weighted_links",
+      rlang::sym(multiplicity$col),
+      total = rlang::call2("complete_weighted_links")
+    ),
+    cli_abort("Unknown {.arg multiplicity} mode {.val {multiplicity$mode}}")
+  )
+}
+
+#' Report a replay that did not reproduce what the file recorded
+#'
+#' Two call sites with different causes, so the message names which stage
+#' disagreed. A source mismatch means the register is not the one selected
+#' from; a result mismatch means the links or the targets are not the ones
+#' the transformation was built from.
+#' @noRd
+check_replayed_integrity <- function(verdict, recorded, stage,
+                                     call = caller_env()) {
+  if (is_null(recorded) || identical(verdict, "ok")) {
+    return(invisible(NULL))
+  }
+  bullets <- if (identical(stage, "source")) {
+    c(
+      "x" = "The replayed selection is not the one the transformation was
+             built from.",
+      "i" = "{.arg frame} is not the register the source sample was drawn
+             from, or it has changed since."
+    )
+  } else {
+    c(
+      "x" = "The transformation replayed, but not to the sample the file
+             records.",
+      "i" = "{.arg links} or {.arg targets} is not the table the
+             transformation was built from. The selection itself matched."
+    )
+  }
+  abort_samplyr(
+    c("Replaying this shared-weight sample did not reproduce it.", bullets),
+    class = "samplyr_error_replay_weight_share_mismatch",
+    call = call
+  )
+}
+
+#' @noRd
+is_shared_weight_sample <- function(x) {
+  is_tbl_sample(x) && identical(sample_weight_contract(x), "shared")
+}
+
+#' Encode a shared-weight sample as its source and its transformation
+#'
+#' The file records the selection the links start from, and the arguments
+#' `share_weights()` was given. It does not record the links, the target
+#' register, or the transformed rows: those are supplied again at replay, the
+#' way a frame is, so nothing unit-level and no linkage is written.
+#'
+#' Two integrity records travel with it and are what replay is checked
+#' against. They cost three fields each and need no data the record does not
+#' already hold, which is why the file needs no fingerprint of the link table:
+#' a wrong `links` or `targets` shows up as a result that does not match.
+#' @noRd
+shared_sample_payload <- function(
+  x,
+  frame = NULL,
+  frame_label = NULL,
+  fn_name,
+  call = caller_env()
+) {
+  record <- attr(x, "metadata")$weight_share
+  check_weight_share_record_writable(record, fn_name, call = call)
+
+  list(
+    format = shared_sample_format_id,
+    format_version = shared_sample_format_version,
+    transformation = encode_weight_share_call(record),
+    # The source is a complete design document. It is an ordinary sample, so
+    # it goes through the encoder every other sample goes through.
+    source = design_payload(
+      record$source_sample,
+      frame = frame,
+      frame_label = frame_label,
+      fn_name = fn_name,
+      call = call
+    )
+  )
+}
+
+#' Refuse a transformation this build cannot write back out
+#'
+#' Same discipline as the panel assignment record. A record naming an
+#' algorithm or a schema version this samplyr does not know is refused rather
+#' than written under the current one, because the file would then claim a
+#' transformation nobody performed.
+#' @noRd
+check_weight_share_record_writable <- function(record, fn_name,
+                                               call = caller_env()) {
+  if (
+    !identical(record$algorithm, weight_share_record_algorithm) ||
+      !identical(record$version, 1L)
+  ) {
+    abort_samplyr(
+      c(
+        "{.fn {fn_name}} cannot write this transformation record.",
+        "x" = "It states algorithm {.val {record$algorithm}} at version
+               {.val {record$version}}, and this samplyr writes
+               {.val {weight_share_record_algorithm}} at version {.val {1L}}.",
+        "i" = "{.fn saveRDS} preserves the object whole."
+      ),
+      class = "samplyr_error_serialize_unsupported",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' @noRd
+encode_weight_share_call <- function(record) {
+  spec <- record$call
+  list(
+    algorithm = record$algorithm,
+    version = record$version,
+    # Join maps are named vectors, written as objects so the pairing survives
+    # rather than depending on two arrays staying in step.
+    by = as.list(spec$by),
+    to = as.list(spec$to),
+    within = list(mode = spec$within$mode, col = spec$within$col),
+    multiplicity = list(
+      mode = spec$multiplicity$mode,
+      scale = spec$multiplicity$scale,
+      col = spec$multiplicity$col,
+      total_col = spec$multiplicity$total_col
+    ),
+    target_scope = spec$target_scope,
+    source_integrity = record$source_integrity,
+    result_integrity = record$result_integrity
+  )
+}
+
+#' Replay every component of a collection and stack the results
+#'
+#' Takes both kinds: a collection read back from a file, and a live one, for
+#' the same reason `replay_design()` takes both a restored design and an
+#' executed sample.
+#'
+#' The collection is rebuilt through `stack_frames()` rather than by restoring
+#' the attributes directly, so a replay is held to every structural rule a
+#' first call was: a register that no longer carries the membership column, or
+#' whose key has stopped being unique, is reported as that rather than
+#' returned as a collection nothing else will accept.
+#' @noRd
+replay_frame_stack <- function(x, frame, fingerprint, call = caller_env()) {
+  # Ahead of the components, so a collection that cannot be rebuilt says so
+  # before it re-executes every one of them.
+  check_overlap_spec_portable(attr(x, "overlaps"), "replay_design", call = call)
+  names_x <- names(x)
+  frames <- frame_stack_component_frames(
+    frame, names_x, "replay_design", required = TRUE, call = call
+  )
+  # Every component, before any of them runs. Each replay_design() call gates
+  # its own component, so this changes no verdict, only when it arrives:
+  # replaying re-executes a whole selection, and finding the third component
+  # unusable after two have run is work thrown away for a result the user was
+  # never going to get. It also decides which of two live complaints the user
+  # hears first, which is what makes it testable.
+  if (is_frame_stack(x)) {
+    for (nm in names_x) {
+      check_weight_contract_serialize(x[[nm]], "replay_design", call = call)
+    }
+  }
+  components <- lapply(names_x, function(nm) {
+    replay_design(x[[nm]], frames[[nm]], fingerprint = fingerprint)
+  })
+  names(components) <- names_x
+
+  # `key` is a bare column, so it goes back in as the symbol it was written
+  # as rather than as the string it is stored as.
+  rlang::inject(stack_frames(
+    !!!components,
+    membership = attr(x, "membership"),
+    key = !!rlang::sym(attr(x, "key")),
+    overlaps = attr(x, "overlaps")
+  ))
+}
+
+#' Encode a frame collection as one document
+#'
+#' The envelope carries what makes the components a collection: the shared
+#' `key`, and per component its name and membership column. Everything else is
+#' the component's own design document, built by the same encoder a lone
+#' sample goes through, so the two never drift.
+#'
+#' `frame` is a list keyed by component name. Per component rather than one
+#' frame for the collection, because the components are separate selections
+#' and generally have separate registers. Frames are fingerprinted, never
+#' written, exactly as for a lone design.
+#' @noRd
+frame_stack_payload <- function(
+  x,
+  frame = NULL,
+  frame_label = NULL,
+  fn_name,
+  call = caller_env()
+) {
+  # Ahead of the components, for the reason the weight-contract gate sits
+  # ahead of encode_execution(): encoding a component warns about its own
+  # receipt, and advice about a receipt inside a file that is not going to be
+  # written is worse than none.
+  check_overlap_spec_portable(attr(x, "overlaps"), fn_name, call = call)
+  names_x <- names(x)
+  membership <- attr(x, "membership")
+  frames <- frame_stack_component_frames(frame, names_x, fn_name, call = call)
+
+  components <- lapply(seq_along(x), function(i) {
+    nm <- names_x[[i]]
+    # No weight-contract gate here: design_payload() raises it as its first
+    # act, so a component the format cannot describe is refused with the same
+    # message either way. A collection is writable exactly when its components
+    # are, which is the whole rule.
+    #
+    # The label is the component name. `frame` is keyed by it, and
+    # frame_arg_labels() prefers a list's own names over the expressions its
+    # elements were written as, so any other source would be overridden here
+    # anyway.
+    component <- design_payload(
+      x[[i]],
+      frame = frames[[nm]],
+      frame_label = if (is_null(frames[[nm]])) NULL else nm,
+      fn_name = fn_name,
+      call = call
+    )
+    # Prepended, so a reader sees which component it is before the design.
+    c(list(name = nm, membership = unname(membership[[nm]])), component)
+  })
+
+  payload <- list(
+    format = frame_stack_format_id,
+    format_version = frame_stack_format_version,
+    key = attr(x, "key"),
+    components = components
+  )
+  payload$overlaps <- encode_overlap_spec(attr(x, "overlaps"))
+  payload
+}
+
+#' Encode a declared overlap specification, and refuse a resolved one
+#'
+#' A declared specification names one column per frame and states the scale it
+#' is on. That is the whole thing, and it is what the estimator reads.
+#'
+#' A specification built from `exante_overlaps()` is resolved when the
+#' collection is formed, and what it leaves on the collection is one matrix
+#' per frame holding a chance per selected unit. That is microdata, which this
+#' format never writes.
+#'
+#' **The test is `cols`, not the class.** A resolved record is a bare list
+#' carrying no class at all, so `is_exante_overlap_spec()` is FALSE for it and
+#' a class test falls through to the declared branch and writes `cols: null`,
+#' losing the matrices without a word. `print.frame_stack()` already
+#' discriminates the two the same way. Dropping the specification is what the
+#' refusal prevents: the collection would read back looking complete and
+#' export under a different estimator, which is a different total rather than
+#' an error.
+#' @noRd
+encode_overlap_spec <- function(overlaps) {
+  if (is_null(overlaps)) {
+    return(NULL)
+  }
+  list(
+    scale = overlaps$scale,
+    # Names carry the frame, so the mapping survives a reader that does not
+    # preserve object key order.
+    cols = as.list(overlaps$cols)
+  )
+}
+
+#' @noRd
+check_overlap_spec_portable <- function(overlaps, fn_name,
+                                        call = caller_env()) {
+  if (is_null(overlaps)) {
+    return(invisible(NULL))
+  }
+  if (is_null(overlaps$cols) || !is_null(overlaps$resolved)) {
+    abort_samplyr(
+      c(
+        "{.fn {fn_name}} is not defined for a collection whose overlaps come
+         from {.fn exante_overlaps}.",
+        "x" = "They are resolved when the collection is formed, into one
+               chance per selected unit. That is unit-level data, which this
+               format never writes, and the request that produced it is not
+               kept, so it cannot be re-run either.",
+        "i" = "Rebuild the collection without them, and pass
+               {.fn exante_overlaps} to {.fn stack_frames} again afterwards.
+               The registers it resolves against are the ones the components
+               are replayed from.",
+        "i" = "Overlaps from {.fn overlap_probabilities} and
+               {.fn overlap_weights} name columns of the components, and
+               travel with the collection."
+      ),
+      class = "samplyr_error_serialize_unsupported",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' The frame supplied for each component, checked against the collection
+#'
+#' A collection's components are separate selections, so one data frame for
+#' all of them describes a call that never happened. Names rather than
+#' position: a list in the wrong order would fingerprint each component
+#' against another's register and report a mismatch naming the wrong frame.
+#' @noRd
+frame_stack_component_frames <- function(frame, names_x, fn_name,
+                                         required = FALSE,
+                                         call = caller_env()) {
+  if (is_null(frame)) {
+    # Optional when saving, where a frame only adds a fingerprint. Required
+    # when replaying, which has nothing to select from without it.
+    if (!required) {
+      return(setNames(vector("list", length(names_x)), names_x))
+    }
+  }
+  if (!is.list(frame) || is.data.frame(frame)) {
+    abort_samplyr(
+      c(
+        "{.arg frame} must be a named list with one entry per component.",
+        "x" = "A {.cls frame_stack} has one register per component, so a
+               single frame cannot describe it.",
+        "i" = "Write it as {.code frame = list({paste(names_x,
+               collapse = ' = , ')} = )}."
+      ),
+      class = "samplyr_error_serialize_frame_stack_frame",
+      call = call
+    )
+  }
+  supplied <- names(frame) %||% rep("", length(frame))
+  missing <- setdiff(names_x, supplied)
+  extra <- setdiff(supplied, names_x)
+  if (length(missing) > 0 || length(extra) > 0) {
+    abort_samplyr(
+      c(
+        "{.arg frame} must name every component of the collection, and only
+         those.",
+        if (length(missing) > 0) {
+          c("x" = "No frame for {.val {missing}}.")
+        },
+        if (length(extra) > 0) {
+          c("x" = "{.val {extra}} {?is/are} not {?a component/components} of
+                   this collection.")
+        }
+      ),
+      class = "samplyr_error_serialize_frame_stack_frame",
+      call = call
+    )
+  }
+  frame[names_x]
+}
+
+#' @param fn_name The public verb this was reached through. Required rather
+#'   than defaulted, so a new entry point has to say what it is: the refusals
+#'   below name it, and a message naming a verb the user did not call is
+#'   worse than the missing-argument error.
 #' @noRd
 design_payload <- function(
   x,
   frame = NULL,
   frame_label = NULL,
+  fn_name,
   call = caller_env()
 ) {
   execution <- NULL
   execution_environment <- NULL
   if (is_tbl_sample(x)) {
+    # Before the receipt is encoded, so a transformed sample never reaches the
+    # warnings below. They describe a receipt this object is not going to get.
+    check_weight_contract_serialize(x, fn_name, call = call)
     execution <- encode_execution(x, call = call)
     execution_environment <- attr(x, "metadata")$execution_environment
     if (is_null(execution$seed)) {
@@ -2043,6 +2671,213 @@ decode_digest_table <- function(rows, spec) {
 }
 
 ## Decoding
+
+#' Rebuild a shared-weight sample's source design and transformation
+#'
+#' Returns the source design with its receipt, plus the transformation to
+#' re-apply. `replay_design()` executes the first against the register and the
+#' second against the links and targets it is given.
+#' @noRd
+decode_shared_sample_payload <- function(payload, call = caller_env()) {
+  version <- payload$format_version
+  if (
+    !is.numeric(version) || length(version) != 1 || is.na(version) ||
+      version < 1 || version != floor(version) ||
+      version > shared_sample_format_version
+  ) {
+    cli_abort(
+      c(
+        "Shared-weight sample file format version {.val {version}} is not
+         supported.",
+        "i" = "This version of samplyr reads format versions up to
+               {.val {shared_sample_format_version}}. Update samplyr to read
+               this file."
+      ),
+      call = call
+    )
+  }
+  spec <- decode_weight_share_call(payload$transformation, call = call)
+  new_shared_sample_design(
+    decode_design_payload(payload$source, call = call),
+    transformation = spec
+  )
+}
+
+#' @noRd
+decode_weight_share_call <- function(transformation, call = caller_env()) {
+  algorithm <- decode_chr(transformation$algorithm)
+  version <- transformation$version
+  # Read before anything is taken from the record, so a transformation this
+  # build does not know is reported as that rather than as a missing field.
+  if (
+    !identical(algorithm, weight_share_record_algorithm) ||
+      !is.numeric(version) || length(version) != 1 || is.na(version) ||
+      version != 1
+  ) {
+    abort_samplyr(
+      c(
+        "This file records a transformation this samplyr cannot replay.",
+        "x" = "It states algorithm {.val {algorithm}} at version
+               {.val {version}}.",
+        "i" = "Replaying it under the rules of a different algorithm would
+               reproduce a sample nobody drew."
+      ),
+      class = "samplyr_error_weight_share_record_unsupported",
+      call = call
+    )
+  }
+
+  chr_map <- function(x) {
+    if (is_null(x) || length(x) == 0) {
+      return(NULL)
+    }
+    out <- vapply(x, function(v) decode_chr(v) %||% NA_character_, character(1))
+    names(out) <- names(x)
+    out
+  }
+  spec <- list(
+    by = chr_map(transformation$by),
+    to = chr_map(transformation$to),
+    within = list(
+      mode = decode_chr(transformation$within$mode),
+      col = decode_chr(transformation$within$col)
+    ),
+    multiplicity = list(
+      mode = decode_chr(transformation$multiplicity$mode),
+      scale = decode_chr(transformation$multiplicity$scale),
+      col = decode_chr(transformation$multiplicity$col),
+      total_col = decode_chr(transformation$multiplicity$total_col)
+    ),
+    target_scope = decode_chr(transformation$target_scope),
+    source_integrity = decode_integrity(transformation$source_integrity),
+    result_integrity = decode_integrity(transformation$result_integrity)
+  )
+  if (
+    is_null(spec$by) || is_null(spec$to) || anyNA(spec$by) || anyNA(spec$to) ||
+      is_null(names(spec$by)) || is_null(names(spec$to)) ||
+      !is_scalar_string(spec$within$mode) ||
+      !is_scalar_string(spec$multiplicity$mode) ||
+      !is_scalar_string(spec$target_scope)
+  ) {
+    cli_abort(
+      c(
+        "Shared-weight sample file has an unreadable transformation.",
+        "i" = "It records the join maps, how links are grouped, how the
+               denominator is formed, and the scope. None can be inferred
+               from the others."
+      ),
+      call = call
+    )
+  }
+  spec
+}
+
+#' @noRd
+decode_integrity <- function(x) {
+  if (is_null(x)) {
+    return(NULL)
+  }
+  list(
+    n_rows = as.integer(x$n_rows),
+    cols = vapply(x$cols, as.character, character(1)),
+    hash = decode_chr(x$hash)
+  )
+}
+
+#' Rebuild a frame collection's designs from its document
+#'
+#' Returns the collection's counterpart to what a design file returns: the
+#' designs and receipts that rebuild it, not the collection itself, which
+#' needs the registers. `replay_design()` turns one into the other.
+#' @noRd
+decode_frame_stack_payload <- function(payload, call = caller_env()) {
+  version <- payload$format_version
+  if (
+    !is.numeric(version) || length(version) != 1 || is.na(version) ||
+      version < 1 || version != floor(version) ||
+      version > frame_stack_format_version
+  ) {
+    cli_abort(
+      c(
+        "Frame collection file format version {.val {version}} is not
+         supported.",
+        "i" = "This version of samplyr reads format versions up to
+               {.val {frame_stack_format_version}}. Update samplyr to read
+               this file."
+      ),
+      call = call
+    )
+  }
+  components <- payload$components
+  if (!is.list(components) || length(components) == 0) {
+    cli_abort(
+      "Frame collection file has no {.field components} entry",
+      call = call
+    )
+  }
+  key <- decode_chr(payload$key)
+  if (!is_scalar_string(key)) {
+    cli_abort(
+      "Frame collection file has no {.field key} entry",
+      call = call
+    )
+  }
+
+  names_x <- vapply(components, function(component) {
+    decode_chr(component$name) %||% NA_character_
+  }, character(1))
+  membership <- vapply(components, function(component) {
+    decode_chr(component$membership) %||% NA_character_
+  }, character(1))
+  if (anyNA(names_x) || anyNA(membership) || anyDuplicated(names_x) > 0) {
+    cli_abort(
+      c(
+        "Frame collection file has a component without a usable
+         {.field name} or {.field membership}.",
+        "i" = "Each component names itself, and names the column saying which
+               frames its units belong to. Neither can be inferred from the
+               other components."
+      ),
+      call = call
+    )
+  }
+  names(membership) <- names_x
+
+  designs <- lapply(components, decode_design_payload, call = call)
+  names(designs) <- names_x
+
+  new_frame_stack_design(
+    designs,
+    membership = membership,
+    key = key,
+    overlaps = decode_overlap_spec(payload$overlaps, names_x, call = call)
+  )
+}
+
+#' @noRd
+decode_overlap_spec <- function(overlaps, frames, call = caller_env()) {
+  if (is_null(overlaps)) {
+    return(NULL)
+  }
+  cols <- vapply(overlaps$cols, function(col) {
+    decode_chr(col) %||% NA_character_
+  }, character(1))
+  scale <- decode_chr(overlaps$scale)
+  if (anyNA(cols) || !setequal(names(cols), frames) || is_null(scale)) {
+    cli_abort(
+      c(
+        "Frame collection file has an unreadable {.field overlaps} entry.",
+        "i" = "It names one column per frame and the scale those columns are
+               on. A partial mapping would export under a different
+               estimator."
+      ),
+      call = call
+    )
+  }
+  # Through the ordinary constructor, so a decoded specification is held to
+  # the same rules as one the user wrote.
+  new_overlap_spec(scale, as.list(cols[frames]), call = call)
+}
 
 #' @noRd
 decode_design_payload <- function(payload, call = caller_env()) {

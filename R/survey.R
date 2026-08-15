@@ -356,6 +356,30 @@
 #' and the `.draw_k` column (sequential draw index) is used as the
 #' sampling unit identifier for Hansen-Hurwitz variance estimation.
 #'
+#' ## A shared estimation weight
+#'
+#' A sample from [share_weights()] carries weights for a population other
+#' than the one that was selected, so it is exported as its **source-target
+#' contributions**: one row per link, weighted by the recorded coefficient
+#' times the source unit's design weight. The generalized weight share total
+#' is the Horvitz-Thompson total of a variable derived on the source units,
+#' and expanding the contributions is what lets `survey` form that variable
+#' inside each sampling unit for whatever is being analyzed. It is exact for
+#' any link structure, with no condition on how many source units reach a
+#' target.
+#'
+#' The rows of the result are contributions rather than target units, so
+#' there are more of them than the transformation returned. No estimate is
+#' affected: a total sums the same terms, and a mean's denominator is the
+#' estimated size of the target population either way.
+#'
+#' An unequal-probability or random-size source design is refused on this
+#' route. Both take their variance from a structure indexed by the rows of
+#' the source sample, and those rows are no longer the sampled units once
+#' each appears per contribution. Use `as_svrepdesign()` there, which
+#' replicates the source design and applies the sharing inside every
+#' replicate.
+#'
 #' The `survey` package is required but not imported. It must be
 #' installed to use this function.
 #'
@@ -408,7 +432,8 @@
 #' @seealso [execute()] for producing tbl_sample objects,
 #'   [survey::svydesign()] for the underlying function,
 #'   [as_survey_design.tbl_sample] for converting directly to a srvyr `tbl_svy`,
-#'   `as_svrepdesign()` for replicate-weight export
+#'   `as_svrepdesign()` for replicate-weight export,
+#'   [as_svydesign.frame_stack()] for overlapping frames
 #'
 #' @family survey export
 #' @export
@@ -1122,7 +1147,7 @@ survey_stage_kind <- function(draw_spec) {
 #' Resolve the variables that match phase-2 rows into the phase-1 data
 #'
 #' Uses identifiers shared by both phases and requires a unique phase-1 match.
-#' phase-2 descendants may repeat that bridge.
+#' Phase-2 descendants may repeat that bridge.
 #' @noRd
 resolve_phase_bridge <- function(phase1_ids, phase2_ids, df1, df2,
                                  call = caller_env()) {
@@ -1548,7 +1573,7 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
 #' Used by the bootstrap escape hatch when survey::svydesign() cannot
 #' represent a stage-1 Poisson PPS specification in a multi-stage object.
 #' The demoted design carries no finite-population correction at that stage.
-#' bootstrap resampler supplies the variance instead.
+#' The bootstrap resampler supplies the variance instead.
 #' @noRd
 survey_demote_rs_poisson_stage1 <- function(df, fpc, first_idx) {
   pi_col <- paste0(".fpc_pi_", first_idx)
@@ -1773,6 +1798,20 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
     "survey",
     reason = "to convert a tbl_sample to a survey design object."
   )
+
+  # A shared-weight sample has no design of its own: its rows are target
+  # units and the design describes the selection they were reached from. It
+  # exports as the source-target contributions, which carry that selection's
+  # strata and units.
+  if (identical(sample_weight_contract(x), "shared")) {
+    return(svydesign_from_shared_weights(
+      x,
+      nest = nest,
+      method = method,
+      systematic_variance = systematic_variance,
+      dots = list(...)
+    ))
+  }
 
   phase_info <- survey_validate_phase_support(
     x,
@@ -2210,6 +2249,416 @@ build_singlephase_svydesign <- function(
   result
 }
 
+## Overlapping frames
+
+#' Export overlapping frames to survey's dual-frame estimator
+#'
+#' @description
+#' Exports a [stack_frames()] collection to `survey::multiframe()`, which
+#' composites the frames into one estimator. Every component is exported on
+#' its own with [as_svydesign()], so each keeps its own strata, clusters and
+#' variance treatment, and the compositing is applied on top of them.
+#'
+#' @details
+#' ## The compositing factor
+#'
+#' `theta` is Hartley's constant factor: a unit belonging to both frames
+#' contributes `theta` of its weight through the first frame and `1 - theta`
+#' through the second, so the two contributions sum to one whichever frame
+#' selected it. A unit belonging to one frame alone keeps its full weight.
+#'
+#' **`theta` belongs to the first frame of the stack.** Reversing the
+#' components and asking for the same estimator means asking for
+#' `1 - theta`. Only `theta = 0.5` is invariant to the order they were
+#' stacked in.
+#'
+#' `theta = NULL` is the multiplicity estimator, which gives every frame
+#' reaching a unit an equal share and is `theta = 0.5` for two frames.
+#' samplyr resolves it and passes the value on. It never forwards `NULL`,
+#' which survey reads as the ratio of the frames' mean sampling weights: a
+#' data-dependent heuristic standing in for frame size over sample size,
+#' rather than a neutral default.
+#'
+#' ## What is not exported this way
+#'
+#' `survey::multiframe()` takes two frames. A stack of more is refused here
+#' rather than at the design layer, the same split [as_svydesign()] already
+#' runs for phases, which chain without a bound while the export stops at
+#' two.
+#'
+#' A two-phase component is refused as well: `as_svydesign()` exports one
+#' with `survey::twophase()`, and `multiframe()` accepts only the objects
+#' `survey::svydesign()` builds.
+#'
+#' ## The expected estimator
+#'
+#' `estimator = "expected"` needs the chance a unit had in every frame,
+#' including the frames it was not selected from, which is what
+#' [stack_frames()]'s `overlaps` argument declares. The composited weight is
+#' then one over the sum of those chances, and it owes nothing to the design
+#' weight, which cancels.
+#'
+#' samplyr hands survey the **weight** form of those chances, never the
+#' probabilities, whichever way they were declared. `survey::multiframe()`
+#' infers the scale from the values, reading a matrix as weights when no
+#' non-zero entry in some frame falls below one, and that is reachable
+#' whenever a frame is a census or its overlapping units are certainties.
+#' Values at or above one are unambiguous under the same rule, so there is
+#' nothing left to infer.
+#'
+#' It is refused for a component whose weights were shared from another
+#' population: the combination is harmonic, and a realized weight-share
+#' weight is a random variable rather than an inverse inclusion probability.
+#'
+#' @param x A `frame_stack` from [stack_frames()].
+#' @param ... Forwarded to `survey::svydesign()` for every component. `pps`
+#'   is refused, because a joint-probability matrix describes one component
+#'   and there is no way to say which.
+#' @param estimator `"constant"`, the default, is Hartley's: a fixed share of
+#'   an overlapping unit's weight through each frame. `"expected"` is the
+#'   Bankier and Kalton-Anderson single-frame estimator, which weights a unit
+#'   by one over the sum of its chances across the frames reaching it and so
+#'   needs the `overlaps` declared on the stack.
+#' @param theta The compositing factor applied to the first frame's
+#'   overlapping units, a single number in `[0, 1]`. `NULL`, the default, is
+#'   the multiplicity estimator. It belongs to `estimator = "constant"` and is
+#'   refused for the other, which would otherwise discard it.
+#' @param nest,systematic_variance Passed to [as_svydesign()] for every
+#'   component.
+#'
+#' @return A `dualframe` object from the survey package, which
+#'   `survey::svytotal()`, `svymean()`, `svyglm()` and their relatives accept.
+#'
+#' @references
+#' Hartley, H. O. (1962). Multiple frame surveys. *Proceedings of the Social
+#' Statistics Section, American Statistical Association*, 203-206.
+#'
+#' Lohr, S. L. (2021). Multiple-frame surveys for a multiple-data-source
+#' world. *Survey Methodology*, 47(2), 229-263.
+#'
+#' @examplesIf requireNamespace("survey", quietly = TRUE)
+#' population <- data.frame(
+#'   person_id = 1:200,
+#'   spend = stats::rnorm(200, 100, 10),
+#'   in_landline = rep(c(TRUE, FALSE), times = c(140, 60)),
+#'   in_cell = rep(c(FALSE, TRUE), times = c(60, 140))
+#' )
+#'
+#' frames <- stack_frames(
+#'   landline = sampling_design() |>
+#'     draw(n = 40) |>
+#'     execute(population[population$in_landline, ], seed = 1),
+#'   cell = sampling_design() |>
+#'     draw(n = 50) |>
+#'     execute(population[population$in_cell, ], seed = 2),
+#'   membership = c(landline = "in_landline", cell = "in_cell"),
+#'   key = person_id
+#' )
+#'
+#' # The multiplicity estimator: an overlap unit counts half in each frame.
+#' svy <- as_svydesign(frames)
+#' survey::svytotal(~spend, svy)
+#'
+#' # Hartley's estimator with a stated factor on the landline frame.
+#' survey::svytotal(~spend, as_svydesign(frames, theta = 0.74))
+#'
+#' @seealso [stack_frames()] for building the collection,
+#'   [as_svydesign()] for the per-component export
+#'
+#' @family multiple frames
+#' @export
+as_svydesign.frame_stack <- function(
+  x,
+  ...,
+  estimator = c("constant", "expected"),
+  theta = NULL,
+  nest = TRUE,
+  systematic_variance = c("warn", "approximate", "error")
+) {
+  estimator <- match.arg(estimator)
+  systematic_variance <- match.arg(systematic_variance)
+  rlang::check_installed(
+    "survey",
+    reason = "to convert a frame stack to a survey design object."
+  )
+  check_multiframe_dots(enquos(...))
+  survey_validate_multiframe_support(x, "as_svydesign")
+  check_multiframe_estimator(x, estimator, theta, "as_svydesign")
+  theta <- if (identical(estimator, "constant")) {
+    resolve_multiframe_theta(theta)
+  }
+
+  designs <- lapply(names(x), function(nm) {
+    do.call(
+      as_svydesign,
+      c(
+        list(x[[nm]]),
+        list(...),
+        list(nest = nest, systematic_variance = systematic_variance)
+      )
+    )
+  })
+
+  survey::multiframe(
+    designs,
+    if (identical(estimator, "constant")) {
+      multiframe_overlaps(x)
+    } else {
+      # Weight form, never probabilities: survey infers the scale, and it
+      # reads a matrix as weights whenever some frame has no non-zero entry
+      # below one. Values at or above one are unambiguous under that rule.
+      multiframe_overlap_weights(x)
+    },
+    estimator = estimator,
+    theta = theta
+  )
+}
+
+#' Two arguments of the per-component export that a stack cannot carry
+#'
+#' Both would otherwise be forwarded to every component. `pps` describes one
+#' design's joint probabilities, so sending it to both is a wrong variance
+#' rather than an error survey would catch, and `method` belongs to the
+#' two-phase path a component may not take at all.
+#' @noRd
+check_multiframe_dots <- function(dots, call = caller_env()) {
+  nms <- names(dots) %||% rep("", length(dots))
+
+  if ("pps" %in% nms) {
+    abort_samplyr(
+      c(
+        "{.arg pps} describes one component, not a stack.",
+        "i" = "A joint-probability matrix belongs to the design that
+               produced it, and forwarding one to every component would
+               compute a variance from the wrong probabilities.",
+        "i" = "Export the component on its own with
+               {.code as_svydesign(frames[[\"<frame name>\"]], pps = ...)} to
+               inspect it."
+      ),
+      class = "samplyr_error_survey_multiframe_argument",
+      call = call
+    )
+  }
+  if ("method" %in% nms) {
+    abort_samplyr(
+      c(
+        "{.arg method} is an argument of the two-phase export.",
+        "i" = "A component of a stack is exported with
+               {.fn survey::svydesign}, and a two-phase component is refused
+               outright."
+      ),
+      class = "samplyr_error_survey_multiframe_argument",
+      call = call
+    )
+  }
+
+  check_forwarded_args(
+    dots,
+    owned = c("estimator", "theta", "nest", "systematic_variance"),
+    accepted = setdiff(svydesign_accepted_args, c("pps", "nest")),
+    derived = svydesign_derived_args,
+    forwarded_to = "survey::svydesign",
+    call = call
+  )
+}
+
+#' What survey's dual-frame estimator will take
+#'
+#' Mirrors `survey_validate_phase_support()`: the ceiling belongs to the
+#' export, not to the design layer, so `stack_frames()` stays K-general and
+#' the refusal is stated here.
+#' @noRd
+survey_validate_multiframe_support <- function(x, fn_name,
+                                               call = caller_env()) {
+  if (length(x) != 2L) {
+    abort_samplyr(
+      c(
+        "{.fn {fn_name}} only supports stacks of two frames.",
+        "i" = "This stack has {length(x)}.",
+        "i" = "{.fn survey::multiframe} composites two frames. The
+               multiplicity estimator is defined for any number, and
+               {.fn stack_frames} records any number."
+      ),
+      class = "samplyr_error_survey_multiframe_unsupported",
+      call = call
+    )
+  }
+
+  shared <- names(x)[vapply(x, function(component) {
+    !is_null(attr(component, "metadata")$weight_share)
+  }, logical(1))]
+  if (length(shared) > 0) {
+    abort_samplyr(
+      c(
+        "{.fn {fn_name}} does not composite a shared estimation weight.",
+        "x" = "{cli::qty(length(shared))}Frame{?s} {.val {shared}}
+               carr{?ies/y} weights shared from another population.",
+        "i" = "A shared weight linearizes as its source-target contributions,
+               and {.fn survey::multiframe} reads one selection probability
+               per row, which a contribution is not.",
+        "i" = "Export that component on its own with
+               {.code as_svydesign(frames[[\"<frame name>\"]])}, which does
+               take the contributions, or the whole stack with
+               {.fn as_svrepdesign}."
+      ),
+      class = "samplyr_error_survey_weight_contract",
+      call = call
+    )
+  }
+
+  twophase <- names(x)[vapply(x, function(component) {
+    survey_phase_info(component)$is_twophase
+  }, logical(1))]
+  if (length(twophase) > 0) {
+    abort_samplyr(
+      c(
+        "{.fn {fn_name}} cannot take a two-phase component.",
+        "x" = "{cli::qty(length(twophase))}Frame{?s} {.val {twophase}}
+               {?is/are} two-phase.",
+        "i" = "A two-phase sample is exported with {.fn survey::twophase},
+               and {.fn survey::multiframe} accepts only the designs
+               {.fn survey::svydesign} builds."
+      ),
+      class = "samplyr_error_survey_multiframe_unsupported",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' The compositing factor, resolved rather than forwarded
+#' @noRd
+resolve_multiframe_theta <- function(theta, call = caller_env()) {
+  # The multiplicity estimator gives every frame reaching a unit an equal
+  # share, which is one half of two. survey's own default for a missing theta
+  # is the ratio of the frames' mean sampling weights, which is a different
+  # estimator and not a neutral one.
+  if (is_null(theta)) {
+    return(0.5)
+  }
+  validate_multiframe_theta(theta, call = call)
+}
+
+#' @noRd
+validate_multiframe_theta <- function(theta, call = caller_env()) {
+  if (
+    !is.numeric(theta) || length(theta) != 1L ||
+      is.na(theta) || !is.finite(theta) || theta < 0 || theta > 1
+  ) {
+    abort_samplyr(
+      c(
+        "{.arg theta} must be a single number between 0 and 1.",
+        "x" = "Got {.code {as_label(theta)}}.",
+        "i" = "It is the share of an overlapping unit's weight carried by the
+               first frame, and the second carries {.code 1 - theta}.",
+        "i" = "Use {.code theta = NULL} for the multiplicity estimator."
+      ),
+      class = "samplyr_error_survey_multiframe_theta",
+      call = call
+    )
+  }
+  theta
+}
+
+#' What the expected estimator needs, and what it cannot be given
+#'
+#' Every refusal here prevents a number rather than standing in for something
+#' unbuilt: the estimator has no meaning without overlaps, `theta` is silently
+#' discarded by survey under it, and a realized weight-share weight is not an
+#' inclusion probability.
+#' @noRd
+check_multiframe_estimator <- function(x, estimator, theta, fn_name,
+                                       call = caller_env()) {
+  if (identical(estimator, "constant")) {
+    return(invisible(NULL))
+  }
+
+  shared <- names(x)[vapply(x, function(component) {
+    identical(sample_weight_contract(component), "shared")
+  }, logical(1))]
+  if (length(shared) > 0) {
+    abort_samplyr(
+      c(
+        "{.code estimator = \"expected\"} cannot take a component whose
+         weights were shared from another population.",
+        "x" = "{cli::qty(length(shared))}Frame{?s} {.val {shared}}
+               carr{?ies/y} shared weights.",
+        "i" = "The estimator combines inverse inclusion probabilities
+               harmonically. A shared weight is a realized random quantity
+               whose expectation carries the unbiasedness of a total, and
+               putting realized values through that combination has no
+               unbiasedness result behind it.",
+        "i" = "Use {.code estimator = \"constant\"}, whose factors apply to
+               components that are each unbiased for their own domain."
+      ),
+      class = "samplyr_error_survey_weight_contract",
+      call = call
+    )
+  }
+
+  if (is_null(attr(x, "overlaps"))) {
+    abort_samplyr(
+      c(
+        "{.code estimator = \"expected\"} needs the chance each unit had in
+         every frame.",
+        "i" = "It weights a unit by {.code 1 / sum(pi)} over the frames
+               reaching it, which membership alone does not give.",
+        "i" = "Declare them on the stack:
+               {.code stack_frames(..., overlaps = overlap_probabilities(frame
+               = \"column\", ...))}, or {.fn overlap_weights}."
+      ),
+      class = "samplyr_error_survey_multiframe_overlaps",
+      call = call
+    )
+  }
+
+  if (!is_null(theta)) {
+    abort_samplyr(
+      c(
+        "{.arg theta} has no meaning for {.code estimator = \"expected\"}.",
+        "i" = "That estimator takes a unit's whole weight from its chances in
+               the frames reaching it, so there is no share left to split.",
+        "i" = "{.arg theta} belongs to {.code estimator = \"constant\"}.
+               survey would discard it here without saying so."
+      ),
+      class = "samplyr_error_survey_multiframe_theta",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' The declared overlaps as weights, one matrix per component
+#'
+#' Zero still marks a frame the unit does not belong to, which is the absence
+#' survey's own formula reads and removes.
+#' @noRd
+multiframe_overlap_weights <- function(x) {
+  stats::setNames(lapply(names(x), function(nm) {
+    probabilities <- frame_component_overlaps(x, nm)
+    ifelse(probabilities > 0, 1 / probabilities, 0)
+  }), names(x))
+}
+
+#' One membership matrix per component, in the order the frames are stacked
+#'
+#' survey reads the column belonging to the *other* frame by position in the
+#' designs list, so these columns follow the stack's order and not the order
+#' the membership mapping happened to be written in. Getting that wrong
+#' produces a number rather than an error.
+#' @noRd
+multiframe_overlaps <- function(x) {
+  membership <- attr(x, "membership")
+  lapply(x, function(component) {
+    matrix(
+      as.numeric(frame_component_membership(component, membership)),
+      nrow = nrow(component),
+      ncol = length(membership),
+      dimnames = list(NULL, names(membership))
+    )
+  })
+}
+
 #' Convert a tbl_sample to a replicate-weight survey design
 #'
 #' Creates a `svyrep.design` object from a `tbl_sample` by first
@@ -2344,13 +2793,26 @@ as_svrepdesign.tbl_sample <- function(
     forwarded_to = "survey::as.svrepdesign"
   )
 
+  type <- match.arg(type)
+
+  # A shared-weight sample has no design of its own: its rows are target
+  # units and the design describes the selection they were reached from. The
+  # replication therefore happens on that source sample, and the recorded
+  # transformation is applied inside it.
+  if (identical(sample_weight_contract(x), "shared")) {
+    return(svrep_from_shared_weights(
+      x,
+      type = type,
+      systematic_variance = systematic_variance,
+      dots = list(...)
+    ))
+  }
+
   survey_validate_phase_support(
     x,
     allow_twophase = FALSE,
     fn_name = "as_svrepdesign"
   )
-
-  type <- match.arg(type)
 
   design <- get_design(x)
   unequal_used <- unique(unlist(lapply(
@@ -2412,6 +2874,451 @@ as_svrepdesign.tbl_sample <- function(
   )
 }
 
+
+#' Replicate weights for a sample whose weights were shared
+#'
+#' The ordering is the whole content of this function. Weight sharing is
+#' linear in the source weights, so the recorded operator can be applied to a
+#' replicate weight system exactly as it is applied to the base weights. What
+#' it cannot do is act on replicate weights that were built from the target
+#' rows: those rows were never sampled, and resampling them would describe a
+#' selection that did not happen.
+#'
+#' So the source sample is replicated first, by its own design and through the
+#' ordinary path, and the transformation is applied inside every replicate.
+#' Every restriction the source export carries (unequal probability, Poisson,
+#' systematic, balanced, spatial) reaches the user from that call, because it
+#' is that call: sharing weights makes no replicate method more exact.
+#'
+#' @return A `svyrep.design` over the target rows.
+#' @noRd
+svrep_from_shared_weights <- function(x, type, systematic_variance, dots,
+                                      call = caller_env()) {
+  record <- prepare_weight_share_record(
+    attr(x, "metadata")$weight_share,
+    "A replicate export",
+    call = call
+  )
+  check_weight_share_alignment(x, "as_svrepdesign", call = call)
+  # The operator addresses target rows by position, so the rows are put back
+  # into the order it was recorded in rather than assumed to be in it.
+  pos <- align_share_rows(x, record, "as_svrepdesign", call = call)
+
+  source_rep <- rlang::exec(
+    as_svrepdesign,
+    record$source_sample,
+    type = type,
+    systematic_variance = systematic_variance,
+    !!!dots
+  )
+
+  analysis <- stats::weights(source_rep, type = "analysis")
+  sampling <- stats::weights(source_rep, type = "sampling")
+
+  shared_analysis <- apply_share_operator(record$operator, analysis)
+  shared_base <- apply_share_operator(record$operator, sampling)
+
+  variables <- as.data.frame(x)[pos, , drop = FALSE]
+  rownames(variables) <- NULL
+  variables[[".weight"]] <- shared_base
+
+  result <- survey::svrepdesign(
+    data = variables,
+    repweights = shared_analysis,
+    weights = shared_base,
+    # The replicate systems are already full analysis weights, so survey is
+    # told not to multiply them by the base weights a second time.
+    combined.weights = TRUE,
+    type = "other",
+    scale = source_rep$scale,
+    rscales = source_rep$rscales,
+    mse = source_rep$mse
+  )
+
+  # Carried across rather than recomputed: the approximation is a property of
+  # the source design, and the target rows have no stages to inspect.
+  attr(result, "samplyr_systematic_variance") <-
+    attr(source_rep, "samplyr_systematic_variance")
+  attr(result, "samplyr_weight_share") <- list(
+    algorithm = record$algorithm,
+    version = record$version,
+    within_mode = record$within_mode,
+    n_source_rows = nrow(record$source_sample)
+  )
+  report_share_coverage(
+    result,
+    c(
+      union_share_coverage(list(record)),
+      list(where = " from this frame")
+    ),
+    call = call
+  )
+}
+
+## Overlapping frames, replicate route
+
+#' Export overlapping frames to a combined replicate-weight design
+#'
+#' @description
+#' Exports a [stack_frames()] collection to one `svyrep.design` whose
+#' replicate columns are grouped in blocks, one block per frame. In a column
+#' belonging to frame `q` only frame `q` varies and every other frame stays at
+#' its full-sample weight, so the combined variance is the sum of the frames'
+#' own contributions, which is what independent selection from each frame
+#' gives.
+#'
+#' Unlike the linearized route this takes any number of frames, exports a
+#' component whose weights were shared from another population, and lets each
+#' frame use the replicate method that suits its own design.
+#'
+#' @details
+#' ## The compositing factor
+#'
+#' `theta = NULL` is the multiplicity estimator: a unit reached by `m` frames
+#' contributes `1/m` of its weight through each of them. It is defined for any
+#' number of frames and needs nothing stated.
+#'
+#' An explicit `theta` is Hartley's constant factor and applies to **two**
+#' frames only, the first frame of the stack carrying `theta` of an
+#' overlapping unit's weight. Above two frames the factors are per domain
+#' rather than per frame, up to `2^K - 1` of them each summing to one over the
+#' frames in that domain, so a single number is not a partial answer but a
+#' wrong one. It is refused rather than recycled.
+#'
+#' ## Replicate methods may differ between frames
+#'
+#' `type = "auto"` picks a method per component, so a PPS frame can take
+#' `"subbootstrap"` beside a stratified frame taking `"JKn"`. Each block keeps
+#' its own component's `scale` and `rscales`, folded together so the combined
+#' design carries `scale = 1`, and mixing methods costs nothing: the blocks do
+#' not interact.
+#'
+#' ## Centering
+#'
+#' Every block is centered at the full combined estimate, which is what makes
+#' the block contributions add up. `mse` is therefore not accepted: with
+#' mean-centering survey would center at the mean over *all* columns and mix
+#' the blocks together.
+#'
+#' ## The returned data
+#'
+#' The rows are the components' rows in stack order, with `.frame` and
+#' `.domain` from [as.data.frame.frame_stack()] in front. `.weight` holds the
+#' **composited** weight, so it agrees with the design's own. Every other
+#' generated column is the component's and describes its selection alone.
+#'
+#' @param x A `frame_stack` from [stack_frames()].
+#' @param ... Passed to [as_svrepdesign()] for every component and on to the
+#'   replicate-weight generator, such as `replicates` or `fay.rho`. `mse` is
+#'   refused.
+#' @param estimator `"constant"`, the default, or `"expected"`, which needs
+#'   the `overlaps` declared on the stack. See [as_svydesign.frame_stack()],
+#'   which documents both; here the expected estimator takes any number of
+#'   frames, since nothing is delegated to `survey::multiframe()`.
+#' @param theta The compositing factor for the first frame's overlapping
+#'   units, a single number in `[0, 1]`, for two frames only. `NULL`, the
+#'   default, is the multiplicity estimator and works for any number.
+#' @param type,systematic_variance Passed to [as_svrepdesign()] for every
+#'   component.
+#'
+#' @return A `svyrep.design` object from the survey package.
+#'
+#' @references
+#' Lohr, S. L. (2021). Multiple-frame surveys for a multiple-data-source
+#' world. *Survey Methodology*, 47(2), 229-263.
+#'
+#' Mecatti, F. (2007). A single frame multiplicity estimator for multiple
+#' frame surveys. *Survey Methodology*, 33(2), 151-157.
+#'
+#' @examplesIf requireNamespace("survey", quietly = TRUE)
+#' population <- data.frame(
+#'   person_id = 1:200,
+#'   spend = stats::rnorm(200, 100, 10),
+#'   in_landline = rep(c(TRUE, FALSE), times = c(140, 60)),
+#'   in_cell = rep(c(FALSE, TRUE), times = c(60, 140))
+#' )
+#'
+#' frames <- stack_frames(
+#'   landline = sampling_design() |>
+#'     draw(n = 40) |>
+#'     execute(population[population$in_landline, ], seed = 1),
+#'   cell = sampling_design() |>
+#'     draw(n = 50) |>
+#'     execute(population[population$in_cell, ], seed = 2),
+#'   membership = c(landline = "in_landline", cell = "in_cell"),
+#'   key = person_id
+#' )
+#'
+#' rep_svy <- as_svrepdesign(frames, type = "bootstrap", replicates = 50)
+#' survey::svytotal(~spend, rep_svy)
+#'
+#' @seealso [as_svydesign.frame_stack()] for the linearized route,
+#'   [stack_frames()] for building the collection
+#'
+#' @family multiple frames
+#' @export
+as_svrepdesign.frame_stack <- function(
+  x,
+  ...,
+  estimator = c("constant", "expected"),
+  theta = NULL,
+  type = c(
+    "auto",
+    "JK1",
+    "JKn",
+    "BRR",
+    "bootstrap",
+    "subbootstrap",
+    "mrbbootstrap",
+    "Fay"
+  ),
+  systematic_variance = c("warn", "approximate", "error")
+) {
+  estimator <- match.arg(estimator)
+  systematic_variance <- match.arg(systematic_variance)
+  type <- match.arg(type)
+  rlang::check_installed(
+    "survey",
+    reason = "to convert a frame stack to a replicate-weight survey design."
+  )
+  check_multiframe_rep_dots(enquos(...))
+  check_multiframe_rep_support(x, "as_svrepdesign")
+  check_multiframe_estimator(x, estimator, theta, "as_svrepdesign")
+  factors <- multiframe_compositing_factors(x, theta, estimator)
+
+  components <- lapply(names(x), function(nm) {
+    # A component's own coverage warning would be wrong here by construction:
+    # a cluster it cannot reach is the reason the other frames exist. The
+    # collection reports over the union instead, once.
+    withCallingHandlers(
+      do.call(
+        as_svrepdesign,
+        c(
+          list(x[[nm]]),
+          list(...),
+          list(
+            type = type,
+            systematic_variance = systematic_variance,
+            mse = TRUE
+          )
+        )
+      ),
+      samplyr_warning_unlinked_cluster = function(w) {
+        rlang::cnd_muffle(w)
+      }
+    )
+  })
+  names(components) <- names(x)
+
+  report_share_coverage(
+    combine_frame_replicates(x, components, factors),
+    c(
+      stack_share_coverage(x),
+      list(where = " from any frame of this stack")
+    )
+  )
+}
+
+#' Coverage over the union of the components that can speak about it
+#'
+#' A stack with no shared component has no link structure and so nothing to
+#' report. Where every component is one, the union is the clusters all of them
+#' name, and the digest decides whether their silences are comparable.
+#' @noRd
+stack_share_coverage <- function(x) {
+  records <- lapply(x, function(component) {
+    attr(component, "metadata")$weight_share
+  })
+  if (all(vapply(records, is_null, logical(1)))) {
+    return(list(status = "not_applicable", clusters = NULL))
+  }
+  # A component sampling the target population directly says nothing about a
+  # cluster no link reaches: an orphan is a cluster and a register is a list
+  # of units, with no map between them for a population it never linked to.
+  # It carries no record, which `union_share_coverage()` already reads as an
+  # unanswered question.
+  union_share_coverage(records)
+}
+
+#' The one argument of the per-component export a stack cannot carry
+#' @noRd
+check_multiframe_rep_dots <- function(dots, call = caller_env()) {
+  nms <- names(dots) %||% rep("", length(dots))
+
+  if ("mse" %in% nms) {
+    abort_samplyr(
+      c(
+        "{.arg mse} is not accepted for a stack of frames.",
+        "i" = "Each block of replicate columns is centered at the full
+               combined estimate, which is what makes the frames'
+               contributions add up.",
+        "i" = "Mean-centering would center at the mean over every column and
+               mix the blocks together."
+      ),
+      class = "samplyr_error_survey_multiframe_argument",
+      call = call
+    )
+  }
+
+  check_forwarded_args(
+    dots,
+    owned = c("estimator", "theta", "type", "systematic_variance"),
+    accepted = setdiff(svrepdesign_accepted_args, "mse"),
+    derived = svrepdesign_derived_args,
+    forwarded_to = "survey::as.svrepdesign",
+    call = call
+  )
+}
+
+#' @noRd
+check_multiframe_rep_support <- function(x, fn_name, call = caller_env()) {
+  # The per-component export refuses a two-phase sample on its own, but with
+  # several components the first thing to know is which one.
+  twophase <- names(x)[vapply(x, function(component) {
+    survey_phase_info(component)$is_twophase
+  }, logical(1))]
+  if (length(twophase) > 0) {
+    abort_samplyr(
+      c(
+        "{.fn {fn_name}} does not support two-phase samples.",
+        "x" = "{cli::qty(length(twophase))}Frame{?s} {.val {twophase}}
+               {?is/are} two-phase.",
+        "i" = "Use {.fn as_svydesign} for two-phase linearization export."
+      ),
+      class = "samplyr_error_svrep_twophase_unsupported",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' The share of each unit's weight its own frame carries
+#'
+#' One vector per component, in stack order. The multiplicity form reads the
+#' number of frames reaching a unit straight off the membership matrix, so it
+#' needs no argument and is defined whatever the number of frames is.
+#' @noRd
+multiframe_compositing_factors <- function(x, theta,
+                                           estimator = "constant",
+                                           call = caller_env()) {
+  membership <- attr(x, "membership")
+
+  if (identical(estimator, "expected")) {
+    # The composited weight is 1 / sum(pi) over the frames reaching the unit,
+    # which owes nothing to the design weight. Dividing it out here leaves a
+    # fixed per-row factor, which is what the blocks carry.
+    return(stats::setNames(lapply(names(x), function(nm) {
+      probabilities <- frame_component_overlaps(x, nm)
+      1 / rowSums(probabilities) / x[[nm]][[".weight"]]
+    }), names(x)))
+  }
+
+  if (is_null(theta)) {
+    return(lapply(x, function(component) {
+      1 / rowSums(frame_component_membership(component, membership))
+    }))
+  }
+
+  validate_multiframe_theta(theta, call = call)
+  if (length(x) != 2L) {
+    abort_samplyr(
+      c(
+        "A single {.arg theta} composites two frames.",
+        "x" = "This stack has {length(x)}.",
+        "i" = "Above two frames the factors are per domain rather than per
+               frame, up to {.code 2^K - 1} of them, each summing to one over
+               the frames in that domain. One number is not a partial
+               statement of that.",
+        "i" = "Use {.code theta = NULL} for the multiplicity estimator, which
+               is defined for any number of frames."
+      ),
+      class = "samplyr_error_survey_multiframe_theta",
+      call = call
+    )
+  }
+
+  shares <- c(theta, 1 - theta)
+  out <- lapply(seq_along(x), function(q) {
+    m <- frame_component_membership(x[[q]], membership)
+    ifelse(rowSums(m) > 1, shares[[q]], 1)
+  })
+  names(out) <- names(x)
+  out
+}
+
+#' One replicate system per frame, combined in blocks
+#'
+#' In a column belonging to frame `q` only frame `q` varies; every other frame
+#' sits at its full-sample composited weight. So the squared deviation a
+#' column contributes is frame `q`'s alone, and the combined variance is the
+#' sum over frames of what each would have computed by itself. That is the
+#' variance independent selection from each frame gives.
+#'
+#' Each component's `scale` is folded into its `rscales` and the combined
+#' design carries `scale = 1`. Both have to travel: a jackknife leaves `scale`
+#' at one and puts its factors in `rscales`, while a bootstrap does the
+#' opposite, so keeping only one of them is undetectable under one method and
+#' wrong under the other.
+#' @noRd
+combine_frame_replicates <- function(x, components, factors) {
+  frames <- names(x)
+  sizes <- vapply(x, nrow, integer(1))
+  analysis <- lapply(frames, function(nm) {
+    stats::weights(components[[nm]], type = "analysis") * factors[[nm]]
+  })
+  base <- lapply(frames, function(nm) {
+    stats::weights(components[[nm]], type = "sampling") * factors[[nm]]
+  })
+  widths <- vapply(analysis, ncol, integer(1))
+
+  weights_vec <- unlist(base, use.names = FALSE)
+  row_start <- cumsum(c(0L, sizes))
+  col_start <- cumsum(c(0L, widths))
+  repweights <- matrix(0, nrow = sum(sizes), ncol = sum(widths))
+  for (q in seq_along(frames)) {
+    cols <- seq.int(col_start[[q]] + 1L, col_start[[q + 1L]])
+    for (p in seq_along(frames)) {
+      rows <- seq.int(row_start[[p]] + 1L, row_start[[p + 1L]])
+      repweights[rows, cols] <- if (identical(p, q)) {
+        analysis[[q]]
+      } else {
+        matrix(base[[p]], nrow = length(rows), ncol = length(cols))
+      }
+    }
+  }
+
+  variables <- as.data.frame(x)
+  variables[[".weight"]] <- weights_vec
+
+  result <- survey::svrepdesign(
+    data = variables,
+    repweights = repweights,
+    weights = weights_vec,
+    # The blocks are already full analysis weights, so survey is told not to
+    # multiply them by the base weights a second time.
+    combined.weights = TRUE,
+    type = "other",
+    scale = 1,
+    rscales = unlist(lapply(frames, function(nm) {
+      components[[nm]]$scale * components[[nm]]$rscales
+    }), use.names = FALSE),
+    mse = TRUE
+  )
+
+  systematic <- lapply(components, attr, which = "samplyr_systematic_variance")
+  if (any(!vapply(systematic, is_null, logical(1)))) {
+    attr(result, "samplyr_systematic_variance") <- systematic
+  }
+  shared <- lapply(components, attr, which = "samplyr_weight_share")
+  if (any(!vapply(shared, is_null, logical(1)))) {
+    attr(result, "samplyr_weight_share") <- shared
+  }
+  attr(result, "samplyr_frame_stack") <- list(
+    frames = frames,
+    replicates = stats::setNames(widths, frames)
+  )
+  result
+}
 
 #' Convert a tbl_sample to a srvyr tbl_svy object
 #'
@@ -2518,4 +3425,226 @@ as_survey_rep.tbl_sample <- function(.data, ...) {
 
   rep_design <- as_svrepdesign(.data, ...)
   srvyr::as_survey_rep(rep_design)
+}
+
+## Linearized export of a shared-weight sample
+
+#' Export a weight-share transformation as its source-target contributions
+#'
+#' The generalized weight share total is the Horvitz-Thompson total of a
+#' variable derived on the *source* units:
+#' `sum_i w_i y_i = sum_j I(j in S) / pi_j * z_j`, with
+#' `z_j = sum_i (L_ji / L_i) y_i`.
+#'
+#' `z` depends on the variable being analyzed, so it cannot be formed in
+#' advance. Expanding one row per contribution instead, weighted by the
+#' recorded coefficient times the source weight, makes survey form `z` inside
+#' each primary sampling unit for whatever variable it is given. That is exact
+#' for any link structure, and needs no condition on how many source units
+#' reach a target, which is what an earlier draft's cluster-level shortcut
+#' would have required.
+#'
+#' The rows of the result are contributions, not target units, so there are
+#' more of them than the transformation returned. No estimate is affected: a
+#' total sums the same terms, and a mean's denominator is the estimated size
+#' of the target population either way.
+#' @noRd
+svydesign_from_shared_weights <- function(x, nest, method,
+                                          systematic_variance, dots,
+                                          call = caller_env()) {
+  if (!is_null(method)) {
+    cli_abort(
+      "{.arg method} is only valid when converting a two-phase sample.",
+      call = call
+    )
+  }
+  if ("pps" %in% names(dots)) {
+    abort_samplyr(
+      c(
+        "{.arg pps} describes the source sample, not its contributions.",
+        "i" = "A joint-probability matrix is indexed by the rows of the
+               sample it was computed for, and this export expands one row
+               per source-target contribution.",
+        "i" = "Use {.fn as_svrepdesign}, which replicates the source design
+               and applies the sharing inside every replicate."
+      ),
+      class = "samplyr_error_share_weights_pps",
+      call = call
+    )
+  }
+
+  record <- prepare_weight_share_record(
+    attr(x, "metadata")$weight_share,
+    "A linearized export",
+    call = call
+  )
+  check_weight_share_alignment(x, "as_svydesign", call = call)
+  pos <- align_share_rows(x, record, "as_svydesign", call = call)
+
+  source_sample <- record$source_sample
+  survey_validate_phase_support(
+    source_sample,
+    allow_twophase = FALSE,
+    fn_name = "as_svydesign",
+    call = call
+  )
+
+  parts <- share_contribution_frame(
+    source_sample, systematic_variance, call = call
+  )
+  operator <- record$operator
+  target <- as.data.frame(x)[pos, , drop = FALSE]
+  carried <- setdiff(names(target), samplyr_internal_cols(target))
+
+  clash <- intersect(carried, parts$design_vars)
+  if (length(clash) > 0) {
+    abort_samplyr(
+      c(
+        "A target column has the name of a source design column.",
+        "x" = "Conflicting: {.field {clash}}.",
+        "i" = "The exported design describes the source selection, and these
+               names carry its strata, its units or its population counts.
+               Rename the target columns before sharing."
+      ),
+      class = "samplyr_error_share_weights_columns",
+      call = call
+    )
+  }
+
+  expanded <- parts$df[operator$source_row, , drop = FALSE]
+  expanded[carried] <- target[operator$target_row, carried, drop = FALSE]
+  expanded[[".weight"]] <- operator$share *
+    source_sample[[".weight"]][operator$source_row]
+  rownames(expanded) <- NULL
+
+  result <- do.call(
+    survey::svydesign,
+    c(
+      list(
+        ids = parts$ids,
+        strata = parts$strata,
+        weights = stats::as.formula("~.weight"),
+        fpc = parts$fpc,
+        data = expanded,
+        nest = nest
+      ),
+      dots
+    )
+  )
+  result$call <- call(
+    "svydesign",
+    ids = parts$ids,
+    strata = parts$strata,
+    weights = stats::as.formula("~.weight"),
+    fpc = parts$fpc,
+    data = quote(data),
+    nest = nest
+  )
+
+  attr(result, "samplyr_systematic_variance") <- parts$systematic
+  attr(result, "samplyr_weight_share") <- list(
+    algorithm = record$algorithm,
+    version = record$version,
+    within_mode = record$within_mode,
+    n_source_rows = nrow(source_sample),
+    n_contributions = length(operator$share)
+  )
+  report_share_coverage(
+    result,
+    c(
+      union_share_coverage(list(record)),
+      list(where = " from this frame")
+    ),
+    call = call
+  )
+}
+
+#' The source design, resolved before the rows are expanded
+#'
+#' The order is the whole of it. `survey_id_info()` returns `~1` for an
+#' unclustered design, meaning every row is a primary sampling unit, and
+#' synthesizes an element identifier as a row counter. Either one computed
+#' *after* expansion would make each contribution its own unit and split the
+#' variance into pieces that are not independent: measured at 631.74 against
+#' the exact 1100.08 on the fixture the tests use. So the identifiers are
+#' resolved on the source sample and carried through the expansion, and an
+#' unclustered design is given an explicit source-unit identifier rather than
+#' left at `~1`.
+#' @noRd
+share_contribution_frame <- function(source_sample, systematic_variance,
+                                     call = caller_env()) {
+  design <- get_design(source_sample)
+  stages <- get_stages_executed(source_sample)
+  df <- as.data.frame(source_sample)
+
+  systematic_stages <- systematic_approximated_stages(design, stages, df)
+  check_systematic_variance(
+    systematic_stages, systematic_variance,
+    approximation = "srswor"
+  )
+
+  id_info <- survey_id_info(design, stages, df, call = call)
+  df <- id_info$df
+  ids <- survey_ids_formula(id_info$id_vars)
+  strata <- survey_strata_info(df, design, stages, id_info$stage_indices)
+  df <- strata$df
+  fpc <- survey_fpc_info(df, design, stages, id_info$stage_indices)
+  df <- fpc$df
+
+  # Both of these take their variance from a structure indexed by the rows of
+  # the source sample: a random-size design from its own probabilities, an
+  # unequal-probability one from a pairwise approximation over them. Neither
+  # survives one row becoming several. The second is the dangerous one,
+  # because it returns a number: measured 1.6% below the exact variance,
+  # which reads as agreement rather than as a warning.
+  if (isTRUE(fpc$has_rs_poisson_stage1) || isTRUE(fpc$has_pps_wor)) {
+    kind <- if (isTRUE(fpc$has_rs_poisson_stage1)) {
+      "random-size"
+    } else {
+      "unequal-probability"
+    }
+    abort_samplyr(
+      c(
+        "A {kind} source design cannot be linearized through its
+         contributions.",
+        "i" = "Its variance comes from a structure indexed by the rows of the
+               source sample, and this export expands one row per
+               source-target contribution, so those rows are no longer the
+               units that were selected.",
+        "i" = "Use {.fn as_svrepdesign}, which replicates the source design
+               and applies the sharing inside every replicate."
+      ),
+      class = "samplyr_error_share_weights_source_design",
+      call = call
+    )
+  }
+
+  resolved <- survey_resolve_pps(
+    df = df, design = design, stages_executed = stages,
+    fpc = fpc, user_pps = NULL
+  )
+  df <- resolved$df
+  fpc <- resolved$fpc
+
+  # `ids = ~1` says every row is a unit, which stops being true the moment a
+  # source row appears once per contribution.
+  if (length(id_info$id_vars) == 0L) {
+    df[[".source_unit"]] <- df[[".sample_id"]]
+    ids <- survey_formula_from_vars(".source_unit")
+  }
+
+  list(
+    df = df,
+    ids = ids,
+    strata = strata$formula,
+    fpc = fpc$formula,
+    design_vars = unique(c(
+      all.vars(ids), all.vars(strata$formula), all.vars(fpc$formula)
+    )),
+    systematic = list(
+      approximation = if (length(systematic_stages) > 0) "srswor",
+      stages = vapply(systematic_stages, function(s) s$name, character(1)),
+      acknowledged = systematic_variance
+    )
+  )
 }

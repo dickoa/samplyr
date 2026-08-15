@@ -6,6 +6,11 @@
 \alias{tbl_sum.tbl_sample}
 \alias{print.rotation_program}
 \alias{print.rotation_wave}
+\alias{print.frame_stack}
+\alias{print.shared_sample_design}
+\alias{print.frame_stack_design}
+\alias{print.samplyr_overlap_spec}
+\alias{print.samplyr_exante_overlap_spec}
 \title{Print methods for samplyr objects}
 \usage{
 \method{print}{sampling_design}(x, ...)
@@ -15,6 +20,16 @@
 \method{print}{rotation_program}(x, ...)
 
 \method{print}{rotation_wave}(x, ...)
+
+\method{print}{frame_stack}(x, ...)
+
+\method{print}{shared_sample_design}(x, ...)
+
+\method{print}{frame_stack_design}(x, ...)
+
+\method{print}{samplyr_overlap_spec}(x, ...)
+
+\method{print}{samplyr_exante_overlap_spec}(x, ...)
 }
 \arguments{
 \item{x}{Object to print}
