@@ -52,7 +52,7 @@ length equal to the number of executed stages. Each element is either:
 \itemize{
 \item For PPS WOR stages: a square matrix of joint inclusion
 probabilities \eqn{\pi_{kl}}{pi_kl}, usable with
-\code{\link[survey:ppsmat]{survey::ppsmat()}} for exact variance estimation.
+\code{\link[survey:ppsmat]{survey::ppsmat()}}.
 \item For PPS WR/PMR stages (\code{pps_multinomial}, \code{pps_chromy}): a
 square matrix of joint expected hits
 \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
@@ -142,6 +142,10 @@ require approximation or simulation.
    \code{scps} \tab unavailable \tab Spatial spreading is not represented \cr
 }
 
+
+Systematic PPS commonly has zero pair probabilities. Its exact matrix
+describes the design, but a zero pair probability rules out a
+design-unbiased variance estimator, and near-zero pairs make it unstable.
 
 \eqn{^*} Exact recursive formulas for Brewer's joint inclusion
 probabilities exist (Brewer 2002, ch. 9) but are
@@ -272,7 +276,7 @@ sample <- sampling_design() |>
 # Compute joint probabilities for stage 1
 jip <- joint_expectation(sample, bfa_eas, stages = 1)
 
-# Use with survey package for exact variance (WOR stages)
+# Use with survey where the sample variance is estimable
 svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 
 # Compute all PPS stages at once

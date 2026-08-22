@@ -310,7 +310,9 @@ test_that("resolving a stack gives what stating the same numbers gives", {
       execute(stated[stated$in_b, , drop = FALSE], seed = 2),
     membership = c(a = "in_a", b = "in_b"),
     key = person_id,
-    overlaps = overlap_probabilities(a = "pi_a", b = "pi_b")
+    overlaps = declared_overlaps(
+      a = "pi_a", b = "pi_b", scale = "probabilities"
+    )
   )
 
   expect_equal(

@@ -1145,7 +1145,7 @@ test_that("a live collection replays without a file", {
 })
 
 test_that("declared overlaps travel with the collection", {
-  overlaps <- overlap_probabilities(a = "pa", b = "pb")
+  overlaps <- declared_overlaps(a = "pa", b = "pb", scale = "probabilities")
   frames <- stack_fixture(overlaps = overlaps)
   registers <- stack_registers()
 
@@ -1384,7 +1384,11 @@ test_that("a collection file missing what makes it one is refused", {
   # estimator, so it is refused rather than dropped to none.
   declared <- jsonlite::fromJSON(
     suppressWarnings(design_json(
-      stack_fixture(overlaps = overlap_probabilities(a = "pa", b = "pb"))
+      stack_fixture(
+        overlaps = declared_overlaps(
+          a = "pa", b = "pb", scale = "probabilities"
+        )
+      )
     )),
     simplifyVector = FALSE
   )
@@ -1486,7 +1490,7 @@ test_that("every within and multiplicity mode replays to the same sample", {
     complete_weighted = list(
       within = quote(hh),
       multiplicity = quote(
-        weighted_links(importance, total = complete_weighted_links())
+        weighted_links(importance, total = complete_links())
       )
     ),
     population = list(

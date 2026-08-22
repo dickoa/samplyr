@@ -8,7 +8,8 @@ complete_links()
 }
 \value{
 \code{complete_links()} is only meaningful inside
-\code{share_weights(multiplicity = )} and otherwise throws an error.
+\code{share_weights(multiplicity = )} or \code{weighted_links(total = )}, and
+otherwise throws an error.
 }
 \description{
 A declarative marker for \code{\link[=share_weights]{share_weights()}}'s \code{multiplicity} argument. It
@@ -16,6 +17,9 @@ states that \code{links} holds every link in the source population, not only the
 links of the sampled units, and so authorizes samplyr to count it.
 }
 \details{
+It makes the same assertion inside \code{\link[=weighted_links]{weighted_links()}}'s \code{total} argument,
+where what is totalled is the link importances rather than the links.
+
 Named for the assertion rather than for the counting it triggers, because
 the assertion is what a reader has to check.
 }
@@ -27,7 +31,6 @@ the assertion is what a reader has to check.
 }
 \seealso{
 Other weight sharing:
-\code{\link[=complete_weighted_links]{complete_weighted_links()}},
 \code{\link[=extend_links]{extend_links()}},
 \code{\link[=share_weights]{share_weights()}},
 \code{\link[=weighted_links]{weighted_links()}}

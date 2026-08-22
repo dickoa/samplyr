@@ -1,23 +1,13 @@
-test_that("SRS gives equal weights", {
+test_that("fixed equal-probability methods give exact weights", {
   frame <- data.frame(id = 1:100)
 
-  result <- sampling_design() |>
-    draw(n = 10, method = "srswor") |>
-    execute(frame, seed = 42)
-
-  # All units have equal weight: N/n = 100/10 = 10
-  expect_true(all(result$.weight == 10))
-  expect_equal(nrow(result), 10)
-})
-
-test_that("SRS weights sum to population size", {
-  frame <- data.frame(id = 1:500)
-
-  result <- sampling_design() |>
-    draw(n = 50, method = "srswor") |>
-    execute(frame, seed = 123)
-
-  expect_equal(sum(result$.weight), 500)
+  for (method in c("srswor", "systematic")) {
+    result <- sampling_design() |>
+      draw(n = 10, method = method) |>
+      execute(frame, seed = 42)
+    expect_equal(nrow(result), 10L, label = paste(method, "cardinality"))
+    expect_equal(result$.weight, rep(10, 10), label = paste(method, "weight"))
+  }
 })
 
 test_that("SRS with frac gives correct weight", {
@@ -50,18 +40,6 @@ test_that("Stratified SRS gives within-stratum weights", {
 
   # Stratum B: N_B/n = 200/10 = 20
   expect_true(all(result_B$.weight == 20))
-})
-
-test_that("Systematic sampling gives equal weights", {
-  frame <- data.frame(id = 1:100)
-
-  result <- sampling_design() |>
-    draw(n = 10, method = "systematic") |>
-    execute(frame, seed = 42)
-
-  # Equal weight: N/n = 10
-  expect_true(all(result$.weight == 10))
-  expect_equal(nrow(result), 10)
 })
 
 test_that("Systematic sampling produces evenly spaced samples", {
@@ -105,23 +83,20 @@ test_that("Bernoulli sampling gives correct weights", {
   expect_true(all(abs(result$.weight - 1 / 0.3) < 1e-10))
 })
 
-test_that("Bernoulli sample size varies around expected value", {
-  frame <- data.frame(id = 1:1000)
+test_that("Bernoulli has random realized cardinality", {
+  frame <- data.frame(
+    id = 1:20,
+    u4 = c(rep(0.1, 4), rep(0.9, 16)),
+    u6 = c(rep(0.1, 6), rep(0.9, 14))
+  )
+  draw_with <- function(prn) {
+    sampling_design() |>
+      draw(frac = 0.25, method = "bernoulli", prn = {{ prn }}) |>
+      execute(frame)
+  }
 
-  # Run multiple times to check variability
-  sizes <- sapply(1:10, function(seed) {
-    result <- sampling_design() |>
-      draw(frac = 0.1, method = "bernoulli") |>
-      execute(frame, seed = seed)
-    nrow(result)
-  })
-
-  # Expected size is 100 (0.1 * 1000)
-  # Should vary (unlike SRS which is fixed)
-  expect_true(sd(sizes) > 0)
-
-  # Mean should be close to expected
-  expect_true(abs(mean(sizes) - 100) < 30)
+  expect_equal(nrow(draw_with(u4)), 4L)
+  expect_equal(nrow(draw_with(u6)), 6L)
 })
 
 test_that("Stratified Bernoulli gives stratum-specific weights", {
@@ -148,104 +123,68 @@ test_that("Stratified Bernoulli gives stratum-specific weights", {
   }
 })
 
-test_that("All equal probability methods give consistent weights", {
-  frame <- data.frame(id = 1:100)
-  methods <- c("srswor", "systematic")
-
-  for (m in methods) {
-    result <- sampling_design() |>
-      draw(n = 10, method = m) |>
-      execute(frame, seed = 42)
-
-    # Weight should be N/n = 10 for all equal probability methods
-    expect_equal(
-      unique(result$.weight),
-      10,
-      info = paste("Method:", m)
-    )
-  }
-
-  # Bernoulli uses frac: weight = 1/frac = 5
-  result <- sampling_design() |>
-    draw(frac = 0.2, method = "bernoulli") |>
-    execute(frame, seed = 42)
-
-  expect_equal(unique(result$.weight), 5, tolerance = 1e-10)
-})
-
 test_that("Bernoulli with n gives expected sample size and correct weights", {
-  frame <- data.frame(id = 1:1000)
+  frame <- data.frame(
+    id = 1:1000,
+    u = c(rep(0.05, 100), rep(0.5, 900))
+  )
 
   result <- sampling_design() |>
-    draw(n = 100, method = "bernoulli") |>
-    execute(frame, seed = 42)
+    draw(n = 100, method = "bernoulli", prn = u) |>
+    execute(frame)
 
-  # Weight should be N/n = 1000/100 = 10 (since frac = n/N = 0.1)
-  expect_true(all(abs(result$.weight - 10) < 1e-10))
-
-  # Sample size should be approximately 100 (random)
-  expect_true(nrow(result) > 50 && nrow(result) < 200)
+  expect_equal(nrow(result), 100L)
+  expect_equal(result$.weight, rep(10, 100))
 })
 
 test_that("pps_poisson with n gives correct weights", {
   frame <- data.frame(
     id = 1:100,
-    size = runif(100, 1, 50)
+    size = 1,
+    u = c(rep(0.1, 20), rep(0.9, 80))
   )
 
   result <- sampling_design() |>
-    draw(n = 20, method = "pps_poisson", mos = size) |>
-    execute(frame, seed = 42)
+    draw(n = 20, method = "pps_poisson", mos = size, prn = u) |>
+    execute(frame)
 
-  # Should produce a sample (random size)
-  expect_true(nrow(result) > 0)
-  # Weights should all be positive and finite
-  expect_true(all(result$.weight > 0))
-  expect_true(all(is.finite(result$.weight)))
+  expect_equal(nrow(result), 20L)
+  expect_equal(result$.weight, rep(5, 20))
 })
 
 test_that("Stratified bernoulli with scalar n uses n per stratum", {
   frame <- data.frame(
     stratum = rep(c("A", "B"), each = 500),
-    id = 1:1000
+    id = 1:1000,
+    u = rep(c(rep(0.05, 50), rep(0.5, 450)), 2)
   )
 
-  sizes <- sapply(1:5, function(seed) {
-    result <- sampling_design() |>
-      stratify_by(stratum) |>
-      draw(n = 50, method = "bernoulli") |>
-      execute(frame, seed = seed)
-    c(A = sum(result$stratum == "A"), B = sum(result$stratum == "B"))
-  })
+  result <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = 50, method = "bernoulli", prn = u) |>
+    execute(frame)
 
-  # frac = 50/500 = 0.1 per stratum, expected 50 each
-  # Mean across seeds should be close to 50 for each stratum
-  expect_true(abs(mean(sizes["A", ]) - 50) < 20)
-  expect_true(abs(mean(sizes["B", ]) - 50) < 20)
+  expect_equal(as.integer(table(result$stratum)), c(50L, 50L))
+  expect_equal(result$.weight, rep(10, 100))
 })
 
 test_that("Stratified bernoulli with named vector n", {
   frame <- data.frame(
     stratum = rep(c("A", "B"), c(200, 800)),
-    id = 1:1000
+    id = 1:1000,
+    u = c(
+      rep(0.05, 20), rep(0.5, 180),
+      rep(0.05, 80), rep(0.5, 720)
+    )
   )
 
   result <- sampling_design() |>
     stratify_by(stratum) |>
-    draw(n = c(A = 20, B = 80), method = "bernoulli") |>
-    execute(frame, seed = 42)
+    draw(n = c(A = 20, B = 80), method = "bernoulli", prn = u) |>
+    execute(frame)
 
-  # Stratum A: frac = 20/200 = 0.1, weight = 10
-  result_A <- result[result$stratum == "A", ]
-  if (nrow(result_A) > 0) {
-    expect_true(all(abs(result_A$.weight - 10) < 1e-10))
-  }
-
-  # Stratum B: frac = 80/800 = 0.1, weight = 10
-  result_B <- result[result$stratum == "B", ]
-  if (nrow(result_B) > 0) {
-    expect_true(all(abs(result_B$.weight - 10) < 1e-10))
-  }
+  expect_equal(as.integer(table(result$stratum)), c(20L, 80L))
+  expect_equal(result$.weight, rep(10, 100))
 })
 
 test_that("bernoulli errors when both n and frac provided", {

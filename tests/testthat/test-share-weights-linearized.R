@@ -173,6 +173,33 @@ test_that("a source unit is one sampling unit, not one per contribution", {
   )
 })
 
+test_that("linearization refuses a selected source with no contribution", {
+  skip_if_not_installed("survey")
+  source_sample <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = c(n = 12, s = 6)) |>
+    execute(linearized_dwellings(), seed = 7)
+  unlinked <- source_sample$dw_id[[1L]]
+  links <- linearized_links()
+  links <- links[links$dw_id != unlinked, , drop = FALSE]
+
+  shared <- share_weights(
+    source_sample,
+    targets = linearized_targets(),
+    links = links,
+    by = c(dw_id = "dw_id"),
+    to = c(person_id = "person_id"),
+    within = hh,
+    multiplicity = complete_links()
+  )
+
+  expect_error(
+    as_svydesign(shared),
+    class = "samplyr_error_share_weights_zero_contribution_source"
+  )
+  expect_no_error(suppressWarnings(as_svrepdesign(shared, type = "JKn")))
+})
+
 test_that("the contribution weight is the coefficient times the source's", {
   skip_if_not_installed("survey")
   source_sample <- sampling_design() |>
@@ -250,6 +277,51 @@ test_that("pps is refused, because it describes the unexpanded sample", {
     as_svydesign(shared, pps = "anything"),
     class = "samplyr_error_share_weights_pps"
   )
+})
+
+test_that("a two-phase source is refused without naming the route that refused it", {
+  skip_if_not_installed("survey")
+
+  # Both phases declare the dwelling as their unit, so the two-phase export
+  # has the bridge it needs and the last assertion below is about the route
+  # rather than about the fixture.
+  phase1 <- sampling_design() |>
+    cluster_by(dw_id) |>
+    draw(n = 40) |>
+    execute(linearized_dwellings(), seed = 11)
+  phase2 <- sampling_design() |>
+    cluster_by(dw_id) |>
+    draw(n = 18) |>
+    execute(phase1, seed = 12)
+  shared <- linearized_shared(phase2)
+
+  # Neither route takes it, so neither may advise the other. Before this the
+  # linearized refusal read "as_svydesign() does not support two-phase
+  # samples. Use as_svydesign() for two-phase linearization export."
+  for (export in list(
+    function() as_svydesign(shared),
+    function() as_svrepdesign(shared, type = "bootstrap", replicates = 10)
+  )) {
+    expect_error(export(), class = "samplyr_error_share_weights_twophase_source")
+    expect_error(export(), regexp = "weights were shared from is two-phase")
+  }
+  expect_no_match(
+    conditionMessage(tryCatch(as_svydesign(shared), error = identity)),
+    "Use `as_svydesign()`",
+    fixed = TRUE
+  )
+
+  # The advice it gives instead has to work.
+  from_phase1 <- linearized_shared(phase1)
+  expect_s3_class(as_svydesign(from_phase1), "survey.design")
+
+  # And the ordinary two-phase route keeps its own class and its own advice,
+  # which is correct there because the linearized export does take it.
+  expect_error(
+    as_svrepdesign(phase2, type = "bootstrap", replicates = 10),
+    class = "samplyr_error_svrep_twophase_unsupported"
+  )
+  expect_s3_class(as_svydesign(phase2), "twophase2")
 })
 
 test_that("a target column may not take a source design column's name", {

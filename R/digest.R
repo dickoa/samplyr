@@ -366,8 +366,7 @@ validate_frame_digest <- function(x, tol = 1e-6, quantile_tol = 0.05) {
     prev <- stages[[pos]]
   }
 
-  # Complete digests cannot contain unreferenced frames. Partial digests may
-  # retain frames from stages omitted from the common replicated prefix.
+  # Partial digests may retain frames outside the common replicated prefix.
   referenced <- vapply(stages, function(s) as.integer(s$frame_ref), integer(1))
   orphaned <- setdiff(frame_ids, referenced)
   if (length(orphaned) > 0 && identical(x$status, "complete")) {
@@ -507,7 +506,7 @@ validate_digest_stage <- function(
       )
     }
   }
-  # Optional: digests written before the field carry no tier.
+  # Older digests carry no probability tier.
   if (
     !is_null(stage$probabilities) &&
       (!is_scalar_string(stage$probabilities) ||
@@ -727,8 +726,7 @@ validate_digest_pools <- function(stage, pos, prev, tol) {
       )
     }
   } else if (!all(is.na(parent))) {
-    # After an element-level stage there is no cluster registry to
-    # reference: parents must be absent, not invented.
+    # Element stages have no parent cluster registry.
     abort_digest(
       "Stage {id}: pools cannot reference a {.field parent_unit}
        because stage {prev$stage_id} retained no cluster registry.",
@@ -880,9 +878,7 @@ validate_digest_units <- function(stage, pools, tol) {
   if (stage$chance_kind == "inclusion_probability") {
     known <- !chance_na
     declared <- units$is_certainty[known]
-    # The certainty predicate, not the caller's general `tol`: this field
-    # records the same property the sample and the joint matrix record, and
-    # a looser reading here would let the three disagree.
+    # Use the shared certainty tolerance across sample, digest, and joint data.
     implied <- is_certainty_probability(units$chance[known])
     if (anyNA(declared) || any(declared != implied)) {
       abort_digest(
@@ -1177,10 +1173,7 @@ validate_digest_selected <- function(stage, pools, units) {
     }
   }
 
-  # Realized allocation must match the trace. Each trace row is one
-  # selected occurrence, so per-pool row counts equal n_realized for
-  # both chance kinds. With several replicates the per-pool count is
-  # replicate-specific and n_realized must be left NA.
+  # Trace rows equal realized occurrences unless replicates differ by pool.
   n_reps <- length(unique(replicate))
   if (n_reps <= 1L) {
     counts <- table(selected$pool_id)
@@ -1507,10 +1500,7 @@ frame_summary <- function(
   scope <- match.arg(scope)
   detail <- match.arg(detail)
 
-  # A frame means "what would this design do", whatever `x` already carries.
-  # Resolving the design from `x` first lets an executed sample or a restored
-  # design be previewed against a different frame, which is the next-wave
-  # planning case.
+  # A supplied frame requests an ex-ante preview of the resolved design.
   exante <- !is_null(frame)
   if (exante) {
     design <- if (is_tbl_sample(x)) {
@@ -1542,9 +1532,7 @@ frame_summary <- function(
       )
     }
   } else if (is_sampling_design(x)) {
-    # A design restored by read_design() carries the execution
-    # receipt's digest: next-wave planning can read population counts
-    # and realized allocations from the design file alone.
+    # Restored designs may carry the receipt digest for next-wave planning.
     digest <- attr(x, "execution")$frame_digest
     if (is_null(digest)) {
       abort_samplyr(
@@ -1604,10 +1592,7 @@ frame_summary_report <- function(x, digest, stages, scope, detail,
   n_reps <- execution$reps %||% 1L
   replicate_ids <- seq_len(as.integer(n_reps))
 
-  # A replicated multi-stage execution records only the stage prefix
-  # shared by every replicate: later-stage pools hang off each
-  # replicate's own selected parents. Say so instead of silently
-  # reporting fewer stages than were executed.
+  # Replicated digests share only the common stage prefix.
   dropped <- if (!exante && is_tbl_sample(x)) {
     setdiff(get_stages_executed(x), stage_ids)
   } else {
@@ -1712,13 +1697,13 @@ exante_pool_weights <- function(stages) {
     w <- if (is_null(parent_pi)) {
       rep(1, nrow(pools))
     } else {
-      # [[ on a named vector, and an unmatched parent weighs nothing.
+      # Unmatched parents contribute no weight.
       matched <- parent_pi[as.character(pools$parent_unit)]
       ifelse(is.na(matched), 0, matched)
     }
     weights[[k]] <- w
 
-    # Carry to the next stage: each unit's own chance times its pool's.
+    # Carry each unit chance times its pool chance.
     parent_pi <- if (is_null(s$units)) {
       NULL
     } else {
@@ -1735,8 +1720,7 @@ frame_summary_stage <- function(stages, scope, exante = FALSE) {
   rows <- lapply(seq_along(stages), function(stage_pos) {
     s <- stages[[stage_pos]]
     pools <- s$pools
-    # Ex-ante pools are weighted by parent selection, while post-hoc pools count
-    # only parents reached by the execution.
+    # Weight ex-ante pools by parent selection chance.
     w <- if (is_null(pool_weights)) {
       as.numeric(pools$chance_status != "design_resolved")
     } else {
@@ -1807,8 +1791,7 @@ stage_random_size <- function(x, stages) {
       if (is_null(spec)) {
         return(NA)
       }
-      isTRUE(spec$method %in% rs_poisson_methods) ||
-        identical(spec$method_fixed, FALSE)
+      is_random_size_method(spec)
     },
     logical(1)
   )
@@ -1830,13 +1813,10 @@ frame_summary_pool <- function(
     pool_rows <- rep(seq_len(nrow(pools)), each = n_reps)
     row_reps <- rep(replicate_ids, times = nrow(pools))
 
-    # The digest stores one structural pool registry and a stacked,
-    # replicate-qualified selected trace. Materialize the public table
-    # at its natural stage x pool x replicate grain without duplicating
-    # the registry in the serialized artifact.
+    # Materialize stage by pool by replicate from one shared registry.
     selected <- s$selected
     if (exante) {
-      # Nothing has been selected yet: 0 would assert a measured zero.
+      # Use NA when nothing has been selected yet.
       n_realized <- rep(NA_real_, length(pool_rows))
     } else if (n_reps == 1L) {
       n_realized <- as.double(pools$n_realized)
@@ -1847,15 +1827,13 @@ frame_summary_pool <- function(
       )
       n_realized <- as.double(as.vector(t(counts)))
     } else {
-      # Compatibility fallback for an older replicated digest that
-      # retained only a common per-replicate count.
+      # Support older common-count replicated digests.
       n_realized <- rep(as.double(pools$n_realized), each = n_reps)
     }
 
     supported <- digest_scope_supports(pools$scope, scope)
     if (identical(scope, "eligible")) {
-      # A design-resolved pool was never eligible for this
-      # realization. Its 0/N is not an eligible take rate.
+      # An ineligible resolved pool has no take rate.
       supported <- supported & pools$chance_status != "design_resolved"
     }
     supported <- supported[pool_rows]
@@ -1885,10 +1863,7 @@ frame_summary_pool <- function(
       chance_status = pools$chance_status[pool_rows],
       chance = chance[pool_rows],
       take_rate = take_rate,
-      # Derived, not stored: `n_expected` already records the post-cap target,
-      # it agrees between the ex-ante preview and the executed digest, and it
-      # is a property of the design rather than of the draw. Adding a boolean
-      # to the serialized schema would not be worth a version bump.
+      # Derive capping from the post-cap expected count.
       capped = capped_from_shortfall(
         as.double(pools$n_expected[pool_rows]),
         as.double(pools$n_target[pool_rows]),
@@ -1924,7 +1899,7 @@ shortfall_tolerance <- function(n_target) {
 
 #' @noRd
 capped_from_shortfall <- function(n_expected, n_target, random_size) {
-  # Execution and ex-ante resolution can differ at floating-point precision.
+  # Allow floating-point differences between execution and preview.
   shortfall <- n_expected < n_target - shortfall_tolerance(n_target)
   if (isTRUE(random_size)) {
     return(rep(FALSE, length(shortfall)))
@@ -1981,7 +1956,7 @@ frame_summary_unit <- function(stages, explicit, exante = FALSE) {
       chance = as.double(units$chance),
       is_certainty = units$is_certainty,
       n_descendants = n_descendants,
-      # A preview has no realization: NA, not a measured FALSE / 0.
+      # A preview has no realized value.
       is_selected = if (exante) NA else hits > 0L,
       n_hits = if (exante) NA_integer_ else hits
     )

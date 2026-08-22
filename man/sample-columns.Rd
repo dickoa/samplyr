@@ -12,10 +12,13 @@ The literal names \code{.weight_k} and \code{.fpc_k} are not themselves reserved
 \details{
 The generated columns are:
 \itemize{
-\item \code{.sample_id}: Unique identifier for each sampled unit
-\item \code{.weight}: Sampling weight (1/probability)
+\item \code{.sample_id}: Sequential identifier for each output row. Under WR or
+PMR, separate occurrences of one population unit have different values.
+\item \code{.weight}: Sampling weight. This is inverse inclusion probability for
+WOR and inverse expected hits per output row for WR or PMR.
 \item \code{.weight_1}, \code{.weight_2}, ...: Per-stage sampling weights
-(\eqn{1/\pi_i^{(k)}}{1/pi_i(k)}) for the stored design. In a
+(\eqn{1/q_i^{(k)}}{1/q_i(k)}), where \eqn{q}{q} is an inclusion
+probability for WOR or an expected hit count for WR or PMR. In a
 single-phase multi-stage sample their product equals \code{.weight}. In a
 multi-phase sample \code{.weight} additionally includes earlier-phase
 weights.
@@ -32,16 +35,16 @@ probabilities for unequal-probability stages.
 \item \strong{Clustered stages}: the number of clusters in the
 stratum/group, not the number of ultimate units.
 \item \strong{WR / PMR} (srswr, pps_multinomial, pps_chromy): \eqn{\infty}{Inf}.
-With-replacement designs have no finite population correction.
-Variance is estimated via the Hansen-Hurwitz formula.
+These exports use no finite population correction and the
+Hansen-Hurwitz variance treatment. It is approximate for PMR.
 }
 
 In a multi-stage design, each stage has its own \code{.fpc_k}. At survey
 export (\code{as_svydesign()}), these are assembled into a multi-level FPC
 formula (e.g., \code{~ .fpc_1 + .fpc_2}).
-\item \code{.draw_1}, \code{.draw_2}, ...: Draw index per stage (WR/PMR methods only).
-Each row represents one independent draw. The draw index identifies
-which with-replacement selection the row came from.
+\item \code{.draw_1}, \code{.draw_2}, ...: Occurrence index per stage (WR/PMR methods
+only). For WR it identifies an independent draw. For PMR it indexes the
+realized occurrences, which need not be independent.
 \item \code{.certainty_1}, \code{.certainty_2}, ...: Whether the unit's resolved
 inclusion probability is one, so that it is self-representing and
 contributes no variance at that stage. TRUE whether the probability

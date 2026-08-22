@@ -168,17 +168,14 @@ validate_frame <- function(
 
   digest <- NULL
   partial_sample <- NULL
-  # Read before `design` is replaced by the design it carries: what the caller
-  # passed decides whether generated columns and a dropped sample class are
-  # legitimate, exactly as `.data` does in execute().
+  # Preserve whether the caller supplied an executed sample.
   continuing <- is_tbl_sample(design)
   if (is_tbl_sample(design)) {
     digest <- get_frame_digest(design)
     if (!is_null(digest) && identical(digest$status, "invalidated")) {
       digest <- NULL
     }
-    # Kept only long enough to validate a next-stage frame against the units
-    # this sample actually selected.
+    # Retain the sample only for next-stage frame validation.
     if (length(remaining_stages(design)) > 0) {
       partial_sample <- design
     }
@@ -193,9 +190,7 @@ validate_frame <- function(
     )
   }
 
-  # One frame and a one-element list are the same input, as they are in
-  # execute(). Both spellings then run the same checks in the same order:
-  # a preflight that approves what execution refuses is worse than none.
+  # Normalize frames exactly as `execute()` does.
   supplied <- normalize_frame_input(frame)
   check_frames_executable(
     supplied$frames,
@@ -281,23 +276,18 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
     as.data.frame(partial_sample)
   }
 
-  # Frame count, phase-frame position, parent identity, and every column each
-  # stage selects on: all static, all already defined for execution.
+  # Run all static execution preflight checks.
   schedule <- stage_frame_schedule(
     design, frames, stages, executed = executed, call = call
   )
 
-  # Both comparisons describe the frames the executed stages sampled from. A
-  # partial sample is being handed the register for a stage that has not run,
-  # which is a different table by design, so comparing them would report drift
-  # on every correct call.
+  # Compare drift only for frames already used by executed stages.
   if (is_null(partial_sample)) {
     check_frame_fingerprint(design, frames, fingerprint)
     check_digest_drift(digest, design, frames[[1]], fingerprint)
   }
 
-  # A previous-phase sample in the first position, exactly as execution reads
-  # it. Only a design start can have one: a continuation stays in its phase.
+  # Only a design start may receive a previous-phase sample.
   prev_phase <- NULL
   if (is_null(partial_sample)) {
     prepared <- prepare_multiphase_frame(schedule$entries[[1]]$frame)
@@ -314,14 +304,10 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
   }
   phase_link_vars <- phase_link_vars_of(prev_phase)
   check_phase_key_invariance(schedule, design, phase_link_vars, prev_phase)
-  # Judged on the frame as supplied, not the prepared one: preparation strips
-  # the generated columns, and the identifiers this reports on are exactly
-  # what a phase-1 sample carries.
+  # Inspect phase identifiers before preparation strips generated columns.
   check_phase_linkage(design, frames[[1]])
 
-  # Rules about the registers as supplied. Ancestry NAs stay here rather than
-  # moving to the effective frame: linking filters those rows out, so by then
-  # the defect the caller asked about is gone.
+  # Check supplied-register ancestry before linkage filters rows.
   for (entry in schedule$entries) {
     check_register_cluster_invariants(design, entry, call = call)
     parent_vars <- collect_ancestor_cluster_vars(design, entry$stage)
@@ -335,8 +321,7 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
     schedule, design, previous_sample = previous_sample, call = call
   )
 
-  # Everything below judges what each stage will actually select from, after
-  # its register has been linked to its parents and carried their variables.
+  # Judge each stage on its effective linked frame.
   effective <- effective_register_frames(
     schedule, design, previous_sample, phase_link_vars, call = call
   )
@@ -702,13 +687,10 @@ check_phase_linkage <- function(design, frame) {
     get_stages_executed(frame),
     frame
   )
-  # The design is not executed yet, so .draw_k columns cannot participate.
-  # its user-declared cluster variables are what it will contribute.
+  # Before execution, declared clusters stand in for draw columns.
   phase2_ids <- unlist(lapply(design$stages, function(s) s$clusters$vars))
 
-  # Only the phase-1 side is knowable now. A phase-2 identifier the phase-1
-  # sample also carries is already part of the bridge. One it does not is
-  # carried onto phase-2 rows at execution and cannot be judged here.
+  # Preflight can judge only identifiers already present in phase 1.
   bridge <- intersect(unique(c(phase1_ids, phase2_ids)), names(frame))
 
   if (length(bridge) == 0) {
@@ -869,7 +851,7 @@ check_digest_drift <- function(digest, design, frame, fingerprint) {
 digest_frame_drift <- function(digest, design, frame) {
   rec <- digest$frames[[1]]
 
-  # Exact content match: nothing can have drifted.
+  # Exact content match rules out drift.
   if (
     !is_null(rec$fingerprint_exact) &&
       identical(rec$fingerprint_exact, frame_content_hash(frame))
@@ -916,8 +898,7 @@ digest_frame_drift <- function(digest, design, frame) {
     )
   }
 
-  # Identical role content at identical size: the pool structure is
-  # unchanged by construction, so skip the per-stage recount.
+  # Identical role content and size preserve pool structure.
   if (roles_match && rec$n_rows == nrow(frame)) {
     return(diffs)
   }
@@ -950,8 +931,7 @@ digest_frame_drift <- function(digest, design, frame) {
 
     for (p in seq_len(nrow(st$pools))) {
       pool <- st$pools[p, , drop = FALSE]
-      # Design-resolved pools hang under unselected parents, whose
-      # ancestry keys the digest deliberately does not retain.
+      # Ignore resolved pools under unselected parents.
       if (pos > 1L && is.na(key_of_pool[p])) {
         next
       }
@@ -1024,7 +1004,7 @@ digest_frame_drift <- function(digest, design, frame) {
     )
   }
 
-  # Compare resolved chances as well as role-scoped frame fingerprints.
+  # Compare resolved chances and role-scoped fingerprints.
   chance <- digest_chance_drift(digest, design, frame)
   all_diffs <- c(diffs, pool_diffs, chance$diffs)
   if (
@@ -1197,8 +1177,7 @@ check_frame_fingerprint <- function(design, frames, fingerprint) {
     return(invisible(NULL))
   }
 
-  # The header commits to no count on the recorded side: the difference may be
-  # that there is a different number of them, which the bullet states.
+  # Leave differing counts to the detail bullet.
   msg <- c(
     "{cli::qty(length(frames))}Frame{?s} differ{?s/} from what was recorded
      when the design was saved:",
@@ -1267,7 +1246,7 @@ fingerprint_diffs <- function(frame_info, frames) {
     if (length(one) == 0) {
       next
     }
-    # A single frame needs no position: there is only one thing it can be.
+    # A single frame needs no position label.
     diffs <- c(diffs, if (length(recorded) == 1L) {
       one
     } else {

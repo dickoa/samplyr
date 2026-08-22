@@ -122,9 +122,7 @@ summary.tbl_sample <- function(object, ...) {
     bullet = "info"
   )
 
-  # Everything below this point is read off the recorded design, which
-  # describes the selection the weights were shared from and not the rows
-  # being summarized. Said once, here, rather than qualified stage by stage.
+  # The recorded design describes source selection, not transformed rows.
   share <- attr(object, "metadata")$weight_share
   if (!is_null(share)) {
     summary_weight_share_note(object, share)
@@ -162,8 +160,7 @@ summary.tbl_sample <- function(object, ...) {
       summary_stage_realization(
         digest$stages[[dpos]],
         is_replicated = is_replicated,
-        random_size = stage_spec$draw_spec$method %in% rs_poisson_methods ||
-          isFALSE(stage_spec$draw_spec$method_fixed)
+        random_size = is_random_size_method(stage_spec$draw_spec)
       )
     } else {
       summary_stage_fallback(
@@ -315,8 +312,7 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL) {
   fmt_f <- function(f) sprintf("%.4f", f)
   fmt_n <- function(v) format(v, big.mark = ",", trim = TRUE)
 
-  # Design-resolved pools are universe context the realization never
-  # reached. The count contrast (reached/universe) carries that.
+  # Count resolved universe pools separately from reached pools.
   resolved <- pools$chance_status == "design_resolved"
   n_universe <- nrow(pools)
   any_resolved <- any(resolved)
@@ -324,9 +320,7 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL) {
   st$pools <- pools
 
   is_wr <- identical(st$chance_kind, "expected_hits")
-  # The design supplies the authoritative size semantics. The fallback
-  # retains compatibility with older hand-built digests and direct
-  # internal calls made without a design specification.
+  # Fall back only for older digests without design semantics.
   if (is_null(random_size)) {
     random_size <- all(is.na(pools$n_target))
   }
@@ -378,8 +372,7 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL) {
       base
     }
   } else {
-    # First-stage pools are the strata themselves. Later-stage pools
-    # split parents by strata, so "pools" is the accurate noun.
+    # Later stages can split each parent into several pools.
     noun <- if (!is_null(st$strata) && all(is.na(pools$parent_unit))) {
       "strata"
     } else {
@@ -437,9 +430,7 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL) {
   if (is_replicated && !varies) {
     suffix <- c(suffix, "per replicate")
   }
-  # Without design-resolved universe context the denominators cover
-  # only what this realization reached. Say so instead of implying
-  # universe coverage.
+  # Without universe context, denominators cover reached pools only.
   if (!any_resolved && identical(st$scope, "eligible")) {
     suffix <- c(suffix, "eligible units under realized parents")
   } else if (
@@ -627,8 +618,7 @@ summary_weight_share_note <- function(object, share) {
     singleton = "one unit per cluster",
     extended = paste0("clusters eliminated over ", share$target_cluster)
   )
-  # Single-line templates: format_inline() keeps the whitespace it is given,
-  # so a wrapped string would print its own indentation.
+  # Keep `format_inline()` templates on one line.
   cli::cat_bullet(
     cli::format_inline(
       "Weights were shared from {nrow(share$source_sample)} sampled row{?s}; the stages below describe that selection, not these rows."
@@ -748,8 +738,7 @@ summary.frame_stack <- function(object, ...) {
     cli::cat_line(cli::style_bold("Coverage"))
     n_orphan <- length(coverage$clusters)
     cli::cat_bullet(
-      # format_inline() keeps the whitespace it is given, so each of these
-      # stays on one line however long it is.
+      # Keep each formatted line unwrapped.
       cli::format_inline(switch(
         coverage$status,
         known = coverage_known_line,

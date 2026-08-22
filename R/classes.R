@@ -6,10 +6,13 @@
 #' The literal names `.weight_k` and `.fpc_k` are not themselves reserved.
 #'
 #' The generated columns are:
-#'   - `.sample_id`: Unique identifier for each sampled unit
-#'   - `.weight`: Sampling weight (1/probability)
+#'   - `.sample_id`: Sequential identifier for each output row. Under WR or
+#'     PMR, separate occurrences of one population unit have different values.
+#'   - `.weight`: Sampling weight. This is inverse inclusion probability for
+#'     WOR and inverse expected hits per output row for WR or PMR.
 #'   - `.weight_1`, `.weight_2`, ...: Per-stage sampling weights
-#'     (\eqn{1/\pi_i^{(k)}}{1/pi_i(k)}) for the stored design. In a
+#'     (\eqn{1/q_i^{(k)}}{1/q_i(k)}), where \eqn{q}{q} is an inclusion
+#'     probability for WOR or an expected hit count for WR or PMR. In a
 #'     single-phase multi-stage sample their product equals `.weight`. In a
 #'     multi-phase sample `.weight` additionally includes earlier-phase
 #'     weights.
@@ -25,15 +28,15 @@
 #'     - **Clustered stages**: the number of clusters in the
 #'       stratum/group, not the number of ultimate units.
 #'     - **WR / PMR** (srswr, pps_multinomial, pps_chromy): \eqn{\infty}{Inf}.
-#'       With-replacement designs have no finite population correction.
-#'       Variance is estimated via the Hansen-Hurwitz formula.
+#'       These exports use no finite population correction and the
+#'       Hansen-Hurwitz variance treatment. It is approximate for PMR.
 #'
 #'     In a multi-stage design, each stage has its own `.fpc_k`. At survey
 #'     export (`as_svydesign()`), these are assembled into a multi-level FPC
 #'     formula (e.g., `~ .fpc_1 + .fpc_2`).
-#'   - `.draw_1`, `.draw_2`, ...: Draw index per stage (WR/PMR methods only).
-#'     Each row represents one independent draw. The draw index identifies
-#'     which with-replacement selection the row came from.
+#'   - `.draw_1`, `.draw_2`, ...: Occurrence index per stage (WR/PMR methods
+#'     only). For WR it identifies an independent draw. For PMR it indexes the
+#'     realized occurrences, which need not be independent.
 #'   - `.certainty_1`, `.certainty_2`, ...: Whether the unit's resolved
 #'     inclusion probability is one, so that it is self-representing and
 #'     contributes no variance at that stage. TRUE whether the probability
@@ -142,15 +145,6 @@ new_sampling_stage <- function(
   )
 }
 
-#' Test if object is a sampling_stage
-#'
-#' @param x Object to test
-#' @return Logical
-#' @noRd
-is_sampling_stage <- function(x) {
-  inherits(x, "sampling_stage")
-}
-
 #' Create a stratum specification
 #'
 #' @param vars Character vector of stratification variable names
@@ -231,6 +225,7 @@ new_draw_spec <- function(
   certainty_size = NULL,
   certainty_prop = NULL,
   certainty_overflow = "error",
+  certainty_plan = NULL,
   on_empty = "error",
   method_type = NULL,
   method_fixed = NULL,
@@ -239,9 +234,7 @@ new_draw_spec <- function(
   method_implementation = NULL
 ) {
   method <- canonical_method_name(method, method_type)
-  # Built-in tiers are known here. Registered methods carry theirs from
-  # sondage::method_spec(). Designs read from files that predate the
-  # field pick the tier up on reconstruction.
+  # Recover probability tiers from built-ins or registered methods.
   method_probabilities <- method_probabilities %||%
     builtin_method_probabilities(method)
   structure(
@@ -261,6 +254,7 @@ new_draw_spec <- function(
       certainty_size = certainty_size,
       certainty_prop = certainty_prop,
       certainty_overflow = certainty_overflow,
+      certainty_plan = certainty_plan,
       on_empty = on_empty,
       method_type = method_type,
       method_fixed = method_fixed,
@@ -415,8 +409,7 @@ as_tbl_sample.data.frame <- function(x, ...) {
     seed = attr(x, "seed"),
     metadata = attr(x, "metadata")
   )
-  # Restoring the class does not launder modifications: verify the
-  # data against the stored integrity record and mark discrepancies.
+  # Restoring a class must not hide sample modifications.
   apply_integrity_marks(out)
 }
 
@@ -520,8 +513,7 @@ get_stages_executed <- function(x) {
 #' @keywords internal
 dplyr_reconstruct.tbl_sample <- function(data, template) {
   if (inherits(template, "grouped_df")) {
-    # Let the grouped_df method rebuild the grouping structure, then
-    # re-attach the sample provenance with the usual marks.
+    # Reattach provenance after grouped reconstruction.
     out <- NextMethod()
     if (!".weight" %in% names(out)) {
       return(out)
@@ -621,8 +613,7 @@ restore_tbl_sample <- function(data, template) {
     return(demote_to_tibble(data))
   }
   if (inherits(data, "grouped_df")) {
-    # Grouped results keep their grouping structure. Provenance is
-    # attached on top (tbl_sample ahead of grouped_df in the class).
+    # Keep grouping below sample provenance in the class vector.
     out <- as_grouped_sample(data, template)
   } else {
     out <- new_tbl_sample(
@@ -694,8 +685,7 @@ vec_restore.tbl_sample <- function(x, to, ...) {
 #' @keywords internal
 dplyr_row_slice.tbl_sample <- function(data, i, ...) {
   out <- NextMethod()
-  # The grouped_df method rebuilds the result without consulting
-  # dplyr_reconstruct() on our template, so re-attach provenance here.
+  # Grouped row slices need explicit provenance restoration.
   if (
     is.data.frame(out) &&
       !is_tbl_sample(out) &&
@@ -749,8 +739,7 @@ dplyr_row_slice.tbl_sample <- function(data, i, ...) {
 #' @keywords internal
 dplyr_col_modify.tbl_sample <- function(data, cols) {
   out <- NextMethod()
-  # See dplyr_row_slice.tbl_sample(): the grouped_df method bypasses
-  # our reconstruct, so re-attach provenance.
+  # Grouped column modifications need provenance restoration.
   if (
     is.data.frame(out) &&
       !is_tbl_sample(out) &&
@@ -786,8 +775,7 @@ dplyr_col_modify.tbl_sample <- function(data, cols) {
 #' @method [ tbl_sample
 #' @export
 `[.tbl_sample` <- function(x, i, j, ..., drop = FALSE) {
-  # x[i, ] and x[i, j] pass three or more index arguments. x[i] (column
-  # subsetting) passes two. Captured before NextMethod() consumes them.
+  # Capture whether `[` subsets rows before `NextMethod()`.
   matrix_style <- (nargs() - !missing(drop)) >= 3L
   result <- NextMethod()
   if (!is.data.frame(result)) {
@@ -800,9 +788,7 @@ dplyr_col_modify.tbl_sample <- function(data, cols) {
       !missing(i) &&
       nrow(result) == nrow(x)
   ) {
-    # Same-length row subsets can still duplicate and drop rows
-    # (x[c(1, 1, 3:n), ]). The row-count check in the restore helper
-    # cannot see that, so inspect the locations directly.
+    # Detect same-length row duplication from the locations.
     loc <- tryCatch(
       vctrs::vec_as_location(i, n = nrow(x)),
       error = function(cnd) NULL

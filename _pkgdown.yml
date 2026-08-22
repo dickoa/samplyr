@@ -56,11 +56,9 @@ reference:
       - share_weights
       - complete_links
       - weighted_links
-      - complete_weighted_links
       - extend_links
       - stack_frames
-      - overlap_probabilities
-      - overlap_weights
+      - declared_overlaps
       - exante_probabilities
       - exante_overlaps
       - as.data.frame.frame_stack

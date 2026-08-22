@@ -16,15 +16,15 @@ Sixteen methods are built in, in three families: equal probability, PPS
    \code{srswr} \tab With \tab Fixed \tab - \tab - \tab Allows duplicates \cr
    \code{systematic} \tab Without \tab Fixed \tab - \tab - \tab Periodic selection \cr
    \code{bernoulli} \tab Without \tab Random \tab - \tab \code{prn} \tab Independent trial per unit \cr
-   \code{pps_systematic} \tab Without \tab Fixed \tab Required \tab - \tab Simple, some bias \cr
-   \code{pps_brewer} \tab Without \tab Fixed \tab Required \tab - \tab Fast, joint prob > 0 \cr
-   \code{pps_cps} \tab Without \tab Fixed \tab Required \tab - \tab Highest entropy, exact joint prob \cr
+   \code{pps_systematic} \tab Without \tab Fixed \tab Required \tab - \tab Order-sensitive, exact first-order probabilities \cr
+   \code{pps_brewer} \tab Without \tab Fixed \tab Required \tab - \tab Exact first-order, approximate joint probabilities \cr
+   \code{pps_cps} \tab Without \tab Fixed \tab Required \tab - \tab Highest entropy, exact joint probabilities \cr
    \code{pps_sampford} \tab Without \tab Fixed \tab Required \tab - \tab Exact Sampford joint probabilities \cr
    \code{pps_poisson} \tab Without \tab Random \tab Required \tab \code{prn} \tab PPS analog of Bernoulli \cr
    \code{pps_sps} \tab Without \tab Fixed \tab Required \tab \code{prn} \tab Sequential Poisson \cr
    \code{pps_pareto} \tab Without \tab Fixed \tab Required \tab \code{prn} \tab Pareto sampling \cr
    \code{pps_multinomial} \tab With \tab Fixed \tab Required \tab - \tab Any hit count, Hansen-Hurwitz \cr
-   \code{pps_chromy} \tab Min. repl. \tab Fixed \tab Required \tab - \tab SAS default PPS_SEQ \cr
+   \code{pps_chromy} \tab Min. repl. \tab Fixed \tab Required \tab - \tab As SAS \code{PPS_SEQ} \cr
    \code{cube} \tab Without \tab Fixed \tab Optional \tab \code{aux} optional \tab Deville & \enc{Tillé}{Tille} 2004 \cr
    \code{lpm2} \tab Without \tab Fixed \tab Optional \tab \code{spread} required \tab Spatial spread \cr
    \code{scps} \tab Without \tab Fixed \tab Optional \tab \code{spread} required \tab Spatial spread \cr
@@ -96,6 +96,10 @@ probabilities from a finite population.
 
 Chen, X.-H., Dempster, A.P. and Liu, J.S. (1994). Weighted finite
 population sampling to maximize entropy. \emph{Biometrika}, 81(3), 457-469.
+
+\code{pps_sampford}:
+Sampford, M.R. (1967). On sampling without replacement with unequal
+probabilities of selection. \emph{Biometrika}, 54(3/4), 499-513.
 
 \code{pps_poisson}:
 Tillé, Y. (2006). \emph{Sampling Algorithms}. Springer.

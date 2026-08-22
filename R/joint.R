@@ -55,7 +55,7 @@
 #'   length equal to the number of executed stages. Each element is either:
 #'   - For PPS WOR stages: a square matrix of joint inclusion
 #'     probabilities \eqn{\pi_{kl}}{pi_kl}, usable with
-#'     [survey::ppsmat()] for exact variance estimation.
+#'     [survey::ppsmat()].
 #'   - For PPS WR/PMR stages (`pps_multinomial`, `pps_chromy`): a
 #'     square matrix of joint expected hits
 #'     \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
@@ -117,6 +117,10 @@
 #' | `cube`             | `joint_inclusion_prob()`      | **Approximate** when unconstrained (high-entropy / Hajek-Brewer-Donadio) |
 #' | `lpm2`             | unavailable                   | Spatial spreading is not represented |
 #' | `scps`             | unavailable                   | Spatial spreading is not represented |
+#'
+#' Systematic PPS commonly has zero pair probabilities. Its exact matrix
+#' describes the design, but a zero pair probability rules out a
+#' design-unbiased variance estimator, and near-zero pairs make it unstable.
 #'
 #' \eqn{^*} Exact recursive formulas for Brewer's joint inclusion
 #' probabilities exist (Brewer 2002, ch. 9) but are
@@ -243,7 +247,7 @@
 #' # Compute joint probabilities for stage 1
 #' jip <- joint_expectation(sample, bfa_eas, stages = 1)
 #'
-#' # Use with survey package for exact variance (WOR stages)
+#' # Use with survey where the sample variance is estimable
 #' svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 #'
 #' # Compute all PPS stages at once
@@ -319,9 +323,7 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
   check_weight_contract_joint(x, "joint_expectation")
   check_no_materialized_wave(x, "joint_expectation")
 
-  # Activation mode. The frozen record answers it, so nothing the stage mode
-  # needs is used, and supplying any of it is an error rather than an
-  # argument quietly without effect.
+  # Activation mode uses only the frozen assignment record.
   if (!is_null(waves)) {
     check_activation_mode_arguments(
       frame = frame,
@@ -436,8 +438,7 @@ normalize_joint_frames <- function(x, frame, stages_executed,
   record <- get_frame_schedule(x)
   n_stages <- length(stages_executed)
 
-  # Shape first, through the grammar every frame-valued verb shares, so an
-  # empty list or a bad member reads the same here as it does in execute().
+  # Normalize frame shape with the shared grammar.
   supplied <- normalize_frame_input(frame, call = call)
   frame <- if (supplied$n_supplied == 1L) supplied$frames[[1]] else frame
 
@@ -533,10 +534,7 @@ compute_stage_jip_digest <- function(
   }
   pools <- st$pools
 
-  # Sample-position rank of every selected occurrence: sample_row is
-  # the verified element locator. Cluster selections match their
-  # ancestry keys against the sample columns. Trace order is the
-  # fallback when neither anchor is available.
+  # Rank occurrences by sample row, ancestry key, or trace order.
   sel$.rank <- seq_len(nrow(sel))
   if (
     identical(st$unit_level, "element") && "sample_row" %in% names(sel)
@@ -662,7 +660,7 @@ compute_stage_jip_digest <- function(
       pik <- u$chance
       sampled_idx <- match(in_pool$unit_id, u$unit_id)
     } else {
-      # Constant element storage: unit_id is the position in the pool.
+      # Constant element storage uses pool position as unit ID.
       pik <- rep(p$chance, p$N)
       sampled_idx <- in_pool$unit_id
     }
@@ -737,10 +735,7 @@ compute_stage_jip <- function(
       distinct(across(all_of(sample_dedup_vars)), .keep_all = TRUE)
   }
 
-  # A later stage selects independently within each parent occurrence.
-  # Population ancestry filters the source frame. Draw columns from
-  # every prior WR stage distinguish repeated conditional selections
-  # in the realized sample and never participate in frame matching.
+  # Later stages condition independently on each parent occurrence.
   ancestor_split <- intersect(
     ancestor_vars, intersect(names(effective_frame), names(sample_df))
   )
@@ -964,8 +959,7 @@ prepare_stage_frame <- function(
     return(frame)
   }
 
-  # A design whose parent stage declared no sampling units predates the parent
-  # identity rule and can only have come from one shared frame.
+  # Legacy designs without parent units require one shared frame.
   if (is_null(design$stages[[stages_executed[pos - 1L]]]$clusters)) {
     return(frame)
   }
@@ -1039,19 +1033,26 @@ compute_joint_matrix <- function(
   }
 
   has_explicit_certainty <- !is_null(draw_spec$certainty_size) ||
-    !is_null(draw_spec$certainty_prop)
+    !is_null(draw_spec$certainty_prop) ||
+    !is_null(draw_spec$certainty_ids)
 
   if (has_explicit_certainty) {
+    forced_idx <- NULL
+    if (!is_null(draw_spec$certainty_ids)) {
+      id_var <- draw_spec$certainty_plan$id_var
+      forced_idx <- which(frame[[id_var]] %in% draw_spec$certainty_ids)
+    }
     return(compute_joint_matrix_with_certainty(
       method = method,
       mos_vals = mos_vals,
       n = n,
       draw_spec = draw_spec,
-      sampled_idx = sampled_idx
+      sampled_idx = sampled_idx,
+      forced_idx = forced_idx
     ))
   }
 
-  # WR/PMR: joint expected hits, no certainty decomposition needed
+  # WR and PMR need no certainty decomposition.
   is_wr <- method %in% pps_wr_methods ||
     identical(draw_spec$method_type, "wr")
   if (is_wr) {
@@ -1152,13 +1153,15 @@ compute_joint_matrix_with_certainty <- function(
   mos_vals,
   n,
   draw_spec,
-  sampled_idx
+  sampled_idx,
+  forced_idx = NULL
 ) {
   cert <- identify_certainty(
     mos_vals = mos_vals,
     n = n,
     certainty_size = draw_spec$certainty_size,
-    certainty_prop = draw_spec$certainty_prop
+    certainty_prop = draw_spec$certainty_prop,
+    forced_idx = forced_idx
   )
 
   sampled_idx <- as.integer(sampled_idx)
@@ -1196,6 +1199,8 @@ compute_joint_matrix_with_certainty <- function(
   reduced_draw_spec <- draw_spec
   reduced_draw_spec$certainty_size <- NULL
   reduced_draw_spec$certainty_prop <- NULL
+  reduced_draw_spec$certainty_ids <- NULL
+  reduced_draw_spec$certainty_plan <- NULL
   pik_prob <- compute_stage_pik(
     method = method,
     mos_vals = remaining_mos,

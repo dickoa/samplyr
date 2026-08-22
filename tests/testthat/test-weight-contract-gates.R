@@ -107,15 +107,60 @@ test_that("panel and wave operations refuse a shared-weight sample", {
     rotation_program(list(a = shared)),
     class = "samplyr_error_panel_weight_contract"
   )
-  # Two, because the arity check runs before the per-wave contract check and
-  # would otherwise be what fires.
-  # stack_waves() establishes that its arguments are materialized waves before
-  # it reads their provenance, so the contract gate is only reachable by a
-  # sample that is both. share_weights() on a wave produces exactly that,
-  # because attaching the transformation keeps the rest of the metadata.
-  wave_shared <- shared_weight_sample(extra_metadata = list(wave = list(wave = 1L)))
   expect_error(
-    stack_waves(wave_shared, wave_shared),
+    execute(shared, wave = 1),
+    class = "samplyr_error_panel_weight_contract"
+  )
+
+  # The refusal must not name the operation that refuses in the other
+  # direction. A sample cannot be both a wave and shared, so advice pointing
+  # from either refusal to the other would be a closed loop.
+  expect_error(
+    execute(shared, wave = 1),
+    regexp = "do not compose in either direction"
+  )
+})
+
+test_that("share_weights() refuses a materialized wave", {
+  master <- wave_share_master()
+  wave <- execute(master, wave = 1)
+
+  targets <- data.frame(
+    person_id = paste0("p", seq_len(nrow(master))),
+    hh_id = paste0("h", seq_len(nrow(master))),
+    stringsAsFactors = FALSE
+  )
+  links <- data.frame(
+    ea_id = master$ea_id,
+    person_id = paste0("p", seq_len(nrow(master))),
+    stringsAsFactors = FALSE
+  )
+  share <- function(x) {
+    share_weights(
+      x,
+      targets = targets, links = links,
+      by = c(ea_id = "ea_id"), to = c(person_id = "person_id"),
+      within = hh_id, multiplicity = complete_links()
+    )
+  }
+
+  expect_error(share(wave), class = "samplyr_error_share_weights_wave")
+  expect_error(share(wave), regexp = "realizes wave 1")
+
+  # The master is not refused. A panel assignment describes selected source
+  # units, so it does not carry to target units, but nothing about it makes
+  # the transformation wrong.
+  from_master <- share(master)
+  expect_s3_class(from_master, "tbl_sample")
+  expect_identical(nrow(from_master), nrow(master))
+  expect_null(attr(from_master, "metadata")$panel_assignment)
+  expect_null(attr(from_master, "metadata")$wave)
+  expect_false(".panel" %in% names(from_master))
+
+  # And the result is an ordinary shared sample: the wave route refuses it
+  # from the other side, which is what makes the pair symmetric.
+  expect_error(
+    execute(from_master, wave = 1),
     class = "samplyr_error_panel_weight_contract"
   )
 })
@@ -131,8 +176,10 @@ test_that("stack_waves reports non-wave arguments instead of failing to format",
     class = "samplyr_error_stack_waves_input"
   )
   expect_error(stack_waves(ordinary, ordinary), regexp = "Arguments 1 and 2")
+  # The singular. A real wave rather than an injected record: the second
+  # argument has to pass the wave check for the first to be reported alone.
   expect_error(
-    stack_waves(ordinary, shared_weight_sample(extra_metadata = list(wave = list(wave = 1L)))),
+    stack_waves(ordinary, execute(wave_share_master(), wave = 1)),
     regexp = "Argument 1 is not one"
   )
 })

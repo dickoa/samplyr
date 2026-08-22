@@ -195,9 +195,34 @@ sample_within_clusters <- function(
 ) {
   groups <- split_row_indices(frame, cluster_vars)
   indices_list <- groups$indices
-  # Display labels, not `groups$keys`: the latter is an internal encoding for
-  # more than one clustering variable and has no business in a report.
+  # Report display labels rather than encoded group keys.
   parent_labels <- key_labels(groups$key_df, cluster_vars)
+
+  # A certainty plan's take stage sizes each pool from the register: the
+  # PSU's own take. The stored n is NULL, which also keeps the srswor fast
+  # path out of the way.
+  take_plan <- draw_spec$certainty_plan
+  take_lookup <- if (!is_null(take_plan) && identical(take_plan$role, "take")) {
+    stats::setNames(take_plan$register$n_take, take_plan$register$psu_id)
+  } else {
+    NULL
+  }
+  pool_spec <- function(data) {
+    if (is_null(take_lookup)) {
+      return(draw_spec)
+    }
+    pool_id <- as.character(data[[take_plan$id_var]][1])
+    take <- take_lookup[pool_id]
+    if (is.na(take)) {
+      cli_abort(
+        "Internal error: PSU {.val {pool_id}} has no take in the certainty plan's register.",
+        call = NULL
+      )
+    }
+    spec <- draw_spec
+    spec$n <- as.numeric(take)
+    spec
+  }
 
   if (
     is_null(strata_spec) &&
@@ -244,7 +269,7 @@ sample_within_clusters <- function(
   results_list <- lapply(seq_along(indices_list), function(i) {
     data <- frame[indices_list[[i]], , drop = FALSE]
     qualify_pool_events(
-      sample_units(data, strata_spec, draw_spec, trace_mode = trace_mode),
+      sample_units(data, strata_spec, pool_spec(data), trace_mode = trace_mode),
       parent_labels[[i]]
     )
   })
@@ -305,10 +330,7 @@ sample_srswor_by_group_indices <- function(
   n_actual <- pmin(as.integer(n_per_group), group_sizes)
   n_actual[is.na(n_actual) | n_actual <= 0L] <- 0L
 
-  # Reporting is opt-in through `pool_keys` because `sample_stratified()` runs
-  # the same comparison against `.N_h` before calling in, and would otherwise
-  # report each capped stratum twice. Callers that do not pre-check, notably
-  # the unstratified cluster path, pass their keys and let this report.
+  # `pool_keys` prevents duplicate capped-stratum reports.
   if (!is_null(pool_keys)) {
     capped <- as.integer(n_per_group) > group_sizes
     capped[is.na(capped)] <- FALSE
@@ -401,8 +423,7 @@ sample_stratified <- function(
   groups <- split_row_indices(frame, strata_vars)
   stratum_info <- stratum_info_from_groups(frame, strata_vars, groups$indices)
 
-  # Only the selection path signals: the digest and joint-replay callers
-  # recompute the same allocation and would repeat the message.
+  # Signal only during selection to avoid replay duplicates.
   stratum_info <- calculate_stratum_sizes(
     stratum_info, strata_spec, draw_spec,
     signal = TRUE
@@ -422,8 +443,7 @@ sample_stratified <- function(
   if (!is_multi_hit_method(draw_spec)) {
     capped <- stratum_info$.n_h > stratum_info$.N_h
     if (any(capped)) {
-      # Full list, not the truncated display form: the reporter decides how
-      # many to name, and a caller inspecting the condition wants them all.
+      # Store full keys and let the reporter truncate them.
       keys <- format_key_labels(
         stratum_info[capped, , drop = FALSE],
         strata_vars,
@@ -444,8 +464,7 @@ sample_stratified <- function(
           n_pools = nrow(stratum_info),
           n_requested = sum(stratum_info$.n_h),
           n_actual = sum(pmin(stratum_info$.n_h, stratum_info$.N_h)),
-          # Every stratum of the stage, not only the capped ones: a stage is
-          # a census when nothing it could reach was left behind.
+          # A census leaves nothing reachable behind in any stratum.
           n_available = sum(stratum_info$.N_h)
         )
       }
@@ -509,9 +528,7 @@ sample_stratified <- function(
       lookup = draw_lookup
     )
 
-    # `draw_sample()` sees one stratum's rows and knows nothing about which
-    # stratum, so events it raises are named here. An outer cluster loop
-    # qualifies again, giving "parent / A".
+    # Qualify draw events by stratum and outer parent.
     res <- qualify_pool_events(
       withCallingHandlers(
         draw_sample(data, n_h, stratum_draw_spec, trace_mode = trace_mode),
@@ -624,16 +641,11 @@ draw_balanced_stratified <- function(
   result <- frame[original_idx, , drop = FALSE]
   result$.weight <- 1 / pik[original_idx]
   result$.fpc <- fpc_vec[original_idx]
-  # The stratified cube returns here rather than through draw_sample(), so it
-  # needs its own certainty assignment. Without it a stratified cube design
-  # carries no .certainty_k at all and the export cannot build the take-all
-  # stratum its PPS-WOR variance treatment requires.
+  # Assign certainty explicitly for the stratified cube path.
   result$.certainty <- is_certainty_probability(pik[original_idx])
   result$.sample_id <- seq_len(nrow(result))
 
-  # One pool per stratum: the cube draw is joint, but the strata
-  # constraint fixes each stratum's size, and within-stratum input
-  # order is preserved by the stable sort.
+  # Record one pool per constrained cube stratum.
   if (identical(trace_mode, "none")) {
     return(list(sample = result, trace = NULL))
   }
@@ -851,6 +863,15 @@ resolve_stratum_draw_spec <- function(
     }
   }
 
+  if (!is_null(draw_spec$certainty_plan)) {
+    # The plan's stored classification for this stratum, kept even when
+    # empty so the certainty path and its invariants stay engaged.
+    stratum_id <- as.character(keys[[1]][1])
+    reg <- draw_spec$certainty_plan$register
+    in_stratum <- reg$stratum == stratum_id
+    stratum_draw_spec$certainty_ids <- reg$psu_id[in_stratum & reg$certainty]
+  }
+
   stratum_draw_spec
 }
 
@@ -940,12 +961,8 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
   method <- draw_spec$method
   mos <- draw_spec$mos
   N <- nrow(data)
-  random_size <- method %in% rs_poisson_methods ||
-    isFALSE(draw_spec$method_fixed)
-  # For random-size designs, `frac` targets an expected count rather
-  # than a fixed cardinality. Preserve that nominal (possibly
-  # fractional) request before probability capping. `n_expected`
-  # records the expectation after the chances have been resolved.
+  random_size <- is_random_size_method(draw_spec)
+  # Preserve nominal random-size targets before probability capping.
   n_target <- if (
     random_size &&
       is.numeric(draw_spec$frac) && length(draw_spec$frac) == 1L
@@ -970,7 +987,8 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
   }
 
   has_certainty <- !is_null(draw_spec$certainty_size) ||
-    !is_null(draw_spec$certainty_prop)
+    !is_null(draw_spec$certainty_prop) ||
+    !is_null(draw_spec$certainty_ids)
 
   if (method %in% pps_methods) {
     mos_check <- data[[mos]]
@@ -1076,8 +1094,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
         mos_vals <- data[[mos]]
         frac <- draw_spec$frac %||% (n / N)
         raw_pik <- frac * mos_vals / sum(mos_vals) * N
-        # Counted before the clamp: after it every clipped unit reads exactly
-        # one and is indistinguishable from a unit that landed there.
+        # Count clipping before values become exactly one.
         n_clipped <- sum(raw_pik > 1)
         pik <- pmin(raw_pik, 1)
         check_poisson_shortfall(
@@ -1113,10 +1130,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
       },
       pps_multinomial = ,
       pps_chromy = {
-        # Built-in WR methods do not support PRN coordination. `prn_methods`
-        # in R/utils.R rejects it at validation time, so no prn arg is
-        # threaded here. Custom WR methods that declare supports_prn = TRUE
-        # are handled in the `is_custom` branch above.
+        # Only registered WR methods may declare PRN support.
         mos_vals <- data[[mos]]
         pik <- sondage::expected_hits(mos_vals, n)
         idx <- sondage::unequal_prob_wr(
@@ -1169,8 +1183,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
     result$.pik <- pik[idx]
   }
 
-  # Resolve certainty from final probabilities. Expected multi-hit counts are
-  # not certainty indicators.
+  # Expected multi-hit counts are not certainty indicators.
   if (method %in% pps_methods || is_balanced_method(draw_spec) || is_custom) {
     result$.certainty <- if (is_multi_hit_method(draw_spec)) {
       rep.int(FALSE, nrow(result))
@@ -1214,11 +1227,18 @@ draw_sample_pps_certainty <- function(
   mos_vals <- data[[mos]]
   N <- nrow(data)
 
+  forced_idx <- NULL
+  if (!is_null(draw_spec$certainty_ids)) {
+    id_var <- draw_spec$certainty_plan$id_var
+    forced_idx <- which(data[[id_var]] %in% draw_spec$certainty_ids)
+  }
+
   cert <- identify_certainty(
     mos_vals = mos_vals,
     n = n,
     certainty_size = draw_spec$certainty_size,
-    certainty_prop = draw_spec$certainty_prop
+    certainty_prop = draw_spec$certainty_prop,
+    forced_idx = forced_idx
   )
 
   if (cert$n_remaining < 0 && draw_spec$certainty_overflow == "error") {
@@ -1249,9 +1269,7 @@ draw_sample_pps_certainty <- function(
     certainty_result$.certainty <- TRUE
   }
 
-  # The pool chance vector: certainty units are taken with chance one, and
-  # units left unselectable (certainty filled or exceeded the target)
-  # have chance zero.
+  # Use chance one for certainty and zero for the unselectable remainder.
   chance <- numeric(N)
   chance[cert$certainty_idx] <- 1
   selected <- cert$certainty_idx
@@ -1271,16 +1289,23 @@ draw_sample_pps_certainty <- function(
       draw_spec = draw_spec
     )
     prob_result <- prob_res$sample
-    # Removing the explicit certainty units shrinks the frame total, so
-    # inclusion_prob() on the remainder can cap a further unit at one.
+    # Recompute capping after removing explicit certainty units.
     prob_result$.certainty <- is_certainty_probability(prob_result$.pik)
+    if (!is_null(forced_idx) && any(prob_result$.certainty)) {
+      # The execute gate refuses any plan whose remainder would cap, so a
+      # capped remainder here means the selection no longer fields the
+      # plan's stored classification.
+      cli_abort(
+        "Internal error: the remainder draw capped a PSU the certainty plan holds noncertainty.",
+        call = NULL
+      )
+    }
     chance[cert$remaining_idx] <- prob_res$chance
     selected <- c(selected, cert$remaining_idx[prob_res$selected])
     n_clipped <- prob_res$n_clipped
   }
 
-  # Check the whole pool because requested and expected totals include
-  # explicit certainty units.
+  # Requested and expected totals include explicit certainty units.
   if (identical(method, "pps_poisson")) {
     check_poisson_shortfall(
       chance,
@@ -1325,8 +1350,7 @@ draw_sample_pps_certainty <- function(
 #' @noRd
 draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
   N <- nrow(data)
-  # Only PPS Poisson clamps computed chances. Every other method here either
-  # honors its target exactly or has no notion of clipping.
+  # Only PPS Poisson clamps computed chances.
   n_clipped <- 0L
 
   if (sum(mos_vals) <= 0) {
@@ -1397,7 +1421,7 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
       },
       pps_multinomial = ,
       pps_chromy = {
-        # Built-in WR methods do not accept PRN. See the note in draw_sample().
+        # Built-in WR methods do not accept PRN.
         pik <- sondage::expected_hits(mos_vals, n)
         idx <- sondage::unequal_prob_wr(
           pik,
@@ -1415,8 +1439,7 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
     result <- data[idx, , drop = FALSE]
     result$.pik <- pik[idx]
   }
-  # `n_clipped` travels back so the certainty path can report clipping on the
-  # combined pool without counting its explicit certainty units as clipped.
+  # Exclude explicit certainty units from the clipping count.
   list(
     sample = result,
     chance = pik,
@@ -1430,7 +1453,8 @@ identify_certainty <- function(
   mos_vals,
   n,
   certainty_size = NULL,
-  certainty_prop = NULL
+  certainty_prop = NULL,
+  forced_idx = NULL
 ) {
   N <- length(mos_vals)
   certainty_idx <- integer(0)
@@ -1459,6 +1483,12 @@ identify_certainty <- function(
       certainty_idx <- c(certainty_idx, new_certain)
       remaining <- setdiff(remaining, new_certain)
     }
+  }
+
+  if (!is_null(forced_idx) && length(forced_idx) > 0) {
+    # A stored classification adds to the threshold rules and never removes
+    # from them; on the bridge path it arrives alone and is authoritative.
+    certainty_idx <- sort(unique(c(certainty_idx, as.integer(forced_idx))))
   }
 
   n_certain <- length(certainty_idx)

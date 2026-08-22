@@ -72,20 +72,21 @@ formula term as a separate sampling stage. A final unclustered
 stage (elements sampled within the previous stage's clusters) gets
 a synthesized row-identity column so that its sampling variance is
 represented. For WR/PMR stages, the \code{.draw_k} column is used as
-the sampling unit identifier instead (each draw is treated as an
-independent unit for Hansen-Hurwitz variance estimation).
+the sampling unit identifier instead. The survey package treats each occurrence as
+independent for Hansen-Hurwitz variance estimation. This is exact for WR
+and the documented approximation for PMR.
 \item \strong{Strata} (\code{strata}): one term per stage, aligned with \code{ids}.
 A stage stratified by several variables exports their
 cross-classification as a single synthesized interaction column
 (survey silently ignores extra variables within a stage's term).
 Trailing unstratified stages are omitted and unstratified stages
 before a stratified stage get a constant placeholder column.
-\item \strong{Weights} (\code{weights}): the \code{.weight} column i.e. the compound weight
-across all stages (i.e., the product of per-stage weights
-\eqn{w = \prod w_k = \prod 1/\pi_k}{w = prod(1/pi_k)}).
-This is the inverse of the overall inclusion probability and is the
-correct weight for design-based point estimation
-(\eqn{\hat{Y} = \sum w_i y_i}{Y-hat = sum(w_i * y_i)}).
+\item \strong{Weights} (\code{weights}): the \code{.weight} column, equal to the product of
+per-stage weights \eqn{w = \prod w_k = \prod 1/q_k}{w = prod(1/q_k)}.
+For WOR, \eqn{q_k = \pi_k}{q_k = pi_k}. For WR or PMR,
+\eqn{q_k = E(K_k)}{q_k = E(K_k)}. Thus an all-WOR exact design uses the
+inverse overall inclusion probability, while WR and PMR rows use the
+occurrence-level Hansen-Hurwitz form.
 \item \strong{FPC} (\code{fpc}): one term per stage, aligned with \code{ids}. Because
 \code{\link[survey:svydesign]{survey::svydesign()}} requires every FPC term on the same scale,
 two encodings are used:
@@ -136,6 +137,16 @@ is retained as the first phase and supplies the rows the wave did not
 keep, which \code{\link[survey:twophase]{survey::twophase()}} needs to build that phase. Columns added
 to the wave for analysis are carried into the exported design. Columns the
 master already has keep the master's values.
+
+The two-phase variance of a \emph{total} can come out negative on a stratified
+master whose stratum means differ strongly relative to the variation within
+them, in which case \code{\link[survey:svytotal]{survey::svytotal()}} returns \code{NaN} with base R's
+\verb{sqrt(v): NaNs produced}. That is \code{\link[survey:twophase]{survey::twophase()}}'s exact estimator
+rather than anything samplyr adds, and samplyr cannot intercept it: the
+variance is not computed until an estimator is called on the returned
+object, and samplyr is not in that call. \code{method = "approx"} gives a finite
+standard error for the same design. A mean is unaffected, and so is a
+clustered master.
 
 The activation is exact, but the first phase is only as expressible as
 \code{\link[survey:twophase]{survey::twophase()}} allows, which takes no \code{pps} specification there. A
@@ -253,7 +264,7 @@ For fixed-size PPS without-replacement stages (\code{pps_brewer},
 \code{pps_systematic}, \code{pps_cps}, \code{pps_sampford}, \code{pps_sps}, \code{pps_pareto}),
 variance is estimated by default using Brewer's approximation (\code{pps = "brewer"} in survey's terminology), which approximates the joint inclusion
 probabilities from the marginal inclusion probabilities. Here Brewer names
-the variance estimator, not the selection algorithm e.g Sampford selection
+the variance estimator, not the selection algorithm e.g. Sampford selection
 receives this default treatment. This is the approximation
 described by Berger (2004). Its accuracy depends on the sampling design and
 population. It is not an exact substitute for joint inclusion probabilities.
@@ -262,6 +273,18 @@ For supported methods, you can instead compute joint inclusion
 probabilities using \code{\link[=joint_expectation]{joint_expectation()}} and pass them via \code{pps = survey::ppsmat(joint_matrix)}. The matrix is exact for CPS, Sampford,
 systematic PPS, and Poisson selection. Generalized Brewer, SPS, Pareto, and
 unconstrained cube use the documented high-entropy approximation.
+Systematic PPS matrices can contain zero pair probabilities. A zero pair
+probability rules out a design-unbiased variance estimator.
+A sampled matrix contains only pairs observed together and cannot establish
+positivity for all population pairs. Supplying a \code{survey::ppsmat()} object
+for systematic PPS therefore warns. The route remains available because
+full pair positivity can hold, especially at high sampling fractions.
+
+An accurate variance estimate does not by itself give accurate Wald
+interval coverage, because finite-sample PPS total estimators can be
+skewed. Validate coverage for the population and sample sizes an
+operational design will use. \code{vignette("survey-analysis")} shows a
+log-scale interval for strictly positive domain totals.
 }
 
 \subsection{Spatial and constrained balanced methods}{
@@ -346,9 +369,10 @@ otherwise large units receive multiple hits.
 For variance estimation, Chromy (2009) recommends the
 Hansen-Hurwitz (with-replacement) approximation rather than
 exact pairwise expectations, which he found "quite variable."
-Chauvet (2019) confirmed this in simulation. Accordingly,
+Accordingly,
 \code{as_svydesign()} treats \code{pps_chromy} stages like
 with-replacement stages (no FPC, no pps argument).
+Chauvet (2019) studied the related randomized without-replacement design.
 
 Note that \code{survey::ppsmat()} is \strong{not} valid for the general
 PMR case. The survey package reads \eqn{\pi_i} from the diagonal
@@ -357,6 +381,8 @@ of the joint matrix, but for PMR the diagonal contains
 receive multiple hits. The generalized Sen-Yates-Grundy variance
 requires \eqn{E(n_i) E(n_j) - E(n_i n_j)} as the pairwise
 weight (Chromy 2009, eq. 5), not \eqn{E(n_i^2) E(n_j^2) - E(n_i n_j)}.
+A direct generalized estimator using Monte Carlo expected hits can be
+negative and unstable, so samplyr does not expose it.
 }
 
 \subsection{Certainty stratum (take-all units)}{
@@ -398,7 +424,11 @@ is the Horvitz-Thompson total of a variable derived on the source units,
 and expanding the contributions is what lets \code{survey} form that variable
 inside each sampling unit for whatever is being analyzed. It is exact for
 any link structure, with no condition on how many source units reach a
-target.
+target, provided every selected source unit has at least one contribution.
+A selected source unit with no link has derived value zero but must still
+remain in the variance calculation. A contribution-row design cannot retain
+that sampling unit without inventing a target row, so this route refuses
+the case and names \code{\link[=as_svrepdesign]{as_svrepdesign()}} as the supported alternative.
 
 The rows of the result are contributions rather than target units, so
 there are more of them than the transformation returned. No estimate is

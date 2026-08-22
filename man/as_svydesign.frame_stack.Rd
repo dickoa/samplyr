@@ -140,10 +140,9 @@ world. \emph{Survey Methodology}, 47(2), 229-263.
 Other multiple frames:
 \code{\link[=as.data.frame.frame_stack]{as.data.frame.frame_stack()}},
 \code{\link[=as_svrepdesign.frame_stack]{as_svrepdesign.frame_stack()}},
+\code{\link[=declared_overlaps]{declared_overlaps()}},
 \code{\link[=exante_overlaps]{exante_overlaps()}},
 \code{\link[=exante_probabilities]{exante_probabilities()}},
-\code{\link[=overlap_probabilities]{overlap_probabilities()}},
-\code{\link[=overlap_weights]{overlap_weights()}},
 \code{\link[=stack_frames]{stack_frames()}},
 \code{\link[=summary.frame_stack]{summary.frame_stack()}}
 }

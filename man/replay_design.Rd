@@ -7,6 +7,7 @@
 replay_design(
   x,
   frame,
+  ...,
   fingerprint = c("error", "warn", "inform", "ignore"),
   links = NULL,
   targets = NULL
@@ -22,6 +23,8 @@ without a file round trip.}
 \item{frame}{The sampling frame the receipt refers to: a data frame
 for a one-frame call, or the ordered list of stage frames for a
 call that supplied one register per stage.}
+
+\item{...}{Must be empty. Arguments after it are matched by exact name.}
 
 \item{fingerprint}{How to respond when \code{frame} differs from the
 fingerprint stored in the design file: \code{"error"} (default), \code{"warn"},

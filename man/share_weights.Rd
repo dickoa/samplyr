@@ -91,6 +91,20 @@ theory as long as each target cluster totals more than zero. Counting is
 the case where every link counts for one.
 }
 
+\section{Panels and waves}{
+
+A materialized wave is refused. Its weights carry an activation factor
+whose randomization ran over the source units, and a target cluster can be
+reached from source units sitting in different panels, so there is no wave
+the target unit belongs to and no factor to carry. Share weights from the
+master instead.
+
+A master carrying a panel assignment is accepted, and its assignment
+record does not carry into the result for the same reason: a panel is a
+property of a selected source unit. The result is an ordinary shared
+sample, and \verb{execute(<it>, wave = )} is refused.
+}
+
 \section{Coverage}{
 
 A target cluster with no link to the source population can never be
@@ -134,7 +148,6 @@ Lavallee, P. (2007). \emph{Indirect Sampling}. Springer.
 \seealso{
 Other weight sharing:
 \code{\link[=complete_links]{complete_links()}},
-\code{\link[=complete_weighted_links]{complete_weighted_links()}},
 \code{\link[=extend_links]{extend_links()}},
 \code{\link[=weighted_links]{weighted_links()}}
 }

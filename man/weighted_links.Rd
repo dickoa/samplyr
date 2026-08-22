@@ -11,8 +11,10 @@ weighted_links(x, total)
 each link.}
 
 \item{total}{The population total of that importance for each target unit:
-a column of \code{targets}, or \code{\link[=complete_weighted_links]{complete_weighted_links()}} to assert that
-\code{links} is the complete population register.}
+a column of \code{targets}, or \code{\link[=complete_links]{complete_links()}} to assert that \code{links} is the
+complete population register and let samplyr total the importances. That
+is the same assertion \code{multiplicity = complete_links()} makes about
+counts, so it is the same marker.}
 }
 \value{
 \code{weighted_links()} is only meaningful inside
@@ -38,12 +40,15 @@ frame-compositing factor, and a workflow can involve both.
 # share_weights(sample, targets, links, by, to, within = enterprise,
 #               multiplicity = weighted_links(asset_share,
 #                                             total = population_assets))
+# or, asserting that `links` is the complete register:
+# share_weights(sample, targets, links, by, to, within = enterprise,
+#               multiplicity = weighted_links(asset_share,
+#                                             total = complete_links()))
 
 }
 \seealso{
 Other weight sharing:
 \code{\link[=complete_links]{complete_links()}},
-\code{\link[=complete_weighted_links]{complete_weighted_links()}},
 \code{\link[=extend_links]{extend_links()}},
 \code{\link[=share_weights]{share_weights()}}
 }

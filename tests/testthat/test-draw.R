@@ -343,11 +343,18 @@ test_that("draw() accepts named vector n with stratification", {
   expect_equal(d$stages[[1]]$draw_spec$n, c(A = 5, B = 6))
 })
 
-test_that("draw() accepts named vector frac with stratification", {
+test_that("draw() limits named frac to one stratification variable", {
   d <- sampling_design() |>
     stratify_by(group) |>
     draw(frac = c(A = 0.1, B = 0.2))
   expect_equal(d$stages[[1]]$draw_spec$frac, c(A = 0.1, B = 0.2))
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(group, domain) |>
+      draw(frac = c(A = 0.1, B = 0.2)),
+    "single stratification"
+  )
 })
 
 test_that("draw() validates round parameter", {
@@ -363,18 +370,26 @@ test_that("draw() validates round parameter", {
 })
 
 test_that("draw records the probabilities tier for built-in methods", {
-  tier_of <- function(method, ...) {
-    design <- sampling_design() |> draw(n = 5, method = method, ...)
+  tier_of <- function(method) {
+    design <- if (method %in% c("lpm2", "scps")) {
+      sampling_design() |>
+        draw(n = 5, method = method, spread = c(x, y))
+    } else if (startsWith(method, "pps_")) {
+      sampling_design() |> draw(n = 5, method = method, mos = size)
+    } else {
+      sampling_design() |> draw(n = 5, method = method)
+    }
     design$stages[[1]]$draw_spec$method_probabilities
   }
-  expect_identical(tier_of("srswor"), "exact")
-  expect_identical(tier_of("srswr"), "exact")
-  expect_identical(tier_of("pps_brewer", mos = size), "exact")
-  expect_identical(tier_of("pps_sampford", mos = size), "exact")
-  # The order-sampling pair honors the target pik only to a documented
-  # approximation; the tier must say so.
-  expect_identical(tier_of("pps_sps", mos = size), "approximate")
-  expect_identical(tier_of("pps_pareto", mos = size), "approximate")
-  # Aliases canonicalize before the lookup.
-  expect_identical(tier_of("balanced"), "exact")
+
+  methods <- c(
+    "srswor", "srswr", "systematic", "bernoulli",
+    "pps_brewer", "pps_systematic", "pps_cps", "pps_sampford",
+    "pps_poisson", "pps_sps", "pps_pareto", "pps_multinomial",
+    "pps_chromy", "cube", "lpm2", "scps", "balanced"
+  )
+  expected <- setNames(rep("exact", length(methods)), methods)
+  expected[c("pps_sps", "pps_pareto")] <- "approximate"
+
+  expect_identical(vapply(methods, tier_of, character(1)), expected)
 })

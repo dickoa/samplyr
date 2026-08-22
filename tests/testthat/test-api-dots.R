@@ -598,3 +598,212 @@ test_that("the prefix fallback is opt-in and picks the longest match", {
     samplyr:::suggest_reserved_arg("zzz", c("alloc", "cost"), prefix = TRUE)
   )
 })
+
+## The indirect-sampling and multiple-frame verbs
+
+# These ten exports shipped without any assertion in this file or in
+# test-api-consistency.R, which is why three separate argument-matching
+# defects reached a release: `replay_design()` matched `links` by prefix and
+# by position, `exante_probabilities()` and `exante_overlaps()` absorbed a
+# misspelled `key` and `by` silently, and four of `share_weights()`'s
+# required arguments fell out of the package's error vocabulary.
+
+test_that("replay_design() matches its optional arguments by exact name", {
+  frame <- data.frame(id = 1:20)
+  sample <- sampling_design() |> draw(n = 6) |> execute(frame, seed = 1)
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(sample, path, frame = frame)
+  restored <- read_design(path)
+
+  # Prefix matching. `link` used to reach `links`, and on a shared sample it
+  # would have been accepted rather than reported.
+  expect_error(
+    replay_design(restored, frame, link = data.frame(a = 1)),
+    class = "samplyr_error_unknown_argument"
+  )
+  expect_error(
+    replay_design(restored, frame, link = data.frame(a = 1)),
+    regexp = "Did you mean"
+  )
+  expect_error(
+    replay_design(restored, frame, targ = data.frame(a = 1)),
+    class = "samplyr_error_unknown_argument"
+  )
+
+  # Positional matching. A fourth positional argument used to land in
+  # `links`; a third used to be the fingerprint.
+  expect_error(
+    replay_design(restored, frame, "warn"),
+    class = "samplyr_error_unnamed_argument"
+  )
+  expect_error(
+    replay_design(restored, frame, "error", data.frame(a = 1)),
+    class = "samplyr_error_unnamed_argument"
+  )
+
+  # And the named spellings still work.
+  expect_identical(replay_design(restored, frame)$id, sample$id)
+  expect_identical(
+    replay_design(restored, frame, fingerprint = "warn")$id,
+    sample$id
+  )
+})
+
+test_that("the ex-ante verbs report a near-miss instead of absorbing it", {
+  register <- data.frame(person_id = 1:20, size = rep(c(2, 5), 10))
+  design <- sampling_design() |> draw(n = 6, method = "pps_brewer", mos = size)
+
+  # `ke` used to prefix-match `key` and then fail on the value, naming an
+  # argument the caller had not written.
+  expect_error(
+    exante_probabilities(design, register, ke = person_id),
+    class = "samplyr_error_unknown_argument"
+  )
+  expect_error(
+    exante_probabilities(design, register, ke = person_id),
+    regexp = "Did you mean `key`"
+  )
+  expect_error(
+    exante_probabilities(design, register, key = person_id, extra = 1),
+    class = "samplyr_error_unknown_argument"
+  )
+  expect_s3_class(
+    exante_probabilities(design, register, key = person_id),
+    "tbl_df"
+  )
+
+  expect_error(
+    exante_overlaps(list(a = register), b = c(person_id = "person_id")),
+    class = "samplyr_error_unknown_argument"
+  )
+  # Omitted rather than misspelled: `by` is never inferred.
+  expect_error(
+    exante_overlaps(list(a = register)),
+    class = "samplyr_error_stack_frames_overlaps"
+  )
+  expect_s3_class(
+    exante_overlaps(list(a = register), by = c(person_id = "person_id")),
+    "samplyr_exante_overlap_spec"
+  )
+})
+
+test_that("share_weights() names every required argument it was not given", {
+  frame <- data.frame(unit = c("a", "b", "c", "d"))
+  sample <- sampling_design() |> draw(n = 2) |> execute(frame, seed = 1)
+  targets <- data.frame(tid = c("t1", "t2"), hh = c("H1", "H1"), y = c(1, 10))
+  links <- data.frame(unit = c("a", "b"), tid = c("t1", "t2"))
+
+  # `within` and `multiplicity` already diagnosed their own absence. These
+  # four gave base R's "argument "targets" is missing, with no default".
+  expect_error(
+    share_weights(
+      sample,
+      links = links, to = c(tid = "tid"),
+      within = hh, multiplicity = complete_links()
+    ),
+    class = "samplyr_error_share_weights_input"
+  )
+  expect_error(
+    share_weights(
+      sample,
+      links = links, to = c(tid = "tid"),
+      within = hh, multiplicity = complete_links()
+    ),
+    regexp = "Missing: `targets` and `by`"
+  )
+
+  # All of them at once, not just the first.
+  expect_error(share_weights(), regexp = "`x`, `targets`, `links`, `by`, and `to`")
+
+  # A stray name still lands in the dots gate rather than among the tables.
+  expect_error(
+    share_weights(
+      sample,
+      targets = targets, links = links,
+      by = c(unit = "unit"), to = c(tid = "tid"),
+      within = hh, multiplicty = complete_links()
+    ),
+    class = "samplyr_error_unknown_argument"
+  )
+})
+
+test_that("stack_frames() diagnoses a near miss instead of taking it as a frame", {
+  population <- data.frame(
+    uid = 1:60,
+    in_a = rep(c(TRUE, FALSE), times = c(40, 20)),
+    in_b = rep(c(FALSE, TRUE), times = c(10, 50))
+  )
+  s_a <- sampling_design() |> draw(n = 8) |>
+    execute(population[population$in_a, ], seed = 1)
+  s_b <- sampling_design() |> draw(n = 9) |>
+    execute(population[population$in_b, ], seed = 2)
+
+  # `membership`, `key` and `overlaps` follow the dots, so a near miss lands
+  # among the components rather than raising R's own "unused argument".
+  # `frame_component_hint()` exists to diagnose it while the name is visible.
+  expect_error(
+    stack_frames(a = s_a, b = s_b, membershp = c(a = "in_a", b = "in_b"),
+                 key = uid),
+    class = "samplyr_error_stack_frames_input"
+  )
+  expect_error(
+    stack_frames(a = s_a, b = s_b, membershp = c(a = "in_a", b = "in_b"),
+                 key = uid),
+    regexp = "Did you mean"
+  )
+  expect_error(
+    stack_frames(a = s_a, b = s_b, membership = c(a = "in_a", b = "in_b"),
+                 key = uid, overlap = declared_overlaps(
+                   a = "x", b = "y", scale = "probabilities"
+                 )),
+    regexp = "Did you mean"
+  )
+
+  # An unnamed component is not a near miss and is reported as what it is,
+  # under its own class.
+  expect_error(
+    stack_frames(s_a, b = s_b, membership = c(a = "in_a", b = "in_b"),
+                 key = uid),
+    class = "samplyr_error_stack_frames_names"
+  )
+})
+
+test_that("the expression markers refuse a near miss inside their argument", {
+  frame <- data.frame(unit = c("a", "b", "c", "d"), stringsAsFactors = FALSE)
+  sample <- sampling_design() |> draw(n = 2) |> execute(frame, seed = 1)
+  targets <- data.frame(
+    tid = c("t1", "t2"), hh = c("H1", "H1"), y = c(1, 10), imp = c(1, 1)
+  )
+  links <- data.frame(unit = c("a", "b"), tid = c("t1", "t2"), imp = c(1, 1))
+  share <- function(multiplicity, within = quote(hh)) {
+    do.call(share_weights, list(
+      sample, targets = targets, links = links,
+      by = c(unit = "unit"), to = c(tid = "tid"),
+      within = within, multiplicity = multiplicity
+    ))
+  }
+
+  # A marker is matched by name, so a misspelling is not silently read as a
+  # column of `targets` carrying the multiplicity.
+  expect_error(
+    share(quote(complete_link())),
+    class = "samplyr_error_share_weights_multiplicity"
+  )
+  expect_error(
+    share(quote(weighted_link(imp, total = complete_links()))),
+    class = "samplyr_error_share_weights_multiplicity"
+  )
+  expect_error(
+    share(quote(complete_links()), quote(extend_link(hh))),
+    class = "samplyr_error_share_weights_within"
+  )
+  # And `extend_links()` takes exactly one bare column, not an expression.
+  expect_error(
+    share(quote(complete_links()), quote(extend_links(hh, tid))),
+    class = "samplyr_error_share_weights_within"
+  )
+  expect_error(
+    share(quote(complete_links()), quote(extend_links("hh"))),
+    class = "samplyr_error_share_weights_within"
+  )
+})

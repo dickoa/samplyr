@@ -80,8 +80,7 @@ normalize_frame_input <- function(frame, arg = "frame",
     }
   }
 
-  # Names are kept on the collection: downstream, a name on a list member is
-  # the frame's diagnostic label, which the stage schedule reads.
+  # Preserve collection names as diagnostic frame labels.
   list(
     frames = frame,
     labels = labels,

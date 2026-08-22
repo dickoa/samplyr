@@ -4,12 +4,14 @@
 \alias{exante_overlaps}
 \title{Resolve overlap probabilities from the designs, instead of stating them}
 \usage{
-exante_overlaps(frames, by)
+exante_overlaps(frames, ..., by)
 }
 \arguments{
 \item{frames}{A named list of registers, one per frame, with the same names
 as the components of the stack. Each is the population the corresponding
 design would draw from.}
+
+\item{...}{Must be empty. Arguments after it are matched by exact name.}
 
 \item{by}{A single named string matching the stack's key to the column
 holding it in the registers, in the same direction as a join:
@@ -43,15 +45,14 @@ exante_overlaps(
 }
 \seealso{
 \code{\link[=exante_probabilities]{exante_probabilities()}} for one register,
-\code{\link[=overlap_probabilities]{overlap_probabilities()}} for stating the chances instead
+\code{\link[=declared_overlaps]{declared_overlaps()}} for naming columns that already hold them
 
 Other multiple frames:
 \code{\link[=as.data.frame.frame_stack]{as.data.frame.frame_stack()}},
 \code{\link[=as_svrepdesign.frame_stack]{as_svrepdesign.frame_stack()}},
 \code{\link[=as_svydesign.frame_stack]{as_svydesign.frame_stack()}},
+\code{\link[=declared_overlaps]{declared_overlaps()}},
 \code{\link[=exante_probabilities]{exante_probabilities()}},
-\code{\link[=overlap_probabilities]{overlap_probabilities()}},
-\code{\link[=overlap_weights]{overlap_weights()}},
 \code{\link[=stack_frames]{stack_frames()}},
 \code{\link[=summary.frame_stack]{summary.frame_stack()}}
 }

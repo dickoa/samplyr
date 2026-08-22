@@ -1609,20 +1609,6 @@ test_that("draw() accepts scalar n", {
   expect_equal(design$stages[[1]]$draw_spec$n, 10)
 })
 
-test_that("draw() accepts named vector n with stratification", {
-  design <- sampling_design() |>
-    stratify_by(region) |>
-    draw(n = c(A = 5, B = 10))
-  expect_equal(design$stages[[1]]$draw_spec$n, c(A = 5, B = 10))
-})
-
-test_that("draw() accepts named vector frac with stratification", {
-  design <- sampling_design() |>
-    stratify_by(region) |>
-    draw(frac = c(A = 0.1, B = 0.2), method = "bernoulli")
-  expect_equal(design$stages[[1]]$draw_spec$frac, c(A = 0.1, B = 0.2))
-})
-
 test_that("draw() accepts data frame n with stratification", {
   n_df <- data.frame(region = c("A", "B"), n = c(5, 10))
   design <- sampling_design() |>

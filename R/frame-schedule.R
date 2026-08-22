@@ -1,10 +1,4 @@
-# Stage-to-frame scheduling.
-#
-# Every execution form resolves to one schedule: an ordered list with one entry
-# per stage executed in this call, each carrying the frame that stage samples
-# from. Building it is the only place stage indices are resolved and frames are
-# matched to stages, so the one-call and continuation spellings cannot drift
-# apart. The schedule is built before any random number is consumed.
+# Build one stage-to-frame schedule before consuming RNG state.
 
 #' Diagnostic name for a stage
 #'
@@ -78,8 +72,7 @@ normalize_stage_selector <- function(stages, allowed,
     refuse("{.arg {arg}} must not contain missing values.")
   }
   if (!is_integerish_numeric(stages)) {
-    # Infinite as well as fractional: trunc(Inf) is Inf, so a fractional
-    # test alone finds nothing to report.
+    # Reject infinite and fractional stage indices.
     bad <- stages[!is.finite(stages) | stages != trunc(stages)]
     refuse(
       "{.arg {arg}} must be whole, finite stage numbers.",
@@ -200,8 +193,7 @@ check_stage_parent_identity <- function(design, stages, executed = NULL,
                                         call = caller_env()) {
   parents <- stages[-length(stages)]
 
-  # A continuation samples within the stage the previous call ended on, so that
-  # stage carries the same requirement.
+  # Continuation keeps the prior stage's frame requirement.
   if (!is_null(executed) && length(executed) > 0) {
     parents <- c(max(executed), parents)
   }
@@ -339,9 +331,7 @@ stage_required_vars <- function(stage_spec) {
     }
     stats::setNames(vars, rep(label, length(vars)))
   }
-  # Names carry the role each column plays, so a diagnostic can say that the
-  # missing column is the PRN rather than only that it is missing. Callers
-  # comparing values are unaffected: setdiff() and %in% ignore names.
+  # Names let diagnostics state each required column's role.
   vars <- c(
     role(stage_spec$strata$vars, "stratification"),
     role(stage_spec$clusters$vars, "cluster"),
@@ -387,8 +377,7 @@ check_scheduled_frame_vars <- function(design, entries, call = caller_env()) {
     }
     stage_idx <- entry$stage
     stage_spec <- design$stages[[stage_idx]]
-    # A previous-phase frame loses its generated columns before any stage
-    # sees it, so the preflight judges the schema that will remain.
+    # Preflight the phase frame after generated columns are stripped.
     available <- setdiff(names(frame), samplyr_internal_cols(frame))
 
     ancestry <- collect_ancestor_cluster_vars(design, stage_idx)
@@ -410,8 +399,7 @@ check_scheduled_frame_vars <- function(design, entries, call = caller_env()) {
     }
 
     required <- stage_required_vars(stage_spec)
-    # Strata of completed stages can arrive by carry-forward, so their absence
-    # here is not yet a failure.
+    # Completed-stage strata may arrive by carry-forward.
     carried <- prior_design_carry_vars(design, stage_idx)
     required <- required[!required %in% carried]
     missing <- required[!required %in% available]

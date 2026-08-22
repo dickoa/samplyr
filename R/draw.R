@@ -13,15 +13,15 @@
 #' | `srswr` | With | Fixed | - | - | Allows duplicates |
 #' | `systematic` | Without | Fixed | - | - | Periodic selection |
 #' | `bernoulli` | Without | Random | - | `prn` | Independent trial per unit |
-#' | `pps_systematic` | Without | Fixed | Required | - | Simple, some bias |
-#' | `pps_brewer` | Without | Fixed | Required | - | Fast, joint prob > 0 |
-#' | `pps_cps` | Without | Fixed | Required | - | Highest entropy, exact joint prob |
+#' | `pps_systematic` | Without | Fixed | Required | - | Order-sensitive, exact first-order probabilities |
+#' | `pps_brewer` | Without | Fixed | Required | - | Exact first-order, approximate joint probabilities |
+#' | `pps_cps` | Without | Fixed | Required | - | Highest entropy, exact joint probabilities |
 #' | `pps_sampford` | Without | Fixed | Required | - | Exact Sampford joint probabilities |
 #' | `pps_poisson` | Without | Random | Required | `prn` | PPS analog of Bernoulli |
 #' | `pps_sps` | Without | Fixed | Required | `prn` | Sequential Poisson |
 #' | `pps_pareto` | Without | Fixed | Required | `prn` | Pareto sampling |
 #' | `pps_multinomial` | With | Fixed | Required | - | Any hit count, Hansen-Hurwitz |
-#' | `pps_chromy` | Min. repl. | Fixed | Required | - | SAS default PPS_SEQ |
+#' | `pps_chromy` | Min. repl. | Fixed | Required | - | As SAS `PPS_SEQ` |
 #' | `cube` | Without | Fixed | Optional | `aux` optional | Deville & \enc{Tillé}{Tille} 2004 |
 #' | `lpm2` | Without | Fixed | Optional | `spread` required | Spatial spread |
 #' | `scps` | Without | Fixed | Optional | `spread` required | Spatial spread |
@@ -93,6 +93,10 @@
 #' Chen, X.-H., Dempster, A.P. and Liu, J.S. (1994). Weighted finite
 #' population sampling to maximize entropy. *Biometrika*, 81(3), 457-469.
 #'
+#' `pps_sampford`:
+#' Sampford, M.R. (1967). On sampling without replacement with unequal
+#' probabilities of selection. *Biometrika*, 54(3/4), 499-513.
+#'
 #' `pps_poisson`:
 #' Tillé, Y. (2006). *Sampling Algorithms*. Springer.
 #'
@@ -144,6 +148,21 @@ NULL
 #'   - A scalar: applies per stratum (if no `alloc`) or as total (if `alloc` specified)
 #'   - A named vector: stratum-specific sizes (for single stratification variable)
 #'   - A data frame: stratum-specific sizes with stratification columns + `n` column
+#'   - A svyplan size or plan object: consumed through svyplan's documented
+#'     coercions, stage-aware for cluster and stratified two-stage plans.
+#'     See `vignette("survey-planning")` for the handoff by plan type.
+#'   - A certainty-aware `svyplan::n_alloc()` plan (solved with a `psu`
+#'     register carrying `psu_id`): accepted at a clustered, stratified
+#'     stage 1, and again at stage 2 for the per-PSU takes. Stage 1 selects
+#'     every PSU the plan classified certainty and draws exactly its
+#'     remainder per stratum; the method must be `pps_systematic`,
+#'     `pps_brewer`, `pps_cps`, or `pps_sampford`, and `mos` must equal the
+#'     register's `N`. Stage 2 selects by `srswor` or `systematic`, and
+#'     stratifying there requires an `alloc` method to split each take.
+#'     Arguments the plan already owns (`frac`, `certainty_size`,
+#'     `certainty_prop`, `min_n`, `max_n`, and at stage 1 `alloc`) are
+#'     refused alongside it, and `execute()` reconciles the frame against
+#'     the register before anything is drawn.
 #' @param frac Sampling fraction. Can be:
 #'   - A scalar: same fraction for all strata
 #'   - A named vector: stratum-specific fractions
@@ -521,10 +540,7 @@ draw <- function(
   certainty_overflow = "error",
   on_empty = "error"
 ) {
-  # The design, the size, and the share are what a draw is written as, so
-  # they stay positional. The fourteen modifiers after `...` are matched
-  # exactly: a positional fourth argument used to land on `min_n` and be
-  # reported as a bounds error.
+  # Match all modifiers after `...` exactly.
   check_keyword_args(
     enquos(...),
     c(
@@ -564,43 +580,9 @@ draw <- function(
   bound_names <- aux_spec$bounds
   spread_names <- parse_draw_variables(enquo(spread), "spread")
 
-  if (!is_character(method) || length(method) != 1) {
-    cli_abort("{.arg method} must be a single character string")
-  }
-
-  custom_spec <- NULL
-  if (method %in% valid_builtin_methods) {
-    method <- match.arg(method, valid_builtin_methods)
-    if (method %in% names(builtin_method_aliases)) {
-      method <- unname(builtin_method_aliases[[method]])
-    }
-  } else if (is_custom_method(method)) {
-    custom_spec <- custom_method_spec(method)
-    prefix <- custom_method_prefix(method)
-    expected_prefix <- if (identical(custom_spec$type, "balanced")) {
-      "balanced"
-    } else {
-      "pps"
-    }
-    if (!identical(prefix, expected_prefix)) {
-      cli_abort(c(
-        "Method {.val {method}} uses the wrong family prefix.",
-        "i" = "Registered methods with {.code type = \"{custom_spec$type}\"} use the {.val {paste0(expected_prefix, '_')}} prefix.",
-        "i" = "Use {.code method = \"{paste0(expected_prefix, '_', sondage_method_name(method))}\"}."
-      ))
-    }
-    if (identical(custom_spec$probabilities, "unknown")) {
-      abort_unknown_probabilities(method)
-    }
-  } else {
-    cli_abort(
-      c(
-        "Unknown sampling method: {.val {method}}.",
-        "i" = "Built-in methods: {.val {valid_builtin_methods}}",
-        "i" = "Custom methods can be registered via {.fn sondage::register_method}."
-      )
-    )
-  }
+  resolved_method <- resolve_draw_method(method)
+  method <- resolved_method$method
+  custom_spec <- resolved_method$custom_spec
 
   valid_round <- c("up", "down", "nearest")
   if (!is_character(round) || length(round) != 1) {
@@ -619,44 +601,50 @@ draw <- function(
 
   strata_vars <- current_stage$strata$vars
 
+  # A certainty-aware plan is fielded from its own classification, never
+  # coerced to stage sizes: stage 1 selects it, stage 2 applies its per-PSU
+  # takes. Any other context falls through to coerce_svyplan_n(), which
+  # refuses it.
+  certainty_plan <- NULL
+  if (is_certainty_alloc_plan(n)) {
+    if (current == 1L && !is_null(current_stage$clusters)) {
+      bridge <- certainty_bridge_spec(
+        plan = n,
+        strata_vars = strata_vars,
+        cluster_vars = current_stage$clusters$vars,
+        method = method,
+        certainty_size = certainty_size,
+        certainty_prop = certainty_prop,
+        min_n = min_n,
+        max_n = max_n,
+        has_alloc = has_alloc
+      )
+      certainty_plan <- bridge$spec
+      n <- bridge$n_total
+    } else if (current == 2L) {
+      certainty_plan <- certainty_take_spec(
+        plan = n,
+        design = .data,
+        method = method,
+        mos = mos_name,
+        frac = frac,
+        certainty_size = certainty_size,
+        certainty_prop = certainty_prop,
+        min_n = min_n,
+        max_n = max_n,
+        has_alloc = has_alloc,
+        strata_vars = strata_vars,
+        clustered = !is_null(current_stage$clusters)
+      )
+      n <- NULL
+    }
+  }
+
   n <- coerce_svyplan_n(
     n,
     stage_index = current,
     clustered = !is_null(current_stage$clusters)
   )
-  n_is_df <- is.data.frame(n)
-  frac_is_df <- is.data.frame(frac)
-  certainty_size_is_df <- is.data.frame(certainty_size)
-  certainty_prop_is_df <- is.data.frame(certainty_prop)
-
-  if (n_is_df || frac_is_df) {
-    if (is_null(strata_vars)) {
-      cli_abort(
-        "Data frame for {.arg n} or {.arg frac} requires stratification. Use {.fn stratify_by} first."
-      )
-    }
-    if (n_is_df) {
-      validate_draw_df(
-        n,
-        strata_vars = strata_vars,
-        value_col = "n",
-        method = method,
-        custom_spec = custom_spec,
-        check_keys = TRUE
-      )
-    }
-    if (frac_is_df) {
-      validate_draw_df(
-        frac,
-        strata_vars = strata_vars,
-        value_col = "frac",
-        method = method,
-        custom_spec = custom_spec,
-        check_keys = TRUE
-      )
-    }
-  }
-
   valid_on_empty <- c("warn", "error", "silent")
   if (
     !is_character(on_empty) ||
@@ -668,34 +656,29 @@ draw <- function(
     )
   }
 
-  validate_draw_args(
-    n,
-    frac,
-    method,
-    mos_name,
-    has_alloc,
-    n_is_df,
-    frac_is_df,
+  certainty_overflow <- match.arg(certainty_overflow, c("error", "allow"))
+
+  validate_draw_configuration(
+    n = n,
+    frac = frac,
+    method = method,
+    mos = mos_name,
+    prn = prn_name,
+    min_n = min_n,
+    max_n = max_n,
+    certainty_size = certainty_size,
+    certainty_prop = certainty_prop,
+    round = round,
+    certainty_overflow = certainty_overflow,
+    on_empty = on_empty,
+    has_alloc = has_alloc,
     strata_vars = strata_vars,
     aux = aux_names,
     bounds = bound_names,
     spread = spread_names,
-    custom_spec = custom_spec
+    custom_spec = custom_spec,
+    certainty_plan = certainty_plan
   )
-  validate_bounds(min_n, max_n, has_alloc)
-  validate_certainty(
-    certainty_size,
-    certainty_prop,
-    mos_name,
-    method,
-    strata_vars,
-    certainty_size_is_df,
-    certainty_prop_is_df,
-    custom_spec = custom_spec
-  )
-  certainty_overflow <- match.arg(certainty_overflow, c("error", "allow"))
-
-  validate_prn(prn_name, method, custom_spec = custom_spec)
 
   if (!is_null(current_stage$draw_spec)) {
     cli_abort(
@@ -719,6 +702,7 @@ draw <- function(
     certainty_size = certainty_size,
     certainty_prop = certainty_prop,
     certainty_overflow = certainty_overflow,
+    certainty_plan = certainty_plan,
     on_empty = on_empty,
     method_type = custom_spec$type,
     method_fixed = custom_spec$fixed_size,
@@ -774,7 +758,7 @@ parse_balanced_aux <- function(quo) {
       aux <- c(aux, as_label(term))
       next
     }
-    if (is_call(term, "bound", ns = "")) {
+    if (is_call(term, "bound", ns = marker_namespaces)) {
       args <- as.list(term)[-1]
       if (length(args) != 1L || !is.symbol(args[[1]])) {
         cli_abort(
@@ -797,6 +781,54 @@ parse_balanced_aux <- function(quo) {
     aux = if (length(aux) > 0) aux else NULL,
     bounds = if (length(bounds) > 0) bounds else NULL
   )
+}
+
+#' @noRd
+resolve_draw_method <- function(method, call = rlang::caller_env()) {
+  if (!is_character(method) || length(method) != 1) {
+    cli_abort("{.arg method} must be a single character string", call = call)
+  }
+
+  if (method %in% valid_builtin_methods) {
+    if (method %in% names(builtin_method_aliases)) {
+      method <- unname(builtin_method_aliases[[method]])
+    }
+    return(list(method = method, custom_spec = NULL))
+  }
+
+  if (!is_custom_method(method)) {
+    cli_abort(
+      c(
+        "Unknown sampling method: {.val {method}}.",
+        "i" = "Built-in methods: {.val {valid_builtin_methods}}",
+        "i" = "Custom methods can be registered via {.fn sondage::register_method}."
+      ),
+      call = call
+    )
+  }
+
+  custom_spec <- custom_method_spec(method)
+  prefix <- custom_method_prefix(method)
+  expected_prefix <- if (identical(custom_spec$type, "balanced")) {
+    "balanced"
+  } else {
+    "pps"
+  }
+  if (!identical(prefix, expected_prefix)) {
+    cli_abort(
+      c(
+        "Method {.val {method}} uses the wrong family prefix.",
+        "i" = "Registered methods with {.code type = \"{custom_spec$type}\"} use the {.val {paste0(expected_prefix, '_')}} prefix.",
+        "i" = "Use {.code method = \"{paste0(expected_prefix, '_', sondage_method_name(method))}\"}."
+      ),
+      call = call
+    )
+  }
+  if (identical(custom_spec$probabilities, "unknown")) {
+    abort_unknown_probabilities(method, call = call)
+  }
+
+  list(method = method, custom_spec = custom_spec)
 }
 
 #' @noRd
@@ -826,38 +858,73 @@ validate_draw_df <- function(
 
     missing_vars <- setdiff(strata_vars, names(df))
     if (length(missing_vars) > 0) {
-      cli_abort(
-        c(
-          "Data frame for {.arg {value_col}} is missing stratification variable{?s}:",
-          "x" = "{.val {missing_vars}}"
-        ),
-        call = call
+      message <- c(
+        "Data frame for {.arg {value_col}} is missing stratification variable{?s}:",
+        "x" = "{.val {missing_vars}}"
       )
+      if (value_col %in% c("n", "frac")) {
+        abort_samplyr(
+          message,
+          class = "samplyr_error_alloc_missing_columns",
+          call = call
+        )
+      }
+      cli_abort(message, call = call)
     }
   }
 
   if (!value_col %in% names(df)) {
-    cli_abort(
-      "Data frame for {.arg {value_col}} must contain a {.val {value_col}} column",
-      call = call
-    )
+    message <- "Data frame for {.arg {value_col}} must contain a {.val {value_col}} column"
+    if (value_col %in% c("n", "frac")) {
+      abort_samplyr(
+        message,
+        class = "samplyr_error_alloc_missing_value_column",
+        call = call
+      )
+    }
+    cli_abort(message, call = call)
   }
 
   if (check_keys) {
     key_df <- df[, strata_vars, drop = FALSE]
-    if (anyDuplicated(key_df) > 0) {
-      cli_abort(
-        "Data frame for {.arg {value_col}} has duplicate rows for the same stratum",
-        call = call
+    if (anyNA(key_df)) {
+      missing_key_cols <- strata_vars[vapply(key_df, anyNA, logical(1))]
+      message <- c(
+        "Data frame for {.arg {value_col}} has missing values in stratification keys.",
+        "x" = "Columns with missing values: {.val {missing_key_cols}}"
       )
+      if (value_col %in% c("n", "frac")) {
+        abort_samplyr(
+          message,
+          class = "samplyr_error_alloc_missing_key_values",
+          call = call
+        )
+      }
+      cli_abort(message, call = call)
+    }
+    if (anyDuplicated(key_df) > 0) {
+      message <- "Data frame for {.arg {value_col}} has duplicate rows for the same stratum"
+      if (value_col %in% c("n", "frac")) {
+        abort_samplyr(
+          message,
+          class = "samplyr_error_alloc_duplicate_keys",
+          call = call
+        )
+      }
+      cli_abort(message, call = call)
     }
   }
 
   values <- df[[value_col]]
   if (value_col %in% c("n", "frac")) {
     if (!is_finite_numeric(values)) {
-      cli_abort(
+      abort_samplyr(
         "{.arg {value_col}} values must be finite numbers (no NA/NaN/Inf)",
+        class = if (value_col == "n") {
+          "samplyr_error_alloc_n_non_finite"
+        } else {
+          "samplyr_error_alloc_frac_non_finite"
+        },
         call = call
       )
     }
@@ -865,29 +932,160 @@ validate_draw_df <- function(
 
   if (value_col == "n") {
     if (any(values <= 0)) {
-      cli_abort("{.arg n} values must be positive", call = call)
+      abort_samplyr(
+        "{.arg n} values must be positive",
+        class = "samplyr_error_alloc_n_bounds",
+        call = call
+      )
     }
     if (!is_integerish_numeric(values)) {
-      cli_abort("{.arg n} values must be integer-valued", call = call)
+      abort_samplyr(
+        "{.arg n} values must be integer-valued",
+        class = "samplyr_error_alloc_n_integer",
+        call = call
+      )
     }
   }
 
   if (value_col == "frac") {
     if (any(values <= 0)) {
-      cli_abort("{.arg frac} values must be positive", call = call)
+      abort_samplyr(
+        "{.arg frac} values must be positive",
+        class = "samplyr_error_alloc_frac_bounds",
+        call = call
+      )
     }
-    # The declared type is the truth for custom methods. The name test
-    # only classifies built-ins (a custom name is never in the method
-    # vectors, so the name test alone would call every custom method
-    # WOR and wrongly reject frac > 1 for custom WR methods).
+    # Classify custom methods by their declared type.
     is_wor <- if (!is_null(custom_spec)) {
       custom_spec$type %in% c("wor", "balanced")
     } else {
       !is_null(method) && !(method %in% c(wr_methods, pmr_methods))
     }
     if (is_wor && any(values > 1)) {
-      cli_abort(
+      abort_samplyr(
         "{.arg frac} cannot exceed 1 for without-replacement methods",
+        class = "samplyr_error_alloc_frac_wor_bounds",
+        call = call
+      )
+    }
+  }
+
+  invisible(NULL)
+}
+
+#' @noRd
+validate_draw_configuration <- function(
+  n,
+  frac,
+  method,
+  mos,
+  prn,
+  min_n,
+  max_n,
+  certainty_size,
+  certainty_prop,
+  round,
+  certainty_overflow,
+  on_empty,
+  has_alloc,
+  strata_vars = NULL,
+  aux = NULL,
+  bounds = NULL,
+  spread = NULL,
+  custom_spec = NULL,
+  warn_ignored = TRUE,
+  certainty_plan = NULL,
+  call = rlang::caller_env()
+) {
+  # A take stage carries no stored size: the certainty plan supplies each
+  # pool's take at selection time.
+  provides_take <- identical(certainty_plan$role, "take")
+  n_is_df <- is.data.frame(n)
+  frac_is_df <- is.data.frame(frac)
+
+  if (n_is_df || frac_is_df) {
+    if (is_null(strata_vars)) {
+      cli_abort(
+        "Data frame for {.arg n} or {.arg frac} requires stratification. Use {.fn stratify_by} first.",
+        call = call
+      )
+    }
+    if (n_is_df) {
+      validate_draw_df(
+        n,
+        strata_vars = strata_vars,
+        value_col = "n",
+        method = method,
+        custom_spec = custom_spec,
+        check_keys = TRUE,
+        call = call
+      )
+    }
+    if (frac_is_df) {
+      validate_draw_df(
+        frac,
+        strata_vars = strata_vars,
+        value_col = "frac",
+        method = method,
+        custom_spec = custom_spec,
+        check_keys = TRUE,
+        call = call
+      )
+    }
+  }
+
+  validate_draw_args(
+    n,
+    frac,
+    method,
+    mos,
+    has_alloc,
+    n_is_df,
+    frac_is_df,
+    strata_vars = strata_vars,
+    aux = aux,
+    bounds = bounds,
+    spread = spread,
+    custom_spec = custom_spec,
+    warn_ignored = warn_ignored,
+    provides_take = provides_take,
+    call = call
+  )
+  validate_bounds(
+    min_n,
+    max_n,
+    has_alloc,
+    warn_ignored = warn_ignored,
+    call = call
+  )
+  validate_certainty(
+    certainty_size,
+    certainty_prop,
+    mos,
+    method,
+    strata_vars,
+    is.data.frame(certainty_size),
+    is.data.frame(certainty_prop),
+    custom_spec = custom_spec,
+    call = call
+  )
+  validate_prn(prn, method, custom_spec = custom_spec, call = call)
+
+  choices <- list(
+    round = c("up", "down", "nearest"),
+    certainty_overflow = c("error", "allow"),
+    on_empty = c("warn", "error", "silent")
+  )
+  values <- list(
+    round = round,
+    certainty_overflow = certainty_overflow,
+    on_empty = on_empty
+  )
+  for (name in names(choices)) {
+    value <- values[[name]]
+    if (!is.character(value) || length(value) != 1 || !value %in% choices[[name]]) {
+      cli_abort(
+        "{.arg {name}} must be one of {.val {choices[[name]]}}",
         call = call
       )
     }
@@ -910,6 +1108,8 @@ validate_draw_args <- function(
   bounds = NULL,
   spread = NULL,
   custom_spec = NULL,
+  warn_ignored = TRUE,
+  provides_take = FALSE,
   call = rlang::caller_env()
 ) {
   if (has_alloc && is_null(n) && !is_null(frac)) {
@@ -947,8 +1147,8 @@ validate_draw_args <- function(
     cli_abort("PPS methods require {.arg mos} (measure of size)", call = call)
   }
 
-  if (!is_pps && !is_balanced && !is_null(mos)) {
-    cli_warn("{.arg mos} is ignored for non-PPS methods")
+  if (warn_ignored && !is_pps && !is_balanced && !is_null(mos)) {
+    cli_warn("{.arg mos} is ignored for non-PPS methods", call = call)
   }
 
   if (!is_null(aux) && !is_balanced) {
@@ -1025,49 +1225,73 @@ validate_draw_args <- function(
     (!is_null(custom_spec) && !custom_spec$fixed_size)
   if (is_random_size) {
     if (!is_null(n) && !is_null(frac)) {
-      cli_abort(
+      abort_samplyr(
         "Specify either {.arg n} (expected sample size) or {.arg frac}, not both",
+        class = "samplyr_error_alloc_size_conflict",
         call = call
       )
     }
     if (is_null(n) && is_null(frac)) {
-      cli_abort(
+      abort_samplyr(
         "{.val {method}} sampling requires {.arg n} or {.arg frac}",
+        class = "samplyr_error_alloc_size_absent",
         call = call
       )
     }
   } else if (method == "pps_cps") {
     if (!is_null(frac)) {
-      cli_abort(
+      abort_samplyr(
         "{.val pps_cps} sampling requires {.arg n}, not {.arg frac}",
+        class = "samplyr_error_alloc_size_conflict",
         call = call
       )
     }
     if (is_null(n)) {
-      cli_abort("{.val pps_cps} sampling requires {.arg n}", call = call)
+      abort_samplyr(
+        "{.val pps_cps} sampling requires {.arg n}",
+        class = "samplyr_error_alloc_size_absent",
+        call = call
+      )
     }
   } else {
-    if (is_null(n) && is_null(frac)) {
-      cli_abort("Specify either {.arg n} or {.arg frac}", call = call)
+    if (is_null(n) && is_null(frac) && !provides_take) {
+      abort_samplyr(
+        "Specify either {.arg n} or {.arg frac}",
+        class = "samplyr_error_alloc_size_absent",
+        call = call
+      )
     }
     if (!is_null(n) && !is_null(frac)) {
-      cli_abort("Specify either {.arg n} or {.arg frac}, not both", call = call)
+      abort_samplyr(
+        "Specify either {.arg n} or {.arg frac}, not both",
+        class = "samplyr_error_alloc_size_conflict",
+        call = call
+      )
     }
   }
 
   if (!is_null(n) && !n_is_df) {
     if (!is.numeric(n)) {
-      cli_abort("{.arg n} must be numeric or a data frame", call = call)
+      abort_samplyr(
+        "{.arg n} must be numeric or a data frame",
+        class = "samplyr_error_alloc_invalid_input_type",
+        call = call
+      )
     }
     if (!is_finite_numeric(n)) {
-      cli_abort("{.arg n} must not contain NA, NaN, or Inf", call = call)
+      abort_samplyr(
+        "{.arg n} must not contain NA, NaN, or Inf",
+        class = "samplyr_error_alloc_n_non_finite",
+        call = call
+      )
     }
     if (length(n) > 1 && !is_null(names(n)) && is_null(strata_vars)) {
-      cli_abort(
+      abort_samplyr(
         c(
           "Named {.arg n} requires stratification at this stage.",
           "i" = "Add {.fn stratify_by} before this {.fn draw} (per-stage; stage-1 strata do not carry over), or pass a scalar."
         ),
+        class = "samplyr_error_alloc_invalid_input_type",
         call = call
       )
     }
@@ -1081,45 +1305,80 @@ validate_draw_args <- function(
       )
     }
     if (length(n) > 1 && (is_null(names(n)) || is_null(strata_vars))) {
-      cli_abort(
+      abort_samplyr(
         "{.arg n} must be a scalar, a named vector, or a data frame",
+        class = "samplyr_error_alloc_invalid_input_type",
         call = call
       )
     }
     if (any(n <= 0)) {
-      cli_abort("{.arg n} must be positive", call = call)
+      abort_samplyr(
+        "{.arg n} must be positive",
+        class = "samplyr_error_alloc_n_bounds",
+        call = call
+      )
     }
     if (!is_integerish_numeric(n)) {
-      cli_abort("{.arg n} must be integer-valued", call = call)
+      abort_samplyr(
+        "{.arg n} must be integer-valued",
+        class = "samplyr_error_alloc_n_integer",
+        call = call
+      )
     }
   }
 
   if (!is_null(frac) && !frac_is_df) {
     if (!is.numeric(frac)) {
-      cli_abort("{.arg frac} must be numeric or a data frame", call = call)
+      abort_samplyr(
+        "{.arg frac} must be numeric or a data frame",
+        class = "samplyr_error_alloc_invalid_input_type",
+        call = call
+      )
     }
     if (!is_finite_numeric(frac)) {
-      cli_abort("{.arg frac} must not contain NA, NaN, or Inf", call = call)
+      abort_samplyr(
+        "{.arg frac} must not contain NA, NaN, or Inf",
+        class = "samplyr_error_alloc_frac_non_finite",
+        call = call
+      )
     }
     if (length(frac) > 1 && (is_null(names(frac)) || is_null(strata_vars))) {
-      cli_abort(
+      abort_samplyr(
         "{.arg frac} must be a scalar, a named vector, or a data frame",
+        class = "samplyr_error_alloc_invalid_input_type",
+        call = call
+      )
+    }
+    if (
+      length(frac) > 1 &&
+        !is_null(names(frac)) &&
+        length(strata_vars) > 1
+    ) {
+      cli_abort(
+        c(
+          "Named {.arg frac} vectors are only supported for single stratification variables.",
+          "i" = "Use a data frame with columns {.val {strata_vars}} and {.val frac}."
+        ),
         call = call
       )
     }
     if (any(frac <= 0)) {
-      cli_abort("{.arg frac} must be positive", call = call)
+      abort_samplyr(
+        "{.arg frac} must be positive",
+        class = "samplyr_error_alloc_frac_bounds",
+        call = call
+      )
     }
-    # See validate_draw_df(): custom_spec$type first, name test only
-    # for built-ins.
+    # Prefer custom type over built-in name classification.
     is_wor <- if (!is_null(custom_spec)) {
       custom_spec$type %in% c("wor", "balanced")
     } else {
       !(method %in% c(wr_methods, pmr_methods))
     }
     if (is_wor && any(frac > 1)) {
-      cli_abort(
+      abort_samplyr(
         "{.arg frac} cannot exceed 1 for without-replacement methods",
+        class = "samplyr_error_alloc_frac_wor_bounds",
         call = call
       )
     }
@@ -1132,6 +1391,7 @@ validate_bounds <- function(
   min_n,
   max_n,
   has_alloc,
+  warn_ignored = TRUE,
   call = rlang::caller_env()
 ) {
   if (!is_null(min_n)) {
@@ -1141,7 +1401,7 @@ validate_bounds <- function(
     if (min_n < 1 || !is_integerish_numeric(min_n)) {
       cli_abort("{.arg min_n} must be a positive integer", call = call)
     }
-    if (!has_alloc) {
+    if (warn_ignored && !has_alloc) {
       cli_warn(
         "{.arg min_n} only applies when an allocation method is specified in {.fn stratify_by}"
       )
@@ -1155,7 +1415,7 @@ validate_bounds <- function(
     if (max_n < 1 || !is_integerish_numeric(max_n)) {
       cli_abort("{.arg max_n} must be a positive integer", call = call)
     }
-    if (!has_alloc) {
+    if (warn_ignored && !has_alloc) {
       cli_warn(
         "{.arg max_n} only applies when an allocation method is specified in {.fn stratify_by}"
       )

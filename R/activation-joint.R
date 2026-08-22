@@ -1,14 +1,13 @@
 ## Joint expectations of the activation
 
-# Conditional on frozen quotas, for a block of m assignment units:
+# Conditional moments use frozen quotas for a block of m units.
 #
 #   P(i active at t)                     = a_t / m
 #   P(i active at t and at s)            = a_both / m
 #   P(i active at t, j active at s)      = (a_t a_s - a_both) / {m (m - 1)}
 #
-# Cross-block expectations are products of marginals. Quotas always come from
-# the record. Certainty blocks reduce to one without a separate branch.
-# These are conditional activation moments, not full two-phase joint chances.
+# Cross-block moments are marginal products. These are conditional activation
+# moments rather than full two-phase joint chances.
 
 #' Arguments the activation mode does not use
 #'
@@ -69,8 +68,7 @@ check_waves_pair <- function(waves, schedule, call = caller_env()) {
 #' Joint expectations of the activation indicators of two waves
 #' @noRd
 activation_joint_expectation <- function(master, waves, call = caller_env()) {
-  # The version before any field, including the field that says whether there
-  # are waves to compute a joint expectation over.
+  # Validate the version before reading fields.
   record <- attr(master, "metadata")$panel_assignment
   if (!is_null(record)) {
     record <- prepare_panel_record(record, "A joint expectation", call = call)
@@ -115,35 +113,29 @@ activation_joint_pool <- function(pool, index, waves, first, second, both) {
 
   take <- function(panels) {
     if (identical(pool$activation, "permanent")) {
-      # Permanent by policy: in the sample at every wave, and outside the
-      # randomized quota denominator. Selection certainty and a pool too
-      # small to rotate are both permanent and share this arithmetic.
+      # Permanent units stay outside randomized quota denominators.
       return(units)
     }
     if (length(panels) == 0L) {
       return(rep(0L, n_blocks))
     }
-    as.integer(rowSums(pool$quotas[, panels, drop = FALSE]))
+    pool_take(pool, panels)
   }
 
   take_1 <- take(first)
   take_2 <- take(second)
   take_both <- take(both)
 
-  # A block of one unit has no distinct pair, so the pairwise expectation is
-  # not zero but undefined. Sub-minimum pools of exactly one unit exist.
+  # Distinct-pair expectation is undefined for a block of one.
   pairs <- units > 1L
   joint_distinct <- rep(NA_real_, n_blocks)
   joint_distinct[pairs] <- (take_1[pairs] * take_2[pairs] - take_both[pairs]) /
     (units[pairs] * (units[pairs] - 1))
 
-  # Every column is computed before the call: tibble() masks by column name
-  # as it builds, so a column named for a local would shadow it.
-  stratum <- activation_pool_stratum(pool)
+  # Compute columns before `tibble()` can mask local names.
+  stratum <- format_pool_stratum(pool, empty = NA_character_)
   class <- pool$class
-  # `class` is the master's selection status and `activation` is whether the
-  # units rotate. They differ for a pool promoted because it is too small to
-  # rotate, which stays "rotating" and reads probability one.
+  # Selection class and activation status can differ for small pools.
   activation <- pool$activation
   prob_1 <- take_1 / units
   prob_2 <- take_2 / units
@@ -169,14 +161,3 @@ activation_joint_pool <- function(pool, index, waves, first, second, both) {
   )
 }
 
-#' The stratum a pool belongs to, rendered for a table column
-#' @noRd
-activation_pool_stratum <- function(pool) {
-  if (is_null(pool$stratum)) {
-    return(NA_character_)
-  }
-  paste(
-    paste0(names(pool$stratum), "=", vapply(pool$stratum, format, character(1))),
-    collapse = ", "
-  )
-}

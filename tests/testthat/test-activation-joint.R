@@ -408,11 +408,11 @@ test_that("a materialized wave is refused and points at its master", {
 
   expect_error(
     joint_expectation(materialized, waves = c(1L, 2L)),
-    class = "samplyr_error_wave_export_unsupported"
+    class = "samplyr_error_wave_joint_unsupported"
   )
   expect_error(
     joint_expectation(materialized),
-    class = "samplyr_error_wave_export_unsupported"
+    class = "samplyr_error_wave_joint_unsupported"
   )
 })
 

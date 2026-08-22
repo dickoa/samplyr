@@ -216,8 +216,7 @@ digest_coverage_line <- function(x) {
   stages <- digest$stages
   k <- length(stages)
   stages_executed <- get_stages_executed(x)
-  # A digest describing fewer stages than were executed (a partial
-  # replicated manifest) cannot state the sample's coverage.
+  # Partial replicated digests cannot state sample coverage.
   if (k < length(stages_executed)) {
     return(character(0))
   }
@@ -331,9 +330,7 @@ tbl_sum.tbl_sample <- function(x, ...) {
 
   if (".weight" %in% names(x) && nrow(x) > 0) {
     w <- x$.weight
-    # A transformed sample's rows are target units and its weights are
-    # estimation weights, so the header says which kind these are rather than
-    # leaving them to read as design weights.
+    # Label transformed weights as estimation weights.
     kind <- if (is_null(share)) "" else "shared, "
     result <- c(
       result,
@@ -349,9 +346,7 @@ tbl_sum.tbl_sample <- function(x, ...) {
     )
   }
 
-  # The recorded design describes selection from the source population, not
-  # these rows. Naming the source is what keeps the stage line above from
-  # reading as a description of the target sample.
+  # Name the source population described by the recorded design.
   if (!is_null(share)) {
     result <- c(
       result,
@@ -426,8 +421,7 @@ print.rotation_wave <- function(x, ...) {
       bullet = "bullet"
     )
   }
-  # Load-bearing rather than decorative: the components are separately
-  # weighted and row-binding them does not produce a combined sample.
+  # Row-bound components are not yet a combined sample.
   cli::cat_bullet(
     "Weights are valid within a cohort and are not combined.",
     bullet = "info"
@@ -464,7 +458,7 @@ print.frame_stack <- function(x, ...) {
   overlaps <- attr(x, "overlaps")
   if (!is_null(overlaps)) {
     cli::cat_bullet(
-      cli::format_inline(if (is_null(overlaps$cols)) {
+      cli::format_inline(if (is_resolved_overlaps(overlaps)) {
         "Overlap {overlaps$scale} resolved from the registers"
       } else {
         "Overlaps declared as {overlaps$scale}: {.field {overlaps$cols}}"
@@ -472,9 +466,7 @@ print.frame_stack <- function(x, ...) {
       bullet = "info"
     )
   }
-  # Load-bearing rather than decorative: a unit listed in two frames is on two
-  # rows carrying two different design weights, and which compositing factor
-  # reconciles them is an estimation-time choice.
+  # Duplicate-frame units need an estimation-time compositing choice.
   cli::cat_bullet(
     "Weights are each frame's own and are not composited here.",
     bullet = "info"
@@ -491,8 +483,7 @@ print.shared_sample_design <- function(x, ...) {
   cat("\n")
 
   spec <- attr(x, "transformation")
-  # One source line per message. cli::format_inline() keeps a string's own
-  # newlines and indentation, so a wrapped literal prints wrapped.
+  # Keep each source message on one line.
   cli::cat_bullet(
     cli::format_inline(paste0(
       "Source keyed by {.field {names(spec$by)}}, ",
@@ -524,7 +515,7 @@ print.shared_sample_design <- function(x, ...) {
     )),
     bullet = "bullet"
   )
-  # The reason this object is not the sample: what it needs and does not have.
+  # State what this object still needs to become a sample.
   cli::cat_bullet(
     paste0(
       "Replay with the source register, the links and the targets ",
@@ -571,8 +562,7 @@ print.frame_stack_design <- function(x, ...) {
       bullet = "info"
     )
   }
-  # The counterpart of the frame_stack note. There are no rows here at all,
-  # so the thing to say is what it takes to get them.
+  # State how to materialize a stack with no rows.
   cli::cat_bullet(
     "Replay each component against its register to rebuild the collection.",
     bullet = "info"
@@ -598,8 +588,7 @@ print.samplyr_overlap_spec <- function(x, ...) {
 #' @export
 print.samplyr_exante_overlap_spec <- function(x, ...) {
   rlang::check_dots_empty()
-  # format_inline() keeps the whitespace it is given, so this stays on one
-  # line however long it is.
+  # Keep the formatted note on one line.
   cli::cat_bullet(
     cli::format_inline("Overlap {x$scale} to resolve from {length(x$frames)} register{?s}, keyed by {.field {unname(x$by)}}"),
     bullet = "info"

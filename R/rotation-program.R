@@ -128,7 +128,7 @@
 rotation_program <- function(cohorts, entry_wave = NULL, schedule = NULL,
                              through = NULL) {
   call <- current_env()
-  cohorts <- check_cohort_registry(cohorts)
+  cohorts <- check_cohort_registry(cohorts, call = call)
   panels <- vapply(
     cohorts, function(x) cohort_panel_count(x, call = call), integer(1)
   )
@@ -161,7 +161,7 @@ rotation_program <- function(cohorts, entry_wave = NULL, schedule = NULL,
       schedule, panels, entry_wave, call = call
     )
   }
-  check_program_block_sizes(schedule, cohorts)
+  check_program_block_sizes(schedule, cohorts, call = call)
 
   structure(
     list(
@@ -259,13 +259,33 @@ normalize_plan_program <- function(plan, cohorts, panels, through,
 }
 
 #' Count the assignment units represented by a cohort receipt
+#'
+#' The plan figure this is compared against is `operational_issue`, which
+#' svyplan computes as `panels * panel_issue`: the units issued to the field,
+#' not the rows they expand to. Both branches here have to count that same
+#' thing.
+#'
+#' A cohort drawn whole has no assignment record, and used to be counted in
+#' rows. That agrees with the plan only where a row is a unit. For a
+#' clustered cohort it does not: eight selected clusters of three elements
+#' each reported 24 against a plan meaning 8, and the mismatch surfaced as a
+#' plan-count error the user had not made. The unit is resolved the same way
+#' an assignment would resolve it, from the stage that would have carried it.
 #' @noRd
 cohort_issue_count <- function(sample, call = caller_env()) {
   record <- cohort_assignment(sample, "A rotation program", call = call)
-  if (is_null(record)) {
-    return(as.double(attr(sample, "metadata")$n_selected))
+  if (!is_null(record)) {
+    return(sum(vapply(record$pools, function(pool) pool$size, numeric(1))))
   }
-  sum(vapply(record$pools, function(pool) pool$size, numeric(1)))
+
+  # Default to the first executed assignment stage.
+  executed <- get_stages_executed(sample)
+  design <- get_design(sample)
+  context <- panel_assignment_context(
+    design, executed[[1L]], as.data.frame(sample), call = call
+  )
+  keys <- make_group_key(as.data.frame(sample), context$key_vars)
+  as.double(length(unique(keys)))
 }
 
 #' @noRd
@@ -405,31 +425,13 @@ normalize_program_schedule <- function(
   call = caller_env()
 ) {
   cohort_names <- names(panels)
-  if (!is.data.frame(schedule)) {
-    abort_samplyr(
-      "{.arg schedule} must be a data frame.",
-      class = "samplyr_error_schedule_columns",
-      call = call
-    )
-  }
-  missing <- setdiff(c("panel", "wave"), names(schedule))
-  if (length(missing) > 0) {
-    abort_samplyr(
-      c(
-        "A program schedule needs a {.field panel} and a {.field wave}
-         column.",
-        "x" = "Missing: {.field {missing}}."
-      ),
-      class = "samplyr_error_schedule_columns",
-      call = call
-    )
-  }
+  subject <- schedule_subject("schedule")
+  check_schedule_columns(schedule, subject, call = call)
 
   cohort <- if ("cohort" %in% names(schedule)) {
     as.character(schedule$cohort)
   } else if (length(cohort_names) == 1L) {
-    # The one-master shorthand: a schedule without a cohort column can only
-    # mean the single cohort registered.
+    # A cohort-free schedule can name only one registered cohort.
     rep(cohort_names, nrow(schedule))
   } else {
     abort_samplyr(
@@ -444,22 +446,10 @@ normalize_program_schedule <- function(
 
   panel <- schedule$panel
   wave <- schedule$wave
-  active <- if ("active" %in% names(schedule)) {
-    schedule$active
-  } else {
-    rep(TRUE, nrow(schedule))
-  }
+  active <- schedule_active_column(schedule, subject, call = call)
 
   check_schedule_integers(panel, "panel", "schedule", call = call)
   check_schedule_integers(wave, "wave", "schedule", call = call)
-  if (!is.logical(active) || anyNA(active)) {
-    abort_samplyr(
-      "The {.field active} column of a schedule must be logical and
-       complete.",
-      class = "samplyr_error_schedule_active",
-      call = call
-    )
-  }
   panel <- as.integer(panel)
   wave <- as.integer(wave)
 
@@ -476,17 +466,14 @@ normalize_program_schedule <- function(
     )
   }
 
-  if (anyDuplicated(paste(cohort, panel, wave, sep = "|")) > 0) {
-    abort_samplyr(
-      c(
-        "A schedule may declare each panel of each cohort once per wave.",
-        "x" = "It repeats at least one {.field cohort}-{.field panel}-{.field
-               wave} combination."
-      ),
-      class = "samplyr_error_schedule_duplicates",
-      call = call
-    )
-  }
+  check_schedule_duplicates(
+    paste(cohort, panel, wave, sep = "|"), subject,
+    declares = "each panel of each cohort once per wave",
+    combination = cli::format_inline(
+      "{.field cohort}-{.field panel}-{.field wave}"
+    ),
+    call = call
+  )
 
   n_waves <- max(wave)
   check_schedule_contiguous(wave, n_waves, "wave", "schedule", call = call)
@@ -532,11 +519,11 @@ normalize_program_schedule <- function(
   grid <- grid[c("wave", "cohort", "panel")]
   rownames(grid) <- NULL
 
-  at <- match(
+  grid$active <- schedule_grid_active(
     paste(grid$cohort, grid$panel, grid$wave, sep = "|"),
-    paste(cohort, panel, wave, sep = "|")
+    paste(cohort, panel, wave, sep = "|"),
+    active
   )
-  grid$active <- !is.na(at) & active[at]
 
   early <- grid$active & grid$wave < entry_wave[grid$cohort]
   if (any(early)) {
@@ -553,20 +540,14 @@ normalize_program_schedule <- function(
     )
   }
 
-  per_wave <- vapply(split(grid$active, grid$wave), sum, integer(1))
-  if (any(per_wave == 0L)) {
-    idle <- as.integer(names(per_wave)[per_wave == 0L])
-    abort_samplyr(
-      c(
-        "Every declared wave must have at least one active component.",
-        "x" = "Nothing is active at wave {idle}.",
-        "i" = "A single cohort may be dormant at a wave, but the program may
-               not."
-      ),
-      class = "samplyr_error_schedule_idle_wave",
-      call = call
-    )
-  }
+  check_schedule_idle_waves(
+    grid$active, grid$wave,
+    headline = "Every declared wave must have at least one active component.",
+    detail = "Nothing is active at wave {idle}.",
+    extra = c("i" = "A single cohort may be dormant at a wave, but the
+                     program may not."),
+    call = call
+  )
 
   never <- vapply(
     split(grid$active, grid$cohort)[cohort_names],
@@ -645,32 +626,19 @@ materialize_program_wave <- function(
   panel_stage = NULL,
   small_pool = NULL,
   reps,
+  frame_digest_given = FALSE,
   execution_environment,
   call = caller_env()
 ) {
-  supplied <- c(
-    if (length(frames) > 0) "a frame",
-    if (!is_null(stages)) "stages",
-    if (!is_null(seed)) "seed",
-    if (!is_null(panels)) "panels",
-    # Each cohort froze its own assignment stage and small-pool policy at its
-    # draw, so a program wave cannot revisit either any more than a
-    # single-master wave can.
-    if (!is_null(panel_stage)) "panel_stage",
-    if (!is_null(small_pool)) "small_pool",
-    if (!is_null(reps)) "reps"
+  # Program waves cannot revise frozen cohort assignment policies.
+  check_wave_extra_arguments(
+    frames = frames, stages = stages, seed = seed, panels = panels,
+    panel_stage = panel_stage, small_pool = small_pool, reps = reps,
+    frame_digest_given = frame_digest_given,
+    selects = "components the program already assigned",
+    stored_with = "the program",
+    call = call
   )
-  if (length(supplied) > 0) {
-    abort_samplyr(
-      c(
-        "{.arg wave} selects components the program already assigned, so it
-         takes no further execution input.",
-        "x" = "Also given: {supplied}."
-      ),
-      class = "samplyr_error_wave_extra_arguments",
-      call = call
-    )
-  }
   wave <- check_wave_declared(wave, program$schedule, call = call)
 
   schedule <- program$schedule
@@ -718,11 +686,6 @@ new_rotation_wave <- function(cohorts, wave, program) {
     schedule_digest = rlang::hash(program$schedule),
     class = "rotation_wave"
   )
-}
-
-#' @noRd
-is_rotation_wave <- function(x) {
-  inherits(x, "rotation_wave")
 }
 
 ## Conversion
@@ -773,8 +736,9 @@ abort_rotation_wave_export <- function(fn_name, call = caller_env()) {
       "i" = "Its cohorts come from different frame vintages, so combining
              them needs the probability that a unit was selected into at
              least one, which no receipt carries.",
-      "i" = "Export a component instead: {.code as_svydesign(wave[[\"<cohort
-             name>\"]])}, once the activation phase is supported."
+      "i" = "Export a component instead:
+             {.code as_svydesign(wave[[\"<cohort name>\"]])}, which carries
+             the activation as its second phase."
     ),
     class = "samplyr_error_rotation_wave_not_combinable",
     call = call

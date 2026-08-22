@@ -9,22 +9,6 @@ round_sample_size <- function(x, round_method = "up") {
   pmax(as.integer(result), 1L)
 }
 
-#' @noRd
-round_preserve_total <- function(x, n) {
-  floored <- floor(x)
-  remainders <- x - floored
-  shortfall <- n - sum(floored)
-
-  if (shortfall > 0) {
-    # True ORIC (Cont & Heidari 2014): primary sort by fractional remainder
-    # descending. Sort by floor(x) second to break ties in favor
-    # of larger strata, minimizing relative rounding error.
-    add_indices <- order(remainders, floored, decreasing = TRUE, method = "radix")[seq_len(shortfall)]
-    floored[add_indices] <- floored[add_indices] + 1
-  }
-  as.integer(floored)
-}
-
 #' Bounded largest-remainder rounding (Hare-Niemeyer with bounds)
 #'
 #' Rounds real-valued allocations to integers that sum to n while respecting
@@ -38,13 +22,12 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
   lo <- as.integer(ceiling(min_vals))
   hi <- as.integer(floor(max_vals))
 
-  # Initialize at floor, clamped to [lo, hi]
+  # Start from bounded floors.
   a <- pmax(as.integer(floor(x)), lo)
   a <- pmin(a, hi)
   shortfall <- n - sum(a)
 
-  # Give increments first to strata furthest below target. Feasibility
-  # guarantees termination.
+  # Increment strata furthest below target.
   while (shortfall > 0L) {
     eligible <- which(a < hi)
     if (length(eligible) == 0L) break
@@ -78,7 +61,7 @@ allocate_bounded <- function(factors, total, lower, upper) {
   f <- factors
   f[!is.finite(f) | f < 0] <- 0
 
-  # Scaling factors to 1 avoids overflow while preserving their ratios.
+  # Scale factors to avoid overflow while preserving ratios.
   f_max <- max(f)
   if (f_max > 0) {
     f <- f / f_max
@@ -86,9 +69,7 @@ allocate_bounded <- function(factors, total, lower, upper) {
 
   at_scale <- function(lambda, f, lo, hi) pmin(pmax(lambda * f, lo), hi)
 
-  # g(lambda) = sum(at_scale(lambda)) runs from sum(lo) to sum(hi) without
-  # ever decreasing, so bisection finds the scale that hits the total.
-  # NA means the positive factors cannot reach it however large lambda gets.
+  # Monotone bisection finds the scale reaching the total.
   solve_scale <- function(f, total, lo, hi) {
     if (sum(at_scale(0, f, lo, hi)) >= total) {
       return(0)
@@ -97,7 +78,7 @@ allocate_bounded <- function(factors, total, lower, upper) {
     if (!any(positive)) {
       return(NA_real_)
     }
-    # Finite saturation scales bracket the search. Otherwise double the bound.
+    # Bracket with saturation scales or repeated doubling.
     reach <- hi[positive] / f[positive]
     reach <- reach[is.finite(reach)]
     top <- if (length(reach) > 0) {
@@ -130,8 +111,7 @@ allocate_bounded <- function(factors, total, lower, upper) {
   lambda <- solve_scale(f, total, lower, upper)
   alloc <- if (is.na(lambda)) lower else at_scale(lambda, f, lower, upper)
 
-  # Positive factors saturated with units still to place: the criterion is
-  # indifferent among the strata that have room, so level them up equally.
+  # Level remaining strata when positive factors saturate.
   if (total - sum(alloc) > sqrt(.Machine$double.eps)) {
     has_room <- upper > alloc
     if (any(has_room)) {
@@ -165,6 +145,25 @@ allocate_bounded <- function(factors, total, lower, upper) {
   n_h
 }
 
+## Every class join_aux_to_strata() can assemble from class_prefix, spelled
+## out so the taxonomy scan in test-error-taxonomy.R sees them. The scan
+## collects character vectors from the namespace; a paste0() with a variable
+## part is invisible to it in both directions.
+join_aux_to_strata_classes <- c(
+  "samplyr_error_alloc_missing_columns",
+  "samplyr_error_alloc_missing_value_column",
+  "samplyr_error_alloc_missing_key_values",
+  "samplyr_error_alloc_duplicate_keys",
+  "samplyr_error_alloc_ambiguous_matches",
+  "samplyr_error_alloc_missing_coverage",
+  "samplyr_error_aux_missing_columns",
+  "samplyr_error_aux_missing_value_column",
+  "samplyr_error_aux_missing_key_values",
+  "samplyr_error_aux_duplicate_keys",
+  "samplyr_error_aux_ambiguous_matches",
+  "samplyr_error_aux_missing_coverage"
+)
+
 #' @noRd
 join_aux_to_strata <- function(
   stratum_info,
@@ -177,6 +176,35 @@ join_aux_to_strata <- function(
   call = rlang::caller_env()
 ) {
   class_prefix <- if (arg_name %in% c("n", "frac")) "alloc" else "aux"
+
+  # Validate auxiliary tables restored from design files.
+  if (!is.data.frame(aux_df)) {
+    abort_samplyr(
+      "{.arg {arg_name}} must be a data frame or a named numeric vector",
+      class = "samplyr_error_aux_invalid_input_type",
+      call = call
+    )
+  }
+
+  missing_vars <- setdiff(key_vars, names(aux_df))
+  if (length(missing_vars) > 0) {
+    abort_samplyr(
+      c(
+        "{.arg {arg_name}} is missing stratification variable{?s}:",
+        "x" = "{.val {missing_vars}}"
+      ),
+      class = paste0("samplyr_error_", class_prefix, "_missing_columns"),
+      call = call
+    )
+  }
+
+  if (!value_col %in% names(aux_df)) {
+    abort_samplyr(
+      "{.arg {arg_name}} must contain a {.val {value_col}} column",
+      class = paste0("samplyr_error_", class_prefix, "_missing_value_column"),
+      call = call
+    )
+  }
 
   key_df <- aux_df[, key_vars, drop = FALSE]
   if (anyNA(key_df)) {
@@ -278,13 +306,13 @@ calculate_stratum_sizes <- function(
     }
   }
 
-  # Keep unscaled factors available for redistribution at the bounds.
+  # Retain unscaled factors for bounded redistribution.
   finalize_allocation <- function(factors, n_total, N_h, alloc_name) {
     validate_target(n_total * factors / sum(factors), alloc_name)
 
-    # WOR is bounded by N_h. WR uses n_total as an integer-safe upper bound.
+    # Bound WOR by population and WR by the integer target.
     wr <- is_multi_hit_method(draw_spec)
-    # For random-size methods this caps the target, not the realization.
+    # Random-size bounds cap the target, not its realization.
     random_size <- is_random_size_method(draw_spec)
     structural_max <- if (wr) rep(n_total, H) else N_h
     upper <- if (is_null(max_n)) {
@@ -306,12 +334,10 @@ calculate_stratum_sizes <- function(
       )
     }
 
-    # An explicit max_n conflicts only when it narrows the population cap.
+    # `max_n` conflicts only when narrower than the population cap.
     max_narrows <- !is_null(max_n) && any(upper < structural_max)
 
-    # Not named `census`: the same branch runs for random-size methods, where
-    # the target is capped and the realization is still a draw. Whether the
-    # stage ends up a census is decided by the reporter, on the aggregate.
+    # This branch caps targets and does not itself declare a census.
     population_limited <- FALSE
     if (sum(upper) < n_total) {
       if (!wr && !max_narrows) {
@@ -362,8 +388,7 @@ calculate_stratum_sizes <- function(
 
     # Report redistribution once when population bounds change the named rule.
     if (signal && !wr && !population_limited) {
-      # Re-solve without population bounds. min_n can release an apparently
-      # binding cap, so the unconstrained target alone is not enough.
+      # Re-solve without population bounds to assess redistribution.
       relaxed_upper <- if (is_null(max_n)) {
         rep(n_total, H)
       } else {
@@ -378,8 +403,7 @@ calculate_stratum_sizes <- function(
           strata_spec$vars,
           max_n = Inf
         )
-        # Reported once per stage by execute(), not here: a stratified stage
-        # inside a cluster loop reaches this line once per parent pool.
+        # Let `execute()` report redistribution once per stage.
         signal_selection_event(
           "allocation_cap",
           pool_keys = labels,

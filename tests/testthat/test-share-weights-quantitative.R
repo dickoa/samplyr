@@ -54,7 +54,7 @@ wl_share <- function(sample, targets = wl_targets(), links = wl_links(), ...) {
     targets = targets, links = links,
     by = c(unit = "unit"), to = c(tid = "tid"),
     within = hh,
-    multiplicity = weighted_links(B, total = complete_weighted_links()),
+    multiplicity = weighted_links(B, total = complete_links()),
     ...
   )
 }
@@ -210,6 +210,72 @@ test_that("a reached cluster whose importance totals zero is refused", {
   )
 })
 
+test_that("the divide-by-zero refusal blames a total only when one was given", {
+  s <- wl_all_samples()[["ab"]]
+  links <- wl_links()
+  links$B <- c(0, 0, 0, 4, 6)
+
+  # Nothing was supplied here: the denominator was counted from `links`
+  # itself, so a message about a supplied total disagreeing with `links`
+  # would name an input the call does not have.
+  expect_error(
+    share_weights(
+      s, wl_targets(), links,
+      by = c(unit = "unit"), to = c(tid = "tid"),
+      within = hh,
+      multiplicity = weighted_links(B, total = complete_links())
+    ),
+    regexp = "asserted to be the complete population register"
+  )
+
+  # And where a total IS supplied, that is what the message says.
+  targets <- wl_targets()
+  targets$Btotal <- c(0, 0, 10)
+  expect_error(
+    share_weights(
+      s, targets, links,
+      by = c(unit = "unit"), to = c(tid = "tid"),
+      within = hh, multiplicity = weighted_links(B, total = Btotal)
+    ),
+    regexp = "supplied total disagrees"
+  )
+})
+
+test_that("weighted_links takes its value by name as well as by position", {
+  s <- wl_all_samples()[["ab"]]
+  targets <- wl_targets()
+  targets$Btotal <- c(5, 1, 10)
+
+  # `x` is what `@param x` names, so it has to be the spelling that works.
+  # Reading `total` by name and the value by position accepted three of these
+  # four and refused the documented one.
+  spellings <- list(
+    quote(weighted_links(B, total = Btotal)),
+    quote(weighted_links(x = B, total = Btotal)),
+    quote(weighted_links(B, Btotal)),
+    quote(weighted_links(total = Btotal, x = B))
+  )
+  results <- lapply(spellings, function(m) {
+    do.call(share_weights, list(
+      s, targets = targets, links = wl_links(),
+      by = c(unit = "unit"), to = c(tid = "tid"),
+      within = quote(hh), multiplicity = m
+    ))
+  })
+  for (r in results[-1]) {
+    expect_identical(r$.weight, results[[1]]$.weight)
+    expect_identical(r$.link_weight, results[[1]]$.link_weight)
+  }
+
+  # The complete-register marker travels through the named spelling too.
+  named <- do.call(share_weights, list(
+    s, targets = targets, links = wl_links(),
+    by = c(unit = "unit"), to = c(tid = "tid"), within = quote(hh),
+    multiplicity = quote(weighted_links(x = B, total = complete_links()))
+  ))
+  expect_identical(named$.weight, wl_share(s)$.weight)
+})
+
 test_that("a zero importance on one link is allowed if its cluster is positive", {
   s <- wl_all_samples()[["ab"]]
   links <- wl_links()
@@ -220,7 +286,7 @@ test_that("a zero importance on one link is allowed if its cluster is positive",
   r <- share_weights(
     s, wl_targets(), links,
     by = c(unit = "unit"), to = c(tid = "tid"),
-    within = hh, multiplicity = weighted_links(B, total = complete_weighted_links())
+    within = hh, multiplicity = weighted_links(B, total = complete_links())
   )
   expect_equal(unique(r$.weight[r$hh == "H1"]), 2 * (3 / 5) + 2 * (2 / 5))
   expect_identical(r$.link_weight[r$tid == "t2"], 0)
@@ -251,7 +317,7 @@ test_that("weighted_links refuses columns and totals that do not exist", {
     share_weights(
       s, wl_targets(), wl_links(),
       by = c(unit = "unit"), to = c(tid = "tid"),
-      within = hh, multiplicity = weighted_links(nope, total = complete_weighted_links())
+      within = hh, multiplicity = weighted_links(nope, total = complete_links())
     ),
     class = "samplyr_error_share_weights_multiplicity"
   )
@@ -284,7 +350,7 @@ test_that("quantitative links with cluster elimination are refused, not guessed"
       s, wl_targets(), wl_links(),
       by = c(unit = "unit"), to = c(tid = "tid"),
       within = extend_links(hh),
-      multiplicity = weighted_links(B, total = complete_weighted_links())
+      multiplicity = weighted_links(B, total = complete_links())
     ),
     class = "samplyr_error_share_weights_multiplicity"
   )
@@ -292,7 +358,43 @@ test_that("quantitative links with cluster elimination are refused, not guessed"
 
 test_that("the quantitative markers refuse to be called on their own", {
   expect_error(weighted_links(x, total = y))
-  expect_error(complete_weighted_links())
+  expect_error(complete_links())
+})
+
+test_that("there is one completeness marker, and it serves both scales", {
+  s <- wl_all_samples()[["ab"]]
+
+  # `complete_weighted_links()` was a second export making the same assertion
+  # about importances that `complete_links()` makes about counts. It is gone,
+  # and the one marker is read in both positions.
+  expect_false(exists("complete_weighted_links", envir = asNamespace("samplyr")))
+  expect_false("complete_weighted_links" %in% getNamespaceExports("samplyr"))
+
+  quantitative <- wl_share(s)
+  counted <- share_weights(
+    s, wl_targets(), wl_links(),
+    by = c(unit = "unit"), to = c(tid = "tid"),
+    within = hh, multiplicity = complete_links()
+  )
+  expect_identical(
+    attr(quantitative, "metadata")$weight_share$denominator$scale,
+    "quantitative"
+  )
+  expect_identical(
+    attr(counted, "metadata")$weight_share$denominator$scale,
+    "binary"
+  )
+
+  # The old spelling is now an ordinary unknown call, reported against the
+  # marker that replaced it rather than failing to be found.
+  expect_error(
+    do.call(share_weights, list(
+      s, targets = wl_targets(), links = wl_links(),
+      by = c(unit = "unit"), to = c(tid = "tid"), within = quote(hh),
+      multiplicity = quote(weighted_links(B, total = complete_weighted_links()))
+    )),
+    class = "samplyr_error_share_weights_multiplicity"
+  )
 })
 
 ## Record and export
@@ -302,6 +404,9 @@ test_that("the record names the quantitative scale and its total mode", {
 
   asserted <- attr(wl_share(s), "metadata")$weight_share
   expect_identical(asserted$denominator$scale, "quantitative")
+  # The stored mode keeps its own name: it is what tells a totalled register
+  # from a totalled count in a file, and the collapse was in the spelling a
+  # user writes rather than in what the record says happened.
   expect_identical(asserted$denominator$mode, "complete_weighted_links")
   expect_identical(asserted$generated_cols, weight_share_generated_cols$quantitative)
   expect_no_error(prepare_weight_share_record(asserted, "A test"))

@@ -230,10 +230,7 @@ stratify_by <- function(
     logical(1)
   )
   if (any(!is_bare_name)) {
-    # The name is already known to be wrong here, so a prefix guess can only
-    # add advice. `stratify_by(region, allocation = "proportional")` is the
-    # case worth naming: `allocation` is five edits from `alloc`, so the
-    # edit-distance rule alone says nothing.
+    # Suggest prefix matches only after the name is known to be invalid.
     offending <- (names(vars_quo) %||% rep("", length(vars_quo)))[!is_bare_name]
     meant <- NULL
     for (nm in offending) {
@@ -413,14 +410,16 @@ validate_stratify_args <- function(
           )
         }
         if (!is.numeric(power) || length(power) != 1 || !is_finite_numeric(power)) {
-          cli_abort(
+          abort_samplyr(
             "{.arg power} must be a single finite number in [0, 1]",
+            class = "samplyr_error_alloc_power_bounds",
             call = call
           )
         }
         if (power < 0 || power > 1) {
-          cli_abort(
+          abort_samplyr(
             "{.arg power} must be between 0 and 1",
+            class = "samplyr_error_alloc_power_bounds",
             call = call
           )
         }
@@ -452,14 +451,7 @@ validate_aux_df <- function(
   arg_name,
   call = rlang::caller_env()
 ) {
-  if (!is.data.frame(df)) {
-    abort_samplyr(
-      "{.arg {arg_name}} must be a data frame or a named numeric vector",
-      class = "samplyr_error_aux_invalid_input_type",
-      call = call
-    )
-  }
-
+  # Callers validate auxiliary input types before this helper.
   missing_vars <- setdiff(vars, names(df))
   if (length(missing_vars) > 0) {
     abort_samplyr(
@@ -590,21 +582,23 @@ coerce_aux_input <- function(
   }
 
   if (is.numeric(x) && is_null(names(x))) {
-    cli_abort(
+    abort_samplyr(
       c(
         "{.arg {arg_name}} must be a data frame or a named numeric vector.",
         "i" = "For one stratification variable, use names as stratum levels (e.g., {.code c(A = 1, B = 2)}).",
         "i" = "For multiple stratification variables, use a data frame."
       ),
+      class = "samplyr_error_aux_invalid_input_type",
       call = call
     )
   }
 
-  cli_abort(
+  abort_samplyr(
     c(
       "{.arg {arg_name}} must be a data frame or a named numeric vector.",
       "i" = "Named vectors are only supported with one stratification variable."
     ),
+    class = "samplyr_error_aux_invalid_input_type",
     call = call
   )
 }

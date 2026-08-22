@@ -1,14 +1,6 @@
-## Sharing design weights with a linked target population
+## Share weights with a linked target population
 
-# The generalized weight share method. A sample was selected from one
-# population and the estimates are wanted for another, linked to it: children
-# through their parents, establishments through their enterprises, persons
-# through their dwellings.
-#
-# Nothing here touches selection. Lavallee section 2.2.2 is the reason the
-# whole feature is a post-execute transformation: the method needs inclusion
-# probabilities only for units actually selected, which is exactly what
-# `.weight` already holds.
+# This post-selection transform follows Lavallee section 2.2.2.
 
 #' Share design weights with a linked target population
 #'
@@ -40,6 +32,18 @@
 #' with a non-negative importance, which Lavallee section 4.5 shows costs no
 #' theory as long as each target cluster totals more than zero. Counting is
 #' the case where every link counts for one.
+#'
+#' @section Panels and waves:
+#' A materialized wave is refused. Its weights carry an activation factor
+#' whose randomization ran over the source units, and a target cluster can be
+#' reached from source units sitting in different panels, so there is no wave
+#' the target unit belongs to and no factor to carry. Share weights from the
+#' master instead.
+#'
+#' A master carrying a panel assignment is accepted, and its assignment
+#' record does not carry into the result for the same reason: a panel is a
+#' property of a selected source unit. The result is an ordinary shared
+#' sample, and `execute(<it>, wave = )` is refused.
 #'
 #' @section Coverage:
 #' A target cluster with no link to the source population can never be
@@ -126,6 +130,15 @@ share_weights <- function(
   check_keyword_args(enquos(...), c("multiplicity", "target_scope"))
   target_scope <- match.arg(target_scope)
 
+  # Diagnose required data arguments before evaluation.
+  check_share_required(c(
+    if (missing(x)) "x",
+    if (missing(targets)) "targets",
+    if (missing(links)) "links",
+    if (missing(by)) "by",
+    if (missing(to)) "to"
+  ))
+
   if (!is_tbl_sample(x)) {
     abort_samplyr(
       "{.arg x} must be an executed {.cls tbl_sample}.",
@@ -134,6 +147,7 @@ share_weights <- function(
   }
   check_single_replicate(x, "share_weights")
   check_sample_unmodified(x, "share_weights")
+  check_share_source_not_wave(x)
   check_weight_contract(
     x, "share_weights",
     class = "samplyr_error_share_weights_weight_contract",
@@ -182,9 +196,7 @@ share_weights <- function(
       n_target_clusters = parts$n_clusters,
       n_reached_clusters = parts$n_reached,
       n_unlinked_units = sum(parts$unit_links[parts$kept] == 0),
-      # Identifiable only when `targets` claims to be the population. Under
-      # reached scope the absence of an observed orphan is not evidence that
-      # none exists, so the question is recorded as unasked.
+      # Reached scope cannot identify population orphans.
       orphan_clusters = if (identical(target_scope, "population")) {
         parts$orphan_clusters
       },
@@ -219,11 +231,15 @@ share_weights <- function(
 #' states that `links` holds every link in the source population, not only the
 #' links of the sampled units, and so authorizes samplyr to count it.
 #'
+#' It makes the same assertion inside [weighted_links()]'s `total` argument,
+#' where what is totalled is the link importances rather than the links.
+#'
 #' Named for the assertion rather than for the counting it triggers, because
 #' the assertion is what a reader has to check.
 #'
 #' @return `complete_links()` is only meaningful inside
-#'   `share_weights(multiplicity = )` and otherwise throws an error.
+#'   `share_weights(multiplicity = )` or `weighted_links(total = )`, and
+#'   otherwise throws an error.
 #'
 #' @examples
 #' # Used inside share_weights():
@@ -233,11 +249,10 @@ share_weights <- function(
 #' @family weight sharing
 #' @export
 complete_links <- function() {
-  cli_abort(
-    paste0(
-      "{.fn complete_links} is a declarative marker and must be used inside ",
-      "{.code share_weights(multiplicity = ...)}."
-    )
+  abort_marker_misused(
+    "complete_links",
+    "{.code share_weights(multiplicity = ...)} or
+     {.code weighted_links(total = ...)}"
   )
 }
 
@@ -259,8 +274,10 @@ complete_links <- function() {
 #' @param x A single non-negative column of `links` holding the importance of
 #'   each link.
 #' @param total The population total of that importance for each target unit:
-#'   a column of `targets`, or [complete_weighted_links()] to assert that
-#'   `links` is the complete population register.
+#'   a column of `targets`, or [complete_links()] to assert that `links` is the
+#'   complete population register and let samplyr total the importances. That
+#'   is the same assertion `multiplicity = complete_links()` makes about
+#'   counts, so it is the same marker.
 #'
 #' @return `weighted_links()` is only meaningful inside
 #'   `share_weights(multiplicity = )` and otherwise throws an error.
@@ -270,42 +287,16 @@ complete_links <- function() {
 #' # share_weights(sample, targets, links, by, to, within = enterprise,
 #' #               multiplicity = weighted_links(asset_share,
 #' #                                             total = population_assets))
+#' # or, asserting that `links` is the complete register:
+#' # share_weights(sample, targets, links, by, to, within = enterprise,
+#' #               multiplicity = weighted_links(asset_share,
+#' #                                             total = complete_links()))
 #'
 #' @family weight sharing
 #' @export
 weighted_links <- function(x, total) {
-  cli_abort(
-    paste0(
-      "{.fn weighted_links} is a declarative marker and must be used inside ",
-      "{.code share_weights(multiplicity = ...)}."
-    )
-  )
-}
-
-#' Assert that a weighted link table is the complete population register
-#'
-#' A declarative marker for [weighted_links()]'s `total` argument. It is
-#' [complete_links()] for link importances rather than link counts: it states
-#' that `links` holds every link in the source population, so their importances
-#' can be totalled to give the population figure.
-#'
-#' @return `complete_weighted_links()` is only meaningful inside
-#'   `weighted_links(total = )` and otherwise throws an error.
-#'
-#' @examples
-#' # Used inside share_weights():
-#' # share_weights(sample, targets, links, by, to, within = enterprise,
-#' #               multiplicity = weighted_links(asset_share,
-#' #                                             total = complete_weighted_links()))
-#'
-#' @family weight sharing
-#' @export
-complete_weighted_links <- function() {
-  cli_abort(
-    paste0(
-      "{.fn complete_weighted_links} is a declarative marker and must be used ",
-      "inside {.code weighted_links(total = ...)}."
-    )
+  abort_marker_misused(
+    "weighted_links", "{.code share_weights(multiplicity = ...)}"
   )
 }
 
@@ -336,12 +327,7 @@ complete_weighted_links <- function() {
 #' @family weight sharing
 #' @export
 extend_links <- function(x) {
-  cli_abort(
-    paste0(
-      "{.fn extend_links} is a declarative marker and must be used inside ",
-      "{.code share_weights(within = ...)}."
-    )
-  )
+  abort_marker_misused("extend_links", "{.code share_weights(within = ...)}")
 }
 
 ## Argument parsing
@@ -371,7 +357,7 @@ parse_within <- function(quo, targets, call = caller_env()) {
   if (is.symbol(expr)) {
     return(list(mode = "cluster", col = as_label(expr)))
   }
-  if (is_call(expr, "extend_links", ns = "")) {
+  if (is_call(expr, "extend_links", ns = marker_namespaces)) {
     args <- as.list(expr)[-1]
     if (length(args) != 1L || !is.symbol(args[[1]])) {
       abort_samplyr(
@@ -402,7 +388,7 @@ parse_within <- function(quo, targets, call = caller_env()) {
 parse_multiplicity <- function(quo, call = caller_env()) {
   expr <- quo_get_expr(quo)
 
-  if (is_call(expr, "weighted_links", ns = "")) {
+  if (is_call(expr, "weighted_links", ns = marker_namespaces)) {
     return(parse_weighted_links(expr, call = call))
   }
 
@@ -429,7 +415,7 @@ parse_multiplicity <- function(quo, call = caller_env()) {
       col = as_label(expr), total_col = NULL
     ))
   }
-  if (is_call(expr, "complete_links", ns = "")) {
+  if (is_call(expr, "complete_links", ns = marker_namespaces)) {
     if (length(as.list(expr)) != 1L) {
       abort_samplyr(
         "{.fn complete_links} takes no arguments.",
@@ -463,17 +449,13 @@ parse_multiplicity <- function(quo, call = caller_env()) {
 #' against is the same one.
 #' @noRd
 parse_weighted_links <- function(expr, call = caller_env()) {
-  args <- as.list(expr)[-1]
-  nms <- names(args) %||% rep("", length(args))
-
-  named_total <- which(nms == "total")
-  positional <- which(!nzchar(nms))
-  value_expr <- if (length(positional) >= 1L) args[[positional[[1]]]] else NULL
-  total_expr <- if (length(named_total) == 1L) {
-    args[[named_total]]
-  } else if (length(positional) >= 2L) {
-    args[[positional[[2]]]]
-  }
+  # Match marker formals to accept documented argument names.
+  matched <- tryCatch(
+    as.list(match.call(weighted_links, expr))[-1],
+    error = function(e) NULL
+  )
+  value_expr <- matched$x
+  total_expr <- matched$total
 
   if (is_null(value_expr) || !is.symbol(value_expr) || is_null(total_expr)) {
     abort_samplyr(
@@ -481,7 +463,7 @@ parse_weighted_links <- function(expr, call = caller_env()) {
         "{.fn weighted_links} takes a column of {.arg links} and a
          {.arg total}.",
         "i" = "{.code weighted_links(importance, total = population_total)},
-               or {.code total = complete_weighted_links()} to assert that
+               or {.code total = complete_links()} to assert that
                {.arg links} is the complete population register."
       ),
       class = "samplyr_error_share_weights_multiplicity",
@@ -489,7 +471,8 @@ parse_weighted_links <- function(expr, call = caller_env()) {
     )
   }
 
-  if (is_call(total_expr, "complete_weighted_links", ns = "")) {
+  if (is_call(total_expr, "complete_links", ns = marker_namespaces)) {
+    # Preserve the legacy stored mode for file compatibility.
     return(list(
       mode = "complete_weighted_links", scale = "quantitative",
       col = as_label(value_expr), total_col = NULL
@@ -505,10 +488,77 @@ parse_weighted_links <- function(expr, call = caller_env()) {
   abort_samplyr(
     c(
       "{.arg total} must be a column of {.arg targets} or
-       {.fn complete_weighted_links}.",
+       {.fn complete_links}.",
       "x" = "Got {.code {as_label(total_expr)}}."
     ),
     class = "samplyr_error_share_weights_multiplicity",
+    call = call
+  )
+}
+
+#' Name the required arguments the call left out
+#'
+#' All of them at once rather than the first, because a call that omits one
+#' usually omits its partner: `by` and `to` are the two halves of one join,
+#' and `targets` and `links` are the two tables it runs over.
+#' @noRd
+check_share_required <- function(absent, call = caller_env()) {
+  if (length(absent) == 0L) {
+    return(invisible(NULL))
+  }
+  says <- c(
+    x = "the sample of the source population",
+    targets = "the target register, one row per target unit",
+    links = "the link table, one row per source-target link",
+    by = "the columns matching the sample to {.arg links}",
+    to = "the columns matching {.arg targets} to {.arg links}"
+  )
+  abort_samplyr(
+    c(
+      "{.fn share_weights} needs {cli::qty(length(absent))}{?an argument/
+       arguments} the call does not give.",
+      "x" = "Missing: {.arg {absent}}.",
+      stats::setNames(
+        vapply(absent, function(a) {
+          cli::format_inline("{.arg {a}} is {says[[a]]}.")
+        }, character(1)),
+        rep("i", length(absent))
+      )
+    ),
+    class = "samplyr_error_share_weights_input",
+    call = call
+  )
+}
+
+#' Refuse a materialized wave as the source of a transformation
+#'
+#' A wave's `.weight` carries the activation factor `m_b / a_bt`, whose
+#' randomization ran over the source units of a block. Sharing from it would
+#' hand that factor to target units, and a target cluster can be reached from
+#' source units in different panels, so no single factor describes one. There
+#' is nothing to carry rather than something not yet built.
+#'
+#' The master is not refused. Its assignment record is dropped, which is the
+#' same fact stated once: a panel belongs to a selected source unit and the
+#' rows of the result are target units.
+#' @noRd
+check_share_source_not_wave <- function(x, call = caller_env()) {
+  wave <- attr(x, "metadata")$wave
+  if (is_null(wave)) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "{.fn share_weights} does not take a materialized wave.",
+      "x" = "This sample realizes wave {wave$wave}, which is an activation of
+             a master rather than a selection of its own.",
+      "i" = "A shared weight is one number per target unit, and a target
+             cluster can be reached from source units in different panels, so
+             the activation does not describe any target unit.",
+      "i" = "Share weights from the master:
+             {.code share_weights(master, targets = ..., links = ...)}."
+    ),
+    class = "samplyr_error_share_weights_wave",
     call = call
   )
 }
@@ -662,10 +712,7 @@ validate_share_inputs <- function(x, targets, links, by, to, within, mult,
 #' @noRd
 check_weighted_links <- function(targets, links, within, mult,
                                  call = caller_env()) {
-  # Section 4.4 defers this combination rather than choosing for the user:
-  # extending a link across a cluster has to say what importance the extended
-  # link carries, and that normalization is not settled. Running it anyway
-  # would produce a number no convention backs.
+  # No accepted normalization exists for this extended weighted case.
   if (identical(within$mode, "extended")) {
     abort_samplyr(
       c(
@@ -750,10 +797,7 @@ check_supplied_multiplicity <- function(targets, col, within,
     )
   }
 
-  # Under cluster elimination the supplied value is the multiplicity of the
-  # extended structure, which is a property of the cluster. A value varying
-  # inside a cluster is therefore the un-extended one, and using it would
-  # silently compute neither method.
+  # Extended multiplicity must be constant within target cluster.
   if (identical(within$mode, "extended")) {
     cl <- make_group_key(as.data.frame(targets), within$col)
     varies <- tapply(value, cl, function(v) length(unique(v)) > 1L)
@@ -804,8 +848,7 @@ share_key_types_compatible <- function(lhs, rhs) {
   if (numeric_like(lhs) && numeric_like(rhs)) {
     return(TRUE)
   }
-  # A factor and its labels compare as the same values once keyed, so the
-  # useful distinction is character-like against everything else.
+  # Compare factors and labels as character-like keys.
   chr_like <- function(v) is.character(v) || is.factor(v)
   if (chr_like(lhs) && chr_like(rhs)) {
     return(TRUE)
@@ -863,9 +906,7 @@ gwsm_compute <- function(x, targets, links, by, to, within, mult,
   src_index <- vctrs::vec_group_loc(src_key_sample)
   link_src_grp <- match(src_key_links, src_index$key)
 
-  # A selected source unit linked to a target the register does not contain
-  # means the register is not the roster it claims to be. Silently dropping
-  # the link would understate that cluster's weight.
+  # Missing linked targets invalidate a claimed complete register.
   orphaned <- !is.na(link_src_grp) & is.na(link_tgt)
   if (any(orphaned)) {
     abort_samplyr(
@@ -882,9 +923,7 @@ gwsm_compute <- function(x, targets, links, by, to, within, mult,
     )
   }
 
-  # The importance of each link. Counting is the case where every link counts
-  # for one, so the binary and quantitative methods run the same code and the
-  # binary one is not a separate path that could drift from it.
+  # Binary links are quantitative links with unit importance.
   link_value <- if (identical(mult$scale, "quantitative")) {
     as.numeric(links[[mult$col]])
   } else {
@@ -904,8 +943,7 @@ gwsm_compute <- function(x, targets, links, by, to, within, mult,
   reached <- unique(contrib$cluster)
   kept <- cluster_of_target %in% reached
 
-  # Expand cluster-level contributions to every target unit of the cluster.
-  # This is step 4, and it is what makes the weight constant within cluster.
+  # Expand contributions to keep weights constant within cluster.
   units_of <- cl_index$loc[contrib$cluster]
   reps <- lengths(units_of)
   target_row <- unlist(units_of, use.names = FALSE)
@@ -925,16 +963,22 @@ gwsm_compute <- function(x, targets, links, by, to, within, mult,
           "The sample reached this cluster, so its population link total
            cannot be zero."
         },
-        "i" = "The supplied total disagrees with {.arg links}: the sample
-               reached this cluster, so something links to it."
+        # Compare totals only when the caller supplied one.
+        "i" = if (mult$mode %in% c("supplied", "weighted_links")) {
+          "The supplied total disagrees with {.arg links}: the sample
+           reached this cluster, so something links to it."
+        } else {
+          "{.arg links} was asserted to be the complete population register,
+           so this cluster's total is the total of the importances recorded
+           for it, and every one of them is zero."
+        }
       ),
       class = "samplyr_error_share_weights_multiplicity",
       call = call
     )
   }
 
-  # Row positions of the kept targets, so the operator spans the result
-  # rather than the register.
+  # Index operator rows against the result.
   position <- cumsum(kept)
   operator <- new_share_operator(
     target_row = position[target_row],
@@ -954,10 +998,7 @@ gwsm_compute <- function(x, targets, links, by, to, within, mult,
     n_clusters = n_clusters,
     n_reached = length(reached),
     orphan_clusters = orphan_clusters,
-    # One value whatever the register's size, which is what makes it storable
-    # for a national register. Two transformations describe the same target
-    # clusters when their digests agree, and one component's silence about a
-    # cluster is evidence of coverage only then.
+    # Digest target clusters without storing the register.
     cluster_digest = rlang::hash(sort(cl_index$key))
   )
 }
@@ -974,9 +1015,7 @@ gwsm_population_links <- function(links, link_tgt, link_value, src_key_links,
   known <- !is.na(link_tgt)
 
   if (identical(within$mode, "extended")) {
-    # Cluster elimination counts the source units reaching a cluster, not the
-    # links into it: after extension every unit of the cluster has exactly
-    # those units as its links.
+    # Extended multiplicity counts source units reaching the cluster.
     unit <- if (identical(mult$mode, "supplied")) {
       as.numeric(targets[[mult$col]])
     } else {
@@ -989,8 +1028,7 @@ gwsm_population_links <- function(links, link_tgt, link_value, src_key_links,
       per_cluster <- tabulate(pairs$cluster, nbins = n_clusters)
       per_cluster[cluster_of_target]
     }
-    # Every unit of a cluster carries the cluster's own total, so the unit
-    # multiplicity and the denominator are the same number here.
+    # Every cluster member carries the cluster total.
     return(list(unit = unit, denominator = unit,
                 cluster_total = cluster_totals(unit, cluster_of_target,
                                                n_clusters, mean_within = TRUE)))
@@ -1005,8 +1043,7 @@ gwsm_population_links <- function(links, link_tgt, link_value, src_key_links,
   unit <- if (!is_null(supplied_col)) {
     as.numeric(targets[[supplied_col]])
   } else {
-    # Summing the link importances over the asserted-complete register. With
-    # unit importances this is exactly the count.
+    # Sum importance over the asserted complete register.
     totals <- numeric(n_tgt)
     if (any(known)) {
       agg <- rowsum(link_value[known], group = link_tgt[known], reorder = TRUE)
@@ -1023,7 +1060,7 @@ gwsm_population_links <- function(links, link_tgt, link_value, src_key_links,
 cluster_totals <- function(unit, cluster_of_target, n_clusters,
                            mean_within = FALSE) {
   if (mean_within) {
-    # Constant within cluster by construction, so any member states it.
+    # Any member states the cluster-constant value.
     out <- numeric(n_clusters)
     out[cluster_of_target] <- unit
     return(out)
@@ -1048,17 +1085,14 @@ gwsm_contributions <- function(link_tgt, link_src_grp, link_value, src_index,
   value <- link_value[usable]
 
   if (identical(within$mode, "extended")) {
-    # Presence, not multiplicity: a source unit linked anywhere in the cluster
-    # is linked to all of it exactly once.
+    # Count source presence once per extended cluster.
     keep <- !duplicated(data.frame(cl = cl, grp = grp))
     cl <- cl[keep]
     grp <- grp[keep]
     value <- value[keep]
   }
 
-  # One sample row per selected occurrence of a source unit. A with-
-  # replacement design selects a unit more than once and each selection
-  # carries its own weight, so each is its own contribution.
+  # Each selected occurrence contributes its own weight.
   rows <- src_index$loc[grp]
   reps <- lengths(rows)
   long <- data.frame(

@@ -1,15 +1,8 @@
 
 ## Exact selection probabilities, resolved without drawing
 
-# The expected multiframe estimator needs a unit's chance in the frames it was
-# not selected from, which Lohr calls the strong requirement of the
-# single-frame estimator. samplyr can compute it: the design and the register
-# determine it exactly, and this resolves it with the same allocation and
-# chance machinery execution uses.
-#
-# The frame digest cannot serve. It is a reporting and privacy structure and
-# may store a varying chance vector as quantile bins, keyed by an internal
-# unit id, so it is neither exact nor keyed on anything a user supplied.
+# Resolve exact cross-frame chances with execution's allocation machinery.
+# Frame digests cannot serve because they may bin chances under internal keys.
 
 #' Selection probabilities a design would give a register, without drawing
 #'
@@ -45,6 +38,7 @@
 #'
 #' @param design A `sampling_design` with a complete [draw()] on every stage.
 #' @param frame The register, a data frame.
+#' @param ... Must be empty. Arguments after it are matched by exact name.
 #' @param key A bare column of `frame` identifying the population unit. It
 #'   must be unique.
 #'
@@ -79,7 +73,8 @@
 #'
 #' @family multiple frames
 #' @export
-exante_probabilities <- function(design, frame, key) {
+exante_probabilities <- function(design, frame, ..., key) {
+  check_keyword_args(enquos(...), "key")
   key_col <- parse_frame_key(
     rlang::enquo(key),
     class = "samplyr_error_exante_key"
@@ -159,7 +154,7 @@ resolve_exante_probabilities <- function(design, frame, key_col,
     )
     check_exante_stage_resolvable(resolved, stage_idx, call = call)
     probability <- probability * exante_stage_chances(resolved, nrow(register))
-    registry <- exante_parent_registry(resolved, stage_frame)
+    registry <- exante_parent_registry(resolved)
   }
 
   list(keys = keys, probability = probability)
@@ -247,9 +242,7 @@ check_exante_stage_resolvable <- function(resolved, stage_idx,
       call = call
     )
   }
-  # A method whose registered probabilities are "unknown" never reaches here:
-  # `draw()` refuses to build the design at all. `resolve_pool_chance()` keeps
-  # its own guard for the paths that do not go through `draw()`.
+  # Keep a guard for designs that bypassed `draw()`.
   invisible(NULL)
 }
 
@@ -275,7 +268,7 @@ exante_stage_chances <- function(resolved, n_rows) {
 #' of the stage being built, so what has to be registered is one id per
 #' cluster key of the stage just resolved.
 #' @noRd
-exante_parent_registry <- function(resolved, frame) {
+exante_parent_registry <- function(resolved) {
   if (!resolved$is_cluster) {
     return(NULL)
   }
@@ -302,6 +295,7 @@ exante_parent_registry <- function(resolved, frame) {
 #' @param frames A named list of registers, one per frame, with the same names
 #'   as the components of the stack. Each is the population the corresponding
 #'   design would draw from.
+#' @param ... Must be empty. Arguments after it are matched by exact name.
 #' @param by A single named string matching the stack's key to the column
 #'   holding it in the registers, in the same direction as a join:
 #'   `by = c(person_id = "person_id")`.
@@ -319,11 +313,24 @@ exante_parent_registry <- function(resolved, frame) {
 #' )
 #'
 #' @seealso [exante_probabilities()] for one register,
-#'   [overlap_probabilities()] for stating the chances instead
+#'   [declared_overlaps()] for naming columns that already hold them
 #'
 #' @family multiple frames
 #' @export
-exante_overlaps <- function(frames, by) {
+exante_overlaps <- function(frames, ..., by) {
+  check_keyword_args(enquos(...), "by")
+  if (missing(by)) {
+    abort_samplyr(
+      c(
+        "{.arg by} must be given.",
+        "i" = "Match the stack's key to the registers' column as a join
+               does: {.code by = c(key_column = \"register_column\")}.",
+        "i" = "It is never inferred: two tables sharing a column name is not
+               evidence that the column means the same thing in both."
+      ),
+      class = "samplyr_error_stack_frames_overlaps"
+    )
+  }
   if (
     !is.list(frames) || length(frames) == 0L ||
       is_null(names(frames)) || !all(nzchar(names(frames))) ||
@@ -436,40 +443,50 @@ resolve_exante_overlaps <- function(samples, spec, membership,
       }
       ifelse(member[, q], resolved[[q]]$probability[position], 0)
     })
-    matrix(
-      unlist(values, use.names = FALSE),
-      nrow = nrow(component),
-      ncol = length(frames),
-      dimnames = list(NULL, frames)
-    )
+    column_matrix(values, nrow(component), frames)
   })
   names(matrices) <- frames
 
-  # The one value that can be checked against what happened. A resolved
-  # own-frame chance has to be the design weight the execution produced, so a
-  # register that is not the population the design drew from is caught here
-  # rather than becoming a variance nobody can trace.
+  # Check resolved own-frame chances against executed design weights.
   for (nm in frames) {
     check_exante_diagonal(samples[[nm]], matrices[[nm]][, nm], nm, call = call)
   }
 
-  list(scale = "probabilities", cols = NULL, resolved = matrices)
+  new_resolved_overlaps(matrices)
+}
+
+#' The resolved form of an overlap declaration
+#'
+#' A class rather than a shape. The resolved record used to be a bare list
+#' told apart from a declared one by `is_null(x$cols)`, in three places, which
+#' is a test on the absence of a field rather than on what the object is.
+#' `cols` stays `NULL` so nothing that reads it has to change.
+#' @noRd
+new_resolved_overlaps <- function(matrices) {
+  structure(
+    list(scale = "probabilities", cols = NULL, resolved = matrices),
+    class = "samplyr_resolved_overlaps"
+  )
+}
+
+#' @noRd
+is_resolved_overlaps <- function(x) {
+  inherits(x, "samplyr_resolved_overlaps")
 }
 
 #' @noRd
 check_exante_diagonal <- function(component, resolved, frame,
                                   call = caller_env()) {
   realized <- 1 / component[[".weight"]]
-  off <- abs(resolved - realized) > 1e-6 * pmax(abs(realized), 1)
-  if (any(off)) {
-    worst <- which.max(abs(resolved - realized))
+  gap <- own_frame_disagreement(resolved, realized)
+  if (!is_null(gap)) {
     abort_samplyr(
       c(
         "A resolved own-frame chance must be the selection that happened.",
         "x" = "{.val {frame}} disagrees with its own design weights on
-               {sum(off)} row{?s}.",
-        "i" = "Worst: {.val {signif(resolved[[worst]], 6)}} resolved against
-               {.val {signif(realized[[worst]], 6)}} realized.",
+               {gap$n} row{?s}.",
+        "i" = "Worst: {.val {signif(gap$supplied, 6)}} resolved against
+               {.val {signif(gap$realized, 6)}} realized.",
         "i" = "The register given for a frame must be the population that
                frame's design drew from."
       ),

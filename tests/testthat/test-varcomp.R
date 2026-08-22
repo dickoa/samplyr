@@ -273,6 +273,39 @@ test_that("modified, two-phase, and unclustered samples are refused", {
   expect_error(varcomp(s, ~nope), "not found")
 })
 
+test_that("a third clustered stage is refused, a second is not", {
+  frame <- withr::with_seed(77, {
+    data.frame(
+      prov = rep(sprintf("p%d", 1:6), each = 40),
+      dist = rep(sprintf("d%02d", 1:12), each = 20),
+      vil = rep(sprintf("v%02d", 1:24), each = 10),
+      y = rnorm(240)
+    )
+  })
+
+  # The limit counts clustered stages, not stages. Two clustered stages and
+  # an element stage is three stages and is accepted; three clustered stages
+  # is also three stages and is not.
+  accepted <- sampling_design() |>
+    add_stage() |> cluster_by(prov) |> draw(n = 3) |>
+    add_stage() |> cluster_by(dist) |> draw(n = 2) |>
+    add_stage() |> draw(n = 4) |>
+    execute(frame, seed = 7)
+  expect_identical(varcomp(accepted, ~y)$stages, 3L)
+
+  refused <- sampling_design() |>
+    add_stage() |> cluster_by(prov) |> draw(n = 3) |>
+    add_stage() |> cluster_by(dist) |> draw(n = 2) |>
+    add_stage() |> cluster_by(vil) |> draw(n = 2) |>
+    execute(frame, seed = 7)
+
+  refusal <- expect_error(
+    varcomp(refused, ~y),
+    class = "samplyr_error_varcomp_stages"
+  )
+  expect_match(conditionMessage(refusal), "This sample has 3", fixed = TRUE)
+})
+
 test_that("a WR first stage keys PSUs by draw, not by cluster", {
   frame <- varcomp_frame()
   s <- sampling_design() |>

@@ -393,7 +393,7 @@ test_that("the receipt records the frozen blocks and quotas", {
   expect_equal(t(realized), pool$quotas, ignore_attr = TRUE)
 })
 
-test_that("the design file carries the blocks and quotas", {
+test_that("the design file carries the assignment law, not the realization", {
   frame <- data.frame(
     id = 1:120,
     region = rep(c("A", "B"), each = 60),
@@ -408,38 +408,45 @@ test_that("the design file carries the blocks and quotas", {
   path <- withr::local_tempfile(fileext = ".json")
   write_design(sample, path, frame = frame)
   written <- attr(read_design(path), "execution")$panel_assignment
-
   record <- attr(sample, "metadata")$panel_assignment
+
+  # Everything replay needs and cannot derive.
   expect_identical(written$algorithm, record$algorithm)
   expect_identical(as.integer(written$version), record$version)
   expect_identical(as.integer(written$panels), 4L)
   expect_identical(as.integer(written$block_size), 8L)
+  expect_identical(as.integer(written$r_min), record$r_min)
   expect_identical(written$unit, "element")
   expect_identical(written$certainty, "permanent")
-  expect_length(written$pools, length(record$pools))
+  expect_identical(unlist(written$key_vars), record$key_vars)
 
+  # And nothing of the realization. The pools are the law applied to one
+  # draw, and re-executing rebuilds them, so writing them stored a second
+  # copy that no reader decoded.
+  expect_null(written$pools)
+
+  # Which is also why a design file carries no assignment-unit identifier,
+  # including when the caller asked for no frame content at all.
+  clustered <- sampling_design() |>
+    cluster_by(region) |>
+    draw(n = 1) |>
+    execute(frame, seed = 8, panels = 2, frame_digest = "none")
+  bare <- withr::local_tempfile(fileext = ".json")
+  write_design(clustered, bare, frame = frame)
+  raw <- paste(readLines(bare, warn = FALSE), collapse = "")
+  expect_false(grepl("\"A\"", raw, fixed = TRUE))
+  expect_false(grepl("\"B\"", raw, fixed = TRUE))
+
+  # Replay reproduces the pools the file does not carry, exactly.
+  replayed <- replay_design(read_design(path), frame)
+  rebuilt <- attr(replayed, "metadata")$panel_assignment
+  expect_identical(length(rebuilt$pools), length(record$pools))
   for (i in seq_along(record$pools)) {
-    expect_identical(
-      as.character(unlist(written$pools[[i]]$keys)),
-      record$pools[[i]]$keys
-    )
-    expect_identical(
-      as.integer(unlist(written$pools[[i]]$blocks)),
-      record$pools[[i]]$blocks
-    )
-    expect_identical(
-      matrix(
-        as.integer(unlist(written$pools[[i]]$quotas)),
-        nrow = length(record$pools[[i]]$blocks),
-        byrow = TRUE
-      ),
-      record$pools[[i]]$quotas
-    )
+    expect_identical(rebuilt$pools[[i]]$keys, record$pools[[i]]$keys)
+    expect_identical(rebuilt$pools[[i]]$blocks, record$pools[[i]]$blocks)
+    expect_identical(rebuilt$pools[[i]]$quotas, record$pools[[i]]$quotas)
   }
-  expect_identical(
-    vapply(written$pools, function(p) p$stratum$region, character(1)),
-    c("A", "B")
-  )
+  expect_identical(replayed$.panel, sample$.panel)
 })
 
 test_that("certainty units are labelled from their own pool", {
@@ -1058,4 +1065,174 @@ test_that("a stage stratified by its own parent names that parent once", {
     lapply(pools, function(p) names(p$stratum)),
     rep(list("psu"), length(pools))
   )
+})
+
+## One class per defect kind
+
+test_that("the panel count refusal carries a class, like every other in the file", {
+  # It was a bare cli_abort(), catchable only by its message, in a file where
+  # every other refusal is classed.
+  expect_error(
+    execute(sampling_design() |> draw(n = 5), data.frame(id = 1:20), panels = 1),
+    class = "samplyr_error_panel_count"
+  )
+  expect_error(
+    execute(sampling_design() |> draw(n = 5), data.frame(id = 1:20), panels = 2.5),
+    class = "samplyr_error_panel_count"
+  )
+  expect_error(
+    execute(sampling_design() |> draw(n = 5), data.frame(id = 1:20), panels = "four"),
+    class = "samplyr_error_panel_count"
+  )
+})
+
+## The two schedule paths ask the same questions
+
+test_that("a defect in either schedule kind carries the same class", {
+  # `normalize_panel_schedule()` and `normalize_program_schedule()` used to
+  # write these five checks twice, with the same condition classes and
+  # divergent wording. They share one implementation now, so a defect that
+  # moves on one path must move on both, and this pins the pairing rather
+  # than either message.
+  frame <- data.frame(id = 1:200)
+  master_schedule <- data.frame(
+    panel = rep(1:2, times = 3), wave = rep(1:3, each = 2),
+    active = c(TRUE, TRUE, TRUE, FALSE, FALSE, TRUE)
+  )
+  cohort <- sampling_design() |>
+    draw(n = 40) |>
+    execute(frame, seed = 1, panels = master_schedule)
+
+  as_panels <- function(schedule) {
+    sampling_design() |> draw(n = 10) |>
+      execute(data.frame(id = 1:100), seed = 1, panels = schedule)
+  }
+  as_program <- function(schedule) {
+    rotation_program(
+      list(startup = cohort), entry_wave = c(startup = 1), schedule = schedule
+    )
+  }
+
+  cases <- list(
+    list(
+      class = "samplyr_error_schedule_columns",
+      panels = data.frame(panel = 1:2),
+      program = data.frame(panel = 1:2)
+    ),
+    list(
+      class = "samplyr_error_schedule_active",
+      panels = data.frame(
+        panel = rep(1:2, 2), wave = rep(1:2, each = 2),
+        active = c("y", "n", "y", "n")
+      ),
+      program = data.frame(
+        panel = c(1, 2), wave = c(1, 1), active = c("y", "n")
+      )
+    ),
+    list(
+      class = "samplyr_error_schedule_values",
+      panels = data.frame(panel = c(1.5, 2), wave = c(1, 1)),
+      program = data.frame(panel = c(1.5, 2), wave = c(1, 1))
+    ),
+    list(
+      class = "samplyr_error_schedule_duplicates",
+      panels = data.frame(panel = c(1, 1, 2, 2), wave = c(1, 1, 2, 2)),
+      program = data.frame(panel = c(1, 1), wave = c(1, 1))
+    ),
+    list(
+      class = "samplyr_error_schedule_idle_wave",
+      panels = data.frame(
+        panel = rep(1:2, 2), wave = rep(1:2, each = 2),
+        active = c(TRUE, TRUE, FALSE, FALSE)
+      ),
+      program = data.frame(
+        panel = c(1, 2, 1, 2), wave = c(1, 1, 2, 2),
+        active = c(TRUE, TRUE, FALSE, FALSE)
+      )
+    )
+  )
+
+  for (case in cases) {
+    expect_error(as_panels(case$panels), class = case$class)
+    expect_error(as_program(case$program), class = case$class)
+  }
+
+  # And each still names the kind of schedule it was given, which is the one
+  # thing the two are allowed to differ on.
+  expect_error(as_panels(data.frame(panel = 1:2)), regexp = "`panels` schedule")
+  expect_error(as_program(data.frame(panel = 1:2)), regexp = "program schedule")
+
+  # Sentence case survives the shared template: the phrase is cli-formatted,
+  # so it cannot be capitalized at the point of use.
+  expect_error(as_panels(data.frame(panel = 1:2)), regexp = "^A `panels` schedule")
+  expect_error(as_program(data.frame(panel = 1:2)), regexp = "^A program schedule")
+
+  # The argument-naming message names the argument, not the description.
+  expect_error(as_program(list(panel = 1)), regexp = "`schedule` must be a data frame")
+})
+
+## Fragments that were written more than once
+
+test_that("one renderer serves both stratum labels", {
+  # A diagnostic sentence and a table column differ only in what an
+  # unstratified pool renders as. They were two functions with two separators
+  # and two fallbacks.
+  stratified <- list(stratum = list(region = "A", urban = TRUE))
+  unstratified <- list(stratum = NULL)
+
+  expect_identical(
+    format_pool_stratum(stratified),
+    "region = A, urban = TRUE"
+  )
+  expect_identical(
+    format_pool_stratum(stratified, empty = NA_character_),
+    format_pool_stratum(stratified)
+  )
+  expect_identical(format_pool_stratum(unstratified), "(unstratified)")
+  expect_identical(
+    format_pool_stratum(unstratified, empty = NA_character_), NA_character_
+  )
+  # A pool whose stratum is present but empty is unstratified too.
+  expect_identical(
+    format_pool_stratum(list(stratum = list())), "(unstratified)"
+  )
+})
+
+test_that("one take computation, which is where a malformed quotas surfaces", {
+  pool <- list(quotas = matrix(c(2L, 1L, 1L, 1L, 1L, 1L, 1L, 1L), nrow = 2,
+                               byrow = TRUE),
+               blocks = c(5L, 4L))
+
+  expect_identical(pool_take(pool, c(1L, 2L)), c(3L, 2L))
+  expect_identical(pool_take(pool, 1L), c(2L, 1L))
+  expect_identical(pool_take(pool, integer(0)), c(0L, 0L))
+
+  # The JSON shape a record can come back as. It fails in one place now
+  # rather than in two, which is what a guard for it would need.
+  listed <- list(quotas = list(c(2L, 1L, 1L, 1L), c(1L, 1L, 1L, 1L)))
+  expect_error(pool_take(listed, 1L), "incorrect number of dimensions")
+})
+
+test_that("a malformed version is described the way every other field is", {
+  record <- function(version) {
+    list(
+      algorithm = "blocked_random_quota", version = version, panels = 4L,
+      assignment_stage = 1L, block_size = 8L, r_min = 1L, unit = "element",
+      key_vars = ".sample_id", pool_vars = character(0), pools = list()
+    )
+  }
+  shown <- function(version) {
+    conditionMessage(tryCatch(
+      prepare_panel_record(record(version), "A probe"), error = identity
+    ))
+  }
+
+  # An inline ladder here said "a character value" where
+  # `describe_record_value()` names the value itself, which is what the
+  # reader needs in order to see what the record actually says.
+  expect_match(shown("3"), '"3"', fixed = TRUE)
+  expect_match(shown(c(1L, 2L)), "2 values of type integer", fixed = TRUE)
+  # "nothing" reads wrong of a version, so that one case stays its own.
+  expect_match(shown(integer(0)), "no version", fixed = TRUE)
+  expect_no_match(shown(integer(0)), "states nothing", fixed = TRUE)
 })

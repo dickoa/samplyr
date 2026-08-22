@@ -204,7 +204,8 @@ test_that("the planning route refuses permanent activation", {
       design, data.frame(id = 1:200), panels = schedule,
       small_pool = "permanent"
     ),
-    class = "samplyr_error_plan_permanent"
+    # One class per defect kind: this is an argument conflict.
+    class = "samplyr_error_plan_small_pool"
   )
   expect_error(
     sampling_design() |>
@@ -221,7 +222,8 @@ test_that("the planning route refuses permanent activation", {
         ),
         panels = schedule
       ),
-    class = "samplyr_error_plan_permanent"
+    # And this is a property of the realized draw, not of the arguments.
+    class = "samplyr_error_plan_certainty"
   )
 
   unsupported <- unclass(schedule)

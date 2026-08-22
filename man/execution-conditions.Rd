@@ -4,11 +4,11 @@
 \alias{execution-conditions}
 \title{Conditions raised during execution}
 \description{
-\code{\link[=execute]{execute()}} signals five conditions when a design cannot be realized as
-written. Each is a classed condition carrying a \code{payload}, so it can be
-caught and inspected rather than only read. They are reported once per
-stage per distinct finding, not once per capped pool and not once per
-replicate.
+\code{\link[=execute]{execute()}} signals five conditions when a \emph{selection} cannot be realized
+as written, because a pool held fewer units than the stage asked for. Each
+is a classed condition carrying a \code{payload}, so it can be caught and
+inspected rather than only read. They are reported once per stage per
+distinct finding, not once per capped pool and not once per replicate.
 }
 \details{
 A pool holding fewer units than the stage asks for is selected whole, which
@@ -41,6 +41,11 @@ redistributed past a saturated stratum. A message, not a warning:
 nothing went wrong, and simulation loops can silence it with
 \code{suppressMessages()}.}
 }
+These are not every condition \code{execute()} raises. Panel assignment has one
+of its own, \code{samplyr_warning_panel_small_pool}, documented with
+\code{small_pool}: it is about a pool too small to \emph{rotate} rather than too
+small to draw from, fires once for the assignment rather than per stage,
+and carries no \code{payload}.
 
 Every condition carries \code{stage}, an \code{operation} naming the detected event,
 and a \code{payload} of aggregated detail. Payload fields mean the same thing

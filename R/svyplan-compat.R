@@ -172,6 +172,13 @@ check_svyplan_schedule <- function(x, arg = "schedule",
 #'   two-stage plans (cluster mode), stage 1 gets `n_psu_int` and
 #'   stage 2 gets `n_per_psu_int`, both named by stratum (the jointly
 #'   integerized field design, svyplan >= 0.8.8).
+#' - Certainty-aware `n_alloc()` results (solved with a `psu` register,
+#'   svyplan >= 0.12.0): never coerced. `draw()` intercepts them before
+#'   this function runs: a clustered, stratified stage 1 fields the plan's
+#'   stored classification (`certainty_bridge_spec()`) and stage 2 applies
+#'   its per-PSU takes (`certainty_take_spec()`); any plan reaching this
+#'   function is in a context the bridge does not serve and is refused,
+#'   because the element-total fallback would misstate the design.
 #' - `n_multi()` results with domains: data frame keyed on the domain
 #'   columns (requires a matching `stratify_by()`).
 #' - `n_cluster()` results: `as.integer()` returns the integerized
@@ -186,6 +193,16 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
 
   if (inherits(n, "svyplan_n") && identical(n$type, "alloc")) {
     detail <- as.data.frame(n)
+    if (is_certainty_alloc_plan(n)) {
+      abort_samplyr(
+        c(
+          "This svyplan allocation is certainty-aware and cannot be a stage size.",
+          "x" = "The plan takes every certainty PSU whole, at its own take, and draws the remaining PSUs by PPS; coercing it to per-stratum totals would field a different design.",
+          "i" = "Pass it to {.fn draw} at a clustered, stratified stage 1 with an exact-pik PPS method, and samplyr fields the plan's own classification."
+        ),
+        class = "samplyr_error_svyplan_certainty_plan"
+      )
+    }
     if ("n_psu_int" %in% names(detail)) {
       if (stage_index == 1L && !clustered) {
         abort_samplyr(
@@ -229,11 +246,16 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
     stage_cols <- c("n_psu", "n_per_psu", "n_per_ssu")
     if (!is_null(n$domains)) {
       dom <- as.data.frame(n)
+      keep <- setdiff(
+        names(dom),
+        c(stage_cols, grep("^\\.", names(dom), value = TRUE))
+      )
       if (!stage_aware) {
         abort_samplyr(
           c(
             "This svyplan plan allocates per domain and per stage.",
-            "i" = "Use it in a design with {.fn stratify_by} on the domain variable{?s} and {.fn cluster_by} at stage 1."
+            # Set the cli plural quantity from `keep`.
+            "i" = "Use it in a design with {.fn stratify_by} on the domain variable{?s} {.val {keep}} and {.fn cluster_by} at stage 1."
           ),
           class = "samplyr_error_svyplan_domains"
         )
@@ -244,10 +266,6 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
           class = "samplyr_error_svyplan_stage"
         )
       }
-      keep <- setdiff(
-        names(dom),
-        c(stage_cols, grep("^\\.", names(dom), value = TRUE))
-      )
       out <- dom[, keep, drop = FALSE]
       out$n <- as.integer(ceiling(dom[[stage_cols[stage_index]]]))
       return(out)
@@ -269,6 +287,508 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
     return(as.integer(n))
   }
   n
+}
+
+#' Detect a certainty-aware svyplan allocation
+#'
+#' The register in `$params$psu` is svyplan's documented stable mark
+#' (svyplan >= 0.12.0). The column fallback covers a fit whose params were
+#' stripped in transit; both directions were verified against svyplan's
+#' `.psu_result()`.
+#' @noRd
+is_certainty_alloc_plan <- function(n) {
+  inherits(n, "svyplan_n") &&
+    identical(n$type, "alloc") &&
+    (!is_null(n$params$psu) || "n_psu_certain" %in% names(n$detail))
+}
+
+#' Methods that field a certainty plan's remainder exactly
+#'
+#' The plan promises exactly `n_psu_draw` PSUs at the plan's own inclusion
+#' probabilities. Random-size methods break the count and order-sampling
+#' methods only approximate the probabilities, so both are out.
+#' @noRd
+certainty_bridge_methods <- c(
+  "pps_systematic", "pps_brewer", "pps_cps", "pps_sampford"
+)
+
+#' Build the bridge spec a certainty plan hands to draw()
+#'
+#' Extracts plain data only, never the svyplan object: the register with its
+#' classification and takes, the per-stratum remainder draw, and provenance.
+#' Everything the plan owns is refused as a draw() argument, and the
+#' plan-level disagreement check runs here so a design that cannot be fielded
+#' fails at build time as well as at the execute gate.
+#' @noRd
+certainty_bridge_spec <- function(
+  plan,
+  strata_vars,
+  cluster_vars,
+  method,
+  certainty_size,
+  certainty_prop,
+  min_n,
+  max_n,
+  has_alloc,
+  call = rlang::caller_env()
+) {
+  refuse <- function(...) {
+    abort_samplyr(
+      c(...),
+      class = "samplyr_error_svyplan_certainty_plan",
+      call = call
+    )
+  }
+
+  if (is_null(strata_vars) || length(strata_vars) != 1L) {
+    refuse(
+      "A certainty plan needs the stage stratified by the plan's stratum variable.",
+      "i" = "Use {.fn stratify_by} with the single variable whose values match the register's {.code stratum}."
+    )
+  }
+  if (length(cluster_vars) != 1L) {
+    refuse(
+      "A certainty plan needs a single cluster variable at stage 1.",
+      "i" = "Use {.fn cluster_by} with the variable whose values match the register's {.code psu_id}."
+    )
+  }
+  if (!method %in% certainty_bridge_methods) {
+    refuse(
+      "A certainty plan requires an exact-pik fixed-size PPS method.",
+      "x" = "Method {.val {method}} cannot field exactly {.code n_psu_draw} PSUs at the plan's probabilities.",
+      "i" = "Use one of {.val {certainty_bridge_methods}}."
+    )
+  }
+  if (!is_null(certainty_size) || !is_null(certainty_prop)) {
+    refuse(
+      "{.arg certainty_size} and {.arg certainty_prop} cannot accompany a certainty plan.",
+      "i" = "The plan already owns the classification; samplyr fields it as stored."
+    )
+  }
+  if (!is_null(min_n) || !is_null(max_n)) {
+    refuse(
+      "{.arg min_n} and {.arg max_n} cannot accompany a certainty plan.",
+      "i" = "The plan's allocation is already settled; bounds would alter it silently."
+    )
+  }
+  if (has_alloc) {
+    refuse(
+      "A certainty plan cannot be combined with {.code stratify_by(alloc = )}.",
+      "i" = "The plan already allocates; use plain {.fn stratify_by}."
+    )
+  }
+
+  register <- normalize_certainty_register(plan, refuse)
+
+  detail <- plan$detail
+  needed <- c("stratum", "n_psu_certain", "n_psu_draw")
+  if (!all(needed %in% names(detail))) {
+    refuse("The plan's {.code $detail} lacks the certainty split columns.")
+  }
+
+  strata <- as.character(detail$stratum)
+  n_psu_certain <- stats::setNames(as.numeric(detail$n_psu_certain), strata)
+  n_psu_draw <- stats::setNames(as.numeric(detail$n_psu_draw), strata)
+
+  held <- vapply(
+    strata,
+    function(h) sum(register$certainty[register$stratum == h]),
+    numeric(1)
+  )
+  if (!isTRUE(all.equal(unname(held), unname(n_psu_certain)))) {
+    refuse(
+      "The plan's register and its {.code $detail} disagree on the certainty split.",
+      "i" = "The plan object is inconsistent; rebuild it with {.code svyplan::n_alloc()}."
+    )
+  }
+
+  check_certainty_plan_disagreement(
+    register,
+    n_psu_draw,
+    method = method,
+    call = call
+  )
+
+  n_per_psu <- plan$params$frame$n_per_psu
+  n_per_psu <- if (is_null(n_per_psu)) {
+    rep(NA_real_, length(strata))
+  } else {
+    rep_len(as.numeric(n_per_psu), length(strata))
+  }
+
+  list(
+    spec = list(
+      role = "select",
+      register = register,
+      n_psu_draw = n_psu_draw,
+      n_per_psu = stats::setNames(n_per_psu, strata),
+      strata_var = strata_vars,
+      id_var = cluster_vars,
+      svyplan_version = as.character(utils::packageVersion("svyplan"))
+    ),
+    n_total = n_psu_certain + n_psu_draw
+  )
+}
+
+#' The register a bridge stage stores, in one normalized shape
+#'
+#' Both bridge stages extract it the same way so a stage-2 plan can be
+#' compared with stage 1's by identity.
+#' @noRd
+normalize_certainty_register <- function(plan, refuse) {
+  register <- plan$psu
+  if (is_null(register$psu_id)) {
+    refuse(
+      "This certainty plan has no {.code psu_id}, so its PSUs cannot be matched to a frame.",
+      "i" = "Rebuild the plan with a {.code psu_id} column in the register: {.code svyplan::n_alloc(..., psu = )}."
+    )
+  }
+  if (is_null(register$n_take)) {
+    refuse(
+      "This certainty plan does not carry the per-PSU takes ({.code n_take}).",
+      "i" = "Rebuild it with svyplan >= 0.12.0, which records the operational takes on {.code $psu}."
+    )
+  }
+  if (anyDuplicated(register$psu_id)) {
+    refuse("The plan's register has duplicated {.code psu_id} values.")
+  }
+  data.frame(
+    psu_id = register$psu_id,
+    stratum = as.character(register$stratum),
+    N = as.numeric(register$N),
+    certainty = as.logical(register$certainty),
+    n_take = as.numeric(register$n_take),
+    stringsAsFactors = FALSE
+  )
+}
+
+#' Build the take spec a certainty plan hands to a stage-2 draw()
+#'
+#' Stage 2 applies the plan's per-PSU takes inside the PSUs a bridged
+#' stage 1 selected, so it requires that stage and the same plan. Within-PSU
+#' stratification is allowed only with an `alloc` method: samplyr's scalar
+#' size at a stratified stage means n per stratum, so a bare stratification
+#' would silently draw the take in every cell, while `alloc` is the
+#' grammar's own way of splitting a stage total.
+#' @noRd
+certainty_take_spec <- function(
+  plan,
+  design,
+  method,
+  mos,
+  frac,
+  certainty_size,
+  certainty_prop,
+  min_n,
+  max_n,
+  has_alloc,
+  strata_vars,
+  clustered,
+  call = rlang::caller_env()
+) {
+  refuse <- function(...) {
+    abort_samplyr(
+      c(...),
+      class = "samplyr_error_svyplan_certainty_plan",
+      call = call
+    )
+  }
+
+  stage1 <- design$stages[[1]]$draw_spec$certainty_plan
+  if (is_null(stage1) || !identical(stage1$role, "select")) {
+    refuse(
+      "A certainty plan at stage 2 needs the same plan at a bridged stage 1.",
+      "i" = "Pass {.code n = plan} at a clustered, stratified stage 1 first; the per-PSU takes assume that selection."
+    )
+  }
+  register <- normalize_certainty_register(plan, refuse)
+  if (!identical(register, stage1$register)) {
+    refuse(
+      "The plan at stage 2 is not the plan stage 1 was built from.",
+      "i" = "Pass the same fitted plan at both stages."
+    )
+  }
+  if (clustered) {
+    refuse(
+      "A certainty plan's take stage selects elements, not clusters.",
+      "i" = "Remove {.fn cluster_by} at stage 2; the plan is two-stage."
+    )
+  }
+  if (!method %in% c("srswor", "systematic")) {
+    refuse(
+      "A certainty plan's take is an equal-probability element selection.",
+      "x" = "Method {.val {method}} is not; use {.val srswor} or {.val systematic}."
+    )
+  }
+  if (!is_null(mos)) {
+    refuse("{.arg mos} cannot accompany a certainty plan's take stage.")
+  }
+  if (!is_null(frac)) {
+    refuse(
+      "{.arg frac} cannot accompany a certainty plan.",
+      "i" = "The plan supplies each PSU's take."
+    )
+  }
+  if (!is_null(certainty_size) || !is_null(certainty_prop)) {
+    refuse(
+      "{.arg certainty_size} and {.arg certainty_prop} cannot accompany a certainty plan."
+    )
+  }
+  if (!is_null(min_n) || !is_null(max_n)) {
+    refuse(
+      "{.arg min_n} and {.arg max_n} cannot accompany a certainty plan.",
+      "i" = "The plan's takes are already settled; bounds would alter them silently."
+    )
+  }
+  if (!is_null(strata_vars) && !has_alloc) {
+    refuse(
+      "Stratifying a certainty plan's take stage needs an {.arg alloc} method.",
+      "x" = "A scalar size at a stratified stage means that size per stratum, so a bare stratification would draw each PSU's take in every cell.",
+      "i" = "State the split with {.code stratify_by(..., alloc = )}; the per-PSU take is the total it distributes."
+    )
+  }
+
+  spec <- stage1
+  spec$role <- "take"
+  spec
+}
+
+#' Refuse a plan whose executable selection rule caps a noncertainty PSU
+#'
+#' The plan classifies by svyplan's element-fraction threshold; the fielded
+#' remainder caps by `n_psu_draw * N_i / sum(N_rest)`. The rules differ, and
+#' ceiling effects near the threshold can push the largest noncertainty PSU
+#' to probability one. Fielding it would silently alter the plan, so the
+#' refusal runs before any RNG is consumed, from the register alone.
+#' @noRd
+check_certainty_plan_disagreement <- function(
+  register,
+  n_psu_draw,
+  method,
+  call = NULL
+) {
+  for (h in names(n_psu_draw)) {
+    draw_h <- n_psu_draw[[h]]
+    if (draw_h <= 0) {
+      next
+    }
+    rest <- register$stratum == h & !register$certainty
+    sizes <- register$N[rest]
+    if (length(sizes) == 0) {
+      next
+    }
+    pik <- draw_h * sizes / sum(sizes)
+    capped <- pik >= 1
+    if (any(capped)) {
+      ids <- register$psu_id[rest][capped]
+      abort_samplyr(
+        c(
+          "The plan's classification and the executable selection rule disagree.",
+          "x" = "In stratum {.val {h}}, drawing {draw_h} of the noncertainty PSUs by {.val {method}} gives PSU {.val {ids}} an inclusion probability of at least one, but the plan holds {?it/them} noncertainty.",
+          "i" = "Flag the PSU in the register's {.code certainty} column and refit the plan with {.code svyplan::n_alloc()}."
+        ),
+        class = "samplyr_error_certainty_plan_disagreement",
+        call = call
+      )
+    }
+  }
+  invisible(NULL)
+}
+
+#' Reconcile the execution frame against a certainty plan's register
+#'
+#' The plan was solved for one register; a frame that disagrees on the PSU
+#' set, the strata, or the sizes describes a different population, and the
+#' classification and probabilities no longer apply. Runs at execute time so
+#' it also covers designs that arrive by deserialization, before any RNG is
+#' consumed.
+#' @noRd
+validate_certainty_bridge <- function(design, schedule, call = NULL) {
+  for (entry in schedule$entries) {
+    stage_spec <- design$stages[[entry$stage]]
+    spec <- stage_spec$draw_spec$certainty_plan
+    if (is_null(spec)) {
+      next
+    }
+    if (identical(spec$role, "take")) {
+      # The take stage sizes pools from the register stage 1 selected under;
+      # a design whose two stages carry different registers is inconsistent.
+      # draw() enforces this at build time, but a deserialized design never
+      # ran draw(), so the gate is the load-bearing check.
+      stage1_spec <- design$stages[[1]]$draw_spec$certainty_plan
+      if (
+        is_null(stage1_spec) ||
+          !identical(stage1_spec$role, "select") ||
+          !identical(spec$register, stage1_spec$register)
+      ) {
+        abort_samplyr(
+          "The take stage's certainty plan does not match the plan stage 1 selects under.",
+          class = "samplyr_error_svyplan_certainty_plan",
+          call = call
+        )
+      }
+      reconcile_certainty_take(
+        spec,
+        frame = entry$frame,
+        stage = entry$stage,
+        call = call
+      )
+      next
+    }
+    # The stored stage size must be the plan's own totals; only draw()
+    # guarantees it, and a deserialized design never ran draw().
+    held <- vapply(
+      names(spec$n_psu_draw),
+      function(h) sum(spec$register$certainty[spec$register$stratum == h]),
+      numeric(1)
+    )
+    n_expected <- held + spec$n_psu_draw
+    n_stored <- stage_spec$draw_spec$n
+    if (
+      !is.numeric(n_stored) ||
+        !setequal(names(n_stored), names(n_expected)) ||
+        !isTRUE(all.equal(
+          unname(n_stored[names(n_expected)]),
+          unname(n_expected)
+        ))
+    ) {
+      abort_samplyr(
+        "The stage size does not match the certainty plan's own totals.",
+        class = "samplyr_error_svyplan_certainty_plan",
+        call = call
+      )
+    }
+    reconcile_certainty_register(
+      spec,
+      frame = entry$frame,
+      mos_var = stage_spec$draw_spec$mos,
+      stage = entry$stage,
+      call = call
+    )
+    check_certainty_plan_disagreement(
+      spec$register,
+      spec$n_psu_draw,
+      method = stage_spec$draw_spec$method,
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' Reconcile a take stage's frame against the register
+#'
+#' By the time the take stage runs, stage 1 has selected, so the frame's
+#' PSUs are a subset of the register rather than all of it. There is no MOS
+#' column at this stage, and the stratum column need not travel to a
+#' listing frame; what must hold is that every PSU present is one the plan
+#' knows, in the stratum the plan states.
+#' @noRd
+reconcile_certainty_take <- function(spec, frame, stage, call = NULL) {
+  if (!spec$id_var %in% names(frame)) {
+    # The pool split needs the parent id and refuses its absence with the
+    # frame-variable message; the register gate has nothing to add.
+    return(invisible(NULL))
+  }
+  refuse <- function(...) {
+    abort_samplyr(
+      c(
+        "The frame does not match the certainty plan's register at stage {stage}.",
+        ...,
+        "i" = "The plan was solved for that register; refit it for this frame with {.code svyplan::n_alloc()}."
+      ),
+      class = "samplyr_error_certainty_register_mismatch",
+      call = call
+    )
+  }
+
+  register <- spec$register
+  ids <- unique(frame[[spec$id_var]])
+  extra <- setdiff(ids, register$psu_id)
+  if (length(extra) > 0) {
+    refuse(
+      "x" = "Frame PSU {.val {head(extra, 5)}} {?is/are} not in the register."
+    )
+  }
+  if (spec$strata_var %in% names(frame)) {
+    seen <- unique(data.frame(
+      psu_id = frame[[spec$id_var]],
+      stratum = as.character(frame[[spec$strata_var]]),
+      stringsAsFactors = FALSE
+    ))
+    at <- match(seen$psu_id, register$psu_id)
+    moved <- seen$stratum != register$stratum[at]
+    if (any(moved)) {
+      refuse(
+        "x" = "PSU {.val {head(seen$psu_id[moved], 5)}} {?is/are} in a different stratum than the register states."
+      )
+    }
+  }
+  invisible(NULL)
+}
+
+#' @noRd
+reconcile_certainty_register <- function(
+  spec,
+  frame,
+  mos_var,
+  stage,
+  call = NULL
+) {
+  refuse <- function(...) {
+    abort_samplyr(
+      c(
+        "The frame does not match the certainty plan's register at stage {stage}.",
+        ...,
+        "i" = "The plan was solved for that register; refit it for this frame with {.code svyplan::n_alloc()}."
+      ),
+      class = "samplyr_error_certainty_register_mismatch",
+      call = call
+    )
+  }
+
+  seen <- unique(data.frame(
+    psu_id = frame[[spec$id_var]],
+    stratum = as.character(frame[[spec$strata_var]]),
+    N = as.numeric(frame[[mos_var]]),
+    stringsAsFactors = FALSE
+  ))
+
+  dup <- unique(seen$psu_id[duplicated(seen$psu_id)])
+  if (length(dup) > 0) {
+    refuse(
+      "x" = "PSU {.val {head(dup, 5)}} carr{?ies/y} more than one stratum or MOS value in the frame, and the register states exactly one."
+    )
+  }
+
+  register <- spec$register
+  missing_psu <- setdiff(register$psu_id, seen$psu_id)
+  if (length(missing_psu) > 0) {
+    refuse(
+      "x" = "Register PSU {.val {head(missing_psu, 5)}} {?is/are} absent from the frame."
+    )
+  }
+  extra <- setdiff(seen$psu_id, register$psu_id)
+  if (length(extra) > 0) {
+    refuse(
+      "x" = "Frame PSU {.val {head(extra, 5)}} {?is/are} not in the register."
+    )
+  }
+
+  at <- match(seen$psu_id, register$psu_id)
+  moved <- seen$stratum != register$stratum[at]
+  if (any(moved)) {
+    refuse(
+      "x" = "PSU {.val {head(seen$psu_id[moved], 5)}} {?is/are} in a different stratum than the register states."
+    )
+  }
+  off <- seen$N != register$N[at]
+  if (any(off)) {
+    refuse(
+      "x" = "The MOS of PSU {.val {head(seen$psu_id[off], 5)}} does not equal the register's {.code N}.",
+      "i" = "The bridge requires {.arg mos} on the register's own scale, exactly."
+    )
+  }
+  invisible(NULL)
 }
 
 #' Variance components from an executed sample
@@ -432,8 +952,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
 
   # Force dots here so a positional outcome gets a contract error, not lookup.
   outcome_label <- if (length(quos) >= 1) as_label(quos[[1]]) else ""
-  # Captured here: inside the handler, caller_env() is the handler frame and
-  # the error would be reported against `value[[3L]](cond)`.
+  # Capture the caller before entering the handler frame.
   vc_frame <- environment()
   dots <- tryCatch(
     list(...),
@@ -475,9 +994,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
   stages_executed <- get_stages_executed(x)
   k1 <- stages_executed[1]
 
-  # Decomposition levels: every executed clustered stage contributes
-  # its (ancestor-qualified) cluster key. The sample rows are the
-  # elements below them.
+  # Use ancestor-qualified clusters as decomposition levels.
   clustered <- stages_executed[vapply(
     stages_executed,
     function(k) !is_null(design$stages[[k]]$clusters),
@@ -559,9 +1076,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
     )
   }
 
-  # Within-PSU weights: the product of the per-stage weights below
-  # stage 1. Whole-take rows below a single executed clustered stage
-  # are self-weighting within their cluster.
+  # Within-PSU weights multiply stages below stage 1.
   later <- stages_executed[-1]
   w_within <- if (length(later) == 0) {
     rep(1, nrow(x))

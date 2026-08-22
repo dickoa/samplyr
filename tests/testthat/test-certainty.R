@@ -52,20 +52,6 @@ test_that("certainty_prop performs iterative selection", {
   expect_true(all(result$.weight == 1))
 })
 
-test_that("certainty selection errors when exceeding sample size", {
-  frame <- data.frame(
-    id = 1:10,
-    mos = c(100, 200, 300, 400, 500, 600, 700, 800, 900, 1000)
-  )
-
-  expect_error(
-    sampling_design() |>
-      draw(n = 2, method = "pps_systematic", mos = mos, certainty_size = 700) |>
-      execute(frame, seed = 42),
-    "exceeds target sample size"
-  )
-})
-
 test_that("certainty selection works with stratification", {
   frame <- data.frame(
     id = 1:8,

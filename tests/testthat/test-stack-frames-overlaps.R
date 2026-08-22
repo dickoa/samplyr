@@ -36,9 +36,9 @@ overlap_component <- function(col, n, seed, population = overlap_population()) {
 }
 
 overlap_fixture <- function(population = overlap_population(),
-                            overlaps = overlap_probabilities(
-                              a = "pi_a", b = "pi_b"
-                            )) {
+                            overlaps = declared_overlaps(
+                              a = "pi_a", b = "pi_b",
+    scale = "probabilities")) {
   stack_frames(
     a = overlap_component("in_a", 10, 1, population),
     b = overlap_component("in_b", 20, 2, population),
@@ -71,7 +71,7 @@ test_that("a stack without overlaps records none", {
 test_that("both scales normalize to the same probabilities", {
   probabilities <- overlap_fixture()
   weights <- overlap_fixture(
-    overlaps = overlap_weights(a = "w_a", b = "w_b")
+    overlaps = declared_overlaps(a = "w_a", b = "w_b", scale = "weights")
   )
 
   for (nm in c("a", "b")) {
@@ -133,7 +133,7 @@ test_that("the two declared scales give the same estimate", {
   skip_if_not_installed("survey")
   probabilities <- overlap_fixture()
   weights <- overlap_fixture(
-    overlaps = overlap_weights(a = "w_a", b = "w_b")
+    overlaps = declared_overlaps(a = "w_a", b = "w_b", scale = "weights")
   )
 
   expect_equal(
@@ -214,7 +214,9 @@ test_that("the weight form survives the case survey's inference gets wrong", {
       execute(population, seed = 2),
     membership = c(a = "in_a", b = "in_b"),
     key = id,
-    overlaps = overlap_probabilities(a = "pi_a", b = "pi_b")
+    overlaps = declared_overlaps(
+      a = "pi_a", b = "pi_b", scale = "probabilities"
+    )
   )
 
   supplied <- multiframe_overlap_weights(frames)
@@ -253,7 +255,9 @@ test_that("three frames take the expected estimator on the replicate route", {
     c = overlap_component("in_c", 12, 3, population),
     membership = c(a = "in_a", b = "in_b", c = "in_c"),
     key = id,
-    overlaps = overlap_probabilities(a = "pi_a", b = "pi_b", c = "pi_c")
+    overlaps = declared_overlaps(
+      a = "pi_a", b = "pi_b", c = "pi_c", scale = "probabilities"
+    )
   )
 
   combined <- as_svrepdesign(
@@ -291,11 +295,17 @@ test_that("a declared scale is not checked against the values", {
   # Probabilities passed off as weights fail the range check rather than being
   # quietly reinterpreted, which is the whole point of declaring the scale.
   expect_error(
-    overlap_fixture(overlaps = overlap_weights(a = "pi_a", b = "pi_b")),
+    overlap_fixture(
+      overlaps = declared_overlaps(a = "pi_a", b = "pi_b", scale = "weights")
+    ),
     class = "samplyr_error_stack_frames_overlaps"
   )
   expect_error(
-    overlap_fixture(overlaps = overlap_probabilities(a = "w_a", b = "w_b")),
+    overlap_fixture(
+      overlaps = declared_overlaps(
+        a = "w_a", b = "w_b", scale = "probabilities"
+      )
+    ),
     class = "samplyr_error_stack_frames_overlaps"
   )
 })
@@ -381,7 +391,9 @@ test_that("every component must carry every overlap column", {
       b = partial,
       membership = c(a = "in_a", b = "in_b"),
       key = id,
-      overlaps = overlap_probabilities(a = "pi_a", b = "pi_b")
+      overlaps = declared_overlaps(
+      a = "pi_a", b = "pi_b", scale = "probabilities"
+    )
     ),
     class = "samplyr_error_stack_frames_overlaps"
   )
@@ -405,13 +417,16 @@ test_that("the marker, its names and its columns are all checked", {
                class = "samplyr_error_stack_frames_overlaps")
   expect_error(stack(c(a = "pi_a", b = "pi_b")),
                class = "samplyr_error_stack_frames_overlaps")
-  expect_error(stack(overlap_probabilities(a = "pi_a")),
+  expect_error(stack(declared_overlaps(a = "pi_a", scale = "probabilities")),
                class = "samplyr_error_stack_frames_overlaps")
-  expect_error(stack(overlap_probabilities(a = "pi_a", c = "pi_b")),
+  expect_error(
+    stack(declared_overlaps(a = "pi_a", c = "pi_b", scale = "probabilities")),
                class = "samplyr_error_stack_frames_overlaps")
-  expect_error(stack(overlap_probabilities(a = "pi_a", b = "pi_a")),
+  expect_error(
+    stack(declared_overlaps(a = "pi_a", b = "pi_a", scale = "probabilities")),
                class = "samplyr_error_stack_frames_overlaps")
-  expect_error(stack(overlap_probabilities("pi_a", "pi_b")),
+  expect_error(
+    stack(declared_overlaps("pi_a", "pi_b", scale = "probabilities")),
                class = "samplyr_error_stack_frames_overlaps")
 })
 
@@ -419,11 +434,13 @@ test_that("a spec is a value, so it can be built before the call", {
   # Unlike `complete_links()` on the other feature, which names a column and
   # has to be evaluated in a data mask, this one carries strings and a scale.
   # Making it a value keeps it composable, as `membership` beside it is.
-  spec <- overlap_probabilities(a = "pi_a", b = "pi_b")
+  spec <- declared_overlaps(a = "pi_a", b = "pi_b", scale = "probabilities")
   expect_s3_class(spec, "samplyr_overlap_spec")
   expect_identical(spec$scale, "probabilities")
   expect_identical(spec$cols, c(a = "pi_a", b = "pi_b"))
-  expect_identical(overlap_weights(a = "w_a", b = "w_b")$scale, "weights")
+  expect_identical(
+    declared_overlaps(a = "w_a", b = "w_b", scale = "weights")$scale, "weights"
+  )
 
   frames <- overlap_fixture(overlaps = spec)
   expect_identical(attr(frames, "overlaps")$cols, c(a = "pi_a", b = "pi_b"))
@@ -433,7 +450,9 @@ test_that("a spec is a value, so it can be built before the call", {
 
 test_that("a spec is stored in frame order, not the order it was written", {
   frames <- overlap_fixture(
-    overlaps = overlap_probabilities(b = "pi_b", a = "pi_a")
+    overlaps = declared_overlaps(
+      b = "pi_b", a = "pi_a", scale = "probabilities"
+    )
   )
   expect_identical(attr(frames, "overlaps")$cols, c(a = "pi_a", b = "pi_b"))
 })
@@ -445,7 +464,9 @@ test_that("a misspelled overlaps argument is named", {
       b = overlap_component("in_b", 20, 2),
       membership = c(a = "in_a", b = "in_b"),
       key = id,
-      overlap = overlap_probabilities(a = "pi_a", b = "pi_b")
+      overlap = declared_overlaps(
+        a = "pi_a", b = "pi_b", scale = "probabilities"
+      )
     ),
     regexp = "Did you mean"
   )
@@ -538,9 +559,9 @@ test_that("a shared weight cannot stand as an inclusion probability", {
       reached = shared, list = listed,
       membership = c(reached = "in_reached", list = "in_list"),
       key = person_id,
-      overlaps = overlap_probabilities(
-        reached = "pi_reached", list = "pi_list"
-      )
+      overlaps = declared_overlaps(
+        reached = "pi_reached", list = "pi_list",
+    scale = "probabilities")
     ),
     class = "samplyr_error_stack_frames_overlaps"
   )
@@ -567,4 +588,57 @@ test_that("a shared weight cannot stand as an inclusion probability", {
     ),
     "svyrep.design"
   )
+})
+
+## One declaring constructor, and the scale it makes you state
+
+test_that("declared_overlaps() requires the scale and matches it exactly", {
+  # `overlap_probabilities()` and `overlap_weights()` said the scale in the
+  # verb. One constructor says it in an argument, which has to be as hard to
+  # omit as the verb was.
+  expect_error(
+    declared_overlaps(a = "pi_a", b = "pi_b"),
+    class = "samplyr_error_stack_frames_overlaps"
+  )
+  expect_error(
+    declared_overlaps(a = "pi_a", b = "pi_b"),
+    regexp = "never inferred from the values"
+  )
+  expect_error(
+    declared_overlaps(a = "pi_a", b = "pi_b", scale = "chances"),
+    class = "samplyr_error_stack_frames_overlaps"
+  )
+  expect_error(
+    declared_overlaps(a = "pi_a", b = "pi_b", scale = c("weights", "weights")),
+    class = "samplyr_error_stack_frames_overlaps"
+  )
+
+  # `scale` follows the dots, so it is matched by exact name and never
+  # mistaken for a frame called `scal`.
+  expect_error(
+    declared_overlaps(a = "pi_a", scal = "probabilities"),
+    class = "samplyr_error_stack_frames_overlaps"
+  )
+
+  both <- lapply(c("probabilities", "weights"), function(s) {
+    declared_overlaps(a = "x", b = "y", scale = s)
+  })
+  expect_identical(both[[1]]$scale, "probabilities")
+  expect_identical(both[[2]]$scale, "weights")
+  expect_identical(both[[1]]$cols, both[[2]]$cols)
+  for (spec in both) expect_s3_class(spec, "samplyr_overlap_spec")
+})
+
+test_that("the two removed constructors are gone", {
+  for (name in c("overlap_probabilities", "overlap_weights")) {
+    expect_false(name %in% getNamespaceExports("samplyr"))
+  }
+  # And the message that lists the accepted forms names what exists.
+  bad <- tryCatch(
+    overlap_fixture(overlaps = list(scale = "probabilities", cols = c(a = "pi_a"))),
+    error = identity
+  )
+  expect_match(conditionMessage(bad), "declared_overlaps()", fixed = TRUE)
+  expect_match(conditionMessage(bad), "exante_overlaps()", fixed = TRUE)
+  expect_no_match(conditionMessage(bad), "overlap_probabilities", fixed = TRUE)
 })

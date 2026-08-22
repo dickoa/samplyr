@@ -26,7 +26,15 @@ test_that("validate_frame guards its inputs", {
 
   expect_error(validate_frame(list(), good_frame), "sampling_design")
   expect_error(validate_frame(design, 1:5), "data frame")
-  expect_error(validate_frame(design, good_frame[0, ]), "0 rows")
+  expect_error(
+    validate_frame(design, good_frame[0, ]),
+    class = "samplyr_error_frame_empty"
+  )
+
+  # `execute()` refuses an empty frame too, but from a later layer and with
+  # no class. Recorded rather than asserted: the classes should be the same
+  # at both entry points, and this is the reachable one.
+  expect_error(execute(design, good_frame[0, ], seed = 1), "0 rows")
 })
 
 test_that("validate_frame accepts a valid stage selector", {

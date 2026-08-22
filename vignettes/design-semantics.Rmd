@@ -32,9 +32,9 @@ The following table summarizes what `samplyr` assumes and what the user must ver
 | Strata are exhaustive and disjoint         | `stratify_by()`            | Partitions the frame by unique combinations of strata variables                                      | Strata variables define a valid partition                                                             |
 | Independent sampling across strata         | `stratify_by() |> draw()` | Each stratum sampled with a separate call to `sondage`                                                 | Correct by construction when strata are disjoint                                                      |
 | Cluster variables constant within clusters | `cluster_by()`             | Validated at execution: MOS and strata variables may not vary within a cluster                       | Cluster ID uniquely identifies the group                                                              |
-| Conditional independence across stages     | `add_stage()`              | Stage \(k\) sampling depends only on the set of units selected at stage \(k - 1\)                    | Standard multi-stage assumption that fails if a later frame depends on earlier randomization |
-| FPC stored as population count             | `execute()`                | `.fpc_k` contains \(N_h\) or a cluster count and is converted to \(\pi_i\) at survey export for PPS stages | Frame size at execution is treated as the population, one of several definitions when a population changes between waves |
-| Weights are \(1/\pi_i\), unadjusted        | All methods                | No calibration, trimming, or non-response adjustment                                                 | Downstream adjustment is the analyst's responsibility                                                 |
+| Conditional independence across stages | `add_stage()` | Stage \(k\) sampling depends only on the units selected at stage \(k - 1\) and its declared inputs | Later frame construction and selection depend on prior randomization only through selected ancestors and recorded design variables |
+| FPC records method-specific stage information | `execute()` | Stores a population or cluster count for WOR and `Inf` for WR or PMR. PPS WOR is converted to \(\pi_i\) at survey export | Frame size at execution is treated as the population, one of several definitions when a population changes between waves |
+| Weights are inverse selection chances, unadjusted | All methods | Uses inclusion probabilities for WOR and expected hit counts for WR or PMR | Downstream adjustment is the analyst's responsibility |
 | PRN values are iid \(\text{U}(0, 1)\)      | `draw(prn = ...)`          | Validated: strictly in \((0, 1)\), no NAs, numeric                                                   | Independence and uniformity of the PRN column                                                         |
 
 ## Notation
@@ -42,18 +42,21 @@ The following table summarizes what `samplyr` assumes and what the user must ver
 Throughout this vignette:
 
 - \(U = \{1, \ldots, N\}\): finite population (the frame).
-- \(S \subseteq U\): selected sample.
-- \(\pi_i = \Pr(i \in S)\): first-order inclusion probability.
+- \(S \subseteq U\): selected population units for a WOR design.
+- \(K_i\): number of realized hits for unit \(i\) in a WR or PMR design.
+- \(q_i\): stage chance, equal to \(\pi_i = \Pr(i \in S)\) for WOR and
+  \(E(K_i)\) for WR or PMR.
 - \(\pi_{kl} = \Pr(k \in S \text{ and } l \in S)\): joint (second-order)
-  inclusion probability.
-- \(w_i = 1 / \pi_i\): design weight (sampling weight before any adjustment).
+  inclusion probability for WOR.
+- \(E(K_k K_l)\): joint expected hits for WR or PMR.
+- \(w_i = 1 / q_i\): design weight per selected unit or realized occurrence.
 - \(N_h\): population size of stratum \(h\) (\(h = 1, \ldots, H\)).
 - \(n_h\): sample size drawn from stratum \(h\).
 - \(K\): number of sampling stages.
 - \(\pi_i^{(k \mid S^{(k-1)})}\): conditional inclusion probability of unit
   \(i\) at stage \(k\), given the set \(S^{(k-1)}\) selected at stage \(k - 1\).
 
-`execute()` produces **design weights only**. Calibration, trimming, and non-response adjustment are out of scope and belong in the estimation layer (`survey`, `srvyr`, or similar).
+`execute()` produces **design weights only**. Calibration, trimming, and nonresponse adjustment are out of scope and belong in the estimation layer (`survey`, `srvyr`, or similar).
 
 One declared transformation departs from that, and says so in the object it returns: `share_weights()` produces **estimation weights** for a population other than the one that was sampled. Its semantics, and the contract that keeps the two kinds of weight apart, are the subject of a section below.
 
@@ -158,9 +161,9 @@ five methods satisfy it exactly.
 
 **With-replacement and PMR** (`srswr`, `pps_multinomial`, `pps_chromy`):
 
-The quantity of interest is the expected number of hits \(E(n_i) = n \, \text{mos}_i / \sum \text{mos}\). Each draw is an independent selection. If unit \(i\) is selected \(k\) times, `samplyr` creates \(k\) rows with a `.draw` column indexing each hit. The weight per draw is \(w_i = 1 / p_i\), where \(p_i\) is the single-draw selection probability. No finite population correction applies (FPC = \(\infty\)).
+The quantity of interest is the expected number of hits \(E(n_i) = n p_i = n \, \text{mos}_i / \sum \text{mos}\). If unit \(i\) is selected \(k\) times, `samplyr` creates \(k\) rows with a `.draw` column indexing each occurrence. The weight on every output row is \(w_i = 1 / E(n_i) = 1 / (n p_i)\). For WR the draws are independent and this is the per-hit Hansen--Hurwitz estimator. No finite population correction applies (FPC = \(\infty\)).
 
-Chromy's sequential PPS (`pps_chromy`) is classified as *probability minimum replacement* (PMR): each unit receives \(\lfloor E(n_i) \rfloor\) or \(\lceil E(n_i) \rceil\) hits. When all \(E(n_i) < 1\), this reduces to WOR.
+Chromy's sequential PPS (`pps_chromy`) is classified as *probability minimum replacement* (PMR): each unit receives \(\lfloor E(n_i) \rfloor\) or \(\lceil E(n_i) \rceil\) hits. Its occurrences are not independent WR draws. At survey export, samplyr uses the Hansen--Hurwitz approximation documented below. When all \(E(n_i) < 1\), the selection itself reduces to WOR.
 
 **Balanced and spatially balanced sampling** (`cube`, `lpm2`, `scps`):
 
@@ -216,19 +219,27 @@ Note where the seed goes. One seed wraps the whole chain, and the individual cal
 
 ## Weight compounding across stages
 
-**Single-stage.** The design weight is:
+**Single-stage.** Let $q_i$ be the stage selection quantity. For WOR,
+$q_i = \pi_i$. For WR or PMR, $q_i = E(K_i)$, the expected hit count.
+The design weight is:
 
 $$
-w_i = \frac{1}{\pi_i}.
+w_i = \frac{1}{q_i}.
 $$
 
-**Multi-stage.** Let \(\pi_i^{(k)}\) denote the conditional inclusion probability of unit \(i\) at stage \(k\), given the set of clusters selected at all prior stages. The compound weight is:
+**Multi-stage.** Let \(q_i^{(k)}\) denote the quantity resolved within the
+clusters selected at prior stages. The compound weight is:
 
 $$
-w_i = \prod_{k=1}^{K} \frac{1}{\pi_i^{(k)}} = \prod_{k=1}^{K} w_i^{(k)}.
+w_i = \prod_{k=1}^{K} \frac{1}{q_i^{(k)}} = \prod_{k=1}^{K} w_i^{(k)}.
 $$
 
-`samplyr` computes this by joining each stage's weight to the previous stage's weight on the shared cluster variables and multiplying. The per-stage weights are preserved as `.weight_1`, `.weight_2`, etc. The `.weight` column always equals their product.
+For an all-WOR exact design this is the inverse product of conditional
+inclusion probabilities. With a WR or PMR stage, each output row is a realized
+occurrence and that stage contributes an inverse expected-hit factor.
+`samplyr` joins each stage's weight to its parent by the shared cluster
+variables and multiplies. The per-stage weights remain in `.weight_1`,
+`.weight_2`, and so on. The `.weight` column always equals their product.
 
 ```{r weight-compound}
 two_stage <- sampling_design() |>
@@ -432,7 +443,13 @@ $$
 and `z` depends on whatever is being analyzed, so it cannot be formed in
 advance. Expanding the contributions lets `survey` form it inside each
 sampling unit instead. That is exact for any link structure, with no condition
-on how many source units reach a target.
+on how many source units reach a target, provided every selected source unit
+has at least one contribution. A selected source unit with no link has derived
+value zero but still defines a sampling unit for the variance calculation.
+Because a contribution-row design cannot retain that unit without inventing a
+target row, `as_svydesign()` refuses this case. `as_svrepdesign()` remains
+supported because it replicates the complete source design before applying the
+sharing operator.
 
 An unequal-probability or random-size source design is refused there. Both
 take their variance from a structure indexed by the rows of the source sample,
@@ -452,7 +469,7 @@ What a stack records is which frames each sampled unit belongs to. What it does
 **not** do is composite the weights, because which compositing factor is
 appropriate depends on the estimand and on the design effects, so it is an
 estimation-time choice. `theta = NULL` at export is the multiplicity
-estimator, giving every frame reaching a unit an equal share; an explicit
+estimator, giving every frame reaching a unit an equal share. An explicit
 `theta` is Hartley's constant factor [@hartley1962] and belongs to the first
 frame of the stack.
 
@@ -489,6 +506,12 @@ returns depends on the method:
   approximation that does not recreate the constraints or the spatial
   algorithm.
 
+Systematic PPS commonly produces zero pairwise inclusion probabilities. Its
+matrix can be exact while a conventional unbiased sample variance remains
+unavailable for pairs that can never be sampled together. Passing that matrix
+through `survey::ppsmat()` is therefore not a guarantee of stable variance
+estimation.
+
 Exact recursive formulas exist for generalized Brewer [@brewer2002, ch. 9] but
 are \(O(N^3)\) and impractical for large frames.
 
@@ -497,7 +520,7 @@ joint matrix is computed on the stochastic part and reassembled with
 \(\pi_{kl} = 1\) for certainty-certainty pairs and \(\pi_{kl} = \pi_l\) for
 certainty-stochastic pairs.
 
-To use the joint matrix for single-stage variance estimation, pass it via
+To use a suitable joint matrix for single-stage variance estimation, pass it via
 `pps = survey::ppsmat(joint_matrix)`. See `?joint_expectation` for the full
 method-by-method breakdown.
 
@@ -514,7 +537,7 @@ For WR methods (`srswr`, `pps_multinomial`), each draw produces one row with `.d
 
 ### 4. Chromy / PMR semantics
 
-`pps_chromy` is treated identically to WR at export (no FPC, no `pps` argument). The exact Sen--Yates--Grundy formula for PMR requires \(E(n_i) E(n_j) - E(n_i n_j)\) as pairwise weights [@chromy2009, eq. 5], but `survey::ppsmat()` reads \(\pi_i\) from the diagonal, which for PMR contains \(E(n_i^2)\), not \(E(n_i)\). The Hansen--Hurwitz approximation is conservative and more stable [@chauvet2019].
+`pps_chromy` is treated identically to WR at export (no FPC, no `pps` argument). The exact Sen--Yates--Grundy formula for PMR requires \(E(n_i) E(n_j) - E(n_i n_j)\) as pairwise weights [@chromy2009, eq. 5], but `survey::ppsmat()` reads \(\pi_i\) from the diagonal, which for PMR contains \(E(n_i^2)\), not \(E(n_i)\). The Hansen--Hurwitz route is an explicit approximation. It can be strongly conservative when frame order supplies implicit stratification, but it remains more stable than the tested generalized estimator based on Monte Carlo expected hits. That candidate frequently returned negative variance estimates and is not exposed as a production path. Chauvet [-@chauvet2019] gives exact pairwise results for the related randomized without-replacement case.
 
 ### 5. Panel assignments
 

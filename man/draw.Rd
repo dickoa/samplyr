@@ -40,6 +40,21 @@ handle dominant units. Can be:
 \item A scalar: applies per stratum (if no \code{alloc}) or as total (if \code{alloc} specified)
 \item A named vector: stratum-specific sizes (for single stratification variable)
 \item A data frame: stratum-specific sizes with stratification columns + \code{n} column
+\item A svyplan size or plan object: consumed through svyplan's documented
+coercions, stage-aware for cluster and stratified two-stage plans.
+See \code{vignette("survey-planning")} for the handoff by plan type.
+\item A certainty-aware \code{svyplan::n_alloc()} plan (solved with a \code{psu}
+register carrying \code{psu_id}): accepted at a clustered, stratified
+stage 1, and again at stage 2 for the per-PSU takes. Stage 1 selects
+every PSU the plan classified certainty and draws exactly its
+remainder per stratum; the method must be \code{pps_systematic},
+\code{pps_brewer}, \code{pps_cps}, or \code{pps_sampford}, and \code{mos} must equal the
+register's \code{N}. Stage 2 selects by \code{srswor} or \code{systematic}, and
+stratifying there requires an \code{alloc} method to split each take.
+Arguments the plan already owns (\code{frac}, \code{certainty_size},
+\code{certainty_prop}, \code{min_n}, \code{max_n}, and at stage 1 \code{alloc}) are
+refused alongside it, and \code{execute()} reconciles the frame against
+the register before anything is drawn.
 }}
 
 \item{frac}{Sampling fraction. Can be:

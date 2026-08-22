@@ -24,10 +24,13 @@ replicates rows with replacement.}
 
 \item{overlaps}{Optional. The probability, or the weight, each sampled unit
 \emph{would have had} in every frame, including the frames it was not selected
-from. Declare the scale with \code{\link[=overlap_probabilities]{overlap_probabilities()}} or
-\code{\link[=overlap_weights]{overlap_weights()}}; it is never inferred from the values. Required by
-\code{estimator = "expected"} at export and unused by the default estimator,
-which reads membership alone.}
+from. Name the columns holding them with \code{\link[=declared_overlaps]{declared_overlaps()}}, which
+states the scale, since it is never inferred from the values. Or name the
+registers with \code{\link[=exante_overlaps]{exante_overlaps()}} and let samplyr resolve the chances
+from each component's own design, which is exact and is checked against
+what the execution produced. Required by \code{estimator = "expected"} at
+export and unused by the default estimator, which reads membership
+alone.}
 }
 \value{
 An object of class \code{frame_stack}: a named list of the component
@@ -125,10 +128,9 @@ Other multiple frames:
 \code{\link[=as.data.frame.frame_stack]{as.data.frame.frame_stack()}},
 \code{\link[=as_svrepdesign.frame_stack]{as_svrepdesign.frame_stack()}},
 \code{\link[=as_svydesign.frame_stack]{as_svydesign.frame_stack()}},
+\code{\link[=declared_overlaps]{declared_overlaps()}},
 \code{\link[=exante_overlaps]{exante_overlaps()}},
 \code{\link[=exante_probabilities]{exante_probabilities()}},
-\code{\link[=overlap_probabilities]{overlap_probabilities()}},
-\code{\link[=overlap_weights]{overlap_weights()}},
 \code{\link[=summary.frame_stack]{summary.frame_stack()}}
 }
 \concept{multiple frames}

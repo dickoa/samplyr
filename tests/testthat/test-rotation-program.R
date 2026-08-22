@@ -205,7 +205,7 @@ test_that("entry waves are declared for every cohort and within range", {
 
 ## Schedule validation
 
-test_that("schedule defects are refused by kind", {
+test_that("rotation program schedules are refused by defect kind", {
   startup <- program_startup()
   one <- function(schedule, entry = c(startup = 1)) {
     rotation_program(
@@ -373,8 +373,24 @@ test_that("the wave route refuses other execution input on a program", {
     class = "samplyr_error_wave_extra_arguments"
   )
   expect_error(
+    execute(program, wave = 2, frame_digest = "full"),
+    class = "samplyr_error_wave_extra_arguments"
+  )
+  expect_error(
     execute(program, wave = 9),
     class = "samplyr_error_wave_undeclared"
+  )
+
+  # The refusal is one helper now. The program copy used to be a second
+  # writing of it, with the same class, divergent wording, and no bullet
+  # saying where the input already lives.
+  expect_error(
+    execute(program, wave = 2, seed = 1),
+    regexp = "Every input a wave needs is stored with the program"
+  )
+  expect_error(
+    execute(program, wave = 2, seed = 1),
+    regexp = "components the program already assigned"
   )
 })
 
@@ -411,4 +427,68 @@ test_that("programs and waves print", {
   expect_output(print(program), "startup")
   expect_output(print(execute(program, wave = 2)), "Rotation Wave 2")
   expect_error(print(program, nope = 1), class = "rlib_error_dots_nonempty")
+})
+
+## Issue counts and the plan figure they are compared against
+
+test_that("a whole cohort is counted in the units the plan means", {
+  # svyplan's `operational_issue` is `panels * panel_issue`: units issued to
+  # the field, not the rows they expand to. A cohort with an assignment
+  # record was counted in assignment units and a cohort drawn whole in rows,
+  # and both were compared against that one figure.
+  population <- data.frame(
+    psu = rep(sprintf("p%02d", 1:40), each = 10),
+    hh = sprintf("h%04d", 1:400),
+    stringsAsFactors = FALSE
+  )
+  whole <- sampling_design() |>
+    cluster_by(psu) |>
+    draw(n = 8) |>
+    execute(population, seed = 5)
+
+  expect_identical(nrow(whole), 80L)
+  expect_identical(attr(whole, "metadata")$n_selected, 80L)
+  expect_identical(cohort_issue_count(whole), 8)
+
+  # The same design with panels reaches the record branch, and the two
+  # branches have to agree about what a unit is.
+  panelled <- sampling_design() |>
+    cluster_by(psu) |>
+    draw(n = 8) |>
+    execute(
+      population,
+      seed = 5,
+      panels = data.frame(
+        panel = rep(1:2, times = 2), wave = rep(1:2, each = 2),
+        active = c(TRUE, FALSE, FALSE, TRUE)
+      )
+    )
+  expect_identical(
+    attr(panelled, "metadata")$panel_assignment$unit, "cluster"
+  )
+  expect_identical(cohort_issue_count(panelled), cohort_issue_count(whole))
+
+  # Unclustered, where a row is a unit and the old branch was right.
+  flat <- sampling_design() |> draw(n = 12) |> execute(data.frame(id = 1:200), seed = 2)
+  expect_identical(cohort_issue_count(flat), 12)
+})
+
+test_that("the rotation-wave export names a route that works", {
+  program <- two_cohort_program()
+  wave <- execute(program, wave = 2)
+
+  expect_error(
+    as_svydesign(wave),
+    class = "samplyr_error_rotation_wave_not_combinable"
+  )
+  # The message used to end "once the activation phase is supported". It is
+  # supported: the component route it recommends returns a two-phase design.
+  expect_error(as_svydesign(wave), regexp = "second phase")
+  expect_no_match(
+    conditionMessage(tryCatch(as_svydesign(wave), error = identity)),
+    "once the activation phase is supported",
+    fixed = TRUE
+  )
+  skip_if_not_installed("survey")
+  expect_s3_class(as_svydesign(wave[["startup"]]), "twophase2")
 })

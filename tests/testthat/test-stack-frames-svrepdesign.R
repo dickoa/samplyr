@@ -359,7 +359,7 @@ test_that("an explicit theta above two frames is refused", {
   expect_error(as_svrepdesign(frames, theta = 0.4), regexp = "per domain")
 })
 
-test_that("theta must be a single number in the unit interval", {
+test_that("svrepdesign theta is scalar and in the unit interval", {
   skip_if_not_installed("survey")
   frames <- svrep_fixture()
   for (bad in list(2, -0.1, c(0.3, 0.7), NA_real_, "0.5")) {

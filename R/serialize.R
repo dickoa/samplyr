@@ -118,65 +118,24 @@ as.list.sampling_design <- function(x, ...) {
 
 ## Design files
 
-# On-disk format: a versioned JSON envelope.
-#
-# {
-#   "format": "samplyr/design",
-#   "format_version": 1,
-#   "schema": { "method_vocabulary": {...} },
-#   "design": { "title": ..., "stages": [...] },
-#   "frame": { "required_variables": [...], "fingerprint": {...} },
-#   "execution": { "seed": ..., "stages_executed": [...], ... },
-#   "tools": { "samplyr": {...} }
-# }
-#
-# One frame records "frame.fingerprint". Separately supplied stage frames
-# record "frame.fingerprints", an array in the order they were given.
-# "execution.frames" records how those frames were mapped to stages: the mode,
-# how many were supplied, their optional diagnostic labels, and the frame
-# position each executed stage drew from. A receipt without it came from one
-# frame, which is how files written before the field are read.
-#
-# Per-stratum values (n, frac, min_n, max_n, certainty_*, variance, cost,
-# cv, importance) use a natural, unambiguous JSON encoding:
-#   scalar        -> JSON number
-#   named vector  -> JSON object
-#   data frame    -> JSON array of row objects
-#
-# Control expressions use a declarative JSON grammar. Each term records an
-# ordering type (ascending, descending, or serpentine) and its variables, so
-# the file contains no R source code and reading it never parses or executes
-# arbitrary code. The portable design and frame metadata are separate from
-# namespaced samplyr/R metadata needed for exact reconstruction.
+# The disk format is a versioned JSON envelope.
+# Scalar, named vector, and data frame values become JSON values, objects,
+# and row arrays. Control terms use declarative JSON and never contain R code.
+# One frame uses `frame.fingerprint`. Multiple frames use ordered
+# `frame.fingerprints` plus `execution.frames` for stage mapping.
 
 design_format_id <- "samplyr/design"
-# The highest version this samplyr reads. Files are written at the lowest
-# version that carries their content without being misread: a reader that does
-# not know the frame-mode fields would replay a multi-register receipt against
-# one frame and get a different sample, so those files declare version 2, while
-# everything else stays readable by a version 1 reader.
-design_format_version <- 2L
+# Write the lowest version that preserves the file's meaning.
+design_format_version <- 3L
 method_vocabulary_id <- "samplyr/common-sampling-method"
 method_vocabulary_version <- 1L
 
-# A frame collection gets its own format identifier rather than an optional
-# block inside a design file. A reader that does not know the collection would
-# otherwise take the first component for the whole thing and replay one frame's
-# sample as if it were the estimate, which is the failure the version rule
-# exists to prevent. An unknown identifier is refused outright instead.
-#
-# Each component entry is a complete samplyr/design document plus the two
-# fields that make it a component: its `name` and the `membership` column
-# saying which frames its units belong to. So the component encoder and decoder
-# are the design ones, unchanged.
+# Collections use a distinct format to prevent single-design replay.
+# Each component adds its name and membership column to a full design document.
 frame_stack_format_id <- "samplyr/frame-stack"
 frame_stack_format_version <- 1L
 
-# A shared-weight sample is recorded as the source selection plus the
-# transformation's arguments, and nothing else. The links and the target
-# register are supplied again at replay, the way a frame is, so no unit-level
-# data and no linkage is ever written. What makes that possible is that the
-# transformation record already carries its own call declaratively.
+# Shared-weight files store the source and declarative transformation only.
 shared_sample_format_id <- "samplyr/shared-sample"
 shared_sample_format_version <- 1L
 
@@ -192,6 +151,11 @@ shared_sample_format_version <- 1L
 #' stores the complete design specification (stages, stratification,
 #' clustering, draw settings, including per-stratum vectors and data frames),
 #' never the frame data itself.
+#'
+#' A file written from an executed sample can also contain its frame digest.
+#' That digest retains selected-unit identifiers and may contain per-unit chance
+#' metadata. Treat an execution receipt as potentially confidential even
+#' though it does not contain the ordinary frame columns.
 #'
 #' @details
 #' ## Lifecycle
@@ -271,8 +235,8 @@ shared_sample_format_version <- 1L
 #' its own format. Each component entry is a complete `samplyr/design`
 #' document plus the two fields that make it a component: its name, and the
 #' column saying which frames its units belong to. The collection's key and
-#' any overlaps declared with [overlap_probabilities()] or
-#' [overlap_weights()] are recorded alongside. Give `frame` as a list keyed by
+#' any overlaps declared with [declared_overlaps()] are recorded
+#' alongside. Give `frame` as a list keyed by
 #' component name, since the components are separate selections with separate
 #' registers.
 #'
@@ -324,7 +288,9 @@ shared_sample_format_version <- 1L
 #'   it was drawn from one frame and carry fingerprints for three. When
 #'   supplied, a fingerprint (name,
 #'   dimensions, column types, content hash) is stored so the frame can
-#'   be verified later. The frame data is never written. The content
+#'   be verified later. The ordinary frame columns are never written. An
+#'   executed sample's receipt can still contain selected-unit identifiers
+#'   in its frame digest. The content
 #'   hash covers column names, column values, and row order. It does not
 #'   depend on the class of the data frame (tibble or data frame) or on
 #'   the order of its columns. For a `frame_stack`, a list **named** by
@@ -440,8 +406,7 @@ read_design <- function(file) {
   if (!is_character(file) || length(file) != 1) {
     cli_abort("{.arg file} must be a single file path or JSON string")
   }
-  # jsonlite::fromJSON() downloads URL-shaped strings. Reading a design
-  # must never touch the network, so refuse them before handing off.
+  # Never let design reading fetch URL-shaped input.
   if (!grepl("^[[:space:]]*[{[]", file)) {
     if (grepl("^[A-Za-z][A-Za-z0-9+.-]+://", file)) {
       cli_abort(c(
@@ -552,6 +517,7 @@ read_design <- function(file) {
 #' @param frame The sampling frame the receipt refers to: a data frame
 #'   for a one-frame call, or the ordered list of stage frames for a
 #'   call that supplied one register per stage.
+#' @param ... Must be empty. Arguments after it are matched by exact name.
 #' @param fingerprint How to respond when `frame` differs from the
 #'   fingerprint stored in the design file: `"error"` (default), `"warn"`,
 #'   `"inform"`, or `"ignore"`.
@@ -603,10 +569,12 @@ read_design <- function(file) {
 replay_design <- function(
   x,
   frame,
+  ...,
   fingerprint = c("error", "warn", "inform", "ignore"),
   links = NULL,
   targets = NULL
 ) {
+  check_keyword_args(enquos(...), c("fingerprint", "links", "targets"))
   fingerprint <- match.arg(fingerprint)
 
   if (is_frame_stack(x) || is_frame_stack_design(x)) {
@@ -710,15 +678,13 @@ replay_design <- function(
     stages <- NULL
   }
   reps <- if (!is_null(receipt$reps)) as.integer(receipt$reps) else NULL
-  # Validate the recorded assignment law before decoding replay arguments.
+  # Validate the assignment law before decoding replay arguments.
   record <- prepare_panel_record(receipt$panel_assignment, "A replay")
-  # A scheduled master is replayed with its schedule, not with the panel
-  # count: the block size follows from the schedule, so the count alone
-  # reproduces different labels.
+  # Replay scheduled masters from their full schedule.
   panels <- decode_panel_argument(receipt, record)
-  # The small-pool policy is part of scheduled assignment replay.
+  # Preserve the scheduled small-pool policy.
   small_pool <- decode_small_pool_argument(record, panels)
-  # The assignment stage determines the units that receive panel labels.
+  # The assignment stage identifies panel units.
   panel_stage <- decode_panel_stage_argument(record)
 
   result <- with_replay_rng(
@@ -802,9 +768,7 @@ check_replay_custom_methods <- function(design, call = caller_env()) {
     }
 
     current <- sondage::method_spec(native_name)
-    # Metadata alone cannot tell two functions apart: the fingerprint
-    # covers the registered formals and body, so replay refuses a
-    # different implementation registered under the same name.
+    # Fingerprint registered formals and bodies for replay safety.
     current$implementation <- method_implementation_hash(current)
     recorded <- list(
       type = spec$method_type,
@@ -1001,8 +965,7 @@ check_replay_link_args <- function(links, targets, subject,
   if (length(given) == 0) {
     return(invisible(NULL))
   }
-  # qty() on both bullets. Interpolating a vector sets cli's quantity for the
-  # bullet it appears in and no further, so the second one needs its own.
+  # Each bullet needs its own `qty()` context.
   abort_samplyr(
     c(
       "{cli::qty(length(given))}{.arg {given}} {?is/are} not used when
@@ -1058,8 +1021,7 @@ replay_shared_sample <- function(x, frame, fingerprint, links, targets,
   }
 
   source_design <- if (is_shared_sample_design(x)) {
-    # The class sits in front of sampling_design, so strip it before handing
-    # back to the ordinary replay path.
+    # Strip the collection class before ordinary replay.
     structure(x, class = setdiff(class(x), "shared_sample_design"))
   } else {
     attr(x, "metadata")$weight_share$source_sample
@@ -1113,10 +1075,11 @@ decode_multiplicity_marker <- function(multiplicity) {
       rlang::sym(multiplicity$col),
       total = rlang::sym(multiplicity$total_col)
     ),
+    # Decode the legacy stored mode to `complete_links()`.
     complete_weighted_links = rlang::call2(
       "weighted_links",
       rlang::sym(multiplicity$col),
-      total = rlang::call2("complete_weighted_links")
+      total = rlang::call2("complete_links")
     ),
     cli_abort("Unknown {.arg multiplicity} mode {.val {multiplicity$mode}}")
   )
@@ -1187,8 +1150,7 @@ shared_sample_payload <- function(
     format = shared_sample_format_id,
     format_version = shared_sample_format_version,
     transformation = encode_weight_share_call(record),
-    # The source is a complete design document. It is an ordinary sample, so
-    # it goes through the encoder every other sample goes through.
+    # Encode the source as an ordinary sample.
     source = design_payload(
       record$source_sample,
       frame = frame,
@@ -1233,8 +1195,7 @@ encode_weight_share_call <- function(record) {
   list(
     algorithm = record$algorithm,
     version = record$version,
-    # Join maps are named vectors, written as objects so the pairing survives
-    # rather than depending on two arrays staying in step.
+    # JSON objects preserve named join pairs.
     by = as.list(spec$by),
     to = as.list(spec$to),
     within = list(mode = spec$within$mode, col = spec$within$col),
@@ -1263,19 +1224,13 @@ encode_weight_share_call <- function(record) {
 #' returned as a collection nothing else will accept.
 #' @noRd
 replay_frame_stack <- function(x, frame, fingerprint, call = caller_env()) {
-  # Ahead of the components, so a collection that cannot be rebuilt says so
-  # before it re-executes every one of them.
+  # Validate collection inputs before replaying components.
   check_overlap_spec_portable(attr(x, "overlaps"), "replay_design", call = call)
   names_x <- names(x)
   frames <- frame_stack_component_frames(
     frame, names_x, "replay_design", required = TRUE, call = call
   )
-  # Every component, before any of them runs. Each replay_design() call gates
-  # its own component, so this changes no verdict, only when it arrives:
-  # replaying re-executes a whole selection, and finding the third component
-  # unusable after two have run is work thrown away for a result the user was
-  # never going to get. It also decides which of two live complaints the user
-  # hears first, which is what makes it testable.
+  # Gate every component before any selection runs.
   if (is_frame_stack(x)) {
     for (nm in names_x) {
       check_weight_contract_serialize(x[[nm]], "replay_design", call = call)
@@ -1286,8 +1241,7 @@ replay_frame_stack <- function(x, frame, fingerprint, call = caller_env()) {
   })
   names(components) <- names_x
 
-  # `key` is a bare column, so it goes back in as the symbol it was written
-  # as rather than as the string it is stored as.
+  # Restore a stored bare key as a symbol.
   rlang::inject(stack_frames(
     !!!components,
     membership = attr(x, "membership"),
@@ -1315,10 +1269,7 @@ frame_stack_payload <- function(
   fn_name,
   call = caller_env()
 ) {
-  # Ahead of the components, for the reason the weight-contract gate sits
-  # ahead of encode_execution(): encoding a component warns about its own
-  # receipt, and advice about a receipt inside a file that is not going to be
-  # written is worse than none.
+  # Gate the collection before encoding components.
   check_overlap_spec_portable(attr(x, "overlaps"), fn_name, call = call)
   names_x <- names(x)
   membership <- attr(x, "membership")
@@ -1326,15 +1277,8 @@ frame_stack_payload <- function(
 
   components <- lapply(seq_along(x), function(i) {
     nm <- names_x[[i]]
-    # No weight-contract gate here: design_payload() raises it as its first
-    # act, so a component the format cannot describe is refused with the same
-    # message either way. A collection is writable exactly when its components
-    # are, which is the whole rule.
-    #
-    # The label is the component name. `frame` is keyed by it, and
-    # frame_arg_labels() prefers a list's own names over the expressions its
-    # elements were written as, so any other source would be overridden here
-    # anyway.
+    # `design_payload()` applies the component weight gate.
+    # Use the component name as its frame label.
     component <- design_payload(
       x[[i]],
       frame = frames[[nm]],
@@ -1342,7 +1286,7 @@ frame_stack_payload <- function(
       fn_name = fn_name,
       call = call
     )
-    # Prepended, so a reader sees which component it is before the design.
+    # Put component identity before its design payload.
     c(list(name = nm, membership = unname(membership[[nm]])), component)
   })
 
@@ -1381,8 +1325,7 @@ encode_overlap_spec <- function(overlaps) {
   }
   list(
     scale = overlaps$scale,
-    # Names carry the frame, so the mapping survives a reader that does not
-    # preserve object key order.
+    # Names preserve frame mapping without object order.
     cols = as.list(overlaps$cols)
   )
 }
@@ -1393,7 +1336,7 @@ check_overlap_spec_portable <- function(overlaps, fn_name,
   if (is_null(overlaps)) {
     return(invisible(NULL))
   }
-  if (is_null(overlaps$cols) || !is_null(overlaps$resolved)) {
+  if (is_resolved_overlaps(overlaps)) {
     abort_samplyr(
       c(
         "{.fn {fn_name}} is not defined for a collection whose overlaps come
@@ -1406,8 +1349,8 @@ check_overlap_spec_portable <- function(overlaps, fn_name,
                {.fn exante_overlaps} to {.fn stack_frames} again afterwards.
                The registers it resolves against are the ones the components
                are replayed from.",
-        "i" = "Overlaps from {.fn overlap_probabilities} and
-               {.fn overlap_weights} name columns of the components, and
+        "i" = "Overlaps from {.fn declared_overlaps} name columns of the
+               components, and
                travel with the collection."
       ),
       class = "samplyr_error_serialize_unsupported",
@@ -1428,8 +1371,7 @@ frame_stack_component_frames <- function(frame, names_x, fn_name,
                                          required = FALSE,
                                          call = caller_env()) {
   if (is_null(frame)) {
-    # Optional when saving, where a frame only adds a fingerprint. Required
-    # when replaying, which has nothing to select from without it.
+    # Frames are optional for saving and required for replay.
     if (!required) {
       return(setNames(vector("list", length(names_x)), names_x))
     }
@@ -1485,8 +1427,7 @@ design_payload <- function(
   execution <- NULL
   execution_environment <- NULL
   if (is_tbl_sample(x)) {
-    # Before the receipt is encoded, so a transformed sample never reaches the
-    # warnings below. They describe a receipt this object is not going to get.
+    # Refuse transformed samples before receipt encoding.
     check_weight_contract_serialize(x, fn_name, call = call)
     execution <- encode_execution(x, call = call)
     execution_environment <- attr(x, "metadata")$execution_environment
@@ -1535,10 +1476,7 @@ design_payload <- function(
   validate_sampling_design(design, call = call)
   check_controls_serializable(design, call = call)
 
-  # Fingerprints record which frames the design was written against. A count
-  # the design could not have been executed with, or one contradicting the
-  # receipt of a sample that already was, describes a call that never
-  # happened. Refused here so the contradictory file is never created.
+  # Refuse frame counts inconsistent with the design or receipt.
   if (!is_null(frame)) {
     supplied <- normalize_frame_input(frame, call = call)
     check_serialization_frame_count(
@@ -1585,12 +1523,23 @@ design_payload <- function(
 #' The lowest format version that cannot be misread
 #'
 #' Additive fields alone do not justify a bump: an older reader ignores them
-#' and loses only detail. These two do, because an older reader would take a
-#' multi-register file for a one-frame file and replay it against a single
-#' frame, producing a different sample without saying so.
+#' and loses only detail. These do, because an older reader would misread the
+#' file rather than lose detail. A multi-register file (version 2) would be
+#' taken for a one-frame file and replayed against a single frame. A
+#' certainty-plan file (version 3) would drop the plan's classification and
+#' field the stored per-stratum totals as an ordinary PPS stage, capping by
+#' threshold instead of forcing the plan's certainty set, and refuse the take
+#' stage's absent size - a different design, silently at stage 1.
 #' @noRd
 required_format_version <- function(payload) {
-  if (
+  bridge <- any(vapply(
+    payload$design$stages %||% list(),
+    function(stage) !is_null(stage$draw$certainty_plan),
+    logical(1)
+  ))
+  if (bridge) {
+    3L
+  } else if (
     !is_null(payload$frame[["fingerprints"]]) ||
       identical(payload$execution$frames$mode, "separate_frames")
   ) {
@@ -1602,11 +1551,7 @@ required_format_version <- function(payload) {
 
 ## Sampling method vocabulary
 
-# The common identifiers are intentionally implementation-neutral. DDI's
-# Sampling Procedure vocabulary supplies the broader standard classification.
-# algorithm-level distinctions such as Brewer, Sampford, and cube are retained
-# by the common identifier and properties because DDI does not distinguish all
-# of them.
+# Common identifiers retain distinctions missing from the broader DDI terms.
 
 #' @noRd
 sampling_method_dictionary <- function() {
@@ -1839,11 +1784,33 @@ encode_stage <- function(stage) {
     draw$certainty_size <- encode_value(spec$certainty_size)
     draw$certainty_prop <- encode_value(spec$certainty_prop)
     draw$certainty_overflow <- spec$certainty_overflow
+    if (!is_null(spec$certainty_plan)) {
+      draw$certainty_plan <- encode_certainty_plan(spec$certainty_plan)
+    }
     draw$on_empty <- spec$on_empty
     out$draw <- draw
   }
 
   out
+}
+
+#' Encode a certainty-plan bridge spec (design format 3)
+#'
+#' Plain data throughout: the register as row objects, the per-stratum
+#' vectors as JSON objects. `n_per_psu` may hold NA (a plan whose recorded
+#' frame lacked the take), which the writer turns into null and the decoder
+#' restores.
+#' @noRd
+encode_certainty_plan <- function(spec) {
+  list(
+    role = spec$role,
+    register = spec$register,
+    n_psu_draw = as.list(spec$n_psu_draw),
+    n_per_psu = as.list(spec$n_per_psu),
+    strata_var = spec$strata_var,
+    id_var = spec$id_var,
+    svyplan_version = spec$svyplan_version
+  )
 }
 
 #' Encode a per-stratum value (scalar, named vector, or data frame)
@@ -1931,7 +1898,11 @@ decode_control <- function(control) {
 #' @noRd
 decode_control_term <- function(term, call = caller_env()) {
   if (!is.list(term) || is_null(names(term))) {
-    cli_abort("Design file contains a malformed control term.", call = call)
+    abort_samplyr(
+      "Design file contains a malformed control term.",
+      class = "samplyr_error_design_file_malformed",
+      call = call
+    )
   }
 
   type <- term$type
@@ -1948,12 +1919,13 @@ decode_control_term <- function(term, call = caller_env()) {
       !type %in% c("ascending", "descending", "serpentine") ||
       !valid_variables
   ) {
-    cli_abort(
+    abort_samplyr(
       c(
         "Design file contains an invalid control term.",
         "i" = "Each term needs a supported {.field type} and a non-empty
                {.field variables} array."
       ),
+      class = "samplyr_error_design_file_malformed",
       call = call
     )
   }
@@ -2009,14 +1981,6 @@ control_eval_env <- function() {
 }
 
 ## Frame information
-
-#' @noRd
-frame_arg_label <- function(frame_quo) {
-  if (is_null(quo_get_expr(frame_quo))) {
-    return(NULL)
-  }
-  as_label(frame_quo)
-}
 
 #' The label, or labels, of whatever shape `frame` was given in
 #'
@@ -2079,9 +2043,7 @@ encode_frame_info <- function(design, frame, frame_label) {
   info <- list(required_variables = design_requirements(design))
   if (!is_null(frame)) {
     frames <- as_frame_list(frame)
-    # Cardinality, not the caller's container: one frame written as
-    # `list(frame)` is still one frame, and the plural field would otherwise
-    # force format version 2 on a file any version 1 reader can read.
+    # One frame remains singular even inside `list(frame)`.
     if (length(frames) == 1L) {
       info$fingerprint <- portable_frame_fingerprint(frames[[1]])
     } else {
@@ -2114,8 +2076,7 @@ encode_samplyr_metadata <- function(
     )
   )
   if (!is_null(frame)) {
-    # Same rule as encode_frame_info(): one supplied frame has one
-    # representation, whichever container the caller wrote it in.
+    # One supplied frame has one representation.
     frames <- as_frame_list(frame)
     out$frame <- if (length(frames) == 1L) {
       samplyr_frame_fingerprint(frames[[1]], frame_label[1])
@@ -2289,21 +2250,15 @@ encode_execution <- function(sample, call = caller_env()) {
   if (!is_null(meta$wave)) {
     receipt$wave <- encode_wave(meta$wave)
   }
-  # A sample produced by more than one execute() call (stage
-  # continuation, multi-phase, or a wave materialized from a master)
-  # cannot be reproduced by replaying the final call alone. The receipt
-  # records only that call.
+  # One receipt cannot replay a chain of execution calls.
   if (!is_null(meta$continued_from) || !is_null(meta$prev_phase)) {
     receipt$chained <- TRUE
   }
-  # Rows or design columns changed after execution: the receipt
-  # describes the original execution, not the current object.
+  # Do not encode a receipt invalidated by sample changes.
   if (!sample_realization_status(sample)$ok) {
     receipt$modified <- TRUE
   }
-  # The frame digest travels inside the receipt with its own schema
-  # version. An invalidated digest is not written: it no longer
-  # describes any sample.
+  # Do not encode an invalidated frame digest.
   digest <- get_frame_digest(sample)
   if (!is_null(digest) && !identical(digest$status, "invalidated")) {
     receipt$frame_digest <- digest
@@ -2332,53 +2287,26 @@ encode_panel_assignment <- function(record, call = caller_env()) {
     algorithm = record$algorithm,
     version = as.integer(record$version),
     panels = as.integer(record$panels),
-    # Which stage the units belong to. A version-1 or version-2 record could
-    # only mean the first executed stage, and preparation has already stated
-    # that. A version-3 record states it itself or is refused above. There is
-    # nothing left here to fall back to.
+    # Record the validated assignment stage.
     assignment_stage = record$assignment_stage,
     block_size = as.integer(record$block_size),
     r_min = as.integer(record$r_min),
     unit = record$unit,
     key_vars = I(as.character(record$key_vars)),
-    # A pool is the assignment stage's strata inside a realized ancestor
-    # occurrence, so the columns are not recoverable from the key alone.
-    # Empty for an unstratified stage 1, which is one pool over everything.
+    # Pool columns include assignment strata and realized ancestors.
     pool_vars = I(as.character(record$pool_vars %||% character(0))),
     control_ordered = isTRUE(record$control_ordered),
     certainty = record$certainty,
     small_pool_policy = record$small_pool_policy %||% "error",
-    # The schedule is an input to the draw, not a derived fact: the block
-    # size follows from it, so replay cannot reproduce `.panel` without it.
+    # Store the schedule needed to reproduce panel blocks.
     schedule = if (!is_null(record$schedule)) {
       data.frame(
         wave = as.integer(record$schedule$wave),
         panel = as.integer(record$schedule$panel),
         active = as.logical(record$schedule$active)
       )
-    },
-    pools = lapply(record$pools, function(pool) {
-      out <- list()
-      if (!is_null(pool$stratum)) {
-        out$stratum <- lapply(pool$stratum, function(v) as.character(v)[1])
-      }
-      out$class <- pool$class
-      # Selection status and activation status are separate facts: a pool too
-      # small to rotate is permanent without being selection-certain.
-      out$activation <- pool$activation %||%
-        if (identical(pool$class, "certainty")) "permanent" else "rotating"
-      if (!is.na(pool$permanent_reason %||% NA_character_)) {
-        out$permanent_reason <- pool$permanent_reason
-      }
-      out$size <- as.integer(pool$size)
-      out$keys <- I(as.character(pool$keys))
-      out$blocks <- I(as.integer(pool$blocks))
-      out$quotas <- lapply(
-        seq_len(nrow(pool$quotas)),
-        function(b) I(as.integer(pool$quotas[b, ]))
-      )
-      out
-    })
+    }
+    # Store the assignment law, not reproducible realized pools.
   )
 }
 
@@ -2455,6 +2383,7 @@ decode_panel_argument <- function(receipt, record) {
 #' already recoverable from the assignment record.
 #' @noRd
 encode_wave <- function(record) {
+  # Wave pools preserve activation facts that replay cannot rebuild.
   list(
     wave = as.integer(record$wave),
     active_panels = I(as.integer(record$active_panels)),
@@ -2465,11 +2394,8 @@ encode_wave <- function(record) {
         out$stratum <- lapply(pool$stratum, function(v) as.character(v)[1])
       }
       out$class <- pool$class
-      # Why the pool activated as it did, not just that it did: a permanent
-      # pool reads take == blocks either way, and only these say whether that
-      # is selection certainty or a pool too small to rotate.
-      out$activation <- pool$activation %||%
-        if (identical(pool$class, "certainty")) "permanent" else "rotating"
+      # Preserve why a pool is permanent.
+      out$activation <- pool$activation
       if (!is.na(pool$permanent_reason %||% NA_character_)) {
         out$permanent_reason <- pool$permanent_reason
       }
@@ -2707,8 +2633,7 @@ decode_shared_sample_payload <- function(payload, call = caller_env()) {
 decode_weight_share_call <- function(transformation, call = caller_env()) {
   algorithm <- decode_chr(transformation$algorithm)
   version <- transformation$version
-  # Read before anything is taken from the record, so a transformation this
-  # build does not know is reported as that rather than as a missing field.
+  # Check transformation type before reading its fields.
   if (
     !identical(algorithm, weight_share_record_algorithm) ||
       !is.numeric(version) || length(version) != 1 || is.na(version) ||
@@ -2874,8 +2799,7 @@ decode_overlap_spec <- function(overlaps, frames, call = caller_env()) {
       call = call
     )
   }
-  # Through the ordinary constructor, so a decoded specification is held to
-  # the same rules as one the user wrote.
+  # Validate decoded specifications through the constructor.
   new_overlap_spec(scale, as.list(cols[frames]), call = call)
 }
 
@@ -2894,18 +2818,23 @@ decode_design_payload <- function(payload, call = caller_env()) {
       version < 1 || version != floor(version) ||
       version > design_format_version
   ) {
-    cli_abort(
+    abort_samplyr(
       c(
         "Design file format version {.val {version}} is not supported.",
         "i" = "This version of samplyr reads format versions up to
                {.val {design_format_version}}. Update samplyr to read
                this file."
       ),
+      class = "samplyr_error_design_file_unsupported",
       call = call
     )
   }
   if (!is.list(payload$design) || !is.list(payload$design$stages)) {
-    cli_abort("Design file has no {.field design.stages} entry", call = call)
+    abort_samplyr(
+      "Design file has no {.field design.stages} entry",
+      class = "samplyr_error_design_file_malformed",
+      call = call
+    )
   }
   vocabulary <- payload$schema$method_vocabulary
   if (
@@ -2913,8 +2842,9 @@ decode_design_payload <- function(payload, call = caller_env()) {
       !is.numeric(vocabulary$version) || length(vocabulary$version) != 1 ||
       vocabulary$version > method_vocabulary_version
   ) {
-    cli_abort(
+    abort_samplyr(
       "Design file uses an unsupported sampling method vocabulary.",
+      class = "samplyr_error_design_file_unsupported",
       call = call
     )
   }
@@ -3010,6 +2940,7 @@ decode_stage <- function(
       certainty_size = decode_value(draw$certainty_size),
       certainty_prop = decode_value(draw$certainty_prop),
       certainty_overflow = decode_chr(draw$certainty_overflow) %||% "error",
+      certainty_plan = decode_certainty_plan(draw$certainty_plan),
       on_empty = decode_chr(draw$on_empty) %||% "error",
       method_type = method$registry_type,
       method_fixed = method$fixed_size,
@@ -3037,7 +2968,11 @@ decode_method <- function(
   call = caller_env()
 ) {
   if (!is.list(method) || !is.character(method$id) || length(method$id) != 1) {
-    cli_abort("Design file contains an invalid sampling method.", call = call)
+    abort_samplyr(
+      "Design file contains an invalid sampling method.",
+      class = "samplyr_error_design_file_malformed",
+      call = call
+    )
   }
 
   common_id <- method$id
@@ -3062,10 +2997,19 @@ decode_method <- function(
   }
 
   if (!is_null(tool_method)) {
+    # Validate metadata as a list before using `$`.
+    if (!is.list(tool_method)) {
+      abort_samplyr(
+        "Design file contains invalid samplyr method metadata.",
+        class = "samplyr_error_design_file_malformed",
+        call = call
+      )
+    }
     name <- decode_chr(tool_method$name)
     if (is_null(name) || length(name) != 1) {
-      cli_abort(
+      abort_samplyr(
         "Design file contains invalid samplyr method metadata.",
+        class = "samplyr_error_design_file_malformed",
         call = call
       )
     }
@@ -3217,6 +3161,102 @@ decode_value <- function(x) {
   unlist(x)
 }
 
+#' Decode a certainty-plan bridge spec (design format 3)
+#'
+#' Shape checks only: the execute-time gates are the validators for what the
+#' spec means against a frame, and they run for deserialized designs too.
+#' What the reader refuses is a block the gates could misread - missing
+#' columns, wrong types, takes that are not positive whole numbers.
+#' @noRd
+decode_certainty_plan <- function(x, call = caller_env()) {
+  if (is_null(x)) {
+    return(NULL)
+  }
+  malformed <- function(what) {
+    abort_samplyr(
+      "Design file contains an invalid certainty plan: {what}.",
+      class = "samplyr_error_design_file_malformed",
+      call = call
+    )
+  }
+  if (!is.list(x)) {
+    malformed("not a plan block")
+  }
+
+  role <- decode_chr(x$role)
+  if (is_null(role) || length(role) != 1 || !role %in% c("select", "take")) {
+    malformed("unknown stage role")
+  }
+  strata_var <- decode_chr(x$strata_var)
+  id_var <- decode_chr(x$id_var)
+  if (
+    is_null(strata_var) || length(strata_var) != 1 || !nzchar(strata_var) ||
+      is_null(id_var) || length(id_var) != 1 || !nzchar(id_var)
+  ) {
+    malformed("the stratum and PSU id variables must be single names")
+  }
+
+  register <- decode_value(x$register)
+  needed <- c("psu_id", "stratum", "N", "certainty", "n_take")
+  if (!is.data.frame(register) || !all(needed %in% names(register)) ||
+        nrow(register) == 0) {
+    malformed("the register must have psu_id, stratum, N, certainty, n_take")
+  }
+  register <- as.data.frame(register[, needed], stringsAsFactors = FALSE)
+  register$stratum <- as.character(register$stratum)
+  if (anyNA(register$psu_id) || anyDuplicated(register$psu_id)) {
+    malformed("register PSU ids must be present and unique")
+  }
+  if (!is.logical(register$certainty) || anyNA(register$certainty)) {
+    malformed("the register's certainty column must be logical")
+  }
+  if (
+    !is.numeric(register$N) || anyNA(register$N) ||
+      any(!is.finite(register$N)) || any(register$N <= 0)
+  ) {
+    malformed("register sizes must be positive and finite")
+  }
+  if (
+    !is.numeric(register$n_take) || anyNA(register$n_take) ||
+      any(!is.finite(register$n_take)) || any(register$n_take < 1) ||
+      any(register$n_take != floor(register$n_take))
+  ) {
+    malformed("register takes must be positive whole numbers")
+  }
+
+  decode_named_counts <- function(v, what, allow_na = FALSE) {
+    if (!is.list(v) || is_null(names(v)) || !all(nzchar(names(v)))) {
+      malformed(paste(what, "must be named"))
+    }
+    out <- vapply(
+      v,
+      function(e) if (is_null(e)) NA_real_ else as.numeric(e),
+      numeric(1)
+    )
+    bad <- if (allow_na) {
+      !is.na(out) & (out < 1 | out != floor(out))
+    } else {
+      is.na(out) | out < 0 | out != floor(out)
+    }
+    if (any(bad)) {
+      malformed(paste(what, "must hold whole numbers"))
+    }
+    out
+  }
+  n_psu_draw <- decode_named_counts(x$n_psu_draw, "n_psu_draw")
+  n_per_psu <- decode_named_counts(x$n_per_psu, "n_per_psu", allow_na = TRUE)
+
+  list(
+    role = role,
+    register = register,
+    n_psu_draw = n_psu_draw,
+    n_per_psu = n_per_psu,
+    strata_var = strata_var,
+    id_var = id_var,
+    svyplan_version = decode_chr(x$svyplan_version)
+  )
+}
+
 #' Rebuild a data frame from JSON row objects
 #' @noRd
 decode_rows <- function(rows) {
@@ -3227,7 +3267,10 @@ decode_rows <- function(rows) {
     logical(1)
   )
   if (is_null(cols) || !all(consistent)) {
-    cli_abort("Design file contains a malformed table entry")
+    abort_samplyr(
+      "Design file contains a malformed table entry",
+      class = "samplyr_error_design_file_malformed"
+    )
   }
   values <- lapply(cols, function(col) {
     unlist(lapply(rows, function(row) row[[col]] %||% NA))

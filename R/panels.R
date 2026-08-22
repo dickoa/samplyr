@@ -1,13 +1,15 @@
 ## Panel assignment
 
-# Panels are randomized fixed-quota assignments inside ordered blocks.
-# Activation uses the recorded block quotas, not the marginal 1/k assignment.
-# Certainty units are permanent. Schedules size blocks from their leanest wave.
+# Panels use randomized fixed quotas within ordered blocks.
+# Activation follows recorded quotas and certainty units stay permanent.
 
 #' Normalize the `panels` argument to a count and an optional schedule
 #'
-#' @return `NULL`, or a list with `k`, `r_min`, `block_size`, `schedule` and
-#'   `stage`.
+#' @return `NULL`, or a list with `k`, `r_min`, `block_size`, `schedule`,
+#'   `stage`, `small_pool` and, for a schedule translated from an
+#'   `svyplan_schedule`, `from_plan`. The last is what
+#'   `resolve_small_pools()` reads to refuse a plan that would assign
+#'   selection-certainty units to its rotating panels.
 #' @noRd
 normalize_panel_input <- function(panels, panel_stage = NULL,
                                   small_pool = NULL,
@@ -39,8 +41,12 @@ normalize_panel_input <- function(panels, panel_stage = NULL,
       !is_integerish_numeric(panels) ||
       panels < 2
   ) {
-    cli_abort(
-      "{.arg panels} must be a single integer >= 2, or a rotation schedule",
+    abort_samplyr(
+      c(
+        "{.arg panels} must be a single integer >= 2, or a rotation schedule.",
+        "i" = "One panel is no partition, so there is nothing to rotate."
+      ),
+      class = "samplyr_error_panel_count",
       call = call
     )
   }
@@ -71,7 +77,7 @@ normalize_plan_panels <- function(plan, stage, small_pool,
         "i" = "The planning schedule describes a rotating cohort life.
                Permanent activation has a different overlap contract."
       ),
-      class = "samplyr_error_plan_permanent",
+      class = "samplyr_error_plan_small_pool",
       call = call
     )
   }
@@ -271,53 +277,30 @@ check_small_pool_applicable <- function(small_pool, has_schedule, has_panels,
 #' @noRd
 normalize_panel_schedule <- function(schedule, min_panels = 2L,
                                      call = caller_env()) {
-  missing <- setdiff(c("panel", "wave"), names(schedule))
-  if (length(missing) > 0) {
-    abort_samplyr(
-      c(
-        "A {.arg panels} schedule needs a {.field panel} and a {.field wave}
-         column.",
-        "x" = "Missing: {.field {missing}}.",
-        "i" = "An {.field active} column is optional: without it every row
-               given is active, and every combination left out is not."
-      ),
-      class = "samplyr_error_schedule_columns",
-      call = call
-    )
-  }
+  subject <- schedule_subject("panels")
+  check_schedule_columns(
+    schedule, subject,
+    extra = c("i" = "An {.field active} column is optional: without it every
+                     row given is active, and every combination left out is
+                     not."),
+    call = call
+  )
 
   panel <- schedule$panel
   wave <- schedule$wave
-  active <- if ("active" %in% names(schedule)) {
-    schedule$active
-  } else {
-    rep(TRUE, nrow(schedule))
-  }
+  active <- schedule_active_column(schedule, subject, call = call)
 
   check_schedule_integers(panel, "panel", call = call)
   check_schedule_integers(wave, "wave", call = call)
-  if (!is.logical(active) || anyNA(active)) {
-    abort_samplyr(
-      "The {.field active} column of a {.arg panels} schedule must be logical
-       and complete.",
-      class = "samplyr_error_schedule_active",
-      call = call
-    )
-  }
   panel <- as.integer(panel)
   wave <- as.integer(wave)
 
-  if (anyDuplicated(paste(panel, wave, sep = "|")) > 0) {
-    abort_samplyr(
-      c(
-        "A {.arg panels} schedule may declare each panel once per wave.",
-        "x" = "It repeats at least one {.field panel}-{.field wave}
-               combination."
-      ),
-      class = "samplyr_error_schedule_duplicates",
-      call = call
-    )
-  }
+  check_schedule_duplicates(
+    paste(panel, wave, sep = "|"), subject,
+    declares = "each panel once per wave",
+    combination = cli::format_inline("{.field panel}-{.field wave}"),
+    call = call
+  )
 
   k <- max(panel)
   n_waves <- max(wave)
@@ -325,7 +308,7 @@ normalize_panel_schedule <- function(schedule, min_panels = 2L,
   check_schedule_contiguous(wave, n_waves, "wave", call = call)
   if (k < min_panels) {
     abort_samplyr(
-      "A {.arg panels} schedule must declare at least {min_panels} panels.",
+      "{subject$upper} must declare at least {min_panels} panels.",
       class = "samplyr_error_schedule_size",
       call = call
     )
@@ -338,28 +321,19 @@ normalize_panel_schedule <- function(schedule, min_panels = 2L,
   )
   grid <- grid[order(grid$wave, grid$panel), c("wave", "panel")]
   rownames(grid) <- NULL
-  at <- match(
+  grid$active <- schedule_grid_active(
     paste(grid$panel, grid$wave, sep = "|"),
-    paste(panel, wave, sep = "|")
+    paste(panel, wave, sep = "|"),
+    active
   )
-  grid$active <- !is.na(at) & active[at]
 
-  per_wave <- vapply(
-    split(grid$active, grid$wave),
-    sum,
-    integer(1)
+  # Size blocks from the leanest declared wave.
+  per_wave <- check_schedule_idle_waves(
+    grid$active, grid$wave,
+    headline = "Every declared wave must activate at least one panel.",
+    detail = "No panel is active at wave {idle}.",
+    call = call
   )
-  if (any(per_wave == 0L)) {
-    idle <- as.integer(names(per_wave)[per_wave == 0L])
-    abort_samplyr(
-      c(
-        "Every declared wave must activate at least one panel.",
-        "x" = "No panel is active at wave {idle}."
-      ),
-      class = "samplyr_error_schedule_idle_wave",
-      call = call
-    )
-  }
 
   r_min <- min(per_wave)
   list(
@@ -368,6 +342,129 @@ normalize_panel_schedule <- function(schedule, min_panels = 2L,
     block_size = panel_block_size(k, r_min),
     schedule = grid
   )
+}
+
+## Shared schedule validation
+
+# Master and program schedules share the same table checks.
+
+#' The phrase the two schedule paths differ on, in the forms a message needs
+#'
+#' Both cases are built here rather than capitalized at the point of use: the
+#' phrase is already cli-formatted, so its first character is not reliably the
+#' letter a sentence would need to raise. `arg` is kept separate for the one
+#' message that names the argument rather than describing the table.
+#' @noRd
+schedule_subject <- function(arg) {
+  if (identical(arg, "panels")) {
+    list(
+      arg = "panels",
+      lower = cli::format_inline("a {.arg panels} schedule"),
+      upper = cli::format_inline("A {.arg panels} schedule")
+    )
+  } else {
+    list(
+      arg = "schedule",
+      lower = "a program schedule",
+      upper = "A program schedule"
+    )
+  }
+}
+
+#' The table shape both schedules need before any column is read
+#' @noRd
+check_schedule_columns <- function(schedule, subject, extra = NULL,
+                                   call = caller_env()) {
+  if (!is.data.frame(schedule)) {
+    abort_samplyr(
+      "{.arg {subject$arg}} must be a data frame.",
+      class = "samplyr_error_schedule_columns",
+      call = call
+    )
+  }
+  missing <- setdiff(c("panel", "wave"), names(schedule))
+  if (length(missing) > 0) {
+    abort_samplyr(
+      c(
+        "{subject$upper} needs a {.field panel} and a {.field wave} column.",
+        "x" = "Missing: {.field {missing}}.",
+        extra
+      ),
+      class = "samplyr_error_schedule_columns",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' The optional `active` column, defaulted and checked
+#'
+#' Absent means every row given is active and every combination left out is
+#' not, which is the convention that lets a caller write only the live rows.
+#' @noRd
+schedule_active_column <- function(schedule, subject, call = caller_env()) {
+  active <- if ("active" %in% names(schedule)) {
+    schedule$active
+  } else {
+    return(rep(TRUE, nrow(schedule)))
+  }
+  if (!is.logical(active) || anyNA(active)) {
+    abort_samplyr(
+      "The {.field active} column of {subject$lower} must be logical and
+       complete.",
+      class = "samplyr_error_schedule_active",
+      call = call
+    )
+  }
+  active
+}
+
+#' A combination declared twice is a mistake, not a re-statement
+#'
+#' `combination` names the key in the message, because what may repeat differs:
+#' panel by wave for one master, cohort by panel by wave for a program.
+#' @noRd
+check_schedule_duplicates <- function(key, subject, declares, combination,
+                                      call = caller_env()) {
+  if (anyDuplicated(key) == 0L) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "{subject$upper} may declare {declares}.",
+      "x" = "It repeats at least one {combination} combination."
+    ),
+    class = "samplyr_error_schedule_duplicates",
+    call = call
+  )
+}
+
+#' Fill a completed grid's activity from the rows the caller declared
+#'
+#' The stored form is the complete grid even when the input named only the
+#' active rows, so a reader never has to know which convention was used.
+#' @noRd
+schedule_grid_active <- function(grid_key, input_key, active) {
+  at <- match(grid_key, input_key)
+  !is.na(at) & active[at]
+}
+
+#' No declared wave may be empty
+#'
+#' @return The count active at each wave, which is `r_min` for a master.
+#' @noRd
+check_schedule_idle_waves <- function(active, wave, headline, detail,
+                                      extra = NULL, call = caller_env()) {
+  per_wave <- vapply(split(active, wave), sum, integer(1))
+  if (any(per_wave == 0L)) {
+    idle <- as.integer(names(per_wave)[per_wave == 0L])
+    abort_samplyr(
+      c(headline, "x" = detail, extra),
+      class = "samplyr_error_schedule_idle_wave",
+      call = call
+    )
+  }
+  per_wave
 }
 
 #' Shared by the draw-time and program schedule paths, which differ only in
@@ -437,7 +534,7 @@ panel_assignment_context <- function(design, stage_num, sample,
                                      call = caller_env()) {
   spec <- design$stages[[stage_num]]
   draw_col <- paste0(".draw_", stage_num)
-  # With-replacement panel units are draw occurrences, so they need draw IDs.
+  # WR panel units need draw IDs.
   multi_hit <- is_multi_hit_method(spec$draw_spec)
   if (multi_hit && !draw_col %in% names(sample)) {
     abort_panel_missing_identity(stage_num, draw_col, occurrence = TRUE,
@@ -454,8 +551,7 @@ panel_assignment_context <- function(design, stage_num, sample,
     clustered = clustered,
     multi_hit = multi_hit,
     ancestor_vars = ancestors,
-    # Strata qualify draw indices because they restart in each selection pool.
-    # unique() prevents duplicate ancestor/stratum columns in stored keys.
+    # Qualify restarted draw indices by strata.
     key_vars = if (clustered) {
       unique(c(
         ancestors, spec$strata$vars, spec$clusters$vars,
@@ -464,13 +560,11 @@ panel_assignment_context <- function(design, stage_num, sample,
     } else {
       ".sample_id"
     },
-    # Pools are the stage's own selection strata, nested inside the realized
-    # ancestor occurrence: blocks that crossed a parent would stop
-    # guaranteeing rotation within every parent.
+    # Nest pools within realized ancestor occurrences.
     pool_vars = unique(c(ancestors, spec$strata$vars)),
     certainty_col = paste0(".certainty_", stage_num),
     control = spec$draw_spec$control,
-    # The unit label follows the sampling law, not its key column.
+    # Label units by the sampling law.
     unit = if (multi_hit) {
       "occurrence"
     } else if (clustered) {
@@ -480,9 +574,7 @@ panel_assignment_context <- function(design, stage_num, sample,
     }
   )
 
-  # A cluster or stratum column removed after execution is the same failure
-  # arriving through a different column: the identity is not expressible, and
-  # matching on what remains would pool the wrong units together.
+  # Missing cluster or stratum columns make identity ambiguous.
   missing <- setdiff(
     c(context$key_vars, context$pool_vars), names(sample)
   )
@@ -547,8 +639,7 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
   units <- result[unit_rows, , drop = FALSE]
   pools <- panel_pools(units, context)
 
-  # Every pool is resolved before any of them consumes a random number, so a
-  # refusal never depends on the assignment draw and never tempts a retry.
+  # Resolve every pool before consuming RNG state.
   pools <- resolve_small_pools(pools, spec, call = call)
 
   panel <- integer(length(unit_rows))
@@ -583,10 +674,7 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
     key_vars = key_vars,
     pool_vars = context$pool_vars,
     control_ordered = length(context$control) > 0L,
-    # Scalar rather than the stage-and-policy pair the plan sketched. Only
-    # certainty at the assignment stage makes a unit permanent, so the stage
-    # is `assignment_stage` by definition and a second copy of it could
-    # disagree with the first.
+    # Permanence is defined at the assignment stage.
     certainty = "permanent",
     small_pool_policy = spec$small_pool %||% "error",
     schedule = spec$schedule,
@@ -635,8 +723,7 @@ prepare_panel_record <- function(record, what, call = caller_env()) {
   record <- normalize_panel_record(record)
   check_panel_record_fields(record, what, call = call)
   if (!is_null(record)) {
-    # After validation, never before it: coercing first would silently turn a
-    # fractional stage into a whole one and validate the result.
+    # Coerce assignment stages only after validation.
     record$assignment_stage <- as.integer(record$assignment_stage)
   }
   record
@@ -650,10 +737,7 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
     return(invisible(NULL))
   }
 
-  # Before the first field is read, because reading one is what fails
-  # otherwise. A design file states its assignment as a JSON object, and a
-  # scalar in its place parses to a length-1 atomic vector rather than to a
-  # list, which `$` refuses in base R's own words.
+  # Validate assignment records as lists before field access.
   if (!is.list(record)) {
     shown <- describe_record_value(record)
     abort_samplyr(
@@ -707,18 +791,11 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
     )
   }
 
-  # Anything else: a version no schema ever carried, or not a single whole
-  # number at all. Neither says which law the quotas were written under.
-  # Plain text: an interpolated value is inserted verbatim, so cli markup
-  # written into it would print as itself.
+  # Reject versions that do not identify a quota law.
   shown <- if (length(version) == 0L) {
     "no version"
-  } else if (length(version) == 1L && is.numeric(version)) {
-    format(version)
-  } else if (length(version) == 1L) {
-    paste0("a ", typeof(version), " value")
   } else {
-    paste0(length(version), " values of type ", typeof(version))
+    describe_record_value(version)
   }
   abort_samplyr(
     c(
@@ -746,11 +823,24 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
 #' Versions 1 and 2 are checked by their own rule, which is that they mean
 #' stage 1 (see `normalize_panel_record()`). Nothing here applies to them.
 #'
-#' Nothing in this build reads `unit`, `key_vars` or `pool_vars` back out of a
-#' stored record: replay re-executes the design, and every record an activation
-#' or an export reads comes from `execute()`. These checks are the interchange
-#' contract for records this build did not write, and they are stated where the
-#' record is read rather than where it happens to be consumed today.
+#' What this does and does not cover, since the difference is not obvious.
+#'
+#' A design file drives exactly four fields of a record: `schedule`, `panels`
+#' and `small_pool_policy`, which become arguments to `execute()` and are
+#' validated by the same code any caller's would be, and `assignment_stage`,
+#' which is checked here and again by `resolve_panel_stage()`. Nothing else
+#' in a record can arrive from a file. Replay re-executes the design, and
+#' every record an activation or an export reads was built by `execute()`.
+#'
+#' So `unit`, `key_vars` and `pool_vars` are checked as a statement about the
+#' version stamp rather than as a guard: a record claiming version 3 without
+#' them is not an older record to be filled in, because version 3 is the
+#' version where they are written down. The realized pools are not checked and
+#' are not written, for the reason `encode_panel_assignment()` gives.
+#'
+#' A record malformed anywhere else has to have been built by hand, in memory.
+#' That is outside what the package defends: the integrity records cover a
+#' sample's data columns, not its metadata.
 #' @noRd
 check_panel_record_fields <- function(record, what, call = caller_env()) {
   if (is_null(record) || !record_states_version(record, 3L)) {
@@ -789,10 +879,7 @@ check_panel_record_fields <- function(record, what, call = caller_env()) {
     )
   }
 
-  # Distinguished from `key_vars` by what an empty list means. No column is a
-  # complete identity, so an empty `key_vars` names nothing. No column is a
-  # complete pool division, which is one pool holding every unit, and that is
-  # what an unstratified first-stage assignment is. Absent is neither.
+  # Empty pool variables mean one pool while empty key variables name nothing.
   if (!valid_record_columns(record$pool_vars, allow_none = TRUE)) {
     abort_panel_record_malformed(
       "must list {.field pool_vars} as distinct column names, or none at all
@@ -890,9 +977,7 @@ abort_panel_record_malformed <- function(
 #' written into it would print as itself.
 #' @noRd
 describe_record_value <- function(value) {
-  # A column list read from a design file is a list of strings, and naming the
-  # columns is what makes a duplicate or an empty name visible. A list holding
-  # anything else is described as the list it is.
+  # Validate stored column lists before checking their names.
   if (
     is.list(value) &&
       all(vapply(
@@ -968,12 +1053,12 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
         "i" = "Execute this design with an explicit panel schedule until
                certainty-aware overlap planning is supported."
       ),
-      class = "samplyr_error_plan_permanent",
+      class = "samplyr_error_plan_certainty",
       call = call
     )
   }
 
-  # Without a schedule there is no wave to protect, so nothing is short.
+  # No schedule means no wave can be short.
   if (is_null(spec$schedule)) {
     return(pools)
   }
@@ -993,7 +1078,7 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
   n_short <- sum(short)
   sizes <- vapply(pools[short], function(pool) length(pool$indices), integer(1))
   labels <- paste0(
-    vapply(pools[short], describe_pool_stratum, character(1)),
+    vapply(pools[short], format_pool_stratum, character(1)),
     " (", sizes, ")"
   )
 
@@ -1033,18 +1118,31 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
   pools
 }
 
-#' A pool's stratum, as a short label for a diagnostic
+#' A pool's stratum, as a short label
+#'
+#' `empty` is what an unstratified pool renders as, and it is the only thing
+#' the two callers differ on: a diagnostic sentence wants a phrase, a table
+#' column wants a missing value.
 #' @noRd
-describe_pool_stratum <- function(pool) {
+format_pool_stratum <- function(pool, empty = "(unstratified)") {
   if (is_null(pool$stratum) || length(pool$stratum) == 0L) {
-    return("(unstratified)")
+    return(empty)
   }
   paste0(
-    names(pool$stratum), " = ", vapply(pool$stratum, function(v) {
-      as.character(v)[1]
-    }, character(1)),
+    names(pool$stratum), " = ",
+    vapply(pool$stratum, function(v) format(v)[1], character(1)),
     collapse = ", "
   )
+}
+
+#' The units a wave takes from each block of a pool
+#'
+#' One line, and the one place a malformed `quotas` surfaces: a record whose
+#' quotas came back from JSON as a list of vectors rather than as a matrix
+#' fails here with "incorrect number of dimensions".
+#' @noRd
+pool_take <- function(pool, panels) {
+  as.integer(rowSums(pool$quotas[, panels, drop = FALSE]))
 }
 
 #' Fill in what an earlier record version left implicit
@@ -1163,10 +1261,7 @@ assign_blocked_panels <- function(m, k, block = panel_block_size(k, 1L)) {
     return(list(panel = integer(0), blocks = integer(0)))
   }
 
-  # Panel identities are permuted once per pool and frozen. The multiset of
-  # quota sizes stays deterministic and only the labelling is random, which
-  # is what keeps every unit's marginal exactly 1/k when m is not a multiple
-  # of k.
+  # Permute panel labels while keeping deterministic quotas.
   labels <- sample.int(k)[rep_len(seq_len(k), m)]
   sizes <- panel_block_sizes(m, block)
 
@@ -1174,7 +1269,7 @@ assign_blocked_panels <- function(m, k, block = panel_block_size(k, 1L)) {
   start <- 0L
   for (size in sizes) {
     at <- start + seq_len(size)
-    # Never bare sample(): on a length-one pool it permutes seq_len(x).
+    # Avoid bare `sample()` on length-one pools.
     panel[at] <- labels[at][sample.int(size)]
     start <- start + size
   }

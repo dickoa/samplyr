@@ -4,12 +4,14 @@
 \alias{exante_probabilities}
 \title{Selection probabilities a design would give a register, without drawing}
 \usage{
-exante_probabilities(design, frame, key)
+exante_probabilities(design, frame, ..., key)
 }
 \arguments{
 \item{design}{A \code{sampling_design} with a complete \code{\link[=draw]{draw()}} on every stage.}
 
 \item{frame}{The register, a data frame.}
+
+\item{...}{Must be empty. Arguments after it are matched by exact name.}
 
 \item{key}{A bare column of \code{frame} identifying the population unit. It
 must be unique.}
@@ -80,9 +82,8 @@ Other multiple frames:
 \code{\link[=as.data.frame.frame_stack]{as.data.frame.frame_stack()}},
 \code{\link[=as_svrepdesign.frame_stack]{as_svrepdesign.frame_stack()}},
 \code{\link[=as_svydesign.frame_stack]{as_svydesign.frame_stack()}},
+\code{\link[=declared_overlaps]{declared_overlaps()}},
 \code{\link[=exante_overlaps]{exante_overlaps()}},
-\code{\link[=overlap_probabilities]{overlap_probabilities()}},
-\code{\link[=overlap_weights]{overlap_weights()}},
 \code{\link[=stack_frames]{stack_frames()}},
 \code{\link[=summary.frame_stack]{summary.frame_stack()}}
 }

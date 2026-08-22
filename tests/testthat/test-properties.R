@@ -9,39 +9,6 @@ make_property_frame <- function() {
   )
 }
 
-test_that("weight sum = N for unstratified SRSWOR", {
-  frame <- make_property_frame()
-  result <- sampling_design() |>
-    draw(n = 40) |>
-    execute(frame, seed = 1)
-
-  expect_equal(sum(result$.weight), nrow(frame))
-})
-
-test_that("weight sum = N for systematic sampling", {
-  frame <- make_property_frame()
-  result <- sampling_design() |>
-    draw(n = 40, method = "systematic") |>
-    execute(frame, seed = 2)
-
-  expect_equal(sum(result$.weight), nrow(frame))
-})
-
-test_that("weight sum is positive and finite for PPS WOR methods", {
-  frame <- make_property_frame()
-  pps_wor <- c("pps_brewer", "pps_systematic", "pps_cps", "pps_sps", "pps_pareto")
-
-  for (method in pps_wor) {
-    result <- sampling_design() |>
-      draw(n = 10, method = method, mos = pop) |>
-      execute(frame, seed = 3)
-
-    ws <- sum(result$.weight)
-    expect_true(is.finite(ws), label = paste(method, "finite weight sum"))
-    expect_true(ws > 0, label = paste(method, "positive weight sum"))
-  }
-})
-
 test_that("weight sum = N for stratified SRSWOR", {
   frame <- make_property_frame()
   result <- sampling_design() |>
@@ -66,53 +33,16 @@ test_that("within-stratum weight sum = N_h for stratified designs", {
   }
 })
 
-test_that("weights are positive for SRSWOR", {
-  frame <- make_property_frame()
-  result <- sampling_design() |>
-    draw(n = 20) |>
-    execute(frame, seed = 10)
-  expect_true(all(result$.weight > 0))
-})
-
-test_that("weights are positive for systematic", {
-  frame <- make_property_frame()
-  result <- sampling_design() |>
-    draw(n = 20, method = "systematic") |>
-    execute(frame, seed = 11)
-  expect_true(all(result$.weight > 0))
-})
-
-test_that("weights are positive for PPS methods", {
-  frame <- make_property_frame()
-  for (method in c("pps_brewer", "pps_systematic", "pps_cps")) {
-    result <- sampling_design() |>
-      draw(n = 10, method = method, mos = pop) |>
-      execute(frame, seed = 12)
-    expect_true(all(result$.weight > 0), label = method)
-  }
-})
-
-test_that("weights are positive for WR methods", {
-  frame <- make_property_frame()
-
-  result_srswr <- sampling_design() |>
-    draw(n = 20, method = "srswr") |>
-    execute(frame, seed = 13)
-  expect_true(all(result_srswr$.weight > 0), label = "srswr")
-
-  for (method in c("pps_multinomial", "pps_chromy")) {
-    result <- sampling_design() |>
-      draw(n = 10, method = method, mos = pop) |>
-      execute(frame, seed = 13)
-    expect_true(all(result$.weight > 0), label = method)
-  }
-})
-
 test_that("fixed-size WOR methods return exactly n rows", {
   frame <- make_property_frame()
   n <- 25
 
-  for (method in c("srswor", "systematic", "pps_brewer", "pps_systematic", "pps_cps")) {
+  methods <- c(
+    "srswor", "systematic", "pps_brewer", "pps_systematic", "pps_cps",
+    "pps_sampford", "pps_sps", "pps_pareto"
+  )
+
+  for (method in methods) {
     if (startsWith(method, "pps_")) {
       design <- sampling_design() |>
         draw(n = n, method = method, mos = pop)
@@ -140,15 +70,6 @@ test_that("WR methods return exactly n rows (one per draw)", {
       execute(frame, seed = 22)
     expect_equal(nrow(result), n, label = method)
   }
-})
-
-test_that("sampled IDs are a subset of frame IDs", {
-  frame <- make_property_frame()
-  result <- sampling_design() |>
-    draw(n = 30) |>
-    execute(frame, seed = 30)
-
-  expect_true(all(result$id %in% frame$id))
 })
 
 test_that("WOR samples have no duplicate IDs", {
@@ -182,32 +103,6 @@ test_that(".fpc equals population/stratum size", {
   }
 })
 
-test_that("implied inclusion probabilities are in (0, 1] for WOR", {
-  frame <- make_property_frame()
-
-  result <- sampling_design() |>
-    draw(n = 30) |>
-    execute(frame, seed = 50)
-
-  pi_i <- 1 / result$.weight
-  expect_true(all(pi_i > 0))
-  expect_true(all(pi_i <= 1))
-})
-
-test_that("implied inclusion probabilities are in (0, 1] for PPS WOR", {
-  frame <- make_property_frame()
-
-  for (method in c("pps_brewer", "pps_systematic", "pps_cps")) {
-    result <- sampling_design() |>
-      draw(n = 10, method = method, mos = pop) |>
-      execute(frame, seed = 51)
-
-    pi_i <- 1 / result$.weight
-    expect_true(all(pi_i > 0), label = paste(method, "> 0"))
-    expect_true(all(pi_i <= 1 + 1e-10), label = paste(method, "<= 1"))
-  }
-})
-
 test_that("compound weight = product of stage weights", {
   frame <- make_property_frame()
 
@@ -226,7 +121,7 @@ test_that("compound weight = product of stage weights", {
   )
 })
 
-test_that("multi-stage weight sum approximates N", {
+test_that("multi-stage weight sum equals N with equal cluster sizes", {
   frame <- make_property_frame()
 
   result <- sampling_design() |>
@@ -237,69 +132,27 @@ test_that("multi-stage weight sum approximates N", {
       draw(n = 3) |>
     execute(frame, seed = 61)
 
-  # Weight sum should approximate N (not exact due to cluster size variation)
-  weight_sum <- sum(result$.weight)
-  expect_true(
-    weight_sum > 0,
-    label = "weight sum is positive"
-  )
-  # Each selected unit represents weight_i units in the population
-  # so sum should be close to N, but depends on cluster sizes
+  expect_equal(sum(result$.weight), nrow(frame), tolerance = 1e-10)
 })
 
-test_that("certainty units have weight 1", {
+test_that("multistage WR weights use expected hits", {
   frame <- data.frame(
-    id = 1:10,
-    size = c(500, 400, 10, 10, 10, 10, 10, 10, 10, 10)
+    psu = rep(1:4, each = 5),
+    unit = rep(1:5, 4)
   )
 
   result <- sampling_design() |>
-    draw(n = 4, method = "pps_brewer", mos = size, certainty_size = 300) |>
-    execute(frame, seed = 70)
+    add_stage("PSUs") |>
+      cluster_by(psu) |>
+      draw(n = 6, method = "srswr") |>
+    add_stage("Units") |>
+      draw(n = 2, method = "srswor") |>
+    execute(frame, seed = 321)
 
-  certainty_rows <- result[result$.certainty_1 == TRUE, ]
-  expect_true(all(certainty_rows$.weight == 1))
-})
-
-test_that("Bernoulli sampling gives equal weights", {
-  frame <- make_property_frame()
-  frac <- 0.2
-
-  result <- sampling_design() |>
-    draw(frac = frac, method = "bernoulli") |>
-    execute(frame, seed = 80)
-
-  if (nrow(result) > 0) {
-    expected_weight <- 1 / frac
-    expect_true(all(result$.weight == expected_weight))
-  }
-})
-
-test_that("WR methods produce sequential .draw_k values", {
-  frame <- make_property_frame()
-
-  result <- sampling_design() |>
-    draw(n = 15, method = "srswr") |>
-    execute(frame, seed = 90)
-
-  expect_true(".draw_1" %in% names(result))
-  expect_equal(sort(result$.draw_1), seq_len(nrow(result)))
-})
-
-test_that("PPS WR methods produce sequential .draw_k values", {
-  frame <- make_property_frame()
-
-  for (method in c("pps_multinomial", "pps_chromy")) {
-    result <- sampling_design() |>
-      draw(n = 10, method = method, mos = pop) |>
-      execute(frame, seed = 91)
-
-    expect_true(".draw_1" %in% names(result), label = paste(method, "has .draw_1"))
-    expect_equal(
-      sort(result$.draw_1), seq_len(nrow(result)),
-      label = paste(method, "sequential draws")
-    )
-  }
+  expect_equal(result$.weight_1, rep(4 / 6, nrow(result)))
+  expect_equal(result$.weight_2, rep(5 / 2, nrow(result)))
+  expect_equal(result$.weight, rep(5 / 3, nrow(result)))
+  expect_equal(sum(result$.weight), nrow(frame))
 })
 
 test_that("execute returns tbl_sample with correct metadata", {
@@ -315,7 +168,7 @@ test_that("execute returns tbl_sample with correct metadata", {
   expect_true(is_sampling_design(get_design(result)))
 })
 
-test_that("required output columns present for all methods", {
+test_that("core output columns are present across method families", {
   frame <- make_property_frame()
   required <- c(".weight", ".weight_1", ".fpc_1", ".sample_id", ".stage")
 

@@ -456,6 +456,58 @@ test_that("cluster-mode alloc plan draws PSUs from an EA-level frame", {
   )
 })
 
+## Certainty-aware alloc plans (svyplan >= 0.12.0, solved with a psu
+## register) are never coerced to stage sizes: the plan takes certainty PSUs
+## whole at their own takes and draws the remainder by PPS. A clustered,
+## stratified stage 1 fields them through the bridge (test-certainty-bridge.R);
+## every other context refuses. The fixtures live in helper-certainty.R.
+
+test_that("a certainty-aware alloc plan is refused as an unclustered stage size", {
+  plan <- certainty_plan_fixture()
+  expect_false(is.null(plan$params$psu))
+  expect_true(any(plan$psu$certainty))
+  expect_error(
+    sampling_design() |> stratify_by(stratum) |> draw(n = plan),
+    class = "samplyr_error_svyplan_certainty_plan"
+  )
+})
+
+test_that("a certainty-aware alloc plan is bridged at a clustered stage 1", {
+  plan <- certainty_plan_fixture()
+  d <- sampling_design() |>
+    stratify_by(stratum) |>
+    cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_systematic", mos = N)
+  expect_false(is.null(d$stages[[1]]$draw_spec$certainty_plan))
+  expect_equal(
+    unname(d$stages[[1]]$draw_spec$n),
+    unname(plan$detail$n_psu_certain + plan$detail$n_psu_draw)
+  )
+})
+
+test_that("a certainty-aware alloc plan is refused at stage 2", {
+  plan <- certainty_plan_fixture()
+  expect_error(
+    sampling_design() |>
+      stratify_by(stratum) |>
+      cluster_by(psu_id) |>
+      draw(n = 5, method = "pps_systematic", mos = N) |>
+      add_stage() |>
+      draw(n = plan),
+    class = "samplyr_error_svyplan_certainty_plan"
+  )
+})
+
+test_that("a certainty plan stripped of its register is still refused", {
+  plan <- certainty_plan_fixture()
+  plan$params$psu <- NULL
+  expect_false("n_psu_int" %in% names(as.data.frame(plan)))
+  expect_error(
+    sampling_design() |> stratify_by(stratum) |> draw(n = plan),
+    class = "samplyr_error_svyplan_certainty_plan"
+  )
+})
+
 test_that("an n_twophase() plan drives a two-phase design by subsampling fraction", {
   frame <- data.frame(
     stratum = c("A", "B", "C"),

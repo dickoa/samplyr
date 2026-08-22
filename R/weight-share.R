@@ -1,15 +1,6 @@
-## Weight sharing: the recorded operator and the weight contract
+## Recorded weight-sharing operator
 
-# The generalized weight share method maps weights from a source sample to a
-# target population through a link structure. Everything in this file is the
-# machinery that map needs and none of it is the map itself: the operator and
-# its arithmetic, the versioned record that makes a transformation auditable
-# and replayable, the integrity records that detect a transformed sample being
-# altered afterwards, and the contract that tells every statistical consumer
-# whether `.weight` is still a design weight.
-#
-# The transformation is linear in the source weights, which is what lets the
-# same recorded operator serve the point estimate and every replicate column.
+# The linear operator serves point estimates and every replicate column.
 
 ## The triplet operator
 
@@ -331,8 +322,7 @@ new_weight_share_record <- function(
     source_integrity = source_integrity,
     source_key_cols = source_key_cols,
     target_key_cols = target_key_cols,
-    # Source keys are known now; target keys need the result, so
-    # attach_weight_share_record() fills them alongside the result integrity.
+    # Attach target keys after the result exists.
     source_row_keys = share_row_keys(source_sample, source_key_cols),
     target_row_keys = NULL,
     target_cluster = target_cluster,
@@ -376,13 +366,9 @@ new_weight_share_coverage <- function(
     n_target_clusters = as.integer(n_target_clusters),
     n_reached_clusters = as.integer(n_reached_clusters),
     n_unlinked_units = as.integer(n_unlinked_units),
-    # Identifiable only under population scope. NULL means the question was
-    # not asked, which is not the same as an empty answer meaning none exist.
+    # NULL means orphan coverage was not assessed.
     orphan_clusters = orphan_clusters,
-    # A fingerprint of the target cluster set, for deciding whether two
-    # transformations are describing the same population. NULL carries the
-    # same "not asked" meaning, so a record written before this field existed
-    # reports coverage over a union as unknown rather than assuming it.
+    # NULL means the target cluster set was not fingerprinted.
     cluster_digest = cluster_digest
   )
 }
@@ -490,8 +476,7 @@ check_weight_share_record_fields <- function(
   call = caller_env()
 ) {
   missing <- setdiff(weight_share_record_fields, names(record))
-  # target_cluster is NULL under the singleton mode, so presence is tested by
-  # name rather than by value throughout.
+  # Test singleton cluster fields by name rather than value.
   if (length(missing) > 0) {
     abort_samplyr(
       c(
@@ -641,8 +626,7 @@ weight_share_integrity_record <- function(data, key_cols, generated_cols) {
 #' @noRd
 attach_weight_share_record <- function(result, record, call = caller_env()) {
   row_keys <- share_row_keys(result, record$target_key_cols)
-  # Realignment resolves a target row by its key, so a key naming two rows
-  # makes the operator ambiguous rather than merely redundant.
+  # Duplicate target keys make realignment ambiguous.
   dup <- unique(row_keys[duplicated(row_keys)])
   if (length(dup) > 0) {
     abort_samplyr(
@@ -749,8 +733,7 @@ verify_weight_share_alignment <- function(x, record) {
   ) {
     return("source")
   }
-  # Only reachable once the values check out, so this separates a permutation
-  # of the recorded rows from any other difference.
+  # Distinguish row permutation from value changes.
   if (!identical(share_row_keys(x, record$target_key_cols), record$target_row_keys)) {
     return("reordered")
   }
@@ -764,7 +747,7 @@ check_weight_share_alignment <- function(x, fn_name, call = caller_env()) {
     return(invisible(NULL))
   }
   status <- verify_weight_share_alignment(x, record)
-  # Reordering is recovered by align_share_rows(), not refused here.
+  # `align_share_rows()` recovers reordering.
   if (status %in% c("ok", "reordered")) {
     return(invisible(NULL))
   }
@@ -887,40 +870,9 @@ check_weight_contract <- function(
   )
 }
 
-## The refusals, one per consumer group
+## Consumer-specific refusals
 
-# Five groups, from the design note's method-support matrix, plus the
-# replicate route which is supported in principle and not yet built. Each
-# carries its own class so it can be caught for that operation alone, and its
-# own advice, because what to do instead differs and generic advice would be
-# worse than none.
-#
-# All of them are reached only by a sample carrying a transformation record,
-# so an ordinary sample runs through untouched.
-
-#' Refuse the linearized survey export
-#'
-#' The variance of a `multiframe` or `svydesign` object comes from the design
-#' structure it carries, and with shared weights the sampling unit is the
-#' source unit rather than the row. Lifting this needs contribution rows that
-#' retain each source unit's strata and PSU identity, which is a later phase
-#' and not a message change.
-#' @noRd
-check_weight_contract_svydesign <- function(x, fn_name, call = caller_env()) {
-  check_weight_contract(
-    x, fn_name,
-    class = "samplyr_error_survey_weight_contract",
-    advice = c(
-      "i" = "Use {.fn as_svrepdesign}. Weight sharing is linear, so the
-             transformation applies inside every replicate and the variance
-             follows the source design.",
-      "i" = "The linearized route needs each shared weight to keep the strata
-             and cluster identity of the source units it came from, which this
-             release does not build."
-    ),
-    call = call
-  )
-}
+# Each operation has a catchable class and specific recovery advice.
 
 #' @noRd
 check_weight_contract_joint <- function(x, fn_name, call = caller_env()) {
@@ -982,8 +934,11 @@ check_weight_contract_panel <- function(x, fn_name, call = caller_env()) {
     advice = c(
       "i" = "Panels and waves are properties of the units that were selected,
              and the rows here are target units reached through links.",
-      "i" = "Assign and rotate panels on the source sample, then share weights
-             from each wave."
+      # Do not advise an operation that also refuses waves.
+      "i" = "Weight sharing and wave activation do not compose in either
+             direction. Share weights from the master and analyse the result
+             as one sample, or rotate panels and analyse each wave without
+             sharing."
     ),
     call = call
   )
@@ -1075,23 +1030,9 @@ check_generated_cols <- function(
 
 ## Coverage at the analysis boundary
 
-# Constraint 2.1 is an unbiasedness condition: a target cluster with no link
-# to the source population can never be reached, and the estimator understates
-# totals by exactly its share.
-#
-# `share_weights()` records that finding and does not warn about it, which is
-# a deliberate departure from the convention that a condition fires where it
-# arises. It cannot know whether the object will stand alone or become one
-# component of a design over several frames, where a cluster unreachable from
-# one frame is the entire reason the second frame exists. So the warning fires
-# where the estimate is formed, and over the union where there is one.
-
-# What one transformation says about the clusters it cannot reach is
-# `coverage$orphan_clusters`, and `NULL` there means the question was not
-# asked. Under reached scope the register is a roster of the clusters the
-# sample got to, so the absence of an observed orphan is not evidence that
-# none exists, and `share_weights()` records no orphan set at all. An empty
-# set is a different answer and is stored as one.
+# Unreachable target clusters bias totals downward. Warn at the analysis
+# boundary so multiframe coverage is assessed over the union. NULL means the
+# question was not assessed while an empty set means none were found.
 
 #' The clusters no component of a collection can reach
 #'
@@ -1123,10 +1064,16 @@ union_share_coverage <- function(records) {
 
 #' Warn once about what the estimate cannot reach, and record it
 #'
-#' `scope` names what the finding is about, so the stack's message says the
-#' union rather than repeating a per-component one.
+#' `where` names what the finding is about, so the stack's message says the
+#' union rather than repeating a per-component one. It is a formal rather than
+#' a field of `coverage`: neither `union_share_coverage()` nor
+#' `stack_share_coverage()` produces it, every call site appended it by hand,
+#' and a call site that forgot got an empty interpolation and a message with
+#' no locus.
 #' @noRd
-report_share_coverage <- function(result, coverage, call = caller_env()) {
+report_share_coverage <- function(result, coverage, where, call = caller_env()) {
+  # Force this early to report the missing argument clearly.
+  force(where)
   attr(result, "samplyr_weight_share_coverage") <- coverage
   if (!identical(coverage$status, "known") || length(coverage$clusters) == 0) {
     return(result)
@@ -1136,7 +1083,7 @@ report_share_coverage <- function(result, coverage, call = caller_env()) {
   shown <- utils::head(coverage$clusters, 5)
   cli_warn(
     c(
-      "{n} target cluster{?s} cannot be reached{coverage$where}.",
+      "{n} target cluster{?s} cannot be reached{where}.",
       "x" = "{.val {shown}}{if (n > length(shown)) ' and more' else ''}.",
       "i" = "Constraint 2.1: a cluster with no link to any source population
              is never surveyed, so totals are understated by its share.",

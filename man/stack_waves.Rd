@@ -46,8 +46,9 @@ It matches units across waves of one master and means nothing outside
 it. It is not a population identity, and it is not generally a primary
 sampling unit: a clustered design's own cluster variable is carried
 through unchanged and is what a consumer's \code{PSU} argument wants.}
-\item{\code{panel}}{The rotation panel the row's \strong{assignment unit} was given,
-or \code{NA} for a sample drawn without panels. That unit is the one the
+\item{\code{panel}}{The rotation panel the row's \strong{assignment unit} was given.
+Always present: a master drawn without panels has no schedule to
+materialize, so it has no waves to stack. That unit is the one the
 master's \code{panel_stage} names, so several rows can share one panel: all
 the members of a rotating household under a retained primary unit carry
 its label, not one of their own.}

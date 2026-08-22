@@ -25,6 +25,12 @@ A `sampling_design` describes how to sample without embedding the confidential
 frame. Saving it creates a versioned JSON recipe that can be inspected,
 reviewed, and executed later.
 
+That statement applies to a design-only recipe. A file written from an
+executed sample can carry its frame digest. The digest does not contain the
+ordinary frame columns, but it retains selected-unit identifiers and may contain
+per-unit chance metadata. Treat an execution receipt as potentially
+confidential.
+
 Three functions cover the workflow.
 
 | Function | Role |
@@ -154,9 +160,12 @@ identical(replayed$.panel, sample$.panel)
 The execution timestamp is new. The selected rows, their order, design
 columns, panels, and replicate assignments are reproduced.
 
-The selected records themselves are not stored in the JSON recipe. Save them
-with an ordinary data format and keep the design document beside them as an
-audit artifact.
+The selected records themselves are not stored in the JSON recipe, but their
+identifiers occur in the digest's selection trace, as frame-derived cluster
+keys or row indices. Save the records with an ordinary
+data format and keep the protected design document beside them as an audit
+artifact. Use `frame_digest = "none"` at execution when that trace must not be
+created, accepting the loss of digest-backed diagnostics.
 
 ## Replay boundaries
 
@@ -217,8 +226,8 @@ identical(rebuilt$.weight, shared$.weight)
 Because the links and the targets are not in the file, they cannot be checked
 before use. The file instead records what the source selection and the result
 hashed to, and replay is checked against both, so a mismatch says which input
-was wrong. A source that does not reproduce means the register is wrong; a
-result that does not means the links or the targets are.
+was wrong. A source that does not reproduce means the register is wrong,
+whereas a result that does not means the links or the targets are.
 
 `saveRDS()` preserves the object whole, though it records an R object rather
 than a design another tool can read, and it does embed the link structure
@@ -274,8 +283,8 @@ either loss would return a collection that looks complete and estimates
 differently: overlaps from `exante_overlaps()`, which resolve to one chance
 per selected unit when the collection is formed, and a component carrying
 shared weights, which a collection has nowhere to put a link table for.
-Overlaps declared with `overlap_probabilities()` or `overlap_weights()` name
-columns of the components and travel with the file.
+Overlaps declared with `declared_overlaps()` name columns of the components
+and travel with the file.
 
 For PRN-coordinated samples, archive each executed sample and the versioned
 register containing stable identifiers and PRNs. Those artifacts audit sample

@@ -533,11 +533,14 @@ test_that("the serialized assignment record carries fixed fields", {
   suppressWarnings(write_design(b0_clustered(), path))
   encoded <- jsonlite::fromJSON(path, simplifyVector = FALSE)$execution$panel_assignment
 
+  # The assignment law, and nothing of the realization it produced. The
+  # realized pools used to be here; replay rebuilds them, so the file carried
+  # a second copy nothing decoded, whose keys were frame identifiers.
   expect_identical(
     names(encoded),
     c("algorithm", "version", "panels", "assignment_stage", "block_size",
       "r_min", "unit", "key_vars", "pool_vars", "control_ordered",
-      "certainty", "small_pool_policy", "schedule", "pools")
+      "certainty", "small_pool_policy", "schedule")
   )
   expect_identical(encoded$algorithm, "blocked_random_quota")
   expect_identical(encoded$version, 3L)
@@ -552,21 +555,31 @@ test_that("the serialized assignment record carries fixed fields", {
   expect_identical(encoded$certainty, "permanent")
   expect_identical(encoded$small_pool_policy, "error")
 
-  expect_length(encoded$pools, 2L)
-  pool <- encoded$pools[[1]]
-  expect_identical(pool$stratum$stratum, "A")
-  expect_identical(pool$class, "rotating")
-  expect_identical(pool$activation, "rotating")
-  expect_identical(pool$size, 4L)
+  expect_null(encoded$pools)
+
+  # A first-stage cluster key is a composite of the stratum and the cluster,
+  # so writing the pools put two frame columns' values into the record. The
+  # record now names columns rather than listing their contents. (The frame
+  # digest is a separate structure and records selected keys by design; it is
+  # what `frame_digest = "none"` turns off, which test-panels.R covers.)
+  encoded_keys <- jsonlite::toJSON(encoded, auto_unbox = TRUE)
+  expect_false(grepl("c01", encoded_keys, fixed = TRUE))
+
+  # The record is still there in memory, and replay rebuilds it from the
+  # design rather than from the file.
+  live <- attr(b0_clustered(), "metadata")$panel_assignment
+  expect_length(live$pools, 2L)
+  expect_identical(live$pools[[1]]$class, "rotating")
+  expect_identical(live$pools[[1]]$size, 4L)
   expect_identical(
-    unlist(pool$keys),
+    live$pools[[1]]$keys,
     samplyr:::make_group_key(
       data.frame(stratum = "A", cluster = c("c01", "c04", "c05", "c06")),
       c("stratum", "cluster")
     )
   )
-  expect_identical(unlist(pool$blocks), 4L)
-  expect_identical(unlist(pool$quotas), rep(1L, 4))
+  expect_identical(live$pools[[1]]$blocks, 4L)
+  expect_identical(as.integer(live$pools[[1]]$quotas), rep(1L, 4))
 })
 
 test_that("a replayed receipt reproduces the assignment exactly", {

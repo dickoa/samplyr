@@ -27,7 +27,9 @@ sample must be the number its receipt records, so a file cannot say
 it was drawn from one frame and carry fingerprints for three. When
 supplied, a fingerprint (name,
 dimensions, column types, content hash) is stored so the frame can
-be verified later. The frame data is never written. The content
+be verified later. The ordinary frame columns are never written. An
+executed sample's receipt can still contain selected-unit identifiers
+in its frame digest. The content
 hash covers column names, column values, and row order. It does not
 depend on the class of the data frame (tibble or data frame) or on
 the order of its columns. For a \code{frame_stack}, a list \strong{named} by
@@ -63,6 +65,11 @@ The file format is versioned JSON and diffable in version control. It
 stores the complete design specification (stages, stratification,
 clustering, draw settings, including per-stratum vectors and data frames),
 never the frame data itself.
+
+A file written from an executed sample can also contain its frame digest.
+That digest retains selected-unit identifiers and may contain per-unit chance
+metadata. Treat an execution receipt as potentially confidential even
+though it does not contain the ordinary frame columns.
 }
 \details{
 \subsection{Lifecycle}{
@@ -148,8 +155,8 @@ A \code{frame_stack} from \code{\link[=stack_frames]{stack_frames()}} is written
 its own format. Each component entry is a complete \code{samplyr/design}
 document plus the two fields that make it a component: its name, and the
 column saying which frames its units belong to. The collection's key and
-any overlaps declared with \code{\link[=overlap_probabilities]{overlap_probabilities()}} or
-\code{\link[=overlap_weights]{overlap_weights()}} are recorded alongside. Give \code{frame} as a list keyed by
+any overlaps declared with \code{\link[=declared_overlaps]{declared_overlaps()}} are recorded
+alongside. Give \code{frame} as a list keyed by
 component name, since the components are separate selections with separate
 registers.
 

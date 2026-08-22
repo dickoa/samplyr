@@ -1,8 +1,7 @@
 ## Wave materialization
 
-# A wave is a probability subsample using the schedule and block quotas frozen
-# in the master receipt. Its activation chance is a_b / m_b. Certainty units
-# remain active with probability one.
+# A wave uses frozen block quotas with activation chance a_b / m_b.
+# Certainty units remain active with probability one.
 
 #' Materialize one scheduled wave of a rotating master
 #' @noRd
@@ -16,6 +15,7 @@ materialize_wave <- function(
   panel_stage = NULL,
   small_pool = NULL,
   reps,
+  frame_digest_given = FALSE,
   execution_environment,
   call = caller_env()
 ) {
@@ -28,6 +28,7 @@ materialize_wave <- function(
     panel_stage = panel_stage,
     small_pool = small_pool,
     reps = reps,
+    frame_digest_given = frame_digest_given,
     call = call
   )
   wave <- check_wave_declared(wave, record$schedule, call = call)
@@ -83,15 +84,12 @@ build_wave_sample <- function(
             active_panels = activation$active,
             schedule_digest = schedule_digest,
             pools = activation$pools,
-            # Which realization the activation was computed against. The
-            # phase-1 link is what an export reads its non-active rows from,
-            # and `.sample_id` is a row position rather than an identity, so
-            # a substituted sample of the same shape would otherwise line up.
+            # Bind activation to the exact master realization.
             master_digest = wave_source_digest(source)
           ),
           extra
         ),
-        # Retain the master as phase 1. Activation is not a new design execution.
+        # Retain the master as phase 1.
         prev_phase = list(
           transition = "panel_activation",
           sample = source,
@@ -121,6 +119,65 @@ wave_source_digest <- function(source) {
   ))
 }
 
+#' The execution inputs a wave refuses, and the message both routes share
+#'
+#' A wave materializes a stored schedule. Every input `execute()` otherwise
+#' takes was resolved when the master was drawn, so each is refused by name
+#' rather than accepted and dropped.
+#'
+#' `frame_digest` is in the list because a wave touches no frame, so there is
+#' nothing to digest. It reaches this by way of `frame_digest_given`, not by
+#' being `NULL`: it has a real default, so absence cannot be read off the
+#' value the way it can for the other six.
+#'
+#' @param selects,stored_with The two phrases the master route and the program
+#'   route differ on. Everything else about the refusal is the same, and it
+#'   used to be written twice, with the program copy missing the last bullet.
+#' @noRd
+check_wave_extra_arguments <- function(
+  frames,
+  stages,
+  seed,
+  panels,
+  panel_stage,
+  small_pool,
+  reps,
+  frame_digest_given = FALSE,
+  selects,
+  stored_with,
+  call = caller_env()
+) {
+  supplied <- c(
+    if (length(frames) > 0) "a frame",
+    if (!is_null(stages)) "stages",
+    if (!is_null(seed)) "seed",
+    if (!is_null(panels)) "panels",
+    # A wave cannot revise the frozen assignment policy.
+    if (!is_null(panel_stage)) "panel_stage",
+    if (!is_null(small_pool)) "small_pool",
+    if (!is_null(reps)) "reps",
+    if (isTRUE(frame_digest_given)) "frame_digest"
+  )
+  if (length(supplied) == 0L) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "{.arg wave} selects {selects}, so it takes no further execution
+       input.",
+      "x" = "Also given: {supplied}.",
+      if (isTRUE(frame_digest_given)) {
+        c("i" = "A wave is materialized from a stored schedule and reads no
+                 frame, so there is nothing for {.arg frame_digest} to
+                 describe.")
+      },
+      "i" = "Every input a wave needs is stored with {stored_with}."
+    ),
+    class = "samplyr_error_wave_extra_arguments",
+    call = call
+  )
+}
+
 #' Guards for the wave route
 #'
 #' `execute(sample, ...)` already means two-phase or continuation, so the wave
@@ -136,6 +193,7 @@ check_wave_call <- function(
   panel_stage = NULL,
   small_pool = NULL,
   reps,
+  frame_digest_given = FALSE,
   call = caller_env()
 ) {
   if (!is_tbl_sample(master)) {
@@ -151,30 +209,14 @@ check_wave_call <- function(
     )
   }
 
-  supplied <- c(
-    if (length(frames) > 0) "a frame",
-    if (!is_null(stages)) "stages",
-    if (!is_null(seed)) "seed",
-    if (!is_null(panels)) "panels",
-    # The assignment stage and the small-pool policy were both resolved when
-    # the master was drawn and are recorded with the assignment, so a wave
-    # cannot revisit either.
-    if (!is_null(panel_stage)) "panel_stage",
-    if (!is_null(small_pool)) "small_pool",
-    if (!is_null(reps)) "reps"
+  check_wave_extra_arguments(
+    frames = frames, stages = stages, seed = seed, panels = panels,
+    panel_stage = panel_stage, small_pool = small_pool, reps = reps,
+    frame_digest_given = frame_digest_given,
+    selects = "units the master already assigned",
+    stored_with = "the master",
+    call = call
   )
-  if (length(supplied) > 0) {
-    abort_samplyr(
-      c(
-        "{.arg wave} selects units the master already assigned, so it takes
-         no further execution input.",
-        "x" = "Also given: {supplied}.",
-        "i" = "Every input a wave needs is stored with the master."
-      ),
-      class = "samplyr_error_wave_extra_arguments",
-      call = call
-    )
-  }
 
   check_single_replicate(master, "execute", call = call)
   check_sample_unmodified(master, "execute", call = call)
@@ -209,10 +251,7 @@ check_wave_call <- function(
     )
   }
 
-  # Whether a record declares waves is a fact about its fields, so the law
-  # those fields were written under is established first. Otherwise a record
-  # this build cannot read is reported as one that declares no waves, which
-  # names the wrong problem and suggests redrawing with a schedule.
+  # Validate record version before checking whether it declares waves.
   record <- metadata$panel_assignment
   if (!is_null(record)) {
     record <- prepare_panel_record(record, "An activation", call = call)
@@ -295,20 +334,20 @@ activate_cohort <- function(sample, record, active, call = caller_env()) {
     rows <- which(!is.na(at))
 
     if (identical(pool$activation, "permanent")) {
-      # Permanent pools stay outside the randomized quota denominator.
+      # Exclude permanent pools from randomized quota denominators.
       keep[rows] <- TRUE
       factor[rows] <- 1
       take <- pool$blocks
       probability <- rep(1, length(pool$blocks))
     } else {
-      take <- as.integer(rowSums(pool$quotas[, active, drop = FALSE]))
+      take <- pool_take(pool, active)
       # Backstop for older records that did not enforce positive activation.
       if (any(take == 0L)) {
         abort_samplyr(
           c(
             "This wave cannot be materialized: some units have no chance of
              being selected for it.",
-            "x" = "Pool {.val {describe_pool_stratum(pool)}} has
+            "x" = "Pool {.val {format_pool_stratum(pool)}} has
                    {sum(take == 0L)} block{?s} with no active unit in this
                    wave.",
             "i" = "The master was drawn before this check existed. Redraw it

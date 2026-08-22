@@ -1,8 +1,8 @@
 # A sample carrying a weight-share transformation, built from the C0
-# primitives because share_weights() does not exist yet. The links are
-# one-to-one so the target weights equal the source weights, which keeps the
-# fixture's arithmetic out of the way of what the tests are about: the
-# contract the object declares, not the transformation that produced it.
+# primitives rather than by calling share_weights(). The links are one-to-one
+# so the target weights equal the source weights, which keeps the fixture's
+# arithmetic out of the way of what the tests are about: the contract the
+# object declares, not the transformation that produced it.
 #
 # Everything a real share_weights() result must have is here, so a gate that
 # passes this fixture will pass a real one.
@@ -13,13 +13,7 @@ shared_weight_source <- function(seed = 1) {
     execute(bfa_eas, seed = seed)
 }
 
-# `extra_metadata` is merged in after the transformation is attached, so a
-# fixture can reach gates that sit behind an earlier structural check. The
-# stack_waves() gate is the case: it runs after that verb has established its
-# arguments are materialized waves, so a shared sample with no wave record
-# never gets that far.
-shared_weight_sample <- function(source = shared_weight_source(),
-                                 extra_metadata = list()) {
+shared_weight_sample <- function(source = shared_weight_source()) {
   n <- nrow(source)
   targets <- tibble::tibble(
     person_id = paste0("p", seq_len(n)),
@@ -67,10 +61,22 @@ shared_weight_sample <- function(source = shared_weight_source(),
     seed = attr(source, "seed"),
     metadata = list()
   )
-  out <- attach_weight_share_record(result, record)
-  if (length(extra_metadata) > 0) {
-    meta <- attr(out, "metadata")
-    attr(out, "metadata") <- utils::modifyList(meta, extra_metadata)
-  }
-  out
+  attach_weight_share_record(result, record)
+}
+
+# A real master and one of its waves, for the tests that need an object the
+# longitudinal gates accept. Two panels over two waves, one active at a time,
+# which is the smallest schedule that materializes.
+wave_share_master <- function(seed = 1) {
+  sampling_design() |>
+    draw(n = 12) |>
+    execute(
+      bfa_eas,
+      seed = seed,
+      panels = data.frame(
+        panel = rep(1:2, times = 2),
+        wave = rep(1:2, each = 2),
+        active = c(TRUE, FALSE, FALSE, TRUE)
+      )
+    )
 }

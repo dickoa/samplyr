@@ -28,23 +28,13 @@ builtin_method_aliases <- c(balanced = "cube")
 valid_builtin_methods <- c(builtin_methods, names(builtin_method_aliases))
 jip_methods <- c(pps_methods, balanced_methods)
 
-# Random-size Poisson methods: independent unit selection with random
-# realized sample size. Variance estimation requires the Horvitz-Thompson
-# Poisson formula via survey::poisson_sampling(), not the SRSWOR or
-# Brewer estimators used for fixed-size designs.
+# Random-size Poisson methods require the Horvitz-Thompson Poisson variance.
 rs_poisson_methods <- c("bernoulli", "pps_poisson")
 
-# A PPS Poisson pool realizing below 95% of what it could have reached is
-# reported. One rule, no special cases: a 5% shortfall on a target of 40
-# delivers about 38 in expectation, which is a real gap between the nominal
-# and realized design. Mild saturation stays well under it, since one unit
-# clipped from 1.05 to 1 on a target of 40 is a 0.125% shortfall.
+# Report PPS Poisson pools below 95 percent of their reachable target.
 poisson_shortfall_tolerance <- 0.95
 
-# Built-in methods whose true first-order inclusion probabilities equal
-# the target pik only to a documented approximation (Rosen's order
-# sampling). Every other built-in is exact. sondage::method_spec()
-# reports the same tiers.
+# Rosen order methods approximate their target first-order probabilities.
 approx_probability_methods <- c("pps_sps", "pps_pareto")
 
 #' Return the public family prefix for a registered method
@@ -132,9 +122,9 @@ abort_unknown_probabilities <- function(method,
     c(
       "Method {.val {method}} declares its selection probabilities
        unknown, so design weights cannot be computed.",
-      "i" = "samplyr weights samples by 1/probability. A method whose
-             true selection probabilities are not known cannot
-             produce them.",
+      "i" = "samplyr weights samples by the inverse of their inclusion
+             probability or expected hit count. A method whose true
+             selection expectations are unknown cannot produce them.",
       "i" = "Declare {.code probabilities = \"exact\"} or
              {.code \"approximate\"} at registration if the method
              honors the {.arg pik} it receives, or draw with sondage
@@ -338,8 +328,7 @@ check_poisson_shortfall <- function(
   n_clipped,
   pool_keys = character(0)
 ) {
-  # Direct `pik` leaves `n` optional: with no declared target there is
-  # nothing to fall short of.
+  # Direct `pik` may omit a nominal count.
   if (is_null(n_requested) || is.na(n_reachable) || n_reachable <= 0) {
     return(invisible(NULL))
   }
@@ -375,7 +364,7 @@ qualify_pool_events <- function(expr, parent_key) {
   for (cnd in events) {
     payload <- cnd$payload
     keys <- payload$pool_keys
-    # A stage with no pools of its own is identified by its parent alone.
+    # Parent identity defines stages without their own pools.
     payload$pool_keys <- if (length(keys) == 0L) {
       parent_key
     } else {
@@ -419,8 +408,7 @@ report_selection_events <- function(expr) {
     },
     character(1)
   )
-  # A literal token rather than NA: an unreplicated execution has no replicate
-  # id, and `NA == NA` would match no event at all.
+  # Use a token because missing replicate IDs do not compare equal.
   replicate_of <- vapply(
     events,
     function(cnd) {
@@ -441,7 +429,7 @@ report_selection_events <- function(expr) {
       }
     )
 
-    # Classify before merging because exhaustion is replicate-specific.
+    # Classify before merging replicate-specific exhaustion.
     outcome_of <- vapply(
       per_replicate,
       function(x) selection_event_outcome(first$operation, x),
@@ -498,9 +486,7 @@ summarize_selection_events <- function(group) {
   field <- function(name) {
     lapply(group, function(cnd) cnd$payload[[name]])
   }
-  # Absent is not zero. An operation that never records a realized count would
-  # otherwise ship `n_actual = 0` in its public payload, which reads as a
-  # measurement rather than as a field this event does not carry.
+  # Do not turn an absent realized count into zero.
   total <- function(name) {
     values <- unlist(field(name))
     if (length(values) == 0L) {
@@ -586,10 +572,7 @@ format_pool_sample <- function(keys, max_shown = 5L) {
   if (length(keys) <= max_shown) {
     return(cli::format_inline("{.val {keys}}"))
   }
-  # The count takes the place of the final list item, so the shown keys are
-  # joined without cli's trailing "and": ".., "c005", and 35 more", not
-  # ".., and "c005", and 35 more". cli's own truncation is not used because it
-  # renders a non-ASCII ellipsis and drops the count.
+  # Join truncated keys manually to retain the omitted count.
   shown <- cli::cli_vec(
     keys[seq_len(max_shown)],
     style = list("vec-last" = ", ")
@@ -775,10 +758,7 @@ suggest_reserved_arg <- function(name, candidates, max_dist = 2L,
   if (!prefix) {
     return(NULL)
   }
-  # An expansion of the argument name is not a near miss by edit distance:
-  # `allocation` is five edits from `alloc`. Enable this only where a name
-  # is already known to be wrong, so a guess can add advice but never
-  # reclassify a legitimate argument.
+  # Suggest expansions only after an argument is known to be invalid.
   starts <- vapply(
     candidates,
     function(cand) startsWith(tolower(name), tolower(cand)),
@@ -899,9 +879,7 @@ check_forwarded_args <- function(
     return(invisible(NULL))
   }
 
-  # Reported on the first stray name in call order, whichever category it
-  # falls into, so the two branches cannot disagree about which argument
-  # the message is about.
+  # Report the first stray argument in call order.
   if (stray[[1]] %in% derived) {
     abort_samplyr(
       c(
@@ -916,10 +894,7 @@ check_forwarded_args <- function(
     )
   }
 
-  # Derived names are candidates for the suggestion even though they are not
-  # accepted: `strat` means `strata` whether or not `strata` can be given, and
-  # answering a near miss with the generic advice leaves the user to guess.
-  # `known` is listed first so it wins a distance tie.
+  # Let known names win suggestion distance ties.
   suggestion <- suggest_reserved_arg(stray[[1]], c(known, derived))
   advice <- if (!is_null(suggestion) && suggestion %in% derived) {
     cli::format_inline(
@@ -1300,8 +1275,7 @@ is_complete_replicate <- function(x) {
     return(FALSE)
   }
 
-  # When the execution stored per-replicate hashes, verify the
-  # extracted values match the recorded realization exactly.
+  # Verify stored per-replicate hashes exactly.
   integrity <- meta$integrity
   rep_hash <- integrity$replicate_hashes[[as.character(r)]]
   if (!is_null(rep_hash)) {
@@ -1372,7 +1346,7 @@ check_no_materialized_wave <- function(x, fn_name, call = caller_env()) {
       "i" = "For the master's own joint probabilities:
              {.code joint_expectation(master, frame)}."
     ),
-    class = "samplyr_error_wave_export_unsupported",
+    class = "samplyr_error_wave_joint_unsupported",
     call = call
   )
 }
@@ -1412,9 +1386,7 @@ check_sample_unmodified <- function(x, fn_name, call = caller_env()) {
     )
   }
 
-  # A transformed sample cannot be told to run a second phase or to export
-  # through as_svydesign(): both are refused for shared weights. Advice that
-  # names them would send the user to another refusal.
+  # Do not advise operations that also refuse transformed samples.
   advice <- if (identical(sample_weight_contract(x), "shared")) {
     c(
       "i" = "This sample's weights were shared with a linked target population, and the recorded transformation addresses its rows by position.",

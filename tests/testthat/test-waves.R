@@ -67,7 +67,7 @@ test_that("a schedule naming only its active rows is completed", {
   )
 })
 
-test_that("schedule defects are refused by kind", {
+test_that("wave schedules are refused by defect kind", {
   expect_error(
     normalize_panel_input(data.frame(panel = 1:4)),
     class = "samplyr_error_schedule_columns"
@@ -290,6 +290,40 @@ test_that("the wave route refuses every other execution input", {
   expect_error(
     execute(master, wave = 1, stages = 1),
     class = "samplyr_error_wave_extra_arguments"
+  )
+  expect_error(
+    execute(master, wave = 1, panel_stage = 1),
+    class = "samplyr_error_wave_extra_arguments"
+  )
+  expect_error(
+    execute(master, wave = 1, small_pool = "permanent"),
+    class = "samplyr_error_wave_extra_arguments"
+  )
+
+  # `frame_digest` used to be accepted here and dropped, which is the exact
+  # silent-ignore this guard exists to prevent. It has a real default, so its
+  # absence is read from `missing()` rather than from its value.
+  expect_error(
+    execute(master, wave = 1, frame_digest = "full"),
+    class = "samplyr_error_wave_extra_arguments"
+  )
+  expect_error(
+    execute(master, wave = 1, frame_digest = "full"),
+    regexp = "reads no\\s+frame"
+  )
+  # Including the value that happens to be the default: passing it is still
+  # passing it.
+  expect_error(
+    execute(master, wave = 1, frame_digest = "summary"),
+    class = "samplyr_error_wave_extra_arguments"
+  )
+  # Not passing it is not passing it.
+  expect_s3_class(execute(master, wave = 1), "tbl_sample")
+
+  # Every name at once, and the message says all of them.
+  expect_error(
+    execute(master, wave = 1, seed = 3, frame_digest = "full"),
+    regexp = "seed and frame_digest"
   )
 })
 
@@ -625,7 +659,7 @@ test_that("a wave inherits the restrictions of any second phase", {
   # is not the query surface for them.
   expect_error(
     joint_expectation(materialized),
-    class = "samplyr_error_wave_export_unsupported"
+    class = "samplyr_error_wave_joint_unsupported"
   )
   # Variance components assume nested stages, and a phase is not a stage.
   expect_error(
@@ -740,4 +774,82 @@ test_that("a cohort drawn whole exports as the single-phase design it is", {
     unname(stats::weights(as_svydesign(live$b))),
     unname(as.data.frame(live$b)$.weight)
   )
+})
+
+## What the documented limits of the wave export actually are
+
+test_that("a wave of a master with no schedule is refused, so `panel` is never NA", {
+  # `stack_waves()` documents `panel` as always present. That rests on a
+  # master without a schedule having no waves to stack at all.
+  bare <- sampling_design() |> draw(n = 10) |> execute(wave_frame(), seed = 3)
+  expect_error(execute(bare, wave = 1), class = "samplyr_error_wave_no_schedule")
+
+  # The one object that would carry NA is a whole cohort of a rotation
+  # program, and it is refused for spanning cohorts before the column is
+  # built. The branch stays as a guard for that refusal being lifted.
+  st <- data.frame(
+    panel = rep(1:2, times = 3), wave = rep(1:3, each = 2),
+    active = c(TRUE, TRUE, TRUE, FALSE, FALSE, TRUE)
+  )
+  startup <- sampling_design() |> draw(n = 40) |>
+    execute(data.frame(id = 1:200), seed = 1, panels = st)
+  intake <- sampling_design() |> draw(n = 12) |>
+    execute(data.frame(id = 201:260), seed = 2)
+  program <- rotation_program(
+    cohorts = list(startup = startup, intake_2 = intake),
+    entry_wave = c(startup = 1, intake_2 = 2),
+    schedule = rbind(
+      transform(st, cohort = "startup"),
+      data.frame(cohort = "intake_2", panel = 1L, wave = 1:3,
+                 active = c(FALSE, TRUE, TRUE))
+    )
+  )
+  whole <- execute(program, wave = 2)[["intake_2"]]
+  expect_false(".panel" %in% names(whole))
+  expect_error(
+    stack_waves(whole, execute(program, wave = 2)[["startup"]]),
+    class = "samplyr_error_stack_waves_input"
+  )
+
+  # And a real stack never produces one.
+  master <- master_2_2()
+  stacked <- stack_waves(execute(master, wave = 1), execute(master, wave = 2))
+  expect_false(anyNA(stacked$panel))
+})
+
+test_that("the two-phase variance of a total can be negative, and approx is finite", {
+  skip_if_not_installed("survey")
+  # Documented on the as_svydesign() page. survey's exact estimator, which
+  # samplyr cannot intercept: the variance is not computed until an estimator
+  # is called, and samplyr is not in that call.
+  set.seed(20260820)
+  population <- data.frame(
+    uid = sprintf("a%04d", 1:1000),
+    stratum = rep(c("N", "C", "S"), times = c(450, 300, 250)),
+    y = round(stats::rnorm(
+      1000, mean = rep(c(80, 120, 160), times = c(450, 300, 250)), sd = 25
+    ), 3)
+  )
+  master <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = c(N = 70, C = 90, S = 110)) |>
+    execute(population, seed = 5150, panels = rotation_2_2())
+  wave <- execute(master, wave = 4)
+
+  # `SE()` and `vcov()` both take the square root again, so each re-emits
+  # base R's warning. Read once, quietly, and assert on the values.
+  total <- suppressWarnings(survey::svytotal(~y, as_svydesign(wave)))
+  total_se <- suppressWarnings(survey::SE(total)[[1]])
+  total_var <- suppressWarnings(vcov(total)[1, 1])
+  expect_true(is.nan(total_se))
+  expect_lt(total_var, 0)
+
+  # The alternative the documentation names has to work.
+  approx <- survey::svytotal(~y, as_svydesign(wave, method = "approx"))
+  expect_true(is.finite(survey::SE(approx)[[1]]))
+  expect_equal(coef(approx)[[1]], coef(total)[[1]])
+
+  # A mean is unaffected, which is the other half of the claim.
+  mean_est <- survey::svymean(~y, as_svydesign(wave))
+  expect_true(is.finite(survey::SE(mean_est)[[1]]))
 })

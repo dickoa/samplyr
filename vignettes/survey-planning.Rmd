@@ -207,6 +207,109 @@ by `sd`, subject to the stated constraints. A cost-weighted allocation adds the
 declared costs. Neither choice is automatically optimal for other variables or
 domains.
 
+## Allocate for several indicators at once
+
+Given per-stratum moments for several indicators and a precision target for
+each, `n_alloc()` finds the cheapest allocation that satisfies all of them
+together. `measures` carries the moments, one row per stratum and indicator,
+and `targets` carries one requirement per indicator.
+
+```{r}
+sector_moments <- ken_enterprises |>
+  summarise(
+    N = n(),
+    mean = mean(revenue_millions),
+    sd = sd(revenue_millions),
+    p = mean(exporter),
+    .by = sector
+  )
+
+joint_measures <- bind_rows(
+  mutate(sector_moments, stratum = sector, name = "revenue", mean, sd, .keep = "none"),
+  mutate(sector_moments, stratum = sector, name = "exporter", p, .keep = "none")
+)
+
+joint_plan <- n_alloc(
+  transmute(sector_moments, stratum = sector, N, .keep = "none"),
+  measures = joint_measures,
+  targets = data.frame(
+    name = c("revenue", "exporter"),
+    cv = c(0.10, 0.05)
+  )
+)
+
+joint_plan
+```
+
+One requirement determines the sample size and the others have slack. The
+result reports which.
+
+```{r}
+joint_plan$constraints[, c("name", ".target", ".achieved", ".binding")]
+```
+
+The exporter proportion binds. Mean revenue was asked for a CV of 0.10 and the
+design delivers about 0.089, because the sample the exporter target requires is
+larger than the one revenue needs. A total sample size on its own would not
+show that.
+
+## Check a plan against the design that runs it
+
+A plan states the precision it expects. Executing the design repeatedly against
+a known population shows the precision it delivers. Comparing the two is the
+most direct check that the variance model, the allocation, and the executed
+design agree with each other.
+
+```{r}
+joint_design <- sampling_design(title = "Enterprise indicators") |>
+  stratify_by(sector) |>
+  draw(n = joint_plan)
+
+estimate_once <- function(seed) {
+  smp <- execute(joint_design, ken_enterprises, seed = seed)
+  c(
+    revenue = sum(smp$.weight * smp$revenue_millions) / sum(smp$.weight),
+    exporter = sum(smp$.weight * smp$exporter) / sum(smp$.weight)
+  )
+}
+
+replicates <- 200
+estimates <- vapply(seq_len(replicates), estimate_once, numeric(2))
+```
+
+Fix the acceptance band before reading the result. The Monte Carlo error on an
+estimated CV is about `1 / sqrt(2 * (replicates - 1))` in relative terms, so
+three of those is a defensible band for a check of this size.
+
+```{r}
+truth <- c(
+  revenue = mean(ken_enterprises$revenue_millions),
+  exporter = mean(ken_enterprises$exporter)
+)
+tolerance <- 3 / sqrt(2 * (replicates - 1))
+
+check <- data.frame(
+  indicator = joint_plan$constraints$name,
+  planned_cv = joint_plan$constraints$.achieved,
+  empirical_cv = apply(estimates, 1, sd) / abs(rowMeans(estimates)),
+  rel_bias = rowMeans(estimates) / truth[joint_plan$constraints$name] - 1,
+  row.names = NULL
+)
+check$ratio <- check$empirical_cv / check$planned_cv
+check$within_tolerance <- abs(check$ratio - 1) < tolerance
+
+check
+```
+
+Compare each indicator against the precision the plan plans for it, which is
+`.achieved`, and not against the target it was asked for. Revenue is checked
+against 0.089 rather than 0.10 for the reason the previous section gives.
+
+This validates the planning model, not the survey. The frame is used as its own
+population, so response, coverage, and measurement play no part, and the
+moments the plan was given are true by construction. It cannot tell you whether
+those moments describe the population that will actually be surveyed.
+
 ## Plan a clustered design
 
 Clustering usually increases variance because units in the same cluster are
@@ -236,6 +339,96 @@ as.integer(cluster_plan)
 In a two-stage `samplyr` design, the cluster plan supplies the stage-1 cluster
 count and the within-cluster take. See `?n_cluster` for the feasibility checks
 and `vignette("introduction")` for multistage execution.
+
+## Field a certainty-aware allocation
+
+A few large PSUs often dominate a stratum. Under proportional-to-size
+selection their inclusion probability reaches one, so a plan that pretends
+they are sampled understates what the field work fixes in advance. Given a
+register with one row per PSU, `n_alloc()` separates the certainty part from
+the sampled remainder and sizes both together. Here the ultimate units are
+households and the register carries each enumeration area's household count.
+
+```{r}
+ea_register <- data.frame(
+  psu_id = c(sprintf("U%02d", 1:8), sprintf("R%02d", 1:8)),
+  stratum = rep(c("urban", "rural"), each = 8),
+  N = c(600, rep(200, 7), 450, 220, 165, rep(153, 5))
+)
+
+certainty_plan <- n_alloc(
+  data.frame(stratum = c("urban", "rural"), N = c(2000, 1600), n_per_psu = 10),
+  measures = data.frame(
+    stratum = c("urban", "rural"), name = "literacy",
+    p = c(0.5, 0.4), icc_psu = 0.05
+  ),
+  targets = data.frame(name = "literacy", cv = 0.10),
+  psu = ea_register
+)
+
+certainty_plan$detail[, c("stratum", "n_int", "n_psu_certain", "n_psu_draw", "threshold")]
+```
+
+The plan's `$psu` table classifies every PSU and states the take the
+operational design fields in it. A certainty PSU carries its own whole take.
+The remainder carries `n_per_psu`.
+
+```{r}
+filter(certainty_plan$psu, certainty)
+```
+
+Passing the plan to `draw()` fields that classification as stored. Stage 1
+must be stratified and clustered, with an exact-pik fixed-size PPS method and
+the register's own sizes as `mos`: every certainty PSU enters with
+probability one, and exactly `n_psu_draw` more are drawn per stratum. The
+same plan at stage 2 applies each PSU's take. The frame here is the household
+listing the register describes.
+
+```{r}
+households <- ea_register[rep(seq_len(nrow(ea_register)), ea_register$N), ] |>
+  mutate(household = row_number(), .by = psu_id)
+
+certainty_sample <- sampling_design(title = "Certainty-aware household survey") |>
+  stratify_by(stratum) |>
+  cluster_by(psu_id) |>
+  draw(n = certainty_plan, method = "pps_systematic", mos = N) |>
+  add_stage() |>
+  draw(n = certainty_plan) |>
+  execute(households, seed = 4)
+
+count(certainty_sample, stratum, name = "n_sampled")
+```
+
+The totals equal the plan's `n_int` exactly, because both stages field the
+plan's own whole-unit numbers. Before anything is drawn, `execute()`
+reconciles the frame against the register on PSU identity, stratum, and size,
+and refuses a frame the plan was not solved for. It also refuses a plan whose
+remainder draw would push another PSU to probability one, naming the PSU to
+flag in the register's `certainty` column before refitting. The plan's
+classification is never silently altered.
+
+Stratifying within PSUs at stage 2 is allowed when an allocation method
+states how each take splits. A bare `stratify_by()` is refused there, because
+a scalar size at a stratified stage means that size in every stratum.
+
+```{r}
+households$sex <- c("f", "m")[households$household %% 2 + 1]
+
+stratified_takes <- sampling_design() |>
+  stratify_by(stratum) |>
+  cluster_by(psu_id) |>
+  draw(n = certainty_plan, method = "pps_systematic", mos = N) |>
+  add_stage() |>
+  stratify_by(sex, alloc = "proportional") |>
+  draw(n = certainty_plan) |>
+  execute(households, seed = 4)
+
+count(stratified_takes, stratum, name = "n_sampled")
+```
+
+Designs holding a certainty plan serialize with `write_design()` like any
+other and replay identically. The file carries the register, so an edited
+copy is refused at execution rather than fielded.
 
 ## Plan a repeated survey
 

@@ -676,3 +676,63 @@ test_that("print and summary return their input invisibly", {
   invisible(capture.output(summarized <- summary(frames)))
   expect_identical(summarized, frames)
 })
+
+## Compositions with the longitudinal feature
+
+test_that("a materialized wave may be a component, and is refused at export", {
+  skip_if_not_installed("survey")
+
+  population <- data.frame(
+    ea_id = sprintf("e%03d", 1:200),
+    region = rep(c("N", "S"), each = 100),
+    in_w = TRUE,
+    in_o = TRUE,
+    stringsAsFactors = FALSE
+  )
+  schedule <- data.frame(
+    panel = rep(1:4, times = 4), wave = rep(1:4, each = 4),
+    active = c(TRUE, TRUE, FALSE, FALSE, FALSE, TRUE, TRUE, FALSE,
+               FALSE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, TRUE)
+  )
+  master <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 30) |>
+    execute(population, seed = 42, panels = schedule)
+  wave <- execute(master, wave = 1)
+  other <- sampling_design() |> draw(n = 30) |> execute(population, seed = 9)
+
+  # Constructible: nothing about a wave stops it being one frame of several,
+  # and `stack_frames()` reads membership and a key, which a wave has.
+  stack <- stack_frames(
+    w = wave, o = other,
+    membership = c(w = "in_w", o = "in_o"), key = ea_id
+  )
+  expect_s3_class(stack, "frame_stack")
+  expect_identical(nrow(stack[["w"]]), nrow(wave))
+  expect_true(survey_phase_info(stack[["w"]])$is_twophase)
+
+  # The inspection views take it, because they describe rather than estimate.
+  expect_s3_class(as.data.frame(stack), "data.frame")
+  expect_output(print(summary(stack)), "2 frames")
+
+  # Both export routes refuse it, each naming the component. A composite
+  # weight needs one selection probability per row, and a wave's second
+  # phase is an activation rather than a selection.
+  expect_error(
+    as_svydesign(stack),
+    class = "samplyr_error_survey_multiframe_unsupported"
+  )
+  expect_error(as_svydesign(stack), regexp = "two-phase")
+  expect_error(as_svydesign(stack), regexp = "\"w\"")
+  expect_error(
+    as_svrepdesign(stack, type = "bootstrap", replicates = 10),
+    class = "samplyr_error_svrep_twophase_unsupported"
+  )
+
+  # The master is not two-phase, so the same stack built from it exports.
+  from_master <- stack_frames(
+    w = master, o = other,
+    membership = c(w = "in_w", o = "in_o"), key = ea_id
+  )
+  expect_s3_class(as_svydesign(from_master), "multiframe")
+})

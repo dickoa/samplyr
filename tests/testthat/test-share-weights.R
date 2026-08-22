@@ -527,3 +527,55 @@ test_that("a real shared sample meets the gates from G1", {
     class = "samplyr_error_execute_weight_contract"
   )
 })
+
+## Markers: how they may be written, and what they do outside their argument
+
+test_that("a marker may be namespace qualified", {
+  frame <- data.frame(unit = c("a", "b", "c", "d"), stringsAsFactors = FALSE)
+  sample <- sampling_design() |> draw(n = 2) |> execute(frame, seed = 1)
+  targets <- data.frame(
+    tid = c("t1", "t2"), hh = c("H1", "H1"), y = c(1, 10), imp = c(1, 1)
+  )
+  links <- data.frame(unit = c("a", "b"), tid = c("t1", "t2"), imp = c(1, 1))
+  share <- function(multiplicity, within = quote(hh)) {
+    do.call(share_weights, list(
+      sample, targets = targets, links = links,
+      by = c(unit = "unit"), to = c(tid = "tid"),
+      within = within, multiplicity = multiplicity
+    ))
+  }
+
+  # A marker is read as an expression and never evaluated, so the qualified
+  # spelling has to be matched rather than working by accident. It used to be
+  # reported as though the spelling were wrong.
+  plain <- share(quote(complete_links()))
+  expect_identical(share(quote(samplyr::complete_links()))$.weight, plain$.weight)
+  expect_identical(
+    share(quote(complete_links()), quote(samplyr::extend_links(hh)))$.weight,
+    share(quote(complete_links()), quote(extend_links(hh)))$.weight
+  )
+  expect_identical(
+    share(quote(samplyr::weighted_links(imp, total = samplyr::complete_links())))$.weight,
+    share(quote(weighted_links(imp, total = complete_links())))$.weight
+  )
+
+  # Only samplyr's own namespace. Another package's call of the same name is
+  # not this marker.
+  expect_error(
+    share(quote(otherpkg::complete_links())),
+    class = "samplyr_error_share_weights_multiplicity"
+  )
+})
+
+test_that("every declarative marker refuses the same way", {
+  # They were four bare cli_abort() calls, catchable only by message.
+  for (call in list(
+    function() complete_links(),
+    function() weighted_links(a, total = b),
+    function() extend_links(a),
+    function() bound(a)
+  )) {
+    expect_error(call(), class = "samplyr_error_marker_misused")
+    expect_error(call(), class = "samplyr_error")
+  }
+})

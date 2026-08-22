@@ -105,7 +105,30 @@ prv_replace_record <- function(path, literal) {
 
 # Version 1 knew one assignment stage, one unit vocabulary, and no small-pool
 # policy: positivity was unchecked rather than defaulted.
-prv_as_version_1 <- function(record) {
+# The pools a version-1 or version-2 file carried. Today's writer emits the
+# assignment law and not the realized pools, so a legacy artifact cannot be
+# made by downgrading one of its files: the block has to be written here.
+# That is what the note above asks for anyway -- a fixture built by the
+# current writer agrees with the current reader by construction.
+prv_legacy_pools <- function(live) {
+  lapply(live$pools, function(pool) {
+    out <- list()
+    if (!is.null(pool$stratum)) {
+      out$stratum <- lapply(pool$stratum, function(v) as.character(v)[1])
+    }
+    out$class <- pool$class
+    out$size <- as.integer(pool$size)
+    out$keys <- as.list(as.character(pool$keys))
+    out$blocks <- as.list(as.integer(pool$blocks))
+    out$quotas <- lapply(
+      seq_len(nrow(pool$quotas)),
+      function(b) as.list(as.integer(pool$quotas[b, ]))
+    )
+    out
+  })
+}
+
+prv_as_version_1 <- function(record, live) {
   list(
     algorithm = record$algorithm,
     version = 1L,
@@ -117,24 +140,13 @@ prv_as_version_1 <- function(record) {
     control_ordered = record$control_ordered,
     certainty = record$certainty,
     schedule = record$schedule,
-    pools = lapply(record$pools, function(pool) {
-      out <- list()
-      if (!is.null(pool$stratum)) {
-        out$stratum <- pool$stratum
-      }
-      out$class <- pool$class
-      out$size <- pool$size
-      out$keys <- pool$keys
-      out$blocks <- pool$blocks
-      out$quotas <- pool$quotas
-      out
-    })
+    pools = prv_legacy_pools(live)
   )
 }
 
 # Version 2 added the small-pool policy and separated a pool's activation from
 # its selection class. It still had one assignment stage and no pool columns.
-prv_as_version_2 <- function(record) {
+prv_as_version_2 <- function(record, live) {
   list(
     algorithm = record$algorithm,
     version = 2L,
@@ -147,20 +159,19 @@ prv_as_version_2 <- function(record) {
     certainty = record$certainty,
     small_pool_policy = record$small_pool_policy,
     schedule = record$schedule,
-    pools = lapply(record$pools, function(pool) {
-      out <- list()
-      if (!is.null(pool$stratum)) {
-        out$stratum <- pool$stratum
-      }
-      out$class <- pool$class
-      out$activation <- pool$activation
-      if (!is.null(pool$permanent_reason)) {
-        out$permanent_reason <- pool$permanent_reason
-      }
-      out$size <- pool$size
-      out$keys <- pool$keys
-      out$blocks <- pool$blocks
-      out$quotas <- pool$quotas
+    # Version 2 is where activation became a fact of its own, so it is added
+    # to the version-1 block rather than carried over from a stored one.
+    pools = lapply(seq_along(live$pools), function(i) {
+      pool <- live$pools[[i]]
+      out <- prv_legacy_pools(live)[[i]]
+      out <- c(
+        out[intersect(c("stratum", "class"), names(out))],
+        list(activation = pool$activation),
+        if (!is.na(pool$permanent_reason %||% NA_character_)) {
+          list(permanent_reason = pool$permanent_reason)
+        },
+        out[intersect(c("size", "keys", "blocks", "quotas"), names(out))]
+      )
       out
     })
   )
@@ -185,7 +196,7 @@ prv_legacy_unit <- function(unit) {
 test_that("a version-1 receipt reproduces its first-stage assignment", {
   master <- prv_master()
   path <- prv_file(master)
-  legacy <- prv_as_version_1(prv_stored_record(path))
+  legacy <- prv_as_version_1(prv_stored_record(path), prv_record(master))
 
   # The downgrade removed what version 1 never had, rather than renumbering a
   # version-3 record.
@@ -223,7 +234,7 @@ test_that("a version-2 receipt reproduces its assignment and its policy", {
     seed = 31, panels = prv_schedule(), small_pool = "permanent"
   ))
   path <- prv_file(master, frame)
-  legacy <- prv_as_version_2(prv_stored_record(path))
+  legacy <- prv_as_version_2(prv_stored_record(path), prv_record(master))
 
   expect_identical(legacy$version, 2L)
   expect_null(legacy$assignment_stage)
@@ -243,7 +254,7 @@ test_that("a version-2 receipt reproduces its assignment and its policy", {
   # is: replayed under today's default, this draw is refused rather than
   # reproduced. That is the intended direction, and it is why the version-2
   # field has to survive the round trip.
-  as_v1 <- prv_as_version_1(prv_stored_record(path))
+  as_v1 <- prv_as_version_1(prv_stored_record(path), prv_record(master))
   expect_null(as_v1$small_pool_policy)
   expect_error(
     suppressWarnings(
@@ -321,8 +332,14 @@ test_that("with-replacement occurrence identities survive the file", {
 
   path <- prv_file(master, frame)
   stored <- prv_stored_record(path)
-  keys <- unlist(stored$pools[[1]]$keys)
+  # The file says the unit is an occurrence by naming the columns that
+  # identify one. It does not carry the occurrences themselves: the realized
+  # pools are rebuilt by replaying, which is what the last assertion checks.
   expect_identical(unlist(stored$key_vars), c("psu", ".draw_1"))
+  expect_identical(stored$unit, "occurrence")
+  expect_null(stored$pools)
+
+  keys <- record$pools[[1]]$keys
   expect_identical(length(keys), 6L)
   expect_identical(anyDuplicated(keys), 0L)
 
@@ -511,7 +528,7 @@ test_that("a version-1 record's stage comes from its version, not its fields", {
   expect_false(identical(master$.panel, lower$.panel))
 
   path <- prv_file(master)
-  legacy <- prv_as_version_1(prv_stored_record(path))
+  legacy <- prv_as_version_1(prv_stored_record(path), prv_record(master))
   legacy$assignment_stage <- 2L
   path1 <- prv_rewrite_record(path, legacy)
 
@@ -530,7 +547,7 @@ test_that("a version-1 record's stage comes from its version, not its fields", {
 test_that("a version-2 record's stage comes from its version too", {
   master <- prv_master()
   path <- prv_file(master)
-  legacy <- prv_as_version_2(prv_stored_record(path))
+  legacy <- prv_as_version_2(prv_stored_record(path), prv_record(master))
   legacy$assignment_stage <- 2L
   path2 <- prv_rewrite_record(path, legacy)
 

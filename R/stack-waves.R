@@ -29,8 +29,9 @@
 #'     it. It is not a population identity, and it is not generally a primary
 #'     sampling unit: a clustered design's own cluster variable is carried
 #'     through unchanged and is what a consumer's `PSU` argument wants.}
-#'   \item{`panel`}{The rotation panel the row's **assignment unit** was given,
-#'     or `NA` for a sample drawn without panels. That unit is the one the
+#'   \item{`panel`}{The rotation panel the row's **assignment unit** was given.
+#'     Always present: a master drawn without panels has no schedule to
+#'     materialize, so it has no waves to stack. That unit is the one the
 #'     master's `panel_stage` names, so several rows can share one panel: all
 #'     the members of a rotating household under a retained primary unit carry
 #'     its label, not one of their own.}
@@ -106,12 +107,9 @@ stack_waves_provenance <- function(wave, call = caller_env()) {
   metadata <- attr(wave, "metadata")
   check_single_replicate(wave, "stack_waves", call = call)
   check_sample_unmodified(wave, "stack_waves", call = call)
-  check_weight_contract_panel(wave, "stack_waves", call = call)
+  # Shared samples cannot also be waves.
 
-  # A component of a rotation program is an ordinary wave object, so nothing
-  # structural distinguishes it. Spanning cohorts needs its own contract:
-  # identity across frame vintages is not established, and a cohort drawn
-  # whole has no panels at all.
+  # Refuse wave stacks spanning cohorts without cross-vintage identity.
   if (!is_null(metadata$wave$cohort)) {
     abort_samplyr(
       c(
@@ -126,9 +124,7 @@ stack_waves_provenance <- function(wave, call = caller_env()) {
     )
   }
 
-  # Provenance is what every later guard reads, so it is required rather than
-  # assumed. Damage that is CONSISTENT across the waves would otherwise pass
-  # the agreement check, which only compares them with each other.
+  # Require provenance before comparing waves with each other.
   missing <- c(
     if (!identical(metadata$prev_phase$transition, "panel_activation")) {
       "an activation link"
@@ -207,10 +203,7 @@ check_stack_waves_inputs <- function(waves, call = caller_env()) {
     abort_samplyr(
       c(
         "{.fn stack_waves} takes materialized waves.",
-        # cli takes the quantity from the last value it interpolated, and
-        # `bad` is a vector of positions rather than a count. Both plurals
-        # have to be told what they count, and the second has to be told
-        # again, because interpolating `bad` resets the quantity to it.
+        # Set each cli plural quantity explicitly.
         "x" = "{cli::qty(length(bad))}Argument{?s} {bad}{cli::qty(length(bad))} {?is/are} not one.",
         "i" = "A wave comes from {.code execute(master, wave = t)}."
       ),
@@ -224,9 +217,12 @@ check_stack_waves_inputs <- function(waves, call = caller_env()) {
 #' Every wave must describe the same realization of the same master
 #' @noRd
 check_stack_waves_agreement <- function(records, call = caller_env()) {
+  # `toString()` safely describes malformed non-scalar legacy fields.
   disagree <- function(field) {
     values <- unique(vapply(records, function(r) {
-      as.character(r[[field]] %||% NA_character_)
+      value <- r[[field]]
+      if (is_null(value) || length(value) == 0L) NA_character_ else
+        toString(as.character(value))
     }, character(1)))
     length(values) > 1L
   }
@@ -275,9 +271,7 @@ stack_waves_rows <- function(wave, label, call = caller_env()) {
   data <- as.data.frame(wave)
   carried <- setdiff(names(data), samplyr_internal_cols(data))
 
-  # These four names carry the contract, so a data column of the same name is
-  # refused rather than silently renamed. `execute()` cannot have caught them:
-  # none is a reserved samplyr name, so any frame may legitimately hold one.
+  # Refuse collisions with the four interchange columns.
   clash <- intersect(carried, stack_waves_columns)
   if (length(clash) > 0) {
     abort_samplyr(
@@ -297,6 +291,7 @@ stack_waves_rows <- function(wave, label, call = caller_env()) {
   generated <- tibble::tibble(
     wave = rep(as.integer(label), nrow(data)),
     master_id = data$.sample_id,
+    # Keep an explicit missing-panel guard for future cohort support.
     panel = if (is_null(data$.panel)) {
       rep(NA_integer_, nrow(data))
     } else {

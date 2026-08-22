@@ -1,3 +1,9 @@
+# Wave export is not tested here. `build_activation_twophase()` reaches
+# `survey_id_info()`, `survey_strata_info()`, `survey_fpc_info()` and
+# `survey_validate_phase_support()`, which this file is the primary suite
+# for, so a change to any of them reaches the wave path too. Its coverage
+# lives in test-waves.R and test-small-pool.R.
+
 test_that("execute() produces .fpc_k columns for unstratified SRS", {
   expect_true(".fpc_1" %in% names(fix_srs))
   # FPC should equal the frame size
@@ -834,6 +840,25 @@ test_that("joint_expectation works with ppsmat for survey export", {
   svy <- as_svydesign(fix_pps_brewer, pps = survey::ppsmat(jip[[1]]))
   # ppsmat designs return "pps"/"survey.design", not "survey.design2"
   expect_s3_class(svy, "survey.design")
+})
+
+test_that("systematic PPS ppsmat export warns about unseen pair probabilities", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    id = seq_len(80),
+    mos = 1 + seq_len(80) %% 9
+  )
+  sample <- sampling_design() |>
+    draw(n = 12, method = "pps_systematic", mos = mos) |>
+    execute(frame, seed = 42)
+  joint <- joint_expectation(sample, frame)
+
+  expect_warning(
+    as_svydesign(sample, pps = survey::ppsmat(joint[[1L]])),
+    class = "samplyr_warning_systematic_ppsmat"
+  )
+  expect_no_warning(as_svydesign(sample, pps = "brewer"))
 })
 
 test_that("joint_expectation works with proportional allocation", {

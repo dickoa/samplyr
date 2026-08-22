@@ -474,26 +474,17 @@ test_that("Neyman allocation with extreme variance spread and bounds", {
 })
 
 
-test_that("round_preserve_total uses ORIC tie-breaking: larger stratum wins", {
-  # Three strata with equal fractional remainders, scrambled position order.
-  # x = c(0.5, 2.5, 1.5), n = 4: shortfall = 1, all frac = 0.5.
-  # Position-based tie-break: index 1 (floor = 0) gets +1 -> c(1, 2, 1).
-  # ORIC tie-break: index 2 (floor = 2, largest) gets +1 -> c(0, 3, 1).
-  x <- c(0.5, 2.5, 1.5)
-  result <- samplyr:::round_preserve_total(x, 4L)
+test_that("allocate_bounded uses ORIC tie-breaking without active bounds", {
+  factors <- c(0.5, 2.5, 1)
+  result <- samplyr:::allocate_bounded(
+    factors,
+    total = 4L,
+    lower = rep(0, 3),
+    upper = rep(4, 3)
+  )
+
   expect_equal(result, c(0L, 3L, 1L))
   expect_equal(sum(result), 4L)
-})
-
-test_that("round_preserve_total total is always preserved", {
-  set.seed(99)
-  for (i in 1:20) {
-    x <- runif(10, 0, 5)
-    n <- as.integer(round(sum(x)))
-    result <- samplyr:::round_preserve_total(x, n)
-    expect_equal(sum(result), n)
-    expect_true(all(result >= 0L))
-  }
 })
 
 # Constrained allocation. An allocation method must preserve its requested
@@ -692,25 +683,6 @@ test_that("zero-factor strata split what saturation leaves behind", {
     alloc_exec(frame, seed = 1)
 
   expect_equal(as.vector(table(result$h)), c(5L, 20L, 20L))
-})
-
-test_that("allocate_bounded reduces to ORIC rounding when no bound binds", {
-  # The load-bearing assumption of routing every allocation through the
-  # bounded path: with slack bounds the two rounders must agree exactly.
-  withr::with_seed(414, {
-    for (i in seq_len(200)) {
-      H <- sample(2:8, 1)
-      factors <- runif(H, 0.1, 10)
-      total <- sample(20:200, 1)
-      upper <- rep(total, H)
-      target <- total * factors / sum(factors)
-
-      expect_identical(
-        samplyr:::allocate_bounded(factors, total, rep(0, H), upper),
-        samplyr:::round_preserve_total(target, total)
-      )
-    }
-  })
 })
 
 test_that("bounded allocation holds its invariants under random inputs", {

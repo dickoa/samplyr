@@ -107,7 +107,8 @@ so a wave activating \code{r} of them selects nothing from that pool when
 that wave rather than a small weight, so the wave's estimator is biased.
 \code{"error"} refuses such an assignment, before any panel is drawn, and
 names the pools. \code{"permanent"} instead activates them at every wave with
-probability one, warning that it has done so, which is exact but changes
+probability one, warning with \code{samplyr_warning_panel_small_pool} that it
+has done so, which is exact but changes
 the operational design: wave sizes, overlap and repeated interviewing all
 increase. Meaningful only with a schedule, since a panel count declares
 no wave to protect. This governs positivity only: a pool with a positive
@@ -131,12 +132,14 @@ samples), not replicate-weight variance estimation. For the latter, see
 (default). \code{execute(master, wave = t)} activates the panels the stored
 schedule declares active at \code{t} and compounds the exact activation
 factor into \code{.weight}. It takes no other execution input: no frame, no
-\code{seed}, \code{stages}, \code{panels}, \code{small_pool} or \code{reps}, since a wave selects
-units the master already assigned, under the policy the master froze.}
+\code{seed}, \code{stages}, \code{panels}, \code{panel_stage}, \code{small_pool}, \code{reps} or
+\code{frame_digest}, since a wave selects units the master already assigned,
+under the policy the master froze, and reads no frame. Each is refused
+by name rather than accepted and ignored.}
 
 \item{frame_digest}{Controls the frame digest, a compact execution
 manifest recorded with the sample and read by \code{\link[=frame_summary]{frame_summary()}}.
-\code{"summary"} (default) records anonymous population structure:
+\code{"summary"} (default) records compressed population structure:
 selection pools, resolved chances (exact for cluster stages,
 constant or quantile-compressed for element stages), and the
 selected-unit trace. \code{"full"} keeps exact per-unit chances for
@@ -156,7 +159,13 @@ replicated multi-stage execution, later-stage pools depend on each
 replicate's realized parents, so the digest keeps the stage
 prefix shared by all replicates and reports status \code{"partial"}.
 Replicated multi-phase and replicated-continuation executions do
-not record one yet.}
+not record one yet.
+
+A digest is not anonymized. Its selection trace retains the identifiers
+needed to name realized units, frame-derived cluster keys or row
+indices. Treat the sample and any serialized
+execution receipt as potentially confidential. \code{"summary"} compresses
+chance information but does not remove those identifiers.}
 }
 \value{
 A \code{tbl_sample}: a data frame subclass carrying the selected rows,
@@ -249,11 +258,11 @@ Weights compound automatically in multi-phase designs, and
 
 \subsection{Weight calculation}{
 
-The \code{.weight} column is the inverse of the selection chance that
-samplyr resolves for the unit based on the first-order inclusion probability
-for without-replacement methods, or the expected number of
-selections for with-replacement methods. The per-stage weight is
-\eqn{w_i^{(k)} = 1 / \pi_i^{(k)}}{w_i(k) = 1 / pi_i(k)}:
+Let \eqn{q_i^{(k)}}{q_i(k)} denote the resolved selection quantity at
+stage \eqn{k}. For without-replacement methods it is the first-order
+inclusion probability \eqn{\pi_i^{(k)}}{pi_i(k)}. For WR and PMR methods
+it is the expected hit count \eqn{E(K_i^{(k)})}{E(K_i(k))}. The per-stage
+weight is \eqn{w_i^{(k)} = 1 / q_i^{(k)}}{w_i(k) = 1 / q_i(k)}:
 \itemize{
 \item \strong{SRS}: \eqn{w_i = N / n}{w = N/n}, constant for all units.
 \item \strong{Stratified SRS}: \eqn{w_i = N_h / n_h}{w = N_h/n_h} within stratum \eqn{h}.
@@ -262,15 +271,14 @@ selections for with-replacement methods. The per-stage weight is
 \code{sondage::inclusion_prob()}. Varies across units.
 \item \strong{WR / PMR}: \eqn{w_i = 1 / E(n_i)}{w_i = 1/E(n_i)} where
 \eqn{E(n_i) = n \cdot p_i}{E(n_i) = n * p_i} is the expected number
-of selections. Each draw is one row. A unit selected \eqn{k} times
+of selections. Each occurrence is one row. A unit selected \eqn{k} times
 appears \eqn{k} times, each with the same weight.
 }
 
 For every built-in method except \code{"pps_sps"} and \code{"pps_pareto"}, the
-resolved chance equals the design's true first-order inclusion
-probability (or expected hits), so \code{.weight} is the inverse of that
-true probability. The order-sampling pair, and registered methods
-declared \code{probabilities = "approximate"}, honor the resolved chance
+resolved quantity equals the design's true first-order inclusion
+probability or expected hit count. The order-sampling pair and registered
+methods declared \code{probabilities = "approximate"} honor the resolved chance
 only to a documented approximation: \code{.weight} is then the inverse of
 the target probability, not of the design's true first-order
 inclusion probability. Weighting by the inverse target is standard
@@ -284,10 +292,13 @@ per stage in the frame digest, reported by \code{\link[=frame_summary]{frame_sum
 
 In a \eqn{K}-stage design, the overall weight for unit \eqn{i} is the
 product of per-stage weights:
-\deqn{w_i = \prod_{k=1}^{K} w_i^{(k)} = \prod_{k=1}^{K} \frac{1}{\pi_i^{(k \mid S^{(k-1)})}}}
-where \eqn{\pi_i^{(k \mid S^{(k-1)})}}{pi_i(k | S(k-1))} is the
-conditional inclusion probability at stage \eqn{k}, given the set of
-clusters selected at all prior stages. For example, in a two-stage design
+\deqn{w_i = \prod_{k=1}^{K} w_i^{(k)} = \prod_{k=1}^{K} \frac{1}{q_i^{(k \mid S^{(k-1)})}}}
+where \eqn{q_i^{(k \mid S^{(k-1)})}}{q_i(k | S(k-1))} is resolved within
+the clusters selected at prior stages. For an all-WOR exact design this is
+the conditional inclusion probability, so the product is the inverse of
+the overall inclusion probability. If a stage is WR or PMR, each output row
+is a realized occurrence and its factor is the inverse expected hit count.
+For example, in a two-stage all-WOR design
 where 5 of 30 EAs are selected in a region (stage 1) and 12 of 50
 households are listed within each selected EA (stage 2):
 \deqn{w_i = \frac{30}{5} \times \frac{50}{12} = 6 \times 4.17 = 25}
@@ -303,9 +314,8 @@ as its frame, the phase-1 inclusion probability is already reflected in
 the input weights.
 The final \code{.weight} is the product of phase-1 and phase-2 weights:
 \deqn{w_i = w_i^{(\text{phase 1})} \times w_i^{(\text{phase 2} \mid \text{phase 1})}}
-This ensures the Horvitz-Thompson estimator
-\eqn{\hat{Y} = \sum_S w_i \, y_i}{Y-hat = sum(w_i * y_i)} is unbiased
-for the population total.
+For WOR phases this gives the Horvitz-Thompson estimator. A WR or PMR phase
+contributes an occurrence-level Hansen-Hurwitz factor instead.
 }
 
 \subsection{Panel partitioning}{

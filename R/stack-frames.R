@@ -1,13 +1,6 @@
 ## Overlapping frames covering one target population
 
-# Two registers, each incomplete, together covering the population: a landline
-# frame and a cell frame, an area frame and a list frame. The samples are
-# selected independently, one design and one seed each, and everything the
-# feature contains happens after that.
-#
-# The word "frames" here is not the sense `execute()` uses. A list of frames
-# given to `execute()` means one frame per stage, a nested hierarchy. These
-# frames all cover the same target population and overlap on it.
+# These independently sampled frames overlap on one target population.
 
 #' The separator between frame names in a domain label
 #'
@@ -78,10 +71,13 @@ frame_stack_columns <- c(".frame", ".domain")
 #'   replicates rows with replacement.
 #' @param overlaps Optional. The probability, or the weight, each sampled unit
 #'   *would have had* in every frame, including the frames it was not selected
-#'   from. Declare the scale with [overlap_probabilities()] or
-#'   [overlap_weights()]; it is never inferred from the values. Required by
-#'   `estimator = "expected"` at export and unused by the default estimator,
-#'   which reads membership alone.
+#'   from. Name the columns holding them with [declared_overlaps()], which
+#'   states the scale, since it is never inferred from the values. Or name the
+#'   registers with [exante_overlaps()] and let samplyr resolve the chances
+#'   from each component's own design, which is exact and is checked against
+#'   what the execution produced. Required by `estimator = "expected"` at
+#'   export and unused by the default estimator, which reads membership
+#'   alone.
 #'
 #' @return An object of class `frame_stack`: a named list of the component
 #'   samples, unchanged, carrying the membership mapping, the key, and any
@@ -147,9 +143,8 @@ stack_frames <- function(..., membership, key, overlaps = NULL) {
   key_col <- parse_frame_key(rlang::enquo(key))
   overlap_spec <- parse_overlap_spec(overlaps, names(samples))
 
-  overlap_spec <- validate_frame_stack(
-    samples, membership, key_col, overlap_spec
-  )
+  validate_frame_stack(samples, membership, key_col, overlap_spec)
+  overlap_spec <- resolve_frame_overlaps(samples, membership, overlap_spec)
   warn_reused_frame_seeds(samples)
 
   new_frame_stack(
@@ -160,13 +155,19 @@ stack_frames <- function(..., membership, key, overlaps = NULL) {
   )
 }
 
-#' Declare that overlap values are inclusion probabilities
+#' Declare the overlap values and the scale they are on
 #'
 #' @description
 #' A declarative marker for [stack_frames()]'s `overlaps` argument. It names,
-#' for every frame, the column holding the probability a unit would have been
-#' selected from that frame, including the frames it was not selected from.
+#' for every frame, the column holding the chance a unit would have been
+#' selected from that frame, including the frames it was not selected from,
+#' and states which scale those columns are on.
 #'
+#' It is the declaring half of a pair. [exante_overlaps()] is the other:
+#' rather than naming columns that already hold the chances, it names the
+#' registers and lets samplyr resolve them from each frame's own design.
+#'
+#' @details
 #' The scale is declared rather than inferred from the values.
 #' `survey::multiframe()` infers it, reading a matrix as weights when no
 #' non-zero entry in some frame falls below one, which is reachable whenever a
@@ -174,44 +175,58 @@ stack_frames <- function(..., membership, key, overlaps = NULL) {
 #' produces those routinely, so the value that decides the reading is a value
 #' this package generates on purpose.
 #'
+#' `"probabilities"` and `"weights"` are reciprocal statements of the same
+#' thing, and the record normalizes either to probabilities, so the two are
+#' interchangeable once the scale is stated. `scale` has no default for the
+#' same reason it is not inferred: a probability of one and a weight of one
+#' are the same number.
+#'
 #' @param ... One named argument per frame, giving the column name as a
-#'   string: `overlap_probabilities(area = "pi_area", list = "pi_list")`.
+#'   string: `declared_overlaps(area = "pi_area", list = "pi_list")`.
+#' @param scale Which quantity the columns hold, `"probabilities"` or
+#'   `"weights"`. Required, and matched by exact name.
 #'
 #' @return An object of class `samplyr_overlap_spec`, carrying the declared
 #'   scale and the column mapping, for `stack_frames()`'s `overlaps` argument.
 #'
+#' @seealso [exante_overlaps()] to resolve the chances from the registers
+#'   instead of naming columns that hold them
+#'
 #' @examples
-#' overlap_probabilities(area = "pi_area", list = "pi_list")
+#' declared_overlaps(area = "pi_area", list = "pi_list",
+#'                   scale = "probabilities")
+#'
+#' declared_overlaps(area = "w_area", list = "w_list", scale = "weights")
 #'
 #' @family multiple frames
 #' @export
-overlap_probabilities <- function(...) {
-  new_overlap_spec("probabilities", rlang::list2(...))
+declared_overlaps <- function(..., scale) {
+  if (missing(scale)) {
+    abort_samplyr(
+      c(
+        "{.arg scale} must be given.",
+        "i" = "Say whether the columns hold {.val probabilities} or
+               {.val weights}.",
+        "i" = "It is never inferred from the values: a probability of one and
+               a weight of one are the same number."
+      ),
+      class = "samplyr_error_stack_frames_overlaps"
+    )
+  }
+  if (!is_scalar_string(scale) || !scale %in% overlap_scales) {
+    abort_samplyr(
+      c(
+        "{.arg scale} must be {.val probabilities} or {.val weights}.",
+        "x" = "Got {.code {as_label(scale)}}."
+      ),
+      class = "samplyr_error_stack_frames_overlaps"
+    )
+  }
+  new_overlap_spec(scale, rlang::list2(...))
 }
 
-#' Declare that overlap values are design weights
-#'
-#' @description
-#' A declarative marker for [stack_frames()]'s `overlaps` argument, naming the
-#' column that holds the weight a unit would have carried in each frame. It is
-#' the reciprocal statement of [overlap_probabilities()], and the record
-#' normalizes either to probabilities, so the two forms are interchangeable
-#' once the scale is stated.
-#'
-#' @param ... One named argument per frame, giving the column name as a
-#'   string: `overlap_weights(area = "w_area", list = "w_list")`.
-#'
-#' @return An object of class `samplyr_overlap_spec`, carrying the declared
-#'   scale and the column mapping, for `stack_frames()`'s `overlaps` argument.
-#'
-#' @examples
-#' overlap_weights(area = "w_area", list = "w_list")
-#'
-#' @family multiple frames
-#' @export
-overlap_weights <- function(...) {
-  new_overlap_spec("weights", rlang::list2(...))
-}
+#' @noRd
+overlap_scales <- c("probabilities", "weights")
 
 #' A declared overlap scale and the columns carrying it
 #'
@@ -228,8 +243,8 @@ new_overlap_spec <- function(scale, args, call = caller_env()) {
     abort_samplyr(
       c(
         "Every frame's overlap column must be named and given as a string.",
-        "i" = "{.code overlap_{scale}(frame = \"column\", ...)}, one entry
-               per frame."
+        "i" = "{.code declared_overlaps(frame = \"column\", ...,
+               scale = \"{scale}\")}, one entry per frame."
       ),
       class = "samplyr_error_stack_frames_overlaps",
       call = call
@@ -386,11 +401,26 @@ parse_overlap_spec <- function(overlaps, frames, call = caller_env()) {
   if (is_exante_overlap_spec(overlaps)) {
     return(overlaps)
   }
+  # Accept an existing frame stack record.
+  if (is_resolved_overlaps(overlaps)) {
+    abort_samplyr(
+      c(
+        "{.arg overlaps} is a record {.fn stack_frames} already resolved.",
+        "x" = "It holds one chance per selected unit, which describes the
+               components it was resolved against and no others.",
+        "i" = "Pass the {.fn exante_overlaps} request again. It names the
+               registers, and resolving it against these components is what
+               makes the chances theirs."
+      ),
+      class = "samplyr_error_stack_frames_overlaps",
+      call = call
+    )
+  }
   if (!is_overlap_spec(overlaps)) {
     abort_samplyr(
       c(
-        "{.arg overlaps} must come from {.fn overlap_probabilities},
-         {.fn overlap_weights} or {.fn exante_overlaps}.",
+        "{.arg overlaps} must come from {.fn declared_overlaps} or
+         {.fn exante_overlaps}.",
         "i" = "The scale is declared, never read off the values: a
                probability of one and a weight of one are the same number."
       ),
@@ -591,6 +621,7 @@ validate_frame_stack <- function(samples, membership, key, overlaps = NULL,
   check_membership_complete(samples, membership, call = call)
   check_frame_key_columns(samples, key, call = call)
   check_frame_overlaps(samples, membership, overlaps, call = call)
+  invisible(NULL)
 }
 
 #' Everything a declared overlap has to satisfy before it is stored
@@ -631,8 +662,9 @@ check_frame_overlaps <- function(samples, membership, overlaps,
     )
   }
 
+  # Defer register checks to overlap resolution.
   if (is_exante_overlap_spec(overlaps)) {
-    return(resolve_exante_overlaps(samples, overlaps, membership, call = call))
+    return(invisible(NULL))
   }
 
   cols <- overlaps$cols
@@ -666,7 +698,23 @@ check_frame_overlaps <- function(samples, membership, overlaps,
     check_overlap_diagonal(component, cols[[nm]], overlaps$scale, nm,
                            call = call)
   }
-  overlaps
+  invisible(NULL)
+}
+
+#' Turn a resolution request into the record the stack stores
+#'
+#' Separate from `validate_frame_stack()` because a validator returns
+#' `invisible(NULL)` everywhere else in this package, and a resolver that
+#' hides inside one is found by reading the call site rather than the name.
+#' A declared spec passes through unchanged; only `exante_overlaps()` has
+#' anything to resolve.
+#' @noRd
+resolve_frame_overlaps <- function(samples, membership, overlaps,
+                                   call = caller_env()) {
+  if (!is_exante_overlap_spec(overlaps)) {
+    return(overlaps)
+  }
+  resolve_exante_overlaps(samples, overlaps, membership, call = call)
 }
 
 #' @noRd
@@ -709,8 +757,7 @@ check_overlap_column <- function(value, member, scale, frame, of, col,
     )
   }
 
-  # Outside the frame the quantity does not exist. Zero is the marker for
-  # that, and a positive value would be read as a real chance.
+  # Use zero for a chance outside the frame.
   outside <- value[!member]
   if (any(!is.na(outside) & outside != 0)) {
     abort_samplyr(
@@ -729,6 +776,23 @@ check_overlap_column <- function(value, member, scale, frame, of, col,
 }
 
 #' The one overlap value samplyr can check against what actually happened
+#' Where a supplied or resolved own-frame value parts from the realized one
+#'
+#' The comparison itself, in one place. Both diagonal checks used the same
+#' relative tolerance and the same worst-offender pick, written twice, which
+#' is the part that could drift silently. The messages stay separate: one is
+#' about a column a user supplied and the other about a chance samplyr
+#' resolved, and they say different things.
+#' @noRd
+own_frame_disagreement <- function(supplied, realized) {
+  off <- abs(supplied - realized) > 1e-6 * pmax(abs(realized), 1)
+  if (!any(off)) {
+    return(NULL)
+  }
+  worst <- which.max(abs(supplied - realized))
+  list(n = sum(off), supplied = supplied[[worst]], realized = realized[[worst]])
+}
+
 #' @noRd
 check_overlap_diagonal <- function(component, col, scale, frame,
                                    call = caller_env()) {
@@ -739,16 +803,15 @@ check_overlap_diagonal <- function(component, col, scale, frame,
     component[[".weight"]]
   }
 
-  off <- abs(supplied - realized) > 1e-6 * pmax(abs(realized), 1)
-  if (any(off)) {
-    worst <- which.max(abs(supplied - realized))
+  gap <- own_frame_disagreement(supplied, realized)
+  if (!is_null(gap)) {
     abort_samplyr(
       c(
         "A frame's own overlap value must be the selection that happened.",
         "x" = "{.field {col}} disagrees with {.val {frame}}'s design weights
-               on {sum(off)} row{?s}.",
-        "i" = "Worst: {.val {signif(supplied[[worst]], 6)}} supplied against
-               {.val {signif(realized[[worst]], 6)}} realized.",
+               on {gap$n} row{?s}.",
+        "i" = "Worst: {.val {signif(gap$supplied, 6)}} supplied against
+               {.val {signif(gap$realized, 6)}} realized.",
         "i" = "The own-frame column describes this component's own selection,
                which samplyr already computed, so the two have to agree."
       ),
@@ -882,9 +945,7 @@ check_frame_key_columns <- function(samples, key, call = caller_env()) {
       )
     }
 
-    # With-replacement selection replicates a unit's row once per draw, so the
-    # key repeats by construction and the identity that must be unique is the
-    # selection occurrence.
+    # WR uniqueness applies to selection occurrences.
     occurrence <- grep("^\\.draw_", names(samples[[nm]]), value = TRUE)
     columns <- c(key, occurrence)
     frame <- as.data.frame(samples[[nm]])[columns]
@@ -957,14 +1018,24 @@ warn_reused_frame_seeds <- function(samples, call = caller_env()) {
 #' component.
 #' @noRd
 frame_component_membership <- function(component, membership) {
-  values <- lapply(unname(membership), function(col) {
-    as.logical(component[[col]])
-  })
+  column_matrix(
+    lapply(unname(membership), function(col) as.logical(component[[col]])),
+    nrow(component), names(membership)
+  )
+}
+
+#' One column per frame, as a matrix, whatever the component's height
+#'
+#' Constructed explicitly rather than with `vapply()`, which returns a vector
+#' rather than a matrix for a one-row component. Three callers built the same
+#' shape by hand.
+#' @noRd
+column_matrix <- function(values, n_rows, frames) {
   matrix(
     unlist(values, use.names = FALSE),
-    nrow = nrow(component),
-    ncol = length(membership),
-    dimnames = list(NULL, names(membership))
+    nrow = n_rows,
+    ncol = length(frames),
+    dimnames = list(NULL, frames)
   )
 }
 
@@ -978,7 +1049,7 @@ frame_component_membership <- function(component, membership) {
 #' @noRd
 frame_component_overlaps <- function(x, nm) {
   overlaps <- attr(x, "overlaps")
-  if (!is_null(overlaps$resolved)) {
+  if (is_resolved_overlaps(overlaps)) {
     return(overlaps$resolved[[nm]])
   }
   component <- x[[nm]]
@@ -993,12 +1064,7 @@ frame_component_overlaps <- function(x, nm) {
     }
     value
   })
-  matrix(
-    unlist(values, use.names = FALSE),
-    nrow = nrow(component),
-    ncol = length(frames),
-    dimnames = list(NULL, frames)
-  )
+  column_matrix(values, nrow(component), frames)
 }
 
 #' The canonical label of each row's domain

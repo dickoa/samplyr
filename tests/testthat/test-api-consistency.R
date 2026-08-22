@@ -346,3 +346,43 @@ test_that("stage selectors share type and uniqueness rules", {
   expect_true(calls$validate_frame(1))
   expect_true(calls$validate_frame(c(1, 2)))
 })
+
+test_that("stored designs retain the draw validation contract", {
+  frame <- data.frame(
+    id = 1:20,
+    stratum = rep(c("a", "b"), 10),
+    mos = 1:20,
+    prn = (1:20) / 21
+  )
+
+  cps <- sampling_design() |> draw(n = 4, method = "pps_cps", mos = mos)
+  cps$stages[[1]]$draw_spec$n <- NULL
+  cps$stages[[1]]$draw_spec$frac <- 0.2
+
+  allocated <- sampling_design() |>
+    stratify_by(stratum, alloc = "proportional") |>
+    draw(n = 4)
+  allocated$stages[[1]]$draw_spec$n <- NULL
+  allocated$stages[[1]]$draw_spec$frac <- 0.2
+
+  prn <- sampling_design() |> draw(n = 4)
+  prn$stages[[1]]$draw_spec$prn <- "prn"
+
+  certainty <- sampling_design() |> draw(n = 4)
+  certainty$stages[[1]]$draw_spec$mos <- "mos"
+  certainty$stages[[1]]$draw_spec$certainty_size <- 10
+
+  spatial <- sampling_design() |> draw(n = 4)
+  spatial$stages[[1]]$draw_spec$method <- "lpm2"
+
+  cases <- list(
+    list(cps, "requires.*n"),
+    list(allocated, "cannot be combined"),
+    list(prn, "only supported"),
+    list(certainty, "only available"),
+    list(spatial, "requires.*spread")
+  )
+  for (case in cases) {
+    expect_error(execute(case[[1]], frame, seed = 1), case[[2]])
+  }
+})

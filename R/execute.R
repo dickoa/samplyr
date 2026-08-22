@@ -1,10 +1,11 @@
 #' Conditions raised during execution
 #'
-#' [execute()] signals five conditions when a design cannot be realized as
-#' written. Each is a classed condition carrying a `payload`, so it can be
-#' caught and inspected rather than only read. They are reported once per
-#' stage per distinct finding, not once per capped pool and not once per
-#' replicate.
+#' [execute()] signals five conditions when a *selection* cannot be realized
+#' as written, because a pool held fewer units than the stage asked for. Each
+#' is a classed condition carrying a `payload`, so it can be caught and
+#' inspected rather than only read. They are reported once per stage per
+#' distinct finding, not once per capped pool and not once per replicate.
+
 #'
 #' A pool holding fewer units than the stage asks for is selected whole, which
 #' makes the design non-self-weighting. `execute()` reports this once per
@@ -36,6 +37,11 @@
 #'     nothing went wrong, and simulation loops can silence it with
 #'     `suppressMessages()`.}
 #' }
+#' These are not every condition `execute()` raises. Panel assignment has one
+#' of its own, `samplyr_warning_panel_small_pool`, documented with
+#' `small_pool`: it is about a pool too small to *rotate* rather than too
+#' small to draw from, fires once for the assignment rather than per stage,
+#' and carries no `payload`.
 #'
 #' Every condition carries `stage`, an `operation` naming the detected event,
 #' and a `payload` of aggregated detail. Payload fields mean the same thing
@@ -199,7 +205,8 @@ NULL
 #'   that wave rather than a small weight, so the wave's estimator is biased.
 #'   `"error"` refuses such an assignment, before any panel is drawn, and
 #'   names the pools. `"permanent"` instead activates them at every wave with
-#'   probability one, warning that it has done so, which is exact but changes
+#'   probability one, warning with `samplyr_warning_panel_small_pool` that it
+#'   has done so, which is exact but changes
 #'   the operational design: wave sizes, overlap and repeated interviewing all
 #'   increase. Meaningful only with a schedule, since a panel count declares
 #'   no wave to protect. This governs positivity only: a pool with a positive
@@ -210,8 +217,10 @@ NULL
 #'   (default). `execute(master, wave = t)` activates the panels the stored
 #'   schedule declares active at `t` and compounds the exact activation
 #'   factor into `.weight`. It takes no other execution input: no frame, no
-#'   `seed`, `stages`, `panels`, `small_pool` or `reps`, since a wave selects
-#'   units the master already assigned, under the policy the master froze.
+#'   `seed`, `stages`, `panels`, `panel_stage`, `small_pool`, `reps` or
+#'   `frame_digest`, since a wave selects units the master already assigned,
+#'   under the policy the master froze, and reads no frame. Each is refused
+#'   by name rather than accepted and ignored.
 #' @param reps Integer number of independent replicate samples to draw (>= 2),
 #'   or `NULL` (default) for a single sample. When specified, `execute()` draws
 #'   `reps` independent samples from the same frame under the same design and
@@ -225,7 +234,7 @@ NULL
 #'   [as_svrepdesign()].
 #' @param frame_digest Controls the frame digest, a compact execution
 #'   manifest recorded with the sample and read by [frame_summary()].
-#'   `"summary"` (default) records anonymous population structure:
+#'   `"summary"` (default) records compressed population structure:
 #'   selection pools, resolved chances (exact for cluster stages,
 #'   constant or quantile-compressed for element stages), and the
 #'   selected-unit trace. `"full"` keeps exact per-unit chances for
@@ -246,6 +255,12 @@ NULL
 #'   prefix shared by all replicates and reports status `"partial"`.
 #'   Replicated multi-phase and replicated-continuation executions do
 #'   not record one yet.
+#'
+#'   A digest is not anonymized. Its selection trace retains the identifiers
+#'   needed to name realized units, frame-derived cluster keys or row
+#'   indices. Treat the sample and any serialized
+#'   execution receipt as potentially confidential. `"summary"` compresses
+#'   chance information but does not remove those identifiers.
 #'
 #' @return A `tbl_sample`: a data frame subclass carrying the selected rows,
 #'   the design that produced them, and generated columns recording the
@@ -326,11 +341,11 @@ NULL
 #'
 #' ## Weight calculation
 #'
-#' The `.weight` column is the inverse of the selection chance that
-#' samplyr resolves for the unit based on the first-order inclusion probability
-#' for without-replacement methods, or the expected number of
-#' selections for with-replacement methods. The per-stage weight is
-#' \eqn{w_i^{(k)} = 1 / \pi_i^{(k)}}{w_i(k) = 1 / pi_i(k)}:
+#' Let \eqn{q_i^{(k)}}{q_i(k)} denote the resolved selection quantity at
+#' stage \eqn{k}. For without-replacement methods it is the first-order
+#' inclusion probability \eqn{\pi_i^{(k)}}{pi_i(k)}. For WR and PMR methods
+#' it is the expected hit count \eqn{E(K_i^{(k)})}{E(K_i(k))}. The per-stage
+#' weight is \eqn{w_i^{(k)} = 1 / q_i^{(k)}}{w_i(k) = 1 / q_i(k)}:
 #'
 #' - **SRS**: \eqn{w_i = N / n}{w = N/n}, constant for all units.
 #' - **Stratified SRS**: \eqn{w_i = N_h / n_h}{w = N_h/n_h} within stratum \eqn{h}.
@@ -339,14 +354,13 @@ NULL
 #'   `sondage::inclusion_prob()`. Varies across units.
 #' - **WR / PMR**: \eqn{w_i = 1 / E(n_i)}{w_i = 1/E(n_i)} where
 #'   \eqn{E(n_i) = n \cdot p_i}{E(n_i) = n * p_i} is the expected number
-#'   of selections. Each draw is one row. A unit selected \eqn{k} times
+#'   of selections. Each occurrence is one row. A unit selected \eqn{k} times
 #'   appears \eqn{k} times, each with the same weight.
 #'
 #' For every built-in method except `"pps_sps"` and `"pps_pareto"`, the
-#' resolved chance equals the design's true first-order inclusion
-#' probability (or expected hits), so `.weight` is the inverse of that
-#' true probability. The order-sampling pair, and registered methods
-#' declared `probabilities = "approximate"`, honor the resolved chance
+#' resolved quantity equals the design's true first-order inclusion
+#' probability or expected hit count. The order-sampling pair and registered
+#' methods declared `probabilities = "approximate"` honor the resolved chance
 #' only to a documented approximation: `.weight` is then the inverse of
 #' the target probability, not of the design's true first-order
 #' inclusion probability. Weighting by the inverse target is standard
@@ -359,10 +373,13 @@ NULL
 #'
 #' In a \eqn{K}-stage design, the overall weight for unit \eqn{i} is the
 #' product of per-stage weights:
-#' \deqn{w_i = \prod_{k=1}^{K} w_i^{(k)} = \prod_{k=1}^{K} \frac{1}{\pi_i^{(k \mid S^{(k-1)})}}}
-#' where \eqn{\pi_i^{(k \mid S^{(k-1)})}}{pi_i(k | S(k-1))} is the
-#' conditional inclusion probability at stage \eqn{k}, given the set of
-#' clusters selected at all prior stages. For example, in a two-stage design
+#' \deqn{w_i = \prod_{k=1}^{K} w_i^{(k)} = \prod_{k=1}^{K} \frac{1}{q_i^{(k \mid S^{(k-1)})}}}
+#' where \eqn{q_i^{(k \mid S^{(k-1)})}}{q_i(k | S(k-1))} is resolved within
+#' the clusters selected at prior stages. For an all-WOR exact design this is
+#' the conditional inclusion probability, so the product is the inverse of
+#' the overall inclusion probability. If a stage is WR or PMR, each output row
+#' is a realized occurrence and its factor is the inverse expected hit count.
+#' For example, in a two-stage all-WOR design
 #' where 5 of 30 EAs are selected in a region (stage 1) and 12 of 50
 #' households are listed within each selected EA (stage 2):
 #' \deqn{w_i = \frac{30}{5} \times \frac{50}{12} = 6 \times 4.17 = 25}
@@ -377,9 +394,8 @@ NULL
 #' the input weights.
 #' The final `.weight` is the product of phase-1 and phase-2 weights:
 #' \deqn{w_i = w_i^{(\text{phase 1})} \times w_i^{(\text{phase 2} \mid \text{phase 1})}}
-#' This ensures the Horvitz-Thompson estimator
-#' \eqn{\hat{Y} = \sum_S w_i \, y_i}{Y-hat = sum(w_i * y_i)} is unbiased
-#' for the population total.
+#' For WOR phases this gives the Horvitz-Thompson estimator. A WR or PMR phase
+#' contributes an occurrence-level Hansen-Hurwitz factor instead.
 #'
 #' ## Panel partitioning
 #'
@@ -598,19 +614,17 @@ execute <- function(
   wave = NULL,
   frame_digest = c("summary", "full", "none")
 ) {
+  # Read this before `match.arg()` fills its default.
+  frame_digest_given <- !missing(frame_digest)
   frame_digest <- match.arg(frame_digest)
 
-  # Argument names belong to the call, so stray-argument reporting reads them
-  # before the frames are normalized. Reading them must not evaluate them: a
-  # misspelled argument is reported by its name, whatever its expression would
-  # have done.
+  # Read call names without evaluating stray arguments.
   check_execute_dot_names(enquos(...))
   dots <- list(...)
 
   execution_environment <- capture_execution_environment()
 
-  # A program is a registry of executed cohorts, so the only thing it can
-  # be executed for is a wave.
+  # A program can only materialize a wave.
   if (is_rotation_program(.data)) {
     if (is_null(wave)) {
       abort_samplyr(
@@ -632,13 +646,12 @@ execute <- function(
       panel_stage = panel_stage,
       small_pool = small_pool,
       reps = reps,
+      frame_digest_given = frame_digest_given,
       execution_environment = execution_environment
     ))
   }
 
-  # A wave is materialized from a stored schedule rather than drawn from a
-  # frame, so it leaves before frame normalization. Its guards refuse every
-  # other execution input rather than quietly ignoring it.
+  # Materialize waves before frame normalization.
   if (!is_null(wave)) {
     return(materialize_wave(
       .data,
@@ -650,6 +663,7 @@ execute <- function(
       panel_stage = panel_stage,
       small_pool = small_pool,
       reps = reps,
+      frame_digest_given = frame_digest_given,
       execution_environment = execution_environment
     ))
   }
@@ -663,8 +677,7 @@ execute <- function(
 
   check_execute_dots(frames, collected = supplied$collected)
 
-  # The same layer validate_frame() runs, so a preflight cannot approve a
-  # frame this call is about to refuse.
+  # Use the same preflight as `validate_frame()`.
   check_frames_executable(
     frames,
     labels = if (supplied$collected) names(frames) else NULL,
@@ -740,23 +753,22 @@ execute <- function(
     )
   }
 
-  # Resolve stages and match frames to them once, before any random number is
-  # consumed, so every execution form runs the same linkage and a static
-  # misuse cannot leave the RNG stream advanced.
+  # Resolve frames before consuming RNG state.
   schedule <- stage_frame_schedule(design, frames, stages, executed)
 
-  # The assignment stage is resolved against what this execution will have
-  # completed, which is the executed stages plus the ones now scheduled. Here
-  # rather than at assignment: a stage that is never drawn is a static misuse
-  # and must not leave the RNG stream advanced.
+  # Certainty-plan stages reconcile their frame against the plan's register
+  # here, before any RNG is consumed, so the gate also covers designs that
+  # arrived by deserialization.
+  validate_certainty_bridge(design, schedule)
+
+  # Resolve panel stages before consuming RNG state.
   panels <- resolve_panel_stage(
     panels,
     executed = sort(unique(c(executed, schedule$stages))),
     design = design
   )
 
-  # Only an all-at-once call can compare the candidate populations of
-  # consecutive registers. Reported once here, outside any replicate loop.
+  # Compare adjacent frame populations once.
   warn_incomplete_registers(
     schedule,
     design,
@@ -824,7 +836,7 @@ execute <- function(
       }
     }
 
-    # PRN conflict check: only on stages being executed in this call
+    # Check PRN conflicts only for stages executed now.
     if (!is_null(reps)) {
       valid_stages <- schedule$stages
       if (length(valid_stages) > 0) {
@@ -845,7 +857,7 @@ execute <- function(
       }
     }
 
-    # Detect replicated tbl_sample passed as a frame (multi-phase)
+    # Detect replicated samples used as phase frames.
     frame_has_reps <- any(vapply(
       frames,
       function(f) {
@@ -935,8 +947,7 @@ execute <- function(
     }
   }
 
-  # One report per execution, whatever shape it has: stages, cluster loops,
-  # replicates, continuations and phases all funnel through here.
+  # Emit one report per execution.
   report_selection_events(
     if (!is_null(seed) && is_null(reps)) {
       withr::with_seed(seed, run_execution())
@@ -1003,8 +1014,7 @@ normalize_execute_frames <- function(dots, call = rlang::caller_env()) {
     return(list(frames = dots[[1]], collected = TRUE))
   }
 
-  # Built as plain text: the positions and the remaining count are two
-  # separate quantities, which cli cannot pluralize in one string.
+  # Plain text keeps the two pluralized counts separate.
   where <- paste(collections, collapse = ", ")
   detail <- paste0(
     if (length(collections) == 1L) "Argument " else "Arguments ",
@@ -1122,9 +1132,7 @@ execute_design <- function(
   stages <- schedule$stages
   frames <- schedule_frames(schedule)
 
-  # The digest records what the user supplied. Preparing a previous-phase
-  # frame strips its generated columns and adds an internal weight, so the
-  # prepared version must not stand in for the original when fingerprinting.
+  # Fingerprint the supplied frame before phase preparation.
   supplied_frames <- frames
 
   prev_phase <- NULL
@@ -1136,10 +1144,7 @@ execute_design <- function(
     }
   }
 
-  # Derived once from the phase this execution descends from, then carried
-  # through every stage transition below. Checked here, before any stage
-  # draws, because a clustered stage keeps one representative row and would
-  # otherwise resolve an ambiguous key silently.
+  # Validate phase keys before clustering can collapse rows.
   phase_link_vars <- phase_link_vars_of(prev_phase)
   check_phase_key_invariance(schedule, design, phase_link_vars, prev_phase)
 
@@ -1197,9 +1202,7 @@ execute_design <- function(
       stage_used_frames[[i]] <- step$frame
     }
 
-    # A random-size stage with on_empty = "warn"/"silent" can select
-    # zero units. Later stages then have nothing to select from: the
-    # empty sample is the realization, so stop here.
+    # An empty random-size draw ends the selection.
     if (nrow(current_sample) == 0) {
       break
     }
@@ -1238,8 +1241,7 @@ execute_design <- function(
 
   digest <- NULL
   if (!identical(frame_digest, "none")) {
-    # Digest failure must never fail the execution: the sample is the
-    # product, the digest an annotation.
+    # Digest failure must not discard a valid sample.
     digest <- tryCatch(
       build_frame_digest(
         design = design,
@@ -1354,8 +1356,7 @@ execute_replicated <- function(
   combined <- do.call(rbind, results)
   combined$.sample_id <- seq_len(nrow(combined))
 
-  # Derive metadata from inputs, not from last loop iteration.
-  # Only prev_phase genuinely comes from inner pipeline.
+  # Derive metadata from inputs, not the last loop iteration.
   the_design <- if (is_sampling_design(.data)) .data else get_design(.data)
   the_stages <- if (executor == "design") {
     schedule$stages
@@ -1416,16 +1417,11 @@ execute_continuation <- function(
   phase_link_vars <- phase_link_vars_of(parent_meta$prev_phase)
 
   current_sample <- as.data.frame(sample)
-  # An assignment is two things that only mean something together: the record,
-  # which states the pools, blocks and quotas a later wave is computed from,
-  # and the `.panel` column, which says which panel each unit is in. Either
-  # one alone says a sample has been assigned, so both are tested.
+  # A valid assignment needs both its record and `.panel`.
   has_record <- !is_null(parent_meta$panel_assignment)
   has_column <- ".panel" %in% names(current_sample)
 
-  # Panels are assigned once, at the draw that creates them. A continuation
-  # carries the assignment forward, so redeclaring `panels` would overwrite
-  # one whose pools and quotas are already frozen in the receipt.
+  # A continuation cannot replace a frozen panel assignment.
   if (!is_null(panels) && (has_record || has_column)) {
     abort_samplyr(
       c(
@@ -1441,8 +1437,7 @@ execute_continuation <- function(
     )
   }
 
-  # Checked whether or not new panels were asked for: continuing a
-  # half-assignment would carry it into the result and on into a wave.
+  # Refuse incomplete inherited assignments.
   if (!identical(has_record, has_column)) {
     abort_samplyr(
       c(
@@ -1486,8 +1481,7 @@ execute_continuation <- function(
     stage_spec <- design$stages[[stage_idx]]
     prev_stage_for_frame <- design$stages[[previous_stage_idx]]
 
-    # Strip internal columns from the frame so they do not collide with
-    # stage-1 metadata carried in current_sample (e.g. .fpc_1, .weight).
+    # Avoid collisions with inherited sample metadata.
     internal <- samplyr_internal_cols(frame)
     if (length(internal) > 0L) {
       frame <- frame[, setdiff(names(frame), internal), drop = FALSE]
@@ -1527,7 +1521,7 @@ execute_continuation <- function(
       stage_used_frames[[i]] <- step$frame
     }
 
-    # See execute_design(): an empty stage ends the selection.
+    # See `execute_design()`. An empty stage ends the selection.
     if (nrow(current_sample) == 0) {
       break
     }
@@ -1558,9 +1552,7 @@ execute_continuation <- function(
 
   digest <- NULL
   if (!identical(frame_digest, "none")) {
-    # Merge only onto a prior digest that still describes its sample.
-    # a continuation cannot manufacture the manifest of stages it did
-    # not observe.
+    # Extend only a digest that still describes its sample.
     prior <- get_frame_digest(sample)
     if (!is_null(prior) && !identical(prior$status, "invalidated")) {
       digest <- tryCatch(
@@ -1596,10 +1588,7 @@ execute_continuation <- function(
       panel_assignment = panel_assignment,
       frame_digest = digest,
       continued_from = parent_meta,
-      # A stage continuation remains in the same phase. If that phase was
-      # itself sampled from an earlier phase, retain the phase link so survey
-      # export does not mistake the completed multistage phase for a
-      # single-phase design.
+      # Preserve the earlier phase link across stage continuation.
       prev_phase = parent_meta$prev_phase,
       execution_environment = execution_environment,
       integrity = sample_integrity_record(
@@ -1689,9 +1678,7 @@ abort_empty_replicate <- function(
   stages_exec <- get_stages_executed(sample)
   rs_methods <- unique(unlist(lapply(stages_exec, function(i) {
     spec <- design$stages[[i]]$draw_spec
-    if (
-      spec$method %in% rs_poisson_methods || identical(spec$method_fixed, FALSE)
-    ) {
+    if (is_random_size_method(spec)) {
       spec$method
     } else {
       NULL
@@ -1756,7 +1743,7 @@ execute_replicated_continuation <- function(
     rep_sample <- sample[sample$.replicate == r, ]
     rep_sample$.replicate <- NULL
 
-    # Restore tbl_sample class for the subset
+    # Restore the sample class after subsetting.
     rep_sample <- new_tbl_sample(
       data = rep_sample,
       design = get_design(sample),
@@ -1794,14 +1781,12 @@ execute_replicated_continuation <- function(
   combined <- do.call(rbind, results)
   combined$.sample_id <- seq_len(nrow(combined))
 
-  # Derive metadata from inputs, not from last loop iteration.
+  # Derive metadata from inputs.
   the_design <- get_design(sample)
   already_executed <- get_stages_executed(sample)
   cont_stages <- schedule$stages
 
-  # Continued pools hang off each replicate's realized parents, so the
-  # continued stages are replicate-specific by construction: the
-  # shareable manifest is the prior one, explicitly marked partial.
+  # Continued stages are replicate-specific.
   digest <- NULL
   if (!identical(frame_digest, "none")) {
     prior <- get_frame_digest(sample)
@@ -1881,9 +1866,7 @@ execute_replicated_multiphase <- function(
   execution_environment,
   call = caller_env()
 ) {
-  # Only the first supplied frame may be a previous phase, so there is exactly
-  # one replicated source. The schedule may point several stages at it. Those
-  # entries are aliases of that one sample, not independent frames.
+  # Repeated schedule entries alias one previous phase.
   supplied <- vector("list", schedule$n_supplied)
   for (entry in schedule$entries) {
     supplied[[entry$frame_index]] <- entry$frame
@@ -1892,10 +1875,7 @@ execute_replicated_multiphase <- function(
 
   rep_ids <- sort(unique(source_sample$.replicate))
 
-  # Each replicate carries its own population, so a phase key can be
-  # unambiguous in one and ambiguous in another. Validating inside the loop
-  # would let earlier replicates draw before a later one failed, so every
-  # replicate-specific source is checked first.
+  # Validate all replicate phase keys before drawing.
   replicate_frames <- lapply(rep_ids, function(r) {
     replicate_phase_source(source_sample, r)
   })
@@ -1926,8 +1906,7 @@ execute_replicated_multiphase <- function(
   for (i in seq_along(rep_ids)) {
     r <- rep_ids[i]
 
-    # Prevalidated above. The schedule remaps this one subset to every stage
-    # that draws on it.
+    # Remap this validated subset to each scheduled stage.
     rep_frames <- supplied
     rep_frames[[1]] <- replicate_frames[[i]]
 
@@ -1981,10 +1960,7 @@ execute_replicated_multiphase <- function(
         vapply(results, nrow, integer(1)),
         as.character(rep_ids)
       ),
-      # The phase this sample descends from is the whole replicated phase-1
-      # sample, not the subset the final replicate happened to use. Taking it
-      # from the last loop result recorded 1/r of the phase, stripped of
-      # .replicate, while claiming r replicates.
+      # Retain the complete replicated parent phase.
       prev_phase = list(
         design = get_design(source_sample),
         stages = get_stages_executed(source_sample),
@@ -2075,8 +2051,7 @@ execute_single_stage_impl <- function(
 
       split <- split_row_indices(frame, split_vars)
       indices_list <- split$indices
-      # The parent here is the previous stage's cluster, so events raised
-      # under it need the same qualification the within-cluster loop applies.
+      # Qualify events by the parent cluster.
       parent_labels <- key_labels(split$key_df, split_vars)
 
       results_list <- lapply(seq_along(indices_list), function(i) {
@@ -2212,11 +2187,9 @@ execute_single_stage_impl <- function(
     )
   }
 
-  # Materialized outputs should always expose a row-unique sample id,
-  # including clustered stages that are expanded back to all rows.
+  # Keep sample IDs unique after cluster expansion.
   result$.sample_id <- seq_len(nrow(result))
-  # `frame` is returned because draw-assignment attachment can rebuild
-  # it, and the trace's row indices refer to the frame actually used.
+  # Return the frame used by trace row indices.
   list(sample = result, trace = stage_trace, frame = frame)
 }
 
@@ -2239,8 +2212,7 @@ find_carry_forward_cols <- function(previous_sample) {
 compound_by_join <- function(result, previous_sample, join_vars, carry_cols) {
   carry_cols_to_select <- setdiff(carry_cols, join_vars)
 
-  # `.prev_weight` is a name a frame may legitimately carry. Colliding with it
-  # surfaced as an internal dplyr error.
+  # Do not collide with a user `.prev_weight` column.
   prev_weight <- free_column_name(result, ".prev_weight")
 
   prev_data <- previous_sample |>
@@ -2255,8 +2227,7 @@ compound_by_join <- function(result, previous_sample, join_vars, carry_cols) {
   n_before <- nrow(result)
   out <- left_join(result, prev_data, by = join_vars)
 
-  # Compounding reads one parent row per selected row. Losing that match would
-  # silently drop the earlier stage's weight from the product.
+  # Every selected row must match one parent weight.
   if (nrow(out) != n_before || anyNA(out[[prev_weight]])) {
     cli_abort(
       c(
@@ -2290,14 +2261,12 @@ compound_stage_weights <- function(
   parent_vars = character(0)
 ) {
   carry_cols <- find_carry_forward_cols(previous_sample)
-  # A repeated/shared phase frame may already put this transient column on
-  # the current result. Do not join a second copy with .x/.y suffixes.
+  # Avoid duplicate transient ancestry columns.
   if ("._prev_phase_weight" %in% names(result)) {
     carry_cols <- setdiff(carry_cols, "._prev_phase_weight")
   }
 
-  # The ancestry resolved by the transition, not a key re-derived here from
-  # whichever columns happen to be shared.
+  # Use ancestry resolved by the stage transition.
   join_vars <- parent_vars
   prev_draw_cols <- grep("^\\.draw_\\d+$", names(previous_sample), value = TRUE)
   if (
@@ -2331,8 +2300,7 @@ attach_draw_assignments <- function(frame, previous_sample, cluster_vars_prev) {
     previous_sample[, c(cluster_vars_prev, prev_draw_cols), drop = FALSE]
   )
 
-  # `.row_id` is a legitimate column name a user may already have, so the
-  # position marker must not assume it is free.
+  # Do not collide with a user `.row_id` column.
   pos <- free_column_name(frame, ".row_id")
   frame[[pos]] <- seq_len(nrow(frame))
   frame <- dplyr::left_join(
@@ -2390,11 +2358,10 @@ validate_design_complete <- function(design, call = rlang::caller_env()) {
       label <- stage$label %||% paste("Stage", i)
       cli_abort("{.val {label}} is incomplete: missing {.fn draw}", call = call)
     }
-    # draw() refuses these at design time. A design restored from a
-    # file bypasses draw(), so execution re-checks.
     if (identical(stage$draw_spec$method_probabilities, "unknown")) {
       abort_unknown_probabilities(stage$draw_spec$method, call = call)
     }
+    validate_stored_draw_spec(stage, call = call)
   }
 
   balanced_stages <- which(vapply(
@@ -2418,14 +2385,45 @@ validate_design_complete <- function(design, call = rlang::caller_env()) {
 }
 
 #' @noRd
+validate_stored_draw_spec <- function(stage, call = rlang::caller_env()) {
+  draw_spec <- stage$draw_spec
+  resolved_method <- resolve_draw_method(draw_spec$method, call = call)
+  method <- resolved_method$method
+  custom_spec <- resolved_method$custom_spec
+
+  validate_draw_configuration(
+    n = draw_spec$n,
+    frac = draw_spec$frac,
+    method = method,
+    mos = draw_spec$mos,
+    prn = draw_spec$prn,
+    min_n = draw_spec$min_n,
+    max_n = draw_spec$max_n,
+    certainty_size = draw_spec$certainty_size,
+    certainty_prop = draw_spec$certainty_prop,
+    round = draw_spec$round,
+    certainty_overflow = draw_spec$certainty_overflow,
+    on_empty = draw_spec$on_empty,
+    has_alloc = !is_null(stage$strata) && !is_null(stage$strata$alloc),
+    strata_vars = stage$strata$vars,
+    aux = draw_spec$aux,
+    bounds = draw_spec$bounds,
+    spread = draw_spec$spread,
+    custom_spec = custom_spec,
+    warn_ignored = FALSE,
+    certainty_plan = draw_spec$certainty_plan,
+    call = call
+  )
+  invisible(NULL)
+}
+
+#' @noRd
 validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
   if (nrow(frame) == 0) {
     cli_abort("Frame has 0 rows", call = call)
   }
 
-  # One definition, shared with the pre-RNG preflight in
-  # stage_frame_schedule(), so the two cannot disagree about what a stage
-  # needs.
+  # Share required-variable rules with the pre-RNG preflight.
   required_vars <- stage_required_vars(stage_spec)
   strata_vars <- stage_spec$strata$vars
   cluster_vars <- stage_spec$clusters$vars
@@ -2483,9 +2481,7 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
         call = call
       )
     }
-    # Only warn about zero MOS when there is a non-zero remainder to
-    # sample from. An all-zero MOS is handled by the harder PPS error
-    # raised later in draw_sample() / draw_pps_method().
+    # Leave all-zero MOS to the PPS selection error.
     if (any(mos_vals == 0) && sum(mos_vals) > 0) {
       n_zero <- sum(mos_vals == 0)
       cli_warn(c(
@@ -2547,18 +2543,9 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
     }
   }
 
+  # Required-variable checks already established presence.
   bound_vars <- stage_spec$draw_spec$bounds
   if (!is_null(bound_vars)) {
-    missing_bounds <- setdiff(bound_vars, names(frame))
-    if (length(missing_bounds) > 0) {
-      cli_abort(
-        c(
-          "Required count-bound variable{?s} not found in frame:",
-          "x" = "{.val {missing_bounds}}"
-        ),
-        call = call
-      )
-    }
     for (var in bound_vars) {
       if (anyNA(frame[[var]])) {
         cli_abort(
@@ -2569,18 +2556,9 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
     }
   }
 
+  # Required-variable checks already established presence.
   spread_vars <- stage_spec$draw_spec$spread
   if (!is_null(spread_vars)) {
-    missing_spread <- setdiff(spread_vars, names(frame))
-    if (length(missing_spread) > 0) {
-      cli_abort(
-        c(
-          "Required spatial coordinate variable{?s} not found in frame:",
-          "x" = "{.val {missing_spread}}"
-        ),
-        call = call
-      )
-    }
     for (var in spread_vars) {
       values <- frame[[var]]
       if (!is.numeric(values) || anyNA(values) || any(!is.finite(values))) {
@@ -2589,21 +2567,6 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
           call = call
         )
       }
-    }
-  }
-
-  control_vars <- extract_control_vars(stage_spec$draw_spec$control)
-  if (length(control_vars) > 0) {
-    missing_control <- setdiff(control_vars, names(frame))
-    if (length(missing_control) > 0) {
-      cli_abort(
-        c(
-          "Control {cli::qty(missing_control)}variable{?s} not found in frame:",
-          "x" = "{.val {missing_control}}",
-          "i" = "Control sorting is applied within strata or clusters, so control variables must exist in the frame."
-        ),
-        call = call
-      )
     }
   }
 

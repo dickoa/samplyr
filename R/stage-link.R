@@ -1,9 +1,4 @@
-# Stage transitions.
-#
-# Linking a stage to the units its parent stage selected is the one operation
-# every execution form performs at every stage boundary. It runs here, once,
-# with the complete ancestry the design declares. Nothing infers a key from
-# whichever columns two tables happen to share.
+# Stage transitions use declared ancestry rather than shared columns.
 
 #' Render a bounded preview of compound keys for a message
 #'
@@ -190,8 +185,7 @@ check_parent_key_na <- function(frame, parent_vars, design, stage_idx,
 check_realized_parent_coverage <- function(frame, previous_sample, parent_vars,
                                            design, stage_idx, frame_index,
                                            frame_label, call = caller_env()) {
-  # Draw occurrences repeat a with-replacement parent. Coverage is a property
-  # of the population key, so multiplicity is collapsed first.
+  # Collapse WR multiplicity before checking population coverage.
   selected <- unique(previous_sample[, parent_vars, drop = FALSE])
   available <- unique(frame[, parent_vars, drop = FALSE])
   missing <- dplyr::anti_join(selected, available, by = parent_vars)
@@ -283,8 +277,7 @@ carry_vars_by_parent <- function(frame, previous_sample, carry_vars, design,
 
   lookup <- unique(previous_sample[, c(parent_vars, carry_vars), drop = FALSE])
 
-  # One value per parent, or the variable does not describe the parent unit
-  # and cannot be carried by it.
+  # Parent variables must be invariant within parent.
   duplicated_parents <- duplicated(lookup[, parent_vars, drop = FALSE])
   if (any(duplicated_parents)) {
     offenders <- unique(lookup[duplicated_parents, parent_vars, drop = FALSE])
@@ -301,17 +294,14 @@ carry_vars_by_parent <- function(frame, previous_sample, carry_vars, design,
   }
 
   present <- intersect(carry_vars, names(frame))
-  # Match whole key rows. Pasting a compound key into one string would make
-  # ("a/b", "c") and ("a", "b/c") the same key, which both invents conflicts
-  # and hides real ones.
+  # Match compound keys by rows to avoid string collisions.
   parent_row <- vctrs::vec_match(
     frame[, parent_vars, drop = FALSE],
     lookup[, parent_vars, drop = FALSE]
   )
   for (var in present) {
     parent_value <- lookup[[var]][parent_row]
-    # Rows outside the selected parents were already filtered out, so an
-    # unmatched row would be a linkage failure rather than a disagreement.
+    # Remaining unmatched rows indicate linkage failure.
     disagree <- !values_agree(frame[[var]], parent_value)
     if (any(disagree)) {
       offenders <- unique(frame[disagree, parent_vars, drop = FALSE])
@@ -335,9 +325,7 @@ carry_vars_by_parent <- function(frame, previous_sample, carry_vars, design,
     return(frame)
   }
 
-  # Frame order decides which rows a seeded selection draws, and a join is
-  # free to reorder. Restore the input order explicitly rather than trusting
-  # the join to preserve it.
+  # Restore frame order after joining.
   pos <- free_column_name(frame, ".samplyr_row_pos")
   n_before <- nrow(frame)
   frame[[pos]] <- seq_len(n_before)
@@ -396,9 +384,7 @@ check_phase_key_invariance <- function(schedule, design, phase_link_vars,
     return(invisible(NULL))
   }
 
-  # The keys are derived from what phase 1 declared. If the sample no longer
-  # carries one, nothing can carry it forward and the omission would surface
-  # much later as a bare "object not found" from survey export.
+  # Refuse missing declared phase keys at the transition.
   if (!is_null(prev_phase) && !is_null(prev_phase$sample)) {
     absent <- setdiff(phase_link_vars, names(prev_phase$sample))
     if (length(absent) > 0) {
@@ -422,8 +408,7 @@ check_phase_key_invariance <- function(schedule, design, phase_link_vars,
     if (is_null(spec$clusters) || !is.data.frame(frame)) {
       next
     }
-    # A unit is its full ancestry plus this stage's cluster, because lower
-    # identifiers are routinely local: person 1 exists in every site.
+    # Qualify local cluster IDs by full ancestry.
     unit_vars <- unique(c(
       collect_ancestor_cluster_vars(design, entry$stage), spec$clusters$vars
     ))
@@ -515,9 +500,7 @@ link_stage_frame <- function(frame, previous_sample, design, stage_idx,
     design, stage_idx, parent_vars, frame_index, frame_label, call = call
   )
 
-  # Identifiers of the previous phase. Phase linkage is orthogonal to the
-  # stages of this design: without it a normalized later register drops the
-  # phase-1 identifier and the two-phase export loses its bridge.
+  # Preserve prior-phase identifiers across normalized registers.
   linked <- carry_vars_by_parent(
     linked, previous_sample, phase_link_vars,
     design, stage_idx, parent_vars, frame_index, frame_label, call = call
@@ -551,10 +534,7 @@ scan_incomplete_registers <- function(schedule, design,
 
   gaps <- list()
   entries <- schedule$entries
-  # Candidacy is chained: a unit is a candidate at stage i only if it is itself
-  # reachable from every earlier register. Rows that no earlier register can
-  # reach, including any with a missing parent key, are not candidates and are
-  # not reported here.
+  # Candidate units must be reachable through every earlier register.
   reachable <- entries[[1]]$frame
   if (!is_null(previous_sample)) {
     seed_vars <- collect_ancestor_cluster_vars(design, entries[[1]]$stage)
@@ -577,8 +557,7 @@ scan_incomplete_registers <- function(schedule, design,
     parent_vars <- collect_ancestor_cluster_vars(design, stage_idx)
     child <- entries[[i]]$frame
 
-    # A missing column is a hard error at the transition. Skip it here so the
-    # warning never pre-empts the better message.
+    # Let transition errors report missing columns.
     if (length(parent_vars) == 0 ||
           !all(parent_vars %in% names(child)) ||
           !all(parent_vars %in% names(reachable))) {
@@ -588,9 +567,7 @@ scan_incomplete_registers <- function(schedule, design,
     candidates <- unique(reachable[, parent_vars, drop = FALSE])
     candidates <- candidates[stats::complete.cases(candidates), , drop = FALSE]
     available <- unique(child[, parent_vars, drop = FALSE])
-    # A diagnostic must never be the thing that fails, and must never pre-empt
-    # the transition's own message. Incompatible key types, for one, are
-    # reported there with both type names.
+    # Diagnostics must not pre-empt transition errors.
     missing <- tryCatch(
       dplyr::anti_join(candidates, available, by = parent_vars),
       error = function(e) NULL
@@ -627,8 +604,7 @@ format_register_gaps <- function(design, gaps) {
       paste(gap$preview, collapse = ", "), "."
     )
   }, character(1))
-  # Frame values are data, not templates: a key containing a brace must not be
-  # read as cli interpolation.
+  # Escape key values before cli interpolation.
   detail <- gsub("}", "}}", gsub("{", "{{", detail, fixed = TRUE), fixed = TRUE)
   names(detail) <- rep("*", length(detail))
   detail

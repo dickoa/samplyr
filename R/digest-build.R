@@ -44,10 +44,7 @@ build_frame_digest <- function(design, stage_ids, stage_traces,
     stage_rec <- built$stage
     registry <- built$registry
 
-    # When one universe frame fed every stage, the pools under
-    # unselected parents are deterministically resolvable: the design
-    # is unambiguous and first-order chances need no random numbers.
-    # Failure to resolve leaves the stage eligible-only.
+    # Resolve unselected-parent pools only from a shared universe frame.
     if (
       pos > 1L &&
         frames_reg$ref[pos] == frames_reg$ref[1] &&
@@ -108,9 +105,7 @@ build_digest_frames <- function(design, input_frames) {
     )
   }
 
-  # A single frame recycled across stages is the common case.
-  # identical() short-circuits on pointer equality, so the content
-  # hash is computed once per distinct object.
+  # Hash each distinct frame once.
   hashes <- character(length(input_frames))
   for (i in seq_along(input_frames)) {
     seen <- NA_integer_
@@ -145,9 +140,7 @@ build_digest_frames <- function(design, input_frames) {
       },
       n_rows = nrow(frame),
       roles = roles,
-      # The frame supplied to the first executed stage is taken as the
-      # population. Frames first supplied for a later stage cover the
-      # realized parents only.
+      # Only the first executed stage receives a population frame.
       scope = if (pos == 1L) "universe" else "eligible"
     )
   })
@@ -218,8 +211,7 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
     cli_abort("Stage {stage_idx} produced no selection pools.", call = NULL)
   }
 
-  # Executed order per pool: the leaf's chance/selected vectors are in
-  # executed order. perm maps them back to input-order rows.
+  # Map executed pool vectors back to input row order.
   for (i in seq_along(records)) {
     r <- records[[i]]
     perm <- r$leaf$perm
@@ -237,10 +229,7 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
   chance_kind <- first_leaf$chance_kind
   order_kind <- first_leaf$order_kind
 
-  # A pool with NA chances is recorded as unavailable: sizes and
-  # selections are kept, the chance representation is absent rather
-  # than invented. No current producer emits NA chances (unknown-probability
-  # methods are refused at draw). This is schema-level hardening.
+  # Record NA chances as unavailable rather than inventing values.
   unavailable <- vapply(
     records, function(r) anyNA(r$leaf$chance), logical(1)
   )
@@ -262,10 +251,7 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
     records, function(r) r$rows[1], integer(1)
   )
 
-  # Parent linkage exists only when the previous stage retained an
-  # identifiable unit registry (a cluster stage). After an element
-  # stage, later pools are conditioned on the realized selection as a
-  # whole and carry no per-unit parent.
+  # Only cluster stages retain a parent unit registry.
   parent_unit <- rep(NA_integer_, length(records))
   if (pos > 1L && length(ancestor_vars) > 0 && !is_null(parent_registry)) {
     keys <- digest_path_keys(frame, pool_first_rows, ancestor_vars)
@@ -283,9 +269,7 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
     pool_id = seq_along(records),
     parent_unit = as.integer(parent_unit)
   )
-  # After a with-replacement parent stage, the frame carries draw
-  # columns and pools exist per (parent, occurrence): record which hit
-  # of the parent each pool hangs under.
+  # Qualify WR parent pools by draw occurrence.
   draw_cols <- grep("^\\.draw_\\d+$", names(frame), value = TRUE)
   if (pos > 1L && length(draw_cols) > 0) {
     draw_col <- draw_cols[
@@ -370,7 +354,7 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
       units$n_descendants <- as.integer(unlist(
         lapply(records, function(r) r$exec_sizes), use.names = FALSE
       ))
-      # Registry for the next stage: full ancestry key per cluster.
+      # Register full ancestry for the next stage.
       key_vars <- c(ancestor_vars, cluster_vars)
       all_exec_rows <- unlist(
         lapply(records, function(r) r$exec_rows), use.names = FALSE
@@ -411,9 +395,7 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
       }
     )
     if (!is_null(registry)) {
-      # Ancestry keys of SELECTED clusters only: derivable from the
-      # sample rows, so no anonymity leak. A continuation uses them to
-      # link its pools back to this stage's units.
+      # Store only selected cluster ancestry used by continuation.
       out$key <- names(registry)[unit_ids]
     }
     out
@@ -613,9 +595,7 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
   }
 
   if (!is_cluster) {
-    # An element pool without a size measure has one constant chance,
-    # resolvable for every pool at once. With a size measure the
-    # chances vary within the pool: not representable as constant.
+    # Only element pools without MOS have one constant chance.
     if (
       !is_null(mos) ||
         !is_null(draw_spec$certainty_size) ||
@@ -628,8 +608,7 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
       resolved <- resolve_pool_chance(draw_spec, NULL, N)
       resolved$chance[1]
     }, numeric(1))
-    random_size <- draw_spec$method %in% rs_poisson_methods ||
-      isFALSE(draw_spec$method_fixed)
+    random_size <- is_random_size_method(draw_spec)
     n_target <- if (
       random_size && !is.null(draw_spec$n) &&
         is.numeric(draw_spec$n) && length(draw_spec$n) == 1L
@@ -727,8 +706,7 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N) {
   }
   method <- draw_spec$method
   wr <- is_multi_hit_method(draw_spec)
-  random_size <- method %in% rs_poisson_methods ||
-    isFALSE(draw_spec$method_fixed)
+  random_size <- is_random_size_method(draw_spec)
 
   n <- draw_spec$n
   frac <- draw_spec$frac
@@ -959,9 +937,9 @@ exante_digest <- function(design, frame,
       call = call
     )
   }
-  # Reuse the execution frame grammar and schedule for the ex-ante walk.
+  # Reuse execution frame rules for the ex-ante walk.
   supplied <- normalize_frame_input(frame, call = call)
-  # Apply the same executable-frame checks as execute() and validate_frame().
+  # Apply the shared executable-frame checks.
   check_frames_executable(
     supplied$frames,
     labels = supplied$labels,
@@ -982,12 +960,10 @@ exante_digest <- function(design, frame,
     frame_index_by_stage[[stage]] <- schedule$entries[[i]]$frame_index
   }
 
-  # Fingerprint supplied frames. Effective frames include inherited columns.
+  # Fingerprint supplied rather than inherited columns.
   input_frames_by_stage <- supplied$frames[frame_index_by_stage]
 
-  # Built before the stage loop: each stage records which supplied frame it
-  # selected from, exactly as an executed digest does. Hardcoding 1 made a
-  # three-register digest claim every stage read the first register.
+  # Record the supplied frame used by each stage.
   frames_reg <- build_digest_frames(design, input_frames_by_stage)
 
   stages_out <- vector("list", length(stages_spec))
@@ -996,10 +972,7 @@ exante_digest <- function(design, frame,
   for (stage_idx in seq_along(stages_spec)) {
     if (stage_idx > 1L) {
       prev <- stages_spec[[stage_idx - 1L]]
-      # An unclustered non-final stage is refused earlier, by the shared
-      # schedule: it has no identity to link the next stage to, so the
-      # design cannot execute either, and it gets the class execution
-      # gives it rather than a preview-specific reason.
+      # Shared scheduling rejects unlinked intermediate element stages.
       if (is_multi_hit_method(prev$draw_spec)) {
         abort_samplyr(
           c(
@@ -1014,9 +987,7 @@ exante_digest <- function(design, frame,
         )
       }
     }
-    # samplyr conditions are the same informative errors execution
-    # gives (allocation coverage, invariance) and pass through. Plain
-    # stops from the chance resolvers are wrapped with the stage.
+    # Preserve samplyr errors and qualify plain resolver errors by stage.
     built <- tryCatch(
       build_exante_stage(
         design, stage_idx, effective_frames_by_stage[[stage_idx]], registry,
@@ -1049,9 +1020,7 @@ exante_digest <- function(design, frame,
     status = "complete"
   )
   validate_frame_digest(digest)
-  # Parent ancestry key per pool and stage, for callers that need to
-  # line ex-ante pools up with another digest's pools (drift). An
-  # attribute, not schema: ex-ante digests never leave the package.
+  # Keep ex-ante parent ancestry as an internal attribute.
   attr(digest, "exante_pool_keys") <- pool_keys
   digest
 }
@@ -1175,9 +1144,7 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
         stratum_key = skey,
         lookup = lookup
       )
-      # The allocation-resolved n_h drives the chance. A per-stratum
-      # frac (already resolved above) prevails for the fraction-driven
-      # methods, exactly as at draw time.
+      # Match draw-time precedence for allocated counts and fractions.
       pool_spec$n <- as.double(info$.n_h[match(skey, info_keys)])
       pool_keys <- if (is_null(unit_keys)) NULL else unit_keys[sgroups[[s]]]
       pool_rows <- if (is_cluster) rows[ckeys %in% pool_keys] else urows
@@ -1474,8 +1441,7 @@ merge_continuation_digest <- function(prior, design, stage_ids,
     } else {
       next_id <- next_id + 1L
       rec$frame_id <- next_id
-      # Continuation frames cover the realized parents, not the
-      # universe.
+      # Continuation frames cover realized parents only.
       rec$scope <- "eligible"
       kept[[length(kept) + 1L]] <- rec
       id_map[j] <- next_id
@@ -1537,8 +1503,7 @@ build_stage_diagnostics <- function(draw_spec, frame, records,
 
   aux_vars <- draw_spec$aux
   if (!is_null(aux_vars)) {
-    # Cluster stages balance on cluster totals: reproduce the sums
-    # sample_clusters() fed to the selection.
+    # Balance cluster stages on cluster totals.
     lookup <- if (is_cluster) {
       key_vars <- c(ancestor_vars, cluster_vars)
       keys_all <- digest_path_keys(frame, seq_len(nrow(frame)), key_vars)

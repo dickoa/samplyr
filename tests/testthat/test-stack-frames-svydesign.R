@@ -173,7 +173,7 @@ test_that("the overlaps columns follow the stack order, not the mapping", {
   )
 })
 
-test_that("theta must be a single number in the unit interval", {
+test_that("svydesign theta is scalar and in the unit interval", {
   skip_if_not_installed("survey")
   frames <- multiframe_fixture()
 

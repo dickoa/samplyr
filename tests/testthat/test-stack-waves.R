@@ -364,3 +364,38 @@ test_that("materializing a wave does not depend on reading the frame digest", {
     120L
   )
 })
+
+## The agreement check reports rather than failing on a type
+
+test_that("a field that is not a scalar is reported, not raised on", {
+  record <- function(unit, wave) {
+    list(
+      wave = wave, master_digest = "d", schedule_digest = "s",
+      algorithm = "x", version = 3L, unit = unit
+    )
+  }
+
+  # Versions 1 and 2 are exempt from the record field checks, so nothing
+  # guarantees `unit` is a scalar. `as.character()` inside a
+  # `vapply(..., character(1))` ended this with R's "values must be length 1"
+  # instead of the disagreement it exists to report.
+  expect_error(
+    check_stack_waves_agreement(list(record(c("a", "b"), 1), record("cluster", 2))),
+    class = "samplyr_error_wave_master_mismatch"
+  )
+  expect_error(
+    check_stack_waves_agreement(list(record(NULL, 1), record("cluster", 2))),
+    class = "samplyr_error_wave_master_mismatch"
+  )
+
+  # And agreement is still agreement, whatever the shape.
+  expect_no_error(
+    check_stack_waves_agreement(list(record("cluster", 1), record("cluster", 2)))
+  )
+  expect_no_error(
+    check_stack_waves_agreement(list(record(NULL, 1), record(NULL, 2)))
+  )
+  expect_no_error(
+    check_stack_waves_agreement(list(record(c("a", "b"), 1), record(c("a", "b"), 2)))
+  )
+})

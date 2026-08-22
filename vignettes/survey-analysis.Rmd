@@ -157,8 +157,28 @@ sample_with_data |>
   filter(urban_rural == "Urban") |>
   summarise(
     mean_consumption = survey_mean(consumption_per_capita)
-  )
+)
 ```
+
+For a strictly positive domain total, a log-scale delta interval is an
+available finite-sample sensitivity analysis. It keeps the endpoints positive
+and allows asymmetric uncertainty.
+
+```{r}
+urban_total <- svytotal(~population, urban_svy)
+urban_estimate <- unname(coef(urban_total)[[1]])
+urban_se <- unname(SE(urban_total)[[1]])
+z <- qnorm(0.975)
+
+exp(log(urban_estimate) + c(-1, 1) * z * urban_se / urban_estimate)
+```
+
+This transformation does not repair a poor variance estimator. It applies
+only when the estimate is positive. Extended PPS qualification found a clear
+coverage improvement for positive domain totals, but not for full-population
+totals. Log-ratio and Fieller intervals did not provide a uniformly reliable
+correction for skewed ratios, whose point estimators can also have material
+finite-sample bias.
 
 ## Replicate weights and PPS variance
 
@@ -202,6 +222,13 @@ also have exact second-order calculations in the supported cases.
 Generalized Brewer, SPS, Pareto, and unconstrained cube use the documented
 high-entropy approximation. Spatial methods and bounded cube do not provide a
 joint matrix. `?joint_expectation` is the authoritative method table.
+
+An exact systematic PPS matrix can contain zero pair probabilities. Exact
+design quantities do not then guarantee an estimable or stable sample variance
+through `survey::ppsmat()`. A sampled matrix cannot show whether unseen
+population pairs have zero probability, so `as_svydesign()` warns when a
+`ppsmat` object is supplied for systematic PPS. It does not refuse the route,
+because full pair positivity can hold at high sampling fractions.
 
 A user-supplied `pps` matrix describes one stage. For a multistage design,
 supplying it exports only the represented PPS stage. Omit it when the intended
@@ -289,7 +316,7 @@ know which one you are on.
 | Number of frames | Two. `survey::multiframe()` composites two | Any number |
 | Compositing | Multiplicity, or Hartley with a stated `theta` | The same, with `theta` above two frames refused |
 | A component with shared weights | Refused | Supported |
-| Replicate methods | Not applicable | May differ between frames; `type = "auto"` picks one per component |
+| Replicate methods | Not applicable | May differ between frames. `type = "auto"` picks one per component |
 
 The two-frame limit belongs to the export and is stated there, not at the
 design layer: `stack_frames()` records any number, exactly as `execute()`

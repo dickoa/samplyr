@@ -36,7 +36,6 @@ reaching a cluster where the clustered form counts links into it.
 \seealso{
 Other weight sharing:
 \code{\link[=complete_links]{complete_links()}},
-\code{\link[=complete_weighted_links]{complete_weighted_links()}},
 \code{\link[=share_weights]{share_weights()}},
 \code{\link[=weighted_links]{weighted_links()}}
 }
