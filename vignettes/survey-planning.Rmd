@@ -32,7 +32,11 @@ We use the synthetic `ken_enterprises` frame. Suppose the main estimate is the
 proportion of exporting enterprises, with a margin of error of three percentage
 points at 95 percent confidence.
 
-```{r}
+```{r, message = FALSE}
+library(samplyr)
+library(svyplan)
+library(dplyr)
+
 data(ken_enterprises)
 
 p_export <- mean(ken_enterprises$exporter)
@@ -230,7 +234,7 @@ joint_measures <- bind_rows(
 )
 
 joint_plan <- n_alloc(
-  transmute(sector_moments, stratum = sector, N, .keep = "none"),
+  mutate(sector_moments, stratum = sector, N, .keep = "none"),
   measures = joint_measures,
   targets = data.frame(
     name = c("revenue", "exporter"),

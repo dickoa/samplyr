@@ -62,8 +62,11 @@ from the data.
 The string `"2"` means that a cohort is interviewed on two consecutive
 occasions and then leaves.
 
-```{r rotation-chart, fig.width = 7, fig.height = 3.6, fig.alt = "Rotation chart for cohorts interviewed on two consecutive occasions."}
+```{r rotation-chart, fig.width = 7, fig.height = 3.6, fig.alt = "Rotation chart for cohorts interviewed on two consecutive occasions.", message = FALSE}
+library(samplyr)
 library(svyplan)
+library(dplyr)
+
 overlap_plan <- design_overlap("2")
 overlap_plan[1]
 plot(overlap_plan, type = "schedule", start = "immediate")
@@ -129,7 +132,6 @@ length, not in how far they have already progressed through the retention
 chain.
 
 ```{r}
-library(dplyr)
 data(ken_enterprises)
 
 base_design <- sampling_design() |>

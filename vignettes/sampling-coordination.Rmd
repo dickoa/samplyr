@@ -50,7 +50,11 @@ See `vignette("rotating-panels")` for that workflow.
 We use the synthetic `ken_enterprises` register and target about 200
 enterprises per wave.
 
-```{r}
+```{r, message = FALSE}
+library(samplyr)
+library(sondage)
+library(dplyr)
+
 data(ken_enterprises)
 
 set.seed(1)

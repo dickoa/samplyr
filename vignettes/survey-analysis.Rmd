@@ -36,7 +36,9 @@ realization and prevents export.
 
 We begin with a stratified sample of enumeration areas.
 
-```{r}
+```{r, message = FALSE}
+library(samplyr)
+
 data(bfa_eas)
 
 sample <- sampling_design(title = "Burkina Faso EA survey") |>
@@ -64,7 +66,7 @@ realized pool count and is not a unit-level inclusion probability.
 The frame need not contain the survey outcomes. Join one collected record to
 each sampled unit using a stable identifier.
 
-```{r}
+```{r, message = FALSE}
 library(dplyr)
 set.seed(2)
 

@@ -66,7 +66,10 @@ One declared transformation departs from that, and says so in the object it retu
 
 A `sampling_design` object is a specification, not a computation. Column names referenced in `stratify_by()`, `cluster_by()`, and `draw()` are stored as strings (deferred resolution). No data is touched until `execute()` binds the design to a frame. This separation means the same design can be applied to different frames or re-executed with different seeds.
 
-```{r design-inert}
+```{r design-inert, message = FALSE}
+library(samplyr)
+library(dplyr)
+
 design <- sampling_design(title = "SRS WOR") |>
   stratify_by(region) |>
   draw(n = 50, method = "srswor")

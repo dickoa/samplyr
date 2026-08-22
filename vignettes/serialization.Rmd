@@ -45,6 +45,9 @@ finalized cross-tool interchange standard.
 ## Save and restore a design
 
 ```{r}
+library(samplyr)
+library(dplyr)
+
 data(bfa_eas)
 
 design <- sampling_design(title = "Burkina Faso EA survey") |>

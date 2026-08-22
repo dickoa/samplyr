@@ -30,6 +30,9 @@ one or more frames.
 The smallest complete example is a simple random sample without replacement.
 
 ```{r}
+library(samplyr)
+library(dplyr)
+
 data(bfa_eas)
 
 design <- sampling_design(title = "Burkina Faso EA sample") |>
