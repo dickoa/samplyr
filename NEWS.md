@@ -228,7 +228,7 @@ Initial release.
   stage against the frame that stage will actually select from, after
   its register has been linked to its parents and carried their
   variables. A register that legitimately omits a stratum carried from
-  an earlier stage passes; one whose copy of that stratum disagrees is
+  an earlier stage passes. One whose copy of that stratum disagrees is
   `samplyr_error_frame_parent_conflict`, as it is at execution.
   Ancestry values that name no parent are judged on the register as
   supplied, since linking filters those rows out.
@@ -277,7 +277,7 @@ Initial release.
   custom balanced designs. Random-size designs keep the Poisson treatment and
   form no take-all stratum. Splitting certainty units out of a user stratum
   can leave a single probability unit behind, whose within-stratum variance
-  is not estimable; `survey` reports that as a lonely PSU and
+  is not estimable. `survey` reports that as a lonely PSU and
   `options(survey.lonely.psu = "adjust")` is the conservative response.
 * PPS WOR methods support certainty selection via absolute (`certainty_size`)
   or proportional (`certainty_prop`) thresholds, including iterative
@@ -290,7 +290,7 @@ Initial release.
 
 * `execute(..., panels = k)` assigns units to `k` panels by randomized fixed
   quota inside frozen ordered blocks. Each first-stage selection stratum is an
-  assignment pool cut into consecutive blocks of `2k` units; every block
+  assignment pool cut into consecutive blocks of `2k` units. Every block
   carries a fixed quota per panel and its labels are permuted within the
   block. Each unit therefore carries each panel with probability `1/k`, and
   panel sizes within a pool differ by at most one.
@@ -306,7 +306,7 @@ Initial release.
   units inside parents that stay in the survey: the address-panel design, in
   which selected areas are retained and households rotate within them. The
   stage must be one the execution completes, and it is accepted only
-  alongside `panels`; `samplyr_error_panel_stage_value`,
+  alongside `panels`. `samplyr_error_panel_stage_value`,
   `samplyr_error_panel_stage_not_applicable` and
   `samplyr_error_panel_stage_unexecuted` report the three ways it can be
   wrong, all of them before any random number is drawn.
@@ -341,7 +341,7 @@ Initial release.
   not new panels are supplied.
 * Panel labels are rotation or workload groups, not an additional
   probability-sampling phase. Full-sample weights remain valid for
-  the combined sample; multiplying one panel's weights by the number of panels
+  the combined sample. Multiplying one panel's weights by the number of panels
   is not generally valid for population inference.
 
 ## Rotation schedules and waves
@@ -358,7 +358,7 @@ Initial release.
 * `execute(..., small_pool = )` governs what happens when a rotation schedule
   would leave a pool with no unit to activate. A pool of `m` assignment units
   leaves `panels - m` panels empty, so a wave activating `r` of them selects
-  nothing from that pool when `m <= panels - r`; those units then have
+  nothing from that pool when `m <= panels - r`. Those units then have
   conditional inclusion probability zero in that wave rather than a small
   weight, so the wave's estimator is biased. The default refuses the
   assignment with `samplyr_error_panel_small_pool`, before any panel label is
@@ -366,7 +366,7 @@ Initial release.
   activates those pools at every wave with probability one, which is exact,
   and warns with `samplyr_warning_panel_small_pool` because it changes the
   operational design: wave sizes, overlap and repeated interviewing all
-  increase. The policy governs positivity only; a pool with a positive but
+  increase. The policy governs positivity only. A pool with a positive but
   single active unit is still assigned and still carries no within-block
   variance estimate.
 * The assignment record separates how a pool was selected from whether its
@@ -397,7 +397,7 @@ Initial release.
   and their sizes the phase-2 population counts. `method` is the only choice
   the export takes, and no method is ever selected as a silent fallback for
   another. `joint_expectation()` still refuses a materialized wave
-  (`samplyr_error_wave_export_unsupported`) and points at the master, which
+  (`samplyr_error_wave_joint_unsupported`) and points at the master, which
   answers the same question for any pair of declared waves:
   `joint_expectation(master, waves = c(t, s))`.
 * `survey::twophase()` takes no `pps` specification at phase 1, so a wave of
@@ -426,7 +426,7 @@ Initial release.
   weight including the activation factor, and is not a final weight, since
   nothing here is adjusted for nonresponse or calibrated. A data column of any
   of those four names is refused rather than silently renamed
-  (`samplyr_error_stack_waves_columns`); `execute()` cannot catch them,
+  (`samplyr_error_stack_waves_columns`). `execute()` cannot catch them,
   because none is a reserved samplyr name.
 * The result is an ordinary tibble, never a `tbl_sample`: it holds several
   realizations and repeats the unit key on purpose. samplyr's internal
@@ -455,7 +455,7 @@ Initial release.
   (`samplyr_error_joint_activation_arguments`) rather than arguments without
   effect, and a materialized wave is still refused, now pointing at the
   master call. These are joint expectations of the activation indicators,
-  conditional on the phase-1 units and the frozen quotas; they are not the
+  conditional on the phase-1 units and the frozen quotas. They are not the
   unconditional joint inclusion probabilities of the two-phase design.
 
 ## Rotation programs
@@ -474,7 +474,7 @@ Initial release.
 * `rotation_program()` links the cohorts of a rotating panel that
   replenishes. A start-up master drawn against one frame vintage and a
   refreshment cohort drawn against each later vintage are separate
-  executions; the program records which samples make up the panel, when each
+  executions. The program records which samples make up the panel, when each
   entered, and which components are live at each occasion.
 * A cohort may be *partitioned*, drawn with `panels` so that it carries
   `.panel` and a frozen assignment, or *whole*, drawn without them. A whole
@@ -484,7 +484,7 @@ Initial release.
   drawn early and held in reserve, so its first active wave need not be its
   entry, and entry is what anchors which population vintage a cohort
   represents.
-* The program schedule adds a `cohort` column to the panel-by-wave grid; for
+* The program schedule adds a `cohort` column to the panel-by-wave grid. For
   a one-cohort program it may be omitted. It is completed to the full grid
   only once the registry is known, because a cohort's available panels come
   from its own receipt. Activity need not be contiguous, since a 4-8-4
@@ -545,7 +545,7 @@ Initial release.
   optionally a frame fingerprint (name, dimensions, column types,
   content hash) via `write_design(..., frame =)` -- the frame data
   itself is never written. The content hash covers column names, column
-  values, and row order; a tibble and a plain data frame holding the
+  values, and row order. A tibble and a plain data frame holding the
   same data fingerprint identically, and column order does not matter.
 * Saving an executed `tbl_sample` records an execution receipt with
   every `execute()` argument that affects the result (seed, executed
@@ -558,7 +558,7 @@ Initial release.
   implementation-version mismatches warn.
   Samples built by several `execute()` calls (continuation,
   multi-phase) or modified after execution are flagged in the receipt
-  and warned about at write time; `replay_design()` refuses chained
+  and warned about at write time. `replay_design()` refuses chained
   receipts rather than replaying only the final call.
 * Receipts record how frames were mapped to stages: the frame mode, how
   many frames were supplied, their optional labels, and the frame
@@ -570,7 +570,7 @@ Initial release.
   `samplyr_error_replay_frame_count`. Chained and multi-phase receipts
   are refused: the mapping describes the recorded call only.
   Files carrying these fields declare format version 2, since a version
-  1 reader would replay them against a single frame; every other file
+  1 reader would replay them against a single frame. Every other file
   is still written at version 1, and a receipt without the fields is
   read as the one-frame call it can only have been. The plural fields
   and version 2 describe genuinely several supplied frames, not the
@@ -633,12 +633,12 @@ Initial release.
 * Control ordering uses a declarative JSON grammar (`ascending`,
   `descending`, and `serpentine`, with explicit variable arrays) rather than
   embedded R expressions. `read_design()` accepts local file paths and JSON
-  strings only; URLs are refused, so reading a design never touches the
+  strings only. URLs are refused, so reading a design never touches the
   network.
 * `validate_frame()` compares a restored design's stored fingerprint
   against the supplied frame and reports what changed (rows, columns,
   column types, or content). The comparison is informational and never
-  fails validation; control it with the `fingerprint` argument
+  fails validation. Control it with the `fingerprint` argument
   (`"inform"`, `"warn"`, or `"ignore"`). One frame and several are
   compared by the same code, and a count that cannot match is itself
   reported: a file recording three registers says nothing about one
@@ -651,7 +651,7 @@ Initial release.
   targets =)`, the way a frame is, so no unit-level data and no linkage is
   ever written. This is possible because the transformation record already
   carries its own call declaratively. `read_design()` returns a
-  `shared_sample_design`; `replay_design()` re-executes the source selection
+  `shared_sample_design`. `replay_design()` re-executes the source selection
   against the register, re-applies the transformation to the supplied tables,
   and reproduces the sample exactly. A live shared sample replays too.
 * Replaying one is checked against two integrity records the file carries, so
@@ -671,7 +671,7 @@ Initial release.
   `overlap_probabilities()` or `overlap_weights()` travel with it. `frame`
   is a list named by component, matched by name rather than position.
   `read_design()` returns a `frame_stack_design` carrying the components'
-  designs and receipts; `replay_design()` executes each against its register
+  designs and receipts. `replay_design()` executes each against its register
   and stacks the results, reproducing the collection exactly. It also takes
   a live `frame_stack`.
 * Two things a collection cannot carry are refused rather than dropped, since
@@ -764,7 +764,7 @@ Initial release.
   components' own findings are muffled. A component's silence about a
   cluster counts as coverage only when it was describing the same target
   clusters, which the record establishes with a fingerprint of the
-  cluster set rather than assuming; where it cannot, the union is
+  cluster set rather than assuming. Where it cannot, the union is
   reported as not established rather than guessed. `summary()` states
   whichever of those the collection has.
 
@@ -789,7 +789,7 @@ Initial release.
   the session collation. Statistical code reads the membership columns
   and never parses the label back.
 * Two components carrying the same recorded seed warn. Distinct seeds are
-  not evidence that the samples were selected independently; the warning
+  not evidence that the samples were selected independently. The warning
   detects one recorded common-random-number mistake and nothing more. No
   other package is positioned to catch it, because no other package
   records the seeds.
@@ -878,7 +878,7 @@ Initial release.
   once per call when they are approximating the variance of an
   equal-probability `systematic` stage. One systematic sample generally does
   not identify its own design variance, so the approximation is supplied as
-  before and neither export is refused; what changes is that a returned
+  before and neither export is refused. What changes is that a returned
   design no longer carries an approximate variance model with nothing to show
   for it. `"warn"` is the default and names every affected stage in one
   condition of class `samplyr_warning_systematic_variance`; `"approximate"`
@@ -892,7 +892,7 @@ Initial release.
   replicate weights, which resample the realized sample rather than redraw a
   random start against the frame in its original order, so no replicate type
   reproduces the selection mechanism. Requesting a particular `type` is
-  therefore not an acknowledgement and does not silence the condition; only
+  therefore not an acknowledgement and does not silence the condition. Only
   `systematic_variance` does. The measured margins below are the
   linearization export's and are not claimed for the replicate one.
 * The documented approximation for equal-probability `systematic` stages now
@@ -928,7 +928,7 @@ Initial release.
   blocks, and stratified blocks also follow first sample appearance. Frame
   and digest computations therefore share dimensions, order, and values for
   repeated-hit designs.
-* Custom methods registered with `fixed_size = FALSE` are random-size;
+* Custom methods registered with `fixed_size = FALSE` are random-size.
   `as_svydesign()` errors rather than applying Brewer's fixed-size
   approximation (which could report near-zero variance). Pass
   `pps = survey::poisson_sampling(1 / x$.weight)` for Poisson-type
@@ -992,7 +992,7 @@ Initial release.
   planning-only, and samplyr does not carry estimators its upstream does not
   define. For a design effect that reflects clustering and stratification,
   hand the design to survey with `as_svydesign()` and use
-  `svymean(deff = TRUE)`; to anticipate the clustering component before
+  `svymean(deff = TRUE)`. To anticipate the clustering component before
   collection, use `svyplan::design_effect()` with `icc` and `n_per_psu`.
 * `varcomp()` has a `tbl_sample` method: design-based variance
   components (B, W, icc, var_ratio) estimated from an executed clustered
@@ -1002,7 +1002,7 @@ Initial release.
   stage 1, never the compound `.weight`) and stage-1 selection shares
   derived from the stage-1 weights, normalized over the sampled PSUs
   (per stratum when stratified). Handles 2- and 3-stage designs with
-  SRS, PPS (WOR and WR), and stratified first stages; refuses
+  SRS, PPS (WOR and WR), and stratified first stages. Refuses
   two-phase samples, certainty PSUs, and deeper designs with precise
   messages. The certainty guard reads `.certainty_k`, which covers implicit
   probability capping as well as explicit thresholds. `strata` follows the
@@ -1021,6 +1021,44 @@ Initial release.
 * A named `n` without stage-level stratification, or with crossed
   stratification variables, fails at design time with guidance rather than
   at execution.
+* Certainty-aware `n_alloc()` plans (solved with a `psu` register, svyplan
+  >= 0.12.0) are fielded from their own classification: `draw(n = plan)` at
+  a clustered, stratified stage 1 selects every PSU the plan marked
+  certainty with probability one and draws exactly `n_psu_draw` further
+  PSUs per stratum by an exact-pik PPS method (`pps_systematic`,
+  `pps_brewer`, `pps_cps`, `pps_sampford`). The plan's stored
+  classification is authoritative. samplyr never recomputes it from the
+  threshold. At execute time the frame is reconciled against the plan's
+  register on PSU identity, stratum, and MOS
+  (`samplyr_error_certainty_register_mismatch`), and a plan whose
+  remainder draw would cap a PSU the classification holds noncertainty is
+  refused before any RNG is consumed
+  (`samplyr_error_certainty_plan_disagreement`), naming the PSU to flag
+  and refit. Arguments the plan already owns (`certainty_size`,
+  `certainty_prop`, `min_n`, `max_n`, and at stage 1 `alloc`) cannot
+  accompany it, and every other stage context is refused
+  (`samplyr_error_svyplan_certainty_plan`).
+* Passing the same plan again at stage 2 applies its per-PSU takes: each
+  certainty PSU contributes its own whole take and each drawn PSU
+  `n_per_psu`, so the element totals equal the plan's `n_int` exactly,
+  by `srswor` (default) or `systematic` within each PSU. Stratifying
+  within PSUs is supported with an explicit `alloc` method, which
+  distributes each PSU's take across the cells. A bare `stratify_by()`
+  at the take stage is refused, because a scalar size at a stratified
+  stage means that size per stratum and would silently draw the take in
+  every cell.
+* Designs with a certainty-plan stage serialize as design format 3: the
+  stage block carries the plan's register, classification, takes, and
+  remainder draws as plain data, and the file executes and replays
+  identically to the never-serialized design. Designs without one keep
+  writing the lowest format that preserves their meaning, and older
+  samplyr versions refuse a format-3 file rather than misread it. The
+  reader checks shape only (`samplyr_error_design_file_malformed` for a
+  register missing columns, non-logical certainty flags, or takes that
+  are not positive whole numbers). What a spec means against a frame is
+  checked at execute time, where the gates also verify that the stage
+  size equals the plan's own totals and that both bridge stages carry
+  the same register, since a deserialized design never ran `draw()`.
 * Precision analysis (`prec_prop()`, `prec_mean()`, `prec_cluster()`,
   `prec_multi()`), sensitivity analysis (`predict()`), response rate
   adjustment (`resp_rate`), and confidence intervals (`confint()`) on
@@ -1033,7 +1071,7 @@ Initial release.
   `"none"` disables it): a versioned manifest of the selection pools,
   first-order chances, and selected units the execution resolved, with
   no unit identifiers. Recording is observational and never changes the
-  selection; its size scales with pools, clusters, and quantile bins
+  selection. Its size scales with pools, clusters, and quantile bins
   rather than frame rows (clusters that are single frame rows make the
   two coincide; `frame_digest = "none"` opts out).
 * `frame_digest = "none"` skips selection-trace construction entirely.
@@ -1069,8 +1107,8 @@ Initial release.
   `frame_summary()`, the serialized design metadata, and a
   `(approximate probabilities)` flag in `summary()`. For these
   methods `.weight` is the inverse target probability, not the
-  inverse of the design's true first-order inclusion probability;
-  the `execute()` weight documentation says so.
+  inverse of the design's true first-order inclusion probability.
+  The `execute()` weight documentation says so.
 * `frame_summary(design, frame)` previews a design before it is run.
   Every selection pool is enumerated and every chance resolved from the
   design and the frame, but nothing is selected: no random numbers are
@@ -1079,12 +1117,12 @@ Initial release.
   shared hierarchy or one register per stage both work. Supplying
   `frame` always means "preview", so a design restored from a file can
   be checked against next wave's frame, and a sample can be previewed
-  against a frame other than the one it was drawn from; omitting it
+  against a frame other than the one it was drawn from. Omitting it
   reports what the recorded digest says happened.
 * A recorded frame that no stage selects from is refused when a digest
   claims to be complete (`samplyr_error_digest_frame_ref`). Checking that
   each stage's frame reference is in range cannot catch a digest whose
-  stages all point at the first of several frames; requiring every frame to
+  stages all point at the first of several frames. Requiring every frame to
   be claimed does. A partial digest is exempt: a replicated multi-stage
   execution keeps the stage prefix common to every replicate and still
   records the frames the dropped stages used.
@@ -1156,7 +1194,7 @@ Initial release.
   contains no WR stage. WR paths retain their realized draw or unit count
   without presenting the frame size as a sampling-coverage denominator.
   When no digest is available, WR draw counts use ancestry-qualified
-  `.draw_k` occurrences; without that column, the output explicitly labels
+  `.draw_k` occurrences. Without that column, the output explicitly labels
   the fallback as selected clusters or selected units rather than draws.
   Unknown pool sizes omit the corresponding sampling fractions instead of
   interrupting the summary, and Chromy stages are labeled as minimum
@@ -1179,13 +1217,13 @@ Initial release.
   - `samplyr_warning_nominal_cap`: a random-size method (`bernoulli`,
     `pps_poisson`, or a registered method declared as random-size) asked for
     more units than the pool holds. Clamping every chance at one caps the
-    target the stage aims at; it does not select that many units, and the
+    target the stage aims at. It does not select that many units, and the
     realized size usually lands below the cap.
   - `samplyr_warning_poisson_shortfall`: a `pps_poisson` pool resolved to an
     expectation more than 5% below what it could have reached, because
     dominant units saturated at probability 1. Measured against the reachable
     target, so a pool whose target the population already reduced is charged
-    only for the further reduction saturation caused; a design reduced both
+    only for the further reduction saturation caused. A design reduced both
     ways gets both warnings. The payload carries `n_requested`,
     `n_reachable`, `n_expected` and `n_clipped`, and only affected pools are
     aggregated, so a healthy pool cannot mask a collapsed one.

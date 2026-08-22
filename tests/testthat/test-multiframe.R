@@ -476,11 +476,10 @@ test_that("an unstratified stage between stratified stages carries both", {
 
 ## T1. Reproductions of the four verified defects
 #
-# These fail until the linkage refactor lands. They are written against the
-# contract, not against current behavior. Expected to turn green in:
-#   parent coverage  -> phase 2
-#   ancestry         -> phase 2
-#   strata carry     -> phase 3
+# Written against the contract before the linkage refactor landed, when all
+# of them failed (parent coverage and ancestry under phase 2, strata carry
+# under phase 3). The refactor shipped and they pass; they stay as the
+# regressions for those defects.
 
 test_that("a realized parent with no rows in the next register is an error", {
   # Before the linkage refactor this returned 2 rows for S1 alone, silently
