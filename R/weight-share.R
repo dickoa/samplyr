@@ -822,8 +822,8 @@ weight_contract_label <- c(
 #'
 #' @param allowed The contracts this operation is defined for.
 #' @param class The operation's own condition class. Callers pass one so a
-#'   refusal can be caught for that operation specifically; the shared class is
-#'   always appended, so a caller can also catch the whole family.
+#'   refusal can be caught for that operation specifically. The shared class
+#'   is always appended, so a caller can also catch the whole family.
 #' @param advice Bullets naming what to do instead. Left to the caller because
 #'   the alternative differs by operation and generic advice would be worse
 #'   than none.
@@ -1038,7 +1038,7 @@ check_generated_cols <- function(
 #'
 #' A cluster is unreachable from the union only when every component names it,
 #' and one component's silence counts as coverage only when it was describing
-#' the same target clusters. That is what the digest establishes; without it,
+#' the same target clusters. That is what the digest establishes. Without it,
 #' or with a component that cannot answer at all, the union is unknown rather
 #' than assumed.
 #'

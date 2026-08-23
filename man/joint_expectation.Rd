@@ -10,7 +10,8 @@ joint_expectation(
   ...,
   stages = NULL,
   waves = NULL,
-  nsim = 10000L
+  nsim = 10000L,
+  seed = 1L
 )
 }
 \arguments{
@@ -37,13 +38,23 @@ Non-PPS stages produce \code{NULL} entries in the returned list.}
 activation mode: the result describes how those two occasions of the
 rotation overlap rather than how the master was selected. Give the same
 wave twice for the joint expectation within one wave. \code{NULL} (default)
-keeps the stage behavior. Mutually exclusive with \code{stages}, \code{frame} and
-\code{nsim}, none of which activation mode uses.}
+keeps the stage behavior. Mutually exclusive with \code{stages}, \code{frame},
+\code{nsim} and \code{seed}, none of which activation mode uses.}
 
 \item{nsim}{Positive integer number of simulations used for Chromy's
 pairwise expected hits (default 10000). Also forwarded to registered
 WR \code{joint_fn}s that explicitly declare an \code{nsim} formal. Ignored by
-analytic methods.}
+analytic methods. Raising it narrows the simulation error, at a cost
+linear in \code{nsim}.}
+
+\item{seed}{Single integer seeding the simulated methods (default 1).
+The simulation runs under it and the calling session's random stream is
+restored afterwards, so the result is an exact function of the sample,
+\code{nsim} and \code{seed}, and calling this never moves a later \code{\link[=execute]{execute()}}.
+Analytic methods draw nothing and ignore it. A chromy matrix carries
+simulation error of a few percent at the default \code{nsim}, so two values
+of \code{seed} give two slightly different answers; neither is more correct
+than the other.}
 }
 \value{
 With \code{waves}, a tibble with one row per block of the frozen

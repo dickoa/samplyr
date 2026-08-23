@@ -1029,8 +1029,9 @@ exante_digest <- function(design, frame,
 #'
 #' Split out of `build_exante_stage()` so the resolution has one
 #' implementation. The digest summarizes what this returns, sometimes into
-#' quantile bins; `exante_probabilities()` keeps the vector. A second copy of
-#' the pool construction and the allocation would drift from the first.
+#' quantile bins, whereas `exante_probabilities()` keeps the vector. A
+#' second copy of the pool construction and the allocation would drift from
+#' the first.
 #'
 #' Each pool also carries the frame rows its units cover and, for each of
 #' those rows, which unit it belongs to. A clustered stage resolves one chance

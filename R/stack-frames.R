@@ -52,7 +52,7 @@ frame_stack_columns <- c(".frame", ".domain")
 #'
 #' Two components carrying the same recorded seed warn with
 #' `samplyr_warning_frame_seed_reused`. Distinct seeds are not evidence of
-#' independence; the warning detects one recorded common-random-number
+#' independence, and the warning detects one recorded common-random-number
 #' mistake and nothing more. A component executed with `seed = NULL` records
 #' no seed and never warns, so a deterministic take-all component is exempt
 #' unless it was given a seed it did not use.
@@ -66,7 +66,7 @@ frame_stack_columns <- c(".frame", ".domain")
 #'   one of the columns.
 #' @param key A bare column identifying the target-population unit, present in
 #'   every component. The same unit may be selected from several frames, so
-#'   the key repeats across components on purpose; within a component it must
+#'   the key repeats across components on purpose. Within a component it must
 #'   be unique, or unique per selection occurrence where the component
 #'   replicates rows with replacement.
 #' @param overlaps Optional. The probability, or the weight, each sampled unit
@@ -82,7 +82,7 @@ frame_stack_columns <- c(".frame", ".domain")
 #' @return An object of class `frame_stack`: a named list of the component
 #'   samples, unchanged, carrying the membership mapping, the key, and any
 #'   overlap record. It is not a `tbl_sample` and not a data frame. `[[`
-#'   returns an intact component; [as.data.frame()] gives the row-bound
+#'   returns an intact component, and [as.data.frame()] gives the row-bound
 #'   inspection view.
 #'
 #' @references
@@ -232,9 +232,9 @@ overlap_scales <- c("probabilities", "weights")
 #'
 #' A value rather than an expression marker, unlike `complete_links()` on the
 #' other feature. That marker names a column of a data frame and has to be
-#' evaluated in its mask; this one carries strings and a scale, so making it a
-#' value keeps it composable in the same way the `membership` argument beside
-#' it already is.
+#' evaluated in its mask, whereas this one carries strings and a scale, so
+#' making it a value keeps it composable in the same way the `membership`
+#' argument beside it already is.
 #' @noRd
 new_overlap_spec <- function(scale, args, call = caller_env()) {
   nms <- names(args) %||% rep("", length(args))
@@ -706,7 +706,7 @@ check_frame_overlaps <- function(samples, membership, overlaps,
 #' Separate from `validate_frame_stack()` because a validator returns
 #' `invisible(NULL)` everywhere else in this package, and a resolver that
 #' hides inside one is found by reading the call site rather than the name.
-#' A declared spec passes through unchanged; only `exante_overlaps()` has
+#' A declared spec passes through unchanged, and only `exante_overlaps()` has
 #' anything to resolve.
 #' @noRd
 resolve_frame_overlaps <- function(samples, membership, overlaps,

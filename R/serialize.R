@@ -241,7 +241,7 @@ shared_sample_format_version <- 1L
 #' registers.
 #'
 #' [read_design()] returns the components' designs and receipts rather than
-#' the collection, which needs the registers; [replay_design()] executes each
+#' the collection, which needs the registers. [replay_design()] executes each
 #' against its register and stacks the results.
 #'
 #' ## Shared-weight samples
@@ -254,7 +254,7 @@ shared_sample_format_version <- 1L
 #'
 #' Two integrity records travel with it, and replay is checked against both.
 #' A source that does not reproduce means `frame` is not the register selected
-#' from; a result that does not means `links` or `targets` is not the table
+#' from. A result that does not means `links` or `targets` is not the table
 #' the transformation was built from.
 #'
 #' ## What the format does not carry
@@ -461,7 +461,7 @@ read_design <- function(file) {
 #' A sample carrying shared weights replays in two steps: the source selection
 #' is re-executed against `frame`, then the recorded transformation is
 #' re-applied to the `links` and `targets` given here. Those two are not in
-#' the file, by design, so they cannot be checked before use; the file instead
+#' the file, by design, so they cannot be checked before use. The file instead
 #' records what the source and the result hashed to, and replay is checked
 #' against both. A source that does not reproduce means `frame` is wrong, and
 #' a result that does not means `links` or `targets` is. Both a file and a
@@ -525,7 +525,7 @@ read_design <- function(file) {
 #'   shared-weight sample only. Both are required there and refused
 #'   elsewhere, since accepting them where nothing uses them would return an
 #'   untransformed sample to someone who believes a transformation was
-#'   re-applied. Supply the tables the transformation was built from; the
+#'   re-applied. Supply the tables the transformation was built from, and the
 #'   result is checked against the integrity the file records.
 #'
 #' @return The replayed `tbl_sample`, or the rebuilt `frame_stack` for a
@@ -645,7 +645,7 @@ replay_design <- function(
     )
   }
 
-  check_replay_custom_methods(design)
+  check_custom_methods_match_record(design, strict = TRUE)
   check_replay_environment(execution_environment)
 
   frames <- normalize_replay_frames(frame_record, frame)
@@ -743,10 +743,24 @@ normalize_replay_frames <- function(record, frame, call = caller_env()) {
   )
 }
 
-#' Verify that registered methods required by a restored design are present
-#' and still advertise the metadata recorded in the design file.
+#' Verify that registered methods a design names are present and still
+#' advertise the metadata the design recorded.
+#'
+#' A design names its custom method by string, so what that string resolves to
+#' is decided by the registry at the moment it runs and not by the design.
+#' Both paths that take a design and produce a sample have to ask.
+#'
+#' `strict = TRUE` is [replay_design()], which claims to reproduce one
+#' specific sample, so every recorded field has to agree. `strict = FALSE` is
+#' [execute()], which is drawing a new sample. There the four contract fields
+#' still have to agree, because they say what the sample *means*:
+#' `variance_family` alone decides the export's variance treatment, and the
+#' recorded value is the one the result carries. A changed implementation
+#' under an unchanged contract is a different matter, and warns: the design is
+#' still the design, and the caller may well have re-registered on purpose.
 #' @noRd
-check_replay_custom_methods <- function(design, call = caller_env()) {
+check_custom_methods_match_record <- function(design, strict = TRUE,
+                                              call = caller_env()) {
   specs <- lapply(design$stages, function(stage) stage$draw_spec)
   specs <- Filter(function(spec) !is_null(spec$method_type), specs)
   if (length(specs) == 0) {
@@ -758,9 +772,10 @@ check_replay_custom_methods <- function(design, call = caller_env()) {
     if (!sondage::is_registered_method(native_name)) {
       abort_samplyr(
         c(
-          "Cannot replay the unregistered custom method {.val {spec$method}}.",
+          "Cannot {if (strict) 'replay' else 'execute'} the unregistered
+           custom method {.val {spec$method}}.",
           "i" = "Register the same implementation with
-                 {.fn sondage::register_method} before replaying."
+                 {.fn sondage::register_method} first."
         ),
         class = "samplyr_error_replay_method_unregistered",
         call = call
@@ -783,19 +798,38 @@ check_replay_custom_methods <- function(design, call = caller_env()) {
       function(field) identical(recorded[[field]], current[[field]]),
       logical(1)
     )
-    if (!all(agrees)) {
-      differing <- fields[!agrees]
+    differing <- fields[!agrees]
+    if (length(differing) == 0) {
+      next
+    }
+
+    # Under `strict` every field is fatal, so the split costs nothing there.
+    fatal <- if (strict) differing else setdiff(differing, "implementation")
+    if (length(fatal) > 0) {
       abort_samplyr(
         c(
           "Registered method {.val {spec$method}} differs from the
            method recorded in the design file
-           ({.field {differing}} disagree{?s/}).",
-          "i" = "Re-register the original implementation before replaying."
+           ({.field {fatal}} disagree{?s/}).",
+          "i" = "Re-register the original implementation before
+                 {if (strict) 'replaying' else 'executing'}."
         ),
         class = "samplyr_error_replay_method_mismatch",
         call = call
       )
     }
+
+    cli_warn(
+      c(
+        "Registered method {.val {spec$method}} carries a different
+         implementation than the design recorded.",
+        "i" = "The declared contract still agrees, so the sample is drawn
+               under the implementation registered now.",
+        "i" = "Re-register the recorded implementation to reproduce the
+               design as written, or {.fn draw} it again to record this one."
+      ),
+      class = "samplyr_warning_method_implementation_drift"
+    )
   }
   invisible(design)
 }
@@ -990,7 +1024,7 @@ check_replay_link_args <- function(links, targets, subject,
 #'
 #' It goes back through `share_weights()` rather than replaying the stored
 #' operator. The operator addresses rows by position, so replaying it would
-#' assume the supplied tables match a layout nothing has checked; re-running
+#' assume the supplied tables match a layout nothing has checked. Re-running
 #' the verb holds the inputs to every rule the first call was held to.
 #' @noRd
 replay_shared_sample <- function(x, frame, fingerprint, links, targets,
@@ -1089,7 +1123,7 @@ decode_multiplicity_marker <- function(multiplicity) {
 #'
 #' Two call sites with different causes, so the message names which stage
 #' disagreed. A source mismatch means the register is not the one selected
-#' from; a result mismatch means the links or the targets are not the ones
+#' from. A result mismatch means the links or the targets are not the ones
 #' the transformation was built from.
 #' @noRd
 check_replayed_integrity <- function(verdict, recorded, stage,

@@ -1356,6 +1356,60 @@ test_that("joint_expectation accepts and validates Chromy nsim", {
   }
 })
 
+test_that("chromy joint expectations are a function of nsim and seed alone", {
+  # Chromy's pairwise hits are simulated, so the matrix has no closed form to
+  # assert. What can be asserted is that the simulation is pinned: the same
+  # call gives the same answer, and it does not move the caller's stream. A
+  # reported standard error that changes between two runs of one script is
+  # the defect this covers.
+  set.seed(1)
+  before <- .Random.seed
+  a <- joint_expectation(fix_pps_chromy, test_frame)
+  expect_identical(.Random.seed, before)
+
+  expect_equal(joint_expectation(fix_pps_chromy, test_frame), a)
+
+  # A later draw must be unaffected by whether a joint was computed first.
+  set.seed(99)
+  with_joint <- {
+    invisible(joint_expectation(fix_pps_chromy, test_frame))
+    stats::runif(3)
+  }
+  set.seed(99)
+  expect_identical(stats::runif(3), with_joint)
+
+  # seed and nsim must each move the answer, or neither argument does a job.
+  expect_false(
+    isTRUE(all.equal(a, joint_expectation(fix_pps_chromy, test_frame, seed = 2L)))
+  )
+  expect_false(
+    isTRUE(all.equal(a, joint_expectation(fix_pps_chromy, test_frame, nsim = 50L)))
+  )
+
+  # An analytic method draws nothing, so seed cannot reach it.
+  expect_equal(
+    joint_expectation(fix_pps_multinomial, test_frame, seed = 1L),
+    joint_expectation(fix_pps_multinomial, test_frame, seed = 12345L)
+  )
+})
+
+test_that("joint_expectation validates seed and refuses it in activation mode", {
+  for (bad in list(2.5, NA_integer_, Inf, c(1, 2), "10", numeric(0))) {
+    expect_error(
+      joint_expectation(fix_pps_chromy, test_frame, seed = bad),
+      "single integer"
+    )
+  }
+  # The refusal must name seed rather than report nsim, which was not given.
+  err <- tryCatch(
+    joint_expectation(fix_pps_chromy, waves = c(1, 2), seed = 3L),
+    error = function(e) e
+  )
+  expect_s3_class(err, "samplyr_error_joint_activation_arguments")
+  expect_match(conditionMessage(err), "seed")
+  expect_false(grepl("nsim", conditionMessage(err)))
+})
+
 test_that("joint_expectation for pps_multinomial diagonal matches E[n_i^2]", {
   frame <- data.frame(
     id = 1:20,

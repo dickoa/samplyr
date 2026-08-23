@@ -28,8 +28,8 @@
 
 `samplyr` imports `sondage` (selection algorithms) and `svyplan` (sample
 size and precision planning), both submitted to CRAN by the same
-maintainer. This package requires `sondage (>= 0.9.0)` and
-`svyplan (>= 0.9.0)`.
+maintainer. This package requires `sondage (>= 0.9.1)` and
+`svyplan (>= 0.12.0)`.
 
 ## Downstream dependencies
 

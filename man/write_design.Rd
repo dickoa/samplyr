@@ -161,7 +161,7 @@ component name, since the components are separate selections with separate
 registers.
 
 \code{\link[=read_design]{read_design()}} returns the components' designs and receipts rather than
-the collection, which needs the registers; \code{\link[=replay_design]{replay_design()}} executes each
+the collection, which needs the registers. \code{\link[=replay_design]{replay_design()}} executes each
 against its register and stacks the results.
 }
 
@@ -175,7 +175,7 @@ is, so no unit-level data and no linkage is written.
 
 Two integrity records travel with it, and replay is checked against both.
 A source that does not reproduce means \code{frame} is not the register selected
-from; a result that does not means \code{links} or \code{targets} is not the table
+from. A result that does not means \code{links} or \code{targets} is not the table
 the transformation was built from.
 }
 

@@ -492,3 +492,58 @@ test_that("the rotation-wave export names a route that works", {
   skip_if_not_installed("survey")
   expect_s3_class(as_svydesign(wave[["startup"]]), "twophase2")
 })
+
+test_that("a cohort drawn whole leaves the wave when its panel is idle", {
+  # A cohort executed without `panels` has one implicit panel, and activating
+  # it is not a subsample, so its factor is one. Nothing asserted the other
+  # half: that at a wave where its single panel is not active, the cohort
+  # contributes nothing. The program drops it before `activate_cohort()` is
+  # reached, so what this pins is the composition of the wave rather than the
+  # activation arithmetic.
+  #
+  # It takes a second cohort to reach: a lone idle cohort is refused earlier
+  # by `samplyr_error_schedule_idle_wave`, because the wave would be empty.
+  frame <- data.frame(id = sprintf("U%03d", 1:120))
+  master_sched <- data.frame(
+    panel = rep(1:2, 3), wave = rep(1:3, each = 2), active = rep(TRUE, 6)
+  )
+  partitioned <- execute(
+    sampling_design() |> draw(n = 40), frame, seed = 21, panels = master_sched
+  )
+  solo <- execute(
+    sampling_design() |> draw(n = 20),
+    data.frame(id = sprintf("B%03d", 1:60)), seed = 22
+  )
+  expect_null(attr(solo, "metadata")$panel_assignment)
+
+  schedule <- data.frame(
+    cohort = c(rep("main", 6), rep("solo", 3)),
+    panel = c(rep(1:2, 3), rep(1L, 3)),
+    wave = c(rep(1:3, each = 2), 1:3),
+    active = c(rep(TRUE, 6), TRUE, FALSE, TRUE)
+  )
+  program <- rotation_program(
+    cohorts = list(main = partitioned, solo = solo),
+    entry_wave = c(main = 1L, solo = 1L),
+    schedule = schedule
+  )
+
+  rows <- function(wave, cohort) {
+    if (!cohort %in% names(wave)) return(0L)
+    nrow(as.data.frame(wave[[cohort]]))
+  }
+
+  # Present when live, absent when idle. Named cohorts, not a row count, so
+  # this cannot be satisfied by the wave happening to hold 40 rows.
+  expect_setequal(names(execute(program, wave = 1)), c("main", "solo"))
+  expect_setequal(names(execute(program, wave = 2)), "main")
+  expect_setequal(names(execute(program, wave = 3)), c("main", "solo"))
+
+  expect_identical(rows(execute(program, wave = 2), "solo"), 0L)
+  expect_identical(rows(execute(program, wave = 1), "solo"), 20L)
+
+  # Activating a whole cohort is not a subsample, so its weights are the
+  # master's, unscaled.
+  live <- as.data.frame(execute(program, wave = 1)[["solo"]])
+  expect_equal(live$.weight, as.data.frame(solo)$.weight[match(live$id, solo$id)])
+})

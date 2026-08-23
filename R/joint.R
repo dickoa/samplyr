@@ -43,12 +43,21 @@
 #'   activation mode: the result describes how those two occasions of the
 #'   rotation overlap rather than how the master was selected. Give the same
 #'   wave twice for the joint expectation within one wave. `NULL` (default)
-#'   keeps the stage behavior. Mutually exclusive with `stages`, `frame` and
-#'   `nsim`, none of which activation mode uses.
+#'   keeps the stage behavior. Mutually exclusive with `stages`, `frame`,
+#'   `nsim` and `seed`, none of which activation mode uses.
 #' @param nsim Positive integer number of simulations used for Chromy's
 #'   pairwise expected hits (default 10000). Also forwarded to registered
 #'   WR `joint_fn`s that explicitly declare an `nsim` formal. Ignored by
-#'   analytic methods.
+#'   analytic methods. Raising it narrows the simulation error, at a cost
+#'   linear in `nsim`.
+#' @param seed Single integer seeding the simulated methods (default 1).
+#'   The simulation runs under it and the calling session's random stream is
+#'   restored afterwards, so the result is an exact function of the sample,
+#'   `nsim` and `seed`, and calling this never moves a later [execute()].
+#'   Analytic methods draw nothing and ignore it. A chromy matrix carries
+#'   simulation error of a few percent at the default `nsim`, so two values
+#'   of `seed` give two slightly different answers; neither is more correct
+#'   than the other.
 #'
 #' @return With `waves`, a tibble with one row per block of the frozen
 #'   assignment. See "Activation mode" below. Otherwise a named list of
@@ -313,8 +322,8 @@
 #' @family diagnostics
 #' @export
 joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
-                              waves = NULL, nsim = 10000L) {
-  check_keyword_args(enquos(...), c("stages", "waves", "nsim"))
+                              waves = NULL, nsim = 10000L, seed = 1L) {
+  check_keyword_args(enquos(...), c("stages", "waves", "nsim", "seed"))
   if (!inherits(x, "tbl_sample")) {
     cli_abort("{.arg x} must be a {.cls tbl_sample} object.")
   }
@@ -328,7 +337,8 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
     check_activation_mode_arguments(
       frame = frame,
       stages = stages,
-      nsim_supplied = !missing(nsim)
+      nsim_supplied = !missing(nsim),
+      seed_supplied = !missing(seed)
     )
     return(activation_joint_expectation(x, waves))
   }
@@ -342,6 +352,16 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
     cli_abort("{.arg nsim} must be a single positive integer.")
   }
   nsim <- as.integer(nsim)
+
+  if (
+    length(seed) != 1L ||
+      !is_integerish_numeric(seed) ||
+      is.na(seed) ||
+      abs(seed) > .Machine$integer.max
+  ) {
+    cli_abort("{.arg seed} must be a single integer.")
+  }
+  seed <- as.integer(seed)
 
   digest <- NULL
   if (is_null(frame)) {
@@ -389,37 +409,48 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
   result <- vector("list", max(stages_executed))
   names(result) <- paste0("stage_", seq_along(result))
 
-  for (stage_idx in stages_requested) {
-    stage_spec <- design$stages[[stage_idx]]
-    draw_spec <- stage_spec$draw_spec
-    method <- draw_spec$method
+  # Chromy's pairwise hits have no closed form and are simulated, as are any
+  # registered WR method's. Everything else here is analytic and draws
+  # nothing. Seeding the whole loop makes the result a function of the
+  # sample, `nsim` and `seed` alone, and restores the caller's stream on the
+  # way out, which is the contract `execute()` already keeps.
+  result <- withr::with_seed(seed, {
+    for (stage_idx in stages_requested) {
+      stage_spec <- design$stages[[stage_idx]]
+      draw_spec <- stage_spec$draw_spec
+      method <- draw_spec$method
 
-    if (!is_null(draw_spec$bounds) || !is_null(draw_spec$spread)) {
-      cli_abort(
-        c(
-          "Joint inclusion probabilities are unavailable for method {.val {method}} with its declared constraints.",
-          "i" = "Controlled count bounds and spatial spreading alter pairwise selection behavior beyond the available approximation."
+      if (!is_null(draw_spec$bounds) || !is_null(draw_spec$spread)) {
+        cli_abort(
+          c(
+            "Joint inclusion probabilities are unavailable for method {.val {method}} with its declared constraints.",
+            "i" = "Controlled count bounds and spatial spreading alter pairwise selection behavior beyond the available approximation."
+          )
         )
-      )
-    }
+      }
 
-    if (!(method %in% jip_methods) && is_null(stage_spec$draw_spec$method_type)) {
-      next
-    }
+      if (
+        !(method %in% jip_methods) &&
+          is_null(stage_spec$draw_spec$method_type)
+      ) {
+        next
+      }
 
-    result[[stage_idx]] <- if (is_null(frame)) {
-      compute_stage_jip_digest(digest, design, stage_idx, x, nsim)
-    } else {
-      compute_stage_jip(
-        x,
-        frames[[match(stage_idx, stages_executed)]],
-        design,
-        stage_idx,
-        stages_executed,
-        nsim
-      )
+      result[[stage_idx]] <- if (is_null(frame)) {
+        compute_stage_jip_digest(digest, design, stage_idx, x, nsim)
+      } else {
+        compute_stage_jip(
+          x,
+          frames[[match(stage_idx, stages_executed)]],
+          design,
+          stage_idx,
+          stages_executed,
+          nsim
+        )
+      }
     }
-  }
+    result
+  })
 
   result
 }

@@ -12,19 +12,22 @@
 #' Arguments the activation mode does not use
 #'
 #' Everything an activation joint needs was frozen at the master's draw, so
-#' the frame, the stage selector and the simulation count have no role. They
-#' are refused by name rather than accepted without effect.
+#' the frame, the stage selector and the simulation controls have no role.
+#' They are refused by name rather than accepted without effect, and each is
+#' named as itself so the message does not report a cause that was not given.
 #' @noRd
 check_activation_mode_arguments <- function(
   frame,
   stages,
   nsim_supplied,
+  seed_supplied = FALSE,
   call = caller_env()
 ) {
   supplied <- c(
     if (!is_null(frame)) "a frame",
     if (!is_null(stages)) "stages",
-    if (isTRUE(nsim_supplied)) "nsim"
+    if (isTRUE(nsim_supplied)) "nsim",
+    if (isTRUE(seed_supplied)) "seed"
   )
   if (length(supplied) == 0) {
     return(invisible(NULL))

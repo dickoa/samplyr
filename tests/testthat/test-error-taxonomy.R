@@ -998,8 +998,7 @@ test_that("every condition class the package can raise is asserted by a test", {
   # sample carries its digest as an attribute rather than through any file
   # a caller can edit. They stay because they prevent a wrong number: a
   # digest missing a stage, or holding no chances, would otherwise yield
-  # joint expectations that look exact. See
-  # `dev/dev-notes-untested-conditions.md`.
+  # joint expectations that look exact.
   #
   # The two ambiguous-matches guards protect join_aux_to_strata() against a
   # stratum table with duplicate keys, which would make match() silently take
@@ -1024,4 +1023,91 @@ test_that("every condition class the package can raise is asserted by a test", {
   # fails here until it is taken off the list, so the debt cannot quietly
   # stop being debt.
   expect_identical(intersect(untested, asserted), character(0))
+})
+
+## The debt: refusals that carry no class at all
+
+# The inventory above pins every class that exists. It says nothing about
+# refusals raised with no class, because an unclassed `cli_abort()` leaves no
+# string for the scan to find. It is invisible in both directions, the same
+# blind spot the file already records for `paste0()`-built names, and it means
+# the inventory's guarantee is "every class that exists is tested" rather than
+# "every refusal has a class".
+#
+# Those two are different, and the gap is not small. A refusal with no class
+# reaches the caller as a bare `rlang_error`, so `tryCatch()` on a samplyr
+# class cannot see it and neither can a test asserting one. This holds the
+# count as a ceiling so the debt can only shrink. It is deliberately not zero:
+# many of these are internal assertions where a class would be noise, and
+# renaming in bulk would churn the message-matching tests for no caller's
+# benefit. What it stops is the number growing unnoticed.
+#
+# `abort_samplyr()` without a class is NOT counted. It appends "samplyr_error"
+# itself, so it is catchable at the family level even when it names nothing
+# more specific.
+
+samplyr_bare_refusals <- function() {
+  ns <- asNamespace("samplyr")
+  names <- ls(ns, all.names = TRUE)
+  count <- 0L
+  bare_in <- function(expr) {
+    if (is.call(expr)) {
+      fn <- expr[[1]]
+      if (is.name(fn) &&
+            as.character(fn) %in%
+              c("cli_abort", "cli_warn", "cli_inform", "abort", "warn") &&
+            !("class" %in% names(as.list(expr)))) {
+        count <<- count + 1L
+      }
+    }
+    if (is.call(expr) || is.pairlist(expr) || is.list(expr)) {
+      for (i in seq_along(expr)) {
+        if (!is.null(expr[[i]])) {
+          tryCatch(bare_in(expr[[i]]), error = function(...) NULL)
+        }
+      }
+    }
+    invisible(NULL)
+  }
+  for (nm in names) {
+    object <- get(nm, envir = ns)
+    if (!is.function(object)) next
+    tryCatch(bare_in(body(object)), error = function(...) NULL)
+  }
+  count
+}
+
+test_that("the number of refusals carrying no class does not grow", {
+  # Lower this when you classify some. Never raise it: a new refusal gets a
+  # class, or it gets an entry in a suite that says why it does not need one.
+  expect_lte(samplyr_bare_refusals(), 195L)
+})
+
+test_that("an unknown selection method is refused with a class", {
+  # Reached two ways, and both used to arrive as a bare rlang_error: `draw()`
+  # validates the name at build time, and `execute()` re-resolves it for a
+  # design that came back from `read_design()` without re-running `draw()`.
+  expect_error(
+    sampling_design() |> draw(n = 5, method = "not_a_method"),
+    class = "samplyr_error_unknown_method"
+  )
+
+  on.exit(try(sondage::unregister_method("vanishing"), silent = TRUE), add = TRUE)
+  sondage::register_method(
+    "vanishing", "wor",
+    sample_fn = function(pik, n = NULL, ...) {
+      utils::head(order(pik, decreasing = TRUE), n)
+    },
+    fixed_size = TRUE, variance_family = "pps_brewer", probabilities = "exact"
+  )
+  frame <- data.frame(id = seq_len(50), size = seq_len(50))
+  path <- withr::local_tempfile(fileext = ".json")
+  design <- sampling_design() |> draw(n = 10, method = "pps_vanishing", mos = size)
+  write_design(execute(design, frame, seed = 1), path, frame = frame)
+
+  sondage::unregister_method("vanishing")
+  expect_error(
+    execute(read_design(path), frame, seed = 1),
+    class = "samplyr_error_unknown_method"
+  )
 })

@@ -34,7 +34,7 @@ fingerprint stored in the design file: \code{"error"} (default), \code{"warn"},
 shared-weight sample only. Both are required there and refused
 elsewhere, since accepting them where nothing uses them would return an
 untransformed sample to someone who believes a transformation was
-re-applied. Supply the tables the transformation was built from; the
+re-applied. Supply the tables the transformation was built from, and the
 result is checked against the integrity the file records.}
 }
 \value{
@@ -63,7 +63,7 @@ Save and replay each phase or stage batch separately.
 A sample carrying shared weights replays in two steps: the source selection
 is re-executed against \code{frame}, then the recorded transformation is
 re-applied to the \code{links} and \code{targets} given here. Those two are not in
-the file, by design, so they cannot be checked before use; the file instead
+the file, by design, so they cannot be checked before use. The file instead
 records what the source and the result hashed to, and replay is checked
 against both. A source that does not reproduce means \code{frame} is wrong, and
 a result that does not means \code{links} or \code{targets} is. Both a file and a

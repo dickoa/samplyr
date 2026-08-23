@@ -36,10 +36,16 @@ sampling, ensuring samples spread evenly across geographic/administrative hierar
 The algorithm builds a composite sort key by:
 \enumerate{
 \item Converting each variable to integer ranks
-\item For variable i, determining group membership from variables 1..(i-1)
-\item If the cumulative group number is even, flipping ranks (descending)
+\item For variable i, numbering the cells of variables 1..(i-1) in the order
+the traversal visits them
+\item Flipping variable i's ranks (descending) in every odd-numbered cell
 \item Using multi-column ordering to produce final sort positions
 }
+
+Step 2 is the cell's position along the snake, not a count of the ranks
+above it. The two agree only when every variable above has an odd number
+of values, and where they disagree the direction fails to reverse at a
+cell boundary, which is the contiguity the sort exists to provide.
 }
 
 \subsection{Use with systematic sampling}{

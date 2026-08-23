@@ -18,7 +18,7 @@ one of the columns.}
 
 \item{key}{A bare column identifying the target-population unit, present in
 every component. The same unit may be selected from several frames, so
-the key repeats across components on purpose; within a component it must
+the key repeats across components on purpose. Within a component it must
 be unique, or unique per selection occurrence where the component
 replicates rows with replacement.}
 
@@ -36,7 +36,7 @@ alone.}
 An object of class \code{frame_stack}: a named list of the component
 samples, unchanged, carrying the membership mapping, the key, and any
 overlap record. It is not a \code{tbl_sample} and not a data frame. \code{[[}
-returns an intact component; \code{\link[=as.data.frame]{as.data.frame()}} gives the row-bound
+returns an intact component, and \code{\link[=as.data.frame]{as.data.frame()}} gives the row-bound
 inspection view.
 }
 \description{
@@ -80,7 +80,7 @@ on a different scale.
 
 Two components carrying the same recorded seed warn with
 \code{samplyr_warning_frame_seed_reused}. Distinct seeds are not evidence of
-independence; the warning detects one recorded common-random-number
+independence, and the warning detects one recorded common-random-number
 mistake and nothing more. A component executed with \code{seed = NULL} records
 no seed and never warns, so a deterministic take-all component is exempt
 unless it was given a seed it did not use.

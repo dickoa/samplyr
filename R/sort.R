@@ -25,9 +25,15 @@
 #'
 #' The algorithm builds a composite sort key by:
 #' 1. Converting each variable to integer ranks
-#' 2. For variable i, determining group membership from variables 1..(i-1)
-#' 3. If the cumulative group number is even, flipping ranks (descending)
+#' 2. For variable i, numbering the cells of variables 1..(i-1) in the order
+#'    the traversal visits them
+#' 3. Flipping variable i's ranks (descending) in every odd-numbered cell
 #' 4. Using multi-column ordering to produce final sort positions
+#'
+#' Step 2 is the cell's position along the snake, not a count of the ranks
+#' above it. The two agree only when every variable above has an odd number
+#' of values, and where they disagree the direction fails to reverse at a
+#' cell boundary, which is the contiguity the sort exists to provide.
 #'
 #' ## Use with systematic sampling
 #'
@@ -130,19 +136,28 @@ serp <- function(...) {
   sort_keys <- vector("list", nvars)
   sort_keys[[1]] <- ranks[[1]]
 
-  cum_pos_change <- ranks[[1]] - 1L
+  # The cell each row sits in, numbered along the traversal. Variable i
+  # reverses in every odd-numbered cell of the variables above it, so what
+  # this has to carry is the cell's position on the snake. Summing the ranks
+  # above tracks that position's parity only when every one of them has an
+  # odd number of values, and where it does not the direction fails to
+  # reverse at a cell boundary.
+  cell <- ranks[[1]]
 
   for (i in 2:nvars) {
     r <- ranks[[i]]
     max_r <- max(r)
 
-    parity <- cum_pos_change %% 2L
-
-    adjusted_r <- ifelse(parity == 0L, r, max_r + 1L - r)
+    adjusted_r <- ifelse(cell %% 2L == 1L, r, max_r + 1L - r)
     sort_keys[[i]] <- adjusted_r
 
     if (i < nvars) {
-      cum_pos_change <- cum_pos_change + (adjusted_r - 1L)
+      # A dense rank rather than cell * max_r + adjusted_r: ragged
+      # hierarchies have no fixed radix, and a rank cannot overflow.
+      cell <- vctrs::vec_rank(
+        data.frame(cell = cell, adjusted = adjusted_r),
+        ties = "dense"
+      )
     }
   }
 

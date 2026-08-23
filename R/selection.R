@@ -1170,7 +1170,10 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
           idx <- sondage::balanced_wor(pik, aux = aux_mat)$sample
         }
       },
-      cli_abort("Unknown sampling method: {.val {method}}")
+      abort_samplyr(
+        "Unknown sampling method: {.val {method}}",
+        class = "samplyr_error_unknown_method"
+      )
     )
   }
 

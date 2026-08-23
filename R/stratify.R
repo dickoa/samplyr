@@ -114,8 +114,9 @@
 #'
 #' ## Power allocation
 #' Power allocation (Bankier, 1988) is a compromise allocation:
-#' \eqn{n_h \propto C_h \times X_h^q}, where \eqn{C_h} is stratum CV, \eqn{X_h}
-#' is a stratum importance measure, and \eqn{q \in [0, 1]}.
+#' \eqn{n_h \propto C_h \times X_h^q}{n_h proportional to C_h * X_h^q}, where
+#' \eqn{C_h} is stratum CV, \eqn{X_h} is a stratum importance measure, and
+#' \eqn{q \in [0, 1]}{0 <= q <= 1}.
 #'
 #' ## Custom allocation
 #' For custom stratum-specific sample sizes or rates, pass a data frame

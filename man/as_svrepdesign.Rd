@@ -28,7 +28,21 @@ than forwarded. \code{design} cannot be given here: it is the
 
 \item{type}{Replicate method passed to \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.
 One of \code{"auto"}, \code{"JK1"}, \code{"JKn"}, \code{"BRR"}, \code{"bootstrap"},
-\code{"subbootstrap"}, \code{"mrbbootstrap"}, or \code{"Fay"}.}
+\code{"subbootstrap"}, \code{"mrbbootstrap"}, or \code{"Fay"}.
+
+The jackknife, BRR and Fay types are deterministic: one sample gives one
+set of replicate weights. The bootstrap types resample, so they draw from
+the session's random stream and two calls on one sample give two
+different standard errors. Set a seed beforehand to make a result
+reproducible, as with any resampling in R.
+
+The spread is not small at the default of 50 replicates. On a
+90-of-600 stratified sample, twelve \code{"bootstrap"} calls on one sample
+ranged over 37\% of their mean, falling to 12\% at \code{replicates = 200} and
+4\% at \code{replicates = 4000}. A reported bootstrap standard error carries
+that simulation noise on top of the sampling variance it is estimating,
+so raise \code{replicates} through \code{...} when the second decimal is going to
+be read.}
 
 \item{systematic_variance}{What to do about the generic replicate weights
 built for equal-probability \code{systematic} stages. \code{"warn"} (default) builds

@@ -880,3 +880,120 @@ test_that("declared srs family gets the equal-probability treatment", {
     as.numeric(survey::SE(survey::svytotal(~id, ref)))
   )
 })
+
+## The registration a restored design names
+
+# `read_design()` does not re-run the `draw()` validators, so the design's
+# recorded method metadata is a claim about a registry that may since have
+# moved. Both paths that turn a design into a sample have to check it.
+
+register_drift_method <- function(fn = toy_wor_fn,
+                                  variance_family = "pps_brewer",
+                                  probabilities = "exact",
+                                  fixed_size = TRUE,
+                                  type = "wor") {
+  try(sondage::unregister_method("drift"), silent = TRUE)
+  sondage::register_method(
+    "drift", type,
+    sample_fn = fn, fixed_size = fixed_size,
+    variance_family = variance_family, probabilities = probabilities
+  )
+}
+
+drift_design_file <- function() {
+  path <- withr::local_tempfile(fileext = ".json", .local_envir = parent.frame())
+  design <- sampling_design() |>
+    draw(n = 20, method = "pps_drift", mos = size)
+  write_design(
+    execute(design, custom_frame, seed = 4), path, frame = custom_frame
+  )
+  path
+}
+
+test_that("execute() refuses a restored design whose method contract moved", {
+  # `variance_family` decides the export's variance treatment, and the sample
+  # carries the value the file recorded. Running under a registration that
+  # declares a different one produces a sample whose stated treatment is not
+  # the one it was drawn under.
+  on.exit(try(sondage::unregister_method("drift"), silent = TRUE), add = TRUE)
+  register_drift_method()
+  path <- drift_design_file()
+
+  register_drift_method(variance_family = "srs")
+  expect_error(
+    execute(read_design(path), custom_frame, seed = 4),
+    class = "samplyr_error_replay_method_mismatch"
+  )
+
+  register_drift_method(fixed_size = FALSE, variance_family = "poisson")
+  expect_error(
+    execute(read_design(path), custom_frame, seed = 4),
+    class = "samplyr_error_replay_method_mismatch"
+  )
+})
+
+test_that("execute() warns, and does not refuse, on implementation drift alone", {
+  # The declared contract still holds, so the sample still means what it says.
+  # A new sample under a re-registered implementation is a reasonable thing to
+  # want, and the warning is what says the file no longer describes it.
+  on.exit(try(sondage::unregister_method("drift"), silent = TRUE), add = TRUE)
+  register_drift_method()
+  path <- drift_design_file()
+
+  # Same selection, different body, so only the implementation hash moves.
+  register_drift_method(fn = function(pik, n = NULL, prn = NULL, ...) {
+    utils::head(order(pik, decreasing = TRUE), n)
+  })
+
+  expect_warning(
+    result <- execute(read_design(path), custom_frame, seed = 4),
+    class = "samplyr_warning_method_implementation_drift"
+  )
+  expect_s3_class(result, "tbl_sample")
+  expect_identical(nrow(result), 20L)
+})
+
+test_that("replay_design() still refuses implementation drift", {
+  # A replay claims to reproduce one specific sample, so a different
+  # implementation is fatal there even though execute() only warns.
+  on.exit(try(sondage::unregister_method("drift"), silent = TRUE), add = TRUE)
+  register_drift_method()
+  path <- drift_design_file()
+
+  # Same selection, different body, so only the implementation hash moves.
+  register_drift_method(fn = function(pik, n = NULL, prn = NULL, ...) {
+    utils::head(order(pik, decreasing = TRUE), n)
+  })
+
+  expect_error(
+    replay_design(read_design(path), custom_frame),
+    class = "samplyr_error_replay_method_mismatch"
+  )
+})
+
+test_that("an unchanged registration passes both paths silently", {
+  # The gate must be invisible when nothing moved, or every ordinary
+  # round trip pays for it.
+  on.exit(try(sondage::unregister_method("drift"), silent = TRUE), add = TRUE)
+  register_drift_method()
+  path <- drift_design_file()
+
+  expect_no_warning(
+    expect_no_error(execute(read_design(path), custom_frame, seed = 4))
+  )
+  expect_no_warning(
+    expect_no_error(replay_design(read_design(path), custom_frame))
+  )
+})
+
+test_that("replay_design() refuses a method that is no longer registered", {
+  on.exit(try(sondage::unregister_method("drift"), silent = TRUE), add = TRUE)
+  register_drift_method()
+  path <- drift_design_file()
+
+  sondage::unregister_method("drift")
+  expect_error(
+    replay_design(read_design(path), custom_frame),
+    class = "samplyr_error_replay_method_unregistered"
+  )
+})

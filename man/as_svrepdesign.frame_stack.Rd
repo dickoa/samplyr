@@ -23,7 +23,7 @@ refused.}
 
 \item{estimator}{\code{"constant"}, the default, or \code{"expected"}, which needs
 the \code{overlaps} declared on the stack. See \code{\link[=as_svydesign.frame_stack]{as_svydesign.frame_stack()}},
-which documents both; here the expected estimator takes any number of
+which documents both. Here the expected estimator takes any number of
 frames, since nothing is delegated to \code{survey::multiframe()}.}
 
 \item{theta}{The compositing factor for the first frame's overlapping

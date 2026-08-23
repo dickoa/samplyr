@@ -38,7 +38,7 @@ clusters by extending the links across them.}
 
 \item{...}{Must be empty. Arguments after it are matched by exact name.}
 
-\item{multiplicity}{The population multiplicity \eqn{L_{ik}}: a bare column
+\item{multiplicity}{The population multiplicity \eqn{L_{ik}}{L_ik}: a bare column
 of \code{targets}, or \code{\link[=complete_links]{complete_links()}} to assert that \code{links} is the
 complete population register and let samplyr count it. For links carrying
 an importance rather than a presence, \code{\link[=weighted_links]{weighted_links()}}.}
@@ -54,7 +54,7 @@ shared estimation weight, \code{.unit_links} the unit's population
 multiplicity, and \code{.cluster_links} the cluster denominator used. Under
 \code{\link[=weighted_links]{weighted_links()}} those two are \code{.link_weight} and
 \code{.cluster_link_weight} instead, holding the same quantities on the
-importance scale; only the pair belonging to the scale in use is emitted.
+importance scale. Only the pair belonging to the scale in use is emitted.
 The recorded design still describes selection from the source population.
 }
 \description{
@@ -69,7 +69,7 @@ Every target unit in a target cluster reached by the sample receives the
 same weight, which is the source weight carried across the links and
 divided by the population number of links to that cluster:
 
-\deqn{w_i = \sum_j \frac{I(j \in S)}{\pi_j} \frac{L_{ji}}{L_i}}
+\deqn{w_i = \sum_j \frac{I(j \in S)}{\pi_j} \frac{L_{ji}}{L_i}}{w_i = sum_j (I(j in S) / pi_j) * (L_ji / L_i)}
 
 Assigning one weight per cluster is what makes unit-level and
 cluster-level estimates of the same total agree.

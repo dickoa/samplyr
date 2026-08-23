@@ -14,7 +14,7 @@
 #' same weight, which is the source weight carried across the links and
 #' divided by the population number of links to that cluster:
 #'
-#' \deqn{w_i = \sum_j \frac{I(j \in S)}{\pi_j} \frac{L_{ji}}{L_i}}
+#' \deqn{w_i = \sum_j \frac{I(j \in S)}{\pi_j} \frac{L_{ji}}{L_i}}{w_i = sum_j (I(j in S) / pi_j) * (L_ji / L_i)}
 #'
 #' Assigning one weight per cluster is what makes unit-level and
 #' cluster-level estimates of the same total agree.
@@ -71,7 +71,7 @@
 #'   make every target unit its own cluster, or [extend_links()] to eliminate
 #'   clusters by extending the links across them.
 #' @param ... Must be empty. Arguments after it are matched by exact name.
-#' @param multiplicity The population multiplicity \eqn{L_{ik}}: a bare column
+#' @param multiplicity The population multiplicity \eqn{L_{ik}}{L_ik}: a bare column
 #'   of `targets`, or [complete_links()] to assert that `links` is the
 #'   complete population register and let samplyr count it. For links carrying
 #'   an importance rather than a presence, [weighted_links()].
@@ -85,7 +85,7 @@
 #'   multiplicity, and `.cluster_links` the cluster denominator used. Under
 #'   [weighted_links()] those two are `.link_weight` and
 #'   `.cluster_link_weight` instead, holding the same quantities on the
-#'   importance scale; only the pair belonging to the scale in use is emitted.
+#'   importance scale. Only the pair belonging to the scale in use is emitted.
 #'   The recorded design still describes selection from the source population.
 #'
 #' @references

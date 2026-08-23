@@ -163,26 +163,59 @@ test_that("serp produces correct pattern for 4 variables", {
 
   result <- df[order(serp(df$A, df$B, df$C, df$D)), ]
 
-  # Verify the snake pattern holds at each level
-  # A=1 (odd): B asc
-  #   A=1,B=1 (g1, odd): C asc
-  #     A=1,B=1,C=1 (g1, odd): D asc
-  #     A=1,B=1,C=2 (g2, even): D desc
-  #   A=1,B=2 (g2, even): C desc
-  #     A=1,B=2,C=2 (g3, odd): D asc
-  #     A=1,B=2,C=1 (g4, even): D desc
-  # A=2 (even): B desc
-  #   ... and so on
+  # A=1 (cell 1, odd): B asc
+  #   A=1,B=1 (cell 1, odd): C asc
+  #     A=1,B=1,C=1 (cell 1, odd): D asc
+  #     A=1,B=1,C=2 (cell 2, even): D desc
+  #   A=1,B=2 (cell 2, even): C desc
+  #     A=1,B=2,C=2 (cell 3, odd): D asc
+  #     A=1,B=2,C=1 (cell 4, even): D desc
+  # A=2 (cell 2, even): B desc, and the snake carries on from where it
+  # stopped rather than restarting.
+  expect_identical(
+    paste0(result$A, result$B, result$C, result$D),
+    c("1111", "1112", "1122", "1121", "1221", "1222", "1212", "1211",
+      "2211", "2212", "2222", "2221", "2121", "2122", "2112", "2111")
+  )
+})
 
-  # Just verify it runs and produces valid output
-  expect_equal(nrow(result), 16)
-  expect_equal(sort(result$id), 1:16)
+test_that("serp is a snake at every level, for even and odd cardinalities", {
+  # The defining property, asserted without a fixture: consecutive rows differ
+  # in exactly one variable, by one rank. The grid varies the cardinality of
+  # the INTERMEDIATE variables, which is what decides where the direction
+  # reverses. A sum of the ranks above tracks that only when every one of
+  # them is odd, so the even entries here are the ones that bite.
+  layouts <- list(
+    c(2, 2, 2), c(3, 2, 3), c(4, 2, 3), c(2, 4, 3), c(3, 4, 4),
+    c(2, 3, 3), c(3, 3, 3), c(3, 5, 2),
+    c(2, 2, 2, 2), c(3, 2, 2, 3), c(2, 4, 2, 3)
+  )
+  for (dims in layouts) {
+    df <- do.call(expand.grid, rev(lapply(dims, seq_len)))
+    df <- df[, rev(seq_along(dims)), drop = FALSE]
+    names(df) <- paste0("v", seq_along(dims))
+    m <- as.matrix(df[order(do.call(serp, as.list(df))), , drop = FALSE])
+    expect_identical(
+      unique(rowSums(abs(diff(m)))),
+      1,
+      info = paste(dims, collapse = "x")
+    )
+  }
+})
 
-  # Check first few: A=1, B=1, C=1, D=1 then D=2
-  expect_equal(result$A[1:2], c(1, 1))
-  expect_equal(result$B[1:2], c(1, 1))
-  expect_equal(result$C[1:2], c(1, 1))
-  expect_equal(result$D[1:2], c(1, 2)) # D ascending in group 1
+test_that("serp snakes through a ragged hierarchy", {
+  # Real geography has unequal numbers of children, so there is no fixed
+  # radix to carry. Every step within a parent must still move one rank.
+  df <- do.call(rbind, lapply(1:4, function(a) {
+    do.call(rbind, lapply(seq_len(c(2, 3, 2, 4)[a]), function(b) {
+      data.frame(v1 = a, v2 = b, v3 = seq_len(c(3, 2, 4, 2, 3)[((a + b) %% 5) + 1]))
+    }))
+  }))
+  ordered <- df[order(serp(df$v1, df$v2, df$v3)), ]
+  within_cell <- split(ordered$v3, paste(ordered$v1, ordered$v2))
+  for (v in within_cell) {
+    expect_identical(abs(diff(v)), rep(1L, length(v) - 1L))
+  }
 })
 
 

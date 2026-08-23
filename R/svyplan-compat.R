@@ -176,7 +176,7 @@ check_svyplan_schedule <- function(x, arg = "schedule",
 #'   svyplan >= 0.12.0): never coerced. `draw()` intercepts them before
 #'   this function runs: a clustered, stratified stage 1 fields the plan's
 #'   stored classification (`certainty_bridge_spec()`) and stage 2 applies
-#'   its per-PSU takes (`certainty_take_spec()`); any plan reaching this
+#'   its per-PSU takes (`certainty_take_spec()`). Any plan reaching this
 #'   function is in a context the bridge does not serve and is refused,
 #'   because the element-total fallback would misstate the design.
 #' - `n_multi()` results with domains: data frame keyed on the domain
@@ -293,7 +293,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
 #'
 #' The register in `$params$psu` is svyplan's documented stable mark
 #' (svyplan >= 0.12.0). The column fallback covers a fit whose params were
-#' stripped in transit; both directions were verified against svyplan's
+#' stripped in transit, and both directions were verified against svyplan's
 #' `.psu_result()`.
 #' @noRd
 is_certainty_alloc_plan <- function(n) {
@@ -555,7 +555,7 @@ certainty_take_spec <- function(
 
 #' Refuse a plan whose executable selection rule caps a noncertainty PSU
 #'
-#' The plan classifies by svyplan's element-fraction threshold; the fielded
+#' The plan classifies by svyplan's element-fraction threshold. The fielded
 #' remainder caps by `n_psu_draw * N_i / sum(N_rest)`. The rules differ, and
 #' ceiling effects near the threshold can push the largest noncertainty PSU
 #' to probability one. Fielding it would silently alter the plan, so the
@@ -597,7 +597,7 @@ check_certainty_plan_disagreement <- function(
 
 #' Reconcile the execution frame against a certainty plan's register
 #'
-#' The plan was solved for one register; a frame that disagrees on the PSU
+#' The plan was solved for one register. A frame that disagrees on the PSU
 #' set, the strata, or the sizes describes a different population, and the
 #' classification and probabilities no longer apply. Runs at execute time so
 #' it also covers designs that arrive by deserialization, before any RNG is
@@ -680,7 +680,7 @@ validate_certainty_bridge <- function(design, schedule, call = NULL) {
 #' By the time the take stage runs, stage 1 has selected, so the frame's
 #' PSUs are a subset of the register rather than all of it. There is no MOS
 #' column at this stage, and the stratum column need not travel to a
-#' listing frame; what must hold is that every PSU present is one the plan
+#' listing frame. What must hold is that every PSU present is one the plan
 #' knows, in the stratum the plan states.
 #' @noRd
 reconcile_certainty_take <- function(spec, frame, stage, call = NULL) {

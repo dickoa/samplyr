@@ -47,7 +47,7 @@ See \code{vignette("survey-planning")} for the handoff by plan type.
 register carrying \code{psu_id}): accepted at a clustered, stratified
 stage 1, and again at stage 2 for the per-PSU takes. Stage 1 selects
 every PSU the plan classified certainty and draws exactly its
-remainder per stratum; the method must be \code{pps_systematic},
+remainder per stratum. The method must be \code{pps_systematic},
 \code{pps_brewer}, \code{pps_cps}, or \code{pps_sampford}, and \code{mos} must equal the
 register's \code{N}. Stage 2 selects by \code{srswor} or \code{systematic}, and
 stratifying there requires an \code{alloc} method to split each take.
@@ -202,10 +202,7 @@ interacts with \code{stratify_by()}.}
 are selected with certainty (probability = 1). Can be:
 \itemize{
 \item A scalar: same threshold for all strata
-\item A data frame: stratum-specific thresholds with stratification columns
-\itemize{
-\item \code{certainty_size} column
-}
+\item A data frame: stratum-specific thresholds with stratification columns + \code{certainty_size} column
 }
 
 Certainty units are removed from the frame before probability sampling,
@@ -217,10 +214,7 @@ Equivalent to SAS SURVEYSELECT \verb{CERTSIZE=} option.}
 (MOS_i / sum(MOS)) >= this value are selected with certainty. Can be:
 \itemize{
 \item A scalar between 0 and 1 (exclusive), same threshold for all strata
-\item A data frame with stratum-specific thresholds with stratification columns
-\itemize{
-\item \code{certainty_prop} column
-}
+\item A data frame with stratum-specific thresholds with stratification columns + \code{certainty_prop} column
 }
 
 Uses iterative selection: after removing certainty units, proportions are

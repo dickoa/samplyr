@@ -280,7 +280,7 @@
 #' fixed-size PPS) understates the variance. Instead, these
 #' methods are exported with `pps = survey::poisson_sampling(pi)`,
 #' which produces the Horvitz-Thompson Poisson variance estimator
-#' \eqn{\hat V = \sum_{i \in S} (1 - \pi_i) / \pi_i^2 \cdot y_i^2}
+#' \eqn{\hat V = \sum_{i \in S} (1 - \pi_i) / \pi_i^2 \cdot y_i^2}{Vhat = sum_{i in S} (1 - pi_i) / pi_i^2 * y_i^2}
 #' described in Sarndal, Swensson and Wretman (1992), section 2.8.
 #'
 #' This applies under the following conditions.
@@ -330,9 +330,9 @@
 #'
 #' `pps_chromy` is classified as a *Probability Minimum Replacement*
 #' (PMR) method which is neither with-replacement nor without-replacement.
-#' Each unit receives exactly \eqn{\lfloor E(n_i) \rfloor} or
-#' \eqn{\lfloor E(n_i) \rfloor + 1} hits, where
-#' \eqn{E(n_i) = n \cdot \textrm{mos}_i / \sum \textrm{mos}}.
+#' Each unit receives exactly \eqn{\lfloor E(n_i) \rfloor}{floor(E(n_i))} or
+#' \eqn{\lfloor E(n_i) \rfloor + 1}{floor(E(n_i)) + 1} hits, where
+#' \eqn{E(n_i) = n \cdot \textrm{mos}_i / \sum \textrm{mos}}{E(n_i) = n * mos_i / sum(mos)}.
 #' When all expected hit counts are below 1, this reduces to WOR,
 #' otherwise large units receive multiple hits.
 #'
@@ -2681,6 +2681,20 @@ multiframe_overlaps <- function(x) {
 #' @param type Replicate method passed to [survey::as.svrepdesign()].
 #'   One of `"auto"`, `"JK1"`, `"JKn"`, `"BRR"`, `"bootstrap"`,
 #'   `"subbootstrap"`, `"mrbbootstrap"`, or `"Fay"`.
+#'
+#'   The jackknife, BRR and Fay types are deterministic: one sample gives one
+#'   set of replicate weights. The bootstrap types resample, so they draw from
+#'   the session's random stream and two calls on one sample give two
+#'   different standard errors. Set a seed beforehand to make a result
+#'   reproducible, as with any resampling in R.
+#'
+#'   The spread is not small at the default of 50 replicates. On a
+#'   90-of-600 stratified sample, twelve `"bootstrap"` calls on one sample
+#'   ranged over 37% of their mean, falling to 12% at `replicates = 200` and
+#'   4% at `replicates = 4000`. A reported bootstrap standard error carries
+#'   that simulation noise on top of the sampling variance it is estimating,
+#'   so raise `replicates` through `...` when the second decimal is going to
+#'   be read.
 #' @param ... Additional arguments passed to [survey::as.svrepdesign()] and
 #'   on to the replicate-weight generator it selects, such as `replicates`,
 #'   `fay.rho`, `fpctype`, or `mse`. Every argument must be named, and its
@@ -3025,7 +3039,7 @@ svrep_from_shared_weights <- function(x, type, systematic_variance, dots,
 #'   refused.
 #' @param estimator `"constant"`, the default, or `"expected"`, which needs
 #'   the `overlaps` declared on the stack. See [as_svydesign.frame_stack()],
-#'   which documents both; here the expected estimator takes any number of
+#'   which documents both. Here the expected estimator takes any number of
 #'   frames, since nothing is delegated to `survey::multiframe()`.
 #' @param theta The compositing factor for the first frame's overlapping
 #'   units, a single number in `[0, 1]`, for two frames only. `NULL`, the
@@ -3249,8 +3263,8 @@ multiframe_compositing_factors <- function(x, theta,
 
 #' One replicate system per frame, combined in blocks
 #'
-#' In a column belonging to frame `q` only frame `q` varies; every other frame
-#' sits at its full-sample composited weight. So the squared deviation a
+#' In a column belonging to frame `q` only frame `q` varies, and every other
+#' frame sits at its full-sample composited weight. So the squared deviation a
 #' column contributes is frame `q`'s alone, and the combined variance is the
 #' sum over frames of what each would have computed by itself. That is the
 #' variance independent selection from each frame gives.

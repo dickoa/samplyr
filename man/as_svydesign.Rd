@@ -307,7 +307,7 @@ is not appropriate, and Brewer's approximation (designed for
 fixed-size PPS) understates the variance. Instead, these
 methods are exported with \code{pps = survey::poisson_sampling(pi)},
 which produces the Horvitz-Thompson Poisson variance estimator
-\eqn{\hat V = \sum_{i \in S} (1 - \pi_i) / \pi_i^2 \cdot y_i^2}
+\eqn{\hat V = \sum_{i \in S} (1 - \pi_i) / \pi_i^2 \cdot y_i^2}{Vhat = sum_{i in S} (1 - pi_i) / pi_i^2 * y_i^2}
 described in Sarndal, Swensson and Wretman (1992), section 2.8.
 
 This applies under the following conditions.
@@ -360,9 +360,9 @@ A method declared \code{"unsupported"} cannot be linearized at all:
 
 \code{pps_chromy} is classified as a \emph{Probability Minimum Replacement}
 (PMR) method which is neither with-replacement nor without-replacement.
-Each unit receives exactly \eqn{\lfloor E(n_i) \rfloor} or
-\eqn{\lfloor E(n_i) \rfloor + 1} hits, where
-\eqn{E(n_i) = n \cdot \textrm{mos}_i / \sum \textrm{mos}}.
+Each unit receives exactly \eqn{\lfloor E(n_i) \rfloor}{floor(E(n_i))} or
+\eqn{\lfloor E(n_i) \rfloor + 1}{floor(E(n_i)) + 1} hits, where
+\eqn{E(n_i) = n \cdot \textrm{mos}_i / \sum \textrm{mos}}{E(n_i) = n * mos_i / sum(mos)}.
 When all expected hit counts are below 1, this reduces to WOR,
 otherwise large units receive multiple hits.
 

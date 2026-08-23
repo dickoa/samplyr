@@ -103,21 +103,21 @@ design <- sampling_design(title = "Gambia bed nets") |>
   add_stage() |>
     draw(n = 6)
 design
-#> ── Sampling Design: Gambia bed nets ────────────────────────────────────────
+#> ── Sampling Design: Gambia bed nets ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> 
 #> ℹ 3 stages
 #> 
-#> ── Stage 1 ─────────────────────────────────────────────────────────────────
+#> ── Stage 1 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Strata: region
 #> • Cluster: district
 #> • Draw: n = 5 (per stratum), method = pps_brewer, mos = population
 #> 
-#> ── Stage 2 ─────────────────────────────────────────────────────────────────
+#> ── Stage 2 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Strata: phc
 #> • Cluster: village
 #> • Draw: n = 2 (per stratum), method = pps_brewer, mos = population
 #> 
-#> ── Stage 3 ─────────────────────────────────────────────────────────────────
+#> ── Stage 3 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Draw: n = 6, method = srswor
 ```
 
@@ -580,15 +580,15 @@ replicate design that varies one frame at a time.
 
 ``` r
 summary(strata_smpl)
-#> ── Sample Summary ──────────────────────────────────────────────────────────
+#> ── Sample Summary ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> 
 #> ℹ n = 300 of 44,570 | stages = 1/1 | seed = 12
 #> 
-#> ── Stage 1 ─────────────────────────────────────────────────────────────────
+#> ── Stage 1 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • srswor, by region (proportional)
 #> • 13 strata: N_h 1,612-5,505, n_h 11-37, f_h 0.0066-0.0068
 #> 
-#> ── Weights ─────────────────────────────────────────────────────────────────
+#> ── Weights ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #> • Mean 148.57 [146.5, 151.22] | CV 0.01 | Kish DEFF 1 | n_eff 300
 ```
 
@@ -646,7 +646,7 @@ Plus auxiliary data: `bfa_eas_variance`, `bfa_eas_cost`
 
 ### SAS PROC SURVEYSELECT
 
-``` sas
+```
 proc surveyselect data=frame method=pps n=50 seed=12345;
   strata region;
   cluster school;
@@ -664,7 +664,7 @@ sampling_design() |>
 
 ### SAS Allocation with Bounds
 
-``` sas
+```
 proc surveyselect data=frame method=srs n=500 seed=42;
   strata region / alloc=neyman var=variance_data allocmin=2 allocmax=100;
 run;
@@ -679,7 +679,7 @@ sampling_design() |>
 
 ### SAS Rounding Control
 
-``` sas
+```
 proc surveyselect data=frame method=sys samprate=0.02 seed=2 round=nearest;
   strata State;
 run;
@@ -694,7 +694,7 @@ sampling_design() |>
 
 ### SPSS CSPLAN
 
-``` spss
+```
 CSPLAN SAMPLE
   /PLAN FILE='myplan.csplan'
   /DESIGN STRATA=region CLUSTER=school

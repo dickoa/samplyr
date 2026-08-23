@@ -373,7 +373,7 @@ NULL
 #'
 #' In a \eqn{K}-stage design, the overall weight for unit \eqn{i} is the
 #' product of per-stage weights:
-#' \deqn{w_i = \prod_{k=1}^{K} w_i^{(k)} = \prod_{k=1}^{K} \frac{1}{q_i^{(k \mid S^{(k-1)})}}}
+#' \deqn{w_i = \prod_{k=1}^{K} w_i^{(k)} = \prod_{k=1}^{K} \frac{1}{q_i^{(k \mid S^{(k-1)})}}}{w_i = prod_k w_i(k) = prod_k 1 / q_i(k | S(k-1))}
 #' where \eqn{q_i^{(k \mid S^{(k-1)})}}{q_i(k | S(k-1))} is resolved within
 #' the clusters selected at prior stages. For an all-WOR exact design this is
 #' the conditional inclusion probability, so the product is the inverse of
@@ -382,7 +382,7 @@ NULL
 #' For example, in a two-stage all-WOR design
 #' where 5 of 30 EAs are selected in a region (stage 1) and 12 of 50
 #' households are listed within each selected EA (stage 2):
-#' \deqn{w_i = \frac{30}{5} \times \frac{50}{12} = 6 \times 4.17 = 25}
+#' \deqn{w_i = \frac{30}{5} \times \frac{50}{12} = 6 \times 4.17 = 25}{w_i = (30/5) * (50/12) = 6 * 4.17 = 25}
 #' The `.weight` column always equals the product of `.weight_1`, `.weight_2`,
 #' etc. Per-stage weights are preserved for diagnostics and for survey
 #' export.
@@ -393,7 +393,7 @@ NULL
 #' as its frame, the phase-1 inclusion probability is already reflected in
 #' the input weights.
 #' The final `.weight` is the product of phase-1 and phase-2 weights:
-#' \deqn{w_i = w_i^{(\text{phase 1})} \times w_i^{(\text{phase 2} \mid \text{phase 1})}}
+#' \deqn{w_i = w_i^{(\text{phase 1})} \times w_i^{(\text{phase 2} \mid \text{phase 1})}}{w_i = w_i(phase 1) * w_i(phase 2 | phase 1)}
 #' For WOR phases this gives the Horvitz-Thompson estimator. A WR or PMR phase
 #' contributes an occurrence-level Hansen-Hurwitz factor instead.
 #'
@@ -760,6 +760,13 @@ execute <- function(
   # here, before any RNG is consumed, so the gate also covers designs that
   # arrived by deserialization.
   validate_certainty_bridge(design, schedule)
+
+  # A design names its custom methods by string, and what those strings
+  # resolve to is the registry's business at this moment, not the design's.
+  # `replay_design()` asks the same question in its strict form. A design
+  # that arrived by deserialization never ran the `draw()` validators, so
+  # this is the only place the question gets asked on this path.
+  check_custom_methods_match_record(design, strict = FALSE)
 
   # Resolve panel stages before consuming RNG state.
   panels <- resolve_panel_stage(

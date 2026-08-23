@@ -155,7 +155,7 @@ NULL
 #'     register carrying `psu_id`): accepted at a clustered, stratified
 #'     stage 1, and again at stage 2 for the per-PSU takes. Stage 1 selects
 #'     every PSU the plan classified certainty and draws exactly its
-#'     remainder per stratum; the method must be `pps_systematic`,
+#'     remainder per stratum. The method must be `pps_systematic`,
 #'     `pps_brewer`, `pps_cps`, or `pps_sampford`, and `mos` must equal the
 #'     register's `N`. Stage 2 selects by `srswor` or `systematic`, and
 #'     stratifying there requires an `alloc` method to split each take.
@@ -295,8 +295,7 @@ NULL
 #' @param certainty_size For PPS without-replacement methods, units with MOS >= this value
 #'   are selected with certainty (probability = 1). Can be:
 #'   - A scalar: same threshold for all strata
-#'   - A data frame: stratum-specific thresholds with stratification columns
-#'     + `certainty_size` column
+#'   - A data frame: stratum-specific thresholds with stratification columns + `certainty_size` column
 #'
 #'   Certainty units are removed from the frame before probability sampling,
 #'   and the remaining sample size is reduced accordingly.
@@ -306,8 +305,7 @@ NULL
 #' @param certainty_prop For PPS without-replacement methods, units whose MOS proportion
 #'   (MOS_i / sum(MOS)) >= this value are selected with certainty. Can be:
 #'   - A scalar between 0 and 1 (exclusive), same threshold for all strata
-#'   - A data frame with stratum-specific thresholds with stratification columns
-#'     + `certainty_prop` column
+#'   - A data frame with stratum-specific thresholds with stratification columns + `certainty_prop` column
 #'
 #'   Uses iterative selection: after removing certainty units, proportions are
 #'   recomputed and the check is repeated until no new units qualify.
@@ -797,12 +795,13 @@ resolve_draw_method <- function(method, call = rlang::caller_env()) {
   }
 
   if (!is_custom_method(method)) {
-    cli_abort(
+    abort_samplyr(
       c(
         "Unknown sampling method: {.val {method}}.",
         "i" = "Built-in methods: {.val {valid_builtin_methods}}",
         "i" = "Custom methods can be registered via {.fn sondage::register_method}."
       ),
+      class = "samplyr_error_unknown_method",
       call = call
     )
   }
