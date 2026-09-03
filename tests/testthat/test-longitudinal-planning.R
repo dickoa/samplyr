@@ -38,7 +38,7 @@ test_that("panel planning counts hand off to a multi-cohort program", {
   startup_n <- plan$n_cohorts * intake_n
   schedule <- svyplan::design_schedule(
     plan,
-    svyplan::design_overlap("4"),
+    svyplan::design_rotation("4"),
     horizon = 6,
     horizon_policy = "continuing",
     refreshment = "entrant_register",
@@ -102,7 +102,7 @@ test_that("the planning route has one source for entries and one prefix", {
     start = "immediate"
   )
   schedule <- svyplan::design_schedule(
-    plan, svyplan::design_overlap("4"), 6, "continuing",
+    plan, svyplan::design_rotation("4"), 6, "continuing",
     refreshment = "entrant_register", rounding = "ceiling"
   )
   intake_n <- ceiling(plan$n_entrants)
@@ -193,7 +193,7 @@ test_that("the planning route refuses permanent activation", {
     start = "immediate"
   )
   schedule <- svyplan::design_schedule(
-    plan, svyplan::design_overlap("4"), 4, "continuing",
+    plan, svyplan::design_rotation("4"), 4, "continuing",
     refreshment = "entrant_register", rounding = "ceiling"
   )
   startup_n <- plan$n_cohorts * ceiling(plan$n_entrants)
@@ -257,7 +257,7 @@ test_that("a gradual plan uses the same interface with one startup panel", {
     start = "gradual"
   )
   schedule <- svyplan::design_schedule(
-    plan, svyplan::design_overlap("4"), 4, "continuing",
+    plan, svyplan::design_rotation("4"), 4, "continuing",
     refreshment = "entrant_register", rounding = "ceiling"
   )
   startup_n <- ceiling(plan$n_entrants)
@@ -282,7 +282,7 @@ test_that("a continuing plan freezes startup activity beyond a short horizon", {
     start = "immediate"
   )
   schedule <- svyplan::design_schedule(
-    plan, svyplan::design_overlap("4"), 2, "continuing",
+    plan, svyplan::design_rotation("4"), 2, "continuing",
     refreshment = "entrant_register", rounding = "ceiling"
   )
   startup_n <- plan$n_cohorts * ceiling(plan$n_entrants)
@@ -305,7 +305,7 @@ test_that("whole-vintage refreshment does not gain a combined-weight route", {
     start = "immediate"
   )
   schedule <- svyplan::design_schedule(
-    plan, svyplan::design_overlap("4"), 2, "continuing",
+    plan, svyplan::design_rotation("4"), 2, "continuing",
     refreshment = "whole_vintage", rounding = "ceiling"
   )
   intake_n <- ceiling(plan$n_entrants)

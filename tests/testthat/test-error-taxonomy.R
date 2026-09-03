@@ -753,8 +753,8 @@ test_that("a per-domain per-stage svyplan plan is refused outside a cluster stag
     icc_psu = c(0.05, 0.05, 0.05),
     stringsAsFactors = FALSE
   )
-  plan <- svyplan::n_multi_cluster(
-    indicators,
+  plan <- svyplan::n_cluster(
+    indicators = indicators,
     domains = "region",
     stage_cost = c(100, 10),
     budget = 50000

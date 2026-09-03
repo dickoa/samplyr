@@ -58,16 +58,18 @@ from the data.
 
 ## Plan a two-occasion rotation
 
-`design_overlap()` describes the time a cohort spends in and out of sample.
+`design_rotation()` describes the time a cohort spends in and out of sample.
 The string `"2"` means that a cohort is interviewed on two consecutive
-occasions and then leaves.
+occasions and then leaves, and `design_overlap()` reports the overlap it
+produces.
 
 ```{r rotation-chart, fig.width = 7, fig.height = 3.6, fig.alt = "Rotation chart for cohorts interviewed on two consecutive occasions.", message = FALSE}
 library(samplyr)
 library(svyplan)
 library(dplyr)
 
-overlap_plan <- design_overlap("2")
+rotation <- design_rotation("2")
+overlap_plan <- design_overlap(rotation)
 overlap_plan[1]
 plot(overlap_plan, type = "schedule", start = "immediate")
 ```
@@ -93,7 +95,7 @@ panel_plan
 
 fieldwork_plan <- design_schedule(
   panel_plan,
-  overlap_plan,
+  rotation,
   horizon = 3,
   horizon_policy = "continuing",
   refreshment = "entrant_register",
@@ -231,7 +233,7 @@ intake for each draw.
 
 ## Check overlap in an executed master
 
-`svyplan::design_overlap()` reports overlap from the planned schedule.
+`svyplan::design_overlap()` reports overlap from the planned rotation.
 `samplyr::joint_expectation()` reports what an executed master records,
 including block-size remainders. For manually scheduled designs, it also
 handles permanent certainty units.
@@ -299,7 +301,7 @@ more or fewer units with the current draw.”
 
 ## The short workflow
 
-1. Use `design_overlap()` to describe the cohort life.
+1. Use `design_rotation()` to describe the cohort life.
 2. Use `n_panel()` to obtain `n_in_sample` and `n_entrants`.
 3. Draw the start-up sample and partition it with `panels`.
 4. Materialize scheduled occasions with `execute(wave = )`.

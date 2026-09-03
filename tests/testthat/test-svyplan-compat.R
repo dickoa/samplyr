@@ -371,7 +371,7 @@ test_that("n_multi domain plans become per-domain data frames", {
                unname(expected))
 })
 
-test_that("n_multi_cluster domain plans feed both stages", {
+test_that("cluster domain plans feed both stages", {
   tg <- data.frame(
     name = "stunting",
     domain = c("urban", "rural"),
@@ -379,8 +379,8 @@ test_that("n_multi_cluster domain plans feed both stages", {
     cv = 0.08,
     icc_psu = 0.05
   )
-  nm <- svyplan::n_multi_cluster(
-    tg,
+  nm <- svyplan::n_cluster(
+    indicators = tg,
     domains = "domain",
     stage_cost = c(500, 50)
   )
