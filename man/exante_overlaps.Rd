@@ -4,7 +4,7 @@
 \alias{exante_overlaps}
 \title{Resolve overlap probabilities from the designs, instead of stating them}
 \usage{
-exante_overlaps(frames, ..., by)
+exante_overlaps(frames, ..., by, allow_approximate = FALSE)
 }
 \arguments{
 \item{frames}{A named list of registers, one per frame, with the same names
@@ -16,6 +16,10 @@ design would draw from.}
 \item{by}{A single named string matching the stack's key to the column
 holding it in the registers, in the same direction as a join:
 \code{by = c(person_id = "person_id")}.}
+
+\item{allow_approximate}{Logical, default \code{FALSE}. Allow approximate
+probability targets when resolving the component designs. See
+\code{\link[=exante_probabilities]{exante_probabilities()}} for the statistical limitations.}
 }
 \value{
 An object of class \code{samplyr_exante_overlap_spec}, for
@@ -29,9 +33,17 @@ component's own design with \code{\link[=exante_probabilities]{exante_probabilit
 
 This is the capability the expected multiframe estimator needs and that a
 sample alone cannot supply: the probability a unit would have had in a
-frame it was not selected from. It is exact, and it is checked against what
-actually happened, because a component's own resolved chance has to equal
-the design weight the execution produced.
+frame it was not selected from. Exact inclusion probabilities are required
+by default. With \code{allow_approximate = TRUE}, approximate targets may be
+used instead. The resulting estimator need not be design-unbiased.
+A component's own resolved chance must equal the reciprocal of its
+execution weight. This consistency check cannot establish the exactness
+of approximate targets.
+
+Resolved stacks retain a named, per-frame \code{probability_quality} vector in
+their \code{overlaps} attribute. Survey exports retain that vector in the
+\code{samplyr_overlap_probability_quality} attribute, and printing a stack
+identifies accepted approximate probabilities.
 }
 \examples{
 exante_overlaps(

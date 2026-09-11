@@ -64,7 +64,9 @@ Each stage can have its own:
 \subsection{Validation rules}{
 \itemize{
 \item Each stage must end with \code{\link[=draw]{draw()}} before the next \code{add_stage()} or \code{\link[=execute]{execute()}}
-\item Empty stages (stage followed immediately by stage) are not allowed
+\item An untouched, unlabeled initial stage is reused by \code{add_stage()}.
+Repeated unlabeled calls there do not create empty stages. Once a stage
+has a label or specification, it needs \code{draw()} before another is added.
 \item The final stage doesn't need \code{cluster_by()} (samples individuals)
 }
 }
@@ -104,15 +106,19 @@ sampling_design() |>
     draw(n = 5) |>
   execute(zwe_frame, seed = 1234)
 
-# Two-stage stratified cluster sample
-sampling_design(title = "Household Survey") |>
+# Two-stage stratified cluster sample, with a synthetic household listing
+household_design <- sampling_design(title = "Household Survey") |>
   add_stage(label = "Enumeration Areas") |>
     stratify_by(region, urban_rural) |>
     cluster_by(ea_id) |>
     draw(n = 3, method = "pps_brewer", mos = households) |>
   add_stage(label = "Households") |>
-    draw(n = 20) |>
-  execute(bfa_eas, seed = 2026)
+    draw(n = 20)
+ea_sample <- execute(household_design, bfa_eas, stages = 1, seed = 2026)
+listing <- data.frame(ea_id = rep(ea_sample$ea_id, ea_sample$households))
+listing$hh_id <- ave(listing$ea_id, listing$ea_id, FUN = seq_along)
+household_sample <- execute(ea_sample, listing, seed = 2027)
+head(as.data.frame(household_sample)[c("ea_id", "hh_id", ".weight")])
 
 # Partial execution: select only stage 1
 design <- sampling_design() |>

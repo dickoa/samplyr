@@ -182,7 +182,7 @@ test_that("control expressions round-trip and order identically", {
   payload <- jsonlite::fromJSON(json, simplifyVector = FALSE)
   control_json <- payload$design$stages[[1]]$draw$control
 
-  expect_equal(payload$format_version, 1)
+  expect_equal(payload$format_version, 3)
   expect_equal(control_json, list(
     list(type = "ascending", variables = list("stratum")),
     list(type = "descending", variables = list("mos")),
@@ -225,7 +225,7 @@ test_that("read_design() refuses unknown declarative control types", {
   payload$design$stages[[1]]$draw$control[[1]]$type <- "system"
   bad <- jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
 
-  expect_error(read_design(bad), "invalid control term")
+  expect_error(read_design(bad), "draw/control/0/type")
 })
 
 test_that("namespaced control calls are rejected when writing", {
@@ -332,7 +332,7 @@ test_that("all built-in methods have unique common mappings", {
 
   published <- jsonlite::fromJSON(
     system.file(
-      "schema", "sampling-methods-v1.json",
+      "schema", "sampling-methods-v2.json",
       package = "samplyr",
       mustWork = TRUE
     ),
@@ -506,7 +506,7 @@ test_that("read_design() validates format and version", {
     "not supported"
   )
   expect_error(
-    read_design('{"format": "samplyr/design", "format_version": 1}'),
+    read_design('{"format": "samplyr/design", "format_version": 3}'),
     "design.stages"
   )
   expect_error(read_design("not json at all {"), "not valid JSON")
@@ -1678,7 +1678,8 @@ test_that("a transformation this build cannot replay is refused", {
   for (field in c("by", "to", "within", "multiplicity", "target_scope")) {
     broken <- payload
     broken$transformation[[field]] <- NULL
-    expect_error(reread(broken), "unreadable transformation", info = field)
+    expect_error(reread(broken), "transformation",
+                 class = "samplyr_error_design_file_malformed", info = field)
   }
 })
 

@@ -459,7 +459,9 @@ print.frame_stack <- function(x, ...) {
   if (!is_null(overlaps)) {
     cli::cat_bullet(
       cli::format_inline(if (is_resolved_overlaps(overlaps)) {
-        "Overlap {overlaps$scale} resolved from the registers"
+        if (any(overlaps$probability_quality == "approximate")) {
+          "Overlap targets resolved from the registers (approximate probabilities accepted)"
+        } else "Overlap {overlaps$scale} resolved from the registers"
       } else {
         "Overlaps declared as {overlaps$scale}: {.field {overlaps$cols}}"
       }),

@@ -1,5 +1,6 @@
 ## G3. Replicate weights for a shared-weight sample
 
+
 # The whole content of this phase is an ordering. Weight sharing is linear, so
 # the recorded operator can be applied to a replicate weight system exactly as
 # it is applied to the base weights. What it cannot do is act on replicates
@@ -318,4 +319,17 @@ test_that("an ordinary sample's replicate export is unchanged", {
   expect_identical(sample_weight_contract(source), "design")
   expect_no_error(as_svrepdesign(source, type = "JKn"))
   expect_null(attr(as_svrepdesign(source, type = "JKn"), "samplyr_weight_share"))
+})
+
+test_that("RWYB Poisson factors propagate through the recorded sharing operator", {
+  skip_if_not_installed("svrep", "0.9.1")
+  source <- sampling_design() |> draw(frac = .5, method = "bernoulli") |>
+    execute(data.frame(unit = 1:40), seed = 42)
+  shared <- gwsm_rep_shared(source)
+  record <- attr(shared, "metadata")$weight_share
+  source_rep <- withr::with_seed(42, as_svrepdesign(source, type = "rwyb", replicates = 200))
+  result <- withr::with_seed(42, as_svrepdesign(shared, type = "rwyb", replicates = 200))
+  expect_equal(unname(stats::weights(result, type = "analysis")),
+    unname(apply_share_operator(record$operator, stats::weights(source_rep, type = "analysis"))))
+  expect_equal(unname(stats::weights(result, type = "sampling")), shared$.weight)
 })

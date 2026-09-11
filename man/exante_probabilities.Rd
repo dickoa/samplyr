@@ -4,7 +4,7 @@
 \alias{exante_probabilities}
 \title{Selection probabilities a design would give a register, without drawing}
 \usage{
-exante_probabilities(design, frame, ..., key)
+exante_probabilities(design, frame, ..., key, allow_approximate = FALSE)
 }
 \arguments{
 \item{design}{A \code{sampling_design} with a complete \code{\link[=draw]{draw()}} on every stage.}
@@ -14,16 +14,24 @@ exante_probabilities(design, frame, ..., key)
 \item{...}{Must be empty. Arguments after it are matched by exact name.}
 
 \item{key}{A bare column of \code{frame} identifying the population unit. It
-must be unique.}
+must be unique and cannot be named \code{probability} or \code{probability_quality}.}
+
+\item{allow_approximate}{Logical, default \code{FALSE}. Explicitly accept
+approximate probability targets, with the limitations described above.}
 }
 \value{
-A tibble with the key column and \code{probability}, one row per unit,
-in the register's own order.
+A tibble with the key column, \code{probability}, and
+\code{probability_quality} (\code{"exact"} or \code{"approximate"}), one row per unit
+in the register's own order. Quality reflects the weakest stage's
+probability contract.
 }
 \description{
 Returns the probability that each unit of a register would be selected,
 computed from the design rather than observed from a sample. It draws no
 random numbers, and it needs no execution.
+By default, every stage must supply exact inclusion probabilities.
+Approximate targets require \code{allow_approximate = TRUE} and are labelled
+in the result.
 
 The intended use is a survey covering one population through several
 registers, where the expected multiframe estimator needs a unit's chance in
@@ -35,7 +43,20 @@ The probability is compounded across stages: for a two-stage design it is
 the chance the unit's cluster is selected times the chance the unit is
 selected within it. The stage-by-stage quantities come from the same
 allocation and chance resolvers execution uses, so a sample's own weights
-reproduce these numbers exactly.
+reproduce these numbers exactly. Agreement with weights verifies that the
+same targets were used. It does not establish that approximate targets are
+the method's actual inclusion probabilities.
+\subsection{Approximate probabilities}{
+
+\code{pps_sps} and \code{pps_pareto}, and custom methods declaring approximate
+probabilities, are refused by default. With \code{allow_approximate = TRUE},
+their targets are returned and compounded across stages. The whole result
+is labelled \code{"approximate"} if any stage has this probability contract,
+including rows selected with certainty. Estimators using these targets
+need not be design-unbiased. Methods declaring \code{"unknown"} probabilities
+remain unsupported even with this opt-in.
+}
+
 \subsection{What it refuses}{
 
 A with-replacement or minimum-replacement stage, because the quantity there

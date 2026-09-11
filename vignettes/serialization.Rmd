@@ -42,6 +42,23 @@ Three functions cover the workflow.
 The format is native to `samplyr` and remains experimental. It is not a
 finalized cross-tool interchange standard.
 
+Reads and writes use native R checks generated from the same source as the
+bundled JSON Schemas. No JavaScript engine is needed. Misspelled executable
+fields are errors. Frame compatibility is checked separately by
+`validate_frame()` and `execute()`.
+
+Files use method vocabulary version 2, with the probability quantity and
+its exact or approximate quality in the common descriptor. Optional named
+namespaces in `annotations` and `tools` survive reading and writing. They cannot add selection rules, and
+any declared required extension is refused by this implementation.
+
+The schemas and compatibility notes are installed with the package:
+
+```{r, eval=FALSE}
+system.file("schema", "design.schema.json", package = "samplyr")
+system.file("schema", "README.md", package = "samplyr")
+```
+
 ## Save and restore a design
 
 ```{r}

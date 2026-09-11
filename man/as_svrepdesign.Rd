@@ -11,7 +11,7 @@ as_svrepdesign(x, ...)
   x,
   ...,
   type = c("auto", "JK1", "JKn", "BRR", "bootstrap", "subbootstrap", "mrbbootstrap",
-    "Fay"),
+    "rwyb", "Fay"),
   systematic_variance = c("warn", "approximate", "error")
 )
 }
@@ -24,11 +24,14 @@ on to the replicate-weight generator it selects, such as \code{replicates},
 name must be one those functions accept: \code{type} follows the \code{...} and so
 is matched exactly, and a near miss such as \code{typ} is reported rather
 than forwarded. \code{design} cannot be given here: it is the
-\code{\link[survey:svydesign]{survey::svydesign()}} object this verb builds from the sample.}
+\code{\link[survey:svydesign]{survey::svydesign()}} object this verb builds from the sample. For
+\code{type = "rwyb"}, only \code{replicates} (default 500, integer at least 2),
+\code{mse} (default TRUE) and \code{compress} (default TRUE) are accepted.}
 
 \item{type}{Replicate method passed to \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.
 One of \code{"auto"}, \code{"JK1"}, \code{"JKn"}, \code{"BRR"}, \code{"bootstrap"},
-\code{"subbootstrap"}, \code{"mrbbootstrap"}, or \code{"Fay"}.
+\code{"subbootstrap"}, \code{"mrbbootstrap"}, \code{"Fay"}, or \code{"rwyb"}. The last
+uses svrep rather than \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.
 
 The jackknife, BRR and Fay types are deterministic: one sample gives one
 set of replicate weights. The bootstrap types resample, so they draw from
@@ -36,7 +39,7 @@ the session's random stream and two calls on one sample give two
 different standard errors. Set a seed beforehand to make a result
 reproducible, as with any resampling in R.
 
-The spread is not small at the default of 50 replicates. On a
+The spread is not small at survey's default of 50 replicates. On a
 90-of-600 stratified sample, twelve \code{"bootstrap"} calls on one sample
 ranged over 37\% of their mean, falling to 12\% at \code{replicates = 200} and
 4\% at \code{replicates = 4000}. A reported bootstrap standard error carries
@@ -58,42 +61,57 @@ returned object in the \code{"samplyr_systematic_variance"} attribute.}
 A \code{svyrep.design} object from the survey package.
 }
 \description{
-Creates a \code{svyrep.design} object from a \code{tbl_sample} by first
-converting to a \code{\link[survey:svydesign]{survey::svydesign()}} object via \code{\link[=as_svydesign]{as_svydesign()}},
-then converting with \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.
+Creates a \code{svyrep.design} object from a \code{tbl_sample}. The \code{"rwyb"} method
+generates Rao-Wu-Yue-Beaumont factors with the optional svrep package
+directly from recorded stage mechanisms. Other methods first build a
+\code{\link[survey:svydesign]{survey::svydesign()}} object, then call \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.
 }
 \details{
-Replicate conversion supports single-phase designs. For unequal-probability
-designs (PPS or random-size Poisson), \code{"subbootstrap"} and \code{"mrbbootstrap"}
-are the supported replicate types. Other types emit a warning and may fail
-because inclusion probabilities vary within strata. For fixed-size PPS
-variance estimation, linearization via \code{\link[=as_svydesign]{as_svydesign()}} is generally
-preferred. Two-phase designs should be exported with \code{\link[=as_svydesign]{as_svydesign()}}.
-\subsection{Bootstrap escape hatch for random-size Poisson at stage 1}{
+Replicate conversion supports single-phase designs, including multistage
+samples, shared weights and independent frame stacks. \code{"auto"} retains
+survey's method choice. It does not depend on whether svrep is installed.
+Two-phase replicate export remains unsupported.
+\subsection{Rao-Wu-Yue-Beaumont bootstrap}{
 
-Some designs cannot be expressed as a linearization-based
-\code{\link[survey:svydesign]{survey::svydesign()}} object. Specifically, multi-stage designs with
-a random-size Poisson method (\code{bernoulli} or \code{pps_poisson}) at stage 1,
-and single-stage designs with \code{cluster_by()} and multiple rows per
-sampled cluster, are rejected by \code{\link[=as_svydesign]{as_svydesign()}} for those methods.
+\code{as_svrepdesign(x, type = "rwyb")} supports SRS without replacement,
+independent draws with replacement (\code{srswr}, \code{pps_multinomial}), independent
+Poisson selection (\code{bernoulli}, \code{pps_poisson}), and combinations of these
+across stages. It also supports fixed-size PPS WOR (\code{pps_brewer}, \code{pps_cps},
+\code{pps_sampford}, \code{pps_systematic}) using approximate joint probabilities
+and warns about this approximation. Equal-probability systematic stages
+use the SRS approximation governed by \code{systematic_variance}.
+Custom methods must declare a supported variance family. Balanced, spatial,
+Pareto, SPS and Chromy methods have no built-in RWYB mapping.
 
-For these cases \code{as_svrepdesign(type = "subbootstrap")} (or
-\code{"mrbbootstrap"}) is the recommended path. The design is exported with
-a permissive specification (no finite-population correction at the
-Poisson stage, no \code{pps} argument), and the bootstrap resampler supplies
-the variance through replicate weights.
+The adapter retains stage-specific sampling units, strata and probabilities.
+With-replacement stages resample draw occurrences, not distinct population
+units. Certainty units have conditional replicate factor one. Noncertainty
+singleton strata raise \code{samplyr_error_rwyb_singleton} whenever their variance
+contribution is needed, except under Poisson sampling, whose variance is
+estimable from one unit.
 
-This is the package's bootstrap approximation for designs that exact
-Horvitz-Thompson linearization cannot express in
-\code{\link[survey:svydesign]{survey::svydesign()}}. The subbootstrap and mrbbootstrap methods were
-developed for fixed-size PPS sampling (Antal and Tille 2011). Their
-behavior on random-size Poisson designs, especially at multiple
-stages, has weaker theoretical backing and should be treated as an
-approximation. In particular, the resampling is fixed-size, so it
-does not capture the variance contribution of the random sample
-size and can materially understate the total variance of a
-Poisson-type design. When the exact Poisson linearization is
-available (single-stage designs), prefer \code{\link[=as_svydesign]{as_svydesign()}}.
+Every selected parent must have a descendant in the final sample. When a
+later stage is Poisson, a complete frame digest (\code{"summary"} or \code{"full"})
+is required to check this. Export refuses missing selected parents because
+silently dropping them changes the earlier-stage resampling distribution.
+Empty samples cannot be exported. These are export limits. Empty Poisson
+realizations remain valid sampling outcomes.
+
+Replication adds simulation error, so finite replicate variances need not
+equal analytic variances exactly. Set a seed and increase \code{replicates} for
+stable estimates. With \code{mse = TRUE}, factors use scale \code{1 / replicates},
+while with \code{mse = FALSE}, they use \code{1 / (replicates - 1)}. svrep's
+\code{estimate_boot_sim_cv()} can assess simulation error for chosen estimates.
+The direct export records backend and stage methods in the
+\code{"samplyr_replication"} attribute.
+}
+
+\subsection{Poisson variance}{
+
+Generic survey bootstrap and jackknife methods are refused for Poisson
+sampling: they can lose the variance of its random sample size. Use
+\code{type = "rwyb"}. For single-stage element Poisson sampling, \code{\link[=as_svydesign]{as_svydesign()}}
+remains available with the analytic Horvitz-Thompson Poisson variance.
 
 Bounded cube, LPM2, and SCPS designs likewise have no native,
 design-specific replicate variance estimator in \code{samplyr}.

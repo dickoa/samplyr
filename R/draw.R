@@ -18,8 +18,8 @@
 #' | `pps_cps` | Without | Fixed | Required | - | Highest entropy, exact joint probabilities |
 #' | `pps_sampford` | Without | Fixed | Required | - | Exact Sampford joint probabilities |
 #' | `pps_poisson` | Without | Random | Required | `prn` | PPS analog of Bernoulli |
-#' | `pps_sps` | Without | Fixed | Required | `prn` | Sequential Poisson |
-#' | `pps_pareto` | Without | Fixed | Required | `prn` | Pareto sampling |
+#' | `pps_sps` | Without | Fixed | Required | `prn` | Sequential Poisson with approximate probability targets |
+#' | `pps_pareto` | Without | Fixed | Required | `prn` | Pareto with approximate probability targets |
 #' | `pps_multinomial` | With | Fixed | Required | - | Any hit count, Hansen-Hurwitz |
 #' | `pps_chromy` | Min. repl. | Fixed | Required | - | As SAS `PPS_SEQ` |
 #' | `cube` | Without | Fixed | Optional | `aux` optional | Deville & \enc{Tillé}{Tille} 2004 |
@@ -27,14 +27,54 @@
 #' | `scps` | Without | Fixed | Optional | `spread` required | Spatial spread |
 #'
 #' Every method takes either `n` or `frac`, except `pps_cps`, which requires
-#' `n`. With `frac` the size follows the `round` parameter (ceiling by
-#' default). The `prn` column marks the methods that accept permanent random
+#' `n`. For fixed-size methods, `frac` follows the `round` parameter (ceiling
+#' by default). Bernoulli and PPS Poisson use an unrounded expected target.
+#' The `prn` column marks the methods that accept permanent random
 #' numbers for coordination. It is always optional.
 #'
 #' "Min. repl." is probability minimum replacement: `pps_chromy` draws a unit
 #' either \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
 #' times, where \eqn{E} is its expected number of hits, so a unit is never hit
 #' more often than its size warrants.
+#'
+#' ## Selection and inference
+#'
+#' All methods above can draw samples when their input requirements are met.
+#' Selection support and variance support are separate contracts. This table
+#' is a quick comparison. [as_svydesign()] and [as_svrepdesign()] describe the
+#' supported stage/phase compositions and sample-specific checks.
+#'
+#' | Method or family | First-order quantity | Joint information | Analysis route |
+#' |---|---|---|---|
+#' | `srswor` | Exact inclusion probabilities | SRS formulas (not exposed by the joint helper) | SRS with FPC, standard replicates or RWYB |
+#' | `srswr`, `pps_multinomial` | Exact expected hit counts | Exact joint hits for PPS | WR draw occurrences with standard replicates or RWYB |
+#' | `systematic`, `pps_systematic` | Exact inclusion probabilities | Exact order-specific matrix for PPS (zero pairs may occur) | SRS/Brewer or generic replicate approximation under the systematic policy |
+#' | `bernoulli`, `pps_poisson` | Exact independent probabilities | Exact Poisson matrix for PPS | Analytic single-stage Poisson variance, or RWYB for supported clustered/multistage designs |
+#' | `pps_brewer`, `pps_cps`, `pps_sampford` | Exact inclusion probabilities | Approximate for Brewer, exact for CPS/Sampford | Brewer by default, an explicit joint matrix, or PPS-compatible replicates (including approximate RWYB) |
+#' | `pps_sps`, `pps_pareto` | Approximate targets | High-entropy approximation using targets | Brewer or generic PPS-compatible replicates (no built-in RWYB mapping) |
+#' | `pps_chromy` | Exact expected hit counts | Monte Carlo joint hits | WR or generic replicate approximation to PMR (no built-in RWYB mapping) |
+#' | Unconstrained `cube` | Exact inclusion probabilities under the method contract | High-entropy approximation | Approximate linearization or generic replicates (no built-in RWYB mapping) |
+#' | Bounded `cube`, `lpm2`, `scps` | Exact inclusion probabilities under the method contract | Refused | Generic `subbootstrap` or `mrbbootstrap` only (linearization refused) |
+#' | Custom methods | Declared exact or approximate quality | Registered joint support | Depends on the variance-family declaration and adapter checks |
+#'
+#' Joint information here refers to [joint_expectation()], which exposes
+#' PPS/balanced-family quantities. Ordinary SRS, WR and independent Bernoulli
+#' formulas still apply. A stage's joint matrix is not automatically a matrix
+#' for the final units of a multistage design. Exact first-order probabilities
+#' do not establish exact variance or confidence-interval coverage.
+#'
+#' RWYB means the explicit `type = "rwyb"` option with svrep.
+#' `type = "auto"` does not select it. PPS WOR remains approximate. Generic
+#' replicates do not recreate ordering, balancing, spatial spreading or hard
+#' constraints. Poisson sampling is refused by generic replicate methods.
+#' See [as_svrepdesign()] for missing-parent and singleton restrictions, and
+#' [as_svydesign()] for Poisson and two-phase export limits.
+#'
+#' SPS, Pareto and custom approximate targets require
+#' `allow_approximate = TRUE` in [exante_probabilities()] and
+#' [exante_overlaps()]. Estimates using these targets need not be
+#' design-unbiased. Unknown probabilities are refused. Probability and
+#' variance declarations by a custom-method author are contracts, not proofs.
 #'
 #' ## Fixed vs random sample size
 #'
@@ -54,8 +94,9 @@
 #'
 #' Declaring certainty units does more than remove them. The remainder is
 #' re-resolved over the reduced target and the reduced MOS total, so the
-#' surviving chances rise and the expectation returns to the target. That is a
-#' different design from the clipped one, not a repair of it.
+#' surviving chances can rise. The remaining expected take equals the reduced target
+#' only if no remaining probability needs clipping. See [draw()] for the
+#' certainty-adjusted `n` and `frac` contract.
 #'
 #' This is not silent. `execute()` warns with class
 #' `samplyr_warning_poisson_shortfall` once per stage when a pool's resolved
@@ -186,7 +227,8 @@ NULL
 #'   is structurally capped at that population for without-replacement
 #'   designs, which makes the stratum a census. Only applies when
 #'   stratification with an allocation method is used. Default is `NULL`
-#'   (no minimum).
+#'   (no minimum). Allocations that give a nonempty stratum zero units
+#'   are refused. Use `min_n = 1` to request positive allocations explicitly.
 #' @param max_n Maximum sample size per stratum. When an allocation method
 #'   would assign more than `max_n` units to a stratum, that stratum is
 #'   capped and the surplus is redistributed over the remaining strata in
@@ -312,10 +354,15 @@ NULL
 #'   Mutually exclusive with `certainty_size`.
 #'
 #' @param certainty_overflow Controls behavior when certainty units exceed the
-#'   target sample size `n`. One of:
+#'   target sample size in a sampling pool (a stratum within its parent, when
+#'   applicable). One of:
 #'   - `"error"` (default): Stop with an informative error.
-#'   - `"allow"`: Return all certainty units with stage weight 1, even if the
-#'     resulting sample has more than `n` units.
+#'   - `"allow"`: Permit a census above the target only when every unit in
+#'     that pool is certain. All units in the pool receive stage weight 1.
+#'
+#'   Under either setting, certainty units that exactly exhaust or exceed
+#'   the target are refused if any noncertainty units remain in the pool,
+#'   because those units would have zero inclusion probability.
 #'
 #' @param on_empty Behavior when a random-size method (`bernoulli`,
 #'   `pps_poisson`, or a custom method registered with
@@ -372,22 +419,24 @@ NULL
 #' (`pps_multinomial`) and PMR methods (`pps_chromy`) handle large units
 #' natively through their hit mechanism.
 #'
-#' When `certainty_overflow = "allow"`, if more units qualify for certainty
-#' selection than the requested `n`, all certainty units are returned with
-#' probability 1 (stage weight = 1). No probabilistic sampling is performed in
-#' this case. The resulting sample size will be the number of certainty
-#' units, which exceeds `n`. In multi-stage designs, the final `.weight` can
-#' still exceed 1 because it compounds all stage weights.
+#' `certainty_overflow = "allow"` permits an all-certainty census of a
+#' sampling pool even when its size exceeds the requested target. Every unit
+#' in that pool is returned with probability 1 (stage weight = 1).
+#' The option does not permit leaving noncertainty units with zero inclusion
+#' probability, including when the certainty count exactly equals the target.
+#' In multi-stage designs, the final `.weight` can still exceed 1 because it
+#' compounds all stage weights.
 #'
-#' **Certainty with `pps_poisson` and user-supplied `frac`.** For
-#' `pps_poisson`, the probabilistic remainder reuses the user-supplied
-#' `frac` against the *remaining* (non-certainty) units. That is,
-#' \eqn{\pi_i = \text{frac} \cdot \text{mos}_i \cdot N_r / \sum_{r}\text{mos}_r}{pi_i = frac * mos_i * N_r / sum_r(mos_r)}
-#' for the \eqn{N_r} remaining units, so the expected total sample size is
-#' \eqn{n_{\mathrm{cert}} + \text{frac} \cdot N_r}{n_cert + frac * N_r}
-#' rather than \eqn{\text{frac} \cdot N}{frac * N}. If you need the
-#' expected total to track `frac * N`, pass an expected `n` instead and
-#' let samplyr derive the remaining fraction as `(n - n_cert) / N_r`.
+#' **Certainty with `pps_poisson`.** Both `n` and `frac` specify a target
+#' expected total that includes certainty units. A fraction gives the
+#' unrounded target `frac * N` over the original pool. After selecting
+#' `n_cert` certainty units, the remaining probabilities are
+#' `pmin(1, (target - n_cert) * mos / sum(mos))`, using only the remaining
+#' units' sizes. Thus `n = 5` and `frac = 0.5` on ten units give the same
+#' probabilities, including when a certainty rule is active. Clipping a
+#' probability at one does not redistribute the excess to other units, so
+#' the actual expected size can be smaller than the target. [frame_summary()]
+#' reports both `n_target` and `n_expected`.
 #'
 #' ## Control sorting
 #'

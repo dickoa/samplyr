@@ -419,7 +419,7 @@ test_that("custom random-size WOR exports with explicit poisson_sampling", {
   }
 })
 
-test_that("custom random-size WOR supports the subbootstrap escape hatch", {
+test_that("custom random-size WOR cannot use fixed-size bootstrap as an escape hatch", {
   skip_if_not_installed("survey")
   on.exit(sondage::unregister_method("test_rswor"), add = TRUE)
   sondage::register_method(
@@ -432,8 +432,12 @@ test_that("custom random-size WOR supports the subbootstrap escape hatch", {
     draw(n = 20, method = "pps_test_rswor", mos = size) |>
     execute(custom_frame, seed = 5)
 
-  rep_design <- as_svrepdesign(result, type = "subbootstrap", replicates = 20)
-  expect_s3_class(rep_design, "svyrep.design")
+  expect_error(as_svrepdesign(result, type = "subbootstrap", replicates = 20),
+    class = "samplyr_error_poisson_replicates")
+  if (requireNamespace("svrep", quietly = TRUE)) {
+    expect_error(as_svrepdesign(result, type = "rwyb"),
+      class = "samplyr_error_rwyb_method")
+  }
 })
 
 ## Custom balanced (cube-like) methods, type = "balanced"

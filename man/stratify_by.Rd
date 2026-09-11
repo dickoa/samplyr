@@ -242,7 +242,7 @@ sampling_design() |>
 # Multiple stratification variables
 sampling_design() |>
   stratify_by(region, urban_rural, alloc = "proportional") |>
-  draw(n = 300) |>
+  draw(n = 300, min_n = 1) |>
   execute(bfa_eas, seed = 2025)
 
 }

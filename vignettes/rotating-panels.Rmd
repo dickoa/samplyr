@@ -261,10 +261,46 @@ than once.
 For two waves derived from the same master, `stack_waves()` checks their common
 origin and returns a long table for a longitudinal analysis package.
 
-```{r}
-wave_table <- stack_waves(startup_wave_1, startup_wave_2)
-names(wave_table)[1:4]
+The establishment frame and the observations below are synthetic. Each
+occasion supplies a new measurement for every issued establishment. Retain
+the frame's baseline revenue under another name, and join the occasion's
+interview by `enterprise_id`. The join preserves the issued rows.
+
+```{r wave-observations}
+set.seed(101)
+interviews_1 <- startup_wave_1 |>
+  as.data.frame() |>
+  transmute(enterprise_id,
+            revenue_millions = revenue_millions * exp(rnorm(n(), 0, 0.1)))
+interviews_2 <- startup_wave_2 |>
+  as.data.frame() |>
+  transmute(enterprise_id,
+            revenue_millions = revenue_millions * exp(rnorm(n(), 0.05, 0.1)))
+
+observed_wave_1 <- startup_wave_1 |>
+  rename(revenue_baseline = revenue_millions) |>
+  left_join(interviews_1, by = "enterprise_id", relationship = "one-to-one")
+observed_wave_2 <- startup_wave_2 |>
+  rename(revenue_baseline = revenue_millions) |>
+  left_join(interviews_2, by = "enterprise_id", relationship = "one-to-one")
+
+survey::svytotal(~revenue_millions, as_svydesign(observed_wave_1))
+survey::svytotal(~revenue_millions, as_svydesign(observed_wave_2))
+
+wave_table <- stack_waves(observed_wave_1, observed_wave_2)
+wave_table |>
+  select(wave, master_id, enterprise_id, revenue_millions, design_weight) |>
+  head(4)
 ```
+
+Both exports use the current occasion's revenue, including where the retained
+master carries a same-named baseline column. A missing current measurement
+would remain missing. It would not fall back to the baseline. The master and
+the other occasion remain unchanged.
+
+These are separate estimates for the start-up cohort's frame. The second
+does not include the refreshment cohort or estimate a growing population's
+total automatically. This example assumes complete response on both occasions.
 
 `design_weight` is the design weight, including activation. It is not a final
 nonresponse-adjusted or calibrated weight. `master_id` links the same selected

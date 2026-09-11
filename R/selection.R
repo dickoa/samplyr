@@ -198,31 +198,8 @@ sample_within_clusters <- function(
   # Report display labels rather than encoded group keys.
   parent_labels <- key_labels(groups$key_df, cluster_vars)
 
-  # A certainty plan's take stage sizes each pool from the register: the
-  # PSU's own take. The stored n is NULL, which also keeps the srswor fast
-  # path out of the way.
-  take_plan <- draw_spec$certainty_plan
-  take_lookup <- if (!is_null(take_plan) && identical(take_plan$role, "take")) {
-    stats::setNames(take_plan$register$n_take, take_plan$register$psu_id)
-  } else {
-    NULL
-  }
-  pool_spec <- function(data) {
-    if (is_null(take_lookup)) {
-      return(draw_spec)
-    }
-    pool_id <- as.character(data[[take_plan$id_var]][1])
-    take <- take_lookup[pool_id]
-    if (is.na(take)) {
-      cli_abort(
-        "Internal error: PSU {.val {pool_id}} has no take in the certainty plan's register.",
-        call = NULL
-      )
-    }
-    spec <- draw_spec
-    spec$n <- as.numeric(take)
-    spec
-  }
+  # Execution and previews resolve the same per-PSU take.
+  pool_spec <- function(data) resolve_parent_draw_spec(draw_spec, data)
 
   if (
     is_null(strata_spec) &&
@@ -863,7 +840,7 @@ resolve_stratum_draw_spec <- function(
     }
   }
 
-  if (!is_null(draw_spec$certainty_plan)) {
+  if (identical(draw_spec$certainty_plan$role, "select")) {
     # The plan's stored classification for this stratum, kept even when
     # empty so the certainty path and its invariants stay engaged.
     stratum_id <- as.character(keys[[1]][1])
@@ -1230,6 +1207,14 @@ draw_sample_pps_certainty <- function(
   mos_vals <- data[[mos]]
   N <- nrow(data)
 
+  # Poisson fractions specify an expected total over the original pool,
+  # including certainties. Do not round that total or reuse the original
+  # fraction after removing certainty units.
+  if (identical(method, "pps_poisson")) {
+    n <- min(n_target, N)
+    draw_spec$frac <- NULL
+  }
+
   forced_idx <- NULL
   if (!is_null(draw_spec$certainty_ids)) {
     id_var <- draw_spec$certainty_plan$id_var
@@ -1260,7 +1245,7 @@ draw_sample_pps_certainty <- function(
         "Certainty selection exceeds target sample size.",
         "x" = "Found {cert$n_certain} certainty unit{?s}, but {.arg n} = {n}.",
         threshold_msg,
-        "i" = "Options: increase {.arg n}, raise the threshold, or use {.arg certainty_overflow = \"allow\"} to keep all certainty units."
+        "i" = "Every unit in this sampling pool is certain. Increase {.arg n}, raise the threshold, or use {.code certainty_overflow = \"allow\"} to permit this census above the target."
       )
     )
   }
@@ -1497,6 +1482,18 @@ identify_certainty <- function(
   n_certain <- length(certainty_idx)
   n_remaining <- n - n_certain
   remaining_idx <- setdiff(seq_len(N), certainty_idx)
+
+  if (length(n_remaining) == 1L && n_remaining <= 0 &&
+      length(remaining_idx) > 0L && n_certain > 0L) {
+    abort_samplyr(
+      c(
+        "Certainty selection exhausts the target sample size and gives the remainder zero inclusion probability.",
+        "x" = "Found {n_certain} certainty units for {.arg n} = {n}, leaving {length(remaining_idx)} units unselectable.",
+        "i" = "Increase {.arg n} or raise the certainty threshold. {.code certainty_overflow = \"allow\"} only permits an all-certainty census when the target is exhausted."
+      ),
+      class = "samplyr_error_certainty_zero_probability"
+    )
+  }
 
   list(
     certainty_idx = certainty_idx,

@@ -302,7 +302,7 @@ certainty_tampered_file <- function(path, f) {
   out
 }
 
-test_that("a bridge design writes format 3 and plain designs stay lower", {
+test_that("bridge and plain designs both write format 3", {
   d <- certainty_bridge_design()
   path <- withr::local_tempfile(fileext = ".json")
   write_design(d, path)
@@ -315,7 +315,7 @@ test_that("a bridge design writes format 3 and plain designs stay lower", {
   write_design(sampling_design() |> draw(n = 10), plain)
   expect_identical(
     jsonlite::fromJSON(plain, simplifyVector = FALSE)$format_version,
-    1L
+    3L
   )
 })
 

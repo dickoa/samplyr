@@ -10,7 +10,7 @@
   estimator = c("constant", "expected"),
   theta = NULL,
   type = c("auto", "JK1", "JKn", "BRR", "bootstrap", "subbootstrap", "mrbbootstrap",
-    "Fay"),
+    "rwyb", "Fay"),
   systematic_variance = c("warn", "approximate", "error")
 )
 }

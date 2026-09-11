@@ -478,7 +478,7 @@ test_that("a record that is not a record is refused as malformed", {
   )
 })
 
-test_that("the refusal names the call, the value and not the `$` operator", {
+test_that("bad file records name the reader and bad in-memory records name replay", {
   master <- prv_master(panel_stage = 2)
   path <- prv_file(master)
   number <- prv_replace_record(path, "3")
@@ -492,7 +492,17 @@ test_that("the refusal names the call, the value and not the `$` operator", {
   expect_match(message, "is not a record", fixed = TRUE)
   expect_match(message, "carries 3 where", fixed = TRUE)
   expect_no_match(message, "$ operator", fixed = TRUE)
-  expect_identical(as.character(conditionCall(err)[[1]]), "replay_design")
+  # read_design() now rejects this while evaluating replay_design()'s x
+  # argument. It must name the same boundary as a direct read.
+  expect_identical(as.character(conditionCall(err)[[1]]), "read_design")
+  direct <- tryCatch(read_design(number),
+    samplyr_error_panel_record_malformed = function(cnd) cnd)
+  expect_identical(as.character(conditionCall(direct)[[1]]), "read_design")
+
+  attr(master, "metadata")$panel_assignment <- 3L
+  in_memory <- tryCatch(replay_design(master, prv_frame()),
+    samplyr_error_panel_record_malformed = function(cnd) cnd)
+  expect_identical(as.character(conditionCall(in_memory)[[1]]), "replay_design")
 })
 
 test_that("in-memory paths refuse a record that is not a record", {

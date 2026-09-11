@@ -337,7 +337,50 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
     report_validation_issues(issues)
   }
 
+  for (i in seq_along(schedule$entries)) {
+    check_stage_positive_targets(
+      design, schedule$entries[[i]]$stage, effective[[i]]
+    )
+  }
+
   invisible(TRUE)
+}
+
+#' Reject deterministic exclusions without simulating a selection
+#' @noRd
+check_stage_positive_targets <- function(design, stage_idx, frame) {
+  spec <- design$stages[[stage_idx]]
+  draw <- spec$draw_spec
+  if (is_null(draw) || nrow(frame) == 0L) return(invisible(NULL))
+  # Stored certainty plans are validated by the planning bridge.
+  if (!is_null(draw$certainty_plan)) return(invisible(NULL))
+  ancestors <- collect_ancestor_cluster_vars(design, stage_idx)
+  parents <- if (length(ancestors)) split_row_indices(frame, ancestors)$indices else list(seq_len(nrow(frame)))
+  for (rows in parents) {
+    units <- frame[rows, , drop = FALSE]
+    if (!is_null(spec$clusters)) {
+      units <- units[!duplicated(units[spec$clusters$vars]), , drop = FALSE]
+    }
+    strata <- spec$strata$vars
+    groups <- if (length(strata)) split_row_indices(units, strata)$indices else list(seq_len(nrow(units)))
+    sizes <- if (length(strata)) {
+      calculate_stratum_sizes(stratum_info_from_groups(units, strata, groups), spec$strata, draw)$.n_h
+    } else {
+      draw$n %||% round_sample_size(nrow(units) * draw$frac, draw$round %||% "up")
+    }
+    if (is_null(draw$certainty_size) && is_null(draw$certainty_prop)) next
+    lookup <- prepare_stratum_draw_lookup(draw, strata)
+    for (j in seq_along(groups)) {
+      pool <- units[groups[[j]], , drop = FALSE]
+      pool_draw <- if (length(strata)) resolve_stratum_draw_spec(
+        draw, pool[1, strata, drop = FALSE], strata,
+        make_group_key(pool[1, strata, drop = FALSE], strata), lookup
+      ) else draw
+      identify_certainty(pool[[draw$mos]], sizes[j],
+        pool_draw$certainty_size, pool_draw$certainty_prop)
+    }
+  }
+  invisible(NULL)
 }
 
 #' Require cluster-level design variables to be constant within each unit

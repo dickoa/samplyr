@@ -42,6 +42,7 @@ Suggests:
    roxygen2,
    sampling,
    survey,
+   svrep (>= 0.9.1),
    srvyr
 Config/testthat/edition: 3
 VignetteBuilder: knitr

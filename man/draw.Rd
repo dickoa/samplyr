@@ -84,7 +84,8 @@ for reliable subgroup estimates. A \code{min_n} above a stratum's population
 is structurally capped at that population for without-replacement
 designs, which makes the stratum a census. Only applies when
 stratification with an allocation method is used. Default is \code{NULL}
-(no minimum).}
+(no minimum). Allocations that give a nonempty stratum zero units
+are refused. Use \code{min_n = 1} to request positive allocations explicitly.}
 
 \item{max_n}{Maximum sample size per stratum. When an allocation method
 would assign more than \code{max_n} units to a stratum, that stratum is
@@ -222,12 +223,17 @@ recomputed and the check is repeated until no new units qualify.
 Mutually exclusive with \code{certainty_size}.}
 
 \item{certainty_overflow}{Controls behavior when certainty units exceed the
-target sample size \code{n}. One of:
+target sample size in a sampling pool (a stratum within its parent, when
+applicable). One of:
 \itemize{
 \item \code{"error"} (default): Stop with an informative error.
-\item \code{"allow"}: Return all certainty units with stage weight 1, even if the
-resulting sample has more than \code{n} units.
-}}
+\item \code{"allow"}: Permit a census above the target only when every unit in
+that pool is certain. All units in the pool receive stage weight 1.
+}
+
+Under either setting, certainty units that exactly exhaust or exceed
+the target are refused if any noncertainty units remain in the pool,
+because those units would have zero inclusion probability.}
 
 \item{on_empty}{Behavior when a random-size method (\code{bernoulli},
 \code{pps_poisson}, or a custom method registered with
@@ -296,22 +302,24 @@ Certainty selection is only available for WOR PPS methods (\code{pps_systematic}
 (\code{pps_multinomial}) and PMR methods (\code{pps_chromy}) handle large units
 natively through their hit mechanism.
 
-When \code{certainty_overflow = "allow"}, if more units qualify for certainty
-selection than the requested \code{n}, all certainty units are returned with
-probability 1 (stage weight = 1). No probabilistic sampling is performed in
-this case. The resulting sample size will be the number of certainty
-units, which exceeds \code{n}. In multi-stage designs, the final \code{.weight} can
-still exceed 1 because it compounds all stage weights.
+\code{certainty_overflow = "allow"} permits an all-certainty census of a
+sampling pool even when its size exceeds the requested target. Every unit
+in that pool is returned with probability 1 (stage weight = 1).
+The option does not permit leaving noncertainty units with zero inclusion
+probability, including when the certainty count exactly equals the target.
+In multi-stage designs, the final \code{.weight} can still exceed 1 because it
+compounds all stage weights.
 
-\strong{Certainty with \code{pps_poisson} and user-supplied \code{frac}.} For
-\code{pps_poisson}, the probabilistic remainder reuses the user-supplied
-\code{frac} against the \emph{remaining} (non-certainty) units. That is,
-\eqn{\pi_i = \text{frac} \cdot \text{mos}_i \cdot N_r / \sum_{r}\text{mos}_r}{pi_i = frac * mos_i * N_r / sum_r(mos_r)}
-for the \eqn{N_r} remaining units, so the expected total sample size is
-\eqn{n_{\mathrm{cert}} + \text{frac} \cdot N_r}{n_cert + frac * N_r}
-rather than \eqn{\text{frac} \cdot N}{frac * N}. If you need the
-expected total to track \code{frac * N}, pass an expected \code{n} instead and
-let samplyr derive the remaining fraction as \code{(n - n_cert) / N_r}.
+\strong{Certainty with \code{pps_poisson}.} Both \code{n} and \code{frac} specify a target
+expected total that includes certainty units. A fraction gives the
+unrounded target \code{frac * N} over the original pool. After selecting
+\code{n_cert} certainty units, the remaining probabilities are
+\code{pmin(1, (target - n_cert) * mos / sum(mos))}, using only the remaining
+units' sizes. Thus \code{n = 5} and \code{frac = 0.5} on ten units give the same
+probabilities, including when a certainty rule is active. Clipping a
+probability at one does not redistribute the excess to other units, so
+the actual expected size can be smaller than the target. \code{\link[=frame_summary]{frame_summary()}}
+reports both \code{n_target} and \code{n_expected}.
 }
 
 \subsection{Control sorting}{

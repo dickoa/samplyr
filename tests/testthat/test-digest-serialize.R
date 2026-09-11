@@ -424,6 +424,11 @@ test_that("probabilities round-trips and is enforced past draw", {
   # legitimately written file.
   payload <- jsonlite::fromJSON(bare_json, simplifyVector = FALSE)
   payload$tools$samplyr$design$stages[[1]]$method$probabilities <- "unknown"
+  expect_error(
+    read_design(jsonlite::toJSON(payload, auto_unbox = TRUE, na = "null")),
+    "probability quality disagree"
+  )
+  payload$design$stages[[1]]$draw$method$probability_quality <- "unknown"
   tampered <- read_design(
     jsonlite::toJSON(payload, auto_unbox = TRUE, na = "null")
   )

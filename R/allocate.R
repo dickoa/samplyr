@@ -682,5 +682,20 @@ calculate_stratum_sizes <- function(
       }
     )
   }
+  # A rounded random-size fraction still supplies a positive probability.
+  zero <- stratum_info$.N_h > 0 & stratum_info$.n_h <= 0
+  if (is_random_size_method(draw_spec) && !is_null(frac)) {
+    zero[] <- FALSE
+  }
+  if (any(zero)) {
+    abort_samplyr(
+      c(
+        "Allocation gives zero inclusion probability to nonempty strata.",
+        "x" = "Zero allocation for: {.val {format_key_labels(stratum_info[zero, , drop = FALSE], strata_spec$vars)}}.",
+        "i" = "Increase the total sample size or use {.code min_n = 1} for allocation. To exclude a population deliberately, restrict the frame before sampling."
+      ),
+      class = "samplyr_error_zero_allocation"
+    )
+  }
   stratum_info
 }

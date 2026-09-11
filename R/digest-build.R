@@ -697,7 +697,7 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
 #' first-order chances. Errors when the chance is not deterministic
 #' from (method, mos, n, frac).
 #' @noRd
-resolve_pool_chance <- function(draw_spec, mos_vals, N) {
+resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL) {
   if (identical(draw_spec$method_probabilities, "unknown")) {
     stop(
       "the registered method declares its selection probabilities ",
@@ -710,9 +710,12 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N) {
 
   n <- draw_spec$n
   frac <- draw_spec$frac
-  if (is_null(n) && !is_null(frac) &&
-        !method %in% c("bernoulli", "pps_poisson")) {
-    n <- round_sample_size(N * frac, draw_spec$round %||% "up")
+  if (is_null(n) && !is_null(frac)) {
+    n <- if (method %in% c("bernoulli", "pps_poisson")) {
+      N * frac
+    } else {
+      round_sample_size(N * frac, draw_spec$round %||% "up")
+    }
   }
   n_target <- if (
     random_size && !is.null(frac) &&
@@ -764,16 +767,21 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N) {
   }
 
   has_cert <- !is_null(draw_spec$certainty_size) ||
-    !is_null(draw_spec$certainty_prop)
+    !is_null(draw_spec$certainty_prop) || !is_null(draw_spec$certainty_ids)
   if (!has_cert) {
     return(list(chance = base_chance(mos_vals, n, N), n_target = n_target))
   }
 
+  if (identical(method, "pps_poisson")) {
+    n <- min(n_target, N)
+    frac <- NULL
+  }
   cert <- identify_certainty(
     mos_vals = mos_vals,
     n = n,
     certainty_size = draw_spec$certainty_size,
-    certainty_prop = draw_spec$certainty_prop
+    certainty_prop = draw_spec$certainty_prop,
+    forced_idx = forced_idx
   )
   if (
     cert$n_remaining < 0 &&
@@ -960,6 +968,7 @@ exante_digest <- function(design, frame,
     frame_index_by_stage[[stage]] <- schedule$entries[[i]]$frame_index
   }
 
+  validate_certainty_bridge(design, schedule, call = call)
   # Fingerprint supplied rather than inherited columns.
   input_frames_by_stage <- supplied$frames[frame_index_by_stage]
 
@@ -1049,7 +1058,8 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
 
   if (
     is_null(strata_vars) &&
-      is_null(draw_spec$n) && is_null(draw_spec$frac)
+      is_null(draw_spec$n) && is_null(draw_spec$frac) &&
+      !identical(draw_spec$certainty_plan$role, "take")
   ) {
     cli_abort("Cannot determine sample size", call = NULL)
   }
@@ -1082,7 +1092,10 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
     mos_vals <- if (!is_null(draw_spec$mos)) {
       frame[[draw_spec$mos]][urows]
     }
-    resolved <- resolve_pool_chance(pool_spec, mos_vals, length(urows))
+    forced_idx <- if (!is_null(pool_spec$certainty_ids)) {
+      which(frame[[pool_spec$certainty_plan$id_var]][urows] %in% pool_spec$certainty_ids)
+    } else NULL
+    resolved <- resolve_pool_chance(pool_spec, mos_vals, length(urows), forced_idx)
     pools_acc[[length(pools_acc) + 1L]] <<- list(
       parent = parent,
       first_row = urows[1],
@@ -1098,6 +1111,7 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
 
   for (g in seq_along(parent_groups)) {
     rows <- parent_groups[[g]]
+    parent_draw <- resolve_parent_draw_spec(draw_spec, frame[rows, , drop = FALSE])
     if (is_cluster) {
       ckeys <- digest_path_keys(
         frame, rows, c(ancestor_vars, cluster_vars)
@@ -1116,7 +1130,7 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
 
     if (is_null(strata_vars)) {
       add_pool(
-        parent_ids[g], unit_rows, draw_spec, n_desc, unit_keys,
+        parent_ids[g], unit_rows, parent_draw, n_desc, unit_keys,
         rows = rows,
         row_units = if (is_cluster) match(ckeys, unit_keys) else seq_along(rows)
       )
@@ -1131,7 +1145,7 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
       frame, strata_vars,
       lapply(sgroups, function(ix) unit_rows[ix])
     )
-    info <- calculate_stratum_sizes(info, strata_spec, draw_spec)
+    info <- calculate_stratum_sizes(info, strata_spec, parent_draw)
     info_keys <- make_group_key(info, strata_vars)
 
     for (s in seq_along(sgroups)) {
@@ -1139,7 +1153,7 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
       key_row <- frame[urows[1], strata_vars, drop = FALSE]
       skey <- make_group_key(key_row, strata_vars)
       pool_spec <- resolve_stratum_draw_spec(
-        draw_spec,
+        parent_draw,
         keys = key_row,
         strata_vars = strata_vars,
         stratum_key = skey,

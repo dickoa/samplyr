@@ -1,0 +1,189 @@
+---
+title: "Select a Three-Stage Household Sample"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Select a Three-Stage Household Sample}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(samplyr)
+library(dplyr)
+```
+
+## The selection task
+
+Select communes within regions, enumeration areas (EAs) within those communes,
+and households within those EAs. The first two stages use PPS without
+replacement and the last uses simple random sampling without replacement.
+Selection pauses while the household listing is prepared, then continues
+under the same design.
+
+We use `bfa_eas`, the package's derived Burkina Faso frame. Its modeled EAs,
+household counts and historical administrative labels are teaching inputs.
+They are not a current official household register. Household listings and
+interview outcomes below are explicitly synthetic.
+
+## Give each register its own sampling unit and MOS
+
+```{r registers}
+library(dplyr)
+ea_register <- bfa_eas |>
+  mutate(
+    region,
+    commune_id = paste(region, province, commune, sep = "/"),
+    ea_id,
+    ea_households = households,
+    .keep = "none"
+  )
+
+commune_register <- ea_register |>
+  summarise(commune_households = sum(ea_households),
+            .by = c(region, commune_id))
+
+head(commune_register, 3)
+head(ea_register, 3)
+```
+
+| Register                  | One row represents           | Key                                      | Measure of size                            |
+|---------------------------|------------------------------|------------------------------------------|--------------------------------------------|
+| `commune_register`        | A commune                    | `commune_id`, qualified by its geography | Sum of EA household counts in that commune |
+| `ea_register`             | An EA                        | `ea_id`, with its parent `commune_id`    | That EA's modeled household count          |
+| `household_listing` below | A household in a selected EA | `ea_id` and local `hh_id`                | None: equal-probability sampling           |
+
+MOS belongs to the unit being selected. A commune's total must not vary across
+its EA rows if using one shared hierarchy. Separate registers make the two
+levels explicit. Their order in `execute()` determines their stage mapping.
+Names on a list are labels, not a join specification.
+
+## Declare all three stages
+
+```{r design}
+library(samplyr)
+household_design <- sampling_design("Three-stage household survey") |>
+  add_stage("Communes") |>
+    stratify_by(region) |>
+    cluster_by(commune_id) |>
+    draw(n = 4, method = "pps_brewer", mos = commune_households) |>
+  add_stage("EAs") |>
+    cluster_by(ea_id) |>
+    draw(n = 3, method = "pps_brewer", mos = ea_households) |>
+  add_stage("Households") |>
+    draw(n = 12)
+
+household_design
+```
+
+The scopes are four communes **per region**, three EAs **per selected commune**,
+and twelve households **per selected EA**. There is no allocation rule at the
+first stage, so `n = 4` is per stratum. A pool smaller than its requested take
+is a census, which execution reports. Region stratification does not implicitly
+become a new stratum specification at later stages.
+
+## Select areas, then pause for listing
+
+```{r select-areas}
+selected_eas <- execute(
+  household_design,
+  list(commune_register, ea_register),
+  stages = 1:2,
+  seed = 91
+)
+
+selected_eas |>
+  as.data.frame() |>
+  count(region, name = "selected_eas")
+```
+
+The EA register covers all communes and execution restricts it to the selected
+parents. The retained object contains the two completed stages and their
+weights. It is the starting point for continuation.
+
+In fieldwork, a listing team enumerates households in the selected EAs. Here
+we create artificial listings whose lengths equal the modeled counts. This
+creates identifiers, not observed household records, and expands only the
+selected EAs.
+
+```{r listing}
+library(tidyr)
+household_listing <- selected_eas |>
+  as.data.frame() |>
+  select(commune_id, ea_id, ea_households) |>
+  uncount(ea_households, .id = "hh_id")
+
+stopifnot(!anyDuplicated(household_listing[c("ea_id", "hh_id")]))
+head(household_listing, 3)
+```
+
+Converting to a plain data frame is intentional here: a listing enumerates
+candidates for the next stage. It is not an expanded final sample for analysis.
+The parent EA disambiguates local household IDs that repeat across EAs.
+
+```{r select-households}
+issued <- execute(selected_eas, household_listing, seed = 92)
+
+issued |>
+  as.data.frame() |>
+  select(commune_id, ea_id, hh_id, .weight_1, .weight_2, .weight_3, .weight) |>
+  head(4)
+
+stopifnot(isTRUE(all.equal(
+  issued$.weight,
+  issued$.weight_1 * issued$.weight_2 * issued$.weight_3
+)))
+frame_summary(issued)
+```
+
+The final weight is the reciprocal of the product of the three conditional
+selection probabilities. Continuation retains the earlier factors. Starting
+a new design on `selected_eas` would instead declare a new sampling phase.
+The two seeds above specify separate reproducible randomization steps. Matching
+a one-call execution exactly would require the same uninterrupted RNG stream.
+
+## Join observations and hand off to analysis
+
+All issued households respond in this example. The artificial consumption
+values illustrate a collected outcome that was absent from the sampling frames.
+
+```{r observations}
+set.seed(93)
+interviews <- issued |>
+  as.data.frame() |>
+  mutate(ea_id, hh_id,
+         consumption = round(rlnorm(n(), log(100000), 0.5)),
+         .keep = "none")
+
+observed <- issued |>
+  left_join(interviews, by = c("ea_id", "hh_id"), relationship = "one-to-one")
+stopifnot(nrow(observed) == nrow(issued))
+```
+
+With real missing responses, retain the issued rows and join response
+indicators and measurements to them. Sampling weights describe selection.
+Removing nonrespondents does not perform response adjustment. The analyst
+chooses and justifies that adjustment downstream in `survey` or another
+analysis package.
+
+```{r analysis}
+linearized <- as_svydesign(observed)
+survey::svymean(~consumption, linearized)
+```
+
+This export uses Brewer's variance approximation for the PPS stages. Exact
+first-order probabilities do not make that variance approximation exact.
+An optional alternative uses svrep's RWYB replicates, also approximate for
+PPS without replacement:
+
+```{r replication, eval=requireNamespace("svrep", quietly=TRUE)}
+set.seed(94)
+replicated <- as_svrepdesign(observed, type = "rwyb", replicates = 500)
+survey::svymean(~consumption, replicated)
+```
+
+The warning describes the PPS approximation. Increasing the number of
+replicates reduces simulation error, not error in the variance approximation.
+Continue with `vignette("survey-analysis")` for outcome joins, domains and
+other analysis designs. Use `?selection-methods` for a compact comparison of
+selection and inference support.

@@ -591,7 +591,7 @@ test_that("single-stage pps_poisson SE matches HT-Poisson formula", {
   expect_equal(unname(survey::SE(est)[1]), manual_se, tolerance = 1e-6)
 })
 
-test_that("multi-stage with bernoulli at stage 2 (with cluster_by) uses Inf FPC at that stage", {
+test_that("multi-stage with bernoulli at stage 2 refuses invalid linearization", {
   skip_if_not_installed("survey")
 
   frame <- data.frame(
@@ -609,10 +609,7 @@ test_that("multi-stage with bernoulli at stage 2 (with cluster_by) uses Inf FPC 
       draw(frac = 0.5, method = "bernoulli") |>
     execute(frame, seed = 21)
 
-  svy <- as_svydesign(s)
-  expect_s3_class(svy, "survey.design2")
-  expect_true(".fpc_inf_2" %in% names(svy$variables))
-  expect_true(all(svy$variables$.fpc_inf_2 == Inf))
+  expect_error(as_svydesign(s), class = "samplyr_error_multistage_poisson_later")
 })
 
 test_that("multi-stage with bernoulli at stage 1 errors with samplyr_error_multistage_poisson_stage1", {
@@ -654,61 +651,14 @@ test_that("clustered single-stage bernoulli with multi-row clusters errors", {
   )
 })
 
-test_that("as_svrepdesign(subbootstrap) is the escape hatch for multi-stage stage-1 bernoulli", {
+test_that("generic bootstrap methods refuse Poisson sampling", {
   skip_if_not_installed("survey")
-
-  frame <- data.frame(
-    psu = rep(seq_len(50), each = 10),
-    id  = seq_len(500),
-    y   = rnorm(500)
-  )
-
-  s <- sampling_design() |>
-    add_stage() |>
-      cluster_by(psu) |>
-      draw(frac = 0.4, method = "bernoulli") |>
-    add_stage() |>
-      draw(n = 4) |>
-    execute(frame, seed = 24)
-
-  # survey drops the (correctly exported) stage-2 FPC when
-  # bootstrapping at stage 1; the warning is informative, not an error.
-  expect_warning(
-    rep_svy <- as_svrepdesign(s, type = "subbootstrap"),
-    "Finite population corrections"
-  )
-  expect_s3_class(rep_svy, "svyrep.design")
-
-  est <- survey::svytotal(~y, rep_svy)
-  expect_true(is.finite(survey::SE(est)[1]))
-})
-
-test_that("as_svrepdesign(subbootstrap) is the escape hatch for clustered single-stage bernoulli", {
-  skip_if_not_installed("survey")
-
-  s <- sampling_design() |>
-    cluster_by(cluster) |>
-    draw(frac = 0.3, method = "bernoulli") |>
-    execute(test_frame, seed = 25)
-
-  rep_svy <- as_svrepdesign(s, type = "subbootstrap")
-  expect_s3_class(rep_svy, "svyrep.design")
-})
-
-test_that("as_svrepdesign warns and may fail for non-bootstrap types on bernoulli", {
-  skip_if_not_installed("survey")
-
-  s <- sampling_design() |>
-    draw(frac = 0.3, method = "bernoulli") |>
-    execute(test_frame, seed = 26)
-
-  expect_warning(
-    tryCatch(
-      as_svrepdesign(s, type = "bootstrap"),
-      samplyr_error_svrep_conversion_failed = function(e) NULL
-    ),
-    "may not work for unequal-probability"
-  )
+  s <- sampling_design() |> cluster_by(cluster) |>
+    draw(frac = 0.3, method = "bernoulli") |> execute(test_frame, seed = 25)
+  for (type in c("bootstrap", "subbootstrap", "mrbbootstrap")) {
+    expect_error(as_svrepdesign(s, type = type),
+      class = "samplyr_error_poisson_replicates")
+  }
 })
 
 test_that("as_survey_design returns a tbl_svy for single-stage bernoulli", {

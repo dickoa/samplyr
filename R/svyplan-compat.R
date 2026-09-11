@@ -595,6 +595,23 @@ check_certainty_plan_disagreement <- function(
   invisible(NULL)
 }
 
+#' Resolve the per-parent take identically for execution and previews
+#' @noRd
+resolve_parent_draw_spec <- function(draw_spec, data, call = caller_env()) {
+  plan <- draw_spec$certainty_plan
+  if (!identical(plan$role, "take")) return(draw_spec)
+  ids <- unique(as.character(data[[plan$id_var]]))
+  at <- match(ids, plan$register$psu_id)
+  if (length(ids) != 1L || anyNA(at)) {
+    abort_samplyr(
+      "The take pool must identify exactly one PSU in the certainty plan's register.",
+      class = "samplyr_error_svyplan_certainty_plan", call = call
+    )
+  }
+  draw_spec$n <- as.numeric(plan$register$n_take[at])
+  draw_spec
+}
+
 #' Reconcile the execution frame against a certainty plan's register
 #'
 #' The plan was solved for one register. A frame that disagrees on the PSU

@@ -1,0 +1,3316 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "samplyr design document",
+  "description": "Bundled schema revision 1. Generated from the samplyr source repository. Do not edit by hand. No remote references.",
+  "$ref": "#/definitions/design_document",
+  "definitions": {
+    "control": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "ascending",
+            "descending",
+            "serpentine"
+          ]
+        },
+        "variables": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "type",
+        "variables"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "ascending",
+                  "descending"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "variables": {
+                "maxItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "method": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "algorithm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "replacement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sample_size": {
+          "type": "string",
+          "minLength": 1
+        },
+        "probabilities": {
+          "type": "string",
+          "minLength": 1
+        },
+        "probability_quantity": {
+          "enum": [
+            "inclusion_probability",
+            "expected_hits"
+          ]
+        },
+        "probability_quality": {
+          "enum": [
+            "exact",
+            "approximate",
+            "unknown"
+          ]
+        },
+        "standards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "vocabulary": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uri": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "vocabulary",
+              "version",
+              "code",
+              "uri"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "family",
+        "algorithm",
+        "replacement",
+        "sample_size",
+        "probabilities",
+        "probability_quantity",
+        "probability_quality"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "simple_random_without_replacement"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "simple_random_without_replacement"
+              },
+              "family": {
+                "const": "equal_probability"
+              },
+              "algorithm": {
+                "const": "simple_random"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "equal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "simple_random_with_replacement"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "simple_random_with_replacement"
+              },
+              "family": {
+                "const": "equal_probability"
+              },
+              "algorithm": {
+                "const": "simple_random"
+              },
+              "replacement": {
+                "const": "with_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "equal"
+              },
+              "probability_quantity": {
+                "const": "expected_hits"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "systematic_equal_probability"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "systematic_equal_probability"
+              },
+              "family": {
+                "const": "equal_probability"
+              },
+              "algorithm": {
+                "const": "systematic"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "equal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "bernoulli"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "bernoulli"
+              },
+              "family": {
+                "const": "equal_probability"
+              },
+              "algorithm": {
+                "const": "bernoulli"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "random"
+              },
+              "probabilities": {
+                "const": "equal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "systematic_probability_proportional_to_size"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "systematic_probability_proportional_to_size"
+              },
+              "family": {
+                "const": "probability_proportional_to_size"
+              },
+              "algorithm": {
+                "const": "systematic"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "unequal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "generalized_brewer_probability_proportional_to_size"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "generalized_brewer_probability_proportional_to_size"
+              },
+              "family": {
+                "const": "probability_proportional_to_size"
+              },
+              "algorithm": {
+                "const": "generalized_brewer"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "unequal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "conditional_poisson"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "conditional_poisson"
+              },
+              "family": {
+                "const": "probability_proportional_to_size"
+              },
+              "algorithm": {
+                "const": "conditional_poisson"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "unequal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "sampford"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "sampford"
+              },
+              "family": {
+                "const": "probability_proportional_to_size"
+              },
+              "algorithm": {
+                "const": "sampford"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "unequal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "poisson_probability_proportional_to_size"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "poisson_probability_proportional_to_size"
+              },
+              "family": {
+                "const": "probability_proportional_to_size"
+              },
+              "algorithm": {
+                "const": "poisson"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "random"
+              },
+              "probabilities": {
+                "const": "unequal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "sequential_poisson"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "sequential_poisson"
+              },
+              "family": {
+                "const": "probability_proportional_to_size"
+              },
+              "algorithm": {
+                "const": "sequential_poisson"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "unequal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "approximate"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "pareto"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "pareto"
+              },
+              "family": {
+                "const": "probability_proportional_to_size"
+              },
+              "algorithm": {
+                "const": "pareto"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "unequal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "approximate"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "multinomial_probability_proportional_to_size"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "multinomial_probability_proportional_to_size"
+              },
+              "family": {
+                "const": "probability_proportional_to_size"
+              },
+              "algorithm": {
+                "const": "multinomial"
+              },
+              "replacement": {
+                "const": "with_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "unequal"
+              },
+              "probability_quantity": {
+                "const": "expected_hits"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "chromy_minimum_replacement"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "chromy_minimum_replacement"
+              },
+              "family": {
+                "const": "probability_proportional_to_size"
+              },
+              "algorithm": {
+                "const": "chromy"
+              },
+              "replacement": {
+                "const": "minimum_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "unequal"
+              },
+              "probability_quantity": {
+                "const": "expected_hits"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "cube_balanced"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "cube_balanced"
+              },
+              "family": {
+                "const": "balanced"
+              },
+              "algorithm": {
+                "const": "cube"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "equal_or_unequal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "local_pivotal"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "local_pivotal"
+              },
+              "family": {
+                "const": "spatially_balanced"
+              },
+              "algorithm": {
+                "const": "local_pivotal"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "equal_or_unequal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "spatially_correlated_poisson"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "spatially_correlated_poisson"
+              },
+              "family": {
+                "const": "spatially_balanced"
+              },
+              "algorithm": {
+                "const": "spatially_correlated_poisson"
+              },
+              "replacement": {
+                "const": "without_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "equal_or_unequal"
+              },
+              "probability_quantity": {
+                "const": "inclusion_probability"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "certainty_plan": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "enum": [
+            "select",
+            "take"
+          ]
+        },
+        "register": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "psu_id": {
+                "type": [
+                  "number",
+                  "string"
+                ]
+              },
+              "stratum": {
+                "type": [
+                  "number",
+                  "string"
+                ]
+              },
+              "N": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "certainty": {
+                "type": "boolean"
+              },
+              "n_take": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "psu_id",
+              "stratum",
+              "N",
+              "certainty",
+              "n_take"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "n_psu_draw": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "n_per_psu": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              },
+              {
+                "type": "object",
+                "maxProperties": 0
+              }
+            ]
+          }
+        },
+        "strata_var": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id_var": {
+          "type": "string",
+          "minLength": 1
+        },
+        "svyplan_version": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        }
+      },
+      "required": [
+        "role",
+        "register",
+        "n_psu_draw",
+        "n_per_psu",
+        "strata_var",
+        "id_var"
+      ],
+      "additionalProperties": false
+    },
+    "draw": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "object",
+                  "minProperties": 1,
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "array",
+                        "maxItems": 0
+                      },
+                      {
+                        "type": "object",
+                        "maxProperties": 0
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "number",
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  },
+                  "minItems": 1
+                }
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "frac": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "object",
+                  "minProperties": 1,
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "array",
+                        "maxItems": 0
+                      },
+                      {
+                        "type": "object",
+                        "maxProperties": 0
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "number",
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  },
+                  "minItems": 1
+                }
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "min_n": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "object",
+                  "minProperties": 1,
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "array",
+                        "maxItems": 0
+                      },
+                      {
+                        "type": "object",
+                        "maxProperties": 0
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "number",
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  },
+                  "minItems": 1
+                }
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "max_n": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "object",
+                  "minProperties": 1,
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "array",
+                        "maxItems": 0
+                      },
+                      {
+                        "type": "object",
+                        "maxProperties": 0
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "number",
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  },
+                  "minItems": 1
+                }
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "certainty_size": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "object",
+                  "minProperties": 1,
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "array",
+                        "maxItems": 0
+                      },
+                      {
+                        "type": "object",
+                        "maxProperties": 0
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "number",
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  },
+                  "minItems": 1
+                }
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "certainty_prop": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "object",
+                  "minProperties": 1,
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "array",
+                        "maxItems": 0
+                      },
+                      {
+                        "type": "object",
+                        "maxProperties": 0
+                      }
+                    ]
+                  }
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "string",
+                        "number",
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  },
+                  "minItems": 1
+                }
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "method": {
+          "$ref": "#/definitions/method"
+        },
+        "mos": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "prn": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "round": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "certainty_overflow": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "on_empty": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "aux": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 0
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "bounds": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 0
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "spread": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 0
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "control": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/control"
+              },
+              "minItems": 0
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "certainty_plan": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/certainty_plan"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        }
+      },
+      "required": [
+        "method"
+      ],
+      "additionalProperties": false
+    },
+    "stage": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "strata": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "vars": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "alloc": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "array",
+                      "maxItems": 0
+                    },
+                    {
+                      "type": "object",
+                      "maxProperties": 0
+                    }
+                  ]
+                },
+                "variance": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "object",
+                              "minProperties": 1,
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "maxItems": 0
+                                  },
+                                  {
+                                    "type": "object",
+                                    "maxProperties": 0
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "minItems": 1
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": [
+                                    "string",
+                                    "number",
+                                    "boolean",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "minItems": 1
+                            }
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "array",
+                      "maxItems": 0
+                    },
+                    {
+                      "type": "object",
+                      "maxProperties": 0
+                    }
+                  ]
+                },
+                "cost": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "object",
+                              "minProperties": 1,
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "maxItems": 0
+                                  },
+                                  {
+                                    "type": "object",
+                                    "maxProperties": 0
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "minItems": 1
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": [
+                                    "string",
+                                    "number",
+                                    "boolean",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "minItems": 1
+                            }
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "array",
+                      "maxItems": 0
+                    },
+                    {
+                      "type": "object",
+                      "maxProperties": 0
+                    }
+                  ]
+                },
+                "cv": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "object",
+                              "minProperties": 1,
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "maxItems": 0
+                                  },
+                                  {
+                                    "type": "object",
+                                    "maxProperties": 0
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "minItems": 1
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": [
+                                    "string",
+                                    "number",
+                                    "boolean",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "minItems": 1
+                            }
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "array",
+                      "maxItems": 0
+                    },
+                    {
+                      "type": "object",
+                      "maxProperties": 0
+                    }
+                  ]
+                },
+                "importance": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "object",
+                              "minProperties": 1,
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "maxItems": 0
+                                  },
+                                  {
+                                    "type": "object",
+                                    "maxProperties": 0
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "minItems": 1
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": [
+                                    "string",
+                                    "number",
+                                    "boolean",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "minItems": 1
+                            }
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "array",
+                      "maxItems": 0
+                    },
+                    {
+                      "type": "object",
+                      "maxProperties": 0
+                    }
+                  ]
+                },
+                "power": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "array",
+                      "maxItems": 0
+                    },
+                    {
+                      "type": "object",
+                      "maxProperties": 0
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "vars"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "clusters": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "vars": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                }
+              },
+              "required": [
+                "vars"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "draw": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/draw"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "fingerprint": {
+      "type": "object",
+      "properties": {
+        "row_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "column_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "enum": [
+                  "date_time",
+                  "date",
+                  "duration",
+                  "ordered_categorical",
+                  "categorical",
+                  "boolean",
+                  "integer",
+                  "number",
+                  "string",
+                  "binary",
+                  "composite",
+                  "tool_specific"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "row_count",
+        "column_count",
+        "columns"
+      ],
+      "additionalProperties": false
+    },
+    "frame": {
+      "type": "object",
+      "properties": {
+        "required_variables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "enum": [
+                  "strata",
+                  "clusters",
+                  "mos",
+                  "prn",
+                  "aux",
+                  "bounds",
+                  "spread",
+                  "control"
+                ]
+              },
+              "stage": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "name",
+              "role",
+              "stage"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "fingerprint": {
+          "$ref": "#/definitions/fingerprint"
+        },
+        "fingerprints": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/fingerprint"
+              },
+              "minItems": 1
+            },
+            {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "#/definitions/fingerprint"
+              }
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "not": {
+        "required": [
+          "fingerprint",
+          "fingerprints"
+        ]
+      }
+    },
+    "frame_schedule": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "single_frame",
+            "shared_frame",
+            "separate_frames"
+          ]
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 1
+        },
+        "stage_frame_index": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 1
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              },
+              {
+                "type": "object",
+                "maxProperties": 0
+              }
+            ]
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "mode",
+        "count",
+        "stages",
+        "stage_frame_index"
+      ],
+      "additionalProperties": false
+    },
+    "panel_assignment": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "panels": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "assignment_stage": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "block_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "r_min": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key_vars": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "pool_vars": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "control_ordered": {
+          "type": "boolean"
+        },
+        "certainty": {
+          "type": "string",
+          "minLength": 1
+        },
+        "small_pool_policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "stratum": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "class": {
+                "type": "string",
+                "minLength": 1
+              },
+              "activation": {
+                "type": "string",
+                "minLength": 1
+              },
+              "permanent_reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "keys": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 0
+              },
+              "blocks": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "minItems": 0
+              },
+              "quotas": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "minItems": 0
+                },
+                "minItems": 0
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "wave": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "panel": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "active": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "wave",
+                  "panel",
+                  "active"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        }
+      },
+      "required": [
+        "algorithm",
+        "version",
+        "panels"
+      ],
+      "additionalProperties": false
+    },
+    "wave_pool": {
+      "type": "object",
+      "properties": {
+        "stratum": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "activation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "permanent_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 0
+        },
+        "take": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 0
+        },
+        "probability": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "wave": {
+      "type": "object",
+      "properties": {
+        "wave": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "active_panels": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 0
+        },
+        "schedule_digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/wave_pool"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "wave",
+        "active_panels"
+      ],
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "stages_executed": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 1
+        },
+        "n_selected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "executed_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "replicate_seeds": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 0
+        },
+        "panels": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "panel_assignment": {
+          "$ref": "#/definitions/panel_assignment"
+        },
+        "frames": {
+          "$ref": "#/definitions/frame_schedule"
+        },
+        "wave": {
+          "$ref": "#/definitions/wave"
+        },
+        "chained": {
+          "type": "boolean"
+        },
+        "modified": {
+          "type": "boolean"
+        },
+        "frame_digest": {}
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "tool_method": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "registry_type": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "fixed_size": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "variance_family": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "probabilities": {
+          "anyOf": [
+            {
+              "enum": [
+                "exact",
+                "approximate",
+                "unknown"
+              ]
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "implementation": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "tool_frame": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "class": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 0
+              }
+            },
+            "required": [
+              "name",
+              "class"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "hash": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "frames": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/tool_frame"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "samplyr_tool": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "dependencies": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "design": {
+          "type": "object",
+          "properties": {
+            "stages": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "method": {
+                        "$ref": "#/definitions/tool_method"
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "array",
+                    "maxItems": 0
+                  }
+                ]
+              },
+              "minItems": 0
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "frame": {
+          "$ref": "#/definitions/tool_frame"
+        },
+        "execution": {
+          "type": "object",
+          "properties": {
+            "environment": {
+              "type": "object",
+              "properties": {
+                "language": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "version": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false
+                },
+                "packages": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "rng": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "normal_kind": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "sample_kind": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "design_document": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "samplyr/design"
+        },
+        "format_version": {
+          "const": 3
+        },
+        "schema": {
+          "type": "object",
+          "properties": {
+            "method_vocabulary": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "const": "samplyr/common-sampling-method"
+                },
+                "version": {
+                  "const": 2
+                }
+              },
+              "required": [
+                "id",
+                "version"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "method_vocabulary"
+          ],
+          "additionalProperties": false
+        },
+        "design": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                {
+                  "type": "object",
+                  "maxProperties": 0
+                }
+              ]
+            },
+            "stages": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/stage"
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "stages"
+          ],
+          "additionalProperties": false
+        },
+        "frame": {
+          "$ref": "#/definitions/frame"
+        },
+        "execution": {
+          "$ref": "#/definitions/execution"
+        },
+        "annotations": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "tools": {
+          "type": "object",
+          "properties": {
+            "samplyr": {
+              "$ref": "#/definitions/samplyr_tool"
+            }
+          },
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "required_extensions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "maxItems": 0
+        }
+      },
+      "required": [
+        "format",
+        "format_version",
+        "schema",
+        "design"
+      ],
+      "additionalProperties": false
+    },
+    "component": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "samplyr/design"
+        },
+        "format_version": {
+          "const": 3
+        },
+        "schema": {
+          "type": "object",
+          "properties": {
+            "method_vocabulary": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "const": "samplyr/common-sampling-method"
+                },
+                "version": {
+                  "const": 2
+                }
+              },
+              "required": [
+                "id",
+                "version"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "method_vocabulary"
+          ],
+          "additionalProperties": false
+        },
+        "design": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                {
+                  "type": "object",
+                  "maxProperties": 0
+                }
+              ]
+            },
+            "stages": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/stage"
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "stages"
+          ],
+          "additionalProperties": false
+        },
+        "frame": {
+          "$ref": "#/definitions/frame"
+        },
+        "execution": {
+          "$ref": "#/definitions/execution"
+        },
+        "annotations": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "tools": {
+          "type": "object",
+          "properties": {
+            "samplyr": {
+              "$ref": "#/definitions/samplyr_tool"
+            }
+          },
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "required_extensions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "maxItems": 0
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "membership": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "format",
+        "format_version",
+        "schema",
+        "design",
+        "name",
+        "membership"
+      ],
+      "additionalProperties": false
+    },
+    "overlaps": {
+      "type": "object",
+      "properties": {
+        "cols": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "scale": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "cols",
+        "scale"
+      ],
+      "additionalProperties": false
+    },
+    "stack_document": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "samplyr/frame-stack"
+        },
+        "format_version": {
+          "const": 1
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/component"
+          },
+          "minItems": 1
+        },
+        "overlaps": {
+          "$ref": "#/definitions/overlaps"
+        },
+        "annotations": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "tools": {
+          "type": "object",
+          "properties": {
+            "samplyr": {
+              "$ref": "#/definitions/samplyr_tool"
+            }
+          },
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "required_extensions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "maxItems": 0
+        }
+      },
+      "required": [
+        "format",
+        "format_version",
+        "key",
+        "components"
+      ],
+      "additionalProperties": false
+    },
+    "integrity": {
+      "type": "object",
+      "properties": {
+        "n_rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cols": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "hash": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "n_rows",
+        "cols",
+        "hash"
+      ],
+      "additionalProperties": false
+    },
+    "transformation": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "const": "generalized_weight_share"
+        },
+        "version": {
+          "const": 1
+        },
+        "by": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "to": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "within": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "enum": [
+                "cluster",
+                "singleton",
+                "extended"
+              ]
+            },
+            "col": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                {
+                  "type": "object",
+                  "maxProperties": 0
+                }
+              ]
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false
+        },
+        "multiplicity": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "enum": [
+                "supplied",
+                "complete_links",
+                "weighted_links",
+                "complete_weighted_links"
+              ]
+            },
+            "scale": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "binary",
+                    "quantitative"
+                  ]
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                {
+                  "type": "object",
+                  "maxProperties": 0
+                }
+              ]
+            },
+            "col": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                {
+                  "type": "object",
+                  "maxProperties": 0
+                }
+              ]
+            },
+            "total_col": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                {
+                  "type": "object",
+                  "maxProperties": 0
+                }
+              ]
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false
+        },
+        "target_scope": {
+          "enum": [
+            "reached",
+            "population"
+          ]
+        },
+        "source_integrity": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/integrity"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "result_integrity": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/integrity"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        }
+      },
+      "required": [
+        "algorithm",
+        "version",
+        "by",
+        "to",
+        "within",
+        "multiplicity",
+        "target_scope"
+      ],
+      "additionalProperties": false
+    },
+    "shared_document": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "samplyr/shared-sample"
+        },
+        "format_version": {
+          "const": 1
+        },
+        "source": {
+          "$ref": "#/definitions/design_document"
+        },
+        "transformation": {
+          "$ref": "#/definitions/transformation"
+        },
+        "annotations": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "tools": {
+          "type": "object",
+          "properties": {
+            "samplyr": {
+              "$ref": "#/definitions/samplyr_tool"
+            }
+          },
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "required_extensions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "maxItems": 0
+        }
+      },
+      "required": [
+        "format",
+        "format_version",
+        "source",
+        "transformation"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

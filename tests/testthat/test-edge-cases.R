@@ -98,24 +98,10 @@ test_that("stratified sampling handles single-unit strata", {
   expect_equal(sum(result$region == "B"), 1)
 })
 
-test_that("proportional allocation with tiny stratum may give zero without min_n", {
-  frame <- data.frame(
-    id = 1:101,
-    region = c("A", rep("B", 100)) # A has ~1%, B has ~99%
-  )
-
-  # Proportional allocation of n=10: A gets 10 * (1/101) = 0.099
-  result <- sampling_design() |>
-    stratify_by(region, alloc = "proportional") |>
-    draw(n = 10) |>
-    execute(frame, seed = 42)
-
-  # Total should be 10
-  expect_equal(nrow(result), 10)
-
-  # Document behavior: tiny stratum may get 0
-  n_from_A <- sum(result$region == "A")
-  expect_true(n_from_A >= 0 && n_from_A <= 1)
+test_that("proportional allocation refuses to silently exclude a tiny stratum", {
+  frame <- data.frame(id = 1:101, region = c("A", rep("B", 100)))
+  design <- sampling_design() |> stratify_by(region, alloc = "proportional") |> draw(n = 10)
+  expect_error(execute(design, frame, seed = 42), class = "samplyr_error_zero_allocation")
 })
 
 test_that("proportional allocation respects min_n for tiny strata", {
@@ -954,14 +940,13 @@ test_that("execute() errors on MOS with negative values", {
   expect_error(execute(design, frame, seed = 1), "negative")
 })
 
-test_that("pps_poisson with certainty uses frac-based pik, not inclusion_prob", {
+test_that("pps_poisson certainty counts toward the fraction's total target", {
   # Frame where one unit dominates, so certainty selection triggers
   frame <- data.frame(
     id = 1:10,
     size = c(500, rep(10, 9))
   )
-  # With frac = 0.3, non-certainty pik should be frac * mos / sum(mos) * N
-  # not sondage::inclusion_prob(mos, n) which rescales iteratively
+  # The expected total is 3, including the certainty unit.
   result <- sampling_design() |>
     draw(
       method = "pps_poisson",
@@ -975,14 +960,10 @@ test_that("pps_poisson with certainty uses frac-based pik, not inclusion_prob", 
   cert_rows <- result[result$.certainty_1 == TRUE, ]
   expect_equal(unique(cert_rows$.weight_1), 1)
 
-  # Non-certainty units: pik = frac * mos / sum(remaining_mos) * N_remaining
-  # = 0.3 * 10 / 90 * 9 = 0.3, so weight = 1/0.3 = 10/3
+  # The two remaining expected selections are spread over nine equal units.
   non_cert <- result[result$.certainty_1 == FALSE, ]
-  if (nrow(non_cert) > 0) {
-    # All non-certainty units have equal size, so equal weights
-    expect_equal(length(unique(round(non_cert$.weight_1, 10))), 1)
-    expect_equal(non_cert$.weight_1[1], 1 / 0.3, tolerance = 1e-10)
-  }
+  expect_gt(nrow(non_cert), 0)
+  expect_equal(non_cert$.weight_1, rep(9 / 2, nrow(non_cert)))
 })
 
 test_that("WR weights produce correct Hansen-Hurwitz total estimator", {

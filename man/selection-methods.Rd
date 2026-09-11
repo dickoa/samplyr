@@ -21,8 +21,8 @@ Sixteen methods are built in, in three families: equal probability, PPS
    \code{pps_cps} \tab Without \tab Fixed \tab Required \tab - \tab Highest entropy, exact joint probabilities \cr
    \code{pps_sampford} \tab Without \tab Fixed \tab Required \tab - \tab Exact Sampford joint probabilities \cr
    \code{pps_poisson} \tab Without \tab Random \tab Required \tab \code{prn} \tab PPS analog of Bernoulli \cr
-   \code{pps_sps} \tab Without \tab Fixed \tab Required \tab \code{prn} \tab Sequential Poisson \cr
-   \code{pps_pareto} \tab Without \tab Fixed \tab Required \tab \code{prn} \tab Pareto sampling \cr
+   \code{pps_sps} \tab Without \tab Fixed \tab Required \tab \code{prn} \tab Sequential Poisson with approximate probability targets \cr
+   \code{pps_pareto} \tab Without \tab Fixed \tab Required \tab \code{prn} \tab Pareto with approximate probability targets \cr
    \code{pps_multinomial} \tab With \tab Fixed \tab Required \tab - \tab Any hit count, Hansen-Hurwitz \cr
    \code{pps_chromy} \tab Min. repl. \tab Fixed \tab Required \tab - \tab As SAS \code{PPS_SEQ} \cr
    \code{cube} \tab Without \tab Fixed \tab Optional \tab \code{aux} optional \tab Deville & \enc{Tillé}{Tille} 2004 \cr
@@ -32,14 +32,55 @@ Sixteen methods are built in, in three families: equal probability, PPS
 
 
 Every method takes either \code{n} or \code{frac}, except \code{pps_cps}, which requires
-\code{n}. With \code{frac} the size follows the \code{round} parameter (ceiling by
-default). The \code{prn} column marks the methods that accept permanent random
+\code{n}. For fixed-size methods, \code{frac} follows the \code{round} parameter (ceiling
+by default). Bernoulli and PPS Poisson use an unrounded expected target.
+The \code{prn} column marks the methods that accept permanent random
 numbers for coordination. It is always optional.
 
 "Min. repl." is probability minimum replacement: \code{pps_chromy} draws a unit
 either \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
 times, where \eqn{E} is its expected number of hits, so a unit is never hit
 more often than its size warrants.
+\subsection{Selection and inference}{
+
+All methods above can draw samples when their input requirements are met.
+Selection support and variance support are separate contracts. This table
+is a quick comparison. \code{\link[=as_svydesign]{as_svydesign()}} and \code{\link[=as_svrepdesign]{as_svrepdesign()}} describe the
+supported stage/phase compositions and sample-specific checks.\tabular{llll}{
+   Method or family \tab First-order quantity \tab Joint information \tab Analysis route \cr
+   \code{srswor} \tab Exact inclusion probabilities \tab SRS formulas (not exposed by the joint helper) \tab SRS with FPC, standard replicates or RWYB \cr
+   \code{srswr}, \code{pps_multinomial} \tab Exact expected hit counts \tab Exact joint hits for PPS \tab WR draw occurrences with standard replicates or RWYB \cr
+   \code{systematic}, \code{pps_systematic} \tab Exact inclusion probabilities \tab Exact order-specific matrix for PPS (zero pairs may occur) \tab SRS/Brewer or generic replicate approximation under the systematic policy \cr
+   \code{bernoulli}, \code{pps_poisson} \tab Exact independent probabilities \tab Exact Poisson matrix for PPS \tab Analytic single-stage Poisson variance, or RWYB for supported clustered/multistage designs \cr
+   \code{pps_brewer}, \code{pps_cps}, \code{pps_sampford} \tab Exact inclusion probabilities \tab Approximate for Brewer, exact for CPS/Sampford \tab Brewer by default, an explicit joint matrix, or PPS-compatible replicates (including approximate RWYB) \cr
+   \code{pps_sps}, \code{pps_pareto} \tab Approximate targets \tab High-entropy approximation using targets \tab Brewer or generic PPS-compatible replicates (no built-in RWYB mapping) \cr
+   \code{pps_chromy} \tab Exact expected hit counts \tab Monte Carlo joint hits \tab WR or generic replicate approximation to PMR (no built-in RWYB mapping) \cr
+   Unconstrained \code{cube} \tab Exact inclusion probabilities under the method contract \tab High-entropy approximation \tab Approximate linearization or generic replicates (no built-in RWYB mapping) \cr
+   Bounded \code{cube}, \code{lpm2}, \code{scps} \tab Exact inclusion probabilities under the method contract \tab Refused \tab Generic \code{subbootstrap} or \code{mrbbootstrap} only (linearization refused) \cr
+   Custom methods \tab Declared exact or approximate quality \tab Registered joint support \tab Depends on the variance-family declaration and adapter checks \cr
+}
+
+
+Joint information here refers to \code{\link[=joint_expectation]{joint_expectation()}}, which exposes
+PPS/balanced-family quantities. Ordinary SRS, WR and independent Bernoulli
+formulas still apply. A stage's joint matrix is not automatically a matrix
+for the final units of a multistage design. Exact first-order probabilities
+do not establish exact variance or confidence-interval coverage.
+
+RWYB means the explicit \code{type = "rwyb"} option with svrep.
+\code{type = "auto"} does not select it. PPS WOR remains approximate. Generic
+replicates do not recreate ordering, balancing, spatial spreading or hard
+constraints. Poisson sampling is refused by generic replicate methods.
+See \code{\link[=as_svrepdesign]{as_svrepdesign()}} for missing-parent and singleton restrictions, and
+\code{\link[=as_svydesign]{as_svydesign()}} for Poisson and two-phase export limits.
+
+SPS, Pareto and custom approximate targets require
+\code{allow_approximate = TRUE} in \code{\link[=exante_probabilities]{exante_probabilities()}} and
+\code{\link[=exante_overlaps]{exante_overlaps()}}. Estimates using these targets need not be
+design-unbiased. Unknown probabilities are refused. Probability and
+variance declarations by a custom-method author are contracts, not proofs.
+}
+
 \subsection{Fixed vs random sample size}{
 
 Where the table says \strong{Fixed}, \code{n} is the realized sample size. Where it
@@ -58,8 +99,9 @@ dominant units explicitly.
 
 Declaring certainty units does more than remove them. The remainder is
 re-resolved over the reduced target and the reduced MOS total, so the
-surviving chances rise and the expectation returns to the target. That is a
-different design from the clipped one, not a repair of it.
+surviving chances can rise. The remaining expected take equals the reduced target
+only if no remaining probability needs clipping. See \code{\link[=draw]{draw()}} for the
+certainty-adjusted \code{n} and \code{frac} contract.
 
 This is not silent. \code{execute()} warns with class
 \code{samplyr_warning_poisson_shortfall} once per stage when a pool's resolved

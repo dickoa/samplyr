@@ -23,7 +23,42 @@ library(dplyr)
 
 This vignette documents what each `samplyr` operation assumes, what it computes, and what is preserved or lost at `survey` export. The contracts stated here are asserted. `vignette("validation")` checks them against synthetic populations with known truths and reports what a run at that replication count can and cannot establish.
 
+Use this as a topic reference while working through the tutorials. The main
+reading path is `vignette("introduction")`, `vignette("three-stage-sampling")`,
+then `vignette("survey-analysis")`.
+
+## Components, scope and transitions
+
+A design is a sequence of stages. Each stage declares optional strata and
+allocation, an optional sampling-unit key, and one selection specification.
+`draw()` completes the stage. `execute()` interprets it against frames.
+Without allocation, scalar `n` applies per stratum. With allocation it is a
+total over those strata. At later stages, both meanings apply within each
+selected parent pool. For random-size methods, the target is an expectation.
+
+| Operation | Input | Result and statistical meaning |
+|---|---|---|
+| `sampling_design()` and specification verbs | Column names and selection rules | An inspectable specification, with no sample drawn |
+| `frame_summary(design, frame)` | Specification and registers | Resolved pool targets and chances, without random draws |
+| `execute(design, frame)` | Specification and population register(s) | A realized sample with selection metadata and weights |
+| `execute(partial_sample, listing)` | An unfinished design's sample and its next register | Continuation with completed-stage probabilities retained |
+| `execute(new_design, previous_sample)` | A new design and an earlier realized sample | New phase with conditional selection factors compounded with prior weights |
+| `execute(master, wave = t)` | A master sample with a panel schedule | Activation by conditional selection under the frozen panel quotas |
+| `as_svydesign(sample)` or `as_svrepdesign(sample)` | A supported sample and collected observations | An analysis representation, subject to the inference restrictions |
+
+The composition laws are that previews agree with execution's resolved
+chances, continuation under the same frame order and uninterrupted RNG stream
+agrees with one-call execution, and serialization preserves the declared
+specification. Weight interpretation must survive every transformation, and
+an export must preserve the required stage information or refuse the design.
+Agreement of numerical targets does not turn approximate probabilities into
+exact ones. Phase-wise conditional factors also need not be unconditional
+marginal inclusion probabilities.
+
 ## Assumptions at a glance
+
+For a compact selection and inference table, see `?selection-methods`. A complete three-stage fieldwork example is in
+`vignette("three-stage-sampling")`.
 
 The following table summarizes what `samplyr` assumes and what the user must verify. Each row is expanded in the sections below.
 
@@ -32,7 +67,7 @@ The following table summarizes what `samplyr` assumes and what the user must ver
 | Strata are exhaustive and disjoint         | `stratify_by()`            | Partitions the frame by unique combinations of strata variables                                      | Strata variables define a valid partition                                                             |
 | Independent sampling across strata         | `stratify_by() |> draw()` | Each stratum sampled with a separate call to `sondage`                                                 | Correct by construction when strata are disjoint                                                      |
 | Cluster variables constant within clusters | `cluster_by()`             | Validated at execution: MOS and strata variables may not vary within a cluster                       | Cluster ID uniquely identifies the group                                                              |
-| Conditional independence across stages | `add_stage()` | Stage \(k\) sampling depends only on the units selected at stage \(k - 1\) and its declared inputs | Later frame construction and selection depend on prior randomization only through selected ancestors and recorded design variables |
+| Conditional selection laws | `add_stage()` | Stage \(k\) sampling depends only on the units selected at stage \(k - 1\) and its declared inputs | Later frame construction and selection depend on prior randomization only through selected ancestors and recorded design variables |
 | FPC records method-specific stage information | `execute()` | Stores a population or cluster count for WOR and `Inf` for WR or PMR. PPS WOR is converted to \(\pi_i\) at survey export | Frame size at execution is treated as the population, one of several definitions when a population changes between waves |
 | Weights are inverse selection chances, unadjusted | All methods | Uses inclusion probabilities for WOR and expected hit counts for WR or PMR | Downstream adjustment is the analyst's responsibility |
 | PRN values are iid \(\text{U}(0, 1)\)      | `draw(prn = ...)`          | Validated: strictly in \((0, 1)\), no NAs, numeric                                                   | Independence and uniformity of the PRN column                                                         |
@@ -335,8 +370,10 @@ That is why this is a post-execute transformation rather than a sixth verb.
 
 The second is that \(L_i\) sums over the whole of \(U^A\), **not over the
 sample**. Counting a supplied link table therefore asserts that the table is a
-complete population register, and getting that wrong understates every weight
-whose links are only partly recorded. The assertion has no default: either name
+complete population register. Underestimating this denominator inflates the
+shared weight if its numerator is held fixed. Missing links can also change
+the numerator or population coverage, so their overall effect has no universal
+direction. The assertion has no default: either name
 a column holding the population multiplicity, or state it with
 `complete_links()`.
 
@@ -387,10 +424,12 @@ every link counts for one, and the two are one implementation rather than two.
 
 ### The weight contract
 
-A shared weight is an estimation weight. It is not \(1/\pi\) for anything,
-because the target units have no inclusion probabilities of their own, and the
-design the object still carries describes the selection of the **source**
-population. So the result records which kind of weight it holds, and every
+A shared weight is an estimation weight and is not generally the reciprocal
+of a target unit's inclusion probability. Target units can have induced
+inclusion probabilities through the source selection and link structure, but
+the generalized weight-sharing formula does not generally produce their
+inverses. The design the object carries describes selection of the **source**
+population. The result records which kind of weight it holds, and every
 statistical consumer states what it does about that record rather than treating
 the sample as ordinary.
 

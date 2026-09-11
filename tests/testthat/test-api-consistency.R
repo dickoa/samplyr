@@ -199,13 +199,13 @@ test_that("genuinely several frames keep the plural schema", {
   )
   expect_named(payload$frame, c("required_variables", "fingerprints"))
   expect_length(payload$frame$fingerprints, 3L)
-  expect_identical(payload$format_version, 2L)
+  expect_identical(payload$format_version, 3L)
   expect_length(payload$tools$samplyr$frame$frames, 3L)
 })
 
-test_that("an older one-element plural artifact is still readable", {
-  # samplyr no longer writes this shape, but files written before the
-  # singular form became canonical carry it, and they remain valid.
+test_that("a one-element plural artifact is still readable", {
+  # samplyr writes the singular form, but the reader still accepts a
+  # one-element plural as the same one-frame call.
   frame <- data.frame(id = 1:20, x = 1:20)
   design <- sampling_design() |> draw(n = 5)
   sample <- execute(design, frame, seed = 3, frame_digest = "none")
@@ -215,7 +215,6 @@ test_that("an older one-element plural artifact is still readable", {
   )
   payload$frame$fingerprints <- list(payload$frame$fingerprint)
   payload$frame$fingerprint <- NULL
-  payload$format_version <- 2L
   legacy <- read_design(
     jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null")
   )

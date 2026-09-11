@@ -2,25 +2,42 @@
 % Please edit documentation in R/frame-input.R
 \name{frame-input-grammar}
 \alias{frame-input-grammar}
-\title{The frame input grammar shared by every public frame-valued verb}
+\title{Supply sampling frames and stage registers}
 \description{
-\code{execute()} defines a data frame and a one-element list of data frames as
-the same call. Six other entry points accepted frame input independently,
-with three different error classes and three different sets of checks, so
-the same input was accepted by one verb and refused by another. The grammar
-is in three layers because they are not all appropriate everywhere:
+A frame is a data frame or a non-empty ordered list of data frames.
+A data frame and a one-element list containing it have the same meaning.
+\code{\link[=execute]{execute()}} also accepts separate data-frame arguments after \code{frame}.
 }
 \details{
-\itemize{
-\item \strong{shape} (\code{normalize_frame_input()}): a data frame, or a non-empty
-ordered list of data frames, canonicalized to one collection.
-\item \strong{executable} (\code{check_frames_executable()}): the rules \code{execute()}
-applies before it samples, which a validator must not be weaker about.
-\item \strong{scheduled} (\code{stage_frame_schedule()}, in \code{R/frame-schedule.R}): the
-count against stages and the positional mapping.
+\subsection{One hierarchy or separate registers}{
+
+A single hierarchy contains the rows needed for the requested stages,
+including parent identifiers. Variables describing a selected cluster,
+such as its MOS and stratum, must be constant within that cluster.
+Separate registers describe one sampling level each and map positionally
+to the requested stages. List names label registers in messages. They do
+not reorder stages or define joins. Child registers carry the parent keys
+needed to identify eligible descendants.
 }
 
-Serialization takes the shape layer plus its own count rule, since a
-fingerprint of a frame with duplicate names is still a correct fingerprint.
+\subsection{Continuing fieldwork}{
+
+Use \code{execute(partial_sample, next_register)} to resume the same design
+after listing. The earlier selection and weights are retained. If one
+supplied frame could cover either the next stage or several remaining
+stages, specify \code{stages} to state which stages to execute.
+
+Use \code{execute(new_design, previous_sample)} to select a new phase from an
+earlier sample. This records an additional probability-sampling operation.
+It is distinct from continuing the unfinished stages of a design.
+
+Frame checks apply before selection: column names must be unambiguous,
+design variables must be present, and keys and cluster-level variables
+must satisfy the design's identity rules. A frame fingerprint in a saved
+design records the supplied data. It does not certify executability.
 }
-\keyword{internal}
+}
+\seealso{
+\code{\link[=execute]{execute()}}, \code{\link[=validate_frame]{validate_frame()}}, \code{\link[=frame_summary]{frame_summary()}},
+\code{\link[=write_design]{write_design()}}, \code{vignette("three-stage-sampling")}
+}

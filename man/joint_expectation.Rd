@@ -53,7 +53,7 @@ restored afterwards, so the result is an exact function of the sample,
 \code{nsim} and \code{seed}, and calling this never moves a later \code{\link[=execute]{execute()}}.
 Analytic methods draw nothing and ignore it. A chromy matrix carries
 simulation error of a few percent at the default \code{nsim}, so two values
-of \code{seed} give two slightly different answers; neither is more correct
+of \code{seed} give two slightly different answers. Neither is more correct
 than the other.}
 }
 \value{
@@ -89,9 +89,10 @@ inclusion probabilities \eqn{\pi_{kl}}{pi_kl}. For with-replacement
 \details{
 Without \code{frame}, the computation runs off the frame digest recorded
 at execution: the digest holds each pool's exact resolved chance
-vector, which is all the joint computation needs, so a sample that
-traveled without its (possibly confidential) frame still yields
-exact joint expectations. This requires an exact chance
+vector, so a sample that traveled without its (possibly confidential)
+frame can still yield joint expectations at the method's stated quality.
+An exact record of approximate targets does not make their probabilities
+exact. Reconstruction requires an exact chance
 representation: cluster stages always have one, element stages with
 constant chances have one, and element stages with varying chances
 keep one only under \code{execute(frame_digest = "full")}. A summarized
@@ -162,17 +163,19 @@ design-unbiased variance estimator, and near-zero pairs make it unstable.
 probabilities exist (Brewer 2002, ch. 9) but are
 \eqn{O(N^3)}{O(N^3)}, making them impractical for frames of more
 than a few hundred units. The high-entropy approximation is
-\eqn{O(N^2)}{O(N^2)} and sufficiently accurate for variance
-estimation in practice. The same trade-off applies to SPS and
-Pareto, whose exact joint probabilities would require enumerating
-the combinatorial sample space.
+\eqn{O(N^2)}{O(N^2)}, but computational convenience does not establish
+its accuracy for a particular design or population. SPS and Pareto also
+use an approximation here, with the further limitation that their
+first-order inputs are approximate targets.
 
 The high-entropy approximation assumes the design is close to the
 maximum-entropy design with the same marginal \eqn{\pi_i}{pi_i}
-(Hajek 1964; Brewer and Donadio 2003). This is a good approximation
-for most PPS designs and is the same quantity that underlies the
-Berger (2004) variance estimator used by \code{survey::svydesign(pps = "brewer")}. For CPS (conditional Poisson / maximum entropy), the
-joint probabilities are exact by definition.
+(Hajek 1964; Brewer and Donadio 2003). Strong ordering, balancing or
+extreme probability distributions can make that assumption unsuitable.
+Validate variance and interval coverage for the intended design and
+population. \code{survey::svydesign(pps = "brewer")} uses the related
+Berger (2004) variance approximation. It is not a claim of exact joint
+probabilities. For CPS, this helper uses the exact CPS calculation.
 
 Bounded cube, LPM2, and SCPS designs are rejected because count constraints
 and spatial spreading alter pairwise selection behavior beyond the

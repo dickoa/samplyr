@@ -34,9 +34,6 @@ rs_poisson_methods <- c("bernoulli", "pps_poisson")
 # Report PPS Poisson pools below 95 percent of their reachable target.
 poisson_shortfall_tolerance <- 0.95
 
-# Rosen order methods approximate their target first-order probabilities.
-approx_probability_methods <- c("pps_sps", "pps_pareto")
-
 #' Return the public family prefix for a registered method
 #' @noRd
 custom_method_prefix <- function(method) {
@@ -84,7 +81,7 @@ custom_method_spec <- function(method) {
 #' @noRd
 builtin_method_probabilities <- function(method) {
   if (!method %in% builtin_methods) return(NULL)
-  if (method %in% approx_probability_methods) "approximate" else "exact"
+  sampling_method_dictionary()[[method]]$probability_quality
 }
 
 #' Fingerprint of a registered method's implementation

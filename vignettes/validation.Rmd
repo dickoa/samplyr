@@ -165,6 +165,16 @@ evaluate_design <- function(design_fn, population, true_mean, R = 199L, seed_ini
     cover[i] <- ci[1, 1] <= true_mean && ci[1, 2] >= true_mean
   }
 
+  # Delete one independent simulation at a time. This accounts for both
+  # parts of the SD/mean-SE ratio and their dependence within each draw.
+  leave_one_ratio <- vapply(seq_len(R), function(i) {
+    sd(est[-i]) / mean(se[-i])
+  }, numeric(1))
+  ratio_mcse <- sqrt((R - 1) * mean(
+    (leave_one_ratio - mean(leave_one_ratio))^2
+  ))
+  coverage_ci <- binom.test(sum(cover), R)$conf.int
+
   tibble(R = R,
          bias = mean(est - true_mean),
          rel_bias_pct = 100 * mean(est - true_mean) / true_mean,
@@ -172,7 +182,11 @@ evaluate_design <- function(design_fn, population, true_mean, R = 199L, seed_ini
          emp_sd = sd(est),
          mean_se = mean(se),
          se_ratio = sd(est) / mean(se),
-         coverage_95 = mean(cover))
+         coverage_95 = mean(cover),
+         mcse_rel_bias_pct = 100 * sd(est) / sqrt(R) / abs(true_mean),
+         mcse_se_ratio = ratio_mcse,
+         coverage_lower = coverage_ci[1],
+         coverage_upper = coverage_ci[2])
 }
 
 mcse_coverage <- function(R, p = 0.95) {
@@ -221,34 +235,56 @@ mc_results
 
 The third design's first stage is `pps_brewer`, and `as_svydesign()` exports it with Brewer's approximation to the joint inclusion probabilities. Its `mean_se` is therefore an approximate quantity, and `se_ratio` for that row compares the empirical spread against an approximation rather than against an exact variance. The first two rows have no such caveat.
 
-## Interpreting the results
+## Separate tolerances from Monte Carlo uncertainty
 
-For this short validation, practical acceptance bands are:
+A practical tolerance states how much error is acceptable for an application.
+Monte Carlo uncertainty states how precisely this simulation measured the
+error. They answer different questions. For illustration, choose tolerances
+of two percentage points of relative bias, 15% around an SD/mean-SE ratio of
+one, and three percentage points around nominal 95% coverage. These are
+teaching choices, not universal standards for qualifying a survey design.
 
-- `abs(rel_bias_pct) <= 2`,
-- `0.85 <= se_ratio <= 1.15`,
-- `0.90 <= coverage_95 <= 0.98`.
+The table below compares those fixed tolerances with 95% Monte Carlo intervals.
+Bias uses the empirical SD divided by the square root of `R`. The ratio uses
+a jackknife over independent simulation runs, accounting for uncertainty in
+both its numerator and denominator. These two intervals are normal
+approximations. Coverage uses an exact binomial interval. The intervals
+measure simulation uncertainty, not uncertainty in a particular survey estimate.
 
-The last two are Monte Carlo widths rather than statistical thresholds, and both work out to about three Monte Carlo standard errors at `R = 199`.
+```{r mc-precision}
+precision <- bind_rows(
+  mc_results |>
+    transmute(design, metric = "Relative bias (%)", estimate = rel_bias_pct,
+              lower = estimate - 1.96 * mcse_rel_bias_pct,
+              upper = estimate + 1.96 * mcse_rel_bias_pct,
+              acceptable_lower = -2, acceptable_upper = 2),
+  mc_results |>
+    transmute(design, metric = "SD / mean SE", estimate = se_ratio,
+              lower = pmax(0, estimate - 1.96 * mcse_se_ratio),
+              upper = estimate + 1.96 * mcse_se_ratio,
+              acceptable_lower = 0.85, acceptable_upper = 1.15),
+  mc_results |>
+    transmute(design, metric = "95% coverage", estimate = coverage_95,
+              lower = coverage_lower, upper = coverage_upper,
+              acceptable_lower = 0.92, acceptable_upper = 0.98)
+) |>
+  mutate(assessment = case_when(
+    lower >= acceptable_lower & upper <= acceptable_upper ~ "Within tolerance",
+    upper < acceptable_lower | lower > acceptable_upper ~ "Outside tolerance",
+    TRUE ~ "Inconclusive at this replication count"
+  ))
 
-At nominal 95% coverage the Monte Carlo standard error of the coverage estimate is \(\sqrt{0.95 \times 0.05 / R}\), which is about 1.5 percentage points at `R = 199`. The band 0.90 to 0.98 is roughly that either side of 0.95, a little wider below than above.
-
-The empirical SD in `se_ratio` is itself estimated from `R` draws, with a relative standard error of about \(1 / \sqrt{2(R - 1)}\), which is 5% at `R = 199`. The band 0.85 to 1.15 is three of those.
-
-Reading the bands this way is what makes them a judgement rather than two magic numbers: a `se_ratio` of 1.12 is inside the band because a correct design will land there often at this replication count, not because a 12% error would be acceptable in a real estimate.
-
-```{r}
-acceptance <- mc_results |>
-  mutate(
-    pass_bias = abs(rel_bias_pct) <= 2,
-    pass_se = se_ratio >= 0.85 & se_ratio <= 1.15,
-    pass_cov = coverage_95 >= 0.90 & coverage_95 <= 0.98,
-    pass_all = pass_bias & pass_se & pass_cov
-  ) |>
-  select(design, pass_bias, pass_se, pass_cov, pass_all)
-
-acceptance
+precision |>
+  select(design, metric, estimate, lower, upper, assessment) |>
+  knitr::kable(digits = 3,
+               col.names = c("Design", "Metric", "Estimate", "MC lower",
+                             "MC upper", "Assessment"))
 ```
+
+An estimate can fall inside a tolerance while its Monte Carlo interval
+extends outside. That result is inconclusive, not a pass. Conversely, a
+small bias can be statistically distinguishable from zero (`bias_z`) while
+remaining practically tolerable. Report both size and uncertainty.
 
 ```{r}
 tibble(
@@ -257,11 +293,19 @@ tibble(
 )
 ```
 
-A pass across these three designs says that:
+At `R = 199`, nominal 95% coverage has Monte Carlo SE of about 1.5 percentage
+points. Resolving a narrow coverage tolerance may therefore need substantially
+more draws. Increasing `R` typically narrows the Monte Carlo intervals at
+roughly the inverse-square-root rate. It does **not** shrink the chosen
+practical tolerances. The interval calculations above are recomputed from the
+new simulations. The tolerance constants remain unchanged unless the
+application's requirements change.
 
-1. the deterministic invariants on `samplyr` design metadata hold exactly, which is a proof for the sample drawn and not a Monte Carlo result
-2. nothing in the exported `survey` designs is far enough from correct design-based inference for `R = 199` to detect.
-
-The second is the weaker claim, and it is the one that matters here. The acceptance bands are about three Monte Carlo standard errors wide, so a bias or a variance error smaller than that will pass unnoticed. A pass is consistent with correctness rather than evidence for it.
-
-`R` is fixed at 199 as a practical default so the vignette builds quickly. Rerunning with a larger `R` narrows every band above in proportion to \(1/\sqrt{R}\) and is what to do when the question is how large a residual error the run can rule out.
+These are pointwise diagnostics for three particular populations/designs,
+not simultaneous certification of the package. Deterministic checks establish
+the stated identities for the realized examples. The simulations assess mean
+bias, the SD/mean-SE ratio and interval coverage in these cases. They do not
+establish unbiased variance estimation for all totals or all populations.
+Random-size sampling, extreme MOS, small pools and other compositions need
+separate checks. See `?selection-methods` for the inference overview and `?as_svydesign`
+and `?as_svrepdesign` for the detailed export restrictions.

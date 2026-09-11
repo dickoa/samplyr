@@ -24,6 +24,10 @@ library(dplyr)
 
 ## From a precision target to a draw
 
+Use this article when the sample size or allocation still needs to be chosen.
+For the main selection workflow, start with `vignette("introduction")` and
+continue to `vignette("three-stage-sampling")`.
+
 Planning answers how many units to issue and how to distribute them. Selection
 then applies that plan to a frame. `svyplan` owns the first calculation and
 `samplyr` owns the second.
@@ -342,7 +346,7 @@ as.integer(cluster_plan)
 
 In a two-stage `samplyr` design, the cluster plan supplies the stage-1 cluster
 count and the within-cluster take. See `?n_cluster` for the feasibility checks
-and `vignette("introduction")` for multistage execution.
+and `vignette("three-stage-sampling")` for multistage execution.
 
 ## Field a certainty-aware allocation
 
@@ -474,49 +478,11 @@ change_target
 overlap. Use prior rounds or a sensitivity range rather than deriving it from
 the rotation pattern.
 
-## Recruit a rotating panel
-
-`n_panel()` translates a cross-sectional responding target into recruitment
-under initial response and conditional retention.
-
-```{r}
-panel_plan <- n_panel(
-  n_prop(p = p_export, moe = 0.03),
-  retention = c(0.90, 0.95, 0.95),
-  resp_rate = 0.80,
-  design = "rotating",
-  start = "immediate"
-)
-
-panel_plan
-```
-
-A rotating `svyplan_panel` contains several counts because start-up and later
-intakes are different operations.
-
-```{r}
-intake_n <- ceiling(panel_plan$n_entrants)
-
-fieldwork_counts <- c(
-  startup = panel_plan$n_cohorts * intake_n,
-  intake_each_occasion = intake_n,
-  expected_respondents = panel_plan$n_resp
-)
-
-fieldwork_counts
-```
-
-Use `startup` for the immediate start-up master and partition it into four
-cohort ages. Use `intake_each_occasion` for every later refreshment draw.
-`draw(n = panel_plan)` is intentionally unsupported because it cannot know
-which operation the caller means.
-
-`n_panel()` treats retention as an unbroken chain. It does not yet turn a
-gapped life such as 4-8-4 into a recruitment and reserve-cohort plan. It also
-does not estimate attrition, adjust nonresponse weights, or combine cohort
-weights. Those are separate design and analysis decisions.
-
-The complete execution handoff is in `vignette("rotating-panels")`.
+For recruitment, retention and refreshment, continue with
+`vignette("rotating-panels")`. It covers `n_panel()` and the distinction
+between the start-up sample and each later intake, then executes the whole
+schedule. Use `vignette("sampling-coordination")` when overlap is controlled
+through PRNs instead of a panel schedule.
 
 ## What planning does not decide
 
@@ -537,7 +503,7 @@ selection design.
 
 ## Next steps
 
-- Use `vignette("introduction")` to execute an ordinary or multistage design.
+- Use `vignette("three-stage-sampling")` to carry a design through fieldwork.
 - Use `vignette("rotating-panels")` for the longitudinal fieldwork handoff.
 - Use `vignette("survey-analysis")` after data collection.
 - Consult the svyplan reference pages for power, two-phase designs,

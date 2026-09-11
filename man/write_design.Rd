@@ -80,6 +80,30 @@ finalized cross-tool survey-sampling interchange standard. The structure
 may change while that separate specification is developed.
 }
 
+\subsection{Document validation}{
+
+Reads and writes use native R checks generated from the same source as the
+bundled JSON Schemas, before reconstruction or file creation. Unknown
+executable fields, duplicate JSON keys, malformed structures and contradictory
+method descriptors are refused. The reader accepts design format version 3
+and version 1 of the frame-stack and shared-sample formats. Earlier design
+versions were never released and are refused. Frame-dependent checks still run
+in \code{\link[=validate_frame]{validate_frame()}} and \code{\link[=execute]{execute()}}. Optional \code{execution.frame_digest}
+contents are exempt from the duplicate-key traversal and contract checks.
+They retain their separate native version checks and warn-and-drop policy.
+Document validation errors name \code{read_design()}, including when it is
+called inside \code{replay_design(read_design(path), frame)}.
+
+Top-level \code{annotations} and \code{tools} contain named metadata objects. Unknown
+namespaces are preserved, including when saving restored collections and
+shared-sample documents. They cannot change selection. A nonempty
+\code{required_extensions} array is refused because no executable extensions are
+currently supported, including in nested component or source documents.
+
+The installed \code{schema/README.md} describes the schemas and compatibility
+rules. Locate it with \code{system.file("schema", "README.md", package = "samplyr")}.
+}
+
 \subsection{Frame information}{
 
 Designs are frame-independent, and so are design files. Two derived
@@ -142,8 +166,10 @@ names, \code{dplyr::desc()}, and \code{\link[=serp]{serp()}} can be represented.
 \subsection{Declarative and implementation metadata}{
 
 The \code{design}, \code{frame}, and \code{execution} blocks use declarative JSON rather
-than R expressions. Selection methods carry samplyr's internal semantic
-descriptor. The \code{tools.samplyr} block records exact method names, R classes,
+than R expressions. Files use method vocabulary version 2, which records
+the first-order quantity and its exact, approximate or unknown quality in
+the common descriptor. The
+\code{tools.samplyr} block records exact method names, R classes,
 the R-derived frame hash, and execution environment needed to rebuild and
 replay the native object. These descriptors are not a finalized external
 method vocabulary.

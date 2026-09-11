@@ -1,0 +1,284 @@
+{
+  "id": "samplyr/common-sampling-method",
+  "version": 2,
+  "external_standard": {
+    "name": "DDI SamplingProcedure",
+    "version": "1.1.4",
+    "uri": "http://rdf-vocabulary.ddialliance.org/ddi-cv/SamplingProcedure/1.1.4/SamplingProcedure.html"
+  },
+  "methods": [
+    {
+      "id": "simple_random_without_replacement",
+      "family": "equal_probability",
+      "algorithm": "simple_random",
+      "replacement": "without_replacement",
+      "sample_size": "fixed",
+      "probabilities": "equal",
+      "implementations": {
+        "samplyr": "srswor"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability.SimpleRandom",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/38e8e88"
+      }
+    },
+    {
+      "id": "simple_random_with_replacement",
+      "family": "equal_probability",
+      "algorithm": "simple_random",
+      "replacement": "with_replacement",
+      "sample_size": "fixed",
+      "probabilities": "equal",
+      "implementations": {
+        "samplyr": "srswr"
+      },
+      "probability_quantity": "expected_hits",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "systematic_equal_probability",
+      "family": "equal_probability",
+      "algorithm": "systematic",
+      "replacement": "without_replacement",
+      "sample_size": "fixed",
+      "probabilities": "equal",
+      "implementations": {
+        "samplyr": "systematic"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability.SystematicRandom",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/f189f62"
+      }
+    },
+    {
+      "id": "bernoulli",
+      "family": "equal_probability",
+      "algorithm": "bernoulli",
+      "replacement": "without_replacement",
+      "sample_size": "random",
+      "probabilities": "equal",
+      "implementations": {
+        "samplyr": "bernoulli"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "systematic_probability_proportional_to_size",
+      "family": "probability_proportional_to_size",
+      "algorithm": "systematic",
+      "replacement": "without_replacement",
+      "sample_size": "fixed",
+      "probabilities": "unequal",
+      "implementations": {
+        "samplyr": "pps_systematic"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "generalized_brewer_probability_proportional_to_size",
+      "family": "probability_proportional_to_size",
+      "algorithm": "generalized_brewer",
+      "replacement": "without_replacement",
+      "sample_size": "fixed",
+      "probabilities": "unequal",
+      "implementations": {
+        "samplyr": "pps_brewer"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "conditional_poisson",
+      "family": "probability_proportional_to_size",
+      "algorithm": "conditional_poisson",
+      "replacement": "without_replacement",
+      "sample_size": "fixed",
+      "probabilities": "unequal",
+      "implementations": {
+        "samplyr": "pps_cps"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "sampford",
+      "family": "probability_proportional_to_size",
+      "algorithm": "sampford",
+      "replacement": "without_replacement",
+      "sample_size": "fixed",
+      "probabilities": "unequal",
+      "implementations": {
+        "samplyr": "pps_sampford"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "poisson_probability_proportional_to_size",
+      "family": "probability_proportional_to_size",
+      "algorithm": "poisson",
+      "replacement": "without_replacement",
+      "sample_size": "random",
+      "probabilities": "unequal",
+      "implementations": {
+        "samplyr": "pps_poisson"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "sequential_poisson",
+      "family": "probability_proportional_to_size",
+      "algorithm": "sequential_poisson",
+      "replacement": "without_replacement",
+      "sample_size": "fixed",
+      "probabilities": "unequal",
+      "implementations": {
+        "samplyr": "pps_sps"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "approximate",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "pareto",
+      "family": "probability_proportional_to_size",
+      "algorithm": "pareto",
+      "replacement": "without_replacement",
+      "sample_size": "fixed",
+      "probabilities": "unequal",
+      "implementations": {
+        "samplyr": "pps_pareto"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "approximate",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "multinomial_probability_proportional_to_size",
+      "family": "probability_proportional_to_size",
+      "algorithm": "multinomial",
+      "replacement": "with_replacement",
+      "sample_size": "fixed",
+      "probabilities": "unequal",
+      "implementations": {
+        "samplyr": "pps_multinomial"
+      },
+      "probability_quantity": "expected_hits",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "chromy_minimum_replacement",
+      "family": "probability_proportional_to_size",
+      "algorithm": "chromy",
+      "replacement": "minimum_replacement",
+      "sample_size": "fixed",
+      "probabilities": "unequal",
+      "implementations": {
+        "samplyr": "pps_chromy"
+      },
+      "probability_quantity": "expected_hits",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "cube_balanced",
+      "family": "balanced",
+      "algorithm": "cube",
+      "replacement": "without_replacement",
+      "sample_size": "fixed",
+      "probabilities": "equal_or_unequal",
+      "implementations": {
+        "samplyr": "cube"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "local_pivotal",
+      "family": "spatially_balanced",
+      "algorithm": "local_pivotal",
+      "replacement": "without_replacement",
+      "sample_size": "fixed",
+      "probabilities": "equal_or_unequal",
+      "implementations": {
+        "samplyr": "lpm2"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
+      "id": "spatially_correlated_poisson",
+      "family": "spatially_balanced",
+      "algorithm": "spatially_correlated_poisson",
+      "replacement": "without_replacement",
+      "sample_size": "fixed",
+      "probabilities": "equal_or_unequal",
+      "implementations": {
+        "samplyr": "scps"
+      },
+      "probability_quantity": "inclusion_probability",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    }
+  ],
+  "description": "Normative built-in method descriptors. Probability quality describes the first-order quantity under the method contract, not variance accuracy."
+}

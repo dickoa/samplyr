@@ -1522,7 +1522,7 @@ test_that("registers round trip through a design file and replay", {
 
   payload <- jsonlite::fromJSON(path, simplifyVector = FALSE)
   # A reader that does not know these fields would replay against one frame.
-  expect_identical(payload$format_version, 2L)
+  expect_identical(payload$format_version, 3L)
   expect_identical(payload$execution$frames$mode, "separate_frames")
   expect_identical(payload$execution$frames$count, 3L)
   expect_length(payload$frame$fingerprints, 3L)
@@ -1533,12 +1533,12 @@ test_that("registers round trip through a design file and replay", {
     attr(restored, "execution")$frames$stage_frame_index, 1:3
   )
 
-  # The mode alone is enough to make a version 1 reader wrong, so a file
-  # written without fingerprints still declares version 2.
+  # Every file declares the current format version, including one
+  # written without fingerprints.
   bare <- withr::local_tempfile(fileext = ".json")
   expect_warning(write_design(sample, bare), "without a frame fingerprint")
   expect_identical(
-    jsonlite::fromJSON(bare, simplifyVector = FALSE)$format_version, 2L
+    jsonlite::fromJSON(bare, simplifyVector = FALSE)$format_version, 3L
   )
 
   replayed <- replay_design(restored, list(schools, classes, students))
@@ -1599,7 +1599,7 @@ test_that("a per-frame mismatch names the frame that differs", {
 })
 
 test_that("a receipt without frame-mode fields is read as one frame", {
-  # A historical file: written before the mapping was recorded.
+  # A file with the frame mapping stripped out.
   design <- sampling_design() |> stratify_by(school_type) |> draw(n = 2)
   sample <- execute(design, mf_schools(), seed = 3)
 
@@ -1607,7 +1607,7 @@ test_that("a receipt without frame-mode fields is read as one frame", {
   write_design(sample, path, frame = mf_schools())
 
   payload <- jsonlite::fromJSON(path, simplifyVector = FALSE)
-  expect_identical(payload$format_version, 1L)
+  expect_identical(payload$format_version, 3L)
   payload$execution$frames <- NULL
   writeLines(jsonlite::toJSON(payload, auto_unbox = TRUE, digits = NA,
                               null = "null"), path)
@@ -2036,7 +2036,6 @@ test_that("a fingerprint count that cannot match is reported, not skipped", {
     function(p) {
       p$frame$fingerprints <- list(p$frame$fingerprint, p$frame$fingerprint)
       p$frame$fingerprint <- NULL
-      p$format_version <- 2L
       p
     }
   )

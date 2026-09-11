@@ -1,23 +1,28 @@
 url: https://dickoa.gitlab.io/samplyr
+repo:
+  url:
+    home: https://gitlab.com/dickoa/samplyr/
+    source: https://gitlab.com/dickoa/samplyr/-/blob/master/
+    issue: https://gitlab.com/dickoa/samplyr/-/work_items
+    user: https://gitlab.com/
 template:
   bootstrap: 5
   math-rendering: mathjax
 
 articles:
-  - title: "Getting Started"
+  - title: "Start here"
     contents:
       - introduction
-      - survey-planning
+      - three-stage-sampling
       - survey-analysis
-  - title: "Repeated Surveys"
+  - title: "For your design"
     contents:
+      - survey-planning
       - sampling-coordination
       - rotating-panels
-  - title: "Sharing and Reproducibility"
+  - title: "Reference and reproducibility"
     contents:
       - serialization
-  - title: "Advanced Statistical Foundations"
-    contents:
       - design-semantics
       - validation
 

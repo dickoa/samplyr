@@ -305,10 +305,10 @@ test_that("certainty_size as data frame applies stratum-specific thresholds", {
 
   result <- sampling_design() |>
     stratify_by(stratum) |>
-    draw(n = 3, method = "pps_brewer", mos = mos, certainty_size = cert_df) |>
+    draw(n = c(A = 3, B = 3, C = 4), method = "pps_brewer", mos = mos, certainty_size = cert_df) |>
     execute(frame, seed = 1)
 
-  expect_equal(nrow(result), 9)
+  expect_equal(nrow(result), 10)
 
   result_A <- result[result$stratum == "A", ]
   expect_true(all(c(3, 4) %in% result_A$id))
@@ -486,10 +486,10 @@ test_that("certainty data frame with multi-variable stratification works", {
 
   result <- sampling_design() |>
     stratify_by(region, urban) |>
-    draw(n = 2, method = "pps_brewer", mos = mos, certainty_size = cert_df) |>
+    draw(n = 3, method = "pps_brewer", mos = mos, certainty_size = cert_df) |>
     execute(frame, seed = 20260205)
 
-  expect_equal(nrow(result), 8)
+  expect_equal(nrow(result), 12)
 
   north <- result[result$region == "North", ]
   expect_true(all(c(3, 4) %in% north$id))
@@ -498,26 +498,12 @@ test_that("certainty data frame with multi-variable stratification works", {
   ))
 })
 
-test_that("certainty_overflow = 'allow' returns all certainty units when n_cert > n", {
-  frame <- data.frame(
-    id = 1:10,
-    mos = c(100, 200, 300, 400, 500, 600, 700, 800, 900, 1000)
-  )
-
-  result <- sampling_design() |>
-    draw(
-      n = 2,
-      method = "pps_systematic",
-      mos = mos,
-      certainty_size = 700,
-      certainty_overflow = "allow"
-    ) |>
-    execute(frame, seed = 42)
-
-  expect_equal(nrow(result), 4)
-  expect_true(all(c(7, 8, 9, 10) %in% result$id))
-  expect_true(all(result$.weight == 1))
-  expect_true(all(result$.certainty_1 == TRUE))
+test_that("certainty_overflow cannot exclude the remaining population", {
+  frame <- data.frame(id = 1:10, mos = seq(100, 1000, 100))
+  design <- sampling_design() |> draw(n = 2, method = "pps_systematic",
+    mos = mos, certainty_size = 700, certainty_overflow = "allow")
+  expect_error(execute(design, frame, seed = 42),
+    class = "samplyr_error_certainty_zero_probability")
 })
 
 test_that("certainty_overflow = 'allow' works with certainty_prop cascade", {
@@ -564,7 +550,7 @@ test_that("certainty_overflow = 'allow' with stratification", {
   expect_true(all(result$.certainty_1 == TRUE))
 })
 
-test_that("certainty_overflow default is 'error' (backward compatible)", {
+test_that("certainty_overflow defaults to refusing an above-target census", {
   frame <- data.frame(
     id = 1:10,
     mos = c(100, 200, 300, 400, 500, 600, 700, 800, 900, 1000)
@@ -572,7 +558,7 @@ test_that("certainty_overflow default is 'error' (backward compatible)", {
 
   expect_error(
     sampling_design() |>
-      draw(n = 2, method = "pps_systematic", mos = mos, certainty_size = 700) |>
+      draw(n = 2, method = "pps_systematic", mos = mos, certainty_size = 50) |>
       execute(frame, seed = 42),
     "exceeds target sample size"
   )
@@ -621,7 +607,7 @@ test_that("certainty_overflow error message mentions allow option", {
 
   expect_error(
     sampling_design() |>
-      draw(n = 2, method = "pps_systematic", mos = mos, certainty_size = 700) |>
+      draw(n = 2, method = "pps_systematic", mos = mos, certainty_size = 50) |>
       execute(frame, seed = 42),
     "certainty_overflow"
   )

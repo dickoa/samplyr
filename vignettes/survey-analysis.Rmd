@@ -32,34 +32,20 @@ corrections during selection. A safe one-to-one join preserves that metadata.
 An operation that adds, removes, or duplicates sampled rows changes the
 realization and prevents export.
 
-## Inspect the sample before fieldwork
+The main path reaches this article after `vignette("introduction")` and
+`vignette("three-stage-sampling")`. The sections on joins, export and domains
+apply to an ordinary sample. Read the later two-phase or overlapping-frame
+examples when your design uses them.
 
-We begin with a stratified sample of enumeration areas.
+We use a small stratified EA sample so the analysis examples run independently.
+Sample inspection is covered in the selection tutorials.
 
-```{r, message = FALSE}
-library(samplyr)
-
-data(bfa_eas)
-
+```{r analysis-sample}
 sample <- sampling_design(title = "Burkina Faso EA survey") |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
   execute(bfa_eas, seed = 1)
-
-summary(sample)
 ```
-
-`frame_summary()` exposes the same realization at pool level.
-
-```{r}
-frame_summary(sample, detail = "pool") |>
-  select(region, N, n_target, n_expected, n_realized, take_rate)
-```
-
-For this feasible fixed-size design, the target, expectation, and realized
-take coincide. Under Bernoulli or Poisson selection the realized count is
-random. Under unequal-probability selection, `take_rate` describes the
-realized pool count and is not a unit-level inclusion probability.
 
 ## Join collected outcomes
 
@@ -89,6 +75,15 @@ class(sample_with_data)
 The result remains a `tbl_sample` because the join is one to one and leaves
 the selected rows intact. Check key uniqueness before joining when collected
 data can contain repeated visits, roster members, or duplicate submissions.
+
+Keep the issued rows when some units do not respond: use a left join and
+record a response indicator. Missing outcomes do not change the selection
+weights. Neither dropping those rows before export nor using `na.rm = TRUE`
+is, by itself, a nonresponse adjustment. Choosing response adjustments or
+calibration belongs to the downstream analysis and its assumptions.
+
+The compact selection and inference table is in `?selection-methods`.
+`?as_svydesign` and `?as_svrepdesign` give the detailed export restrictions.
 
 ## Export to survey
 
@@ -185,7 +180,8 @@ finite-sample bias.
 ## Replicate weights and PPS variance
 
 For a supported single-phase design, `as_svrepdesign()` creates replicate
-weights through `survey::as.svrepdesign()`.
+weights through `survey::as.svrepdesign()`, or through the optional **svrep**
+package when `type = "rwyb"` is requested.
 
 ```{r}
 replicate_design <- as_svrepdesign(sample, type = "auto")
@@ -198,6 +194,111 @@ random Poisson sample size. `as_svydesign()` and `as_svrepdesign()` report or
 refuse combinations that cannot be represented under their documented
 contracts. See their reference pages before selecting a variance route for an
 advanced design.
+
+For independent Poisson selection, including clustered and multistage
+designs, request Rao-Wu-Yue-Beaumont replicates explicitly:
+
+```{r, eval=requireNamespace("svrep", quietly = TRUE)}
+poisson_sample <- sampling_design() |>
+  draw(frac = 0.4, method = "bernoulli") |>
+  execute(data.frame(id = 1:100, y = 1:100), seed = 12)
+set.seed(42)
+poisson_replicates <- as_svrepdesign(
+  poisson_sample, type = "rwyb", replicates = 1000
+)
+svytotal(~y, poisson_replicates)
+```
+
+RWYB retains the variation in Poisson sample size that generic fixed-size
+bootstraps can lose. It also supports mixed SRS, independent draws with
+replacement, and fixed-size PPS WOR stages. PPS WOR variance is an
+approximation and is reported as such. Increase the replicate count to reduce
+simulation error. svrep's `estimate_boot_sim_cv()` helps assess it for chosen
+estimates. No new sampling verbs are needed.
+
+Two-phase replicate export is not yet supported. Multistage RWYB export
+requires every selected parent to remain represented in the final sample.
+Later Poisson stages require a complete frame digest to check this. A
+noncertainty singleton is refused when its variance is not estimable, while
+a singleton Poisson sample can contribute a valid variance estimate.
+
+When exporting a materialized wave or a second-phase sample with
+`as_svydesign()`, current analysis columns take precedence over same-named
+columns in the retained first-phase sample. Missing current measurements
+remain missing. Keep earlier measurements under separate names if you need
+both. Identifiers and sampling metadata retain their design meanings.
+
+## Two phases: screening followed by a detailed interview
+
+A second phase samples units already selected at phase 1, using information
+collected in that phase. It is a new selection law on the realized sample.
+A later stage in a household design instead samples children within selected
+parents. Continuing that design with a household listing is not a new phase.
+
+The bundled `ken_enterprises` is entirely synthetic. Here a cheap screening
+interview determines phase-two strata, and only the subsample receives a
+detailed interview. The stable `enterprise_id` links the phases. At phase 1,
+`cluster_by(enterprise_id)` declares that identity. Each such unit has one row.
+
+```{r screening}
+screening_design <- sampling_design("Establishment screening") |>
+  cluster_by(enterprise_id) |>
+  draw(n = 500)
+
+phase1 <- execute(screening_design, ken_enterprises, seed = 71)
+set.seed(72)
+phase1 <- phase1 |>
+  mutate(
+    revenue_baseline = revenue_millions,
+    screen_score = log1p(employees) + rnorm(n(), sd = 0.5),
+    priority = if_else(screen_score >= 4, "high", "ordinary")
+  )
+phase1 |> as.data.frame() |> count(priority)
+```
+
+The synthetic screening variables are observed for every phase-one unit,
+including those that will not enter phase 2. They remain in the retained
+phase-one sample so the two-phase export can reconstruct the selection pools.
+
+```{r detailed-interview}
+interview_design <- sampling_design("Detailed establishment interview") |>
+  stratify_by(priority) |>
+  draw(n = c(high = 90, ordinary = 60))
+
+phase2 <- execute(interview_design, phase1, seed = 73)
+
+set.seed(74)
+phase2 <- phase2 |>
+  mutate(
+    revenue_millions = revenue_baseline * exp(rnorm(n(), 0, 0.15)),
+    audit_hours = rgamma(n(), shape = 3, rate = 0.5)
+  )
+```
+
+`audit_hours` is a new phase-two measurement. `revenue_millions` is an updated
+measurement with the same name as its baseline counterpart. Export uses the
+current phase-two values. `revenue_baseline` keeps the earlier values available
+explicitly. All detailed interviews are complete in this example.
+
+```{r two-phase-estimation}
+two_phase_svy <- as_svydesign(phase2)
+svytotal(~revenue_millions + audit_hours, two_phase_svy)
+
+# The export uses the current observations and the combined phase weights.
+stopifnot(isTRUE(all.equal(
+  unname(coef(svytotal(~revenue_millions, two_phase_svy))),
+  sum(phase2$.weight * phase2$revenue_millions)
+)))
+```
+
+These estimates illustrate inference for the synthetic establishment
+population, not substantive estimates for Kenya. The example uses SRS at
+phase 1 and stratified SRS at phase 2, a supported two-phase path. PPS, WR and
+Poisson phase designs have additional export restrictions. Phase chains longer
+than two and two-phase replicate export are currently unsupported. See
+`?as_svydesign` before changing the selection methods.
+
+## Joint information for PPS variance
 
 For supported PPS methods, `joint_expectation()` reconstructs exact or
 approximate second-order quantities according to the method.
@@ -294,6 +395,18 @@ asking for `1 - theta`.
 ```{r frames-hartley}
 svytotal(~spend, as_svydesign(frames, theta = 0.74))
 ```
+
+The expected multiframe estimator instead needs each unit's selection
+probability in every frame containing it. Supply the original registers through
+`overlaps = exante_overlaps(list(area = area_register, list = list_register),
+by = c(person_id = "person_id"))` when building the stack, using the stack's
+component names and key, then export with `estimator = "expected"`.
+The resolver requires exact inclusion probabilities by default. SPS and Pareto
+targets require `allow_approximate = TRUE` in `exante_overlaps()`. This accepts
+an approximation that can affect design unbiasedness. The stack records quality
+by frame, and exported designs retain it in their
+`samplyr_overlap_probability_quality` attribute. For inspecting one register,
+`exante_probabilities()` returns the same quality beside each probability.
 
 `samplyr` never forwards a missing `theta` to `survey`. Left unset there, it
 defaults to the ratio of the frames' mean sampling weights, which is a

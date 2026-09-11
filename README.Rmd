@@ -33,6 +33,18 @@ A tidy grammar for survey sampling in R. `samplyr` provides a minimal set of com
 
 These packages are complementary, not competing. Handoffs are explicit (for example, `svyplan` outputs can feed `draw(n = ...)`, and `samplyr` outputs convert via `as_svydesign()`, `as_svrepdesign()`, and `as_survey_design()`).
 
+## Learn samplyr
+
+Follow three articles: [Get started](https://dickoa.gitlab.io/samplyr/articles/introduction.html)
+for the grammar, [Select a three-stage sample](https://dickoa.gitlab.io/samplyr/articles/three-stage-sampling.html)
+for a complete fieldwork example, then [Analyze the sample](https://dickoa.gitlab.io/samplyr/articles/survey-analysis.html)
+for the handoff to `survey` and `srvyr`.
+
+Choose the planning, coordination or rotating-panel article when your design
+needs it. The [selection-methods reference](https://dickoa.gitlab.io/samplyr/reference/selection-methods.html)
+contains the compact selection and inference comparison. Serialization,
+semantics and validation are references to consult as needed.
+
 ## Why samplyr?
 
 `samplyr` is built around a simple idea: sampling code should read like its English description.
@@ -42,10 +54,15 @@ library(samplyr)
 data(bfa_eas)
 
 # "Stratify by region, proportionally allocate 500 samples, execute"
-sampling_design() |>
+overview_sample <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 500) |>
   execute(bfa_eas, seed = 1)
+
+overview_sample |>
+  as.data.frame() |>
+  dplyr::select(ea_id, region, households, .weight) |>
+  head(4)
 ```
 
 Consider a real survey design from Lohr (2022, Example 7.1), based on a 1991 study of bed net use in rural Gambia (D'Alessandro et al., 1994):
@@ -61,17 +78,22 @@ design <- sampling_design(title = "Gambia bed nets") |>
   add_stage() |>
     stratify_by(region) |>
     cluster_by(district) |>
-    draw(n = 5, method = "pps_brewer", mos = population) |>
+    draw(n = 5, method = "pps_brewer", mos = district_population) |>
   add_stage() |>
     stratify_by(phc) |>
     cluster_by(village) |>
-    draw(n = 2, method = "pps_brewer", mos = population) |>
+    draw(n = 2, method = "pps_brewer", mos = village_population) |>
   add_stage() |>
     draw(n = 6)
 design
 ```
 
-The `samplyr` code mirrors the verbal description verb for verb.
+The two MOS names distinguish district totals from village totals. This is
+a design declaration. Execution also needs compatible registers and compound
+listings. For a complete runnable example using bundled data, see
+[Select a Three-Stage Household Sample](https://dickoa.gitlab.io/samplyr/articles/three-stage-sampling.html)
+(`vignette("three-stage-sampling")`): communes, EAs and synthetic household
+listings, followed by observations and survey export.
 
 *Lohr, S. L. (2022). Sampling: Design and Analysis (3rd ed.). CRC Press.*
 
@@ -286,20 +308,24 @@ sample
 
 ## Beyond the Basics
 
-The verbs above cover most designs. These capabilities work the same way and
-are documented where they are taught in depth:
+The verbs above compose across many common design families. These capabilities
+extend the same grammar. The linked references describe their inputs and limits:
 
 | Capability | How | Where |
 |---|---|---|
-| Balanced sampling | `draw(method = "cube", aux = ...)`, with `bound()` for hard count constraints | `vignette("introduction")` |
+| Balanced sampling | `draw(method = "cube", aux = ...)`, with `bound()` for hard count constraints | `?draw`, `?bound` |
 | Spatially balanced | `draw(method = "lpm2" or "scps", spread = c(lon, lat))` | `?selection-methods` |
 | Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across waves | `vignette("sampling-coordination")` |
-| Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `vignette("introduction")` |
+| Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `?draw`, `sondage::register_method()` |
 | Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `vignette("rotating-panels")` |
 | Replicated draws | `execute(reps = 5)` | `?execute` |
 | Two-phase | pipe a `tbl_sample` into a new design's `execute()` | `vignette("survey-analysis")` |
 | Indirect sampling | `share_weights()`, to estimate for a population linked to the one that was sampled | `vignette("design-semantics")` |
 | Overlapping frames | `stack_frames()`, for two registers of one population | `vignette("survey-analysis")` |
+
+The [selection-methods reference](https://dickoa.gitlab.io/samplyr/reference/selection-methods.html)
+(`?selection-methods`) compares first-order and joint probability quality and
+variance routes, with links to the detailed stage/phase restrictions.
 
 ```{r beyond, eval = FALSE}
 # Balanced on auxiliary totals, PPS on size
@@ -328,9 +354,11 @@ survey::svymean(~y, svy)
 as_survey_design(sample) |> dplyr::summarise(mean_y = srvyr::survey_mean(y))
 ```
 
-`as_svydesign()` uses the Brewer variance approximation by default.
-`joint_expectation()` computes exact pairwise joint inclusion probabilities
-where the method supports them, for tighter variance estimates. See
+For fixed-size PPS WOR stages, `as_svydesign()` uses the Brewer variance
+approximation by default. Other selection families receive their own treatment.
+`joint_expectation()` supplies exact or approximate pairwise quantities where
+supported. An exact matrix does not guarantee a stable variance estimate or
+accurate interval coverage. See
 `vignette("survey-analysis")` for domain estimation, replicate weights, and the
 method-by-method breakdown.
 

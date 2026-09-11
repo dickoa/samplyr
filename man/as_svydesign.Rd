@@ -135,8 +135,13 @@ sample without replacement of the realized quota, so the blocks are the
 phase-2 strata and their sizes the phase-2 population counts. The master
 is retained as the first phase and supplies the rows the wave did not
 keep, which \code{\link[survey:twophase]{survey::twophase()}} needs to build that phase. Columns added
-to the wave for analysis are carried into the exported design. Columns the
-master already has keep the master's values.
+to the wave for analysis are carried into the exported design. Current
+wave or phase-2 analysis columns replace same-named first-phase columns.
+Unsampled rows have missing current measurements in those columns. Columns
+absent from the wave remain available from the master, so dropping a wave
+column does not erase the corresponding master measurements. Design identifiers,
+strata and internal sampling columns retain their recorded meanings.
+Keep earlier measurements under separate names if both are needed.
 
 The two-phase variance of a \emph{total} can come out negative on a stratified
 master whose stratum means differ strongly relative to the variation within
@@ -315,19 +320,13 @@ This applies under the following conditions.
 \item Single-stage designs (no \code{cluster_by()}, or \code{cluster_by()} with
 one row per sampled cluster) are exported with \code{poisson_sampling()}
 and produce the exact Horvitz-Thompson Poisson variance.
-\item Multi-stage designs with a random-size Poisson method at stage k > 1
-omit the finite-population correction at the Poisson stage (the same
-handling used for with-replacement methods). The Poisson stage is
-treated as sampled with replacement, which is mildly conservative.
-\item Multi-stage designs with a random-size Poisson method at stage 1
-are not supported by \code{survey::svydesign()}, which rejects multi-stage
-designs when the \code{pps} argument is set. Such designs raise an error
-suggesting \code{as_svrepdesign(type = "subbootstrap")}.
+\item Multi-stage designs with a Poisson method at any stage are refused by
+linearization export. Treating Poisson sampling as fixed-size sampling
+with replacement can understate variance, even to zero. Use
+\code{as_svrepdesign(type = "rwyb")}, which requires the optional svrep package.
 \item Single-stage designs that use \code{cluster_by()} with multiple rows per
-sampled cluster (for example a household listing within sampled EAs)
-raise an error. \code{survey::poisson_sampling()} treats rows as
-independent and does not honor within-cluster correlation. Use
-\code{as_svrepdesign(type = "subbootstrap")} for these designs.
+sampled cluster are also refused by linearization export. Use
+\code{as_svrepdesign(type = "rwyb")} to replicate the sampled clusters.
 \item Custom methods registered with \code{fixed_size = FALSE}
 (\code{sondage::register_method()}) are also random-size, but samplyr
 cannot verify that their selections are independent across units,
@@ -338,7 +337,7 @@ exported through \code{poisson_sampling()} exactly like the built-ins
 above. Undeclared methods raise an error. If you know the method is
 Poisson-type, pass the probabilities explicitly:
 \code{as_svydesign(x, pps = survey::poisson_sampling(1 / x$.weight))},
-or use \code{as_svrepdesign(type = "subbootstrap")}.
+or declare \code{variance_family = "poisson"} and use \code{type = "rwyb"}.
 }
 }
 

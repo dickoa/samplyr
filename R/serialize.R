@@ -125,10 +125,10 @@ as.list.sampling_design <- function(x, ...) {
 # `frame.fingerprints` plus `execution.frames` for stage mapping.
 
 design_format_id <- "samplyr/design"
-# Write the lowest version that preserves the file's meaning.
+# Every file declares the current version. Earlier versions were never released.
 design_format_version <- 3L
 method_vocabulary_id <- "samplyr/common-sampling-method"
-method_vocabulary_version <- 1L
+method_vocabulary_version <- 2L
 
 # Collections use a distinct format to prevent single-design replay.
 # Each component adds its name and membership column to a full design document.
@@ -164,6 +164,29 @@ shared_sample_format_version <- 1L
 #' experimental. They support samplyr persistence and replay. They are not a
 #' finalized cross-tool survey-sampling interchange standard. The structure
 #' may change while that separate specification is developed.
+#'
+#' ## Document validation
+#'
+#' Reads and writes use native R checks generated from the same source as the
+#' bundled JSON Schemas, before reconstruction or file creation. Unknown
+#' executable fields, duplicate JSON keys, malformed structures and contradictory
+#' method descriptors are refused. The reader accepts design format version 3
+#' and version 1 of the frame-stack and shared-sample formats. Earlier design
+#' versions were never released and are refused. Frame-dependent checks still run
+#' in [validate_frame()] and [execute()]. Optional `execution.frame_digest`
+#' contents are exempt from the duplicate-key traversal and contract checks.
+#' They retain their separate native version checks and warn-and-drop policy.
+#' Document validation errors name `read_design()`, including when it is
+#' called inside `replay_design(read_design(path), frame)`.
+#'
+#' Top-level `annotations` and `tools` contain named metadata objects. Unknown
+#' namespaces are preserved, including when saving restored collections and
+#' shared-sample documents. They cannot change selection. A nonempty
+#' `required_extensions` array is refused because no executable extensions are
+#' currently supported, including in nested component or source documents.
+#'
+#' The installed `schema/README.md` describes the schemas and compatibility
+#' rules. Locate it with `system.file("schema", "README.md", package = "samplyr")`.
 #'
 #' ## Frame information
 #'
@@ -223,8 +246,10 @@ shared_sample_format_version <- 1L
 #' ## Declarative and implementation metadata
 #'
 #' The `design`, `frame`, and `execution` blocks use declarative JSON rather
-#' than R expressions. Selection methods carry samplyr's internal semantic
-#' descriptor. The `tools.samplyr` block records exact method names, R classes,
+#' than R expressions. Files use method vocabulary version 2, which records
+#' the first-order quantity and its exact, approximate or unknown quality in
+#' the common descriptor. The
+#' `tools.samplyr` block records exact method names, R classes,
 #' the R-derived frame hash, and execution environment needed to rebuild and
 #' replay the native object. These descriptors are not a finalized external
 #' method vocabulary.
@@ -420,8 +445,10 @@ read_design <- function(file) {
       )
     }
   }
+  json <- if (grepl("^[[:space:]]*[{[]", file)) file else
+    paste(readLines(file, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
   payload <- tryCatch(
-    jsonlite::fromJSON(file, simplifyVector = FALSE),
+    jsonlite::fromJSON(json, simplifyVector = FALSE),
     error = function(cnd) {
       cli_abort(
         "{.arg file} is not valid JSON or a readable file.",
@@ -429,6 +456,7 @@ read_design <- function(file) {
       )
     }
   )
+  validate_design_document(payload)
   if (identical(payload$format, frame_stack_format_id)) {
     decode_frame_stack_payload(payload)
   } else if (identical(payload$format, shared_sample_format_id)) {
@@ -951,7 +979,9 @@ build_design_json <- function(
   fn_name,
   call = caller_env()
 ) {
-  payload <- if (is_shared_weight_sample(x)) {
+  payload <- if (is_shared_sample_design(x) || is_frame_stack_design(x)) {
+    restored_document_payload(x, frame, frame_label, fn_name, call)
+  } else if (is_shared_weight_sample(x)) {
     shared_sample_payload(
       x,
       frame = frame,
@@ -976,7 +1006,7 @@ build_design_json <- function(
       call = call
     )
   }
-  jsonlite::toJSON(
+  json <- jsonlite::toJSON(
     payload,
     auto_unbox = TRUE,
     dataframe = "rows",
@@ -985,6 +1015,10 @@ build_design_json <- function(
     null = "null",
     pretty = pretty
   )
+  validate_design_document(
+    jsonlite::fromJSON(json, simplifyVector = FALSE), call = call
+  )
+  json
 }
 
 #' Refuse link arguments where they describe nothing
@@ -1497,6 +1531,9 @@ design_payload <- function(
   } else if (is_sampling_design(x)) {
     design <- x
     execution <- attr(x, "execution")
+    if (!is_null(execution$frames$n_supplied)) {
+      execution$frames <- encode_frame_schedule(execution$frames)
+    }
     execution_environment <- attr(
       x,
       "design_tools"
@@ -1541,9 +1578,10 @@ design_payload <- function(
     ),
     design = encode_design(design)
   )
+  payload$annotations <- attr(design, "design_annotations")
   payload$frame <- encode_frame_info(design, frame, frame_label)
   payload$execution <- execution
-  payload$format_version <- required_format_version(payload)
+  payload$format_version <- design_format_version
   payload$tools <- attr(design, "design_tools") %||% list()
   payload$tools$samplyr <- encode_samplyr_metadata(
     design,
@@ -1554,157 +1592,30 @@ design_payload <- function(
   payload
 }
 
-#' The lowest format version that cannot be misread
-#'
-#' Additive fields alone do not justify a bump: an older reader ignores them
-#' and loses only detail. These do, because an older reader would misread the
-#' file rather than lose detail. A multi-register file (version 2) would be
-#' taken for a one-frame file and replayed against a single frame. A
-#' certainty-plan file (version 3) would drop the plan's classification and
-#' field the stored per-stratum totals as an ordinary PPS stage, capping by
-#' threshold instead of forcing the plan's certainty set, and refuse the take
-#' stage's absent size - a different design, silently at stage 1.
-#' @noRd
-required_format_version <- function(payload) {
-  bridge <- any(vapply(
-    payload$design$stages %||% list(),
-    function(stage) !is_null(stage$draw$certainty_plan),
-    logical(1)
-  ))
-  if (bridge) {
-    3L
-  } else if (
-    !is_null(payload$frame[["fingerprints"]]) ||
-      identical(payload$execution$frames$mode, "separate_frames")
-  ) {
-    2L
-  } else {
-    1L
-  }
-}
 
 ## Sampling method vocabulary
 
 # Common identifiers retain distinctions missing from the broader DDI terms.
 
 #' @noRd
-sampling_method_dictionary <- function() {
-  probability <- list(
-    code = "Probability",
-    uri = paste0(
-      "http://rdf-vocabulary.ddialliance.org/cv/",
-      "SamplingProcedure/1.1.4/0d2765b"
-    )
-  )
-  simple_random <- list(
-    code = "Probability.SimpleRandom",
-    uri = paste0(
-      "http://rdf-vocabulary.ddialliance.org/cv/",
-      "SamplingProcedure/1.1.4/38e8e88"
-    )
-  )
-  systematic_random <- list(
-    code = "Probability.SystematicRandom",
-    uri = paste0(
-      "http://rdf-vocabulary.ddialliance.org/cv/",
-      "SamplingProcedure/1.1.4/f189f62"
-    )
-  )
-  entry <- function(
-    id,
-    family,
-    algorithm,
-    replacement,
-    sample_size,
-    probabilities,
-    ddi = probability
-  ) {
-    list(
-      id = id,
-      family = family,
-      algorithm = algorithm,
-      replacement = replacement,
-      sample_size = sample_size,
-      probabilities = probabilities,
-      ddi = ddi
-    )
+sampling_method_dictionary <- local({
+  dictionary <- NULL
+  function() {
+    if (is_null(dictionary)) {
+      registry <- jsonlite::fromJSON(
+        system.file("schema", "sampling-methods-v2.json",
+                    package = "samplyr", mustWork = TRUE),
+        simplifyVector = FALSE
+      )
+      dictionary <<- setNames(
+        registry$methods,
+        vapply(registry$methods, function(x) x$implementations$samplyr,
+               character(1))
+      )
+    }
+    dictionary
   }
-
-  list(
-    srswor = entry(
-      "simple_random_without_replacement", "equal_probability", "simple_random",
-      "without_replacement", "fixed", "equal", simple_random
-    ),
-    srswr = entry(
-      "simple_random_with_replacement", "equal_probability", "simple_random",
-      "with_replacement", "fixed", "equal"
-    ),
-    systematic = entry(
-      "systematic_equal_probability", "equal_probability", "systematic",
-      "without_replacement", "fixed", "equal", systematic_random
-    ),
-    bernoulli = entry(
-      "bernoulli", "equal_probability", "bernoulli",
-      "without_replacement", "random", "equal"
-    ),
-    pps_systematic = entry(
-      "systematic_probability_proportional_to_size",
-      "probability_proportional_to_size", "systematic",
-      "without_replacement", "fixed", "unequal"
-    ),
-    pps_brewer = entry(
-      "generalized_brewer_probability_proportional_to_size",
-      "probability_proportional_to_size", "generalized_brewer",
-      "without_replacement", "fixed", "unequal"
-    ),
-    pps_cps = entry(
-      "conditional_poisson", "probability_proportional_to_size",
-      "conditional_poisson",
-      "without_replacement", "fixed", "unequal"
-    ),
-    pps_sampford = entry(
-      "sampford", "probability_proportional_to_size", "sampford",
-      "without_replacement", "fixed", "unequal"
-    ),
-    pps_poisson = entry(
-      "poisson_probability_proportional_to_size",
-      "probability_proportional_to_size", "poisson",
-      "without_replacement", "random", "unequal"
-    ),
-    pps_sps = entry(
-      "sequential_poisson", "probability_proportional_to_size",
-      "sequential_poisson",
-      "without_replacement", "fixed", "unequal"
-    ),
-    pps_pareto = entry(
-      "pareto", "probability_proportional_to_size", "pareto",
-      "without_replacement", "fixed", "unequal"
-    ),
-    pps_multinomial = entry(
-      "multinomial_probability_proportional_to_size",
-      "probability_proportional_to_size", "multinomial",
-      "with_replacement", "fixed", "unequal"
-    ),
-    pps_chromy = entry(
-      "chromy_minimum_replacement", "probability_proportional_to_size",
-      "chromy",
-      "minimum_replacement", "fixed", "unequal"
-    ),
-    cube = entry(
-      "cube_balanced", "balanced", "cube",
-      "without_replacement", "fixed", "equal_or_unequal"
-    ),
-    lpm2 = entry(
-      "local_pivotal", "spatially_balanced", "local_pivotal",
-      "without_replacement", "fixed", "equal_or_unequal"
-    ),
-    scps = entry(
-      "spatially_correlated_poisson", "spatially_balanced",
-      "spatially_correlated_poisson",
-      "without_replacement", "fixed", "equal_or_unequal"
-    )
-  )
-}
+})
 
 #' @noRd
 encode_method <- function(spec) {
@@ -1751,6 +1662,10 @@ encode_method <- function(spec) {
     replacement = entry$replacement,
     sample_size = entry$sample_size,
     probabilities = entry$probabilities,
+    probability_quantity = entry$probability_quantity %||%
+      if (identical(spec$method_type, "wr")) "expected_hits" else "inclusion_probability",
+    probability_quality = entry$probability_quality %||%
+      spec$method_probabilities %||% "unknown",
     standards = list(list(
       vocabulary = "DDI SamplingProcedure",
       version = "1.1.4",
@@ -2081,7 +1996,7 @@ encode_frame_info <- function(design, frame, frame_label) {
     if (length(frames) == 1L) {
       info$fingerprint <- portable_frame_fingerprint(frames[[1]])
     } else {
-      info$fingerprints <- lapply(frames, portable_frame_fingerprint)
+      info$fingerprints <- unname(lapply(frames, portable_frame_fingerprint))
     }
   }
   info
@@ -2657,10 +2572,14 @@ decode_shared_sample_payload <- function(payload, call = caller_env()) {
     )
   }
   spec <- decode_weight_share_call(payload$transformation, call = call)
-  new_shared_sample_design(
+  restored <- new_shared_sample_design(
     decode_design_payload(payload$source, call = call),
     transformation = spec
   )
+  attr(restored, "wrapper_document") <- payload[
+    intersect(c("format", "format_version", "annotations", "tools"), names(payload))
+  ]
+  restored
 }
 
 #' @noRd
@@ -2805,12 +2724,16 @@ decode_frame_stack_payload <- function(payload, call = caller_env()) {
   designs <- lapply(components, decode_design_payload, call = call)
   names(designs) <- names_x
 
-  new_frame_stack_design(
+  restored <- new_frame_stack_design(
     designs,
     membership = membership,
     key = key,
     overlaps = decode_overlap_spec(payload$overlaps, names_x, call = call)
   )
+  attr(restored, "wrapper_document") <- payload[
+    intersect(c("format", "format_version", "annotations", "tools"), names(payload))
+  ]
+  restored
 }
 
 #' @noRd
@@ -2849,15 +2772,13 @@ decode_design_payload <- function(payload, call = caller_env()) {
   version <- payload$format_version
   if (
     !is.numeric(version) || length(version) != 1 || is.na(version) ||
-      version < 1 || version != floor(version) ||
-      version > design_format_version
+      version != design_format_version
   ) {
     abort_samplyr(
       c(
         "Design file format version {.val {version}} is not supported.",
-        "i" = "This version of samplyr reads format versions up to
-               {.val {design_format_version}}. Update samplyr to read
-               this file."
+        "i" = "This version of samplyr reads format version
+               {.val {design_format_version}} only."
       ),
       class = "samplyr_error_design_file_unsupported",
       call = call
@@ -2874,7 +2795,7 @@ decode_design_payload <- function(payload, call = caller_env()) {
   if (
     !identical(vocabulary$id, method_vocabulary_id) ||
       !is.numeric(vocabulary$version) || length(vocabulary$version) != 1 ||
-      vocabulary$version > method_vocabulary_version
+      vocabulary$version != method_vocabulary_version
   ) {
     abort_samplyr(
       "Design file uses an unsupported sampling method vocabulary.",
@@ -2906,6 +2827,7 @@ decode_design_payload <- function(payload, call = caller_env()) {
   )
   attr(design, "portable_frame_info") <- payload$frame
   attr(design, "design_tools") <- payload$tools
+  attr(design, "design_annotations") <- payload$annotations
   execution <- payload$execution
   if (!is_null(execution$frame_digest)) {
     execution$frame_digest <- tryCatch(
@@ -3018,6 +2940,9 @@ decode_method <- function(
     fields <- c(
       "family", "algorithm", "replacement", "sample_size", "probabilities"
     )
+    fields <- c(fields, intersect(
+      c("probability_quantity", "probability_quality"), names(method)
+    ))
     matches <- vapply(fields, function(field) {
       identical(decode_chr(method[[field]]), expected[[field]])
     }, logical(1))
@@ -3065,12 +2990,18 @@ decode_method <- function(
         call = call
       )
     }
+    quality <- method$probability_quality
+    native_quality <- decode_chr(tool_method$probabilities)
+    if (!is_null(quality) && !is_null(native_quality) &&
+        !identical(quality, native_quality)) {
+      cli_abort("Common and samplyr probability quality disagree.", call = call)
+    }
     return(list(
       name = name,
       registry_type = decode_chr(tool_method$registry_type),
       fixed_size = decode_flag(tool_method$fixed_size),
       variance_family = decode_chr(tool_method$variance_family),
-      probabilities = decode_chr(tool_method$probabilities),
+      probabilities = decode_chr(quality %||% native_quality),
       implementation = decode_chr(tool_method$implementation)
     ))
   }
@@ -3090,7 +3021,7 @@ decode_method <- function(
     registry_type = NULL,
     fixed_size = NULL,
     variance_family = NULL,
-    probabilities = NULL,
+    probabilities = decode_chr(method$probability_quality),
     implementation = NULL
   )
 }

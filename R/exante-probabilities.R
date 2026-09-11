@@ -1,7 +1,7 @@
 
-## Exact selection probabilities, resolved without drawing
+## Selection probabilities and explicitly accepted approximate targets
 
-# Resolve exact cross-frame chances with execution's allocation machinery.
+# Resolve cross-frame chances with execution's allocation machinery.
 # Frame digests cannot serve because they may bin chances under internal keys.
 
 #' Selection probabilities a design would give a register, without drawing
@@ -10,6 +10,9 @@
 #' Returns the probability that each unit of a register would be selected,
 #' computed from the design rather than observed from a sample. It draws no
 #' random numbers, and it needs no execution.
+#' By default, every stage must supply exact inclusion probabilities.
+#' Approximate targets require `allow_approximate = TRUE` and are labelled
+#' in the result.
 #'
 #' The intended use is a survey covering one population through several
 #' registers, where the expected multiframe estimator needs a unit's chance in
@@ -21,7 +24,19 @@
 #' the chance the unit's cluster is selected times the chance the unit is
 #' selected within it. The stage-by-stage quantities come from the same
 #' allocation and chance resolvers execution uses, so a sample's own weights
-#' reproduce these numbers exactly.
+#' reproduce these numbers exactly. Agreement with weights verifies that the
+#' same targets were used. It does not establish that approximate targets are
+#' the method's actual inclusion probabilities.
+#'
+#' ## Approximate probabilities
+#'
+#' `pps_sps` and `pps_pareto`, and custom methods declaring approximate
+#' probabilities, are refused by default. With `allow_approximate = TRUE`,
+#' their targets are returned and compounded across stages. The whole result
+#' is labelled `"approximate"` if any stage has this probability contract,
+#' including rows selected with certainty. Estimators using these targets
+#' need not be design-unbiased. Methods declaring `"unknown"` probabilities
+#' remain unsupported even with this opt-in.
 #'
 #' ## What it refuses
 #'
@@ -40,10 +55,14 @@
 #' @param frame The register, a data frame.
 #' @param ... Must be empty. Arguments after it are matched by exact name.
 #' @param key A bare column of `frame` identifying the population unit. It
-#'   must be unique.
+#'   must be unique and cannot be named `probability` or `probability_quality`.
+#' @param allow_approximate Logical, default `FALSE`. Explicitly accept
+#'   approximate probability targets, with the limitations described above.
 #'
-#' @return A tibble with the key column and `probability`, one row per unit,
-#'   in the register's own order.
+#' @return A tibble with the key column, `probability`, and
+#'   `probability_quality` (`"exact"` or `"approximate"`), one row per unit
+#'   in the register's own order. Quality reflects the weakest stage's
+#'   probability contract.
 #'
 #' @references
 #' Lohr, S. L. (2021). Multiple-frame surveys for a multiple-data-source
@@ -73,16 +92,22 @@
 #'
 #' @family multiple frames
 #' @export
-exante_probabilities <- function(design, frame, ..., key) {
-  check_keyword_args(enquos(...), "key")
+exante_probabilities <- function(design, frame, ..., key, allow_approximate = FALSE) {
+  check_keyword_args(enquos(...), c("key", "allow_approximate"))
   key_col <- parse_frame_key(
     rlang::enquo(key),
     class = "samplyr_error_exante_key"
   )
-  resolved <- resolve_exante_probabilities(design, frame, key_col)
+  if (key_col %in% c("probability", "probability_quality")) {
+    abort_samplyr("{.arg key} must not be named probability or probability_quality.",
+      class = "samplyr_error_exante_key")
+  }
+  resolved <- resolve_exante_probabilities(design, frame, key_col,
+    allow_approximate = allow_approximate)
   result <- tibble::tibble(
     key = resolved$keys,
-    probability = resolved$probability
+    probability = resolved$probability,
+    probability_quality = rep(resolved$probability_quality, length(resolved$keys))
   )
   names(result)[[1]] <- key_col
   result
@@ -95,8 +120,10 @@ exante_probabilities <- function(design, frame, ..., key) {
 #' @noRd
 resolve_exante_probabilities <- function(design, frame, key_col,
                                          frame_label = NULL,
+                                         allow_approximate = FALSE,
                                          call = caller_env()) {
   check_exante_design_complete(design, call = call)
+  quality <- exante_probability_quality(design, allow_approximate, call = call)
 
   supplied <- normalize_frame_input(frame, call = call)
   if (supplied$n_supplied > 1L) {
@@ -126,6 +153,7 @@ resolve_exante_probabilities <- function(design, frame, key_col,
   schedule <- stage_frame_schedule(
     design, supplied$frames, stages = NULL, executed = NULL, call = call
   )
+  validate_certainty_bridge(design, schedule, call = call)
   stage_frames <- effective_register_frames(schedule, design, call = call)
   frames_by_stage <- vector("list", length(design$stages))
   for (i in seq_along(schedule$entries)) {
@@ -157,7 +185,36 @@ resolve_exante_probabilities <- function(design, frame, key_col,
     registry <- exante_parent_registry(resolved)
   }
 
-  list(keys = keys, probability = probability)
+  list(keys = keys, probability = probability, probability_quality = quality)
+}
+
+#' Compound probabilities inherit the weakest stage's probability contract
+#' @noRd
+exante_probability_quality <- function(design, allow_approximate, call = caller_env()) {
+  check_exante_approximate_arg(allow_approximate, call = call)
+  quality <- vapply(design$stages, function(s) {
+    s$draw_spec$method_probabilities %||%
+      builtin_method_probabilities(s$draw_spec$method) %||% "unknown"
+  }, character(1))
+  if (any(!quality %in% c("exact", "approximate"))) {
+    abort_samplyr("The design declares unknown inclusion probabilities.",
+      class = "samplyr_error_exante_unsupported", call = call)
+  }
+  if (any(quality == "approximate") && !allow_approximate) {
+    abort_samplyr(c(
+      "The design supplies approximate probability targets, not exact inclusion probabilities.",
+      "i" = "Set {.code allow_approximate = TRUE} to accept these targets explicitly. Estimates using them need not be design-unbiased."
+    ), class = "samplyr_error_exante_approximate", call = call)
+  }
+  if (any(quality == "approximate")) "approximate" else "exact"
+}
+
+#' @noRd
+check_exante_approximate_arg <- function(allow_approximate, call = caller_env()) {
+  if (!is.logical(allow_approximate) || length(allow_approximate) != 1L || is.na(allow_approximate)) {
+    abort_samplyr("{.arg allow_approximate} must be TRUE or FALSE.",
+      class = "samplyr_error_exante_unsupported", call = call)
+  }
 }
 
 #' @noRd
@@ -288,9 +345,17 @@ exante_parent_registry <- function(resolved) {
 #'
 #' This is the capability the expected multiframe estimator needs and that a
 #' sample alone cannot supply: the probability a unit would have had in a
-#' frame it was not selected from. It is exact, and it is checked against what
-#' actually happened, because a component's own resolved chance has to equal
-#' the design weight the execution produced.
+#' frame it was not selected from. Exact inclusion probabilities are required
+#' by default. With `allow_approximate = TRUE`, approximate targets may be
+#' used instead. The resulting estimator need not be design-unbiased.
+#' A component's own resolved chance must equal the reciprocal of its
+#' execution weight. This consistency check cannot establish the exactness
+#' of approximate targets.
+#'
+#' Resolved stacks retain a named, per-frame `probability_quality` vector in
+#' their `overlaps` attribute. Survey exports retain that vector in the
+#' `samplyr_overlap_probability_quality` attribute, and printing a stack
+#' identifies accepted approximate probabilities.
 #'
 #' @param frames A named list of registers, one per frame, with the same names
 #'   as the components of the stack. Each is the population the corresponding
@@ -299,6 +364,9 @@ exante_parent_registry <- function(resolved) {
 #' @param by A single named string matching the stack's key to the column
 #'   holding it in the registers, in the same direction as a join:
 #'   `by = c(person_id = "person_id")`.
+#' @param allow_approximate Logical, default `FALSE`. Allow approximate
+#'   probability targets when resolving the component designs. See
+#'   [exante_probabilities()] for the statistical limitations.
 #'
 #' @return An object of class `samplyr_exante_overlap_spec`, for
 #'   `stack_frames()`'s `overlaps` argument.
@@ -317,8 +385,9 @@ exante_parent_registry <- function(resolved) {
 #'
 #' @family multiple frames
 #' @export
-exante_overlaps <- function(frames, ..., by) {
-  check_keyword_args(enquos(...), "by")
+exante_overlaps <- function(frames, ..., by, allow_approximate = FALSE) {
+  check_keyword_args(enquos(...), c("by", "allow_approximate"))
+  check_exante_approximate_arg(allow_approximate)
   if (missing(by)) {
     abort_samplyr(
       c(
@@ -360,7 +429,8 @@ exante_overlaps <- function(frames, ..., by) {
   }
 
   structure(
-    list(scale = "probabilities", frames = frames, by = by),
+    list(scale = "probabilities", frames = frames, by = by,
+      allow_approximate = allow_approximate),
     class = "samplyr_exante_overlap_spec"
   )
 }
@@ -417,6 +487,7 @@ resolve_exante_overlaps <- function(samples, spec, membership,
       spec$frames[[nm]],
       register_col,
       frame_label = paste0("the register for frame \"", nm, "\""),
+      allow_approximate = spec$allow_approximate %||% FALSE,
       call = call
     )
   })
@@ -452,7 +523,8 @@ resolve_exante_overlaps <- function(samples, spec, membership,
     check_exante_diagonal(samples[[nm]], matrices[[nm]][, nm], nm, call = call)
   }
 
-  new_resolved_overlaps(matrices)
+  quality <- vapply(resolved, function(x) x$probability_quality, character(1))
+  new_resolved_overlaps(matrices, probability_quality = quality)
 }
 
 #' The resolved form of an overlap declaration
@@ -462,9 +534,10 @@ resolve_exante_overlaps <- function(samples, spec, membership,
 #' is a test on the absence of a field rather than on what the object is.
 #' `cols` stays `NULL` so nothing that reads it has to change.
 #' @noRd
-new_resolved_overlaps <- function(matrices) {
+new_resolved_overlaps <- function(matrices, probability_quality = NULL) {
   structure(
-    list(scale = "probabilities", cols = NULL, resolved = matrices),
+    list(scale = "probabilities", cols = NULL, resolved = matrices,
+      probability_quality = probability_quality),
     class = "samplyr_resolved_overlaps"
   )
 }

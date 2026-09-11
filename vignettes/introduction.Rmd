@@ -39,19 +39,14 @@ design <- sampling_design(title = "Burkina Faso EA sample") |>
   draw(n = 100)
 
 sample <- execute(design, bfa_eas, seed = 24)
-sample
+sample |>
+  as.data.frame() |>
+  dplyr::select(ea_id, region, households, .weight) |>
+  head(4)
 ```
 
 The frame has one row per enumeration area. The result keeps its frame columns
 and adds the design information needed for analysis.
-
-```{r}
-library(dplyr)
-sample |>
-  as_tibble() |>
-  select(ea_id, region, households, .weight, .weight_1) |>
-  slice_head(n = 6)
-```
 
 `.weight` is the overall design weight. In a one-stage sample it equals
 `.weight_1`. A multistage sample also carries one weight column per stage and
@@ -148,62 +143,16 @@ second-order information required for variance estimation, whether a random
 sample size is acceptable, and whether permanent random numbers are needed.
 The comparison is in `?selection-methods`.
 
-## A two-stage sample
+## Continue inside selected units
 
-Multistage designs select units within units chosen earlier. This small example
-selects EAs first and then households from a separate listing frame.
+`add_stage()` starts another selection within each selected parent. For
+example, adding `add_stage() |> draw(n = 12)` after the EA selection declares
+a household draw within each selected EA. Execution needs household rows,
+with EA identifiers linking them to their parents.
 
-```{r}
-ea_frame <- bfa_eas |>
-  slice_head(n = 200)
-
-household_frame <- data.frame(
-  ea_id = rep(ea_frame$ea_id, each = 12),
-  household_id = sequence(rep(12, nrow(ea_frame))),
-  outcome = rnorm(12 * nrow(ea_frame))
-)
-
-two_stage_design <- sampling_design(title = "EA and household sample") |>
-  cluster_by(ea_id) |>
-  draw(n = 20) |>
-  add_stage() |>
-  draw(n = 5)
-
-household_sample <- execute(
-  two_stage_design,
-  ea_frame,
-  household_frame,
-  seed = 28
-)
-
-c(
-  eas = n_distinct(household_sample$ea_id),
-  households = nrow(household_sample)
-)
-```
-
-Frames are mapped to stages by position. `samplyr` restricts the household
-listing to the selected EAs, then compounds the conditional stage weights.
-
-```{r}
-household_sample |>
-  select(ea_id, household_id, .weight_1, .weight_2, .weight) |>
-  slice_head(n = 6)
-```
-
-When later listings become available only after stage 1 fieldwork, execute the
-same design in steps. Pass `stages = 1` for the first selection, then continue
-from that unmodified partial sample.
-
-```{r}
-selected_eas <- execute(two_stage_design, ea_frame, stages = 1, seed = 28)
-continued_sample <- execute(selected_eas, household_frame)
-
-identical(household_sample$household_id, continued_sample$household_id)
-```
-
-One seed around the single-call execution covers the whole random sequence.
-The continuation stores the required RNG state, so the two routes agree.
+The next tutorial, `vignette("three-stage-sampling")`, works through this
+process in full: commune and EA registers, household listing, continuation,
+and survey export. It also explains the scope of `n` at every stage.
 
 ## Fractions, replacement, and ordering
 
@@ -248,24 +197,29 @@ frame_summary(stratified_sample, detail = "pool") |>
 For domain estimates, convert the complete sample first and subset the survey
 design afterwards. See `vignette("survey-analysis")` for that workflow.
 
-## Where the specialized methods live
+## Choose your next step
 
-The getting-started path does not require every selection family.
+The main learning path is:
 
-| Need | Next reference |
+1. **Get started**: the design grammar and a first sample, covered here.
+2. **Select a three-stage sample**: `vignette("three-stage-sampling")` follows
+   fieldwork from area registers to households and observations.
+3. **Analyze the sample**: `vignette("survey-analysis")` covers outcome joins,
+   domain estimates and variance choices, with optional two-phase and
+   overlapping-frame examples.
+
+Use the other articles when their task arises:
+
+| Task | Article |
 |:--|:--|
-| Choose a sample size or allocation | `vignette("survey-planning")` |
-| Export weights and estimate domains | `vignette("survey-analysis")` |
-| Coordinate repeated samples with PRNs | `vignette("sampling-coordination")` |
-| Build a rotating panel | `vignette("rotating-panels")` |
-| Understand probability and variance contracts | `vignette("design-semantics")` |
+| Choose sizes and allocations before selection | `vignette("survey-planning")` |
+| Coordinate new draws with permanent random numbers | `vignette("sampling-coordination")` |
+| Schedule panels and refreshment cohorts | `vignette("rotating-panels")` |
 | Save or replay a design | `vignette("serialization")` |
 
-Balanced sampling, spatially balanced sampling, custom methods, hard balance
-constraints, replicate execution, and detailed joint-probability calculations
-remain available through `?selection-methods` and the statistical-contract
-article. They are useful tools, but they are not prerequisites for drawing a
-valid first sample.
+For a method or inference lookup, use `?selection-methods`. Consult
+`vignette("design-semantics")` for the underlying contracts and
+`vignette("validation")` for simulation diagnostics.
 
 ## A compact checklist
 
@@ -276,8 +230,7 @@ valid first sample.
 5. Keep the returned design columns unchanged.
 6. Archive the executed sample and its frame provenance.
 
-The next article for most users is `vignette("survey-planning")` when the take
-is not yet known, or `vignette("survey-analysis")` when data collection is
-complete.
+Continue with `vignette("three-stage-sampling")`, or go directly to
+`vignette("survey-analysis")` if you already have a selected sample.
 
 ## References

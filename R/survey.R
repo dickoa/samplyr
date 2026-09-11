@@ -111,8 +111,13 @@
 #' phase-2 strata and their sizes the phase-2 population counts. The master
 #' is retained as the first phase and supplies the rows the wave did not
 #' keep, which [survey::twophase()] needs to build that phase. Columns added
-#' to the wave for analysis are carried into the exported design. Columns the
-#' master already has keep the master's values.
+#' to the wave for analysis are carried into the exported design. Current
+#' wave or phase-2 analysis columns replace same-named first-phase columns.
+#' Unsampled rows have missing current measurements in those columns. Columns
+#' absent from the wave remain available from the master, so dropping a wave
+#' column does not erase the corresponding master measurements. Design identifiers,
+#' strata and internal sampling columns retain their recorded meanings.
+#' Keep earlier measurements under separate names if both are needed.
 #'
 #' The two-phase variance of a *total* can come out negative on a stratified
 #' master whose stratum means differ strongly relative to the variation within
@@ -288,19 +293,13 @@
 #' - Single-stage designs (no `cluster_by()`, or `cluster_by()` with
 #'   one row per sampled cluster) are exported with `poisson_sampling()`
 #'   and produce the exact Horvitz-Thompson Poisson variance.
-#' - Multi-stage designs with a random-size Poisson method at stage k > 1
-#'   omit the finite-population correction at the Poisson stage (the same
-#'   handling used for with-replacement methods). The Poisson stage is
-#'   treated as sampled with replacement, which is mildly conservative.
-#' - Multi-stage designs with a random-size Poisson method at stage 1
-#'   are not supported by `survey::svydesign()`, which rejects multi-stage
-#'   designs when the `pps` argument is set. Such designs raise an error
-#'   suggesting `as_svrepdesign(type = "subbootstrap")`.
+#' - Multi-stage designs with a Poisson method at any stage are refused by
+#'   linearization export. Treating Poisson sampling as fixed-size sampling
+#'   with replacement can understate variance, even to zero. Use
+#'   `as_svrepdesign(type = "rwyb")`, which requires the optional svrep package.
 #' - Single-stage designs that use `cluster_by()` with multiple rows per
-#'   sampled cluster (for example a household listing within sampled EAs)
-#'   raise an error. `survey::poisson_sampling()` treats rows as
-#'   independent and does not honor within-cluster correlation. Use
-#'   `as_svrepdesign(type = "subbootstrap")` for these designs.
+#'   sampled cluster are also refused by linearization export. Use
+#'   `as_svrepdesign(type = "rwyb")` to replicate the sampled clusters.
 #' - Custom methods registered with `fixed_size = FALSE`
 #'   (`sondage::register_method()`) are also random-size, but samplyr
 #'   cannot verify that their selections are independent across units,
@@ -311,7 +310,7 @@
 #'   above. Undeclared methods raise an error. If you know the method is
 #'   Poisson-type, pass the probabilities explicitly:
 #'   `as_svydesign(x, pps = survey::poisson_sampling(1 / x$.weight))`,
-#'   or use `as_svrepdesign(type = "subbootstrap")`.
+#'   or declare `variance_family = "poisson"` and use `type = "rwyb"`.
 #'
 #' ## Declared variance families for custom methods
 #'
@@ -1024,6 +1023,16 @@ build_activation_twophase <- function(
 
   df1 <- as.data.frame(master)
 
+  # Copy current measurements before generating export columns so their
+  # names participate in collision avoidance (for example a user's .active).
+  carried <- setdiff(names(x), protected_sample_cols(df1, design1, stages1))
+  if (length(carried) > 0) {
+    at <- match(df1$.sample_id, x$.sample_id)
+    for (nm in carried) {
+      df1[[nm]] <- as.data.frame(x)[[nm]][at]
+    }
+  }
+
   id_info <- survey_id_info(
     design1,
     stages1,
@@ -1048,15 +1057,6 @@ build_activation_twophase <- function(
   phase2 <- activation_phase2_columns(df1, x, metadata, call = call)
   df1 <- phase2$df
   cols <- phase2$cols
-
-  # Preserve master values and append wave-only analysis variables.
-  carried <- setdiff(names(as.data.frame(x)), names(df1))
-  if (length(carried) > 0) {
-    at <- match(df1$.sample_id, x$.sample_id)
-    for (nm in carried) {
-      df1[[nm]] <- as.data.frame(x)[[nm]][at]
-    }
-  }
 
   pps_arg <- dots[["pps"]]
   dots[["pps"]] <- NULL
@@ -1493,6 +1493,15 @@ survey_strata_info <- function(
 #' represented PPS stage.
 #' @noRd
 survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
+  later_poisson <- stages_executed[-1L][vapply(stages_executed[-1L], function(i) {
+    identical(survey_stage_kind(design$stages[[i]]$draw_spec), "rs_poisson")
+  }, logical(1))]
+  if (length(later_poisson)) {
+    abort_samplyr(c(
+      "Linearization export cannot represent Poisson sampling at later stages.",
+      "i" = "Use {.code as_svrepdesign(x, type = \"rwyb\")} to retain the random sample-size variance."
+    ), class = "samplyr_error_multistage_poisson_later")
+  }
   fpc_stage_indices <- if (length(id_stage_indices) == 0) {
     stages_executed[1]
   } else {
@@ -1540,7 +1549,7 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
     weight_col <- paste0(".weight_", stage_idx)
     fpc_col <- paste0(".fpc_", stage_idx)
 
-    if (kind %in% c("wr", "rs_poisson_later", "unsupported_later")) {
+    if (kind %in% c("wr", "unsupported_later")) {
       if (scale == "fraction") {
         f0_col <- paste0(".fpc_f0_", stage_idx)
         df[[f0_col]] <- 0
@@ -1591,12 +1600,10 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices) {
   )
 }
 
-#' Demote a stage-1 random-size Poisson FPC to Inf.
+#' Demote an unsupported stage-1 variance specification to a WR approximation
 #'
-#' Used by the bootstrap escape hatch when survey::svydesign() cannot
-#' represent a stage-1 Poisson PPS specification in a multi-stage object.
-#' The demoted design carries no finite-population correction at that stage.
-#' The bootstrap resampler supplies the variance instead.
+#' Used only by the existing generic bootstrap route for unsupported
+#' balanced or spatial variance families. Poisson designs use RWYB directly.
 #' @noRd
 survey_demote_rs_poisson_stage1 <- function(df, fpc, first_idx) {
   pi_col <- paste0(".fpc_pi_", first_idx)
@@ -1621,15 +1628,10 @@ survey_demote_rs_poisson_stage1 <- function(df, fpc, first_idx) {
 
 #' Resolve the pps argument for as_svydesign.
 #'
-#' Single-phase only. Encapsulates the case split documented in
-#' as_svydesign(): exact poisson_sampling() at single-stage, error or
-#' bootstrap relaxation for multi-stage stage-1 Poisson, error or
-#' bootstrap relaxation for clustered single-stage Poisson with multiple
-#' rows per cluster, Brewer for fixed-size PPS WOR, FALSE otherwise.
-#'
-#' Returns a list with the resolved `pps` argument plus possibly modified
-#' `df` and `fpc` (when the bootstrap relaxation rewrites a stage-1
-#' Poisson FPC to Inf).
+#' Single-phase only: exact Poisson variance for single-stage element
+#' sampling, refusal for other Poisson designs, Brewer for fixed-size PPS
+#' WOR, and FALSE otherwise. Generic bootstraps may relax unsupported
+#' balanced or spatial families, but never independent Poisson sampling.
 #' @noRd
 survey_resolve_pps <- function(
   df,
@@ -1699,16 +1701,11 @@ survey_resolve_pps <- function(
   first_idx <- stages_executed[1]
 
   if (length(stages_executed) > 1L) {
-    if (relax_pps_for_bootstrap) {
-      relaxed <- survey_demote_rs_poisson_stage1(df, fpc, first_idx)
-      pps <- if (relaxed$fpc$has_pps_wor) "brewer" else FALSE
-      return(list(pps = pps, df = relaxed$df, fpc = relaxed$fpc))
-    }
     abort_samplyr(
       c(
         "{.pkg survey} does not support multi-stage designs with a random-size Poisson method at stage 1.",
         "i" = "{.pkg survey} rejects multi-stage designs when the {.code pps} argument is set.",
-        "i" = "Use {.code as_svrepdesign(type = \"subbootstrap\")} for a bootstrap approximation.",
+        "i" = "Use {.code as_svrepdesign(type = \"rwyb\")} for independent Poisson replication.",
         "i" = "Or convert each stage separately."
       ),
       class = "samplyr_error_multistage_poisson_stage1"
@@ -1720,15 +1717,11 @@ survey_resolve_pps <- function(
     cluster_vars <- stage_spec$clusters$vars
     n_clusters <- nrow(unique(df[, cluster_vars, drop = FALSE]))
     if (nrow(df) > n_clusters) {
-      if (relax_pps_for_bootstrap) {
-        relaxed <- survey_demote_rs_poisson_stage1(df, fpc, first_idx)
-        return(list(pps = FALSE, df = relaxed$df, fpc = relaxed$fpc))
-      }
       abort_samplyr(
         c(
           "Cannot export a clustered random-size Poisson design with multiple rows per sampled cluster via {.fn as_svydesign}.",
           "i" = "{.pkg survey}'s {.fn poisson_sampling} estimator treats rows as independent and does not honor within-cluster correlation.",
-          "i" = "Use {.code as_svrepdesign(type = \"subbootstrap\")} for a bootstrap approximation that resamples clusters."
+          "i" = "Use {.code as_svrepdesign(type = \"rwyb\")} to replicate the independent Poisson cluster selections."
         ),
         class = "samplyr_error_cluster_poisson_export"
       )
@@ -1744,16 +1737,12 @@ survey_resolve_pps <- function(
     !stage_spec$draw_spec$method %in% rs_poisson_methods &&
       !is_declared_poisson
   ) {
-    if (relax_pps_for_bootstrap) {
-      relaxed <- survey_demote_rs_poisson_stage1(df, fpc, first_idx)
-      return(list(pps = FALSE, df = relaxed$df, fpc = relaxed$fpc))
-    }
     abort_samplyr(
       c(
         "Cannot export the custom random-size method {.val {stage_spec$draw_spec$method}} via {.fn as_svydesign}.",
         "i" = "The method is registered with {.code fixed_size = FALSE}, so the sample size is random. {.pkg survey}'s Poisson variance estimator assumes selections are independent across units, which samplyr cannot verify for a custom method.",
         "i" = "If selections are independent (Poisson-type), pass the inclusion probabilities explicitly: {.code as_svydesign(x, pps = survey::poisson_sampling(1 / x$.weight))}.",
-        "i" = "Otherwise use {.code as_svrepdesign(type = \"subbootstrap\")} for a bootstrap approximation."
+        "i" = "To use RWYB replication, register the method with {.code variance_family = \"poisson\"} only if selections are independent."
       ),
       class = "samplyr_error_custom_random_wor_export"
     )
@@ -2017,6 +2006,13 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
     )
     df2 <- fpc2$df
 
+    if (fpc1$has_rs_poisson_stage1 || fpc2$has_rs_poisson_stage1) {
+      abort_samplyr(c(
+        "Two-phase export does not support Poisson sampling in either phase.",
+        "i" = "The current two-phase bridge cannot represent the random sample-size variance."
+      ), class = "samplyr_error_twophase_poisson")
+    }
+
     if (fpc1$has_pps_wor) {
       cli_abort(c(
         "Two-phase export does not support PPS at phase 1.",
@@ -2036,6 +2032,16 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
     }
     fpc2_rename_map <- setNames(fpc2_vars_renamed, fpc2_vars)
 
+    analysis_cols <- setdiff(
+      names(df),
+      unique(c(
+        protected_sample_cols(df1, design1, stages1),
+        protected_sample_cols(df2, design2, stages_executed),
+        bridge_vars
+      ))
+    )
+    # Drop stale phase-1 measurements before joining current phase-2 values.
+    df1[intersect(analysis_cols, names(df1))] <- NULL
     phase2_cols_needed <- unique(
       c(
         bridge_vars,
@@ -2043,6 +2049,7 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
         strata2_extra,
         fpc2_vars,
         setdiff(names(df2), names(df1)),
+        analysis_cols,
         ".weight"
       )
     )
@@ -2176,13 +2183,10 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
 
 #' Build a single-phase survey.design from a tbl_sample.
 #'
-#' Shared by [as_svydesign.tbl_sample()] and [as_svrepdesign.tbl_sample()].
-#' When `relax_pps_for_bootstrap = TRUE`, multi-stage stage-1 random-size
-#' Poisson designs and clustered single-stage random-size Poisson designs
-#' with multi-row clusters are exported with a permissive specification
-#' (Inf at the Poisson stage, no `pps` argument), so that the bootstrap
-#' resampler can produce a variance estimate. The relaxed design is not a
-#' valid linearization design.
+#' Shared by [as_svydesign.tbl_sample()] and generic replicate exports.
+#' `relax_pps_for_bootstrap` only permits the existing generic approximation
+#' for unsupported balanced or spatial variance families. RWYB bypasses this
+#' function and preserves the original stage mechanisms.
 #' @noRd
 build_singlephase_svydesign <- function(
   x,
@@ -2415,7 +2419,7 @@ as_svydesign.frame_stack <- function(
     )
   })
 
-  survey::multiframe(
+  result <- survey::multiframe(
     designs,
     if (identical(estimator, "constant")) {
       multiframe_overlaps(x)
@@ -2426,6 +2430,8 @@ as_svydesign.frame_stack <- function(
     estimator = estimator,
     theta = theta
   )
+  attr(result, "samplyr_overlap_probability_quality") <- attr(x, "overlaps")$probability_quality
+  result
 }
 
 #' Two arguments of the per-component export that a stack cannot carry
@@ -2673,14 +2679,16 @@ multiframe_overlaps <- function(x) {
 
 #' Convert a tbl_sample to a replicate-weight survey design
 #'
-#' Creates a `svyrep.design` object from a `tbl_sample` by first
-#' converting to a [survey::svydesign()] object via [as_svydesign()],
-#' then converting with [survey::as.svrepdesign()].
+#' Creates a `svyrep.design` object from a `tbl_sample`. The `"rwyb"` method
+#' generates Rao-Wu-Yue-Beaumont factors with the optional svrep package
+#' directly from recorded stage mechanisms. Other methods first build a
+#' [survey::svydesign()] object, then call [survey::as.svrepdesign()].
 #'
 #' @inheritParams as_svydesign
 #' @param type Replicate method passed to [survey::as.svrepdesign()].
 #'   One of `"auto"`, `"JK1"`, `"JKn"`, `"BRR"`, `"bootstrap"`,
-#'   `"subbootstrap"`, `"mrbbootstrap"`, or `"Fay"`.
+#'   `"subbootstrap"`, `"mrbbootstrap"`, `"Fay"`, or `"rwyb"`. The last
+#'   uses svrep rather than [survey::as.svrepdesign()].
 #'
 #'   The jackknife, BRR and Fay types are deterministic: one sample gives one
 #'   set of replicate weights. The bootstrap types resample, so they draw from
@@ -2688,7 +2696,7 @@ multiframe_overlaps <- function(x) {
 #'   different standard errors. Set a seed beforehand to make a result
 #'   reproducible, as with any resampling in R.
 #'
-#'   The spread is not small at the default of 50 replicates. On a
+#'   The spread is not small at survey's default of 50 replicates. On a
 #'   90-of-600 stratified sample, twelve `"bootstrap"` calls on one sample
 #'   ranged over 37% of their mean, falling to 12% at `replicates = 200` and
 #'   4% at `replicates = 4000`. A reported bootstrap standard error carries
@@ -2701,7 +2709,9 @@ multiframe_overlaps <- function(x) {
 #'   name must be one those functions accept: `type` follows the `...` and so
 #'   is matched exactly, and a near miss such as `typ` is reported rather
 #'   than forwarded. `design` cannot be given here: it is the
-#'   [survey::svydesign()] object this verb builds from the sample.
+#'   [survey::svydesign()] object this verb builds from the sample. For
+#'   `type = "rwyb"`, only `replicates` (default 500, integer at least 2),
+#'   `mse` (default TRUE) and `compress` (default TRUE) are accepted.
 #' @param systematic_variance What to do about the generic replicate weights
 #'   built for equal-probability `systematic` stages. `"warn"` (default) builds
 #'   them and warns once per call, naming every affected stage.
@@ -2715,38 +2725,51 @@ multiframe_overlaps <- function(x) {
 #' @return A `svyrep.design` object from the survey package.
 #'
 #' @details
-#' Replicate conversion supports single-phase designs. For unequal-probability
-#' designs (PPS or random-size Poisson), `"subbootstrap"` and `"mrbbootstrap"`
-#' are the supported replicate types. Other types emit a warning and may fail
-#' because inclusion probabilities vary within strata. For fixed-size PPS
-#' variance estimation, linearization via [as_svydesign()] is generally
-#' preferred. Two-phase designs should be exported with [as_svydesign()].
+#' Replicate conversion supports single-phase designs, including multistage
+#' samples, shared weights and independent frame stacks. `"auto"` retains
+#' survey's method choice. It does not depend on whether svrep is installed.
+#' Two-phase replicate export remains unsupported.
 #'
-#' ## Bootstrap escape hatch for random-size Poisson at stage 1
+#' ## Rao-Wu-Yue-Beaumont bootstrap
 #'
-#' Some designs cannot be expressed as a linearization-based
-#' [survey::svydesign()] object. Specifically, multi-stage designs with
-#' a random-size Poisson method (`bernoulli` or `pps_poisson`) at stage 1,
-#' and single-stage designs with `cluster_by()` and multiple rows per
-#' sampled cluster, are rejected by [as_svydesign()] for those methods.
+#' `as_svrepdesign(x, type = "rwyb")` supports SRS without replacement,
+#' independent draws with replacement (`srswr`, `pps_multinomial`), independent
+#' Poisson selection (`bernoulli`, `pps_poisson`), and combinations of these
+#' across stages. It also supports fixed-size PPS WOR (`pps_brewer`, `pps_cps`,
+#' `pps_sampford`, `pps_systematic`) using approximate joint probabilities
+#' and warns about this approximation. Equal-probability systematic stages
+#' use the SRS approximation governed by `systematic_variance`.
+#' Custom methods must declare a supported variance family. Balanced, spatial,
+#' Pareto, SPS and Chromy methods have no built-in RWYB mapping.
 #'
-#' For these cases `as_svrepdesign(type = "subbootstrap")` (or
-#' `"mrbbootstrap"`) is the recommended path. The design is exported with
-#' a permissive specification (no finite-population correction at the
-#' Poisson stage, no `pps` argument), and the bootstrap resampler supplies
-#' the variance through replicate weights.
+#' The adapter retains stage-specific sampling units, strata and probabilities.
+#' With-replacement stages resample draw occurrences, not distinct population
+#' units. Certainty units have conditional replicate factor one. Noncertainty
+#' singleton strata raise `samplyr_error_rwyb_singleton` whenever their variance
+#' contribution is needed, except under Poisson sampling, whose variance is
+#' estimable from one unit.
 #'
-#' This is the package's bootstrap approximation for designs that exact
-#' Horvitz-Thompson linearization cannot express in
-#' [survey::svydesign()]. The subbootstrap and mrbbootstrap methods were
-#' developed for fixed-size PPS sampling (Antal and Tille 2011). Their
-#' behavior on random-size Poisson designs, especially at multiple
-#' stages, has weaker theoretical backing and should be treated as an
-#' approximation. In particular, the resampling is fixed-size, so it
-#' does not capture the variance contribution of the random sample
-#' size and can materially understate the total variance of a
-#' Poisson-type design. When the exact Poisson linearization is
-#' available (single-stage designs), prefer [as_svydesign()].
+#' Every selected parent must have a descendant in the final sample. When a
+#' later stage is Poisson, a complete frame digest (`"summary"` or `"full"`)
+#' is required to check this. Export refuses missing selected parents because
+#' silently dropping them changes the earlier-stage resampling distribution.
+#' Empty samples cannot be exported. These are export limits. Empty Poisson
+#' realizations remain valid sampling outcomes.
+#'
+#' Replication adds simulation error, so finite replicate variances need not
+#' equal analytic variances exactly. Set a seed and increase `replicates` for
+#' stable estimates. With `mse = TRUE`, factors use scale `1 / replicates`,
+#' while with `mse = FALSE`, they use `1 / (replicates - 1)`. svrep's
+#' `estimate_boot_sim_cv()` can assess simulation error for chosen estimates.
+#' The direct export records backend and stage methods in the
+#' `"samplyr_replication"` attribute.
+#'
+#' ## Poisson variance
+#'
+#' Generic survey bootstrap and jackknife methods are refused for Poisson
+#' sampling: they can lose the variance of its random sample size. Use
+#' `type = "rwyb"`. For single-stage element Poisson sampling, [as_svydesign()]
+#' remains available with the analytic Horvitz-Thompson Poisson variance.
 #'
 #' Bounded cube, LPM2, and SCPS designs likewise have no native,
 #' design-specific replicate variance estimator in `samplyr`.
@@ -2799,6 +2822,7 @@ as_svrepdesign.tbl_sample <- function(
     "bootstrap",
     "subbootstrap",
     "mrbbootstrap",
+    "rwyb",
     "Fay"
   ),
   systematic_variance = c("warn", "approximate", "error")
@@ -2811,15 +2835,14 @@ as_svrepdesign.tbl_sample <- function(
     reason = "to convert a tbl_sample to a replicate-weight survey design."
   )
 
+  type <- match.arg(type)
   check_forwarded_args(
     enquos(...),
     owned = c("type", "systematic_variance"),
-    accepted = svrepdesign_accepted_args,
+    accepted = if (type == "rwyb") c("replicates", "mse", "compress") else svrepdesign_accepted_args,
     derived = svrepdesign_derived_args,
     forwarded_to = "survey::as.svrepdesign"
   )
-
-  type <- match.arg(type)
 
   # Replicate the source design before applying shared weights.
   if (identical(sample_weight_contract(x), "shared")) {
@@ -2838,6 +2861,18 @@ as_svrepdesign.tbl_sample <- function(
   )
 
   design <- get_design(x)
+  if (type == "rwyb") {
+    return(build_rwyb_svrepdesign(x, systematic_variance, ...))
+  }
+  poisson_stages <- get_stages_executed(x)[vapply(get_stages_executed(x), function(i) {
+    identical(survey_stage_kind(design$stages[[i]]$draw_spec), "rs_poisson")
+  }, logical(1))]
+  if (length(poisson_stages)) {
+    abort_samplyr(c(
+      "Generic replicate methods do not represent Poisson sample-size variance.",
+      "i" = "Use {.code as_svrepdesign(x, type = \"rwyb\")} for independent Poisson sampling."
+    ), class = "samplyr_error_poisson_replicates")
+  }
   unequal_used <- unique(unlist(lapply(
     get_stages_executed(x),
     function(stage_idx) {
@@ -3096,6 +3131,7 @@ as_svrepdesign.frame_stack <- function(
     "bootstrap",
     "subbootstrap",
     "mrbbootstrap",
+    "rwyb",
     "Fay"
   ),
   systematic_variance = c("warn", "approximate", "error")
@@ -3331,6 +3367,7 @@ combine_frame_replicates <- function(x, components, factors) {
     frames = frames,
     replicates = stats::setNames(widths, frames)
   )
+  attr(result, "samplyr_overlap_probability_quality") <- attr(x, "overlaps")$probability_quality
   result
 }
 
