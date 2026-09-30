@@ -9,7 +9,11 @@ make_group_key <- function(df, vars) {
 
   encode_component <- function(x) {
     missing <- is.na(x)
-    value <- enc2utf8(as.character(x))
+    value <- as.character(x)
+    # Numbers and logicals print in ASCII. Anything else may not.
+    if (!is.numeric(x) && !is.logical(x)) {
+      value <- enc2utf8(value)
+    }
     value[missing] <- ""
     encoded <- paste0(
       "V",

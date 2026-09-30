@@ -1,9 +1,6 @@
 # Build one stage-to-frame schedule before consuming RNG state.
 
 #' Diagnostic name for a stage
-#'
-#' Labels are optional presentation metadata, so a stage always has a
-#' positional name and gains its label only when one was given.
 #' @noRd
 stage_token <- function(design, stage_idx) {
   label <- design$stages[[stage_idx]]$label
@@ -26,22 +23,11 @@ frame_token <- function(frame_index, frame_label = NULL) {
 
 #' The base contract every `stages` argument shares
 #'
-#' `stages` means the same thing in `execute()`, `validate_frame()`,
-#' `joint_expectation()` and `frame_summary()`, so it is validated the same
-#' way in all four: a non-empty vector of distinct whole stage numbers drawn
-#' from what the caller allows. Each verb then layers its own rules on the
-#' canonical result. Execution adds a start stage and contiguity.
-#' `joint_expectation()` and `frame_summary()` restrict `allowed` to what they
-#' can answer for.
-#'
-#' Duplicates are refused rather than quietly collapsed. `stages = c(1, 1)`
-#' asks for one stage twice, which no verb can honour, so silently returning
-#' one stage hides a mistake in whatever computed the vector.
-#'
+#' Shared by `execute()`, `validate_frame()`, `joint_expectation()` and
+#' `frame_summary()`. Each verb layers its own rules on the result.
+#' Duplicates are refused, not collapsed.
 #' @param allowed The stage numbers this caller accepts.
-#' @param what A plural noun phrase naming `allowed`, such as
-#'   `"executed stages"`. It appears verbatim, so no message here depends on
-#'   cli pluralization agreeing with a second interpolated vector.
+#' @param what A plural noun phrase naming `allowed`, used verbatim.
 #' @return The distinct stage numbers, sorted, as integers.
 #' @noRd
 normalize_stage_selector <- function(stages, allowed,
@@ -72,7 +58,6 @@ normalize_stage_selector <- function(stages, allowed,
     refuse("{.arg {arg}} must not contain missing values.")
   }
   if (!is_integerish_numeric(stages)) {
-    # Reject infinite and fractional stage indices.
     bad <- stages[!is.finite(stages) | stages != trunc(stages)]
     refuse(
       "{.arg {arg}} must be whole, finite stage numbers.",
@@ -102,9 +87,6 @@ normalize_stage_selector <- function(stages, allowed,
 }
 
 #' Resolve the stages a call executes
-#'
-#' Moved out of the executors so that a design start and a continuation share
-#' one definition of contiguity and one set of messages.
 #' @noRd
 resolve_execute_stages <- function(design, stages, executed = NULL,
                                    call = caller_env()) {
@@ -117,7 +99,11 @@ resolve_execute_stages <- function(design, stages, executed = NULL,
     }
     remaining <- setdiff(seq_len(n_stages), executed)
     if (length(remaining) == 0) {
-      cli_abort("All stages have been executed", call = call)
+      cli_abort(
+        "All stages have been executed",
+        call = call,
+        class = "samplyr_error_stage_selector"
+      )
     }
     return(remaining)
   }
@@ -129,7 +115,11 @@ resolve_execute_stages <- function(design, stages, executed = NULL,
   if (continuation) {
     already_done <- intersect(stages, executed)
     if (length(already_done) > 0) {
-      cli_abort("Stage{?s} {already_done} already executed", call = call)
+      cli_abort(
+        "Stage{?s} {already_done} already executed",
+        call = call,
+        class = "samplyr_error_stage_selector"
+      )
     }
     next_expected <- max(executed) + 1L
     if (stages[1] != next_expected) {
@@ -137,27 +127,35 @@ resolve_execute_stages <- function(design, stages, executed = NULL,
       cli_abort(c(
         "{.arg stages} must continue from stage {next_expected}.",
         "i" = "Stage(s) {executed_str} already executed; next stage must be {next_expected}."
-      ), call = call)
+      ), call = call,
+        class = "samplyr_error_stage_selector"
+      )
     }
   } else if (stages[1] != 1L) {
     cli_abort(c(
       "{.arg stages} must start at stage 1 when executing from a design.",
       "i" = "To continue from a previous sample, pass the {.cls tbl_sample} instead of the design."
-    ), call = call)
+    ), call = call,
+      class = "samplyr_error_stage_selector"
+    )
   }
 
   expected <- seq.int(stages[1], stages[length(stages)])
   if (!identical(stages, expected)) {
-    cli_abort("{.arg stages} must be contiguous (no gaps)", call = call)
+    cli_abort(
+      "{.arg stages} must be contiguous (no gaps)",
+      call = call,
+      class = "samplyr_error_stage_selector"
+    )
   }
   stages
 }
 
 #' Refuse a continuation that cannot say which stage a single frame belongs to
 #'
-#' With two or more stages left, one frame is either a stage-specific register
-#' for the next stage or a shared hierarchy for all of them. Guessing produced
-#' samples drawn from the wrong register, so the caller states which.
+#' With two or more stages left, one frame is a register for the next stage or
+#' a shared hierarchy. Guessing drew from the wrong register, so the caller
+#' says which.
 #' @noRd
 check_continuation_ambiguity <- function(design, remaining, n_frames,
                                          call = caller_env()) {
@@ -184,10 +182,7 @@ check_continuation_ambiguity <- function(design, remaining, n_frames,
 
 #' Require a parent identity on any stage another stage samples within
 #'
-#' Strata are selection pools, not parent unit identities. Without
-#' `cluster_by()` the next stage has no key naming the units this stage
-#' selected, and the frame it samples from silently widens to the whole
-#' stratum.
+#' Without `cluster_by()` the child frame silently widens to the whole stratum.
 #' @noRd
 check_stage_parent_identity <- function(design, stages, executed = NULL,
                                         call = caller_env()) {
@@ -225,11 +220,8 @@ check_stage_parent_identity <- function(design, stages, executed = NULL,
 
 #' Keep phase linkage in the first frame position
 #'
-#' A `tbl_sample` supplied to a new design is the previous phase, and a phase
-#' is a property of the whole execution rather than of one stage. Later
-#' positions are stage registers, so a sample there is a category error: today
-#' it is read as a second previous phase and fails downstream with an opaque
-#' empty-frame message.
+#' A `tbl_sample` is the previous phase of the whole execution. Later
+#' positions are stage registers.
 #' @noRd
 check_phase_frame_position <- function(frames, labels, call = caller_env()) {
   if (length(frames) < 2L) {
@@ -257,8 +249,6 @@ check_phase_frame_position <- function(frames, labels, call = caller_env()) {
 }
 
 #' Match supplied frames to the stages of one call
-#'
-#' @param design The design being executed.
 #' @param frames The captured `...`, in order.
 #' @param stages The stage indices this call executes, already resolved.
 #' @param executed Stages already executed, or `NULL` for a design start.
@@ -318,10 +308,8 @@ build_frame_schedule <- function(design, frames, stages, executed = NULL,
 
 #' Every frame column a stage selects on
 #'
-#' One definition for all eight families a stage can name, so a preflight and
-#' the stage's own validation cannot disagree about what a frame must carry.
-#' Anything omitted here is a column whose absence is only discovered mid
-#' execution, after earlier stages have already drawn.
+#' Shared by preflight and stage validation. A column omitted here is found
+#' missing only after earlier stages have drawn.
 #' @noRd
 stage_required_vars <- function(stage_spec) {
   draw_spec <- stage_spec$draw_spec
@@ -360,14 +348,8 @@ role_bullets <- function(vars) {
 
 #' Check every frame for the columns its stage needs, before sampling
 #'
-#' Presence of a column does not depend on any draw, so finding out at the
-#' transition means stage 1 has already consumed the RNG stream. Values are
-#' still validated at the stage itself, where the linked frame is known.
-#'
-#' Prior-stage strata are exempt: they may legitimately be absent from a later
-#' frame and arrive by carry-forward. A `tbl_sample` frame is not exempt. It is
-#' checked against the schema that survives once its generated columns are
-#' stripped, which is what the stage will actually see.
+#' Checks presence only, before stage 1 consumes the RNG stream. Values are
+#' validated at the stage, where the linked frame is known.
 #' @noRd
 check_scheduled_frame_vars <- function(design, entries, call = caller_env()) {
   for (entry in entries) {
@@ -411,7 +393,13 @@ check_scheduled_frame_vars <- function(design, entries, call = caller_env()) {
            {.field {missing}}.",
           stats::setNames(role_bullets(missing), rep("x", length(missing))),
           "i" = "{stage_token(design, stage_idx)} selects on
-                 {.field {unname(required)}}."
+                 {.field {unname(required)}}.",
+          # `mos = v` names a column v. A name held in v needs the pronoun.
+          if (any(names(missing) %in% c("MOS", "PRN", "auxiliary", "bound",
+                                        "spread"))) {
+            c("i" = "A column name held in a variable is written
+                     {.code .data[[v]]}, as in {.code mos = .data[[v]]}.")
+          }
         ),
         class = "samplyr_error_frame_missing_vars",
         call = call
@@ -423,9 +411,7 @@ check_scheduled_frame_vars <- function(design, entries, call = caller_env()) {
 
 #' Build and validate the schedule for one execution
 #'
-#' The single entry point. Everything here is static: it runs before any random
-#' number is consumed, so a misuse cannot leave a partially drawn sample or
-#' advance the RNG stream.
+#' The single entry point. It is static and runs before any random draw.
 #' @noRd
 stage_frame_schedule <- function(design, frames, stages, executed = NULL,
                                  call = caller_env()) {
@@ -449,14 +435,8 @@ stage_frame_schedule <- function(design, frames, stages, executed = NULL,
 
 #' What a schedule recorded about the frames it was given
 #'
-#' Receipts and frame-backed consumers need to tell three spellings apart: one
-#' shared frame, one register for a partial execution, and one register per
-#' stage. The record carries the mapping, never the data, so it can be
-#' serialized and compared against what a later call supplies.
-#'
-#' It describes the call that produced it. A chained sample records the final
-#' call only, which is why `chained` and not this record decides whether a
-#' receipt can be replayed.
+#' The mapping, never the data, for the call that produced the sample. The
+#' earlier calls of a chained sample have their own records in the receipt.
 #' @noRd
 schedule_record <- function(schedule) {
   labels <- rep(NA_character_, schedule$n_supplied)
@@ -489,9 +469,7 @@ get_frame_schedule <- function(x) {
 
 #' The frame record of an executed sample, or the historical one-frame default
 #'
-#' Samples executed before the record existed, and the deserialized receipts of
-#' those samples, carry no mapping. They came from one frame by construction,
-#' which is what the default states.
+#' Samples and receipts from before the record existed used one frame.
 #' @noRd
 frame_record_or_default <- function(record, stages) {
   if (!is_null(record)) {
@@ -514,9 +492,6 @@ schedule_frames <- function(schedule) {
 }
 
 #' Replace the frames of a validated schedule, keeping its stage mapping
-#'
-#' Replicated multi-phase execution rebuilds its frames per replicate. The stage
-#' mapping was validated once and does not change with the replicate.
 #' @noRd
 schedule_swap_frames <- function(schedule, frames) {
   for (i in seq_along(schedule$entries)) {

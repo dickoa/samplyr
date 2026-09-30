@@ -23,11 +23,9 @@ Kenyan shillings (KES)}
 }
 }
 \source{
-\itemize{
-\item World Bank Group, \emph{Republic of Kenya World Bank Enterprise Survey
-2025}, reference KEN_2025_WBES_v01_M,
+World Bank Group, \emph{Republic of Kenya World Bank Enterprise Survey 2025},
+reference KEN_2025_WBES_v01_M,
 \url{https://microdata.worldbank.org/catalog/8150}.
-}
 }
 \usage{
 ken_enterprises

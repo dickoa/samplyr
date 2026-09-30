@@ -1,17 +1,8 @@
-## F2. as_svydesign.frame_stack(): the linearized dual-frame export
+## as_svydesign.frame_stack(): the linearized dual-frame export
 
-# The frames take UNEQUAL sampling fractions on purpose. survey's own default
-# for a missing `theta` is the ratio of the frames' mean sampling weights, and
-# with equal fractions that ratio is exactly one half: the fixture would then
-# agree with the default it is meant to distinguish samplyr's resolution from,
-# and forwarding NULL would pass every test.
-#
-#   population   1 .. 20 .. 40 .. 60
-#   frame a      x     x
-#   frame b            x     x         overlap = units 21 to 40
-#
-# Frame a takes 10 of 40, frame b takes 20 of 40, so the design weights are 4
-# and 2 and survey's default factor is 2/3 rather than 1/2.
+# Frame a (units 1 to 40) takes 10 and frame b (units 21 to 60) takes 20, so
+# the weights are 4 and 2. The unequal fractions make survey's default theta
+# 2/3 rather than 1/2, so forwarding NULL fails the tests.
 
 multiframe_population <- function() {
   data.frame(
@@ -111,8 +102,7 @@ test_that("theta = NULL is the multiplicity estimator, not survey's default", {
 
   ours <- coef(survey::svytotal(~y, as_svydesign(frames)))
   half <- coef(survey::svytotal(~y, hand_built_multiframe(frames, 0.5)))
-  # survey reads a missing theta as mean_weights / sum(mean_weights), which is
-  # 4 / (4 + 2) here. Pin the number so a regression to forwarding NULL fails.
+  # survey reads a missing theta as 4 / (4 + 2) here.
   survey_default <- coef(
     survey::svytotal(~y, hand_built_multiframe(frames, theta = NULL))
   )
@@ -150,10 +140,7 @@ test_that("theta belongs to the first frame of the stack", {
 
 test_that("the overlaps columns follow the stack order, not the mapping", {
   skip_if_not_installed("survey")
-  # survey reads `overlaps[[f]][, 3 - f]`, the other frame's column by
-  # position. A matrix built in the order the membership mapping was written
-  # rather than in the order the frames are stacked produces a number, not an
-  # error, so the encoding is asserted directly.
+  # survey reads `overlaps[[f]][, 3 - f]`, the other frame's column by index.
   frames <- stack_frames(
     b = multiframe_component("in_b", 20, 2),
     a = multiframe_component("in_a", 10, 1),
@@ -274,9 +261,7 @@ test_that("a shared-weight component is refused on the linearized route", {
     as_svydesign(frames),
     class = "samplyr_error_survey_weight_contract"
   )
-  # The per-component export raises the same class, so the message is what
-  # separates the two: this one names the frame, and it does not send the
-  # caller to a stack method that does not exist.
+  # The per-component export raises the same class, so match the message.
   expect_error(as_svydesign(frames), regexp = "reached")
   expect_error(
     as_svydesign(frames),
@@ -288,8 +273,7 @@ test_that("a shared-weight component is refused on the linearized route", {
 
 test_that("pps is refused, because it describes one component", {
   skip_if_not_installed("survey")
-  # Forwarding one joint-probability matrix to both components would compute
-  # a variance from the wrong probabilities rather than raise an error.
+  # One matrix for both components would give a wrong variance, not an error.
   expect_error(
     as_svydesign(multiframe_fixture(), pps = "anything"),
     class = "samplyr_error_survey_multiframe_argument"
@@ -327,10 +311,7 @@ test_that("an accepted survey argument reaches every component", {
 
 test_that("nest reaches every component", {
   skip_if_not_installed("survey")
-  # `nest` cannot change a samplyr export's numbers: a cluster spanning two
-  # strata is refused at `execute()`, so every design reaching survey is
-  # already nested. What is checkable is that the value arrives, and each
-  # component design records the call it was built with.
+  # Every exported design is already nested, so only the value's arrival shows.
   frames <- multiframe_fixture()
 
   unnested <- as_svydesign(frames, nest = FALSE)
@@ -392,4 +373,26 @@ test_that("a PPS component composites through the export", {
     coef(survey::svytotal(~y, as_svydesign(frames))),
     coef(survey::svytotal(~y, hand_built_multiframe(frames, theta = 0.5)))
   )
+})
+
+test_that("two censuses of consistent registers estimate the total exactly", {
+  skip_if_not_installed("survey")
+  # Registers in agreement count the overlap once, so the estimate is exact.
+  population <- data.frame(
+    pid = 1:300,
+    y = as.numeric(1:300),
+    in_a = rep(c(TRUE, FALSE), c(200, 100)),
+    in_b = rep(c(FALSE, TRUE), c(100, 200))
+  )
+  census <- function(col, seed) {
+    rows <- population[population[[col]], , drop = FALSE]
+    sampling_design() |> draw(n = nrow(rows)) |> execute(rows, seed = seed)
+  }
+  stack <- stack_frames(
+    a = census("in_a", 1), b = census("in_b", 2),
+    membership = c(a = "in_a", b = "in_b"),
+    key = pid
+  )
+  total <- survey::svytotal(~y, as_svydesign(stack))
+  expect_equal(unname(stats::coef(total)), sum(population$y))
 })

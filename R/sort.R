@@ -24,7 +24,10 @@
 #' ## Algorithm
 #'
 #' The algorithm builds a composite sort key by:
-#' 1. Converting each variable to integer ranks
+#'
+#' 1. Converting each variable to integer ranks, with character values in
+#'    byte order (the C locale) whatever the session locale, and missing
+#'    values last
 #' 2. For variable i, numbering the cells of variables 1..(i-1) in the order
 #'    the traversal visits them
 #' 3. Flipping variable i's ranks (descending) in every odd-numbered cell
@@ -51,8 +54,9 @@
 #' Chromy, J. R. (1979). Sequential sample selection methods.
 #' \emph{Proceedings of the Survey Research Methods Section, ASA}, 401-406.
 #'
-#' Chromy, J. R., & Williams, R. L. (1980). SAS sample selection macros.
-#' \emph{Proceedings of the Fifth Annual SAS Users Group International}, 392-396.
+#' Williams, R. L. and Chromy, J. R. (1980). SAS sample selection MACROS.
+#' \emph{Proceedings of the Fifth Annual SAS Users Group International
+#' Conference}, 392-396.
 #'
 #' @seealso [dplyr::arrange()], [dplyr::desc()]
 #'
@@ -114,10 +118,6 @@ serp <- function(...) {
     return(1)
   }
 
-  if (nvars == 1) {
-    return(xtfrm(var_vals[[1]]))
-  }
-
   lengths <- vapply(var_vals, length, integer(1))
   if (length(unique(lengths)) > 1) {
     abort_samplyr(
@@ -126,22 +126,23 @@ serp <- function(...) {
     )
   }
 
+  # Radix ranks, so the order is the same in every locale. NAs rank last.
   ranks <- lapply(var_vals, function(v) {
+    v <- utf8_sort_key(v)
     lvls <- sort(unique(v[!is.na(v)]), method = "radix")
-    r <- as.integer(factor(v, levels = lvls))
+    r <- match(v, lvls)
     r[is.na(r)] <- length(lvls) + 1L
     r
   })
 
+  if (nvars == 1) {
+    return(ranks[[1]])
+  }
+
   sort_keys <- vector("list", nvars)
   sort_keys[[1]] <- ranks[[1]]
 
-  # The cell each row sits in, numbered along the traversal. Variable i
-  # reverses in every odd-numbered cell of the variables above it, so what
-  # this has to carry is the cell's position on the snake. Summing the ranks
-  # above tracks that position's parity only when every one of them has an
-  # odd number of values, and where it does not the direction fails to
-  # reverse at a cell boundary.
+  # Cell position on the snake, not a rank sum, whose parity breaks.
   cell <- ranks[[1]]
 
   for (i in 2:nvars) {
@@ -152,8 +153,7 @@ serp <- function(...) {
     sort_keys[[i]] <- adjusted_r
 
     if (i < nvars) {
-      # A dense rank rather than cell * max_r + adjusted_r: ragged
-      # hierarchies have no fixed radix, and a rank cannot overflow.
+      # A dense rank: ragged hierarchies have no fixed radix.
       cell <- vctrs::vec_rank(
         data.frame(cell = cell, adjusted = adjusted_r),
         ties = "dense"
@@ -166,4 +166,55 @@ serp <- function(...) {
   rank_vec <- integer(n)
   rank_vec[ord] <- seq_len(n)
   rank_vec
+}
+
+#' The row order a `control` specification sorts a data frame into
+#'
+#' The same terms `arrange()` accepts: columns, expressions, top-level
+#' `desc()` and `serp()`. Keys are ordered by a stable radix sort with NAs
+#' last, so the order and the sample drawn from it do not depend on the
+#' locale or on how a label is encoded. `arrange()` translates labels of
+#' unknown encoding under a C locale and sorts the translation.
+#' @noRd
+control_order <- function(data, control_quos) {
+  keys <- list()
+  decreasing <- logical()
+  for (quo in control_quos) {
+    expr <- quo_get_expr(quo)
+    descending <- is_call(expr, "desc", n = 1L, ns = c("", "dplyr"))
+    if (descending) {
+      quo <- new_quosure(expr[[2L]], quo_get_env(quo))
+    }
+    value <- rlang::eval_tidy(quo, data)
+    columns <- if (is.data.frame(value)) as.list(value) else list(value)
+    for (column in columns) {
+      column <- utf8_sort_key(vctrs::vec_recycle(column, nrow(data)))
+      keys[[length(keys) + 1L]] <- column
+      decreasing[[length(decreasing) + 1L]] <- descending
+    }
+  }
+  do.call(
+    order,
+    c(unname(keys), list(na.last = TRUE, decreasing = decreasing, method = "radix"))
+  )
+}
+
+#' Character values as UTF-8, ready for a radix sort
+#'
+#' `order(method = "radix")` refuses non-ASCII strings marked "unknown",
+#' which is what `read.csv()` returns in a UTF-8 locale. Those that are valid
+#' UTF-8 are marked as UTF-8 and keep their bytes. The rest are translated
+#' from the native encoding. A radix sort then orders the UTF-8 bytes, the
+#' same in every locale. Anything other than a character vector is returned
+#' unchanged.
+#' @noRd
+utf8_sort_key <- function(x) {
+  if (!is.character(x)) {
+    return(x)
+  }
+  native <- which(Encoding(x) == "unknown" & validUTF8(x))
+  marked <- x[native]
+  Encoding(marked) <- "UTF-8"
+  x[native] <- marked
+  enc2utf8(x)
 }

@@ -11,26 +11,23 @@ design_json(x, frame = NULL, ..., pretty = FALSE)
 along with an execution receipt), a \code{frame_stack}, or a sample carrying
 shared weights.}
 
-\item{frame}{Optional sampling frame. A data frame is the one frame
-the design was built against. An ordered list of data frames is the
-stage registers, in the order \code{\link[=execute]{execute()}} received them, and each
-is fingerprinted separately. One frame written as a one-element list
-is still one frame and is recorded identically. The number of frames
-must be one the design could be executed with, and for an executed
-sample must be the number its receipt records, so a file cannot say
-it was drawn from one frame and carry fingerprints for three. When
-supplied, a fingerprint (name,
-dimensions, column types, content hash) is stored so the frame can
-be verified later. The ordinary frame columns are never written. An
-executed sample's receipt can still contain selected-unit identifiers
-in its frame digest. The content
-hash covers column names, column values, and row order. It does not
-depend on the class of the data frame (tibble or data frame) or on
-the order of its columns. For a \code{frame_stack}, a list \strong{named} by
-component, holding what each component was drawn from. Matched by name
-rather than position, since a list in the wrong order would fingerprint
-each component against another's register. For a shared-weight sample,
-the register the source selection was drawn from.}
+\item{frame}{Optional sampling frame, fingerprinted (name, dimensions,
+column types, content hash) so it can be verified later. A data frame is
+the one frame the design was built against. An ordered list of data
+frames is the stage registers, in the order \code{\link[=execute]{execute()}} received them,
+each fingerprinted separately. A one-element list is one frame (see
+\link{frame-input-grammar}). The number of frames must be one the design
+could be executed with, and for an executed sample the number its
+receipt records. For a sample built by several calls, one element per
+call that read frames (the first call and each continuation), in call
+order: that call's frame, or the list of its registers. One data frame
+stands for all of them when each read that same frame. For a
+\code{frame_stack}, a list \strong{named} by component, holding what each
+component was drawn from, matched by name rather than position. For a
+shared-weight sample, the register the source selection was drawn from.
+\code{vignette("serialization")} states what the hash covers. The ordinary
+frame columns are never written, but an executed sample's receipt can
+still contain selected-unit identifiers in its frame digest.}
 
 \item{...}{These dots are for future extensions and must be empty.
 \code{pretty} follows \code{...}, so it is matched exactly and must be named.}

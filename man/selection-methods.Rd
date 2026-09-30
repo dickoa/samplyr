@@ -43,42 +43,22 @@ times, where \eqn{E} is its expected number of hits, so a unit is never hit
 more often than its size warrants.
 \subsection{Selection and inference}{
 
-All methods above can draw samples when their input requirements are met.
-Selection support and variance support are separate contracts. This table
-is a quick comparison. \code{\link[=as_svydesign]{as_svydesign()}} and \code{\link[=as_svrepdesign]{as_svrepdesign()}} describe the
-supported stage/phase compositions and sample-specific checks.\tabular{llll}{
-   Method or family \tab First-order quantity \tab Joint information \tab Analysis route \cr
-   \code{srswor} \tab Exact inclusion probabilities \tab SRS formulas (not exposed by the joint helper) \tab SRS with FPC, standard replicates or RWYB \cr
-   \code{srswr}, \code{pps_multinomial} \tab Exact expected hit counts \tab Exact joint hits for PPS \tab WR draw occurrences with standard replicates or RWYB \cr
-   \code{systematic}, \code{pps_systematic} \tab Exact inclusion probabilities \tab Exact order-specific matrix for PPS (zero pairs may occur) \tab SRS/Brewer or generic replicate approximation under the systematic policy \cr
-   \code{bernoulli}, \code{pps_poisson} \tab Exact independent probabilities \tab Exact Poisson matrix for PPS \tab Analytic single-stage Poisson variance, or RWYB for supported clustered/multistage designs \cr
-   \code{pps_brewer}, \code{pps_cps}, \code{pps_sampford} \tab Exact inclusion probabilities \tab Approximate for Brewer, exact for CPS/Sampford \tab Brewer by default, an explicit joint matrix, or PPS-compatible replicates (including approximate RWYB) \cr
-   \code{pps_sps}, \code{pps_pareto} \tab Approximate targets \tab High-entropy approximation using targets \tab Brewer or generic PPS-compatible replicates (no built-in RWYB mapping) \cr
-   \code{pps_chromy} \tab Exact expected hit counts \tab Monte Carlo joint hits \tab WR or generic replicate approximation to PMR (no built-in RWYB mapping) \cr
-   Unconstrained \code{cube} \tab Exact inclusion probabilities under the method contract \tab High-entropy approximation \tab Approximate linearization or generic replicates (no built-in RWYB mapping) \cr
-   Bounded \code{cube}, \code{lpm2}, \code{scps} \tab Exact inclusion probabilities under the method contract \tab Refused \tab Generic \code{subbootstrap} or \code{mrbbootstrap} only (linearization refused) \cr
-   Custom methods \tab Declared exact or approximate quality \tab Registered joint support \tab Depends on the variance-family declaration and adapter checks \cr
-}
-
-
-Joint information here refers to \code{\link[=joint_expectation]{joint_expectation()}}, which exposes
-PPS/balanced-family quantities. Ordinary SRS, WR and independent Bernoulli
-formulas still apply. A stage's joint matrix is not automatically a matrix
-for the final units of a multistage design. Exact first-order probabilities
-do not establish exact variance or confidence-interval coverage.
-
-RWYB means the explicit \code{type = "rwyb"} option with svrep.
-\code{type = "auto"} does not select it. PPS WOR remains approximate. Generic
-replicates do not recreate ordering, balancing, spatial spreading or hard
-constraints. Poisson sampling is refused by generic replicate methods.
-See \code{\link[=as_svrepdesign]{as_svrepdesign()}} for missing-parent and singleton restrictions, and
-\code{\link[=as_svydesign]{as_svydesign()}} for Poisson and two-phase export limits.
+Every method above draws a sample when its inputs are met, but selection
+support and variance support are separate contracts. \link{variance-estimation}
+gives how each method's variance is estimated and how exact it is.
 
 SPS, Pareto and custom approximate targets require
 \code{allow_approximate = TRUE} in \code{\link[=exante_probabilities]{exante_probabilities()}} and
 \code{\link[=exante_overlaps]{exante_overlaps()}}. Estimates using these targets need not be
 design-unbiased. Unknown probabilities are refused. Probability and
 variance declarations by a custom-method author are contracts, not proofs.
+
+The two order-sampling methods part ways in small pools. Drawing 3 of 12
+units with sizes from 1 to 20, over 20,000 draws, \code{pps_sps} realized
+inclusion probabilities up to 0.047 away from its targets, and a
+Horvitz-Thompson count built on the targets came out 6.6\% low. \code{pps_pareto}
+stayed within 0.009 of its targets, with a bias under 1\%. For coordinated
+samples from small pools, prefer \code{pps_pareto}.
 }
 
 \subsection{Fixed vs random sample size}{
@@ -132,7 +112,7 @@ Brewer, K.R.W. (1975). A simple procedure for sampling PPS WOR.
 \emph{Australian Journal of Statistics}, 17(3), 166-172.
 
 \code{pps_cps}:
-Hájek, J. (1964). Asymptotic theory of rejective sampling with varying
+\enc{Hájek}{Hajek}, J. (1964). Asymptotic theory of rejective sampling with varying
 probabilities from a finite population.
 \emph{Annals of Mathematical Statistics}, 35(4), 1491-1523.
 
@@ -144,14 +124,14 @@ Sampford, M.R. (1967). On sampling without replacement with unequal
 probabilities of selection. \emph{Biometrika}, 54(3/4), 499-513.
 
 \code{pps_poisson}:
-Tillé, Y. (2006). \emph{Sampling Algorithms}. Springer.
+\enc{Tillé}{Tille}, Y. (2006). \emph{Sampling Algorithms}. Springer.
 
 \code{pps_sps}:
 Ohlsson, E. (1998). Sequential Poisson sampling.
 \emph{Journal of Official Statistics}, 14(2), 149-162.
 
 \code{pps_pareto}:
-Rosén, B. (1997). Asymptotic theory for order sampling.
+\enc{Rosén}{Rosen}, B. (1997). Asymptotic theory for order sampling.
 \emph{Journal of Statistical Planning and Inference}, 62(2), 135-158.
 
 \code{pps_chromy}:
@@ -164,12 +144,22 @@ sampling: the cube method. \emph{Biometrika}, 91(4), 893-912.
 
 Chauvet, G. (2009). Stratified balanced sampling.
 \emph{Survey Methodology}, 35(1), 115-119.
+
+\code{lpm2}:
+\enc{Grafström}{Grafstrom}, A., \enc{Lundström}{Lundstrom}, N.L.P. and
+Schelin, L. (2012). Spatially balanced sampling through the pivotal method.
+\emph{Biometrics}, 68(2), 514-520. \doi{10.1111/j.1541-0420.2011.01699.x}
+
+\code{scps}:
+\enc{Grafström}{Grafstrom}, A. (2012). Spatially correlated Poisson
+sampling. \emph{Journal of Statistical Planning and Inference}, 142(1),
+139-147. \doi{10.1016/j.jspi.2011.07.003}
 }
 \seealso{
 \code{\link[=draw]{draw()}} to set a method on a stage,
+\link{variance-estimation} for how each method's variance is estimated,
 \code{\link[=joint_expectation]{joint_expectation()}} for which methods yield exact second-order
-quantities, \code{\link[=as_svydesign]{as_svydesign()}} for how each family is exported to
-\pkg{survey}
+quantities
 
 Other design specification:
 \code{\link[=add_stage]{add_stage()}},

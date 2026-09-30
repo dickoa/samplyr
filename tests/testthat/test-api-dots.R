@@ -29,8 +29,7 @@ test_that("reserved dots reject unexpected arguments", {
     as_tbl_sample(plain, unexpected = TRUE),
     class = "rlib_error_dots_nonempty"
   )
-  # write_design() reserves its dots too, through the package's own guard
-  # rather than rlang's, so a near miss is named.
+  # write_design() uses the package's own guard, so a near miss is named.
   expect_error(
     write_design(design, withr::local_tempfile(), unexpected = TRUE),
     class = "samplyr_error_unknown_argument"
@@ -94,8 +93,7 @@ test_that("as_svydesign() refuses a name neither it nor survey owns", {
     class = "samplyr_error_unknown_argument"
   )
   expect_error(as_svydesign(s, zzz = 1), "survey::svydesign")
-  # A stray name is read without being forced, so an expression that would
-  # fail is still diagnosed as the argument it was meant to be.
+  # A stray name is read without being forced.
   expect_error(
     as_svydesign(s, nes = stop("must not be evaluated")),
     class = "samplyr_error_unknown_argument"
@@ -106,10 +104,7 @@ test_that("the export verbs refuse an argument samplyr derives itself", {
   skip_if_not_installed("survey")
   s <- dots_cluster_sample()
 
-  # Accepting these forwarded the value into a do.call() whose named
-  # arguments were already fixed, so survey raised "formal argument matched
-  # by multiple actual arguments" from a verb the user never called. The
-  # name is survey's, so "unknown" would be the wrong report.
+  # The name is survey's, so "unknown" would be the wrong report.
   for (arg in samplyr:::svydesign_derived_args) {
     call_args <- list(s)
     call_args[[arg]] <- ~y
@@ -123,8 +118,7 @@ test_that("the export verbs refuse an argument samplyr derives itself", {
     class = "samplyr_error_derived_argument"
   )
 
-  # Diagnosed from the name alone: the value is never forced, so a stray
-  # `data = frame` on a large frame does not evaluate before the message.
+  # A stray `data = frame` is not evaluated before the message.
   expect_error(
     as_svydesign(s, ids = stop("must not be evaluated")),
     class = "samplyr_error_derived_argument"
@@ -137,23 +131,18 @@ test_that("the export verbs refuse an argument samplyr derives itself", {
   cnd <- tryCatch(as_svydesign(s, strata = ~y), error = function(e) e)
   expect_identical(cnd$argument, "strata")
   expect_match(conditionMessage(cnd), "samplyr derives")
-  # One class for the whole category: handling it must not require knowing
-  # which argument was refused.
+  # One class for the whole category, whichever argument was refused.
   expect_identical(
     class(tryCatch(as_svrepdesign(s, design = 1), error = function(e) e))[1:2],
     c("samplyr_error_derived_argument", "samplyr_error")
   )
 
-  # `pps` is extracted from the dots before the do.call() on both paths and
-  # stays the documented route to an exact PPS variance.
+  # `pps` stays the documented route to an exact PPS variance.
   expect_s3_class(
     as_svydesign(s, pps = NULL), "survey.design"
   )
 
-  # A near miss of a derived name is still unknown, since that is what was
-  # typed, but the answer names what was meant and why it will not work
-  # either. Dropping derived names from the suggestion candidates left
-  # `strat` with nothing but the generic advice.
+  # A near miss of a derived name is unknown but names what was meant.
   expect_error(
     as_svydesign(s, strat = ~y),
     class = "samplyr_error_unknown_argument"
@@ -162,9 +151,7 @@ test_that("the export verbs refuse an argument samplyr derives itself", {
   expect_error(as_svydesign(s, strat = ~y), "samplyr derives it")
   expect_error(as_svydesign(s, dat = 1), "Did you mean.*data")
 
-  # An accepted name wins a distance tie against a derived one, since it is
-  # the suggestion the user can act on. `fps` is one edit from both the
-  # accepted `pps` and the derived `fpc`.
+  # `fps` is one edit from both the accepted `pps` and the derived `fpc`.
   expect_error(as_svydesign(s, fps = 1), "Did you mean.*pps")
   expect_false(grepl(
     "samplyr derives it",
@@ -190,8 +177,7 @@ test_that("a two-phase export refuses the arguments twophase() derives", {
   listing <- tidyr::expand_grid(site = stage1$site, person = seq_len(5))
   phase2 <- suppressWarnings(execute(design, stage1, listing, seed = 2))
 
-  # survey::twophase() takes `id` where svydesign() takes `ids`, and `subset`
-  # belongs to it alone. Both are supplied by samplyr, so both are derived.
+  # twophase() takes `id` where svydesign() takes `ids`, and owns `subset`.
   for (arg in samplyr:::twophase_derived_args) {
     call_args <- list(phase2, method = "simple")
     call_args[[arg]] <- ~site
@@ -201,8 +187,7 @@ test_that("a two-phase export refuses the arguments twophase() derives", {
     )
   }
 
-  # `ids` is not a formal of twophase(), so on this path it is unknown
-  # rather than derived: the two categories are read per path.
+  # `ids` is not a formal of twophase(), so on this path it is unknown.
   expect_error(
     as_svydesign(phase2, method = "simple", ids = ~site),
     class = "samplyr_error_unknown_argument"
@@ -216,8 +201,7 @@ test_that("the export verbs refuse a positional argument in the dots", {
   skip_if_not_installed("survey")
   s <- dots_cluster_sample()
 
-  # survey matches it to whichever formal is still free: passed on, ~y
-  # would have become as.svrepdesign()'s fay.rho.
+  # Passed on, ~y would become as.svrepdesign()'s fay.rho.
   expect_error(
     as_svrepdesign(s, ~y),
     class = "samplyr_error_unnamed_argument"
@@ -242,10 +226,7 @@ test_that("as_svrepdesign() refuses a misspelled type but keeps survey's own", {
     class = "samplyr_error_unknown_argument"
   )
 
-  # These reach survey through two forwarding layers and are bound without
-  # being forced, so rlang::check_dots_used() reports them as unused. They
-  # are valid, which is why the accepted names are listed explicitly.
-  # BRR-family conversion drops the finite population correction and says so.
+  # Forwarded unforced, so rlang::check_dots_used() would call these unused.
   expect_s3_class(
     suppressWarnings(as_svrepdesign(s, type = "Fay", fay.rho = 0.3)),
     "svyrep.design"
@@ -300,10 +281,7 @@ test_that("the accepted survey argument sets exist in the installed survey", {
     character()
   )
 
-  # Pinned literally, not derived from survey's formals: the loops in the
-  # tests above are vacuous on an empty set, so a name silently dropped from
-  # a derived set would otherwise go unnoticed. Changing the contract has to
-  # mean changing this list.
+  # Pinned literally because the loops above are vacuous on an empty set.
   expect_setequal(
     samplyr:::svydesign_derived_args,
     c("ids", "probs", "strata", "weights", "fpc", "data")
@@ -314,9 +292,7 @@ test_that("the accepted survey argument sets exist in the installed survey", {
   )
   expect_setequal(samplyr:::svrepdesign_derived_args, "design")
 
-  # A derived name is one survey declares and samplyr fills in. If it were
-  # not a formal it would be a typo, and if it were also accepted the guard
-  # would let it through to collide in the do.call().
+  # A derived name must be a survey formal and must not also be accepted.
   expect_setequal(
     setdiff(samplyr:::svydesign_derived_args, svydesign_formals),
     character()
@@ -343,9 +319,7 @@ test_that("the accepted survey argument sets exist in the installed survey", {
     ),
     character()
   )
-  # as.svrepdesign() reaches its replicate-weight generators through a
-  # second `...`, so only the part it declares is checkable here. The rest
-  # is covered by the calls above, which fail if a name is dropped.
+  # Replicate generators sit behind a second `...`, so only part is checkable.
   svrepdesign_formals <- c(
     names(formals(utils::getS3method(
       "as.svrepdesign",
@@ -386,11 +360,10 @@ test_that("nest is reported as inert on a two-phase export", {
     as_svydesign(phase2, nest = FALSE, method = "simple"),
     class = "samplyr_warning_nest_ignored"
   )
-  # The default must stay silent, and a single-phase export never warns.
   expect_no_warning(as_svydesign(phase2, method = "simple"))
   expect_no_warning(as_svydesign(dots_cluster_sample(), nest = FALSE))
 
-  # `subset` belongs to twophase() alone; `variables` to svydesign() alone.
+  # `subset` belongs to twophase() alone and `variables` to svydesign() alone.
   expect_error(
     as_svydesign(phase2, variables = ~site),
     class = "samplyr_error_unknown_argument"
@@ -425,15 +398,13 @@ test_that("varcomp() refuses a misspelled strata instead of dropping it", {
     varcomp(s, ~y, nonsense = 1),
     class = "samplyr_error_unknown_argument"
   )
-  # A second positional formula was read as the outcome's neighbour and
-  # dropped, so a per-stratum call came back unstratified.
+  # A second positional formula would otherwise be dropped silently.
   expect_error(
     varcomp(s, ~y, ~dom),
     class = "samplyr_error_unnamed_argument"
   )
 
-  # The named spelling reaches the estimator: the guard is worth having
-  # only because these two differ.
+  # The named spelling reaches the estimator.
   plain <- as.data.frame(varcomp(s, ~y))
   by_dom <- as.data.frame(varcomp(s, ~y, strata = ~dom))
   expect_false(identical(plain, by_dom))
@@ -444,10 +415,7 @@ test_that("the forwarded pps argument is read exactly, not by prefix", {
   skip_if_not_installed("survey")
   s <- dots_cluster_sample()
 
-  # `$` on a list matches by prefix, so a dot merely starting with "pps"
-  # was read as the pps specification and changed the exported design.
-  # The public guard now refuses such a name, so read the internal builder
-  # directly to keep the exact match pinned.
+  # The public guard refuses `ppsx`, so the builder pins the exact match.
   plain <- samplyr:::build_singlephase_svydesign(
     s,
     dots = list(),
@@ -485,7 +453,6 @@ test_that("check_forwarded_args() reads names without forcing values", {
     captured(zzz = stop("must not be evaluated")),
     class = "samplyr_error_unknown_argument"
   )
-  # A suggestion is made against the forwarded names too, not only our own.
   expect_error(captured(strat = ~a), "Did you mean.*strata")
   expect_error(captured(zzz = 1), "arguments owned here are")
 })
@@ -499,9 +466,7 @@ test_that("design_effect() and effective_n() refuse a positional outcome", {
     draw(n = 3) |>
     execute(frame, seed = 1)
 
-  # `design_effect(x, y)` reads as "the design effect for y" and is the
-  # natural first attempt. Unguarded it was forwarded to svyplan and forced
-  # there, reporting `object 'y' not found`.
+  # Forced inside svyplan, `y` would report `object 'y' not found`.
   for (call in list(
     function() design_effect(sample, y),
     function() effective_n(sample, y)
@@ -513,17 +478,14 @@ test_that("design_effect() and effective_n() refuse a positional outcome", {
     expect_false(grepl("object 'y' not found", msg, fixed = TRUE))
   }
 
-  # Named planning arguments still forward and still compute: the weighting
-  # loss multiplied by the anticipated clustering component. Refusing the
-  # whole of `...` would have broken this.
+  # Named planning arguments still forward and compute.
   expect_equal(as.double(design_effect(sample)), 1)
   expect_equal(
     as.double(design_effect(sample, icc = 0.1, n_per_psu = 5)), 1.4
   )
   expect_gt(as.double(effective_n(sample)), 0)
 
-  # svyplan keeps rejecting names it does not know, so samplyr does not
-  # duplicate that check.
+  # svyplan rejects names it does not know.
   expect_error(design_effect(sample, zzz = 1), "zzz")
 })
 
@@ -547,27 +509,22 @@ test_that("varcomp() names the contract when the outcome cannot be evaluated", {
   expect_match(msg, "one-sided formula")
   expect_match(msg, "`y` could not be evaluated")
 
-  # The expression alone cannot decide: a symbol holding a formula is a
-  # legitimate outcome, which is why this is caught around the forcing.
+  # A symbol holding a formula is a legitimate outcome.
   outcome <- ~y
   expect_s3_class(varcomp(sample, outcome), "svyplan_varcomp")
   expect_s3_class(varcomp(sample, ~y), "svyplan_varcomp")
 })
 
 test_that("stratify_by() suggests alloc for an expanded spelling", {
-  # `allocation` is five edits from `alloc`, so the edit-distance rule says
-  # nothing; the prefix fallback is enabled only where the value is already
-  # known not to be a bare column name.
+  # `allocation` is five edits from `alloc`, beyond the edit-distance rule.
   err <- expect_error(
     sampling_design() |> stratify_by(region, allocation = "proportional")
   )
   expect_match(cli::ansi_strip(conditionMessage(err)), "Did you mean .?alloc")
 
-  # A named bare column is a legitimate rename and is untouched.
   design <- sampling_design() |> stratify_by(region, cost_center = urban)
   expect_identical(design$stages[[1]]$strata$vars, c("region", "urban"))
 
-  # No suggestion is invented when nothing matches.
   err2 <- expect_error(
     sampling_design() |> stratify_by(region, zzz = "x")
   )
@@ -582,12 +539,10 @@ test_that("the prefix fallback is opt-in and picks the longest match", {
     ),
     "alloc"
   )
-  # Near misses still win over the prefix rule.
   expect_identical(
     samplyr:::suggest_reserved_arg("allocs", c("alloc", "cost"), prefix = TRUE),
     "alloc"
   )
-  # Longest prefix, not the first.
   expect_identical(
     samplyr:::suggest_reserved_arg(
       "variance_data", c("var", "variance"), prefix = TRUE
@@ -601,12 +556,7 @@ test_that("the prefix fallback is opt-in and picks the longest match", {
 
 ## The indirect-sampling and multiple-frame verbs
 
-# These ten exports shipped without any assertion in this file or in
-# test-api-consistency.R, which is why three separate argument-matching
-# defects reached a release: `replay_design()` matched `links` by prefix and
-# by position, `exante_probabilities()` and `exante_overlaps()` absorbed a
-# misspelled `key` and `by` silently, and four of `share_weights()`'s
-# required arguments fell out of the package's error vocabulary.
+# These verbs match their arguments by exact name and diagnose a near miss.
 
 test_that("replay_design() matches its optional arguments by exact name", {
   frame <- data.frame(id = 1:20)
@@ -615,8 +565,6 @@ test_that("replay_design() matches its optional arguments by exact name", {
   write_design(sample, path, frame = frame)
   restored <- read_design(path)
 
-  # Prefix matching. `link` used to reach `links`, and on a shared sample it
-  # would have been accepted rather than reported.
   expect_error(
     replay_design(restored, frame, link = data.frame(a = 1)),
     class = "samplyr_error_unknown_argument"
@@ -630,8 +578,6 @@ test_that("replay_design() matches its optional arguments by exact name", {
     class = "samplyr_error_unknown_argument"
   )
 
-  # Positional matching. A fourth positional argument used to land in
-  # `links`; a third used to be the fingerprint.
   expect_error(
     replay_design(restored, frame, "warn"),
     class = "samplyr_error_unnamed_argument"
@@ -641,7 +587,6 @@ test_that("replay_design() matches its optional arguments by exact name", {
     class = "samplyr_error_unnamed_argument"
   )
 
-  # And the named spellings still work.
   expect_identical(replay_design(restored, frame)$id, sample$id)
   expect_identical(
     replay_design(restored, frame, fingerprint = "warn")$id,
@@ -653,8 +598,6 @@ test_that("the ex-ante verbs report a near-miss instead of absorbing it", {
   register <- data.frame(person_id = 1:20, size = rep(c(2, 5), 10))
   design <- sampling_design() |> draw(n = 6, method = "pps_brewer", mos = size)
 
-  # `ke` used to prefix-match `key` and then fail on the value, naming an
-  # argument the caller had not written.
   expect_error(
     exante_probabilities(design, register, ke = person_id),
     class = "samplyr_error_unknown_argument"
@@ -676,7 +619,7 @@ test_that("the ex-ante verbs report a near-miss instead of absorbing it", {
     exante_overlaps(list(a = register), b = c(person_id = "person_id")),
     class = "samplyr_error_unknown_argument"
   )
-  # Omitted rather than misspelled: `by` is never inferred.
+  # `by` is never inferred.
   expect_error(
     exante_overlaps(list(a = register)),
     class = "samplyr_error_stack_frames_overlaps"
@@ -693,8 +636,6 @@ test_that("share_weights() names every required argument it was not given", {
   targets <- data.frame(tid = c("t1", "t2"), hh = c("H1", "H1"), y = c(1, 10))
   links <- data.frame(unit = c("a", "b"), tid = c("t1", "t2"))
 
-  # `within` and `multiplicity` already diagnosed their own absence. These
-  # four gave base R's "argument "targets" is missing, with no default".
   expect_error(
     share_weights(
       sample,
@@ -712,10 +653,8 @@ test_that("share_weights() names every required argument it was not given", {
     regexp = "Missing: `targets` and `by`"
   )
 
-  # All of them at once, not just the first.
   expect_error(share_weights(), regexp = "`x`, `targets`, `links`, `by`, and `to`")
 
-  # A stray name still lands in the dots gate rather than among the tables.
   expect_error(
     share_weights(
       sample,
@@ -738,9 +677,7 @@ test_that("stack_frames() diagnoses a near miss instead of taking it as a frame"
   s_b <- sampling_design() |> draw(n = 9) |>
     execute(population[population$in_b, ], seed = 2)
 
-  # `membership`, `key` and `overlaps` follow the dots, so a near miss lands
-  # among the components rather than raising R's own "unused argument".
-  # `frame_component_hint()` exists to diagnose it while the name is visible.
+  # These follow the dots, so a near miss lands among the components.
   expect_error(
     stack_frames(a = s_a, b = s_b, membershp = c(a = "in_a", b = "in_b"),
                  key = uid),
@@ -759,8 +696,6 @@ test_that("stack_frames() diagnoses a near miss instead of taking it as a frame"
     regexp = "Did you mean"
   )
 
-  # An unnamed component is not a near miss and is reported as what it is,
-  # under its own class.
   expect_error(
     stack_frames(s_a, b = s_b, membership = c(a = "in_a", b = "in_b"),
                  key = uid),
@@ -783,8 +718,7 @@ test_that("the expression markers refuse a near miss inside their argument", {
     ))
   }
 
-  # A marker is matched by name, so a misspelling is not silently read as a
-  # column of `targets` carrying the multiplicity.
+  # A misspelled marker is not read as a column of `targets`.
   expect_error(
     share(quote(complete_link())),
     class = "samplyr_error_share_weights_multiplicity"
@@ -797,7 +731,6 @@ test_that("the expression markers refuse a near miss inside their argument", {
     share(quote(complete_links()), quote(extend_link(hh))),
     class = "samplyr_error_share_weights_within"
   )
-  # And `extend_links()` takes exactly one bare column, not an expression.
   expect_error(
     share(quote(complete_links()), quote(extend_links(hh, tid))),
     class = "samplyr_error_share_weights_within"

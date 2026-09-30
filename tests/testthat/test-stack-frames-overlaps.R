@@ -1,16 +1,8 @@
-## F4. Declared overlaps and the expected estimator
+## Declared overlaps and the expected estimator
 
-# The frames take equal-probability samples so every inclusion probability is
-# a number the fixture can state exactly and the tests can assert against:
-# 10 of 40 in frame a, 20 of 40 in frame b.
-#
-#   population   1 .. 20 .. 40 .. 60
-#   frame a      x     x               pi_a = 0.25
-#   frame b            x     x         pi_b = 0.5
-#
-# So the expected estimator's weight is 1 / (0.25 + 0.5) = 4/3 on the overlap,
-# 4 on frame a alone and 2 on frame b alone. Those three numbers are the whole
-# oracle and none of them comes from samplyr.
+# Equal-probability components give exact chances: 10 of 40 in frame a (1-40),
+# 20 of 40 in frame b (21-60). The expected weight is 4/3 on the overlap, 4 on a
+# alone and 2 on b alone, and none of these numbers comes from samplyr.
 
 overlap_pi_a <- 10 / 40
 overlap_pi_b <- 20 / 40
@@ -172,10 +164,7 @@ test_that("the expected estimate differs from the constant one", {
 
 test_that("the exporter hands survey weights, which it cannot misread", {
   skip_if_not_installed("survey")
-  # survey infers the scale, and reads a matrix as weights when no non-zero
-  # entry in some frame falls below one. Weight form satisfies that rule by
-  # construction; probability form is what a census or a certainty overlap
-  # would push over the line.
+  # survey reads a matrix as weights when no non-zero entry is below one.
   frames <- overlap_fixture()
   supplied <- multiframe_overlap_weights(frames)
 
@@ -189,11 +178,7 @@ test_that("the exporter hands survey weights, which it cannot misread", {
 
 test_that("the weight form survives the case survey's inference gets wrong", {
   skip_if_not_installed("survey")
-  # survey reads a matrix as weights when no non-zero entry in SOME frame
-  # falls below one. Here frame a is a census whose units are all certainties
-  # in b, so frame a's matrix is all ones, while frame b holds a genuine 0.5.
-  # Handed probabilities, survey would take the weights branch and invert the
-  # wrong quantity. Handed weights, there is nothing to infer.
+  # Frame a's matrix is all ones, so survey would read probabilities as weights.
   population <- data.frame(
     id = 1:60,
     y = as.numeric(1:60),
@@ -279,8 +264,7 @@ test_that("three frames take the expected estimator on the replicate route", {
 
 test_that("an own-frame value must be the selection that happened", {
   skip_if_not_installed("survey")
-  # The one overlap samplyr can check against reality, because it computed
-  # that component's weights itself.
+  # The own-frame overlap is the one samplyr computed itself.
   population <- overlap_population()
   population$pi_a <- ifelse(population$in_a, 0.9, 0)
 
@@ -292,8 +276,7 @@ test_that("an own-frame value must be the selection that happened", {
 })
 
 test_that("a declared scale is not checked against the values", {
-  # Probabilities passed off as weights fail the range check rather than being
-  # quietly reinterpreted, which is the whole point of declaring the scale.
+  # Values on the wrong scale fail the range check and are never reinterpreted.
   expect_error(
     overlap_fixture(
       overlaps = declared_overlaps(a = "pi_a", b = "pi_b", scale = "weights")
@@ -311,9 +294,7 @@ test_that("a declared scale is not checked against the values", {
 })
 
 test_that("the range rule is checked on cross-frame columns too", {
-  # The integration cases below reach the own-frame column, where the
-  # diagonal check fires first and would mask this one. Called directly, only
-  # the range rule can pass or fail.
+  # Called directly, as stack_frames() would hit the diagonal check first.
   member <- c(TRUE, TRUE, FALSE)
   ok <- function(value, scale) {
     check_overlap_column(value, member, scale, "a", "b", "col")
@@ -340,9 +321,7 @@ test_that("the range rule is checked on cross-frame columns too", {
   expect_null(ok(c(0.25, 1, NA), "probabilities"))
   bad(c(0.25, 1, 0.3), "probabilities")
 
-  # A character column compares against a number without complaint in R, so
-  # the range rule would "catch" this one for the wrong reason. The message is
-  # what separates the two.
+  # A character column also fails the range rule, so the message is checked.
   expect_error(
     check_overlap_column(c("a", "b", "c"), member, "probabilities",
                          "a", "b", "col"),
@@ -431,9 +410,7 @@ test_that("the marker, its names and its columns are all checked", {
 })
 
 test_that("a spec is a value, so it can be built before the call", {
-  # Unlike `complete_links()` on the other feature, which names a column and
-  # has to be evaluated in a data mask, this one carries strings and a scale.
-  # Making it a value keeps it composable, as `membership` beside it is.
+  # It carries strings and a scale, not a masked column, so it is a value.
   spec <- declared_overlaps(a = "pi_a", b = "pi_b", scale = "probabilities")
   expect_s3_class(spec, "samplyr_overlap_spec")
   expect_identical(spec$scale, "probabilities")
@@ -566,8 +543,7 @@ test_that("a shared weight cannot stand as an inclusion probability", {
     class = "samplyr_error_stack_frames_overlaps"
   )
 
-  # ... and again where the estimator would use them, so the message names
-  # the estimator rather than the missing record.
+  # ... and again at the estimator, whose message names the estimator.
   frames <- stack_frames(
     reached = shared, list = listed,
     membership = c(reached = "in_reached", list = "in_list"),
@@ -581,7 +557,7 @@ test_that("a shared weight cannot stand as an inclusion probability", {
     as_svrepdesign(frames, estimator = "expected"),
     regexp = "unbiasedness"
   )
-  # The constant estimator still takes it, which F3 established.
+  # The constant estimator still takes it.
   expect_s3_class(
     suppressWarnings(
       as_svrepdesign(frames, type = "bootstrap", replicates = 20)
@@ -593,9 +569,6 @@ test_that("a shared weight cannot stand as an inclusion probability", {
 ## One declaring constructor, and the scale it makes you state
 
 test_that("declared_overlaps() requires the scale and matches it exactly", {
-  # `overlap_probabilities()` and `overlap_weights()` said the scale in the
-  # verb. One constructor says it in an argument, which has to be as hard to
-  # omit as the verb was.
   expect_error(
     declared_overlaps(a = "pi_a", b = "pi_b"),
     class = "samplyr_error_stack_frames_overlaps"
@@ -613,8 +586,7 @@ test_that("declared_overlaps() requires the scale and matches it exactly", {
     class = "samplyr_error_stack_frames_overlaps"
   )
 
-  # `scale` follows the dots, so it is matched by exact name and never
-  # mistaken for a frame called `scal`.
+  # `scale` follows the dots, so it is matched by exact name only.
   expect_error(
     declared_overlaps(a = "pi_a", scal = "probabilities"),
     class = "samplyr_error_stack_frames_overlaps"

@@ -122,3 +122,9 @@ synth_three_stage_design <- function() {
     draw(n = 2, method = "pps_systematic", mos = village_pop) |>
     add_stage("Compounds") |> draw(n = 3)
 }
+
+# The function a condition names in its header, as the user reads it.
+condition_header <- function(cnd) {
+  call <- conditionCall(cnd)
+  if (is.call(call)) deparse(call[[1]]) else ""
+}

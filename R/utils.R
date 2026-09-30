@@ -1,9 +1,3 @@
-#' Internal utility functions
-#'
-#' @name utils
-#' @keywords internal
-NULL
-
 #' @noRd
 equal_prob_methods <- c("srswor", "srswr", "systematic", "bernoulli")
 wr_methods <- c("srswr", "pps_multinomial")
@@ -86,12 +80,8 @@ builtin_method_probabilities <- function(method) {
 
 #' Fingerprint of a registered method's implementation
 #'
-#' Hash of the formals and body of the registered sample_fn and
-#' joint_fn (sondage >= 0.8.8 exposes them in method_spec()).
-#' Deparsing the language objects normalizes formatting and drops
-#' comments, so re-registering the same code fingerprints identically.
-#' The enclosing environment is not covered. NULL for built-ins and
-#' for specs without functions.
+#' Hashes the deparsed formals and body of `sample_fn` and `joint_fn`. The
+#' enclosing environment is not covered. NULL for built-ins.
 #' @noRd
 method_implementation_hash <- function(spec) {
   if (is_null(spec$sample_fn)) return(NULL)
@@ -106,12 +96,6 @@ method_implementation_hash <- function(spec) {
 }
 
 #' Refuse a method whose selection probabilities are unknown
-#'
-#' A registered method with probabilities = "unknown" (the strict
-#' default) treats the pik it receives as a selection weight, not an
-#' honored first-order target, so 1/pik design weights would be
-#' systematically biased. samplyr samples are weighted by
-#' construction. Such a method cannot produce one.
 #' @noRd
 abort_unknown_probabilities <- function(method,
                                         call = rlang::caller_env()) {
@@ -133,10 +117,6 @@ abort_unknown_probabilities <- function(method,
 }
 
 #' Check if method is WOR (built-in or registered)
-#'
-#' Balanced (cube) selection is without replacement. Custom balanced
-#' methods carry method_type "balanced" and must count as WOR just
-#' like the built-in `cube` method does through the name test.
 #' @noRd
 is_wor_method <- function(draw_spec) {
   method <- draw_spec$method
@@ -155,11 +135,6 @@ is_multi_hit_method <- function(draw_spec) {
 }
 
 #' Check if a method draws a random number of units
-#'
-#' A random-size method realizes a count around its target rather than exactly
-#' it, so a target above the population caps the *nominal* target while the
-#' realized size can still land below it. Every diagnostic that reads a
-#' shortfall as running out of units has to exclude these.
 #' @noRd
 is_random_size_method <- function(draw_spec) {
   draw_spec$method %in% rs_poisson_methods ||
@@ -189,26 +164,26 @@ is_integerish_numeric <- function(x, tol = sqrt(.Machine$double.eps)) {
 
 #' Resolved certainty: an inclusion probability numerically equal to one
 #'
-#' Callers pass inclusion probabilities, never expected hits. The tight
-#' tolerance absorbs floating-point noise without treating probabilities just
-#' below one as self-representing.
+#' Takes inclusion probabilities, never expected hits.
 #' @noRd
 is_certainty_probability <- function(p, tol = 100 * .Machine$double.eps) {
   is.finite(p) & p >= 1 - tol
 }
 
+#' Evaluate `expr`, giving an error it raises a samplyr class
+#'
+#' For `rlang::arg_match()`, whose refusal has no class of its own.
+#' @noRd
+with_error_class <- function(expr, class) {
+  tryCatch(expr, error = function(e) {
+    class(e) <- unique(c(class, "samplyr_error", class(e)))
+    stop(e)
+  })
+}
+
 #' Report a per-pool selection diagnostic, aggregate it later
 #'
-#' Selection leaves know one pool at a time. A stratified stage inside a
-#' cluster loop runs the same leaf once per parent, and a replicated execution
-#' runs the whole design once per replicate, so a diagnostic emitted where it
-#' is detected fires once per pool per replicate. Leaves signal instead, and
-#' `execute()` emits one aggregated condition per stage.
-#'
-#' The envelope is deliberately generic. `operation` names what happened, the
-#' payload fields belong to that operation, and the collector groups on
-#' `operation` and `stage`. The Poisson shortfall diagnostic routes through the
-#' same mechanism.
+#' Leaves signal per pool. `execute()` emits one aggregated condition per stage.
 #' @noRd
 signal_selection_event <- function(operation, ..., stage = NA_integer_) {
   rlang::signal(
@@ -222,11 +197,7 @@ signal_selection_event <- function(operation, ..., stage = NA_integer_) {
 
 #' Report a fixed-size target the pool population could not supply
 #'
-#' `n_available` is the population of every pool the stage executed, not only
-#' the capped ones. The reporter needs it to tell a stage that exhausted
-#' everything it could reach from one that merely ran short in places, and
-#' that comparison has to hold after aggregation across pools, parents and
-#' replicates.
+#' `n_available` covers every pool the stage executed, not only capped ones.
 #' @noRd
 signal_population_cap <- function(
   pool_keys,
@@ -290,6 +261,8 @@ tag_replicate_events <- function(expr, replicate) {
 }
 
 #' Attach a stage to selection events raised by its leaves
+#'
+#' A population cap also carries the stage totals, which replace leaf sums.
 #' @noRd
 collect_stage_events <- function(expr, stage) {
   events <- list()
@@ -301,12 +274,16 @@ collect_stage_events <- function(expr, stage) {
     }
   )
   for (cnd in events) {
+    payload <- cnd$payload
+    if (identical(cnd$operation, "population_cap")) {
+      payload$stage_totals <- result$stage_totals
+    }
     rlang::signal(
       message = "",
       class = "samplyr_condition_selection_event",
       operation = cnd$operation,
       stage = stage,
-      payload = cnd$payload
+      payload = payload
     )
   }
   result
@@ -314,9 +291,8 @@ collect_stage_events <- function(expr, stage) {
 
 #' Report a PPS Poisson pool that cannot reach the size it was asked for
 #'
-#' Measures saturation against the population-reachable take so it does not
-#' duplicate the nominal-cap diagnostic. `pik` includes certainty units.
-#' `n_clipped` does not.
+#' Measured against the reachable take, not the nominal one. `pik` includes
+#' certainty units and `n_clipped` does not.
 #' @noRd
 check_poisson_shortfall <- function(
   pik,
@@ -365,7 +341,7 @@ qualify_pool_events <- function(expr, parent_key) {
     payload$pool_keys <- if (length(keys) == 0L) {
       parent_key
     } else {
-      paste(parent_key, keys, sep = " / ")
+      ifelse(nzchar(keys), paste(parent_key, keys, sep = " > "), parent_key)
     }
     rlang::signal(
       message = "",
@@ -380,9 +356,6 @@ qualify_pool_events <- function(expr, parent_key) {
 }
 
 #' Collect every selection event of an execution and report each once
-#'
-#' Aggregates pools within a replicate and unions their labels across
-#' replicates before emitting user-facing conditions.
 #' @noRd
 report_selection_events <- function(expr) {
   events <- list()
@@ -446,11 +419,6 @@ report_selection_events <- function(expr) {
 }
 
 #' The public reading of one replicate's aggregate
-#'
-#' `population_cap` has two readings and the aggregate decides which: an
-#' allocation site sees its own strata, a cluster leaf sees one parent's pools,
-#' and neither can tell whether the stage as a whole came up empty-handed.
-#' Every other operation reads one way.
 #' @noRd
 selection_event_outcome <- function(operation, x) {
   if (identical(operation, "population_cap") && is_stage_census(x)) {
@@ -470,10 +438,13 @@ report_selection_outcome <- function(outcome, stage, x) {
     size_capped = warn_size_capped(stage, x),
     nominal_cap = warn_nominal_capped(stage, x),
     poisson_shortfall = warn_poisson_shortfall(stage, x),
+    singleton_pool = inform_singleton_strata(stage, x),
+    empty_parent = warn_empty_parents(stage, x),
     allocation_cap = inform_allocation_capped(stage, x),
     cli_abort(
       "Internal error: unhandled selection outcome {.val {outcome}}.",
-      call = NULL
+      call = NULL,
+      class = "samplyr_error_internal"
     )
   )
 }
@@ -493,7 +464,7 @@ summarize_selection_events <- function(group) {
   }
 
   keys <- unique(unlist(field("pool_keys")))
-  list(
+  out <- list(
     pool_keys = keys,
     n_capped = total("n_capped"),
     n_pools = total("n_pools"),
@@ -503,20 +474,28 @@ summarize_selection_events <- function(group) {
     n_reachable = total("n_reachable"),
     n_expected = total("n_expected"),
     n_clipped = total("n_clipped"),
-    n_moved = total("n_moved")
+    n_moved = total("n_moved"),
+    n_singleton = total("n_singleton"),
+    n_empty = total("n_empty")
   )
+
+  # Only capped pools signal, so add their shortfall to the selection.
+  stage_totals <- Filter(Negate(is_null), field("stage_totals"))
+  if (length(stage_totals) > 0L) {
+    whole <- stage_totals[[1]]
+    shortfall <- out$n_requested - out$n_actual
+    out$n_pools <- whole$n_pools
+    out$n_available <- whole$n_available
+    out$n_actual <- whole$n_actual
+    out$n_requested <- whole$n_actual + shortfall
+  }
+  out
 }
 
 #' Collapse one stage's per-replicate aggregates into the single report
 #'
-#' Counts come from the first replicate rather than from a sum, because the
-#' user reads them as the size of one realization: ten replicates capping the
-#' same three pools capped three pools, not thirty. Pool identities are unioned,
-#' since a replicate that reached a different parent found a real pool that the
-#' others did not.
-#'
-#' `varied` records that those two facts came apart, so the report can stop
-#' implying that its counts describe the list it prints.
+#' Counts come from the first replicate and pool keys are unioned. `varied`
+#' flags that the two came apart.
 #' @noRd
 merge_replicate_aggregates <- function(per_replicate) {
   out <- per_replicate[[1]]
@@ -544,13 +523,7 @@ merge_replicate_aggregates <- function(per_replicate) {
 
 #' Did this stage select every unit it could reach?
 #'
-#' Stage-local by construction. A second-stage take that exhausts every
-#' selected cluster satisfies this while the design as a whole still sampled,
-#' so the claim is about the stage and its wording has to stay there.
-#'
-#' Counting saturated pools would not do: `equal` allocation on populations
-#' (1, 100) with `n = 102` has one stratum over its share before
-#' redistribution and both strata taken whole after it.
+#' Stage-local. Compares totals, not counts of saturated pools.
 #' @noRd
 is_stage_census <- function(x) {
   isTRUE(!is.na(x$n_actual) && !is.na(x$n_available) &&
@@ -558,9 +531,6 @@ is_stage_census <- function(x) {
 }
 
 #' Name a few pools and count the rest
-#'
-#' A capped design can have hundreds of pools, so the message names enough to
-#' start an investigation and points at the digest for the full list.
 #' @noRd
 format_pool_sample <- function(keys, max_shown = 5L) {
   if (length(keys) == 0L) {
@@ -579,10 +549,6 @@ format_pool_sample <- function(keys, max_shown = 5L) {
 }
 
 #' Render the pool list, and say so when replicates disagreed
-#'
-#' When the pools varied across replicates the printed list is a union while
-#' the counts describe one realization. Labeling it as such is what keeps the
-#' two from reading as the same measurement.
 #' @noRd
 pool_lines <- function(x, label) {
   pools <- format_pool_sample(x$pool_keys)
@@ -620,11 +586,6 @@ warn_size_capped <- function(stage, x) {
 }
 
 #' Report a stage that took every unit within reach
-#'
-#' Stage-local, and the wording carries that: the stage exhausted the pools it
-#' executed, which above stage one are the pools a sampled ancestor handed it.
-#' Such a stage contributes no variance of its own, and it does not make the
-#' design a census.
 #' @noRd
 warn_census <- function(stage, x) {
   cli_warn(
@@ -647,11 +608,8 @@ warn_census <- function(stage, x) {
 
 #' Report a nominal target above the pool population on a random-size stage
 #'
-#' Deliberately not the population-cap wording. A Poisson or Bernoulli stage
-#' asked for more units than the pool holds has its per-unit chances clamped at
-#' 1, which caps the target it aims at. It has not selected that many units,
-#' and the realized count is a draw that usually lands below the cap. Naming a
-#' selected count here would state a number the sample does not contain.
+#' Names no selected count, because the realized size is a draw that usually
+#' lands below the capped target.
 #' @noRd
 warn_nominal_capped <- function(stage, x) {
   cli_warn(
@@ -673,9 +631,7 @@ warn_nominal_capped <- function(stage, x) {
 
 #' Report PPS Poisson pools that saturated below their reachable target
 #'
-#' Only the affected pools are aggregated, because they are the only ones that
-#' signaled. A stage total would let a large pool meeting its target hide a
-#' small one that collapsed, which is the case most worth reporting.
+#' Aggregates only affected pools, so a large pool cannot hide a collapsed one.
 #' @noRd
 warn_poisson_shortfall <- function(stage, x) {
   cli_warn(
@@ -695,6 +651,53 @@ warn_poisson_shortfall <- function(stage, x) {
     class = "samplyr_warning_poisson_shortfall",
     stage = stage,
     operation = "poisson_shortfall",
+    payload = x
+  )
+}
+
+#' Report strata whose draw outside certainty is a single unit
+#'
+#' A message, since one unit per stratum can be the design. Counted per
+#' parent, which is the number of lonely strata survey will find.
+#' @noRd
+inform_singleton_strata <- function(stage, x) {
+  cli_inform(
+    c(
+      "Stage {stage}: {x$n_singleton} strat{?um/a} {?takes/take} a single
+       unit outside certainty.",
+      pool_lines(x, "Strata with one unit"),
+      "i" = "A stratum needs two selections for its variance to be
+             estimated. survey stops on a stratum with one unless its
+             strata are collapsed, and a replicate method has nothing to
+             resample in it.",
+      "i" = "To estimate within each stratum, allocate at least two units
+             outside certainty to it. {.arg min_n} bounds a stratum's whole
+             take, certainty units included."
+    ),
+    class = "samplyr_message_singleton_pool",
+    stage = stage,
+    operation = "singleton_pool",
+    payload = x
+  )
+}
+
+#' Report selected units a later stage found empty
+#'
+#' Raised only under `on_empty = "warn"`.
+#' @noRd
+warn_empty_parents <- function(stage, x) {
+  cli_warn(
+    c(
+      "Stage {stage}: {x$n_empty} selected unit{?s} of the previous stage
+       {?has/have} no rows to sample from.",
+      pool_lines(x, "Empty units"),
+      "i" = "Each contributes zero to every total, which keeps the estimates
+             unbiased. Set {.code on_empty = \"silent\"} in this stage's
+             {.fn draw} once that is expected."
+    ),
+    class = "samplyr_warning_empty_parent",
+    stage = stage,
+    operation = "empty_parent",
     payload = x
   )
 }
@@ -733,11 +736,6 @@ abort_samplyr <- function(
 }
 
 #' Find the reserved argument a stray name in `...` was most likely meant to be
-#'
-#' Arguments placed after `...` in a signature must be matched exactly, so a
-#' near miss such as `seedd` or the singular `stage` falls into `...` instead
-#' of raising R's own "unused argument" error. Returns the closest candidate
-#' within `max_dist` edits, or `NULL` when nothing is close enough to name.
 #' @noRd
 suggest_reserved_arg <- function(name, candidates, max_dist = 2L,
                                  prefix = FALSE) {
@@ -770,10 +768,8 @@ suggest_reserved_arg <- function(name, candidates, max_dist = 2L,
 
 #' Message bullets naming a stray argument and its likely intended spelling
 #'
-#' Used by the verbs whose `...` carries data, where a misspelled reserved
-#' argument would otherwise be diagnosed as bad data. The bullets are
-#' formatted here rather than returned as cli templates, because the caller
-#' raises them from a frame where these locals no longer exist.
+#' Formatted here, not returned as cli templates, because the caller raises
+#' them from a frame where these locals no longer exist.
 #' @noRd
 stray_arg_bullets <- function(name, candidates) {
   suggestion <- suggest_reserved_arg(name, candidates)
@@ -794,15 +790,8 @@ stray_arg_bullets <- function(name, candidates) {
 
 #' Refuse anything that lands in a `...` reserved for nothing
 #'
-#' A function whose optional arguments follow `...` matches them exactly, so a
-#' near miss such as the singular `stage` falls into `...` rather than raising
-#' R's "unused argument" error. That is the point of the placement: partial
-#' matching would otherwise accept `stage`, and `st`, without ever teaching the
-#' name, and would break the day an argument sharing that prefix is added.
-#'
-#' @param dots The caller's `...`, captured with `enquos()`. Quosures, not
-#'   values: a stray argument is diagnosed by its name, so forcing it would
-#'   let its expression fail first and replace this message with its own.
+#' @param dots The caller's `...` as quosures from `enquos()`. Forcing them
+#'   would let a stray expression fail first with its own message.
 #' @param candidates The arguments that follow `...`, for suggestions.
 #' @noRd
 check_keyword_args <- function(dots, candidates, call = rlang::caller_env()) {
@@ -837,9 +826,8 @@ check_keyword_args <- function(dots, candidates, call = rlang::caller_env()) {
 
 #' Refuse names that belong to nobody in a `...` that is forwarded onward
 #'
-#' Reject unnamed, misspelled, and caller-derived arguments before forwarding.
-#' Explicit accepted names avoid forcing downstream arguments merely to check
-#' whether they were used.
+#' Checks against explicit accepted names, so no downstream argument is forced
+#' just to see whether it was used.
 #' @noRd
 check_forwarded_args <- function(
   dots,
@@ -876,7 +864,6 @@ check_forwarded_args <- function(
     return(invisible(NULL))
   }
 
-  # Report the first stray argument in call order.
   if (stray[[1]] %in% derived) {
     abort_samplyr(
       c(
@@ -920,6 +907,20 @@ check_forwarded_args <- function(
   )
 }
 
+#' The column names execution writes, which an input may not hold
+#'
+#' Exact names, not prefixes: `.weight_adj` is the user's.
+#' @return The members of `nms` that are reserved.
+#' @noRd
+samplyr_reserved_names <- function(nms) {
+  exact <- c(
+    ".weight", ".fpc", ".pik", ".sample_id", ".stage", ".panel",
+    ".replicate", ".draw", ".certainty", "._prev_phase_weight"
+  )
+  generated <- grepl("^\\.(weight|fpc|draw|certainty)_[0-9]+$", nms)
+  unique(c(intersect(nms, exact), nms[generated]))
+}
+
 #' Validate names before execute() adds sampling columns
 #' @noRd
 validate_execute_frame_names <- function(
@@ -949,15 +950,7 @@ validate_execute_frame_names <- function(
     return(invisible(NULL))
   }
 
-  exact <- c(
-    ".weight", ".fpc", ".pik", ".sample_id", ".stage", ".panel",
-    ".replicate", ".draw", ".certainty", "._prev_phase_weight"
-  )
-  generated <- grepl(
-    "^\\.(weight|fpc|draw|certainty)_[0-9]+$",
-    nms
-  )
-  reserved <- unique(c(intersect(nms, exact), nms[generated]))
+  reserved <- samplyr_reserved_names(nms)
   if (length(reserved) > 0L) {
     abort_samplyr(
       c(
@@ -987,8 +980,7 @@ collect_ancestor_cluster_vars <- function(design, stage_idx) {
 
 #' Identity of the realized ancestor occurrence a stage's units sit inside
 #'
-#' Adds draw indices for with-replacement ancestors and qualifies them by their
-#' selection pools. The realized sample must still carry those indices.
+#' Adds pool-qualified draw indices for with-replacement ancestors.
 #' @noRd
 collect_ancestor_occurrence_vars <- function(design, stage_idx, sample,
                                              call = caller_env()) {
@@ -1021,11 +1013,8 @@ find_duplicate_key_rows <- function(df, vars) {
 
 #' Test whether a tbl_sample contains multiple replicates
 #'
-#' Note: if `.replicate` contains NA, unique() includes it, so this
-#' returns TRUE for c(1, NA). This is intentionally conservative.
-#' In guarded contexts (survey export, svyplan), check_single_replicate()
-#' catches NA before calling this. In display contexts (print, summary),
-#' treating corrupted data as multi-replicate is the safe default.
+#' TRUE for `c(1, NA)` by design. Guarded callers reject NA first with
+#' `check_single_replicate()`.
 #' @noRd
 has_multiple_replicates <- function(x) {
   ".replicate" %in% names(x) && length(unique(x$.replicate)) > 1L
@@ -1040,7 +1029,8 @@ check_single_replicate <- function(x, fn_name, call = caller_env()) {
   if (anyNA(x$.replicate)) {
     cli_abort(
       "{.field .replicate} column contains {.val NA} values.",
-      call = call
+      call = call,
+      class = "samplyr_error_replicated_sample_unsupported"
     )
   }
   if (has_multiple_replicates(x)) {
@@ -1060,23 +1050,15 @@ check_single_replicate <- function(x, fn_name, call = caller_env()) {
 
 #' Internal tbl_sample column pattern
 #'
-#' Columns written by execute() that carry design metadata. Stripped
-#' when a tbl_sample is reused as a frame (samplyr_internal_cols) and
-#' protected against overwrites by dplyr_col_modify.tbl_sample.
+#' Stripped from reused frames, guarded by `dplyr_col_modify.tbl_sample()`.
 #' @noRd
 samplyr_internal_col_pattern <-
   "^\\.(weight|fpc|sample_id|stage|draw|certainty|replicate|panel)"
 
 #' Detect a tbl_sample whose class was stripped
 #'
-#' Some tidyr and base operations preserve samplyr's attributes and generated
-#' columns while dropping only the tbl_sample class. Such an object must not be
-#' accepted as an ordinary population frame for a fresh design execution: that
-#' would silently rerun stage 1 and treat inherited weights as frame variables.
-#'
-#' Attributes are definitive evidence. The column fallback deliberately
-#' requires the full core/stage signature so an unrelated frame with a single
-#' conventional `.weight` column is not rejected.
+#' Accepting one as a frame would rerun stage 1 on inherited weights. The
+#' column fallback needs the full signature, not a lone `.weight` column.
 #' @noRd
 looks_like_stripped_tbl_sample <- function(x) {
   if (is_tbl_sample(x) || !is.data.frame(x)) {
@@ -1098,11 +1080,6 @@ looks_like_stripped_tbl_sample <- function(x) {
 }
 
 #' Columns whose values the stored design depends on
-#'
-#' Internal metadata columns plus the stratification and clustering
-#' variables of the executed stages. These are the columns covered by
-#' the integrity record: dropping, renaming, or changing their values
-#' breaks the link between the data and the stored design.
 #' @noRd
 protected_sample_cols <- function(data, design, stages_executed) {
   internal <- grep(samplyr_internal_col_pattern, names(data), value = TRUE)
@@ -1121,12 +1098,8 @@ protected_sample_cols <- function(data, design, stages_executed) {
 
 #' Order-invariant hash of the protected columns
 #'
-#' Rows are put in a canonical order before hashing, so harmless
-#' reordering (arrange, sorted joins) leaves the hash unchanged. Ties
-#' in the ordering are rows with identical protected values, which are
-#' interchangeable, so the hash is well defined. (.sample_id alone is
-#' not a usable key: it is duplicated across expanded rows of
-#' cluster-final stages.)
+#' Rows are sorted on every protected column first. `.sample_id` alone is not
+#' a key because expanded rows of cluster-final stages repeat it.
 #' @noRd
 protected_values_hash <- function(data, cols) {
   vals <- lapply(cols, function(col) data[[col]])
@@ -1140,21 +1113,55 @@ protected_values_hash <- function(data, cols) {
 
 #' Integrity record for an executed sample
 #'
-#' Stored in metadata$integrity by every execute path. This is the
-#' authoritative description of the realization: per-operation
-#' modification marks give immediate feedback and good messages, but
-#' too many table operations can bypass an S3 hook (base assignment,
-#' rbind(), vctrs operations, third-party verbs), so
-#' check_sample_unmodified() recomputes and compares this record at
-#' the analysis boundary.
+#' Authoritative over the per-operation marks, which many table operations
+#' bypass. `check_sample_unmodified()` recomputes it.
 #' @noRd
 sample_integrity_record <- function(data, design, stages_executed) {
   cols <- protected_sample_cols(data, design, stages_executed)
   list(
     n_rows = nrow(data),
     cols = cols,
-    hash = protected_values_hash(data, cols)
+    hash = protected_values_hash(data, cols),
+    col_hashes = integrity_column_hashes(data, cols)
   )
+}
+
+#' One hash per protected column, reading a factor by its labels
+#'
+#' Kept in memory only, to name the changed column. Files carry `hash` alone.
+#' @noRd
+integrity_column_hashes <- function(data, cols) {
+  vals <- lapply(cols, function(col) {
+    v <- data[[col]]
+    if (is.factor(v)) as.character(v) else v
+  })
+  if (nrow(data) > 1L) {
+    keys <- lapply(vals, utf8_sort_key)
+    ord <- do.call(order, c(unname(keys), list(method = "radix")))
+    vals <- lapply(vals, function(v) v[ord])
+  }
+  stats::setNames(vapply(vals, rlang::hash, character(1)), cols)
+}
+
+#' The protected columns a sample no longer matches its record on
+#' @noRd
+integrity_changed_columns <- function(x, integrity) {
+  missing <- setdiff(integrity$cols, names(x))
+  if (length(missing) > 0L || nrow(x) != integrity$n_rows ||
+        is_null(integrity$col_hashes)) {
+    return(missing)
+  }
+  now <- integrity_column_hashes(x, integrity$cols)
+  integrity$cols[now != integrity$col_hashes[integrity$cols]]
+}
+
+#' Keep only the fields a file records
+#' @noRd
+integrity_for_file <- function(integrity) {
+  if (is_null(integrity)) {
+    return(NULL)
+  }
+  integrity[c("n_rows", "cols", "hash")]
 }
 
 #' Per-replicate hashes for the complete-replicate exemption
@@ -1171,9 +1178,7 @@ replicate_integrity_hashes <- function(data, cols, rep_ids) {
 
 #' Compare a sample against its stored integrity record
 #'
-#' @return "ok", or the failure kind: "columns" (protected columns
-#'   missing), "rows" (row count changed), or "values" (protected
-#'   values changed).
+#' @return "ok", or the failure kind "columns", "rows" or "values".
 #' @noRd
 verify_sample_integrity <- function(x, integrity) {
   if (!all(integrity$cols %in% names(x))) {
@@ -1182,7 +1187,9 @@ verify_sample_integrity <- function(x, integrity) {
   if (nrow(x) != integrity$n_rows) {
     return("rows")
   }
-  if (!identical(protected_values_hash(x, integrity$cols), integrity$hash)) {
+  if (!identical(protected_values_hash(x, integrity$cols), integrity$hash) &&
+        (is_null(integrity$col_hashes) ||
+           length(integrity_changed_columns(x, integrity)) > 0L)) {
     return("values")
   }
   "ok"
@@ -1190,8 +1197,7 @@ verify_sample_integrity <- function(x, integrity) {
 
 #' Apply integrity-derived modification marks to a tbl_sample
 #'
-#' Used by as_tbl_sample() so a stripped-and-restored object cannot
-#' launder away its modification state.
+#' Keeps as_tbl_sample() from laundering a stripped-and-restored object.
 #' @noRd
 apply_integrity_marks <- function(x) {
   integrity <- attr(x, "metadata")$integrity
@@ -1207,13 +1213,7 @@ apply_integrity_marks <- function(x) {
 
 #' Record a post-execution modification on a tbl_sample
 #'
-#' `what` is "rows" (row set changed: removed, added, or duplicated),
-#' "columns" (an internal design column was overwritten or dropped),
-#' or "values" (protected values changed through an untracked route,
-#' detected by integrity verification). The marks accumulate in
-#' `metadata$modified` and give immediate feedback.
-#' check_sample_unmodified() treats the integrity record as
-#' authoritative at the analysis boundary.
+#' `what` is "rows", "columns" or "values", accumulated in `metadata$modified`.
 #' @noRd
 mark_sample_modified <- function(x, what) {
   meta <- attr(x, "metadata") %||% list()
@@ -1223,7 +1223,7 @@ mark_sample_modified <- function(x, what) {
 }
 
 #' Modifications recorded on a tbl_sample
-#' @return Character vector, subset of c("rows", "columns").
+#' @return Character vector, subset of c("rows", "columns", "values").
 #' @noRd
 sample_modifications <- function(x) {
   attr(x, "metadata")$modified %||% character(0)
@@ -1231,13 +1231,8 @@ sample_modifications <- function(x) {
 
 #' Test whether a row-modified sample is exactly one complete replicate
 #'
-#' Extracting a single replicate from a replicated execution (for
-#' example `filter(.replicate == 1)`) is the documented way to analyze
-#' one realization, so it is exempt from the modified-rows check. The
-#' extraction is verified against the contiguous `.sample_id` block
-#' recorded at execution time (`metadata$replicate_rows`), so a
-#' replicate that was further filtered, duplicated, or had its
-#' identifier columns rewritten does not pass.
+#' Exempts `filter(.replicate == 1)` from the modified-rows check when the rows
+#' match their `.sample_id` block and stored per-replicate hash.
 #' @noRd
 is_complete_replicate <- function(x) {
   meta <- attr(x, "metadata")
@@ -1272,7 +1267,6 @@ is_complete_replicate <- function(x) {
     return(FALSE)
   }
 
-  # Verify stored per-replicate hashes exactly.
   integrity <- meta$integrity
   rep_hash <- integrity$replicate_hashes[[as.character(r)]]
   if (!is_null(rep_hash)) {
@@ -1286,17 +1280,9 @@ is_complete_replicate <- function(x) {
 
 #' Integrity-aware realization status of a tbl_sample
 #'
-#' The integrity record is authoritative: when it verifies, the sample
-#' IS the executed realization and any per-operation marks were false
-#' alarms (e.g. an overwrite with identical values). When it fails, the
-#' sample is not the realization even if no operation marked it, which
-#' catches routes the S3 hooks cannot see (base assignment, rbind(),
-#' vctrs operations, third-party verbs). A sample reduced to exactly
-#' one complete replicate (hash-verified when available) counts as
-#' intact. Samples without an integrity record (built by older
-#' versions or by hand) fall back to the marks.
-#' @return list(ok = logical, mods = character): mods combines the
-#'   per-operation marks with the integrity failure kind.
+#' The integrity record decides when present, overriding the marks either way.
+#' One complete replicate counts as intact. Without a record the marks decide.
+#' @return list(ok, mods), mods joining the marks and the integrity failure.
 #' @noRd
 sample_realization_status <- function(x) {
   mods <- sample_modifications(x)
@@ -1321,11 +1307,8 @@ sample_realization_status <- function(x) {
 
 #' Refuse a materialized wave where the joint probabilities are not yet built
 #'
-#' A wave's first-order probabilities are exact and [as_svydesign()] carries
-#' the activation as a second phase. What is not built is the second-order
-#' pair: the joint probability of two units both surviving the activation,
-#' which within a block is `a (a - 1) / {m (m - 1)}` and across blocks the
-#' product of their takes.
+#' First-order probabilities are exact and [as_svydesign()] carries the
+#' activation as a second phase. The second-order joint is not built.
 #' @noRd
 check_no_materialized_wave <- function(x, fn_name, call = caller_env()) {
   wave <- attr(x, "metadata")$wave
@@ -1356,6 +1339,12 @@ check_sample_unmodified <- function(x, fn_name, call = caller_env()) {
     return(invisible(NULL))
   }
   mods <- status$mods
+  integrity <- attr(x, "metadata")$integrity
+  changed <- if (is_null(integrity)) {
+    character(0)
+  } else {
+    integrity_changed_columns(x, integrity)
+  }
 
   bullets <- character(0)
   if ("rows" %in% mods) {
@@ -1365,21 +1354,28 @@ check_sample_unmodified <- function(x, fn_name, call = caller_env()) {
     )
   }
   if ("columns" %in% mods) {
+    gone <- intersect(changed, setdiff(integrity$cols, names(x)))
     bullets <- c(
       bullets,
-      "x" = "Internal design columns (e.g. {.field .weight}, {.field .fpc_*}) or design-referenced strata/cluster columns were dropped or renamed after {.fn execute}."
+      "x" = if (length(gone) > 0L) {
+        cli::format_inline(
+          "{.field {gone}} {?was/were} dropped or renamed after {.fn execute}."
+        )
+      } else {
+        "Internal design columns (e.g. {.field .weight}, {.field .fpc_*}) or design-referenced strata/cluster columns were dropped or renamed after {.fn execute}."
+      }
     )
   }
   if ("values" %in% mods) {
     bullets <- c(
       bullets,
-      "x" = "Protected values (weights, design metadata, or strata/cluster identifiers) no longer match the executed realization."
-    )
-  }
-  if (length(sample_modifications(x)) == 0) {
-    bullets <- c(
-      bullets,
-      "i" = "The change came through a route samplyr does not track per operation (e.g. base assignment, {.fn rbind}, or a vctrs operation); integrity verification caught it at this boundary."
+      "x" = if (length(changed) > 0L) {
+        cli::format_inline(
+          "The values of {.field {changed}} no longer match the executed realization."
+        )
+      } else {
+        "Protected values (weights, design metadata, or strata/cluster identifiers) no longer match the executed realization."
+      }
     )
   }
 
@@ -1409,13 +1405,14 @@ check_sample_unmodified <- function(x, fn_name, call = caller_env()) {
 
 #' Label each row of a key table
 #'
-#' One label per row, in row order. `format_key_labels()` deduplicates on top
-#' of this. Callers holding a table of already-distinct groups need the
-#' positional correspondence instead.
+#' Positional, one label per row. `format_key_labels()` deduplicates.
 #' @noRd
 key_labels <- function(df, vars) {
   if (nrow(df) == 0) {
     return(character(0))
+  }
+  if (length(vars) == 0L) {
+    return(rep("", nrow(df)))
   }
   do.call(
     paste,
@@ -1423,20 +1420,49 @@ key_labels <- function(df, vars) {
   )
 }
 
+#' Every distinct key of a set of rows, as the user's values
+#'
+#' Does not truncate, so "and 12 more" stays out of the quoted keys.
 #' @noRd
-format_key_labels <- function(df, vars, max_n = 8L) {
+format_key_labels <- function(df, vars) {
   if (nrow(df) == 0) {
     return(character(0))
   }
+  unique(key_labels(df, vars))
+}
 
-  labels <- unique(key_labels(df, vars))
-
-  if (length(labels) <= max_n) {
-    return(labels)
+#' A parent path as the user's values, one level per stage
+#'
+#' Levels join with " > ", variables within a level with "/". A variable in
+#' no `levels` entry, such as a draw index, is a level of its own.
+#' @noRd
+path_labels <- function(df, vars, levels = list()) {
+  if (nrow(df) == 0) {
+    return(character(0))
   }
+  groups <- Filter(length, lapply(levels, function(lv) lv[lv %in% vars]))
+  groups <- c(groups, as.list(setdiff(vars, unlist(groups))))
+  groups <- groups[order(vapply(groups, function(g) min(match(g, vars)), 1))]
+  parts <- lapply(groups, function(g) key_labels(df, g))
+  do.call(paste, c(parts, list(sep = " > ")))
+}
 
-  c(
-    labels[seq_len(max_n)],
-    paste0("... and ", length(labels) - max_n, " more")
-  )
+#' Each earlier stage's cluster variables, in stage order
+#' @noRd
+ancestor_cluster_levels <- function(design, stage_idx) {
+  if (stage_idx <= 1L) {
+    return(list())
+  }
+  levels <- lapply(design$stages[seq_len(stage_idx - 1L)], function(s) {
+    s$clusters$vars
+  })
+  Filter(length, levels)
+}
+
+#' The stratification variables a pool's label shows
+#'
+#' Leaves out the variables that repeat the parent's own identifier.
+#' @noRd
+strata_label_vars <- function(strata_spec) {
+  strata_spec$label_vars %||% strata_spec$vars
 }

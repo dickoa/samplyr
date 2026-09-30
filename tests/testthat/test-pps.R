@@ -37,17 +37,15 @@ test_that("Stratified PPS gives correct within-stratum weights", {
     draw(n = 2, method = "pps_systematic", mos = size) |>
     execute(frame, seed = 123)
 
-  # Check within each stratum
   result_A <- result[result$stratum == "A", ]
   result_B <- result[result$stratum == "B", ]
 
-  # Stratum A: total = 100, n = 2, w_i = 100 / (2 * size_i)
+  # Stratum totals are 100 and 1000, so w_i = total / (2 * size_i).
   for (i in seq_len(nrow(result_A))) {
     expected_weight <- 100 / (2 * result_A$size[i])
     expect_equal(result_A$.weight[i], expected_weight, tolerance = 1e-10)
   }
 
-  # Stratum B: total = 1000, n = 2, w_i = 1000 / (2 * size_i)
   for (i in seq_len(nrow(result_B))) {
     expected_weight <- 1000 / (2 * result_B$size[i])
     expect_equal(result_B$.weight[i], expected_weight, tolerance = 1e-10)
@@ -55,7 +53,6 @@ test_that("Stratified PPS gives correct within-stratum weights", {
 })
 
 test_that("Cluster PPS sampling gives correct cluster-level weights", {
-  # Frame with clusters of different sizes
   frame <- data.frame(
     cluster = rep(1:4, times = c(5, 10, 15, 20)),
     cluster_size = rep(c(5, 10, 15, 20), times = c(5, 10, 15, 20)),
@@ -67,15 +64,13 @@ test_that("Cluster PPS sampling gives correct cluster-level weights", {
     draw(n = 2, method = "pps_systematic", mos = cluster_size) |>
     execute(frame, seed = 42)
 
-  # Get unique cluster info from result
   cluster_info <- unique(result[, c(
     "cluster",
     "cluster_size",
     ".weight"
   )])
 
-  # Total cluster size sum (at cluster level) = 5+10+15+20 = 50
-  # w_i = 50 / (2 * cluster_size)
+  # Cluster sizes sum to 50 at cluster level.
   for (i in seq_len(nrow(cluster_info))) {
     expected_weight <- 50 / (2 * cluster_info$cluster_size[i])
     expect_equal(cluster_info$.weight[i], expected_weight, tolerance = 1e-10)
@@ -134,19 +129,12 @@ test_that("PPS multinomial method produces replicated rows with draw index", {
     draw(n = 4, method = "pps_multinomial", mos = size) |>
     execute(frame, seed = 123)
 
-  # WR method: one row per draw (n rows total)
+  # WR method: one row per draw
   expect_equal(nrow(result), 4L)
-
-  # Should have .draw_1 column for stage 1
   expect_true(".draw_1" %in% names(result))
-
-  # Draw IDs should be sequential 1:n
   expect_equal(result$.draw_1, 1:4)
-
-  # Weights should be positive
   expect_true(all(result$.weight > 0))
 
-  # Weight = 1/pik = total_size / (n * size_i) for each draw
   total_size <- sum(frame$size)
   n <- 4
   for (i in seq_len(nrow(result))) {
@@ -165,19 +153,12 @@ test_that("PPS Chromy method produces replicated rows with draw index", {
     draw(n = 4, method = "pps_chromy", mos = size) |>
     execute(frame, seed = 123)
 
-  # PMR: one row per draw (n rows total)
+  # PMR: one row per draw
   expect_equal(nrow(result), 4L)
-
-  # Should have .draw_1 column
   expect_true(".draw_1" %in% names(result))
-
-  # Draw IDs should be sequential
   expect_equal(result$.draw_1, 1:4)
-
-  # Weights should be positive
   expect_true(all(result$.weight > 0))
 
-  # Weight = 1/pik = total_size / (n * size_i)
   total_size <- sum(frame$size)
   n <- 4
   for (i in seq_len(nrow(result))) {
@@ -187,7 +168,6 @@ test_that("PPS Chromy method produces replicated rows with draw index", {
 })
 
 test_that("PPS Chromy with minimum replacement replicates large-hit units", {
-  # When expected hits > 1, Chromy uses minimum replacement
   frame <- data.frame(
     id = 1:4,
     size = c(10, 20, 30, 140) # Total = 200
@@ -198,7 +178,6 @@ test_that("PPS Chromy with minimum replacement replicates large-hit units", {
     draw(n = 10, method = "pps_chromy", mos = size) |>
     execute(frame, seed = 42)
 
-  # PMR: one row per draw (n=10 rows total)
   expect_equal(nrow(result), 10L)
   expect_equal(result$.draw_1, 1:10)
 
@@ -217,10 +196,8 @@ test_that("Stratified PPS Chromy works correctly", {
     draw(n = 3, method = "pps_chromy", mos = size) |>
     execute(frame, seed = 42)
 
-  # Total rows should be 6 (3 per stratum)
   expect_equal(nrow(result), 6L)
 
-  # 3 draws from each stratum
   expect_equal(sum(result$stratum == "A"), 3L)
   expect_equal(sum(result$stratum == "B"), 3L)
 })
@@ -254,12 +231,10 @@ test_that("Stratified PPS SPS gives correct within-stratum weights", {
 })
 
 ## PPS Poisson shortfall
-##
-## The check measures against what the pool could reach, not against what was
-## asked for. A target above the population has already been reduced once by
-## the population, and that reduction belongs to `nominal_cap`; charging the
-## same units to saturation as well would double count. Both conditions fire
-## when there are genuinely two reductions.
+
+# The check measures against what the pool could reach, not what was asked
+# for. A reduction by the population belongs to `nominal_cap`, and both
+# conditions fire only when two reductions occur.
 
 count_conditions_pps <- function(expr, class) {
   n <- 0L
@@ -342,9 +317,7 @@ test_that("mild clipping under the tolerance is silent", {
 })
 
 test_that("a target above the population is not charged to saturation", {
-  # Uniform sizes, n > N: the population reduced the target and nothing else
-  # did. Measuring against the request rather than against what was reachable
-  # would report a shortfall that saturation did not cause.
+  # Uniform sizes, n > N: only the population reduced the target.
   frame <- uniform_pps_frame(10)
 
   expect_equal(
@@ -383,8 +356,7 @@ test_that("two genuine reductions report both, and stay auditable", {
 })
 
 test_that("explicit certainty that covers the deficit silences the check", {
-  # The documented remedy. Checked on the combined pool: the certainty units
-  # sit at chance one and raise the expectation, so the check goes quiet.
+  # Certainty units sit at chance one and raise the combined expectation.
   expect_equal(
     count_conditions_pps(
       execute(
@@ -413,11 +385,7 @@ test_that("explicit certainty that does not bind leaves the check firing", {
 })
 
 test_that("deliberate certainty units are not counted as clipped", {
-  # One unit taken by the certainty rule, and two more whose computed chances
-  # exceed one on the remainder: 9 residual units spread over a MOS total of
-  # 217, so 9 * 100 / 217 = 4.1 for each of the two large ones. Counting
-  # `sum(pik == 1)` on the combined pool would report three, charging the
-  # explicitly selected unit to saturation.
+  # One certainty unit, then 9 over a MOS total of 217 clips two at 4.1 each.
   frame <- data.frame(id = 1:20, m = c(1000, 100, 100, rep(1, 17)))
 
   w <- capture_shortfall(
@@ -431,8 +399,7 @@ test_that("deliberate certainty units are not counted as clipped", {
 })
 
 test_that("a healthy pool cannot mask a collapsed one", {
-  # Stratum A saturates, stratum B meets its target. A stage-level ratio
-  # would average the two and report nothing.
+  # Stratum A saturates and B meets its target, so a stage ratio would hide A.
   frame <- data.frame(
     stratum = rep(c("A", "B"), each = 50),
     m = c(c(rep(300, 3), rep(1, 47)), rep(1, 50)),
@@ -479,7 +446,7 @@ test_that("a shortfall inside a cluster is named by its ancestry", {
   )
 
   expect_false(is.null(w))
-  expect_identical(w$payload$pool_keys, "p1 / A")
+  expect_identical(w$payload$pool_keys, "p1 > A")
 })
 
 test_that("replicates report one shortfall with one replicate's totals", {
@@ -501,8 +468,6 @@ test_that("replicates report one shortfall with one replicate's totals", {
 })
 
 test_that("the shortfall does not bias the Horvitz-Thompson total", {
-  # The warning is about design fidelity, not about bias: a saturated Poisson
-  # design still estimates the total without systematic error.
   frame <- skewed_pps_frame()
   frame$y <- frame$m * 2 + 1
 

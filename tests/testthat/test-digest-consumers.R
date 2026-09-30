@@ -37,7 +37,7 @@ test_that("the coverage line is absent without a digest or a universe", {
   s$.weight <- s$.weight * 2
   expect_false("Sampling" %in% names(tbl_sum(s)))
 
-  # Replicate-varying realized sizes: no line rather than a guess.
+  # Replicate-varying realized sizes give no line rather than a guess.
   r <- sampling_design() |>
     draw(frac = 0.1, method = "bernoulli", on_empty = "silent") |>
     execute(test_frame, seed = 5, reps = 3)
@@ -96,8 +96,6 @@ test_that("summary falls back to the sample-based report without a digest", {
 })
 
 test_that("pools under different parents keep distinct lines", {
-  # The proof case from the plan: same stratum label under different
-  # parents must not be merged in the realization report.
   frame <- expand.grid(
     district = c("A", "B"),
     ea = 1:3,
@@ -111,8 +109,7 @@ test_that("pools under different parents keep distinct lines", {
     draw(n = 1) |>
     execute(frame, seed = 2)
   out <- capture.output(summary(s))
-  # Two stage-2 pools, one per parent district, each 1/3; a merged
-  # display would overstate the take rate as N 6, n 2, f 0.6667.
+  # A merged display would show N 6, n 2, f 0.6667.
   expect_true(any(grepl("2 pools: N_h 3, n_h 1, f_h 0.3333", out,
                         fixed = TRUE)))
   expect_false(any(grepl("0.6667", out, fixed = TRUE)))
@@ -169,7 +166,6 @@ test_that("validate_frame displays compound parents without machine keys", {
 })
 
 test_that("frame_summary reports replicated executions per replicate", {
-  # Stage detail remains a compact common-per-replicate summary.
   r <- sampling_design() |>
     stratify_by(stratum) |>
     draw(n = 10) |>
@@ -179,8 +175,7 @@ test_that("frame_summary reports replicated executions per replicate", {
   expect_equal(fs$n_target, 40)
   expect_equal(fs$take_rate, 40 / 120)
 
-  # Pool detail has one scalar row per structural pool and realization,
-  # even when every replicate happens to have the same allocation.
+  # One pool row per realization, even when the allocations coincide.
   fp <- frame_summary(r, detail = "pool")
   expect_identical(nrow(fp), 12L)
   expect_identical(fp$replicate, rep(1:3, times = 4))
@@ -191,8 +186,7 @@ test_that("frame_summary reports replicated executions per replicate", {
     0L
   )
 
-  # Random-size stage detail has no single realized value, while pool
-  # detail exposes every replicate instead of returning a list column.
+  # Random-size pool detail exposes every replicate, not a list column.
   b <- sampling_design() |>
     stratify_by(stratum) |>
     draw(frac = 0.1, method = "bernoulli", on_empty = "silent") |>
@@ -221,15 +215,14 @@ test_that("frame_summary unit detail spans the stacked replicates", {
     execute(test_frame, seed = 9, reps = 3, frame_digest = "full")
   fu <- frame_summary(r, detail = "unit")
   expect_identical(nrow(fu), 120L)
-  # n_hits counts occurrences across all replicates; is_selected marks
-  # selection in at least one.
+  # n_hits counts occurrences across replicates.
   expect_equal(sum(fu$n_hits), 30)
-  expect_identical(sum(fu$is_selected), 26L)
+  expect_identical(sum(fu$is_selected), 28L)
+  expect_identical(sum(fu$is_selected), length(unique(r$id)))
   expect_true(all(fu$n_hits[!fu$is_selected] == 0))
   # A WOR unit drawn by more than one replicate shows n_hits > 1.
   expect_true(any(fu$n_hits > 1))
 
-  # Cross-check against the per-replicate trace.
   sel <- samplyr::get_frame_digest(r)$stages[[1]]$selected
   expect_identical(sort(unique(sel$replicate)), 1:3)
   expect_equal(
@@ -247,9 +240,7 @@ test_that("replicated multi-stage digests report the shared stage prefix", {
     add_stage("Units") |> draw(n = 3) |>
     execute(test_frame, seed = 8, reps = 3)
 
-  # Later stages are replicate-specific: the manifest keeps stage 1
-  # and frame_summary states the truncation instead of silently
-  # narrowing.
+  # Later stages are replicate-specific, and frame_summary says so.
   expect_message(
     fs <- frame_summary(r),
     "replicate-specific"

@@ -85,7 +85,13 @@ test_that("survey export supports non-syntactic design column names", {
 
   svy <- as_svydesign(sample)
 
-  expect_equal(all.vars(svy$call$ids), "psu id")
+  # Clusters export as a generated id in order of first appearance.
+  expect_equal(all.vars(svy$call$ids), ".id_1")
+  expect_identical(
+    svy$variables$.id_1,
+    match(sample[["psu id"]], unique(sample[["psu id"]]))
+  )
+  expect_true("psu id" %in% names(svy$variables))
   expect_equal(all.vars(svy$call$strata), "stratum name")
 })
 
@@ -135,7 +141,7 @@ test_that("execute rejects duplicate frame names", {
   expect_identical(count_matches("middle"), 0L)
 })
 
-test_that("execute validates seed range and replicate overflow", {
+test_that("execute validates the seed range", {
   frame <- data.frame(id = seq_len(10))
   design <- sampling_design() |> draw(n = 2)
 
@@ -147,14 +153,10 @@ test_that("execute validates seed range and replicate overflow", {
     execute(design, frame, seed = -.Machine$integer.max - 1),
     class = "samplyr_error_seed_range"
   )
-  expect_error(
-    execute(
-      design,
-      frame,
-      seed = .Machine$integer.max,
-      reps = 2
-    ),
-    class = "samplyr_error_seed_overflow"
+  # Replicate seeds are drawn from the seed, so the largest one works too.
+  expect_identical(
+    nrow(execute(design, frame, seed = .Machine$integer.max, reps = 2)),
+    4L
   )
 
   expect_no_error(

@@ -1,16 +1,18 @@
 ---
-title: "Validation on Synthetic Populations"
+title: "Validation on synthetic populations"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Validation on Synthetic Populations}
+  %\VignetteIndexEntry{Validation on synthetic populations}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
 ```{r, include = FALSE}
+has_suggests <- requireNamespace("survey", quietly = TRUE)
 knitr::opts_chunk$set(
   collapse = TRUE,
-  comment = "#>"
+  comment = "#>",
+  eval = has_suggests
 )
 ```
 
@@ -143,7 +145,7 @@ For each design we report:
 - `se_ratio`: empirical SD of estimates divided by mean estimated SE,
 - `coverage_95`: fraction of 95% CIs covering the true finite-population mean.
 
-`rel_bias_pct` and `bias_z` measure the same thing on different scales, and only the second is comparable across designs. The true mean here is near 200, so a 2% relative bias is about 4 units, which is large next to the Monte Carlo noise: relative bias against a large mean is a generous criterion. `bias_z` divides by the Monte Carlo standard error of the estimated bias, so a value near zero says the bias is not distinguishable from simulation noise, and a value past 2 or 3 says it is, whatever the units of `y` happen to be.
+`rel_bias_pct` and `bias_z` measure the same thing on different scales, and only the second is comparable across designs. The true mean here is 223, so a 2% relative bias is about 4.5 units, which is large next to the Monte Carlo noise. Relative bias against a large mean is a generous criterion. `bias_z` divides by the Monte Carlo standard error of the estimated bias, so a value near zero says the bias is not distinguishable from simulation noise, and a value past 2 or 3 says it is, whatever the units of `y` happen to be.
 
 This vignette fixes Monte Carlo replication at `R = 199`.
 
@@ -235,6 +237,43 @@ mc_results
 
 The third design's first stage is `pps_brewer`, and `as_svydesign()` exports it with Brewer's approximation to the joint inclusion probabilities. Its `mean_se` is therefore an approximate quantity, and `se_ratio` for that row compares the empirical spread against an approximation rather than against an exact variance. The first two rows have no such caveat.
 
+### Balancing the variance approximation ignores
+
+A `cube` design without count constraints is linearized with the high-entropy
+approximation, which does not see the balancing. The next run balances on
+`x` and estimates two means: `y`, which depends little on `x`, and a variable
+`z` that follows `x` closely.
+
+```{r cube-variance}
+set.seed(4)
+balanced_population <- population |>
+  mutate(z = x + rnorm(n(), sd = 20))
+
+cube_runs <- t(vapply(seq_len(R_mc), function(i) {
+  svy <- sampling_design() |>
+    draw(n = 400, method = "cube", aux = x) |>
+    execute(balanced_population, seed = 5000 + i) |>
+    as_svydesign()
+  c(y = coef(svymean(~y, svy)), y_se = SE(svymean(~y, svy)),
+    z = coef(svymean(~z, svy)), z_se = SE(svymean(~z, svy)))
+}, numeric(4)))
+
+tibble(
+  outcome = c("y", "z"),
+  cor_with_x = c(cor(population$x, population$y),
+                 cor(balanced_population$x, balanced_population$z)),
+  se_ratio = c(sd(cube_runs[, 1]) / mean(cube_runs[, 2]),
+               sd(cube_runs[, 3]) / mean(cube_runs[, 4]))
+)
+```
+
+For `y` the ratio is close to one. For `z` the reported standard error is
+several times the spread it describes, because balancing on `x` removed most
+of `z`'s sampling variance and the approximation still counts it. The error is
+conservative and grows with how closely the outcome follows the balancing
+variables. `?variance-estimation` gives the other variance estimators for balanced
+designs.
+
 ## Separate tolerances from Monte Carlo uncertainty
 
 A practical tolerance states how much error is acceptable for an application.
@@ -301,11 +340,12 @@ practical tolerances. The interval calculations above are recomputed from the
 new simulations. The tolerance constants remain unchanged unless the
 application's requirements change.
 
-These are pointwise diagnostics for three particular populations/designs,
+These are pointwise diagnostics for four particular designs,
 not simultaneous certification of the package. Deterministic checks establish
 the stated identities for the realized examples. The simulations assess mean
 bias, the SD/mean-SE ratio and interval coverage in these cases. They do not
 establish unbiased variance estimation for all totals or all populations.
 Random-size sampling, extreme MOS, small pools and other compositions need
-separate checks. See `?selection-methods` for the inference overview and `?as_svydesign`
-and `?as_svrepdesign` for the detailed export restrictions.
+separate checks. See `?variance-estimation` for how each selection method's
+variance is estimated, and `?as_svydesign` and `?as_svrepdesign` for the export
+restrictions.

@@ -1,8 +1,7 @@
-## API consistency acceptance coverage.
-## Every block states a contract that must hold at a public boundary; the
-## reproductions in the plan are kept alongside the assertions they came from.
+## API consistency: each block states a contract at a public boundary.
 
 test_that("forwarded dots protect package-owned tail arguments lazily", {
+  skip_if_not_installed("survey")
   frame <- data.frame(id = 1:20, y = seq_len(20))
   sample <- sampling_design() |>
     draw(n = 5) |>
@@ -46,8 +45,7 @@ test_that("selection and serialization modifiers are keyword-only", {
     class = "samplyr_error_unknown_argument"
   )
 
-  # The shape arguments stay positional, and write_design() keeps returning
-  # its input invisibly after the file side effect.
+  # Shape arguments stay positional, and write_design() returns invisibly.
   expect_s3_class(draw(design, 2), "sampling_design")
   path <- withr::local_tempfile(fileext = ".json")
   expect_invisible(write_design(draw(design, n = 2), path, frame))
@@ -95,8 +93,6 @@ test_that("frame-valued APIs share one typed grammar", {
 })
 
 test_that("validate_frame() cannot approve what execute() refuses", {
-  # Every case below was accepted by the direct data-frame branch of
-  # validate_frame() while execute() refused it before consuming any RNG.
   frame <- data.frame(id = 1:20, x = 1:20, z = 21:40)
 
   # Parent identity: a non-final stage with nothing to link the next one to.
@@ -155,8 +151,7 @@ test_that("both frame spellings give the same diagnostic, not just the same verd
     cli::ansi_strip(conditionMessage(direct)),
     cli::ansi_strip(conditionMessage(listed))
   )
-  # The column's role survives the shared path: knowing `x` is missing is
-  # less useful than knowing it is the auxiliary variable.
+  # The column's role survives the shared path.
   expect_match(cli::ansi_strip(conditionMessage(direct)), "auxiliary variable")
 })
 
@@ -171,8 +166,7 @@ test_that("a singleton frame list is canonical one-frame input", {
   expect_named(payload$frame, c("required_variables", "fingerprint"))
   expect_null(payload$frame$fingerprints)
 
-  # Identical to the data-frame spelling, field for field and version for
-  # version: the container the caller wrote must not change the schema.
+  # Identical to the data-frame spelling, field for field.
   direct <- jsonlite::fromJSON(
     design_json(design, frame = frame), simplifyVector = FALSE
   )
@@ -204,8 +198,7 @@ test_that("genuinely several frames keep the plural schema", {
 })
 
 test_that("a one-element plural artifact is still readable", {
-  # samplyr writes the singular form, but the reader still accepts a
-  # one-element plural as the same one-frame call.
+  # samplyr writes the singular form but still reads a one-element plural.
   frame <- data.frame(id = 1:20, x = 1:20)
   design <- sampling_design() |> draw(n = 5)
   sample <- execute(design, frame, seed = 3, frame_digest = "none")
@@ -242,8 +235,7 @@ test_that("serialized frame counts agree with design and receipt shapes", {
     design_json(mf_design(), frame = list(mf_schools(), mf_classes())),
     class = "samplyr_error_serialization_frame_count"
   )
-  # The narrow class inherits the count class execute() already raises, so a
-  # caller can catch either without learning two names.
+  # The narrow class inherits the count class execute() raises.
   expect_error(
     design_json(separate, frame = mf_hierarchy()),
     class = "samplyr_error_frame_count"

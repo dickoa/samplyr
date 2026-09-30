@@ -17,9 +17,23 @@
 #' ## Continuing fieldwork
 #'
 #' Use `execute(partial_sample, next_register)` to resume the same design
-#' after listing. The earlier selection and weights are retained. If one
-#' supplied frame could cover either the next stage or several remaining
-#' stages, specify `stages` to state which stages to execute.
+#' after listing. The earlier selection and weights are retained, and
+#' omitting `stages` executes every remaining stage. If one supplied frame
+#' could cover either the next stage or several remaining stages, the two
+#' draw different samples, so `execute()` refuses to guess and asks for
+#' `stages` (`samplyr_error_ambiguous_continuation`). [validate_frame()]
+#' applies the same rule.
+#'
+#' A listing derived from the partial sample, for example with
+#' [dplyr::reframe()] or [tidyr::uncount()], may carry its generated columns
+#' (`.weight`, `.fpc_1`, ...). A continuation strips them before sampling.
+#' Passing the original design as `.data` instead starts a new execution at
+#' stage 1 and treats a `tbl_sample` frame as a previous phase. When that
+#' frame is a strict partial result of the same design, `execute()` warns
+#' but proceeds, since a new phase is a valid operation. A plain listing that
+#' still carries sampling attributes or generated columns is refused as the
+#' frame of a fresh design execution. To use such rows as an unrelated
+#' frame, remove both.
 #'
 #' Use `execute(new_design, previous_sample)` to select a new phase from an
 #' earlier sample. This records an additional probability-sampling operation.
@@ -30,10 +44,71 @@
 #' must satisfy the design's identity rules. A frame fingerprint in a saved
 #' design records the supplied data. It does not certify executability.
 #'
+#' ## Other data frame classes
+#'
+#' A frame of a class that extends `data.frame`, other than a tibble, is read
+#' by its columns. Every column is kept with its own class, and the frame
+#' class's own methods (for example a subsetting rule that always keeps a
+#' column) are not used, so the sample is the one the same columns in a plain
+#' data frame give. The sample is a tibble whatever the frame's class.
+#'
+#' The grouping of a grouped or rowwise frame is ignored, and the result is
+#' not grouped. Grouping does not stratify a design: strata are declared with
+#' [stratify_by()]. The first time this happens in a session a message says
+#' so.
+#'
 #' @seealso [execute()], [validate_frame()], [frame_summary()],
-#'   [write_design()], `vignette("three-stage-sampling")`
+#'   [write_design()], `vignette("introduction")`
 #' @name frame-input-grammar
 NULL
+
+#' Bring one supplied frame to the form every consumer reads
+#'
+#' samplyr subsets, groups and joins frames as plain data frames. A class
+#' that extends `data.frame` can change what those operations do: a `[`
+#' method that keeps a column whatever columns are asked for made every row
+#' its own stratum key, and a stratified draw returned the whole frame at
+#' weight one. So a frame whose class samplyr does not know is read by its
+#' columns alone, with base `.subset2()`, into a tibble. The columns and their
+#' own classes are kept, the frame class's methods are not.
+#'
+#' Plain data frames, tibbles and samplyr's own samples are left as they are.
+#' Grouped and rowwise frames are not among them, so they are rebuilt too,
+#' which drops the grouping: a leftover `group_by()` had leaked into the
+#' joins between stages and into the output. A grouped sample keeps its
+#' class, which two-phase sampling needs, and its grouping is not read. The
+#' user is told once per session, since grouping can be a mistaken attempt
+#' to stratify.
+#' @noRd
+prepare_frame <- function(frame) {
+  if (dplyr::is_grouped_df(frame) || inherits(frame, "rowwise_df")) {
+    cli::cli_inform(
+      c(
+        "samplyr ignores the grouping of a grouped or rowwise frame.",
+        "i" = "Grouping does not stratify a design. Declare strata with
+               {.fn stratify_by}."
+      ),
+      class = "samplyr_message_frame_ungrouped",
+      .frequency = "once",
+      .frequency_id = "samplyr_frame_ungrouped"
+    )
+  }
+  if (is_known_frame_class(frame)) {
+    return(frame)
+  }
+  columns <- lapply(seq_along(frame), function(i) .subset2(frame, i))
+  names(columns) <- names(frame)
+  tibble::new_tibble(columns, nrow = .row_names_info(frame, 2L))
+}
+
+#' Frame classes whose subsetting samplyr relies on as it is
+#' @noRd
+is_known_frame_class <- function(frame) {
+  cls <- class(frame)
+  identical(cls, "data.frame") ||
+    identical(cls, c("tbl_df", "tbl", "data.frame")) ||
+    is_tbl_sample(frame)
+}
 
 #' Canonicalize any public frame input into one ordered collection
 #'
@@ -49,7 +124,7 @@ normalize_frame_input <- function(frame, arg = "frame",
   # Data frames are lists, so this test comes first.
   if (is.data.frame(frame)) {
     return(list(
-      frames = list(frame),
+      frames = list(prepare_frame(frame)),
       labels = "",
       n_supplied = 1L,
       input_was_list = FALSE
@@ -94,6 +169,10 @@ normalize_frame_input <- function(frame, arg = "frame",
         call = call
       )
     }
+  }
+
+  for (i in seq_along(frame)) {
+    frame[[i]] <- prepare_frame(frame[[i]])
   }
 
   # Preserve collection names as diagnostic frame labels.

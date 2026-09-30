@@ -60,7 +60,6 @@ test_that("stratified panels have equal representation per stratum", {
     class = "samplyr_warning_census"
   )
 
-  # Each panel should have equal count per stratum
   panel_strata <- table(result$region, result$.panel)
   for (i in seq_len(nrow(panel_strata))) {
     counts <- as.integer(panel_strata[i, ])
@@ -87,7 +86,6 @@ test_that("multi-stage panels assigned at PSU level", {
 
   expect_true(".panel" %in% names(result))
 
-  # All students in a school share the same panel
   panel_by_school <- tapply(result$.panel, result$school_id, unique)
   for (panels_in_school in panel_by_school) {
     expect_length(panels_in_school, 1)
@@ -95,10 +93,7 @@ test_that("multi-stage panels assigned at PSU level", {
 })
 
 test_that("clustered panels block in control order", {
-  # 16 PSUs with K = 2 is four blocks of 2K, the point at which blocking
-  # differs from one global random quota. The control variable is
-  # deliberately non-monotone in the PSU identifier, so the recorded
-  # assignment order can only come from `control`.
+  # score is non-monotone in psu, so the order can only come from `control`.
   frame <- data.frame(
     psu = rep(1:20, each = 2),
     ssu = 1:40,
@@ -118,8 +113,7 @@ test_that("clustered panels block in control order", {
   expect_identical(pool$blocks, c(4L, 4L, 4L, 4L))
   expect_identical(pool$quotas, matrix(2L, nrow = 4L, ncol = 2L))
 
-  # The recorded quotas are the realized ones: each block of four PSUs in
-  # control order holds exactly two of each panel.
+  # Each block of four PSUs in control order holds two of each panel.
   panel_of <- unique(as.data.frame(asc)[c("psu", ".panel")])
   in_order <- panel_of$.panel[match(expected, as.character(panel_of$psu))]
   for (block in split(in_order, rep(1:4, each = 4))) {
@@ -133,8 +127,7 @@ test_that("panel blocking supports mixed desc() and serp() control ordering", {
     region = rep(c("A", "A", "A", "A", "B", "B", "B", "B"), each = 2),
     district = rep(c(1, 2, 3, 4, 1, 2, 3, 4), each = 2),
     score = rep(c(10, 20, 30, 40, 50, 60, 70, 80), each = 2),
-    # A clustered stage orders whole clusters, so a control variable has to
-    # be constant within one.
+    # A control variable must be constant within a cluster.
     ssu = rep(1:8, each = 2)
   )
 
@@ -150,9 +143,7 @@ test_that("panel blocking supports mixed desc() and serp() control ordering", {
     draw(n = 4, control = c(score, serp(district, ssu))) |>
     execute(frame, seed = 1, panels = 2)
 
-  # Scores are distinct, so `desc(score)` fixes the order outright and the
-  # serpentine term never breaks a tie. Each stratum is one block of four
-  # with a quota of two per panel.
+  # Distinct scores fix the order, so the serpentine term never breaks a tie.
   pool_keys <- function(x) {
     lapply(attr(x, "metadata")$panel_assignment$pools, function(p) p$keys)
   }
@@ -267,8 +258,7 @@ test_that("panels work with continuation (execute_continuation path)", {
 ## The assignment construction
 
 test_that("block sizes follow the scalar rule", {
-  # A pool below one block is one block; otherwise the tail is spread one
-  # unit at a time over the full blocks and never left standing alone.
+  # The tail is spread over the full blocks and never left standing alone.
   expect_identical(panel_block_sizes(1L, 8L), 1L)
   expect_identical(panel_block_sizes(7L, 8L), 7L)
   expect_identical(panel_block_sizes(8L, 8L), 8L)
@@ -288,9 +278,7 @@ test_that("block sizes follow the scalar rule", {
 })
 
 test_that("every unit's unconditional panel probability is 1/k", {
-  # m = 9 with k = 4 is the awkward case: the quota multiset is 3, 2, 2, 2,
-  # so uniformity comes from permuting the panel identities, not from equal
-  # group sizes.
+  # m = 9, k = 4 gives quotas 3, 2, 2, 2, so uniformity comes from the labels.
   m <- 9L
   k <- 4L
   reps <- 4000L
@@ -309,9 +297,7 @@ test_that("every unit's unconditional panel probability is 1/k", {
 })
 
 test_that("labels are uniformly permuted inside a block", {
-  # A block of 2k with k = 2 holds two labels of each panel, so its 4!
-  # orderings collapse to 6 equiprobable arrangements. This is the SRSWOR
-  # property a later activation of one panel rests on.
+  # A 2k block with k = 2 has 6 equiprobable arrangements of its 4 labels.
   reps <- 6000L
   arrangements <- withr::with_seed(11, {
     vapply(
@@ -331,9 +317,7 @@ test_that("labels are uniformly permuted inside a block", {
 })
 
 test_that("a pool smaller than one block is assigned, not refused", {
-  # Every stratum contributes a single unit against a block size of 8. The
-  # assignment is well defined; only a later variance estimate would need
-  # the pools collapsed, and that is not assignment's call to make.
+  # One unit per stratum against a block size of 8 is still well defined.
   frame <- data.frame(
     id = 1:30,
     region = rep(letters[1:6], each = 5),
@@ -381,8 +365,7 @@ test_that("the receipt records the frozen blocks and quotas", {
   expect_identical(pool$blocks, panel_block_sizes(100L, 8L))
   expect_identical(as.integer(rowSums(pool$quotas)), pool$blocks)
 
-  # The recorded quota is the realized count in that block, which is what a
-  # later activation is computed against.
+  # The recorded quota is the realized count in its block.
   in_order <- result$.panel[match(pool$keys, as.character(result$.sample_id))]
   block_of <- rep(seq_along(pool$blocks), pool$blocks)
   realized <- vapply(
@@ -420,13 +403,10 @@ test_that("the design file carries the assignment law, not the realization", {
   expect_identical(written$certainty, "permanent")
   expect_identical(unlist(written$key_vars), record$key_vars)
 
-  # And nothing of the realization. The pools are the law applied to one
-  # draw, and re-executing rebuilds them, so writing them stored a second
-  # copy that no reader decoded.
+  # Pools are the law applied to one draw, and replay rebuilds them.
   expect_null(written$pools)
 
-  # Which is also why a design file carries no assignment-unit identifier,
-  # including when the caller asked for no frame content at all.
+  # So no assignment-unit identifier is written, even with no frame content.
   clustered <- sampling_design() |>
     cluster_by(region) |>
     draw(n = 1) |>
@@ -467,8 +447,7 @@ test_that("certainty units are labelled from their own pool", {
     certainty$keys,
     as.character(result$.sample_id[result$.certainty_1])
   )
-  # A permanent unit consumes no rotating quota: the two pools carry their
-  # own, and together they still cover every selected unit exactly once.
+  # Certainty consumes no rotating quota. The pools cover each unit once.
   expect_identical(
     sum(vapply(record$pools, function(p) p$size, integer(1))),
     nrow(result)
@@ -516,8 +495,7 @@ test_that("a with-replacement first stage assigns by realized draw", {
     execute(frame, seed = 5, panels = 4)
 
   record <- attr(result, "metadata")$panel_assignment
-  # The estimator's PSU is the realized draw, so the same population cluster
-  # drawn twice is two assignment units.
+  # The PSU is the realized draw, so a cluster drawn twice is two units.
   expect_identical(record$key_vars, c("psu", ".draw_1"))
   expect_identical(record$pools[[1]]$size, 10L)
   expect_identical(
@@ -580,8 +558,7 @@ test_that("a continuation keeps the assignment its master recorded", {
     master_map$.panel[match(continued_map$school_id, master_map$school_id)]
   )
 
-  # The frozen pools travel with the sample: a later wave reads them from
-  # the receipt rather than recomputing them against another frame vintage.
+  # A later wave reads the frozen pools from the receipt, not another frame.
   expect_identical(
     attr(continued, "metadata")$panel_assignment,
     attr(master, "metadata")$panel_assignment
@@ -610,8 +587,7 @@ test_that("panels do not change which units are selected", {
   expect_identical(with$student_id, without$student_id)
   expect_identical(with$.weight, without$.weight)
 
-  # Same at a single stage: assignment draws sit after the stage loop, so
-  # they cannot perturb any selection.
+  # Assignment draws come after the stage loop, so they perturb no selection.
   flat <- sampling_design() |>
     stratify_by(school_id) |>
     draw(n = 2)
@@ -723,8 +699,7 @@ test_that("a multi-hit ancestor contributes its strata, cluster and draw", {
   sample <- execute(design, ctx_frame(), seed = 12)
   expect_true(".draw_1" %in% names(sample))
 
-  # The draw index restarts inside every stratum, so the stratum is what
-  # makes it name an occurrence.
+  # The draw index restarts in every stratum, so the stratum qualifies it.
   expect_identical(
     samplyr:::collect_ancestor_occurrence_vars(design, 2L, sample),
     c("psu_stratum", "psu", ".draw_1")
@@ -736,8 +711,7 @@ test_that("an ancestor that has lost its draw index is refused", {
   sample <- execute(design, ctx_frame(), seed = 12)
   sample$.draw_1 <- NULL
 
-  # Reading the ancestor as without replacement instead would merge two
-  # conditional populations of descendants into one.
+  # Reading it as without replacement would merge two descendant populations.
   expect_error(
     samplyr:::collect_ancestor_occurrence_vars(design, 2L, sample),
     class = "samplyr_error_panel_missing_identity"
@@ -756,10 +730,7 @@ test_that("an assignment stage that has lost its draw index is refused", {
 })
 
 test_that("a public execution cannot assign over collapsed occurrences", {
-  # The reachable form: a with-replacement first stage, its draw column
-  # dropped, and panels declared on the continuation. This used to warn only
-  # that the sample was modified and then assign one panel to occurrences
-  # that were selected separately.
+  # A WR first stage with its draw column dropped, panels on the continuation.
   frame <- data.frame(
     psu = rep(sprintf("P%d", 1:8), each = 5),
     unit = rep(1:5, times = 8),
@@ -806,8 +777,7 @@ test_that("a missing cluster or stratum column is the same refusal", {
 test_that("the declared-ancestor helper keeps its own contract", {
   design <- ctx_design_multihit()
 
-  # It takes no sample and names no draw column: validation and linkage call
-  # it before an execution exists.
+  # It takes no sample, since validation and linkage call it before execution.
   expect_identical(samplyr:::collect_ancestor_cluster_vars(design, 1L), character(0))
   expect_identical(samplyr:::collect_ancestor_cluster_vars(design, 2L), "psu")
   expect_identical(samplyr:::collect_ancestor_cluster_vars(design, 3L), c("psu", "hh"))
@@ -822,8 +792,7 @@ test_that("the context resolves a lower stage's key, pools and certainty", {
   expect_true(context$clustered)
   expect_false(context$multi_hit)
   expect_identical(context$ancestor_vars, "psu")
-  # The household is identified inside the PSU occurrence it sits in, and
-  # qualified by its own selection stratum.
+  # The household is keyed inside its PSU occurrence and its own stratum.
   expect_identical(context$key_vars, c("psu", "hh_stratum", "hh"))
   # Pools are the household strata within each realized PSU.
   expect_identical(context$pool_vars, c("psu", "hh_stratum"))
@@ -855,8 +824,7 @@ test_that("a terminal unclustered stage is keyed on the sample row", {
   expect_false(context$clustered)
   expect_identical(context$key_vars, ".sample_id")
   expect_identical(context$unit, "element")
-  # The ancestry is still what a pool is built from, even though the key
-  # does not need it.
+  # The ancestry still builds the pool, though the key does not need it.
   expect_identical(context$pool_vars, c("psu", "hh"))
 })
 
@@ -884,14 +852,11 @@ test_that("the context and the record it produced agree at stage 1", {
   )
 })
 
-
 ## Lower-stage construction
 #
-# The context computing the right variable lists at a lower stage is a
-# separate question from whether assignment built from that context pools,
-# orders and marks the right units. No public argument selects a lower stage
-# yet, so these drive the internals directly. Wave propagation is not covered
-# here.
+# Whether assignment built from a lower-stage context pools, orders and marks
+# the right units. No public argument selects a lower stage yet, so these
+# drive the internals directly. Wave propagation is not covered here.
 
 # Two PSUs, four households in each, two people in each household. Households
 # are stratified inside the PSU, so a stage-2 pool is a proper subset of a
@@ -916,8 +881,7 @@ test_that("stage-2 pools are the parent occurrence crossed with its strata", {
   sample <- execute(design, ctx_frame(), seed = 11)
   pools <- ctx_assign(design, sample, 2L)$record$pools
 
-  # Two PSUs each holding a small and a large household stratum: four pools,
-  # not two and not one.
+  # Two PSUs, each with a small and a large household stratum: four pools.
   expect_length(pools, 4L)
   expect_identical(
     lapply(pools, function(p) names(p$stratum)),
@@ -931,8 +895,7 @@ test_that("stage-2 pools are the parent occurrence crossed with its strata", {
     sort(paste(rep(selected_psus, each = 2), c("large", "small")))
   )
 
-  # No pool crosses a parent. Every key is the pool's own PSU paired with a
-  # household of that PSU's realized selection.
+  # No pool crosses a parent.
   data <- as.data.frame(sample)
   for (pool in pools) {
     in_pool <- data[
@@ -955,8 +918,7 @@ test_that("stage-2 assignment rotates households inside a retained parent", {
   sample <- execute(design, ctx_frame(), seed = 11)
   data <- ctx_assign(design, sample, 2L)$sample
 
-  # The point of a lower assignment stage: one PSU carries more than one
-  # panel, which stage-1 assignment can never produce.
+  # One PSU carries more than one panel, which stage-1 assignment cannot do.
   by_psu <- tapply(data$.panel, data$psu, function(x) length(unique(x)))
   expect_true(all(by_psu > 1L))
   # Every person of one household still carries that household's panel.
@@ -979,8 +941,7 @@ test_that("certainty at the assignment stage decides permanence, not below", {
   sample <- execute(design, frame, seed = 21)
   expect_true(any(sample$.certainty_2))
 
-  # Stage 2 reads `.certainty_2`, so the self-representing household is a
-  # permanent pool of its own.
+  # Stage 2 reads `.certainty_2`, so the certain household is its own pool.
   at_2 <- ctx_assign(design, sample, 2L)$record$pools
   expect_true(any(vapply(at_2, function(p) {
     identical(p$class, "certainty")
@@ -989,8 +950,7 @@ test_that("certainty at the assignment stage decides permanence, not below", {
     identical(p$class, "rotating")
   }, logical(1))))
 
-  # Stage 3 reads `.certainty_3`, which no stage produced. A certainty
-  # household does not make the people inside it permanent.
+  # No stage produced `.certainty_3`, so the people inside stay rotating.
   at_3 <- ctx_assign(design, sample, 3L)$record$pools
   expect_true(all(vapply(at_3, function(p) {
     identical(p$class, "rotating")
@@ -999,8 +959,7 @@ test_that("certainty at the assignment stage decides permanence, not below", {
 
 test_that("the assignment stage's own control order fixes the key order", {
   frame <- ctx_frame()
-  # Non-monotone in the household identifier, so an order that follows it
-  # can only have come from the stage-2 control.
+  # Non-monotone in hh, so a following order can only come from the control.
   frame$hh_score <- (frame$hh * 7L) %% 6L
 
   design <- sampling_design() |>
@@ -1055,8 +1014,7 @@ test_that("a stage stratified by its own parent names that parent once", {
   sample <- execute(design, ctx_frame(), seed = 41)
   context <- samplyr:::panel_assignment_context(design, 2L, sample)
 
-  # The ancestry and the stage's own strata both name the PSU. A repeated
-  # column would reach the record as an invented `psu.1` field.
+  # Ancestry and strata both name psu. A repeat would become a `psu.1` field.
   expect_identical(context$pool_vars, "psu")
   expect_identical(context$key_vars, c("psu", "hh"))
 
@@ -1070,8 +1028,6 @@ test_that("a stage stratified by its own parent names that parent once", {
 ## One class per defect kind
 
 test_that("the panel count refusal carries a class, like every other in the file", {
-  # It was a bare cli_abort(), catchable only by its message, in a file where
-  # every other refusal is classed.
   expect_error(
     execute(sampling_design() |> draw(n = 5), data.frame(id = 1:20), panels = 1),
     class = "samplyr_error_panel_count"
@@ -1089,11 +1045,7 @@ test_that("the panel count refusal carries a class, like every other in the file
 ## The two schedule paths ask the same questions
 
 test_that("a defect in either schedule kind carries the same class", {
-  # `normalize_panel_schedule()` and `normalize_program_schedule()` used to
-  # write these five checks twice, with the same condition classes and
-  # divergent wording. They share one implementation now, so a defect that
-  # moves on one path must move on both, and this pins the pairing rather
-  # than either message.
+  # Both paths share one implementation, so this pins the class pairing.
   frame <- data.frame(id = 1:200)
   master_schedule <- data.frame(
     panel = rep(1:2, times = 3), wave = rep(1:3, each = 2),
@@ -1157,13 +1109,11 @@ test_that("a defect in either schedule kind carries the same class", {
     expect_error(as_program(case$program), class = case$class)
   }
 
-  # And each still names the kind of schedule it was given, which is the one
-  # thing the two are allowed to differ on.
+  # Each names the kind of schedule it was given, the one allowed difference.
   expect_error(as_panels(data.frame(panel = 1:2)), regexp = "`panels` schedule")
   expect_error(as_program(data.frame(panel = 1:2)), regexp = "program schedule")
 
-  # Sentence case survives the shared template: the phrase is cli-formatted,
-  # so it cannot be capitalized at the point of use.
+  # Sentence case survives the shared cli-formatted template.
   expect_error(as_panels(data.frame(panel = 1:2)), regexp = "^A `panels` schedule")
   expect_error(as_program(data.frame(panel = 1:2)), regexp = "^A program schedule")
 
@@ -1171,12 +1121,10 @@ test_that("a defect in either schedule kind carries the same class", {
   expect_error(as_program(list(panel = 1)), regexp = "`schedule` must be a data frame")
 })
 
-## Fragments that were written more than once
+## Shared fragments
 
 test_that("one renderer serves both stratum labels", {
-  # A diagnostic sentence and a table column differ only in what an
-  # unstratified pool renders as. They were two functions with two separators
-  # and two fallbacks.
+  # A sentence and a table column differ only in the unstratified fallback.
   stratified <- list(stratum = list(region = "A", urban = TRUE))
   unstratified <- list(stratum = NULL)
 
@@ -1207,8 +1155,7 @@ test_that("one take computation, which is where a malformed quotas surfaces", {
   expect_identical(pool_take(pool, 1L), c(2L, 1L))
   expect_identical(pool_take(pool, integer(0)), c(0L, 0L))
 
-  # The JSON shape a record can come back as. It fails in one place now
-  # rather than in two, which is what a guard for it would need.
+  # The JSON shape a record can come back as.
   listed <- list(quotas = list(c(2L, 1L, 1L, 1L), c(1L, 1L, 1L, 1L)))
   expect_error(pool_take(listed, 1L), "incorrect number of dimensions")
 })
@@ -1227,9 +1174,7 @@ test_that("a malformed version is described the way every other field is", {
     ))
   }
 
-  # An inline ladder here said "a character value" where
-  # `describe_record_value()` names the value itself, which is what the
-  # reader needs in order to see what the record actually says.
+  # `describe_record_value()` names the value itself.
   expect_match(shown("3"), '"3"', fixed = TRUE)
   expect_match(shown(c(1L, 2L)), "2 values of type integer", fixed = TRUE)
   # "nothing" reads wrong of a version, so that one case stays its own.

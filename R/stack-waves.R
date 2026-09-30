@@ -92,11 +92,12 @@
 stack_waves <- function(...) {
   waves <- list(...)
   check_stack_waves_inputs(waves)
-  records <- lapply(waves, stack_waves_provenance)
+  call <- current_env()
+  records <- lapply(waves, stack_waves_provenance, call = call)
   check_stack_waves_agreement(records)
 
   rows <- lapply(seq_along(waves), function(i) {
-    stack_waves_rows(waves[[i]], records[[i]]$wave)
+    stack_waves_rows(waves[[i]], records[[i]]$wave, call = call)
   })
   vctrs::vec_rbind(!!!rows)
 }

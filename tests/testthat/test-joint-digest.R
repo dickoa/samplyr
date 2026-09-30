@@ -16,7 +16,7 @@ test_that("digest and frame paths agree for constant-chance stages", {
     execute(test_frame, seed = 11, frame_digest = "full")
   expect_jip_paths_equal(s, test_frame)
 
-  # srswor is not a jip method; both paths return the same NULL shape.
+  # srswor is not a jip method, and both paths return the same NULL shape.
   s2 <- sampling_design() |>
     draw(n = 10) |>
     execute(test_frame, seed = 12)
@@ -104,9 +104,7 @@ test_that("both paths give per-parent conditional stage-2 chances", {
     execute(frame_jip, seed = 42)
 
   jip <- expect_jip_paths_equal(s, frame_jip, stages = 2)
-  # The stage-2 chances are conditional per parent district: the
-  # diagonal must reproduce the executed weights, not the pooled
-  # approximation that merged both districts into one draw.
+  # Stage-2 chances are conditional per parent district, not pooled.
   sel <- dplyr::distinct(as.data.frame(s), district, ea, .weight_2)
   expect_equal(sort(diag(jip[[2]])), sort(1 / sel$.weight_2), tolerance = 1e-10)
   # Cross-district pairs are independent: pi_ij = pi_i * pi_j.
@@ -473,7 +471,6 @@ test_that("summarized chances refuse instead of approximating", {
     joint_expectation(s),
     class = "samplyr_error_digest_summarized"
   )
-  # The frame path still works for the same sample.
   expect_silent(jip <- joint_expectation(s, test_frame))
   expect_true(is.matrix(jip[[1]]))
 })
@@ -486,8 +483,7 @@ test_that("missing or invalidated digests refuse the frame-free path", {
 })
 
 test_that("automatic certainty drives the joint-matrix decomposition", {
-  # Units 1-3 cap at probability one with no explicit rule. The joint
-  # matrix must decompose on the resolved flags, not on rule membership.
+  # Units 1-3 cap at probability one with no explicit certainty rule.
   frame <- data.frame(id = seq_len(60), mos = c(500, 400, 300, rep(10, 57)))
 
   s <- sampling_design() |>

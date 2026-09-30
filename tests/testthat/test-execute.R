@@ -82,7 +82,6 @@ test_that("execute() weights sum to population", {
     draw(n = 100) |>
     execute(frame, seed = 42)
 
-  # Weights should sum approximately to population
   expect_equal(sum(result$.weight), N, tolerance = 0.01)
 })
 
@@ -110,8 +109,7 @@ test_that("execute() validates incomplete design", {
 test_that("execute() validates required variables", {
   frame <- data.frame(id = 1:100, x = rnorm(100))
 
-  # A missing column does not depend on any draw, so this is caught before
-  # sampling starts and the message names the frame and the stage.
+  # A missing column is caught before sampling starts.
   expect_error(
     sampling_design() |>
       stratify_by(region) |>
@@ -129,10 +127,8 @@ test_that("execute() with stratification samples from all strata", {
     draw(n = 25) |>
     execute(frame, seed = 42)
 
-  # Should have samples from all 4 regions
   expect_equal(length(unique(result$region)), 4)
 
-  # Each stratum should have ~25 samples
   counts <- table(result$region)
   expect_true(all(counts == 25))
 })
@@ -145,10 +141,9 @@ test_that("execute() with proportional allocation", {
     draw(n = 200) |>
     execute(frame, seed = 42)
 
-  # Each stratum is 250/1000 = 25% of population
-  # Should get ~50 from each stratum (200 * 0.25 = 50)
+  # Each region is 25% of the population, so ~50 of 200.
   counts <- table(result$region)
-  expect_true(all(counts >= 45 & counts <= 55)) # Allow some rounding
+  expect_true(all(counts >= 45 & counts <= 55))
 })
 
 test_that("execute() with seed is reproducible", {
@@ -183,7 +178,6 @@ test_that("execute() without seed gives different results", {
   result1 <- execute(design, frame)
   result2 <- execute(design, frame)
 
-  # Very unlikely to get same sample
   expect_false(identical(result1$id, result2$id))
 })
 
@@ -207,11 +201,10 @@ test_that("execute() with cluster_by samples clusters", {
     draw(n = 20) |>
     execute(frame, seed = 42)
 
-  # Should have exactly 20 schools
   n_schools <- length(unique(result$school_id))
   expect_equal(n_schools, 20)
 
-  # Each school should have all 10 students
+  # Each school keeps all 10 students.
   school_counts <- table(result$school_id)
   expect_true(all(school_counts == 10))
 })
@@ -237,7 +230,6 @@ test_that("execute() with stages parameter", {
     add_stage(label = "Students") |>
     draw(n = 5)
 
-  # Execute only stage 1
   result <- execute(design, frame, stages = 1, seed = 42)
 
   stages_exec <- get_stages_executed(result)
@@ -254,21 +246,18 @@ test_that("sample can continue to next stage", {
     add_stage(label = "Students") |>
     draw(n = 5)
 
-  # Execute stage 1
   stage1_result <- execute(design, frame, stages = 1, seed = 42)
 
-  # Continue to stage 2
   stage2_result <- stage1_result |> execute(frame, seed = 43)
 
   stages_exec <- get_stages_executed(stage2_result)
   expect_equal(stages_exec, c(1, 2))
 
-  # Should have 20 schools * 5 students = 100
+  # 20 schools * 5 students.
   expect_equal(nrow(stage2_result), 100)
 })
 
 test_that("execute() with round='up' uses ceiling", {
-  # Create a frame where 0.1 * N is not an integer
   frame <- data.frame(id = 1:105, x = rnorm(105))
 
   result <- sampling_design() |>
@@ -280,7 +269,6 @@ test_that("execute() with round='up' uses ceiling", {
 })
 
 test_that("execute() with round='down' uses floor", {
-  # Create a frame where 0.1 * N is not an integer
   frame <- data.frame(id = 1:105, x = rnorm(105))
 
   result <- sampling_design() |>
@@ -292,7 +280,6 @@ test_that("execute() with round='down' uses floor", {
 })
 
 test_that("execute() with round='nearest' uses standard rounding", {
-  # Test case where fractional part < 0.5
   frame1 <- data.frame(id = 1:102, x = rnorm(102))
 
   result1 <- sampling_design() |>
@@ -302,7 +289,6 @@ test_that("execute() with round='nearest' uses standard rounding", {
   # 102 * 0.1 = 10.2, round = 10
   expect_equal(nrow(result1), 10)
 
-  # Test case where fractional part > 0.5
   frame2 <- data.frame(id = 1:108, x = rnorm(108))
 
   result2 <- sampling_design() |>
@@ -319,34 +305,27 @@ test_that("execute() with stratified sampling respects round parameter", {
     region = c(rep("A", 33), rep("B", 67))
   )
 
-  # With round = "up" (ceiling)
   result_up <- sampling_design() |>
     stratify_by(region) |>
     draw(frac = 0.1, round = "up") |>
     execute(frame, seed = 42)
 
-  # A: 33 * 0.1 = 3.3, ceiling = 4
-  # B: 67 * 0.1 = 6.7, ceiling = 7
-  # Total = 11
+  # ceiling(3.3) + ceiling(6.7) = 4 + 7.
   expect_equal(nrow(result_up), 11)
 
-  # With round = "nearest"
   result_nearest <- sampling_design() |>
     stratify_by(region) |>
     draw(frac = 0.1, round = "nearest") |>
     execute(frame, seed = 42)
 
-  # A: 33 * 0.1 = 3.3, round = 3
-  # B: 67 * 0.1 = 6.7, round = 7
-  # Total = 10
+  # round(3.3) + round(6.7) = 3 + 7.
   expect_equal(nrow(result_nearest), 10)
 })
 
 test_that("execute() with round='down' ensures minimum of 1 per stratum", {
-  # Create frame with tiny stratum
   frame <- data.frame(
     id = 1:110,
-    region = c(rep("A", 5), rep("B", 105)) # A is tiny
+    region = c(rep("A", 5), rep("B", 105))
   )
 
   result <- sampling_design() |>
@@ -356,7 +335,7 @@ test_that("execute() with round='down' ensures minimum of 1 per stratum", {
 
   counts <- table(result$region)
 
-  # A: 5 * 0.1 = 0.5, floor would be 0, but minimum is 1
+  # floor(0.5) would be 0, but the minimum is 1.
   expect_true(counts["A"] >= 1)
 
   # B: 105 * 0.1 = 10.5, floor = 10
@@ -370,10 +349,8 @@ test_that("single-stage tracks per-stage weight", {
     draw(n = 100) |>
     execute(frame, seed = 42)
 
-  # Stagewise weight column should exist
   expect_true(".weight_1" %in% names(result))
 
-  # For single stage, .weight_1 should equal .weight
   expect_equal(result$.weight_1, result$.weight)
 })
 
@@ -388,11 +365,9 @@ test_that("multi-stage compound weight = product of stage weights", {
     draw(n = 5) |>
     execute(frame, seed = 42)
 
-  # Stagewise weight columns should exist
   expect_true(".weight_1" %in% names(result))
   expect_true(".weight_2" %in% names(result))
 
-  # Compound weight = product of stagewise weights
   expect_equal(result$.weight, result$.weight_1 * result$.weight_2)
 })
 
@@ -406,21 +381,16 @@ test_that("multi-stage with separate execution maintains weight compounding", {
     add_stage(label = "Students") |>
     draw(n = 5)
 
-  # Execute stage 1 only
   stage1_result <- execute(design, frame, stages = 1, seed = 42)
 
-  # Stage 1 should have .weight_1
   expect_true(".weight_1" %in% names(stage1_result))
   expect_true(all(stage1_result$.weight > 0))
 
-  # Continue to stage 2
   final_result <- stage1_result |> execute(frame, seed = 43)
 
-  # Should have both stagewise weight columns
   expect_true(".weight_1" %in% names(final_result))
   expect_true(".weight_2" %in% names(final_result))
 
-  # Compound weight = product of stagewise weights
   expect_equal(
     final_result$.weight,
     final_result$.weight_1 * final_result$.weight_2
@@ -435,10 +405,8 @@ test_that("stratified sampling tracks stage weight", {
     draw(n = 200) |>
     execute(frame, seed = 42)
 
-  # All weights positive
   expect_true(all(result$.weight > 0))
 
-  # Stagewise weight column should exist
   expect_true(".weight_1" %in% names(result))
 })
 
@@ -450,10 +418,8 @@ test_that("cluster sampling tracks stage weight", {
     draw(n = 20) |>
     execute(frame, seed = 42)
 
-  # All weights positive
   expect_true(all(result$.weight > 0))
 
-  # Stagewise weight column should exist
   expect_true(".weight_1" %in% names(result))
 })
 
@@ -469,12 +435,9 @@ test_that("two-stage with cluster_by at both stages samples within groups", {
     draw(n = 3) |>
     execute(frame, seed = 42)
 
-  # 10 schools * 3 students = 30
-
   expect_equal(nrow(result), 30)
   expect_equal(length(unique(result$school_id)), 10)
 
-  # Each school should have exactly 3 students
   students_per_school <- table(result$school_id)
   expect_true(all(students_per_school == 3))
 })
@@ -499,10 +462,8 @@ test_that("two-stage cluster_by at both stages matches omitting cluster_by at st
     draw(n = 3) |>
     execute(frame, seed = 42)
 
-  # Both should produce the same number of rows
   expect_equal(nrow(result_with), nrow(result_without))
 
-  # Both should produce the same schools and same count per school
   expect_equal(
     sort(unique(result_with$school_id)),
     sort(unique(result_without$school_id))
@@ -549,21 +510,18 @@ test_that("three-stage with cluster_by at all stages samples correctly", {
     draw(n = 4) |>
     execute(frame, seed = 42)
 
-  # 2 regions * 3 schools * 4 students = 24
+  # 2 regions * 3 schools * 4 students.
   expect_equal(nrow(result), 24)
   expect_equal(length(unique(result$region)), 2)
   expect_equal(length(unique(result$school_id)), 6)
 
-  # Each school should have exactly 4 students
   expect_true(all(table(result$school_id) == 4))
 
-  # Each region should have exactly 3 schools
   schools_per_region <- tapply(
     result$school_id, result$region, function(x) length(unique(x))
   )
   expect_true(all(schools_per_region == 3))
 
-  # Compound weight = product of all stage weights
   expect_equal(
     result$.weight,
     result$.weight_1 * result$.weight_2 * result$.weight_3
@@ -758,8 +716,7 @@ test_that("continuation with stages = 2:3 picks up the remaining stages", {
 })
 
 test_that("continuation with one frame and several stages left is refused", {
-  # One frame cannot say whether it is a register for the next stage or a
-  # hierarchy covering all of them, and guessing samples the wrong register.
+  # One frame cannot say whether it is the next register or the full hierarchy.
   design <- three_stage_design()
   frame <- three_stage_frame()
 
@@ -770,7 +727,6 @@ test_that("continuation with one frame and several stages left is refused", {
     class = "samplyr_error_ambiguous_continuation"
   )
 
-  # With one stage left there is nothing to disambiguate.
   s2 <- execute(s1, frame, stages = 2, seed = 2)
   expect_s3_class(execute(s2, frame, seed = 3), "tbl_sample")
 })
@@ -805,7 +761,6 @@ test_that("a design with no linkable stages is refused before sampling", {
     draw(n = 10)
 
   # Neither stage names a unit, so stage 2 has nothing to sample within.
-  # This is caught statically, not at the join.
   expect_error(
     execute(design, frame, seed = 123),
     class = "samplyr_error_stage_parent_id"
@@ -829,14 +784,12 @@ test_that("WR parent + clustered final stage does not cross-duplicate rows", {
 
   result <- execute(design, frame, seed = 1)
 
-  # 4 draws, 1 EA per draw, 3 units per EA = 12 rows
+  # 4 draws, 1 EA per draw, 3 units per EA.
   expect_equal(nrow(result), 12L)
 
-  # Each draw_1 context should have exactly 3 rows (one EA's worth)
   draw_counts <- table(result$.draw_1)
   expect_true(all(draw_counts == 3L))
 
-  # Weights should sum to the population total
   expect_equal(sum(result$.weight), 18)
 })
 
@@ -876,8 +829,8 @@ test_that("stratified phase 1 -> SRS phase 2: heterogeneous weights compound", {
 
   w_A <- unique(phase1$.weight[phase1$region == "A"])
   w_B <- unique(phase1$.weight[phase1$region == "B"])
-  expect_equal(w_A, 4)  # 80/20
-  expect_equal(w_B, 6)  # 120/20
+  expect_equal(w_A, 4)
+  expect_equal(w_B, 6)
 
   phase2 <- sampling_design() |>
     draw(n = 10) |>
@@ -912,7 +865,7 @@ test_that("phase 1 -> stratified phase 2", {
 
   expect_equal(nrow(phase2), 20)
 
-  # Phase 1 weight = 500/100 = 5 for all
+  # Phase 1 weight is 500/100 = 5.
   expect_true(all(phase2$.weight >= 5))
   expect_equal(phase2$.weight, phase2$.weight_1 * 5)
 })
@@ -924,7 +877,6 @@ test_that("phase 1 -> multi-stage phase 2: three-level compounding", {
     x = rnorm(1000)
   )
 
-  # Cluster phase 1 selects 10 of 20 clusters (all units within selected clusters)
   phase1 <- sampling_design() |>
     cluster_by(cluster_id) |>
     draw(n = 10) |>
@@ -934,7 +886,6 @@ test_that("phase 1 -> multi-stage phase 2: three-level compounding", {
   phase1_weight <- unique(phase1$.weight)
   expect_equal(phase1_weight, 2) # 20/10
 
-  # Phase 2: select 5 clusters, then 3 units within each
   phase2 <- sampling_design() |>
     add_stage(label = "Clusters") |>
     cluster_by(cluster_id) |>
@@ -946,8 +897,6 @@ test_that("phase 1 -> multi-stage phase 2: three-level compounding", {
   expect_s3_class(phase2, "tbl_sample")
   expect_equal(nrow(phase2), 15)
 
-  # Phase 2 stage weights: .weight_1 = 10/5 = 2, .weight_2 = 50/3
-  # Overall: .weight = phase1_weight * .weight_1 * .weight_2
   expect_equal(
     phase2$.weight,
     phase2$.weight_1 * phase2$.weight_2 * phase1_weight
@@ -1016,7 +965,7 @@ test_that("internal columns from phase 1 do not collide with phase 2", {
     draw(n = 20) |>
     execute(phase1, seed = 123)
 
-  # No duplicate suffixed columns (.weight_1.x / .weight_1.y)
+  # No suffixed duplicates such as .weight_1.x / .weight_1.y.
   expect_equal(sum(grepl("^\\.weight_1", names(phase2))), 1)
   expect_equal(sum(grepl("^\\.fpc_1", names(phase2))), 1)
 })
@@ -1037,8 +986,7 @@ test_that("dropping the sample class does not silently disable provenance", {
     class = "samplyr_error_stripped_sample_frame"
   )
 
-  # Treating those rows as a genuinely ordinary frame requires an explicit
-  # opt-out: remove both provenance attributes and generated sample columns.
+  # An explicit opt-out removes both provenance attributes and sample columns.
   ordinary_frame <- phase1_plain
   attr(ordinary_frame, "design") <- NULL
   attr(ordinary_frame, "stages_executed") <- NULL
@@ -1049,7 +997,7 @@ test_that("dropping the sample class does not silently disable provenance", {
 
   phase2 <- execute(phase2_design, ordinary_frame, seed = 123)
 
-  # No compounding, just phase 2 weight (50/20 = 2.5)
+  # No compounding, just the phase 2 weight 50/20.
   expect_equal(unique(phase2$.weight), 2.5)
 })
 

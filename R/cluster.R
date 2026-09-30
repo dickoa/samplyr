@@ -6,7 +6,7 @@
 #' *as a whole*.
 #'
 #' @param .data A `sampling_design` object (piped from [sampling_design()],
-#'   [stratify_by()], or [add_stage()]).
+#'   [add_stage()], or [stratify_by()]), before the stage's [draw()].
 #' @param ... Clustering variable(s) specified as bare column names that
 #'   identify the sampling units. In most cases this is a single variable
 #'   (e.g., school_id, household_id).
@@ -44,12 +44,10 @@
 #' globally unique ID or include multiple columns in `cluster_by()`.
 #'
 #' @section Order of operations:
-#' In a single stage, the typical order is:
-#' 1. `stratify_by()` (optional) - define strata
-#' 2. `cluster_by()` (optional) - define sampling units
-#' 3. `draw()` (required) - specify selection parameters
-#'
-#' Both `stratify_by()` and `cluster_by()` are optional but `draw()` is required.
+#' Within a stage, `cluster_by()` and [stratify_by()] are optional and come
+#' before [draw()], in either order. `draw()` is required and closes the
+#' stage, so `cluster_by()` after it is refused. [sampling_design()]
+#' describes the stage grammar and why the order matters.
 #'
 #' @examples
 #' # Simple cluster sample: select 30 EAs
@@ -92,13 +90,23 @@
 #' @family design specification
 #' @export
 cluster_by <- function(.data, ...) {
-  if (!is_sampling_design(.data)) {
-    cli_abort("{.arg .data} must be a {.cls sampling_design} object")
+  if (is.data.frame(.data)) {
+    abort_frame_misplaced("cluster_by")
   }
+  if (!is_sampling_design(.data)) {
+    cli_abort(
+      "{.arg .data} must be a {.cls sampling_design} object",
+      class = "samplyr_error_design_expected"
+    )
+  }
+  check_stage_open(.data, "cluster_by")
 
   vars_quo <- enquos(...)
   if (length(vars_quo) == 0) {
-    cli_abort("At least one clustering variable must be specified")
+    cli_abort(
+      "At least one clustering variable must be specified",
+      class = "samplyr_error_grouping_variables"
+    )
   }
 
   is_bare_name <- vapply(
@@ -111,7 +119,7 @@ cluster_by <- function(.data, ...) {
       "{.fn cluster_by} variables must be bare column names.",
       "x" = "Tidy-select helpers and expressions are not supported.",
       "i" = "Example: {.code cluster_by(ea_id)}"
-    ))
+    ), class = "samplyr_error_grouping_variables")
   }
 
   vars <- unname(vapply(vars_quo, as_label, character(1)))
@@ -119,12 +127,16 @@ cluster_by <- function(.data, ...) {
 
   current <- .data$current_stage
   if (current < 1 || current > length(.data$stages)) {
-    cli_abort("Invalid design state: no current stage")
+    cli_abort(
+      "Invalid design state: no current stage",
+      class = "samplyr_error_internal"
+    )
   }
 
   if (!is_null(.data$stages[[current]]$clusters)) {
     cli_abort(
-      "Clustering already defined for this stage. Use {.fn add_stage} to start a new stage."
+      "Clustering already defined for this stage. Use {.fn add_stage} to start a new stage.",
+      class = "samplyr_error_stage_duplicate"
     )
   }
 

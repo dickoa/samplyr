@@ -1,18 +1,20 @@
 ---
-title: "Plan and Run a Rotating Panel"
+title: "Plan and run a rotating panel"
 output: rmarkdown::html_vignette
 bibliography: references.bib
 link-citations: true
 vignette: >
-  %\VignetteIndexEntry{Plan and Run a Rotating Panel}
+  %\VignetteIndexEntry{Plan and run a rotating panel}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
 ```{r, include = FALSE}
+has_suggests <- requireNamespace("survey", quietly = TRUE)
 knitr::opts_chunk$set(
   collapse = TRUE,
-  comment = "#>"
+  comment = "#>",
+  eval = has_suggests
 )
 ```
 
@@ -102,6 +104,17 @@ fieldwork_plan <- design_schedule(
   rounding = "ceiling"
 )
 ```
+
+The printed plan reads from the top. The entrants line gives the intake per
+occasion, 99 after rounding, and the respondents the two cohorts present at
+an occasion yield together. At a response rate of 0.80 and a retention of
+0.90, 99 entrants give about 79 first-interview and 71 second-interview
+respondents, 150 in all. That is one short of the 151 whole respondents the
+precision target rounds up to, although 150.5 expected respondents already
+reach the margin of 0.08. The next line states that target for a proportion
+near 0.5. The wave table shows each interview alone: 79 and 71 respondents
+give margins of about 0.11 and 0.12, so the target holds only for estimates
+pooled over the two cohorts.
 
 The two numbers needed for selection are explicit in the result.
 
@@ -206,7 +219,7 @@ intake_2 <- execute(intake_design, entrants, seed = 8)
 ```
 
 `rotation_program()` records how separately executed cohorts fit into one
-fieldwork programme.
+fieldwork program.
 
 ```{r}
 program <- rotation_program(
@@ -311,6 +324,49 @@ needed for a variance of change. The appropriate longitudinal estimator
 depends on the design, response process, calibration, and available joint
 inclusion information. `stack_waves()` validates the handoff but deliberately
 does not choose that estimator.
+
+## Hold a reserve instead of substituting
+
+Field substitution, replacing a nonresponding unit with a neighbor, changes
+the design in a way no weight records. A planned reserve does the same job
+inside the design. Draw the issued sample together with its reserve,
+partition it into panels, and declare a release schedule: the first release
+opens the main panels, and a second, if response falls short, opens the
+reserve as well.
+
+```{r reserve}
+release <- data.frame(
+  panel = rep(1:5, times = 2),
+  wave = rep(1:2, each = 5),
+  active = c(TRUE, TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, TRUE, TRUE, TRUE)
+)
+reserve_master <- sampling_design() |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 250) |>
+  execute(bfa_eas, seed = 11, panels = release)
+
+main_release <- execute(reserve_master, wave = 1)
+full_release <- execute(reserve_master, wave = 2)
+c(issued = nrow(reserve_master), main = nrow(main_release),
+  with_reserve = nrow(full_release))
+
+# The weight factor of the main release, per unit
+at <- match(main_release$.sample_id, reserve_master$.sample_id)
+range(main_release$.weight / reserve_master$.weight[at])
+```
+
+Each release is a probability subsample of the issued sample. A unit is
+released with probability equal to its block's quota for the released panels
+over the block size, and its weight is multiplied by the inverse, the block
+size over that quota. That factor is exact, and it is not the nominal 5/4 when
+a pool does not divide into full blocks, which is why the range above is not a
+single value.
+Releasing the reserve returns every issued unit at its original weight. What
+a release cannot do is target units: opening the reserve only where response
+was poor would make the release depend on the outcome, which no weight
+corrects. Release whole panels, uniformly, and leave the remaining
+nonresponse to the analysis. `?panel-assignment` describes the schedule and
+its weights.
 
 ## Where PRNs fit
 

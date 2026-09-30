@@ -45,9 +45,48 @@
 #'     balanced stages. Always FALSE for WR/PMR stages, where the recorded
 #'     chance is an expected hit rather than a probability.
 #'   - `.replicate`: Replicate identifier (only when `reps` is specified)
-#'   - `.panel`: Panel assignment (only when `panels` is specified)
+#'   - `.panel`: Panel assignment (only when `panels` is specified), described
+#'     in [panel-assignment]
 #'   - Stage and stratum identifiers as appropriate
 #'
+#' ## How the weights are computed
+#'
+#' Let \eqn{q_i^{(k)}}{q_i(k)} be the resolved selection quantity at stage
+#' \eqn{k}: the first-order inclusion probability \eqn{\pi_i^{(k)}}{pi_i(k)}
+#' for a method without replacement, the expected hit count
+#' \eqn{E(K_i^{(k)})}{E(K_i(k))} for WR and PMR methods. The stage weight is
+#' \eqn{w_i^{(k)} = 1 / q_i^{(k)}}{w_i(k) = 1 / q_i(k)}:
+#'
+#' - **SRS**: \eqn{w_i = N / n}{w = N/n}, constant for all units.
+#' - **Stratified SRS**: \eqn{w_i = N_h / n_h}{w = N_h/n_h} within stratum \eqn{h}.
+#' - **PPS WOR**: \eqn{w_i = 1 / \pi_i}{w_i = 1/pi_i}, with \eqn{\pi_i}{pi_i}
+#'   from the measure of size by `sondage::inclusion_prob()`.
+#' - **WR / PMR**: \eqn{w_i = 1 / E(n_i)}{w_i = 1/E(n_i)} with
+#'   \eqn{E(n_i) = n \cdot p_i}{E(n_i) = n * p_i}. A unit selected \eqn{k}
+#'   times appears \eqn{k} times, each with the same weight.
+#'
+#' For every built-in method except `"pps_sps"` and `"pps_pareto"`, the
+#' resolved quantity is the design's true first-order inclusion probability
+#' or expected hit count. Those two, and registered methods declared
+#' `probabilities = "approximate"`, honor it only to a documented
+#' approximation, so `.weight` is the inverse of a target probability. That
+#' is standard practice for these methods and the deviation is typically
+#' small, but it is a bias of the method. The tier is recorded per stage in
+#' the frame digest, reported by [frame_summary()] as the `probabilities`
+#' column, and flagged by `summary()`.
+#'
+#' Across \eqn{K} stages the weight is the product of the stage weights,
+#' each resolved within the clusters selected at earlier stages:
+#' \deqn{w_i = \prod_{k=1}^{K} \frac{1}{q_i^{(k \mid S^{(k-1)})}}}{w_i = prod_k 1 / q_i(k | S(k-1))}
+#' For an all-WOR design this is the inverse of the overall inclusion
+#' probability. A WR or PMR stage contributes an occurrence-level factor. For
+#' example, 5 of 30 EAs in a region and then 12 of 50 households in each
+#' selected EA give \eqn{(30/5) \times (50/12) = 25}{(30/5) * (50/12) = 25}.
+#'
+#' A new phase executed on an earlier phase's sample multiplies the phase-1
+#' weight by the conditional phase-2 weight,
+#' \eqn{w_i = w_i^{(1)} \times w_i^{(2 \mid 1)}}{w_i = w_i(1) * w_i(2 | 1)},
+#' which gives the Horvitz-Thompson estimator for WOR phases.
 #'
 #' @name sample-columns
 #' @family diagnostics
@@ -89,15 +128,27 @@ new_sampling_design <- function(
 #' @noRd
 validate_sampling_design <- function(x, call = caller_env()) {
   if (!inherits(x, "sampling_design")) {
-    cli_abort("Object must be a {.cls sampling_design}", call = call)
+    cli_abort(
+      "Object must be a {.cls sampling_design}",
+      call = call,
+      class = "samplyr_error_design_expected"
+    )
   }
 
   if (!is_null(x$title) && !is_character(x$title)) {
-    cli_abort("{.arg title} must be a character string", call = call)
+    cli_abort(
+      "{.arg title} must be a character string",
+      call = call,
+      class = "samplyr_error_design_argument"
+    )
   }
 
   if (!is.list(x$stages)) {
-    cli_abort("{.arg stages} must be a list", call = call)
+    cli_abort(
+      "{.arg stages} must be a list",
+      call = call,
+      class = "samplyr_error_design_argument"
+    )
   }
 
   x
@@ -444,7 +495,10 @@ as_tbl_sample.data.frame <- function(x, ...) {
 #' @export
 get_design <- function(x) {
   if (!is_tbl_sample(x)) {
-    cli_abort("{.arg x} must be a {.cls tbl_sample}")
+    cli_abort(
+      "{.arg x} must be a {.cls tbl_sample}",
+      class = "samplyr_error_sample_expected"
+    )
   }
   attr(x, "design")
 }
@@ -482,7 +536,10 @@ get_design <- function(x) {
 #' @export
 get_stages_executed <- function(x) {
   if (!is_tbl_sample(x)) {
-    cli_abort("{.arg x} must be a {.cls tbl_sample}")
+    cli_abort(
+      "{.arg x} must be a {.cls tbl_sample}",
+      class = "samplyr_error_sample_expected"
+    )
   }
   attr(x, "stages_executed")
 }
@@ -653,8 +710,8 @@ demote_to_tibble <- function(data) {
 #'
 #' vctrs restores attributes from a prototype after operations like
 #' [vctrs::vec_rbind()]. The default restoration copies them blindly,
-#' which previously produced a "clean" doubled realization from
-#' `vec_rbind(sample, sample)`. Routing through the shared restore
+#' which would give `vec_rbind(sample, sample)` a "clean" doubled
+#' realization. Routing through the shared restore
 #' helper applies the same demotion and marking rules as the dplyr
 #' hooks. (The integrity record catches base `rbind()` and any other
 #' route at the analysis boundary regardless.)

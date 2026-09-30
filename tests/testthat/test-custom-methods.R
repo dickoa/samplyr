@@ -28,9 +28,8 @@ toy_wr_fn <- function(hits, n = NULL, prn = NULL, ...) {
   sample.int(length(hits), size = n, replace = TRUE, prob = hits)
 }
 
-# Deterministic WR test method when PRNs are supplied. The registry owns the
-# interpretation of PRN for custom methods; this simple implementation makes
-# forwarding observable without depending on the ambient RNG stream.
+# Deterministic WR method when PRNs are supplied, so PRN forwarding is
+# observable without depending on the ambient RNG stream.
 toy_wr_prn_fn <- function(hits, n = NULL, prn = NULL, ...) {
   if (is.null(prn)) {
     prn <- runif(length(hits))
@@ -442,7 +441,7 @@ test_that("custom random-size WOR cannot use fixed-size bootstrap as an escape h
 
 ## Custom balanced (cube-like) methods, type = "balanced"
 
-# Delegates to the default cube algorithm; same RNG path as built-in
+# Delegates to the default cube algorithm, on the built-in's RNG path
 toy_balanced_fn <- function(pik, aux = NULL, ...) {
   sondage::balanced_wor(pik, aux = aux)$sample
 }
@@ -593,9 +592,7 @@ test_that("custom balanced methods export like the built-in cube", {
     draw(n = 10, method = "balanced_test_cube", mos = size) |>
     execute(custom_frame, seed = 42)
 
-  # Classified as PPS WOR (Brewer), not equal-probability SRS: the
-  # method_type "balanced" previously fell through to "equal_wor" and
-  # exported an unequal-probability design with SRS variance.
+  # Classified as PPS WOR (Brewer), not equal-probability SRS.
   spec <- get_design(s_custom)$stages[[1]]$draw_spec
   expect_identical(samplyr:::survey_stage_kind(spec), "pps_wor")
 
@@ -654,8 +651,7 @@ test_that("custom balanced methods count as WOR for frac validation", {
     )
   expect_true(samplyr:::is_wor_method(design$stages[[1]]$draw_spec))
 
-  # allocation-time check goes through is_wor_method(); mutate the
-  # draw_spec to bypass draw-time validation and exercise it
+  # Mutating the draw_spec bypasses draw() and reaches the allocation check
   design$stages[[1]]$draw_spec$frac <- data.frame(
     region = c("North", "South"),
     frac = c(0.2, 1.1)
@@ -673,7 +669,6 @@ test_that("frac > 1 follows the declared type, not the method name", {
   sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
 
   # Custom WR methods allow frac > 1, like the built-in WR methods
-  # (the name test alone misclassified every custom method as WOR)
   s <- sampling_design() |>
     draw(frac = 1.5, method = "pps_test_wr", mos = size) |>
     execute(custom_frame, seed = 4)
@@ -810,9 +805,7 @@ test_that("declared poisson family exports like the built-in pps_poisson", {
     execute(custom_frame, seed = 7)
   expect_identical(sort(s_custom$id), sort(s_builtin$id))
 
-  # The declaration replaces the refusal with exact Poisson
-  # linearization: the motivating bug (Brewer misclassification with a
-  # near-zero SE) now ends in the right estimator instead of an error
+  # The declaration gives exact Poisson linearization instead of a refusal
   se_custom <- as.numeric(
     survey::SE(survey::svytotal(~id, as_svydesign(s_custom)))
   )
@@ -826,8 +819,7 @@ test_that("declared poisson family exports like the built-in pps_poisson", {
 test_that("declared unsupported family refuses linearization, keeps bootstrap", {
   skip_if_not_installed("survey")
   on.exit(sondage::unregister_method("test_unsup"), add = TRUE)
-  # Fixed-size WOR would be inferred as pps_wor (Brewer); the declared
-  # family overrides even a safe-looking inference
+  # The declared family overrides the pps_wor inference for fixed-size WOR
   sondage::register_method(
     "test_unsup", "wor",
     sample_fn = toy_wor_fn, fixed_size = TRUE,
@@ -852,8 +844,7 @@ test_that("declared unsupported family refuses linearization, keeps bootstrap", 
 test_that("declared srs family gets the equal-probability treatment", {
   skip_if_not_installed("survey")
   on.exit(sondage::unregister_method("test_srs"), add = TRUE)
-  # mos is required for custom methods, but a constant mos gives equal
-  # pik and the declared family says the SRS treatment applies
+  # A constant mos gives equal pik, and the family declares SRS treatment
   toy_srs_fn <- function(pik, n = NULL, prn = NULL, ...) {
     sample.int(length(pik), size = n)
   }
@@ -915,10 +906,7 @@ drift_design_file <- function() {
 }
 
 test_that("execute() refuses a restored design whose method contract moved", {
-  # `variance_family` decides the export's variance treatment, and the sample
-  # carries the value the file recorded. Running under a registration that
-  # declares a different one produces a sample whose stated treatment is not
-  # the one it was drawn under.
+  # The sample carries the recorded variance_family, so a new one is refused.
   on.exit(try(sondage::unregister_method("drift"), silent = TRUE), add = TRUE)
   register_drift_method()
   path <- drift_design_file()
@@ -937,9 +925,7 @@ test_that("execute() refuses a restored design whose method contract moved", {
 })
 
 test_that("execute() warns, and does not refuse, on implementation drift alone", {
-  # The declared contract still holds, so the sample still means what it says.
-  # A new sample under a re-registered implementation is a reasonable thing to
-  # want, and the warning is what says the file no longer describes it.
+  # The declared contract still holds, so the sample means what it says.
   on.exit(try(sondage::unregister_method("drift"), silent = TRUE), add = TRUE)
   register_drift_method()
   path <- drift_design_file()
@@ -958,8 +944,7 @@ test_that("execute() warns, and does not refuse, on implementation drift alone",
 })
 
 test_that("replay_design() still refuses implementation drift", {
-  # A replay claims to reproduce one specific sample, so a different
-  # implementation is fatal there even though execute() only warns.
+  # A replay reproduces one specific sample, so this drift is fatal.
   on.exit(try(sondage::unregister_method("drift"), silent = TRUE), add = TRUE)
   register_drift_method()
   path <- drift_design_file()
@@ -976,8 +961,6 @@ test_that("replay_design() still refuses implementation drift", {
 })
 
 test_that("an unchanged registration passes both paths silently", {
-  # The gate must be invisible when nothing moved, or every ordinary
-  # round trip pays for it.
   on.exit(try(sondage::unregister_method("drift"), silent = TRUE), add = TRUE)
   register_drift_method()
   path <- drift_design_file()
@@ -1000,4 +983,24 @@ test_that("replay_design() refuses a method that is no longer registered", {
     replay_design(read_design(path), custom_frame),
     class = "samplyr_error_replay_method_unregistered"
   )
+})
+
+test_that("a plain error inside a stratum is reported verbatim", {
+  on.exit(sondage::unregister_method("test_fail"), add = TRUE)
+  sondage::register_method(
+    "test_fail", "wor",
+    sample_fn = function(pik, n = NULL, prn = NULL, ...) {
+      stop("no {unit} to draw")
+    },
+    probabilities = "exact"
+  )
+  frame <- data.frame(s = rep(c("a", "b"), each = 5), size = 1:10)
+  design <- sampling_design() |>
+    stratify_by(s) |>
+    draw(n = 2, method = "pps_test_fail", mos = size)
+  err <- tryCatch(execute(design, frame, seed = 1), error = identity)
+  expect_s3_class(err, "samplyr_error_method_failed")
+  msg <- cli::ansi_strip(conditionMessage(err))
+  expect_match(msg, "no {unit} to draw", fixed = TRUE)
+  expect_match(msg, "In stratum \"a\"", fixed = TRUE)
 })

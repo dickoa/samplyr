@@ -1,6 +1,4 @@
-# Native checks for the generated sampling-document contract. The contract is
-# installed package data, never supplied by a design file. Only the operations
-# emitted by the generator in the source repository are understood here.
+# Checks against the installed document contract, never one a file supplies.
 
 #' @noRd
 serialization_contract <- local({
@@ -12,7 +10,11 @@ serialization_contract <- local({
                     mustWork = TRUE), simplifyVector = FALSE
       )
       if (!identical(contract$version, 1L)) {
-        stop("Unsupported installed sampling-document contract version.")
+        abort_samplyr(
+          "Internal error: unsupported installed document contract version.",
+          class = "samplyr_error_internal",
+          call = NULL
+        )
       }
     }
     contract
@@ -57,7 +59,13 @@ serialization_values_equal <- function(x, y) {
 serialization_contract_errors <- function(payload, format = payload$format) {
   contract <- serialization_contract()
   root <- contract$roots[[format]]
-  if (is.null(root)) stop("No installed contract for this document format.")
+  if (is.null(root)) {
+    abort_samplyr(
+      "Internal error: no installed contract for format {.val {format}}.",
+      class = "samplyr_error_internal",
+      call = NULL
+    )
+  }
   check_serialization_rules(payload, contract$definitions[[root]],
                             contract$definitions, "")
 }
@@ -178,7 +186,11 @@ check_serialization_rules <- function(x, rules, definitions, path) {
       when = {
         if (!length(check(x, rule$condition))) check(x, rule$rule) else list()
       },
-      stop("Unknown operation in the installed sampling-document contract: ", op)
+      abort_samplyr(
+        "Internal error: unknown document contract operation {.val {op}}.",
+        class = "samplyr_error_internal",
+        call = NULL
+      )
     )
     errors <- c(errors, found)
   }

@@ -1,15 +1,8 @@
-## F1. stack_frames(): overlapping frames over one target population
+## stack_frames(): overlapping frames over one target population
 
-# The fixture takes every unit of each frame, so the row sets, their order and
-# every domain label are exactly known and nothing depends on an RNG. A
-# take-all draw also records no seed, which keeps the independence warning out
-# of the way of the tests that are not about it.
-#
-#   population   1 2 3 4 5 6
-#   frame a      x x x x
-#   frame b          x x x x
-#
-# So the domains are: {1, 2} in a alone, {3, 4} in both, {5, 6} in b alone.
+# The fixture takes every unit of each frame, so rows and domains are exact
+# and no seed is recorded. Frame a holds units 1-4 and frame b units 3-6, so
+# the domains are {1, 2} in a alone, {3, 4} in both, {5, 6} in b alone.
 
 frame_population <- function() {
   data.frame(
@@ -35,10 +28,8 @@ frame_fixture <- function(population = frame_population()) {
   )
 }
 
-# Row order within a component is the selection's, not part of any contract,
-# so the view is sorted by key inside each component before anything exact is
-# asserted about it. The component blocks keep the order they were given in,
-# which is a contract.
+# Row order within a component is not a contract, so the view is sorted by
+# key inside each component. The order of the component blocks is a contract.
 frame_view <- function(frames) {
   view <- as.data.frame(frames)
   view[order(match(view$.frame, names(frames)), view$id), , drop = FALSE]
@@ -121,8 +112,7 @@ test_that("the view is a copy: editing it does not reach the components", {
 })
 
 test_that("components may carry different columns, and the view fills them", {
-  # Two registers of the same people hold different variables about them. The
-  # membership columns and the key are the only ones every component must have.
+  # Only the membership columns and the key must be in every component.
   population <- frame_population()
   with_extra <- population
   with_extra$listed_at <- "2026"
@@ -166,9 +156,7 @@ test_that("domain labels do not depend on the order the frames were given", {
 })
 
 test_that("domain labels sort in byte order, not the session collation", {
-  # Upper case sorts before lower case in the C locale and after it in most
-  # others, so "B+a" pins the radix ordering that makes the label reproducible
-  # on another machine.
+  # Byte order gives "B+a", where most locales would give "a+B".
   population <- data.frame(
     id = 1:4,
     in_B = c(TRUE, TRUE, FALSE, FALSE),
@@ -430,9 +418,7 @@ test_that("a missing membership is an error, not a domain", {
 })
 
 test_that("a component false on its own frame is refused", {
-  # The diagonal is what says the column and the frame describe the same
-  # register. It also rules out a row belonging to no frame at all, since
-  # every row of a component is true on its own column.
+  # The diagonal ties each column to its frame's register.
   population <- frame_population()
   population$in_a[[1]] <- FALSE
   rows <- population[population$id %in% 1:4, , drop = FALSE]
@@ -445,6 +431,73 @@ test_that("a component false on its own frame is refused", {
       key = id
     ),
     class = "samplyr_error_stack_frames_membership_diagonal"
+  )
+})
+
+# Two censuses of overlapping registers, 100 units in both. A's register
+# says the overlap is not in B, B's says it is.
+conflict_population <- function() {
+  data.frame(
+    pid = 1:300,
+    y = as.numeric(1:300),
+    in_a = rep(c(TRUE, FALSE), c(200, 100)),
+    in_b = rep(c(FALSE, TRUE), c(100, 200))
+  )
+}
+
+census_component <- function(rows, seed) {
+  sampling_design() |> draw(n = nrow(rows)) |> execute(rows, seed = seed)
+}
+
+test_that("a unit whose components disagree on its membership is refused", {
+  population <- conflict_population()
+  register_a <- population[population$in_a, ]
+  register_b <- population[population$in_b, ]
+  register_a$in_b[register_a$pid > 100] <- FALSE
+
+  expect_error(
+    stack_frames(
+      a = census_component(register_a, 1),
+      b = census_component(register_b, 2),
+      membership = c(a = "in_a", b = "in_b"),
+      key = pid
+    ),
+    class = "samplyr_error_stack_frames_membership_conflict"
+  )
+
+  # One unit is enough, and keys compare as labels across factor and text.
+  register_a <- population[population$in_a, ]
+  register_a$in_b[register_a$pid == 150] <- FALSE
+  register_a$pid <- as.character(register_a$pid)
+  register_b$pid <- factor(register_b$pid)
+  expect_error(
+    stack_frames(
+      a = census_component(register_a, 1),
+      b = census_component(register_b, 2),
+      membership = c(a = "in_a", b = "in_b"),
+      key = pid
+    ),
+    class = "samplyr_error_stack_frames_membership_conflict"
+  )
+})
+
+test_that("agreeing memberships stack, whatever the component shapes", {
+  population <- conflict_population()
+  register_a <- population[population$in_a, ]
+  register_b <- population[population$in_b, ]
+  one_row <- census_component(register_a[150, ], 3)
+  with_replacement <- sampling_design() |>
+    draw(n = 50, method = "pps_multinomial", mos = y) |>
+    execute(register_b, seed = 1)
+  expect_true(anyDuplicated(with_replacement$pid) > 0)
+
+  expect_s3_class(
+    stack_frames(
+      a = one_row, b = with_replacement,
+      membership = c(a = "in_a", b = "in_b"),
+      key = pid
+    ),
+    "frame_stack"
   )
 })
 
@@ -525,9 +578,7 @@ test_that("a missing or repeated key is refused", {
 })
 
 test_that("a with-replacement component may repeat its key", {
-  # Row replication is what with-replacement selection does, so the key
-  # repeats by construction and the identity checked is the draw. A duplicate
-  # register entry underneath is not recoverable from the sample.
+  # The key repeats by construction, so the identity checked is the draw.
   population <- frame_population()
   rows <- population[population$in_a, , drop = FALSE]
   wr <- sampling_design() |>
@@ -598,9 +649,7 @@ test_that("the seed warning names the frames that share the seed", {
 ## Composition with share_weights()
 
 test_that("a shared-weight component may be stacked", {
-  # The composition is allowed: a target population reached through links from
-  # one frame and listed directly in another. Nothing here composites the
-  # weights, so no weight contract applies at this level.
+  # One target population, reached through links and listed directly.
   dwellings <- data.frame(dwelling_id = 1:12)
   source_sample <- sampling_design() |>
     draw(n = 6) |>
@@ -658,8 +707,7 @@ test_that("summary reports the domains in canonical order", {
   output <- capture.output(summary(frames))
 
   expect_true(any(grepl("2 frames \\| 8 rows \\| key id", output)))
-  # The domain lines are the ones ending in a row count; the frame lines end
-  # in a seed.
+  # Domain lines end in a row count, frame lines in a seed.
   domains <- grep(" rows$", output, value = TRUE)
   expect_identical(
     sub("^. ", "", domains),
@@ -701,8 +749,7 @@ test_that("a materialized wave may be a component, and is refused at export", {
   wave <- execute(master, wave = 1)
   other <- sampling_design() |> draw(n = 30) |> execute(population, seed = 9)
 
-  # Constructible: nothing about a wave stops it being one frame of several,
-  # and `stack_frames()` reads membership and a key, which a wave has.
+  # A wave has membership and a key, which is all `stack_frames()` reads.
   stack <- stack_frames(
     w = wave, o = other,
     membership = c(w = "in_w", o = "in_o"), key = ea_id
@@ -715,9 +762,7 @@ test_that("a materialized wave may be a component, and is refused at export", {
   expect_s3_class(as.data.frame(stack), "data.frame")
   expect_output(print(summary(stack)), "2 frames")
 
-  # Both export routes refuse it, each naming the component. A composite
-  # weight needs one selection probability per row, and a wave's second
-  # phase is an activation rather than a selection.
+  # A wave's second phase is an activation, not a selection, so both refuse.
   expect_error(
     as_svydesign(stack),
     class = "samplyr_error_survey_multiframe_unsupported"

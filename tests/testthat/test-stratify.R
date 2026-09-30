@@ -41,7 +41,7 @@ test_that("stratify_by() validates allocation method", {
   # Invalid allocation
   expect_error(
     sampling_design() |> stratify_by(region, alloc = "invalid"),
-    "arg"
+    class = "samplyr_error_alloc_unknown_method"
   )
 })
 
@@ -402,5 +402,67 @@ test_that("execute() rejects invalid keys/values in tampered custom frac data fr
   expect_error(
     execute(design_bad_vals, frame, seed = 1),
     "cannot exceed 1"
+  )
+})
+
+## Proportional allocation to a size
+
+test_that("proportional allocation follows importance when it is given", {
+  frame <- data.frame(
+    id = 1:100,
+    region = rep(c("A", "B", "C"), times = c(20, 30, 50))
+  )
+  size <- c(A = 10, B = 30, C = 60)
+  counts <- function(s) c(table(factor(s$region, levels = c("A", "B", "C"))))
+  by_size <- sampling_design() |>
+    stratify_by(region, alloc = "proportional", importance = size) |>
+    draw(n = 12)
+
+  # 12 * size / 100 is 1.2, 3.6, 7.2. Largest remainders give B the last unit.
+  sample <- execute(by_size, frame, seed = 1)
+  expect_identical(counts(sample), c(A = 1L, B = 4L, C = 7L))
+
+  # Power allocation with every cv 1 and power 1 is the same rule.
+  recipe <- sampling_design() |>
+    stratify_by(region, alloc = "power", cv = c(A = 1, B = 1, C = 1),
+                importance = size, power = 1) |>
+    draw(n = 12)
+  expect_identical(counts(execute(recipe, frame, seed = 1)), counts(sample))
+
+  # Without importance the shares follow the 20, 30, 50 units.
+  by_count <- sampling_design() |>
+    stratify_by(region, alloc = "proportional") |>
+    draw(n = 12)
+  expect_identical(
+    counts(execute(by_count, frame, seed = 1)),
+    c(A = 2L, B = 4L, C = 6L)
+  )
+
+  expect_match(
+    paste(utils::capture.output(print(by_size)), collapse = "\n"),
+    "region (proportional to importance)",
+    fixed = TRUE
+  )
+
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(by_size, path)
+  expect_identical(counts(execute(read_design(path), frame, seed = 1)),
+                   counts(sample))
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "proportional",
+                  importance = c(A = 0, B = 30, C = 60)) |>
+      draw(n = 12) |>
+      execute(frame, seed = 1),
+    class = "samplyr_error_aux_importance_bounds"
+  )
+  expect_error(
+    sampling_design() |>
+      stratify_by(region, alloc = "proportional",
+                  importance = c(A = 10, B = 30)) |>
+      draw(n = 12) |>
+      execute(frame, seed = 1),
+    class = "samplyr_error_aux_missing_coverage"
   )
 })

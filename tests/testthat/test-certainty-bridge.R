@@ -1,8 +1,6 @@
-## Certainty-plan bridge, stage 1. draw(n = plan) at a clustered, stratified
-## stage 1 fields the plan's stored classification exactly: every certainty
-## PSU enters with probability one, the remainder is drawn at exactly
-## n_psu_draw by an exact-pik PPS method, and a frame or plan the selection
-## cannot honor is refused before any RNG is consumed.
+## Certainty-plan bridge. draw(n = plan) at a clustered, stratified stage 1
+## fields the plan's certainty PSUs with probability one, draws the rest at
+## exactly n_psu_draw, and refuses what it cannot field before any RNG.
 
 test_that("a certainty plan is fielded exactly at a clustered stage 1", {
   plan <- certainty_plan_fixture()
@@ -17,20 +15,17 @@ test_that("a certainty plan is fielded exactly at a clustered stage 1", {
 
   psu <- unique(s[, c("psu_id", "stratum", "N", ".weight_1", ".certainty_1")])
 
-  # Exactly the plan's PSU counts, stratum by stratum.
   got <- table(psu$stratum)
   want <- plan$detail$n_psu_certain + plan$detail$n_psu_draw
   expect_equal(as.integer(got[plan$detail$stratum]), as.integer(want))
 
-  # Exactly the plan's certainty set, with first-stage weight one.
   expect_setequal(
     psu$psu_id[psu$.certainty_1],
     plan$psu$psu_id[plan$psu$certainty]
   )
   expect_equal(unique(psu$.weight_1[psu$.certainty_1]), 1)
 
-  # Drawn PSUs carry the plan's own probabilities exactly:
-  # pik = n_psu_draw * N_i / sum(N_rest).
+  # Drawn PSUs carry pik = n_psu_draw * N_i / sum(N_rest).
   register <- certainty_plan_register()
   for (h in c("A", "B")) {
     cert_ids <- plan$psu$psu_id[plan$psu$certainty & plan$psu$stratum == h]
@@ -81,8 +76,6 @@ test_that("every replicate holds the certainty PSUs", {
 })
 
 test_that("a manual scalar stage 2 still runs under a bridge stage 1", {
-  # Until the per-PSU take handoff ships, stage 2 is the caller's own; a
-  # constant take must keep working under a bridged stage 1.
   plan <- certainty_plan_fixture()
   frame <- certainty_element_frame()
 
@@ -221,8 +214,7 @@ test_that("a plan whose remainder would cap a PSU refuses before any RNG", {
 })
 
 test_that("the execute gate re-runs the disagreement check on the stored spec", {
-  # Deserialization skips draw(), so the gate cannot rely on the draw-time
-  # check; a tampered spec stands in for a file until the format carries one.
+  # A file skips draw(), so the gate cannot rely on the draw-time check.
   plan <- certainty_plan_fixture()
   frame <- certainty_element_frame()
   d <- sampling_design() |>
@@ -230,9 +222,7 @@ test_that("the execute gate re-runs the disagreement check on the stored spec", 
     stratify_by(stratum) |>
     cluster_by(psu_id) |>
     draw(n = plan, method = "pps_systematic", mos = N)
-  # Raise the remainder draw while keeping the stage total consistent with
-  # it, so the totals gate passes and the disagreement gate is what fires:
-  # 6 of B's noncertainty PSUs caps the 220-size PSU (6 * 220 / 1150 > 1).
+  # Totals stay consistent, but 6 draws in B cap a PSU: 6 * 220 / 1150 > 1.
   d$stages[[1]]$draw_spec$certainty_plan$n_psu_draw[["B"]] <- 6
   d$stages[[1]]$draw_spec$n[["B"]] <- 7
 
@@ -435,8 +425,7 @@ test_that("a shape-valid but inconsistent file is caught at the execute gate", {
     class = "samplyr_error_certainty_register_mismatch"
   )
 
-  # A stage size de-synced from the plan's own totals: only draw() built the
-  # identity, and a file never ran draw(), so the gate re-derives it.
+  # Only draw() builds the stage-size identity, so the gate re-derives it.
   desynced <- certainty_tampered_file(path, function(doc) {
     doc$design$stages[[1]]$draw$n$A <- 12
     doc
@@ -472,9 +461,7 @@ test_that("the take stage reproduces the operational design exactly", {
     draw(n = plan) |>
     execute(frame, seed = 7)
 
-  # The whole-unit design, stratum by stratum and PSU by PSU: each
-  # certainty PSU contributes exactly its own take, each drawn PSU exactly
-  # n_per_psu, so the element totals equal n_int.
+  # Each PSU contributes exactly its take, so stratum totals equal n_int.
   expect_equal(nrow(s), sum(plan$detail$n_int))
   expect_equal(
     as.integer(table(s$stratum)[plan$detail$stratum]),
@@ -487,8 +474,6 @@ test_that("the take stage reproduces the operational design exactly", {
     as.integer(takes[names(per_psu)])
   )
 
-  # Element weights are the pool over its take, exactly, and the compound
-  # weight is the product of the stages.
   w <- unique(s[, c("psu_id", "N", ".weight_1", ".weight_2", ".weight")])
   expect_equal(w$.weight_2, unname(w$N / takes[w$psu_id]))
   expect_equal(w$.weight, w$.weight_1 * w$.weight_2)
@@ -516,8 +501,7 @@ test_that("a stratified take stage splits each take with alloc, preserving it", 
     as.integer(per_psu),
     as.integer(takes[names(per_psu)])
   )
-  # The fixture's sexes alternate, so a proportional split is even up to
-  # the whole unit an odd take cannot halve (B01's take is 19).
+  # Sexes alternate, so splits are even up to one unit (B01's take is 19).
   cells <- table(s$psu_id, s$sex)
   expect_true(all(abs(cells[, "f"] - cells[, "m"]) <= 1))
   expect_gt(sum(cells[, "f"] != cells[, "m"]), 0)
@@ -546,6 +530,7 @@ test_that("a continuation applies the takes to the stage-1 result", {
 })
 
 test_that("the two-stage bridge exports with certainty intact", {
+  skip_if_not_installed("survey")
   plan <- certainty_plan_fixture()
   frame <- certainty_element_frame()
   s <- sampling_design() |>
@@ -560,7 +545,7 @@ test_that("the two-stage bridge exports with certainty intact", {
   cert_rows <- s$.certainty_1
   expect_equal(unique(s$.weight_1[cert_rows]), 1)
 
-  e <- as_svydesign(s)
+  e <- as_svydesign(s, systematic_variance = "approximate")
   expect_s3_class(e, "survey.design")
   expect_equal(unname(stats::weights(e)), s$.weight)
 })
@@ -576,7 +561,7 @@ test_that("take-stage contexts the bridge does not serve are refused", {
       add_stage()
   }
 
-  # Bare stratification would draw the take per cell; alloc states the split.
+  # Bare stratification would draw the take per cell, so alloc states the split.
   expect_error(
     stage2() |> stratify_by(sex) |> draw(n = plan),
     class = "samplyr_error_svyplan_certainty_plan"
@@ -636,6 +621,22 @@ test_that("joint expectations give certainty PSUs probability one", {
   psu <- unique(s[, c("psu_id", ".certainty_1", ".weight_1")])
   d <- diag(j$stage_1)
   expect_equal(d[psu$.certainty_1], rep(1, sum(psu$.certainty_1)))
-  # The probability part's diagonal is its first-order inclusion.
   expect_equal(d[!psu$.certainty_1], 1 / psu$.weight_1[!psu$.certainty_1])
+})
+
+test_that("the disagreement gate uses the tolerance selection uses", {
+  # 3 * 6.6 / 19.8 falls 2.2e-16 short of one, and selection takes it for sure.
+  register <- data.frame(
+    psu_id = c("a", "b", "c", "d"), stratum = "A",
+    N = c(2.5, 6.6, 4.3, 6.4), certainty = FALSE
+  )
+  pik <- 3 * register$N / sum(register$N)
+  expect_lt(pik[2], 1)
+  expect_true(is_certainty_probability(pik[2]))
+  err <- tryCatch(
+    check_certainty_plan_disagreement(register, c(A = 3), "pps_systematic"),
+    error = identity
+  )
+  expect_s3_class(err, "samplyr_error_certainty_plan_disagreement")
+  expect_match(conditionMessage(err), "\"b\"", fixed = TRUE)
 })

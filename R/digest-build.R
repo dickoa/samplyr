@@ -63,7 +63,8 @@ build_frame_digest <- function(design, stage_ids, stage_traces,
           parent_registry = parent_registry,
           registry = registry
         ),
-        error = function(e) NULL
+        # An unresolvable stage keeps its eligible-only pools.
+        samplyr_exante_unresolvable = function(e) NULL
       )
       if (!is_null(expanded)) {
         stage_rec <- expanded$stage
@@ -208,7 +209,11 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
 
   records <- flatten_stage_trace(trace, seq_len(nrow(frame)))
   if (length(records) == 0) {
-    cli_abort("Stage {stage_idx} produced no selection pools.", call = NULL)
+    cli_abort(
+      "Stage {stage_idx} produced no selection pools.",
+      call = NULL,
+      class = "samplyr_error_internal"
+    )
   }
 
   # Map executed pool vectors back to input row order.
@@ -260,7 +265,8 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
       cli_abort(
         "Stage {stage_idx} pools reference parents that stage
          {stage_idx - 1L} did not record.",
-        call = NULL
+        call = NULL,
+        class = "samplyr_error_internal"
       )
     }
   }
@@ -499,6 +505,27 @@ attach_sample_rows <- function(stages, design, sample) {
   stage
 }
 
+#' Group rows by value, identified by their digest key
+#'
+#' Groups follow first appearance, as `split()` on a factor of the keys
+#' would, but keys are built for each distinct group rather than for every
+#' row. Values that differ yet share a key, such as two doubles printing
+#' alike, share one group, as they did when rows were grouped by key.
+#' @noRd
+group_rows_by_key <- function(df, key_of) {
+  loc <- vctrs::vec_group_loc(df)
+  key <- key_of(loc$key)
+  rows <- loc$loc
+  if (anyDuplicated(key)) {
+    rows <- lapply(
+      split(rows, factor(key, levels = unique(key))),
+      function(r) sort(unlist(r, use.names = FALSE))
+    )
+    key <- unique(key)
+  }
+  list(key = key, rows = unname(rows))
+}
+
 #' Resolve a stage's unreached pools from the universe frame
 #'
 #' Enumerates every parent x strata pool of the stage over the full
@@ -534,23 +561,31 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
     length(draw_spec$n %||% 1) == 1 &&
     length(draw_spec$frac %||% 1) == 1 &&
     is_null(names(draw_spec$n)) && is_null(names(draw_spec$frac)) &&
+    # A certainty plan's takes come from the plan at selection.
+    is_null(draw_spec$certainty_plan) &&
     (identical(stage$storage, "units") ||
        identical(stage$storage, "constant"))
   if (!resolvable) {
-    stop("stage is not deterministically resolvable")
+    abort_unresolvable("stage is not deterministically resolvable")
   }
   mos <- draw_spec$mos
   if (!is_null(mos) && !mos %in% names(frame)) {
-    stop("measure of size not present in the universe frame")
+    abort_unresolvable("measure of size not present in the universe frame")
   }
 
-  keys_all <- digest_path_keys(frame, seq_len(nrow(frame)), ancestor_vars)
-  parent_all <- unname(parent_registry[keys_all])
-  if (anyNA(parent_all)) {
-    stop("universe frame contains parents the previous stage did not record")
+  ancestry <- vctrs::new_data_frame(
+    stats::setNames(lapply(ancestor_vars, function(v) frame[[v]]), ancestor_vars)
+  )
+  ancestry_first <- vctrs::vec_unique_loc(ancestry)
+  parent_first <- unname(parent_registry[
+    digest_path_keys(frame, ancestry_first, ancestor_vars)
+  ])
+  if (anyNA(parent_first)) {
+    abort_unresolvable("universe frame contains parents the previous stage did not record")
   }
+  parent_all <- parent_first[vctrs::vec_group_id(ancestry)]
 
-  frame_pool_keys <- data.frame(.parent = parent_all)
+  frame_pool_keys <- vctrs::new_data_frame(list(.parent = parent_all))
   executed_pool_keys <- data.frame(.parent = stage$pools$parent_unit)
   pool_vars <- ".parent"
   if (!is_null(strata_vars)) {
@@ -558,11 +593,11 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
     executed_pool_keys[strata_vars] <- stage$pools[strata_vars]
     pool_vars <- c(pool_vars, strata_vars)
   }
-  pool_key <- make_group_key(frame_pool_keys, pool_vars)
+  pooled <- group_rows_by_key(frame_pool_keys, function(k) {
+    make_group_key(k, pool_vars)
+  })
+  groups <- stats::setNames(pooled$rows, pooled$key)
   executed_key <- make_group_key(executed_pool_keys, pool_vars)
-  groups <- split(
-    seq_len(nrow(frame)), factor(pool_key, levels = unique(pool_key))
-  )
   new_keys <- setdiff(names(groups), executed_key)
   if (length(new_keys) == 0) {
     return(list(stage = stage, registry = registry))
@@ -601,13 +636,13 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
         !is_null(draw_spec$certainty_size) ||
         !is_null(draw_spec$certainty_prop)
     ) {
-      stop("element chances vary within an unreached pool")
+      abort_unresolvable("element chances vary within an unreached pool")
     }
     N_vec <- lengths(groups[new_keys])
-    value <- vapply(N_vec, function(N) {
-      resolved <- resolve_pool_chance(draw_spec, NULL, N)
-      resolved$chance[1]
-    }, numeric(1))
+    sizes <- unique(N_vec)
+    value <- vapply(sizes, function(N) {
+      resolve_pool_chance(draw_spec, NULL, N)$chance[1]
+    }, numeric(1))[match(N_vec, sizes)]
     random_size <- is_random_size_method(draw_spec)
     n_target <- if (
       random_size && !is.null(draw_spec$n) &&
@@ -637,57 +672,82 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
   }
 
   next_unit <- if (is_null(units)) 1L else max(units$unit_id) + 1L
-  new_units <- list()
-  new_reg <- integer(0)
-  N_vec <- integer(length(new_keys))
-  n_target_vec <- numeric(length(new_keys))
-  expected_vec <- numeric(length(new_keys))
-
-  for (i in seq_along(new_keys)) {
-    rows <- groups[[new_keys[i]]]
-    child_keys <- digest_path_keys(
-      frame, rows, c(ancestor_vars, cluster_vars)
-    )
-    first_of <- !duplicated(child_keys)
-    child_first_rows <- rows[first_of]
-    N <- length(child_first_rows)
-    mos_vals <- if (!is_null(mos)) frame[[mos]][child_first_rows]
-    n_desc <- as.integer(
-      table(factor(child_keys, levels = child_keys[first_of]))
-    )
-
-    resolved <- resolve_pool_chance(draw_spec, mos_vals, N)
-    N_vec[i] <- N
-    n_target_vec[i] <- resolved$n_target
-    expected_vec[i] <- sum(resolved$chance)
-
-    ids <- seq.int(next_unit, length.out = N)
-    new_units[[i]] <- data.frame(
-      unit_id = ids,
-      pool_id = next_pool + i - 1L,
-      unit_order = seq_len(N),
-      chance = resolved$chance,
-      is_certainty = if (
-        identical(stage$chance_kind, "inclusion_probability")
-      ) {
-        is_certainty_probability(resolved$chance)
-      } else {
-        rep(NA, N)
-      },
-      n_descendants = n_desc
-    )
-    new_reg <- c(new_reg, setNames(ids, child_keys[first_of]))
-    next_unit <- next_unit + N
+  child_vars <- c(ancestor_vars, cluster_vars)
+  pool_rows <- groups[new_keys]
+  rows <- unlist(pool_rows, use.names = FALSE)
+  pool_of_row <- rep.int(seq_along(new_keys), lengths(pool_rows))
+  child_frame <- vctrs::new_data_frame(c(
+    list(.pool = pool_of_row),
+    stats::setNames(lapply(child_vars, function(v) frame[[v]][rows]), child_vars)
+  ))
+  # Units follow their pool, then their first row inside it.
+  unit_keys <- NULL
+  children <- group_rows_by_key(child_frame, function(k) {
+    unit_keys <<- digest_path_keys(k, seq_len(nrow(k)), child_vars)
+    paste0(k$.pool, "|", unit_keys)
+  })
+  first_pos <- vapply(children$rows, `[`, integer(1), 1L)
+  child_pool <- pool_of_row[first_pos]
+  child_first_rows <- rows[first_pos]
+  # Merged groups no longer line up with the keys built for grouping.
+  child_keys <- if (length(unit_keys) == length(first_pos)) {
+    unit_keys
+  } else {
+    digest_path_keys(frame, child_first_rows, child_vars)
   }
+  N_vec <- tabulate(child_pool, nbins = length(new_keys))
+  mos_all <- if (!is_null(mos)) frame[[mos]][child_first_rows]
+  pool_children <- split(seq_along(child_pool), factor(
+    child_pool, levels = seq_along(new_keys)
+  ))
+
+  resolved <- if (is_null(mos)) {
+    # Without a size measure a pool's chances depend on its size alone.
+    sizes <- unique(N_vec)
+    by_size <- lapply(sizes, function(N) resolve_pool_chance(draw_spec, NULL, N))
+    by_size[match(N_vec, sizes)]
+  } else {
+    lapply(seq_along(new_keys), function(i) {
+      resolve_pool_chance(draw_spec, mos_all[pool_children[[i]]], N_vec[i])
+    })
+  }
+  n_target_vec <- vapply(resolved, function(r) r$n_target, numeric(1))
+  expected_vec <- vapply(resolved, function(r) sum(r$chance), numeric(1))
+  chance <- unlist(lapply(resolved, `[[`, "chance"), use.names = FALSE)
+
+  ids <- seq.int(next_unit, length.out = length(child_pool))
+  new_units <- data.frame(
+    unit_id = ids,
+    pool_id = next_pool + child_pool - 1L,
+    unit_order = sequence(N_vec),
+    chance = chance,
+    is_certainty = if (
+      identical(stage$chance_kind, "inclusion_probability")
+    ) {
+      is_certainty_probability(chance)
+    } else {
+      rep(NA, length(chance))
+    },
+    n_descendants = lengths(children$rows)
+  )
+  new_reg <- setNames(ids, child_keys)
 
   stage$pools <- rbind(
     pools, make_pools(N_vec, n_target_vec, expected_vec)
   )
   rownames(stage$pools) <- NULL
-  stage$units <- rbind(units, do.call(rbind, new_units))
+  stage$units <- rbind(units, new_units)
   rownames(stage$units) <- NULL
   stage$scope <- "universe"
   list(stage = stage, registry = c(registry, new_reg))
+}
+
+#' Signal a pool the design alone cannot resolve
+#'
+#' Callers catch the condition and refuse with the stage named.
+#' @noRd
+abort_unresolvable <- function(reason) {
+  rlang::abort(reason, class = "samplyr_exante_unresolvable", call = NULL)
 }
 
 #' First-order chances of one pool, from the design alone
@@ -698,11 +758,12 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
 #' from (method, mos, n, frac).
 #' @noRd
 resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL) {
+  rlang::local_error_call(caller_env())
   if (identical(draw_spec$method_probabilities, "unknown")) {
-    stop(
+    abort_unresolvable(paste0(
       "the registered method declares its selection probabilities ",
       "unknown, so they cannot be resolved from the design"
-    )
+    ))
   }
   method <- draw_spec$method
   wr <- is_multi_hit_method(draw_spec)
@@ -787,7 +848,7 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL) {
     cert$n_remaining < 0 &&
       !identical(draw_spec$certainty_overflow, "allow")
   ) {
-    stop("certainty overflow cannot be resolved without executing")
+    abort_unresolvable("certainty overflow cannot be resolved without executing")
   }
   chance <- numeric(N)
   chance[cert$certainty_idx] <- 1
@@ -913,7 +974,9 @@ digest_quantile_bins <- function(chance_by_pool, pool_ids, pool_sizes) {
 #'   shared hierarchy, or an ordered list of stage registers, as [execute()]
 #'   takes them. Frames are read and checked with the same grammar
 #'   `execute()` applies, so a frame this accepts is one execution accepts.
-#' @param call Environment reported as the error call.
+#' @param call Environment reported as the error call. By default an error
+#'   names `exante_digest()`. A function that wraps it passes its own
+#'   environment, so the error names that function instead.
 #' @return An ex-ante frame digest list.
 #' @family extension APIs
 #' @seealso [get_frame_digest()], [frame_summary()]
@@ -928,7 +991,11 @@ digest_quantile_bins <- function(chance_by_pool, pool_ids, pool_sizes) {
 #' digest$stages[[1]]$scope
 #' @export
 exante_digest <- function(design, frame,
-                                call = rlang::caller_env()) {
+                                call = rlang::current_env()) {
+  # Pointing the frame at itself would never resolve.
+  if (!identical(call, rlang::current_env())) {
+    rlang::local_error_call(call)
+  }
   stages_spec <- design$stages
   incomplete <- length(stages_spec) == 0 ||
     any(vapply(
@@ -1047,6 +1114,7 @@ exante_digest <- function(design, frame,
 #' per cluster, and every row of that cluster carries it.
 #' @noRd
 resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
+  rlang::local_error_call(caller_env())
   spec <- design$stages[[stage_idx]]
   draw_spec <- spec$draw_spec
   strata_spec <- spec$strata
@@ -1061,7 +1129,11 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
       is_null(draw_spec$n) && is_null(draw_spec$frac) &&
       !identical(draw_spec$certainty_plan$role, "take")
   ) {
-    cli_abort("Cannot determine sample size", call = NULL)
+    cli_abort(
+      "Cannot determine sample size",
+      call = NULL,
+      class = "samplyr_error_internal"
+    )
   }
 
   if (is_cluster) {
@@ -1089,6 +1161,7 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
   pools_acc <- list()
   add_pool <- function(parent, urows, pool_spec, n_desc, keys,
                        rows = urows, row_units = seq_along(urows)) {
+    rlang::local_error_call(caller_env())
     mos_vals <- if (!is_null(draw_spec$mos)) {
       frame[[draw_spec$mos]][urows]
     }
@@ -1192,6 +1265,7 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
 #' @noRd
 build_exante_stage <- function(design, stage_idx, frame,
                                parent_registry, frame_ref = 1L) {
+  rlang::local_error_call(caller_env())
   resolved <- resolve_exante_pools(
     design, stage_idx, frame, parent_registry
   )

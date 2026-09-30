@@ -35,7 +35,15 @@ not \emph{what} to sample from.
 }
 \section{Design flow}{
 
-A typical design workflow follows this pattern:
+A design is a sequence of stages, and each stage is written in this order:
+\enumerate{
+\item \code{\link[=stratify_by]{stratify_by()}} and \code{\link[=cluster_by]{cluster_by()}}, each optional and used at most once,
+in either order.
+\item \code{\link[=draw]{draw()}}, required, which closes the stage.
+}
+
+\code{\link[=add_stage]{add_stage()}} then opens the next stage, and \code{\link[=execute]{execute()}} runs the design.
+A single-stage design needs no \code{add_stage()}.
 
 \if{html}{\out{<div class="sourceCode r">}}\preformatted{sampling_design() |>
   stratify_by(...) |>
@@ -43,6 +51,14 @@ A typical design workflow follows this pattern:
   draw(...) |>
   execute(frame)
 }\if{html}{\out{</div>}}
+
+\code{draw()} reads the stage's strata and clusters when it is called. They
+decide which forms of \code{n}, \code{frac} and the certainty thresholds are valid,
+whether \code{min_n} and \code{max_n} apply, and how a svyplan plan is taken. Once a stage has its \code{draw()}, a \code{stratify_by()}, a \code{cluster_by()}
+or a second \code{draw()} on it is refused with class
+\code{samplyr_error_stage_closed}. The same holds for a design from
+\code{\link[=read_design]{read_design()}} or \code{\link[=get_design]{get_design()}}, whose last stage is closed. Extend it
+with \code{add_stage()}.
 }
 
 \examples{

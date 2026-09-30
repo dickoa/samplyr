@@ -1,19 +1,8 @@
-## F3. as_svrepdesign.frame_stack(): the block replicate composition
+## as_svrepdesign.frame_stack(): the block replicate composition
 
-# The components are chosen so that `type = "auto"` gives them DIFFERENT
-# methods with DIFFERENT scales, and both deterministically: a stratified
-# frame takes JKn, whose scale is 1 and whose factors live in `rscales`, and
-# an unstratified frame takes JK1, whose scale is 0.475. A fixture where both
-# scales were 1 could not tell a design that folds each component's scale into
-# its rscales from one that drops it, which is the same trap the G3 fixture
-# hit from the other side.
-#
-#   population   1 .. 20 .. 40 .. 60
-#   frame a      x     x                stratified, 4 strata, n = 2 each
-#   frame b            x     x          srswor, n = 20
-#
-# The compositing factors are written out from the membership columns rather
-# than taken from samplyr, so the oracle does not read the code it checks.
+# Frame a (units 1 to 40, 4 strata of n = 2) takes JKn with scale 1, frame b
+# (units 21 to 60, n = 20) takes JK1 with scale 0.475. The oracle writes the
+# compositing factors from the membership columns, not from samplyr.
 
 svrep_population <- function() {
   data.frame(
@@ -123,8 +112,7 @@ test_that("three frames composite by multiplicity against a hand total", {
 
 test_that("the combined variance is the sum of the frames' own", {
   skip_if_not_installed("survey")
-  # This is what independent selection from each frame buys, and it is the
-  # reason the blocks are built the way they are.
+  # The frames are selected independently, so their variances add.
   frames <- svrep_fixture()
   combined <- as_svrepdesign(frames)
 
@@ -162,9 +150,7 @@ test_that("each frame's block leaves every other frame at full sample", {
 
 test_that("each component's scale is folded into the combined rscales", {
   skip_if_not_installed("survey")
-  # A jackknife leaves `scale` at 1 and carries its factors in `rscales`,
-  # while JK1 here carries 0.475 in `scale`. Keeping only one of the two is
-  # undetectable under the first and wrong under the second.
+  # JKn carries its factors in `rscales`, and JK1 carries 0.475 in `scale`.
   frames <- svrep_fixture()
   combined <- as_svrepdesign(frames)
 
@@ -216,12 +202,10 @@ test_that("a PPS frame needs a type its own design supports", {
     key = id
   )
 
-  # `type` is one choice for the whole stack, so a PPS frame moves every
-  # frame onto a method that supports it. The per-component export says so
-  # before it fails.
+  # The default type takes the PPS first stage as drawn with replacement.
   expect_warning(
-    expect_error(as_svrepdesign(frames), class = "samplyr_error"),
-    regexp = "unequal-probability"
+    expect_s3_class(as_svrepdesign(frames), "svyrep.design"),
+    class = "samplyr_warning_replicate_wr_first_stage"
   )
   expect_s3_class(
     suppressWarnings(as_svrepdesign(frames, type = "subbootstrap")),
@@ -269,9 +253,7 @@ test_that("the stack is recorded on the returned design", {
 
 test_that("a component whose weights were shared composites here", {
   skip_if_not_installed("survey")
-  # The linearized route refuses this; the replicate route is where it works,
-  # because the per-component export already applies the link operator inside
-  # every replicate before the blocks are built.
+  # Each component applies the link operator inside every replicate.
   dwellings <- data.frame(dwelling_id = 1:20)
   source_sample <- sampling_design() |>
     draw(n = 8) |>
@@ -311,8 +293,7 @@ test_that("a component whose weights were shared composites here", {
   )
   expect_s3_class(combined, "svyrep.design")
 
-  # The point estimate is the composited total and owes nothing to the
-  # replication, so it is checkable exactly.
+  # The point estimate does not depend on the replicates, so it is exact.
   by_hand <- sum(vapply(names(frames), function(nm) {
     component <- frames[[nm]]
     factor <- svrep_factor(component, c("in_reached", "in_list"))
@@ -405,8 +386,7 @@ test_that("a two-phase component is refused, and the frame is named", {
     as_svrepdesign(frames),
     class = "samplyr_error_svrep_twophase_unsupported"
   )
-  # The per-component export raises the same class, so what separates the two
-  # is that this one says which frame.
+  # The per-component export raises the same class, so match the frame name.
   expect_error(as_svrepdesign(frames), regexp = "\"a\"")
 })
 

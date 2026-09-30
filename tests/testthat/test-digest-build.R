@@ -4,9 +4,7 @@
 
 digest_of <- function(x) samplyr::get_frame_digest(x)
 
-# Pure data comparison: everything except execution-time metadata
-# (executed_at differs between runs; the digest itself is the object
-# under test).
+# Compares data only, dropping execution-time metadata and the digest itself.
 strip_to_data <- function(x) {
   df <- as.data.frame(x)
   attributes(df) <- attributes(df)[c("names", "class", "row.names")]
@@ -36,7 +34,7 @@ test_that("digest collection is observational", {
                     frame_digest = "full")
     expect_identical(strip_to_data(none), strip_to_data(summ))
     expect_identical(strip_to_data(none), strip_to_data(full))
-    # Same rows, weights, and RNG consumption regardless of mode.
+  # Same rows, weights, and RNG consumption in every mode.
     expect_identical(attr(none, "seed"), attr(summ, "seed"))
     expect_null(digest_of(none))
     expect_false(is.null(digest_of(summ)))
@@ -104,7 +102,6 @@ test_that("stratified allocation records the quadruple per stratum pool", {
   expect_equal(p$n_target, rep(10, 4))
   expect_equal(p$n_expected, rep(10, 4))
   expect_identical(p$n_realized, rep(10L, 4))
-  # Frame roles cover the stratification column.
   roles <- d$frames[[1]]$roles
   expect_true("stratum" %in% roles$column)
   expect_identical(roles$role[roles$column == "stratum"], "strata")
@@ -123,7 +120,6 @@ test_that("row-level PPS compresses to a mean-faithful distribution", {
   dist <- st$chance_distribution
   expect_identical(nrow(dist), 101L)
   expect_identical(sum(dist$n_units), st$pools$N)
-  # The n_units-weighted sum reproduces n_expected exactly.
   expect_equal(sum(dist$chance * dist$n_units), st$pools$n_expected,
                tolerance = 1e-10)
   expect_equal(st$pools$n_expected, 100, tolerance = 1e-8)
@@ -141,7 +137,7 @@ test_that("certainty selections surface in the compressed distribution", {
   st <- d$stages[[1]]
   expect_identical(st$storage, "quantiles")
   dist <- st$chance_distribution
-  # test_frame has 5 rows with mos >= 180: chance 1 mass is retained.
+  # test_frame has 5 rows with mos >= 180.
   expect_identical(sum(dist$n_units[dist$chance >= 1 - 1e-9]), 5L)
   expect_identical(st$pools$n_realized, 12L)
 })
@@ -302,8 +298,7 @@ test_that("random-size stages keep target, expectation, and realization", {
   expect_equal(p2$n_target, 12)
   expect_identical(p2$n_realized, nrow(s2))
 
-  # A fraction is a nominal expected-count target and need not be an
-  # integer, even though the realized count always is.
+  # A fraction is a nominal expected count and need not be an integer.
   s3 <- sampling_design() |>
     draw(frac = 0.085, method = "bernoulli", on_empty = "silent") |>
     execute(test_frame, seed = 5)
@@ -311,8 +306,7 @@ test_that("random-size stages keep target, expectation, and realization", {
   expect_equal(p3$n_target, 10.2)
   expect_equal(p3$n_expected, 10.2)
 
-  # PPS probability capping can prevent the resolved expectation from
-  # reaching the nominal request; retaining both values exposes that.
+  # PPS capping can keep the resolved expectation below the nominal request.
   dominant <- data.frame(id = 1:20, mos = c(100, rep(1, 19)))
   s4 <- suppressWarnings(
     sampling_design() |>
@@ -334,7 +328,7 @@ test_that("with-replacement stages record expected hits and occurrences", {
   st <- d$stages[[1]]
   expect_identical(st$chance_kind, "expected_hits")
   expect_equal(st$pools$n_expected, 15, tolerance = 1e-8)
-  # One trace row per draw; occurrences count repeat hits.
+  # One trace row per draw, and occurrences count repeat hits.
   expect_identical(nrow(st$selected), 15L)
   expect_identical(st$pools$n_realized, 15L)
   hit_counts <- table(st$selected$unit_id)
@@ -362,16 +356,12 @@ test_that("cluster stages store the anonymous unit registry", {
   expect_identical(st1$units$n_descendants, rep(5L, 24))
   expect_identical(nrow(st1$selected), 8L)
 
-  # The single universe frame lets stage 2 resolve the pools of
-  # unselected clusters from the design: 8 executed + 16 resolved.
+  # A single universe frame resolves the 16 unselected clusters' pools too.
   st2 <- d$stages[[2]]
   expect_identical(st2$scope, "universe")
   expect_identical(nrow(st2$pools), 24L)
   executed <- st2$pools$chance_status != "design_resolved"
   expect_identical(sum(executed), 8L)
-  # Executed pools hang off exactly the selected stage-1 units;
-  # resolved pools cover the remaining clusters with chance and no
-  # realization.
   expect_setequal(
     st2$pools$parent_unit[executed], st1$selected$unit_id
   )
@@ -398,8 +388,7 @@ test_that("the unit registry chances reconcile with sample weights", {
     as.data.frame(s)[, c("cluster", ".weight_1")]
   )$.weight_1
   expect_equal(sort(sel_chance), sort(weight_chance), tolerance = 1e-10)
-  # Unselected units keep their resolved chances: the digest knows
-  # what the sample cannot.
+  # Unselected units keep their resolved chances.
   expect_identical(nrow(st1$units), 24L)
   expect_equal(
     sum(st1$units$chance[st1$units$pool_id == 1]),
@@ -423,9 +412,7 @@ test_that("full mode keeps exact unit chances for element PPS stages", {
 })
 
 test_that("an element stage cannot be a parent stage", {
-  # Stage 1 selects elements, so a following stage would have no identifiable
-  # parent unit to sample within. The design is refused before it can produce
-  # a digest whose stage-2 pools have no parent.
+  # An element stage leaves a following stage no parent unit.
   frame <- data.frame(
     id = 1:200,
     region = rep(c("North", "South"), each = 100),
@@ -463,8 +450,7 @@ test_that("a zero-selection realization keeps its pool in the digest", {
 })
 
 test_that("stages never reached are absent from the digest", {
-  # Stage 1 selects zero clusters; stage 2 never executes and must be
-  # absent, not present with invented zeroes.
+  # Stage 2 never executes, so it is absent rather than zero-filled.
   s <- suppressWarnings(
     sampling_design() |>
       add_stage() |> cluster_by(cluster) |>
@@ -488,13 +474,11 @@ test_that("replicated executions share structure and split traces", {
   d <- digest_of(r)
   expect_no_error(samplyr:::validate_frame_digest(d))
   st <- d$stages[[1]]
-  # One shared pool registry; fixed-size allocation is kept because it
-  # is identical across replicates.
+  # Fixed-size allocation is identical across replicates, so it is kept.
   expect_identical(nrow(st$pools), 4L)
   expect_identical(st$pools$n_realized, rep(5L, 4))
   expect_identical(sort(unique(st$selected$replicate)), 1:3)
   expect_identical(nrow(st$selected), 60L)
-  # Per-replicate traces match the stacked sample.
   for (rep in 1:3) {
     expect_identical(
       sum(st$selected$replicate == rep),
@@ -511,7 +495,6 @@ test_that("replicate-varying realized sizes are NA, not a guess", {
   st <- d$stages[[1]]
   expect_true(is.na(st$pools$n_realized))
   expect_equal(st$pools$n_target, 12)
-  # The traces still carry each replicate's realization.
   counts <- table(factor(st$selected$replicate, levels = 1:3))
   expect_identical(
     as.integer(counts),
@@ -520,10 +503,7 @@ test_that("replicate-varying realized sizes are NA, not a guess", {
 })
 
 test_that("replicated multistage digests keep the shared stage prefix", {
-  # Later-stage pools hang off each replicate's realized parents, so
-  # they are replicate-specific: the merged manifest keeps stage 1 and
-  # is explicitly marked partial, rather than stacking traces under one
-  # replicate's pool registry.
+  # Later-stage pools are replicate-specific, so only stage 1 is kept.
   r <- sampling_design() |>
     add_stage() |> stratify_by(stratum) |> cluster_by(cluster) |>
     draw(n = 2, method = "pps_brewer", mos = mos) |>
@@ -536,8 +516,6 @@ test_that("replicated multistage digests keep the shared stage prefix", {
   st <- d$stages[[1]]
   expect_identical(st$storage, "units")
   expect_identical(sort(unique(st$selected$replicate)), 1:2)
-  # Each replicate's selected clusters are traced against the shared
-  # universe registry.
   expect_identical(nrow(st$selected), 16L)
 })
 
@@ -549,18 +527,15 @@ test_that("a continuation extends the prior digest with linked stages", {
     execute(test_frame, seed = 42, stages = 1)
   d1 <- digest_of(part)
   expect_length(d1$stages, 1)
-  # Selected cluster keys are recorded for continuation linkage; they
-  # name only clusters already visible on the sample rows.
+  # Selected cluster keys are recorded for continuation linkage.
   expect_true("key" %in% names(d1$stages[[1]]$selected))
 
   cont <- part |> execute(test_frame, seed = 43)
   d <- digest_of(cont)
   expect_no_error(samplyr:::validate_frame_digest(d))
   expect_length(d$stages, 2)
-  # The prior stage manifest is carried unchanged.
   expect_identical(d$stages[[1]]$pools, d1$stages[[1]]$pools)
   expect_identical(d$stages[[1]]$units, d1$stages[[1]]$units)
-  # New pools hang off the previously selected units.
   expect_setequal(
     d$stages[[2]]$pools$parent_unit,
     d1$stages[[1]]$selected$unit_id
@@ -582,8 +557,7 @@ test_that("a replicated continuation keeps the prior manifest as partial", {
   d <- digest_of(cont)
   expect_false(is.null(d))
   expect_identical(d$status, "partial")
-  # The manifest describes the prior stage; the continued stages are
-  # replicate-specific and are not manufactured.
+  # The continued stages are replicate-specific and are not manufactured.
   expect_length(d$stages, 1)
   expect_no_error(samplyr:::validate_frame_digest(d))
 })
@@ -619,7 +593,6 @@ test_that("a second phase records the phase-1 sample as its universe", {
     execute(p1, seed = 49)
   d <- digest_of(p2)
   expect_no_error(samplyr:::validate_frame_digest(d))
-  # The phase-2 population is the realized phase-1 sample.
   expect_identical(d$frames[[1]]$n_rows, 40L)
   expect_identical(d$stages[[1]]$scope, "universe")
   expect_identical(d$stages[[1]]$pools$N, 40L)
@@ -646,14 +619,12 @@ test_that("custom WOR methods pass their resolved chances through", {
   st <- d$stages[[1]]
   expect_identical(st$chance_kind, "inclusion_probability")
   expect_identical(st$storage, "units")
-  # The recorded chances are exactly the vector samplyr resolved and
-  # handed to the registered method.
+  # The recorded chances are exactly those handed to the registered method.
   expect_equal(
     st$units$chance,
     sondage::inclusion_prob(test_frame$mos, 10),
     tolerance = 1e-12
   )
-  # Deterministic method: selected units are the top-10 chances.
   expect_setequal(
     st$selected$unit_id,
     order(st$units$chance, decreasing = TRUE)[1:10]
@@ -684,7 +655,6 @@ test_that("custom WR methods record expected hits", {
 
 test_that("custom random-size methods retain their nominal target", {
   on.exit(sondage::unregister_method("digest_rand"), add = TRUE)
-  # Poisson-type: independent selection against the resolved chances.
   sondage::register_method(
     "digest_rand", "wor",
     sample_fn = function(pik, n = NULL, prn = NULL, ...) {
@@ -746,14 +716,12 @@ test_that("custom cluster selection keeps registry and linkage", {
   st1 <- d$stages[[1]]
   expect_identical(st1$storage, "units")
   expect_identical(nrow(st1$units), 24L)
-  # Registered methods resolve unreached pools too (samplyr computes
-  # their chances); executed pools hang off the selected units.
+  # samplyr computes the chances of unreached pools for registered methods.
   p2 <- d$stages[[2]]$pools
   expect_setequal(
     p2$parent_unit[p2$chance_status != "design_resolved"],
     st1$selected$unit_id
   )
-  # Deterministic per stratum: the two largest-mos clusters win.
   for (pool in 1:4) {
     in_pool <- st1$units$pool_id == pool
     top2 <- st1$units$unit_id[in_pool][
@@ -767,8 +735,7 @@ test_that("custom cluster selection keeps registry and linkage", {
 ## Design-resolved universe expansion: guards
 
 test_that("expansion requires a resolvable design", {
-  # Allocation methods need stratum statistics the resolution refuses
-  # to replay: the stage stays eligible-only.
+  # Allocation needs stratum statistics the resolution does not replay.
   s <- sampling_design() |>
     add_stage() |> cluster_by(cluster) |> draw(n = 6) |>
     add_stage() |> stratify_by(stratum, alloc = "proportional") |>
@@ -787,9 +754,7 @@ test_that("expansion requires a single universe frame", {
     add_stage() |> draw(n = 3) |>
     execute(test_frame, frame2[frame2$stratum != "Z", ], seed = 21)
   st2 <- digest_of(s)$stages[[2]]
-  # Different frame objects with equal content share one registry
-  # record, so this still expands; a genuinely different later frame
-  # must not.
+  # Equal content shares one registry record, but a different frame does not.
   frame3 <- test_frame
   frame3$extra <- 1
   s2 <- sampling_design() |>
@@ -832,8 +797,7 @@ test_that("the final-stage trace carries a verified sample_row", {
     execute(test_frame, seed = 24)
   sel <- digest_of(s)$stages[[2]]$selected
   expect_identical(sel$sample_row, seq_len(nrow(s)))
-  # The locator lands each trace row on its own sample row: the
-  # sample's cluster at that row matches the pool's parent key.
+  # Each trace row lands on the sample row of its pool's parent cluster.
   d <- digest_of(s)
   key_of_unit <- d$stages[[1]]$selected$key[
     match(
@@ -875,8 +839,7 @@ test_that("pools under a with-replacement parent record the occurrence", {
   # One stage-2 pool per selected draw, not per distinct parent.
   expect_identical(nrow(st2$pools), 6L)
   expect_true("parent_occurrence" %in% names(st2$pools))
-  # parent_occurrence is the draw index (the sample's .draw_k), so
-  # (parent, occurrence) pairs are the stage-1 trace in draw order.
+  # parent_occurrence is the draw index (the sample's .draw_k).
   expect_setequal(
     paste(st2$pools$parent_unit, st2$pools$parent_occurrence),
     paste(st1$selected$unit_id, seq_len(nrow(st1$selected)))
@@ -932,7 +895,6 @@ test_that("bound() constraints record expected, bounds, and realized", {
   expect_true(all(bounds$satisfied))
   expect_true(all(bounds$realized >= bounds$lower &
                     bounds$realized <= bounds$upper))
-  # Realized counts match the sample composition.
   for (h in c("A", "B", "C", "D")) {
     expect_identical(
       bounds$realized[bounds$level == h],
@@ -958,19 +920,15 @@ test_that("spatial stages record coordinate metadata, not coordinates", {
   expect_equal(sp$ranges$min, c(min(frame$lon), min(frame$lat)))
   expect_equal(sp$ranges$max, c(max(frame$lon), max(frame$lat)))
   expect_identical(sp$n_duplicate_coordinates, 1L)
-  # No population coordinate cloud is retained anywhere.
   expect_null(d$stages[[1]]$units)
   expect_false(any(c("lon", "lat") %in% names(d$stages[[1]]$pools)))
 })
 
-## Synthetic three-stage reference: same structural assertions as the
-## Fixture 7: three-stage reference, from a frame reproducible in
-## code (helper-fixtures.R)
+## Fixture 7: synthetic three-stage reference (helper-fixtures.R)
 
 test_that("the synthetic three-stage design yields the expected scope chain", {
   frame <- synth_three_stage_frame()
-  # One stage-3 village holds fewer units than the take, so this fixture
-  # caps a pool by construction. Not what this test is about.
+  # One stage-3 village holds fewer units than the take, capping a pool.
   s <- suppressWarnings(synth_three_stage_design() |> execute(frame, seed = 7))
 
   n_districts <- length(unique(frame$district))
@@ -985,8 +943,7 @@ test_that("the synthetic three-stage design yields the expected scope chain", {
   d <- digest_of(s)
   st2 <- d$stages[[2]]
   st3 <- d$stages[[3]]
-  # Two executed phc pools under each of the 6 selected districts,
-  # never merged across parents; the rest design-resolved.
+  # Two executed pools per selected district, never merged across parents.
   executed2 <- st2$pools$chance_status != "design_resolved"
   expect_identical(
     as.integer(table(st2$pools$parent_unit[executed2])),
@@ -1005,9 +962,7 @@ test_that("the synthetic three-stage design yields the expected scope chain", {
 
 test_that("an unknown-probabilities method is refused at draw", {
   on.exit(sondage::unregister_method("weight_only"), add = TRUE)
-  # The registration-docs counterexample: successive sampling treats
-  # pik as a selection weight, so 1/pik design weights would be
-  # systematically biased. The declaration makes draw() refuse.
+  # Treats pik as a selection weight, so 1/pik design weights are biased.
   sondage::register_method(
     "weight_only", "wor",
     sample_fn = function(pik, n = NULL, prn = NULL, ...) {
@@ -1055,4 +1010,51 @@ test_that("digest stages record the probabilities tier", {
 
   fs <- frame_summary(s)
   expect_identical(fs$probabilities, c("approximate", "exact"))
+})
+
+## Grouping frame rows for the universe expansion
+
+test_that("rows group by value, and values that print alike share a group", {
+  df <- data.frame(x = c(2, 0.1 + 0.2, 1, 0.3, 2, 0.1 + 0.2))
+  grouped <- group_rows_by_key(df, function(k) as.character(k$x))
+  expect_identical(grouped$key, c("2", "0.3", "1"))
+  expect_identical(grouped$rows, list(c(1L, 5L), c(2L, 4L, 6L), 3L))
+})
+
+test_that("a certainty-plan take stage keeps its digest without a warning", {
+  plan <- certainty_plan_fixture()
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_systematic", mos = N) |>
+    add_stage() |> draw(n = plan)
+  expect_no_warning(
+    s <- execute(design, certainty_element_frame(), seed = 3)
+  )
+  digest <- attr(s, "metadata")$frame_digest
+  expect_length(digest$stages, 2L)
+  expect_identical(digest$stages[[2]]$scope, "eligible")
+})
+
+test_that("unreached cluster pools of unequal size resolve each unit's chance", {
+  households <- c(3L, 5L, 4L, 6L, 3L, 5L)
+  frame <- data.frame(psu = rep(seq_along(households), households * 2))
+  frame$hh <- unlist(lapply(households, function(h) rep(seq_len(h), each = 2)))
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 2) |>
+    add_stage() |> cluster_by(hh) |> draw(n = 2)
+  s <- execute(design, frame, seed = 1)
+  stage <- attr(s, "metadata")$frame_digest$stages[[2]]
+  resolved <- stage$pools[stage$pools$chance_status == "design_resolved", ]
+  expect_identical(nrow(resolved), 4L)
+  units <- stage$units[stage$units$pool_id %in% resolved$pool_id, ]
+  size <- resolved$N[match(units$pool_id, resolved$pool_id)]
+  expect_identical(sort(resolved$N), sort(households[-unique(s$psu)]))
+  expect_equal(units$chance, 2 / size)
+  expect_identical(
+    units$unit_order,
+    unlist(lapply(split(units$unit_order, units$pool_id), seq_along),
+           use.names = FALSE)
+  )
+  expect_true(all(units$unit_order <= size))
+  expect_identical(units$n_descendants, rep(2L, nrow(units)))
 })

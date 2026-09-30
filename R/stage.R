@@ -14,6 +14,7 @@
 #' ## Multi-stage design structure
 #'
 #' In multi-stage designs, sampling proceeds hierarchically:
+#'
 #' 1. **Stage 1**: Select primary sampling units (PSUs), e.g., schools
 #' 2. **Stage 2**: Within selected PSUs, select secondary units, e.g., classrooms
 #' 3. **Stage 3+**: Continue nesting as needed
@@ -48,6 +49,10 @@
 #' ## Validation rules
 #'
 #' - Each stage must end with [draw()] before the next `add_stage()` or [execute()]
+#' - [draw()] closes a stage. [stratify_by()], [cluster_by()], or a second
+#'   `draw()` after it are refused, so a design, including one from
+#'   [read_design()], is extended with `add_stage()`. [sampling_design()]
+#'   gives the reason.
 #' - An untouched, unlabeled initial stage is reused by `add_stage()`.
 #'   Repeated unlabeled calls there do not create empty stages. Once a stage
 #'   has a label or specification, it needs `draw()` before another is added.
@@ -119,13 +124,22 @@
 #' @family design specification
 #' @export
 add_stage <- function(.data, label = NULL) {
+  if (is.data.frame(.data)) {
+    abort_frame_misplaced("add_stage")
+  }
   if (!is_sampling_design(.data)) {
-    cli_abort("{.arg .data} must be a {.cls sampling_design} object")
+    cli_abort(
+      "{.arg .data} must be a {.cls sampling_design} object",
+      class = "samplyr_error_design_expected"
+    )
   }
 
   if (!is_null(label)) {
     if (!is_character(label) || length(label) != 1) {
-      cli_abort("{.arg label} must be a single character string")
+      cli_abort(
+        "{.arg label} must be a single character string",
+        class = "samplyr_error_design_argument"
+      )
     }
   }
 
@@ -149,7 +163,7 @@ add_stage <- function(.data, label = NULL) {
       cli_abort(c(
         "Cannot start new stage: {.val {stage_label}} has no {.fn draw}",
         "i" = "Each stage must end with {.fn draw} before starting a new stage"
-      ))
+      ), class = "samplyr_error_stage_incomplete")
     }
   }
 
@@ -158,4 +172,44 @@ add_stage <- function(.data, label = NULL) {
   .data$current_stage <- length(.data$stages)
   .data$validated <- FALSE
   .data
+}
+
+#' Refuse a specification verb on a stage that `draw()` has closed
+#'
+#' `draw()` reads the stage's strata and clusters when it is called: whether
+#' a scalar `n` is per stratum or a total, whether a named `n` matches the
+#' strata, and how a svyplan plan is taken. A verb added afterwards would
+#' leave that reading stale. `draw(n = plan) |> stratify_by(region)` took a
+#' plan's total in every region this way. The same holds for a design from
+#' `read_design()` or `get_design()`, whose current stage is its last, drawn
+#' one.
+#' @noRd
+check_stage_open <- function(.data, verb, call = caller_env()) {
+  current <- .data$current_stage
+  if (current < 1 || current > length(.data$stages)) {
+    return(invisible(NULL))
+  }
+  stage <- .data$stages[[current]]
+  if (is_null(stage$draw_spec)) {
+    return(invisible(NULL))
+  }
+  label <- stage$label %||% paste("Stage", current)
+  reason <- if (identical(verb, "draw")) {
+    c(
+      "x" = "A stage takes one {.fn draw}.",
+      "i" = "Call {.fn add_stage} first to specify the next stage."
+    )
+  } else {
+    c(
+      "x" = "{.fn draw} reads a stage's strata and clusters when it is
+             called, so {.fn {verb}} cannot follow it.",
+      "i" = "Call {.fn {verb}} before {.fn draw} in the stage it belongs to,
+             or call {.fn add_stage} first to specify the next stage."
+    )
+  }
+  abort_samplyr(
+    c("{.val {label}} is closed: it already has {.fn draw}.", reason),
+    class = "samplyr_error_stage_closed",
+    call = call
+  )
 }

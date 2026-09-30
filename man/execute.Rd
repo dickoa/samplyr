@@ -22,150 +22,102 @@ execute(
 partially executed \code{tbl_sample} to continue the remaining stages of its
 stored design.}
 
-\item{...}{Data frame(s) to sample from. For single-stage designs, provide
-one frame. For multi-stage designs with separate frames, provide frames
-in stage order. Passing a \code{tbl_sample} here while \code{.data} is a new
-\code{sampling_design} starts a new sampling phase. It does not continue the
-stages stored in that sample. Ordinary input frames must have unique
-names and must not use columns reserved for execution output, such as
-\code{.weight}, \code{.sample_id}, \code{.stage}, \code{.weight_k}, or \code{.fpc_k}, where \code{k}
-is the stage number (\code{.weight_1}, \code{.fpc_1}, and so on). Frames are
-matched positionally, so any name given here is a label. A label
-resembling one of the arguments below (\code{seedd}, or the singular
-\code{stage}, \code{rep}, \code{panel}) is refused rather than read as a frame,
-because those arguments follow \code{...} and are matched exactly.
+\item{...}{Data frame(s) to sample from: one frame for a single-stage
+design or a shared hierarchy, or one frame per stage in stage order. A
+\code{tbl_sample} passed here while \code{.data} is a new \code{sampling_design} starts
+a new sampling phase rather than continuing that sample's stages.
+Ordinary input frames must have unique column names and must not use
+columns reserved for execution output, such as \code{.weight}, \code{.sample_id},
+\code{.stage}, \code{.weight_k}, or \code{.fpc_k} for stage \code{k}. Frames are matched by
+position, so a name given here is a label. A label resembling an
+argument below (\code{seedd}, or the singular \code{stage}, \code{rep}, \code{panel}) is
+refused, because those arguments follow \code{...} and are matched exactly.
 
-A single unnamed list of data frames is read as those frames in that
-order, which is the same call written with a value rather than one
-argument per frame. Write them out when you are typing the call.
-The list is for code that already holds them, such as a loop over
-registers or \code{\link[=replay_design]{replay_design()}}. Mixing the two is refused. Names
+A single unnamed list of data frames is the same call, for code that
+already holds the frames, such as a loop over registers or
+\code{\link[=replay_design]{replay_design()}}. Mixing it with separate frames is refused. Names
 inside the list are frame labels, so a misspelled argument must be
-written outside it to be reported as one.}
+written outside it to be reported as one. See \link{frame-input-grammar}.}
 
-\item{stages}{Integer vector specifying which stage(s) to execute.
-From a \code{sampling_design}, the vector must start at stage 1 and this is how
-an operational workflow stops after its first contiguous batch of stages.
-From a partial \code{tbl_sample}, it must start at the next unexecuted stage.
-Default (\code{NULL}) executes all remaining stages.}
+\item{stages}{Integer vector of the stages to execute, or \code{NULL}
+(default) for all remaining stages. From a \code{sampling_design} it must
+start at stage 1, so an operational workflow can stop after its first
+contiguous batch of stages. From a partial \code{tbl_sample} it must start at
+the next unexecuted stage.}
 
-\item{seed}{Integer random seed for reproducibility, between
-\code{-.Machine$integer.max} and \code{.Machine$integer.max}.}
+\item{seed}{Integer random seed, between \code{-.Machine$integer.max} and
+\code{.Machine$integer.max}. A given seed leaves the session's random number
+stream untouched. With \code{seed = NULL}, selection draws from the session
+stream and advances it, and \code{\link[=replay_design]{replay_design()}} refuses the resulting
+sample because its receipt cannot reproduce it.}
 
-\item{panels}{Rotation groups (panels) to partition the sample into for
-rotation or workload management, as an integer count, a rotation
-schedule, or an \code{svyplan_schedule} from
-\code{\link[svyplan:design_schedule]{svyplan::design_schedule()}}. Assignment is a randomized fixed-quota partition
-within the assignment stage's selection strata: every unit carries each
-panel with probability \code{1 / panels}. It is not an additional
-probability-sampling phase. The output includes a \code{.panel} column with
-values 1 through the panel count. Default \code{NULL} means no panel
-partitioning. Cannot be used together with \code{reps}, and cannot be
-redeclared on a sample that already carries an assignment.
-
-A schedule is a data frame with an integer \code{panel} column, an integer
-\code{wave} column and an optional logical \code{active} column. A combination
-left out is inactive. It declares the panel count and, through the
-fewest panels any wave activates, the assignment block size. Only a
-sample drawn with a schedule can be materialized by \code{wave}.
-
-For an \code{svyplan_schedule}, \code{execute()} extracts the startup activity and
-checks its panel parameters before assignment. A gradual launch has one
-whole startup cohort and needs no partition. Permanent activation is not
-part of this automatic route.}
+\item{panels}{Rotation groups (panels) to partition the sample into, as an
+integer count, a rotation schedule (a data frame with integer \code{panel}
+and \code{wave} columns and an optional logical \code{active} column), or an
+\code{svyplan_schedule} from \code{\link[svyplan:design_schedule]{svyplan::design_schedule()}}. The output gains a
+\code{.panel} column, and only a sample drawn with a schedule can be
+materialized by \code{wave}. Default \code{NULL} means no panels. Cannot be
+combined with \code{reps}, or redeclared on a sample that already carries an
+assignment. \link{panel-assignment} describes the assignment and the
+schedules.}
 
 \item{panel_stage}{Stage whose selected units are assigned to panels, as a
 single stage number, or \code{NULL} (the default) for the first executed
 stage. Accepted only alongside \code{panels}, and the stage must be one the
-execution completes. Every later stage inherits its ancestor's panel, so
-assigning at stage 1 rotates whole primary units while assigning lower
-down rotates units inside parents that stay in the survey: the
-address-panel design, in which selected areas are retained and households
-rotate within them.
-
-Pools are then the assignment stage's strata inside each realized parent,
-so they are smaller than first-stage pools and \code{small_pool} matters more.
-Selection certainty counts only at the assignment stage, in both
-directions: a certainty primary unit does not make its households
-permanent, and a certainty selection below the assignment stage does not
-keep its household in every wave. A stage that selects with replacement
-assigns realized draw occurrences, so one population unit selected twice
-may take two different panels. A parent selected twice likewise gives two
-separate populations of households, and a household reached under both
-hits is assigned once for each.
-
-Assigning below the first stage is not a default and should not be
-treated as one. Holding the parent fixed while its members rotate can
-bias cross-sectional estimates over time, and a unit that cannot move
-between parents is balanced for net change but not for gross change.}
+execution completes. Later stages inherit their ancestor's panel, so
+assigning below stage 1 rotates units inside parents that stay in the
+survey. \link{panel-assignment} explains what that changes, including how it
+can bias estimates over time.}
 
 \item{small_pool}{What to do when a rotation schedule would leave a pool
-with no unit to activate, as \code{"error"} (the default, reached by \code{NULL})
-or \code{"permanent"}. A pool of \code{m} units leaves \code{panels - m} panels empty,
-so a wave activating \code{r} of them selects nothing from that pool when
-\code{m <= panels - r}. Those units then have inclusion probability zero in
-that wave rather than a small weight, so the wave's estimator is biased.
-\code{"error"} refuses such an assignment, before any panel is drawn, and
-names the pools. \code{"permanent"} instead activates them at every wave with
-probability one, warning with \code{samplyr_warning_panel_small_pool} that it
-has done so, which is exact but changes
-the operational design: wave sizes, overlap and repeated interviewing all
-increase. Meaningful only with a schedule, since a panel count declares
-no wave to protect. This governs positivity only: a pool with a positive
-but single active unit is still assigned, and is still marked as carrying
-no within-block variance estimate. An \code{svyplan_schedule} refuses
-\code{"permanent"} because its overlap describes a fully rotating life.}
+with no unit to activate at some wave. \code{"error"} (the default, reached by
+\code{NULL}) refuses the assignment, and \code{"permanent"} activates those units
+at every wave and warns with \code{samplyr_warning_panel_small_pool}.
+Meaningful only with a schedule. See \link{panel-assignment}.}
 
 \item{reps}{Integer number of independent replicate samples to draw (>= 2),
-or \code{NULL} (default) for a single sample. When specified, \code{execute()} draws
-\code{reps} independent samples from the same frame under the same design and
-returns a single stacked \code{tbl_sample} with a \code{.replicate} column (integer
-1 through \code{reps}). Replicate \code{r} uses seed \code{seed + r - 1}. The complete
-sequence must remain within \code{R} supported integer range. Cannot be
-combined with \code{panels} or with stages that use permanent random numbers.
-
-This is \strong{repeated sample realization} (drawing multiple independent
-samples), not replicate-weight variance estimation. For the latter, see
-\code{\link[=as_svrepdesign]{as_svrepdesign()}}.}
+or \code{NULL} (default) for a single sample. The replicates are stacked in
+one \code{tbl_sample} with a \code{.replicate} column (integer 1 through \code{reps}).
+Their seeds are drawn from \code{seed}, since consecutive seeds do not give
+independent draws in R, and recorded in the \code{replicate_seeds} element
+of the sample's metadata, so replicate \code{r} alone is
+\code{execute(design, frame, seed = replicate_seeds[r])}. Cannot be combined
+with \code{panels} or with stages that use permanent random numbers.
+\code{as_svrepdesign(type = "random_groups")} estimates variance from the
+spread of the replicates, for any selection method.}
 
 \item{wave}{Integer wave of a scheduled master to materialize, or \code{NULL}
 (default). \code{execute(master, wave = t)} activates the panels the stored
 schedule declares active at \code{t} and compounds the exact activation
-factor into \code{.weight}. It takes no other execution input: no frame, no
+factor into \code{.weight}. A wave selects units the master already assigned,
+under the policy the master froze, so it takes no frame and none of
 \code{seed}, \code{stages}, \code{panels}, \code{panel_stage}, \code{small_pool}, \code{reps} or
-\code{frame_digest}, since a wave selects units the master already assigned,
-under the policy the master froze, and reads no frame. Each is refused
-by name rather than accepted and ignored.}
+\code{frame_digest}. Each is refused by name rather than ignored.}
 
 \item{frame_digest}{Controls the frame digest, a compact execution
-manifest recorded with the sample and read by \code{\link[=frame_summary]{frame_summary()}}.
-\code{"summary"} (default) records compressed population structure:
-selection pools, resolved chances (exact for cluster stages,
-constant or quantile-compressed for element stages), and the
-selected-unit trace. \code{"full"} keeps exact per-unit chances for
-element stages too. \code{"none"} records no digest and skips trace
-construction for minimum execution overhead. When one universe frame
-feeds every stage, later stages also record the pools their
-realization never reached, with chances resolved deterministically
-from the design (\code{chance_status = "design_resolved"}), this gives
-\code{\link[=frame_summary]{frame_summary()}} and downstream digest consumers complete universe
-denominators without the frame. The digest never
-affects selection, weights, or estimation. Design executions
-record a digest, replicated executions share the population
-structure across replicates with replicate-specific traces, and a
-stage continuation extends the digest carried by its input sample
-(an input without a valid digest yields no digest). In a
-replicated multi-stage execution, later-stage pools depend on each
-replicate's realized parents, so the digest keeps the stage
-prefix shared by all replicates and reports status \code{"partial"}.
-Replicated multi-phase and replicated-continuation executions do
-not record one yet.
+manifest recorded with the sample and read by \code{\link[=frame_summary]{frame_summary()}}. The
+digest never affects selection, weights, or estimation. \code{"summary"}
+(default) records selection pools, resolved chances (exact for cluster
+stages, constant or quantile-compressed for element stages), and the
+selected-unit trace. \code{"full"} keeps exact per-unit chances for element
+stages too. \code{"none"} records no digest and skips trace construction for
+minimum execution overhead.
 
-A digest is not anonymized. Its selection trace retains the identifiers
-needed to name realized units, frame-derived cluster keys or row
-indices. Treat the sample and any serialized
-execution receipt as potentially confidential. \code{"summary"} compresses
-chance information but does not remove those identifiers.}
+When one universe frame feeds every stage, later stages also record the
+pools their realization never reached, with chances resolved from the
+design (\code{chance_status = "design_resolved"}), which gives complete
+universe denominators without the frame. A stage continuation extends
+the digest of its input sample, and an input without a valid digest
+yields none. Replicates share one population structure with their own
+traces. A replicated multi-stage execution keeps only the stage prefix
+shared by all replicates, with status \code{"partial"}, as \code{\link[=frame_summary]{frame_summary()}}
+describes. Replicated multi-phase and replicated-continuation executions
+do not record a digest yet.
+
+A digest is not anonymized. Its selection trace keeps the identifiers
+of realized units (frame-derived cluster keys or row indices), even
+under \code{"summary"}, so treat the sample and any serialized execution
+receipt as potentially confidential.}
 }
 \value{
 A \code{tbl_sample}: a data frame subclass carrying the selected rows,
@@ -180,33 +132,31 @@ one holds.
 producing a sampled dataset with appropriate weights and metadata.
 }
 \details{
-Every pattern below has a worked example under \strong{Examples}.
 \subsection{Multi-stage with a single frame}{
 
 For hierarchical data where all stages are in one frame, pass that one
 frame. It must contain all clustering variables and represent the stage
-hierarchy correctly. Lower-stage IDs may repeat across different parents.
-\code{samplyr} resolves them using the full ancestry from earlier stages.
+hierarchy correctly. Lower-stage IDs may repeat across different parents,
+because \code{samplyr} resolves them using the full ancestry from earlier
+stages.
 }
 
 \subsection{Multi-stage with one frame per stage}{
 
-When each stage has its own register, pass one frame per stage.
-Frames map to stages by position, and the number of frames is what
-schedules the stages: one frame is a shared hierarchy covering all of
-them, and one frame per stage gives each its own. Any other count is
-\code{samplyr_error_frame_count}.
+When each stage has its own register, pass one frame per stage. The
+number of frames schedules the stages: one frame is a shared hierarchy
+covering all of them, one frame per stage gives each its own, and any
+other count is \code{samplyr_error_frame_count}.
 
 Registers are supplied whole. Each is restricted to the units its parent
 stage selected, and the variables earlier stages introduced are carried
-onto it, so a lower register neither has to be pre-filtered nor to
-duplicate the upper stages' stratification columns. A register that
-legitimately omits a carried stratum is fine. One whose own copy of it
-disagrees is an error.
+onto it, so a lower register need not be pre-filtered or duplicate the
+upper stages' stratification columns. A register may legitimately omit a
+carried stratum, but one whose own copy of it disagrees is an error.
 
-The frames may also be held as a list, which is the same call. Inside that
-list a name is a diagnostic label for the frame, not an argument name.
-Mixing the two spellings in one call is refused.
+Before any stage draws, every later stage is checked on all the units it
+could reach, as \code{\link[=validate_frame]{validate_frame()}} checks them, so a defect in a unit the
+seed happens to skip is still refused.
 
 This form, the single-hierarchy form, and the stage continuation below
 run the same stage transition. Under one shared RNG stream, and with
@@ -218,213 +168,34 @@ sample.
 
 \code{stages} executes only the stages named, returning a partial \code{tbl_sample}.
 Fieldwork then produces the next stage's frame, and passing the partial
-sample back as \code{.data} continues the same design.
-Omitting \code{stages} on the continuation executes every remaining stage.
-Where more than one stage remains and one frame is supplied, that frame
-could be the next stage's register or a hierarchy covering the rest, and
-the two draw different samples. \code{execute()} refuses to guess and asks for
-\code{stages} (\code{samplyr_error_ambiguous_continuation}). \code{\link[=validate_frame]{validate_frame()}}
-applies the same rule, so a frame it approves is one this call accepts.
-
-When the listing frame is derived from a \code{tbl_sample} (e.g. via
-\code{\link[tidyr:uncount]{tidyr::uncount()}} or \code{\link[dplyr:slice]{dplyr::slice()}}), it may carry internal
-columns (\code{.weight}, \code{.fpc_1}, etc.) from the earlier stage. These
-are automatically stripped before sampling so they do not collide
-with the metadata carried by the stage-1 result.
-Pass the unmodified stage-1 result as \code{.data} and the expanded listing
-as the frame, as above. Passing the original design as \code{.data} instead
-starts a new execution at stage 1 and treats a \code{tbl_sample} frame as a
-previous sampling phase. It is not a stage continuation. When an intact
-frame is a strict partial result of that same design, \code{execute()} warns
-about this ambiguity but permits it because it is a valid new-phase
-operation and will export through \code{\link[survey:twophase]{survey::twophase()}}.
-If a class-dropping operation such as \code{\link[tidyr:uncount]{tidyr::uncount()}} leaves a plain
-listing with sampling attributes or generated columns, \code{execute()} refuses
-to use it as an ordinary frame for a fresh design execution. It remains a
-valid listing frame when the unmodified partial sample is \code{.data}. To use
-such rows as a genuinely unrelated ordinary frame, remove both the sampling
-attributes and the generated sample columns explicitly.
+sample back as \code{.data} continues the same design. \link{frame-input-grammar}
+states how a continuation reads its frame, when it asks for \code{stages}, and
+how it differs from starting a new phase on a sample.
 }
 
 \subsection{Multi-phase sampling}{
 
-To start a new phase, use the new phase's design as \code{.data} and pass the
-previous phase's \code{tbl_sample} as its frame.
-This is distinct from stage continuation: \code{phase1} is a frame for a new
-design, rather than \code{.data} carrying unexecuted stages of the same design.
-Weights compound automatically in multi-phase designs, and
-\code{\link[=as_svydesign]{as_svydesign()}} exports this path through \code{\link[survey:twophase]{survey::twophase()}}.
+\code{execute(new_design, previous_sample)} starts a new phase, with the
+earlier sample as the frame of a new design rather than \code{.data} carrying
+unexecuted stages. Weights compound across phases, and \code{\link[=as_svydesign]{as_svydesign()}}
+exports this path through \code{\link[survey:twophase]{survey::twophase()}}.
 }
 
-\subsection{Weight calculation}{
+\subsection{Weights}{
 
-Let \eqn{q_i^{(k)}}{q_i(k)} denote the resolved selection quantity at
-stage \eqn{k}. For without-replacement methods it is the first-order
-inclusion probability \eqn{\pi_i^{(k)}}{pi_i(k)}. For WR and PMR methods
-it is the expected hit count \eqn{E(K_i^{(k)})}{E(K_i(k))}. The per-stage
-weight is \eqn{w_i^{(k)} = 1 / q_i^{(k)}}{w_i(k) = 1 / q_i(k)}:
-\itemize{
-\item \strong{SRS}: \eqn{w_i = N / n}{w = N/n}, constant for all units.
-\item \strong{Stratified SRS}: \eqn{w_i = N_h / n_h}{w = N_h/n_h} within stratum \eqn{h}.
-\item \strong{PPS WOR}: \eqn{w_i = 1 / \pi_i}{w_i = 1/pi_i} where
-\eqn{\pi_i}{pi_i} is computed from the measure of size by
-\code{sondage::inclusion_prob()}. Varies across units.
-\item \strong{WR / PMR}: \eqn{w_i = 1 / E(n_i)}{w_i = 1/E(n_i)} where
-\eqn{E(n_i) = n \cdot p_i}{E(n_i) = n * p_i} is the expected number
-of selections. Each occurrence is one row. A unit selected \eqn{k} times
-appears \eqn{k} times, each with the same weight.
-}
-
-For every built-in method except \code{"pps_sps"} and \code{"pps_pareto"}, the
-resolved quantity equals the design's true first-order inclusion
-probability or expected hit count. The order-sampling pair and registered
-methods declared \code{probabilities = "approximate"} honor the resolved chance
-only to a documented approximation: \code{.weight} is then the inverse of
-the target probability, not of the design's true first-order
-inclusion probability. Weighting by the inverse target is standard
-practice for these methods, and the deviation is typically small,
-but it is a bias of the method, not of samplyr. The tier is recorded
-per stage in the frame digest, reported by \code{\link[=frame_summary]{frame_summary()}} as the
-\code{probabilities} column, and flagged by \code{summary()}.
-}
-
-\subsection{Multi-stage weight compounding}{
-
-In a \eqn{K}-stage design, the overall weight for unit \eqn{i} is the
-product of per-stage weights:
-\deqn{w_i = \prod_{k=1}^{K} w_i^{(k)} = \prod_{k=1}^{K} \frac{1}{q_i^{(k \mid S^{(k-1)})}}}{w_i = prod_k w_i(k) = prod_k 1 / q_i(k | S(k-1))}
-where \eqn{q_i^{(k \mid S^{(k-1)})}}{q_i(k | S(k-1))} is resolved within
-the clusters selected at prior stages. For an all-WOR exact design this is
-the conditional inclusion probability, so the product is the inverse of
-the overall inclusion probability. If a stage is WR or PMR, each output row
-is a realized occurrence and its factor is the inverse expected hit count.
-For example, in a two-stage all-WOR design
-where 5 of 30 EAs are selected in a region (stage 1) and 12 of 50
-households are listed within each selected EA (stage 2):
-\deqn{w_i = \frac{30}{5} \times \frac{50}{12} = 6 \times 4.17 = 25}{w_i = (30/5) * (50/12) = 6 * 4.17 = 25}
-The \code{.weight} column always equals the product of \code{.weight_1}, \code{.weight_2},
-etc. Per-stage weights are preserved for diagnostics and for survey
-export.
-}
-
-\subsection{Multi-phase weight compounding}{
-
-When a new phase's design is executed with a previous-phase \code{tbl_sample}
-as its frame, the phase-1 inclusion probability is already reflected in
-the input weights.
-The final \code{.weight} is the product of phase-1 and phase-2 weights:
-\deqn{w_i = w_i^{(\text{phase 1})} \times w_i^{(\text{phase 2} \mid \text{phase 1})}}{w_i = w_i(phase 1) * w_i(phase 2 | phase 1)}
-For WOR phases this gives the Horvitz-Thompson estimator. A WR or PMR phase
-contributes an occurrence-level Hansen-Hurwitz factor instead.
-}
-
-\subsection{Panel partitioning}{
-
-When \code{panels} is specified, the sample is partitioned into non-overlapping
-groups for rotation or workload management.
-
-Assignment is randomized with fixed quotas. Within each selection stratum
-of the assignment stage the assignment units are ordered, cut into
-consecutive blocks of \code{2 * panels}, given a fixed quota per panel inside
-each block, and permuted within their block. Every unit therefore carries
-each panel with probability \code{1 / panels}, and panel sizes within a pool
-differ by at most one.
-
-Blocking is what preserves order. Units adjacent in the \code{control} order of
-the assignment stage's \code{draw()} fall in the same block, so every panel
-inherits the same spread over that order. A pool holding fewer than
-\code{2 * panels} units is a single block: still assigned, simply with no
-block-level order structure left to preserve.
-
-For multi-stage designs, panels are assigned at stage 1 by default, and
-every unit below inherits its ancestor's panel. \code{panel_stage} moves the
-assignment to another stage, which is what expresses a design that retains
-its primary units and rotates the units inside them. A pool is then the
-assignment stage's strata inside each realized parent and never crosses a
-parent. Under a with-replacement assignment stage the assignment unit is
-the realized draw, the unit the estimator uses, so one population cluster
-drawn twice may carry two different panels.
-
-Certainty units are labelled from their own pools and consume no rotating
-quota. A certainty unit is in the sample at every occasion, so a schedule
-that rotated it out would sample the very units the certainty stratum
-exists to enumerate. Certainty counts only at the assignment stage, in both
-directions: a certainty primary unit does not make the units below it
-permanent when \code{panel_stage} names a lower stage, and a certainty selection
-at a stage below the assignment stage does not keep its assignment unit in
-every wave. A unit selected with probability one inside a rotating parent
-is absent from the waves that parent sits out.
-
-Panels are assigned once. \code{.panel} is carried forward by a stage
-continuation, and redeclaring \code{panels} on a sample that already carries an
-assignment is an error.
-}
-
-\subsection{Rotation schedules and waves}{
-
-Passing a schedule to \code{panels} instead of a count declares which panels are
-active at which occasion, and lets \code{execute(master, wave = t)} materialize
-one of them:
-
-\if{html}{\out{<div class="sourceCode r">}}\preformatted{schedule <- data.frame(
-  panel  = rep(1:4, times = 3),
-  wave   = rep(1:3, each = 4),
-  active = c(TRUE, TRUE, FALSE, FALSE,
-             FALSE, TRUE, TRUE, FALSE,
-             FALSE, FALSE, TRUE, TRUE)
-)
-master <- execute(design, frame, seed = 1, panels = schedule)
-wave_2 <- execute(master, wave = 2)
-}\if{html}{\out{</div>}}
-
-The schedule is read at the master draw, not only at materialization,
-because the block size follows from it. A schedule whose leanest wave
-activates \code{r} of the \code{k} panels blocks at \code{k * ceiling(2 / r)} rather than
-at the worst case \verb{2k}, which keeps more of the assignment order while
-still leaving two units per block in the take.
-
-Materializing wave \code{t} selects the panels declared active at \code{t} and
-multiplies \code{.weight} by the inverse of the activation probability. That
-probability is the block's frozen quota for the active panels over the
-block size, so it is exact rather than nominal, and it is generally not
-\code{k / r}. Permanent certainty units are activated at every wave with
-probability one and their weights are untouched.
-
-A materialized wave is a sample in its own right, with its own integrity
-record: it is not a filtered master, and \code{frame_summary()} and the weight
-diagnostics work on it. It retains the master as its first phase, so
-\code{\link[=as_svydesign]{as_svydesign()}} exports it through \code{\link[survey:twophase]{survey::twophase()}} with the
-activation as the second phase. What it cannot do is replay, because a wave
-is derived from a recorded execution rather than being one. That refuses
-rather than answering approximately.
-
-The schedule states which groups are live when. It does not replenish the
-sample: every panel comes from the frame vintage the master was drawn
-from. Steady-state replenishment is a fresh \code{execute()} against a later
-frame. See \code{vignette("rotating-panels")}.
-
-Weights are not adjusted for panel membership. They reflect the full-sample
-inclusion probability and are valid for the combined sample. Taking a
-subset of the panels is a simple random subsample without replacement
-within each block, but its conditional probability is the block's realized
-quota over the block size, not \code{1 / panels}, so multiplying one panel's
-weights by \code{panels} is not generally valid for population inference. The
-block sizes and realized quotas are recorded with the sample and written
-to the design file by \code{\link[=write_design]{write_design()}}, because they, not \code{1 / panels},
-are what such a subset has to be computed against.
+\code{.weight} is the product of the per-stage weights and of the phase weights
+across phases. \link{sample-columns} gives the formulas.
 }
 
 \subsection{When a design cannot be realized as written}{
 
 A pool holding fewer units than the stage asks for is selected whole,
-which makes the design non-self-weighting. \code{execute()} reports this, and
-four related outcomes, as classed conditions carrying a \code{payload}.
-
-\code{frame_digest} defaults to \code{"summary"}, so the ordinary way to read
-capping after the fact is the \code{capped} column of
-\code{frame_summary(sample, detail = "pool")}. See \link{execution-conditions} for
-the five classes, their payload fields, and how to capture one when no
-digest is kept.
+which makes the design non-self-weighting. \code{execute()} reports this and
+four related outcomes as classed conditions carrying a \code{payload}. With the
+default digest, the \code{capped} column of
+\code{frame_summary(sample, detail = "pool")} shows capping after the fact.
+\link{execution-conditions} gives the five classes, their payload fields, and
+how to capture one when no digest is kept.
 }
 }
 \examples{
@@ -470,12 +241,12 @@ nrow(selected_eas)  # Number of selected EAs
 # Continuation: the listing produced by fieldwork becomes the next frame,
 # and the partial sample is passed back as `.data`
 listing <- selected_eas |>
-  dplyr::slice(rep(seq_len(dplyr::n()), each = 20)) |>
-  dplyr::mutate(hh_id = dplyr::row_number())
+  as.data.frame() |>
+  dplyr::reframe(hh_id = seq_len(20), .by = ea_id)
 sample <- selected_eas |> execute(listing, seed = 43)
 nrow(sample)  # 12 households in each selected EA
 
-# One frame per stage ----------------------------------------
+## One frame per stage
 # Frames map to stages by position: a district register, then an EA register
 districts <- dplyr::distinct(zwe_eas, province, district)
 two_stage <- sampling_design() |>
@@ -492,7 +263,7 @@ registers <- list(districts, zwe_eas)
 same <- two_stage |> execute(registers, seed = 424)
 identical(sample$.sample_id, same$.sample_id)
 
-# Multi-phase --------------------------------------------------
+## Multi-phase
 # The previous phase's sample is the new phase's frame
 phase1 <- sampling_design() |>
   draw(n = 200) |>
@@ -510,10 +281,9 @@ table(sample$.replicate)  # 100 per replicate
 
 # Rotating panel: 4 rotation groups
 sample <- sampling_design() |>
-  stratify_by(region) |>
   draw(n = 200) |>
   execute(bfa_eas, seed = 1, panels = 4)
-table(sample$.panel)  # ~50 per panel
+table(sample$.panel)  # 50 per panel
 
 }
 \seealso{

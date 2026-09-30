@@ -60,6 +60,9 @@
 #' # multiplied by the clustering component the planning arguments imply
 #' design_effect(samp, icc = 0.05, n_per_psu = 25)
 #'
+#' @references
+#' Kish, L. (1965). *Survey Sampling*. Wiley.
+#'
 #' @seealso [svyplan::design_effect()], [svyplan::effective_n()],
 #'   [svyplan::varcomp()], [svyplan::n_cluster()],
 #'   [as_svydesign()] to hand the design to \pkg{survey} for an
@@ -135,7 +138,10 @@ sample_weights <- function(x, fn) {
   check_sample_unmodified(x, fn)
   w <- x[[".weight"]]
   if (is.null(w)) {
-    cli_abort("tbl_sample has no {.field .weight} column.")
+    cli_abort(
+      "tbl_sample has no {.field .weight} column.",
+      class = "samplyr_error_tbl_sample_missing_attributes"
+    )
   }
   w
 }
@@ -189,6 +195,7 @@ check_svyplan_schedule <- function(x, arg = "schedule",
 #' - Other svyplan objects: scalar total via `as.integer()`.
 #' @noRd
 coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
+  rlang::local_error_call(caller_env())
   stage_aware <- clustered || stage_index > 1L
 
   if (inherits(n, "svyplan_n") && identical(n$type, "alloc")) {
@@ -217,10 +224,9 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
         return(stats::setNames(detail$n_psu_int, detail$stratum))
       }
       if (stage_index == 2L) {
-        return(stats::setNames(
-          as.integer(detail$n_per_psu_int),
-          detail$stratum
-        ))
+        # A joint-target plan fixes a whole take and reports no rounded one.
+        take <- detail$n_per_psu_int %||% detail$n_per_psu
+        return(stats::setNames(as.integer(take), detail$stratum))
       }
       abort_samplyr(
         c(
@@ -578,7 +584,7 @@ check_certainty_plan_disagreement <- function(
       next
     }
     pik <- draw_h * sizes / sum(sizes)
-    capped <- pik >= 1
+    capped <- is_certainty_probability(pik)
     if (any(capped)) {
       ids <- register$psu_id[rest][capped]
       abort_samplyr(
@@ -628,10 +634,7 @@ validate_certainty_bridge <- function(design, schedule, call = NULL) {
       next
     }
     if (identical(spec$role, "take")) {
-      # The take stage sizes pools from the register stage 1 selected under;
-      # a design whose two stages carry different registers is inconsistent.
-      # draw() enforces this at build time, but a deserialized design never
-      # ran draw(), so the gate is the load-bearing check.
+      # Both stages must carry the same register.
       stage1_spec <- design$stages[[1]]$draw_spec$certainty_plan
       if (
         is_null(stage1_spec) ||
@@ -652,8 +655,7 @@ validate_certainty_bridge <- function(design, schedule, call = NULL) {
       )
       next
     }
-    # The stored stage size must be the plan's own totals; only draw()
-    # guarantees it, and a deserialized design never ran draw().
+    # Only draw() guarantees the stored size is the plan's totals.
     held <- vapply(
       names(spec$n_psu_draw),
       function(h) sum(spec$register$certainty[spec$register$stratum == h]),
@@ -702,8 +704,7 @@ validate_certainty_bridge <- function(design, schedule, call = NULL) {
 #' @noRd
 reconcile_certainty_take <- function(spec, frame, stage, call = NULL) {
   if (!spec$id_var %in% names(frame)) {
-    # The pool split needs the parent id and refuses its absence with the
-    # frame-variable message; the register gate has nothing to add.
+    # The pool split refuses a missing parent id itself.
     return(invisible(NULL))
   }
   refuse <- function(...) {

@@ -65,6 +65,18 @@
 #' within a unit, ancestry types that must be joinable, and ancestry
 #' values that name no parent.
 #'
+#' Values are judged on every unit a stage could reach, not on the parents a
+#' draw happens to select: missing, `NA` or mistyped strata, clusters,
+#' measures of size and the other columns a stage reads, reported with class
+#' `samplyr_error_frame_invalid`. [execute()] runs the same check on every
+#' later stage before it draws, so whether a frame is accepted never depends
+#' on the seed. Both also refuse a size in `n` or `frac` for a stratum no
+#' reachable unit belongs to (`samplyr_error_alloc_unknown_strata`), which
+#' would otherwise be dropped without a word. Tables that only describe
+#' strata, such as `variance`, may hold extra rows, and so may a take table
+#' keyed by a parent's identifier, for the parents a continuation did not
+#' select.
+#'
 #' It also checks candidate coverage, and is stricter there than
 #' execution: a unit reachable at one stage with no rows in the
 #' register the next stage samples from is
@@ -164,7 +176,10 @@ validate_frame <- function(
   fingerprint = c("inform", "warn", "ignore")
 ) {
   check_keyword_args(enquos(...), c("stages", "fingerprint"))
-  fingerprint <- match.arg(fingerprint)
+  fingerprint <- with_error_class(
+    rlang::arg_match(fingerprint),
+    "samplyr_error_validate_argument"
+  )
 
   digest <- NULL
   partial_sample <- NULL
@@ -186,7 +201,8 @@ validate_frame <- function(
   if (!is_sampling_design(design)) {
     cli_abort(
       "{.arg design} must be a {.cls sampling_design} or a
-       {.cls tbl_sample}"
+       {.cls tbl_sample}",
+      class = "samplyr_error_design_expected"
     )
   }
 
@@ -228,10 +244,14 @@ remaining_stages <- function(sample) {
 #'
 #' @param previous_sample The realized sample a continuation extends, or `NULL`
 #'   for a design start, where the first register is the population.
+#' @param tolerate_gaps Link a candidate parent with no rows in the next
+#'   register to nothing instead of refusing it. `execute()` tolerates such a
+#'   gap until a unit it selects falls in one.
 #' @return One effective frame per scheduled entry.
 #' @noRd
 effective_register_frames <- function(schedule, design, previous_sample = NULL,
                                       phase_link_vars = character(0),
+                                      tolerate_gaps = FALSE,
                                       call = caller_env()) {
   entries <- schedule$entries
   effective <- vector("list", length(entries))
@@ -245,7 +265,8 @@ effective_register_frames <- function(schedule, design, previous_sample = NULL,
       link_stage_frame(
         entry$frame, parent, design, entry$stage,
         frame_index = entry$frame_index, frame_label = entry$frame_label,
-        phase_link_vars = phase_link_vars, call = call
+        phase_link_vars = phase_link_vars, check_coverage = !tolerate_gaps,
+        call = call
       )$frame
     }
     parent <- effective[[i]]
@@ -265,6 +286,7 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
                                      partial_sample = NULL,
                                      digest = NULL,
                                      call = caller_env()) {
+  rlang::local_error_call(call)
   executed <- if (is_null(partial_sample)) {
     NULL
   } else {
@@ -336,6 +358,10 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
   if (length(issues) > 0) {
     report_validation_issues(issues)
   }
+  check_schedule_strata_known(
+    schedule, effective, design, selected = partial_sample, call = call
+  )
+  inform_unselected_rows(schedule, effective, partial_sample)
 
   for (i in seq_along(schedule$entries)) {
     check_stage_positive_targets(
@@ -349,6 +375,7 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
 #' Reject deterministic exclusions without simulating a selection
 #' @noRd
 check_stage_positive_targets <- function(design, stage_idx, frame) {
+  rlang::local_error_call(caller_env())
   spec <- design$stages[[stage_idx]]
   draw <- spec$draw_spec
   if (is_null(draw) || nrow(frame) == 0L) return(invisible(NULL))
@@ -846,7 +873,167 @@ report_validation_issues <- function(issues) {
     )
   }, character(1))
   names(bullets) <- rep("x", length(bullets))
-  cli_abort(c("Frame validation failed:", bullets), call = NULL)
+  abort_samplyr(
+    c("Frame validation failed:", bullets),
+    class = "samplyr_error_frame_invalid",
+    call = NULL
+  )
+}
+
+#' Judge every later stage on every unit it could reach, before any draw
+#'
+#' Selection checks a later stage's values only inside the parents it
+#' selected. A register with NA strata in 4 of 20 PSUs then failed on some
+#' seeds and passed on others, and trying seeds until one passed conditioned
+#' the sample on the defect. The walk treats every candidate as selected,
+#' as `validate_frame()` does, and applies the same checks. Gaps between
+#' registers stay tolerated, as they are at execution. The first scheduled
+#' stage is left to execution, which already judges it whole or on the
+#' parents a continuation realized.
+#' @noRd
+preflight_later_stages <- function(schedule, design, sample = NULL,
+                                   call = caller_env()) {
+  # Design variables only, read by name, so no class method runs.
+  keep <- unique(
+    unlist(lapply(design$stages, stage_required_vars), use.names = FALSE)
+  )
+  narrow <- function(df) {
+    cols <- intersect(names(df), keep)
+    vctrs::new_data_frame(.subset(df, cols), n = nrow(df))
+  }
+  for (i in seq_along(schedule$entries)) {
+    schedule$entries[[i]]$frame <- narrow(schedule$entries[[i]]$frame)
+  }
+
+  if (length(schedule$entries) >= 2L) {
+    effective <- effective_register_frames(
+      schedule, design,
+      previous_sample = if (is_null(sample)) NULL else narrow(sample),
+      tolerate_gaps = TRUE,
+      call = call
+    )
+    issues <- list()
+    for (i in seq_along(schedule$entries)[-1L]) {
+      stage_idx <- schedule$entries[[i]]$stage
+      issues <- c(issues, stage_frame_issues(
+        design$stages[[stage_idx]], effective[[i]], stage_idx
+      ))
+    }
+    if (length(issues) > 0L) {
+      report_validation_issues(issues)
+    }
+  } else {
+    effective <- list(schedule$entries[[1]]$frame)
+  }
+  check_schedule_strata_known(
+    schedule, effective, design, selected = sample, call = call
+  )
+  invisible(NULL)
+}
+
+#' Refuse a size given for a stratum the stage cannot reach
+#'
+#' `n` and `frac` name the strata they size. A name that matches no stratum
+#' was dropped without a word, so a typo in one label went unnoticed as long
+#' as the true label had its own entry. Judged against every unit the stage
+#' can reach: the supplied register for the first scheduled stage, which is
+#' the population at a design start, and the linked candidates after it. A
+#' later stage runs per parent, and a stratum absent from one parent is
+#' normal, so no per-parent check could do this. Tables that describe strata
+#' (`variance`, `cost`, `cv`, `importance`) may be reused across designs and
+#' are not judged.
+#'
+#' A continuation's register usually lists the selected parents only, while
+#' a take table keyed by the parent's identifier may cover every parent of
+#' the first stage. An entry for a parent the sample did not select names a
+#' real stratum no unit can reach, so it is not judged. Entries under the
+#' selected parents still are, at every stage the continuation runs.
+#' @param selected The sample a continuation extends, or NULL. Its executed
+#'   stages say which ancestors are selected, not the columns it carries.
+#' @noRd
+check_schedule_strata_known <- function(schedule, effective, design,
+                                        selected = NULL,
+                                        call = caller_env()) {
+  for (i in seq_along(schedule$entries)) {
+    stage_idx <- schedule$entries[[i]]$stage
+    frame <- if (i == 1L) schedule$entries[[1]]$frame else effective[[i]]
+    check_stage_strata_known(
+      design, stage_idx, frame,
+      selected = selected,
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' @noRd
+check_stage_strata_known <- function(design, stage_idx, frame,
+                                     selected = NULL,
+                                     call = caller_env()) {
+  spec <- design$stages[[stage_idx]]
+  strata_vars <- spec$strata$vars
+  if (is_null(strata_vars) || !all(strata_vars %in% names(frame))) {
+    return(invisible(NULL))
+  }
+  present <- vctrs::vec_unique(frame[, strata_vars, drop = FALSE])
+  present_keys <- make_group_key(present, strata_vars)
+
+  # Strata keyed by an ancestor the continued sample already selected. An
+  # ancestor selected within this call is not known yet, so it stays judged,
+  # even when an expanded sample already carries its column.
+  parent_vars <- intersect(
+    strata_vars, collect_ancestor_cluster_vars(design, stage_idx)
+  )
+  completed <- if (is_null(selected)) {
+    character(0)
+  } else {
+    unlist(lapply(
+      design$stages[get_stages_executed(selected)],
+      function(s) s$clusters$vars
+    ))
+  }
+  parent_vars <- intersect(parent_vars, intersect(completed, names(selected)))
+  reachable <- function(value) TRUE
+  if (length(parent_vars) > 0L) {
+    selected_keys <- make_group_key(
+      vctrs::vec_unique(as.data.frame(selected)[parent_vars]), parent_vars
+    )
+    reachable <- function(value) {
+      make_group_key(value[parent_vars], parent_vars) %in% selected_keys
+    }
+  }
+
+  for (arg in c("n", "frac")) {
+    value <- spec$draw_spec[[arg]]
+    if (is.data.frame(value)) {
+      if (!all(strata_vars %in% names(value))) next
+      keys <- make_group_key(value, strata_vars)
+      extra <- !keys %in% present_keys & reachable(value)
+      labels <- format_key_labels(
+        value[extra, strata_vars, drop = FALSE], strata_vars
+      )
+    } else if (!is_null(names(value)) && length(strata_vars) == 1L) {
+      named <- stats::setNames(data.frame(names(value)), strata_vars)
+      extra <- !names(value) %in% present_keys & reachable(named)
+      labels <- names(value)[extra]
+    } else {
+      next
+    }
+    if (any(extra)) {
+      abort_samplyr(
+        c(
+          "{.arg {arg}} names {sum(extra)} {?stratum/strata} that
+           {stage_token(design, stage_idx)} does not have.",
+          "x" = "No unit the stage can reach is in {format_pool_sample(labels)}.",
+          "i" = "Check the labels against {.field {strata_vars}} in the
+                 frame, or drop the entr{?y/ies}."
+        ),
+        class = "samplyr_error_alloc_unknown_strata",
+        call = call
+      )
+    }
+  }
+  invisible(NULL)
 }
 
 #' Report structural drift between a frame and a recorded digest
@@ -888,18 +1075,34 @@ check_digest_drift <- function(digest, design, frame, fingerprint) {
   invisible(NULL)
 }
 
+#' @param parts When TRUE, return the components instead of the messages:
+#'   `exact`, `missing_roles`, `roles_match`, `rows_match`, `pool_diffs` and
+#'   `chance` (NULL for a check that did not run). `joint_expectation()`
+#'   reads them to tell a reordered frame from a changed one.
 #' @return Character vector of drift descriptions. It is empty when there is
 #'   no drift.
 #' @noRd
-digest_frame_drift <- function(digest, design, frame) {
+digest_frame_drift <- function(digest, design, frame, parts = FALSE) {
   rec <- digest$frames[[1]]
+  as_parts <- function(exact = FALSE, missing_roles = character(0),
+                       roles_match = FALSE, pool_diffs = NULL,
+                       chance = NULL) {
+    list(
+      exact = exact,
+      missing_roles = missing_roles,
+      roles_match = roles_match,
+      rows_match = is_null(rec$n_rows) || rec$n_rows == nrow(frame),
+      pool_diffs = pool_diffs,
+      chance = chance
+    )
+  }
 
   # Exact content match rules out drift.
   if (
     !is_null(rec$fingerprint_exact) &&
       identical(rec$fingerprint_exact, frame_content_hash(frame))
   ) {
-    return(character(0))
+    return(if (parts) as_parts(exact = TRUE, roles_match = TRUE) else character(0))
   }
 
   diffs <- character(0)
@@ -943,10 +1146,10 @@ digest_frame_drift <- function(digest, design, frame) {
 
   # Identical role content and size preserve pool structure.
   if (roles_match && rec$n_rows == nrow(frame)) {
-    return(diffs)
+    return(if (parts) as_parts(roles_match = TRUE) else diffs)
   }
   if (length(missing_roles) > 0) {
-    return(diffs)
+    return(if (parts) as_parts(missing_roles = missing_roles) else diffs)
   }
 
   pool_diffs <- character(0)
@@ -1049,6 +1252,13 @@ digest_frame_drift <- function(digest, design, frame) {
 
   # Compare resolved chances and role-scoped fingerprints.
   chance <- digest_chance_drift(digest, design, frame)
+  if (parts) {
+    return(as_parts(
+      roles_match = roles_match,
+      pool_diffs = pool_diffs,
+      chance = chance
+    ))
+  }
   all_diffs <- c(diffs, pool_diffs, chance$diffs)
   if (
     length(all_diffs) > 0 && length(chance$diffs) == 0 &&
@@ -1230,9 +1440,9 @@ check_frame_fingerprint <- function(design, frames, fingerprint) {
            checks."
   )
   if (identical(fingerprint, "warn")) {
-    cli_warn(msg)
+    cli_warn(msg, class = "samplyr_warning_frame_fingerprint")
   } else {
-    cli::cli_inform(msg)
+    cli::cli_inform(msg, class = "samplyr_message_frame_fingerprint")
   }
   invisible(NULL)
 }
@@ -1375,4 +1585,34 @@ fingerprint_differences <- function(fp, frame) {
     diffs <- "same structure but different content (hash mismatch)"
   }
   diffs
+}
+
+#' Say how much of a continuation's register lies under unselected parents
+#'
+#' A listing often covers more than the units the sample selected, and
+#' `execute()` sets the rest aside without a word, which is right for
+#' execution. Asked to judge the register, `validate_frame()` says so once,
+#' since rows the user expected to be sampled from may be among them.
+#' @noRd
+inform_unselected_rows <- function(schedule, effective, partial_sample) {
+  if (is_null(partial_sample) || length(schedule$entries) == 0L) {
+    return(invisible(NULL))
+  }
+  supplied <- nrow(schedule$entries[[1]]$frame)
+  kept <- nrow(effective[[1]])
+  set_aside <- supplied - kept
+  if (set_aside <= 0L) {
+    return(invisible(NULL))
+  }
+  cli::cli_inform(
+    c(
+      "i" = "{set_aside} of {supplied} row{?s} of the register for
+             {stage_token(get_design(partial_sample), schedule$entries[[1]]$stage)}
+             belong to units the sample did not select.",
+      " " = "{.fn execute} sets them aside and samples from the other
+             {kept}."
+    ),
+    class = "samplyr_message_frame_unselected_rows"
+  )
+  invisible(NULL)
 }

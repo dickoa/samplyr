@@ -79,9 +79,7 @@ check_json_duplicate_keys <- function(x, path = "$", call = caller_env(),
   }
   for (i in seq_along(x)) {
     key <- if (is_null(nms)) "" else nms[i]
-    # Digest tables have their own validator. Restrict the exemption to
-    # document execution receipts, including nested component/source designs.
-    # Duplicate frame_digest fields in the receipt itself still fail above.
+    # Receipt digests have their own validator.
     if (context == "execution" && key == "frame_digest") next
     child_context <- "other"
     if (context == "document") {

@@ -1,10 +1,8 @@
 ## Joint expectations of the activation
 
-## The exact reference. Given the frozen quotas, a block's panels are an
-## arrangement of its label multiset, so the joint law of the labels at two
-## positions is obtained by enumerating every ordered pair of distinct
-## positions. This assumes nothing the implementation assumes: it counts
-## arrangements rather than applying the closed form under test.
+# The exact reference. Given the frozen quotas, a block's panels arrange its
+# label multiset, so the joint law at two positions comes from enumerating all
+# ordered pairs of distinct positions rather than the closed form under test.
 
 enumerate_block <- function(labels, first, second) {
   m <- length(labels)
@@ -95,8 +93,7 @@ test_that("the within-wave case is the same expression at t equals s", {
   master <- joint_master()
   result <- joint_expectation(master, waves = c(3L, 3L))
 
-  # Both takes are the same take, and the pairwise expectation collapses to
-  # a(a-1)/{m(m-1)}.
+  # Both takes coincide, so the pairwise expectation is a(a-1)/{m(m-1)}.
   expect_identical(result$take_1, result$take_2)
   expect_identical(result$take_1, result$take_both)
   expect_equal(result$joint_same, result$take_1 / result$units)
@@ -107,9 +104,7 @@ test_that("the within-wave case is the same expression at t equals s", {
 })
 
 test_that("unequal realized quotas are read, not assumed flat", {
-  # A pool that is not a multiple of the block size gives one block an extra
-  # unit, and its quotas are then unequal. This is the ordinary case, not an
-  # edge case, so the fixture asserts the fixture.
+  # A pool not a multiple of the block size gives one block an extra unit.
   master <- joint_master(seed = 7, n = 82)
   record <- attr(master, "metadata")$panel_assignment
   quotas <- do.call(rbind, lapply(record$pools, function(p) p$quotas))
@@ -119,7 +114,6 @@ test_that("unequal realized quotas are read, not assumed flat", {
   result <- joint_expectation(master, waves = c(1L, 2L))
   expect_true(any(result$units != min(result$units)))
 
-  # And those blocks still match enumeration.
   for (i in which(result$units > 4L)) {
     pool <- record$pools[[result$pool[i]]]
     schedule <- record$schedule
@@ -135,9 +129,7 @@ test_that("unequal realized quotas are read, not assumed flat", {
 ## Published rotation patterns
 
 test_that("published overlap figures are reproduced", {
-  # Take-weighted overlap between two waves. With quotas exactly equal, which
-  # is what a pool that is a multiple of the block size gives, this is the
-  # published proportion of units in common.
+  # With equal quotas, the take-weighted overlap is the published proportion.
   overlap <- function(master, t, s) {
     result <- joint_expectation(master, waves = c(t, s))
     sum(result$take_both) / sum(result$take_1)
@@ -145,20 +137,14 @@ test_that("published overlap figures are reproduced", {
 
   frame <- joint_frame(800)
 
-  # A cyclic in-for-D-out-of-C rotation as a schedule. One spell per cycle,
-  # so nothing is affected by a panel returning.
+  # A cyclic in-for-D-out-of-C rotation, with one spell per cycle.
   cyclic <- function(cycle, live) {
     grid <- expand.grid(panel = seq_len(cycle), wave = seq_len(2 * cycle))
     grid$active <- ((grid$wave - grid$panel) %% cycle) < live
     grid
   }
 
-  # The US CPS 4-8-4: in 4 months, out 8, in 4 more, then out of the survey
-  # for good. The two spells have to be staggered rather than cycled: a panel
-  # that returns to its first spell keeps 7 of 8 groups from month to month,
-  # not 6, and the published figure is 6. Panels are therefore declared with
-  # a finite life, and the waves compared are interior ones where all eight
-  # live groups exist.
+  # CPS 4-8-4 panels have a finite life, as cycling would keep 7 of 8 groups.
   cps <- expand.grid(panel = 1:40, wave = 1:55)
   offset <- cps$wave - cps$panel
   cps$active <- offset %in% c(0:3, 12:15)
@@ -169,8 +155,7 @@ test_that("published overlap figures are reproduced", {
   expect_equal(overlap(cps_master, 20L, 21L), 0.75)
   expect_equal(overlap(cps_master, 20L, 32L), 0.50)
 
-  # ONS in-for-15 and in-for-27, quarterly labels aside: consecutive overlap
-  # is (D-1)/D and annual overlap (D-12)/D.
+  # ONS in-for-15 and in-for-27: consecutive (D-1)/D, annual (D-12)/D.
   ons15 <- sampling_design() |>
     draw(n = 60) |>
     execute(frame, seed = 4, panels = cyclic(30L, 15L))
@@ -187,14 +172,11 @@ test_that("published overlap figures are reproduced", {
 ## Blocks the formula has to degrade on
 
 test_that("a block of one unit has no distinct pair", {
-  # Sub-minimum pools exist: a stratum of a single unit is one block of one.
   frame <- data.frame(
     id = 1:41,
     stratum = c(rep("big", 40), "alone")
   )
-  # A stratum of one unit cannot rotate over four panels, so the schedule
-  # has to say what happens to it. Promotion keeps the pool in the table,
-  # which is what this test is about.
+  # Promotion keeps the one-unit pool in the table.
   expect_warning(
     master <- sampling_design() |>
       stratify_by(stratum) |>
@@ -226,9 +208,7 @@ test_that("a permanent pool is certain at every wave and every pair", {
   permanent <- result[result$class == "certainty", ]
   expect_gt(nrow(permanent), 0L)
 
-  # Every take is the whole block, so both marginals, the same-unit joint and
-  # the pairwise expectation are one. The last needs no special case: it is
-  # (m^2 - m) / {m (m - 1)}.
+  # Every take is the whole block, so the pairwise term is (m^2 - m) / {m(m-1)}.
   expect_identical(permanent$take_1, permanent$units)
   expect_identical(permanent$take_both, permanent$units)
   expect_equal(permanent$prob_1, rep(1, nrow(permanent)))
@@ -244,11 +224,7 @@ test_that("a permanent pool is certain at every wave and every pair", {
 })
 
 test_that("no column pre-judges what is estimable", {
-  # Whether a pair of waves supports a covariance estimator is T1.2b's
-  # ruling, so the table states moments and structure only. A take below two
-  # is visible in the takes themselves, without a column naming it a defect:
-  # a one-unit certainty block would be labelled non-estimable by such a
-  # column while having exactly zero activation variance.
+  # The table states moments and structure only, never estimability.
   master <- joint_master()
   result <- joint_expectation(master, waves = c(1L, 2L))
 
@@ -265,8 +241,6 @@ test_that("no column pre-judges what is estimable", {
 })
 
 test_that("an assignment record from another algorithm is refused", {
-  # The algorithm and version were frozen so that a later assignment cannot
-  # inherit this probability law by writing the same field names.
   master <- joint_master()
   metadata <- attr(master, "metadata")
   metadata$panel_assignment$algorithm <- "some_future_algorithm"
@@ -294,10 +268,7 @@ test_that("an assignment record from another algorithm is refused", {
 })
 
 test_that("only a version this build reads is accepted", {
-  # Support is a set, not a ceiling. A record numbered below any schema that
-  # existed describes no known law, so it is as unreadable as one from the
-  # future, and a version that is not a single whole number states nothing at
-  # all.
+  # Support is a set, not a ceiling.
   master <- joint_master()
   with_version <- function(value) {
     metadata <- attr(master, "metadata")
@@ -323,8 +294,7 @@ test_that("only a version this build reads is accepted", {
     "tbl_df"
   )
 
-  # A record from the future says so specifically; anything else reports
-  # provenance it cannot read.
+  # Only a record from the future is reported as newer.
   expect_match(
     conditionMessage(tryCatch(
       joint_expectation(with_version(99L), waves = c(1L, 2L)),
@@ -424,8 +394,7 @@ test_that("the stage modes are untouched by the new argument", {
     region = rep(c("North", "South"), each = 200)
   )
 
-  # Poisson joint inclusion probabilities are exactly the outer product of
-  # the marginals, so this asserts values rather than shape.
+  # Poisson joint inclusion probabilities are the outer product of marginals.
   sample <- sampling_design() |>
     draw(n = 40, method = "pps_poisson", mos = mos) |>
     execute(frame, seed = 8)
@@ -439,7 +408,6 @@ test_that("the stage modes are untouched by the new argument", {
   diag(expected) <- pi
   expect_equal(result$stage_1, expected)
 
-  # And a scheduled master answers the stage question the same way.
   scheduled <- sampling_design() |>
     draw(n = 40, method = "pps_poisson", mos = mos) |>
     execute(frame, seed = 8, panels = joint_rotation())

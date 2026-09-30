@@ -131,8 +131,7 @@ wave_source_digest <- function(source) {
 #' value the way it can for the other six.
 #'
 #' @param selects,stored_with The two phrases the master route and the program
-#'   route differ on. Everything else about the refusal is the same, and it
-#'   used to be written twice, with the program copy missing the last bullet.
+#'   route differ on. Everything else about the refusal is the same.
 #' @noRd
 check_wave_extra_arguments <- function(
   frames,

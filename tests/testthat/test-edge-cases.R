@@ -4,7 +4,7 @@ test_that("execute restores RNG state correctly", {
 
   set.seed(123)
   runif(1)
-  val_control <- runif(1) # The next value in the stream
+  val_control <- runif(1)
 
   set.seed(123)
   runif(1)
@@ -19,15 +19,12 @@ test_that("execute restores RNG state correctly", {
     info = "RNG state was not restored to original stream after execute()"
   )
 
-  # Clear the seed completely
   if (exists(".Random.seed", envir = globalenv())) {
     rm(".Random.seed", envir = globalenv())
   }
 
-  # Run execute
   invisible(execute(design, frame, seed = 555))
 
-  # Check if seed was removed
   expect_false(
     exists(".Random.seed", envir = globalenv()),
     info = "execute() left a seed behind when none existed before"
@@ -38,7 +35,7 @@ test_that("execute() does not pollute global RNG state", {
   frame <- data.frame(id = 1:100)
 
   set.seed(123)
-  rnorm(5) # Advance state
+  rnorm(5)
 
   state_before <- .Random.seed
 
@@ -55,7 +52,6 @@ test_that("execute() without seed does not affect reproducibility", {
   frame <- data.frame(id = 1:100)
   design <- sampling_design() |> draw(n = 10)
 
-  # Two executions without seed should give different results
   result1 <- execute(design, frame)
   result2 <- execute(design, frame)
 
@@ -85,10 +81,9 @@ test_that("execute() with different seeds gives different results", {
 test_that("stratified sampling handles single-unit strata", {
   frame <- data.frame(
     id = 1:10,
-    region = c("A", rep("B", 9)) # Region A has only 1 unit
+    region = c("A", rep("B", 9))
   )
 
-  # With n=1 per stratum
   result <- sampling_design() |>
     stratify_by(region) |>
     draw(n = 1) |>
@@ -110,13 +105,11 @@ test_that("proportional allocation respects min_n for tiny strata", {
     region = c("A", rep("B", 100))
   )
 
-  # With min_n=1, stratum A should get at least 1
   result <- sampling_design() |>
     stratify_by(region, alloc = "proportional") |>
     draw(n = 10, min_n = 1) |>
     execute(frame, seed = 42)
 
-  # min_n=1 should guarantee at least 1 from each stratum
   expect_true(sum(result$region == "A") >= 1)
 })
 
@@ -129,10 +122,9 @@ test_that("neyman allocation with zero-variance stratum and min_n", {
 
   variance_df <- data.frame(
     region = c("A", "B"),
-    var = c(0, 100) # A has zero variance (single unit)
+    var = c(0, 100)
   )
 
-  # With min_n=1 to ensure A gets at least 1
   result <- sampling_design() |>
     stratify_by(region, alloc = "neyman", variance = variance_df) |>
     draw(n = 10, min_n = 1) |>
@@ -158,7 +150,6 @@ test_that("sample size capped at stratum population with warning", {
     class = "samplyr_warning_census"
   )
 
-  # A should have 5 (all available), B should have 10
   expect_equal(sum(result$region == "A"), 5)
   expect_equal(sum(result$region == "B"), 10)
 })
@@ -195,7 +186,7 @@ test_that("stratified capping warning reports correct totals", {
     region = c(rep("A", 5), rep("B", 10), rep("C", 15))
   )
 
-  # Request 10 per stratum: A capped at 5, B=10, C=10 => actual 25 vs requested 30
+  # A is capped at 5, so 25 of the requested 30.
   expect_warning(
     result <- sampling_design() |>
       stratify_by(region) |>
@@ -210,7 +201,6 @@ test_that("stratified capping warning reports correct totals", {
 test_that("no capping warning for WR methods even when n > N", {
   frame <- data.frame(id = 1:10)
 
-  # srswr with n > N is normal (with replacement)
   expect_no_warning(
     result <- sampling_design() |>
       draw(n = 20, method = "srswr") |>
@@ -223,7 +213,7 @@ test_that("no capping warning for WR methods even when n > N", {
 test_that("very small frac gives at least 1 unit", {
   frame <- data.frame(id = 1:100)
 
-  # frac = 0.001 on N=100 -> expected 0.1 -> rounds to at least 1
+  # 0.001 * 100 = 0.1 still rounds to at least 1.
   result <- sampling_design() |>
     draw(frac = 0.001) |>
     execute(frame, seed = 42)
@@ -234,7 +224,7 @@ test_that("very small frac gives at least 1 unit", {
 test_that("frac rounding with round='up'", {
   frame <- data.frame(id = 1:100)
 
-  # frac = 0.025 on N=100 -> 2.5 -> ceiling = 3
+  # 0.025 * 100 = 2.5, ceiling 3.
   result <- sampling_design() |>
     draw(frac = 0.025, round = "up") |>
     execute(frame, seed = 42)
@@ -245,7 +235,7 @@ test_that("frac rounding with round='up'", {
 test_that("frac rounding with round='down'", {
   frame <- data.frame(id = 1:100)
 
-  # frac = 0.025 on N=100 -> 2.5 -> floor = 2
+  # 0.025 * 100 = 2.5, floor 2.
   result <- sampling_design() |>
     draw(frac = 0.025, round = "down") |>
     execute(frame, seed = 42)
@@ -259,14 +249,14 @@ test_that("stratified frac with tiny strata", {
     region = c(rep("Tiny", 5), rep("Large", 105))
   )
 
-  # frac = 0.1: Tiny gets 0.5, Large gets 10.5
+  # Tiny gets 0.5 and Large 10.5 before rounding up.
   result <- sampling_design() |>
     stratify_by(region) |>
     draw(frac = 0.1, round = "up") |>
     execute(frame, seed = 42)
 
-  expect_equal(sum(result$region == "Tiny"), 1) # ceiling(0.5)
-  expect_equal(sum(result$region == "Large"), 11) # ceiling(10.5)
+  expect_equal(sum(result$region == "Tiny"), 1)
+  expect_equal(sum(result$region == "Large"), 11)
 })
 
 test_that("cluster sampling with varying cluster sizes", {
@@ -413,8 +403,7 @@ test_that("min_n capped at stratum population", {
     region = c(rep("A", 3), rep("B", 22))
   )
 
-  # A is capped at its population of 3 and the surplus goes to B, which
-  # reports itself; the message has its own tests in test-bounds.R.
+  # The capping message has its own tests in test-bounds.R.
   result <- suppressMessages(
     sampling_design() |>
       stratify_by(region, alloc = "equal") |>
@@ -573,9 +562,12 @@ test_that("grouped data frame input works", {
 
   design <- sampling_design() |> draw(n = 10)
 
+  # The one-time message is tested in test-frame-classes.R.
+  withr::local_options(rlib_message_verbosity = "quiet")
   result <- execute(design, grouped_frame, seed = 42)
 
   expect_equal(nrow(result), 10)
+  expect_false(dplyr::is_grouped_df(result))
 })
 
 test_that("frame with .weight column is rejected before sampling", {
@@ -745,11 +737,10 @@ test_that("within-cluster sampling respects stratification", {
     draw(n = 1) |>
     execute(frame, seed = 123)
 
-  # 2 clusters x 2 strata x 1 unit = 4 rows
+  # 2 clusters x 2 strata x 1 unit.
   expect_equal(nrow(result), 4)
   expect_equal(length(unique(result$cluster)), 2)
 
-  # Each selected cluster should have 1 from X and 1 from Y
   for (cl in unique(result$cluster)) {
     cl_data <- result[result$cluster == cl, ]
     expect_equal(sort(cl_data$stratum), c("X", "Y"))
@@ -772,10 +763,9 @@ test_that("within-cluster stratified proportional allocation works", {
     draw(n = 6) |>
     execute(frame, seed = 42)
 
-  # 2 clusters x 6 units each = 12
   expect_equal(nrow(result), 12)
 
-  # Within each cluster, proportional: X gets ~2, Y gets ~4
+  # Proportional within each cluster gives X ~2 and Y ~4.
   for (cl in unique(result$cluster)) {
     cl_data <- result[result$cluster == cl, ]
     expect_equal(nrow(cl_data), 6)
@@ -785,8 +775,7 @@ test_that("within-cluster stratified proportional allocation works", {
 })
 
 test_that("within-cluster sampling handles dots in cluster variable values", {
-  # Two composite cluster keys that would collide with interaction(sep=".")
-  # ("A.B", "C") and ("A", "B.C") both produce "A.B.C" with paste(sep=".")
+  # ("A.B", "C") and ("A", "B.C") both paste to "A.B.C" with sep = ".".
   frame <- data.frame(
     region = c("A.B", "A.B", "A", "A"),
     district = c("C", "C", "B.C", "B.C"),
@@ -802,7 +791,6 @@ test_that("within-cluster sampling handles dots in cluster variable values", {
     draw(n = 1) |>
     execute(frame, seed = 42)
 
-  # Should have 2 clusters with 1 unit each, not a mangled single group
   expect_equal(nrow(result), 2)
   n_clusters <- result |>
     dplyr::distinct(region, district) |>
@@ -811,12 +799,10 @@ test_that("within-cluster sampling handles dots in cluster variable values", {
 })
 
 test_that("draw() accepts n from floating-point arithmetic that is near-integer", {
-  # 0.1 + 0.2 = 0.30000000000000004 in floating-point
-  # 100 * (0.1 + 0.2) = 30.000000000000004
+  # 100 * (0.1 + 0.2) is 30.000000000000004.
   n_val <- 100 * (0.1 + 0.2)
-  expect_false(n_val == round(n_val)) # confirms FP issue exists
+  expect_false(n_val == round(n_val))
 
-  # Should NOT error: the value is "integer enough"
   design <- sampling_design() |>
     draw(n = n_val)
 
@@ -836,7 +822,6 @@ test_that("draw() accepts min_n/max_n from floating-point arithmetic", {
     region = rep(c("A", "B"), 50)
   )
 
-  # Near-integer from FP arithmetic
   min_val <- 2 + 1e-15
   max_val <- 40 - 1e-15
 
@@ -854,7 +839,6 @@ test_that("custom n data frame errors when strata missing from allocation", {
     region = rep(c("A", "B", "C", "D"), each = 25)
   )
 
-  # Only covers A and B, missing C and D
   sizes_df <- data.frame(
     region = c("A", "B"),
     n = c(10, 10)
@@ -941,7 +925,7 @@ test_that("execute() errors on MOS with negative values", {
 })
 
 test_that("pps_poisson certainty counts toward the fraction's total target", {
-  # Frame where one unit dominates, so certainty selection triggers
+  # One unit dominates, so certainty selection triggers.
   frame <- data.frame(
     id = 1:10,
     size = c(500, rep(10, 9))
@@ -956,7 +940,6 @@ test_that("pps_poisson certainty counts toward the fraction's total target", {
     ) |>
     execute(frame, seed = 42)
 
-  # The certainty unit should have weight=1 (pik=1)
   cert_rows <- result[result$.certainty_1 == TRUE, ]
   expect_equal(unique(cert_rows$.weight_1), 1)
 
@@ -978,13 +961,10 @@ test_that("WR weights produce correct Hansen-Hurwitz total estimator", {
     draw(n = n, method = "pps_multinomial", mos = size) |>
     execute(frame, seed = 42)
 
-  # With replicated rows, sum(weight * y) should equal the HH total estimator:
-  # Y_hat_HH = (1/n) * sum_draws(y_j / p_j) = sum(weight * y)
-  # where weight = 1/pik = total_size / (n * size_i) per draw
+  # sum(weight * y) is the Hansen-Hurwitz total with one row per draw.
   expect_equal(nrow(result), n)
   hh_total <- sum(result$.weight * result$y)
 
-  # Compute manually: (1/n) * sum_draws(y_j * total_size / size_j)
   total_size <- sum(frame$size)
   manual_total <- (1 / n) * sum(result$y * total_size / result$size)
   expect_equal(hh_total, manual_total, tolerance = 1e-10)
@@ -992,27 +972,23 @@ test_that("WR weights produce correct Hansen-Hurwitz total estimator", {
 
 test_that("srswr weights produce correct HH estimation with replicated rows", {
   frame <- data.frame(id = 1:20, y = rnorm(20))
-  n <- 30 # large n relative to N ensures some duplicates
+  n <- 30
 
   result <- sampling_design() |>
     draw(n = n, method = "srswr") |>
     execute(frame, seed = 42)
 
-  # With replicated rows, nrow = n (one row per draw)
   expect_equal(nrow(result), n)
 
-  # sum(weight * y) should produce the HH total
-  # weight = N/n per draw
   hh_total <- sum(result$.weight * result$y)
 
-  # Manual: (1/n) * sum_draws(y_j * N) = (N/n) * sum(y_draws)
   N <- nrow(frame)
   manual_total <- (N / n) * sum(result$y)
   expect_equal(hh_total, manual_total, tolerance = 1e-10)
 })
 
 test_that("joint_expectation errors when frame rows are not uniquely identified", {
-  # Frame with duplicate rows on non-dot columns (no cluster vars)
+  # Duplicate rows on non-dot columns, and no cluster vars.
   frame <- data.frame(
     id = c(1, 1, 2, 3, 4, 5, 6, 7, 8, 9),
     size = c(10, 10, 20, 30, 40, 50, 60, 70, 80, 90)
@@ -1029,9 +1005,7 @@ test_that("joint_expectation errors when frame rows are not uniquely identified"
 })
 
 test_that("a stage with no design-driven key is refused, not guessed", {
-  # Two-stage design with no strata or clusters at either stage. This used to
-  # fall back to guessing a key from shared columns; it is now refused before
-  # sampling, so no join is ever reached with an unresolved key.
+  # Neither stage has strata or clusters, so no key is guessed.
   frame <- data.frame(id = 1:50, value = rnorm(50))
 
   design <- sampling_design() |>
@@ -1052,7 +1026,7 @@ test_that("summary() handles single-row sample without NA", {
     execute(frame, seed = 1)
 
   output <- capture.output(summary(sample))
-  # CV should be 0, not NA
+  # CV is 0, not NA.
   cv_line <- output[grepl("CV", output)]
   expect_false(grepl("NA", cv_line))
 })
@@ -1102,7 +1076,6 @@ test_that(".certainty is tracked per-stage as .certainty_k", {
     execute(frame, seed = 1)
 
   expect_true(".certainty_1" %in% names(result))
-  # Raw .certainty should not be present
   expect_false(".certainty" %in% names(result))
 })
 
@@ -1151,7 +1124,6 @@ test_that("stratified bernoulli with data frame frac works", {
 
   expect_s3_class(sample, "tbl_sample")
   expect_true(nrow(sample) > 0)
-  # Each stratum should be represented
   expect_equal(
     sort(unique(as.character(sample$region))),
     sort(levels(bfa_eas$region))
@@ -1174,7 +1146,6 @@ test_that("stratified pps_poisson with data frame frac works", {
 })
 
 test_that("stratified bernoulli with named vector frac works", {
-  # Named vector frac should be resolved per stratum
   levels_ft <- levels(bfa_eas$region)
   frac_vec <- setNames(rep(0.05, length(levels_ft)), levels_ft)
 
@@ -1210,7 +1181,6 @@ test_that("PPS warns when some MOS values are zero", {
     "zero value"
   )
 
-  # Unit with MOS=0 should not be in the sample
   expect_false(1 %in% result$id)
   expect_equal(nrow(result), 3L)
 })
@@ -1233,7 +1203,7 @@ test_that("PPS errors when all MOS are zero within a stratum", {
   frame <- data.frame(
     id = 1:20,
     group = rep(c("A", "B"), each = 10),
-    size = c(rep(0L, 10), 1:10) # group A has all zeros
+    size = c(rep(0L, 10), 1:10)
   )
 
   suppressWarnings(expect_error(
@@ -1246,7 +1216,7 @@ test_that("PPS errors when all MOS are zero within a stratum", {
 })
 
 test_that("PPS with zero MOS after certainty removal errors", {
-  # All non-certainty units have zero MOS
+  # Every non-certainty unit has zero MOS.
   frame <- data.frame(
     id = 1:5,
     size = c(1000, 0, 0, 0, 0)
@@ -1267,16 +1237,12 @@ test_that("srswr produces n replicated rows with correct .draw_1", {
     draw(n = 15, method = "srswr") |>
     execute(frame, seed = 42)
 
-  # One row per draw
-
   expect_equal(nrow(result), 15L)
   expect_true(".draw_1" %in% names(result))
   expect_equal(result$.draw_1, 1:15)
 
-  # Some ids should repeat (n > N)
   expect_true(length(unique(result$id)) < 15)
 
-  # Weight = N/n for all rows (equal-probability WR)
   expect_true(all(abs(result$.weight - 10 / 15) < 1e-10))
 })
 
@@ -1316,7 +1282,6 @@ test_that("pps_chromy row replication preserves HH point estimate", {
   expect_equal(nrow(result), n)
   expect_equal(result$.draw_1, 1:n)
 
-  # HH total check
   total_size <- sum(frame$size)
   hh_total <- sum(result$.weight * result$y)
   manual_total <- (1 / n) * sum(result$y * total_size / result$size)
@@ -1331,7 +1296,6 @@ test_that("WR weight sum estimates population total N", {
     draw(n = n, method = "srswr") |>
     execute(frame, seed = 42)
 
-  # Sum of weights should equal N (= 20)
   expect_equal(sum(result$.weight), 20, tolerance = 1e-10)
 })
 
@@ -1347,17 +1311,14 @@ test_that("stratified srswr produces replicated rows per stratum", {
     draw(n = 15, method = "srswr") |>
     execute(frame, seed = 42)
 
-  # 15 per stratum = 30 total rows
   expect_equal(nrow(result), 30L)
   expect_equal(sum(result$stratum == "A"), 15L)
   expect_equal(sum(result$stratum == "B"), 15L)
 
-  # Draw IDs should be sequential within each stratum group
   expect_true(".draw_1" %in% names(result))
 })
 
 test_that("WR cluster sampling replicates cluster rows", {
-  # Frame with clusters
   frame <- data.frame(
     cluster = rep(1:5, each = 4),
     id = 1:20,
@@ -1370,11 +1331,9 @@ test_that("WR cluster sampling replicates cluster rows", {
     draw(n = 8, method = "pps_multinomial", mos = size) |>
     execute(frame, seed = 42)
 
-  # n=8 draws, each cluster has 4 elements, so total rows = 8 * 4 = 32
   expect_equal(nrow(result), 8 * 4)
   expect_true(".draw_1" %in% names(result))
 
-  # Each draw should have exactly 4 elements (one full cluster)
   for (d in 1:8) {
     draw_rows <- result[result$.draw_1 == d, ]
     expect_equal(nrow(draw_rows), 4L)
@@ -1429,8 +1388,6 @@ test_that("as_svydesign uses .draw_k as id for WR methods", {
   svy <- as_svydesign(result)
   expect_s3_class(svy, "survey.design")
 
-  # The design should use .draw_1 as id
-  # (survey package stores this internally)
   expect_true(".draw_1" %in% names(svy$cluster))
 })
 
@@ -1469,9 +1426,7 @@ test_that("on_empty = 'error' causes bernoulli to abort on zero selection", {
   skip_on_cran()
   frame <- data.frame(id = 1:5)
 
-  # With frac = 0.001 on N=5, expected count = 0.005; almost always zero
-
-  # Run many seeds until we hit the zero-selection path
+  # Expected count 0.005 on N = 5, so some seed selects nothing.
   got_error <- FALSE
   for (seed in 1:200) {
     result <- tryCatch(
@@ -1496,7 +1451,6 @@ test_that("on_empty = 'silent' returns an empty sample without warning", {
   skip_on_cran()
   frame <- data.frame(id = 1:5)
 
-  # Same approach: find a seed that triggers zero selection
   got_empty <- FALSE
   for (seed in 1:200) {
     warns <- NULL
@@ -1604,7 +1558,6 @@ test_that("Neyman allocation errors when variance doesn't cover all strata", {
     region = rep(c("A", "B", "C"), c(30, 30, 40))
   )
 
-  # Only covers A and B, missing C
   var_df <- data.frame(region = c("A", "B"), var = c(10, 20))
 
   expect_error(
@@ -1840,7 +1793,6 @@ test_that("Neyman allocation works with valid complete variance", {
     execute(frame, seed = 42)
 
   expect_equal(nrow(result), 30)
-  # B has higher variance, should get more units
   expect_true(sum(result$region == "B") > sum(result$region == "A"))
 })
 
@@ -1944,7 +1896,6 @@ test_that("validate_frame() reports which strata variable has NA", {
     stratify_by(region, urban) |>
     draw(n = 2)
 
-  # Only urban has NA
   frame <- data.frame(
     id = 1:10,
     region = rep(c("A", "B"), 5),

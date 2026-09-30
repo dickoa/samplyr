@@ -1,15 +1,8 @@
-## X1. Coverage reported at the analysis boundary, over the union
+## Coverage reported at the analysis boundary, over the union
 
-# Constraint 2.1 is an unbiasedness condition: a target cluster with no link
-# to the source population is never surveyed and totals are understated by its
-# share. `share_weights()` records that and does not warn, because it cannot
-# know whether the object will stand alone or become one component of a design
-# over several frames, where a cluster one frame cannot reach is the reason
-# the second frame exists. So the warning fires where the estimate is formed.
-#
-# The target population is twelve households of two people each. Each fixture
-# frame links a stated subset of them, so what each frame can and cannot reach
-# is written down rather than derived.
+# `share_weights()` records target clusters no link reaches but does not warn,
+# since another frame may reach them. The warning fires where the estimate is
+# formed. The targets are twelve households of two people each.
 
 coverage_targets <- function() {
   data.frame(
@@ -111,9 +104,7 @@ test_that("a frame reaching every cluster does not warn", {
 
 test_that("a reached-scope transformation states nothing and does not warn", {
   skip_if_not_installed("survey")
-  # Its register is a roster of the clusters the sample got to, so the absence
-  # of an observed orphan is not evidence that none exists. `summary()` says
-  # so; the export does not invent a finding.
+  # A roster of reached clusters cannot show that no orphan exists.
   shared <- coverage_component(1:9, seed = 11, scope = "reached")
 
   expect_no_warning(
@@ -153,9 +144,7 @@ coverage_stack <- function(a, b) {
 
 test_that("frames that cover each other's gaps produce no finding", {
   skip_if_not_installed("survey")
-  # a cannot reach h10-h12, b cannot reach h01-h03, and between them they
-  # reach everything. This is the case a per-component warning gets wrong by
-  # construction, which is the reason the condition fires here instead.
+  # a misses h10-h12 and b misses h01-h03, but together they reach all.
   frames <- coverage_stack(
     coverage_component(1:9, seed = 11),
     coverage_component(4:12, seed = 12)
@@ -207,8 +196,6 @@ test_that("the finding fires once, not once per component", {
 
 test_that("a component's own warning is muffled inside a collection", {
   skip_if_not_installed("survey")
-  # Standing alone this component warns; inside the stack the collection
-  # speaks for it, and its own finding would be the wrong one.
   component <- coverage_component(1:9, seed = 11)
   expect_warning(
     as_svrepdesign(component, type = "bootstrap", replicates = 10),
@@ -241,8 +228,6 @@ test_that("one component that cannot answer leaves the union unknown", {
 
 test_that("components describing different populations are incompatible", {
   skip_if_not_installed("survey")
-  # b's register holds a different set of clusters, so its silence about h11
-  # is not evidence that h11 is covered.
   other <- coverage_targets()
   other$hh <- paste0(other$hh, "x")
 
@@ -259,9 +244,7 @@ test_that("components describing different populations are incompatible", {
 
 test_that("a record written without the digest leaves the union unknown", {
   skip_if_not_installed("survey")
-  # The field carries the "not asked" meaning `orphan_clusters` already does,
-  # so a transformation recorded before it existed reports unknown rather
-  # than having its silence read as coverage.
+  # A missing digest reads as "not asked", never as coverage.
   a <- coverage_component(1:9, seed = 11)
   b <- coverage_component(4:12, seed = 12)
   metadata <- attr(b, "metadata")
@@ -279,8 +262,7 @@ test_that("a record written without the digest leaves the union unknown", {
 
 test_that("a frame sampling the target directly cannot answer for it", {
   skip_if_not_installed("survey")
-  # An orphan is a cluster and a register is a list of units, with no map
-  # between them for a population this component never linked to.
+  # No map joins its units to clusters of a population it never linked to.
   targets <- coverage_targets()
   direct <- sampling_design() |>
     draw(n = 8) |>
@@ -309,6 +291,23 @@ test_that("a collection with no link structure reports nothing to cover", {
 
 ## The digest itself
 
+test_that("the digest does not depend on the session locale", {
+  targets <- coverage_targets()
+  # Mixed case collates one way in C and another in a UTF-8 locale.
+  targets$hh <- rep(
+    c("a", "B", "b", "A", "c", "C", "_d", "D", "e", "E", "f", "F"),
+    each = 2
+  )
+  digest <- function() {
+    component <- coverage_component(1:9, seed = 11, targets = targets)
+    attr(component, "metadata")$weight_share$coverage$cluster_digest
+  }
+  # testthat sorts in C, so the other run names the session's own locale.
+  in_c <- withr::with_locale(c(LC_COLLATE = "C"), digest())
+  utf8 <- Sys.getlocale("LC_CTYPE")
+  expect_identical(in_c, withr::with_locale(c(LC_COLLATE = utf8), digest()))
+})
+
 test_that("the digest is the target cluster set, not its size", {
   a <- coverage_component(1:9, seed = 11)
   same <- coverage_component(4:12, seed = 12)
@@ -329,8 +328,7 @@ test_that("the digest is the target cluster set, not its size", {
     )$weight_share$coverage$cluster_digest
   ))
 
-  # And it is not recorded where the register does not claim to be the
-  # population, because there is nothing for it to fingerprint.
+  # Not recorded when the register does not claim to be the population.
   expect_null(
     attr(
       coverage_component(1:9, seed = 11, scope = "reached"),

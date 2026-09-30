@@ -72,9 +72,7 @@ test_that("auxiliary validation errors use standardized classes", {
     class = "samplyr_error_aux_importance_bounds"
   )
 
-  # The key column and the value column are separate refusals, and the
-  # message has to name which one is absent: both inputs are a data frame
-  # with two columns and one wrong name.
+  # The message names which of the key and value columns is absent.
   missing_key <- expect_error(
     sampling_design() |>
       stratify_by(
@@ -97,8 +95,7 @@ test_that("auxiliary validation errors use standardized classes", {
   )
   expect_match(conditionMessage(missing_value), "var", fixed = TRUE)
 
-  # Cost is checked here as well as in the allocator, and both sites carry
-  # this class. This is the reachable one.
+  # Cost is checked here and in the allocator. This site is the reachable one.
   expect_error(
     sampling_design() |>
       stratify_by(
@@ -162,26 +159,18 @@ test_that("execution allocation/coverage errors use standardized classes", {
 
 ## Malformed n, frac, power and auxiliary inputs, on both routes that reach them
 
-# Two routes carry these refusals and they are not the same code. `draw()` and
-# `stratify_by()` validate what the caller typed; `read_design()` restores a
-# design file without re-running either, so the allocator is the only gate on
-# that route. Both are asserted for every class below: each one was raised
-# unclassed on the first route and classed on the second, which made it
-# uncatchable through the API and testable only past `draw()`.
-#
-# The mutation-based assertions above stay as they are. They pin the allocator
-# site itself, so they hold whether or not the read path keeps reaching it.
+# `draw()` and `stratify_by()` validate what the caller typed, and
+# `read_design()` restores a design without re-running either, so the allocator
+# is the only gate on that route. Every class below is asserted on both routes.
 
 corrupt_design_file <- function(design, pattern, replacement, fixed = TRUE,
                                 frame = NULL) {
   path <- tempfile(fileext = ".json")
-  # A sample written without its frame warns that replay cannot be verified,
-  # which is not what these tests are about.
+  # Without its frame, a written sample warns that replay cannot be verified.
   write_design(design, path, frame = frame)
   text <- paste(readLines(path, warn = FALSE), collapse = "\n")
   edited <- sub(pattern, replacement, text, fixed = fixed)
-  # A pattern that stopped matching would leave a valid design behind and
-  # report the absence of an error, which reads as the wrong failure.
+  # A pattern that stopped matching would leave a valid design behind.
   expect_false(identical(edited, text))
   out <- tempfile(fileext = ".json")
   writeLines(edited, out)
@@ -263,8 +252,7 @@ test_that("a stratum table with broken keys is catchable on both routes", {
     class = "samplyr_error_alloc_missing_key_values"
   )
 
-  # The same refusal guards the read path: a key nulled in the file restores
-  # as NA and execute() refuses before any allocation arithmetic.
+  # A key nulled in the file restores as NA and is refused the same way.
   design <- strata() |>
     draw(n = data.frame(region = c("A", "B", "C"), n = c(11, 12, 13)))
   expect_error(
@@ -274,8 +262,7 @@ test_that("a stratum table with broken keys is catchable on both routes", {
     class = "samplyr_error_alloc_missing_key_values"
   )
 
-  # Coverage is only checkable against a frame, so a table that names fewer
-  # strata than the frame holds is refused at execute() on the normal route.
+  # Coverage needs a frame, so a short table is refused at execute().
   expect_error(
     strata() |>
       draw(n = data.frame(region = c("A", "B"), n = c(5, 5))) |>
@@ -309,10 +296,7 @@ test_that("a size of the wrong type or shape is catchable on both routes", {
     class = "samplyr_error_alloc_invalid_input_type"
   )
 
-  # On the read route these reached selection instead of being refused:
-  # `n = true` drew one row, `frac = -0.2` drew one row, and `frac = 2` drew
-  # the whole frame. A scalar size touches neither the stratum-table checks
-  # nor the allocator, so nothing re-applied draw()'s rules.
+  # On this route a scalar size bypasses the table checks and the allocator.
   scalar_n <- sampling_design() |> draw(n = 17)
   for (value in c('"n": "ten"', '"n": true', '"n": [1, 2]')) {
     expect_error(
@@ -342,8 +326,7 @@ test_that("a size of the wrong type or shape is catchable on both routes", {
     class = "samplyr_error_alloc_invalid_input_type"
   )
 
-  # The same rules on the unstratified scalar path that the stratum table
-  # already had, so a restored size is refused rather than drawn from.
+  # The unstratified scalar path applies the stratum table's rules.
   for (value in c('"n": -4', '"n": 2.5')) {
     expect_error(
       execute(read_design(corrupt_design_file(scalar_n, '"n": 17', value)),
@@ -395,9 +378,7 @@ test_that("a stage must state exactly one of `n` and `frac`, on both routes", {
     class = "samplyr_error_alloc_size_conflict"
   )
 
-  # Neither reached selection as "Cannot determine sample size" from three
-  # files down. Both reached it as a sample of 17 rows, because the allocator
-  # reads `n` first and never looks at `frac`.
+  # The allocator reads `n` and ignores `frac`, so both are checked before it.
   scalar_n <- sampling_design() |> draw(n = 17)
   expect_error(
     execute(read_design(corrupt_design_file(scalar_n, '"n": 17', '"n": null')),
@@ -423,10 +404,7 @@ test_that("a stage must state exactly one of `n` and `frac`, on both routes", {
 })
 
 test_that("a design file that cannot be read is refused by class", {
-  # Every refusal on the read path was unclassed, so a caller could not tell
-  # a broken file from any other error. Split by what the reader can do about
-  # it: malformed is a file that is wrong, unsupported is a file this build is
-  # too old to read.
+  # Malformed is a wrong file, unsupported is one this build is too old to read.
   control <- sampling_design() |>
     stratify_by(region) |>
     draw(n = 10, method = "systematic", control = c(id))
@@ -530,8 +508,7 @@ test_that("a malformed `power` is catchable at stratify_by() and after read_desi
       )
   }
 
-  # Two checks at stratify_by() split what the allocator covers in one, so
-  # both the type refusal and the range refusal carry the class.
+  # stratify_by() splits the check, so type and range refusals share the class.
   expect_error(power_design(2), class = "samplyr_error_alloc_power_bounds")
   expect_error(power_design(-1), class = "samplyr_error_alloc_power_bounds")
   expect_error(power_design("x"), class = "samplyr_error_alloc_power_bounds")
@@ -548,6 +525,79 @@ test_that("a malformed `power` is catchable at stratify_by() and after read_desi
     execute(read_design(corrupt_design_file(design, '"power": 0.37', '"power": -1')),
             frame, seed = 1),
     class = "samplyr_error_alloc_power_bounds"
+  )
+})
+
+test_that("an allocation input the allocation does not read is refused", {
+  aux <- c(A = 1, B = 2, C = 9)
+  # Each allocation with every input it ignores, and no allocation at all.
+  unused <- list(
+    list(alloc = "equal", variance = aux),
+    list(alloc = "proportional", variance = aux),
+    list(alloc = "proportional", power = 0.3),
+    list(alloc = "neyman", variance = aux, cost = aux),
+    list(alloc = "neyman", variance = aux, cv = aux),
+    list(alloc = "optimal", variance = aux, cost = aux, importance = aux),
+    list(alloc = "power", cv = aux, importance = aux, variance = aux),
+    list(variance = aux),
+    list(power = 0.5)
+  )
+  expect_length(unused, 9L)
+  for (args in unused) {
+    expect_error(
+      do.call(stratify_by, c(list(sampling_design(), quote(region)), args)),
+      class = "samplyr_error_alloc_unused_aux",
+      label = paste(names(args), collapse = " + ")
+    )
+  }
+
+  # Each allocation with exactly the inputs it reads is accepted.
+  used <- list(
+    list(alloc = "equal"),
+    list(alloc = "proportional"),
+    list(alloc = "proportional", importance = aux),
+    list(alloc = "neyman", variance = aux),
+    list(alloc = "optimal", variance = aux, cost = aux),
+    list(alloc = "power", cv = aux, importance = aux, power = 0.3)
+  )
+  for (args in used) {
+    expect_s3_class(
+      do.call(stratify_by, c(list(sampling_design(), quote(region)), args)),
+      "sampling_design"
+    )
+  }
+})
+
+test_that("a non-positive proportional size restored from a file is refused", {
+  # A design file skips stratify_by(), which refuses the value when typed.
+  design <- sampling_design() |>
+    stratify_by(region, alloc = "proportional",
+                importance = c(A = 10, B = 30, C = 60)) |>
+    draw(n = 12)
+  expect_error(
+    execute(
+      read_design(corrupt_design_file(design, '"importance": 10', '"importance": 0')),
+      taxonomy_frame(),
+      seed = 1
+    ),
+    class = "samplyr_error_aux_importance_bounds"
+  )
+})
+
+test_that("an unused allocation input restored from a file is refused", {
+  frame <- taxonomy_frame()
+  design <- sampling_design() |>
+    stratify_by(region, alloc = "neyman", variance = c(A = 1, B = 2, C = 9)) |>
+    draw(n = 30)
+  expect_error(
+    execute(
+      read_design(corrupt_design_file(
+        design, '"alloc": "neyman"', '"alloc": "proportional"'
+      )),
+      frame,
+      seed = 1
+    ),
+    class = "samplyr_error_alloc_unused_aux"
   )
 })
 
@@ -591,10 +641,6 @@ test_that("an auxiliary input of the wrong type is catchable on both routes", {
 test_that("a design file whose tables lost a column is refused by class", {
   frame <- taxonomy_frame()
 
-  # Before the allocator guarded these, a consistently renamed column reached
-  # the join and came back as a vctrs out-of-bounds column or, for the value
-  # column, as "non-numeric argument to mathematical function" from the
-  # allocation arithmetic well below it.
   n_design <- sampling_design() |>
     stratify_by(region) |>
     draw(n = data.frame(region = c("A", "B", "C"), n = c(11, 12, 13)))
@@ -636,8 +682,7 @@ test_that("a design file whose tables lost a column is refused by class", {
 test_that("duplicate and out-of-range stratum rows survive a design file round trip", {
   frame <- taxonomy_frame()
 
-  # The same two classes the mutation-based test above pins, reached instead
-  # through a file a caller can edit.
+  # The classes the mutation-based test pins, reached through an edited file.
   n_design <- sampling_design() |>
     stratify_by(region) |>
     draw(n = data.frame(region = c("A", "B", "C"), n = c(11, 12, 13)))
@@ -664,13 +709,7 @@ test_that("duplicate and out-of-range stratum rows survive a design file round t
 ## Refusals that need a fixture rather than a malformed argument
 
 test_that("cube landing that cannot meet its bounds is refused by class", {
-  # Three bound() margins over-constrain landing: each compiles to the
-  # tightest integer interval around its expected count, so with enough
-  # margins relative to n the cube has to relax one. A single margin is
-  # satisfiable and does not reach this.
-  #
-  # The frame carries no RNG: group sizes are fixed by rep() and modular
-  # arithmetic, so only execute()'s seed drives the result.
+  # Three bound() margins over-constrain landing at n = 13, one alone would not.
   id <- 1:300
   frame <- data.frame(
     id = id,
@@ -695,8 +734,7 @@ test_that("a receipt with an unusable RNG record is refused by class", {
     draw(n = 5) |>
     execute(frame, seed = 7)
 
-  # Every shape that fails the length-1 test: absent, empty, and two kinds
-  # recorded where one belongs.
+  # Absent, empty, and two kinds: every shape that fails the length-1 test.
   for (kind in c('"kind": null', '"kind": []',
                  '"kind": ["Mersenne-Twister", "Knuth-TAOCP"]')) {
     expect_error(
@@ -714,18 +752,14 @@ test_that("a receipt with an unusable RNG record is refused by class", {
 test_that("a two-phase export with no per-stage probabilities is refused", {
   skip_if_not_installed("survey")
 
-  # One row per village, so the phase-1 identifiers name phase-1 rows
-  # uniquely and clear the bridge. A cluster-then-element phase 1 never
-  # does, which is what shadowed this refusal.
+  # One row per village, so phase-1 identifiers are unique and clear the bridge.
   frame <- data.frame(
     village = paste0("v", 1:60),
     region = rep(c("A", "B", "C"), each = 20),
     stringsAsFactors = FALSE
   )
 
-  # With-replacement stage 1 has an infinite correction, so the phase-1 fpc
-  # states no probability for it and `method = "full"` has nothing to derive
-  # the per-stage probabilities from.
+  # A WR stage 1 leaves the fpc no probability for `method = "full"` to use.
   phase1 <- sampling_design() |>
     cluster_by(region) |>
     draw(n = 2, method = "srswr") |>
@@ -741,8 +775,8 @@ test_that("a two-phase export with no per-stage probabilities is refused", {
   )
 
   # The refusal names the two exports that do work, so they have to.
-  expect_no_error(as_svydesign(s2, method = "simple"))
-  expect_no_error(as_svydesign(s2, method = "approx"))
+  expect_no_error(quiet_across(as_svydesign(s2, method = "simple")))
+  expect_no_error(quiet_across(as_svydesign(s2, method = "approx")))
 })
 
 test_that("a per-domain per-stage svyplan plan is refused outside a cluster stage", {
@@ -760,9 +794,7 @@ test_that("a per-domain per-stage svyplan plan is refused outside a cluster stag
     budget = 50000
   )
 
-  # The plan sizes PSUs and elements within them, so stage 1 has to declare
-  # the cluster structure. Without `cluster_by()` the stage is not stage
-  # aware and the plan cannot be read.
+  # The plan sizes PSUs and elements, so stage 1 must declare `cluster_by()`.
   expect_error(
     sampling_design() |> draw(n = plan),
     class = "samplyr_error_svyplan_domains"
@@ -772,8 +804,7 @@ test_that("a per-domain per-stage svyplan plan is refused outside a cluster stag
     class = "samplyr_error_svyplan_domains"
   )
 
-  # The message has to name the domain columns: it pluralizes on them, and
-  # a marker with no quantity fails to format and loses the class with it.
+  # The message pluralizes on the domain columns, so it must name them.
   expect_error(
     sampling_design() |> draw(n = plan),
     regexp = "region"
@@ -788,9 +819,7 @@ test_that("a negative variance is refused by both allocators that read it", {
   )
   negative <- data.frame(region = c("A", "B", "C"), var = c(1, -2, 3))
 
-  # `stratify_by()` accepts it: the sign is not checked until the allocator
-  # has joined the values to the strata. Neyman and optimal reach separate
-  # copies of the check, so a fix that touches one has to touch both.
+  # The sign is checked after the join, in separate Neyman and optimal copies.
   expect_error(
     sampling_design() |>
       stratify_by(region, alloc = "neyman", variance = negative) |>
@@ -850,14 +879,12 @@ test_that("replicate export errors use standardized classes", {
     draw(n = 20, method = "pps_brewer", mos = households) |>
     execute(bfa_eas, seed = 1)
 
-  # PPS + non-safe type emits warning (no longer a hard error)
+  # A first-stage-only type on PPS is a classed WR approximation that succeeds.
   expect_warning(
-    tryCatch(
-      as_svrepdesign(pps_sample, type = "bootstrap"),
-      samplyr_error_svrep_conversion_failed = function(e) NULL
-    ),
-    "may not work for unequal-probability"
+    rep <- as_svrepdesign(pps_sample, type = "bootstrap"),
+    class = "samplyr_warning_replicate_wr_first_stage"
   )
+  expect_s3_class(rep, "svyrep.design")
 
   frame <- data.frame(id = 1:120, x = rnorm(120))
   design <- sampling_design() |>
@@ -876,8 +903,7 @@ test_that("a misspelled reserved argument to execute() is named, not misdiagnose
   frame <- data.frame(id = 1:40, region = rep(c("n", "s"), 20))
   design <- sampling_design() |> draw(n = 8)
 
-  # Arguments after `...` are matched exactly, so near misses land in `...`.
-  # Reporting them by position would describe the wrong problem.
+  # Arguments after `...` match exactly, so near misses land in `...`.
   expect_error(
     execute(design, frame, seedd = 1),
     class = "samplyr_error_unknown_argument"
@@ -939,7 +965,7 @@ test_that("a misspelled reserved argument to stratify_by() is named", {
     "Did you mean.*variance"
   )
 
-  # A label that resembles no reserved argument is ignored, as before.
+  # A label that resembles no reserved argument is ignored.
   frame <- data.frame(id = 1:40, region = rep(c("n", "s"), 20))
   labeled <- sampling_design() |>
     stratify_by(reg = region) |>
@@ -950,14 +976,9 @@ test_that("a misspelled reserved argument to stratify_by() is named", {
 
 ## The inventory: every class this package can raise is asserted somewhere
 
-# Not a count, and not fifty-three more assertions duplicating the suites that
-# already make them. A class added without a test would arrive as a name this
-# scan does not find, which is the same shape as the method-verdict inventory
-# in test-weight-contract-gates.R.
-#
-# Read from the namespace rather than from `R/`: under `R CMD check` the
-# package is installed and its sources are not there, and a conditional skip
-# would be a skip.
+# A class added without a test arrives as a name this scan does not find. Read
+# from the namespace rather than `R/`, because `R CMD check` installs the
+# package without its sources.
 
 samplyr_condition_classes <- function() {
   ns <- asNamespace("samplyr")
@@ -976,6 +997,22 @@ samplyr_class_pattern <- "samplyr_(error|warning|message)_[a-z0-9_]+"
 # never ends in an underscore, so the trailing one is what tells them apart.
 drop_paste_fragments <- function(x) sort(x[!grepl("_$", x)])
 
+test_that("an exported verb called directly names itself", {
+  # exante_digest() takes a call for functions that wrap it. Called by a
+  # user, its refusal must still name it rather than the user's frame.
+  frame <- data.frame(id = 1:10)
+  cnd <- expect_error(
+    exante_digest(sampling_design(), frame),
+    class = "samplyr_error_exante_unsupported"
+  )
+  expect_identical(condition_header(cnd), "exante_digest")
+  cnd <- expect_error(
+    frame_summary(sampling_design() |> draw(n = 2), "not a frame"),
+    class = "samplyr_error"
+  )
+  expect_identical(condition_header(cnd), "frame_summary")
+})
+
 test_that("every condition class the package can raise is asserted by a test", {
   raised <- samplyr_condition_classes()
   expect_gt(length(raised), 200L)
@@ -986,30 +1023,7 @@ test_that("every condition class the package can raise is asserted by a test", {
     regmatches(text, gregexpr(samplyr_class_pattern, text))
   )))
 
-  # Present in the namespace scan and named in no test. All four predate the
-  # indirect-sampling and the longitudinal work: every class either feature
-  # introduced is asserted by its own suite, which is what this pins.
-  #
-  # The digest pair are guards on a digest that only samplyr builds, and it is
-  # built to cover exactly the executed stages with a chance representation
-  # for every pool. Probing found no route: partial execution, continuation,
-  # every `frame_digest` setting on either call, two-phase, and replicates
-  # all produce a digest covering all executed stages or none at all, and a
-  # sample carries its digest as an attribute rather than through any file
-  # a caller can edit. They stay because they prevent a wrong number: a
-  # digest missing a stage, or holding no chances, would otherwise yield
-  # joint expectations that look exact.
-  #
-  # The two ambiguous-matches guards protect join_aux_to_strata() against a
-  # stratum table with duplicate keys, which would make match() silently take
-  # first matches and misallocate. Probing found no route: stratum_info rows
-  # come from split_row_indices() groups, one per distinct combination, and
-  # make_group_key() is a length-prefixed collision-free encoding, so its
-  # keys cannot collide. They stay because nothing else defends that
-  # invariant, and a wrong number is worse than a dead branch.
-  #
-  # Built from suffixes so the list is not itself an assertion: spelled out,
-  # every name here would count as tested by the scan above.
+  # Unreachable guards, spelled as suffixes so this list asserts nothing.
   untested <- paste0("samplyr_error_", c(
     "digest_no_stage",
     "digest_unavailable",
@@ -1019,74 +1033,91 @@ test_that("every condition class the package can raise is asserted by a test", {
 
   expect_identical(setdiff(raised, c(asserted, untested)), character(0))
 
-  # And the exemptions have to stay real. Writing a test for one of them
-  # fails here until it is taken off the list, so the debt cannot quietly
-  # stop being debt.
+  # Testing an exempt class fails here until it leaves the list.
   expect_identical(intersect(untested, asserted), character(0))
 })
 
 ## The debt: refusals that carry no class at all
 
-# The inventory above pins every class that exists. It says nothing about
-# refusals raised with no class, because an unclassed `cli_abort()` leaves no
-# string for the scan to find. It is invisible in both directions, the same
-# blind spot the file already records for `paste0()`-built names, and it means
-# the inventory's guarantee is "every class that exists is tested" rather than
-# "every refusal has a class".
-#
-# Those two are different, and the gap is not small. A refusal with no class
-# reaches the caller as a bare `rlang_error`, so `tryCatch()` on a samplyr
-# class cannot see it and neither can a test asserting one. This holds the
-# count as a ceiling so the debt can only shrink. It is deliberately not zero:
-# many of these are internal assertions where a class would be noise, and
-# renaming in bulk would churn the message-matching tests for no caller's
-# benefit. What it stops is the number growing unnoticed.
-#
-# `abort_samplyr()` without a class is NOT counted. It appends "samplyr_error"
-# itself, so it is catchable at the family level even when it names nothing
-# more specific.
+# The inventory cannot see a refusal raised with no class. This holds their
+# count as a ceiling so it can only shrink. `abort_samplyr()` without a class
+# is not counted, since it appends "samplyr_error" itself.
 
-samplyr_bare_refusals <- function() {
-  ns <- asNamespace("samplyr")
-  names <- ls(ns, all.names = TRUE)
-  count <- 0L
-  bare_in <- function(expr) {
+samplyr_bare_refusals <- function(ns = asNamespace("samplyr")) {
+  signalers <- c("cli_abort", "cli_warn", "cli_inform", "abort", "warn",
+                 "inform")
+  found <- character(0)
+  callee <- function(fn) {
+    if (is.name(fn)) {
+      return(as.character(fn))
+    }
+    # pkg::fn and pkg:::fn
+    if (is.call(fn) && as.character(fn[[1]]) %in% c("::", ":::")) {
+      return(as.character(fn[[3]]))
+    }
+    ""
+  }
+  bare_in <- function(expr, where, parent = "") {
+    fn <- ""
     if (is.call(expr)) {
-      fn <- expr[[1]]
-      if (is.name(fn) &&
-            as.character(fn) %in%
-              c("cli_abort", "cli_warn", "cli_inform", "abort", "warn") &&
-            !("class" %in% names(as.list(expr)))) {
-        count <<- count + 1L
+      fn <- callee(expr[[1]])
+      args <- as.list(expr)[-1]
+      bare <- if (fn %in% signalers) {
+        !"class" %in% names(args)
+      } else if (fn %in% c("stop", "warning", "message")) {
+        # stop(e) re-raises a condition object, which keeps its class.
+        length(args) > 0L && !is.name(args[[1]])
+      } else if (fn == "arg_match") {
+        parent != "with_error_class"
+      } else {
+        fn == "match.arg"
+      }
+      if (bare) {
+        found <<- c(found, paste0(where, ": ", fn, "()"))
       }
     }
     if (is.call(expr) || is.pairlist(expr) || is.list(expr)) {
       for (i in seq_along(expr)) {
         if (!is.null(expr[[i]])) {
-          tryCatch(bare_in(expr[[i]]), error = function(...) NULL)
+          tryCatch(bare_in(expr[[i]], where, fn), error = function(...) NULL)
         }
       }
     }
     invisible(NULL)
   }
-  for (nm in names) {
+  for (nm in ls(ns, all.names = TRUE)) {
     object <- get(nm, envir = ns)
     if (!is.function(object)) next
-    tryCatch(bare_in(body(object)), error = function(...) NULL)
+    tryCatch(bare_in(body(object), nm), error = function(...) NULL)
   }
-  count
+  found
 }
 
-test_that("the number of refusals carrying no class does not grow", {
-  # Lower this when you classify some. Never raise it: a new refusal gets a
-  # class, or it gets an entry in a suite that says why it does not need one.
-  expect_lte(samplyr_bare_refusals(), 195L)
+test_that("every condition the package signals carries a class", {
+  expect_identical(samplyr_bare_refusals(), character(0))
+})
+
+test_that("the class scan sees qualified, base and message calls", {
+  probe <- new.env()
+  probe$f <- function(e) {
+    cli::cli_inform("a")
+    stop("b")
+    inform("c")
+    cli_abort("d", class = "samplyr_error_internal")
+    stop(e)
+    match.arg(e)
+    rlang::arg_match(e)
+    with_error_class(rlang::arg_match(e), "samplyr_error_internal")
+  }
+  expect_identical(
+    samplyr_bare_refusals(probe),
+    c("f: cli_inform()", "f: stop()", "f: inform()", "f: match.arg()",
+      "f: arg_match()")
+  )
 })
 
 test_that("an unknown selection method is refused with a class", {
-  # Reached two ways, and both used to arrive as a bare rlang_error: `draw()`
-  # validates the name at build time, and `execute()` re-resolves it for a
-  # design that came back from `read_design()` without re-running `draw()`.
+  # `draw()` checks the name at build time, `execute()` after `read_design()`.
   expect_error(
     sampling_design() |> draw(n = 5, method = "not_a_method"),
     class = "samplyr_error_unknown_method"
@@ -1110,4 +1141,256 @@ test_that("an unknown selection method is refused with a class", {
     execute(read_design(path), frame, seed = 1),
     class = "samplyr_error_unknown_method"
   )
+})
+
+## Design verbs, draw arguments and selection
+
+test_that("the design verbs class their refusals", {
+  expect_error(stratify_by(list(), region), class = "samplyr_error_design_expected")
+  expect_error(cluster_by(list(), region), class = "samplyr_error_design_expected")
+  expect_error(draw(list(), n = 2), class = "samplyr_error_design_expected")
+  expect_error(add_stage(list()), class = "samplyr_error_design_expected")
+
+  expect_error(
+    sampling_design() |> stratify_by(),
+    class = "samplyr_error_grouping_variables"
+  )
+  expect_error(
+    sampling_design() |> cluster_by(dplyr::starts_with("i")),
+    class = "samplyr_error_grouping_variables"
+  )
+  expect_error(
+    sampling_design() |> stratify_by(region) |> stratify_by(id),
+    class = "samplyr_error_stage_duplicate"
+  )
+  expect_error(
+    sampling_design() |> cluster_by(region) |> cluster_by(id),
+    class = "samplyr_error_stage_duplicate"
+  )
+  expect_error(
+    sampling_design() |> stratify_by(region) |> add_stage(),
+    class = "samplyr_error_stage_incomplete"
+  )
+  expect_error(
+    execute(sampling_design() |> stratify_by(region), taxonomy_frame()),
+    class = "samplyr_error_stage_incomplete"
+  )
+})
+
+test_that("an allocation name is checked in stratify_by() and in a file", {
+  err <- tryCatch(
+    sampling_design() |> stratify_by(region, alloc = "prop"),
+    error = identity
+  )
+  expect_s3_class(err, "samplyr_error_alloc_unknown_method")
+  expect_match(conditionMessage(err), "is not one of them", fixed = TRUE)
+  expect_error(
+    sampling_design() |> stratify_by(region, alloc = 3),
+    class = "samplyr_error_alloc_unknown_method"
+  )
+  expect_error(
+    sampling_design() |> stratify_by(region, alloc = "neyman"),
+    class = "samplyr_error_aux_required"
+  )
+
+  design <- sampling_design() |>
+    stratify_by(region, alloc = "proportional") |>
+    draw(n = 6)
+  path <- corrupt_design_file(
+    design, '"alloc": "proportional"', '"alloc": "zzz"'
+  )
+  expect_error(
+    execute(read_design(path), taxonomy_frame(), seed = 1),
+    class = "samplyr_error_alloc_unknown_method"
+  )
+})
+
+test_that("draw() arguments are classed by what is wrong with them", {
+  base <- sampling_design()
+  expect_error(base |> draw(n = 2, on_empty = "zzz"),
+               class = "samplyr_error_draw_argument")
+  expect_error(base |> draw(n = 2, round = 1),
+               class = "samplyr_error_draw_argument")
+  expect_error(
+    base |> stratify_by(region, alloc = "equal") |> draw(n = 4, min_n = 1:2),
+    class = "samplyr_error_draw_argument"
+  )
+
+  expect_error(base |> draw(n = 2, method = "pps_brewer"),
+               class = "samplyr_error_draw_method_argument")
+  expect_error(base |> draw(n = 2, method = "srswor", prn = u),
+               class = "samplyr_error_draw_method_argument")
+  expect_error(
+    base |>
+      draw(n = 2, method = "pps_multinomial", mos = x, certainty_size = 5),
+    class = "samplyr_error_draw_method_argument"
+  )
+  expect_warning(base |> draw(n = 2, mos = x),
+                 class = "samplyr_warning_draw_argument_ignored")
+
+  # A design file reaches the same refusals at execute().
+  design <- base |> draw(n = 2, on_empty = "warn")
+  path <- corrupt_design_file(design, '"on_empty": "warn"', '"on_empty": "zzz"')
+  expect_error(
+    execute(read_design(path), taxonomy_frame(), seed = 1),
+    class = "samplyr_error_draw_argument"
+  )
+})
+
+test_that("selection refusals carry a class", {
+  frame <- data.frame(id = 1:20, x = c(0, 1:19), z = 0)
+  bernoulli <- function(on_empty) {
+    sampling_design() |>
+      draw(frac = 0.0001, method = "bernoulli", on_empty = on_empty)
+  }
+  expect_error(execute(bernoulli("error"), frame, seed = 1),
+               class = "samplyr_error_empty_selection")
+  expect_warning(execute(bernoulli("warn"), frame, seed = 1),
+                 class = "samplyr_warning_empty_selection")
+
+  expect_warning(
+    execute(sampling_design() |> draw(n = 2, method = "pps_brewer", mos = x),
+            frame, seed = 1),
+    class = "samplyr_warning_mos_zero"
+  )
+  expect_error(
+    suppressWarnings(execute(
+      sampling_design() |> draw(n = 2, method = "pps_brewer", mos = z),
+      frame, seed = 1
+    )),
+    class = "samplyr_error_mos_zero_sum"
+  )
+  expect_error(
+    execute(
+      sampling_design() |>
+        draw(n = 2, method = "pps_brewer", mos = s, certainty_size = 50),
+      data.frame(s = rep(100, 4)), seed = 1
+    ),
+    class = "samplyr_error_certainty_overflow"
+  )
+})
+
+## Arguments, files, replay and diagnostics
+
+test_that("argument refusals carry the class of the function they reach", {
+  frame <- data.frame(id = 1:40)
+  design <- sampling_design() |> draw(n = 5)
+  sample <- execute(design, frame, seed = 1)
+
+  expect_error(sampling_design(title = 1),
+               class = "samplyr_error_design_argument")
+  expect_error(sampling_design() |> add_stage(label = 1),
+               class = "samplyr_error_design_argument")
+  expect_error(get_design(frame), class = "samplyr_error_sample_expected")
+  expect_error(frame_summary(sample, scope = "zzz"),
+               class = "samplyr_error_summary_argument")
+  expect_error(execute(design, frame, reps = 1),
+               class = "samplyr_error_execute_argument")
+  expect_error(execute(design, frame, frame_digest = "zzz"),
+               class = "samplyr_error_execute_argument")
+  expect_error(validate_frame(design, frame, fingerprint = "zzz"),
+               class = "samplyr_error_validate_argument")
+  expect_error(joint_expectation(sample, nsim = 0),
+               class = "samplyr_error_joint_argument")
+  expect_error(write_design(design, 1),
+               class = "samplyr_error_serialize_argument")
+  expect_error(read_design("https://example.org/design.json"),
+               class = "samplyr_error_serialize_argument")
+})
+
+test_that("joint expectations refuse what they cannot compute", {
+  cube <- sampling_design() |>
+    draw(n = 4, method = "cube", aux = bound(x)) |>
+    execute(data.frame(x = rep(1, 20)), seed = 1)
+  expect_error(joint_expectation(cube),
+               class = "samplyr_error_joint_method_unsupported")
+
+  twins <- data.frame(m = rep(1:5, 2))
+  sample <- sampling_design() |>
+    draw(n = 3, method = "pps_brewer", mos = m) |>
+    execute(twins, seed = 1, frame_digest = "none")
+  expect_error(
+    suppressWarnings(joint_expectation(sample, twins)),
+    class = "samplyr_error_joint_frame_key"
+  )
+})
+
+test_that("writing and replaying warn with a class", {
+  frame <- data.frame(id = 1:40)
+  design <- sampling_design() |> draw(frac = 0.5)
+  sample <- execute(design, frame, seed = 1)
+  other <- frame
+  other$id[1] <- 99L
+
+  expect_warning(write_design(sample, tempfile()),
+                 class = "samplyr_warning_no_fingerprint")
+  unseeded <- execute(design, frame)
+  expect_warning(write_design(unseeded, tempfile(), frame = frame),
+                 class = "samplyr_warning_receipt_no_seed")
+  expect_warning(
+    write_design(dplyr::filter(sample, id > 3), tempfile(), frame = frame),
+    class = "samplyr_warning_modified_sample"
+  )
+  expect_warning(
+    execute(sampling_design() |> draw(n = 2), dplyr::filter(sample, id > 3),
+            seed = 2),
+    class = "samplyr_warning_modified_sample"
+  )
+
+  path <- tempfile(fileext = ".json")
+  write_design(sample, path, frame = frame)
+  restored <- read_design(path)
+  expect_warning(replay_design(restored, other, fingerprint = "warn"),
+                 class = "samplyr_warning_replay_frame_mismatch")
+  expect_message(replay_design(restored, other, fingerprint = "inform"),
+                 class = "samplyr_message_replay_frame_mismatch")
+  expect_warning(
+    replay_design(restored, frame[1:20, , drop = FALSE],
+                  fingerprint = "ignore"),
+    class = "samplyr_warning_replay_rows"
+  )
+  expect_warning(
+    check_replay_environment(list(
+      language = list(version = "0.0.0"), packages = list(samplyr = "0.0.1")
+    )),
+    class = "samplyr_warning_replay_environment"
+  )
+
+  design_path <- tempfile(fileext = ".json")
+  write_design(design, design_path, frame = frame)
+  expect_warning(
+    validate_frame(read_design(design_path), other, fingerprint = "warn"),
+    class = "samplyr_warning_frame_fingerprint"
+  )
+  expect_message(validate_frame(read_design(design_path), other),
+                 class = "samplyr_message_frame_fingerprint")
+})
+
+test_that("digest diagnostics carry a class", {
+  frame <- data.frame(id = 1:40, psu = rep(1:10, each = 4))
+  two_stage <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 4) |>
+    add_stage() |> draw(n = 2)
+  replicated <- execute(two_stage, frame, seed = 1, reps = 2)
+  expect_message(frame_summary(replicated),
+                 class = "samplyr_message_digest_partial")
+
+  local_mocked_bindings(build_frame_digest = function(...) stop("unbuilt"))
+  expect_warning(
+    execute(sampling_design() |> draw(n = 2), frame, seed = 1),
+    class = "samplyr_warning_digest_unavailable"
+  )
+})
+
+test_that("a single-stage pps object on a multistage sample warns", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:40, psu = rep(1:10, each = 4))
+  frame$m <- frame$psu
+  sample <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |>
+    draw(n = 4, method = "pps_brewer", mos = m) |>
+    add_stage() |> draw(n = 2) |>
+    execute(frame, seed = 1)
+  expect_warning(as_svydesign(sample, pps = "overton"),
+                 class = "samplyr_warning_pps_single_stage")
 })

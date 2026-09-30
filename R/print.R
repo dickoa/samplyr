@@ -26,14 +26,14 @@ print.sampling_design <- function(x, ...) {
   )
 
   for (i in seq_along(x$stages)) {
-    print_stage(x$stages[[i]], i)
+    print_stage(x$stages[[i]], i, x)
   }
   cat("\n")
   invisible(x)
 }
 
 #' @noRd
-print_stage <- function(stage, num) {
+print_stage <- function(stage, num, design = NULL) {
   cat("\n")
   if (!is_null(stage$label)) {
     cli::cat_rule(left = paste0("Stage ", num, ": ", stage$label))
@@ -44,7 +44,10 @@ print_stage <- function(stage, num) {
   if (!is_null(stage$strata)) {
     strata <- stage$strata
     vars_str <- paste(strata$vars, collapse = ", ")
-    alloc_str <- if (!is_null(strata$alloc)) {
+    alloc_str <- if (identical(strata$alloc, "proportional") &&
+                     !is_null(strata$importance)) {
+      " (proportional to importance)"
+    } else if (!is_null(strata$alloc)) {
       paste0(" (", strata$alloc, ")")
     } else {
       ""
@@ -66,7 +69,8 @@ print_stage <- function(stage, num) {
     draw_desc <- format_draw_spec(
       stage$draw_spec,
       has_strata = has_strata,
-      alloc = alloc
+      alloc = alloc,
+      parent = nearest_parent_units(design, num)
     )
     cli::cat_bullet(paste0("Draw: ", draw_desc), bullet = "bullet")
   } else {
@@ -84,40 +88,50 @@ print_stage <- function(stage, num) {
 #' With stratification and `alloc`, it is the total.
 #' Named vectors and data frames are already explicit per-stratum.
 #' @noRd
-format_draw_spec <- function(draw, has_strata = FALSE, alloc = NULL) {
+format_draw_spec <- function(draw, has_strata = FALSE, alloc = NULL,
+                             parent = NULL) {
   parts <- c()
+  # A later stage runs once in every unit its parent stage selected.
+  per_parent <- if (length(parent) > 0L) {
+    paste0("per ", paste(parent, collapse = "/"))
+  }
 
   scope_tag <- function(value, has_strata, alloc) {
-    if (!has_strata) return("")
-    if (length(value) > 1 && !is_null(names(value))) {
-      return(" (per stratum)")
+    stratum <- if (!has_strata) {
+      NULL
+    } else if (length(value) > 1 && !is_null(names(value))) {
+      "per stratum"
+    } else if (length(value) == 1) {
+      if (is_null(alloc)) "per stratum" else "total"
     }
-    if (length(value) == 1) {
-      if (is_null(alloc)) " (per stratum)" else " (total)"
-    } else {
-      ""
-    }
+    tags <- c(stratum, per_parent)
+    if (length(tags) == 0L) "" else paste0(" (", paste(tags, collapse = ", "), ")")
   }
 
   format_scalar <- function(value_name, value, has_strata, alloc) {
     if (length(value) > 1 && !is_null(names(value))) {
       return(paste0(
-        value_name, " = <", length(value), " values, per stratum>"
+        value_name, " = <", length(value), " values, ",
+        paste(c("per stratum", per_parent), collapse = ", "), ">"
       ))
     }
     paste0(value_name, " = ", value, scope_tag(value, has_strata, alloc))
   }
 
+  table_form <- paste0(
+    "<custom data frame, ",
+    paste(c("per stratum", per_parent), collapse = ", "), ">"
+  )
   if (!is_null(draw$n)) {
     if (is.data.frame(draw$n)) {
-      parts <- c(parts, "n = <custom data frame, per stratum>")
+      parts <- c(parts, paste0("n = ", table_form))
     } else {
       parts <- c(parts, format_scalar("n", draw$n, has_strata, alloc))
     }
   }
   if (!is_null(draw$frac)) {
     if (is.data.frame(draw$frac)) {
-      parts <- c(parts, "frac = <custom data frame, per stratum>")
+      parts <- c(parts, paste0("frac = ", table_form))
     } else {
       parts <- c(parts, format_scalar("frac", draw$frac, has_strata, alloc))
     }
@@ -242,7 +256,11 @@ digest_coverage_line <- function(x) {
 
   total <- digest_universe_units(digest)
   if (is.na(total)) {
-    return(character(0))
+    # No denominator the digest can vouch for: the count stands alone.
+    return(c("Sampling" = paste0(
+      k, if (k == 1L) " stage" else " stages",
+      " | ", fmt(realized), " units"
+    )))
   }
 
   c("Sampling" = paste0(
@@ -255,13 +273,19 @@ digest_coverage_line <- function(x) {
 #'
 #' A number only when the digest supports it: an element-level last
 #' stage, and either a universe-scope single element stage or a
-#' universe-scope cluster first stage with complete descendant counts.
+#' universe-scope cluster first stage with complete descendant counts, read
+#' from the same frame as the last stage. With one register per stage, or a
+#' listing supplied to a continuation, the first frame's descendants are not
+#' the units the last stage drew from, and the ratio read "15/13 units".
 #' @noRd
 digest_universe_units <- function(digest) {
   stages <- digest$stages
   k <- length(stages)
   first <- stages[[1]]
   if (!identical(stages[[k]]$unit_level, "element")) {
+    return(NA_real_)
+  }
+  if (!identical(first$frame_ref, stages[[k]]$frame_ref)) {
     return(NA_real_)
   }
   if (k == 1L) {
@@ -602,4 +626,23 @@ print.samplyr_exante_overlap_spec <- function(x, ...) {
 #' @noRd
 plural_suffix <- function(n, word) {
   paste0(word, if (n == 1) "" else "s")
+}
+
+#' The sampling units of the nearest earlier clustered stage
+#'
+#' A later stage's `n` and `frac` apply within each unit that stage selected,
+#' so the print says "per ea_id". NULL at stage 1, or with no clustered
+#' ancestor.
+#' @noRd
+nearest_parent_units <- function(design, stage_idx) {
+  if (is_null(design) || stage_idx <= 1L) {
+    return(NULL)
+  }
+  for (k in rev(seq_len(stage_idx - 1L))) {
+    vars <- design$stages[[k]]$clusters$vars
+    if (length(vars) > 0L) {
+      return(vars)
+    }
+  }
+  NULL
 }

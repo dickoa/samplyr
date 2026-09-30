@@ -1,6 +1,4 @@
-# Shared fixtures for the normalized stage-register work: one register per
-# STAGE. Not `stack_frames()`, which covers one population with several
-# frames and is fixtured in test-stack-frames*.R.
+# Fixtures for one register per stage.
 #
 # A four-school hierarchy held as three separate registers plus the
 # equivalent single hierarchical frame. Class and student identifiers are
@@ -65,8 +63,8 @@ mf_design <- function() {
 # Ancestry-qualified identity of the selected elements.
 mf_keys <- function(x) paste(x$school_id, x$class_id, x$student_no)
 
-# A class register that omits S4 entirely. Seed 1 selects S4 and realizes the
-# gap; seed 2 selects S1 and S3 and leaves it a candidate-only gap.
+# A class register without S4. Seed 1 selects S4 and realizes the gap, and
+# seed 2 selects S1 and S3 and leaves it a candidate-only gap.
 mf_classes_without_s4 <- function() {
   classes <- mf_classes()
   classes[classes$school_id != "S4", , drop = FALSE]

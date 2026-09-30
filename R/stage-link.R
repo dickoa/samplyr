@@ -1,19 +1,12 @@
 # Stage transitions use declared ancestry rather than shared columns.
 
-#' Render a bounded preview of compound keys for a message
+#' Render compound keys as the user's values for a message
 #'
-#' Users see their own column values, never an internal key encoding.
+#' Users see their own column values, never an internal key encoding. Every
+#' key is returned, and a message bounds the list with `format_pool_sample()`.
 #' @noRd
-format_key_preview <- function(keys, max_shown = 5L) {
-  shown <- utils::head(keys, max_shown)
-  rendered <- apply(shown, 1, function(row) paste(row, collapse = "/"))
-  rendered <- unname(rendered)
-  extra <- nrow(keys) - length(rendered)
-  if (extra > 0) {
-    c(rendered, paste0("... and ", extra, " more"))
-  } else {
-    rendered
-  }
+format_key_preview <- function(keys) {
+  unname(apply(keys, 1, function(row) paste(row, collapse = "/")))
 }
 
 #' Require the full declared ancestry on both sides of a transition
@@ -191,7 +184,24 @@ check_realized_parent_coverage <- function(frame, previous_sample, parent_vars,
   missing <- dplyr::anti_join(selected, available, by = parent_vars)
 
   if (nrow(missing) == 0) {
-    return(invisible(NULL))
+    return(invisible(missing))
+  }
+
+  # An empty pool contributes zero to every total.
+  on_empty <- design$stages[[stage_idx]]$draw_spec$on_empty %||% "error"
+  if (identical(on_empty, "warn")) {
+    signal_selection_event(
+      "empty_parent",
+      pool_keys = unique(path_labels(
+        missing, parent_vars, ancestor_cluster_levels(design, stage_idx)
+      )),
+      n_empty = nrow(missing),
+      n_pools = nrow(selected),
+      stage = stage_idx
+    )
+  }
+  if (!identical(on_empty, "error")) {
+    return(invisible(missing))
   }
 
   preview <- format_key_preview(missing)
@@ -200,11 +210,15 @@ check_realized_parent_coverage <- function(frame, previous_sample, parent_vars,
       "{nrow(missing)} unit{?s} selected at the previous stage
        {?has/have} no rows in {frame_token(frame_index, frame_label)}.",
       "x" = "{stage_token(design, stage_idx)} cannot sample within
-             {.val {preview}}.",
+             {format_pool_sample(preview)}.",
       "i" = "Keyed on {.field {parent_vars}}.",
       "i" = "Every selected unit needs an eligible population in the next
              frame. Extra rows for unselected units are allowed and are
-             filtered out."
+             filtered out.",
+      "i" = "If a selected unit can have no eligible members, such as a
+             household with no eligible person, set {.code on_empty =
+             \"warn\"} or {.code \"silent\"} in this stage's {.fn draw}.
+             The unit then contributes zero."
     ),
     class = "samplyr_error_frame_missing_parent",
     call = call
@@ -234,9 +248,15 @@ prior_design_carry_vars <- function(design, stage_idx) {
 #' A temporary column name no frame is using
 #' @noRd
 free_column_name <- function(frame, base) {
+  free_name(names(frame), base)
+}
+
+#' `base`, or `base` followed by the first integer that avoids `taken`
+#' @noRd
+free_name <- function(taken, base) {
   name <- base
   i <- 1L
-  while (name %in% names(frame)) {
+  while (name %in% taken) {
     name <- paste0(base, i)
     i <- i + 1L
   }
@@ -275,7 +295,10 @@ carry_vars_by_parent <- function(frame, previous_sample, carry_vars, design,
     return(frame)
   }
 
-  lookup <- unique(previous_sample[, c(parent_vars, carry_vars), drop = FALSE])
+  # vec_unique() keeps first occurrences in order.
+  lookup <- vctrs::vec_unique(
+    previous_sample[, c(parent_vars, carry_vars), drop = FALSE]
+  )
 
   # Parent variables must be invariant within parent.
   duplicated_parents <- duplicated(lookup[, parent_vars, drop = FALSE])
@@ -286,7 +309,7 @@ carry_vars_by_parent <- function(frame, previous_sample, carry_vars, design,
         "{.field {carry_vars}} does not have one value per selected unit.",
         "x" = "{stage_token(design, stage_idx)} would carry it forward by
                {.field {parent_vars}}, which needs one value per unit.",
-        "i" = "Units with more than one value: {.val {format_key_preview(offenders)}}."
+        "i" = "Units with more than one value: {format_pool_sample(format_key_preview(offenders))}."
       ),
       class = "samplyr_error_frame_parent_conflict",
       call = call
@@ -310,7 +333,7 @@ carry_vars_by_parent <- function(frame, previous_sample, carry_vars, design,
           "{.field {var}} in {frame_token(frame_index, frame_label)}
            disagrees with the value carried from the selected unit.",
           "x" = "One variable cannot hold two values for the same unit.",
-          "i" = "Units that disagree: {.val {format_key_preview(offenders)}}.",
+          "i" = "Units that disagree: {format_pool_sample(format_key_preview(offenders))}.",
           "i" = "Drop the column from this frame to use the value the earlier
                  stage selected on."
         ),
@@ -457,6 +480,7 @@ check_phase_key_invariance <- function(schedule, design, phase_link_vars,
 link_stage_frame <- function(frame, previous_sample, design, stage_idx,
                              frame_index = 1L, frame_label = NULL,
                              phase_link_vars = character(0),
+                             check_coverage = TRUE,
                              call = caller_env()) {
   parent_vars <- collect_ancestor_cluster_vars(design, stage_idx)
 
@@ -482,10 +506,12 @@ link_stage_frame <- function(frame, previous_sample, design, stage_idx,
     frame, previous_sample, parent_vars, design, stage_idx,
     frame_index, frame_label, call = call
   )
-  check_realized_parent_coverage(
-    frame, previous_sample, parent_vars, design, stage_idx,
-    frame_index, frame_label, call = call
-  )
+  empty_parents <- if (check_coverage) {
+    check_realized_parent_coverage(
+      frame, previous_sample, parent_vars, design, stage_idx,
+      frame_index, frame_label, call = call
+    )
+  }
 
   linked <- dplyr::semi_join(
     frame,
@@ -506,7 +532,33 @@ link_stage_frame <- function(frame, previous_sample, design, stage_idx,
     design, stage_idx, parent_vars, frame_index, frame_label, call = call
   )
 
-  list(frame = linked, parent_vars = parent_vars)
+  list(frame = linked, parent_vars = parent_vars, empty_parents = empty_parents)
+}
+
+#' Selected units a later stage found empty, per stage and replicate
+#'
+#' Kept in the sample's metadata rather than its digest, which
+#' `frame_digest = "none"` omits, because export has to say when a stage
+#' ran with empty parents.
+#' @noRd
+add_empty_parents <- function(records, stage, keys, replicate = NA_integer_) {
+  if (is_null(keys) || nrow(keys) == 0L) {
+    return(records)
+  }
+  c(records, list(list(
+    stage = as.integer(stage),
+    replicate = as.integer(replicate),
+    n = nrow(keys),
+    keys = as.data.frame(keys)
+  )))
+}
+
+#' @noRd
+tag_empty_parents <- function(records, replicate) {
+  lapply(records, function(r) {
+    r$replicate <- as.integer(replicate)
+    r
+  })
 }
 
 #' Find candidate parents no later register can serve
@@ -566,6 +618,17 @@ scan_incomplete_registers <- function(schedule, design,
 
     candidates <- unique(reachable[, parent_vars, drop = FALSE])
     candidates <- candidates[stats::complete.cases(candidates), , drop = FALSE]
+    # A stage that accepts empty parents has no gap to report.
+    accepts_empty <- !identical(
+      design$stages[[stage_idx]]$draw_spec$on_empty %||% "error", "error"
+    )
+    if (accepts_empty) {
+      reachable <- tryCatch(
+        dplyr::semi_join(child, candidates, by = parent_vars),
+        error = function(e) child
+      )
+      next
+    }
     available <- unique(child[, parent_vars, drop = FALSE])
     # Diagnostics must not pre-empt transition errors.
     missing <- tryCatch(
@@ -601,7 +664,7 @@ format_register_gaps <- function(design, gaps) {
       " has no rows for ", gap$n,
       if (gap$n == 1L) " candidate unit of " else " candidate units of ",
       stage_token(design, gap$stage), ": ",
-      paste(gap$preview, collapse = ", "), "."
+      paste(c(utils::head(gap$preview, 5L), if (gap$n > 5L) paste("and", gap$n - 5L, "more")), collapse = ", "), "."
     )
   }, character(1))
   # Escape key values before cli interpolation.

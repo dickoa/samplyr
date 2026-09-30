@@ -1,10 +1,6 @@
-# Tests for the tbl_sample row/column mutation contract (review issue 2)
-#
-# Removing, adding, or duplicating rows -- or overwriting internal
-# design columns -- leaves a sample whose stored design no longer
-# describes it. Such samples are marked as modified and rejected by
-# design-based computations, with one exemption: a verified complete
-# single replicate.
+# Changing rows or internal design columns leaves a sample its stored design
+# does not describe. Such samples are marked as modified and rejected by
+# design-based computations, except a verified complete single replicate.
 
 test_that("filter() marks the sample and as_svydesign() rejects it", {
   skip_if_not_installed("survey")
@@ -40,8 +36,7 @@ test_that("[ row subsetting is consistent with filter()", {
     class = "samplyr_error_modified_sample"
   )
 
-  # Column subsetting that keeps all internal columns does not
-  # invalidate; dropping any of them does (see the dedicated tests).
+  # Column subsetting that keeps all internal columns does not invalidate.
   internal <- grep("^\\.", names(fix_srs), value = TRUE)
   subset_cols <- fix_srs[, c("id", "y", internal)]
   expect_length(sample_modifications(subset_cols), 0)
@@ -50,9 +45,7 @@ test_that("[ row subsetting is consistent with filter()", {
 test_that("dropping internal columns via [ or select() invalidates", {
   skip_if_not_installed("survey")
 
-  # Keeping only .weight silently changed the exported design before:
-  # without .fpc_1 the FPC falls back to no correction and the SE
-  # inflates. Now the drop is marked and the export refuses.
+  # Without .fpc_1 the export would drop the FPC and inflate the SE.
   slim <- fix_srs[, c("id", "y", ".weight")]
   expect_identical(sample_modifications(slim), "columns")
   expect_error(
@@ -76,6 +69,7 @@ test_that("dropping internal columns via [ or select() invalidates", {
 })
 
 test_that("renaming internal columns invalidates", {
+  skip_if_not_installed("survey")
   renamed <- dplyr::rename(fix_srs, w1 = .weight_1)
   expect_identical(sample_modifications(renamed), "columns")
   expect_error(
@@ -224,11 +218,12 @@ test_that("extracting one complete replicate is exempt", {
 })
 
 test_that("a partial or forged replicate is rejected", {
+  skip_if_not_installed("survey")
   reps <- sampling_design() |>
     draw(n = 20) |>
     execute(test_frame, seed = 7, reps = 4)
 
-  # Complete replicate, then domain filter: no longer exempt
+  # Complete replicate, then domain filter: not exempt
   partial <- reps |>
     dplyr::filter(.replicate == 1) |>
     dplyr::filter(y > 0)
@@ -309,14 +304,14 @@ test_that("domain analysis via survey::subset matches, filtered export blocked",
   correct <- survey::svytotal(~y, subset(full_design, domain))
   expect_gt(as.numeric(survey::SE(correct)), 0)
 
-  # The review's footgun now errors instead of understating the SE
+  # Filtering before export would understate the SE, so it is refused.
   expect_error(
     as_svydesign(dplyr::filter(sample, domain)),
     class = "samplyr_error_modified_sample"
   )
 })
 
-## Integrity backstop and table-operation matrix (robustness review)
+## Integrity backstop and table-operation matrix
 
 test_that("integrity verification catches untracked modification routes", {
   skip_if_not_installed("survey")
@@ -379,7 +374,7 @@ test_that("grouping preserves provenance and marks flow through", {
   expect_identical(dplyr::group_vars(gm), "stratum")
   expect_length(sample_modifications(gm), 0)
 
-  # grouped filter marks rows; export refuses after ungrouping too
+  # grouped filter marks rows, and export refuses after ungrouping too
   gf <- dplyr::filter(g, y > min(y))
   expect_true(is_tbl_sample(gf))
   expect_identical(sample_modifications(gf), "rows")
@@ -405,6 +400,7 @@ test_that("grouping preserves provenance and marks flow through", {
 })
 
 test_that("a tampered extracted replicate is rejected", {
+  skip_if_not_installed("survey")
   reps <- sampling_design() |>
     draw(n = 20) |>
     execute(test_frame, seed = 7, reps = 4)
@@ -427,4 +423,61 @@ test_that("reordering and one-to-one joins verify against the integrity record",
     dplyr::left_join(lookup, by = "id")
   expect_length(sample_modifications(reshaped), 0)
   expect_s3_class(as_svydesign(reshaped), "survey.design")
+})
+
+## What the integrity refusal names
+
+test_that("a factor turned into its labels is the same realization", {
+  # Levels out of label order, so ordering by codes and by labels differ.
+  frame <- bfa_eas
+  frame$region <- factor(frame$region, levels = rev(levels(frame$region)))
+  s <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 2) |>
+    execute(frame, seed = 1)
+  expect_true(is.factor(s$region))
+  as_text <- dplyr::mutate(s, region = as.character(region))
+  expect_no_error(check_sample_unmodified(as_text, "as_svydesign"))
+
+  relabeled <- dplyr::mutate(
+    s, region = factor(region, labels = paste0("r", seq_along(levels(region))))
+  )
+  err <- tryCatch(
+    check_sample_unmodified(relabeled, "as_svydesign"),
+    error = identity
+  )
+  expect_s3_class(err, "samplyr_error_modified_sample")
+  expect_match(
+    cli::ansi_strip(conditionMessage(err)),
+    "The values of region no longer match", fixed = TRUE
+  )
+})
+
+test_that("the integrity refusal names the column and not a route", {
+  s <- sampling_design() |>
+    stratify_by(region) |>
+    cluster_by(ea_id) |>
+    draw(n = 2) |>
+    execute(bfa_eas, seed = 1)
+  message_of <- function(x) {
+    err <- tryCatch(check_sample_unmodified(x, "as_svydesign"),
+                    error = identity)
+    expect_s3_class(err, "samplyr_error_modified_sample")
+    cli::ansi_strip(conditionMessage(err))
+  }
+  dropped <- message_of(dplyr::select(s, -region))
+  expect_match(dropped, "region was dropped or renamed", fixed = TRUE)
+  expect_false(grepl("base assignment", dropped, fixed = TRUE))
+
+  moved <- s
+  moved$ea_id[1] <- moved$ea_id[2]
+  expect_match(
+    message_of(moved), "The values of ea_id no longer match", fixed = TRUE
+  )
+})
+
+test_that("a written record carries the file fields only", {
+  record <- attr(fix_srs, "metadata")$integrity
+  expect_named(record, c("n_rows", "cols", "hash", "col_hashes"))
+  expect_named(integrity_for_file(record), c("n_rows", "cols", "hash"))
 })

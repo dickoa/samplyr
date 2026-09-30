@@ -22,7 +22,9 @@ without a file round trip.}
 
 \item{frame}{The sampling frame the receipt refers to: a data frame
 for a one-frame call, or the ordered list of stage frames for a
-call that supplied one register per stage.}
+call that supplied one register per stage. For a sample built by
+several calls, one element per call that read frames, in the form
+\code{frame} takes in \code{\link[=write_design]{write_design()}}.}
 
 \item{...}{Must be empty. Arguments after it are matched by exact name.}
 
@@ -32,10 +34,9 @@ fingerprint stored in the design file: \code{"error"} (default), \code{"warn"},
 
 \item{links, targets}{The link table and the target register, for a
 shared-weight sample only. Both are required there and refused
-elsewhere, since accepting them where nothing uses them would return an
-untransformed sample to someone who believes a transformation was
-re-applied. Supply the tables the transformation was built from, and the
-result is checked against the integrity the file records.}
+elsewhere, so a sample is never returned untransformed to a caller
+expecting a transformation. The result is checked against the integrity
+the file records.}
 }
 \value{
 The replayed \code{tbl_sample}, or the rebuilt \code{frame_stack} for a
@@ -44,72 +45,80 @@ frame collection.
 \description{
 Re-executes a design exactly as recorded in its execution receipt,
 passing the stored \code{seed}, \code{stages}, \code{panels}, and \code{reps} back to
-\code{\link[=execute]{execute()}}. This avoids reconstructing those arguments by hand from
-the receipt fields.
+\code{\link[=execute]{execute()}}.
 }
 \details{
 Given the same frame and compatible recorded implementations, the replayed
 sample is identical to the original: the same rows in the same order, the
 same weights and design columns, and the same \code{.panel} and \code{.replicate}
 assignments. Only the execution timestamp differs. Replay restores the
-execution-time RNG configuration and then restores the caller's RNG state.
-It warns when recorded R or package versions differ.
+execution-time RNG configuration and then the caller's RNG state. It
+warns when recorded R or package versions differ.
 
-Receipts record a single \code{\link[=execute]{execute()}} call. A sample produced by
-several calls (a stage continuation or a multi-phase pipeline)
-carries a \code{chained} flag in its receipt and cannot be replayed.
-Save and replay each phase or stage batch separately.
+When the design was saved with a frame fingerprint, \code{frame} is compared
+against it before replaying. A differing frame still yields a valid
+sample, but not the recorded one, so the default is to error. Several
+frames are compared one by one, and a mismatch names the register by
+position and recorded label. A wrong number of frames is
+\code{samplyr_error_replay_frame_count}. After replaying, the row count is
+checked against the receipt's \code{n_selected}.
 
-A sample carrying shared weights replays in two steps: the source selection
-is re-executed against \code{frame}, then the recorded transformation is
-re-applied to the \code{links} and \code{targets} given here. Those two are not in
-the file, by design, so they cannot be checked before use. The file instead
-records what the source and the result hashed to, and replay is checked
-against both. A source that does not reproduce means \code{frame} is wrong, and
-a result that does not means \code{links} or \code{targets} is. Both a file and a
-live shared sample are accepted.
+A \code{chained} sample, produced by several \code{\link[=execute]{execute()}} calls, is replayed
+call by call, each under its own seed, stages and RNG kind. The first
+call and each continuation read the frames given here, a new phase reads
+the phase replayed before it, and a wave reads its replayed master.
+Inherited panels and replicates are carried rather than declared again.
+The fingerprints cover every call's frames, and the row count is checked
+after each call. An earlier call run without a seed is
+\code{samplyr_error_receipt_no_seed}. When a new phase was drawn from a sample
+modified after its execution, the record starts at that phase, and its
+frame must be the modified sample as the \code{tbl_sample} it was
+(\code{samplyr_error_replay_phase_frame} otherwise).
 
-A frame collection replays component by component and is stacked again
-afterwards, so \code{frame} is a list named by component. Both a collection read
-back from a file and a live \code{frame_stack} are accepted. Every component is
-checked before any of them runs, since replaying re-executes each
-selection. The collection is rebuilt through \code{\link[=stack_frames]{stack_frames()}} rather than
-by restoring its attributes, so a register that has stopped carrying the
-membership column, or whose key is no longer unique, is reported as that.
+A chained receipt that does not record its earlier calls (a continuation
+of a modified sample, or a file written before receipts recorded earlier
+calls) is refused with class \code{samplyr_error_receipt_chained}. The refusal
+carries the final call's \code{seed} and \code{stages} as fields and gives the
+recipe. Rebuild the sample that call ran on by replaying its own receipt,
+or keep it when it was modified, since no receipt rebuilds a modified
+sample. Then run
+\code{execute(earlier, frame, seed = seed, stages = stages)} for a continuation,
+or \code{execute(design, earlier, seed = seed)} for a new phase. That
+reproduces the sample exactly under the same RNG kind, which the refusal
+names since a direct \code{\link[=execute]{execute()}} does not set it.
 
-For a design using a registered custom method, the receipt records a
-fingerprint of the implementation (the formals and body of the
-registered \code{sample_fn} and \code{joint_fn}). Replay refuses when the
-currently registered function differs from the recorded one, since
-identical registry metadata does not imply the same selections.
-The fingerprint normalizes formatting and comments and does not
-cover the function's enclosing environment: a registered function
-that reads from its environment can change behavior without
-changing its fingerprint.
+A shared-weight sample re-executes the source selection against \code{frame},
+then re-applies the recorded transformation to \code{links} and \code{targets}.
+Those are not in the file, so replay checks the source and the result
+against the hashes the file records. A source that does not reproduce
+means \code{frame} is wrong, and a result that does not means \code{links} or
+\code{targets} is.
 
-A panelized receipt carries a panel assignment record, and it is read
-before any panel argument is decoded from it. A record naming an
-assignment algorithm or a schema version this samplyr does not know is
-\code{samplyr_error_panel_record_unsupported} rather than a replay under the
-current law. A record that does not carry what the version it states
-requires, or that is not a set of named fields at all, is
-\code{samplyr_error_panel_record_malformed} rather than a repaired one: the
-assignment stage decides what the assignment units are, so filling in a
-missing one would replay a different assignment of the same sample.
+A frame collection replays each component against its register, with
+\code{frame} a list named by component. Every component is checked before any
+runs. The results are stacked through \code{\link[=stack_frames]{stack_frames()}} rather than by
+restoring attributes, so a register that has lost the membership column,
+or whose key is no longer unique, is reported as that. Shared-weight
+samples and collections are accepted both from a file and live.
 
-When the design was saved with a frame fingerprint, \code{frame} is
-compared against it before replaying. A differing frame still yields
-a valid sample, but not the recorded one, so the default is to error.
-Several frames are compared one by one and reported by position and
-recorded label, so a mismatch names the register that moved. After
-replaying, the row count is checked against the receipt's
-\code{n_selected} as a final consistency check.
+For a registered custom method, the receipt records a fingerprint of the
+implementation (the formals and body of the registered \code{sample_fn} and
+\code{joint_fn}). Replay refuses when the currently registered function
+differs, since identical registry metadata does not imply the same
+selections. The fingerprint normalizes formatting and comments and does
+not cover the enclosing environment, so a registered function that reads
+from its environment can change behavior without changing its
+fingerprint.
 
-A sample drawn from one register per stage is replayed by passing
-those registers back as a list, in the same order. The receipt
-records how many frames the call was given, so supplying the wrong
-number is \code{samplyr_error_replay_frame_count} rather than a sample
-drawn from the wrong pools.
+A panel assignment record naming an algorithm or schema version this
+samplyr does not know is \code{samplyr_error_panel_record_unsupported}. One
+that lacks what its stated version requires, or is not a set of named
+fields, is \code{samplyr_error_panel_record_malformed}. Neither is replayed
+under the current law or repaired, since the assignment stage decides the
+assignment units and filling in a missing one would replay a different
+assignment.
+
+\code{vignette("serialization")} works through these cases with examples.
 }
 \examples{
 sample <- sampling_design() |>
@@ -139,6 +148,16 @@ identical(
   replay_design(read_design(path), list(regions, bfa_eas))$ea_id,
   registers$ea_id
 )
+
+# A second phase replays both calls from the first phase's frame
+phase1 <- execute(sampling_design() |> stratify_by(region) |> draw(n = 300),
+                  bfa_eas, seed = 7)
+phase2 <- sampling_design() |>
+  stratify_by(urban_rural) |>
+  draw(n = 60) |>
+  execute(phase1, seed = 8)
+write_design(phase2, path, frame = bfa_eas)
+identical(replay_design(read_design(path), bfa_eas)$ea_id, phase2$ea_id)
 
 unlink(path)
 }

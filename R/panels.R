@@ -1,15 +1,12 @@
 ## Panel assignment
 
-# Panels use randomized fixed quotas within ordered blocks.
-# Activation follows recorded quotas and certainty units stay permanent.
+# Random fixed quotas within ordered blocks. Certainty units stay permanent.
 
 #' Normalize the `panels` argument to a count and an optional schedule
 #'
 #' @return `NULL`, or a list with `k`, `r_min`, `block_size`, `schedule`,
-#'   `stage`, `small_pool` and, for a schedule translated from an
-#'   `svyplan_schedule`, `from_plan`. The last is what
-#'   `resolve_small_pools()` reads to refuse a plan that would assign
-#'   selection-certainty units to its rotating panels.
+#'   `stage`, `small_pool`, and `from_plan` for an `svyplan_schedule`
+#'   (read by `resolve_small_pools()`).
 #' @noRd
 normalize_panel_input <- function(panels, panel_stage = NULL,
                                   small_pool = NULL,
@@ -34,6 +31,20 @@ normalize_panel_input <- function(panels, panel_stage = NULL,
     spec$small_pool <- normalize_small_pool(small_pool, call = call)
     spec$stage <- stage
     return(spec)
+  }
+  # Several counts read as issued and reserve sizes, which panels are not.
+  if (is.numeric(panels) && length(panels) > 1L) {
+    abort_samplyr(
+      c(
+        "{.arg panels} takes one count, the number of equal random panels,
+         not {length(panels)} sizes.",
+        "i" = "To hold part of the sample back, split it into panels and
+               activate the held panels in a later wave through a rotation
+               schedule, as {.help execute} describes."
+      ),
+      class = "samplyr_error_panel_count",
+      call = call
+    )
   }
   if (
     !is.numeric(panels) ||
@@ -129,14 +140,8 @@ normalize_plan_panels <- function(plan, stage, small_pool,
 
 #' Which stage owns the panel assignment
 #'
-#' A stage number, not a label: numbers are the selectors every other
-#' execution argument already uses, and a label is optional presentation
-#' metadata that need not be unique. `NULL` means the first executed stage,
-#' which is what assignment has always used.
-#'
-#' Whether the named stage was actually executed cannot be settled here. It is
-#' a property of the execution about to run, so it is checked against the
-#' resolved stage schedule before any random number is consumed.
+#' A stage number, since labels are optional and need not be unique. `NULL`
+#' means the first executed stage.
 #' @noRd
 normalize_panel_stage <- function(panel_stage, call = caller_env()) {
   if (is_null(panel_stage)) {
@@ -179,11 +184,8 @@ check_panel_stage_applicable <- function(panel_stage, call = caller_env()) {
 
 #' Resolve the assignment stage against the execution about to run
 #'
-#' Assignment reads the realized selection of one stage, so that stage has to
-#' be one this execution will have completed. Checked against the resolved
-#' schedule rather than the design, so a partial execution that stops short of
-#' the named stage is refused rather than assigning from a stage that was
-#' never drawn.
+#' Checked against the resolved schedule, not the design, so a partial
+#' execution that stops before the named stage is refused.
 #' @noRd
 resolve_panel_stage <- function(spec, executed, design, call = caller_env()) {
   if (is_null(spec) || is_null(spec$stage)) {
@@ -213,15 +215,9 @@ resolve_panel_stage <- function(spec, executed, design, call = caller_env()) {
 
 #' The small-pool policy, and where it does and does not apply
 #'
-#' A pool of `m` assignment units leaves `k - m` panels empty, so a wave
-#' activating `r` panels can take nothing from it exactly when `m <= k - r`.
-#' The policy governs that case and only that case: a pool with a positive
-#' but singleton take is still assigned, still carries an exact weight, and is
-#' still marked variance-non-estimable, which is what D1b ruled and is not
-#' what this argument changes.
-#'
-#' It is meaningful only alongside a schedule. A scalar `panels` declares no
-#' wave activation, so it has no `r_min` and no take to protect.
+#' A wave activating `r` of `k` panels takes nothing from a pool of `m`
+#' units exactly when `m <= k - r`. The policy governs only that case, and
+#' only with a schedule, since a scalar `panels` has no `r_min`.
 #' @noRd
 normalize_small_pool <- function(small_pool, call = caller_env()) {
   if (is_null(small_pool)) {
@@ -271,9 +267,7 @@ check_small_pool_applicable <- function(small_pool, has_schedule, has_panels,
 
 #' Validate and normalize a rotation schedule
 #'
-#' The stored form is the complete panel-by-wave grid even when the input
-#' names only the active rows, so a reader never has to know which convention
-#' the caller used.
+#' The stored form is always the complete panel-by-wave grid.
 #' @noRd
 normalize_panel_schedule <- function(schedule, min_panels = 2L,
                                      call = caller_env()) {
@@ -327,7 +321,6 @@ normalize_panel_schedule <- function(schedule, min_panels = 2L,
     active
   )
 
-  # Size blocks from the leanest declared wave.
   per_wave <- check_schedule_idle_waves(
     grid$active, grid$wave,
     headline = "Every declared wave must activate at least one panel.",
@@ -350,10 +343,8 @@ normalize_panel_schedule <- function(schedule, min_panels = 2L,
 
 #' The phrase the two schedule paths differ on, in the forms a message needs
 #'
-#' Both cases are built here rather than capitalized at the point of use: the
-#' phrase is already cli-formatted, so its first character is not reliably the
-#' letter a sentence would need to raise. `arg` is kept separate for the one
-#' message that names the argument rather than describing the table.
+#' Both cases are prebuilt because the phrase is already cli-formatted, so
+#' its first character cannot be capitalized reliably.
 #' @noRd
 schedule_subject <- function(arg) {
   if (identical(arg, "panels")) {
@@ -399,8 +390,7 @@ check_schedule_columns <- function(schedule, subject, extra = NULL,
 
 #' The optional `active` column, defaulted and checked
 #'
-#' Absent means every row given is active and every combination left out is
-#' not, which is the convention that lets a caller write only the live rows.
+#' Absent means every row given is active.
 #' @noRd
 schedule_active_column <- function(schedule, subject, call = caller_env()) {
   active <- if ("active" %in% names(schedule)) {
@@ -421,8 +411,7 @@ schedule_active_column <- function(schedule, subject, call = caller_env()) {
 
 #' A combination declared twice is a mistake, not a re-statement
 #'
-#' `combination` names the key in the message, because what may repeat differs:
-#' panel by wave for one master, cohort by panel by wave for a program.
+#' `combination` names the key, panel-wave or cohort-panel-wave.
 #' @noRd
 check_schedule_duplicates <- function(key, subject, declares, combination,
                                       call = caller_env()) {
@@ -440,9 +429,6 @@ check_schedule_duplicates <- function(key, subject, declares, combination,
 }
 
 #' Fill a completed grid's activity from the rows the caller declared
-#'
-#' The stored form is the complete grid even when the input named only the
-#' active rows, so a reader never has to know which convention was used.
 #' @noRd
 schedule_grid_active <- function(grid_key, input_key, active) {
   at <- match(grid_key, input_key)
@@ -507,9 +493,8 @@ check_schedule_contiguous <- function(x, top, name, arg = "panels",
 
 #' Block size for a pool
 #'
-#' `r_min` is the fewest panels any declared wave activates. A block must be
-#' large enough that the take of `r_min` panels leaves two units per block,
-#' which is the smallest take carrying a within-block variance estimate.
+#' Large enough that the `r_min` panels of the leanest wave take two units
+#' per block, the smallest take with a within-block variance estimate.
 #' @noRd
 panel_block_size <- function(k, r_min) {
   as.integer(k * ceiling(2 / r_min))
@@ -517,24 +502,16 @@ panel_block_size <- function(k, r_min) {
 
 #' Everything one stage contributes to a panel assignment
 #'
-#' Assignment used to be stage 1 by construction, so the stage's contribution
-#' was read straight off the first stage's specification wherever it was
-#' needed. It is a selected stage now, and six separate things follow from
-#' which one it is: what identifies an assignment unit, what a pool is made
-#' of, which certainty column says a unit was selected for sure, which control
-#' variables order a pool before it is blocked, whether the stage can select
-#' one population unit more than once, and what to call the unit in the
-#' record. Resolving them once, together, is what keeps them consistent with
-#' each other.
-#'
+#' Unit identity, pool variables, certainty column, control order, multi-hit
+#' status and unit label, resolved together so they stay consistent.
 #' @param stage_num The assignment stage, an index into `design$stages`.
-#' @param sample The realized sample, read for the columns the identity needs.
+#' @param sample The realized sample, read for the identity columns.
 #' @noRd
 panel_assignment_context <- function(design, stage_num, sample,
                                      call = caller_env()) {
   spec <- design$stages[[stage_num]]
   draw_col <- paste0(".draw_", stage_num)
-  # WR panel units need draw IDs.
+  # With-replacement panel units need draw IDs.
   multi_hit <- is_multi_hit_method(spec$draw_spec)
   if (multi_hit && !draw_col %in% names(sample)) {
     abort_panel_missing_identity(stage_num, draw_col, occurrence = TRUE,
@@ -560,11 +537,9 @@ panel_assignment_context <- function(design, stage_num, sample,
     } else {
       ".sample_id"
     },
-    # Nest pools within realized ancestor occurrences.
     pool_vars = unique(c(ancestors, spec$strata$vars)),
     certainty_col = paste0(".certainty_", stage_num),
     control = spec$draw_spec$control,
-    # Label units by the sampling law.
     unit = if (multi_hit) {
       "occurrence"
     } else if (clustered) {
@@ -574,7 +549,6 @@ panel_assignment_context <- function(design, stage_num, sample,
     }
   )
 
-  # Missing cluster or stratum columns make identity ambiguous.
   missing <- setdiff(
     c(context$key_vars, context$pool_vars), names(sample)
   )
@@ -587,10 +561,7 @@ panel_assignment_context <- function(design, stage_num, sample,
 
 #' Refuse an assignment whose units the sample can no longer tell apart
 #'
-#' One condition class for one kind of defect, whichever column is gone and
-#' whichever stage declared it. The distinction the message draws is between a
-#' missing draw index, where the identity would silently weaken into a
-#' coarser one, and any other missing column, where it cannot be built at all.
+#' A missing draw index would silently coarsen the identity.
 #' @noRd
 abort_panel_missing_identity <- function(stage_num, columns, occurrence,
                                          call = caller_env()) {
@@ -619,8 +590,7 @@ abort_panel_missing_identity <- function(stage_num, columns, occurrence,
 
 #' Assign panel labels by blocked random quota within frozen pools
 #'
-#' Returns the sample carrying a `.panel` column and the assignment record
-#' [execute()] stores in the receipt.
+#' @return The sample with a `.panel` column, and the record for the receipt.
 #' @noRd
 assign_panels <- function(result, spec, context, call = caller_env()) {
   k <- spec$k
@@ -686,37 +656,21 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
 
 #' The assignment record this package knows how to read
 #'
-#' `assign_panels()` stamps an algorithm name and a version because everything
-#' computed from the record afterwards is specific to them: a block's quotas
-#' mean what they mean under blocked random quota assignment and under nothing
-#' else, and the conditional probabilities derived from them are that
-#' algorithm's law rather than a general one. A later algorithm writing the
-#' same field names must not inherit that law by default, so it is refused
-#' until whatever reads the record has been taught the new one.
+#' Quotas belong to this algorithm, so a record naming another is refused.
 #' @noRd
 panel_record_algorithm <- "blocked_random_quota"
 
 #' The record versions this build knows how to read
 #'
-#' Stated as the set that is supported rather than as a ceiling. A version is
-#' not an ordering along which older is safer: a record numbered below any
-#' schema that ever existed describes no known law at all, so it is as
-#' unreadable as one from the future and less explicable.
+#' A set, not a ceiling. A version below any that existed is unreadable too.
 #' @noRd
 supported_panel_record_versions <- c(1L, 2L, 3L)
 
 #' Read an assignment record under the law it names
 #'
-#' The three steps are ordered rather than independent. Which law the record
-#' was written under decides what its fields mean, so the algorithm and version
-#' are established first. Normalization then fills in what that version left
-#' implicit, and only then is the record checked against what that version
-#' requires. A reader that validated first would be checking fields whose
-#' meaning it had not yet established, and one that decoded first would be
-#' interpreting them.
-#'
-#' Returns the normalized record, which is what every later reader should use.
-#' `NULL` in is `NULL` out: a sample drawn whole has no assignment to read.
+#' Checks algorithm and version, then normalizes, then validates fields, and
+#' the order matters. `NULL` in is `NULL` out.
+#' @return The normalized record, which every later reader should use.
 #' @noRd
 prepare_panel_record <- function(record, what, call = caller_env()) {
   check_panel_record_supported(record, what, call = call)
@@ -729,15 +683,13 @@ prepare_panel_record <- function(record, what, call = caller_env()) {
   record
 }
 
-#' @param record The assignment record, or `NULL` for a sample drawn whole,
-#'   which has no quotas to interpret.
+#' @param record The assignment record, or `NULL` for a sample drawn whole.
 #' @noRd
 check_panel_record_supported <- function(record, what, call = caller_env()) {
   if (is_null(record)) {
     return(invisible(NULL))
   }
 
-  # Validate assignment records as lists before field access.
   if (!is.list(record)) {
     shown <- describe_record_value(record)
     abort_samplyr(
@@ -791,7 +743,6 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
     )
   }
 
-  # Reject versions that do not identify a quota law.
   shown <- if (length(version) == 0L) {
     "no version"
   } else {
@@ -813,34 +764,10 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
 
 #' What a record numbered 3 has to carry to be one
 #'
-#' A version stamp is a claim about shape as much as about law, and the two
-#' cannot be separated: reading a stage-aware record means reading which stage
-#' it assigned, what its units are, and which columns identify them. A record
-#' that states version 3 without stating those is not an older record to be
-#' filled in, because version 3 is the version where they are written down.
-#' Filling them in would invent the assignment rather than read it.
-#'
-#' Versions 1 and 2 are checked by their own rule, which is that they mean
-#' stage 1 (see `normalize_panel_record()`). Nothing here applies to them.
-#'
-#' What this does and does not cover, since the difference is not obvious.
-#'
-#' A design file drives exactly four fields of a record: `schedule`, `panels`
-#' and `small_pool_policy`, which become arguments to `execute()` and are
-#' validated by the same code any caller's would be, and `assignment_stage`,
-#' which is checked here and again by `resolve_panel_stage()`. Nothing else
-#' in a record can arrive from a file. Replay re-executes the design, and
-#' every record an activation or an export reads was built by `execute()`.
-#'
-#' So `unit`, `key_vars` and `pool_vars` are checked as a statement about the
-#' version stamp rather than as a guard: a record claiming version 3 without
-#' them is not an older record to be filled in, because version 3 is the
-#' version where they are written down. The realized pools are not checked and
-#' are not written, for the reason `encode_panel_assignment()` gives.
-#'
-#' A record malformed anywhere else has to have been built by hand, in memory.
-#' That is outside what the package defends: the integrity records cover a
-#' sample's data columns, not its metadata.
+#' A version-3 record missing its stage, unit or identity columns is refused,
+#' not filled in, because version 3 is where they are written down. Versions
+#' 1 and 2 mean stage 1 (see `normalize_panel_record()`). Of these fields only
+#' `assignment_stage` can come from a design file. Pools are not checked.
 #' @noRd
 check_panel_record_fields <- function(record, what, call = caller_env()) {
   if (is_null(record) || !record_states_version(record, 3L)) {
@@ -895,16 +822,13 @@ check_panel_record_fields <- function(record, what, call = caller_env()) {
 
 #' The unit vocabulary version 3 is authoritative for
 #'
-#' `psu` is not among them: it named a stage rather than a kind of unit, and a
-#' stage-aware assignment has to say which of the three a unit is at whatever
-#' stage owns it.
+#' The older `psu` is not among them, since it named a stage, not a unit kind.
 #' @noRd
 panel_units <- c("cluster", "occurrence", "element")
 
 #' Does the record state exactly this version?
 #'
-#' Read through the value rather than compared to it, so a version written as
-#' a double by a JSON reader is the same version as one written as an integer.
+#' Compared by value, so a double from a JSON reader matches an integer.
 #' @noRd
 record_states_version <- function(record, version) {
   stated <- record$version
@@ -915,15 +839,8 @@ record_states_version <- function(record, version) {
 
 #' A list of column names, as a record may state one
 #'
-#' Both shapes a column list arrives in are accepted. JSON has one array type,
-#' so a record read from a design file states its columns as a list of strings
-#' where an in-memory record states a character vector, and neither is more
-#' canonical than the other. What is checked is the same either way: every
-#' element is one non-missing, non-empty name.
-#'
-#' Duplicates and empty strings are refused rather than tolerated because both
-#' would change what the list means: a repeated column claims an identity or a
-#' division it does not add to, and an empty name matches no column at all.
+#' A character vector, or a list of strings as read from JSON. Every name
+#' must be non-missing, non-empty and distinct.
 #' @noRd
 valid_record_columns <- function(x, allow_none) {
   if (is.list(x)) {
@@ -945,9 +862,8 @@ valid_record_columns <- function(x, allow_none) {
     anyDuplicated(x) == 0L
 }
 
-#' @param requirement What version 3 requires, as a cli-formatted clause
-#'   completing "A version-3 panel assignment ...".
-#' @param stated The value the record carries, described plainly.
+#' @param requirement A cli clause completing "A version-3 panel assignment".
+#' @param stated The value the record carries.
 #' @noRd
 abort_panel_record_malformed <- function(
   requirement,
@@ -973,11 +889,10 @@ abort_panel_record_malformed <- function(
 
 #' A record field's value, as plain text for a diagnostic
 #'
-#' Plain text: an interpolated value is inserted verbatim, so cli markup
-#' written into it would print as itself.
+#' Plain text, since cli markup in an interpolated value prints as itself.
 #' @noRd
 describe_record_value <- function(value) {
-  # Validate stored column lists before checking their names.
+  # Flatten a JSON list of strings to a character vector.
   if (
     is.list(value) &&
       all(vapply(
@@ -1011,19 +926,8 @@ describe_record_value <- function(value) {
 
 #' Resolve every pool's activation before any assignment is drawn
 #'
-#' A pool of `m` rotating units leaves `k - m` panels empty when `m < k`, so a
-#' wave activating `r` panels can take nothing from it exactly when
-#' `m <= k - r`. Taking nothing is not a small take: the conditional inclusion
-#' probability is zero, there is no inverse weight, and the units are absent
-#' from that wave by construction rather than underrepresented in it.
-#'
-#' `r_min` is the binding case because `k - r_t` is largest when `r_t` is
-#' smallest, so a pool that survives `r_min` survives every declared wave.
-#'
-#' Selection certainty and activation permanence are recorded separately.
-#' `class` says how the master selected the pool. `activation` says whether
-#' its units rotate. A promoted pool is not selection-certain, and anything
-#' reading the record must branch on `activation`.
+#' A rotating pool of at most `k - r_min` units is short. A promoted pool is
+#' not selection-certain, so readers branch on `activation`, not `class`.
 #' @noRd
 resolve_small_pools <- function(pools, spec, call = caller_env()) {
   policy <- spec$small_pool %||% "error"
@@ -1120,9 +1024,7 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
 
 #' A pool's stratum, as a short label
 #'
-#' `empty` is what an unstratified pool renders as, and it is the only thing
-#' the two callers differ on: a diagnostic sentence wants a phrase, a table
-#' column wants a missing value.
+#' `empty` is the label of an unstratified pool.
 #' @noRd
 format_pool_stratum <- function(pool, empty = "(unstratified)") {
   if (is_null(pool$stratum) || length(pool$stratum) == 0L) {
@@ -1137,9 +1039,8 @@ format_pool_stratum <- function(pool, empty = "(unstratified)") {
 
 #' The units a wave takes from each block of a pool
 #'
-#' One line, and the one place a malformed `quotas` surfaces: a record whose
-#' quotas came back from JSON as a list of vectors rather than as a matrix
-#' fails here with "incorrect number of dimensions".
+#' Fails with "incorrect number of dimensions" when `quotas` came back from
+#' JSON as a list rather than a matrix.
 #' @noRd
 pool_take <- function(pool, panels) {
   as.integer(rowSums(pool$quotas[, panels, drop = FALSE]))
@@ -1147,8 +1048,8 @@ pool_take <- function(pool, panels) {
 
 #' Fill in what an earlier record version left implicit
 #'
-#' Versions 1 and 2 assign from stage 1 and lack a small-pool policy. Their
-#' older unit vocabulary is preserved. Version 3 fields must be explicit.
+#' Versions 1 and 2 assign from stage 1 and keep their older unit vocabulary.
+#' A missing small-pool policy reads as `error`.
 #' @noRd
 normalize_panel_record <- function(record) {
   if (is_null(record)) {
@@ -1177,10 +1078,8 @@ normalize_panel_record <- function(record) {
 
 #' Split assignment units into frozen pools
 #'
-#' Pools are the assignment stage's selection strata inside the realized
-#' ancestor occurrence, each split into its rotating and its
-#' permanent-certainty part. Pool order is deterministic, which is what makes
-#' the assignment reproducible from the seed.
+#' Strata within the realized ancestor occurrence, each split into rotating
+#' and certainty parts. Pool order is deterministic for seed reproducibility.
 #' @noRd
 panel_pools <- function(units, context) {
   if (length(context$pool_vars) == 0L) {
@@ -1221,9 +1120,7 @@ panel_pools <- function(units, context) {
 
 #' Selection certainty at the assignment stage, and only there
 #'
-#' A unit selected with certainty at some other stage is not certain at this
-#' one: an ancestor taken with probability one says nothing about whether this
-#' stage's units rotate.
+#' A certain ancestor says nothing about whether this stage's units rotate.
 #' @noRd
 panel_certainty_flag <- function(units, certainty_col) {
   if (!certainty_col %in% names(units)) {
@@ -1235,18 +1132,13 @@ panel_certainty_flag <- function(units, certainty_col) {
 
 #' Order the units of one pool before blocking
 #'
-#' The explicit panel control order when the stage declares one, and the
-#' realized order otherwise. `arrange()` is stable, so control ties keep the
-#' realized order and the ordering is recoverable from the sample.
+#' Control order if declared, else realized order. The sort is stable.
 #' @noRd
 panel_pool_order <- function(units, idx, control_quos) {
   if (length(control_quos) == 0L || length(idx) <= 1L) {
     return(idx)
   }
-  sub <- units[idx, , drop = FALSE]
-  position <- free_column_name(sub, ".panel_position")
-  sub[[position]] <- seq_along(idx)
-  idx[arrange(sub, !!!control_quos)[[position]]]
+  idx[control_order(units[idx, , drop = FALSE], control_quos)]
 }
 
 #' Blocked random quota labels for one pool
@@ -1278,9 +1170,7 @@ assign_blocked_panels <- function(m, k, block = panel_block_size(k, 1L)) {
 
 #' Sizes of the consecutive blocks of one pool
 #'
-#' A pool smaller than one block is a single block, still assignable but with
-#' no block-level order structure. Otherwise the tail is spread one unit at a
-#' time over the full blocks, never left standalone.
+#' A pool under one block is one block. A remainder spreads over full blocks.
 #' @noRd
 panel_block_sizes <- function(m, block) {
   m <- as.integer(m)

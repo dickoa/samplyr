@@ -71,8 +71,7 @@ many_pool_design <- function(n_pools, take = 10) {
 }
 
 test_that("an unstratified stage-2 take above the pool size reports once", {
-  # This case was silent before: `pmin()` capped each pool and said nothing,
-  # so the design stopped being self-weighting with no notice.
+  # Capping breaks self-weighting, so it has to be reported.
   expect_warning(
     result <- execute(short_psu_design(), short_psu_frame(), seed = 1),
     class = "samplyr_warning_size_capped"
@@ -82,9 +81,7 @@ test_that("an unstratified stage-2 take above the pool size reports once", {
 })
 
 test_that("many capped pools still report exactly one condition", {
-  # 199 of 200, not 200 of 200: leaving one pool with units to spare keeps
-  # this a population cap. A stage that exhausts every pool it executed is a
-  # census and reports as one, which is covered separately.
+  # One pool keeps units to spare, so this is a cap and not a census.
   frame <- many_pool_frame(n_pools = 200, small = 199)
 
   expect_equal(
@@ -136,8 +133,7 @@ test_that("the full pool list survives frame_digest = \"none\"", {
 })
 
 test_that("replicates report the shared finding once, not once each", {
-  # The pools that cap are a property of the design and the frame, so ten
-  # replicates are one finding, not ten.
+  # Capped pools are a property of the design and frame, not of a replicate.
   frame <- data.frame(id = 1:110, h = rep(c("A", "B"), times = c(10, 100)))
   design <- sampling_design() |>
     stratify_by(h) |>
@@ -153,8 +149,7 @@ test_that("replicates report the shared finding once, not once each", {
 })
 
 test_that("a stratified stage inside a cluster loop reports once", {
-  # sample_stratified() runs once per parent pool, so this reported once per
-  # cluster before the events were aggregated.
+  # sample_stratified() runs once per parent pool.
   frame <- do.call(rbind, lapply(1:3, function(k) {
     data.frame(
       clust = paste0("c", k),
@@ -196,8 +191,6 @@ test_that("replicated allocation capping reports once", {
 })
 
 test_that("random-size shortfall is not a population cap", {
-  # Bernoulli and Poisson realize a count around their target. Falling below
-  # it is the shortfall of P1 item 4, not a pool that ran out of units.
   frame <- data.frame(id = 1:500)
 
   for (design in list(
@@ -246,8 +239,7 @@ test_that("nothing is marked capped when nothing caps", {
 })
 
 test_that("a random-size shortfall is not marked capped", {
-  # Poisson realizes around its target, so n_expected < n_target would read as
-  # a population cap on a stage that never ran out of units.
+  # Poisson realizes around its target, so a shortfall is not a cap.
   frame <- data.frame(id = 1:500, m = seq(1, 10, length.out = 500))
 
   sample <- execute(
@@ -261,10 +253,7 @@ test_that("a random-size shortfall is not marked capped", {
 })
 
 test_that("a random-size target above the population caps the nominal target", {
-  # Clamping every chance at 1 caps what the stage aims at, it does not select
-  # that many units. Reporting a population cap here states a selected count
-  # the sample does not contain, and contradicts the digest, which reads the
-  # same stage as uncapped.
+  # Clamping every chance at 1 caps the target, not the selected count.
   frame <- data.frame(id = 1:10, m = seq(1, 5, length.out = 10))
 
   for (design in list(
@@ -297,8 +286,7 @@ test_that("the nominal cap reports the target it capped to, not a count", {
   frame <- data.frame(id = 1:10, m = seq(1, 5, length.out = 10))
   design <- sampling_design() |> draw(n = 20, method = "pps_poisson", mos = m)
 
-  # The frame also saturates, so a shortfall is reported alongside the
-  # nominal cap. Two reductions, two findings; only one is under test here.
+  # The frame also saturates, so a shortfall is reported alongside.
   w <- NULL
   sample <- suppressWarnings(withCallingHandlers(
     execute(design, frame, seed = 1),
@@ -307,14 +295,12 @@ test_that("the nominal cap reports the target it capped to, not a count", {
 
   expect_equal(w$payload$n_requested, 20)
   expect_equal(w$payload$n_available, 10)
-  # The realized size is a draw and lands below the cap. The warning must not
-  # be readable as a claim about it.
+  # The realized size is a draw and lands below the cap.
   expect_lt(nrow(sample), 10L)
 })
 
 test_that("an explicit per-stratum random-size target caps nominally", {
-  # The allocation path already distinguishes the two. This is the path that
-  # skips it: explicit per-stratum sizes reach selection uncapped.
+  # Explicit per-stratum sizes skip allocation and reach selection uncapped.
   frame <- data.frame(stratum = rep(c("A", "B"), each = 5), id = 1:10)
   design <- sampling_design() |>
     stratify_by(stratum) |>
@@ -337,9 +323,7 @@ test_that("an explicit per-stratum random-size target caps nominally", {
 })
 
 test_that("a fixed-size target above the population is still a population cap", {
-  # Asserted on the operation rather than the class: a fixed-size shortfall
-  # is a population cap however the reporter reads the aggregate, and this
-  # frame happens to be exhausted, so the reading is census.
+  # Asserted on the operation, since this exhausted frame reads as a census.
   frame <- data.frame(id = 1:10)
   design <- sampling_design() |> draw(n = 20)
 
@@ -386,9 +370,7 @@ capture_one <- function(expr, class) {
 }
 
 test_that("every fixed-size path reaches the same class for the same request", {
-  # Asking for 20 units from a frame of 10 is one situation. Which code path
-  # computed the number is not something the user expressed, so it must not
-  # decide which condition they get.
+  # The code path that computed the size must not decide the condition.
   flat <- data.frame(id = 1:10)
   strat <- data.frame(stratum = rep(c("A", "B"), each = 5), id = 1:10)
 
@@ -413,9 +395,7 @@ test_that("every fixed-size path reaches the same class for the same request", {
 })
 
 test_that("a stage census is decided by exhaustion, not by saturated pools", {
-  # `equal` on populations (1, 100) with n = 102: one stratum exceeds its
-  # share before redistribution, both are taken whole after it. Counting
-  # saturated pools would read this as a partial cap.
+  # equal on sizes (1, 100) with n = 102 ends with both strata taken whole.
   frame <- data.frame(
     stratum = rep(c("A", "B"), times = c(1, 100)),
     id = 1:101
@@ -448,6 +428,97 @@ test_that("a stage that leaves units behind is not a census", {
   expect_equal(w$payload$n_actual, 39)
   expect_equal(w$payload$n_available, sum(c(2, 3, 4, 50, 50, 50)))
   expect_lt(w$payload$n_actual, w$payload$n_available)
+})
+
+# 40 EAs, two of them with 3 households against a take of 5 or 3 per pool.
+# Each parent runs alone and only the two short ones signal, so their sums
+# read as a stage that took everything it reached.
+short_ea_frame <- function() {
+  sizes <- c(rep(12, 38), 3, 3)
+  frame <- data.frame(ea = rep(sprintf("e%02d", 1:40), sizes))
+  frame$hh <- seq_len(nrow(frame))
+  frame$sex <- rep(c("f", "m"), length.out = nrow(frame))
+  frame
+}
+
+short_ea_design <- function(variant) {
+  first <- sampling_design() |>
+    add_stage() |>
+    cluster_by(ea) |>
+    draw(n = 40) |>
+    add_stage()
+  switch(
+    variant,
+    cluster = first |> cluster_by(hh) |> draw(n = 5),
+    stratify = first |> stratify_by(sex) |> draw(n = 3),
+    both = first |> stratify_by(sex) |> cluster_by(hh) |> draw(n = 3),
+    alloc = first |> stratify_by(sex, alloc = "proportional") |> draw(n = 5),
+    census = first |> cluster_by(hh) |> draw(n = 20)
+  )
+}
+
+test_that("a lower stage short in a few parents is capped, not a census", {
+  frame <- short_ea_frame()
+  n_hh <- nrow(frame)
+  n_ea_sex <- nrow(unique(frame[c("ea", "sex")]))
+  take_ea <- pmin(table(frame$ea), 5)
+  take_ea_sex <- pmin(table(frame$ea, frame$sex), 3)
+  # Hand totals for each variant: pools, units selected, units requested.
+  expected <- list(
+    cluster = c(40, sum(take_ea), 40 * 5),
+    stratify = c(n_ea_sex, sum(take_ea_sex), n_ea_sex * 3),
+    both = c(n_ea_sex, sum(take_ea_sex), n_ea_sex * 3),
+    alloc = c(n_ea_sex, sum(take_ea), 40 * 5)
+  )
+  expect_identical(names(expected), c("cluster", "stratify", "both", "alloc"))
+
+  for (variant in names(expected)) {
+    design <- short_ea_design(variant)
+    expect_identical(
+      count_conditions(
+        execute(design, frame, seed = 1),
+        "samplyr_warning_census"
+      ),
+      0L,
+      label = variant
+    )
+    w <- capture_one(
+      execute(design, frame, seed = 1),
+      "samplyr_warning_size_capped"
+    )
+    expect_false(is.null(w), label = variant)
+    got <- unlist(w$payload[c("n_pools", "n_actual", "n_requested")])
+    expect_equal(unname(got), expected[[variant]], label = variant)
+    expect_equal(w$payload$n_available, n_hh, label = variant)
+  }
+})
+
+test_that("a lower stage that takes every household is still a census", {
+  frame <- short_ea_frame()
+  w <- capture_one(
+    execute(short_ea_design("census"), frame, seed = 1),
+    "samplyr_warning_census"
+  )
+  expect_false(is.null(w))
+  expect_equal(w$payload$n_pools, 40)
+  expect_equal(w$payload$n_actual, nrow(frame))
+  expect_equal(w$payload$n_available, nrow(frame))
+})
+
+test_that("a clustered lower stage counts clusters, not their rows", {
+  # Two persons per household, and the stage counts households.
+  hh <- short_ea_frame()
+  frame <- hh[rep(seq_len(nrow(hh)), each = 2), c("ea", "hh")]
+  frame$person <- seq_len(nrow(frame))
+  s <- NULL
+  w <- capture_one(
+    s <- execute(short_ea_design("cluster"), frame, seed = 1),
+    "samplyr_warning_size_capped"
+  )
+  expect_identical(nrow(s), 2L * length(unique(s$hh)))
+  expect_equal(w$payload$n_available, nrow(hh))
+  expect_equal(w$payload$n_actual, length(unique(s$hh)))
+  expect_equal(w$payload$n_actual, sum(pmin(table(hh$ea), 5)))
 })
 
 test_that("both readings of a population cap carry the same operation", {
@@ -487,11 +558,7 @@ test_that("replicates report one census with one replicate's totals", {
 })
 
 test_that("replicates reaching different parents still report once", {
-  # Deduplication used to require the aggregates to match, which they do only
-  # for a single-stage design. A replicated multistage design reaches
-  # different parents in different replicates, so the same stage legitimately
-  # names different pools each time and the report fragmented into one warning
-  # per distinct pool set.
+  # Replicates reach different parents but form one finding.
   frame <- data.frame(psu = rep(c("p1", "p2"), each = 4), id = 1:8)
   design <- sampling_design() |>
     add_stage("psu") |>
@@ -521,11 +588,7 @@ test_that("replicates reaching different parents still report once", {
 })
 
 test_that("replicates reaching different outcomes report each one", {
-  # PSUs of 2, 3 and 50, taking 2 of them and 10 units from each. A replicate
-  # drawing the two small PSUs exhausts them; one drawing the large PSU does
-  # not. Merging before classifying let whichever replicate reported first
-  # name the class for the rest, so the same design and replicate count gave
-  # a census under one seed and a population cap under another.
+  # PSUs of 2, 3 and 50: replicates drawing the two small ones exhaust them.
   frame <- data.frame(
     psu = rep(c("p1", "p2", "p3"), times = c(2, 3, 50)),
     id = 1:55
@@ -539,28 +602,26 @@ test_that("replicates reaching different outcomes report each one", {
 
   expect_equal(
     count_conditions(
-      execute(design, frame, seed = 1, reps = 6),
+      execute(design, frame, seed = 18, reps = 6),
       "samplyr_warning_census"
     ),
     1L
   )
   expect_equal(
     count_conditions(
-      execute(design, frame, seed = 1, reps = 6),
+      execute(design, frame, seed = 18, reps = 6),
       "samplyr_warning_size_capped"
     ),
     1L
   )
 
-  # Each condition names only the pools that produced it: p2 is exhausted
-  # alongside p1 in the census replicates, and must not be listed as a capped
-  # pool of a replicate that never exhausted it.
+  # p2 is listed only in the census, where it is exhausted alongside p1.
   census <- capture_one(
-    execute(design, frame, seed = 1, reps = 6),
+    execute(design, frame, seed = 18, reps = 6),
     "samplyr_warning_census"
   )
   capped <- capture_one(
-    execute(design, frame, seed = 1, reps = 6),
+    execute(design, frame, seed = 18, reps = 6),
     "samplyr_warning_size_capped"
   )
 
@@ -582,8 +643,7 @@ test_that("the class does not depend on which replicate reported first", {
     add_stage("unit") |>
     draw(n = 10)
 
-  # Seeds 1 and 2 differ only in replicate ordering; both executions contain
-  # both outcomes, so both must report both.
+  # Every seed's replicates contain both outcomes, so each reports both.
   for (seed in c(1, 2, 5)) {
     expect_equal(
       count_conditions(
@@ -611,9 +671,7 @@ test_that("replicates that agree do not claim to have varied", {
 })
 
 test_that("an unreplicated execution reports its own totals", {
-  # The replicate grouping key has to distinguish "no replicate" from a
-  # missing value, or an unreplicated run aggregates an empty group and every
-  # total comes back NA.
+  # The replicate key must distinguish no replicate from a missing value.
   w <- capture_one(
     execute(short_psu_design(), short_psu_frame(), seed = 1),
     "samplyr_warning_size_capped"
@@ -647,7 +705,7 @@ test_that("a random-size allocation above the population is never a census", {
   )
 })
 
-test_that("the allocation path no longer warns on its own", {
+test_that("the allocation path does not warn on its own", {
   frame <- data.frame(
     psu = rep(paste0("c", 1:3), each = 8),
     stratum = rep(rep(c("A", "B"), each = 4), 3),
@@ -661,7 +719,6 @@ test_that("the allocation path no longer warns on its own", {
     stratify_by(stratum, alloc = "proportional") |>
     draw(n = 20)
 
-  # Three parent pools used to produce three warnings from allocate.R.
   expect_equal(
     count_conditions(
       execute(design, frame, seed = 1),
@@ -695,12 +752,11 @@ test_that("capped pools inside a cluster loop keep their parent", {
   expect_false(is.null(m))
   expect_equal(m$payload$n_capped, 3L)
   # Three parents each cap their local stratum A. Three pools, three names.
-  expect_identical(m$payload$pool_keys, c("c1 / A", "c2 / A", "c3 / A"))
+  expect_identical(m$payload$pool_keys, c("c1 > A", "c2 > A", "c3 > A"))
 })
 
 test_that("an allocation-originated event names every stratum it counted", {
-  # The count and the key list describe the same pools, so a report of 2 of 2
-  # that names none of them is not a report.
+  # The count and the key list describe the same pools.
   w <- capture_one(
     execute(
       sampling_design() |>
@@ -735,14 +791,12 @@ test_that("allocation strata inside parents are named parent by parent", {
   expect_equal(w$payload$n_pools, 6L)
   expect_identical(
     w$payload$pool_keys,
-    c("c1 / A", "c1 / B", "c2 / A", "c2 / B", "c3 / A", "c3 / B")
+    c("c1 > A", "c1 > B", "c2 > A", "c2 > B", "c3 > A", "c3 > B")
   )
 })
 
 test_that("a cluster stage nested in a cluster stage keeps its parent", {
-  # The nested branch of execute_single_stage() runs its own parent loop and
-  # has to qualify what that loop raises, exactly as the within-cluster
-  # sampler does.
+  # The nested branch of execute_single_stage() qualifies its parent loop.
   frame <- data.frame(
     psu = rep(c("p1", "p2"), each = 6),
     ssu = rep(paste0("s", 1:4), each = 3),
@@ -878,4 +932,156 @@ test_that("the census and nominal-cap messages read as intended", {
       seed = 1
     ))
   })
+})
+
+## Strata that draw a single unit outside certainty
+#
+# A stratum needs two selections for a variance. The export warns once the
+# sample exists, and execute() says it while the allocation can change. It is
+# a message, because one unit per stratum is sometimes the design.
+
+capture_singletons <- function(expr) {
+  found <- list()
+  withCallingHandlers(
+    force(expr),
+    samplyr_message_singleton_pool = function(m) {
+      found[[length(found) + 1L]] <<- m
+      invokeRestart("muffleMessage")
+    }
+  )
+  found
+}
+
+test_that("strata taking one unit are named once per stage", {
+  n_by_stratum <- c(A = 5, B = 20, C = 975)
+  frame <- data.frame(id = 1:1000, st = rep(names(n_by_stratum), n_by_stratum))
+  found <- capture_singletons(
+    sampling_design() |>
+      stratify_by(st, alloc = "proportional") |>
+      draw(n = 50, min_n = 1) |>
+      execute(frame, seed = 1)
+  )
+  expect_length(found, 1L)
+  expect_identical(found[[1]]$payload$pool_keys, c("A", "B"))
+  expect_identical(found[[1]]$payload$n_singleton, 2L)
+  expect_identical(found[[1]]$stage, 1L)
+
+  # Replicates report the shared finding once.
+  found <- capture_singletons(
+    sampling_design() |>
+      stratify_by(st, alloc = "proportional") |>
+      draw(n = 50, min_n = 1) |>
+      execute(frame, seed = 1, reps = 3)
+  )
+  expect_length(found, 1L)
+})
+
+test_that("certainty units do not count as the stratum's selections", {
+  # a: one selection besides certainty. b: nothing to estimate. c: two drawn.
+  frame <- data.frame(
+    id = 1:13,
+    st = rep(c("a", "b", "c"), c(5, 2, 6)),
+    size = c(100, 1, 1, 1, 1, 100, 1, 1, 1, 1, 1, 1, 1)
+  )
+  found <- capture_singletons(
+    sampling_design() |>
+      stratify_by(st) |>
+      draw(
+        n = c(a = 2, b = 2, c = 2), method = "pps_brewer", mos = size,
+        certainty_size = 50
+      ) |>
+      execute(frame, seed = 1)
+  )
+  expect_length(found, 1L)
+  expect_identical(found[[1]]$payload$pool_keys, "a")
+})
+
+test_that("a stratum of one unit, taken whole, is not reported", {
+  # Nothing is left to estimate in it, so it is no lonely stratum.
+  frame <- data.frame(id = 1:21, st = rep(c("a", "b"), c(20, 1)))
+  found <- capture_singletons(
+    sampling_design() |>
+      stratify_by(st) |>
+      draw(n = c(a = 2, b = 1)) |>
+      execute(frame, seed = 1)
+  )
+  expect_length(found, 0L)
+})
+
+test_that("only fixed-size strata without replacement are judged", {
+  frame <- data.frame(
+    id = 1:40,
+    st = rep(c("a", "b"), each = 20),
+    size = 1:40
+  )
+  quiet <- list(
+    random_size = sampling_design() |> stratify_by(st) |>
+      draw(frac = 0.05, method = "bernoulli", on_empty = "silent"),
+    with_replacement = sampling_design() |> stratify_by(st) |>
+      draw(n = 1, method = "pps_multinomial", mos = size),
+    unstratified = sampling_design() |> draw(n = 1),
+    two_each = sampling_design() |> stratify_by(st) |> draw(n = 2)
+  )
+  expect_length(quiet, 4L)
+  for (name in names(quiet)) {
+    found <- capture_singletons(
+      suppressWarnings(execute(quiet[[name]], frame, seed = 1))
+    )
+    expect_length(found, 0L)
+  }
+  expect_length(
+    capture_singletons(execute(
+      sampling_design() |> stratify_by(st) |> draw(n = 1), frame, seed = 1
+    )),
+    1L
+  )
+})
+
+test_that("a lower stage counts a stratum once in every parent", {
+  frame <- data.frame(
+    psu = rep(1:10, each = 6),
+    g = rep(c("x", "y"), 30),
+    id = 1:60
+  )
+  found <- capture_singletons(
+    sampling_design() |>
+      add_stage() |> cluster_by(psu) |> draw(n = 3) |>
+      add_stage() |> stratify_by(g) |> draw(n = 1) |>
+      execute(frame, seed = 1)
+  )
+  expect_length(found, 1L)
+  expect_identical(found[[1]]$stage, 2L)
+  expect_identical(found[[1]]$payload$n_singleton, 6L)
+  expect_length(found[[1]]$payload$pool_keys, 6L)
+})
+
+test_that("a pool label steps down the hierarchy once per level", {
+  # Levels are joined with " > ", so a "/" inside a value stays part of it,
+  # and a stratum keyed by the parent's own identifier is not repeated.
+  areas <- data.frame(area = c("a/b", "a/b", "c/d", "c/d"), ea = 1:4)
+  homes <- expand.grid(hh = 1:5, ea = 1:4)
+  homes$area <- areas$area[homes$ea]
+  homes$sex <- rep(c("f", "m"), length.out = nrow(homes))
+  take <- data.frame(ea = 1:4, n = c(9, 2, 2, 2))
+  by_ea <- sampling_design() |>
+    add_stage() |> cluster_by(area) |> draw(n = 2) |>
+    add_stage() |> cluster_by(ea) |> draw(n = 2) |>
+    add_stage() |> stratify_by(ea) |> draw(n = take)
+  w <- capture_one(
+    execute(by_ea, list(unique(areas["area"]), areas, homes), seed = 1),
+    "samplyr_warning_size_capped"
+  )
+  expect_identical(w$payload$pool_keys, "a/b > 1")
+
+  cells <- expand.grid(sex = c("f", "m"), ea = 1:4, stringsAsFactors = FALSE)
+  cells$n <- ifelse(cells$ea == 1 & cells$sex == "f", 9, 1)
+  by_cell <- sampling_design() |>
+    add_stage() |> cluster_by(area) |> draw(n = 2) |>
+    add_stage() |> cluster_by(ea) |> draw(n = 2) |>
+    add_stage() |> stratify_by(ea, sex) |> draw(n = cells)
+  w <- capture_one(
+    execute(by_cell, list(unique(areas["area"]), areas, homes), seed = 1),
+    "samplyr_warning_size_capped"
+  )
+  expect_identical(w$payload$pool_keys, "a/b > 1 > f")
 })

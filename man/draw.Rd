@@ -26,165 +26,148 @@ draw(
 }
 \arguments{
 \item{.data}{A \code{sampling_design} object (piped from \code{\link[=sampling_design]{sampling_design()}},
-\code{\link[=stratify_by]{stratify_by()}}, or \code{\link[=cluster_by]{cluster_by()}}).}
+\code{\link[=add_stage]{add_stage()}}, \code{\link[=stratify_by]{stratify_by()}}, or \code{\link[=cluster_by]{cluster_by()}}).}
 
 \item{n}{Sample size. For random-size methods (\code{bernoulli}, \code{pps_poisson}),
-\code{n} is the \strong{expected} sample size (converted internally to \code{frac = n / N}).
-For \code{pps_poisson} the realized expectation can fall below \code{n} when large
-units saturate at probability 1. \code{execute()} warns with class
-\code{samplyr_warning_poisson_shortfall} when it falls more than 5\% short of
-what the pool could reach. See \link{selection-methods} for the fixed versus
-random distinction, and use \code{certainty_size} or \code{certainty_prop} to
-handle dominant units. Can be:
+\code{n} is the \strong{expected} sample size, converted to \code{frac = n / N}.
+\link{selection-methods} explains the fixed versus random distinction and the
+warning raised when \code{pps_poisson} falls short of \code{n}. Can be:
 \itemize{
 \item A scalar: applies per stratum (if no \code{alloc}) or as total (if \code{alloc} specified)
-\item A named vector: stratum-specific sizes (for single stratification variable)
-\item A data frame: stratum-specific sizes with stratification columns + \code{n} column
-\item A svyplan size or plan object: consumed through svyplan's documented
-coercions, stage-aware for cluster and stratified two-stage plans.
-See \code{vignette("survey-planning")} for the handoff by plan type.
+\item A named vector: stratum-specific sizes (for single stratification
+variable). A name, or a data frame row, for a stratum the stage cannot
+reach is refused at execution (\code{samplyr_error_alloc_unknown_strata}).
+\item A data frame: stratum-specific sizes, with every stratification column
+of \code{\link[=stratify_by]{stratify_by()}} and an \code{n} column. For a take per parent unit,
+stratify the stage by the parent's cluster id:
+\code{add_stage() |> stratify_by(ea_id) |> draw(n = take)}. The table may
+cover every parent of the design, and a continuation on a listing of
+the selected parents uses only their rows. Entries for parents the
+sample did not select are not checked, so a mistyped identifier that
+matches no selected parent passes unnoticed.
+\item A svyplan size or plan object, read through svyplan's documented
+coercions and stage-aware for cluster and stratified two-stage plans.
+A plan giving one size for a stage stratified without \code{alloc} is
+refused (\code{samplyr_error_svyplan_total_per_stratum}) rather than taken
+in every stratum. \code{vignette("survey-planning")} gives the handoff by
+plan type.
 \item A certainty-aware \code{svyplan::n_alloc()} plan (solved with a \code{psu}
-register carrying \code{psu_id}): accepted at a clustered, stratified
-stage 1, and again at stage 2 for the per-PSU takes. Stage 1 selects
-every PSU the plan classified certainty and draws exactly its
-remainder per stratum. The method must be \code{pps_systematic},
-\code{pps_brewer}, \code{pps_cps}, or \code{pps_sampford}, and \code{mos} must equal the
-register's \code{N}. Stage 2 selects by \code{srswor} or \code{systematic}, and
-stratifying there requires an \code{alloc} method to split each take.
-Arguments the plan already owns (\code{frac}, \code{certainty_size},
-\code{certainty_prop}, \code{min_n}, \code{max_n}, and at stage 1 \code{alloc}) are
-refused alongside it, and \code{execute()} reconciles the frame against
-the register before anything is drawn.
+register carrying \code{psu_id}), at a clustered, stratified stage 1 and
+again at stage 2 for the per-PSU takes. Stage 1 takes every certainty
+PSU and draws exactly the plan's remainder per stratum. Its method
+must be \code{pps_systematic}, \code{pps_brewer}, \code{pps_cps}, or \code{pps_sampford},
+with \code{mos} equal to the register's \code{N}. Stage 2 selects by \code{srswor} or
+\code{systematic}, and stratifying there requires an \code{alloc} method.
+Arguments the plan owns (\code{frac}, \code{certainty_size}, \code{certainty_prop},
+\code{min_n}, \code{max_n}, and at stage 1 \code{alloc}) are refused alongside it.
+\code{vignette("survey-planning")} shows the workflow and the frame checks.
 }}
 
-\item{frac}{Sampling fraction. Can be:
-\itemize{
-\item A scalar: same fraction for all strata
-\item A named vector: stratum-specific fractions
-\item A data frame: stratum-specific fractions with stratification columns + \code{frac} column
-}
-
-Only one of \code{n} or \code{frac} should be specified. When the rounded
-stratum sample size (\eqn{N_h \cdot \text{frac}}{N_h * frac}) would
-be zero, it is floored at 1 so every stratum receives at least one
-unit.}
+\item{frac}{Sampling fraction: a scalar for all strata, a named vector of
+stratum-specific fractions, or a data frame with every stratification
+column and a \code{frac} column. Give \code{n} or \code{frac}, not both.}
 
 \item{...}{These dots are for future extensions and must be empty.
-\code{.data}, \code{n}, and \code{frac} are what a draw is written as and stay
-positional. Every argument after \code{...} is matched exactly and must be
-named, so a positional fourth argument is refused rather than taken
-for \code{min_n}.}
+Arguments after \code{...} must be named in full, so a positional fourth
+argument is refused rather than taken for \code{min_n}.}
 
-\item{min_n}{Minimum sample size per stratum. When an allocation method
-(e.g., Neyman, proportional) would assign fewer than \code{min_n} units to a
-stratum, that stratum is raised to \code{min_n} and the difference is taken
-from the remaining strata in proportion to the method's own allocation
-factors. Commonly set to 2 (minimum for variance estimation) or higher
-for reliable subgroup estimates. A \code{min_n} above a stratum's population
-is structurally capped at that population for without-replacement
-designs, which makes the stratum a census. Only applies when
-stratification with an allocation method is used. Default is \code{NULL}
-(no minimum). Allocations that give a nonempty stratum zero units
-are refused. Use \code{min_n = 1} to request positive allocations explicitly.}
+\item{min_n}{Minimum sample size per stratum, \code{NULL} (no minimum) by
+default. When an allocation method would assign fewer units to a
+stratum, the stratum is raised to \code{min_n} and the other strata give up
+the difference. For without-replacement designs a \code{min_n} above a
+stratum's population makes that stratum a census. \code{min_n} counts the
+stratum's whole take, certainty units included, so a stratum can hold
+fewer than \code{min_n} units drawn outside certainty, and \code{execute()} names
+one left with a single such unit (\code{samplyr_message_singleton_pool}).
+Allocations that give a nonempty stratum zero units are refused.
+\code{min_n = 1} requests positive allocations explicitly. For minimums that
+differ by stratum, compute the sizes and pass them as a named \code{n} or a
+data frame.}
 
-\item{max_n}{Maximum sample size per stratum. When an allocation method
-would assign more than \code{max_n} units to a stratum, that stratum is
-capped and the surplus is redistributed over the remaining strata in
-proportion to the method's own allocation factors. Useful for capping
-dominant strata or managing operational constraints.
+\item{max_n}{Maximum sample size per stratum, \code{NULL} (no maximum) by
+default. When an allocation method would assign more, the stratum is
+capped and the surplus goes to the other strata.
 
-Neither bound introduces the population cap. An allocation is always
-capped at the stratum population, so \code{min_n} and \code{max_n} narrow a range
-that already exists. See the "Population bounds and redistribution"
-section of \code{\link[=stratify_by]{stratify_by()}}. For with-replacement methods the number of
-distinct units is not a bound at all, and these arguments are the only
-limits that apply. Only applies when stratification with an allocation
-method is used. Default is \code{NULL} (no maximum).
-
-To see what a bound does to an allocation before drawing anything, pass
-the design and the frame to \code{\link[=frame_summary]{frame_summary()}}:
+Both bounds apply only with an allocation method in \code{\link[=stratify_by]{stratify_by()}},
+and narrow a range the stratum population already caps. The
+"Population bounds and redistribution" section of \code{\link[=stratify_by]{stratify_by()}} gives
+how the surplus is shared and why with-replacement methods differ.
 \code{frame_summary(design, frame, detail = "pool")} reports the per-stratum
-target each bound produces, without selecting or consuming any random
+target each bound produces, without selecting or consuming random
 numbers.}
 
-\item{method}{Character string naming the selection method, \code{"srswor"} by
-default. \link{selection-methods} lists all sixteen built-ins with what each
-one requires and cites the paper behind each.
+\item{method}{Selection method, \code{"srswor"} by default.
+\link{selection-methods} lists the sixteen built-ins with what each one
+requires and the paper behind each.
 
-\code{"cube"} uses auxiliary variables (\code{aux}) to balance the sample so that
-Horvitz-Thompson estimates of auxiliary totals match population totals,
-and supports equal or unequal (\code{mos}) inclusion probabilities. When
-stratified it uses the stratified cube algorithm (Chauvet 2009). At most
-two stages may use a balanced-family method. \code{"balanced"} is retained as
-a compatibility alias for \code{"cube"}.
+\code{"cube"} balances the sample on \code{aux} so that Horvitz-Thompson
+estimates of auxiliary totals match population totals, with equal or
+unequal (\code{mos}) inclusion probabilities, and uses the stratified cube
+algorithm (Chauvet 2009) when stratified. At most two stages may use a
+balanced-family method. \code{"balanced"} is a compatibility alias for
+\code{"cube"}.
 
-Methods registered with \code{\link[sondage:register_method]{sondage::register_method()}} use a prefix that
-identifies their sampling family. Registered \code{type = "wor"} and
-\code{type = "wr"} methods use \code{"pps_<name>"} (for example,
-\code{"pps_mymethod"}). Registered \code{type = "balanced"} methods use
-\code{"balanced_<name>"}. For the latter, \code{mos} is optional.
+A method registered with \code{\link[sondage:register_method]{sondage::register_method()}} is named
+\code{"pps_<name>"} for \code{type = "wor"} or \code{type = "wr"}, and
+\code{"balanced_<name>"} for \code{type = "balanced"}, where \code{mos} is optional.
 \code{supports_aux = TRUE} permits ordinary balancing variables in \code{aux}, and
-\code{supports_spread = TRUE} requires coordinates in \code{spread}. These
-capabilities are declared when the method is registered in \code{sondage}.
+\code{supports_spread = TRUE} requires coordinates in \code{spread}.
 
-Sample weights are \code{1 / pik}, where \code{pik} is the inclusion expectation
-(target inclusion probabilities, or expected hits for \code{type = "wr"}
-methods) that samplyr resolves and hands to the registered method.
-Registered methods state where they sit in the taxonomy with
-\code{probabilities} at registration: \code{"exact"} (the design's true
-first-order inclusion probabilities, or expected hits, equal
-\code{pik}), \code{"approximate"}
-(honored to a documented approximation, as Pareto sampling does), or
-\code{"unknown"} (the default: \code{pik} is a selection weight only, so the
-weights would be systematically biased). \code{draw()} refuses \code{"unknown"}
-methods. Declare the method's tier to use it. The classic trap is
-\code{sample(prob = pik)}: with \code{replace = TRUE} it yields expected hits
-exactly equal to \code{pik} (a valid \code{type = "wr"} method), but without
-replacement its inclusion probabilities differ from \code{pik}, so a
-\code{type = "wor"} wrapper's tier really is unknown.}
+Its weights are \code{1 / pik}, the inclusion expectation (target inclusion
+probabilities, or expected hits for \code{type = "wr"}) samplyr hands to the
+method. The \code{probabilities} tier declared at registration is \code{"exact"}
+(the design's first-order inclusion probabilities, or expected hits,
+equal \code{pik}), \code{"approximate"} (to a documented approximation, as in
+Pareto sampling), or \code{"unknown"}, the default. \code{draw()} refuses
+\code{"unknown"}, because \code{pik} is then a selection weight only and the
+weights would be systematically biased. The classic trap is
+\code{sample(prob = pik)}. With \code{replace = TRUE} its expected hits equal
+\code{pik}, a valid \code{type = "wr"} method, but its inclusion probabilities
+without replacement do not, so a \code{type = "wor"} wrapper's tier is
+unknown.}
 
-\item{mos}{Measure of size variable, specified as a bare column name
-(unquoted). Required for built-in PPS methods and registered \code{type = "wor"} or \code{type = "wr"} methods named with the \code{pps_} prefix. Optional
-for \code{cube}, \code{lpm2}, \code{scps}, and registered \code{type = "balanced"} methods
-named with the \code{balanced_} prefix and when omitted, equal inclusion
-probabilities are used.}
+\item{mos}{Measure of size, a bare column name. Required for built-in PPS
+methods and registered \code{pps_} methods. Optional for \code{cube}, \code{lpm2},
+\code{scps}, and registered \code{balanced_} methods, which use equal inclusion
+probabilities without it. A column name held in a variable is written
+\code{.data[[v]]}, here and in \code{prn}, \code{aux} and \code{spread}. A quoted string is
+refused with class \code{samplyr_error_draw_string_column}.}
 
-\item{prn}{Permanent random number variable for sample coordination,
-specified as a bare column name (unquoted). Must be a numeric column
-with values in the open interval (0, 1) and no missing values.
-Supported methods: \code{"bernoulli"}, \code{"pps_poisson"}, \code{"pps_sps"},
-\code{"pps_pareto"}. When supplied, the sample is deterministic for a given
-set of PRN values, enabling coordination across survey waves.}
+\item{prn}{Permanent random numbers for sample coordination, a bare
+numeric column with values in the open interval (0, 1) and no missing
+values. Supported by \code{"bernoulli"}, \code{"pps_poisson"}, \code{"pps_sps"}, and
+\code{"pps_pareto"}. The sample is then deterministic for a given set of PRN
+values, which coordinates samples across survey waves.}
 
 \item{aux}{Cube balancing declarations for \code{method = "cube"}, or ordinary
 balancing variables for a registered balanced method that declares
-\code{supports_aux = TRUE}.
-Bare numeric columns, such as \code{aux = c(income, pop_density)}, request
-approximate Horvitz-Thompson total balance. A \code{\link[=bound]{bound()}} marker requests
-adjacent-integer count bounds for every observed category, for example
-\code{aux = c(income, bound(region), bound(urban_rural))}. Use separate
-\code{bound()} calls for separate marginal constraints. With \code{cluster_by()},
-ordinary auxiliary values are summed to cluster level, while bound
-variables must be constant within each cluster.}
+\code{supports_aux = TRUE}. Bare numeric columns, such as
+\code{aux = c(income, pop_density)}, request approximate Horvitz-Thompson
+total balance. A \code{\link[=bound]{bound()}} marker requests adjacent-integer count bounds
+for every observed category, as in
+\code{aux = c(income, bound(region), bound(urban_rural))}, with a separate
+\code{bound()} for each marginal constraint. With \code{cluster_by()}, ordinary
+auxiliary values are summed to cluster level, while bound variables
+must be constant within each cluster.}
 
-\item{spread}{Spatial coordinates for \code{method = "lpm2"}, \code{"scps"}, or a
-registered balanced method that declares \code{supports_spread = TRUE},
-specified as bare numeric columns, for example \code{spread = c(longitude, latitude)}. Coordinates must be finite and have no missing values. They
-should be placed on comparable scales before sampling. Methods declaring
-\code{supports_spread = TRUE} require this argument. With \code{cluster_by()},
-coordinates must be constant within each cluster.}
+\item{spread}{Spatial coordinates for \code{method = "lpm2"} or \code{"scps"}, or
+for a registered balanced method declaring \code{supports_spread = TRUE},
+which requires them. Bare numeric columns such as
+\code{spread = c(longitude, latitude)}, finite, with no missing values, and
+placed on comparable scales. With \code{cluster_by()}, coordinates must be
+constant within each cluster.}
 
-\item{round}{Rounding method when converting \code{frac} to sample sizes.
-One of:
+\item{round}{Rounding when \code{frac} is converted to sample sizes. One of:
 \itemize{
-\item \code{"up"} (default): Round up (ceiling). Matches SAS SURVEYSELECT default.
-\item \code{"down"}: Round down (floor).
-\item \code{"nearest"}: Round to nearest integer (standard rounding).
+\item \code{"up"} (default): ceiling, the SAS SURVEYSELECT default.
+\item \code{"down"}: floor.
+\item \code{"nearest"}: nearest integer, halves up.
 }
 
-This parameter only affects designs using \code{frac} to specify the sampling
-rate. When \code{n} is specified directly, no rounding occurs. After rounding,
-a minimum of 1 is enforced per stratum or group.}
+An \code{n} given directly is not rounded. A product within floating-point
+error of an integer counts as that integer, so \code{frac = 0.07} of 100
+units draws 7 under every rule. After rounding, every stratum or group
+receives at least 1 unit.}
 
 \item{control}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Variables for
 sorting the frame before selection. Can be:
@@ -196,78 +179,76 @@ sorting the frame before selection. Can be:
 \item Mixed: \code{control = c(region, serp(district, commune), desc(size))}
 }
 
-See the "Control sorting" section for what the ordering buys and how it
-interacts with \code{stratify_by()}.}
+Character values sort by their bytes in UTF-8, as in the C locale, so
+the order and the sample do not depend on the session locale. Missing
+values sort last, also under \code{desc()}. Ties keep the frame's order. See
+the "Control sorting" section.}
 
-\item{certainty_size}{For PPS without-replacement methods, units with MOS >= this value
-are selected with certainty (probability = 1). Can be:
-\itemize{
-\item A scalar: same threshold for all strata
-\item A data frame: stratum-specific thresholds with stratification columns + \code{certainty_size} column
-}
+\item{certainty_size}{For PPS without-replacement methods, units with
+MOS >= this value are selected with certainty (probability 1). A scalar
+for all strata, or a data frame with the stratification columns and a
+\code{certainty_size} column. Certainty units are removed from the frame
+before probability sampling, which draws the remaining sample size.
+Mutually exclusive with \code{certainty_prop}. Equivalent to SAS
+SURVEYSELECT \verb{CERTSIZE=}.}
 
-Certainty units are removed from the frame before probability sampling,
-and the remaining sample size is reduced accordingly.
-Mutually exclusive with \code{certainty_prop}.
-Equivalent to SAS SURVEYSELECT \verb{CERTSIZE=} option.}
-
-\item{certainty_prop}{For PPS without-replacement methods, units whose MOS proportion
-(MOS_i / sum(MOS)) >= this value are selected with certainty. Can be:
-\itemize{
-\item A scalar between 0 and 1 (exclusive), same threshold for all strata
-\item A data frame with stratum-specific thresholds with stratification columns + \code{certainty_prop} column
-}
-
-Uses iterative selection: after removing certainty units, proportions are
-recomputed and the check is repeated until no new units qualify.
+\item{certainty_prop}{For PPS without-replacement methods, units whose
+MOS share (MOS_i / sum(MOS)) >= this value are selected with certainty.
+A scalar strictly between 0 and 1, or a data frame with the
+stratification columns and a \code{certainty_prop} column. Shares are
+recomputed after removing certainty units, until no new unit qualifies.
 Mutually exclusive with \code{certainty_size}.}
 
-\item{certainty_overflow}{Controls behavior when certainty units exceed the
-target sample size in a sampling pool (a stratum within its parent, when
-applicable). One of:
+\item{certainty_overflow}{What to do when certainty units exceed the
+target sample size of a sampling pool (a stratum within its parent,
+when applicable). One of:
 \itemize{
-\item \code{"error"} (default): Stop with an informative error.
-\item \code{"allow"}: Permit a census above the target only when every unit in
-that pool is certain. All units in the pool receive stage weight 1.
+\item \code{"error"} (default): stop with an error.
+\item \code{"allow"}: permit a census above the target only when every unit in
+that pool is certain. All units in the pool get stage weight 1.
 }
 
 Under either setting, certainty units that exactly exhaust or exceed
 the target are refused if any noncertainty units remain in the pool,
 because those units would have zero inclusion probability.}
 
-\item{on_empty}{Behavior when a random-size method (\code{bernoulli},
-\code{pps_poisson}, or a custom method registered with
-\code{fixed_size = FALSE}) selects zero units in a stratum or the whole
-frame. One of:
+\item{on_empty}{What to do when this stage selects nothing or has nothing
+to select from: a random-size method (\code{bernoulli}, \code{pps_poisson}, or a
+custom method registered with \code{fixed_size = FALSE}) that selects zero
+units in a stratum or the whole frame, or a unit selected at the
+previous stage with no rows in this stage's frame, such as a household
+with no eligible member. One of:
 \itemize{
-\item \code{"error"} (default): Stop with an informative error. Zero selections
-usually indicate a design problem (sampling fraction too small or
-stratum too small) that should be fixed rather than silently papered
-over.
-\item \code{"warn"}: Issue a warning and keep the empty selection.
-\item \code{"silent"}: Keep the empty selection without a message.
+\item \code{"error"} (default): stop with an error. Zero selections usually
+signal a design problem, such as a sampling fraction or a stratum
+that is too small.
+\item \code{"warn"}: warn and keep the empty selection.
+\item \code{"silent"}: keep the empty selection without a message.
 }
 
-An empty selection is a valid realization of a random-size design:
-it contributes zero to Horvitz-Thompson totals, so estimates from
-repeated executions remain unbiased. (A fallback that draws a
-substitute unit would need weights from the combined "draw, then
-fall back" design. Reusing the SRS or Poisson weights biases HT
-totals upward.) When an empty stage occurs in a multi-stage
-design, later stages have nothing to select from and the result is
-an empty sample. \code{"warn"} and \code{"silent"} are intended for
-simulation and replicated runs. Check \code{nrow()} before analyzing a
-single realization.
+An empty selection is a valid realization of a random-size design. It
+contributes zero to Horvitz-Thompson totals, so estimates over repeated
+executions remain unbiased. Later stages of a multistage design then
+have nothing to select from, and the sample is empty. \code{"warn"} and
+\code{"silent"} are meant for simulation and replicated runs, so check
+\code{nrow()} before analyzing a single realization.
 
-A replicated execution that produced empty replicates cannot be
-passed to a later \code{\link[=execute]{execute()}} call (a new phase or a stage
-continuation): this raises an error of class
-\code{samplyr_error_empty_phase_replicate} rather than silently
-skipping the empty replicates, which would condition all
-downstream results on nonempty realizations. Handle empty
-replicates explicitly, for example by executing each nonempty
-replicate separately while accounting for the empty ones in the
-analysis.}
+A selected unit with no rows in the next frame is refused under
+\code{"error"} (\code{samplyr_error_frame_missing_parent}). Under \code{"warn"}
+(\code{samplyr_warning_empty_parent}, once per stage) or \code{"silent"} it stays
+in the design with nothing selected under it and contributes zero to
+every total. It is recorded in the sample, counted by \code{\link[=summary]{summary()}},
+exempt from the incomplete-register checks of \code{\link[=validate_frame]{validate_frame()}} and
+\code{\link[=execute]{execute()}}, and named at export by \code{\link[=as_svydesign]{as_svydesign()}}.
+\link{variance-estimation} gives how the export treats such units, and why
+a primary unit left with no row is refused.
+
+A replicated execution with empty replicates cannot feed a later
+\code{\link[=execute]{execute()}} call (a new phase or a stage continuation). It raises
+\code{samplyr_error_empty_phase_replicate} rather than skip them and
+condition downstream results on nonempty realizations. Handle them
+explicitly, for example by executing each nonempty replicate separately
+and accounting for the empty ones in the analysis.}
 }
 \value{
 A modified \code{sampling_design} object with selection parameters specified.
@@ -276,70 +257,54 @@ A modified \code{sampling_design} object with selection parameters specified.
 \code{draw()} sets the sample size or sampling fraction, the selection method,
 and whatever that method needs: a measure of size for PPS, auxiliary
 variables for balanced sampling, coordinates for spatial spread. Every
-stage in a sampling design must end with \code{draw()}.
+stage in a sampling design ends with \code{draw()}, which closes it. A second
+\code{draw()}, or a \code{\link[=stratify_by]{stratify_by()}} or \code{\link[=cluster_by]{cluster_by()}} after it, is refused, and
+\code{\link[=sampling_design]{sampling_design()}} describes the stage grammar.
 }
 \details{
-\subsection{Custom allocation with data frames}{
-
-For stratum-specific sample sizes or rates, pass a data frame to \code{n} or \code{frac}.
-The data frame must contain:
-\itemize{
-\item All stratification variable columns (matching those in \code{stratify_by()})
-\item An \code{n} column (for sizes) or \code{frac} column (for rates)
-}
-}
-
 \subsection{Certainty selection}{
 
-In PPS without-replacement sampling, very large units can have theoretical
-inclusion probabilities exceeding 1. Certainty selection handles this by
-selecting such units with probability 1 before sampling the remainder.
-The output includes a \code{.certainty_k} column (where \code{k} is the stage number)
-indicating which units were certainty selections.
+In PPS without-replacement sampling, very large units can have
+theoretical inclusion probabilities above 1. Certainty selection takes
+them with probability 1 before sampling the remainder, and marks them in
+the \code{.certainty_k} column described in \link{sample-columns}. It is available
+for the WOR PPS methods (\code{pps_systematic}, \code{pps_brewer}, \code{pps_cps},
+\code{pps_sampford}, \code{pps_poisson}, \code{pps_sps}, \code{pps_pareto}). With-replacement
+(\code{pps_multinomial}) and PMR (\code{pps_chromy}) methods handle large units
+through their hit mechanism. A pool censused under
+\code{certainty_overflow = "allow"} has stage weight 1, but in a multistage
+design the final \code{.weight} can still exceed 1 because it compounds all
+stage weights.
 
-Certainty selection is only available for WOR PPS methods (\code{pps_systematic},
-\code{pps_brewer}, \code{pps_cps}, \code{pps_poisson}, \code{pps_sps}, \code{pps_pareto}). With-replacement methods
-(\code{pps_multinomial}) and PMR methods (\code{pps_chromy}) handle large units
-natively through their hit mechanism.
-
-\code{certainty_overflow = "allow"} permits an all-certainty census of a
-sampling pool even when its size exceeds the requested target. Every unit
-in that pool is returned with probability 1 (stage weight = 1).
-The option does not permit leaving noncertainty units with zero inclusion
-probability, including when the certainty count exactly equals the target.
-In multi-stage designs, the final \code{.weight} can still exceed 1 because it
-compounds all stage weights.
-
-\strong{Certainty with \code{pps_poisson}.} Both \code{n} and \code{frac} specify a target
-expected total that includes certainty units. A fraction gives the
-unrounded target \code{frac * N} over the original pool. After selecting
-\code{n_cert} certainty units, the remaining probabilities are
-\code{pmin(1, (target - n_cert) * mos / sum(mos))}, using only the remaining
-units' sizes. Thus \code{n = 5} and \code{frac = 0.5} on ten units give the same
-probabilities, including when a certainty rule is active. Clipping a
-probability at one does not redistribute the excess to other units, so
-the actual expected size can be smaller than the target. \code{\link[=frame_summary]{frame_summary()}}
-reports both \code{n_target} and \code{n_expected}.
+\strong{Certainty with \code{pps_poisson}.} Both \code{n} and \code{frac} give a target
+expected total that includes certainty units, \code{frac} as the unrounded
+\code{frac * N} over the original pool. After \code{n_cert} certainty units are
+selected, the remaining probabilities are
+\code{pmin(1, (target - n_cert) * mos / sum(mos))} over the remaining units'
+sizes. Thus \code{n = 5} and \code{frac = 0.5} on ten units give the same
+probabilities, with or without a certainty rule. Clipping at one does not
+redistribute the excess to other units, so the expected size can fall
+below the target. \code{\link[=frame_summary]{frame_summary()}} reports both \code{n_target} and
+\code{n_expected}.
 }
 
 \subsection{Control sorting}{
 
-Control sorting orders the sampling frame before selection, providing implicit
-stratification. This is particularly effective with systematic and sequential
-methods (\code{systematic}, \code{pps_systematic}, \code{pps_chromy}), where it ensures the
-sample spreads evenly across the sorted variables.
+Control sorting orders the frame before selection, giving implicit
+stratification. It is most effective with the systematic and sequential
+methods (\code{systematic}, \code{pps_systematic}, \code{pps_chromy}), where the sample
+spreads evenly across the sorted variables.
 
-\strong{Serpentine vs nested sorting.} Nested (the default,
-\code{control = c(var1, var2, var3)}) sorts ascending by each variable in turn.
-Serpentine (\code{control = serp(var1, var2, var3)}) alternates direction at each
-hierarchy level, which minimizes the "jumps" between adjacent units and makes
-nearby observations more similar. For geographic hierarchies this means the
-last district of region 1 is adjacent to the last district of region 2.
+Nested sorting (the default, \code{control = c(var1, var2, var3)}) sorts
+ascending by each variable in turn. Serpentine sorting
+(\code{control = serp(var1, var2, var3)}) alternates direction at each
+hierarchy level, which minimizes the jumps between adjacent units. For a
+geographic hierarchy, the last district of region 1 is then adjacent to
+the last district of region 2.
 
-\strong{Combining with explicit stratification.} When both \code{stratify_by()} and
-\code{control} are used, sorting is applied within each stratum, giving explicit
-stratification for variance control alongside implicit stratification for
-sample spread.
+With \code{\link[=stratify_by]{stratify_by()}}, sorting is applied within each stratum, combining
+explicit stratification for variance control with implicit
+stratification for sample spread.
 }
 }
 \examples{
@@ -450,7 +415,8 @@ sampling_design() |>
 \code{\link[=stratify_by]{stratify_by()}} for stratification,
 \code{\link[=cluster_by]{cluster_by()}} for clustering,
 \code{\link[=execute]{execute()}} for running designs,
-\code{\link[=serp]{serp()}} for serpentine sorting
+\code{\link[=serp]{serp()}} for serpentine sorting,
+\link{variance-estimation} for how each method's variance is estimated
 
 Other design specification:
 \code{\link[=add_stage]{add_stage()}},

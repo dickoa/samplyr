@@ -1,18 +1,13 @@
-# Wave export is not tested here. `build_activation_twophase()` reaches
-# `survey_id_info()`, `survey_strata_info()`, `survey_fpc_info()` and
-# `survey_validate_phase_support()`, which this file is the primary suite
-# for, so a change to any of them reaches the wave path too. Its coverage
-# lives in test-waves.R and test-small-pool.R.
+# Wave export is tested in test-waves.R and test-small-pool.R. It reaches the
+# survey_*_info() helpers tested here, so a change to them reaches it too.
 
 test_that("execute() produces .fpc_k columns for unstratified SRS", {
   expect_true(".fpc_1" %in% names(fix_srs))
-  # FPC should equal the frame size
   expect_equal(unique(fix_srs$.fpc_1), nrow(test_frame))
 })
 
 test_that("execute() produces .fpc_k columns for stratified design", {
   expect_true(".fpc_1" %in% names(fix_strat_prop))
-  # FPC should vary by stratum and equal stratum population sizes
   fpc_by_stratum <- tapply(fix_strat_prop$.fpc_1, fix_strat_prop$stratum, unique)
   pop_by_stratum <- table(test_frame$stratum)
   for (s in names(fpc_by_stratum)) {
@@ -30,7 +25,6 @@ test_that("execute() produces .fpc_k columns for clustered design", {
     execute(test_frame, seed = 5)
 
   expect_true(".fpc_1" %in% names(sample))
-  # FPC should equal the number of distinct clusters in the frame
   n_clusters <- length(unique(test_frame$cluster))
   expect_equal(unique(sample$.fpc_1), n_clusters)
 })
@@ -38,8 +32,6 @@ test_that("execute() produces .fpc_k columns for clustered design", {
 test_that("execute() produces .fpc_k for each stage in multi-stage design", {
   expect_true(".fpc_1" %in% names(fix_multistage))
   expect_true(".fpc_2" %in% names(fix_multistage))
-  # Stage 1 FPC should be the number of clusters per stratum
-  # Stage 2 FPC should be the number of units per selected cluster
 })
 
 test_that(".fpc_k columns carry forward in partial execution", {
@@ -51,31 +43,32 @@ test_that(".fpc_k columns carry forward in partial execution", {
     add_stage(label = "Units") |>
     draw(n = 3)
 
-  # Execute stage 1 only
   stage1 <- execute(design, test_frame, stages = 1, seed = 42)
   expect_true(".fpc_1" %in% names(stage1))
 
-  # Continue with stage 2
   stage2 <- execute(stage1, test_frame, seed = 43)
-  expect_true(".fpc_1" %in% names(stage2)) # carried forward
-  expect_true(".fpc_2" %in% names(stage2)) # new
+  expect_true(".fpc_1" %in% names(stage2))
+  expect_true(".fpc_2" %in% names(stage2))
 })
 
 test_that(".fpc_k is preserved through dplyr operations", {
-  # filter should preserve
   filtered <- dplyr::filter(fix_strat_prop, stratum == levels(stratum)[1])
   expect_true(".fpc_1" %in% names(filtered))
 
-  # mutate should preserve
   mutated <- dplyr::mutate(fix_strat_prop, new_col = 1)
   expect_true(".fpc_1" %in% names(mutated))
 })
 
-test_that("summary.tbl_sample runs without error", {
-  expect_output(summary(fix_strat_prop), "Sample Summary")
-  expect_output(summary(fix_strat_prop), "Stage 1")
-  expect_output(summary(fix_strat_prop), "stages =")
-  expect_output(summary(fix_strat_prop), "Weights")
+test_that("summary.tbl_sample returns a summary that prints", {
+  x <- summary(fix_strat_prop)
+  expect_s3_class(x, "summary_tbl_sample")
+  expect_output(print(x), "Sample Summary")
+  expect_output(print(x), "Stage 1")
+  expect_output(print(x), "stages =")
+  expect_output(print(x), "Weights")
+  utils::capture.output(shown <- withVisible(print(x)))
+  expect_false(shown$visible)
+  expect_identical(shown$value, x)
 })
 
 test_that("summary.tbl_sample shows stratum allocation ranges", {
@@ -83,7 +76,6 @@ test_that("summary.tbl_sample shows stratum allocation ranges", {
   expect_true(any(grepl("N_h", output)))
   expect_true(any(grepl("n_h", output)))
   expect_true(any(grepl("f_h", output)))
-  # One line covering the four strata
   expect_true(any(grepl("4 strata: N_h 30, n_h 10, f_h 0.3333", output,
                         fixed = TRUE)))
 })
@@ -160,7 +152,8 @@ test_that("operational continuation exports as one multistage design", {
   svy <- as_svydesign(sample)
   expect_s3_class(svy, "survey.design2")
   expect_false(inherits(svy, c("twophase", "twophase2")))
-  expect_identical(all.vars(svy$call$ids), c("psu", ".id_2"))
+  expect_identical(all.vars(svy$call$ids), c(".id_1", ".id_2"))
+  expect_identical(svy$variables$.id_1, match(sample$psu, unique(sample$psu)))
   expect_identical(all.vars(svy$call$fpc), c(".fpc_1", ".fpc_2"))
 })
 
@@ -314,17 +307,42 @@ test_that("as_svrepdesign works for PPS with mrbbootstrap type", {
   expect_s3_class(rep_svy, "svyrep.design")
 })
 
-test_that("as_svrepdesign warns for PPS with non-safe type", {
+test_that("as_svrepdesign says a PPS first stage is taken as with replacement", {
   skip_if_not_installed("survey")
 
-  # bootstrap warns and then may fail (conversion error is caught separately)
-  expect_warning(
-    tryCatch(
-      as_svrepdesign(fix_pps_brewer, type = "bootstrap"),
-      samplyr_error_svrep_conversion_failed = function(e) NULL
-    ),
-    "may not work for unequal-probability"
-  )
+  for (type in c("bootstrap", "JKn")) {
+    expect_warning(
+      rep <- as_svrepdesign(fix_pps_brewer, type = type),
+      "first stage, drawn with \"pps_brewer\", as drawn with replacement",
+      class = "samplyr_warning_replicate_wr_first_stage"
+    )
+    expect_s3_class(rep, "svyrep.design")
+  }
+})
+
+test_that("unequal probabilities below stage 1 draw no first-stage warning", {
+  skip_if_not_installed("survey")
+  frame <- test_frame
+  frame$unit_mos <- rep(c(3, 9, 5, 12, 7), 24)
+  later_pps <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(cluster) |>
+    draw(n = 3) |>
+    add_stage() |> draw(n = 2, method = "pps_brewer", mos = unit_mos) |>
+    execute(frame, seed = 1)
+  wr_first <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(cluster) |>
+    draw(n = 3, method = "pps_multinomial", mos = mos) |>
+    add_stage() |> draw(n = 2) |>
+    execute(frame, seed = 1)
+  for (sample in list(later_pps, wr_first)) {
+    expect_no_warning(
+      suppressWarnings(
+        as_svrepdesign(sample, type = "JKn"),
+        classes = "simpleWarning"
+      ),
+      class = "samplyr_warning_replicate_wr_first_stage"
+    )
+  }
 })
 
 test_that("as_survey_rep.tbl_sample returns srvyr replicate object", {
@@ -429,10 +447,82 @@ test_that("as_svydesign errors for two-phase with PPS at phase 1", {
   p1 <- execute(d1, frame, seed = 1)
   p2 <- execute(d2, p1, seed = 2)
 
-  expect_error(
-    as_svydesign(p2),
-    "PPS at phase 1"
+  err <- tryCatch(as_svydesign(p2), error = identity)
+  expect_s3_class(err, "samplyr_error_twophase_phase1_pps")
+  expect_match(conditionMessage(err), "pps_brewer", fixed = TRUE)
+  expect_false(grepl("separately", conditionMessage(err), fixed = TRUE))
+})
+
+test_that("a PPS phase 1 is named before a linkage problem behind it", {
+  skip_if_not_installed("survey")
+  # The EA key does not identify phase-1 rows, but phase-1 PPS has no route.
+  pop <- expand.grid(k = 1:10, ea = 1:30)
+  pop$mos <- (pop$ea %% 6) + 1
+  p1 <- sampling_design() |>
+    cluster_by(ea) |>
+    draw(n = 8, method = "pps_brewer", mos = mos) |>
+    execute(pop, seed = 1)
+  p2 <- sampling_design() |> draw(n = 30) |> execute(p1, seed = 2)
+  expect_error(as_svydesign(p2), class = "samplyr_error_twophase_phase1_pps")
+})
+
+test_that("a spatial or bounded phase 1 is refused before the phases are linked", {
+  skip_if_not_installed("survey")
+  # As on the wave route: these methods have no variance at either phase.
+  pop <- expand.grid(k = 1:10, ea = 1:30)
+  pop$mos <- (pop$ea %% 6) + 1
+  pop$lon <- (pop$ea * 7) %% 11
+  pop$lat <- (pop$ea * 5) %% 13
+  pop$band <- pop$ea %% 2
+  second <- sampling_design() |> draw(n = 30)
+  phase1s <- list(
+    lpm2 = sampling_design() |>
+      cluster_by(ea) |>
+      draw(n = 8, method = "lpm2", mos = mos, spread = c(lon, lat)),
+    scps = sampling_design() |>
+      cluster_by(ea) |>
+      draw(n = 8, method = "scps", spread = c(lon, lat)),
+    bounded = sampling_design() |>
+      cluster_by(ea) |>
+      draw(n = 8, method = "cube", aux = c(bound(band)))
   )
+  for (nm in names(phase1s)) {
+    p2 <- execute(second, execute(phase1s[[nm]], pop, seed = 1), seed = 2)
+    err <- tryCatch(as_svydesign(p2), error = identity)
+    expect_s3_class(err, "samplyr_error_custom_random_wor_export")
+    expect_match(conditionMessage(err), phase1s[[nm]]$stages[[1]]$draw_spec$method,
+                 fixed = TRUE, info = nm)
+    err <- tryCatch(as_svrepdesign(p2), error = identity)
+    expect_match(conditionMessage(err), "refuses it too", fixed = TRUE, info = nm)
+  }
+})
+
+test_that("replicate advice for two phases names a route that exists", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:200, size = runif(200, 1, 10), y = rnorm(200))
+  second <- sampling_design() |> cluster_by(id) |> draw(n = 40)
+
+  pps1 <- sampling_design() |>
+    cluster_by(id) |>
+    draw(n = 80, method = "pps_brewer", mos = size) |>
+    execute(frame, seed = 1)
+  err <- tryCatch(
+    as_svrepdesign(execute(second, pps1, seed = 2)),
+    error = identity
+  )
+  expect_s3_class(err, "samplyr_error_svrep_twophase_unsupported")
+  expect_match(conditionMessage(err), "refuses it too", fixed = TRUE)
+
+  srs1 <- sampling_design() |>
+    cluster_by(id) |>
+    draw(n = 80) |>
+    execute(frame, seed = 1)
+  err <- tryCatch(
+    as_svrepdesign(execute(second, srs1, seed = 2)),
+    error = identity
+  )
+  expect_match(conditionMessage(err), "two-phase linearization", fixed = TRUE)
+  expect_s3_class(as_svydesign(execute(second, srs1, seed = 2)), "twophase2")
 })
 
 test_that("as_svydesign rejects method for single-phase samples", {
@@ -456,8 +546,7 @@ test_that("as_svydesign uses Inf FPC for WR methods (no correction)", {
 test_that("as_svydesign handles mixed WR/WOR with Inf FPC for WR stages", {
   skip_if_not_installed("survey")
 
-  # Two clustered stages: stage 1 WR, stage 2 WOR.
-  # WR stage gets Inf FPC (no correction), WOR stage keeps real FPC.
+  # Stage 1 WR gets Inf FPC, and stage 2 WOR keeps its real FPC.
   n_districts <- 10
   n_schools_per <- 8
   n_students_per <- 5
@@ -487,14 +576,12 @@ test_that("as_svydesign handles mixed WR/WOR with Inf FPC for WR stages", {
   svy <- as_svydesign(sample)
   expect_s3_class(svy, "survey.design2")
 
-  # FPC should be present -- WR stage uses Inf, WOR stage uses real FPC
   expect_false(is.null(svy$fpc$popsize))
 })
 
 test_that("as_svydesign preserves FPC when all clustered stages are WOR", {
   skip_if_not_installed("survey")
 
-  # Two clustered stages, both WOR. FPC should be present for both.
   n_districts <- 10
   n_schools_per <- 8
   n_students_per <- 5
@@ -524,15 +611,34 @@ test_that("as_svydesign preserves FPC when all clustered stages are WOR", {
   svy <- as_svydesign(sample)
   expect_s3_class(svy, "survey.design2")
 
-  # FPC should be present -- both clustered stages are WOR
   expect_false(is.null(svy$fpc$popsize))
 })
 
-test_that("as_svydesign errors without survey package", {
-  # This test validates the check_installed mechanism
-  # It would only fail if survey is not installed, which is the point
-  # In practice, the skip_if_not_installed tests above cover the happy path
-  expect_true(TRUE) # placeholder
+test_that("every export asks for the survey package before anything else", {
+  asked <- character(0)
+  local_mocked_bindings(
+    check_installed = function(pkg, ...) {
+      asked <<- c(asked, pkg)
+      rlang::abort("survey is absent", class = "probe_not_installed")
+    },
+    .package = "rlang"
+  )
+  population <- data.frame(id = 1:20, in_a = 1:20 <= 12, in_b = 1:20 > 8)
+  component <- function(col, seed) {
+    sampling_design() |>
+      draw(n = 4) |>
+      execute(population[population[[col]], ], seed = seed)
+  }
+  sample <- component("in_a", 1)
+  stack <- stack_frames(
+    a = sample, b = component("in_b", 2),
+    membership = c(a = "in_a", b = "in_b"), key = id
+  )
+  for (x in list(sample, stack)) {
+    expect_error(as_svydesign(x), class = "probe_not_installed")
+    expect_error(as_svrepdesign(x), class = "probe_not_installed")
+  }
+  expect_identical(asked, rep("survey", 4))
 })
 
 ## Random-size Poisson methods (bernoulli, pps_poisson)
@@ -638,8 +744,7 @@ test_that("multi-stage with bernoulli at stage 1 errors with samplyr_error_multi
 test_that("clustered single-stage bernoulli with multi-row clusters errors", {
   skip_if_not_installed("survey")
 
-  # test_frame has 5 rows per cluster: cluster_by + bernoulli triggers the
-  # multi-row-per-cluster guard.
+  # test_frame has 5 rows per cluster, which trips the multi-row guard.
   s <- sampling_design() |>
     cluster_by(cluster) |>
     draw(frac = 0.3, method = "bernoulli") |>
@@ -725,7 +830,7 @@ test_that("joint_expectation returns list of correct length", {
   jip <- joint_expectation(fix_multistage, test_frame)
   expect_type(jip, "list")
   expect_length(jip, 2)
-  # Stage 1 is PPS -> matrix; Stage 2 is SRS -> NULL
+  # Stage 1 is PPS, so a matrix. Stage 2 is SRS, so NULL.
   expect_true(is.matrix(jip[[1]]))
   expect_null(jip[[2]])
 })
@@ -743,7 +848,6 @@ test_that("joint_expectation matrix is square and symmetric", {
 
   expect_true(is.matrix(mat))
   expect_equal(nrow(mat), ncol(mat))
-  # Joint matrix should be symmetric
   expect_equal(mat, t(mat), tolerance = 1e-10)
 })
 
@@ -751,7 +855,6 @@ test_that("joint_expectation diagonal equals marginal pik", {
   jip <- joint_expectation(fix_pps_brewer, test_frame)
   mat <- jip[[1]]
 
-  # Diagonal should equal 1/weight (marginal inclusion probabilities)
   pik_from_weights <- 1 / fix_pps_brewer$.weight_1
   expect_equal(diag(mat), pik_from_weights, tolerance = 1e-6)
 })
@@ -808,7 +911,21 @@ test_that("systematic PPS ppsmat export warns about unseen pair probabilities", 
     as_svydesign(sample, pps = survey::ppsmat(joint[[1L]])),
     class = "samplyr_warning_systematic_ppsmat"
   )
-  expect_no_warning(as_svydesign(sample, pps = "brewer"))
+  # A supplied matrix is not the systematic-variance warning's business.
+  expect_warning(
+    as_svydesign(sample, pps = "brewer"),
+    class = "samplyr_warning_systematic_variance"
+  )
+  classes <- character()
+  withCallingHandlers(
+    as_svydesign(sample, pps = survey::ppsmat(joint[[1L]])),
+    warning = function(w) {
+      classes <<- c(classes, class(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  expect_true("samplyr_warning_systematic_ppsmat" %in% classes)
+  expect_false("samplyr_warning_systematic_variance" %in% classes)
 })
 
 test_that("joint_expectation works with proportional allocation", {
@@ -817,7 +934,6 @@ test_that("joint_expectation works with proportional allocation", {
 
   expect_true(is.matrix(mat))
   expect_equal(nrow(mat), ncol(mat))
-  # Diagonal pi_i should equal 1/weight for each cluster
   sample_df <- as.data.frame(fix_strat_pps)
   sample_clusters <- sample_df |>
     dplyr::distinct(cluster, .keep_all = TRUE)
@@ -826,11 +942,9 @@ test_that("joint_expectation works with proportional allocation", {
 })
 
 test_that("joint_expectation works with stage vector", {
-  # Request both stages via vector
   jip <- joint_expectation(fix_multistage, test_frame, stages = c(1, 2))
   expect_length(jip, 2)
   expect_true(is.matrix(jip[[1]]))
-  # Stage 2 is SRS -- should be NULL
   expect_null(jip[[2]])
 })
 
@@ -848,9 +962,7 @@ test_that("joint_expectation works with stratified pps_poisson and named frac", 
 
   expect_true(is.matrix(mat))
   expect_equal(nrow(mat), ncol(mat))
-  # Symmetric
   expect_equal(mat, t(mat), tolerance = 1e-10)
-  # Diagonal should equal marginal pik = 1/weight
   pik_from_weights <- 1 / sample$.weight_1
   expect_equal(diag(mat), pik_from_weights, tolerance = 1e-6)
 })
@@ -878,7 +990,6 @@ test_that("joint_expectation works with frac data frame", {
 })
 
 test_that("joint_expectation decomposes certainty units correctly", {
-  # Create a frame where one unit is very large (certainty selection)
   frame <- data.frame(
     id = paste0("u", 1:10),
     size = c(5000, rep(20, 9))
@@ -893,14 +1004,11 @@ test_that("joint_expectation decomposes certainty units correctly", {
 
   expect_true(is.matrix(mat))
   expect_equal(nrow(mat), ncol(mat))
-  # Symmetric
   expect_equal(mat, t(mat), tolerance = 1e-10)
 
-  # Diagonal should equal marginal pik = 1/weight
   pik_from_weights <- 1 / sample$.weight_1
   expect_equal(diag(mat), pik_from_weights, tolerance = 1e-6)
 
-  # Certainty unit (weight = 1, pi = 1) should have diagonal = 1
   cert_rows <- which(sample$.certainty_1)
   if (length(cert_rows) > 0) {
     expect_equal(
@@ -950,14 +1058,11 @@ test_that("joint_expectation cross-stratum entries equal pi_i * pi_j", {
   jip <- joint_expectation(fix_strat_pps, test_frame)
   mat <- jip[[1]]
 
-  # No zeros: cross-stratum entries should be pi_i * pi_j, not 0
+  # Cross-stratum entries are pi_i * pi_j, not 0.
   expect_true(all(mat > 0))
 
-  # Verify cross-stratum entries explicitly
   pi_vec <- diag(mat)
   expected_cross <- outer(pi_vec, pi_vec)
-  # Within-stratum entries differ from pi_i * pi_j (joint != product)
-  # but cross-stratum entries should be exactly pi_i * pi_j
   sample_clusters <- as.data.frame(fix_strat_pps) |>
     dplyr::distinct(cluster, stratum)
   strata <- sample_clusters$stratum
@@ -979,7 +1084,6 @@ test_that("joint_expectation matrix matches sample PSU ordering", {
   jip <- joint_expectation(fix_strat_pps, test_frame)
   mat <- jip[[1]]
 
-  # Diagonal should equal 1/weight in the same order as the sample
   sample_clusters <- as.data.frame(fix_strat_pps) |>
     dplyr::distinct(cluster, .keep_all = TRUE)
   pik_from_weights <- 1 / sample_clusters$.weight_1
@@ -989,8 +1093,7 @@ test_that("joint_expectation matrix matches sample PSU ordering", {
 test_that("joint_expectation with ppsmat gives valid SE for stratified PPS", {
   skip_if_not_installed("survey")
 
-  # ppsmat requires matrix dims = nrow(sample), so use unclustered PPS
-  # (each row is its own PSU, like bfa_eas where ea_id = row)
+  # ppsmat needs one matrix row per sample row, so the PPS is unclustered.
   sample <- sampling_design() |>
     stratify_by(stratum) |>
     draw(n = 5, method = "pps_brewer", mos = mos) |>
@@ -1004,11 +1107,8 @@ test_that("joint_expectation with ppsmat gives valid SE for stratified PPS", {
   est_exact <- survey::svymean(~mos, svy_exact)
   est_brewer <- survey::svymean(~mos, svy_brewer)
 
-  # SE should not be NaN
   expect_false(any(is.nan(survey::SE(est_exact))))
-  # Point estimates should match
   expect_equal(coef(est_exact), coef(est_brewer), tolerance = 1e-6)
-  # SEs should be close (exact vs approximation)
   expect_equal(
     survey::SE(est_exact)[[1]],
     survey::SE(est_brewer)[[1]],
@@ -1017,7 +1117,6 @@ test_that("joint_expectation with ppsmat gives valid SE for stratified PPS", {
 })
 
 test_that("joint_expectation with certainty works in stratified design", {
-  # Add a large-mos cluster to force certainty selection
   cert_frame <- test_frame
   cert_frame$mos[cert_frame$cluster == "cl01"] <- 5000L
 
@@ -1034,7 +1133,6 @@ test_that("joint_expectation with certainty works in stratified design", {
   expect_equal(nrow(mat), ncol(mat))
   expect_equal(mat, t(mat), tolerance = 1e-10)
 
-  # Diagonal equals marginal pik
   sample_clusters <- as.data.frame(sample) |>
     dplyr::distinct(cluster, .keep_all = TRUE)
   pik_from_weights <- 1 / sample_clusters$.weight_1
@@ -1052,10 +1150,9 @@ test_that("as_svydesign for srswr uses .draw_1 as PSU with Inf FPC", {
   svy <- as_svydesign(result)
   expect_s3_class(svy, "survey.design")
 
-  # Should have 10 rows (one per draw)
+  # One row per draw.
   expect_equal(nrow(svy$variables), 10L)
 
-  # Estimate the mean -- should not error
   est <- survey::svymean(~y, svy)
   expect_true(is.numeric(coef(est)))
   expect_true(all(survey::SE(est) > 0))
@@ -1082,7 +1179,6 @@ test_that("as_svydesign for pps_chromy uses .draw_1 with Inf FPC", {
 })
 
 test_that("two-stage WR cluster design with independent sub-samples", {
-  # Stage 1: WR cluster sampling; Stage 2: SRS within clusters
   frame <- data.frame(
     cluster = rep(1:10, each = 5),
     id = 1:50,
@@ -1098,16 +1194,14 @@ test_that("two-stage WR cluster design with independent sub-samples", {
     draw(n = 3) |>
     execute(frame, seed = 42)
 
-  # Stage 1: 6 draws, Stage 2: 3 units per draw = 18 rows
+  # 6 draws times 3 units per draw.
   expect_equal(nrow(result), 18L)
 
-  # Each draw should have exactly 3 sub-sampled units
   expect_true(".draw_1" %in% names(result))
   for (d in unique(result$.draw_1)) {
     expect_equal(sum(result$.draw_1 == d), 3L)
   }
 
-  # Compound weight = stage1_weight * stage2_weight
   expect_true(all(
     abs(result$.weight - result$.weight_1 * result$.weight_2) < 1e-10
   ))
@@ -1133,7 +1227,6 @@ test_that("two-stage WR cluster design produces valid survey design", {
   svy <- as_svydesign(result)
   expect_s3_class(svy, "survey.design")
 
-  # Should be able to estimate mean without error
   est <- survey::svymean(~y, svy)
   expect_true(is.numeric(coef(est)))
   expect_true(all(survey::SE(est) > 0))
@@ -1154,14 +1247,12 @@ test_that("PPS WOR with certainty creates separate take-all stratum", {
   svy <- as_svydesign(result)
   expect_s3_class(svy, "survey.design")
 
-  # Should have .cert_stratum in the data
   expect_true(".cert_stratum" %in% names(svy$variables))
 
-  # Should have 2 strata: certainty and probability
+  # Two strata: certainty and probability.
   strata_levels <- unique(svy$strata[, 1])
   expect_equal(length(strata_levels), 2L)
 
-  # svymean should work
   est <- survey::svymean(~y, svy)
   expect_true(is.numeric(coef(est)))
   expect_true(all(survey::SE(est) > 0))
@@ -1184,10 +1275,8 @@ test_that("PPS WOR with certainty + user strata creates interaction strata", {
   svy <- as_svydesign(result)
   expect_s3_class(svy, "survey.design")
 
-  # Should have both group and .cert_stratum
   expect_true(".cert_stratum" %in% names(svy$variables))
 
-  # svymean should work
   est <- survey::svymean(~y, svy)
   expect_true(is.numeric(coef(est)))
   expect_true(all(survey::SE(est) > 0))
@@ -1227,9 +1316,7 @@ test_that("certainty stratum gives lower df than without separation", {
   n_cert <- sum(result$.certainty_1)
   n_prob <- sum(!result$.certainty_1)
 
-  # df with separation = (n_cert - 1) + (n_prob - 1)
-  # df without = n_total - 1
-  # Difference = 1 (one fewer df due to stratum split)
+  # One fewer df than n - 1, from the certainty/probability split.
   expect_equal(df_with, (n_cert - 1) + (n_prob - 1))
   expect_true(df_with < nrow(result) - 1)
 })
@@ -1272,9 +1359,7 @@ test_that("joint_expectation returns matrix for pps_multinomial", {
 
   expect_true(is.matrix(mat))
   expect_equal(nrow(mat), ncol(mat))
-  # Symmetric
   expect_equal(mat, t(mat), tolerance = 1e-10)
-  # Dimensions match unique sampled units
   n_unique <- dplyr::n_distinct(fix_pps_multinomial$id)
   expect_equal(nrow(mat), n_unique)
 })
@@ -1285,9 +1370,7 @@ test_that("joint_expectation returns matrix for pps_chromy", {
 
   expect_true(is.matrix(mat))
   expect_equal(nrow(mat), ncol(mat))
-  # Symmetric
   expect_equal(mat, t(mat), tolerance = 1e-10)
-  # Dimensions match unique sampled units
   n_unique <- dplyr::n_distinct(fix_pps_chromy$id)
   expect_equal(nrow(mat), n_unique)
 })
@@ -1307,11 +1390,7 @@ test_that("joint_expectation accepts and validates Chromy nsim", {
 })
 
 test_that("chromy joint expectations are a function of nsim and seed alone", {
-  # Chromy's pairwise hits are simulated, so the matrix has no closed form to
-  # assert. What can be asserted is that the simulation is pinned: the same
-  # call gives the same answer, and it does not move the caller's stream. A
-  # reported standard error that changes between two runs of one script is
-  # the defect this covers.
+  # Simulated hits have no closed form, so the test pins the simulation.
   set.seed(1)
   before <- .Random.seed
   a <- joint_expectation(fix_pps_chromy, test_frame)
@@ -1373,8 +1452,7 @@ test_that("joint_expectation for pps_multinomial diagonal matches E[n_i^2]", {
   je <- joint_expectation(sample, frame)
   mat <- je[[1]]
 
-  # Diagonal of the joint expected hits matrix is E[n_i^2], not E[n_i].
-  # For multinomial: E[n_i^2] = n*(n-1)*p_i^2 + n*p_i
+  # The diagonal is E[n_i^2] = n * (n - 1) * p_i^2 + n * p_i, not E[n_i].
   mos_vals <- frame$size
   n <- 5
   p <- mos_vals / sum(mos_vals)
@@ -1420,12 +1498,11 @@ test_that("joint_expectation for stratified pps_multinomial works", {
   expect_equal(mat, t(mat), tolerance = 1e-10)
 })
 
-## Multistage export completeness (July 2026 review)
+## Multistage export completeness
 #
-# Every executed sampling stage must be represented in the exported ids
-# and fpc formulas, multi-variable cluster_by()/stratify_by() must
-# collapse to a single formula term per stage, and the certainty stratum
-# must combine with user strata instead of being appended.
+# Every executed stage appears in the exported ids and fpc, multi-variable
+# keys collapse to one term per stage, and the certainty stratum combines
+# with user strata.
 
 test_that("first-stage census + unclustered SRS stage has positive SE matching reference", {
   skip_if_not_installed("survey")
@@ -1612,8 +1689,7 @@ test_that("certainty stratum combines with user strata", {
   expect_equal(sum(smp$.certainty_1), 2L)
 
   svy <- as_svydesign(smp)
-  # One combined stratum term, with certainty separated within each
-  # user stratum.
+  # One stratum term, with certainty separated within each user stratum.
   expect_length(all.vars(svy$call$strata), 1L)
   expect_equal(
     length(unique(svy$strata[[1]])),
@@ -1721,9 +1797,7 @@ test_that("PPS stage 1 with clustered stage 2 exports without fpc scale error", 
     y = (1:200) %% 13
   )
 
-  # Errored before the multistage export rewrite: survey requires all
-  # fpc terms on one scale, and pi at stage 1 was mixed with a count
-  # at stage 2.
+  # survey needs every fpc term on one scale, pi at stage 1 included.
   s <- sampling_design() |>
     add_stage() |>
       cluster_by(psu) |>
@@ -1751,10 +1825,7 @@ test_that("unclustered element stage before later stages is refused", {
     add_stage() |> draw(n = 100) |>
     add_stage() |> cluster_by(psu) |> draw(n = 4)
 
-  # This shape no longer reaches export: execution refuses it, because an
-  # element stage cannot name the units stage 2 would sample within. The
-  # samplyr_error_survey_midstage_element guard in as_svydesign() is kept for
-  # samples deserialized from a version that predates this rule.
+  # Execution refuses it: an element stage cannot name stage 2's parents.
   expect_error(
     execute(design, frame, seed = 5),
     class = "samplyr_error_stage_parent_id"
@@ -1781,9 +1852,7 @@ test_that("WR stage 1 with unclustered stage 2 keeps the WR variance", {
 
   svy <- as_svydesign(s)
 
-  # With replacement at stage 1 (fpc = Inf, f1 = 0), later-stage terms
-  # contribute nothing: the export must equal the pure between-draw
-  # estimator.
+  # fpc = Inf at stage 1, so the export equals the between-draw estimator.
   df <- as.data.frame(s)
   ref <- survey::svydesign(
     ids = ~.draw_1, weights = ~.weight, data = df
@@ -1795,7 +1864,7 @@ test_that("WR stage 1 with unclustered stage 2 keeps the WR variance", {
   )
 })
 
-test_that("user pps object on a multi-stage sample warns and exports stage 1", {
+test_that("a single-stage pps specification on a multi-stage sample exports stage 1", {
   skip_if_not_installed("survey")
 
   frame <- data.frame(
@@ -1813,21 +1882,26 @@ test_that("user pps object on a multi-stage sample warns and exports stage 1", {
       draw(n = 8) |>
     execute(frame, seed = 31)
 
-  jip <- joint_expectation(s, frame, stages = 1)[[1]]
-  # survey needs the joint matrix at row level for multi-row clusters
-  idx <- match(s$psu, sort(unique(s$psu)))
+  # Overton's approximation is single-stage in survey: stage 1 only.
   expect_warning(
-    svy <- as_svydesign(s, pps = survey::ppsmat(jip[idx, idx])),
-    "single-stage"
+    svy <- as_svydesign(s, pps = "overton"),
+    "one stage"
   )
   expect_s3_class(svy, "survey.design")
-  expect_gt(unname(survey::SE(survey::svymean(~y, svy))), 0)
+  expect_identical(NCOL(svy$cluster), 1L)
+
+  # survey indexes a joint matrix by row, so it needs one row per stage-1 unit.
+  jip <- joint_expectation(s, frame, stages = 1)[[1]]
+  idx <- match(s$psu, sort(unique(s$psu)))
+  expect_error(
+    as_svydesign(s, pps = survey::ppsmat(jip[idx, idx])),
+    class = "samplyr_error_pps_rows_per_psu"
+  )
 })
 
-# Resolved certainty and the take-all stratum. A unit whose inclusion
-# probability was capped at one by the PPS calculation is the same
-# statistical object as one named by certainty_size, and must export the
-# same way. The frame is deterministic: units 1-3 cap at one under n = 10.
+# A unit capped at probability one by the PPS calculation is the same object
+# as one named by certainty_size and exports the same way. The frame is
+# deterministic: units 1-3 cap at one under n = 10.
 cert_export_frame <- function() {
   frame <- data.frame(id = seq_len(60), mos = c(500, 400, 300, rep(10, 57)))
   frame$y <- frame$mos * 2 + (frame$id %% 7)
@@ -1886,8 +1960,7 @@ test_that("cube certainty units get a take-all stratum", {
     draw(n = 10, method = "cube", mos = mos, aux = c(x)) |>
     execute(frame, seed = 3)
 
-  # cube is absent from pps_wor_methods but exports under the PPS-WOR
-  # variance treatment, so the name test alone used to miss it.
+  # cube is not in pps_wor_methods but exports under the PPS-WOR treatment.
   expect_true(any(sample$.certainty_1))
   expect_equal(deparse(as_svydesign(sample)$call$strata), "~.cert_stratum")
 })
@@ -1895,10 +1968,7 @@ test_that("cube certainty units get a take-all stratum", {
 test_that("random-size designs do not acquire a take-all stratum", {
   skip_if_not_installed("survey")
 
-  # pps_poisson is a pps_wor_method by name but exports under the Poisson
-  # treatment, where a Brewer take-all stratum would be wrong.
-  # Three dominant units by construction: the shortfall is the point of the
-  # fixture, not a finding of this test.
+  # pps_poisson exports under the Poisson treatment, with no take-all stratum.
   sample <- suppressWarnings(
     sampling_design() |>
       draw(n = 10, method = "pps_poisson", mos = mos) |>
@@ -1941,9 +2011,7 @@ test_that("a two-phase export represents every phase-1 stage", {
     value = seq_len(400) / 400
   )
 
-  # Phase 1 selects clusters and then elements within them. The element stage
-  # is unclustered, so it contributes neither an identifier nor a correction
-  # term unless one is synthesized for it.
+  # The unclustered element stage needs a synthesized identifier and fpc term.
   phase1 <- sampling_design() |>
     add_stage() |>
     cluster_by(psu) |>
@@ -1957,7 +2025,7 @@ test_that("a two-phase export represents every phase-1 stage", {
     draw(n = 20) |>
     execute(phase1, seed = 8)
 
-  svy <- as_svydesign(phase2)
+  svy <- quiet_across(as_svydesign(phase2))
   total <- survey::svytotal(~value, svy)
 
   expect_equal(
@@ -1969,9 +2037,7 @@ test_that("a two-phase export represents every phase-1 stage", {
     sum(as.data.frame(phase2)$.weight * as.data.frame(phase2)$value)
   )
 
-  # Against a twophase() call written by hand, stating both phase-1 stages.
-  # The weights alone do not detect a dropped stage's variance, so the
-  # standard error is compared too.
+  # The weights cannot detect a dropped stage's variance, so SEs are compared.
   reference_data <- as.data.frame(phase1)
   reference_data$.elem <- seq_len(nrow(reference_data))
   reference_data$.in_phase2 <- reference_data$id %in% as.data.frame(phase2)$id
@@ -2010,8 +2076,7 @@ test_that("a systematic stage says its variance is approximated", {
     result <- as_svydesign(systematic),
     class = "samplyr_warning_systematic_variance"
   )
-  # The stage is named, so a reader knows which one to think about, and the
-  # estimator being approximated is the linearization one.
+  # The stage is named, and the approximated estimator is linearization.
   svy_warning <- conditionMessage(
     tryCatch(as_svydesign(systematic), warning = function(w) w)
   )
@@ -2051,8 +2116,7 @@ test_that("replicate weights say they do not reproduce a systematic stage", {
     result <- as_svrepdesign(systematic, type = "JKn"),
     class = "samplyr_warning_systematic_variance"
   )
-  # The condition describes the replicate estimator, not the linearization
-  # one, and does not carry the linearization's measured margins.
+  # The condition describes the replicate estimator, not the linearization one.
   rep_warning <- conditionMessage(
     tryCatch(as_svrepdesign(systematic, type = "JKn"),
              warning = function(w) w)
@@ -2102,9 +2166,7 @@ test_that("the replicate warning is confined to what it approximates", {
     type = "JKn"
   ))
 
-  # A systematic stage that took everything within reach contributes no
-  # variance for the replicates to misstate. The second stage keeps the
-  # export non-degenerate, which a jackknife needs.
+  # A census stage has nothing to misstate. Stage 2 keeps JK1 non-degenerate.
   clustered <- data.frame(
     id = seq_len(400),
     psu = rep(seq_len(40), each = 10)
@@ -2118,8 +2180,7 @@ test_that("the replicate warning is confined to what it approximates", {
       draw(n = 5) |>
       execute(clustered, seed = 1)
   )
-  # survey drops post-first-stage corrections here and says so. Only its
-  # warnings are muffled, so the class under test would still surface.
+  # Only survey's own warnings are muffled, so the class under test surfaces.
   without_survey_warnings <- function(expr) {
     withCallingHandlers(expr, warning = function(w) {
       if (!inherits(w, "samplyr_warning_systematic_variance")) {
@@ -2157,23 +2218,22 @@ test_that("the replicate refusal comes before the conversion", {
     id = seq_len(400),
     region = rep(c("North", "South"), each = 200)
   )
-  # Unstratified, so survey::as.svrepdesign() refuses "JKn" on its own. Which
-  # error arrives says which check ran first.
+  # survey refuses unstratified JKn too. The error shows which check ran first.
   unstratified <- sampling_design() |>
     draw(n = 50, method = "systematic") |>
     execute(frame, seed = 1)
   # The default warns on the way past, which is not what this asserts.
-  expect_error(
+  cnd <- expect_error(
     suppressWarnings(as_svrepdesign(unstratified, type = "JKn")),
     class = "samplyr_error_svrep_conversion_failed"
   )
+  expect_identical(condition_header(cnd), "as_svrepdesign")
   expect_error(
     as_svrepdesign(unstratified, type = "JKn", systematic_variance = "error"),
     class = "samplyr_error_systematic_variance"
   )
 
-  # `systematic_variance` follows the dots, so a near miss is reported as a
-  # stray argument rather than partial-matched or forwarded to survey.
+  # A near miss is a stray argument, not partial-matched or sent to survey.
   systematic <- sampling_design() |>
     stratify_by(region) |>
     draw(n = 50, method = "systematic") |>
@@ -2184,7 +2244,7 @@ test_that("the replicate refusal comes before the conversion", {
   )
   expect_error(
     as_svrepdesign(systematic, type = "JKn", systematic_variance = "nonsense"),
-    "should be one of"
+    class = "samplyr_error_survey_argument"
   )
 })
 
@@ -2202,9 +2262,24 @@ test_that("the systematic warning is confined to what it approximates", {
       execute(frame, seed = 1)
   ))
 
-  # pps_systematic has its own variance treatment.
+  # pps_systematic is approximated by Brewer's formula, named in the condition.
+  pps_sys <- sampling_design() |>
+    draw(n = 50, method = "pps_systematic", mos = mos) |>
+    execute(frame, seed = 1)
+  w <- tryCatch(as_svydesign(pps_sys), warning = identity)
+  expect_s3_class(w, "samplyr_warning_systematic_variance")
+  expect_match(conditionMessage(w), "Brewer", fixed = TRUE)
+  expect_identical(
+    attr(as_svydesign(pps_sys, systematic_variance = "approximate"),
+         "samplyr_systematic_variance")$approximation,
+    "brewer"
+  )
+
+  # A census pps_systematic stage has nothing to approximate.
   expect_no_warning(as_svydesign(
-    sampling_design() |> draw(n = 50, method = "pps_systematic", mos = mos) |>
+    sampling_design() |>
+      stratify_by(region) |>
+      draw(n = 200, method = "pps_systematic", mos = mos) |>
       execute(frame, seed = 1)
   ))
 
@@ -2227,8 +2302,9 @@ test_that("a systematic phase one is named even though the sample is not", {
     draw(n = 20, method = "systematic") |>
     execute(frame, seed = 1)
   phase2 <- sampling_design() |>
+    stratify_by(psu) |>
     cluster_by(id) |>
-    draw(n = 30) |>
+    draw(n = 2) |>
     execute(phase1, seed = 2)
 
   # The approximation enters through a design the sample itself does not hold.
@@ -2239,4 +2315,61 @@ test_that("a systematic phase one is named even though the sample is not", {
   expect_no_warning(
     as_svydesign(phase2, systematic_variance = "approximate")
   )
+})
+
+## The stored call
+
+test_that("exported two-phase and wave designs print without their data", {
+  skip_if_not_installed("survey")
+  pop <- data.frame(id = 1:2000, st = rep(1:2, 1000), y = rnorm(2000))
+  p1 <- sampling_design() |>
+    stratify_by(st) |> cluster_by(id) |> draw(n = 300) |>
+    execute(pop, seed = 1)
+  p2 <- sampling_design() |> draw(n = 50) |> execute(p1, seed = 2)
+  rotation <- data.frame(
+    panel = rep(1:4, times = 4),
+    wave = rep(1:4, each = 4),
+    active = c(TRUE, TRUE, FALSE, FALSE, FALSE, TRUE, TRUE, FALSE,
+               FALSE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, TRUE)
+  )
+  master <- sampling_design() |> stratify_by(st) |> draw(n = 200) |>
+    execute(pop, seed = 3, panels = rotation)
+
+  for (svy in list(as_svydesign(p2), as_svydesign(execute(master, wave = 1)))) {
+    expect_lte(length(utils::capture.output(print(svy))), 30L)
+    expect_identical(svy$call$data, quote(data))
+    expect_lt(length(deparse(svy$call)), 20L)
+  }
+})
+
+test_that("the stored call keeps every argument and rebuilds the design", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    psu = rep(1:40, each = 5),
+    st = rep(c("a", "b"), each = 100),
+    size = rep(1:40, each = 5),
+    y = rnorm(200)
+  )
+  s <- sampling_design() |>
+    stratify_by(st) |>
+    draw(n = 30, method = "pps_brewer", mos = size) |>
+    execute(frame, seed = 1)
+  svy <- as_svydesign(s, pps = "brewer", nest = FALSE, check.strata = TRUE)
+  expect_identical(svy$call$pps, "brewer")
+  expect_identical(svy$call$check.strata, TRUE)
+  expect_identical(svy$call$nest, FALSE)
+
+  rebuilt <- eval(svy$call, list(data = svy$variables), asNamespace("survey"))
+  expect_equal(
+    survey::SE(survey::svytotal(~y, rebuilt)),
+    survey::SE(survey::svytotal(~y, svy))
+  )
+
+  # An object passed as a value is named, not printed.
+  one <- sampling_design() |>
+    draw(n = 12, method = "pps_brewer", mos = size) |>
+    execute(frame, seed = 2)
+  joint <- joint_expectation(one, frame)[[1]]
+  svy <- as_svydesign(one, pps = survey::ppsmat(joint))
+  expect_identical(svy$call$pps, quote(pps))
 })

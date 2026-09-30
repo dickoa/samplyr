@@ -6,24 +6,24 @@
 #' (WR) and PMR stages, this produces the joint expected hits
 #' \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
 #'
-#' Without `frame`, the computation runs off the frame digest recorded
-#' at execution: the digest holds each pool's exact resolved chance
-#' vector, so a sample that traveled without its (possibly confidential)
-#' frame can still yield joint expectations at the method's stated quality.
-#' An exact record of approximate targets does not make their probabilities
-#' exact. Reconstruction requires an exact chance
-#' representation: cluster stages always have one, element stages with
-#' constant chances have one, and element stages with varying chances
-#' keep one only under `execute(frame_digest = "full")`. A summarized
-#' representation refuses rather than approximates. With `frame`, the
-#' quantities are replayed against it as before. The frame must be
-#' unchanged since execution ([validate_frame()] reports drift).
+#' Without `frame`, the computation uses the frame digest recorded at
+#' execution, so a sample that traveled without its (possibly
+#' confidential) frame still yields joint expectations at the method's
+#' stated quality. This needs each pool's exact chances, which the
+#' digest always holds for cluster stages and constant-chance element
+#' stages, but for element stages with varying chances only under
+#' `execute(frame_digest = "full")`. A summarized digest refuses rather
+#' than approximates, so pass the frame instead. An exact record of
+#' approximate targets does not make their probabilities exact. A
+#' supplied frame must keep the pools the sample was drawn from, as `frame`
+#' describes, and its units must be uniquely identifiable within each
+#' stratum/cluster group by their column values.
 #'
 #' A sample drawn from separately supplied stage registers needs either
-#' its intact digest or the ordered list of those registers. One
-#' lower-stage register cannot reconstruct upper-stage joint
-#' quantities: it holds no rows for the population the upper stage
-#' selected from.
+#' its intact digest or all of those registers, in the order they were
+#' supplied. One frame is refused with `samplyr_error_frame_count`,
+#' because a lower-stage register holds no rows for the population an
+#' upper stage selected from.
 #'
 #' @inheritParams as_svydesign
 #' @param frame The frame originally passed to [execute()]. A data
@@ -33,10 +33,20 @@
 #'   the columns its stage sampled on (strata variables, cluster
 #'   variables, measure of size). When `NULL` (the default), the
 #'   computation uses the frame digest recorded on the sample instead.
+#'
+#'   The frame is checked against the digest recorded at execution.
+#'   Other columns, another row order or other column types are accepted
+#'   when every pool keeps the size and selection chances the sample was
+#'   drawn with. Rows added or removed, a changed design value or a
+#'   missing design column are refused with
+#'   `samplyr_error_joint_frame_mismatch`, and so is any difference at all
+#'   for a stage whose method depends on row order (`systematic`,
+#'   `pps_systematic`, `pps_chromy`, registered methods), whose matrix is
+#'   that of the order. Under `frame_digest = "none"` there is nothing to
+#'   compare against, and a warning says so.
 #' @param ... These dots are for future extensions and must be empty.
-#'   `stages` and the arguments after it follow `...`, so each must be
-#'   named exactly: the singular `stage` is reported rather than
-#'   prefix-matched.
+#'   `stages` and the arguments after it must be named exactly: the
+#'   singular `stage` is reported rather than prefix-matched.
 #' @param stages An integer vector of stage numbers to compute, or
 #'   `NULL` (default) to compute all PPS stages.
 #'   Non-PPS stages produce `NULL` entries in the returned list.
@@ -47,22 +57,22 @@
 #'   keeps the stage behavior. Mutually exclusive with `stages`, `frame`,
 #'   `nsim` and `seed`, none of which activation mode uses.
 #' @param nsim Positive integer number of simulations used for Chromy's
-#'   pairwise expected hits (default 10000). Also forwarded to registered
-#'   WR `joint_fn`s that explicitly declare an `nsim` formal. Ignored by
-#'   analytic methods. Raising it narrows the simulation error, at a cost
+#'   pairwise expected hits (default 10000), also forwarded to registered
+#'   WR `joint_fn`s that explicitly declare an `nsim` formal. Analytic
+#'   methods ignore it. Raising it narrows the simulation error, at a cost
 #'   linear in `nsim`.
-#' @param seed Single integer seeding the simulated methods (default 1).
-#'   The simulation runs under it and the calling session's random stream is
-#'   restored afterwards, so the result is an exact function of the sample,
-#'   `nsim` and `seed`, and calling this never moves a later [execute()].
-#'   Analytic methods draw nothing and ignore it. A chromy matrix carries
-#'   simulation error of a few percent at the default `nsim`, so two values
-#'   of `seed` give two slightly different answers. Neither is more correct
-#'   than the other.
+#' @param seed Single integer seeding the simulated methods (default 1),
+#'   which analytic methods ignore. The session's random stream is restored
+#'   afterwards, so the result is an exact function of the sample, `nsim`
+#'   and `seed`, and calling this never moves a later [execute()]. At the
+#'   default `nsim` a chromy matrix carries simulation error of a few
+#'   percent, so two seeds give slightly different answers, neither more
+#'   correct than the other.
 #'
 #' @return With `waves`, a tibble with one row per block of the frozen
-#'   assignment. See "Activation mode" below. Otherwise a named list of
-#'   length equal to the number of executed stages. Each element is either:
+#'   assignment, described in the "Activation mode" section. Otherwise a
+#'   named list of length equal to the number of executed stages. Each
+#'   element is either:
 #'   - For PPS WOR stages: a square matrix of joint inclusion
 #'     probabilities \eqn{\pi_{kl}}{pi_kl}, usable with
 #'     [survey::ppsmat()].
@@ -80,38 +90,39 @@
 #'   block, so the same child population identity can appear in more
 #'   than one block.
 #'
-#' @details
-#' For each PPS stage, the function:
-#' 1. Reconstructs the full-population first-order quantities from
-#'    the frame using the stage's method and measure of size
-#' 2. Dispatches to the appropriate sondage joint probability or
-#'    joint expected hits function
-#' 3. Extracts the submatrix corresponding to sampled units
+#'   Each matrix is dense and covers every sampled unit of the stage,
+#'   across pools as well as within them, so `m` sampled units take
+#'   \eqn{8 m^2}{8 m^2} bytes: about 80 MB at 3,200 units, 0.8 GB at 10,000
+#'   and 12.8 GB at 40,000. For a large stage, request only the stages
+#'   needed with `stages`.
 #'
-#' For stratified stages, the target sample size per stratum (n_h) is
-#' reconstructed by replaying the same allocation logic used during
-#' [execute()] (proportional, Neyman, optimal, etc.) against the
-#' frame. This ensures first-order quantities match what was computed
-#' at sampling time, regardless of allocation method.
+#' @details
+#' Each PPS stage's full-population first-order quantities are rebuilt
+#' from its method and measure of size, with per-stratum targets (n_h)
+#' replayed from the allocation [execute()] used (proportional, Neyman,
+#' optimal, etc.), so they match those at sampling time. The matching
+#' sondage joint function then gives the submatrix of sampled units.
 #'
 #' For stratified or conditional (within-cluster) stages, joint
-#' quantities are computed independently within each group. Blocks
-#' follow their first appearance in the sample, as do units within a
-#' block. Cross-block entries are products of the corresponding
-#' marginal chances.
+#' quantities are computed independently within each group. Blocks follow
+#' their first appearance in the sample, as do units within a block, and
+#' cross-block entries are products of the marginal chances. Below a WR
+#' parent, pair the matrix with stage-specific identities in this order,
+#' not blindly with every sample row when descendants duplicate a
+#' selected unit.
 #'
-#' A stage below a WR parent is conditional on each parent draw
-#' occurrence, not only on the parent's population identity. Repeated
-#' hits of one parent therefore produce separate independent child
-#' blocks. Pair the returned matrix with stage-specific identities in
-#' this order. Do not pair it blindly with every sample row when
-#' descendants duplicate a selected unit.
+#' With certainty selections (\eqn{\pi_i = 1}{pi_i = 1}) in a WOR design,
+#' the joint probabilities of the non-certainty units are computed from
+#' the reduced \eqn{\pi}{pi} vector, and the full matrix is reassembled
+#' with \eqn{\pi_{ij} = 1}{pi_ij = 1} for certainty pairs and
+#' \eqn{\pi_{ij} = \pi_j}{pi_ij = pi_j} for certainty x non-certainty
+#' pairs.
 #'
 #' ## Exact vs. approximate computation
 #'
-#' The accuracy of the returned matrix depends on the sampling method.
-#' Some algorithms yield closed-form joint probabilities. Others
-#' require approximation or simulation.
+#' The accuracy of the returned matrix depends on the sampling method, as
+#' the two tables below show. [variance-estimation] covers how a matrix
+#' enters a variance estimate.
 #'
 #' ## WOR methods (\eqn{\pi_{kl}}{pi_kl})
 #'
@@ -121,10 +132,10 @@
 #' | `pps_sampford`     | `joint_inclusion_prob()`      | **Exact** (Sampford design)        |
 #' | `pps_systematic`   | `joint_inclusion_prob()`      | **Exact** (circular-interval overlap) |
 #' | `pps_poisson`      | `joint_inclusion_prob()`      | **Exact** (\eqn{\pi_{kl} = \pi_k \pi_l}{pi_kl = pi_k * pi_l}, independent draws) |
-#' | `pps_brewer`       | `joint_inclusion_prob()`      | **Approximate**\eqn{^*} (high-entropy / Hajek-Brewer-Donadio) |
-#' | `pps_sps`          | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
-#' | `pps_pareto`       | `joint_inclusion_prob()`      | **Approximate** (high-entropy / Hajek-Brewer-Donadio) |
-#' | `cube`             | `joint_inclusion_prob()`      | **Approximate** when unconstrained (high-entropy / Hajek-Brewer-Donadio) |
+#' | `pps_brewer`       | `joint_inclusion_prob()`      | **Approximate**\eqn{^*} (high-entropy) |
+#' | `pps_sps`          | `joint_inclusion_prob()`      | **Approximate** (high-entropy) |
+#' | `pps_pareto`       | `joint_inclusion_prob()`      | **Approximate** (high-entropy) |
+#' | `cube`             | `joint_inclusion_prob()`      | **Approximate** when unconstrained (high-entropy) |
 #' | `lpm2`             | unavailable                   | Spatial spreading is not represented |
 #' | `scps`             | unavailable                   | Spatial spreading is not represented |
 #'
@@ -133,27 +144,18 @@
 #' design-unbiased variance estimator, and near-zero pairs make it unstable.
 #'
 #' \eqn{^*} Exact recursive formulas for Brewer's joint inclusion
-#' probabilities exist (Brewer 2002, ch. 9) but are
-#' \eqn{O(N^3)}{O(N^3)}, making them impractical for frames of more
-#' than a few hundred units. The high-entropy approximation is
-#' \eqn{O(N^2)}{O(N^2)}, but computational convenience does not establish
-#' its accuracy for a particular design or population. SPS and Pareto also
-#' use an approximation here, with the further limitation that their
-#' first-order inputs are approximate targets.
+#' probabilities (Brewer 2002, ch. 9) are \eqn{O(N^3)}{O(N^3)},
+#' impractical beyond a few hundred units, whereas the high-entropy
+#' approximation is \eqn{O(N^2)}{O(N^2)}. It assumes the design is close
+#' to the maximum-entropy design with the same marginal \eqn{\pi_i}{pi_i}
+#' (Hajek 1964; Brewer and Donadio 2003), which strong ordering,
+#' balancing or extreme probabilities can break, so validate variance and
+#' interval coverage for the intended design and population. SPS and
+#' Pareto also enter it with approximate first-order targets.
 #'
-#' The high-entropy approximation assumes the design is close to the
-#' maximum-entropy design with the same marginal \eqn{\pi_i}{pi_i}
-#' (Hajek 1964; Brewer and Donadio 2003). Strong ordering, balancing or
-#' extreme probability distributions can make that assumption unsuitable.
-#' Validate variance and interval coverage for the intended design and
-#' population. `survey::svydesign(pps = "brewer")` uses the related
-#' Berger (2004) variance approximation. It is not a claim of exact joint
-#' probabilities. For CPS, this helper uses the exact CPS calculation.
-#'
-#' Bounded cube, LPM2, and SCPS designs are rejected because count constraints
-#' and spatial spreading alter pairwise selection behavior beyond the
-#' available approximation. Use [as_svrepdesign()] with `type =
-#' "subbootstrap"` for a generic bootstrap approximation instead.
+#' Bounded cube, LPM2, and SCPS designs are refused, because count
+#' constraints and spatial spreading alter pairwise selection beyond the
+#' approximation. [variance-estimation] gives their replicate variance.
 #'
 #' ## WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})
 #'
@@ -162,19 +164,16 @@
 #' | `pps_multinomial`  | `joint_expected_hits()`       | **Exact** (analytic: \eqn{n(n-1) p_k p_l + n p_k \mathbf{1}_{k=l}}{n(n-1) p_k p_l + n p_k 1(k=l)}) |
 #' | `pps_chromy`       | `joint_expected_hits()`       | **Approximate** (Monte Carlo simulation, 10 000 replicates) |
 #'
-#' For `pps_chromy`, the sequential dependence structure does not admit
-#' a closed-form expression for \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
-#' sondage uses Monte Carlo simulation (default 10 000 replicates) to
-#' estimate the pairwise expectations. Increasing `nsim` reduces Monte
-#' Carlo error at the cost of computation time.
+#' The sequential dependence of `pps_chromy` admits no closed form for
+#' \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}, so sondage estimates it by Monte
+#' Carlo simulation under `nsim` and `seed`.
 #'
 #' ## Activation mode
 #'
-#' `joint_expectation(master, waves = c(t, s))` answers a different question
-#' from the stage modes above. A scheduled master assigned every unit to a
-#' panel at its draw and froze the block-by-panel quotas, so how two occasions
-#' of the rotation overlap is already determined and needs neither the frame
-#' nor a simulation. It is read from the record.
+#' A scheduled master assigned every unit to a panel at its draw and froze
+#' the block-by-panel quotas, so how two occasions of the rotation overlap
+#' is already determined. `joint_expectation(master, waves = c(t, s))`
+#' reads it from the record, with neither the frame nor a simulation.
 #'
 #' Conditional on the frozen quotas, the panels inside a block of `m`
 #' assignment units are an arrangement of that block's labels. Writing
@@ -189,13 +188,12 @@
 #' marginals for units of different blocks, whose arrangements are drawn
 #' independently. The within-wave case is the third expression at `t == s`.
 #'
-#' The result is one row per block, and stays small at any sample size. Within
-#' a block the joints take only two values, and across blocks they factorize
-#' as products of the marginals, so every entry of the full matrix is
-#' recoverable from this table. It is the conditional covariance kernel, not
-#' the joint-probability matrix, that is block-diagonal: across blocks the
-#' joint is \eqn{p_i p_j}{p_i p_j}, which is generally not zero, while the
-#' covariance is.
+#' The result has one row per block and stays small at any sample size,
+#' yet every entry of the full matrix is recoverable from it, since within
+#' a block the joints take only two values. The conditional covariance
+#' kernel is block-diagonal, not the joint-probability matrix: across
+#' blocks the joint is \eqn{p_i p_j}{p_i p_j}, generally not zero, while
+#' the covariance is zero.
 #'
 #' `pool`, `stratum`, `class` and `block` identify the block. `units` is
 #' \eqn{m}{m}. `take_1`, `take_2` and `take_both` are the three takes.
@@ -204,65 +202,34 @@
 #' unit, where no distinct pair exists and `joint_distinct` is `NA` rather
 #' than zero.
 #'
-#' Quotas are frequently unequal, because a pool that is not a multiple of the
-#' block size gives one block an extra unit, so these are read from the record
-#' rather than derived from the panel count. A certainty block is permanent
-#' and takes every unit at every wave, which makes `joint_distinct` exactly
-#' one.
+#' Quotas are frequently unequal, because a pool that is not a multiple of
+#' the block size gives one block an extra unit, so they are read from the
+#' record rather than derived from the panel count. A certainty block is
+#' permanent and takes every unit at every wave, which makes
+#' `joint_distinct` exactly one.
 #'
-#' **What this states, and what it does not.** These are joint expectations of
-#' the activation indicators, conditional on the phase-1 units and on the
-#' frozen quotas. They are not the unconditional joint inclusion probabilities
-#' of the complete two-phase design, which also carry the master's own
-#' pairwise term. How the two combine for a variance of change is not settled
-#' here. [as_svydesign()] carries the activation as a second phase for
-#' ordinary totals.
+#' These are joint expectations of the activation indicators, conditional
+#' on the phase-1 units and the frozen quotas, not the unconditional joint
+#' inclusion probabilities of the two-phase design, which also carry the
+#' master's own pairwise term. How the two combine for a variance of change
+#' is not settled here. [as_svydesign()] carries the activation as a second
+#' phase for ordinary totals.
 #'
-#' Activation mode takes a master, not a materialized wave, so a pair of waves
-#' neither of which has been materialized can be asked for.
-#'
-#' ## Limitations
-#'
-#' - The frame-free path requires a digest with exact chances: the
-#'   default summary digest suffices for cluster stages and
-#'   constant-chance element stages. Element stages with varying
-#'   chances need `execute(frame_digest = "full")`. Otherwise pass
-#'   the frame.
-#' - When `frame` is supplied it must be unchanged from what was
-#'   passed to [execute()], and units in it must be uniquely
-#'   identifiable within each stratum/cluster group by their column
-#'   values.
-#' - A sample drawn from one register per stage needs all of them, in
-#'   the order they were supplied. One frame is refused with
-#'   `samplyr_error_frame_count` rather than computed from the wrong
-#'   population.
-#' - For WOR designs with certainty selections (\eqn{\pi_i = 1}{pi_i = 1}),
-#'   the joint matrix is decomposed: certainty units are separated
-#'   from the stochastic part, the joint probabilities for
-#'   non-certainty units are computed from the reduced \eqn{\pi}{pi}
-#'   vector, and the full matrix is reassembled with
-#'   \eqn{\pi_{ij} = 1}{pi_ij = 1} for certainty pairs and
-#'   \eqn{\pi_{ij} = \pi_j}{pi_ij = pi_j} for certainty x
-#'   non-certainty pairs.
+#' Activation mode takes a master, not a materialized wave, so neither of
+#' the two waves needs to have been materialized.
 #'
 #' @examplesIf requireNamespace("survey", quietly = TRUE)
+#' # A single-stage stratified Sampford sample, whose joint matrix is exact
 #' sample <- sampling_design() |>
-#'   add_stage() |>
-#'     stratify_by(region) |>
-#'     cluster_by(ea_id) |>
-#'     draw(n = 5, method = "pps_brewer", mos = households) |>
-#'   add_stage() |>
-#'     draw(n = 12) |>
+#'   stratify_by(region) |>
+#'   draw(n = 5, method = "pps_sampford", mos = households) |>
 #'   execute(bfa_eas, seed = 2025)
 #'
-#' # Compute joint probabilities for stage 1
-#' jip <- joint_expectation(sample, bfa_eas, stages = 1)
+#' jip <- joint_expectation(sample, bfa_eas)
 #'
-#' # Use with survey where the sample variance is estimable
+#' # survey reads the matrix by row, one row per sampled unit
 #' svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
-#'
-#' # Compute all PPS stages at once
-#' jip_all <- joint_expectation(sample, bfa_eas)
+#' survey::svytotal(~population, svy)
 #'
 #' # A sample drawn from one register per stage passes them as a list
 #' regions <- dplyr::distinct(bfa_eas, region, .keep_all = TRUE)
@@ -309,6 +276,12 @@
 #' Brewer, K.R.W. and Donadio, M.E. (2003). The high entropy variance of the
 #' Horvitz-Thompson estimator. \emph{Survey Methodology}, 29(2), 189-196.
 #'
+#' Exact conditional Poisson (CPS) joint probabilities:
+#' Aires, N. (1999). Algorithms to find exact inclusion probabilities for
+#' conditional Poisson sampling and Pareto \eqn{\pi}{pi}ps sampling designs.
+#' \emph{Methodology and Computing in Applied Probability}, 1(4), 457-469.
+#' \doi{10.1023/A:1010091628740}
+#'
 #' Exact Brewer joint probabilities:
 #' Brewer, K.R.W. (2002). \emph{Combined Survey Sampling Inference: Weighing
 #' Basu's Elephants}. Arnold, ch. 9.
@@ -327,7 +300,10 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
                               waves = NULL, nsim = 10000L, seed = 1L) {
   check_keyword_args(enquos(...), c("stages", "waves", "nsim", "seed"))
   if (!inherits(x, "tbl_sample")) {
-    cli_abort("{.arg x} must be a {.cls tbl_sample} object.")
+    cli_abort(
+      "{.arg x} must be a {.cls tbl_sample} object.",
+      class = "samplyr_error_sample_expected"
+    )
   }
   check_single_replicate(x, "joint_expectation")
   check_sample_unmodified(x, "joint_expectation")
@@ -351,7 +327,10 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
       nsim < 1 ||
       nsim > .Machine$integer.max
   ) {
-    cli_abort("{.arg nsim} must be a single positive integer.")
+    cli_abort(
+      "{.arg nsim} must be a single positive integer.",
+      class = "samplyr_error_joint_argument"
+    )
   }
   nsim <- as.integer(nsim)
 
@@ -361,7 +340,10 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
       is.na(seed) ||
       abs(seed) > .Machine$integer.max
   ) {
-    cli_abort("{.arg seed} must be a single integer.")
+    cli_abort(
+      "{.arg seed} must be a single integer.",
+      class = "samplyr_error_joint_argument"
+    )
   }
   seed <- as.integer(seed)
 
@@ -408,14 +390,15 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
     normalize_stage_selector(stages, stages_executed, what = "executed stages")
   }
 
+  # Refuse a frame other than the executed one before any matrix.
+  if (!is_null(frames)) {
+    check_joint_frame(x, frames, design, stages_executed, stages_requested)
+  }
+
   result <- vector("list", max(stages_executed))
   names(result) <- paste0("stage_", seq_along(result))
 
-  # Chromy's pairwise hits have no closed form and are simulated, as are any
-  # registered WR method's. Everything else here is analytic and draws
-  # nothing. Seeding the whole loop makes the result a function of the
-  # sample, `nsim` and `seed` alone, and restores the caller's stream on the
-  # way out, which is the contract `execute()` already keeps.
+  # Chromy and WR methods simulate, so the whole loop is seeded.
   result <- withr::with_seed(seed, {
     for (stage_idx in stages_requested) {
       stage_spec <- design$stages[[stage_idx]]
@@ -427,7 +410,8 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
           c(
             "Joint inclusion probabilities are unavailable for method {.val {method}} with its declared constraints.",
             "i" = "Controlled count bounds and spatial spreading alter pairwise selection behavior beyond the available approximation."
-          )
+          ),
+          class = "samplyr_error_joint_method_unsupported"
         )
       }
 
@@ -455,6 +439,134 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
   })
 
   result
+}
+
+#' Methods whose joint probabilities depend on the order of the pool
+#'
+#' Registered custom methods are counted among them, since samplyr cannot
+#' know how they use the order.
+#' @noRd
+joint_order_dependent <- function(draw_spec) {
+  draw_spec$method %in% c("systematic", "pps_systematic", "pps_chromy") ||
+    !is_null(draw_spec$method_type)
+}
+
+#' Refuse a frame that is not the one the sample was drawn from
+#'
+#' The frame path recomputes every pool from the frame it is given, so a
+#' different frame gives the joint probabilities of a selection that did not
+#' happen. The digest recorded at execution is the reference.
+#'
+#' Its fingerprint is taken over the design's columns in row order, so it
+#' also changes when rows are reordered or a column changes type, as after a
+#' round trip through a file or a database. When it differs, the frame is
+#' accepted if every pool keeps its size and its selection chances, which is
+#' what an order-free method's matrix depends on. An order-dependent method
+#' is refused on any difference: its matrix is that of the order, which
+#' neither record can confirm. Without a digest there is nothing to compare
+#' against, which is said and not refused.
+#' @noRd
+check_joint_frame <- function(x, frames, design, stages_executed,
+                              stages_requested, call = caller_env()) {
+  digest <- get_frame_digest(x)
+  if (is_null(digest)) {
+    cli_warn(
+      c(
+        "The frame could not be checked against the one the sample was
+         drawn from.",
+        "i" = "The sample carries no frame digest
+               ({.code frame_digest = \"none\"}). The joint probabilities
+               are those of the frame as supplied."
+      ),
+      class = "samplyr_warning_joint_frame_unverified",
+      call = call
+    )
+    return(invisible(NULL))
+  }
+
+  stage_ids <- vapply(digest$stages, function(st) st$stage_id, integer(1))
+  refs <- vapply(digest$stages, function(st) st$frame_ref, integer(1))
+  for (ref in unique(refs[stage_ids %in% stages_requested])) {
+    stages <- intersect(stage_ids[refs == ref], stages_requested)
+    frame <- frames[[match(stages[1], stages_executed)]]
+    rec <- digest$frames[[ref]]
+    role_cols <- unique(rec$roles$column)
+    missing <- setdiff(role_cols, names(frame))
+    problem <- NULL
+    if (length(missing) > 0) {
+      problem <- cli::format_inline(
+        "Design column{?s} {.val {missing}} {?is/are} missing."
+      )
+    } else if (!is_null(rec$n_rows) && rec$n_rows != nrow(frame)) {
+      problem <- cli::format_inline(
+        "It has {nrow(frame)} row{?s} where the sample was drawn from
+         {rec$n_rows}."
+      )
+    } else if (
+      !is_null(rec$fingerprint_roles) &&
+        !identical(
+          rec$fingerprint_roles,
+          frame_content_hash(frame, columns = role_cols)
+        )
+    ) {
+      problem <- joint_frame_difference(
+        digest, design, frame, ref, stages
+      )
+    }
+    if (!is_null(problem)) {
+      abort_samplyr(
+        c(
+          "This frame is not the one the sample was drawn from.",
+          "x" = problem,
+          "i" = "Pass the frame {.fn execute} used, in its original row
+                 order, or omit {.arg frame} to use the digest. To preview
+                 chances on another frame, use
+                 {.fn exante_probabilities} or {.fn frame_summary}."
+        ),
+        class = "samplyr_error_joint_frame_mismatch",
+        call = call
+      )
+    }
+  }
+  invisible(NULL)
+}
+
+#' Why a frame whose fingerprint differs cannot be used, or NULL when it can
+#' @noRd
+joint_frame_difference <- function(digest, design, frame, ref, stages) {
+  if (!identical(ref, 1L)) {
+    return(paste(
+      "Its design columns differ from the recorded register, and pools of a",
+      "separately supplied register cannot be compared."
+    ))
+  }
+  parts <- digest_frame_drift(digest, design, frame, parts = TRUE)
+  if (length(parts$pool_diffs) > 0) {
+    return("Its pools differ in size from the ones the sample was drawn from.")
+  }
+  chance <- parts$chance
+  if (is_null(chance) || chance$n_compared == 0L) {
+    return("Its design columns differ and its pools could not be compared.")
+  }
+  if (length(chance$diffs) > 0) {
+    return(paste(
+      "Its selection chances differ from the ones the sample was drawn",
+      "with, so a design value changed."
+    ))
+  }
+  ordered <- vapply(
+    stages,
+    function(i) joint_order_dependent(design$stages[[i]]$draw_spec),
+    logical(1)
+  )
+  if (any(ordered)) {
+    return(cli::format_inline(
+      "Its design columns differ, and stage{?s} {stages[ordered]} use{?s/}
+       an order-dependent method whose joint probabilities are those of the
+       row order."
+    ))
+  }
+  NULL
 }
 
 #' Resolve the frame each executed stage was drawn from
@@ -533,6 +645,7 @@ compute_stage_jip_digest <- function(
   x,
   nsim = 10000L
 ) {
+  rlang::local_error_call(caller_env())
   stage_ids <- vapply(digest$stages, function(s) s$stage_id, integer(1))
   pos <- match(stage_idx, stage_ids)
   if (is.na(pos)) {
@@ -756,7 +869,8 @@ compute_stage_jip <- function(
     cluster_vars <- cluster_spec$vars
     frame_dedup_vars <- unique(c(ancestor_vars, cluster_vars))
     frame_keep <- unique(c(
-      frame_dedup_vars, strata_vars, draw_spec$mos
+      frame_dedup_vars, strata_vars, draw_spec$mos,
+      extract_control_vars(draw_spec$control)
     ))
     effective_frame <- effective_frame |>
       select(all_of(frame_keep)) |>
@@ -788,7 +902,8 @@ compute_stage_jip <- function(
       if (anyNA(frame_group_pos)) {
         cli_abort(
           "Could not match a sampled parent occurrence to the frame.",
-          call = NULL
+          call = NULL,
+          class = "samplyr_error_internal"
         )
       }
     }
@@ -896,7 +1011,8 @@ compute_stratified_jip <- function(
   if (anyNA(frame_group_pos)) {
     cli_abort(
       "Could not match a sampled stratum to the frame.",
-      call = NULL
+      call = NULL,
+      class = "samplyr_error_internal"
     )
   }
 
@@ -910,7 +1026,8 @@ compute_stratified_jip <- function(
     if (is_null(n_h) || is.na(n_h)) {
       cli_abort(
         "Could not resolve target stratum sample size while computing joint probabilities.",
-        call = NULL
+        call = NULL,
+        class = "samplyr_error_internal"
       )
     }
 
@@ -968,7 +1085,9 @@ resolve_unstratified_n <- function(frame, draw_spec) {
   }
 
   cli_abort("Cannot determine target sample size for unstratified stage.",
-            call = NULL)
+            call = NULL,
+    class = "samplyr_error_internal"
+  )
 }
 
 #' Prepare the effective frame for a given stage
@@ -1016,6 +1135,11 @@ compute_group_jip <- function(
   ancestor_cluster_vars = character(0),
   nsim = 10000L
 ) {
+  # Order-dependent methods ran on the pool sorted by `control`.
+  perm <- selection_order(group_frame, draw_spec)
+  if (!is_null(perm)) {
+    group_frame <- group_frame[perm, , drop = FALSE]
+  }
   sampled_idx <- match_sampled_units(
     group_frame,
     sample_df,
@@ -1059,30 +1183,12 @@ compute_joint_matrix <- function(
       cli_abort(c(
         "Cannot compute joint expectations: sum of MOS variable {.var {mos_var}} is zero.",
         "i" = "At least one unit must have a positive measure of size."
-      ), call = NULL)
+      ), call = NULL,
+        class = "samplyr_error_mos_zero_sum"
+      )
     }
   } else {
     mos_vals <- NULL
-  }
-
-  has_explicit_certainty <- !is_null(draw_spec$certainty_size) ||
-    !is_null(draw_spec$certainty_prop) ||
-    !is_null(draw_spec$certainty_ids)
-
-  if (has_explicit_certainty) {
-    forced_idx <- NULL
-    if (!is_null(draw_spec$certainty_ids)) {
-      id_var <- draw_spec$certainty_plan$id_var
-      forced_idx <- which(frame[[id_var]] %in% draw_spec$certainty_ids)
-    }
-    return(compute_joint_matrix_with_certainty(
-      method = method,
-      mos_vals = mos_vals,
-      n = n,
-      draw_spec = draw_spec,
-      sampled_idx = sampled_idx,
-      forced_idx = forced_idx
-    ))
   }
 
   # WR and PMR need no certainty decomposition.
@@ -1093,56 +1199,30 @@ compute_joint_matrix <- function(
     return(compute_jeh_by_method(pik, n, method, sampled_idx, nsim))
   }
 
-  pik <- compute_stage_pik(method, mos_vals, n, draw_spec, N = N)
+  # The digest's own computation, so the frame path matches selection.
+  forced_idx <- NULL
+  if (!is_null(draw_spec$certainty_ids)) {
+    id_var <- draw_spec$certainty_plan$id_var
+    forced_idx <- which(frame[[id_var]] %in% draw_spec$certainty_ids)
+  }
+  pool_spec <- draw_spec
+  pool_spec$n <- as.double(n)
+  pik <- tryCatch(
+    resolve_pool_chance(pool_spec, mos_vals, N, forced_idx)$chance,
+    # Both refusals fire before a sample can exist.
+    error = function(e) {
+      abort_samplyr(
+        c(
+          "Internal error: the stage's chances could not be resolved.",
+          "x" = conditionMessage(e)
+        ),
+        class = "samplyr_error_internal",
+        call = NULL
+      )
+    }
+  )
   compute_jip_from_pik(
     pik, method, sampled_idx, draw_spec = draw_spec, nsim = nsim
-  )
-}
-
-#' Compute first-order inclusion/hit expectations for one stage
-#' @noRd
-compute_stage_pik <- function(method, mos_vals, n, draw_spec, N = length(mos_vals)) {
-  # Custom registered methods
-  if (!is_null(draw_spec$method_type)) {
-    if (draw_spec$method_type == "wr") {
-      return(sondage::expected_hits(mos_vals, n))
-    }
-    if (draw_spec$method_type == "balanced" && is_null(mos_vals)) {
-      return(rep(n / N, N))
-    }
-    return(sondage::inclusion_prob(mos_vals, n))
-  }
-
-  switch(
-    method,
-    pps_multinomial = ,
-    pps_chromy = {
-      sondage::expected_hits(mos_vals, n)
-    },
-    pps_brewer = ,
-    pps_systematic = ,
-    pps_cps = ,
-    pps_sampford = ,
-    pps_sps = ,
-    pps_pareto = {
-      sondage::inclusion_prob(mos_vals, n)
-    },
-    pps_poisson = {
-      frac <- draw_spec$frac %||% (n / N)
-      pik_raw <- frac * mos_vals / sum(mos_vals) * N
-      pmin(pik_raw, 1)
-    },
-    cube = {
-      if (!is_null(mos_vals)) {
-        sondage::inclusion_prob(mos_vals, n)
-      } else {
-        rep(n / N, N)
-      }
-    },
-    cli_abort(
-      "No joint probability function for method {.val {method}}",
-      call = NULL
-    )
   )
 }
 
@@ -1164,7 +1244,8 @@ compute_jip_from_pik <- function(
     if (is_null(n)) {
       cli_abort(
         "Internal error: {.arg n} must be provided for WR/PMR methods.",
-        call = NULL
+        call = NULL,
+        class = "samplyr_error_internal"
       )
     }
     return(compute_jeh_by_method(pik, n, method, sampled_idx, nsim))
@@ -1177,87 +1258,6 @@ compute_jip_from_pik <- function(
   }
 
   assemble_jip_with_certainty(pik, cert_idx, method, sampled_idx, draw_spec = draw_spec)
-}
-
-#' Compute sampled joint matrix when certainty thresholds are explicit
-#' @noRd
-compute_joint_matrix_with_certainty <- function(
-  method,
-  mos_vals,
-  n,
-  draw_spec,
-  sampled_idx,
-  forced_idx = NULL
-) {
-  cert <- identify_certainty(
-    mos_vals = mos_vals,
-    n = n,
-    certainty_size = draw_spec$certainty_size,
-    certainty_prop = draw_spec$certainty_prop,
-    forced_idx = forced_idx
-  )
-
-  sampled_idx <- as.integer(sampled_idx)
-  n_sampled <- length(sampled_idx)
-  result <- matrix(0, nrow = n_sampled, ncol = n_sampled)
-
-  cert_idx <- cert$certainty_idx
-  cert_pos <- which(sampled_idx %in% cert_idx)
-  prob_pos <- which(!(sampled_idx %in% cert_idx))
-
-  if (length(cert_pos) > 0) {
-    result[cert_pos, cert_pos] <- 1
-  }
-
-  if (length(prob_pos) == 0) {
-    return(result)
-  }
-
-  if (cert$n_remaining <= 0 || length(cert$remaining_idx) == 0) {
-    cli_abort(
-      c(
-        "Could not reconstruct probabilistic remainder for certainty design.",
-        "i" = "Sample contains non-certainty units but certainty selection left no remainder."
-      ),
-      call = NULL
-    )
-  }
-
-  remaining_idx <- cert$remaining_idx
-  n_prob <- min(cert$n_remaining, length(remaining_idx))
-  remaining_mos <- mos_vals[remaining_idx]
-  sampled_prob_idx <- sampled_idx[prob_pos]
-  sampled_prob_reduced <- match(sampled_prob_idx, remaining_idx)
-
-  reduced_draw_spec <- draw_spec
-  reduced_draw_spec$certainty_size <- NULL
-  reduced_draw_spec$certainty_prop <- NULL
-  reduced_draw_spec$certainty_ids <- NULL
-  reduced_draw_spec$certainty_plan <- NULL
-  pik_prob <- compute_stage_pik(
-    method = method,
-    mos_vals = remaining_mos,
-    n = n_prob,
-    draw_spec = reduced_draw_spec,
-    N = length(remaining_mos)
-  )
-
-  prob_block <- compute_jip_from_pik(
-    pik = pik_prob,
-    method = method,
-    sampled_idx = sampled_prob_reduced,
-    n = n_prob,
-    draw_spec = reduced_draw_spec
-  )
-  result[prob_pos, prob_pos] <- prob_block
-
-  if (length(cert_pos) > 0) {
-    prob_diag <- diag(prob_block)
-    result[cert_pos, prob_pos] <- rep(prob_diag, each = length(cert_pos))
-    result[prob_pos, cert_pos] <- rep(prob_diag, times = length(cert_pos))
-  }
-
-  result
 }
 
 #' Dispatch to sondage::joint_inclusion_prob for WOR methods
@@ -1407,7 +1407,9 @@ match_sampled_units <- function(
 
   if (length(match_vars) == 0) {
     cli_abort("No shared columns to match sampled units to frame.",
-              call = NULL)
+              call = NULL,
+      class = "samplyr_error_joint_frame_key"
+    )
   }
 
   group_sample <- sample_df
@@ -1430,7 +1432,9 @@ match_sampled_units <- function(
         "Frame rows are not uniquely identified by columns {.val {match_vars}}.",
         "i" = "Found {nrow(group_frame)} rows but only {n_unique} unique key combinations.",
         "i" = "Ensure the frame has a column (or combination) that uniquely identifies each unit."
-      ), call = NULL)
+      ), call = NULL,
+        class = "samplyr_error_joint_frame_key"
+      )
     }
 
     sample_key <- group_sample[[key_var]]
@@ -1448,7 +1452,9 @@ match_sampled_units <- function(
       "Frame rows are not uniquely identified by columns {.val {match_vars}}.",
       "i" = "Found {nrow(group_frame)} rows but only {n_unique} unique key combinations.",
       "i" = "Ensure the frame has a column (or combination) that uniquely identifies each unit."
-    ), call = NULL)
+    ), call = NULL,
+      class = "samplyr_error_joint_frame_key"
+    )
   }
 
   frame_keys <- group_frame |>

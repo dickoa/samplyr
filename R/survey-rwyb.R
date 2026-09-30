@@ -14,7 +14,8 @@
 #' @noRd
 build_rwyb_svrepdesign <- function(x, systematic_variance,
                                   replicates = 500, mse = TRUE,
-                                  compress = TRUE) {
+                                  compress = TRUE, lonely.psu = "fail") {
+  rlang::local_error_call(caller_env())
   rlang::check_installed("svrep", version = "0.9.1",
     reason = "to generate Rao-Wu-Yue-Beaumont replicate weights.")
   if (!is.numeric(replicates) || length(replicates) != 1L ||
@@ -29,6 +30,18 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
       class = "samplyr_error_rwyb_input")
     }
   }
+  # Only at the final stage, where no lower stage adds variance.
+  if (!is.character(lonely.psu) || length(lonely.psu) != 1L ||
+      !lonely.psu %in% c("fail", "certainty")) {
+    abort_samplyr(
+      c(
+        "{.arg lonely.psu} must be {.val fail} or {.val certainty} for RWYB.",
+        "i" = "{.val certainty} treats a final-stage stratum with one
+               noncertainty unit as taken with certainty."
+      ),
+      class = "samplyr_error_rwyb_input"
+    )
+  }
   df <- as.data.frame(x)
   if (nrow(df) == 0L) {
     abort_samplyr("An empty sample cannot be exported as a replicate design.",
@@ -36,7 +49,8 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
   }
   design <- get_design(x)
   stages <- get_stages_executed(x)
-  methods <- vapply(stages, function(i) rwyb_stage_method(design$stages[[i]]$draw_spec), character(1))
+  call <- current_env()
+  methods <- vapply(stages, function(i) rwyb_stage_method(design$stages[[i]]$draw_spec, call = call), character(1))
   systematic <- systematic_approximated_stages(design, stages, df)
   check_systematic_variance(systematic, systematic_variance,
     approximation = "generic_replicates", fn_name = "as_svrepdesign")
@@ -47,9 +61,21 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
     ), class = "samplyr_warning_rwyb_pps_approximation")
   }
 
-  # This also validates the nested-stage grammar before creating any factors.
-  ids <- survey_id_info(design, stages, df)
-  df_ids <- ids$df
+  spec <- export_stage_spec(df, design, stages)
+  # Refuse a stage the nested grammar cannot carry before creating factors.
+  midstage <- Filter(function(e) e$midstage_element, spec$stage)
+  if (length(midstage) > 0L) {
+    abort_survey_midstage_element(midstage[[1]]$stage)
+  }
+  # Recorded whatever the digest, which may be absent.
+  empty <- sample_empty_parents(x)
+  if (length(empty) > 0L) {
+    parent_stages <- sort(unique(vapply(empty, function(r) r$stage, 1L))) - 1L
+    abort_samplyr(c(
+      "Some selected stage-{parent_stages} units have no rows in the final sample.",
+      "i" = "RWYB export currently requires every selected parent to be represented. The missing parents cannot be discarded from variance estimation."
+    ), class = "samplyr_error_rwyb_missing_parents")
+  }
   factors <- matrix(1, nrow(df), replicates)
   prior_prob <- rep(1, nrow(df))
   parent <- rep(1L, nrow(df))
@@ -63,15 +89,13 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
   }
   for (pos in seq_along(stages)) {
     i <- stages[pos]
-    spec <- design$stages[[i]]
-    strata <- if (length(spec$strata$vars)) group_ids(df, spec$strata$vars) else rep(1L, nrow(df))
+    entry <- spec$stage[[pos]]
+    # User strata only: certainty units are left out through `active`.
+    strata <- if (length(entry$strata$user)) group_ids(df, entry$strata$user) else rep(1L, nrow(df))
     pool <- group_ids(data.frame(parent = parent, stratum = strata), c("parent", "stratum"))
-    id_var <- ids$id_vars[match(i, ids$stage_indices)]
-    unit <- if (is.na(id_var)) seq_len(nrow(df)) else df_ids[[id_var]]
-    unit <- group_ids(data.frame(pool = pool, unit = unit), c("pool", "unit"))
+    unit <- group_ids(data.frame(pool = pool, unit = entry$unit$id), c("pool", "unit"))
 
-    # A selected parent with no surviving descendants still belongs to the
-    # first-stage empirical distribution. Never silently resample survivors.
+    # A parent with no survivors still belongs to the first stage.
     stage_digest <- Filter(function(s) identical(s$stage_id, i), digest$stages)
     if (pos < length(stages) && length(stage_digest) &&
         length(unique(unit)) != sum(stage_digest[[1]]$pools$n_realized)) {
@@ -80,7 +104,7 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
         "i" = "RWYB export currently requires every selected parent to be represented. The missing parents cannot be discarded from variance estimation."
       ), class = "samplyr_error_rwyb_missing_parents")
     }
-    prob <- 1 / df[[paste0(".weight_", i)]]
+    prob <- entry$prob
     wr <- methods[pos] %in% c("SRSWR", "PPSWR")
     if (wr) prob[] <- 0
     if (length(prob) != nrow(df) || any(!is.finite(prob)) ||
@@ -94,15 +118,25 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
       abort_samplyr("Stage-{i} probabilities vary within a sampling unit.",
       class = "samplyr_error_rwyb_input")
     }
-    active <- prob < 1 & prior_prob > 0
+    active <- !is_certainty_probability(prob) & prior_prob > 0
     conditional <- matrix(1, nrow(df), replicates)
     if (any(active)) {
       # Count sampling units, not their rows of surviving descendants.
-      if (methods[pos] != "Poisson" &&
+      final <- pos == length(stages)
+      allow_singletons <- final && identical(lonely.psu, "certainty")
+      if (methods[pos] != "Poisson" && !allow_singletons &&
           any(tabulate(pool[active & !duplicated(unit)]) == 1L)) {
         abort_samplyr(c(
           "RWYB cannot estimate variance for a noncertainty singleton stratum at stage {i}.",
-          "i" = "At least two sampled noncertainty units per stratum are needed for this sampling method."
+          "i" = "At least two sampled noncertainty units per stratum are needed for this sampling method.",
+          "i" = if (final) {
+            "Pass {.code lonely.psu = \"certainty\"} to treat each such unit
+             as taken with certainty at this final stage, which gives it no
+             variance of its own."
+          } else {
+            "Collapse the strata before sampling. Only a final-stage
+             singleton can be treated as taken with certainty."
+          }
         ), class = "samplyr_error_rwyb_singleton")
       }
       conditional[active, ] <- svrep::make_rwyb_bootstrap_weights(
@@ -111,19 +145,17 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
         strata_ids = matrix(pool[active], ncol = 1L),
         samp_unit_sel_probs = matrix(prob[active], ncol = 1L),
         samp_method_by_stage = methods[pos],
-        allow_final_stage_singletons = FALSE,
+        allow_final_stage_singletons = allow_singletons,
         output = "factors"
       )
     }
-    # Damp conditional factors to avoid counting lower-stage
-    # variability twice. WR ancestors have zero variance FPC.
+    # Damp so lower-stage variability is not counted twice.
     attenuation <- sqrt(prior_prob / (2 - prior_prob))
     factors <- factors * (1 + attenuation * (conditional - 1))
     prior_prob <- prior_prob * prob
     parent <- unit
   }
-  # Compute rank on distinct factor rows with the tall matrix orientation.
-  # survey's default QR on a very wide, expanded cluster matrix is expensive.
+  # Rank on distinct rows: QR on the wide matrix is expensive.
   distinct <- factors[!duplicated(factors), , drop = FALSE]
   rank_matrix <- if (nrow(distinct) < ncol(distinct)) t(distinct) else distinct
   degrees <- qr(rank_matrix, tol = 1e-5)$rank - 1L
@@ -146,7 +178,8 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
 
 #' Only mechanisms whose variance interpretation is known may use RWYB
 #' @noRd
-rwyb_stage_method <- function(draw) {
+rwyb_stage_method <- function(draw, call = caller_env()) {
+  rlang::local_error_call(call)
   kind <- survey_stage_kind(draw)
   declared <- draw$method_variance
   supported <- is_null(draw$bounds) && (

@@ -1,10 +1,8 @@
 ---
-title: "Get Started with samplyr"
+title: "Get started with samplyr"
 output: rmarkdown::html_vignette
-bibliography: references.bib
-link-citations: true
 vignette: >
-  %\VignetteIndexEntry{Get Started with samplyr}
+  %\VignetteIndexEntry{Get started with samplyr}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -96,9 +94,13 @@ If `stratify_by()` has no allocation rule, a scalar `n` is interpreted per
 stratum. You can also pass a named vector or a `svyplan::n_alloc()` result to
 `draw()` when each stratum needs its own take.
 
-Use equal allocation when comparable precision within each stratum is the
-goal. Use proportional allocation for a self-weighting element design when
-the other design features permit it. Neyman and cost-weighted allocations
+Equal allocation gives comparable precision within each stratum only when
+the strata vary about equally, so it suits strata that are reporting domains
+of similar variability. Proportional allocation divides the total by the
+number of units each stratum holds at that stage, which makes an element
+sample self-weighting. At a clustered stage it counts clusters, not the
+households inside them. Given `importance`, such as each stratum's household
+total, it allocates clusters in proportion to that size instead. Neyman and cost-weighted allocations
 need prior variability or cost information and optimize the criterion supplied
 for that planning variable. They are not universal optima for every outcome
 and domain.
@@ -143,16 +145,272 @@ second-order information required for variance estimation, whether a random
 sample size is acceptable, and whether permanent random numbers are needed.
 The comparison is in `?selection-methods`.
 
-## Continue inside selected units
+`cluster_by()` also names each unit's identifier, and a frame with one row per
+unit can use it too. With the same seed, the design below selects the same EAs
+with the same weights as `draw(n = 200)` alone, and it records `ea_id` as the
+identity of each selected unit.
 
-`add_stage()` starts another selection within each selected parent. For
-example, adding `add_stage() |> draw(n = 12)` after the EA selection declares
-a household draw within each selected EA. Execution needs household rows,
-with EA identifiers linking them to their parents.
+```{r unit-identity}
+screening <- sampling_design(title = "Screening sample") |>
+  cluster_by(ea_id) |>
+  draw(n = 200)
 
-The next tutorial, `vignette("three-stage-sampling")`, works through this
-process in full: commune and EA registers, household listing, continuation,
-and survey export. It also explains the scope of `n` at every stage.
+screened <- execute(screening, bfa_eas, seed = 25)
+nrow(screened)
+```
+
+Declare it whenever a second phase may later subsample this sample. The two
+phases are linked through an identifier both designs declare. An ID column
+the design does not name does not link them, so the survey export of the
+second phase would be refused. `vignette("survey-analysis")` works through a
+screening sample followed by a detailed interview.
+
+## A three-stage household sample
+
+`add_stage()` starts another selection within each selected parent. This
+section selects communes within regions, enumeration areas (EAs) within those
+communes, and households within those EAs. The first two stages use PPS
+without replacement and the last uses simple random sampling without
+replacement. Selection pauses while the household listing is prepared, then
+continues under the same design.
+
+`bfa_eas` is a derived Burkina Faso frame. Its modeled EAs, household counts
+and historical administrative labels are teaching inputs, not a current
+official household register. The household listing and interview outcomes
+below are synthetic.
+
+### Give each register its own sampling unit and size
+
+```{r registers}
+ea_register <- bfa_eas |>
+  mutate(
+    region,
+    commune_id = paste(region, province, commune, sep = "/"),
+    ea_id,
+    ea_households = households,
+    .keep = "none"
+  )
+
+commune_register <- ea_register |>
+  summarise(commune_households = sum(ea_households),
+            .by = c(region, commune_id))
+
+head(commune_register, 3)
+```
+
+| Register            | One row represents           | Key                                   | Measure of size                            |
+|---------------------|------------------------------|---------------------------------------|--------------------------------------------|
+| `commune_register`  | A commune                    | `commune_id`, qualified by geography  | Sum of EA household counts in that commune |
+| `ea_register`       | An EA                        | `ea_id`, with its parent `commune_id` | That EA's modeled household count          |
+| `household_listing` | A household in a selected EA | `ea_id` and local `hh_id`             | None, equal-probability sampling           |
+
+The measure of size belongs to the unit being selected. In one shared
+hierarchy frame, a commune's total would have to repeat on each of its EA
+rows. Separate registers make the two levels explicit. Their order in
+`execute()` maps them to stages, and names on a list are labels, not a join
+specification.
+
+### Declare all three stages
+
+```{r design}
+household_design <- sampling_design("Three-stage household survey") |>
+  add_stage("Communes") |>
+    stratify_by(region) |>
+    cluster_by(commune_id) |>
+    draw(n = 4, method = "pps_brewer", mos = commune_households) |>
+  add_stage("EAs") |>
+    cluster_by(ea_id) |>
+    draw(n = 3, method = "pps_brewer", mos = ea_households) |>
+  add_stage("Households") |>
+    draw(n = 12)
+
+household_design
+```
+
+The takes are four communes **per region**, three EAs **per selected
+commune**, and twelve households **per selected EA**. The first stage has no
+allocation rule, so `n = 4` is per stratum. A pool smaller than its take is
+a census, which execution reports. Region stratification does not carry over
+as a stratum specification to later stages.
+
+### Select areas, then pause for listing
+
+```{r select-areas}
+selected_eas <- execute(
+  household_design,
+  list(commune_register, ea_register),
+  stages = 1:2,
+  seed = 91
+)
+
+selected_eas |>
+  as.data.frame() |>
+  count(region, name = "selected_eas")
+```
+
+The EA register covers all communes, and execution restricts it to the
+selected parents. The result holds the two completed stages and their weights,
+and it is the starting point for continuation.
+
+In fieldwork, a listing team enumerates households in the selected EAs. Here
+an artificial listing gives each selected EA as many households as its modeled
+count. It creates identifiers, not household records.
+
+```{r listing}
+household_listing <- selected_eas |>
+  as.data.frame() |>
+  reframe(hh_id = seq_len(ea_households), .by = c(commune_id, ea_id))
+
+stopifnot(!anyDuplicated(household_listing[c("ea_id", "hh_id")]))
+head(household_listing, 3)
+```
+
+The listing is a plain data frame because it enumerates candidates for the
+next stage. The parent EA tells apart household IDs that repeat across EAs.
+
+A real listing rarely finds exactly the number of households the EA was
+selected on. That does not bias the weights. The EA stage used the measure of
+size in its register, and the household stage uses the take over the listed
+count, so each factor is the probability of the selection actually made. What
+the difference costs is self-weighting. The final weight varies with the ratio
+of listed to modeled households, and an EA listed with fewer households than
+the take is taken whole, which execution reports.
+
+When a selected EA is too large to list, it is divided into segments, the
+segments are counted, and one is selected with probability proportional to its
+count. That is one more stage between EAs and households,
+`add_stage("Segments") |> cluster_by(segment_id) |> draw(n = 1, method = "pps_brewer", mos = segment_households)`,
+with a segment register as its frame. Its probability enters the weight like
+any other stage's, and the household listing then covers the selected segment
+only.
+
+### Continue from the listing
+
+```{r select-households}
+issued <- execute(selected_eas, household_listing, seed = 92)
+
+issued |>
+  as.data.frame() |>
+  select(commune_id, ea_id, hh_id, .weight_1, .weight_2, .weight_3, .weight) |>
+  head(4)
+
+stopifnot(isTRUE(all.equal(
+  issued$.weight,
+  issued$.weight_1 * issued$.weight_2 * issued$.weight_3
+)))
+frame_summary(issued)
+```
+
+The final weight is the reciprocal of the product of the three conditional
+selection probabilities. Continuation keeps the earlier factors, whereas
+starting a new design on `selected_eas` would declare a new sampling phase.
+The two seeds specify separate reproducible randomization steps, so matching a
+one-call execution exactly would need the same uninterrupted RNG stream.
+
+A person stage continues the same way from a household roster, for example
+`add_stage("Person") |> draw(n = 1, on_empty = "silent")` for one eligible
+person per household. A selected household with no eligible member has no
+roster rows. By default that refuses the stage, because a missing roster is
+more often an error than an empty household. `on_empty = "silent"` or
+`"warn"` accepts such households: they stay in the design, contribute zero to
+every total, and are counted by `summary()`. An EA in which no household has
+an eligible member is different: it has no row at all, and the survey export
+refuses the sample, because the variance between EAs would lose its zero.
+
+### Set a household take per EA before selection
+
+The household stage above takes twelve households in every EA. A take that
+differs by EA and is fixed before any selection is a table keyed by `ea_id`.
+Stratifying the household stage by that identifier applies each row within
+its own EA. The table can cover every EA in the register, although only the
+selected ones will be listed.
+
+```{r per-ea-take}
+takes <- ea_register |>
+  transmute(
+    ea_id,
+    # Never more than the EA's modeled count.
+    n = pmin(if_else(ea_households < 150, 8, 12), ea_households)
+  )
+
+per_ea_design <- sampling_design("Three-stage survey, take per EA") |>
+  add_stage("Communes") |>
+    stratify_by(region) |>
+    cluster_by(commune_id) |>
+    draw(n = 4, method = "pps_brewer", mos = commune_households) |>
+  add_stage("EAs") |>
+    cluster_by(ea_id) |>
+    draw(n = 3, method = "pps_brewer", mos = ea_households) |>
+  add_stage("Households") |>
+    stratify_by(ea_id) |>
+    draw(n = takes)
+
+areas <- execute(
+  per_ea_design,
+  list(commune_register, ea_register),
+  stages = 1:2,
+  seed = 91
+)
+area_listing <- areas |>
+  as.data.frame() |>
+  reframe(hh_id = seq_len(ea_households), .by = c(commune_id, ea_id))
+
+per_ea <- execute(areas, area_listing, seed = 92)
+per_ea |>
+  as.data.frame() |>
+  count(ea_id, name = "households") |>
+  left_join(takes, by = "ea_id") |>
+  head(4)
+```
+
+Each selected EA takes its own row, and the rows for EAs that were not
+selected are simply unused. A mistyped `ea_id` that matches no selected EA is
+therefore not caught at this point. Check the table against the register
+before selection, for example with `setdiff(takes$ea_id, ea_register$ea_id)`.
+
+### Join observations and hand off to analysis
+
+Every issued household responds in this example. The artificial consumption
+values stand for an outcome collected in the field.
+
+```{r observations}
+set.seed(93)
+interviews <- issued |>
+  as.data.frame() |>
+  mutate(ea_id, hh_id,
+         consumption = round(rlnorm(n(), log(100000), 0.5)),
+         .keep = "none")
+
+observed <- issued |>
+  left_join(interviews, by = c("ea_id", "hh_id"), relationship = "one-to-one")
+stopifnot(nrow(observed) == nrow(issued))
+```
+
+With real nonresponse, keep the issued rows and join response indicators and
+measurements to them. Sampling weights describe selection, and dropping
+nonrespondents is not a response adjustment. The analyst chooses and
+justifies that adjustment downstream.
+
+```{r analysis, eval = requireNamespace("survey", quietly = TRUE)}
+linearized <- as_svydesign(observed)
+survey::svymean(~consumption, linearized)
+```
+
+This export uses Brewer's variance approximation for the PPS stages. Exact
+first-order probabilities do not make that variance approximation exact.
+svrep's RWYB replicates are an alternative, also approximate for PPS without
+replacement.
+
+```{r replication, eval = requireNamespace("svrep", quietly = TRUE)}
+set.seed(94)
+replicated <- as_svrepdesign(observed, type = "rwyb", replicates = 500)
+survey::svymean(~consumption, replicated)
+```
+
+The warning describes the PPS approximation. More replicates reduce
+simulation error, not the error of the variance approximation.
+`vignette("survey-analysis")` continues with outcome joins, domains and other
+analysis designs.
 
 ## Fractions, replacement, and ordering
 
@@ -202,7 +460,7 @@ design afterwards. See `vignette("survey-analysis")` for that workflow.
 The main learning path is:
 
 1. **Get started**: the design grammar and a first sample, covered here.
-2. **Select a three-stage sample**: `vignette("three-stage-sampling")` follows
+2. **Select a three-stage sample**: the household example above follows
    fieldwork from area registers to households and observations.
 3. **Analyze the sample**: `vignette("survey-analysis")` covers outcome joins,
    domain estimates and variance choices, with optional two-phase and
@@ -230,7 +488,5 @@ For a method or inference lookup, use `?selection-methods`. Consult
 5. Keep the returned design columns unchanged.
 6. Archive the executed sample and its frame provenance.
 
-Continue with `vignette("three-stage-sampling")`, or go directly to
-`vignette("survey-analysis")` if you already have a selected sample.
+Continue with `vignette("survey-analysis")` to analyze the selected sample.
 
-## References

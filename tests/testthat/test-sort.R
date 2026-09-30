@@ -7,9 +7,7 @@ test_that("serp returns correct order for 2 variables", {
 
   result <- df[order(serp(df$region, df$district)), ]
 
-  # Region 1 (odd):  district ascending  -> 1, 2, 3
-  # Region 2 (even): district descending -> 3, 2, 1
-  # Region 3 (odd):  district ascending  -> 1, 2, 3
+  # Odd regions take districts ascending, even regions descending.
   expected_ids <- c(1, 2, 3, 6, 5, 4, 7, 8, 9)
 
   expect_equal(result$id, expected_ids)
@@ -22,14 +20,7 @@ test_that("serp returns correct order for 3 variables", {
 
   result <- df[order(serp(df$A, df$B, df$C)), ]
 
-  # A=1 (odd): B ascending (1, 2, 3)
-  #   A=1, B=1 (group 1, odd):  C ascending  (1, 2)
-  #   A=1, B=2 (group 2, even): C descending (2, 1)
-  #   A=1, B=3 (group 3, odd):  C ascending  (1, 2)
-  # A=2 (even): B descending (3, 2, 1)
-  #   A=2, B=3 (group 4, even): C descending (2, 1)
-  #   A=2, B=2 (group 5, odd):  C ascending  (1, 2)
-  #   A=2, B=1 (group 6, even): C descending (2, 1)
+  # Each level runs descending in the even-numbered cells of the level above.
   expected_ids <- c(1, 7, 9, 3, 5, 11, 12, 6, 4, 10, 8, 2)
 
   expect_equal(result$id, expected_ids)
@@ -45,9 +36,7 @@ test_that("serp works with character variables", {
 
   result <- df[order(serp(df$region, df$district)), ]
 
-  # North (1st, odd):  district ascending  (A, B)
-  # South (2nd, even): district descending (B, A)
-  # West  (3rd, odd):  district ascending  (A, B)
+  # South, the second region, takes its districts descending.
   expected_ids <- c(1, 2, 4, 3, 5, 6)
 
   expect_equal(result$id, expected_ids)
@@ -59,7 +48,6 @@ test_that("serp works with single variable (just ascending)", {
 
   result <- df[order(serp(df$x)), ]
 
-  # Single variable: simple ascending sort
   expected_ids <- c(2, 4, 1, 3, 5)
 
   expect_equal(result$id, expected_ids)
@@ -75,9 +63,7 @@ test_that("serp handles NA values", {
 
   result <- df[order(serp(df$region, df$district)), ]
 
-  # Region 1 (odd): district ascending, NA last -> 1, 2, NA
-
-  # Region 2 (even): district descending, NA first -> NA, 2, 1
+  # NA sorts last in ascending region 1 and first in descending region 2.
   expected_ids <- c(1, 3, 2, 5, 6, 4)
 
   expect_equal(result$id, expected_ids)
@@ -125,32 +111,10 @@ test_that("serp composes with other arrange arguments", {
     id = 1:12
   )
 
-  # Simulating: arrange(df, group, serp(x, y), desc(z))
+  # The order arrange(df, group, serp(x, y), desc(z)) gives
   result <- df[order(df$group, serp(df$x, df$y), -df$z), ]
 
-  # Within each group:
-  #   x=1 (odd):  y ascending  (1, 2, 3)
-  #   x=2 (even): y descending (3, 2, 1)
-  #   Within each (x, y), z descending (but each cell has only one row here)
-  #
-  # Group A data:
-  #   id=1: x=1, y=1, z=10
-  #   id=2: x=2, y=2, z=20
-  #   id=3: x=1, y=3, z=30
-  #   id=4: x=2, y=1, z=40
-  #   id=5: x=1, y=2, z=50
-  #   id=6: x=2, y=3, z=60
-  #
-  # Serpentine order within A:
-  #   x=1, y=1: id=1
-  #   x=1, y=2: id=5
-  #   x=1, y=3: id=3
-  #   x=2, y=3: id=6
-  #   x=2, y=2: id=2
-  #   x=2, y=1: id=4
-  #
-  # Same pattern for Group B: ids 7, 11, 9, 12, 8, 10
-
+  # In each group x=1 takes y ascending and x=2 takes y descending.
   expected_ids <- c(1, 5, 3, 6, 2, 4, 7, 11, 9, 12, 8, 10)
 
   expect_equal(result$id, expected_ids)
@@ -163,15 +127,7 @@ test_that("serp produces correct pattern for 4 variables", {
 
   result <- df[order(serp(df$A, df$B, df$C, df$D)), ]
 
-  # A=1 (cell 1, odd): B asc
-  #   A=1,B=1 (cell 1, odd): C asc
-  #     A=1,B=1,C=1 (cell 1, odd): D asc
-  #     A=1,B=1,C=2 (cell 2, even): D desc
-  #   A=1,B=2 (cell 2, even): C desc
-  #     A=1,B=2,C=2 (cell 3, odd): D asc
-  #     A=1,B=2,C=1 (cell 4, even): D desc
-  # A=2 (cell 2, even): B desc, and the snake carries on from where it
-  # stopped rather than restarting.
+  # At A=2 the snake carries on from where it stopped rather than restarting.
   expect_identical(
     paste0(result$A, result$B, result$C, result$D),
     c("1111", "1112", "1122", "1121", "1221", "1222", "1212", "1211",
@@ -180,11 +136,7 @@ test_that("serp produces correct pattern for 4 variables", {
 })
 
 test_that("serp is a snake at every level, for even and odd cardinalities", {
-  # The defining property, asserted without a fixture: consecutive rows differ
-  # in exactly one variable, by one rank. The grid varies the cardinality of
-  # the INTERMEDIATE variables, which is what decides where the direction
-  # reverses. A sum of the ranks above tracks that only when every one of
-  # them is odd, so the even entries here are the ones that bite.
+  # Intermediate cardinalities decide where the direction reverses.
   layouts <- list(
     c(2, 2, 2), c(3, 2, 3), c(4, 2, 3), c(2, 4, 3), c(3, 4, 4),
     c(2, 3, 3), c(3, 3, 3), c(3, 5, 2),
@@ -204,8 +156,7 @@ test_that("serp is a snake at every level, for even and odd cardinalities", {
 })
 
 test_that("serp snakes through a ragged hierarchy", {
-  # Real geography has unequal numbers of children, so there is no fixed
-  # radix to carry. Every step within a parent must still move one rank.
+  # Unequal numbers of children leave no fixed radix to carry.
   df <- do.call(rbind, lapply(1:4, function(a) {
     do.call(rbind, lapply(seq_len(c(2, 3, 2, 4)[a]), function(b) {
       data.frame(v1 = a, v2 = b, v3 = seq_len(c(3, 2, 4, 2, 3)[((a + b) %% 5) + 1]))
@@ -220,14 +171,7 @@ test_that("serp snakes through a ragged hierarchy", {
 
 
 test_that("serp matches SAS SURVEYSELECT SORT=SERP behavior", {
-  # This test verifies the algorithm matches the SAS documentation description:
-  # "In hierarchic serpentine sorting, PROC SURVEYSELECT sorts by the first
-  # CONTROL variable in ascending order. Then within the first level of the
-
-  # first CONTROL variable, the procedure sorts by the second CONTROL variable
-  # in ascending order. Within the second level of the first CONTROL variable,
-  # the procedure sorts by the second CONTROL variable in descending order."
-
+  # SAS sorts the second CONTROL variable descending in the first one's level 2.
   df <- data.frame(
     control1 = c(1, 1, 1, 2, 2, 2, 3, 3, 3),
     control2 = c("a", "b", "c", "a", "b", "c", "a", "b", "c"),
@@ -236,27 +180,19 @@ test_that("serp matches SAS SURVEYSELECT SORT=SERP behavior", {
 
   result <- df[order(serp(df$control1, df$control2)), ]
 
-  # Level 1 of control1: control2 ascending (a, b, c)
-  # Level 2 of control1: control2 descending (c, b, a)
-  # Level 3 of control1: control2 ascending (a, b, c)
-
   expect_equal(result$control1, c(1, 1, 1, 2, 2, 2, 3, 3, 3))
   expect_equal(result$control2, c("a", "b", "c", "c", "b", "a", "a", "b", "c"))
 })
 
 
 test_that("serp uses byte-order (radix) for character variable ranks", {
-  # Byte/ASCII order: uppercase before lowercase (A=65 < B=66 < a=97 < b=98).
-  # The fix (method = "radix" in sort()) ensures this holds regardless of
-  # system locale, which may interleave cases (e.g. A, a, B, b).
-  # Input deliberately scrambles position order to distinguish from position-based sort.
+  # Byte order ranks A, B, a, b in every locale, unlike the input positions.
   df <- data.frame(
     region   = c("a", "B", "A", "b"),
     district = c(1L, 1L, 1L, 1L),
     id       = 1:4
   )
   result <- df[order(serp(df$region, df$district)), ]
-  # Radix level order: A(rank 1), B(rank 2), a(rank 3), b(rank 4)
   expect_equal(result$id, c(3L, 2L, 1L, 4L))
 })
 
@@ -276,8 +212,6 @@ test_that("serp is fast for large datasets", {
     key <- serp(large_df$a, large_df$b, large_df$c)
     result <- large_df[order(key), ]
   })
-
-  # Should complete in under 1 second
 
   expect_lt(time["elapsed"], 1)
 })

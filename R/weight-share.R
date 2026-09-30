@@ -1,26 +1,15 @@
 ## Recorded weight-sharing operator
 
-# The linear operator serves point estimates and every replicate column.
-
 ## The triplet operator
 
 #' A sparse linear map from source rows to target rows
 #'
-#' Stored in triplet form rather than as a dense matrix. The dense form is
-#' `n_target * n_source` doubles for a structure that is almost always sparse,
-#' and the triplet form is also the shape the record serializes to and the
-#' shape a reader can check by eye against a link table.
-#'
-#' Triplets are canonicalized on construction, ordered by target and then by
-#' source. Two calls that build the same map in different orders therefore
-#' produce identical records, which is what makes the record comparable and
-#' hashable rather than merely equivalent.
+#' Stored as triplets sorted by target then source, so two builds of the same
+#' map give identical, hashable records.
 #'
 #' @param target_row,source_row Positive integer row indices.
 #' @param share The coefficient multiplying that source row's weight.
-#' @param n_target,n_source Dimensions of the map. Passed rather than inferred
-#'   from the maxima, because a map whose last target rows receive nothing is
-#'   legitimate and inferring would silently shrink it.
+#' @param n_target,n_source Dimensions, not inferred. Last rows can be empty.
 #' @noRd
 new_share_operator <- function(
   target_row,
@@ -74,11 +63,8 @@ vec_cast_count <- function(x, arg, call = caller_env()) {
 
 #' Refuse an operator that cannot be a weight-sharing map
 #'
-#' The duplicate-pair check is the one with statistical content. A repeated
-#' (target, source) pair adds a second coefficient for a link that exists once,
-#' which inflates that target's weight without any diagnostic saying so. It is
-#' the same defect that makes duplicate link rows a refusal at the call site,
-#' arriving one layer down where it can no longer be attributed to user data.
+#' A repeated (target, source) pair is refused because it would count that
+#' source weight twice with no diagnostic.
 #' @noRd
 validate_share_operator <- function(op, call = caller_env()) {
   n <- length(op$target_row)
@@ -176,19 +162,11 @@ canonicalize_share_operator <- function(op) {
 
 #' Apply the operator to source weights
 #'
-#' `w_B = T w_A`. Accepts a vector of source weights or a matrix whose columns
-#' are replicate weight systems, and returns the same shape over target rows.
-#' Applying the one recorded operator to every replicate column is what keeps
-#' the sharing inside the replication, which is the ordering the variance
-#' depends on.
+#' `w_B = T w_A`, applied to every replicate column so the sharing stays
+#' inside the replication. A target row no entry names receives zero.
 #'
-#' A target row no entry names receives zero rather than a missing value: it
-#' contributed nothing, which is a number, not an unknown.
-#'
-#' @param w Numeric vector of length `n_source`, or a numeric matrix with
-#'   `n_source` rows.
-#' @return A vector or matrix over the `n_target` target rows, matching the
-#'   shape of `w`.
+#' @param w Numeric vector of length `n_source` or a matrix with that many rows.
+#' @return A vector or matrix over the `n_target` rows, shaped like `w`.
 #' @noRd
 apply_share_operator <- function(op, w, call = caller_env()) {
   vector_in <- is.null(dim(w))
@@ -229,24 +207,11 @@ apply_share_operator <- function(op, w, call = caller_env()) {
   out
 }
 
-#' Target rows the operator never names
-#'
-#' Returned rather than refused. Whether an unreached target row is a defect
-#' depends on the mode that built the operator, and this file does not know
-#' the mode.
-#' @noRd
-share_operator_unreached <- function(op) {
-  setdiff(seq_len(op$n_target), unique(op$target_row))
-}
-
 ## The transformation record
 
 #' The law this package writes weight-share records under
 #'
-#' Stamped for the same reason the panel assignment stamps one: everything
-#' computed from the record afterwards is specific to the algorithm and the
-#' version. A later algorithm writing these field names must not inherit this
-#' one's meaning by default.
+#' A later algorithm writing these field names must not inherit this meaning.
 #' @noRd
 weight_share_record_algorithm <- "generalized_weight_share"
 
@@ -269,8 +234,7 @@ weight_share_target_scopes <- c("reached", "population")
 
 #' The columns each denominator scale generates on the result
 #'
-#' Only the pair belonging to the mode in use is emitted. Two always-missing
-#' columns would be a shape this package does not otherwise produce.
+#' Only the pair for the mode in use is emitted.
 #' @noRd
 weight_share_generated_cols <- list(
   binary = c(".unit_links", ".cluster_links"),
@@ -279,26 +243,13 @@ weight_share_generated_cols <- list(
 
 #' Build the record a transformed sample carries
 #'
-#' The record stores the normalized operator and normalized identities, never
-#' the user's expressions. Re-evaluating a quosure or re-reading a link table
-#' at export time would let an external register change the meaning of a
-#' transformation that has already happened, which is the discipline
-#' `replay_design()` already enforces for designs.
+#' Stores the normalized operator and row keys, never the user's expressions.
+#' `attach_weight_share_record()` fills the two fields that describe the result.
 #'
-#' `result_integrity` is filled in by `attach_weight_share_record()`, because
-#' it cannot be computed until the result it describes exists.
-#'
-#' @param source_sample The intact source sample, retained whole. The replicate
-#'   route needs to rebuild its replicate weights, and a payload sufficient for
-#'   that is the sample itself.
-#' @param source_key_cols,target_key_cols Column names identifying a row on
-#'   each side. The per-row key values are derived from them and stored
-#'   separately: the operator addresses rows by position, so validating
-#'   alignment needs the keys themselves and not only where to find them.
-#' @param denominator A list carrying `mode`, `scale` and, for the asserted
-#'   modes, what was asserted.
-#' @param coverage The Constraint 2.1 diagnostics, from
-#'   `new_weight_share_coverage()`.
+#' @param source_sample The intact source sample, kept for the replicate route.
+#' @param source_key_cols,target_key_cols Key column names on each side.
+#' @param denominator A list with `mode`, `scale` and any asserted values.
+#' @param coverage From `new_weight_share_coverage()`.
 #' @noRd
 new_weight_share_record <- function(
   operator,
@@ -322,7 +273,6 @@ new_weight_share_record <- function(
     source_integrity = source_integrity,
     source_key_cols = source_key_cols,
     target_key_cols = target_key_cols,
-    # Attach target keys after the result exists.
     source_row_keys = share_row_keys(source_sample, source_key_cols),
     target_row_keys = NULL,
     target_cluster = target_cluster,
@@ -342,9 +292,8 @@ new_weight_share_record <- function(
 
 #' Per-row key values, in the table's own row order
 #'
-#' `make_group_key()` rather than pasting with a separator: it length-prefixes
-#' each component, so a key value containing the separator cannot be confused
-#' with a boundary between two of them.
+#' `make_group_key()` length-prefixes components, so a separator inside a
+#' value cannot fake a boundary.
 #' @noRd
 share_row_keys <- function(data, key_cols) {
   make_group_key(as.data.frame(data, stringsAsFactors = FALSE), key_cols)
@@ -375,11 +324,7 @@ new_weight_share_coverage <- function(
 
 #' Read a weight-share record under the law it names
 #'
-#' Ordered the same way `prepare_panel_record()` is, and for the same reason:
-#' which law the record was written under decides what its fields mean, so the
-#' algorithm and version are established before any field is read.
-#'
-#' `NULL` in is `NULL` out. An ordinary sample carries no transformation.
+#' Checks algorithm and version before reading any field. `NULL` in, `NULL` out.
 #' @noRd
 prepare_weight_share_record <- function(record, what, call = caller_env()) {
   check_weight_share_record_supported(record, what, call = call)
@@ -464,10 +409,7 @@ weight_share_record_fields <- c(
 #' @noRd
 weight_share_attached_fields <- c("target_row_keys", "result_integrity")
 
-#' @param attached Whether the record has been attached to its result. Two
-#'   fields describe the result and are necessarily empty before there is one,
-#'   so requiring them at construction would make a correct record fail and
-#'   never requiring them would let an unattached one reach an exporter.
+#' @param attached If `TRUE`, `weight_share_attached_fields` must be filled.
 #' @noRd
 check_weight_share_record_fields <- function(
   record,
@@ -583,16 +525,9 @@ is_valid_share_operator <- function(op) {
 
 #' Columns whose values a transformed sample's integrity record covers
 #'
-#' The internal design columns, the target keys, and the link columns the
-#' transformation generated. Target keys are included because the operator
-#' addresses target rows positionally: a reordered or rewritten key column
-#' means the recorded map no longer describes this table.
-#'
-#' The generated link columns are named explicitly rather than folded into
-#' `samplyr_internal_col_pattern`. Widening that pattern would change which
-#' columns count as internal for every sample in the package, including the
-#' stripped-class detection, which is a blast radius this file has no reason
-#' to take on.
+#' Internal design columns, target keys (the operator is positional) and the
+#' generated link columns. The latter are listed explicitly because widening
+#' `samplyr_internal_col_pattern` would affect every sample.
 #' @noRd
 weight_share_protected_cols <- function(data, key_cols, generated_cols) {
   internal <- grep(samplyr_internal_col_pattern, names(data), value = TRUE)
@@ -614,19 +549,11 @@ weight_share_integrity_record <- function(data, key_cols, generated_cols) {
 
 #' Attach a completed transformation to its result
 #'
-#' Mints a fresh integrity record for the transformed sample and stores a copy
-#' inside the transformation record. A shared-weight sample is a legitimately
-#' modified sample, so it must not inherit the source's integrity record and it
-#' must not be reachable through the tampering gate: `check_sample_unmodified()`
-#' would tell a user their data was corrupted when it was transformed on
-#' purpose.
-#'
-#' Any modification marks carried over from the source are cleared. They
-#' describe the source realization and the result is not it.
+#' Mints a fresh integrity record and clears the source's modification marks,
+#' so `check_sample_unmodified()` does not read the result as tampered.
 #' @noRd
 attach_weight_share_record <- function(result, record, call = caller_env()) {
   row_keys <- share_row_keys(result, record$target_key_cols)
-  # Duplicate target keys make realignment ambiguous.
   dup <- unique(row_keys[duplicated(row_keys)])
   if (length(dup) > 0) {
     abort_samplyr(
@@ -659,14 +586,8 @@ attach_weight_share_record <- function(result, record, call = caller_env()) {
 
 #' Put a transformed sample back into the order the operator was recorded in
 #'
-#' The integrity hash is order-invariant on purpose: for an ordinary sample
-#' nothing is positional, so `arrange()` or a sorted join is harmless and must
-#' not read as tampering. A share operator *is* positional, so for a
-#' transformed sample the order is load-bearing and has to be recovered rather
-#' than assumed.
-#'
-#' Recovered, not refused: reordering a transformed sample is an ordinary thing
-#' to do to a table, and the keys say exactly which row is which.
+#' The integrity hash ignores row order but the operator is positional, so
+#' order is recovered from the keys rather than refused.
 #'
 #' @return An integer vector `pos` with `x[pos, ]` in recorded order.
 #' @noRd
@@ -701,15 +622,9 @@ align_share_rows <- function(x, record, fn_name, call = caller_env()) {
 
 #' Verify a transformed sample against everything the record claims
 #'
-#' Four separate things can have gone wrong and they need separate findings:
-#' the result was altered, the retained source sample was altered, the operator
-#' no longer spans the tables it is being applied to, or the target rows were
-#' merely reordered. The last is recoverable and the others are not, so
-#' collapsing them would either refuse a harmless `arrange()` or accept a
-#' rewritten table.
+#' The outcomes stay separate because only reordering is recoverable.
 #'
-#' @return "ok", "reordered", or the failure kind: "result", "source", or
-#'   "dimensions".
+#' @return "ok", "reordered", "result", "source" or "dimensions".
 #' @noRd
 verify_weight_share_alignment <- function(x, record) {
   op <- record$operator
@@ -789,13 +704,11 @@ check_weight_share_alignment <- function(x, fn_name, call = caller_env()) {
 
 #' What kind of weight a sample's `.weight` column holds
 #'
-#' The one place this question is answered. Every statistical consumer decides
-#' explicitly what to do with a transformed sample, and it decides through this
-#' rather than by testing for a metadata field, so adding a second kind of
-#' transformation later is one change here and not eighteen elsewhere.
+#' Consumers ask this rather than test the metadata, so a new kind of
+#' transformation is one change here.
 #'
 #' @return `"design"` for Horvitz-Thompson or Hansen-Hurwitz design weights,
-#'   `"shared"` for estimation weights produced by a recorded transformation.
+#'   `"shared"` for estimation weights from a recorded transformation.
 #' @noRd
 sample_weight_contract <- function(x) {
   if (is_null(attr(x, "metadata")$weight_share)) {
@@ -813,20 +726,12 @@ weight_contract_label <- c(
 
 #' Refuse a sample whose weights this operation is not defined for
 #'
-#' Distinct from `check_sample_unmodified()` on purpose. That gate says the
-#' data no longer matches the design, which is a defect. This one says the
-#' weights are a different quantity than the operation needs, which is a
-#' property of a deliberately produced object, and telling a user the first
-#' when the second is true sends them looking for corruption they will not
-#' find.
+#' Kept separate from `check_sample_unmodified()`, which reports corruption.
+#' Here the weights are deliberately a different quantity.
 #'
 #' @param allowed The contracts this operation is defined for.
-#' @param class The operation's own condition class. Callers pass one so a
-#'   refusal can be caught for that operation specifically. The shared class
-#'   is always appended, so a caller can also catch the whole family.
-#' @param advice Bullets naming what to do instead. Left to the caller because
-#'   the alternative differs by operation and generic advice would be worse
-#'   than none.
+#' @param class The operation's condition class. The shared one is appended.
+#' @param advice Bullets naming what to do instead, specific to the operation.
 #' @noRd
 check_weight_contract <- function(
   x,
@@ -872,8 +777,6 @@ check_weight_contract <- function(
 
 ## Consumer-specific refusals
 
-# Each operation has a catchable class and specific recovery advice.
-
 #' @noRd
 check_weight_contract_joint <- function(x, fn_name, call = caller_env()) {
   check_weight_contract(
@@ -907,9 +810,7 @@ check_weight_contract_varcomp <- function(x, fn_name, call = caller_env()) {
 
 #' Refuse a transformed sample as the starting point of more selection
 #'
-#' Covers both routes into `execute()`: continuing the stored design, and
-#' supplying the sample as a frame for a further phase. One condition, because
-#' the defect is the same one and the user's next step is the same either way.
+#' Covers continuing the stored design and supplying the sample as a frame.
 #' @noRd
 check_weight_contract_execute <- function(x, fn_name, call = caller_env()) {
   check_weight_contract(
@@ -936,8 +837,8 @@ check_weight_contract_panel <- function(x, fn_name, call = caller_env()) {
              and the rows here are target units reached through links.",
       # Do not advise an operation that also refuses waves.
       "i" = "Weight sharing and wave activation do not compose in either
-             direction. Share weights from the master and analyse the result
-             as one sample, or rotate panels and analyse each wave without
+             direction. Share weights from the master and analyze the result
+             as one sample, or rotate panels and analyze each wave without
              sharing."
     ),
     call = call
@@ -946,12 +847,8 @@ check_weight_contract_panel <- function(x, fn_name, call = caller_env()) {
 
 #' Refuse a transformed sample as the subject of a receipt
 #'
-#' The JSON format carries a design and an execution receipt, and nothing
-#' else. Writing a transformed sample would produce a file describing the
-#' source selection alone, which reads back as an ordinary sample and replays
-#' to one: the links, the target data and the shared weights would be absent
-#' with nothing marking their absence. Refused rather than warned about,
-#' because the file would be indistinguishable from a correct one.
+#' The file would hold only the source selection and read back as an ordinary
+#' sample, so this refuses rather than warns.
 #' @noRd
 check_weight_contract_serialize <- function(x, fn_name, call = caller_env()) {
   check_weight_contract(
@@ -970,14 +867,9 @@ check_weight_contract_serialize <- function(x, fn_name, call = caller_env()) {
 
 #' The source design and the transformation that rebuild a shared sample
 #'
-#' What [read_design()] returns for a shared-weight sample file. It carries
-#' the source selection's design and receipt, and the arguments
-#' [share_weights()] was given, but neither the links nor the target register:
-#' those are supplied to [replay_design()], the way a frame is.
-#'
-#' A `sampling_design` with an attribute rather than a list, because there is
-#' exactly one design here and every design accessor should keep working on
-#' it.
+#' What [read_design()] returns for a shared-weight sample file. Links and the
+#' target register are supplied to [replay_design()], like a frame. The
+#' transformation is an attribute so every design accessor keeps working.
 #' @noRd
 new_shared_sample_design <- function(source, transformation) {
   structure(
@@ -995,11 +887,6 @@ is_shared_sample_design <- function(x) {
 ## Generated columns
 
 #' Refuse generated names the target data already uses
-#'
-#' Silently overwriting is the alternative, and it would replace a user's own
-#' column with a quantity that happens to share its name. The refusal names
-#' every colliding column at once rather than the first, because a user
-#' renaming them wants the whole list.
 #'
 #' @param owner How to describe the table in the message.
 #' @noRd
@@ -1030,21 +917,12 @@ check_generated_cols <- function(
 
 ## Coverage at the analysis boundary
 
-# Unreachable target clusters bias totals downward. Warn at the analysis
-# boundary so multiframe coverage is assessed over the union. NULL means the
-# question was not assessed while an empty set means none were found.
+# Warned here, not per component, so multiframe coverage covers the union.
 
 #' The clusters no component of a collection can reach
 #'
-#' A cluster is unreachable from the union only when every component names it,
-#' and one component's silence counts as coverage only when it was describing
-#' the same target clusters. That is what the digest establishes. Without it,
-#' or with a component that cannot answer at all, the union is unknown rather
-#' than assumed.
-#'
-#' A `NULL` record answers `NULL` to both questions, so a component with no
-#' link structure at all lands in the same "unknown" as one whose register
-#' never claimed to be the population.
+#' Known only when every component reports orphans under the same cluster
+#' digest. Otherwise the status is "unknown" or "incompatible".
 #' @noRd
 union_share_coverage <- function(records) {
   coverages <- lapply(records, function(record) record$coverage)
@@ -1064,12 +942,7 @@ union_share_coverage <- function(records) {
 
 #' Warn once about what the estimate cannot reach, and record it
 #'
-#' `where` names what the finding is about, so the stack's message says the
-#' union rather than repeating a per-component one. It is a formal rather than
-#' a field of `coverage`: neither `union_share_coverage()` nor
-#' `stack_share_coverage()` produces it, every call site appended it by hand,
-#' and a call site that forgot got an empty interpolation and a message with
-#' no locus.
+#' `where` names the locus of the finding and is a required formal.
 #' @noRd
 report_share_coverage <- function(result, coverage, where, call = caller_env()) {
   # Force this early to report the missing argument clearly.

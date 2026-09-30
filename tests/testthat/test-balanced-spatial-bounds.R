@@ -49,10 +49,7 @@ test_that("ordinary cube auxiliaries and bound() constraints compose", {
 })
 
 test_that("bound() reproduces the paper's controlled matrix rounding example", {
-  # Tripet & Tillé (2026), "Balanced Sampling With Inequalities: Application
-  # to Category Bounding, Matrix Rounding, and Spread Sampling",
-  # doi:10.1080/01621459.2025.2550667, supplementary R code: Cochran's
-  # 5 x 4 controlled-rounding matrix.
+  # Cochran's 5 x 4 matrix from Tripet and Tille (2026), supplementary code
   cochran <- matrix(
     c(
       15, 21, 17, 9,

@@ -19,8 +19,8 @@ A tbl_sample or plain tibble, per the restoration rules
 \description{
 vctrs restores attributes from a prototype after operations like
 \code{\link[vctrs:vec_rbind]{vctrs::vec_rbind()}}. The default restoration copies them blindly,
-which previously produced a "clean" doubled realization from
-\code{vec_rbind(sample, sample)}. Routing through the shared restore
+which would give \code{vec_rbind(sample, sample)} a "clean" doubled
+realization. Routing through the shared restore
 helper applies the same demotion and marking rules as the dplyr
 hooks. (The integrity record catches base \code{rbind()} and any other
 route at the analysis boundary regardless.)

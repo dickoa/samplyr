@@ -35,7 +35,9 @@ sampling, ensuring samples spread evenly across geographic/administrative hierar
 
 The algorithm builds a composite sort key by:
 \enumerate{
-\item Converting each variable to integer ranks
+\item Converting each variable to integer ranks, with character values in
+byte order (the C locale) whatever the session locale, and missing
+values last
 \item For variable i, numbering the cells of variables 1..(i-1) in the order
 the traversal visits them
 \item Flipping variable i's ranks (descending) in every odd-numbered cell
@@ -104,8 +106,9 @@ sampling_design() |>
 Chromy, J. R. (1979). Sequential sample selection methods.
 \emph{Proceedings of the Survey Research Methods Section, ASA}, 401-406.
 
-Chromy, J. R., & Williams, R. L. (1980). SAS sample selection macros.
-\emph{Proceedings of the Fifth Annual SAS Users Group International}, 392-396.
+Williams, R. L. and Chromy, J. R. (1980). SAS sample selection MACROS.
+\emph{Proceedings of the Fifth Annual SAS Users Group International
+Conference}, 392-396.
 }
 \seealso{
 \code{\link[dplyr:arrange]{dplyr::arrange()}}, \code{\link[dplyr:desc]{dplyr::desc()}}

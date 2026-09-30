@@ -1,8 +1,8 @@
 ---
-title: "Save and Replay a Design"
+title: "Save and replay a design"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Save and Replay a Design}
+  %\VignetteIndexEntry{Save and replay a design}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -189,18 +189,38 @@ created, accepting the loss of digest-backed diagnostics.
 
 ## Replay boundaries
 
-The receipt describes one `execute()` call. A stage continuation or
-multi-phase pipeline uses several calls, so its final receipt is marked
-`chained` and cannot replay the whole pipeline. Save and replay each stage
-batch or phase separately.
+A stage continuation, a new phase drawn from an earlier sample, and a
+materialized panel wave each start from the result of an earlier `execute()`
+call. The receipt of such a sample is marked `chained` and records every
+earlier call, so `replay_design()` re-runs them in order. It needs the frames
+of each call that read one, which are the first call and every continuation,
+as a list in call order. One data frame is enough when they all read the same
+frame.
 
-A modified sample is also outside the contract. If rows or design columns
-changed after execution, the receipt still describes the original selection.
+```{r}
+phase1 <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 300) |>
+  execute(bfa_eas, seed = 7)
+phase2 <- sampling_design() |>
+  stratify_by(urban_rural) |>
+  draw(n = 60) |>
+  execute(phase1, seed = 8)
 
-A materialized panel wave is derived from its master and is not independently
-replayable. Save the master. A `rotation_program()` is a registry rather than
-a sampling design, so archive each cohort execution and the schedule used to
-rebuild the registry.
+write_design(phase2, path, frame = bfa_eas)
+replayed <- replay_design(read_design(path), bfa_eas)
+identical(replayed$ea_id, phase2$ea_id)
+```
+
+A modified sample is outside the contract. If rows or design columns changed
+after execution, the receipt still describes the original selection. A new
+phase drawn from a modified sample is recorded from that phase on, and
+replays from the modified sample passed back as its frame. A continuation of
+a modified sample cannot be replayed, and writing it warns.
+
+A `rotation_program()` is a registry rather than a sampling design, so
+archive each cohort execution and the schedule used to rebuild the
+registry.
 
 A sample carrying shared weights from `share_weights()` has a format of its
 own, `samplyr/shared-sample`. It records the source selection and the
@@ -330,8 +350,9 @@ unsupported_control <- sampling_design() |>
 design_json(unsupported_control)
 ```
 
-Files carry a `format_version`. A reader refuses newer versions it does not
-understand and validates the fields required by older versions. Unknown tool
+Files carry a `format_version`. This release reads and writes design files
+at format version 3 with method vocabulary 2, and refuses any other version.
+Frame-collection and shared-weight files are at version 1. Unknown tool
 namespaces are retained when a file is read and written again, but preservation
 does not imply cross-tool statistical equivalence.
 

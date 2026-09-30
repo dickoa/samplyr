@@ -96,8 +96,7 @@ test_that("a schedule for several cohorts must name them", {
 })
 
 test_that("non-contiguous activity is accepted", {
-  # 2-out-2 in miniature: live, dormant, live again. A rotation such as the
-  # 4-8-4 leaves and re-enters by design.
+  # Live, dormant, live again, as a 4-8-4 rotation does by design.
   schedule <- data.frame(
     panel = rep(1:2, times = 4),
     wave = rep(1:4, each = 2),
@@ -273,9 +272,7 @@ test_that("a registered cohort that is never active is a mistake", {
 })
 
 test_that("a schedule may not activate fewer panels than the blocks allow", {
-  # Drawn with two of four panels live at every wave, so r_min is 2 and the
-  # block size collapsed to K. A program that then runs a single panel
-  # leaves under two units per block.
+  # Two of four panels live at every wave give r_min = 2 and blocks of K.
   lean <- data.frame(
     panel = rep(1:4, times = 2),
     wave = rep(1:2, each = 4),
@@ -381,9 +378,6 @@ test_that("the wave route refuses other execution input on a program", {
     class = "samplyr_error_wave_undeclared"
   )
 
-  # The refusal is one helper now. The program copy used to be a second
-  # writing of it, with the same class, divergent wording, and no bullet
-  # saying where the input already lives.
   expect_error(
     execute(program, wave = 2, seed = 1),
     regexp = "Every input a wave needs is stored with the program"
@@ -408,6 +402,7 @@ test_that("row-binding a wave yields a plain data frame it cannot export", {
 })
 
 test_that("survey export refuses the collection by name", {
+  skip_if_not_installed("survey")
   wave_2 <- execute(two_cohort_program(), wave = 2)
 
   expect_error(
@@ -432,10 +427,7 @@ test_that("programs and waves print", {
 ## Issue counts and the plan figure they are compared against
 
 test_that("a whole cohort is counted in the units the plan means", {
-  # svyplan's `operational_issue` is `panels * panel_issue`: units issued to
-  # the field, not the rows they expand to. A cohort with an assignment
-  # record was counted in assignment units and a cohort drawn whole in rows,
-  # and both were compared against that one figure.
+  # svyplan's `operational_issue` counts units issued, not the rows they span.
   population <- data.frame(
     psu = rep(sprintf("p%02d", 1:40), each = 10),
     hh = sprintf("h%04d", 1:400),
@@ -450,8 +442,7 @@ test_that("a whole cohort is counted in the units the plan means", {
   expect_identical(attr(whole, "metadata")$n_selected, 80L)
   expect_identical(cohort_issue_count(whole), 8)
 
-  # The same design with panels reaches the record branch, and the two
-  # branches have to agree about what a unit is.
+  # The same design with panels reaches the record branch, which agrees.
   panelled <- sampling_design() |>
     cluster_by(psu) |>
     draw(n = 8) |>
@@ -468,7 +459,7 @@ test_that("a whole cohort is counted in the units the plan means", {
   )
   expect_identical(cohort_issue_count(panelled), cohort_issue_count(whole))
 
-  # Unclustered, where a row is a unit and the old branch was right.
+  # Unclustered, a row is a unit.
   flat <- sampling_design() |> draw(n = 12) |> execute(data.frame(id = 1:200), seed = 2)
   expect_identical(cohort_issue_count(flat), 12)
 })
@@ -481,8 +472,7 @@ test_that("the rotation-wave export names a route that works", {
     as_svydesign(wave),
     class = "samplyr_error_rotation_wave_not_combinable"
   )
-  # The message used to end "once the activation phase is supported". It is
-  # supported: the component route it recommends returns a two-phase design.
+  # The component route the message recommends returns a two-phase design.
   expect_error(as_svydesign(wave), regexp = "second phase")
   expect_no_match(
     conditionMessage(tryCatch(as_svydesign(wave), error = identity)),
@@ -494,15 +484,7 @@ test_that("the rotation-wave export names a route that works", {
 })
 
 test_that("a cohort drawn whole leaves the wave when its panel is idle", {
-  # A cohort executed without `panels` has one implicit panel, and activating
-  # it is not a subsample, so its factor is one. Nothing asserted the other
-  # half: that at a wave where its single panel is not active, the cohort
-  # contributes nothing. The program drops it before `activate_cohort()` is
-  # reached, so what this pins is the composition of the wave rather than the
-  # activation arithmetic.
-  #
-  # It takes a second cohort to reach: a lone idle cohort is refused earlier
-  # by `samplyr_error_schedule_idle_wave`, because the wave would be empty.
+  # A lone idle cohort empties the wave and is refused, so a second is needed.
   frame <- data.frame(id = sprintf("U%03d", 1:120))
   master_sched <- data.frame(
     panel = rep(1:2, 3), wave = rep(1:3, each = 2), active = rep(TRUE, 6)
@@ -533,8 +515,7 @@ test_that("a cohort drawn whole leaves the wave when its panel is idle", {
     nrow(as.data.frame(wave[[cohort]]))
   }
 
-  # Present when live, absent when idle. Named cohorts, not a row count, so
-  # this cannot be satisfied by the wave happening to hold 40 rows.
+  # Named cohorts, not a row count, so 40 rows cannot pass by chance.
   expect_setequal(names(execute(program, wave = 1)), c("main", "solo"))
   expect_setequal(names(execute(program, wave = 2)), "main")
   expect_setequal(names(execute(program, wave = 3)), c("main", "solo"))
@@ -542,8 +523,7 @@ test_that("a cohort drawn whole leaves the wave when its panel is idle", {
   expect_identical(rows(execute(program, wave = 2), "solo"), 0L)
   expect_identical(rows(execute(program, wave = 1), "solo"), 20L)
 
-  # Activating a whole cohort is not a subsample, so its weights are the
-  # master's, unscaled.
+  # Activating a whole cohort is not a subsample, so weights are unscaled.
   live <- as.data.frame(execute(program, wave = 1)[["solo"]])
   expect_equal(live$.weight, as.data.frame(solo)$.weight[match(live$id, solo$id)])
 })

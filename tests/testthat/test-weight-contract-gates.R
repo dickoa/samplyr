@@ -1,9 +1,7 @@
-## G1. The weight contract at every consumer
+## The weight contract at every consumer
 
-# Two obligations. Every statistical consumer decides explicitly what a shared
-# estimation weight means to it, and no ordinary sample notices that the
-# decision exists. The second is the larger risk: these gates sit on paths
-# every existing test already runs.
+# Every statistical consumer decides explicitly what a shared estimation
+# weight means to it, and no ordinary sample notices that the decision exists.
 
 ## The inventory
 
@@ -35,9 +33,7 @@ test_that("every registered tbl_sample method has a recorded verdict", {
   registered <- getNamespaceInfo(asNamespace("samplyr"), "S3methods")
   methods <- registered[registered[, 2] == "tbl_sample", 1]
 
-  # Not a count. A method added without deciding what it does about a shared
-  # weight is exactly the defect this phase exists to prevent, and it would
-  # arrive as a name this vector does not carry.
+  # A method added without a verdict shows up as a name this vector lacks.
   expect_setequal(as.character(methods), names(tbl_sample_verdicts))
 })
 
@@ -45,9 +41,7 @@ test_that("every registered tbl_sample method has a recorded verdict", {
 
 test_that("the linearized survey exports take a shared-weight sample", {
   skip_if_not_installed("survey")
-  # They export the source-target contributions, which carry the source
-  # selection's strata and units, so the rows are contributions rather than
-  # target units and the design is the source's.
+  # Rows are source-target contributions, so the design is the source's.
   shared <- shared_weight_sample()
 
   svy <- as_svydesign(shared)
@@ -63,11 +57,7 @@ test_that("the replicate exports accept a shared-weight sample", {
   skip_if_not_installed("survey")
   shared <- shared_weight_sample()
 
-  # The route weight sharing is designed to take. The placeholder refusal that
-  # stood here before its branch existed is gone, not reworded.
-  # JK1 rather than JKn: this fixture's source is an unstratified srswor
-  # sample, and survey refuses JKn for one. That refusal is the source
-  # design's, and it reaches the user through the shared branch unchanged.
+  # survey refuses JKn for this unstratified source, so JK1 is used.
   expect_no_error(as_svrepdesign(shared, type = "JK1"))
   expect_s3_class(as_svrepdesign(shared, type = "JK1"), "svyrep.design")
 })
@@ -112,9 +102,7 @@ test_that("panel and wave operations refuse a shared-weight sample", {
     class = "samplyr_error_panel_weight_contract"
   )
 
-  # The refusal must not name the operation that refuses in the other
-  # direction. A sample cannot be both a wave and shared, so advice pointing
-  # from either refusal to the other would be a closed loop.
+  # The message must not point to the operation that refuses the other way.
   expect_error(
     execute(shared, wave = 1),
     regexp = "do not compose in either direction"
@@ -147,9 +135,7 @@ test_that("share_weights() refuses a materialized wave", {
   expect_error(share(wave), class = "samplyr_error_share_weights_wave")
   expect_error(share(wave), regexp = "realizes wave 1")
 
-  # The master is not refused. A panel assignment describes selected source
-  # units, so it does not carry to target units, but nothing about it makes
-  # the transformation wrong.
+  # The master is accepted, and its panel assignment is not carried over.
   from_master <- share(master)
   expect_s3_class(from_master, "tbl_sample")
   expect_identical(nrow(from_master), nrow(master))
@@ -157,8 +143,7 @@ test_that("share_weights() refuses a materialized wave", {
   expect_null(attr(from_master, "metadata")$wave)
   expect_false(".panel" %in% names(from_master))
 
-  # And the result is an ordinary shared sample: the wave route refuses it
-  # from the other side, which is what makes the pair symmetric.
+  # The result is an ordinary shared sample, which the wave route refuses.
   expect_error(
     execute(from_master, wave = 1),
     class = "samplyr_error_panel_weight_contract"
@@ -168,16 +153,13 @@ test_that("share_weights() refuses a materialized wave", {
 test_that("stack_waves reports non-wave arguments instead of failing to format", {
   ordinary <- shared_weight_source()
 
-  # Regression: the plural for a vector of positions took its quantity from
-  # the vector, so this path raised a cli formatting error rather than the
-  # error it was written to raise.
+  # Two positions give the plural message, not a cli formatting error.
   expect_error(
     stack_waves(ordinary, ordinary),
     class = "samplyr_error_stack_waves_input"
   )
   expect_error(stack_waves(ordinary, ordinary), regexp = "Arguments 1 and 2")
-  # The singular. A real wave rather than an injected record: the second
-  # argument has to pass the wave check for the first to be reported alone.
+  # The second argument is a real wave, so the first is reported alone.
   expect_error(
     stack_waves(ordinary, execute(wave_share_master(), wave = 1)),
     regexp = "Argument 1 is not one"
@@ -203,9 +185,7 @@ test_that("every refusal carries the family class as well as its own", {
 test_that("a refusal is not reported as tampering", {
   shared <- shared_weight_sample()
 
-  # The sample is intact: the transformation minted its own integrity record.
-  # Telling a user their data was corrupted would send them looking for a
-  # defect that is not there.
+  # The transformation minted its own integrity record.
   expect_silent(check_sample_unmodified(shared, "test"))
   cond <- tryCatch(varcomp(shared, ~.weight), condition = function(e) e)
   expect_false(inherits(cond, "samplyr_error_modified_sample"))
@@ -226,8 +206,7 @@ test_that("the srvyr bridges take a shared-weight sample", {
 test_that("the weighting-loss diagnostics accept shared weights", {
   shared <- shared_weight_sample()
 
-  # Computed from .weight alone, so they describe the final weights. The
-  # links here are one-to-one, so they equal the source sample's.
+  # Computed from .weight alone, and the links here are one-to-one.
   expect_identical(design_effect(shared), design_effect(shared_weight_source()))
   expect_identical(effective_n(shared), effective_n(shared_weight_source()))
 })
@@ -266,8 +245,6 @@ test_that("dplyr verbs carry the transformation record through", {
 test_that("stripping and restoring the class does not launder the contract", {
   shared <- shared_weight_sample()
 
-  # The route the note names: as_tbl_sample() on an object that kept the
-  # attributes but lost the class must not hand back a design-weight sample.
   stripped <- shared
   class(stripped) <- setdiff(class(stripped), "tbl_sample")
   restored <- as_tbl_sample(stripped)
@@ -284,9 +261,7 @@ test_that("vctrs restoration carries the record or drops the class entirely", {
   shared <- shared_weight_sample()
 
   doubled <- vctrs::vec_rbind(shared, shared)
-  # Either it is still a sample and still shared, or it is no longer a sample
-  # at all. What it must never be is a sample whose weights read as design
-  # weights.
+  # Either still a shared sample or no sample at all.
   if (is_tbl_sample(doubled)) {
     expect_identical(sample_weight_contract(doubled), "shared")
   } else {
@@ -305,12 +280,12 @@ test_that("dropping .weight demotes to a plain tibble rather than a design sampl
 ## Ordinary samples notice nothing
 
 test_that("an ordinary sample passes every gate the shared one is refused by", {
+  skip_if_not_installed("survey")
   ordinary <- shared_weight_source()
 
   expect_identical(sample_weight_contract(ordinary), "design")
   expect_no_error(as_svydesign(ordinary))
-  # survey warns about the tiny sampling fraction. That is its finding about
-  # the design, not about this gate.
+  # survey warns about the tiny sampling fraction.
   expect_no_error(suppressWarnings(as_svrepdesign(ordinary, type = "bootstrap")))
   expect_no_error(joint_expectation(ordinary, bfa_eas))
   expect_no_error(design_effect(ordinary))
@@ -355,11 +330,11 @@ test_that("an ordinary stage continuation is unaffected", {
 })
 
 test_that("the gates add no condition to an ordinary sample's failures", {
+  skip_if_not_installed("survey")
   ordinary <- shared_weight_source()
   modified <- ordinary[1:3, ]
 
-  # The tampering gate still owns this finding. A weight-contract class
-  # appearing here would mean the two checks had been conflated.
+  # The tampering gate owns this finding.
   cond <- tryCatch(as_svydesign(modified), condition = function(e) e)
   expect_s3_class(cond, "samplyr_error_modified_sample")
   expect_false(inherits(cond, "samplyr_error_weight_contract"))

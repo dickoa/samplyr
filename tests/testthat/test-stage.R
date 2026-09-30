@@ -100,3 +100,59 @@ test_that("each stage can have its own stratification", {
   expect_equal(d$stages[[2]]$strata$vars, "urban_rural")
   expect_null(d$stages[[3]]$strata)
 })
+
+## draw() closes a stage
+#
+# draw() reads the stage's strata and clusters when it is called, so nothing
+# may change them afterwards. `draw(n = plan) |> stratify_by(region)` used to
+# take a plan's total in every region.
+
+test_that("a verb after draw() on the same stage is refused", {
+  closed <- sampling_design() |> add_stage("EAs") |> draw(n = 10)
+  expect_error(
+    closed |> stratify_by(region),
+    class = "samplyr_error_stage_closed"
+  )
+  expect_error(closed |> cluster_by(ea), class = "samplyr_error_stage_closed")
+  expect_error(closed |> draw(n = 5), class = "samplyr_error_stage_closed")
+
+  # The order is refused before the arguments are read.
+  expect_error(closed |> draw(n = -5), class = "samplyr_error_stage_closed")
+  expect_error(
+    closed |> stratify_by(region, alloc = "nonsense"),
+    class = "samplyr_error_stage_closed"
+  )
+})
+
+test_that("a design from a file or a sample is closed at its last stage", {
+  design <- sampling_design() |> draw(n = 5)
+  path <- tempfile(fileext = ".json")
+  write_design(design, path)
+  expect_error(
+    read_design(path) |> stratify_by(region),
+    class = "samplyr_error_stage_closed"
+  )
+
+  sample <- execute(design, bfa_eas, seed = 1)
+  expect_error(
+    get_design(sample) |> cluster_by(ea_id),
+    class = "samplyr_error_stage_closed"
+  )
+
+  # add_stage() opens the next stage, which takes every verb.
+  extended <- read_design(path) |>
+    add_stage() |>
+    stratify_by(region) |>
+    cluster_by(ea_id) |>
+    draw(n = 2)
+  expect_identical(extended$stages[[2]]$strata$vars, "region")
+  expect_identical(extended$stages[[2]]$clusters$vars, "ea_id")
+})
+
+test_that("strata and clusters may be declared in either order", {
+  one <- sampling_design() |> stratify_by(region) |> cluster_by(ea_id) |>
+    draw(n = 2)
+  other <- sampling_design() |> cluster_by(ea_id) |> stratify_by(region) |>
+    draw(n = 2)
+  expect_identical(one$stages, other$stages)
+})

@@ -23,12 +23,22 @@ the stage registers, one per executed stage, in the order they
 were supplied to \code{\link[=execute]{execute()}}. Either way each frame must contain
 the columns its stage sampled on (strata variables, cluster
 variables, measure of size). When \code{NULL} (the default), the
-computation uses the frame digest recorded on the sample instead.}
+computation uses the frame digest recorded on the sample instead.
+
+The frame is checked against the digest recorded at execution.
+Other columns, another row order or other column types are accepted
+when every pool keeps the size and selection chances the sample was
+drawn with. Rows added or removed, a changed design value or a
+missing design column are refused with
+\code{samplyr_error_joint_frame_mismatch}, and so is any difference at all
+for a stage whose method depends on row order (\code{systematic},
+\code{pps_systematic}, \code{pps_chromy}, registered methods), whose matrix is
+that of the order. Under \code{frame_digest = "none"} there is nothing to
+compare against, and a warning says so.}
 
 \item{...}{These dots are for future extensions and must be empty.
-\code{stages} and the arguments after it follow \code{...}, so each must be
-named exactly: the singular \code{stage} is reported rather than
-prefix-matched.}
+\code{stages} and the arguments after it must be named exactly: the
+singular \code{stage} is reported rather than prefix-matched.}
 
 \item{stages}{An integer vector of stage numbers to compute, or
 \code{NULL} (default) to compute all PPS stages.
@@ -42,24 +52,24 @@ keeps the stage behavior. Mutually exclusive with \code{stages}, \code{frame},
 \code{nsim} and \code{seed}, none of which activation mode uses.}
 
 \item{nsim}{Positive integer number of simulations used for Chromy's
-pairwise expected hits (default 10000). Also forwarded to registered
-WR \code{joint_fn}s that explicitly declare an \code{nsim} formal. Ignored by
-analytic methods. Raising it narrows the simulation error, at a cost
+pairwise expected hits (default 10000), also forwarded to registered
+WR \code{joint_fn}s that explicitly declare an \code{nsim} formal. Analytic
+methods ignore it. Raising it narrows the simulation error, at a cost
 linear in \code{nsim}.}
 
-\item{seed}{Single integer seeding the simulated methods (default 1).
-The simulation runs under it and the calling session's random stream is
-restored afterwards, so the result is an exact function of the sample,
-\code{nsim} and \code{seed}, and calling this never moves a later \code{\link[=execute]{execute()}}.
-Analytic methods draw nothing and ignore it. A chromy matrix carries
-simulation error of a few percent at the default \code{nsim}, so two values
-of \code{seed} give two slightly different answers. Neither is more correct
-than the other.}
+\item{seed}{Single integer seeding the simulated methods (default 1),
+which analytic methods ignore. The session's random stream is restored
+afterwards, so the result is an exact function of the sample, \code{nsim}
+and \code{seed}, and calling this never moves a later \code{\link[=execute]{execute()}}. At the
+default \code{nsim} a chromy matrix carries simulation error of a few
+percent, so two seeds give slightly different answers, neither more
+correct than the other.}
 }
 \value{
 With \code{waves}, a tibble with one row per block of the frozen
-assignment. See "Activation mode" below. Otherwise a named list of
-length equal to the number of executed stages. Each element is either:
+assignment, described in the "Activation mode" section. Otherwise a
+named list of length equal to the number of executed stages. Each
+element is either:
 \itemize{
 \item For PPS WOR stages: a square matrix of joint inclusion
 probabilities \eqn{\pi_{kl}}{pi_kl}, usable with
@@ -78,6 +88,12 @@ distinct sampled units (or clusters). At a later stage below a WR
 parent, each parent draw occurrence defines a separate conditional
 block, so the same child population identity can appear in more
 than one block.
+
+Each matrix is dense and covers every sampled unit of the stage,
+across pools as well as within them, so \code{m} sampled units take
+\eqn{8 m^2}{8 m^2} bytes: about 80 MB at 3,200 units, 0.8 GB at 10,000
+and 12.8 GB at 40,000. For a large stage, request only the stages
+needed with \code{stages}.
 }
 \description{
 Reconstructs the second-order design quantities for PPS stages. For
@@ -87,57 +103,50 @@ inclusion probabilities \eqn{\pi_{kl}}{pi_kl}. For with-replacement
 \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
 }
 \details{
-Without \code{frame}, the computation runs off the frame digest recorded
-at execution: the digest holds each pool's exact resolved chance
-vector, so a sample that traveled without its (possibly confidential)
-frame can still yield joint expectations at the method's stated quality.
-An exact record of approximate targets does not make their probabilities
-exact. Reconstruction requires an exact chance
-representation: cluster stages always have one, element stages with
-constant chances have one, and element stages with varying chances
-keep one only under \code{execute(frame_digest = "full")}. A summarized
-representation refuses rather than approximates. With \code{frame}, the
-quantities are replayed against it as before. The frame must be
-unchanged since execution (\code{\link[=validate_frame]{validate_frame()}} reports drift).
+Without \code{frame}, the computation uses the frame digest recorded at
+execution, so a sample that traveled without its (possibly
+confidential) frame still yields joint expectations at the method's
+stated quality. This needs each pool's exact chances, which the
+digest always holds for cluster stages and constant-chance element
+stages, but for element stages with varying chances only under
+\code{execute(frame_digest = "full")}. A summarized digest refuses rather
+than approximates, so pass the frame instead. An exact record of
+approximate targets does not make their probabilities exact. A
+supplied frame must keep the pools the sample was drawn from, as \code{frame}
+describes, and its units must be uniquely identifiable within each
+stratum/cluster group by their column values.
 
 A sample drawn from separately supplied stage registers needs either
-its intact digest or the ordered list of those registers. One
-lower-stage register cannot reconstruct upper-stage joint
-quantities: it holds no rows for the population the upper stage
-selected from.
+its intact digest or all of those registers, in the order they were
+supplied. One frame is refused with \code{samplyr_error_frame_count},
+because a lower-stage register holds no rows for the population an
+upper stage selected from.
 
-For each PPS stage, the function:
-\enumerate{
-\item Reconstructs the full-population first-order quantities from
-the frame using the stage's method and measure of size
-\item Dispatches to the appropriate sondage joint probability or
-joint expected hits function
-\item Extracts the submatrix corresponding to sampled units
-}
-
-For stratified stages, the target sample size per stratum (n_h) is
-reconstructed by replaying the same allocation logic used during
-\code{\link[=execute]{execute()}} (proportional, Neyman, optimal, etc.) against the
-frame. This ensures first-order quantities match what was computed
-at sampling time, regardless of allocation method.
+Each PPS stage's full-population first-order quantities are rebuilt
+from its method and measure of size, with per-stratum targets (n_h)
+replayed from the allocation \code{\link[=execute]{execute()}} used (proportional, Neyman,
+optimal, etc.), so they match those at sampling time. The matching
+sondage joint function then gives the submatrix of sampled units.
 
 For stratified or conditional (within-cluster) stages, joint
-quantities are computed independently within each group. Blocks
-follow their first appearance in the sample, as do units within a
-block. Cross-block entries are products of the corresponding
-marginal chances.
+quantities are computed independently within each group. Blocks follow
+their first appearance in the sample, as do units within a block, and
+cross-block entries are products of the marginal chances. Below a WR
+parent, pair the matrix with stage-specific identities in this order,
+not blindly with every sample row when descendants duplicate a
+selected unit.
 
-A stage below a WR parent is conditional on each parent draw
-occurrence, not only on the parent's population identity. Repeated
-hits of one parent therefore produce separate independent child
-blocks. Pair the returned matrix with stage-specific identities in
-this order. Do not pair it blindly with every sample row when
-descendants duplicate a selected unit.
+With certainty selections (\eqn{\pi_i = 1}{pi_i = 1}) in a WOR design,
+the joint probabilities of the non-certainty units are computed from
+the reduced \eqn{\pi}{pi} vector, and the full matrix is reassembled
+with \eqn{\pi_{ij} = 1}{pi_ij = 1} for certainty pairs and
+\eqn{\pi_{ij} = \pi_j}{pi_ij = pi_j} for certainty x non-certainty
+pairs.
 \subsection{Exact vs. approximate computation}{
 
-The accuracy of the returned matrix depends on the sampling method.
-Some algorithms yield closed-form joint probabilities. Others
-require approximation or simulation.
+The accuracy of the returned matrix depends on the sampling method, as
+the two tables below show. \link{variance-estimation} covers how a matrix
+enters a variance estimate.
 }
 
 \subsection{WOR methods (\eqn{\pi_{kl}}{pi_kl})}{\tabular{lll}{
@@ -146,10 +155,10 @@ require approximation or simulation.
    \code{pps_sampford} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (Sampford design) \cr
    \code{pps_systematic} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (circular-interval overlap) \cr
    \code{pps_poisson} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (\eqn{\pi_{kl} = \pi_k \pi_l}{pi_kl = pi_k * pi_l}, independent draws) \cr
-   \code{pps_brewer} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate}\eqn{^*} (high-entropy / Hajek-Brewer-Donadio) \cr
-   \code{pps_sps} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
-   \code{pps_pareto} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy / Hajek-Brewer-Donadio) \cr
-   \code{cube} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} when unconstrained (high-entropy / Hajek-Brewer-Donadio) \cr
+   \code{pps_brewer} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate}\eqn{^*} (high-entropy) \cr
+   \code{pps_sps} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy) \cr
+   \code{pps_pareto} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy) \cr
+   \code{cube} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} when unconstrained (high-entropy) \cr
    \code{lpm2} \tab unavailable \tab Spatial spreading is not represented \cr
    \code{scps} \tab unavailable \tab Spatial spreading is not represented \cr
 }
@@ -160,26 +169,18 @@ describes the design, but a zero pair probability rules out a
 design-unbiased variance estimator, and near-zero pairs make it unstable.
 
 \eqn{^*} Exact recursive formulas for Brewer's joint inclusion
-probabilities exist (Brewer 2002, ch. 9) but are
-\eqn{O(N^3)}{O(N^3)}, making them impractical for frames of more
-than a few hundred units. The high-entropy approximation is
-\eqn{O(N^2)}{O(N^2)}, but computational convenience does not establish
-its accuracy for a particular design or population. SPS and Pareto also
-use an approximation here, with the further limitation that their
-first-order inputs are approximate targets.
+probabilities (Brewer 2002, ch. 9) are \eqn{O(N^3)}{O(N^3)},
+impractical beyond a few hundred units, whereas the high-entropy
+approximation is \eqn{O(N^2)}{O(N^2)}. It assumes the design is close
+to the maximum-entropy design with the same marginal \eqn{\pi_i}{pi_i}
+(Hajek 1964; Brewer and Donadio 2003), which strong ordering,
+balancing or extreme probabilities can break, so validate variance and
+interval coverage for the intended design and population. SPS and
+Pareto also enter it with approximate first-order targets.
 
-The high-entropy approximation assumes the design is close to the
-maximum-entropy design with the same marginal \eqn{\pi_i}{pi_i}
-(Hajek 1964; Brewer and Donadio 2003). Strong ordering, balancing or
-extreme probability distributions can make that assumption unsuitable.
-Validate variance and interval coverage for the intended design and
-population. \code{survey::svydesign(pps = "brewer")} uses the related
-Berger (2004) variance approximation. It is not a claim of exact joint
-probabilities. For CPS, this helper uses the exact CPS calculation.
-
-Bounded cube, LPM2, and SCPS designs are rejected because count constraints
-and spatial spreading alter pairwise selection behavior beyond the
-available approximation. Use \code{\link[=as_svrepdesign]{as_svrepdesign()}} with \code{type = "subbootstrap"} for a generic bootstrap approximation instead.
+Bounded cube, LPM2, and SCPS designs are refused, because count
+constraints and spatial spreading alter pairwise selection beyond the
+approximation. \link{variance-estimation} gives their replicate variance.
 }
 
 \subsection{WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})}{\tabular{lll}{
@@ -189,20 +190,17 @@ available approximation. Use \code{\link[=as_svrepdesign]{as_svrepdesign()}} wit
 }
 
 
-For \code{pps_chromy}, the sequential dependence structure does not admit
-a closed-form expression for \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
-sondage uses Monte Carlo simulation (default 10 000 replicates) to
-estimate the pairwise expectations. Increasing \code{nsim} reduces Monte
-Carlo error at the cost of computation time.
+The sequential dependence of \code{pps_chromy} admits no closed form for
+\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}, so sondage estimates it by Monte
+Carlo simulation under \code{nsim} and \code{seed}.
 }
 
 \subsection{Activation mode}{
 
-\code{joint_expectation(master, waves = c(t, s))} answers a different question
-from the stage modes above. A scheduled master assigned every unit to a
-panel at its draw and froze the block-by-panel quotas, so how two occasions
-of the rotation overlap is already determined and needs neither the frame
-nor a simulation. It is read from the record.
+A scheduled master assigned every unit to a panel at its draw and froze
+the block-by-panel quotas, so how two occasions of the rotation overlap
+is already determined. \code{joint_expectation(master, waves = c(t, s))}
+reads it from the record, with neither the frame nor a simulation.
 
 Conditional on the frozen quotas, the panels inside a block of \code{m}
 assignment units are an arrangement of that block's labels. Writing
@@ -217,13 +215,12 @@ for units \eqn{i \neq j}{i != j} of one block, and the product of the
 marginals for units of different blocks, whose arrangements are drawn
 independently. The within-wave case is the third expression at \code{t == s}.
 
-The result is one row per block, and stays small at any sample size. Within
-a block the joints take only two values, and across blocks they factorize
-as products of the marginals, so every entry of the full matrix is
-recoverable from this table. It is the conditional covariance kernel, not
-the joint-probability matrix, that is block-diagonal: across blocks the
-joint is \eqn{p_i p_j}{p_i p_j}, which is generally not zero, while the
-covariance is.
+The result has one row per block and stays small at any sample size,
+yet every entry of the full matrix is recoverable from it, since within
+a block the joints take only two values. The conditional covariance
+kernel is block-diagonal, not the joint-probability matrix: across
+blocks the joint is \eqn{p_i p_j}{p_i p_j}, generally not zero, while
+the covariance is zero.
 
 \code{pool}, \code{stratum}, \code{class} and \code{block} identify the block. \code{units} is
 \eqn{m}{m}. \code{take_1}, \code{take_2} and \code{take_both} are the three takes.
@@ -232,69 +229,36 @@ are the two joint expectations. \code{has_pair} is \code{FALSE} for a block of o
 unit, where no distinct pair exists and \code{joint_distinct} is \code{NA} rather
 than zero.
 
-Quotas are frequently unequal, because a pool that is not a multiple of the
-block size gives one block an extra unit, so these are read from the record
-rather than derived from the panel count. A certainty block is permanent
-and takes every unit at every wave, which makes \code{joint_distinct} exactly
-one.
+Quotas are frequently unequal, because a pool that is not a multiple of
+the block size gives one block an extra unit, so they are read from the
+record rather than derived from the panel count. A certainty block is
+permanent and takes every unit at every wave, which makes
+\code{joint_distinct} exactly one.
 
-\strong{What this states, and what it does not.} These are joint expectations of
-the activation indicators, conditional on the phase-1 units and on the
-frozen quotas. They are not the unconditional joint inclusion probabilities
-of the complete two-phase design, which also carry the master's own
-pairwise term. How the two combine for a variance of change is not settled
-here. \code{\link[=as_svydesign]{as_svydesign()}} carries the activation as a second phase for
-ordinary totals.
+These are joint expectations of the activation indicators, conditional
+on the phase-1 units and the frozen quotas, not the unconditional joint
+inclusion probabilities of the two-phase design, which also carry the
+master's own pairwise term. How the two combine for a variance of change
+is not settled here. \code{\link[=as_svydesign]{as_svydesign()}} carries the activation as a second
+phase for ordinary totals.
 
-Activation mode takes a master, not a materialized wave, so a pair of waves
-neither of which has been materialized can be asked for.
-}
-
-\subsection{Limitations}{
-\itemize{
-\item The frame-free path requires a digest with exact chances: the
-default summary digest suffices for cluster stages and
-constant-chance element stages. Element stages with varying
-chances need \code{execute(frame_digest = "full")}. Otherwise pass
-the frame.
-\item When \code{frame} is supplied it must be unchanged from what was
-passed to \code{\link[=execute]{execute()}}, and units in it must be uniquely
-identifiable within each stratum/cluster group by their column
-values.
-\item A sample drawn from one register per stage needs all of them, in
-the order they were supplied. One frame is refused with
-\code{samplyr_error_frame_count} rather than computed from the wrong
-population.
-\item For WOR designs with certainty selections (\eqn{\pi_i = 1}{pi_i = 1}),
-the joint matrix is decomposed: certainty units are separated
-from the stochastic part, the joint probabilities for
-non-certainty units are computed from the reduced \eqn{\pi}{pi}
-vector, and the full matrix is reassembled with
-\eqn{\pi_{ij} = 1}{pi_ij = 1} for certainty pairs and
-\eqn{\pi_{ij} = \pi_j}{pi_ij = pi_j} for certainty x
-non-certainty pairs.
-}
+Activation mode takes a master, not a materialized wave, so neither of
+the two waves needs to have been materialized.
 }
 }
 \examples{
 \dontshow{if (requireNamespace("survey", quietly = TRUE)) withAutoprint(\{ # examplesIf}
+# A single-stage stratified Sampford sample, whose joint matrix is exact
 sample <- sampling_design() |>
-  add_stage() |>
-    stratify_by(region) |>
-    cluster_by(ea_id) |>
-    draw(n = 5, method = "pps_brewer", mos = households) |>
-  add_stage() |>
-    draw(n = 12) |>
+  stratify_by(region) |>
+  draw(n = 5, method = "pps_sampford", mos = households) |>
   execute(bfa_eas, seed = 2025)
 
-# Compute joint probabilities for stage 1
-jip <- joint_expectation(sample, bfa_eas, stages = 1)
+jip <- joint_expectation(sample, bfa_eas)
 
-# Use with survey where the sample variance is estimable
+# survey reads the matrix by row, one row per sampled unit
 svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
-
-# Compute all PPS stages at once
-jip_all <- joint_expectation(sample, bfa_eas)
+survey::svytotal(~population, svy)
 
 # A sample drawn from one register per stage passes them as a list
 regions <- dplyr::distinct(bfa_eas, region, .keep_all = TRUE)
@@ -340,6 +304,12 @@ varying probabilities from a finite population.
 
 Brewer, K.R.W. and Donadio, M.E. (2003). The high entropy variance of the
 Horvitz-Thompson estimator. \emph{Survey Methodology}, 29(2), 189-196.
+
+Exact conditional Poisson (CPS) joint probabilities:
+Aires, N. (1999). Algorithms to find exact inclusion probabilities for
+conditional Poisson sampling and Pareto \eqn{\pi}{pi}ps sampling designs.
+\emph{Methodology and Computing in Applied Probability}, 1(4), 457-469.
+\doi{10.1023/A:1010091628740}
 
 Exact Brewer joint probabilities:
 Brewer, K.R.W. (2002). \emph{Combined Survey Sampling Inference: Weighing

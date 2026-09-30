@@ -1,18 +1,15 @@
-## G3. Replicate weights for a shared-weight sample
+## Replicate weights for a shared-weight sample
 
 
-# The whole content of this phase is an ordering. Weight sharing is linear, so
-# the recorded operator can be applied to a replicate weight system exactly as
-# it is applied to the base weights. What it cannot do is act on replicates
-# built from the target rows, because those rows were never sampled.
+# Weight sharing is linear, so the recorded operator applies to replicate
+# weights as to the base weights. It cannot act on replicates built from the
+# target rows, because those rows were never sampled.
 
 gwsm_rep_source <- function(seed = 1) {
   frame <- data.frame(unit = 1:40, st = rep(1:2, each = 20))
   sampling_design() |>
     stratify_by(st) |>
-    # Unequal stratum fractions on purpose: with one weight for every unit,
-    # pairing a row with the wrong row's weight would change nothing, and the
-    # realignment tests would pass against an implementation that skipped it.
+    # Unequal stratum fractions, so a row paired with a wrong weight shows.
     draw(n = c("1" = 8, "2" = 4)) |>
     execute(frame, seed = seed)
 }
@@ -72,8 +69,6 @@ test_that("the shared total is the Horvitz-Thompson total of a derived variable"
   source_weights <- record$source_sample$.weight
   derived <- as.vector(t(dense) %*% shared$y)
 
-  # This identity is why the method needs no new variance theory: the shared
-  # total is an ordinary HT total of a variable defined on the source units.
   expect_equal(
     sum(apply_share_operator(op, source_weights) * shared$y),
     sum(source_weights * derived)
@@ -86,10 +81,7 @@ test_that("sharing inside the replication differs from sharing after it", {
   rep_design <- as_svrepdesign(shared, type = "JKn")
   inside <- survey::SE(survey::svytotal(~y, rep_design))
 
-  # What a user gets by sharing once and then replicating the target rows as
-  # though they had been sampled. Two members of a household carry the same
-  # weight and are perfectly correlated, and a target-row jackknife cannot
-  # see that.
+  # Replicating target rows ignores that household members share one weight.
   d <- as.data.frame(rep_design$variables)
   d$w <- stats::weights(rep_design, type = "sampling")
   after_design <- survey::as.svrepdesign(
@@ -99,8 +91,7 @@ test_that("sharing inside the replication differs from sharing after it", {
   after <- survey::SE(survey::svytotal(~y, after_design))
 
   expect_false(isTRUE(all.equal(inside, after)))
-  # Pin the correct one, so a regression to the other ordering fails rather
-  # than merely producing a different number.
+  # Pins the correct value, not only a difference.
   expect_equal(inside, 25.45372, tolerance = 1e-5)
 })
 
@@ -119,8 +110,7 @@ test_that("the export is a target-row replicate design with the source's structu
     ncol(stats::weights(rep_design, type = "analysis")),
     ncol(stats::weights(source_rep, type = "analysis"))
   )
-  # Replicate structure belongs to the source design and is carried across
-  # rather than invented for the target rows.
+  # The replicate structure is the source design's.
   expect_identical(rep_design$scale, source_rep$scale)
   expect_equal(rep_design$rscales, source_rep$rscales)
   expect_identical(rep_design$mse, source_rep$mse)
@@ -135,8 +125,7 @@ test_that("the base weights of the export are the shared weights", {
     unname(stats::weights(rep_design, type = "sampling")),
     shared$.weight
   )
-  # 40 households of two people each, and the shared weights estimate that
-  # population total exactly under this design.
+  # 40 households of two people, estimated exactly under this design.
   expect_equal(sum(stats::weights(rep_design, type = "sampling")), 80)
 })
 
@@ -174,15 +163,12 @@ test_that("a reordered target sample exports through key realignment", {
   straight <- as_svrepdesign(shared, type = "JKn")
   shuffled <- as_svrepdesign(reordered, type = "JKn")
 
-  # Reordering a table is an ordinary thing to do, and the operator is
-  # positional, so the export realigns rather than refusing or silently
-  # pairing the wrong weights with the wrong rows.
+  # The operator is positional, so the export realigns rows by key.
   expect_equal(
     survey::SE(survey::svytotal(~y, straight)),
     survey::SE(survey::svytotal(~y, shuffled))
   )
-  # Per unit, not merely as a multiset: a sorted comparison would pass even
-  # if every weight had been attached to the wrong target.
+  # Compared per unit, since a sorted comparison misses misattached weights.
   by_pid <- function(d) {
     stats::setNames(
       stats::weights(d, type = "sampling"), as.character(d$variables$pid)
@@ -198,8 +184,7 @@ test_that("a replicate type whose scale is not one keeps that scale", {
   source <- gwsm_rep_source()
   shared <- gwsm_rep_shared(source)
 
-  # JKn carries its factors in rscales and leaves scale at 1, so it cannot
-  # tell a preserved scale from a hardcoded one. bootstrap can.
+  # JKn leaves scale at 1, so only bootstrap can show a preserved scale.
   source_rep <- as_svrepdesign(source, type = "bootstrap")
   rep_design <- as_svrepdesign(shared, type = "bootstrap")
 
@@ -211,9 +196,7 @@ test_that("an altered shared sample is caught by the tampering gate", {
   skip_if_not_installed("survey")
   shared <- gwsm_rep_shared()
 
-  # The transformation minted a fresh integrity record covering the target
-  # keys and the generated columns, so the ordinary gate sees these and owns
-  # the finding. The alignment check is for what it cannot see.
+  # The shared sample has its own integrity record over the target rows.
   tampered <- shared
   tampered$.weight[1] <- tampered$.weight[1] * 2
   expect_error(
@@ -237,9 +220,7 @@ test_that("the tampering advice does not point a shared sample at a refusal", {
   msg <- conditionMessage(tryCatch(
     as_svrepdesign(tampered, type = "JKn"), condition = function(e) e
   ))
-  # Running a second phase and exporting with as_svydesign() are both refused
-  # for a shared sample, so advice naming them would send the user from one
-  # refusal to another.
+  # A shared sample refuses a second phase, so advice must not suggest one.
   expect_match(msg, "share_weights")
   expect_no_match(msg, "run a second phase")
 })
@@ -248,8 +229,7 @@ test_that("an altered retained source is caught by the alignment check", {
   skip_if_not_installed("survey")
   shared <- gwsm_rep_shared()
 
-  # Only the alignment check can see this: the target rows are untouched, so
-  # the ordinary integrity record verifies.
+  # The target rows are untouched, so the integrity record still verifies.
   meta <- attr(shared, "metadata")
   meta$weight_share$source_sample$.weight[1] <- 999
   attr(shared, "metadata") <- meta
@@ -278,9 +258,7 @@ test_that("sharing makes no replicate method more exact", {
     within = hh, multiplicity = complete_links()
   )
 
-  # No replicate type reproduces a systematic stage. That restriction belongs
-  # to the source design, and it reaches the user through the shared branch
-  # unchanged, because the source export is what raises it.
+  # No replicate type reproduces a systematic stage, shared or not.
   expect_error(
     as_svrepdesign(shared, type = "JKn", systematic_variance = "error"),
     class = "samplyr_error_systematic_variance"
@@ -289,8 +267,7 @@ test_that("sharing makes no replicate method more exact", {
     as_svrepdesign(shared, type = "JKn", systematic_variance = "warn"),
     class = "samplyr_warning_systematic_variance"
   )
-  # And the acknowledgement is recorded on the exported object, so a shared
-  # export is no less traceable than an ordinary one.
+  # The acknowledgement is recorded on the exported object.
   quiet <- as_svrepdesign(
     shared, type = "JKn", systematic_variance = "approximate"
   )
@@ -302,8 +279,7 @@ test_that("both routes take a shared sample, by different constructions", {
   shared <- gwsm_rep_shared()
 
   expect_no_error(as_svrepdesign(shared, type = "JKn"))
-  # The replicate route keeps the target rows and replicates the source; the
-  # linearized route expands the source-target contributions instead.
+  # The linearized route expands the source-target contributions.
   linearized <- as_svydesign(shared)
   expect_gte(nrow(linearized$variables), nrow(shared))
   expect_equal(

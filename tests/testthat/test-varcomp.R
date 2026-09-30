@@ -203,9 +203,7 @@ test_that("capped PPS certainty is refused like explicit certainty", {
     add_stage() |> draw(n = 3) |>
     execute(frame, seed = 92)
 
-  # The dominant cluster is capped at probability one by the PPS
-  # calculation, with no threshold supplied. It is a certainty PSU, and
-  # the flag records it the same way it records an explicit rule.
+  # c01 is capped at probability one by the PPS calculation, with no threshold.
   dominant <- s$cl == "c01"
   expect_true(any(dominant))
   expect_true(all(s$.certainty_1[dominant]))
@@ -217,10 +215,7 @@ test_that("capped PPS certainty is refused like explicit certainty", {
 })
 
 test_that("a probability just below one is not certainty", {
-  # Certainty is an exactness test. A design can legitimately place a PSU at
-  # pi = 1 - 7.45e-9, and that is a probability PSU with a real (if tiny)
-  # between-PSU contribution, not a self-representing one. The decomposition
-  # stays numerically stable there, so varcomp proceeds rather than refusing.
+  # pi = 1 - 7.45e-9 is a probability PSU, since certainty is an exactness test.
   tol <- sqrt(.Machine$double.eps)
   target_pi <- 1 - tol / 2
   n_clusters <- 24L
@@ -283,9 +278,7 @@ test_that("a third clustered stage is refused, a second is not", {
     )
   })
 
-  # The limit counts clustered stages, not stages. Two clustered stages and
-  # an element stage is three stages and is accepted; three clustered stages
-  # is also three stages and is not.
+  # The limit counts clustered stages, not stages.
   accepted <- sampling_design() |>
     add_stage() |> cluster_by(prov) |> draw(n = 3) |>
     add_stage() |> cluster_by(dist) |> draw(n = 2) |>
@@ -338,10 +331,8 @@ test_that("a WR first stage keys PSUs by draw, not by cluster", {
   expect_false(isTRUE(all.equal(vc$icc, merged$icc)))
 })
 
-
 test_that("a stratified WR first stage qualifies draw keys by stratum", {
-  # .draw_1 restarts in each stratum pool. The bare index would merge
-  # draws across strata and trip the weight-constancy check.
+  # .draw_1 restarts in each stratum pool.
   frame <- withr::with_seed(3, {
     data.frame(
       region = rep(c("N", "S"), each = 60),

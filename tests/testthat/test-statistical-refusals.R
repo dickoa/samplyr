@@ -1,9 +1,13 @@
 test_that("deterministic zero allocations fail in validation, preview and execution", {
   frame <- data.frame(h = c("A", "B", rep("C", 101)), y = c(1000, 1000, rep(1, 101)))
   design <- sampling_design() |> stratify_by(h, alloc = "proportional") |> draw(n = 3)
-  expect_error(validate_frame(design, frame), class = "samplyr_error_zero_allocation")
-  expect_error(frame_summary(design, frame), "zero inclusion probability")
-  expect_error(execute(design, frame), class = "samplyr_error_zero_allocation")
+  # Raised six calls down, the refusal still names the verb called.
+  cnd <- expect_error(validate_frame(design, frame), class = "samplyr_error_zero_allocation")
+  expect_identical(condition_header(cnd), "validate_frame")
+  cnd <- expect_error(frame_summary(design, frame), "zero inclusion probability")
+  expect_identical(condition_header(cnd), "frame_summary")
+  cnd <- expect_error(execute(design, frame), class = "samplyr_error_zero_allocation")
+  expect_identical(condition_header(cnd), "execute")
   repaired <- sampling_design() |> stratify_by(h, alloc = "proportional") |> draw(n = 3, min_n = 1)
   sample <- execute(repaired, frame, seed = 1)
   expect_setequal(sample$h, c("A", "B", "C"))
@@ -67,5 +71,26 @@ test_that("two-phase export cannot silently use fixed-size Poisson variance", {
   frame <- data.frame(id = 1:40, y = 1)
   phase1 <- sampling_design() |> cluster_by(id) |> draw(n = 20) |> execute(frame, seed = 12)
   phase2 <- sampling_design() |> draw(frac = .5, method = "bernoulli") |> execute(phase1, seed = 13)
+  expect_error(as_svydesign(phase2), class = "samplyr_error_twophase_poisson")
+})
+
+test_that("a Poisson phase is refused before the phases are linked", {
+  skip_if_not_installed("survey")
+  # Neither phase declares a shared identifier, so the link would fail too.
+  frame <- data.frame(psu = rep(1:10, each = 8), id = 1:80, y = 1)
+  phase1 <- sampling_design() |>
+    draw(frac = 0.5, method = "bernoulli") |>
+    execute(frame, seed = 3)
+  phase2 <- sampling_design() |> draw(n = 10) |> execute(phase1, seed = 4)
+  expect_error(as_svydesign(phase2), class = "samplyr_error_twophase_poisson")
+
+  # A later Poisson stage is a Poisson phase too, which RWYB cannot take.
+  phase1 <- sampling_design() |>
+    cluster_by(psu) |>
+    draw(n = 6) |>
+    add_stage() |>
+    draw(frac = 0.5, method = "bernoulli") |>
+    execute(frame, seed = 3)
+  phase2 <- sampling_design() |> draw(n = 10) |> execute(phase1, seed = 4)
   expect_error(as_svydesign(phase2), class = "samplyr_error_twophase_poisson")
 })

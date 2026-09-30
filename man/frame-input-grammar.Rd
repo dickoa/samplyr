@@ -23,9 +23,23 @@ needed to identify eligible descendants.
 \subsection{Continuing fieldwork}{
 
 Use \code{execute(partial_sample, next_register)} to resume the same design
-after listing. The earlier selection and weights are retained. If one
-supplied frame could cover either the next stage or several remaining
-stages, specify \code{stages} to state which stages to execute.
+after listing. The earlier selection and weights are retained, and
+omitting \code{stages} executes every remaining stage. If one supplied frame
+could cover either the next stage or several remaining stages, the two
+draw different samples, so \code{execute()} refuses to guess and asks for
+\code{stages} (\code{samplyr_error_ambiguous_continuation}). \code{\link[=validate_frame]{validate_frame()}}
+applies the same rule.
+
+A listing derived from the partial sample, for example with
+\code{\link[dplyr:reframe]{dplyr::reframe()}} or \code{\link[tidyr:uncount]{tidyr::uncount()}}, may carry its generated columns
+(\code{.weight}, \code{.fpc_1}, ...). A continuation strips them before sampling.
+Passing the original design as \code{.data} instead starts a new execution at
+stage 1 and treats a \code{tbl_sample} frame as a previous phase. When that
+frame is a strict partial result of the same design, \code{execute()} warns
+but proceeds, since a new phase is a valid operation. A plain listing that
+still carries sampling attributes or generated columns is refused as the
+frame of a fresh design execution. To use such rows as an unrelated
+frame, remove both.
 
 Use \code{execute(new_design, previous_sample)} to select a new phase from an
 earlier sample. This records an additional probability-sampling operation.
@@ -36,8 +50,22 @@ design variables must be present, and keys and cluster-level variables
 must satisfy the design's identity rules. A frame fingerprint in a saved
 design records the supplied data. It does not certify executability.
 }
+
+\subsection{Other data frame classes}{
+
+A frame of a class that extends \code{data.frame}, other than a tibble, is read
+by its columns. Every column is kept with its own class, and the frame
+class's own methods (for example a subsetting rule that always keeps a
+column) are not used, so the sample is the one the same columns in a plain
+data frame give. The sample is a tibble whatever the frame's class.
+
+The grouping of a grouped or rowwise frame is ignored, and the result is
+not grouped. Grouping does not stratify a design: strata are declared with
+\code{\link[=stratify_by]{stratify_by()}}. The first time this happens in a session a message says
+so.
+}
 }
 \seealso{
 \code{\link[=execute]{execute()}}, \code{\link[=validate_frame]{validate_frame()}}, \code{\link[=frame_summary]{frame_summary()}},
-\code{\link[=write_design]{write_design()}}, \code{vignette("three-stage-sampling")}
+\code{\link[=write_design]{write_design()}}, \code{vignette("introduction")}
 }

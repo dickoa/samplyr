@@ -1,8 +1,6 @@
-# Selection traces: every internal wrapper returns list(sample, trace)
-# where the trace records the full resolved chance vector, the selected
-# positions in executed order, and how the frame was partitioned into
-# pools. These tests drive the wrappers directly with specs pulled from
-# designs and check the trace against the sample it came with.
+# Selection traces: every internal wrapper returns list(sample, trace), where
+# the trace records the resolved chance vector, the selected positions in
+# executed order, and the partition of the frame into pools.
 
 stage_spec <- function(design) design$stages[[1]]
 
@@ -21,7 +19,6 @@ test_that("unstratified srswor records a constant-chance pool", {
   expect_identical(tr$order_kind, "input")
   expect_null(tr$perm)
   expect_identical(anyDuplicated(tr$selected), 0L)
-  # The trace's selected positions are the sample rows, in order.
   expect_identical(res$sample$id, test_frame$id[tr$selected])
   expect_equal(res$sample$.weight, 1 / tr$chance[tr$selected])
 })
@@ -49,7 +46,6 @@ test_that("the stratified srswor fast path records one pool per stratum", {
   expect_length(tr$groups, 4)
   keys <- vapply(tr$groups, function(g) as.character(g$keys$stratum), character(1))
   expect_setequal(keys, c("A", "B", "C", "D"))
-  # Group rows partition the frame.
   all_rows <- sort(unlist(lapply(tr$groups, function(g) g$rows)))
   expect_identical(all_rows, seq_len(120L))
   for (g in tr$groups) {
@@ -76,14 +72,11 @@ test_that("stratified PPS pools carry the full resolved chance vector", {
     expect_length(leaf$chance, 30)
     expect_equal(sum(leaf$chance), 4, tolerance = 1e-8)
     expect_true(all(leaf$chance > 0 & leaf$chance <= 1))
-    # 1/.weight of this stratum's sample rows equals the resolved
-    # chance at the selected positions, in selection order.
     rows <- offset + seq_along(leaf$selected)
     expect_equal(
       1 / res$sample$.weight[rows],
       leaf$chance[leaf$selected]
     )
-    # Selected frame rows line up through the split mapping.
     expect_identical(
       res$sample$id[rows],
       test_frame$id[g$rows[leaf$selected]]
@@ -99,15 +92,13 @@ test_that("control ordering is recorded as a pool-local permutation", {
   tr <- trace_of(res)
   expect_identical(tr$order_kind, "control")
   expect_identical(sort(tr$perm), seq_len(120L))
-  # perm maps executed order back to input order: position i of the
-  # executed pool is input row perm[i].
+  # Position i of the executed pool is input row perm[i].
   expect_identical(res$sample$id, test_frame$id[tr$perm[tr$selected]])
   expect_equal(test_frame$y[tr$perm], sort(test_frame$y, decreasing = TRUE))
 })
 
 test_that("certainty selection records chance one and the rule positions", {
-  # test_frame has 5 rows with mos >= 180; n = 12 leaves room for a
-  # probability draw among the rest.
+  # test_frame has 5 rows with mos >= 180.
   d <- sampling_design() |>
     draw(n = 12, method = "pps_brewer", mos = mos, certainty_size = 180)
   s <- stage_spec(d)
@@ -120,9 +111,7 @@ test_that("certainty selection records chance one and the rule positions", {
   expect_true(all(tr$chance[tr$selected] > 0))
   expect_equal(1 / res$sample$.weight, tr$chance[tr$selected])
   expect_identical(res$sample$id, test_frame$id[tr$selected])
-  # cert_rule stays explicit-rule provenance; .certainty is the resolved
-  # property. Here the rule catches every probability-one unit, so the two
-  # coincide, but the flag is derived from the chance vector either way.
+  # cert_rule is rule provenance, .certainty is derived from the chance vector.
   expect_identical(
     res$sample$.certainty,
     samplyr:::is_certainty_probability(tr$chance[tr$selected])
@@ -133,8 +122,7 @@ test_that("certainty selection records chance one and the rule positions", {
 })
 
 test_that("cert_rule records only explicit-rule units, not capped ones", {
-  # Only unit 1 clears the threshold; units 2 and 3 are capped at one by
-  # the remainder draw. The flag covers all three, the rule only the first.
+  # Only unit 1 clears the threshold, units 2 and 3 are capped at one.
   frame <- data.frame(id = seq_len(53), mos = c(1000, 500, 400, rep(10, 50)))
   d <- sampling_design() |>
     draw(n = 10, method = "pps_brewer", mos = mos, certainty_size = 900)
@@ -159,7 +147,6 @@ test_that("with-replacement traces record expected hits and repeats", {
   expect_equal(sum(tr$chance), 10, tolerance = 1e-8)
   expect_identical(length(tr$selected), 10L)
   expect_identical(res$sample$id, test_frame$id[tr$selected])
-  # Expected hits are the reciprocal per-draw weights.
   expect_equal(1 / res$sample$.weight, tr$chance[tr$selected])
 })
 
@@ -200,8 +187,7 @@ test_that("cluster selection wraps the units trace with cluster identity", {
     expect_identical(leaf$N, 6L)
     expect_equal(sum(leaf$chance), 2, tolerance = 1e-8)
     expect_identical(length(leaf$selected), 2L)
-    # rows index the one-row-per-cluster frame; compose down to the
-    # full frame through first_rows.
+    # rows index the one-row-per-cluster frame, composed through first_rows.
     selected_clusters <- tr$first_rows[g$rows[leaf$selected]]
     expect_true(all(
       as.character(test_frame$cluster[selected_clusters]) %in%
@@ -226,7 +212,7 @@ test_that("within-cluster selection records one pool per parent", {
     expect_equal(g$node$chance, rep(3 / 5, 5))
     expect_identical(length(g$node$selected), 3L)
   }
-  # Non-fast path (frac): same shape, per-pool draw_sample leaves.
+  # The frac path goes through per-pool draw_sample leaves.
   d2 <- sampling_design() |> draw(frac = 0.4)
   s2 <- stage_spec(d2)
   res2 <- withr::with_seed(10, samplyr:::sample_within_clusters(

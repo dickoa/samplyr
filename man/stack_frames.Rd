@@ -14,7 +14,11 @@ stack_frames(..., membership, key, overlaps = NULL)
 \item{membership}{A named character vector mapping every frame name to the
 column holding that frame's membership indicator, in the same direction
 as \code{c(frame_name = "column_name")}. Every component must contain every
-one of the columns.}
+one of the columns. A unit selected in more than one component must
+have the same membership in each, matched by \code{key}, or the stack is
+refused with class \code{samplyr_error_stack_frames_membership_conflict}. The
+membership of a unit selected in one component only has nothing to be
+compared with, so it is taken as given.}
 
 \item{key}{A bare column identifying the target-population unit, present in
 every component. The same unit may be selected from several frames, so

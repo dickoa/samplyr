@@ -1,7 +1,7 @@
 ## Stage-aware panel assignment
 #
 # `panel_stage` names the stage whose selected units are assigned to panels.
-# Stage 1 rotates whole primary units; a lower stage rotates units inside
+# Stage 1 rotates whole primary units. A lower stage rotates units inside
 # parents that stay in the survey, which is the address-panel design.
 
 ps_frame <- function() {
@@ -49,8 +49,7 @@ ps_record <- function(x) attr(x, "metadata")$panel_assignment
 test_that("panel_stage = 2 rotates households inside retained parents", {
   master <- ps_master()
 
-  # Every selected PSU carries more than one panel, which stage-1 assignment
-  # cannot produce.
+  # Every selected PSU carries more than one panel.
   by_psu <- tapply(master$.panel, master$psu, function(x) length(unique(x)))
   expect_length(by_psu, 3L)
   expect_true(all(by_psu == 4L))
@@ -67,12 +66,9 @@ test_that("a wave of a lower-stage master keeps every parent", {
   master <- ps_master()
   wave <- execute(master, wave = 2)
 
-  # The PSUs stay in the survey and the households rotate within them: this
-  # is the design the stage-aware assignment exists for.
   expect_identical(sort(unique(wave$psu)), sort(unique(master$psu)))
   expect_identical(nrow(wave), nrow(master) %/% 2L)
-  # Four households per PSU, two panels of four active: the activation
-  # probability is 1/2 and the master weight of 6 doubles.
+  # Two of four panels active, so the master weight of 6 doubles.
   expect_identical(unique(wave$.weight), 12)
   expect_identical(sort(unique(wave$.panel)), c(2L, 3L))
 })
@@ -83,10 +79,8 @@ test_that("the lower-stage record states its stage, unit and pools", {
   expect_identical(record$version, 3L)
   expect_identical(record$assignment_stage, 2L)
   expect_identical(record$unit, "cluster")
-  # The household is identified inside the PSU it sits in.
   expect_identical(record$key_vars, c("psu", "hh"))
-  # One pool per realized PSU: a block that crossed a parent would stop
-  # guaranteeing rotation within every parent.
+  # One pool per realized PSU, so every parent rotates.
   expect_identical(record$pool_vars, "psu")
   expect_length(record$pools, 3L)
   expect_identical(
@@ -110,7 +104,6 @@ test_that("a lower-stage stratified stage pools inside each parent", {
 
   expect_identical(record$pool_vars, c("psu", "hh_stratum"))
   expect_identical(record$key_vars, c("psu", "hh_stratum", "hh"))
-  # Two PSUs, two household strata in each.
   expect_length(record$pools, 4L)
 })
 
@@ -159,7 +152,6 @@ test_that("panel_stage must be a single stage number", {
 })
 
 test_that("panel_stage must name a stage the execution completes", {
-  # Beyond the design.
   expect_error(
     execute(ps_design(), ps_frame(), seed = 1, panels = 2, panel_stage = 4),
     class = "samplyr_error_panel_stage_unexecuted"
@@ -173,8 +165,7 @@ test_that("panel_stage must name a stage the execution completes", {
 })
 
 test_that("an unexecuted panel_stage is refused before any draw is taken", {
-  # A static misuse must not leave the stream advanced, or a later seeded
-  # execution in the same session would differ.
+  # A static misuse must not advance the RNG stream.
   after <- withr::with_seed(4, {
     try(
       execute(ps_design(), ps_frame(), seed = 1, panels = 2, panel_stage = 4),
@@ -200,16 +191,13 @@ test_that("a wave takes no panel_stage", {
 })
 
 test_that("a within-parent pool too small to rotate is refused", {
-  # Two households per PSU against four panels with two active: a wave
-  # activating the other two would take nothing from any PSU. Within-parent
-  # pools are small by nature, which is why this matters more here than at
-  # stage 1.
+  # Two households per PSU and four panels leave some waves with no household.
   expect_error(
     execute(ps_design(hh_take = 2), ps_frame(), seed = 77,
             panels = ps_schedule(), panel_stage = 2),
     class = "samplyr_error_panel_small_pool"
   )
-  # And the opt-in still promotes rather than refuses.
+  # The opt-in promotes rather than refuses.
   expect_warning(
     promoted <- execute(
       ps_design(hh_take = 2), ps_frame(), seed = 77,
@@ -281,9 +269,7 @@ test_that("replaying a lower-stage master reproduces its assignment", {
 })
 
 test_that("replay passes the assignment stage back rather than defaulting", {
-  # Without this the receipt replays through an `execute()` that assigns from
-  # stage 1, which reproduces a different assignment of the same sample
-  # instead of failing.
+  # Replaying from stage 1 would give a different assignment, not an error.
   master <- ps_master()
   path <- withr::local_tempfile(fileext = ".json")
   suppressWarnings(write_design(master, path))
@@ -310,7 +296,7 @@ test_that("a first-stage receipt replays without the argument", {
   suppressWarnings(write_design(master, path))
   receipt <- jsonlite::fromJSON(path, simplifyVector = FALSE)$execution
 
-  # Stage 1 is what an omitted argument already means, so nothing is passed.
+  # Stage 1 is what an omitted argument already means.
   expect_null(
     samplyr:::decode_panel_stage_argument(
       samplyr:::prepare_panel_record(receipt$panel_assignment, "A replay")
@@ -348,9 +334,7 @@ test_that("versions 1 and 2 normalize to a first-stage assignment", {
 })
 
 test_that("an older record keeps the unit vocabulary it was written with", {
-  # An unclustered with-replacement assignment recorded "element" and keyed
-  # on `.sample_id`, so nothing in the record says whether the stage was
-  # multi-hit. Translating it to "occurrence" would be inventing a fact.
+  # Nothing in the record says whether the stage was multi-hit.
   v2 <- list(
     algorithm = "blocked_random_quota", version = 2L, panels = 2L,
     unit = "element", key_vars = ".sample_id", pools = list()
@@ -376,9 +360,8 @@ test_that("all three versions are supported and a fourth is not", {
 
 ## One assignment per master
 
-# An assignment is a record and a `.panel` column together. Removing either
-# used to leave a sample that looked unassigned to the continuation guard,
-# which tested only the column.
+# An assignment is a record and a `.panel` column together, and the
+# continuation guard reads both.
 
 ps_stage1_assigned <- function() {
   execute(ps_design(), ps_frame(), stages = 1, seed = 3, panels = 2)
@@ -387,7 +370,6 @@ ps_stage1_assigned <- function() {
 test_that("panels cannot be redeclared once a master carries an assignment", {
   stage1 <- ps_stage1_assigned()
 
-  # Both representations present, which is what an unmodified master has.
   expect_error(
     suppressWarnings(execute(
       stage1, ps_frame(), stages = 2:3, seed = 4, panels = 2
@@ -395,8 +377,7 @@ test_that("panels cannot be redeclared once a master carries an assignment", {
     class = "samplyr_error_panels_already_assigned"
   )
 
-  # The record alone. It is still frozen in the receipt, so this would
-  # replace a stage-1 assignment with a stage-2 one.
+  # The record alone would replace a stage-1 assignment with a stage-2 one.
   record_only <- stage1
   record_only$.panel <- NULL
   expect_error(
@@ -407,8 +388,7 @@ test_that("panels cannot be redeclared once a master carries an assignment", {
     class = "samplyr_error_panels_already_assigned"
   )
 
-  # The column alone, with no record behind it. A guard reading only the
-  # record would let this one through and assign a second time.
+  # The column alone, with no record behind it.
   column_only <- execute(ps_design(), ps_frame(), stages = 1, seed = 3)
   column_only$.panel <- rep(1:2, length.out = nrow(column_only))
   expect_null(attr(column_only, "metadata")$panel_assignment)
@@ -430,7 +410,7 @@ test_that("a half-assignment is refused even without new panels", {
     class = "samplyr_error_panel_assignment_incomplete"
   )
 
-  # The other direction: labels with no provenance.
+  # Labels with no provenance.
   without_record <- execute(ps_design(), ps_frame(), stages = 1, seed = 3)
   without_record$.panel <- rep(1:2, length.out = nrow(without_record))
   expect_error(
@@ -445,8 +425,7 @@ test_that("a complete assignment still continues", {
 
   expect_true(".panel" %in% names(continued))
   expect_identical(ps_record(continued)$assignment_stage, 1L)
-  # A continuation with neither a record nor a column is not a
-  # half-assignment: it is a sample with no panels.
+  # Neither a record nor a column is a sample with no panels.
   plain <- execute(ps_design(), ps_frame(), stages = 1, seed = 3)
   expect_false(
     ".panel" %in% names(execute(plain, ps_frame(), stages = 2:3, seed = 4))

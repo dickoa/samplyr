@@ -225,3 +225,14 @@ digest_fixtures <- function() {
     replicated = digest_fixture_replicated()
   )
 }
+
+## Attach a digest to a sample directly, bypassing execution
+set_frame_digest <- function(x, digest, validate = TRUE) {
+  if (validate) {
+    validate_frame_digest(digest)
+  }
+  meta <- attr(x, "metadata") %||% list()
+  meta$frame_digest <- digest
+  attr(x, "metadata") <- meta
+  x
+}

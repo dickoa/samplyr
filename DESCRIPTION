@@ -20,6 +20,7 @@ License: GPL (>= 2)
 Language: en-US
 Encoding: UTF-8
 LazyData: true
+LazyDataCompression: xz
 Roxygen: list(markdown = TRUE)
 Depends: R (>= 4.1.0)
 Imports:
@@ -38,6 +39,7 @@ Suggests:
    testthat (>= 3.0.0),
    tidyr,
    knitr,
+   Matrix,
    rmarkdown,
    roxygen2,
    sampling,

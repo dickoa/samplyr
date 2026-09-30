@@ -80,6 +80,9 @@ design_effect(prop_samp)
 design_effect(samp, icc = 0.05, n_per_psu = 25)
 
 }
+\references{
+Kish, L. (1965). \emph{Survey Sampling}. Wiley.
+}
 \seealso{
 \code{\link[svyplan:design_effect]{svyplan::design_effect()}}, \code{\link[svyplan:effective_n]{svyplan::effective_n()}},
 \code{\link[svyplan:varcomp]{svyplan::varcomp()}}, \code{\link[svyplan:n_cluster]{svyplan::n_cluster()}},

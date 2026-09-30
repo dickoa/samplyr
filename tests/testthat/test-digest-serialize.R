@@ -43,7 +43,7 @@ test_that("the digest round-trips through design JSON", {
       d0$stages[[k]]$selected$unit_id
     )
   }
-  # Chances keep full precision; stratum labels come back as character.
+  # Chances keep full precision, and stratum labels come back as character.
   expect_equal(
     d1$stages[[1]]$units$chance,
     d0$stages[[1]]$units$chance,
@@ -312,8 +312,7 @@ test_that("a shifted size measure surfaces as chance drift", {
   withr::local_options(cli.width = 500)
   s <- serialize_fixture()
   frame5 <- test_frame
-  # Double one cluster's size measure: same pool counts, different
-  # brewer inclusion probabilities within stratum A only.
+  # Same pool counts, different Brewer probabilities in stratum A only.
   frame5$mos[frame5$cluster == "cl01"] <-
     frame5$mos[frame5$cluster == "cl01"] * 2
   txt <- paste(
@@ -336,8 +335,7 @@ test_that("a rescaled size measure reports unchanged chances", {
     testthat::capture_messages(validate_frame(s, frame6)),
     collapse = ""
   )
-  # The bytes changed but no inclusion probability did: the chance
-  # comparison is the sharper instrument.
+  # The bytes changed but no inclusion probability did.
   expect_match(txt, "role-scoped fingerprint mismatch", fixed = TRUE)
   expect_match(txt, "selection chances are unchanged", fixed = TRUE)
   expect_false(grepl("selection chances differ", txt, fixed = TRUE))
@@ -365,7 +363,7 @@ test_that("designs the ex-ante builder refuses skip chance drift", {
     add_stage() |> draw(n = 2) |>
     execute(test_frame, seed = 3)
   frame8 <- test_frame[-1, ]
-  # Structural drift still reports; no chance lines, no error.
+  # Structural drift still reports, with no chance lines and no error.
   txt <- paste(
     testthat::capture_messages(validate_frame(s, frame8)),
     collapse = ""
@@ -408,8 +406,7 @@ test_that("probabilities round-trips and is enforced past draw", {
   restored <- read_design(json)
   expect_identical(restored$stages[[1]]$draw_spec$method_probabilities, "exact")
 
-  # Replay refuses when the re-registered method contradicts the
-  # recorded declaration.
+  # A re-registered method that contradicts the record is refused.
   sondage::unregister_method("rt_exact")
   sondage::register_method(
     "rt_exact", "wor", sample_fn = sampler, probabilities = "unknown"
@@ -419,9 +416,7 @@ test_that("probabilities round-trips and is enforced past draw", {
     class = "samplyr_error"
   )
 
-  # A design file carrying probabilities = "unknown" bypasses draw(), so
-  # execution itself re-checks and refuses. Flip only the flag in a
-  # legitimately written file.
+  # A file declaring "unknown" bypasses draw(), so execute() re-checks it.
   payload <- jsonlite::fromJSON(bare_json, simplifyVector = FALSE)
   payload$tools$samplyr$design$stages[[1]]$method$probabilities <- "unknown"
   expect_error(
@@ -489,8 +484,7 @@ test_that("the probabilities tier round-trips with the digest", {
   expect_identical(d$stages[[1]]$probabilities, "approximate")
   expect_identical(frame_summary(restored)$probabilities, "approximate")
 
-  # Digests written before the field existed carry no tier: they must
-  # still validate and report NA rather than invent one.
+  # A digest with no tier validates and reports NA.
   payload <- jsonlite::fromJSON(json, simplifyVector = FALSE)
   stored <- payload$execution$frame_digest
   stored$stages[[1]]$probabilities <- NULL

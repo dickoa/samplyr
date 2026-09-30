@@ -431,8 +431,7 @@ test_that("validator rejects non-positive replicate numbers", {
 })
 
 test_that("replicated traces skip the per-pool n_realized check", {
-  # Two replicates: per-pool counts are replicate-specific, so an NA
-  # n_realized passes and no count comparison is attempted.
+  # Per-pool counts are replicate-specific, so an NA n_realized passes.
   d <- digest_fixture_replicated()
   expect_no_error(samplyr:::validate_frame_digest(d))
 })
@@ -448,7 +447,7 @@ test_that("get_frame_digest returns NULL without a digest", {
 })
 
 test_that("set_frame_digest attaches a validated digest", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_constant())
+  s <- set_frame_digest(fix_srs, digest_fixture_constant())
   d <- samplyr::get_frame_digest(s)
   expect_identical(d$version, 2L)
   expect_identical(d$status, "complete")
@@ -456,7 +455,7 @@ test_that("set_frame_digest attaches a validated digest", {
   bad <- digest_fixture_constant()
   bad$status <- "bogus"
   expect_error(
-    samplyr:::set_frame_digest(fix_srs, bad),
+    set_frame_digest(fix_srs, bad),
     class = "samplyr_error_digest_invalid"
   )
 })
@@ -464,7 +463,7 @@ test_that("set_frame_digest attaches a validated digest", {
 test_that("get_frame_digest requires the exact supported schema version", {
   d <- digest_fixture_constant()
   d$version <- 1L
-  s <- samplyr:::set_frame_digest(fix_srs, d, validate = FALSE)
+  s <- set_frame_digest(fix_srs, d, validate = FALSE)
   expect_error(
     samplyr::get_frame_digest(s),
     class = "samplyr_error_digest_version"
@@ -472,7 +471,7 @@ test_that("get_frame_digest requires the exact supported schema version", {
 
   d <- digest_fixture_constant()
   d$version <- 99L
-  s <- samplyr:::set_frame_digest(fix_srs, d, validate = FALSE)
+  s <- set_frame_digest(fix_srs, d, validate = FALSE)
   expect_error(
     samplyr::get_frame_digest(s),
     class = "samplyr_error_digest_version"
@@ -480,7 +479,7 @@ test_that("get_frame_digest requires the exact supported schema version", {
 })
 
 test_that("a modified sample reports an invalidated digest lazily", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_constant())
+  s <- set_frame_digest(fix_srs, digest_fixture_constant())
   s$.weight <- s$.weight * 2
   expect_identical(samplyr::get_frame_digest(s)$status, "invalidated")
   expect_error(
@@ -490,13 +489,13 @@ test_that("a modified sample reports an invalidated digest lazily", {
 })
 
 test_that("value-identical overwrites do not invalidate the digest", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_constant())
+  s <- set_frame_digest(fix_srs, digest_fixture_constant())
   s$.weight <- s$.weight
   expect_identical(samplyr::get_frame_digest(s)$status, "complete")
 })
 
 test_that("adding analysis columns does not invalidate the digest", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_constant())
+  s <- set_frame_digest(fix_srs, digest_fixture_constant())
   s$analysis_var <- seq_len(nrow(s))
   expect_identical(samplyr::get_frame_digest(s)$status, "complete")
   expect_no_error(frame_summary(s))
@@ -513,7 +512,7 @@ test_that("frame_summary requires a tbl_sample with a digest", {
 })
 
 test_that("frame_summary validates the stage argument", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_constant())
+  s <- set_frame_digest(fix_srs, digest_fixture_constant())
   expect_error(frame_summary(s, stages = "one"), class = "samplyr_error")
   expect_error(frame_summary(s, stages = 3), class = "samplyr_error")
   expect_error(frame_summary(s, stages = Inf), class = "samplyr_error")
@@ -524,7 +523,7 @@ test_that("frame_summary validates the stage argument", {
 ## frame_summary: stage detail
 
 test_that("stage detail reports the selection chain", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_constant())
+  s <- set_frame_digest(fix_srs, digest_fixture_constant())
   fs <- frame_summary(s)
   expect_s3_class(fs, "tbl_df")
   expect_named(fs, c(
@@ -540,7 +539,7 @@ test_that("stage detail reports the selection chain", {
 })
 
 test_that("stage detail covers every stage of a multistage digest", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_units())
+  s <- set_frame_digest(fix_srs, digest_fixture_units())
   fs <- frame_summary(s)
   expect_identical(nrow(fs), 2L)
   expect_identical(fs$storage, c("units", "constant"))
@@ -550,18 +549,16 @@ test_that("stage detail covers every stage of a multistage digest", {
 })
 
 test_that("universe scope suppresses eligible-only denominators", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_units())
+  s <- set_frame_digest(fix_srs, digest_fixture_units())
   fs <- frame_summary(s, scope = "universe")
-  # Stage 1 covered the full universe; stage 2 only eligible units in
-  # selected clusters, so its universe denominator is unknowable.
+  # Stage 2 holds only eligible units, so its universe denominator is unknown.
   expect_equal(fs$N, c(24, NA))
   expect_equal(fs$take_rate, c(8 / 24, NA))
-  # Realized counts are facts and stay reported.
   expect_equal(fs$n_realized, c(8, 24))
 })
 
 test_that("conditional scope suppresses denominators on both bases", {
-  s <- samplyr:::set_frame_digest(
+  s <- set_frame_digest(
     fix_srs, digest_fixture_units(stage2_scope = "conditional")
   )
   eligible <- frame_summary(s, scope = "eligible")
@@ -573,26 +570,26 @@ test_that("conditional scope suppresses denominators on both bases", {
 })
 
 test_that("stage detail keeps expected and realized sizes distinct", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_quantiles())
+  s <- set_frame_digest(fix_srs, digest_fixture_quantiles())
   fs <- frame_summary(s)
   expect_identical(fs$storage, "quantiles")
   expect_equal(fs$n_expected, 0.085 * 120)
   expect_equal(fs$n_realized, 10)
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_wr())
+  s <- set_frame_digest(fix_srs, digest_fixture_wr())
   fs <- frame_summary(s)
   expect_identical(fs$chance_kind, "expected_hits")
   expect_equal(fs$n_realized, 10)
 })
 
 test_that("replicate-varying realized allocation reports NA, not a guess", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_replicated())
+  s <- set_frame_digest(fix_srs, digest_fixture_replicated())
   fs <- frame_summary(s)
   expect_true(is.na(fs$n_realized))
   expect_true(is.na(fs$take_rate))
 })
 
 test_that("the stage argument filters the report", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_units())
+  s <- set_frame_digest(fix_srs, digest_fixture_units())
   fs <- frame_summary(s, stages = 2)
   expect_identical(nrow(fs), 1L)
   expect_identical(fs$stage, 2L)
@@ -601,7 +598,7 @@ test_that("the stage argument filters the report", {
 ## frame_summary: pool detail
 
 test_that("pool detail reports every pool with its strata", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_units())
+  s <- set_frame_digest(fix_srs, digest_fixture_units())
   fs <- frame_summary(s, detail = "pool")
   expect_identical(nrow(fs), 12L)
   expect_identical(fs$replicate, rep(1L, 12))
@@ -610,8 +607,7 @@ test_that("pool detail reports every pool with its strata", {
     as.character(fs$stratum[fs$stage == 1]),
     c("A", "B", "C", "D")
   )
-  # Stage 2 is unstratified: its stratum labels are NA, its parents
-  # are the selected stage-1 units.
+  # Stage 2 is unstratified, and its parents are the selected stage-1 units.
   expect_true(all(is.na(fs$stratum[fs$stage == 2])))
   expect_identical(
     fs$parent_unit[fs$stage == 2],
@@ -621,10 +617,8 @@ test_that("pool detail reports every pool with its strata", {
 })
 
 test_that("pool detail survives a digest deeper than the attached design", {
-  # A digest travels on its own and can be read against a design that does not
-  # reach every stage it records. Whether such a stage draws a random number of
-  # units is then unknown, and unknown is an answer, not an error.
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_units())
+  # A digest can record stages the attached design does not reach.
+  s <- set_frame_digest(fix_srs, digest_fixture_units())
   expect_no_error(frame_summary(s, detail = "pool"))
 
   rs <- samplyr:::stage_random_size(s, samplyr::get_frame_digest(s)$stages)
@@ -632,9 +626,7 @@ test_that("pool detail survives a digest deeper than the attached design", {
 })
 
 test_that("capped is NA where a shortfall cannot be read without the design", {
-  # A shortfall is a population cap on a fixed-size stage and the design's own
-  # arithmetic on a random-size one. With no design to say which, only the
-  # absence of a shortfall is determinable.
+  # Without a design, only the absence of a shortfall is determinable.
   capped <- samplyr:::capped_from_shortfall(c(5, 10), c(10, 10), NA)
   expect_identical(capped, c(NA, FALSE))
 
@@ -649,17 +641,17 @@ test_that("capped is NA where a shortfall cannot be read without the design", {
 })
 
 test_that("pool detail reports the constant chance where one applies", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_constant())
+  s <- set_frame_digest(fix_srs, digest_fixture_constant())
   fs <- frame_summary(s, detail = "pool")
   expect_equal(fs$chance, rep(1 / 3, 4))
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_quantiles())
+  s <- set_frame_digest(fix_srs, digest_fixture_quantiles())
   fs <- frame_summary(s, detail = "pool")
   expect_true(is.na(fs$chance))
   expect_identical(fs$chance_status, "summarized")
 })
 
 test_that("pool-level take rates honor pool scope", {
-  s <- samplyr:::set_frame_digest(
+  s <- set_frame_digest(
     fix_srs, digest_fixture_units(stage2_scope = "conditional")
   )
   fs <- frame_summary(s, detail = "pool")
@@ -670,13 +662,13 @@ test_that("pool-level take rates honor pool scope", {
 ## frame_summary: unit detail
 
 test_that("unit detail reports the anonymous unit registry", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_units())
+  s <- set_frame_digest(fix_srs, digest_fixture_units())
   fs <- frame_summary(s, detail = "unit")
   expect_named(fs, c(
     "stage", "pool_id", "unit_id", "unit_order", "chance",
     "is_certainty", "n_descendants", "is_selected", "n_hits"
   ))
-  # Only stage 1 retained units; stage 2 is constant storage.
+  # Only stage 1 retained units. Stage 2 is constant storage.
   expect_identical(unique(fs$stage), 1L)
   expect_identical(nrow(fs), 24L)
   expect_identical(sum(fs$is_selected), 8L)
@@ -689,7 +681,7 @@ test_that("unit detail reports the anonymous unit registry", {
 })
 
 test_that("unit detail errors for a stage without unit storage", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_units())
+  s <- set_frame_digest(fix_srs, digest_fixture_units())
   expect_error(
     frame_summary(s, stages = 2, detail = "unit"),
     class = "samplyr_error_digest_no_units"
@@ -697,7 +689,7 @@ test_that("unit detail errors for a stage without unit storage", {
 })
 
 test_that("unit detail is empty when no stage retained units", {
-  s <- samplyr:::set_frame_digest(fix_srs, digest_fixture_quantiles())
+  s <- set_frame_digest(fix_srs, digest_fixture_quantiles())
   fs <- frame_summary(s, detail = "unit")
   expect_identical(nrow(fs), 0L)
   expect_named(fs, c(
@@ -707,10 +699,7 @@ test_that("unit detail is empty when no stage retained units", {
 })
 
 test_that("every recorded frame must be claimed by a stage", {
-  # A stage's frame_ref being in range is checked per stage, and that alone
-  # let a three-register digest point every stage at the first record while
-  # records 2 and 3 sat unreferenced: the digest then said stage 3 selected
-  # from a 4-row frame when it selected from a 24-row one.
+  # Per-stage range checks alone would let every stage point at record 1.
   registers <- list(mf_schools(), mf_classes(), mf_students())
   digest <- samplyr::exante_digest(mf_design(), registers)
   expect_no_error(samplyr:::validate_frame_digest(digest))
@@ -740,10 +729,7 @@ test_that("every recorded frame must be claimed by a stage", {
 })
 
 test_that("a partial digest may record frames its dropped stages used", {
-  # A replicated multi-stage execution keeps only the stage prefix common to
-  # every replicate. The frames of the dropped stages stay recorded, because
-  # pruning them would renumber every frame_ref and lose the provenance of
-  # what the execution ran against. That is not the defect above.
+  # A replicated run keeps the common stage prefix and every frame record.
   registers <- list(mf_schools(), mf_classes(), mf_students())
   digest <- samplyr::exante_digest(mf_design(), registers)
 
@@ -752,7 +738,6 @@ test_that("a partial digest may record frames its dropped stages used", {
   trimmed$status <- "partial"
   expect_no_error(samplyr:::validate_frame_digest(trimmed))
 
-  # The same shape claiming completeness is refused.
   trimmed$status <- "complete"
   expect_error(
     samplyr:::validate_frame_digest(trimmed),

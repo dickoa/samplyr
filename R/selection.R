@@ -102,7 +102,8 @@ abort_cluster_invariants <- function(varying, cluster_vars) {
       "i" = "Found clusters where {.val {varying}} varies across rows.",
       "i" = "Ensure the frame has one consistent value per cluster for these columns."
     ),
-    call = NULL
+    call = NULL,
+    class = "samplyr_error_frame_cluster_invariant"
   )
 }
 
@@ -191,12 +192,13 @@ sample_within_clusters <- function(
   strata_spec,
   draw_spec,
   cluster_vars,
-  trace_mode = "full"
+  trace_mode = "full",
+  levels = list()
 ) {
   groups <- split_row_indices(frame, cluster_vars)
   indices_list <- groups$indices
   # Report display labels rather than encoded group keys.
-  parent_labels <- key_labels(groups$key_df, cluster_vars)
+  parent_labels <- path_labels(groups$key_df, cluster_vars, levels)
 
   # Execution and previews resolve the same per-PSU take.
   pool_spec <- function(data) resolve_parent_draw_spec(draw_spec, data)
@@ -279,6 +281,7 @@ sample_within_clusters <- function(
 
 #' @noRd
 sample_units <- function(frame, strata_spec, draw_spec, trace_mode = "full") {
+  rlang::local_error_call(caller_env())
   if (!is_null(strata_spec)) {
     sample_stratified(frame, strata_spec, draw_spec, trace_mode = trace_mode)
   } else {
@@ -396,6 +399,66 @@ sample_stratified <- function(
   draw_spec,
   trace_mode = "full"
 ) {
+  rlang::local_error_call(caller_env())
+  res <- sample_stratified_impl(frame, strata_spec, draw_spec, trace_mode)
+  signal_singleton_strata(
+    frame, strata_spec$vars, res$sample, draw_spec,
+    label_vars = strata_label_vars(strata_spec)
+  )
+  res
+}
+
+#' Report strata that take one unit outside certainty
+#'
+#' A stratum needs two selections for its variance to be estimated. With
+#' one, survey stops with "only one PSU" and replicate methods have nothing
+#' to resample, and the export says so after the fact. `execute()` tells the
+#' designer while the allocation can still change. Certainty units are
+#' split into their own take-all stratum at export, so the count is of the
+#' units drawn outside certainty, and a stratum whose remainder is taken
+#' whole has no variance to estimate.
+#' @noRd
+signal_singleton_strata <- function(frame, strata_vars, sample, draw_spec,
+                                    label_vars = strata_vars) {
+  if (!is_wor_method(draw_spec) || is_random_size_method(draw_spec) ||
+      nrow(sample) == 0L) {
+    return(invisible(NULL))
+  }
+  certain <- if (".certainty" %in% names(sample)) {
+    !is.na(sample$.certainty) & sample$.certainty
+  } else {
+    rep(FALSE, nrow(sample))
+  }
+  pools <- vctrs::vec_unique(frame[, strata_vars, drop = FALSE])
+  pool_keys <- make_group_key(pools, strata_vars)
+  population <- tabulate(
+    match(make_group_key(frame, strata_vars), pool_keys), length(pool_keys)
+  )
+  sample_pool <- match(make_group_key(sample, strata_vars), pool_keys)
+  n_certain <- tabulate(sample_pool[certain], length(pool_keys))
+  n_drawn <- tabulate(sample_pool[!certain], length(pool_keys))
+  single <- n_drawn == 1L & population - n_certain > 1L
+  if (!any(single)) {
+    return(invisible(NULL))
+  }
+  signal_selection_event(
+    "singleton_pool",
+    pool_keys = format_key_labels(
+      pools[single, , drop = FALSE], label_vars
+    ),
+    n_singleton = sum(single)
+  )
+  invisible(NULL)
+}
+
+#' @noRd
+sample_stratified_impl <- function(
+  frame,
+  strata_spec,
+  draw_spec,
+  trace_mode = "full"
+) {
+  rlang::local_error_call(caller_env())
   strata_vars <- strata_spec$vars
   groups <- split_row_indices(frame, strata_vars)
   stratum_info <- stratum_info_from_groups(frame, strata_vars, groups$indices)
@@ -423,8 +486,7 @@ sample_stratified <- function(
       # Store full keys and let the reporter truncate them.
       keys <- format_key_labels(
         stratum_info[capped, , drop = FALSE],
-        strata_vars,
-        max_n = Inf
+        strata_label_vars(strata_spec)
       )
       if (is_random_size_method(draw_spec)) {
         signal_nominal_cap(
@@ -491,7 +553,8 @@ sample_stratified <- function(
     n_h <- stratum_info$.n_h[[i]]
     if (is_null(n_h) || length(n_h) == 0 || is.na(n_h)) {
       cli_abort(
-        "Could not determine sample size for stratum {.val {stratum_key}}"
+        "Could not determine sample size for stratum {.val {stratum_key}}",
+        class = "samplyr_error_internal"
       )
     }
 
@@ -510,13 +573,21 @@ sample_stratified <- function(
       withCallingHandlers(
         draw_sample(data, n_h, stratum_draw_spec, trace_mode = trace_mode),
         error = function(e) {
+          where <- cli::format_inline("In stratum {.val {stratum_key}}")
+          if (inherits(e, "rlang_error") &&
+                (is_null(e$body) || is.character(e$body))) {
+            e$body <- c(e$body, i = where)
+            e$call <- NULL
+            stop(e)
+          }
           cli_abort(
-            c(conditionMessage(e), "i" = "In stratum {.val {stratum_key}}"),
-            call = NULL
+            c("{conditionMessage(e)}", "i" = where),
+            call = NULL,
+            class = "samplyr_error_method_failed"
           )
         }
       ),
-      key_labels(keys, strata_vars)
+      key_labels(keys, strata_label_vars(strata_spec))
     )
     selected <- res$sample
     selected$.weight <- 1 / selected$.pik
@@ -841,8 +912,7 @@ resolve_stratum_draw_spec <- function(
   }
 
   if (identical(draw_spec$certainty_plan$role, "select")) {
-    # The plan's stored classification for this stratum, kept even when
-    # empty so the certainty path and its invariants stay engaged.
+    # Kept even when empty, so the certainty invariants stay engaged.
     stratum_id <- as.character(keys[[1]][1])
     reg <- draw_spec$certainty_plan$register
     in_stratum <- reg$stratum == stratum_id
@@ -854,6 +924,7 @@ resolve_stratum_draw_spec <- function(
 
 #' @noRd
 sample_unstratified <- function(frame, draw_spec, trace_mode = "full") {
+  rlang::local_error_call(caller_env())
   N <- nrow(frame)
   round_method <- draw_spec$round %||% "up"
 
@@ -862,7 +933,11 @@ sample_unstratified <- function(frame, draw_spec, trace_mode = "full") {
   } else if (!is_null(draw_spec$frac)) {
     round_sample_size(N * draw_spec$frac, round_method)
   } else {
-    cli_abort("Cannot determine sample size", call = NULL)
+    cli_abort(
+      "Cannot determine sample size",
+      call = NULL,
+      class = "samplyr_error_internal"
+    )
   }
 
   if (!is_multi_hit_method(draw_spec) && n > N) {
@@ -905,10 +980,8 @@ sample_unstratified <- function(frame, draw_spec, trace_mode = "full") {
 #' (the default) or accept the empty realization. An empty sample is a
 #' valid outcome of a Bernoulli/Poisson design: it contributes zero to
 #' Horvitz-Thompson totals, which is what keeps the estimator unbiased
-#' over repeated realizations. (An earlier fallback drew one unit by
-#' SRS with weight N. Those weights were conditional on the branch
-#' reached, not inverse inclusion probabilities of the combined design,
-#' and biased HT totals upward by N * (1 - p)^N.)
+#' over repeated realizations. Redrawing on an empty result would make the
+#' weights conditional on the branch reached and bias totals upward.
 #' @noRd
 handle_empty_selection <- function(method_label, on_empty) {
   header <- "{method_label} sampling produced zero selections."
@@ -918,23 +991,42 @@ handle_empty_selection <- function(method_label, on_empty) {
       c(
         header,
         "i" = "Increase {.arg frac} (or {.arg n}), or use a fixed-size method.",
-        "i" = "Set {.code on_empty = \"warn\"} or {.code \"silent\"} to accept an empty sample (a valid realization of a random-size design; estimates from repeated executions remain unbiased)."
+        "i" = "Set {.code on_empty = \"warn\"} or {.code \"silent\"} to accept an empty sample. It is a valid realization of a random-size design, and estimates over repeated executions remain unbiased."
       ),
-      call = NULL
+      call = NULL,
+      class = "samplyr_error_empty_selection"
     ),
     warn = cli_warn(c(
       header,
       "!" = "Returning an empty sample.",
-      "i" = "This is a valid realization of a random-size design; it contributes zero to Horvitz-Thompson totals.",
+      "i" = "This is a valid realization of a random-size design, and it contributes zero to Horvitz-Thompson totals.",
       "i" = "Set {.code on_empty = \"error\"} to catch this, or {.code on_empty = \"silent\"} to suppress."
-    )),
+    ),
+      class = "samplyr_warning_empty_selection"
+    ),
     silent = NULL
   )
   invisible(NULL)
 }
 
+#' The order a pool is selected in, as a permutation of its rows
+#'
+#' `control` sorts a pool before selection, which is what makes systematic
+#' and sequential methods implicitly stratified. Selection and every
+#' computation that reconstructs it (the frame path of `joint_expectation()`)
+#' take the order from here, so they cannot disagree. NULL when the design
+#' sets no `control`, meaning the pool's own row order.
+#' @noRd
+selection_order <- function(data, draw_spec) {
+  if (is_null(draw_spec$control)) {
+    return(NULL)
+  }
+  control_order(data, draw_spec$control)
+}
+
 #' @noRd
 draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
+  rlang::local_error_call(caller_env())
   method <- draw_spec$method
   mos <- draw_spec$mos
   N <- nrow(data)
@@ -949,13 +1041,10 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
     as.double(n)
   }
 
-  perm <- NULL
+  perm <- selection_order(data, draw_spec)
   order_kind <- "input"
-  if (!is_null(draw_spec$control)) {
-    data$.__trace_row <- seq_len(N)
-    data <- arrange(data, !!!draw_spec$control)
-    perm <- data$.__trace_row
-    data$.__trace_row <- NULL
+  if (!is_null(perm)) {
+    data <- data[perm, , drop = FALSE]
     order_kind <- "control"
   }
 
@@ -973,7 +1062,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
       cli_abort(c(
         "Cannot use PPS sampling: sum of MOS variable {.var {mos}} is zero.",
         "i" = "At least one unit must have a positive measure of size."
-      ))
+      ), class = "samplyr_error_mos_zero_sum")
     }
   }
 
@@ -1202,14 +1291,13 @@ draw_sample_pps_certainty <- function(
   perm = NULL,
   trace_mode = "full"
 ) {
+  rlang::local_error_call(caller_env())
   method <- draw_spec$method
   mos <- draw_spec$mos
   mos_vals <- data[[mos]]
   N <- nrow(data)
 
-  # Poisson fractions specify an expected total over the original pool,
-  # including certainties. Do not round that total or reuse the original
-  # fraction after removing certainty units.
+  # The Poisson total covers certainties: never round it or reuse frac.
   if (identical(method, "pps_poisson")) {
     n <- min(n_target, N)
     draw_spec$frac <- NULL
@@ -1246,7 +1334,8 @@ draw_sample_pps_certainty <- function(
         "x" = "Found {cert$n_certain} certainty unit{?s}, but {.arg n} = {n}.",
         threshold_msg,
         "i" = "Every unit in this sampling pool is certain. Increase {.arg n}, raise the threshold, or use {.code certainty_overflow = \"allow\"} to permit this census above the target."
-      )
+      ),
+      class = "samplyr_error_certainty_overflow"
     )
   }
 
@@ -1269,23 +1358,27 @@ draw_sample_pps_certainty <- function(
     remaining_mos <- mos_vals[cert$remaining_idx]
     n_prob <- min(cert$n_remaining, length(cert$remaining_idx))
 
+    # With certainty units taken, an empty remainder is not an empty pool.
+    remainder_spec <- draw_spec
+    if (length(cert$certainty_idx) > 0) {
+      remainder_spec$on_empty <- "silent"
+    }
     prob_res <- draw_pps_method(
       data = remaining_data,
       n = n_prob,
       method = method,
       mos_vals = remaining_mos,
-      draw_spec = draw_spec
+      draw_spec = remainder_spec
     )
     prob_result <- prob_res$sample
     # Recompute capping after removing explicit certainty units.
     prob_result$.certainty <- is_certainty_probability(prob_result$.pik)
     if (!is_null(forced_idx) && any(prob_result$.certainty)) {
-      # The execute gate refuses any plan whose remainder would cap, so a
-      # capped remainder here means the selection no longer fields the
-      # plan's stored classification.
+      # The execute gate refuses any plan whose remainder would cap.
       cli_abort(
         "Internal error: the remainder draw capped a PSU the certainty plan holds noncertainty.",
-        call = NULL
+        call = NULL,
+        class = "samplyr_error_internal"
       )
     }
     chance[cert$remaining_idx] <- prob_res$chance
@@ -1348,7 +1441,8 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
         "i" = "At least one remaining unit must have a positive measure of size.",
         "i" = "This can happen when certainty selection removes all units with positive MOS."
       ),
-      call = NULL
+      call = NULL,
+      class = "samplyr_error_mos_zero_sum"
     )
   }
 
@@ -1444,6 +1538,7 @@ identify_certainty <- function(
   certainty_prop = NULL,
   forced_idx = NULL
 ) {
+  rlang::local_error_call(caller_env())
   N <- length(mos_vals)
   certainty_idx <- integer(0)
 
@@ -1474,8 +1569,7 @@ identify_certainty <- function(
   }
 
   if (!is_null(forced_idx) && length(forced_idx) > 0) {
-    # A stored classification adds to the threshold rules and never removes
-    # from them; on the bridge path it arrives alone and is authoritative.
+    # A stored classification adds to the threshold rules, never removes.
     certainty_idx <- sort(unique(c(certainty_idx, as.integer(forced_idx))))
   }
 

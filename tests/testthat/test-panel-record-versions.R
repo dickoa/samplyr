@@ -1,10 +1,7 @@
 ## Reading an assignment record under the version it states
 
-# A design file is an interchange format, so a record reaching a reader may
-# have been written by an older samplyr, a newer one, or something else
-# entirely. The version stamp is what tells the reader which law the fields
-# were written under, and it is only worth stamping if it is read before the
-# fields are.
+# A record may come from an older samplyr, a newer one, or another tool. The
+# version stamp says which law the fields follow, so it is read before them.
 
 prv_frame <- function() {
   frame <- expand.grid(
@@ -45,11 +42,8 @@ prv_file <- function(master, frame = prv_frame()) {
 
 ## Rewriting a stored record, without the package's help
 
-# Everything below is test-only and literal. It names the fields each version
-# carried and writes them out itself: a legacy artifact built by the current
-# writer, or repaired by the current normalizer, would agree with the current
-# reader by construction and could not detect a reader that ignores the
-# version at all.
+# These helpers write each version's fields literally. A legacy artifact built
+# by the current writer would agree with the current reader by construction.
 
 prv_stored_record <- function(path) {
   jsonlite::fromJSON(path, simplifyVector = FALSE)$execution$panel_assignment
@@ -81,11 +75,9 @@ prv_rewrite_record <- function(path, record) {
   out
 }
 
-# The record replaced by a bare JSON value rather than by another object,
-# which is what a truncated or hand-edited file carries where the assignment
-# belongs. The literal is written as text: a scalar built in R and serialized
-# would be an array of one under `auto_unbox = FALSE` and a scalar under
-# `auto_unbox = TRUE`, and which of those a file carries is the point.
+# The record replaced by a bare JSON value, as a truncated or hand-edited file
+# carries. The literal is written as text, because serializing an R scalar
+# would decide whether the file holds a scalar or an array of one.
 prv_replace_record <- function(path, literal) {
   lines <- readLines(path)
   opens <- grep('^    "panel_assignment": \\{$', lines)
@@ -103,13 +95,8 @@ prv_replace_record <- function(path, literal) {
   out
 }
 
-# Version 1 knew one assignment stage, one unit vocabulary, and no small-pool
-# policy: positivity was unchecked rather than defaulted.
-# The pools a version-1 or version-2 file carried. Today's writer emits the
-# assignment law and not the realized pools, so a legacy artifact cannot be
-# made by downgrading one of its files: the block has to be written here.
-# That is what the note above asks for anyway -- a fixture built by the
-# current writer agrees with the current reader by construction.
+# The pools a version-1 or version-2 file carried. The current writer emits
+# the assignment law and not the realized pools, so the block is written here.
 prv_legacy_pools <- function(live) {
   lapply(live$pools, function(pool) {
     out <- list()
@@ -159,8 +146,7 @@ prv_as_version_2 <- function(record, live) {
     certainty = record$certainty,
     small_pool_policy = record$small_pool_policy,
     schedule = record$schedule,
-    # Version 2 is where activation became a fact of its own, so it is added
-    # to the version-1 block rather than carried over from a stored one.
+    # Version 2 adds activation to the version-1 pool block.
     pools = lapply(seq_along(live$pools), function(i) {
       pool <- live$pools[[i]]
       out <- prv_legacy_pools(live)[[i]]
@@ -198,8 +184,7 @@ test_that("a version-1 receipt reproduces its first-stage assignment", {
   path <- prv_file(master)
   legacy <- prv_as_version_1(prv_stored_record(path), prv_record(master))
 
-  # The downgrade removed what version 1 never had, rather than renumbering a
-  # version-3 record.
+  # The downgrade removes what version 1 never had.
   expect_identical(legacy$version, 1L)
   expect_null(legacy$assignment_stage)
   expect_null(legacy$pool_vars)
@@ -222,8 +207,7 @@ test_that("a version-1 receipt reproduces its first-stage assignment", {
 })
 
 test_that("a version-2 receipt reproduces its assignment and its policy", {
-  # One PSU in stratum C, so its pool holds a single unit against four panels
-  # with two active: it rotates to nothing and is promoted on request.
+  # The single-PSU pool in stratum C rotates to nothing and is promoted.
   frame <- prv_frame()
   frame$reg <- ifelse(frame$psu == "P8", "C", frame$psu)
   design <- sampling_design() |>
@@ -250,10 +234,7 @@ test_that("a version-2 receipt reproduces its assignment and its policy", {
   expect_identical(replayed$.panel, master$.panel)
   expect_identical(replayed$psu, master$psu)
 
-  # The policy is what carries it, and version 1 is what a record without one
-  # is: replayed under today's default, this draw is refused rather than
-  # reproduced. That is the intended direction, and it is why the version-2
-  # field has to survive the round trip.
+  # Without the policy, as in version 1, the default refuses this draw.
   as_v1 <- prv_as_version_1(prv_stored_record(path), prv_record(master))
   expect_null(as_v1$small_pool_policy)
   expect_error(
@@ -286,9 +267,7 @@ test_that("a lower-stage receipt reproduces the whole generated record", {
   original <- prv_record(master)
   again <- prv_record(replayed)
 
-  # Panels, and then everything the record states about them: a replay that
-  # reproduced the labels while pooling or blocking them differently would
-  # carry different denominators into every later activation.
+  # Pools and blocks set the denominators of every later activation.
   expect_identical(replayed$.panel, master$.panel)
   expect_identical(again$assignment_stage, 2L)
   expect_identical(again$key_vars, c("psu", "hh"))
@@ -319,9 +298,7 @@ test_that("with-replacement occurrence identities survive the file", {
   expect_identical(record$unit, "occurrence")
   expect_identical(record$key_vars, c("psu", ".draw_1"))
 
-  # Six draws over four distinct PSUs: P2 and P5 are each hit twice, and the
-  # two hits of P5 fall in different panels. A file that collapsed an
-  # occurrence to its PSU could not carry that.
+  # P2 and P5 are each hit twice, and P5's hits fall in different panels.
   occurrences <- unique(data.frame(
     psu = master$psu, draw = master$.draw_1, panel = master$.panel
   ))
@@ -332,9 +309,7 @@ test_that("with-replacement occurrence identities survive the file", {
 
   path <- prv_file(master, frame)
   stored <- prv_stored_record(path)
-  # The file says the unit is an occurrence by naming the columns that
-  # identify one. It does not carry the occurrences themselves: the realized
-  # pools are rebuilt by replaying, which is what the last assertion checks.
+  # The file names the occurrence columns, and replay rebuilds the pools.
   expect_identical(unlist(stored$key_vars), c("psu", ".draw_1"))
   expect_identical(stored$unit, "occurrence")
   expect_null(stored$pools)
@@ -349,7 +324,7 @@ test_that("with-replacement occurrence identities survive the file", {
   expect_identical(prv_record(replayed)$pools[[1]]$keys, record$pools[[1]]$keys)
 })
 
-## A frame that no longer carries the ancestry
+## A frame without the assignment ancestry
 
 test_that("a replay frame missing the assignment ancestry is refused", {
   master <- prv_master(panel_stage = 2)
@@ -363,11 +338,7 @@ test_that("a replay frame missing the assignment ancestry is refused", {
     replay_design(design, no_hh),
     class = "samplyr_error_replay_frame_mismatch"
   )
-  # Told to ignore the fingerprint, the execution refuses at the stage that
-  # needs the column. What is observable from here is which refusal it is and
-  # that no sample comes back: a replay restores the stream it was given
-  # whether or not it drew from it, so "before any random number" is not
-  # something this test can assert.
+  # Ignoring the fingerprint, the stage that needs the column refuses.
   expect_error(
     replay_design(design, no_hh, fingerprint = "ignore"),
     class = "samplyr_error_frame_missing_vars"
@@ -388,8 +359,7 @@ test_that("an unsupported version is refused before any field is decoded", {
     class = "samplyr_error_panel_record_unsupported"
   )
 
-  # Reached in the right order, not merely reached: a decoder that ran first
-  # would take the receipt apart under a law nothing has established.
+  # A decoder that ran before the version check would fail here.
   local_mocked_bindings(
     decode_panel_argument = function(...) stop("a decoder ran"),
     decode_panel_stage_argument = function(...) stop("a decoder ran"),
@@ -430,11 +400,7 @@ test_that("a record that is not a record is refused as malformed", {
   master <- prv_master(panel_stage = 2)
   path <- prv_file(master)
 
-  # A design file states the assignment as an object of named fields. A bare
-  # JSON value in its place parses to a length-1 atomic vector, which reading a
-  # field off is base R's complaint about `$` rather than anything about the
-  # artifact. `simplifyVector = FALSE` does not prevent this: it stops arrays
-  # collapsing, and a scalar was never an array.
+  # A bare JSON value parses to a length-1 atomic vector, not a list.
   bare <- list(
     "a number" = "3",
     "a string" = '"blocked_random_quota"',
@@ -444,8 +410,7 @@ test_that("a record that is not a record is refused as malformed", {
   for (case in names(bare)) {
     scalar_path <- prv_replace_record(path, bare[[case]])
     stored <- prv_stored_record(scalar_path)
-    # Asserted, because a splice that produced a list again would leave every
-    # expectation below passing without the case ever arising.
+    # A splice that produced a list again would make this case vacuous.
     expect_false(is.list(stored), info = case)
     expect_length(stored, 1L)
 
@@ -456,15 +421,13 @@ test_that("a record that is not a record is refused as malformed", {
     )
   }
 
-  # An empty object is a record, and an unreadable one: it states no algorithm
-  # rather than being no record. The two are separated by remedy.
+  # An empty object states no algorithm, so it is unsupported, not malformed.
   expect_error(
     replay_design(read_design(prv_replace_record(path, "{}")), prv_frame()),
     class = "samplyr_error_panel_record_unsupported"
   )
 
-  # Refused where the version would be established, not after a decoder has
-  # taken the receipt apart under a law nothing has read.
+  # Refused before any decoder runs.
   number <- prv_replace_record(path, "3")
   local_mocked_bindings(
     decode_panel_argument = function(...) stop("a decoder ran"),
@@ -492,8 +455,7 @@ test_that("bad file records name the reader and bad in-memory records name repla
   expect_match(message, "is not a record", fixed = TRUE)
   expect_match(message, "carries 3 where", fixed = TRUE)
   expect_no_match(message, "$ operator", fixed = TRUE)
-  # read_design() now rejects this while evaluating replay_design()'s x
-  # argument. It must name the same boundary as a direct read.
+  # read_design() refuses this inside replay_design()'s x argument.
   expect_identical(as.character(conditionCall(err)[[1]]), "read_design")
   direct <- tryCatch(read_design(number),
     samplyr_error_panel_record_malformed = function(cnd) cnd)
@@ -531,8 +493,7 @@ test_that("in-memory paths refuse a record that is not a record", {
 ## An older version does not carry a later version's meaning
 
 test_that("a version-1 record's stage comes from its version, not its fields", {
-  # The master is a first-stage assignment, and stage 2 of the same design
-  # assigns differently, so interpreting the extraneous field is detectable.
+  # Stage 2 assigns differently, so reading the extraneous field would show.
   master <- prv_master()
   lower <- prv_master(panel_stage = 2)
   expect_false(identical(master$.panel, lower$.panel))
@@ -573,9 +534,7 @@ test_that("a version-3 record missing or misstating a field is refused", {
   path <- prv_file(master)
   record <- prv_stored_record(path)
 
-  # Each case sets one field outright. A merge would recurse into the column
-  # lists and leave them as they were, which is how three of these first
-  # passed against a reader that had not read them.
+  # Each case assigns one field, since a merge leaves column lists unchanged.
   malformed <- list(
     "no assignment stage" = function(r) within_record(r, "assignment_stage", NULL),
     "missing assignment stage" = function(r) within_record(r, "assignment_stage", NA_integer_),
@@ -604,8 +563,7 @@ test_that("a version-3 record missing or misstating a field is refused", {
     )
   }
 
-  # The one absence that is not a defect: no pool columns at all is one pool
-  # holding every unit, which is what an unstratified first stage has.
+  # No pool columns is one pool holding every unit, as when unstratified.
   single_pool <- prv_master()
   expect_identical(prv_record(single_pool)$pool_vars, character(0))
   replayed <- replay_design(read_design(prv_file(single_pool)), prv_frame())
@@ -627,8 +585,6 @@ test_that("the refusal names the version and the field", {
 })
 
 test_that("an in-memory record is read under the same rule", {
-  # Activation, joint moments and stacking read the record the execution left
-  # on the sample, so they answer to it as well.
   master <- prv_master(prv_schedule())
   broken <- master
   attr(broken, "metadata")$panel_assignment$unit <- "psu"
@@ -661,9 +617,7 @@ prv_class <- function(case) {
 }
 
 test_that("the writer refuses a record it would have to repair to write", {
-  # Writing is reading: a receipt is the record as a later reader will find
-  # it, so a writer that fills in a field the record does not carry produces a
-  # well-formed file describing an assignment nothing recorded.
+  # Filling in a missing field would write an assignment nothing recorded.
   master <- prv_master(panel_stage = 2)
   path <- withr::local_tempfile(fileext = ".json")
 
@@ -682,12 +636,10 @@ test_that("the writer refuses a record it would have to repair to write", {
     )
   }
 
-  # Refused before the file exists, not after it is written and then regretted.
+  # Refused before the file exists.
   expect_false(file.exists(path))
 
-  # Each refusal names the call the user made. The encoder is shared, so
-  # without the public call threaded through it every one of them would be
-  # reported against an internal function nobody invoked.
+  # The shared encoder reports each refusal against the public call.
   stageless <- prv_mutated(master, "assignment_stage", NULL)
   named_by <- function(expr) {
     err <- tryCatch(expr, samplyr_error_panel_record_malformed = function(e) e)
@@ -715,8 +667,7 @@ test_that("materializing, pairing and programming read the version first", {
     expect_error(
       joint_expectation(broken, waves = c(1, 2)), class = cls, info = case
     )
-    # A program is built out of numbers taken from these records, so it is
-    # refused where it is declared rather than at its first wave.
+    # A program is refused where it is declared, not at its first wave.
     expect_error(
       rotation_program(
         cohorts = list(A = broken),
@@ -741,9 +692,7 @@ test_that("a survey export reads the version before the quotas it exports", {
   wave <- execute(master, wave = 1)
   expect_s3_class(as_svydesign(wave), "twophase2")
 
-  # The phase-2 units, blocks and probabilities are this algorithm's and this
-  # schema's. An export is where a misread record becomes an object that looks
-  # estimable.
+  # A misread record would export as an object that looks estimable.
   for (case in names(prv_broken)) {
     spec <- prv_broken[[case]]
     expect_error(
@@ -767,10 +716,7 @@ test_that("stacking waves reads the version of the record it stacks", {
 })
 
 test_that("an unreadable record is not reported as one that declares no waves", {
-  # Whether a record declares waves is a fact about its fields, so a record
-  # whose law is unknown must not be described by one of them. The two facts
-  # are separated by removing the schedule as well: before the version was
-  # read first, this was a missing schedule.
+  # The schedule is removed too, so the version must be read first.
   master <- prv_master(prv_schedule())
   unreadable <- prv_mutated(
     prv_mutated(master, "version", 99L), "schedule", NULL

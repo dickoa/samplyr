@@ -8,7 +8,7 @@ cluster_by(.data, ...)
 }
 \arguments{
 \item{.data}{A \code{sampling_design} object (piped from \code{\link[=sampling_design]{sampling_design()}},
-\code{\link[=stratify_by]{stratify_by()}}, or \code{\link[=add_stage]{add_stage()}}).}
+\code{\link[=add_stage]{add_stage()}}, or \code{\link[=stratify_by]{stratify_by()}}), before the stage's \code{\link[=draw]{draw()}}.}
 
 \item{...}{Clustering variable(s) specified as bare column names that
 identify the sampling units. In most cases this is a single variable
@@ -59,14 +59,10 @@ globally unique ID or include multiple columns in \code{cluster_by()}.
 }
 \section{Order of operations}{
 
-In a single stage, the typical order is:
-\enumerate{
-\item \code{stratify_by()} (optional) - define strata
-\item \code{cluster_by()} (optional) - define sampling units
-\item \code{draw()} (required) - specify selection parameters
-}
-
-Both \code{stratify_by()} and \code{cluster_by()} are optional but \code{draw()} is required.
+Within a stage, \code{cluster_by()} and \code{\link[=stratify_by]{stratify_by()}} are optional and come
+before \code{\link[=draw]{draw()}}, in either order. \code{draw()} is required and closes the
+stage, so \code{cluster_by()} after it is refused. \code{\link[=sampling_design]{sampling_design()}}
+describes the stage grammar and why the order matters.
 }
 
 \examples{

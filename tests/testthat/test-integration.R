@@ -33,7 +33,6 @@ make_school_frame <- function() {
     )
   )
 
-  # Expand to students
   students <- do.call(
     rbind,
     lapply(seq_len(n_schools), function(i) {
@@ -87,7 +86,6 @@ test_that("Stratified proportional allocation workflow", {
 test_that("Stratified Neyman allocation workflow", {
   frame <- make_population_frame()
 
-  # Calculate stratum variances
   var_df <- aggregate(income ~ region, data = frame, FUN = var)
   names(var_df)[2] <- "var"
 
@@ -122,7 +120,6 @@ test_that("Optimal allocation with named vectors", {
   frame <- make_population_frame()
   regions <- levels(factor(frame$region))
 
-  # Compute variances as a named vector
   vars_by_region <- tapply(frame$income, frame$region, var)
   costs <- setNames(c(500, 500, 750, 500), regions)
 
@@ -276,7 +273,6 @@ test_that("Different sampling rates per stratum", {
 test_that("Multi-stage with separate execution workflow", {
   frame <- make_school_frame()
 
-  # Define design
   design <- sampling_design() |>
     add_stage(label = "Schools") |>
     cluster_by(school_id) |>
@@ -300,7 +296,6 @@ test_that("Print methods work", {
     cluster_by(school_id) |>
     draw(n = 100)
 
-  # Should not error
   expect_output(print(design), "Sampling Design")
   expect_output(print(design), "Test Survey")
 })
@@ -320,9 +315,7 @@ test_that("Weights are mathematically correct", {
 })
 
 test_that("per-EA frac compensation yields a self-weighting two-stage design", {
-  # Two-stage self-weighting recipe: PPS EAs on a household count, then
-  # households at frac = f / pi1 so every household has probability f and
-  # weight 1/f.
+  # Households at frac = f / pi1 each have probability f and weight 1/f.
   sizes <- c(4, 6, 8, 10, 12, 5, 7, 9, 11, 8)
   frame <- data.frame(
     ea = rep(seq_along(sizes), sizes),

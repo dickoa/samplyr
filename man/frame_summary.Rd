@@ -16,33 +16,29 @@ frame_summary(
 \arguments{
 \item{x}{A \code{tbl_sample} produced by \code{\link[=execute]{execute()}} that carries a
 frame digest, or a \code{sampling_design} restored by \code{\link[=read_design]{read_design()}}
-whose file was written from an executed sample: the execution
-receipt carries the digest, so a shipped design file supports
-next-wave planning without the frame or the sample. With \code{frame},
-any complete \code{sampling_design} will do.}
+from a file written from an executed sample. That file's execution
+receipt carries the digest, so it supports next-wave planning
+without the frame or the sample. With \code{frame}, any complete
+\code{sampling_design} will do.}
 
-\item{frame}{Optional frame to preview the design against: one data
-frame for a shared hierarchy, or an ordered list of stage
-registers, as \code{\link[=execute]{execute()}} takes them. When supplied, the report
-describes what the design \emph{would} do on that frame rather than
-what it did, and no sampling is performed: no random numbers are
-drawn and \code{.Random.seed} is left as it was. See "Previewing a
-design" below.}
+\item{frame}{Optional frame on which to preview what the design
+\emph{would} do, in a form \code{\link[=execute]{execute()}} accepts: one data frame for a
+shared hierarchy, or an ordered list of stage registers. No
+sampling is performed, no random numbers are drawn, and
+\code{.Random.seed} is left as it was. See "Previewing a design" below.}
 
 \item{...}{These dots are for future extensions and must be empty.
-\code{stages} and the arguments after it follow \code{...}, so each must be
-named exactly: the singular \code{stage} is reported rather than
-prefix-matched.}
+The arguments after them must be named exactly, so the singular
+\code{stage} is reported rather than prefix-matched.}
 
 \item{stages}{An integer vector of stage numbers to report, or
 \code{NULL} (default) for all recorded stages.}
 
 \item{scope}{Denominator basis for population sizes and take rates.
-With \code{"eligible"} (default), denominators cover the units that
-were eligible for the recorded execution. With \code{"universe"},
-denominators are reported only where the digest covers the full
-population hierarchy. Denominators that the recorded scope cannot
-support are \code{NA}, never invented.}
+\code{"eligible"} (default) counts the units eligible for the recorded
+execution. \code{"universe"} reports denominators only where the digest
+covers the full population hierarchy. A denominator the recorded
+scope cannot support is \code{NA}, never invented.}
 
 \item{detail}{Resolution of the report: \code{"stage"} (one row per
 stage), \code{"pool"} (one row per selection pool and realization), or
@@ -50,7 +46,7 @@ stage), \code{"pool"} (one row per selection pool and realization), or
 retained a unit-level representation).}
 }
 \value{
-A tibble. The \code{scope} column always states how complete the
+A tibble. Its \code{scope} column states how complete the
 underlying representation is (\code{"eligible"}, \code{"universe"},
 \code{"conditional"}, \code{"partial"}, or \code{"unknown"}).
 
@@ -66,54 +62,43 @@ label columns, \code{N}, \code{n_target}, \code{n_expected}, \code{n_realized}, 
 applies, \code{NA} otherwise), \code{take_rate}, and \code{capped}. \code{replicate} is
 \code{1} for an ordinary execution. In a replicated execution, \code{pool_id}
 identifies the shared structural pool and the key is \code{stage},
-\code{pool_id}, and \code{replicate}. Stratum columns of stages that do not
-use them are \code{NA}.
+\code{pool_id}, and \code{replicate}. Stratum columns are \code{NA} for stages that
+do not use them.
 
-\code{capped} marks a pool that held fewer units than the stage asked
-for. It is always \code{FALSE} on a random-size stage, which realizes a
-count around its target rather than running out of units, and \code{NA}
-where the target fell short but the design recording which kind of
-stage it is was not available.
-
-\code{capped} is a statement about selection: it marks a pool that could
-not supply the executable target it was given. A stratum whose
-target an allocation method had already reduced to the stratum
-population is therefore \code{FALSE}, because \code{n_target} records the
-post-redistribution target and the pool delivered it in full. That
-event is reported by \code{execute()} instead, as a message of class
-\code{samplyr_message_allocation_capped} or, when the stage ends up
-taking everything within reach, \code{samplyr_warning_census}. The
-digest does not retain the pre-redistribution allocation target,
-so the distinction is available from the conditions rather than
-from this table.
+\code{capped} marks a pool that could not supply the executable target
+it was given. It is always \code{FALSE} on a random-size stage, and \code{NA}
+for a shortfall when no design is available to record which kind of
+stage it is. A stratum that an allocation method had already
+reduced to its population is \code{FALSE}, because \code{n_target} records
+the post-redistribution target. \code{execute()} reports that event as
+\code{samplyr_message_allocation_capped} or, when the stage takes
+everything within reach, \code{samplyr_warning_census} (see
+\link{execution-conditions}).
 
 For \code{detail = "unit"}, one row per population unit of each stage
 that stored units, with \code{stage}, \code{pool_id}, \code{unit_id},
 \code{unit_order}, \code{chance}, \code{is_certainty}, \code{n_descendants},
 \code{is_selected}, and \code{n_hits}. Stages that stored only a constant or a
-chance distribution contribute no rows. Requesting such a stage
-explicitly is an error rather than a silently empty result.
+chance distribution contribute no rows, and requesting such a stage
+explicitly is an error.
 }
 \description{
-An executed sample can carry a frame digest: a compact record of the
+An executed sample can carry a frame digest, a compact record of the
 frames, selection pools, resolved selection chances, and allocation
 that each stage encountered at execution time. \code{frame_summary()}
-turns that record into documented tibbles, so the structure of the
-selection remains intelligible after the original frame has gone
-away.
+turns that record into tibbles, so the structure of the selection
+stays readable after the original frame has gone away.
 }
 \details{
-\code{take_rate} is \code{n_realized / N}. It is a take rate, not an
-inclusion probability: for unequal-probability designs the two
-differ by design. \code{chance_kind} states what the recorded chances
-mean: first-order inclusion probabilities for without-replacement
-stages, expected hits for with-replacement stages. \code{probabilities}
-states how well the stage's method honors them: \code{"exact"} when the
-recorded chances equal the design's true first-order chances,
-\code{"approximate"} when the method treats them as a target achieved to
-a documented approximation (\code{"pps_sps"}, \code{"pps_pareto"}, and
-registered methods declared \code{probabilities = "approximate"}), and
-\code{NA} for digests recorded before the field existed.
+\code{take_rate} is \code{n_realized / N}, not an inclusion probability, and
+the two differ for unequal-probability designs. \code{chance_kind} states
+what the recorded chances mean: first-order inclusion probabilities
+for without-replacement stages, expected hits for with-replacement
+stages. \code{probabilities} is the stage's probability tier (see
+\link{sample-columns}): \code{"exact"} when the recorded chances equal the
+design's true first-order chances, \code{"approximate"} when the method
+achieves them only to a documented approximation, and \code{NA} for
+digests recorded before the field existed.
 
 The allocation columns distinguish three quantities:
 \itemize{
@@ -122,66 +107,55 @@ execution-time population limits, probability capping, or
 certainty overflow. For a random-size design specified with
 \code{frac}, it is \code{N * frac} and may be fractional.
 \item \code{n_expected} is the sum of the final resolved inclusion
-probabilities or expected hits. It can differ from \code{n_target}
-after probability capping or other feasibility adjustments.
-\item \code{n_realized} is the number of selected units or occurrences in
-the realization.
+probabilities or expected hits. Probability capping or other
+feasibility adjustments can make it differ from \code{n_target}.
+\item \code{n_realized} is the number of selected units or occurrences.
 }
 
-These quantities often coincide for a feasible fixed-size design.
-For Bernoulli and Poisson sampling, \code{n_realized} varies around
-\code{n_expected}. \code{n_target} still records the nominal requested
-expectation. It is \code{NA} only when no nominal count can be recovered,
-for example from an older digest or a method with unspecified target
-semantics.
+The three often coincide for a feasible fixed-size design. Under
+Bernoulli and Poisson sampling, \code{n_realized} varies around
+\code{n_expected} and \code{n_target} keeps the nominal expectation.
+\code{n_target} is \code{NA} only when no nominal count can be recovered, as
+from an older digest or a method with unspecified target semantics.
 
-Stage detail stays compact for replicated executions: a common
-per-replicate realized allocation is reported, while varying
-\code{n_realized} and \code{take_rate} are \code{NA}. Pool detail is the drill-down:
-it returns one row per pool and replicate with scalar realized
-values, even when all replicates happen to agree. Population and
-design columns repeat across those rows, so select one replicate
-before using a replicated pool table as a next-wave planning frame.
-Unit detail spans the stacked replicates:
-\code{is_selected} marks units selected in at least one replicate and
-\code{n_hits} counts occurrences across all replicates, so a
-without-replacement unit can show \code{n_hits > 1}. The per-replicate
-trace is the \code{replicate} column of the digest's selected units.
-A replicated multi-stage execution records only the stage prefix
-shared by every replicate: later-stage pools hang off each
-replicate's own selected parents, so those stages are not part of
-the manifest and \code{frame_summary()} says so.
+In a replicated execution, stage detail reports the realized
+allocation when every replicate shares it, and \code{NA} for \code{n_realized}
+and \code{take_rate} otherwise. Pool detail has one row per pool and
+replicate even when the replicates agree, with population and design
+columns repeated, so select one replicate before using it as a
+next-wave planning frame. Unit detail spans the stacked replicates:
+\code{is_selected} marks units selected in at least one and \code{n_hits}
+counts occurrences across all, so a without-replacement unit can show
+\code{n_hits > 1}. The per-replicate trace is the \code{replicate} column of
+the digest's selected units. A replicated multi-stage execution
+records only the stage prefix every replicate shares, because
+later-stage pools hang off each replicate's own selected parents, and
+\code{frame_summary()} says so.
 
 A digest whose sample was modified after execution (rows, weights,
-or design columns changed) is reported as invalidated and refused:
-a stale digest is worse than no digest.
+or design columns changed) is reported as invalidated and refused.
 }
 \section{Previewing a design}{
 
-With \code{frame}, the report is resolved from the design and the frame
-without drawing: every selection pool is enumerated and every chance
-resolved, but nothing is selected. This makes an allocation
-inspectable before it is committed to, and lets a design restored from
-a file be checked against next wave's frame.
-
-Because there is no realization, \code{n_realized} and \code{take_rate} are \code{NA},
-as are \code{is_selected} and \code{n_hits} at \code{detail = "unit"}. Every other
-column, and the shape of the table, is the same as for a recorded
-digest, so the two are directly comparable.
+With \code{frame}, every selection pool is enumerated and every chance
+resolved, but nothing is selected. An allocation can be inspected
+before it is committed to, and a design restored from a file can be
+checked against next wave's frame. \code{n_realized} and \code{take_rate} are
+\code{NA}, as are \code{is_selected} and \code{n_hits} at \code{detail = "unit"}. Every
+other column, and the shape of the table, matches a recorded digest,
+so the two are directly comparable.
 
 At \code{detail = "pool"}, a stage below a clustered stage reports one pool
 per \emph{candidate} parent, and its \code{n_target} is what that stage would
-take \strong{given that parent is selected}. This is what field planning
-needs: how many households to list in a selected cluster.
-
-At \code{detail = "stage"}, those conditional pools are rolled up weighted
-by the probability each parent is selected, so the row reports the
-\strong{expected} size of the stage rather than the total across every
-candidate. A design taking 10 of 100 clusters and 5 units in each
-reports \code{n_target = 50} at stage 2, not 500. For a design whose stage
-sizes are fixed this is also the exact size. Where per-parent takes
-vary (\code{frac} over unequal clusters, for instance) the realized size
-varies around it.
+take \strong{given that parent is selected}, such as how many households
+to list in a selected cluster. At \code{detail = "stage"}, those pools are
+rolled up weighted by the probability each parent is selected, so the
+row reports the \strong{expected} stage size rather than the total over
+every candidate. A design taking 10 of 100 clusters and 5 units in
+each reports \code{n_target = 50} at stage 2, not 500. With fixed stage
+sizes this is also the exact size. Where per-parent takes vary (\code{frac}
+over unequal clusters, for instance) the realized size varies around
+it.
 
 Not every design can be previewed. A stage below a with-replacement
 stage is refused, because the number of times each parent is hit is

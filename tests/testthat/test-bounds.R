@@ -3,9 +3,9 @@ make_unequal_frame <- function() {
   data.frame(
     id = 1:1000,
     region = c(
-      rep("Large", 800), # 80% of population
-      rep("Medium", 150), # 15% of population
-      rep("Small", 50) # 5% of population
+      rep("Large", 800),
+      rep("Medium", 150),
+      rep("Small", 50)
     ),
     income = rlnorm(1000, meanlog = 10, sdlog = 0.5)
   )
@@ -14,7 +14,7 @@ make_unequal_frame <- function() {
 make_variance_df <- function() {
   data.frame(
     region = c("Large", "Medium", "Small"),
-    var = c(100, 400, 900) # Small stratum has highest variance
+    var = c(100, 400, 900)
   )
 }
 
@@ -85,7 +85,7 @@ test_that("min_n cannot exceed max_n", {
 test_that("min_n and max_n warn when no allocation method", {
   expect_warning(
     sampling_design() |>
-      stratify_by(region) |> # No alloc specified
+      stratify_by(region) |>
       draw(n = 100, min_n = 2),
     "only applies when an allocation method"
   )
@@ -101,7 +101,7 @@ test_that("min_n and max_n warn when no allocation method", {
 test_that("min_n errors when constraint is infeasible", {
   frame <- make_unequal_frame()
 
-  # 3 strata * 50 min = 150 required, but only asking for 100
+  # 3 strata * 50 = 150 required, above n = 100.
   expect_error(
     sampling_design() |>
       stratify_by(region, alloc = "proportional") |>
@@ -114,7 +114,7 @@ test_that("min_n errors when constraint is infeasible", {
 test_that("max_n errors when constraint is infeasible", {
   frame <- make_unequal_frame()
 
-  # 3 strata * 10 max = 30 allowed, but asking for 100
+  # 3 strata * 10 = 30 allowed, below n = 100.
   expect_error(
     sampling_design() |>
       stratify_by(region, alloc = "proportional") |>
@@ -127,9 +127,7 @@ test_that("max_n errors when constraint is infeasible", {
 test_that("min_n ensures minimum per stratum with proportional allocation", {
   frame <- make_unequal_frame()
 
-  # Without min_n, proportional would give Small stratum very few units
-  # 5% of 100 = 5 units
-
+  # Proportional gives Small 5% of 100 = 5 units.
   result <- sampling_design() |>
     stratify_by(region, alloc = "proportional") |>
     draw(n = 100, min_n = 10) |>
@@ -137,22 +135,16 @@ test_that("min_n ensures minimum per stratum with proportional allocation", {
 
   counts <- table(result$region)
 
-  # All strata should have at least min_n
   expect_true(all(counts >= 10))
 
-  # Total should still be exactly 100
   expect_equal(sum(counts), 100)
 
-  # Small stratum should have exactly 10 (raised from ~5)
   expect_equal(as.numeric(counts["Small"]), 10)
 })
 
 test_that("min_n ensures minimum per stratum with Neyman allocation", {
   frame <- make_unequal_frame()
   var_df <- make_variance_df()
-
-  # Neyman allocation with high variance in Small stratum
-  # But Small has low N_h, so allocation might still be low
 
   result <- sampling_design() |>
     stratify_by(region, alloc = "neyman", variance = var_df) |>
@@ -161,21 +153,15 @@ test_that("min_n ensures minimum per stratum with Neyman allocation", {
 
   counts <- table(result$region)
 
-  # All strata should have at least min_n
   expect_true(all(counts >= 5))
 
-  # Total should be exactly 100
   expect_equal(sum(counts), 100)
 })
 
 test_that("min_n ensures minimum with equal allocation", {
   frame <- make_unequal_frame()
 
-  # Equal allocation gives 33-34 per stratum for n=100
-  # min_n = 40 should force all to at least 40
-  # But that requires 120 total, which is infeasible for n=100
-
-  # Test with feasible min_n
+  # Equal allocation gives 33-34 per stratum, so min_n = 35 needs n = 120.
   result <- sampling_design() |>
     stratify_by(region, alloc = "equal") |>
     draw(n = 120, min_n = 35) |>
@@ -189,9 +175,7 @@ test_that("min_n ensures minimum with equal allocation", {
 test_that("max_n caps large strata with proportional allocation", {
   frame <- make_unequal_frame()
 
-  # Proportional allocation would give Large stratum 80 units (80% of 100)
-  # max_n = 50 should cap it
-
+  # Proportional gives Large 80 of 100.
   result <- sampling_design() |>
     stratify_by(region, alloc = "proportional") |>
     draw(n = 100, max_n = 50) |>
@@ -199,13 +183,10 @@ test_that("max_n caps large strata with proportional allocation", {
 
   counts <- table(result$region)
 
-  # No stratum should exceed max_n
   expect_true(all(counts <= 50))
 
-  # Total should still be exactly 100
   expect_equal(sum(counts), 100)
 
-  # Large stratum should be capped at 50 (down from ~80)
   expect_equal(as.numeric(counts["Large"]), 50)
 })
 
@@ -220,19 +201,15 @@ test_that("max_n caps with Neyman allocation", {
 
   counts <- table(result$region)
 
-  # No stratum should exceed max_n
   expect_true(all(counts <= 40))
 
-  # Total should be exactly 100
   expect_equal(sum(counts), 100)
 })
 
 test_that("min_n and max_n work together", {
   frame <- make_unequal_frame()
 
-  # Proportional would give: Large ~80, Medium ~15, Small ~5
-  # With min_n=10, max_n=50: Large capped at 50, Small raised to 10
-
+  # Proportional gives Large ~80, Small ~5.
   result <- sampling_design() |>
     stratify_by(region, alloc = "proportional") |>
     draw(n = 100, min_n = 10, max_n = 50) |>
@@ -240,14 +217,11 @@ test_that("min_n and max_n work together", {
 
   counts <- table(result$region)
 
-  # All within bounds
   expect_true(all(counts >= 10))
   expect_true(all(counts <= 50))
 
-  # Total correct
   expect_equal(sum(counts), 100)
 
-  # Large capped, Small raised
   expect_equal(as.numeric(counts["Large"]), 50)
   expect_gte(as.numeric(counts["Small"]), 10)
 })
@@ -255,10 +229,7 @@ test_that("min_n and max_n work together", {
 test_that("tight bounds still work when feasible", {
   frame <- make_unequal_frame()
 
-  # 3 strata, n = 99, min_n = 30, max_n = 35
-  # Forces each to be in [30, 35], total must be 99
-  # Feasible: 33 + 33 + 33 = 99
-
+  # Each stratum in [30, 35] with total 99 is feasible as 33 + 33 + 33.
   result <- sampling_design() |>
     stratify_by(region, alloc = "equal") |>
     draw(n = 99, min_n = 30, max_n = 35) |>
@@ -272,16 +243,12 @@ test_that("tight bounds still work when feasible", {
 })
 
 test_that("bounds work when stratum size < min_n", {
-  # Create frame where one stratum is smaller than desired min_n
   small_frame <- data.frame(
     id = 1:100,
-    region = c(rep("A", 80), rep("B", 15), rep("C", 5)) # C has only 5 units
+    region = c(rep("A", 80), rep("B", 15), rep("C", 5))
   )
 
-  # Asking for min_n = 10 but C only has 5 units
-  # Should cap at population size (take all 5 from C)
-  # Effective minimums: A=10, B=10, C=5 (capped at pop)
-  # Total minimum = 25, so n=50 is feasible
+  # C is capped at its 5 units, so the minimum total is 25 and n = 50 fits.
   result <- sampling_design() |>
     stratify_by(region, alloc = "proportional") |>
     draw(n = 50, min_n = 10) |>
@@ -289,14 +256,11 @@ test_that("bounds work when stratum size < min_n", {
 
   counts <- table(result$region)
 
-  # A and B should have at least 10
   expect_gte(as.numeric(counts["A"]), 10)
   expect_gte(as.numeric(counts["B"]), 10)
 
-  # C should have all 5 (capped by population)
   expect_equal(as.numeric(counts["C"]), 5)
 
-  # Total should still be 50
   expect_equal(sum(counts), 50)
 })
 
@@ -328,14 +292,12 @@ test_that("weights are correct when bounds applied", {
     draw(n = 100, min_n = 10, max_n = 50) |>
     execute(frame, seed = 42)
 
-  # Check weights are inverse of selection probabilities
   for (r in c("Large", "Medium", "Small")) {
     stratum_data <- result[result$region == r, ]
     n_h <- nrow(stratum_data)
     N_h <- sum(frame$region == r)
     expected_weight <- N_h / n_h
 
-    # All units in stratum should have same weight
     expect_equal(length(unique(stratum_data$.weight)), 1)
     expect_equal(stratum_data$.weight[1], expected_weight, tolerance = 0.001)
   }
@@ -363,10 +325,8 @@ test_that("NULL bounds are stored correctly", {
   expect_null(draw_spec$max_n)
 })
 
-test_that("bounds work with many strata (iteration cap regression)", {
-  # Verifies that the bounded solver converges for H > 50 strata. The scale
-  # is found by bisection, so the iteration count does not grow with H; an
-  # earlier implementation capped iterations at 50 and could fail for large H.
+test_that("bounds converge with many strata within the iteration cap", {
+  # The scale is found by bisection, so iterations do not grow with H > 50.
   n_strata <- 80
   sizes <- rep(c(500, 10), length.out = n_strata)
   frame <- data.frame(
@@ -374,8 +334,7 @@ test_that("bounds work with many strata (iteration cap regression)", {
     stratum = rep(paste0("S", sprintf("%03d", seq_len(n_strata))), times = sizes)
   )
 
-  # Small strata (N=10) get proportional targets < min_n=3,
-  # forcing redistribution from large strata across many iterations
+  # Small strata (N = 10) get proportional targets below min_n = 3.
   result <- sampling_design() |>
     stratify_by(stratum, alloc = "proportional") |>
     draw(n = 400, min_n = 3, max_n = 20) |>
@@ -388,14 +347,12 @@ test_that("bounds work with many strata (iteration cap regression)", {
 })
 
 test_that("bounds work with highly skewed population and tight bounds", {
-  # One dominant stratum with 90% of population, tight max forces redistribution
   frame <- data.frame(
     id = 1:1000,
     stratum = c(rep("Huge", 900), rep("B", 50), rep("C", 30), rep("D", 20))
   )
 
-  # Proportional target for Huge: 900/1000 * 100 = 90, capped at 30
-  # 60 excess units must redistribute to 3 small strata
+  # Huge's target of 90 is capped at 30, so 60 units move to small strata.
   result <- sampling_design() |>
     stratify_by(stratum, alloc = "proportional") |>
     draw(n = 100, min_n = 5, max_n = 30) |>
@@ -408,17 +365,13 @@ test_that("bounds work with highly skewed population and tight bounds", {
 })
 
 test_that("bounds saturate correctly (all strata at min or max)", {
-  # 5 strata: proportional gives very unequal allocation
-  # Tight bounds force all strata to either min or max
   frame <- data.frame(
     id = 1:1100,
     stratum = c(rep("A", 500), rep("B", 300), rep("C", 200),
                 rep("D", 50), rep("E", 50))
   )
 
-  # n=50, min=8, max=12: feasible (5*8=40 <= 50 <= 5*12=60)
-  # Proportional: A=22.7, B=13.6, C=9.1, D=2.3, E=2.3
-  # D and E forced to 8, A capped at 12, remainder to B and C
+  # Proportional A=22.7, B=13.6, C=9.1, D=2.3, E=2.3 under min 8, max 12.
   result <- sampling_design() |>
     stratify_by(stratum, alloc = "proportional") |>
     draw(n = 50, min_n = 8, max_n = 12) |>
@@ -431,7 +384,6 @@ test_that("bounds saturate correctly (all strata at min or max)", {
 })
 
 test_that("bounds work with equal allocation and many strata", {
-  # Equal allocation with 100 strata: each gets n/100
   n_strata <- 100
   frame <- data.frame(
     id = seq_len(n_strata * 50),
@@ -450,18 +402,15 @@ test_that("bounds work with equal allocation and many strata", {
 })
 
 test_that("Neyman allocation with extreme variance spread and bounds", {
-  # One stratum has much higher variance, pulling allocation strongly
-  # Bounds prevent over/under-allocation
   frame <- data.frame(
     id = 1:600,
     stratum = rep(c("Low", "Medium", "High"), each = 200)
   )
   var_df <- data.frame(
     stratum = c("High", "Low", "Medium"),
-    var = c(10000, 1, 1) # extreme spread
+    var = c(10000, 1, 1)
   )
 
-  # Neyman gives almost everything to High, bounds prevent this
   result <- sampling_design() |>
     stratify_by(stratum, alloc = "neyman", variance = var_df) |>
     draw(n = 60, min_n = 10, max_n = 40) |>
@@ -487,10 +436,9 @@ test_that("allocate_bounded uses ORIC tie-breaking without active bounds", {
   expect_equal(sum(result), 4L)
 })
 
-# Constrained allocation. An allocation method must preserve its requested
-# total and its own criterion once a stratum saturates. The population size
-# is an upper bound whether or not `max_n` was supplied, and it is not a
-# bound at all for with-replacement draws.
+# Constrained allocation keeps its total and its own criterion once a stratum
+# saturates. N_h is an upper bound with or without `max_n`, but not for
+# with-replacement draws.
 
 alloc_frame <- function(sizes, labels = LETTERS[seq_along(sizes)]) {
   data.frame(
@@ -499,9 +447,8 @@ alloc_frame <- function(sizes, labels = LETTERS[seq_along(sizes)]) {
   )
 }
 
-# These tests are about the allocation numbers. Capping reports itself with a
-# message, which has its own tests at the end of this block; silence it here
-# so a saturating fixture does not fill the console.
+# Capping reports itself with a message, tested at the end of this file, so
+# the allocation-number tests silence it.
 alloc_exec <- function(design, frame, ...) {
   suppressMessages(execute(design, frame, ...))
 }
@@ -543,10 +490,7 @@ test_that("equal allocation redistributes past a small stratum", {
 })
 
 test_that("redistribution follows the allocation factors, not spare capacity", {
-  # Neyman factors N_h * sqrt(var) are (1000, 1000, 500). Once A saturates
-  # at 10, the free strata must split 240 as 2:1, giving 160/80.
-  # Redistributing in proportion to unused capacity would give 142/98 and
-  # quietly stop being a Neyman allocation.
+  # Factors (1000, 1000, 500) with A saturated at 10 split 240 as 160/80.
   frame <- alloc_frame(c(10, 500, 500))
   variance <- data.frame(h = c("A", "B", "C"), var = c(10000, 4, 1))
 
@@ -612,7 +556,6 @@ test_that("explicit bounds preserve the total when feasible", {
     draw(n = 50, min_n = 10) |>
     execute(frame, seed = 1)
 
-  # min_n exceeds stratum A, which is structurally capped at its population.
   expect_equal(nrow(feasible), 50)
   expect_equal(as.vector(table(feasible$h)), c(5L, 45L))
 })
@@ -647,8 +590,6 @@ test_that("a request above the population becomes a census", {
 })
 
 test_that("with-replacement allocation is not bounded by distinct units", {
-  # N_h is not a bound on the number of draws. Adding a nominal min_n used
-  # to make this design abort with a maximum-bound error.
   frame <- alloc_frame(c(10, 90))
 
   for (method in c("srswr", "pps_multinomial", "pps_chromy")) {
@@ -672,8 +613,7 @@ test_that("with-replacement allocation is not bounded by distinct units", {
 })
 
 test_that("zero-factor strata split what saturation leaves behind", {
-  # A carries the only positive Neyman factor and saturates at 5. The
-  # criterion is then indifferent between B and C, so they split equally.
+  # Only A has a positive factor, so B and C split what it leaves equally.
   frame <- alloc_frame(c(5, 150, 150))
   variance <- data.frame(h = c("A", "B", "C"), var = c(1, 0, 0))
 
@@ -703,11 +643,7 @@ test_that("bounded allocation holds its invariants under random inputs", {
 })
 
 test_that("a binding lower bound releases an upper bound that looked binding", {
-  # Unconstrained shares of 60 over factors (1, 10, 1) are 4.5/54.5/4.5, so C
-  # looks short of its lower bound of 40 and B looks over its upper bound of
-  # 30. Freezing both leaves 60 - 70 units to place in A. Solving the monotone
-  # equation instead pins C at 40 and shares the remaining 20 at the factor
-  # ratio, where B's upper bound never binds at all.
+  # Freezing both apparent violations would leave 60 - 70 units for A.
   out <- samplyr:::allocate_bounded(
     factors = c(1, 10, 1),
     total = 60,
@@ -721,8 +657,7 @@ test_that("a binding lower bound releases an upper bound that looked binding", {
 })
 
 test_that("a binding lower bound pushes a free stratum below its share", {
-  # A is pinned by lower == upper, leaving 7 units for B and C at equal
-  # factors. B's lower bound of 5 takes precedence over the equal split.
+  # A is pinned by lower == upper, and B's lower bound beats the equal split.
   out <- samplyr:::allocate_bounded(
     factors = c(1, 40, 40),
     total = 27,
@@ -734,11 +669,7 @@ test_that("a binding lower bound pushes a free stratum below its share", {
 })
 
 test_that("interior strata share one scale", {
-  # Characterization of the bounded solution: every stratum that no bound
-  # touches sits at a common lambda = n_h / factor_h. Integerization moves a
-  # stratum by less than one unit, so the spread in that ratio stays within
-  # 1 / factor_h. A scheme that redistributes by spare capacity, or that
-  # freezes violated bounds pass by pass, breaks this.
+  # Integerization moves an interior stratum by less than 1 / factor_h.
   withr::with_seed(416, {
     checked <- 0L
     for (i in seq_len(300)) {
@@ -767,10 +698,7 @@ test_that("interior strata share one scale", {
 })
 
 test_that("the solution depends on the factors only through their ratios", {
-  # The bracket for the scale search is a bound divided by a factor, so a
-  # uniformly tiny factor vector can overflow it to Inf and collapse the
-  # search onto a degenerate interval. Scaling the whole vector must not
-  # change the allocation at any magnitude, subnormal included.
+  # Tiny factors can overflow the search bracket to Inf.
   ref <- samplyr:::allocate_bounded(c(1, 2), 10, c(0, 0), c(10, 10))
   expect_identical(ref, c(3L, 7L))
 
@@ -783,8 +711,7 @@ test_that("the solution depends on the factors only through their ratios", {
 })
 
 test_that("a factor far below its bound takes the share its ratio implies", {
-  # The quotient overflows for the small factor alone, so the bracket cannot
-  # come from it. The ratio still says the second stratum takes everything.
+  # The quotient overflows for the small factor alone.
   expect_identical(
     samplyr:::allocate_bounded(c(1e-320, 2), 10, c(0, 0), c(10, 10)),
     c(0L, 10L)
@@ -796,10 +723,7 @@ test_that("a factor far below its bound takes the share its ratio implies", {
 })
 
 test_that("min_n and N_h binding together still deliver the total", {
-  # The released-upper-bound shape through the public API. Neyman factors are
-  # N_h * sqrt(var) = (100, 1020, 100); min_n lifts every lower bound to 25
-  # and B's population caps it at 30. The scale settles at 0.35, so B fills
-  # its stratum and A and C take 35 each.
+  # Factors (100, 1020, 100): B fills at 30 and A and C take 35 each.
   frame <- alloc_frame(c(100, 30, 100))
   variance <- data.frame(h = c("A", "B", "C"), var = c(1, 1156, 1))
 
@@ -855,8 +779,7 @@ test_that("capping the allocation reports once per execution", {
 
   expect_equal(count_messages(execute(design, frame, seed = 1)), 1L)
 
-  # Recomputing the same allocation to recover joint probabilities is not a
-  # second allocation, so it must stay quiet.
+  # Recomputing the allocation for joint probabilities is not a new one.
   sample <- suppressMessages(execute(design, frame, seed = 1))
   expect_equal(count_messages(joint_expectation(sample, frame, stages = 1)), 0L)
 })
@@ -872,7 +795,7 @@ test_that("an allocation that fits reports nothing", {
     class = "samplyr_message_allocation_capped"
   )
 
-  # A census warns on its own; it must not also report redistribution.
+  # A census warns on its own and does not also report redistribution.
   expect_no_message(
     suppressWarnings(
       sampling_design() |>
@@ -885,10 +808,7 @@ test_that("an allocation that fits reports nothing", {
 })
 
 test_that("the reported redistribution counts whole units", {
-  # Rounding the continuous overshoot reported "0 units redistributed" here:
-  # the ideal split of 21 is 10.5/10.5, A overshoots its population by half a
-  # unit, and one whole unit really does move. The realized 10/11 against an
-  # integerized ideal of 11/10 is what the message must describe.
+  # Ideal 10.5/10.5 integerizes to 11/10, and A's realized 10 moves one unit.
   expect_message(
     sampling_design() |>
       stratify_by(h, alloc = "equal") |>
@@ -901,12 +821,7 @@ test_that("the reported redistribution counts whole units", {
 })
 
 test_that("a bound min_n releases does not report as capping", {
-  # The same released-upper-bound shape the solver had to learn, one level up
-  # in the diagnostic. Neyman factors (100, 1000, 100) on populations
-  # (100, 30, 100) with n = 60: B's unconstrained share is 50, above its
-  # population of 30, so a test against the unconstrained targets calls it
-  # capped. But min_n = 20 lifts every stratum to 20 and consumes the whole
-  # sample, so the solution is 20/20/20 and B never reaches 30.
+  # B's unconstrained share of 50 exceeds N = 30, but min_n = 20 gives 20/20/20.
   frame <- alloc_frame(c(100, 30, 100))
   variance <- data.frame(h = c("A", "B", "C"), var = c(1, (10 / 30 * 100)^2, 1))
 
@@ -922,9 +837,7 @@ test_that("a bound min_n releases does not report as capping", {
 })
 
 test_that("a bound that still binds under min_n reports", {
-  # The other half: min_n present and a population bound genuinely active.
-  # Equal allocation of 60 over (10, 100, 100) with min_n = 5 gives 10/25/25,
-  # against 20/20/20 without the population bound, so A gave up 10 units.
+  # Without A's population bound the split would be 20/20/20.
   frame <- alloc_frame(c(10, 100, 100))
 
   expect_message(

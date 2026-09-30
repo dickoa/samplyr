@@ -258,11 +258,7 @@ test_that("stratified proportional gives deff = 1", {
 })
 
 test_that("stratified disproportionate Kish deff matches formula", {
-  # w_A = 100/10 = 10, w_B = 100/40 = 2.5
-  # sum(w) = 10*10 + 40*2.5 = 200
-  # sum(w^2) = 10*100 + 40*6.25 = 1250
-  # eff_n = 200^2 / 1250 = 32
-  # deff = 50 / 32 = 1.5625
+  # Weights 10 (x10) and 2.5 (x40): eff_n = 200^2 / 1250 = 32, deff = 50 / 32
   expect_equal(as.double(design_effect(fix_deff_disprop)), 1.5625)
   expect_equal(effective_n(fix_deff_disprop), 32)
 })
@@ -456,11 +452,11 @@ test_that("cluster-mode alloc plan draws PSUs from an EA-level frame", {
   )
 })
 
-## Certainty-aware alloc plans (svyplan >= 0.12.0, solved with a psu
-## register) are never coerced to stage sizes: the plan takes certainty PSUs
-## whole at their own takes and draws the remainder by PPS. A clustered,
-## stratified stage 1 fields them through the bridge (test-certainty-bridge.R);
-## every other context refuses. The fixtures live in helper-certainty.R.
+## Certainty-aware alloc plans
+
+# A plan solved with a psu register takes its certainty PSUs whole. Only a
+# clustered, stratified stage 1 fields it (test-certainty-bridge.R), and every
+# other context refuses. The fixtures live in helper-certainty.R.
 
 test_that("a certainty-aware alloc plan is refused as an unclustered stage size", {
   plan <- certainty_plan_fixture()
@@ -509,6 +505,7 @@ test_that("a certainty plan stripped of its register is still refused", {
 })
 
 test_that("an n_twophase() plan drives a two-phase design by subsampling fraction", {
+  skip_if_not_installed("survey")
   frame <- data.frame(
     stratum = c("A", "B", "C"),
     N = c(4000, 3000, 3000),
@@ -550,6 +547,7 @@ test_that("an n_twophase() plan drives a two-phase design by subsampling fractio
 })
 
 test_that("a two-phase design needs a shared identifier to export", {
+  skip_if_not_installed("survey")
   pop <- data.frame(unit_id = 1:2000, stratum = rep(c("A", "B"), each = 1000))
   phase1 <- sampling_design() |>
     draw(n = 400) |>
@@ -558,10 +556,136 @@ test_that("a two-phase design needs a shared identifier to export", {
     stratify_by(stratum) |>
     draw(frac = c(A = 0.5, B = 0.25)) |>
     execute(phase1, seed = 4)
-  # Neither phase declares a unit identifier, so there is nothing to build a
-  # cross-phase bridge from.
+  # Neither phase declares a unit identifier to bridge the phases.
   expect_error(
     as_svydesign(phase2),
     class = "samplyr_error_twophase_bridge"
+  )
+})
+
+## A plan's single size at a stratified stage
+
+# Without `alloc`, a scalar `n` is taken in every stratum, but a plan's size is
+# a total for the stage (or per PSU, one level down).
+
+total_plans <- function() {
+  list(
+    n_prop = svyplan::n_prop(p = 0.3, moe = 0.05),
+    n_mean = svyplan::n_mean(var = 4, moe = 0.2),
+    power_prop = svyplan::power_prop(p1 = 0.3, p2 = 0.4, power = 0.8),
+    n_multi = svyplan::n_multi(
+      data.frame(name = c("a", "b"), p = c(0.2, 0.4), moe = 0.05)
+    ),
+    n_cluster = svyplan::n_cluster(
+      stage_cost = c(500, 50), icc = 0.05, budget = 30000
+    )
+  )
+}
+
+plan_strata_frame <- function() {
+  # PSUs of 30, above the plan's take of 14 per PSU.
+  data.frame(
+    ea = rep(sprintf("EA%03d", 1:400), each = 30),
+    region = rep(c("north", "south", "east", "west"), each = 3000),
+    grp = rep(c("x", "y", "z"), 4000),
+    hh = 1:12000
+  )
+}
+
+test_that("a plan's size at a stratified stage without alloc is refused", {
+  plans <- total_plans()
+  expect_identical(
+    names(plans),
+    c("n_prop", "n_mean", "power_prop", "n_multi", "n_cluster")
+  )
+  for (name in names(plans)) {
+    expect_error(
+      sampling_design() |> stratify_by(region) |> draw(n = plans[[name]]),
+      class = "samplyr_error_svyplan_total_per_stratum",
+      label = name
+    )
+    expect_error(
+      sampling_design() |>
+        stratify_by(region) |>
+        cluster_by(ea) |>
+        draw(n = plans[[name]]),
+      class = "samplyr_error_svyplan_total_per_stratum",
+      label = paste(name, "clustered")
+    )
+  }
+
+  # One level down, a per-PSU take split by strata inside each PSU.
+  expect_error(
+    sampling_design() |>
+      cluster_by(ea) |>
+      draw(n = 10) |>
+      add_stage() |>
+      stratify_by(grp) |>
+      draw(n = plans$n_cluster),
+    class = "samplyr_error_svyplan_total_per_stratum"
+  )
+})
+
+test_that("strata cannot be added after a plan's size was drawn", {
+  # draw() reads the stage's strata when it is called.
+  expect_error(
+    sampling_design() |>
+      draw(n = svyplan::n_prop(p = 0.3, moe = 0.05)) |>
+      stratify_by(region),
+    class = "samplyr_error_stage_closed"
+  )
+})
+
+test_that("with alloc a plan's size is the stage total", {
+  plans <- total_plans()
+  frame <- plan_strata_frame()
+  for (name in setdiff(names(plans), "n_cluster")) {
+    s <- sampling_design() |>
+      stratify_by(region, alloc = "proportional") |>
+      draw(n = plans[[name]]) |>
+      execute(frame, seed = 1)
+    expect_identical(nrow(s), as.integer(plans[[name]]), label = name)
+  }
+
+  cl <- plans$n_cluster
+  stages <- as.integer(cl)
+  s <- sampling_design() |>
+    stratify_by(region, alloc = "proportional") |>
+    cluster_by(ea) |>
+    draw(n = cl) |>
+    add_stage() |>
+    stratify_by(grp, alloc = "proportional") |>
+    draw(n = cl) |>
+    execute(frame, seed = 1)
+  expect_identical(length(unique(s$ea)), stages[[1]])
+  expect_identical(nrow(s), as.integer(prod(stages)))
+})
+
+test_that("the plain size a refusal suggests is taken in every stratum", {
+  plan <- svyplan::n_prop(p = 0.3, moe = 0.05)
+  s <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = as.integer(plan)) |>
+    execute(plan_strata_frame(), seed = 1)
+  expect_identical(nrow(s), 4L * as.integer(plan))
+})
+
+test_that("a joint-target cluster plan fields its fixed take at stage 2", {
+  frame <- data.frame(
+    stratum = c("a", "b"), N = c(20000, 8000), N_psu = c(400, 160),
+    n_per_psu = c(12, 8), cost_psu = 400, cost_ssu = 40
+  )
+  measures <- data.frame(stratum = c("a", "b"), name = "y", p = 0.3,
+                         icc_psu = 0.05)
+  plan <- svyplan::n_alloc(frame, measures = measures,
+                           targets = data.frame(name = "y", cv = 0.08))
+  expect_false("n_per_psu_int" %in% names(as.data.frame(plan)))
+  expect_identical(
+    coerce_svyplan_n(plan, stage_index = 2L),
+    c(a = 12L, b = 8L)
+  )
+  expect_identical(
+    coerce_svyplan_n(plan, stage_index = 1L, clustered = TRUE),
+    stats::setNames(as.data.frame(plan)$n_psu_int, c("a", "b"))
   )
 })

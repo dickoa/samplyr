@@ -265,12 +265,9 @@ normalize_plan_program <- function(plan, cohorts, panels, through,
 #' not the rows they expand to. Both branches here have to count that same
 #' thing.
 #'
-#' A cohort drawn whole has no assignment record, and used to be counted in
-#' rows. That agrees with the plan only where a row is a unit. For a
-#' clustered cohort it does not: eight selected clusters of three elements
-#' each reported 24 against a plan meaning 8, and the mismatch surfaced as a
-#' plan-count error the user had not made. The unit is resolved the same way
-#' an assignment would resolve it, from the stage that would have carried it.
+#' A cohort drawn whole has no assignment record. Its unit is resolved the
+#' way an assignment would resolve it, from the stage that would have carried
+#' it, so a clustered cohort counts clusters, not rows.
 #' @noRd
 cohort_issue_count <- function(sample, call = caller_env()) {
   record <- cohort_assignment(sample, "A rotation program", call = call)

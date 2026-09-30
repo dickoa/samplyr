@@ -213,7 +213,7 @@ test_that("draw() errors on double draw", {
     sampling_design() |>
       draw(n = 100) |>
       draw(n = 50),
-    "already called"
+    class = "samplyr_error_stage_closed"
   )
 })
 
@@ -360,7 +360,7 @@ test_that("draw() limits named frac to one stratification variable", {
 test_that("draw() validates round parameter", {
   expect_error(
     sampling_design() |> draw(frac = 0.1, round = "invalid"),
-    "arg"
+    class = "samplyr_error_draw_argument"
   )
 
   expect_error(

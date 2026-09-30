@@ -1,10 +1,10 @@
 ---
-title: "Plan a Sample with svyplan"
+title: "Plan a sample with svyplan"
 output: rmarkdown::html_vignette
 bibliography: references.bib
 link-citations: true
 vignette: >
-  %\VignetteIndexEntry{Plan a Sample with svyplan}
+  %\VignetteIndexEntry{Plan a sample with svyplan}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -25,8 +25,8 @@ library(dplyr)
 ## From a precision target to a draw
 
 Use this article when the sample size or allocation still needs to be chosen.
-For the main selection workflow, start with `vignette("introduction")` and
-continue to `vignette("three-stage-sampling")`.
+For the main selection workflow, including a three-stage fieldwork example,
+start with `vignette("introduction")`.
 
 Planning answers how many units to issue and how to distribute them. Selection
 then applies that plan to a frame. `svyplan` owns the first calculation and
@@ -211,9 +211,29 @@ Do not also request an allocation in `stratify_by()`. Either `svyplan` supplies
 the stratum takes or `samplyr` computes them, not both.
 
 Neyman allocation minimizes the planned variance for the variable represented
-by `sd`, subject to the stated constraints. A cost-weighted allocation adds the
-declared costs. Neither choice is automatically optimal for other variables or
-domains.
+by `sd`, subject to the stated constraints [@cochran1977, sec. 5.5]. A
+cost-weighted allocation adds the declared costs. Neither choice is
+automatically optimal for other variables or domains. When each stratum is
+also a reporting domain, power allocation (`alloc = "power"`) compromises
+between the precision of the overall estimate and that of each stratum
+[@bankier1988].
+
+A stratum small enough to enumerate can be taken whole while the rest of the
+total is still allocated by the criterion. A logical `take_all` column in the
+planning frame marks it, and `draw(n = plan)` fields the census and the
+Neyman takes together. `stratify_by()` has no take-all rule of its own, so
+this is the route for such a design.
+
+```{r}
+take_all_plan <- allocation_frame |>
+  mutate(take_all = stratum == "Chemicals & Chemical Products") |>
+  n_alloc(n = 600, alloc = "neyman", min_n_stratum = 20)
+
+as.data.frame(take_all_plan)[, c("stratum", "N", "n_int", "take_all")]
+```
+
+The census stratum has weight one and contributes no sampling variance, and
+the remaining takes are the Neyman allocation of what is left of the total.
 
 ## Allocate for several indicators at once
 
@@ -323,7 +343,7 @@ those moments describe the population that will actually be surveyed.
 Clustering usually increases variance because units in the same cluster are
 similar. For a one-stage approximation with equal cluster size, the familiar
 design effect is determined by the homogeneity measure `icc` and the take per
-cluster.
+cluster [@kish1965].
 
 ```{r}
 design_effect(icc = 0.05, n_per_psu = 10)
@@ -345,8 +365,50 @@ as.integer(cluster_plan)
 ```
 
 In a two-stage `samplyr` design, the cluster plan supplies the stage-1 cluster
-count and the within-cluster take. See `?n_cluster` for the feasibility checks
-and `vignette("three-stage-sampling")` for multistage execution.
+count and the within-cluster take, so the same object goes to both `draw()`
+calls.
+
+```{r}
+sampling_design() |>
+  add_stage() |>
+    cluster_by(ea_id) |>
+    draw(n = cluster_plan, method = "pps_brewer", mos = households) |>
+  add_stage() |>
+    draw(n = cluster_plan)
+```
+
+A stratified plan allocated on the ultimate units comes from `n_alloc()` with
+a cluster model. The frame gives each stratum's households `N`, its PSU count
+`N_psu`, a fixed take `n_per_psu` and the stage costs, and the measures give
+the within-PSU homogeneity `icc_psu`. The plan then sets each stratum's PSU
+count at stage 1 and its take at stage 2, where the stage repeats the
+stratification because strata do not carry over between stages.
+
+```{r}
+cluster_frame <- bfa_eas |>
+  summarise(N = sum(households), N_psu = n(), .by = urban_rural) |>
+  rename(stratum = urban_rural) |>
+  mutate(n_per_psu = 12, cost_psu = 400, cost_ssu = 40)
+
+cluster_alloc <- n_alloc(
+  cluster_frame,
+  measures = data.frame(stratum = cluster_frame$stratum, name = "poverty",
+                        p = 0.3, icc_psu = 0.05),
+  targets = data.frame(name = "poverty", cv = 0.08)
+)
+
+sampling_design() |>
+  add_stage() |>
+    stratify_by(urban_rural) |>
+    cluster_by(ea_id) |>
+    draw(n = cluster_alloc, method = "pps_brewer", mos = households) |>
+  add_stage() |>
+    stratify_by(urban_rural) |>
+    draw(n = cluster_alloc)
+```
+
+See `?n_cluster` and `?n_alloc` for the feasibility checks and
+`vignette("introduction")` for multistage execution.
 
 ## Field a certainty-aware allocation
 
@@ -503,7 +565,8 @@ selection design.
 
 ## Next steps
 
-- Use `vignette("three-stage-sampling")` to carry a design through fieldwork.
+- Use the three-stage example in `vignette("introduction")` to carry a design
+  through fieldwork.
 - Use `vignette("rotating-panels")` for the longitudinal fieldwork handoff.
 - Use `vignette("survey-analysis")` after data collection.
 - Consult the svyplan reference pages for power, two-phase designs,

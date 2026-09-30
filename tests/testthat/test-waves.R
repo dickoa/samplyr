@@ -157,8 +157,7 @@ test_that("the activation factor is the block take, and totals are preserved", {
   master <- master_2_2()
   materialized <- execute(master, wave = 1)
 
-  # Two of four panels, blocks of four with a quota of one each: the
-  # conditional probability is 2/4 and the factor its inverse.
+  # Two of four panels in blocks of four: probability 2/4, factor 2.
   factor <- materialized$.weight /
     master$.weight[match(materialized$.sample_id, master$.sample_id)]
   expect_identical(unique(factor), 2)
@@ -300,9 +299,7 @@ test_that("the wave route refuses every other execution input", {
     class = "samplyr_error_wave_extra_arguments"
   )
 
-  # `frame_digest` used to be accepted here and dropped, which is the exact
-  # silent-ignore this guard exists to prevent. It has a real default, so its
-  # absence is read from `missing()` rather than from its value.
+  # `frame_digest` has a real default, so its presence is read from `missing()`.
   expect_error(
     execute(master, wave = 1, frame_digest = "full"),
     class = "samplyr_error_wave_extra_arguments"
@@ -311,8 +308,7 @@ test_that("the wave route refuses every other execution input", {
     execute(master, wave = 1, frame_digest = "full"),
     regexp = "reads no\\s+frame"
   )
-  # Including the value that happens to be the default: passing it is still
-  # passing it.
+  # Passing the default value is still passing it.
   expect_error(
     execute(master, wave = 1, frame_digest = "summary"),
     class = "samplyr_error_wave_extra_arguments"
@@ -361,9 +357,7 @@ test_that("only a scheduled, complete, unmaterialized master carries a wave", {
       draw(n = 2) |>
     add_stage("Units") |>
       draw(n = 5)
-  # wave_frame() has two regions, so a first stage of two clusters cannot
-  # rotate over four panels. The policy is incidental to what this test
-  # asserts, but it has to be declared for the master to exist at all.
+  # Two regions cannot rotate over four panels, so small_pool is declared.
   expect_warning(
     partial <- execute(
       design, wave_frame(), stages = 1, seed = 1, panels = rotation_2_2(),
@@ -416,29 +410,34 @@ test_that("the schedule survives the design file and replay reproduces it", {
     normalize_panel_input(rotation_2_2())$schedule[c("wave", "panel", "active")]
   )
 
-  # The block size follows from the schedule, so a replay given only the
-  # panel count would produce different labels.
+  # The block size follows from the schedule, not from the panel count alone.
   replayed <- replay_design(restored, frame)
   expect_identical(replayed$.panel, master$.panel)
   expect_identical(replayed$id, master$id)
 })
 
-test_that("a materialized wave records its wave and refuses replay", {
+test_that("a materialized wave records its wave and replays from its master", {
   frame <- wave_frame()
   materialized <- execute(master_2_2(), wave = 3)
 
   path <- withr::local_tempfile(fileext = ".json")
-  suppressWarnings(write_design(materialized, path, frame = frame))
+  expect_no_warning(write_design(materialized, path, frame = frame))
   receipt <- attr(read_design(path), "execution")
 
   expect_true(isTRUE(receipt$chained))
+  expect_identical(receipt$transition, "wave")
   expect_equal(receipt$wave$wave, 3L)
   expect_equal(as.integer(unlist(receipt$wave$active_panels)), c(3L, 4L))
   expect_length(receipt$wave$pools, 2L)
 
-  expect_error(
-    replay_design(read_design(path), frame),
-    class = "samplyr_error_receipt_chained"
+  replayed <- replay_design(read_design(path), frame)
+  expect_identical(
+    lapply(as.data.frame(replayed), identity),
+    lapply(as.data.frame(materialized), identity)
+  )
+  expect_identical(
+    attr(replayed, "metadata")$wave$active_panels,
+    attr(materialized, "metadata")$wave$active_panels
   )
 })
 
@@ -453,8 +452,7 @@ test_that("a wave retains the master as its first phase", {
   expect_identical(as.data.frame(prev$sample), as.data.frame(master))
   expect_identical(prev$stages, get_stages_executed(master))
 
-  # The master's metadata is reachable through the phase link, so the
-  # separate copy it used to be given is gone.
+  # The master's metadata is reachable through the phase link only.
   expect_null(attr(materialized, "metadata")$materialized_from)
   expect_equal(
     attr(prev$sample, "metadata")$n_selected,
@@ -470,8 +468,7 @@ test_that("a wave exports through twophase() with its exact weights", {
   svy <- as_svydesign(materialized)
   expect_s3_class(svy, "twophase2")
 
-  # The exported design's weights are the activation weights, not the
-  # master's: survey derives them from the two phases independently.
+  # survey derives the weights from the two phases independently.
   expect_equal(
     unname(stats::weights(svy)),
     unname(as.data.frame(materialized)$.weight)
@@ -479,8 +476,7 @@ test_that("a wave exports through twophase() with its exact weights", {
   expect_equal(nrow(svy$phase1$full$variables), nrow(master))
   expect_equal(sum(svy$subset), nrow(materialized))
 
-  # The point estimate is the design-weighted total either way; it is the
-  # variance the second phase supplies.
+  # The total is design-weighted either way, and phase 2 supplies the variance.
   total <- survey::svytotal(~value, svy)
   expect_equal(
     unname(coef(total)),
@@ -498,14 +494,12 @@ test_that("the activation phase carries the frozen blocks, not a filter", {
   record <- attr(master, "metadata")$panel_assignment
   blocks <- unlist(lapply(record$pools, function(p) p$blocks))
 
-  # One phase-2 stratum per frozen block, and its population count is the
-  # block's size in assignment units.
+  # One phase-2 stratum per frozen block, sized in assignment units.
   strata2 <- svy$phase2$strata[, 1]
   expect_equal(length(unique(strata2)), length(blocks))
   expect_setequal(unique(svy$phase2$fpc$popsize[, 1]), unique(blocks))
 
-  # A hand-written filter of the same rows is a modified sample and is
-  # refused, so the two routes cannot be confused.
+  # A hand-written filter of the same rows is a modified sample and is refused.
   filtered <- dplyr::filter(master, .panel %in% c(1L, 2L))
   expect_error(
     as_svydesign(filtered),
@@ -525,7 +519,7 @@ test_that("wave export supports the method choice and never falls back", {
   expect_s3_class(simple, "twophase")
   expect_s3_class(approx, "twophase")
 
-  # Same weights on every method; they differ only in the variance.
+  # Same weights on every method, which differ only in the variance.
   expect_equal(unname(stats::weights(simple)), unname(stats::weights(full)))
   expect_equal(unname(stats::weights(approx)), unname(stats::weights(full)))
 })
@@ -557,9 +551,7 @@ test_that("wave export covers the master shapes twophase() can represent", {
       unname(as.data.frame(materialized)$.weight),
       info = nm
     )
-    # The master is the first phase and every one of its stages is
-    # represented there. Weights alone do not detect a dropped stage,
-    # because a stage can carry variance without carrying probability.
+    # Weights alone miss a dropped stage, so the phase-1 stage count is checked.
     expect_equal(
       ncol(svy$phase1$full$cluster),
       length(get_stages_executed(master)),
@@ -583,9 +575,7 @@ test_that("a wave of a multistage master matches a hand-written twophase()", {
 
   total <- survey::svytotal(~value, as_svydesign(materialized))
 
-  # The same design written out by hand: both master stages at phase 1, the
-  # frozen blocks as phase-2 strata. A dropped stage moves the standard error
-  # while leaving the total exact, so both are compared.
+  # Both master stages at phase 1, blocks as phase-2 strata, SE compared too.
   record <- attr(master, "metadata")$panel_assignment
   df <- as.data.frame(master)
   keys <- make_group_key(df, record$key_vars)
@@ -634,8 +624,7 @@ test_that("wave export refuses a master with unequal inclusion probabilities", {
   # The master's own export is exact and is what the message points at.
   expect_s3_class(as_svydesign(pps), "survey.design")
 
-  # A method with no linearization treatment at all refuses on that ground
-  # instead, at either phase.
+  # A method with no linearization treatment refuses on that ground instead.
   spatial <- sampling_design() |>
     draw(n = 40, method = "lpm2", spread = c(score, value)) |>
     execute(frame, seed = 5, panels = rotation_2_2())
@@ -649,14 +638,12 @@ test_that("a wave inherits the restrictions of any second phase", {
   skip_if_not_installed("survey")
   materialized <- execute(master_2_2(), wave = 1)
 
-  # Replicate weights are not built for two-phase samples, and the message
-  # names the export that does work.
+  # Replicate weights are not built for two-phase samples.
   expect_error(
     as_svrepdesign(materialized),
     class = "samplyr_error_svrep_twophase_unsupported"
   )
-  # Activation joints are computed, but from the master: a materialized wave
-  # is not the query surface for them.
+  # Activation joints are computed from the master, not a materialized wave.
   expect_error(
     joint_expectation(materialized),
     class = "samplyr_error_wave_joint_unsupported"
@@ -694,6 +681,46 @@ test_that("a wave without its master refuses rather than exporting", {
     as_svydesign(materialized),
     class = "samplyr_error_wave_no_master"
   )
+  # Without the link it would be replicated as a single-phase sample.
+  for (type in c("JK1", "bootstrap", "subbootstrap")) {
+    expect_error(
+      as_svrepdesign(materialized, type = type),
+      class = "samplyr_error_wave_no_master"
+    )
+  }
+  skip_if_not_installed("svrep")
+  expect_error(
+    as_svrepdesign(materialized, type = "rwyb"),
+    class = "samplyr_error_wave_no_master"
+  )
+})
+
+test_that("a wave names its master's systematic stage once", {
+  skip_if_not_installed("survey")
+  master <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 60, method = "systematic") |>
+    execute(wave_frame(), seed = 42, panels = rotation_2_2())
+  warning <- tryCatch(
+    as_svydesign(execute(master, wave = 2)),
+    samplyr_warning_systematic_variance = identity
+  )
+  expect_s3_class(warning, "samplyr_warning_systematic_variance")
+  expect_match(conditionMessage(warning), "stage 1, phase\\s+1\\.")
+  expect_no_match(conditionMessage(warning), "phase\\s+2")
+})
+
+test_that("weights shared from a wave without its master are refused", {
+  skip_if_not_installed("survey")
+  materialized <- execute(master_2_2(), wave = 2)
+  metadata <- attr(materialized, "metadata")
+  metadata$prev_phase <- NULL
+  attr(materialized, "metadata") <- metadata
+  shared <- shared_weight_sample(source = materialized)
+
+  expect_error(as_svydesign(shared), class = "samplyr_error_wave_no_master")
+  expect_error(as_svrepdesign(shared, type = "bootstrap"),
+               class = "samplyr_error_wave_no_master")
 })
 
 test_that("a wave whose rows are not the master's is caught", {
@@ -701,8 +728,7 @@ test_that("a wave whose rows are not the master's is caught", {
   master <- master_2_2()
   materialized <- execute(master, wave = 1)
 
-  # A master from a different execution has the same shape and the same
-  # assignment record fields, so only the realized take detects the swap.
+  # Only the realized take tells a same-shaped master from another execution.
   metadata <- attr(materialized, "metadata")
   metadata$prev_phase$sample <- master_2_2(seed = 99)
   attr(materialized, "metadata") <- metadata
@@ -766,8 +792,7 @@ test_that("a cohort drawn whole exports as the single-phase design it is", {
   )
   live <- execute(program, wave = 2)
 
-  # The partitioned cohort activates a subsample and is two-phase; the whole
-  # cohort is not a subsample at all and stays single-phase.
+  # The partitioned cohort is two-phase, the whole cohort stays single-phase.
   expect_s3_class(as_svydesign(live$a), "twophase2")
   expect_s3_class(as_svydesign(live$b), "survey.design")
   expect_equal(
@@ -779,14 +804,11 @@ test_that("a cohort drawn whole exports as the single-phase design it is", {
 ## What the documented limits of the wave export actually are
 
 test_that("a wave of a master with no schedule is refused, so `panel` is never NA", {
-  # `stack_waves()` documents `panel` as always present. That rests on a
-  # master without a schedule having no waves to stack at all.
+  # `stack_waves()` documents `panel` as always present.
   bare <- sampling_design() |> draw(n = 10) |> execute(wave_frame(), seed = 3)
   expect_error(execute(bare, wave = 1), class = "samplyr_error_wave_no_schedule")
 
-  # The one object that would carry NA is a whole cohort of a rotation
-  # program, and it is refused for spanning cohorts before the column is
-  # built. The branch stays as a guard for that refusal being lifted.
+  # Only a whole cohort would carry NA, and it is refused for spanning cohorts.
   st <- data.frame(
     panel = rep(1:2, times = 3), wave = rep(1:3, each = 2),
     active = c(TRUE, TRUE, TRUE, FALSE, FALSE, TRUE)
@@ -819,9 +841,7 @@ test_that("a wave of a master with no schedule is refused, so `panel` is never N
 
 test_that("the two-phase variance of a total can be negative, and approx is finite", {
   skip_if_not_installed("survey")
-  # Documented on the as_svydesign() page. survey's exact estimator, which
-  # samplyr cannot intercept: the variance is not computed until an estimator
-  # is called, and samplyr is not in that call.
+  # survey computes this variance after export, so samplyr cannot intercept it.
   set.seed(20260820)
   population <- data.frame(
     uid = sprintf("a%04d", 1:1000),
@@ -836,8 +856,7 @@ test_that("the two-phase variance of a total can be negative, and approx is fini
     execute(population, seed = 5150, panels = rotation_2_2())
   wave <- execute(master, wave = 4)
 
-  # `SE()` and `vcov()` both take the square root again, so each re-emits
-  # base R's warning. Read once, quietly, and assert on the values.
+  # SE() and vcov() each re-emit base R's sqrt warning, so read them quietly.
   total <- suppressWarnings(survey::svytotal(~y, as_svydesign(wave)))
   total_se <- suppressWarnings(survey::SE(total)[[1]])
   total_var <- suppressWarnings(vcov(total)[1, 1])

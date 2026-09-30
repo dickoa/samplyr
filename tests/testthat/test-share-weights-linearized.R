@@ -1,18 +1,8 @@
-## X2. The linearized export of a weight-share transformation
+## The linearized export of a weight-share transformation
 
-# The generalized weight share total is the Horvitz-Thompson total of a
-# variable derived on the source units:
-#
-#   sum_i w_i y_i  =  sum_j I(j in S) / pi_j * z_j,   z_j = sum_i L_ji/L_i y_i
-#
-# so the oracle is that identity, computed with machinery that already
-# existed: attach z to the source sample, export the source sample the
-# ordinary way, and take its total. Nothing about that reimplements what is
-# under test, and it pins the standard error as well as the estimate.
-#
-# The fixture links 15 of the 90 targets to TWO dwellings each, which is the
-# structure an earlier draft's cluster-level shortcut could not have
-# expressed, and which is the reason this export exists.
+# The oracle is sum_i w_i y_i = sum_j I(j in S) / pi_j * z_j, with
+# z_j = sum_i L_ji / L_i * y_i, computed by exporting the source sample with z
+# attached. The fixture links 15 of the 90 targets to two dwellings each.
 
 linearized_targets <- function() {
   withr::with_seed(3, data.frame(
@@ -86,8 +76,7 @@ test_that("the export is the HT total of the derived source variable", {
 
   shared <- expect_matches_oracle(source_sample)
 
-  # And the point estimate is the transformation's own weighted total, which
-  # is what makes this the same estimator the replicate route exports.
+  # The point estimate is the transformation's own weighted total.
   expect_equal(
     unname(coef(survey::svytotal(~y, as_svydesign(shared)))),
     sum(shared$.weight * shared$y)
@@ -117,12 +106,17 @@ test_that("it holds for every source design shape it accepts", {
       draw(n = 3) |>
       execute(dwellings, seed = 7)
   )
+  # With replacement, a size measure included: the variance reads draw
+  # identifiers, which the expansion carries, not a structure over rows.
+  expect_matches_oracle(
+    sampling_design() |>
+      draw(n = 18, method = "pps_multinomial", mos = size) |>
+      execute(dwellings, seed = 7)
+  )
 })
 
 test_that("a target reached twice is carried, with no condition on it", {
   skip_if_not_installed("survey")
-  # The case the cluster-level shortcut could not express. There are more
-  # contributions than target rows precisely because of it.
   source_sample <- sampling_design() |>
     draw(n = 18) |>
     execute(linearized_dwellings(), seed = 7)
@@ -141,10 +135,7 @@ test_that("a target reached twice is carried, with no condition on it", {
 
 test_that("a source unit is one sampling unit, not one per contribution", {
   skip_if_not_installed("survey")
-  # `survey_id_info()` gives `~1` for an unclustered design, meaning every row
-  # is a unit. Resolved after the expansion that would make each contribution
-  # its own unit and take the variance apart into pieces that are not
-  # independent, which understates it without failing.
+  # Per-contribution units would understate the variance without failing.
   source_sample <- sampling_design() |>
     stratify_by(region) |>
     draw(n = c(n = 12, s = 6)) |>
@@ -153,14 +144,13 @@ test_that("a source unit is one sampling unit, not one per contribution", {
   svy <- as_svydesign(shared)
 
   expect_identical(deparse(svy$call$ids), "~.source_unit")
-  # One identifier per source row, repeated across that row's contributions.
   operator <- attr(shared, "metadata")$weight_share$operator
   expect_identical(
     svy$variables$.source_unit,
     source_sample$.sample_id[operator$source_row]
   )
 
-  # The value of getting it wrong, on this fixture.
+  # Per-contribution units give a smaller SE on this fixture.
   wrong <- svy
   wrong$variables$.each <- seq_len(nrow(wrong$variables))
   by_row <- survey::svydesign(
@@ -212,7 +202,6 @@ test_that("the contribution weight is the coefficient times the source's", {
     as_svydesign(shared)$variables$.weight,
     operator$share * source_sample$.weight[operator$source_row]
   )
-  # Which sums back to the transformation's own weights.
   expect_equal(
     sum(as_svydesign(shared)$variables$.weight),
     sum(shared$.weight)
@@ -236,11 +225,7 @@ test_that("a mean's denominator is the target population either way", {
 
 test_that("a source design whose variance is indexed by its rows is refused", {
   skip_if_not_installed("survey")
-  # An unequal-probability design takes its variance from a pairwise
-  # approximation over the sampled rows, and a random-size one from its own
-  # probabilities. Neither survives one row becoming several. The first is
-  # the dangerous one: it returns a number, 1.6% low on this fixture, which
-  # reads as agreement rather than as a warning.
+  # Pairwise and random-size variances do not survive one row becoming several.
   dwellings <- linearized_dwellings()
 
   for (design in list(
@@ -266,6 +251,26 @@ test_that("a source design whose variance is indexed by its rows is refused", {
   )
 })
 
+test_that("a source sample that lost a primary unit is refused", {
+  skip_if_not_installed("survey")
+  # Block b1 has no dwellings in the register, so it has no row.
+  dwellings <- linearized_dwellings()
+  blocks <- unique(dwellings[c("blk", "region")])
+  source_sample <- sampling_design() |>
+    cluster_by(blk) |> draw(n = 6) |>
+    add_stage() |> draw(frac = 1, on_empty = "silent") |>
+    execute(list(blocks, dwellings[dwellings$blk != "b1", ]), seed = 1)
+  expect_false("b1" %in% source_sample$blk)
+  expect_true(any(vapply(
+    attr(source_sample, "metadata")$empty_parents,
+    function(r) "b1" %in% r$keys$blk, NA
+  )))
+  expect_error(
+    as_svydesign(linearized_shared(source_sample)),
+    class = "samplyr_error_export_empty_psu"
+  )
+})
+
 test_that("pps is refused, because it describes the unexpanded sample", {
   skip_if_not_installed("survey")
   source_sample <- sampling_design() |>
@@ -279,12 +284,29 @@ test_that("pps is refused, because it describes the unexpanded sample", {
   )
 })
 
+test_that("arguments forwarded to survey are checked as on every other path", {
+  skip_if_not_installed("survey")
+  source_sample <- sampling_design() |>
+    draw(n = 18) |>
+    execute(linearized_dwellings(), seed = 7)
+  shared <- linearized_shared(source_sample)
+
+  expect_error(as_svydesign(shared, nesst = TRUE),
+               class = "samplyr_error_unknown_argument")
+  expect_error(as_svydesign(shared, ids = ~1),
+               class = "samplyr_error_derived_argument")
+  expect_error(as_svydesign(shared, 5),
+               class = "samplyr_error_unnamed_argument")
+  expect_s3_class(as_svydesign(shared, check.strata = FALSE), "survey.design2")
+  skip_if_not_installed("srvyr")
+  expect_error(srvyr::as_survey_design(shared, nesst = TRUE),
+               class = "samplyr_error_unknown_argument")
+})
+
 test_that("a two-phase source is refused without naming the route that refused it", {
   skip_if_not_installed("survey")
 
-  # Both phases declare the dwelling as their unit, so the two-phase export
-  # has the bridge it needs and the last assertion below is about the route
-  # rather than about the fixture.
+  # Both phases declare the dwelling as their unit, so the bridge exists.
   phase1 <- sampling_design() |>
     cluster_by(dw_id) |>
     draw(n = 40) |>
@@ -295,9 +317,7 @@ test_that("a two-phase source is refused without naming the route that refused i
     execute(phase1, seed = 12)
   shared <- linearized_shared(phase2)
 
-  # Neither route takes it, so neither may advise the other. Before this the
-  # linearized refusal read "as_svydesign() does not support two-phase
-  # samples. Use as_svydesign() for two-phase linearization export."
+  # Neither route takes it, so neither refusal may advise the other.
   for (export in list(
     function() as_svydesign(shared),
     function() as_svrepdesign(shared, type = "bootstrap", replicates = 10)
@@ -315,8 +335,7 @@ test_that("a two-phase source is refused without naming the route that refused i
   from_phase1 <- linearized_shared(phase1)
   expect_s3_class(as_svydesign(from_phase1), "survey.design")
 
-  # And the ordinary two-phase route keeps its own class and its own advice,
-  # which is correct there because the linearized export does take it.
+  # The ordinary two-phase route keeps its own class and its own advice.
   expect_error(
     as_svrepdesign(phase2, type = "bootstrap", replicates = 10),
     class = "samplyr_error_svrep_twophase_unsupported"
@@ -326,8 +345,7 @@ test_that("a two-phase source is refused without naming the route that refused i
 
 test_that("a target column may not take a source design column's name", {
   skip_if_not_installed("survey")
-  # The exported design describes the source selection, so these names carry
-  # its strata, its units or its population counts.
+  # These names carry the source selection's strata, units or counts.
   targets <- linearized_targets()
   targets$region <- "n"
 
@@ -343,11 +361,100 @@ test_that("a target column may not take a source design column's name", {
   )
 })
 
+test_that("a target column named like samplyr's is carried unless reserved", {
+  skip_if_not_installed("survey")
+  # Only the names execute() writes are samplyr's. The replicate export
+  # already carried the others.
+  source_sample <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = c(n = 12, s = 6)) |>
+    execute(linearized_dwellings(), seed = 7)
+  targets <- linearized_targets()
+  targets$.weight_adj <- seq_len(nrow(targets)) + 0.5
+  targets$.fpc_note <- rev(seq_len(nrow(targets))) + 0.25
+  targets$.weight_1 <- -1
+  shared <- linearized_shared(source_sample, targets)
+  svy <- as_svydesign(shared)
+  operator <- attr(shared, "metadata")$weight_share$operator
+  for (nm in c(".weight_adj", ".fpc_note")) {
+    expect_identical(
+      svy$variables[[nm]],
+      shared[[nm]][operator$target_row],
+      info = nm
+    )
+  }
+  # A name execute() writes stays the source design's own.
+  expect_identical(
+    svy$variables$.weight_1,
+    source_sample$.weight_1[operator$source_row]
+  )
+})
+
+test_that("generated source columns never overwrite a user column", {
+  skip_if_not_installed("survey")
+  # Each generated name is given to a source column, then to a target column.
+  element <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = c(n = 12, s = 6))
+  two_stage <- sampling_design() |>
+    add_stage() |>
+    cluster_by(blk) |>
+    draw(n = 6) |>
+    add_stage() |>
+    stratify_by(region) |>
+    draw(n = 2)
+  with_replacement <- sampling_design() |>
+    draw(n = 20, method = "srswr")
+  cases <- list(
+    list(design = element, generated = ".source_unit"),
+    list(design = with_replacement, generated = ".fpc_inf_1"),
+    list(design = two_stage, generated = c(".id_1", ".id_2", ".strata_all_1"))
+  )
+
+  for (case in cases) {
+    source_sample <- execute(case$design, linearized_dwellings(), seed = 7)
+    shared <- linearized_shared(source_sample)
+    clean <- as_svydesign(shared)
+    expect_setequal(
+      setdiff(names(clean$variables), union(names(source_sample), names(shared))),
+      case$generated
+    )
+    reference <- survey::svytotal(~y, clean)
+
+    for (nm in case$generated) {
+      user_source <- source_sample
+      user_source[[nm]] <- seq_len(nrow(user_source)) + 0.5
+      shared <- linearized_shared(user_source)
+      svy <- as_svydesign(shared)
+      operator <- attr(shared, "metadata")$weight_share$operator
+      expect_identical(
+        svy$variables[[nm]],
+        user_source[[nm]][operator$source_row],
+        info = nm
+      )
+      total <- survey::svytotal(~y, svy)
+      expect_equal(coef(total), coef(reference), info = nm)
+      expect_equal(vcov(total), vcov(reference), info = nm)
+
+      targets <- linearized_targets()
+      targets[[nm]] <- seq_len(nrow(targets)) + 0.5
+      shared <- linearized_shared(source_sample, targets)
+      svy <- as_svydesign(shared)
+      expect_equal(
+        unname(coef(survey::svytotal(stats::reformulate(nm), svy))),
+        sum(shared$.weight * shared[[nm]]),
+        info = nm
+      )
+      total <- survey::svytotal(~y, svy)
+      expect_equal(coef(total), coef(reference), info = nm)
+      expect_equal(vcov(total), vcov(reference), info = nm)
+    }
+  }
+})
+
 test_that("a stack still refuses a shared component on this route", {
   skip_if_not_installed("survey")
-  # The export exists for a lone transformation, but `survey::multiframe()`
-  # reads one selection probability per row and a contribution is not one, so
-  # the composited variance would be wrong rather than refused.
+  # survey::multiframe() reads one selection probability per row.
   targets <- linearized_targets()
   targets$in_reached <- TRUE
   targets$in_list <- rep(c(TRUE, FALSE, TRUE), 30)
@@ -403,9 +510,7 @@ test_that("a tampered result is refused before anything is built", {
   tampered$.weight <- tampered$.weight * 2
   expect_error(as_svydesign(tampered), class = "samplyr_error")
 
-  # An altered retained source is what the integrity record cannot see: the
-  # target rows are untouched, so only the alignment check catches it, and
-  # the contribution weights are built from exactly those source weights.
+  # The integrity record cannot see an altered source, so alignment catches it.
   altered <- shared
   metadata <- attr(altered, "metadata")
   metadata$weight_share$source_sample$.weight[[1]] <- 999

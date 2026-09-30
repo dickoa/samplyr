@@ -24,7 +24,14 @@
 #' not *what* to sample from.
 #'
 #' @section Design flow:
-#' A typical design workflow follows this pattern:
+#' A design is a sequence of stages, and each stage is written in this order:
+#'
+#' 1. [stratify_by()] and [cluster_by()], each optional and used at most once,
+#'    in either order.
+#' 2. [draw()], required, which closes the stage.
+#'
+#' [add_stage()] then opens the next stage, and [execute()] runs the design.
+#' A single-stage design needs no `add_stage()`.
 #' ```r
 #' sampling_design() |>
 #'   stratify_by(...) |>
@@ -32,6 +39,14 @@
 #'   draw(...) |>
 #'   execute(frame)
 #' ```
+#'
+#' `draw()` reads the stage's strata and clusters when it is called. They
+#' decide which forms of `n`, `frac` and the certainty thresholds are valid,
+#' whether `min_n` and `max_n` apply, and how a svyplan plan is taken. Once a stage has its `draw()`, a `stratify_by()`, a `cluster_by()`
+#' or a second `draw()` on it is refused with class
+#' `samplyr_error_stage_closed`. The same holds for a design from
+#' [read_design()] or [get_design()], whose last stage is closed. Extend it
+#' with `add_stage()`.
 #'
 #' @examples
 #' # Simple random sample of 100 EAs
@@ -67,13 +82,20 @@
 #' @family design specification
 #' @export
 sampling_design <- function(title = NULL) {
+  if (is.data.frame(title)) {
+    abort_frame_misplaced("sampling_design")
+  }
   if (!is_null(title) && !is_character(title)) {
-    cli_abort("{.arg title} must be a character string or NULL")
+    cli_abort(
+      "{.arg title} must be a character string or NULL",
+      class = "samplyr_error_design_argument"
+    )
   }
 
   if (!is_null(title) && length(title) != 1) {
     cli_abort(
-      "{.arg title} must be a single string, not a vector of length {length(title)}"
+      "{.arg title} must be a single string, not a vector of length {length(title)}",
+      class = "samplyr_error_design_argument"
     )
   }
 
@@ -88,4 +110,33 @@ sampling_design <- function(title = NULL) {
   design$current_stage <- 1L
 
   validate_sampling_design(design)
+}
+
+#' Refuse a frame where the design goes
+#'
+#' A design is built without its frame and meets it in `execute()`. The
+#' three first mistakes, `sampling_design(frame)`, `frame |> draw()` and
+#' `execute(frame, design)`, are each refused with a message that names it.
+#' @noRd
+abort_frame_misplaced <- function(verb, design_given = FALSE,
+                                  call = caller_env()) {
+  what <- if (identical(verb, "sampling_design")) {
+    "{.fn sampling_design} takes a title, not a frame."
+  } else if (identical(verb, "execute")) {
+    "{.fn execute} takes the design first and the frame after it."
+  } else {
+    "{.fn {verb}} takes a design, not a frame."
+  }
+  fix <- if (identical(verb, "execute") && design_given) {
+    "Swap them: {.code execute(design, frame)}."
+  } else {
+    "Build the design with {.fn sampling_design} and the verbs, then pass
+     the frame to {.fn execute}: {.code sampling_design() |> draw(n = 100)
+     |> execute(frame)}."
+  }
+  abort_samplyr(
+    c(what, "i" = fix),
+    class = "samplyr_error_frame_misplaced",
+    call = call
+  )
 }

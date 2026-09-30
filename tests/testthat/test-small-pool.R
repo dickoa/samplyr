@@ -1,10 +1,8 @@
 ## Small-pool positivity: refusal by default, promotion on request
 
-# A pool of `m` units leaves `k - m` panels empty, so a wave activating `r`
-# panels selects nothing from it exactly when `m <= k - r`. Those units have
-# conditional inclusion probability zero in that wave, so the estimator is
-# biased rather than imprecise. The default refuses; `small_pool =
-# "permanent"` activates the pool at every wave instead.
+# A pool of `m` units selects nothing in a wave activating `r` of `k` panels
+# exactly when `m <= k - r`, which biases the estimator. The default refuses,
+# and `small_pool = "permanent"` activates the pool at every wave.
 
 small_pool_frame <- function() {
   data.frame(
@@ -81,9 +79,7 @@ test_that("the refusal is anchored on execute(), not an internal helper", {
 })
 
 test_that("refusal does not depend on the assignment draw", {
-  # Whatever the seed, the same schedule and the same pool sizes refuse:
-  # the check reads realized pool sizes and runs before any panel label is
-  # drawn, so it cannot be retried into success.
+  # The check reads realized pool sizes before any panel label is drawn.
   for (seed in c(1L, 2L, 3L, 99L)) {
     expect_error(
       execute(
@@ -96,9 +92,7 @@ test_that("refusal does not depend on the assignment draw", {
 })
 
 test_that("a pool above the threshold is not refused", {
-  # Three PSUs per stratum against k - r_min = 2 is the first safe size, and
-  # it is below the block size B = 4, so positivity and variance support are
-  # separate thresholds.
+  # Three PSUs is the first safe size, and it is below the block size B = 4.
   design <- sampling_design() |>
     add_stage("psu") |>
     stratify_by(reg) |>
@@ -131,8 +125,7 @@ test_that("small_pool = 'permanent' promotes the pool and says so", {
   expect_identical(record$small_pool_policy, "permanent")
   expect_identical(record$version, 3L)
 
-  # Selection status and activation status are recorded separately: these
-  # pools are permanent without being selection-certain.
+  # These pools are permanent without being selection-certain.
   expect_identical(
     vapply(record$pools, function(pool) pool$class, character(1)),
     rep("rotating", 3L)
@@ -158,8 +151,7 @@ test_that("a promoted pool appears in every wave with its weight intact", {
 
   for (t in 1:2) {
     wave <- execute(master, wave = t)
-    # Activation probability one, so the wave reproduces the master exactly
-    # rather than estimating it.
+    # Activation probability is one, so the wave reproduces the master.
     expect_setequal(unique(wave$reg), c("A", "B", "C"))
     expect_equal(sum(wave$.weight * wave$y), total)
   }
@@ -261,7 +253,7 @@ test_that("replay reproduces a promoted master rather than refusing it", {
   )
 })
 
-## A record written before the check existed
+## A version-1 record without activation fields
 
 test_that("a version-1 record with a stranded pool refuses at materialization", {
   suppressWarnings(
@@ -271,9 +263,7 @@ test_that("a version-1 record with a stranded pool refuses at materialization", 
     )
   )
 
-  # Rewrite the record as version 1 would have written it: no activation
-  # field, no policy, and the promoted pools left rotating. This is the state
-  # an older samplyr could produce and this build must not materialize.
+  # Version 1 has no activation field or policy, and the pools stay rotating.
   metadata <- attr(master, "metadata")
   metadata$panel_assignment$version <- 1L
   metadata$panel_assignment$small_pool_policy <- NULL
@@ -327,6 +317,7 @@ test_that("a version-1 record with adequate pools still materializes", {
 ## Export of an activation that retains everything
 
 test_that("an all-permanent wave exports as the single-phase design it is", {
+  skip_if_not_installed("survey")
   suppressWarnings(
     master <- execute(
       small_pool_design(), small_pool_frame(),
@@ -335,12 +326,11 @@ test_that("an all-permanent wave exports as the single-phase design it is", {
   )
   wave <- execute(master, wave = 1)
 
-  # Every activation probability is one, so the conditional phase-2 variance
-  # is exactly zero and the design is the master's. A two-phase object would
-  # state a different design, and survey aborts on this one outright:
-  # an identity phase 2 over singleton phase-1 strata is a subscript error
-  # inside twophase().
-  design <- as_svydesign(wave)
+  # Every activation probability is one, so the design is the master's.
+  expect_warning(
+    design <- as_svydesign(wave),
+    class = "samplyr_warning_lonely_psu"
+  )
   expect_s3_class(design, "survey.design2")
   expect_false(inherits(design, "twophase2"))
 
@@ -352,8 +342,8 @@ test_that("an all-permanent wave exports as the single-phase design it is", {
 })
 
 test_that("a wave activating every panel also reduces to single phase", {
-  # The same identity reached by a different route: no pool is permanent, but
-  # the wave takes every panel, so nothing is subsampled.
+  skip_if_not_installed("survey")
+  # No pool is permanent, but the wave takes every panel.
   frame <- small_pool_frame()
   frame <- frame[frame$reg != "C", , drop = FALSE]
   schedule <- data.frame(
@@ -385,6 +375,7 @@ test_that("a wave activating every panel also reduces to single phase", {
 })
 
 test_that("a mixed wave keeps its second phase", {
+  skip_if_not_installed("survey")
   frame <- rbind(small_pool_frame(), data.frame(
     reg = rep("D", 400),
     psu = rep(sprintf("D%02d", 1:20), each = 20),
@@ -454,8 +445,7 @@ test_that("the version-1 backstop is anchored on execute()", {
     samplyr_error_panel_small_pool = function(cnd) cnd
   )
   expect_identical(deparse(conditionCall(err)[[1]]), "execute")
-  # The stored body keeps the source line breaks; cli collapses them only
-  # when it formats, so the assertion normalizes whitespace first.
+  # The stored body keeps the source line breaks, so normalize whitespace.
   expect_match(
     gsub("\\s+", " ", cli::ansi_strip(paste(err$body, collapse = " "))),
     "in this wave"

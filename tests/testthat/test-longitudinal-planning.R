@@ -297,6 +297,7 @@ test_that("a continuing plan freezes startup activity beyond a short horizon", {
 })
 
 test_that("whole-vintage refreshment does not gain a combined-weight route", {
+  skip_if_not_installed("survey")
   plan <- svyplan::n_panel(
     svyplan::n_prop(p = 0.5, moe = 0.25),
     retention = c(0.90, 0.95, 0.95),

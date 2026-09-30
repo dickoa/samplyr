@@ -4,7 +4,7 @@
 \alias{exante_digest}
 \title{Resolve a design's full ex-ante digest from a frame, without drawing}
 \usage{
-exante_digest(design, frame, call = rlang::caller_env())
+exante_digest(design, frame, call = rlang::current_env())
 }
 \arguments{
 \item{design}{A complete \code{sampling_design} (a \code{draw()} at every
@@ -15,7 +15,9 @@ shared hierarchy, or an ordered list of stage registers, as \code{\link[=execute
 takes them. Frames are read and checked with the same grammar
 \code{execute()} applies, so a frame this accepts is one execution accepts.}
 
-\item{call}{Environment reported as the error call.}
+\item{call}{Environment reported as the error call. By default an error
+names \code{exante_digest()}. A function that wraps it passes its own
+environment, so the error names that function instead.}
 }
 \value{
 An ex-ante frame digest list.

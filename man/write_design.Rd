@@ -17,26 +17,23 @@ shared weights.}
 \item{path}{File path to write to. Conventionally with a \code{.json}
 extension.}
 
-\item{frame}{Optional sampling frame. A data frame is the one frame
-the design was built against. An ordered list of data frames is the
-stage registers, in the order \code{\link[=execute]{execute()}} received them, and each
-is fingerprinted separately. One frame written as a one-element list
-is still one frame and is recorded identically. The number of frames
-must be one the design could be executed with, and for an executed
-sample must be the number its receipt records, so a file cannot say
-it was drawn from one frame and carry fingerprints for three. When
-supplied, a fingerprint (name,
-dimensions, column types, content hash) is stored so the frame can
-be verified later. The ordinary frame columns are never written. An
-executed sample's receipt can still contain selected-unit identifiers
-in its frame digest. The content
-hash covers column names, column values, and row order. It does not
-depend on the class of the data frame (tibble or data frame) or on
-the order of its columns. For a \code{frame_stack}, a list \strong{named} by
-component, holding what each component was drawn from. Matched by name
-rather than position, since a list in the wrong order would fingerprint
-each component against another's register. For a shared-weight sample,
-the register the source selection was drawn from.}
+\item{frame}{Optional sampling frame, fingerprinted (name, dimensions,
+column types, content hash) so it can be verified later. A data frame is
+the one frame the design was built against. An ordered list of data
+frames is the stage registers, in the order \code{\link[=execute]{execute()}} received them,
+each fingerprinted separately. A one-element list is one frame (see
+\link{frame-input-grammar}). The number of frames must be one the design
+could be executed with, and for an executed sample the number its
+receipt records. For a sample built by several calls, one element per
+call that read frames (the first call and each continuation), in call
+order: that call's frame, or the list of its registers. One data frame
+stands for all of them when each read that same frame. For a
+\code{frame_stack}, a list \strong{named} by component, holding what each
+component was drawn from, matched by name rather than position. For a
+shared-weight sample, the register the source selection was drawn from.
+\code{vignette("serialization")} states what the hash covers. The ordinary
+frame columns are never written, but an executed sample's receipt can
+still contain selected-unit identifiers in its frame digest.}
 
 \item{...}{These dots are for future extensions and must be empty.
 \code{pretty} follows \code{...}, so it is matched exactly and must be named.}
@@ -61,166 +58,121 @@ executed sample) to a human-readable, samplyr-native JSON file.
 \code{read_design()} reads it back into a \code{sampling_design} that executes
 identically to the original.
 
-The file format is versioned JSON and diffable in version control. It
-stores the complete design specification (stages, stratification,
-clustering, draw settings, including per-stratum vectors and data frames),
-never the frame data itself.
+The file is versioned JSON, diffable in version control. It stores the
+complete design specification (stages, stratification, clustering, draw
+settings, including per-stratum vectors and data frames), never the frame
+data itself.
 
 A file written from an executed sample can also contain its frame digest.
-That digest retains selected-unit identifiers and may contain per-unit chance
-metadata. Treat an execution receipt as potentially confidential even
-though it does not contain the ordinary frame columns.
+That digest retains selected-unit identifiers and may contain per-unit
+chance metadata. Treat an execution receipt as potentially confidential
+even though it does not contain the ordinary frame columns.
 }
 \details{
 \subsection{Lifecycle}{
 
 The serialization interface and its samplyr-native file format are
-experimental. They support samplyr persistence and replay. They are not a
-finalized cross-tool survey-sampling interchange standard. The structure
-may change while that separate specification is developed.
-}
-
-\subsection{Document validation}{
-
-Reads and writes use native R checks generated from the same source as the
-bundled JSON Schemas, before reconstruction or file creation. Unknown
-executable fields, duplicate JSON keys, malformed structures and contradictory
-method descriptors are refused. The reader accepts design format version 3
-and version 1 of the frame-stack and shared-sample formats. Earlier design
-versions were never released and are refused. Frame-dependent checks still run
-in \code{\link[=validate_frame]{validate_frame()}} and \code{\link[=execute]{execute()}}. Optional \code{execution.frame_digest}
-contents are exempt from the duplicate-key traversal and contract checks.
-They retain their separate native version checks and warn-and-drop policy.
-Document validation errors name \code{read_design()}, including when it is
-called inside \code{replay_design(read_design(path), frame)}.
-
-Top-level \code{annotations} and \code{tools} contain named metadata objects. Unknown
-namespaces are preserved, including when saving restored collections and
-shared-sample documents. They cannot change selection. A nonempty
-\code{required_extensions} array is refused because no executable extensions are
-currently supported, including in nested component or source documents.
-
-The installed \code{schema/README.md} describes the schemas and compatibility
-rules. Locate it with \code{system.file("schema", "README.md", package = "samplyr")}.
+experimental. They are not a finalized cross-tool interchange standard,
+and the structure may change. \code{vignette("serialization")} walks through
+the file contents and the replay workflow.
 }
 
 \subsection{Frame information}{
 
-Designs are frame-independent, and so are design files. Two derived
-blocks describe the frame without embedding it:
-\itemize{
-\item \emph{Requirements} (always written): the columns each stage needs
-(stratification, clustering, \code{mos}, \code{prn}, \code{aux}, and control
-variables), so any candidate frame can be checked before execution
-with \code{\link[=validate_frame]{validate_frame()}}.
-\item \emph{Fingerprint} (written when \code{frame} is supplied): portable dimensions
-and column types in \code{frame}, plus the R source label, native classes, and
-content hash in \code{tools.samplyr}. Together these can verify that a frame is
-the exact one the design was built against without putting R details in
-the common metadata.
-}
+Design files are frame-independent. Every file records the columns each
+stage needs (stratification, clustering, \code{mos}, \code{prn}, \code{aux}, and control
+variables), so a candidate frame can be checked with \code{\link[=validate_frame]{validate_frame()}}
+before execution. When \code{frame} is supplied, the file also records a
+fingerprint: portable dimensions and column types in \code{frame}, plus the R
+source label, native classes, and content hash in \code{tools.samplyr}.
 }
 
 \subsection{Execution receipts}{
 
-When \code{x} is a \code{tbl_sample}, the file additionally records an execution
-receipt: every argument of the \code{\link[=execute]{execute()}} call that affects the
-result (\code{seed}, executed stages, \code{panels}, \code{reps}, and the per
-replicate seeds), the execution-time RNG configuration and package
-versions, plus the number of selected units and the execution timestamp.
-Together with the frame fingerprint this makes a single-call sample
-reproducible when the same frame, compatible package implementations, and
-any recorded custom methods are available. Running
-\code{replay_design(read_design(path), frame)} then obtains the same
-\code{tbl_sample} (the same rows in the same order, including \code{.panel} and
-\code{.replicate} assignments) with only the execution timestamp differing.
-The sampled rows themselves are not stored. Use a data format (CSV,
-parquet) for those.
+When \code{x} is a \code{tbl_sample}, the file also records an execution receipt:
+every \code{\link[=execute]{execute()}} argument that affects the result (\code{seed}, executed
+stages, \code{panels}, \code{reps}, and the per-replicate seeds), the RNG
+configuration, package versions, the number of selected units, the
+execution timestamp, and how each call mapped its frames to stages. A
+receipt without that mapping is read as a one-frame call. With the same
+frame, compatible package implementations, and any recorded custom
+methods, \code{\link[=replay_design]{replay_design()}} reproduces the sample. The sampled rows
+themselves are not stored. Use a data format (CSV, parquet) for those.
 
-Receipts describe one \code{\link[=execute]{execute()}} call. A sample built by several
-calls (a stage continuation or a multi-phase pipeline) is flagged as
-\code{chained} in the receipt and \code{write_design()} warns: replaying the
-final call alone cannot reproduce it, so save and replay each phase
-or stage batch separately. A sample whose rows or design columns were
-modified after execution is likewise flagged (\code{modified}). Its
-receipt describes the original execution, not the modified object.
+A sample built by several \code{\link[=execute]{execute()}} calls (a stage continuation, a new
+phase drawn from an earlier sample, or a materialized panel wave) is
+flagged as \code{chained}. Its receipt records every earlier call in
+\code{earlier_calls}: seed, stages, frame mapping, panel and replicate
+arguments, RNG kind, how it used the call before it, and, for a call
+followed by a new phase, its own design.
 
-The receipt also records how frames were mapped to stages: the frame
-mode, how many frames were supplied, their optional labels, and the
-frame position each executed stage drew from. This is what a
-\code{chained} receipt describes too, for its final call only, so the
-mapping never implies that a chained sample can be replayed. A
-receipt written before these fields existed is read as the one-frame
-call it can only have been.
+A sample whose rows or design columns were modified after execution is
+flagged \code{modified}, and its receipt describes the original execution. A
+new phase drawn from a modified sample is recorded from that phase on,
+with the modified sample as its frame. Two chains cannot be recorded: a
+continuation of a modified sample, since replaying the earlier call
+rebuilds the sample as it was before the change, and a continuation made
+by a samplyr version that did not keep its parent's seed. For these
+\code{write_design()} warns with class \code{samplyr_warning_receipt_chained} and
+gives the recipe of \code{\link[=replay_design]{replay_design()}}.
 }
 
 \subsection{Control expressions}{
 
-\code{draw(control = ...)} expressions are stored as declarative JSON terms,
-not R code. Each term records an ordering type (\code{"ascending"},
-\code{"descending"}, or \code{"serpentine"}) and its variables. Only bare column
-names, \code{dplyr::desc()}, and \code{\link[=serp]{serp()}} can be represented.
-\code{write_design()} errors on anything else.
+\code{draw(control = ...)} expressions are stored as declarative JSON terms
+(\code{"ascending"}, \code{"descending"}, or \code{"serpentine"}, with their variables),
+not R code. Only bare column names, \code{dplyr::desc()}, and \code{\link[=serp]{serp()}} can be
+represented, and \code{write_design()} errors on anything else.
 }
 
-\subsection{Declarative and implementation metadata}{
+\subsection{Collections and shared weights}{
 
-The \code{design}, \code{frame}, and \code{execution} blocks use declarative JSON rather
-than R expressions. Files use method vocabulary version 2, which records
-the first-order quantity and its exact, approximate or unknown quality in
-the common descriptor. The
-\code{tools.samplyr} block records exact method names, R classes,
-the R-derived frame hash, and execution environment needed to rebuild and
-replay the native object. These descriptors are not a finalized external
-method vocabulary.
-}
-
-\subsection{Frame collections}{
-
-A \code{frame_stack} from \code{\link[=stack_frames]{stack_frames()}} is written as \code{samplyr/frame-stack},
-its own format. Each component entry is a complete \code{samplyr/design}
-document plus the two fields that make it a component: its name, and the
-column saying which frames its units belong to. The collection's key and
-any overlaps declared with \code{\link[=declared_overlaps]{declared_overlaps()}} are recorded
-alongside. Give \code{frame} as a list keyed by
-component name, since the components are separate selections with separate
-registers.
-
-\code{\link[=read_design]{read_design()}} returns the components' designs and receipts rather than
-the collection, which needs the registers. \code{\link[=replay_design]{replay_design()}} executes each
-against its register and stacks the results.
-}
-
-\subsection{Shared-weight samples}{
+A \code{frame_stack} from \code{\link[=stack_frames]{stack_frames()}} is written as \code{samplyr/frame-stack}.
+Each component entry is a complete \code{samplyr/design} document plus its name
+and membership column, and the collection's key and any overlaps declared
+with \code{\link[=declared_overlaps]{declared_overlaps()}} are recorded alongside. \code{\link[=read_design]{read_design()}} returns
+the components' designs and receipts rather than the collection, which
+needs the registers.
 
 A sample carrying shared weights from \code{\link[=share_weights]{share_weights()}} is written as
-\code{samplyr/shared-sample}, its own format. It records the source selection
-and the transformation's arguments, and nothing else: the links and the
-target register are supplied again to \code{\link[=replay_design]{replay_design()}}, the way a frame
-is, so no unit-level data and no linkage is written.
+\code{samplyr/shared-sample}. It records the source selection, the
+transformation's arguments, and two integrity records, and nothing else.
+The links and the target register are supplied again to
+\code{\link[=replay_design]{replay_design()}}, the way a frame is.
 
-Two integrity records travel with it, and replay is checked against both.
-A source that does not reproduce means \code{frame} is not the register selected
-from. A result that does not means \code{links} or \code{targets} is not the table
-the transformation was built from.
+Frame data, target data and link tables are never written. What would
+need them is refused rather than written in part: a collection whose
+overlaps come from \code{\link[=exante_overlaps]{exante_overlaps()}} (one chance per selected unit, which
+is unit-level data), and a shared-weight sample used as a component of a
+collection (no place for a link table). Serialize the sample on its own,
+or the collection without them, and rebuild afterwards. \code{saveRDS()}
+preserves any of these objects whole.
 }
 
-\subsection{What the format does not carry}{
+\subsection{Document validation}{
 
-A design and one execution receipt per component, and nothing beyond them.
-Frame data, target data and link tables are never written. So what cannot
-be described that way is refused rather than written in part:
-\itemize{
-\item a collection whose overlaps come from \code{\link[=exante_overlaps]{exante_overlaps()}}. Those resolve
-to one chance per selected unit when the collection is formed, which is
-unit-level data, and the request that produced them is not kept.
-\item a shared-weight sample used as a component of a collection. A component
-entry is a design document, and a collection replays from one register
-per component with nowhere to put a link table.
-}
+Reads and writes check the document before reconstruction or file
+creation, with native R checks generated from the same source as the
+bundled JSON Schemas. Unknown executable fields, duplicate JSON keys,
+malformed structures and contradictory method descriptors are refused, and
+so is a nonempty \code{required_extensions} array at any level, since no
+executable extensions are currently supported. The reader accepts design
+format version 3 and version 1 of the frame-stack and shared-sample
+formats. An optional \code{execution.frame_digest} is exempt and keeps its own
+version check and warn-and-drop policy. Frame-dependent checks run in
+\code{\link[=validate_frame]{validate_frame()}} and \code{\link[=execute]{execute()}}. Validation errors name
+\code{read_design()}, also when it is called inside
+\code{replay_design(read_design(path), frame)}.
 
-Serialize the sample on its own, or the collection without them, and
-rebuild afterwards. \code{saveRDS()} preserves any of these objects whole.
+The \code{design}, \code{frame}, and \code{execution} blocks are declarative JSON, with
+method vocabulary version 2. Its descriptors are not a finalized external
+method vocabulary. The \code{tools.samplyr} block holds what
+rebuilding and replaying the native object needs (exact method names, R
+classes, the R-derived frame hash, the execution environment). Unknown
+namespaces in the top-level \code{annotations} and \code{tools} objects are
+preserved when a file is written again, but cannot change selection.
+\code{system.file("schema", "README.md", package = "samplyr")} locates the
+schema and compatibility notes.
 }
 }
 \examples{

@@ -7,8 +7,14 @@
 #' @param object A `tbl_sample` object produced by [execute()].
 #' @param ... Must be empty.
 #'
-#' @return Invisibly returns `object`. Called for its side effect of
-#'   printing a summary.
+#' @return A `summary_tbl_sample` object, which prints the summary below.
+#'   Its fields hold the figures the print shows: `n`, `stages`, `seed`,
+#'   `weights` (mean, minimum, maximum and coefficient of variation of
+#'   `.weight`), `design_effect` and `effective_n` (as [design_effect()] and
+#'   [effective_n()] give them), and `certainty`, the units taken with
+#'   certainty at each executed stage. Weight figures are `NULL` for an
+#'   empty sample and for stacked replicates, which the print also leaves
+#'   out. `sample` is the summarized sample itself.
 #'
 #' @details
 #' The header line shows the total sample size (with the universe size
@@ -60,6 +66,49 @@
 #' @export
 summary.tbl_sample <- function(object, ...) {
   rlang::check_dots_empty()
+  design <- get_design(object)
+  stages <- get_stages_executed(object)
+  w <- object[[".weight"]]
+  weighted <- !is_null(w) && length(w) > 0L &&
+    !has_multiple_replicates(object)
+  structure(
+    list(
+      sample = object,
+      n = nrow(object),
+      stages = stages,
+      seed = attr(object, "seed"),
+      weights = if (weighted) {
+        list(
+          mean = mean(w),
+          min = min(w),
+          max = max(w),
+          cv = if (length(w) > 1L) stats::sd(w) / mean(w) else 0
+        )
+      },
+      design_effect = if (weighted) design_effect(weights = w),
+      effective_n = if (weighted) effective_n(weights = w),
+      certainty = stats::setNames(
+        vapply(stages, function(k) {
+          as.integer(summary_certainty_count(object, design, k))
+        }, integer(1)),
+        paste0("stage_", stages)
+      )
+    ),
+    class = "summary_tbl_sample"
+  )
+}
+
+#' @rdname summary.tbl_sample
+#' @param x A `summary_tbl_sample` object.
+#' @export
+print.summary_tbl_sample <- function(x, ...) {
+  render_sample_summary(x$sample)
+  invisible(x)
+}
+
+#' The printed summary, from the sample
+#' @noRd
+render_sample_summary <- function(object) {
   design <- get_design(object)
   stages_executed <- get_stages_executed(object)
   seed <- attr(object, "seed")
@@ -155,19 +204,23 @@ summary.tbl_sample <- function(object, ...) {
     cli::cat_rule(left = rule_txt)
     cli::cat_bullet(summary_design_line(stage_spec), bullet = "bullet")
 
+    n_cert <- summary_certainty_count(object_for_alloc, design, stage_idx)
     dpos <- match(stage_idx, digest_stage_ids)
     if (!is.na(dpos)) {
       summary_stage_realization(
         digest$stages[[dpos]],
         is_replicated = is_replicated,
-        random_size = is_random_size_method(stage_spec$draw_spec)
+        random_size = is_random_size_method(stage_spec$draw_spec),
+        n_cert = n_cert
       )
     } else {
       summary_stage_fallback(
         object_for_alloc, design, stage_spec, stage_idx,
-        is_replicated = is_replicated
+        is_replicated = is_replicated,
+        n_cert = n_cert
       )
     }
+    summary_empty_parents(attr(object, "metadata")$empty_parents, stage_idx)
   }
 
   if (".weight" %in% names(object) && nrow(object) == 0) {
@@ -213,7 +266,7 @@ summary.tbl_sample <- function(object, ...) {
   }
 
   cat("\n")
-  invisible(object)
+  invisible(NULL)
 }
 
 #' One-line design description of a stage
@@ -307,7 +360,8 @@ summary_range <- function(v, fmt = function(x) format(x, trim = TRUE)) {
 #' resolution, and the per-pool rows live in frame_summary(). Method
 #' diagnostics (balance, bounds, spatial) follow as their own bullets.
 #' @noRd
-summary_stage_realization <- function(st, is_replicated, random_size = NULL) {
+summary_stage_realization <- function(st, is_replicated, random_size = NULL,
+                                      n_cert = 0L) {
   pools <- st$pools
   fmt_f <- function(f) sprintf("%.4f", f)
   fmt_n <- function(v) format(v, big.mark = ",", trim = TRUE)
@@ -407,26 +461,7 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL) {
     base
   }
 
-  suffix <- character(0)
-  if (
-    identical(st$storage, "units") &&
-      identical(st$chance_kind, "inclusion_probability") &&
-      !is_null(st$selected)
-  ) {
-    sel_units <- unique(st$selected$unit_id)
-    n_cert <- sum(
-      st$units$is_certainty[match(sel_units, st$units$unit_id)],
-      na.rm = TRUE
-    )
-    if (n_cert > 0) {
-      suffix <- c(
-        suffix,
-        paste0(
-          n_cert, " certainty selection", if (n_cert > 1) "s"
-        )
-      )
-    }
-  }
+  suffix <- summary_certainty_text(n_cert)
   if (is_replicated && !varies) {
     suffix <- c(suffix, "per replicate")
   }
@@ -498,7 +533,7 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL) {
 #' stages have no sampling fraction because their FPC is Inf.
 #' @noRd
 summary_stage_fallback <- function(object_for_alloc, design, stage_spec,
-                                   stage_idx, is_replicated) {
+                                   stage_idx, is_replicated, n_cert = 0L) {
   fpc_col <- paste0(".fpc_", stage_idx)
   if (!fpc_col %in% names(object_for_alloc)) {
     cli::cat_bullet("FPC information unavailable.", bullet = "warning")
@@ -509,7 +544,10 @@ summary_stage_fallback <- function(object_for_alloc, design, stage_spec,
   is_wr_stage <- stage_method %in% c(wr_methods, pmr_methods) ||
     identical(stage_spec$draw_spec$method_type, "wr")
 
-  suffix <- if (is_replicated) " | replicate 1" else ""
+  suffix <- paste(
+    c("", summary_certainty_text(n_cert), if (is_replicated) "replicate 1"),
+    collapse = " | "
+  )
 
   # Full identity key for this stage's units
   ancestor_vars <- intersect(
@@ -774,3 +812,66 @@ coverage_incompatible_line <- "The frames describe different target populations,
 
 #' @noRd
 coverage_unknown_line <- "Coverage over the union of the frames is not established."
+
+#' Name the selected parents a stage found empty
+#'
+#' Read from the metadata record rather than the digest, so it holds under
+#' `frame_digest = "none"`. Pools are counted from what was sampled, which
+#' an empty parent never is, so without this line the stage would show fewer
+#' parents than the stage above selected. Replicated counts are per
+#' replicate.
+#' @noRd
+summary_empty_parents <- function(records, stage_idx) {
+  records <- Filter(function(r) identical(r$stage, stage_idx), records)
+  if (length(records) == 0L) {
+    return(invisible(NULL))
+  }
+  counts <- vapply(records, function(r) r$n, integer(1))
+  replicated <- any(!is.na(vapply(records, function(r) r$replicate, integer(1))))
+  text <- if (replicated) {
+    paste0(
+      summary_range(counts),
+      " selected parents with nothing to sample, in each replicate that had any"
+    )
+  } else {
+    paste0(
+      sum(counts), " selected parent", if (sum(counts) == 1L) "" else "s",
+      " with nothing to sample (on_empty)"
+    )
+  }
+  cli::cat_bullet(text, bullet = "info")
+  invisible(NULL)
+}
+
+#' Units a stage took with certainty, counted from the sample
+#'
+#' Read from `.certainty_k`, which every storage mode of the digest and no
+#' digest at all leave on the sample. Counting from the digest's unit table
+#' saw certainty only under `frame_digest = "full"`, so the default summary
+#' hid 194 certainty selections. A clustered stage counts its units, keyed
+#' by their ancestry. A stage with replacement has no certainty column.
+#' @noRd
+summary_certainty_count <- function(sample, design, stage_idx) {
+  col <- paste0(".certainty_", stage_idx)
+  if (!col %in% names(sample) || nrow(sample) == 0L) {
+    return(0L)
+  }
+  certain <- sample[[col]] %in% TRUE
+  spec <- design$stages[[stage_idx]]
+  if (is_null(spec$clusters)) {
+    return(sum(certain))
+  }
+  keys <- intersect(
+    unique(c(collect_ancestor_cluster_vars(design, stage_idx), spec$clusters$vars)),
+    names(sample)
+  )
+  nrow(vctrs::vec_unique(as.data.frame(sample)[certain, keys, drop = FALSE]))
+}
+
+#' @noRd
+summary_certainty_text <- function(n_cert) {
+  if (n_cert <= 0L) {
+    return(character(0))
+  }
+  paste0(n_cert, " certainty selection", if (n_cert > 1L) "s")
+}

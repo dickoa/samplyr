@@ -1,11 +1,6 @@
-# A sample carrying a weight-share transformation, built from the C0
-# primitives rather than by calling share_weights(). The links are one-to-one
-# so the target weights equal the source weights, which keeps the fixture's
-# arithmetic out of the way of what the tests are about: the contract the
-# object declares, not the transformation that produced it.
-#
-# Everything a real share_weights() result must have is here, so a gate that
-# passes this fixture will pass a real one.
+# A weight-share sample built from the internal primitives, with one-to-one
+# links so the target weights equal the source weights. It carries everything
+# a real share_weights() result has, so a gate that passes it passes a real one.
 
 shared_weight_source <- function(seed = 1) {
   sampling_design() |>
@@ -32,9 +27,7 @@ shared_weight_sample <- function(source = shared_weight_source()) {
       n_source = n
     ),
     source_sample = source,
-    # The source's own integrity record, not a fresh one: what has to be
-    # verified later is that the retained sample is still the realization the
-    # weights were shared from.
+    # The source's own integrity record, so the retained realization is checked.
     source_integrity = attr(source, "metadata")$integrity,
     source_key_cols = ".sample_id",
     target_key_cols = "person_id",
@@ -52,8 +45,7 @@ shared_weight_sample <- function(source = shared_weight_source()) {
     call_info = list(fn = "share_weights")
   )
 
-  # The recorded design and stages still describe selection from the source
-  # population, which is what print and summary have to say.
+  # The design and stages still describe selection from the source population.
   result <- new_tbl_sample(
     data = targets,
     design = get_design(source),
@@ -79,4 +71,9 @@ wave_share_master <- function(seed = 1) {
         active = c(TRUE, FALSE, FALSE, TRUE)
       )
     )
+}
+
+## Target rows a share operator never names
+share_operator_unreached <- function(op) {
+  setdiff(seq_len(op$n_target), unique(op$target_row))
 }

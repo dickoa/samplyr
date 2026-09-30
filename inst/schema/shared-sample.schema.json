@@ -2328,6 +2328,146 @@
       ],
       "additionalProperties": false
     },
+    "chain_call": {
+      "type": "object",
+      "properties": {
+        "transition": {
+          "enum": [
+            "start",
+            "continuation",
+            "phase",
+            "wave"
+          ]
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 1
+        },
+        "n_selected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "panels": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "panel_assignment": {
+          "$ref": "#/definitions/panel_assignment"
+        },
+        "frames": {
+          "$ref": "#/definitions/frame_schedule"
+        },
+        "wave": {
+          "$ref": "#/definitions/wave"
+        },
+        "rng": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "normal_kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sample_kind": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "design": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                {
+                  "type": "object",
+                  "maxProperties": 0
+                }
+              ]
+            },
+            "stages": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/stage"
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "stages"
+          ],
+          "additionalProperties": false
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "method": {
+                    "$ref": "#/definitions/tool_method"
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              }
+            ]
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "transition",
+        "stages"
+      ],
+      "additionalProperties": false
+    },
     "execution": {
       "type": "object",
       "properties": {
@@ -2393,6 +2533,24 @@
           "type": "boolean"
         },
         "modified": {
+          "type": "boolean"
+        },
+        "transition": {
+          "enum": [
+            "start",
+            "continuation",
+            "phase",
+            "wave"
+          ]
+        },
+        "earlier_calls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/chain_call"
+          },
+          "minItems": 0
+        },
+        "earlier_modified": {
           "type": "boolean"
         },
         "frame_digest": {}

@@ -314,8 +314,7 @@ test_that("certainty_size as data frame applies stratum-specific thresholds", {
   expect_true(all(c(3, 4) %in% result_A$id))
   expect_true(all(result_A[result_A$id %in% c(3, 4), ]$.certainty_1 == TRUE))
 
-  # No unit in B reaches the 800 threshold, but inclusion_prob() caps the
-  # two largest at probability one, which is certainty all the same.
+  # No unit in B reaches 800, but inclusion_prob() caps the two largest at one.
   result_B <- result[result$stratum == "B", ]
   expect_setequal(result_B$id[result_B$.certainty_1], c(7, 8))
 
@@ -364,8 +363,7 @@ test_that("certainty_prop as data frame applies stratum-specific thresholds", {
   expect_true(4 %in% result_A$id)
   expect_true(result_A[result_A$id == 4, ]$.certainty_1 == TRUE)
 
-  # B is taken whole, so every unit resolves to probability one. The 30%
-  # threshold never binds; the census does.
+  # B is taken whole, so the census, not the 30% threshold, gives certainty.
   result_B <- result[result$stratum == "B", ]
   expect_true(all(result_B$.certainty_1))
 })
@@ -574,7 +572,7 @@ test_that("certainty_overflow validates input", {
         certainty_size = 500,
         certainty_overflow = "invalid"
       ),
-    "should be one of"
+    class = "samplyr_error_draw_argument"
   )
 })
 
@@ -633,8 +631,7 @@ test_that("missing stratum in certainty data frame uses no threshold", {
   result_A <- result[result$stratum == "A", ]
   expect_true(any(result_A$.certainty_1 == TRUE))
 
-  # C gets no threshold, but its two largest units still cap at probability
-  # one, so certainty here comes from the probability calculation.
+  # C has no threshold, but its two largest units still cap at one.
   result_C <- result[result$stratum == "C", ]
   expect_setequal(result_C$id[result_C$.certainty_1], c(11, 12))
 })
@@ -643,7 +640,7 @@ test_that("missing stratum in certainty data frame uses no threshold", {
 # however it arose, not membership of an explicit certainty rule. Frames
 # below are fully deterministic so the resolved probabilities are exact.
 
-# Three dominant units cap at one under n = 10; the remaining 57 share the
+# Three dominant units cap at one under n = 10, and the remaining 57 share the
 # residual take at 0.1228 each.
 dominant_frame <- function() {
   data.frame(id = seq_len(60), mos = c(500, 400, 300, rep(10, 57)))
@@ -674,8 +671,7 @@ test_that("automatic capping sets certainty for every fixed-size PPS-WOR method"
 })
 
 test_that("a certainty rule's remainder can create further certainty units", {
-  # Only unit 1 clears the 900 threshold. Removing it shrinks the frame
-  # total, so inclusion_prob() then caps units 2 and 3 in the remainder.
+  # Removing unit 1 shrinks the total, so units 2 and 3 cap in the remainder.
   frame <- data.frame(id = seq_len(53), mos = c(1000, 500, 400, rep(10, 50)))
 
   result <- sampling_design() |>
@@ -814,10 +810,7 @@ test_that("sample certainty flags agree with the frame digest", {
 test_that("stratified cube resolves certainty and exports a take-all stratum", {
   skip_if_not_installed("survey")
 
-  # The stratified cube returns through draw_balanced_stratified() rather
-  # than draw_sample(), so it needs its own certainty assignment. Without
-  # one the design carried no .certainty_k at all and the export could not
-  # build the take-all stratum its PPS-WOR treatment requires.
+  # draw_balanced_stratified() bypasses draw_sample() and sets certainty itself.
   frame <- data.frame(
     id = seq_len(80),
     h = rep(c("A", "B"), each = 40),
@@ -850,10 +843,7 @@ test_that("stratified cube resolves certainty and exports a take-all stratum", {
 })
 
 test_that("every unequal-probability stage carries a consistent certainty column", {
-  # Guards the gap that stratified cube fell into: a selection path that
-  # builds its own result must not silently omit the column. Asserted as an
-  # invariant rather than relying on a downstream weight-based fallback,
-  # which would mask the omission instead of surfacing it.
+  # A selection path that builds its own result must not omit the column.
   frame <- dominant_frame()
   frame$x <- rep(c(1, 2), length.out = nrow(frame))
 
@@ -872,8 +862,7 @@ test_that("every unequal-probability stage carries a consistent certainty column
   )
 
   for (name in names(designs)) {
-    # `dominant_frame()` saturates by construction, so the Poisson design
-    # reports a shortfall. Not what this test is about.
+    # dominant_frame() saturates, so the Poisson design warns of a shortfall.
     result <- suppressWarnings(execute(designs[[name]], frame, seed = 3))
     expect_true(".certainty_1" %in% names(result), info = name)
     expect_identical(
@@ -885,10 +874,7 @@ test_that("every unequal-probability stage carries a consistent certainty column
 })
 
 test_that("the certainty tolerance is an exactness test", {
-  # Producers assign probability one rather than converging on it, so the
-  # tolerance only has to absorb a few eps. It must not swallow a design
-  # probability that is legitimately just below one, because dropping that
-  # unit's variance contribution would understate the standard error.
+  # Probability one is assigned exactly, so the tolerance absorbs a few eps.
   expect_true(is_certainty_probability(1))
   expect_true(is_certainty_probability(1 - 10 * .Machine$double.eps))
   expect_false(is_certainty_probability(1 - sqrt(.Machine$double.eps)))
@@ -897,4 +883,20 @@ test_that("the certainty tolerance is an exactness test", {
   expect_false(is_certainty_probability(NA_real_))
   expect_false(is_certainty_probability(NaN))
   expect_false(is_certainty_probability(Inf))
+})
+
+test_that("a refusal inside a stratum keeps its class and names the stratum", {
+  frame <- data.frame(
+    s = rep(c("a", "b"), each = 5), id = 1:10,
+    mos = c(10, 10, 10, 10, 10, 100, 100, 1, 1, 1)
+  )
+  design <- sampling_design() |>
+    stratify_by(s) |>
+    draw(n = 2, method = "pps_brewer", mos = mos, certainty_size = 50)
+  err <- tryCatch(execute(design, frame, seed = 1), error = identity)
+  expect_s3_class(err, "samplyr_error_certainty_zero_probability")
+  expect_identical(names(err$body), c("x", "i", "i"))
+  expect_identical(
+    cli::ansi_strip(unname(err$body[[3]])), "In stratum \"b\""
+  )
 })

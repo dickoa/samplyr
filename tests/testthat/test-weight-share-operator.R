@@ -1,9 +1,8 @@
-## C0. The recorded operator, the transformation record, and the weight contract
+## The recorded operator, the transformation record, and the weight contract
 
-# Nothing here goes through share_weights(), which does not exist yet. These
-# are the machinery's own guarantees: the arithmetic of the sparse map, the
-# record's version discipline, integrity of a transformed sample, and the
-# contract that tells consumers what .weight holds.
+# The machinery's own guarantees, without share_weights(): the sparse map's
+# arithmetic, the record's version discipline, integrity of a transformed
+# sample, and the contract that tells consumers what .weight holds.
 
 ## Helpers
 
@@ -21,8 +20,7 @@ demo_operator <- function() {
 }
 
 # The same map with the cluster's second unit dropped, so target 4 is reached
-# by nothing. A dense-matrix implementation gets that row right by accident;
-# a scatter can get it wrong.
+# by nothing. A dense matrix gets that row right by accident, a scatter may not.
 sparse_operator <- function() {
   new_share_operator(
     target_row = c(1L, 1L, 2L, 3L),
@@ -92,8 +90,7 @@ test_that("the operator reproduces a hand-computed weight vector", {
   op <- demo_operator()
   w <- c(10, 20, 40)
 
-  # 1: 0.5*10 + 0.5*20 = 15; 2: 1*20 = 20; 3 and 4: 0.25*40 = 10 each, the
-  # cluster weight assigned to both of its units.
+  # 1: 0.5*10 + 0.5*20, 2: 1*20, 3 and 4: 0.25*40 each, the cluster weight.
   expect_identical(apply_share_operator(op, w), c(15, 20, 10, 10))
 })
 
@@ -141,16 +138,12 @@ test_that("a missing source weight propagates rather than aggregating to zero", 
   op <- demo_operator()
   out <- apply_share_operator(op, c(10, NA, 40))
 
-  # Targets 1 and 2 draw on source 2; targets 3 and 4 do not.
+  # Targets 1 and 2 draw on source 2, targets 3 and 4 do not.
   expect_identical(is.na(out), c(TRUE, TRUE, FALSE, FALSE))
 })
 
 test_that("the scatter lands by target index, not by aggregation order", {
-  # Built by hand, deliberately not canonicalized: a record assembled outside
-  # the constructor, or an aggregation that groups by first appearance rather
-  # than by sorted order, must still put each total on the row it belongs to.
-  # An implementation that scattered positionally would pass on canonical
-  # input and be wrong here.
+  # Deliberately not canonicalized, so a positional scatter would fail here.
   op <- list(
     target_row = c(4L, 1L, 4L, 2L),
     source_row = c(1L, 2L, 3L, 1L),
@@ -159,7 +152,7 @@ test_that("the scatter lands by target index, not by aggregation order", {
     n_source = 3L
   )
 
-  # 1: 200; 2: 100; 3: unreached; 4: 100 + 400 = 500.
+  # 1: 200, 2: 100, 3: unreached, 4: 100 + 400 = 500.
   expect_identical(
     apply_share_operator(op, c(100, 200, 400)),
     c(200, 100, 0, 500)
@@ -337,10 +330,7 @@ test_that("every declared record field is required", {
   for (field in weight_share_record_fields) {
     truncated <- complete
     truncated[[field]] <- NULL
-    # The algorithm and version are established before any other field is
-    # read, so their absence is diagnosed by that step rather than by the
-    # field check. A missing version is unreadable in the same way a future
-    # one is, and reports itself that way.
+    # Algorithm and version are read first. A missing version is unsupported.
     expected <- if (identical(field, "version")) {
       "samplyr_error_weight_share_record_unsupported"
     } else {
@@ -475,8 +465,7 @@ test_that("the target key and generated link columns are protected", {
   expect_true(all(
     c(".weight", "tgt_id", ".unit_links", ".cluster_links") %in% cols
   ))
-  # The cluster column is not protected: it is user data the transformation
-  # read, not a quantity it produced or addresses rows by.
+  # The cluster column is user data the transformation only reads.
   expect_false("hh_id" %in% cols)
 })
 
@@ -523,16 +512,13 @@ test_that("reordering is reported as its own finding, not as tampering", {
   record <- attr(result, "metadata")$weight_share
   reordered <- result[c(2, 1, 4, 3), ]
 
-  # protected_values_hash() is order-invariant by design, so the integrity
-  # record alone cannot see a permutation. The operator is positional, so the
-  # permutation still matters and has to be found somewhere.
+  # The integrity hash is order-invariant, but the operator is positional.
   expect_identical(
     verify_sample_integrity(reordered, record$result_integrity), "ok"
   )
   expect_identical(verify_weight_share_alignment(reordered, record), "reordered")
 
-  # Recovered rather than refused: an arrange() on a transformed sample is an
-  # ordinary thing to do.
+  # Recovered rather than refused, as arrange() is an ordinary operation.
   expect_silent(check_weight_share_alignment(reordered, "as_svrepdesign"))
 })
 
@@ -547,8 +533,7 @@ test_that("key realignment restores the recorded row order", {
 
   expect_identical(pos, c(2L, 4L, 1L, 3L))
   expect_identical(reordered$tgt_id[pos], result$tgt_id)
-  # The recorded operator reproduces the weights once the rows are back in the
-  # order it was recorded in, and does not before.
+  # The operator reproduces the weights only once the rows are realigned.
   recomputed <- apply_share_operator(
     record$operator, record$source_sample$.weight
   )

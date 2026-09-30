@@ -1,138 +1,129 @@
 #' Define stratification
 #'
-#' `stratify_by()` specifies stratification variables and optional allocation
-#' methods for a sampling design. Stratification ensures representation from
-#' all subgroups defined by the stratification variables.
+#' `stratify_by()` specifies stratification variables and an optional
+#' allocation method for a sampling design, so that every subgroup the
+#' variables define is represented. It applies to the current stage and comes
+#' before that stage's [draw()], which closes it.
 #'
-#' @param .data A `sampling_design` object (piped from [sampling_design()] or
-#'   [add_stage()]).
-#' @param ... Stratification variables specified as bare column names. Any
-#'   name given here is a label and does not rename the variable. A label
-#'   resembling one of the arguments below (`allocc`, `varianc`) is refused,
-#'   because those arguments follow `...` and are matched exactly.
-#' @param alloc Character string specifying the allocation method. One of:
-#'   - `NULL` (default): No allocation. `n` in [draw()] is per stratum
+#' @param .data A `sampling_design` object (piped from [sampling_design()],
+#'   [add_stage()], or [cluster_by()]), before the stage's [draw()].
+#' @param ... Stratification variables as bare column names. A name given
+#'   here is a label and does not rename the variable. A label resembling one
+#'   of the arguments below (`allocc`, `varianc`) is refused, because those
+#'   arguments follow `...` and are matched exactly.
+#' @param alloc Character string naming the allocation method. With a method,
+#'   `n` in [draw()] is the *total* sample size to distribute. One of:
+#'   - `NULL` (default): No allocation. `n` in [draw()] is *per stratum*
 #'   - `"equal"`: Equal allocation across strata
-#'   - `"proportional"`: Proportional to stratum size
+#'   - `"proportional"`: Proportional to the number of the stage's sampling
+#'     units in each stratum, or to `importance` when it is supplied
 #'   - `"neyman"`: Neyman optimal allocation (requires `variance`)
 #'   - `"optimal"`: Cost-variance optimal allocation (requires `variance` and `cost`)
 #'   - `"power"`: Power allocation (requires `cv` and `importance`)
 #'
-#'   Every method is capped at the stratum population: a stratum is never
-#'   allocated more units than it holds, and the surplus is redistributed
-#'   across the strata with room left, in proportion to the same factors the
-#'   method uses. A named rule can therefore be departed from when a stratum
-#'   is too small to absorb its share, so `"equal"` on populations
-#'   \eqn{(10, 490, 500)} with `n = 300` gives 10/145/145 rather than
-#'   100/100/100. `execute()` reports this once per stage with a message of
-#'   class `samplyr_message_allocation_capped`, however many parent pools or
-#'   replicates the stage runs over.
-#' @param variance Stratum variances for Neyman or optimal allocation.
-#'   Either a data frame with columns for all stratification variables plus
-#'   a `var` column, or a named numeric vector (when using a single
-#'   stratification variable) where names correspond to stratum levels.
-#'   For named vectors, names must match the values in the stratification
+#'   Every method caps a stratum at its population and redistributes the
+#'   surplus, so `"equal"` on populations \eqn{(10, 490, 500)} with `n = 300`
+#'   gives 10/145/145 rather than 100/100/100. `execute()` reports this with
+#'   a message of class `samplyr_message_allocation_capped` (see
+#'   [execution-conditions]).
+#'
+#'   An input the method does not read is refused with class
+#'   `samplyr_error_alloc_unused_aux` rather than ignored: `variance`
+#'   next to `"proportional"`, `cost` next to `"neyman"`, or any of
+#'   `variance`, `cost`, `cv`, `importance`, `power` with no `alloc`.
+#' @param variance Stratum variances for Neyman or optimal allocation. Either
+#'   a data frame with every stratification column (the join keys) plus a
+#'   `var` column, or, with a single stratification variable only, a named
+#'   numeric vector whose names match the values of the stratification
 #'   column (for example `c(A = 1.2, B = 0.8)`).
-#' @param cost Stratum costs for optimal allocation.
-#'   Either a data frame with columns for all stratification variables plus
-#'   a `cost` column, or a named numeric vector (when using a single
-#'   stratification variable) where names correspond to stratum levels.
-#'   For named vectors, names must match the values in the stratification
-#'   column.
-#' @param cv Stratum coefficients of variation (\eqn{C_h}) for power allocation.
-#'   Either a data frame with stratification columns plus a `cv` column, or
-#'   a named numeric vector for a single stratification variable (names are
-#'   stratum levels).
-#' @param importance Stratum importance measure (\eqn{X_h}) for power allocation.
-#'   Either a data frame with stratification columns plus an `importance`
-#'   column, or a named numeric vector for a single stratification variable
-#'   (names are stratum levels).
+#' @param cost Stratum costs for optimal allocation, in the same two forms
+#'   as `variance` with a `cost` column.
+#' @param cv Stratum coefficients of variation (\eqn{C_h}) for power
+#'   allocation, in the same two forms as `variance` with a `cv` column.
+#' @param importance A positive size per stratum (\eqn{X_h}), in the same two
+#'   forms as `variance` with an `importance` column. It is what
+#'   `"proportional"` allocates in proportion to, such as each stratum's
+#'   household total, or the importance measure of power allocation.
 #' @param power Power exponent \eqn{q} for power allocation.
 #'   Must satisfy \eqn{0 \le q \le 1}. Defaults to `0.5`.
 #'
 #' @return A modified `sampling_design` object with stratification specified.
 #'
 #' @details
-#' ## Allocation methods
+#' ## Equal allocation
+#' Each stratum receives n/H units, where H is the number of strata.
 #'
-#' When no `alloc` is specified, the `n` parameter in [draw()] is interpreted
-#' as the sample size *per stratum*. When an `alloc` method is specified,
-#' `n` becomes the *total* sample size to be distributed according to the
-#' allocation method.
+#' ## Proportional allocation
+#' Each stratum receives \eqn{n \times N_h/N}{n * N_h/N} units, where \eqn{N_h}
+#' is the number of the stage's sampling units in stratum h and N their total.
+#' At a clustered stage \eqn{N_h} counts PSUs, not the elements inside them,
+#' and `mos` does not enter the allocation.
+#'
+#' With `importance`, each stratum receives
+#' \eqn{n \times X_h / \sum X_h}{n * X_h / sum(X_h)} units instead, so a
+#' clustered stage can allocate its PSUs in proportion to the households they
+#' hold. This gives the same sizes as power allocation with every
+#' \eqn{C_h = 1} and \eqn{q = 1}. A two-stage plan allocated on the ultimate
+#' units, from [svyplan::n_alloc()] with a cluster model, is passed to
+#' [draw()] directly.
+#'
+#' ## Neyman allocation
+#' Minimizes variance for a fixed sample size. Each stratum receives
+#' \eqn{n \times (N_h \times S_h) / \sum(N_h \times S_h)}{n * (N_h * S_h) / sum(N_h * S_h)}
+#' units, where S_h is the stratum standard deviation. At a clustered stage
+#' the units allocated are PSUs, so S_h is the standard deviation of PSU
+#' totals.
+#'
+#' ## Optimal allocation
+#' Minimizes variance for fixed cost (or cost for fixed variance). Each
+#' stratum receives
+#' \eqn{n \times (N_h \times S_h / \sqrt{C_h}) / \sum(N_h \times S_h / \sqrt{C_h})}{n * (N_h * S_h / sqrt(C_h)) / sum(N_h * S_h / sqrt(C_h))}
+#' units, where C_h is the per-unit cost in stratum h.
+#'
+#' ## Power allocation
+#' A compromise allocation (Bankier, 1988) with
+#' \eqn{n_h \propto C_h \times X_h^q}{n_h proportional to C_h * X_h^q}, where
+#' \eqn{C_h} is the stratum CV, \eqn{X_h} a stratum importance measure, and
+#' \eqn{q \in [0, 1]}{0 <= q <= 1}.
 #'
 #' ## Population bounds and redistribution
 #'
 #' For an allocation method the realized sizes satisfy
 #' \eqn{\sum_h n_h = n}{sum(n_h) = n} and
 #' \eqn{0 \le n_h \le N_h}{0 <= n_h <= N_h} whenever the request is feasible.
-#' The population size is an upper bound in its own right, so `min_n` and
-#' `max_n` add user bounds on top of a cap that is always present rather than
-#' introducing one.
+#' The population cap is always present, and `min_n` and `max_n` add user
+#' bounds on top of it.
 #'
-#' Saturated strata are fixed at their bound and removed from the problem,
-#' then the remaining total is reallocated over the remaining strata using the
-#' method's own factors (\eqn{N_h} for proportional,
-#' \eqn{N_h \sqrt{S_h^2}}{N_h * sqrt(var_h)} for Neyman, and so on). This
-#' keeps the stated criterion intact after saturation. When the free strata
-#' all carry zero factors the criterion is indifferent between them, and the
-#' remainder is split equally in stratum order.
+#' Saturated strata are fixed at their bound and removed, and the remaining
+#' total is reallocated over the other strata with the method's own factors
+#' (\eqn{N_h} for proportional,
+#' \eqn{N_h \sqrt{S_h^2}}{N_h * sqrt(var_h)} for Neyman, and so on), which
+#' keeps the stated criterion after saturation. When the free strata all
+#' carry zero factors, the remainder is split equally in stratum order.
+#'
+#' Real-valued targets become integers by largest remainder, which keeps the
+#' total. Strata tied for a unit are served in a fixed order of their labels,
+#' the "stratum order" above. It depends on neither the order of the frame's
+#' rows nor the session locale, so a permuted frame gets the same allocation.
 #'
 #' Requesting more than the frame holds allocates every unit rather than
-#' failing. `execute()` reports it through the same per-stage diagnostic as
-#' every other population cap, so a stage that ends up taking everything it
-#' could reach warns with class `samplyr_warning_census`, and a random-size
-#' method in the same position warns with `samplyr_warning_nominal_cap`.
-#' Bounds that make the request impossible are errors rather than silent
-#' adjustments, with classes `samplyr_error_alloc_min_infeasible` and
+#' failing, and `execute()` warns with class `samplyr_warning_census`, or
+#' `samplyr_warning_nominal_cap` for a random-size method (see
+#' [execution-conditions]). Bounds that make the request impossible are
+#' errors of class `samplyr_error_alloc_min_infeasible` or
 #' `samplyr_error_alloc_max_infeasible`.
 #'
-#' With-replacement and Poisson-multinomial designs draw units repeatedly, so
-#' the number of distinct units is not an upper bound on the number of draws.
-#' For those methods only `min_n` and `max_n` bind.
+#' With-replacement (`srswr`, `pps_multinomial`) and minimum-replacement
+#' (`pps_chromy`) methods can select a unit more than once, so the number of
+#' distinct units does not bound the draws, and only `min_n` and `max_n` bind.
 #'
 #' Per-stratum sizes given directly, through a scalar or named `n`, a `frac`,
-#' or a data frame, are instructions rather than a total to distribute. They
-#' are never redistributed. Selection caps an impossible one and reports it.
-#'
-#' ## Equal allocation
-#' Each stratum receives n/H units, where H is the number of strata.
-#'
-#' ## Proportional allocation
-#' Each stratum receives \eqn{n \times N_h/N}{n * N_h/N} units, where \eqn{N_h} is the stratum
-#' population size and N is the total population size.
-#'
-#' ## Neyman allocation
-#' Minimizes variance for fixed sample size. Each stratum receives:
-#' \eqn{n \times (N_h \times S_h) / \sum(N_h \times S_h)}{n * (N_h * S_h) / sum(N_h * S_h)}
-#' where S_h is the stratum standard deviation.
-#'
-#' ## Optimal allocation
-#' Minimizes variance for fixed cost (or cost for fixed variance).
-#' Each stratum receives:
-#' \eqn{n \times (N_h \times S_h / \sqrt{C_h}) / \sum(N_h \times S_h / \sqrt{C_h})}{n * (N_h * S_h / sqrt(C_h)) / sum(N_h * S_h / sqrt(C_h))}
-#' where C_h is the per-unit cost in stratum h.
-#'
-#' ## Power allocation
-#' Power allocation (Bankier, 1988) is a compromise allocation:
-#' \eqn{n_h \propto C_h \times X_h^q}{n_h proportional to C_h * X_h^q}, where
-#' \eqn{C_h} is stratum CV, \eqn{X_h} is a stratum importance measure, and
-#' \eqn{q \in [0, 1]}{0 <= q <= 1}.
+#' or a data frame, are never redistributed. Selection caps an impossible one
+#' and reports it.
 #'
 #' ## Custom allocation
-#' For custom stratum-specific sample sizes or rates, pass a data frame
-#' directly to the `n` or `frac` argument in [draw()]. The data frame must
-#' contain columns for all stratification variables plus an `n` or `frac` column.
-#'
-#' ## Auxiliary input formats (`variance`, `cost`, `cv`, `importance`)
-#' - With **one** stratification variable, you may use a named vector
-#'   (e.g., `variance = c(A = 1.2, B = 0.8)`).
-#' - With **multiple** stratification variables, you must use a data frame
-#'   containing all stratification columns plus the value column.
-#'
-#' @section Data frame requirements:
-#' Auxiliary data frames (`variance`, `cost`) must contain:
-#' - All stratification variable columns (used as join keys)
-#' - The appropriate value column (`var` or `cost`)
+#' For sizes or rates chosen per stratum, pass [draw()] a data frame as `n`
+#' or `frac`, with every stratification column plus an `n` or `frac` column.
 #'
 #' @examples
 #' # Simple stratification: 20 EAs per region
@@ -181,6 +172,16 @@
 #'   draw(n = 200) |>
 #'   execute(bfa_eas, seed = 7)
 #'
+#' # EAs allocated in proportion to each region's households rather than to
+#' # its number of EAs
+#' households <- stats::aggregate(households ~ region, bfa_eas, sum)
+#' names(households)[2] <- "importance"
+#' sampling_design() |>
+#'   stratify_by(region, alloc = "proportional", importance = households) |>
+#'   cluster_by(ea_id) |>
+#'   draw(n = 100) |>
+#'   execute(bfa_eas, seed = 7)
+#'
 #' # Custom sample sizes per stratum using a data frame
 #' custom_sizes <- data.frame(
 #'   region = levels(bfa_eas$region),
@@ -194,8 +195,12 @@
 #' # Multiple stratification variables
 #' sampling_design() |>
 #'   stratify_by(region, urban_rural, alloc = "proportional") |>
-#'   draw(n = 300, min_n = 1) |>
+#'   draw(n = 300, min_n = 2) |>
 #'   execute(bfa_eas, seed = 2025)
+#'
+#' @references
+#' Bankier, M.D. (1988). Power allocations: determining sample sizes for
+#' subnational areas. *The American Statistician*, 42(3), 174-177.
 #'
 #' @seealso
 #' [sampling_design()] for creating designs,
@@ -214,13 +219,23 @@ stratify_by <- function(
   importance = NULL,
   power = NULL
 ) {
-  if (!is_sampling_design(.data)) {
-    cli_abort("{.arg .data} must be a {.cls sampling_design} object")
+  if (is.data.frame(.data)) {
+    abort_frame_misplaced("stratify_by")
   }
+  if (!is_sampling_design(.data)) {
+    cli_abort(
+      "{.arg .data} must be a {.cls sampling_design} object",
+      class = "samplyr_error_design_expected"
+    )
+  }
+  check_stage_open(.data, "stratify_by")
 
   vars_quo <- enquos(...)
   if (length(vars_quo) == 0) {
-    cli_abort("At least one stratification variable must be specified")
+    cli_abort(
+      "At least one stratification variable must be specified",
+      class = "samplyr_error_grouping_variables"
+    )
   }
 
   check_stratify_dots(vars_quo)
@@ -251,18 +266,20 @@ stratify_by <- function(
         c("i" = cli::format_inline("Did you mean {.arg {meant}}?"))
       },
       "i" = "Example: {.code stratify_by(region, strata)}"
-    ))
+    ), class = "samplyr_error_grouping_variables")
   }
 
   vars <- unname(vapply(vars_quo, as_label, character(1)))
 
-  valid_alloc <- c("equal", "proportional", "neyman", "optimal", "power")
-  if (!is_null(alloc)) {
-    if (!is_character(alloc) || length(alloc) != 1) {
-      cli_abort("{.arg alloc} must be a single character string")
-    }
-    alloc <- match.arg(alloc, valid_alloc)
-  }
+  alloc <- check_alloc_method(alloc)
+
+  check_alloc_inputs_used(
+    alloc,
+    list(
+      variance = variance, cost = cost, cv = cv,
+      importance = importance, power = power
+    )
+  )
 
   if (!is_null(variance)) {
     variance <- coerce_aux_input(variance, vars, "var", "variance")
@@ -315,12 +332,16 @@ stratify_by <- function(
 
   current <- .data$current_stage
   if (current < 1 || current > length(.data$stages)) {
-    cli_abort("Invalid design state: no current stage")
+    cli_abort(
+      "Invalid design state: no current stage",
+      class = "samplyr_error_internal"
+    )
   }
 
   if (!is_null(.data$stages[[current]]$strata)) {
     cli_abort(
-      "Stratification already defined for this stage. Use {.fn add_stage} to start a new stage."
+      "Stratification already defined for this stage. Use {.fn add_stage} to start a new stage.",
+      class = "samplyr_error_stage_duplicate"
     )
   }
 
@@ -362,6 +383,90 @@ check_stratify_dots <- function(vars_quo, call = rlang::caller_env()) {
   invisible(vars_quo)
 }
 
+#' The auxiliary inputs each allocation reads
+#' @noRd
+alloc_inputs <- list(
+  equal = character(0),
+  proportional = "importance",
+  neyman = "variance",
+  optimal = c("variance", "cost"),
+  power = c("cv", "importance", "power")
+)
+
+#' Refuse an allocation input the allocation does not read
+#'
+#' An input the rule ignores was dropped without a word, so `importance`
+#' next to `alloc = "proportional"` looked like it shaped the allocation.
+#' `stratify_by()` checks what the caller typed and the allocator checks the
+#' stored spec, which is what a design file restores.
+#' @noRd
+check_alloc_inputs_used <- function(alloc, inputs, call = caller_env()) {
+  supplied <- names(inputs)[!vapply(inputs, is_null, logical(1))]
+  used <- if (is_null(alloc)) character(0) else alloc_inputs[[alloc]]
+  unused <- setdiff(supplied, used)
+  if (length(unused) == 0L) {
+    return(invisible(NULL))
+  }
+  # Name the allocations that read every unused input, else any of them.
+  reads_all <- vapply(alloc_inputs, function(x) all(unused %in% x), NA)
+  reads_any <- vapply(alloc_inputs, function(x) any(unused %in% x), NA)
+  readers <- names(alloc_inputs)[if (any(reads_all)) reads_all else reads_any]
+  problem <- if (is_null(alloc)) {
+    cli::format_inline(
+      "{.arg {unused}} {?is/are} read only by an allocation method, and
+       there is no {.arg alloc}."
+    )
+  } else {
+    cli::format_inline(
+      "{.val {alloc}} allocation does not use {.arg {unused}}."
+    )
+  }
+  abort_samplyr(
+    c(
+      problem,
+      "i" = cli::format_inline(
+        "Remove {.arg {unused}}, or choose an allocation that reads
+         {cli::qty(length(unused))}{?it/them}: {.val {readers}}."
+      )
+    ),
+    class = "samplyr_error_alloc_unused_aux",
+    call = call
+  )
+}
+
+#' The allocation methods `stratify_by()` knows
+#' @noRd
+valid_alloc_methods <- c("equal", "proportional", "neyman", "optimal", "power")
+
+#' Refuse an allocation name `stratify_by()` does not know
+#' @noRd
+check_alloc_method <- function(alloc, call = caller_env()) {
+  if (is_null(alloc)) {
+    return(NULL)
+  }
+  hit <- if (is_character(alloc) && length(alloc) == 1L && !is.na(alloc)) {
+    match(alloc, valid_alloc_methods)
+  } else {
+    NA_integer_
+  }
+  if (is.na(hit)) {
+    given <- if (rlang::is_string(alloc)) {
+      cli::format_inline("{.val {alloc}} is not one of them.")
+    } else {
+      cli::format_inline("It is {.obj_type_friendly {alloc}}.")
+    }
+    abort_samplyr(
+      c(
+        "{.arg alloc} must be one of {.val {valid_alloc_methods}}.",
+        "x" = given
+      ),
+      class = "samplyr_error_alloc_unknown_method",
+      call = call
+    )
+  }
+  valid_alloc_methods[[hit]]
+}
+
 #' @noRd
 validate_stratify_args <- function(
   alloc,
@@ -379,7 +484,8 @@ validate_stratify_args <- function(
         if (is_null(variance)) {
           cli_abort(
             "Neyman allocation requires {.arg variance} data frame",
-            call = call
+            call = call,
+            class = "samplyr_error_aux_required"
           )
         }
       },
@@ -387,13 +493,15 @@ validate_stratify_args <- function(
         if (is_null(variance)) {
           cli_abort(
             "Optimal allocation requires {.arg variance} data frame",
-            call = call
+            call = call,
+            class = "samplyr_error_aux_required"
           )
         }
         if (is_null(cost)) {
           cli_abort(
             "Optimal allocation requires {.arg cost} data frame",
-            call = call
+            call = call,
+            class = "samplyr_error_aux_required"
           )
         }
       },
@@ -401,13 +509,15 @@ validate_stratify_args <- function(
         if (is_null(cv)) {
           cli_abort(
             "Power allocation requires {.arg cv} data frame or named vector",
-            call = call
+            call = call,
+            class = "samplyr_error_aux_required"
           )
         }
         if (is_null(importance)) {
           cli_abort(
             "Power allocation requires {.arg importance} data frame or named vector",
-            call = call
+            call = call,
+            class = "samplyr_error_aux_required"
           )
         }
         if (!is.numeric(power) || length(power) != 1 || !is_finite_numeric(power)) {
@@ -492,7 +602,7 @@ validate_aux_df <- function(
     abort_samplyr(
       c(
         "{.arg {arg_name}} has duplicate rows for the same stratum.",
-        "x" = "Duplicate keys: {.val {dup_labels}}"
+        "x" = "Duplicate keys: {format_pool_sample(dup_labels)}"
       ),
       class = "samplyr_error_aux_duplicate_keys",
       call = call
@@ -574,7 +684,8 @@ coerce_aux_input <- function(
           "i" = "Current stratification variables: {.val {vars}}.",
           "i" = "Use a data frame with columns {.val {c(vars, value_col)}}."
         ),
-        call = call
+        call = call,
+        class = "samplyr_error_aux_invalid_input_type"
       )
     }
     df <- data.frame(names(x), unname(x), stringsAsFactors = FALSE)

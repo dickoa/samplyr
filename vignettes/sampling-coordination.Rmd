@@ -1,10 +1,10 @@
 ---
-title: "Coordinate Samples with Permanent Random Numbers"
+title: "Coordinate samples with permanent random numbers"
 output: rmarkdown::html_vignette
 bibliography: references.bib
 link-citations: true
 vignette: >
-  %\VignetteIndexEntry{Coordinate Samples with Permanent Random Numbers}
+  %\VignetteIndexEntry{Coordinate samples with permanent random numbers}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -285,7 +285,7 @@ frame_for_second_survey <- frame |>
 For equal-probability Bernoulli samples, separated intervals give an exact
 result when their sampling fractions fit without overlap. For fixed-size PPS
 samples with different sizes, strata, or size measures, the half-turn is only
-a heuristic. Large survey programmes generally need a dedicated coordination
+a heuristic. Large survey programs generally need a dedicated coordination
 system rather than repeated ad hoc shifts [@ohlsson1995; @riviere2001].
 
 ## A practical checklist
@@ -300,8 +300,10 @@ system rather than repeated ad hoc shifts [@ohlsson1995; @riviere2001].
 6. Recompute probabilities whenever the frame or design changes.
 
 Start with the Bernoulli example if you are learning the mechanism. Move to
-`pps_sps` only when you need both unequal selection probabilities and an exact
-realized sample size. Use `vignette("rotating-panels")` when the requirement is
+an order-sampling method, `pps_pareto` or `pps_sps`, only when you need both
+unequal selection probabilities and an exact realized sample size. In small
+pools `pps_pareto` keeps much closer to its target probabilities, as
+`?selection-methods` reports. Use `vignette("rotating-panels")` when the requirement is
 a controlled entry-and-exit schedule rather than simply more or less overlap.
 
 ## References

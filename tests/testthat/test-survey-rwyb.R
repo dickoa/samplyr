@@ -78,9 +78,18 @@ test_that("RWYB rejects lost parents, unsupported mechanisms and unidentified si
     on_empty = "silent") |> execute(data.frame(u = c(.01, rep(.9, 15)), y = 1))
   expect_gt(rwyb_variance(poisson_one, replicates = 1000), 0)
   pareto <- sampling_design() |> draw(n = 4, method = "pps_pareto", mos = id) |> execute(frame, seed = 1)
-  expect_error(as_svrepdesign(pareto, type = "rwyb"), class = "samplyr_error_rwyb_method")
+  cnd <- expect_error(as_svrepdesign(pareto, type = "rwyb"), class = "samplyr_error_rwyb_method")
+  expect_identical(condition_header(cnd), "as_svrepdesign")
   expect_error(as_svrepdesign(singleton, type = "rwyb", replicates = 1), class = "samplyr_error_rwyb_input")
-  expect_error(as_svrepdesign(singleton, type = "rwyb", lonely.psu = "certainty"),
+  # A single-stage design's only stage is final, so "certainty" applies there.
+  expect_s3_class(
+    as_svrepdesign(singleton, type = "rwyb", replicates = 10,
+                   lonely.psu = "certainty"),
+    "svyrep.design"
+  )
+  expect_error(as_svrepdesign(singleton, type = "rwyb", lonely.psu = "remove"),
+    class = "samplyr_error_rwyb_input")
+  expect_error(as_svrepdesign(singleton, type = "rwyb", lonely = "certainty"),
     class = "samplyr_error_unknown_argument")
 })
 

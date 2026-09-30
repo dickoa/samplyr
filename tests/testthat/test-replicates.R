@@ -20,8 +20,6 @@ test_that("replicates are independent (different rows selected)", {
 
   rep1 <- result$id[result$.replicate == 1]
   rep2 <- result$id[result$.replicate == 2]
-  # With n=20 from 120, there's overlap, but they shouldn't be identical
-
   expect_false(identical(rep1, rep2))
 })
 
@@ -36,14 +34,19 @@ test_that("seed reproducibility across runs", {
   expect_identical(r1$.weight, r2$.weight)
 })
 
-test_that("seed + r - 1 convention: replicate 1 matches standalone seed", {
+test_that("each replicate is the execution at its recorded seed", {
   design <- sampling_design() |> draw(n = 20)
 
   replicated <- execute(design, test_frame, seed = 42, reps = 3)
-  standalone <- execute(design, test_frame, seed = 42)
-
-  rep1 <- replicated[replicated$.replicate == 1, ]
-  expect_equal(sort(rep1$id), sort(standalone$id))
+  seeds <- attr(replicated, "metadata")$replicate_seeds
+  for (r in 1:3) {
+    standalone <- execute(design, test_frame, seed = seeds[r])
+    expect_identical(
+      sort(replicated$id[replicated$.replicate == r]),
+      sort(standalone$id),
+      info = r
+    )
+  }
 })
 
 test_that("no seed still produces independent replicates", {
@@ -54,7 +57,6 @@ test_that("no seed still produces independent replicates", {
   expect_equal(sort(unique(result$.replicate)), 1:3)
   rep1 <- result$id[result$.replicate == 1]
   rep2 <- result$id[result$.replicate == 2]
-  # Should be different (extremely unlikely to be identical by chance)
   expect_false(identical(rep1, rep2))
 })
 
@@ -72,7 +74,6 @@ test_that("row ordering: grouped by .replicate ascending", {
     draw(n = 20) |>
     execute(test_frame, seed = 42, reps = 5)
 
-  # .replicate should be non-decreasing
   expect_true(all(diff(result$.replicate) >= 0))
 })
 
@@ -81,7 +82,7 @@ test_that("weights are correct per replicate", {
     draw(n = 20) |>
     execute(test_frame, seed = 42, reps = 3)
 
-  # SRS n=20 from 120 => weight = 120/20 = 6
+  # 120/20 = 6.
   expect_true(all(result$.weight == 6))
 })
 
@@ -92,7 +93,6 @@ test_that("reps with stratified proportional allocation", {
     execute(test_frame, seed = 1, reps = 3)
 
   expect_equal(nrow(result), 120)
-  # Each replicate has 40 rows, 10 per stratum
   for (r in 1:3) {
     rep_data <- result[result$.replicate == r, ]
     expect_equal(nrow(rep_data), 40)
@@ -131,8 +131,7 @@ test_that("reps + panels is an error", {
 
 test_that("reps + PRN on executed stage is an error", {
   tf <- test_frame
-  # PRN identifies a unit across surveys, so a clustered stage needs one
-  # value per cluster rather than one per descendant row.
+  # A clustered stage needs one PRN per cluster, not per descendant row.
   clusters <- unique(tf$cluster)
   tf$prn <- runif(length(clusters))[match(tf$cluster, clusters)]
 
@@ -147,8 +146,7 @@ test_that("reps + PRN on executed stage is an error", {
 
 test_that("reps on continuation is allowed when PRN was on a prior stage", {
   tf <- test_frame
-  # PRN identifies a unit across surveys, so a clustered stage needs one
-  # value per cluster rather than one per descendant row.
+  # A clustered stage needs one PRN per cluster, not per descendant row.
   clusters <- unique(tf$cluster)
   tf$prn <- runif(length(clusters))[match(tf$cluster, clusters)]
 
@@ -159,10 +157,9 @@ test_that("reps on continuation is allowed when PRN was on a prior stage", {
     add_stage("Units") |>
       draw(n = 3)
 
-  # Stage 1 with PRN, no reps
   stage1 <- execute(design, tf, stages = 1, seed = 1)
 
-  # Continue stage 2 with reps; the PRN stage is already done
+  # The PRN stage is already done.
   result <- execute(stage1, tf, seed = 10, reps = 3)
   expect_equal(sort(unique(result$.replicate)), 1:3)
 })
@@ -181,7 +178,7 @@ test_that("two-stage replicated sampling", {
 
   expect_true(".replicate" %in% names(result))
   expect_equal(sort(unique(result$.replicate)), 1:3)
-  # Each replicate: 4 strata * 2 clusters * 3 units = 24
+  # 4 strata * 2 clusters * 3 units.
   for (r in 1:3) {
     expect_equal(nrow(result[result$.replicate == r, ]), 24)
   }
@@ -195,7 +192,7 @@ test_that("stratified PPS replicated", {
     execute(test_frame, seed = 42, reps = 2)
 
   expect_equal(sort(unique(result$.replicate)), 1:2)
-  # 8 per stratum * 4 strata = 32 per rep
+  # 8 per stratum * 4 strata.
   expect_equal(nrow(result), 64)
 })
 
@@ -224,7 +221,6 @@ test_that(".draw_k values are per-replicate for WR methods", {
     draw(n = 10, method = "srswr") |>
     execute(test_frame, seed = 1, reps = 3)
 
-  # Each replicate should have draw values starting from 1
   for (r in 1:3) {
     rep_draws <- result$.draw_1[result$.replicate == r]
     expect_true(1L %in% rep_draws)
@@ -242,14 +238,11 @@ test_that("continuation from replicated partial sample auto-loops", {
     add_stage("Units") |>
       draw(n = 3)
 
-  # Stage 1 with reps
   stage1 <- execute(design, test_frame, stages = 1, seed = 1, reps = 3)
   expect_equal(sort(unique(stage1$.replicate)), 1:3)
 
-  # Continue, automatically looping over replicates
   result <- execute(stage1, test_frame, seed = 100)
   expect_equal(sort(unique(result$.replicate)), 1:3)
-  # Each replicate expanded to units
   expect_true(".weight_2" %in% names(result))
 })
 
@@ -324,7 +317,11 @@ test_that("metadata records reps count and replicate_seeds", {
 
   meta <- attr(result, "metadata")
   expect_equal(meta$reps, 3)
-  expect_equal(meta$replicate_seeds, c(42L, 43L, 44L))
+  # Drawn from the seed, not counted up from it.
+  expect_identical(
+    meta$replicate_seeds,
+    c(1781592037L, 1228985497L, 608797924L)
+  )
 })
 
 test_that("metadata replicate_seeds is NULL when no seed", {
@@ -376,7 +373,6 @@ test_that("reps works with random-size bernoulli", {
     execute(test_frame, seed = 1, reps = 3)
 
   expect_equal(sort(unique(result$.replicate)), 1:3)
-  # Replicates may have different sizes
   rep_sizes <- table(result$.replicate)
   expect_true(all(rep_sizes > 0))
 })
@@ -384,7 +380,7 @@ test_that("reps works with random-size bernoulli", {
 test_that("reps works with certainty selection", {
   tf <- test_frame
   tf$big_mos <- tf$mos
-  tf$big_mos[1:3] <- 10000  # Force certainty
+  tf$big_mos[1:3] <- 10000
 
   result <- sampling_design() |>
     stratify_by(stratum) |>
@@ -397,6 +393,7 @@ test_that("reps works with certainty selection", {
 ## Survey export guards
 
 test_that("as_svydesign errors on replicated sample", {
+  skip_if_not_installed("survey")
   result <- sampling_design() |>
     draw(n = 20) |>
     execute(test_frame, seed = 1, reps = 2)
@@ -408,6 +405,7 @@ test_that("as_svydesign errors on replicated sample", {
 })
 
 test_that("as_svydesign works after filtering to one replicate", {
+  skip_if_not_installed("survey")
   result <- sampling_design() |>
     draw(n = 20) |>
     execute(test_frame, seed = 1, reps = 2)
@@ -418,6 +416,7 @@ test_that("as_svydesign works after filtering to one replicate", {
 })
 
 test_that("as_svrepdesign errors on replicated sample", {
+  skip_if_not_installed("survey")
   result <- sampling_design() |>
     draw(n = 20) |>
     execute(test_frame, seed = 1, reps = 2)
@@ -462,6 +461,7 @@ test_that("joint_expectation errors on replicated sample", {
 })
 
 test_that("check_single_replicate errors on NA in .replicate", {
+  skip_if_not_installed("survey")
   result <- sampling_design() |>
     draw(n = 20) |>
     execute(test_frame, seed = 1, reps = 2)
@@ -487,7 +487,6 @@ test_that("tbl_sum omits replicate line for single replicate", {
     draw(n = 20) |>
     execute(test_frame, seed = 1, reps = 2)
 
-  # Filter to single replicate
   one_rep <- result[result$.replicate == 1, ]
   header <- tbl_sum(one_rep)
   expect_false("Replicates" %in% names(header))
@@ -529,24 +528,21 @@ test_that("summary shows full weight diagnostics for single replicate", {
   expect_no_match(output_text, "omitted")
 })
 
-## Bug fix: replicated multi-phase
+## Replicated multi-phase execution
 
 test_that("replicated phase-1 passed as frame executes per-replicate", {
-  # Phase 1: replicated
   phase1 <- sampling_design() |>
     draw(n = 20) |>
     execute(test_frame, seed = 1, reps = 2)
 
   expect_equal(nrow(phase1), 40)
 
-  # Phase 2: new design on replicated phase-1
   phase2 <- sampling_design() |>
     draw(n = 5) |>
     execute(phase1, seed = 100)
 
   expect_true(".replicate" %in% names(phase2))
   expect_equal(sort(unique(phase2$.replicate)), 1:2)
-  # 5 per replicate
   expect_equal(sum(phase2$.replicate == 1), 5)
   expect_equal(sum(phase2$.replicate == 2), 5)
   expect_equal(nrow(phase2), 10)
@@ -587,8 +583,7 @@ test_that("replicated multi-phase: weights compound correctly", {
     draw(n = 5) |>
     execute(phase1, seed = 100)
 
-  # Phase-1 weight: 120/20 = 6, phase-2 weight: 20/5 = 4
-  # Combined: 6 * 4 = 24
+  # Phase 1 weight 120/20 = 6 times phase 2 weight 20/5 = 4.
   expect_equal(unique(phase2$.weight), 24)
 })
 
@@ -613,7 +608,7 @@ test_that("replicated multi-phase: .replicate stripped from phase-2 internals", 
     draw(n = 5) |>
     execute(phase1, seed = 100)
 
-  # .replicate should only appear once (outer tag, not leaked from frame)
+  # The outer tag only, not one leaked from the frame.
   expect_equal(sum(names(phase2) == ".replicate"), 1)
 })
 
@@ -630,7 +625,7 @@ test_that("non-replicated phase-1 with reps on phase-2 still works", {
   expect_equal(nrow(phase2), 15)
 })
 
-## Bug fix: stages validation before PRN check
+## Stage validation comes before the PRN check
 
 test_that("reps with out-of-range stages gives clean user error", {
   design <- sampling_design() |> draw(n = 10)
@@ -665,7 +660,7 @@ test_that("reps with out-of-range stages on continuation gives clean error", {
   )
 })
 
-## Bug fix: summary/print with corrupted .replicate
+## summary() and print() with a corrupted .replicate
 
 test_that("summary handles NA in .replicate gracefully", {
   result <- sampling_design() |>
@@ -674,10 +669,9 @@ test_that("summary handles NA in .replicate gracefully", {
 
   result$.replicate[1] <- NA_integer_
 
-  # Should not error, should warn about NA
   output <- capture.output(summary(result))
   output_text <- paste(output, collapse = "\n")
-  # Should fall back to non-replicated display (show DEFF)
+  # Falls back to the non-replicated display, which shows DEFF.
   expect_match(output_text, "DEFF")
 })
 

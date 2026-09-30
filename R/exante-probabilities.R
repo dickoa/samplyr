@@ -122,6 +122,7 @@ resolve_exante_probabilities <- function(design, frame, key_col,
                                          frame_label = NULL,
                                          allow_approximate = FALSE,
                                          call = caller_env()) {
+  rlang::local_error_call(call)
   check_exante_design_complete(design, call = call)
   quality <- exante_probability_quality(design, allow_approximate, call = call)
 
@@ -529,10 +530,8 @@ resolve_exante_overlaps <- function(samples, spec, membership,
 
 #' The resolved form of an overlap declaration
 #'
-#' A class rather than a shape. The resolved record used to be a bare list
-#' told apart from a declared one by `is_null(x$cols)`, in three places, which
-#' is a test on the absence of a field rather than on what the object is.
-#' `cols` stays `NULL` so nothing that reads it has to change.
+#' A class, so readers test what the object is rather than whether `cols` is
+#' absent. `cols` stays `NULL` so nothing that reads it has to change.
 #' @noRd
 new_resolved_overlaps <- function(matrices, probability_quality = NULL) {
   structure(

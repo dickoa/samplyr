@@ -1,17 +1,13 @@
-## G4. Quantitative links
+## Quantitative links
 
 # Lavallee section 4.5 replaces the 0/1 link indicator with a non-negative
-# importance, with no loss of theory subject to Constraint 4.1: the total over
-# each target cluster is strictly positive. Counting is the case where every
-# link counts for one, so the two run the same code and the tests say so.
+# importance, subject to Constraint 4.1 (each target cluster total > 0).
+# Counting is the case where every link counts for one.
 
 ## The worked population
-#
-# Source U^A = {a, b, c, d}, srswor n = 2, every design weight 2.
-# Target: H1 = {t1, t2}, H2 = {t3}.
-#
-# Importances B[j, ik]:  a->t1 = 3, a->t2 = 1, b->t1 = 2, c->t3 = 4, d->t3 = 6
-# so B[t1] = 5, B[t2] = 1, B[t3] = 10, and B[H1] = 6, B[H2] = 10.
+# Source {a, b, c, d}, srswor n = 2, every weight 2. H1 = {t1, t2}, H2 = {t3}.
+# Importances a->t1 = 3, a->t2 = 1, b->t1 = 2, c->t3 = 4, d->t3 = 6,
+# so B[t1] = 5, B[t2] = 1, B[t3] = 10, B[H1] = 6 and B[H2] = 10.
 
 wl_source_frame <- function() {
   data.frame(unit = c("a", "b", "c", "d"), stringsAsFactors = FALSE)
@@ -70,8 +66,7 @@ test_that("quantitative links are exactly unbiased", {
     sum(r$.weight * r$y)
   }, numeric(1))
 
-  # Every cluster has a positive link total, so Constraint 4.1 holds and the
-  # whole target population is reachable.
+  # Every cluster has a positive link total, so Constraint 4.1 holds.
   expect_equal(mean(totals), sum(wl_targets()$y))
   expect_equal(mean(totals), 111)
 })
@@ -83,8 +78,7 @@ test_that("the weights agree with a hand-calculated B matrix", {
   expect_equal(unique(r$.weight[r$hh == "H1"]), 2 * (4 / 6) + 2 * (2 / 6))
 
   r2 <- wl_share(wl_all_samples()[["ac"]])
-  # {a, c}: only a reaches H1, carrying 4 of the 6; only c reaches H2, with 4
-  # of the 10.
+  # {a, c}: a carries 4 of H1's 6, and c carries 4 of H2's 10.
   expect_equal(unique(r2$.weight[r2$hh == "H1"]), 2 * (4 / 6))
   expect_equal(unique(r2$.weight[r2$hh == "H2"]), 2 * (4 / 10))
 })
@@ -93,9 +87,7 @@ test_that("the weight is constant within a target cluster", {
   r <- wl_share(wl_all_samples()[["ab"]])
   h1 <- r[r$hh == "H1", ]
 
-  # t1 and t2 carry very different importances, and still one weight: the
-  # denominator is the cluster's, which is what makes unit and cluster
-  # estimates agree.
+  # t1 and t2 differ in importance but share the cluster's denominator.
   expect_equal(length(unique(h1$.weight)), 1L)
   expect_false(isTRUE(all.equal(h1$.link_weight[1], h1$.link_weight[2])))
 })
@@ -114,8 +106,6 @@ test_that("unit importances reproduce complete_links() exactly", {
     within = hh, multiplicity = complete_links()
   )
 
-  # The generalization has to contain the case it generalizes. If these ever
-  # diverge, one of the two paths has drifted.
   expect_equal(weighted$.weight, counted$.weight)
   expect_equal(weighted$.link_weight, counted$.unit_links)
   expect_equal(weighted$.cluster_link_weight, counted$.cluster_links)
@@ -166,8 +156,7 @@ test_that("a generated quantitative name the register already uses is refused", 
 test_that("a supplied total that differs from the links is used as given", {
   s <- wl_all_samples()[["ab"]]
   targets <- wl_targets()
-  # The recorded link table is incomplete: t1 really carries 9 of importance
-  # in the population, not the 5 that were observed.
+  # The link table is incomplete: t1 carries 9 in the population, not 5.
   targets$Btotal <- c(9, 1, 10)
 
   supplied <- share_weights(
@@ -197,9 +186,7 @@ test_that("a reached cluster whose importance totals zero is refused", {
   targets <- wl_targets()
   targets$Btotal <- c(0, 0, 10)
 
-  # Constraint 4.1. The sample reached H1, so a zero total for it is a
-  # contradiction rather than an empty cluster, and dividing by it would
-  # produce an infinite weight.
+  # H1 was reached, so a zero total is a contradiction, not an empty cluster.
   expect_error(
     share_weights(
       s, targets, wl_links(),
@@ -215,9 +202,7 @@ test_that("the divide-by-zero refusal blames a total only when one was given", {
   links <- wl_links()
   links$B <- c(0, 0, 0, 4, 6)
 
-  # Nothing was supplied here: the denominator was counted from `links`
-  # itself, so a message about a supplied total disagreeing with `links`
-  # would name an input the call does not have.
+  # The denominator is counted from `links`, so no supplied total is blamed.
   expect_error(
     share_weights(
       s, wl_targets(), links,
@@ -246,9 +231,7 @@ test_that("weighted_links takes its value by name as well as by position", {
   targets <- wl_targets()
   targets$Btotal <- c(5, 1, 10)
 
-  # `x` is what `@param x` names, so it has to be the spelling that works.
-  # Reading `total` by name and the value by position accepted three of these
-  # four and refused the documented one.
+  # `x` is the documented name, so it has to be a spelling that works.
   spellings <- list(
     quote(weighted_links(B, total = Btotal)),
     quote(weighted_links(x = B, total = Btotal)),
@@ -281,8 +264,7 @@ test_that("a zero importance on one link is allowed if its cluster is positive",
   links <- wl_links()
   links$B[2] <- 0
 
-  # Constraint 4.1 is about the cluster total, not about every link. A link
-  # of no importance contributes nothing and is not an error.
+  # Constraint 4.1 is about the cluster total, not about every link.
   r <- share_weights(
     s, wl_targets(), links,
     by = c(unit = "unit"), to = c(tid = "tid"),
@@ -342,9 +324,7 @@ test_that("weighted_links refuses columns and totals that do not exist", {
 test_that("quantitative links with cluster elimination are refused, not guessed", {
   s <- wl_all_samples()[["ab"]]
 
-  # Section 4.4 defers this: an extended link has to say what importance it
-  # carries, and that convention is not fixed. Any answer would be one no
-  # published convention backs.
+  # Section 4.4 fixes no convention for the importance of an extended link.
   expect_error(
     share_weights(
       s, wl_targets(), wl_links(),
@@ -364,9 +344,6 @@ test_that("the quantitative markers refuse to be called on their own", {
 test_that("there is one completeness marker, and it serves both scales", {
   s <- wl_all_samples()[["ab"]]
 
-  # `complete_weighted_links()` was a second export making the same assertion
-  # about importances that `complete_links()` makes about counts. It is gone,
-  # and the one marker is read in both positions.
   expect_false(exists("complete_weighted_links", envir = asNamespace("samplyr")))
   expect_false("complete_weighted_links" %in% getNamespaceExports("samplyr"))
 
@@ -385,8 +362,7 @@ test_that("there is one completeness marker, and it serves both scales", {
     "binary"
   )
 
-  # The old spelling is now an ordinary unknown call, reported against the
-  # marker that replaced it rather than failing to be found.
+  # complete_weighted_links() is an ordinary unknown marker call.
   expect_error(
     do.call(share_weights, list(
       s, targets = wl_targets(), links = wl_links(),
@@ -404,9 +380,7 @@ test_that("the record names the quantitative scale and its total mode", {
 
   asserted <- attr(wl_share(s), "metadata")$weight_share
   expect_identical(asserted$denominator$scale, "quantitative")
-  # The stored mode keeps its own name: it is what tells a totalled register
-  # from a totalled count in a file, and the collapse was in the spelling a
-  # user writes rather than in what the record says happened.
+  # The stored mode tells a totalled register from a totalled count in a file.
   expect_identical(asserted$denominator$mode, "complete_weighted_links")
   expect_identical(asserted$generated_cols, weight_share_generated_cols$quantitative)
   expect_no_error(prepare_weight_share_record(asserted, "A test"))
@@ -432,14 +406,11 @@ test_that("a quantitative sample exports to replicate weights like any other", {
 
   rep_design <- as_svrepdesign(r, type = "JK1")
   expect_s3_class(rep_design, "svyrep.design")
-  # The operator is the whole transformation whatever built it, so the
-  # replicate route needs nothing scale-specific.
+  # The operator is the whole transformation, so no route is scale-specific.
   expect_equal(
     unname(stats::weights(rep_design, type = "sampling")),
     r$.weight
   )
-  # And neither does the linearized route, which takes the same operator as
-  # its contribution rows.
   expect_false(is_null(attr(as_svydesign(r), "samplyr_weight_share")))
 })
 

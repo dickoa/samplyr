@@ -34,11 +34,11 @@
     Output
       -- Sample Summary --------------------------------------------------------------
       
-      i n = 43 of 120 | stages = 1/1 | seed = 3 | reps = 3 | n/rep ~ 14
+      i n = 40 of 120 | stages = 1/1 | seed = 3 | reps = 3 | n/rep ~ 13
       
       -- Stage 1 ---------------------------------------------------------------------
       * bernoulli, by stratum
-      * 4 strata: N_h 30, n_h 1-7 across replicates, n_expected 12
+      * 4 strata: N_h 30, n_h 1-8 across replicates, n_expected 12
       
       -- Weights ---------------------------------------------------------------------
       i Weight diagnostics omitted for stacked replicates. Filter to one first: x |> filter(.replicate == 1)

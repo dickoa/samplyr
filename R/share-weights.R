@@ -128,7 +128,10 @@ share_weights <- function(
   target_scope = c("reached", "population")
 ) {
   check_keyword_args(enquos(...), c("multiplicity", "target_scope"))
-  target_scope <- match.arg(target_scope)
+  target_scope <- with_error_class(
+    rlang::arg_match(target_scope),
+    "samplyr_error_share_weights_input"
+  )
 
   # Diagnose required data arguments before evaluation.
   check_share_required(c(
@@ -999,7 +1002,7 @@ gwsm_compute <- function(x, targets, links, by, to, within, mult,
     n_reached = length(reached),
     orphan_clusters = orphan_clusters,
     # Digest target clusters without storing the register.
-    cluster_digest = rlang::hash(sort(cl_index$key))
+    cluster_digest = rlang::hash(sort(enc2utf8(cl_index$key), method = "radix"))
   )
 }
 

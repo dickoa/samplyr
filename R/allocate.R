@@ -1,10 +1,24 @@
+#' Put values within floating-point noise of an integer on that integer
+#'
+#' `100 * 0.07` is 7.000000000000001, and a bare `ceiling()` makes it 8.
+#' Every rounding of a computed size goes through here first, so the size
+#' drawn is the one the arithmetic meant.
+#' @noRd
+snap_integer <- function(x) {
+  nearest <- round(x)
+  close <- which(abs(x - nearest) <= 1e-9 * pmax(1, abs(x)))
+  x[close] <- nearest[close]
+  x
+}
+
 #' @noRd
 round_sample_size <- function(x, round_method = "up") {
   result <- switch(
     round_method,
-    up = ceiling(x),
-    down = floor(x),
-    nearest = round(x)
+    up = ceiling(snap_integer(x)),
+    down = floor(snap_integer(x)),
+    # Half up, as documented: round() is half to even.
+    nearest = floor(snap_integer(x + 0.5))
   )
   pmax(as.integer(result), 1L)
 }
@@ -19,11 +33,11 @@ round_sample_size <- function(x, round_method = "up") {
 #'
 #' @noRd
 round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
-  lo <- as.integer(ceiling(min_vals))
-  hi <- as.integer(floor(max_vals))
+  lo <- as.integer(ceiling(snap_integer(min_vals)))
+  hi <- as.integer(floor(snap_integer(max_vals)))
 
   # Start from bounded floors.
-  a <- pmax(as.integer(floor(x)), lo)
+  a <- pmax(as.integer(floor(snap_integer(x))), lo)
   a <- pmin(a, hi)
   shortfall <- n - sum(a)
 
@@ -125,8 +139,8 @@ allocate_bounded <- function(factors, total, lower, upper) {
 
   n_h <- round_preserve_total_bounded(alloc, total, lower, upper)
 
-  lo_int <- as.integer(ceiling(lower))
-  hi_int <- as.integer(floor(upper))
+  lo_int <- as.integer(ceiling(snap_integer(lower)))
+  hi_int <- as.integer(floor(snap_integer(upper)))
   if (
     abs(sum(n_h) - total) > 0.5 ||
       any(n_h < lo_int) ||
@@ -139,16 +153,15 @@ allocate_bounded <- function(factors, total, lower, upper) {
         "i" = "Bounds [{min(lo_int)}, {max(hi_int)}], got
                [{min(n_h)}, {max(n_h)}]."
       ),
-      call = NULL
+      call = NULL,
+      class = "samplyr_error_internal"
     )
   }
   n_h
 }
 
-## Every class join_aux_to_strata() can assemble from class_prefix, spelled
-## out so the taxonomy scan in test-error-taxonomy.R sees them. The scan
-## collects character vectors from the namespace; a paste0() with a variable
-## part is invisible to it in both directions.
+## Every class join_aux_to_strata() builds from class_prefix, spelled out
+## because the taxonomy scan cannot see through a paste0() with a variable part.
 join_aux_to_strata_classes <- c(
   "samplyr_error_alloc_missing_columns",
   "samplyr_error_alloc_missing_value_column",
@@ -230,7 +243,7 @@ join_aux_to_strata <- function(
     abort_samplyr(
       c(
         dup_msg,
-        "x" = "Duplicate keys: {.val {dup_labels}}"
+        "x" = "Duplicate keys: {format_pool_sample(dup_labels)}"
       ),
       class = paste0("samplyr_error_", class_prefix, "_duplicate_keys"),
       call = call
@@ -263,7 +276,7 @@ join_aux_to_strata <- function(
     abort_samplyr(
       c(
         coverage_msg,
-        "x" = "Missing {missing_label} for: {.val {missing_labels}}"
+        "x" = "Missing {missing_label} for: {format_pool_sample(missing_labels)}"
       ),
       class = paste0("samplyr_error_", class_prefix, "_missing_coverage"),
       call = call
@@ -276,6 +289,15 @@ join_aux_to_strata <- function(
   joined
 }
 
+#' Stratum sample sizes, whatever order the strata arrive in
+#'
+#' Largest-remainder rounding gives a tied extra unit to the first stratum
+#' it meets. Selection lists strata in frame order, the digest in frame order
+#' within each parent, and the frame path of `joint_expectation()` sorted, so
+#' the allocation is computed in the radix order of the stratum labels and
+#' returned in the caller's order. Every path then gets the same `n_h`, and
+#' so does a permuted frame. Factors sort by label, not by level, so
+#' reordering the levels changes nothing either.
 #' @noRd
 calculate_stratum_sizes <- function(
   stratum_info,
@@ -283,7 +305,37 @@ calculate_stratum_sizes <- function(
   draw_spec,
   signal = FALSE
 ) {
+  rlang::local_error_call(caller_env())
+  labels <- lapply(strata_spec$vars, function(v) {
+    x <- stratum_info[[v]]
+    utf8_sort_key(if (is.factor(x)) as.character(x) else x)
+  })
+  ord <- if (length(labels) == 0L) {
+    seq_len(nrow(stratum_info))
+  } else {
+    do.call(order, c(labels, list(na.last = TRUE, method = "radix")))
+  }
+  out <- allocate_strata(
+    stratum_info[ord, , drop = FALSE], strata_spec, draw_spec, signal
+  )
+  out[order(ord), , drop = FALSE]
+}
+
+#' @noRd
+allocate_strata <- function(
+  stratum_info,
+  strata_spec,
+  draw_spec,
+  signal = FALSE
+) {
+  rlang::local_error_call(caller_env())
   alloc <- strata_spec$alloc
+  # A design file restores the spec without stratify_by()'s checks.
+  check_alloc_inputs_used(
+    alloc,
+    strata_spec[c("variance", "cost", "cv", "importance", "power")],
+    call = NULL
+  )
   n_total <- draw_spec$n
   frac <- draw_spec$frac
   min_n <- draw_spec$min_n
@@ -348,8 +400,7 @@ calculate_stratum_sizes <- function(
         if (signal) {
           keys <- format_key_labels(
             stratum_info,
-            strata_spec$vars,
-            max_n = Inf
+            strata_label_vars(strata_spec)
           )
           if (random_size) {
             signal_nominal_cap(
@@ -400,8 +451,7 @@ calculate_stratum_sizes <- function(
         moved <- sum(unbounded[capped] - n_h[capped])
         labels <- format_key_labels(
           stratum_info[capped, , drop = FALSE],
-          strata_spec$vars,
-          max_n = Inf
+          strata_label_vars(strata_spec)
         )
         # Let `execute()` report redistribution once per stage.
         signal_selection_event(
@@ -494,18 +544,18 @@ calculate_stratum_sizes <- function(
     if (!is_null(n_total)) {
       if (!is_null(names(n_total))) {
         if (is_null(strata_ids)) {
-          cli_abort(c(
+          abort_samplyr(c(
             "Named {.arg n} vectors are only supported for single stratification variables.",
             "i" = "Use a data frame for multi-variable stratification: {.val {strata_spec$vars}}"
-          ), call = NULL)
+          ), class = "samplyr_error_alloc_invalid_input_type", call = NULL)
         }
         matched <- n_total[as.character(strata_ids)]
         if (anyNA(matched)) {
           missing <- strata_ids[is.na(matched)]
-          cli_abort(c(
+          abort_samplyr(c(
             "Named {.arg n} does not cover all strata in the frame.",
-            "x" = "Missing allocation for: {.val {missing}}"
-          ), call = NULL)
+            "x" = "Missing allocation for: {format_pool_sample(missing)}"
+          ), class = "samplyr_error_alloc_missing_coverage", call = NULL)
         }
         as.integer(matched)
       } else {
@@ -514,25 +564,29 @@ calculate_stratum_sizes <- function(
     } else if (!is_null(frac)) {
       if (!is_null(names(frac))) {
         if (is_null(strata_ids)) {
-          cli_abort(c(
+          abort_samplyr(c(
             "Named {.arg frac} vectors are only supported for single stratification variables.",
             "i" = "Use a data frame for multi-variable stratification: {.val {strata_spec$vars}}"
-          ), call = NULL)
+          ), class = "samplyr_error_alloc_invalid_input_type", call = NULL)
         }
         frac_matched <- frac[as.character(strata_ids)]
         if (anyNA(frac_matched)) {
           missing <- strata_ids[is.na(frac_matched)]
-          cli_abort(c(
+          abort_samplyr(c(
             "Named {.arg frac} does not cover all strata in the frame.",
-            "x" = "Missing allocation for: {.val {missing}}"
-          ), call = NULL)
+            "x" = "Missing allocation for: {format_pool_sample(missing)}"
+          ), class = "samplyr_error_alloc_missing_coverage", call = NULL)
         }
         round_sample_size(stratum_info$.N_h * frac_matched, round_method)
       } else {
         round_sample_size(stratum_info$.N_h * frac, round_method)
       }
     } else {
-      cli_abort("Cannot determine stratum sample sizes", call = NULL)
+      cli_abort(
+        "Cannot determine stratum sample sizes",
+        call = NULL,
+        class = "samplyr_error_internal"
+      )
     }
   } else {
     switch(alloc,
@@ -540,9 +594,19 @@ calculate_stratum_sizes <- function(
         finalize_allocation(rep(1, H), n_total, stratum_info$.N_h, alloc)
       },
       proportional = {
-        finalize_allocation(
-          stratum_info$.N_h, n_total, stratum_info$.N_h, alloc
-        )
+        size <- stratum_info$.N_h
+        if (!is_null(strata_spec$importance)) {
+          stratum_info <- join_aux_to_strata(
+            stratum_info = stratum_info,
+            aux_df = strata_spec$importance,
+            key_vars = strata_spec$vars,
+            arg_name = "importance",
+            value_col = "importance"
+          )
+          # Positive by validate_stratify_args(), rerun on a stored spec.
+          size <- stratum_info$importance
+        }
+        finalize_allocation(size, n_total, stratum_info$.N_h, alloc)
       },
       power = {
         cv_df <- strata_spec$cv
@@ -691,7 +755,7 @@ calculate_stratum_sizes <- function(
     abort_samplyr(
       c(
         "Allocation gives zero inclusion probability to nonempty strata.",
-        "x" = "Zero allocation for: {.val {format_key_labels(stratum_info[zero, , drop = FALSE], strata_spec$vars)}}.",
+        "x" = "Zero allocation for: {format_pool_sample(format_key_labels(stratum_info[zero, , drop = FALSE], strata_label_vars(strata_spec)))}.",
         "i" = "Increase the total sample size or use {.code min_n = 1} for allocation. To exclude a population deliberately, restrict the frame before sampling."
       ),
       class = "samplyr_error_zero_allocation"

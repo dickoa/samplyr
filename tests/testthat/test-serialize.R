@@ -552,7 +552,7 @@ test_that("write_design() validates its inputs", {
   )
 })
 
-## Complete receipts and replay_design() (review issue 4)
+## Complete receipts and replay_design()
 
 # The replay contract: full equality of the materialized sample except
 # the execution timestamp.
@@ -612,7 +612,10 @@ test_that("replay_design() reproduces a replicated execution", {
   write_design(reps, path, frame = test_frame)
   receipt <- attr(read_design(path), "execution")
   expect_equal(receipt$reps, 4L)
-  expect_equal(unlist(receipt$replicate_seeds), 3:6)
+  expect_equal(
+    unlist(receipt$replicate_seeds),
+    c(721735354L, 1653298151L, 438540986L, 535251819L)
+  )
 
   replay <- replay_design(read_design(path), test_frame)
   expect_identical(replay$.replicate, reps$.replicate)
@@ -658,8 +661,7 @@ test_that("replay_design() warns when execution versions differ", {
     simplifyVector = FALSE
   )
   payload$tools$samplyr$execution$environment$packages$samplyr <- "0.0.0"
-  # Match the writer's serialization settings: default digits would
-  # truncate the digest's chance values and fail its round trip.
+  # The writer's settings, since default digits truncate the digest's chances.
   json <- jsonlite::toJSON(
     payload, auto_unbox = TRUE, null = "null", na = "null", digits = NA
   )
@@ -699,7 +701,7 @@ test_that("replay_design() requires recorded custom methods", {
   )
 })
 
-test_that("chained receipts warn at write time and refuse replay", {
+test_that("a continuation receipt replays every call behind it", {
   stage1 <- sampling_design() |>
     add_stage("Clusters") |>
     cluster_by(cluster) |>
@@ -710,18 +712,128 @@ test_that("chained receipts warn at write time and refuse replay", {
   full <- execute(stage1, test_frame, seed = 6)
 
   path <- withr::local_tempfile(fileext = ".json")
-  expect_warning(
-    write_design(full, path, frame = test_frame),
-    "more than one"
+  expect_no_warning(write_design(full, path, frame = test_frame))
+  receipt <- attr(read_design(path), "execution")
+  expect_true(isTRUE(receipt$chained))
+  expect_identical(receipt$transition, "continuation")
+  expect_length(receipt[["earlier_calls"]], 1L)
+  expect_identical(receipt[["earlier_calls"]][[1]]$seed, 5L)
+
+  expect_identical(
+    lapply(as.data.frame(replay_design(read_design(path), test_frame)),
+           identity),
+    lapply(as.data.frame(full), identity)
   )
-  expect_true(isTRUE(attr(read_design(path), "execution")$chained))
-  expect_error(
-    replay_design(read_design(path), test_frame),
-    class = "samplyr_error_receipt_chained"
+  expect_identical(
+    lapply(as.data.frame(replay_design(full, test_frame)), identity),
+    lapply(as.data.frame(full), identity)
   )
 })
 
-test_that("two-phase receipts are flagged as chained", {
+test_that("a receipt without its earlier calls refuses replay with a recipe", {
+  # A file written before receipts recorded their earlier calls.
+  strip_calls <- function(path) {
+    payload <- jsonlite::fromJSON(path, simplifyVector = FALSE)
+    payload$execution[c("earlier_calls", "transition")] <- NULL
+    jsonlite::write_json(payload, path, auto_unbox = TRUE, digits = NA,
+                         null = "null", pretty = TRUE)
+    path
+  }
+
+  # A continuation: replay the earlier receipt, then use the refusal's seed.
+  design <- sampling_design() |>
+    add_stage("Clusters") |>
+    cluster_by(cluster) |>
+    draw(n = 4) |>
+    add_stage("Units") |>
+    draw(n = 2)
+  stage1 <- execute(design, test_frame, stages = 1, seed = 5)
+  first_path <- withr::local_tempfile(fileext = ".json")
+  write_design(stage1, first_path, frame = test_frame)
+  full <- execute(stage1, test_frame, seed = 6)
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(full, path, frame = test_frame)
+  strip_calls(path)
+
+  refusal <- tryCatch(
+    replay_design(read_design(path), test_frame),
+    error = identity
+  )
+  expect_s3_class(refusal, "samplyr_error_receipt_chained")
+  expect_identical(refusal$seed, 6L)
+  expect_identical(refusal$stages, 2L)
+  expect_match(conditionMessage(refusal), "seed = 6, stages = 2", fixed = TRUE)
+  earlier <- replay_design(read_design(first_path), test_frame)
+  again <- execute(earlier, test_frame, seed = refusal$seed,
+                   stages = refusal$stages)
+  expect_identical(
+    lapply(as.data.frame(again), identity),
+    lapply(as.data.frame(full), identity)
+  )
+
+  # A second phase: replay the first, then run the phase design on it.
+  phase1 <- sampling_design() |>
+    cluster_by(cluster) |>
+    draw(n = 6) |>
+    execute(test_frame, seed = 3)
+  phase1_path <- withr::local_tempfile(fileext = ".json")
+  write_design(phase1, phase1_path, frame = test_frame)
+  design2 <- sampling_design() |> draw(n = 5)
+  phase2 <- execute(design2, phase1, seed = 4)
+  phase2_path <- withr::local_tempfile(fileext = ".json")
+  write_design(phase2, phase2_path, frame = test_frame)
+  strip_calls(phase2_path)
+  refusal <- tryCatch(
+    replay_design(read_design(phase2_path), phase1),
+    error = identity
+  )
+  expect_match(conditionMessage(refusal), "execute(design, earlier, seed = 4)",
+               fixed = TRUE)
+  earlier <- replay_design(read_design(phase1_path), test_frame)
+  again <- execute(design2, earlier, seed = refusal$seed)
+  expect_identical(
+    lapply(as.data.frame(again), identity),
+    lapply(as.data.frame(phase2), identity)
+  )
+})
+
+test_that("a continuation of a modified sample still refuses replay", {
+  stage1 <- sampling_design() |>
+    add_stage("Clusters") |>
+    cluster_by(cluster) |>
+    draw(n = 4) |>
+    add_stage("Units") |>
+    draw(n = 2) |>
+    execute(test_frame, stages = 1, seed = 5)
+  edited <- stage1[stage1$cluster != stage1$cluster[1], ]
+  full <- suppressWarnings(execute(edited, test_frame, seed = 6))
+
+  path <- withr::local_tempfile(fileext = ".json")
+  expect_warning(
+    write_design(full, path, frame = test_frame),
+    "was modified after its execution",
+    class = "samplyr_warning_receipt_chained"
+  )
+  receipt <- attr(read_design(path), "execution")
+  expect_null(receipt[["earlier_calls"]])
+  expect_true(receipt$earlier_modified)
+  refusal <- tryCatch(
+    replay_design(read_design(path), test_frame),
+    error = identity
+  )
+  expect_s3_class(refusal, "samplyr_error_receipt_chained")
+  expect_match(conditionMessage(refusal), "Keep that modified sample",
+               fixed = TRUE)
+  # Following the advice on the kept sample reproduces the result.
+  again <- suppressWarnings(execute(edited, test_frame, seed = refusal$seed,
+                                    stages = refusal$stages))
+  expect_identical(
+    lapply(as.data.frame(again), identity),
+    lapply(as.data.frame(full), identity)
+  )
+})
+
+test_that("a two-phase receipt carries the first phase's own design", {
   phase1 <- sampling_design() |>
     cluster_by(cluster) |>
     draw(n = 6) |>
@@ -732,11 +844,190 @@ test_that("two-phase receipts are flagged as chained", {
     execute(phase1, seed = 2)
 
   path <- withr::local_tempfile(fileext = ".json")
-  expect_warning(
-    write_design(phase2, path, frame = test_frame),
-    "more than one"
+  expect_no_warning(write_design(phase2, path, frame = test_frame))
+  receipt <- attr(read_design(path), "execution")
+  expect_true(isTRUE(receipt$chained))
+  expect_identical(receipt$transition, "phase")
+  earlier <- receipt[["earlier_calls"]][[1]]
+  expect_identical(earlier$transition, "start")
+  expect_identical(earlier$design$stages[[1]]$draw$n, 6L)
+
+  replayed <- replay_design(read_design(path), test_frame)
+  expect_identical(
+    lapply(as.data.frame(replayed), identity),
+    lapply(as.data.frame(phase2), identity)
   )
-  expect_true(isTRUE(attr(read_design(path), "execution")$chained))
+  # The first phase is rebuilt too, with its own design.
+  expect_identical(
+    lapply(as.data.frame(attr(replayed, "metadata")$prev_phase$sample),
+           identity),
+    lapply(as.data.frame(phase1), identity)
+  )
+})
+
+chain_design <- function() {
+  sampling_design() |>
+    add_stage("Clusters") |>
+    stratify_by(stratum) |>
+    cluster_by(cluster) |>
+    draw(n = 2) |>
+    add_stage("Units") |>
+    draw(n = 2)
+}
+
+expect_replays <- function(x, frame, replay_frame = frame) {
+  path <- withr::local_tempfile(fileext = ".json", .local_envir = parent.frame())
+  write_design(x, path, frame = frame)
+  from_file <- replay_design(read_design(path), replay_frame)
+  from_memory <- replay_design(x, replay_frame)
+  expect_identical(
+    lapply(as.data.frame(from_file), identity),
+    lapply(as.data.frame(x), identity)
+  )
+  expect_identical(
+    lapply(as.data.frame(from_memory), identity),
+    lapply(as.data.frame(x), identity)
+  )
+  invisible(path)
+}
+
+test_that("a replicated continuation replays every replicate from one first stage", {
+  stage1 <- execute(chain_design(), test_frame, stages = 1, seed = 3)
+  continued <- execute(stage1, test_frame, seed = 9, reps = 3)
+  path <- expect_replays(continued, test_frame)
+
+  receipt <- attr(read_design(path), "execution")
+  expect_true(isTRUE(receipt$chained))
+  expect_identical(receipt$transition, "continuation")
+  # Every replicate continues the same eight clusters.
+  expect_setequal(unique(as.character(continued$cluster)),
+                  unique(as.character(stage1$cluster)))
+})
+
+test_that("chains of phases and continuations replay call by call", {
+  phase1 <- execute(chain_design(), test_frame, seed = 1)
+  phase2 <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = 4) |>
+    execute(phase1, seed = 2)
+  phase3 <- sampling_design() |>
+    draw(n = 5) |>
+    execute(phase2, seed = 3)
+  path <- expect_replays(phase3, test_frame)
+  calls <- attr(read_design(path), "execution")[["earlier_calls"]]
+  expect_identical(
+    vapply(calls, function(cl) cl$transition, character(1)),
+    c("start", "phase")
+  )
+
+  replicated_phase <- sampling_design() |>
+    draw(n = 6) |>
+    execute(phase1, seed = 4, reps = 2)
+  expect_replays(replicated_phase, test_frame)
+
+  replicated_start <- execute(chain_design(), test_frame, stages = 1,
+                              seed = 5, reps = 2)
+  expect_replays(execute(replicated_start, test_frame, seed = 6), test_frame)
+
+  # A phase drawn from a continuation, then continued itself.
+  stage1 <- execute(chain_design(), test_frame, stages = 1, seed = 7)
+  continued <- execute(stage1, test_frame, seed = 8)
+  mixed <- sampling_design() |>
+    add_stage() |>
+    cluster_by(cluster) |>
+    draw(n = 4) |>
+    add_stage() |>
+    draw(n = 1)
+  mixed1 <- execute(mixed, continued, stages = 1, seed = 10)
+  mixed2 <- execute(mixed1, continued, seed = 11)
+  expect_replays(mixed2, list(test_frame, test_frame, continued))
+})
+
+test_that("a phase drawn from a modified sample replays from that sample", {
+  phase1 <- execute(chain_design(), test_frame, seed = 1)
+  kept <- phase1[phase1$stratum != "A", ]
+  phase2 <- suppressWarnings(
+    sampling_design() |> draw(n = 5) |> execute(kept, seed = 2)
+  )
+
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(phase2, path, frame = kept)
+  receipt <- attr(read_design(path), "execution")
+  expect_identical(receipt$transition, "phase")
+  expect_length(receipt[["earlier_calls"]], 0L)
+
+  replayed <- suppressWarnings(replay_design(read_design(path), kept))
+  expect_identical(
+    lapply(as.data.frame(replayed), identity),
+    lapply(as.data.frame(phase2), identity)
+  )
+  expect_error(
+    replay_design(read_design(path), phase1),
+    class = "samplyr_error_replay_frame_mismatch"
+  )
+  expect_error(
+    replay_design(read_design(path), as.data.frame(kept), fingerprint = "ignore"),
+    class = "samplyr_error_replay_phase_frame"
+  )
+})
+
+test_that("an earlier call without a seed is named at write and at replay", {
+  stage1 <- execute(chain_design(), test_frame, stages = 1)
+  continued <- execute(stage1, test_frame, seed = 2)
+
+  path <- withr::local_tempfile(fileext = ".json")
+  expect_warning(
+    write_design(continued, path, frame = test_frame),
+    class = "samplyr_warning_receipt_no_seed"
+  )
+  expect_error(
+    replay_design(read_design(path), test_frame),
+    "Call 1 of the 2",
+    class = "samplyr_error_receipt_no_seed"
+  )
+})
+
+test_that("panels assigned by an earlier call are carried, not declared again", {
+  stage1 <- execute(chain_design(), test_frame, stages = 1, seed = 3,
+                    panels = 2)
+  continued <- execute(stage1, test_frame, seed = 4)
+  expect_replays(continued, test_frame)
+  expect_identical(
+    replay_design(continued, test_frame)$.panel,
+    continued$.panel
+  )
+})
+
+test_that("each earlier call replays under its own RNG kind", {
+  in_kind <- function(code) {
+    old <- RNGkind()
+    on.exit(RNGkind(old[[1]], old[[2]], old[[3]]))
+    RNGkind("L'Ecuyer-CMRG")
+    code
+  }
+  stage1 <- in_kind(execute(chain_design(), test_frame, stages = 1, seed = 3))
+  default_stage1 <- execute(chain_design(), test_frame, stages = 1, seed = 3)
+  expect_false(identical(stage1$cluster, default_stage1$cluster))
+
+  continued <- execute(stage1, test_frame, seed = 4)
+  expect_replays(continued, test_frame)
+})
+
+test_that("a chain replayed on other frames warns at the first call that differs", {
+  stage1 <- execute(chain_design(), test_frame, stages = 1, seed = 3)
+  continued <- execute(stage1, test_frame, seed = 4)
+  smaller <- test_frame[test_frame$stratum != "D", ]
+  seen <- character(0)
+  withCallingHandlers(
+    replay_design(continued, smaller, fingerprint = "ignore"),
+    samplyr_warning_replay_rows = function(w) {
+      seen <<- c(seen, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  expect_length(seen, 2L)
+  expect_match(seen[[1]], "Call 1 of 2", fixed = TRUE)
+  expect_match(seen[[2]], "Call 2 of 2", fixed = TRUE)
 })
 
 test_that("modified samples are flagged in the receipt", {
@@ -826,8 +1117,7 @@ test_that("built-in probability tiers are serialized and back-filled", {
     "approximate"
   )
 
-  # Files written before the field carry no tier for built-ins;
-  # reconstruction fills it from the method name.
+  # A built-in with no recorded tier gets it from the method name.
   payload$tools$samplyr$design$stages[[1]]$method$probabilities <- NULL
   restored <- read_design(
     jsonlite::toJSON(payload, auto_unbox = TRUE, na = "null")
@@ -851,8 +1141,7 @@ test_that("replay refuses a different implementation under the same name", {
   json <- design_json(s, frame = test_frame)
   restored <- read_design(json)
 
-  # Re-registering the same code (formatting and comments may differ)
-  # fingerprints identically and replays the recorded sample.
+  # The same code, formatted differently, fingerprints identically.
   sondage::unregister_method("impl_swap")
   same_code <- function(pik, n = NULL, prn = NULL, ...)   seq_len(n) # same tree
   sondage::register_method(
@@ -862,8 +1151,7 @@ test_that("replay refuses a different implementation under the same name", {
   expect_identical(replayed$id, s$id)
   expect_identical(replayed$.weight, s$.weight)
 
-  # A different function under identical registry metadata is refused:
-  # without the fingerprint this silently replayed different rows.
+  # A different function under identical registry metadata is refused.
   sondage::unregister_method("impl_swap")
   last_k <- function(pik, n = NULL, prn = NULL, ...) {
     rev(seq_along(pik))[seq_len(n)]
@@ -877,18 +1165,11 @@ test_that("replay refuses a different implementation under the same name", {
   )
 })
 
-## I1a. The shared-weight sample the format has no schema for
+## A shared-weight component the format cannot write
 
-# The format carries one design and one execution receipt. A shared-weight
-# sample is more than that, and writing one would produce a file describing
-# the source selection alone: it reads back as an ordinary sample and replays
-# to one, with nothing recording that the links, the target rows and the
-# shared weights were dropped. Refused at every entry point rather than
-# written partially.
-#
-# A frame collection was refused here too until it got a format of its own.
-# What remains refused about one is a component the format cannot describe,
-# which is I1b-1 below.
+# A design file carries one design and one receipt, so writing a shared-weight
+# component would describe the source selection alone. Such a component, and a
+# collection the format cannot describe, are refused at every entry point.
 
 # A collection carrying overlaps resolved from registers, which is the
 # collection-level thing the format still cannot write.
@@ -902,8 +1183,7 @@ serialize_unwritable_stack <- function() {
     a = population[population$in_a, , drop = FALSE],
     b = population[population$in_b, , drop = FALSE]
   )
-  # Take-all draws: deterministic, and they record no seed, so the
-  # independence warning stays out of tests that are not about it.
+  # Take-all draws record no seed, so the independence warning stays out.
   component <- function(rows) {
     sampling_design() |>
       draw(n = nrow(rows)) |>
@@ -918,10 +1198,8 @@ serialize_unwritable_stack <- function() {
   )
 }
 
-# A collection whose first component carries shared weights. Standalone shared
-# samples have a format of their own; a component still has none, because a
-# component entry is a design document and the collection's replay has no way
-# to take one link table per component.
+# A collection whose first component carries shared weights. A component entry
+# is a design document, and replay cannot take one link table per component.
 serialize_shared_component_stack <- function() {
   households <- data.frame(hh = paste0("h", 1:20), stringsAsFactors = FALSE)
   people <- data.frame(
@@ -972,13 +1250,10 @@ test_that("a shared-weight component is refused at every verb", {
     class = "samplyr_error_serialize_weight_contract"
   )
 
-  # Catchable as the whole weight-contract family too, which is what lets a
-  # caller handle every refusal of a transformed sample in one place.
+  # Catchable as the whole weight-contract family too.
   expect_error(design_json(frames), class = "samplyr_error_weight_contract")
 
-  # Each verb names itself. They share one helper, so a message naming a verb
-  # the user did not call is the failure mode, and a class-only assertion
-  # cannot see it.
+  # Each verb names itself, though all share one helper.
   expect_error(design_json(frames), "`design_json\\(\\)` is not defined")
   expect_error(write_design(frames, path), "`write_design\\(\\)` is not defined")
   expect_error(replay_design(frames, registers), "`replay_design\\(\\)` is not")
@@ -987,11 +1262,7 @@ test_that("a shared-weight component is refused at every verb", {
 test_that("the shared-weight refusal precedes the receipt warnings", {
   frames <- serialize_shared_component_stack()$stack
 
-  # Encoding the component would warn that its receipt carries no seed and no
-  # frame fingerprint. Advice about a receipt inside a file that is not going
-  # to be written is worse than none, so the gate sits ahead of the encoding.
-  # Pins the placement: moving it below encode_execution() still errors, and
-  # only this sees the difference.
+  # The gate sits ahead of encoding, which would warn about the receipt.
   expect_no_warning(
     expect_error(
       design_json(frames),
@@ -1022,8 +1293,7 @@ test_that("a refused write_design() leaves no file behind", {
   path <- withr::local_tempfile(fileext = ".json")
   expect_false(file.exists(path))
 
-  # The refusal is raised while the JSON is built, before writeLines(), so
-  # neither kind can leave a file that reads back as a complete design.
+  # The refusal is raised while the JSON is built, before writeLines().
   expect_error(write_design(serialize_shared_component_stack()$stack, path))
   expect_false(file.exists(path))
 
@@ -1043,20 +1313,16 @@ test_that("the new refusals leave the ordinary paths alone", {
   json <- design_json(sample, frame = test_frame)
   expect_identical(replay_design(read_design(json), test_frame)$id, sample$id)
 
-  # The frame_stack branch sits ahead of the design/sample dispatch, so a
-  # genuinely wrong argument must still get the dispatch message rather than
-  # a report about frame collections.
+  # A wrong argument gets the dispatch message, not one about collections.
   expect_error(design_json(42), "must be a <sampling_design> or a <tbl_sample>")
   expect_error(replay_design(42, test_frame), "must be a <sampling_design>")
 })
 
-## I1b-1. The frame collection format
+## The frame collection format
 
-# A collection is one design and one receipt per component plus what makes
-# them a collection, so it gets its own format identifier rather than an
-# optional block in a design file. Each component entry is a complete
-# samplyr/design document with two fields added, which is what lets the
-# component encoder and decoder be the design ones unchanged.
+# A collection gets its own format identifier. Each component entry is a
+# complete samplyr/design document with two fields added, so the design
+# encoder and decoder read components unchanged.
 
 stack_population <- function() {
   data.frame(
@@ -1102,9 +1368,7 @@ test_that("a frame collection writes its own format, not a design file", {
   expect_identical(payload$key, "id")
   expect_length(payload$components, 2L)
 
-  # Each component is a design document plus the two fields that make it a
-  # component. Asserted directly, because it is what lets decode_design_payload()
-  # read a component with no changes.
+  # A design document plus two fields, so decode_design_payload() reads it.
   expect_identical(
     vapply(payload$components, function(x) x$name, character(1)),
     c("a", "b")
@@ -1155,8 +1419,7 @@ test_that("declared overlaps travel with the collection", {
   replayed <- replay_design(restored, frame = registers)
   expect_identical(attr(replayed, "overlaps"), overlaps)
 
-  # Dropping the specification would export the collection under a different
-  # estimator, so its absence has to be visible rather than inferred.
+  # An absent specification stays visible rather than inferred.
   bare <- read_design(design_json(stack_fixture(), frame = registers))
   expect_null(attr(bare, "overlaps"))
 })
@@ -1167,9 +1430,7 @@ test_that("resolved overlaps are refused rather than written empty", {
     overlaps = exante_overlaps(registers, by = c(id = "id"))
   )
 
-  # The record left on the collection carries no class at all, so a class test
-  # falls through to the declared branch and writes `cols: null`, losing the
-  # matrices silently. The discriminator is `cols`, and this pins it.
+  # The resolved record has no class, so `cols` is what tells it apart.
   spec <- attr(frames, "overlaps")
   expect_false(inherits(spec, "samplyr_exante_overlap_spec"))
   expect_null(spec$cols)
@@ -1189,11 +1450,7 @@ test_that("resolved overlaps are refused rather than written empty", {
 test_that("the resolved-overlaps refusal precedes encoding the components", {
   frames <- serialize_unwritable_stack()
 
-  # Same contract as the shared-weight gate, and the same reason: encoding a
-  # component warns about its own receipt, and advice about a receipt inside a
-  # file that is not going to be written is worse than none. Below the
-  # component loop the refusal still fires and every class assertion still
-  # passes, so only this sees the difference.
+  # The gate sits ahead of the component loop, which would warn per receipt.
   expect_no_warning(
     expect_error(
       design_json(frames),
@@ -1206,8 +1463,6 @@ test_that("a collection needs one register per component, named", {
   frames <- stack_fixture()
   registers <- stack_registers()
 
-  # A single data frame, a list in the wrong shape, a short list, and one
-  # naming a component that does not exist.
   expect_error(
     design_json(frames, frame = registers$a),
     class = "samplyr_error_serialize_frame_stack_frame"
@@ -1225,8 +1480,7 @@ test_that("a collection needs one register per component, named", {
     class = "samplyr_error_serialize_frame_stack_frame"
   )
 
-  # Saving without registers stays legal: a frame only adds a fingerprint.
-  # Replaying without them does not, since there is nothing to select from.
+  # Saving without registers is legal, replaying without them is not.
   expect_s3_class(suppressWarnings(design_json(frames)), "json")
   expect_error(
     replay_design(frames, frame = NULL),
@@ -1239,10 +1493,7 @@ test_that("registers are matched to components by name, not position", {
   registers <- stack_registers()
   reversed <- registers[c("b", "a")]
 
-  # The components have different registers, so matching by position would
-  # fingerprint each against the other's and replay the wrong rows. It would
-  # not necessarily error, which is why this asserts the result rather than
-  # the absence of a condition.
+  # Matching by position would replay the wrong rows without an error.
   expect_identical(
     as.data.frame(replay_design(frames, frame = reversed)),
     as.data.frame(replay_design(frames, frame = registers))
@@ -1281,8 +1532,7 @@ test_that("a collection with a shared-weight component is refused", {
     key = person
   )
 
-  # The collection is writable the moment the component is, so the refusal is
-  # the component's own rather than a second one about collections.
+  # The refusal is the component's own, not one about collections.
   expect_error(
     design_json(frames),
     class = "samplyr_error_serialize_weight_contract"
@@ -1292,12 +1542,7 @@ test_that("a collection with a shared-weight component is refused", {
     class = "samplyr_error_serialize_weight_contract"
   )
 
-  # Replay checks every component before running any. The shared one has to
-  # come second for that to be visible: the first component is then given a
-  # register too small for its receipt, which replays with warnings rather
-  # than failing. Without the up-front pass the user hears those warnings
-  # about a collection that was never going to be rebuilt, after a selection
-  # has been re-executed for nothing.
+  # Every component is checked before any runs, so the short register is silent.
   reversed <- stack_frames(
     b = sampling_design() |> draw(n = 10, method = "srswor") |>
       execute(in_b, seed = 4),
@@ -1326,9 +1571,7 @@ test_that("the two formats do not read each other", {
     frame = registers$a
   )
 
-  # A design reader given a collection would take the first component for the
-  # whole thing, which is one frame's estimate presented as the collection's.
-  # The identifier is what stops that, so it is asserted from both sides.
+  # The format identifier keeps each reader to its own format.
   expect_s3_class(read_design(stack_file), "frame_stack_design")
   expect_s3_class(read_design(sample_file), "sampling_design")
   expect_false(inherits(read_design(sample_file), "frame_stack_design"))
@@ -1346,9 +1589,7 @@ test_that("a collection file missing what makes it one is refused", {
     suppressWarnings(design_json(stack_fixture())),
     simplifyVector = FALSE
   )
-  # The encoder's own options. A receipt carries a frame digest whose
-  # length-one entries do not survive a plain re-encode, which would be this
-  # test's round trip rather than anything the format does.
+  # The encoder's options, since length-one digest entries need them.
   reread <- function(payload) {
     read_design(jsonlite::toJSON(
       payload,
@@ -1358,8 +1599,7 @@ test_that("a collection file missing what makes it one is refused", {
   }
   expect_s3_class(reread(intact), "frame_stack_design")
 
-  # Each of these could be filled in with a guess, and each guess would build
-  # a collection that is not the one the file describes.
+  # None of these may be filled in with a guess.
   without_key <- intact
   without_key$key <- NULL
   expect_error(reread(without_key), "key")
@@ -1380,8 +1620,7 @@ test_that("a collection file missing what makes it one is refused", {
   without_components$components <- list()
   expect_error(reread(without_components), "components")
 
-  # A partial overlap mapping would export the collection under a different
-  # estimator, so it is refused rather than dropped to none.
+  # A partial overlap mapping is refused rather than dropped to none.
   declared <- jsonlite::fromJSON(
     suppressWarnings(design_json(
       stack_fixture(
@@ -1397,13 +1636,11 @@ test_that("a collection file missing what makes it one is refused", {
   expect_error(reread(declared), "overlaps")
 })
 
-## I1b-2. The shared-weight sample format
+## The shared-weight sample format
 
 # The file records the source selection and the transformation's arguments.
-# The links and the target register are supplied again at replay, the way a
-# frame is, so no unit-level data and no linkage is ever written. What makes
-# that possible is that the transformation record already carries its own call
-# declaratively.
+# The links and the target register are supplied again at replay, like a
+# frame, so no unit-level data and no linkage is ever written.
 
 shared_source_register <- function() {
   data.frame(hh = paste0("h", 1:20), stringsAsFactors = FALSE)
@@ -1446,8 +1683,7 @@ test_that("a shared-weight sample writes its source and its call, not its data",
     "format", "format_version", "transformation", "source"
   ))
 
-  # The source is an ordinary design document, so it goes through the encoder
-  # every other sample goes through.
+  # The source is an ordinary design document.
   expect_identical(payload$source$format, "samplyr/design")
   expect_identical(payload$source$execution$seed, 3L)
 
@@ -1460,9 +1696,7 @@ test_that("a shared-weight sample writes its source and its call, not its data",
   expect_identical(spec$multiplicity$mode, "complete_links")
   expect_identical(spec$target_scope, "reached")
 
-  # The point of the format, and the reason there is no privacy question to
-  # settle: no target unit and no link appears anywhere in the file. Column
-  # names do, because the call names them, and that is all a reader learns.
+  # No target unit and no link appears in the file, only column names.
   people <- shared_target_register()
   expect_false(any(vapply(
     people$person, grepl, logical(1), x = json, fixed = TRUE
@@ -1510,8 +1744,7 @@ test_that("every within and multiplicity mode replays to the same sample", {
     expect_identical(replayed$person, shared$person, info = nm)
     expect_identical(replayed$.weight, shared$.weight, info = nm)
     expect_identical(names(replayed), names(shared), info = nm)
-    # The transformation record has to survive too, or the replayed object is
-    # a different kind of thing from the one that was saved.
+    # The transformation record survives too.
     expect_identical(
       attr(replayed, "metadata")$weight_share$call,
       attr(shared, "metadata")$weight_share$call,
@@ -1537,9 +1770,6 @@ test_that("replay reports which of the three inputs was wrong", {
   shared <- shared_sample_fixture(within = hh, multiplicity = complete_links())
   restored <- read_design(design_json(shared, frame = register))
 
-  # The links and the targets are not in the file, so they cannot be checked
-  # before use. Two recorded integrity records are what catch them, and they
-  # sit at different stages so the message can say which.
   expect_error(
     replay_design(restored, frame = register, links = people),
     class = "samplyr_error_replay_argument"
@@ -1549,8 +1779,7 @@ test_that("replay reports which of the three inputs was wrong", {
     class = "samplyr_error_replay_argument"
   )
 
-  # A register that is not the one selected from: caught before the
-  # transformation is re-applied at all.
+  # A wrong register is caught before the transformation is re-applied.
   expect_error(
     replay_design(
       restored, frame = register[1:10, , drop = FALSE],
@@ -1559,10 +1788,7 @@ test_that("replay reports which of the three inputs was wrong", {
     class = "samplyr_error_replay_frame_mismatch"
   )
 
-  # The source checkpoint carries the case the frame fingerprint cannot: a
-  # sample saved without `frame` records no fingerprint, so nothing else
-  # guards the register. It compares the design columns, so what it sees is a
-  # selection whose weights differ, not a register with different labels.
+  # Saved without `frame`, only the source checkpoint guards the register.
   bigger <- data.frame(
     hh = paste0("h", 1:30), stringsAsFactors = FALSE
   )
@@ -1589,8 +1815,7 @@ test_that("replay reports which of the three inputs was wrong", {
     "replayed selection"
   )
 
-  # A link table that transforms cleanly but is not the one used: only the
-  # result integrity can see this, which is why it is recorded.
+  # A clean but different link table is seen by the result integrity only.
   relinked <- people
   relinked$hh <- rev(relinked$hh)
   expect_error(
@@ -1614,8 +1839,6 @@ test_that("links and targets are refused where they describe nothing", {
     draw(n = 3, method = "srswor") |>
     execute(register, seed = 1)
 
-  # Accepting and ignoring them would let a user replay an ordinary sample
-  # believing a transformation had been re-applied.
   expect_error(
     replay_design(sample, register, links = people),
     class = "samplyr_error_replay_argument"
@@ -1624,8 +1847,7 @@ test_that("links and targets are refused where they describe nothing", {
     replay_design(sample, register, targets = people),
     class = "samplyr_error_replay_argument"
   )
-  # Singular and plural both, because cli needs a quantity for each bullet and
-  # loses it after interpolating a vector.
+  # Singular and plural both, since cli needs a quantity for each bullet.
   expect_error(
     replay_design(sample, register, links = people, targets = people),
     "are not used"
@@ -1652,9 +1874,7 @@ test_that("a transformation this build cannot replay is refused", {
   }
   expect_s3_class(reread(payload), "shared_sample_design")
 
-  # Replaying under the rules of a different algorithm would reproduce a
-  # sample nobody drew, so the name and the version are read before anything
-  # is taken from the record.
+  # The algorithm name and version are read before anything else.
   wrong_algorithm <- payload
   wrong_algorithm$transformation$algorithm <- "some_other_method"
   expect_error(
@@ -1673,8 +1893,7 @@ test_that("a transformation this build cannot replay is refused", {
   newer_format$format_version <- 2L
   expect_error(reread(newer_format), "format version")
 
-  # Each part of the call is load-bearing and none can be inferred from the
-  # others, so a file missing one is refused rather than defaulted.
+  # No part of the call can be inferred, so a missing one is not defaulted.
   for (field in c("by", "to", "within", "multiplicity", "target_scope")) {
     broken <- payload
     broken$transformation[[field]] <- NULL
@@ -1699,8 +1918,7 @@ test_that("the three formats stay distinguishable", {
   expect_s3_class(read_design(design_file), "sampling_design")
   expect_false(inherits(read_design(design_file), "shared_sample_design"))
 
-  # A shared-sample design is a sampling_design, so the accessors keep
-  # working on the source selection it carries.
+  # The accessors work on the source selection it carries.
   restored <- read_design(shared_file)
   expect_s3_class(restored, "sampling_design")
   expect_length(restored$stages, 1L)

@@ -85,6 +85,18 @@ each stage selects on, cluster-level variables that must be constant
 within a unit, ancestry types that must be joinable, and ancestry
 values that name no parent.
 
+Values are judged on every unit a stage could reach, not on the parents a
+draw happens to select: missing, \code{NA} or mistyped strata, clusters,
+measures of size and the other columns a stage reads, reported with class
+\code{samplyr_error_frame_invalid}. \code{\link[=execute]{execute()}} runs the same check on every
+later stage before it draws, so whether a frame is accepted never depends
+on the seed. Both also refuse a size in \code{n} or \code{frac} for a stratum no
+reachable unit belongs to (\code{samplyr_error_alloc_unknown_strata}), which
+would otherwise be dropped without a word. Tables that only describe
+strata, such as \code{variance}, may hold extra rows, and so may a take table
+keyed by a parent's identifier, for the parents a continuation did not
+select.
+
 It also checks candidate coverage, and is stricter there than
 execution: a unit reachable at one stage with no rows in the
 register the next stage samples from is

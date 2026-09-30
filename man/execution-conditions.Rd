@@ -41,6 +41,20 @@ redistributed past a saturated stratum. A message, not a warning:
 nothing went wrong, and simulation loops can silence it with
 \code{suppressMessages()}.}
 }
+One more is reported the same way, once per stage with a \code{payload},
+although nothing was capped. \code{samplyr_message_singleton_pool} names the
+strata of a fixed-size design without replacement that draw a single unit
+outside certainty. Such a stratum gives no variance estimate of its own:
+survey stops on it unless strata are collapsed, and the export warns
+again. It is a message because one unit per stratum is sometimes the
+design. Its payload carries \code{pool_keys} and \code{n_singleton}, the number of
+such strata, each counted once in every parent it appears in.
+
+A selected unit that has no rows in the next stage's frame is reported the
+same way under that stage's \code{on_empty = "warn"}:
+\code{samplyr_warning_empty_parent}, with \code{pool_keys} and \code{n_empty}. See
+\code{on_empty} in \code{\link[=draw]{draw()}}.
+
 These are not every condition \code{execute()} raises. Panel assignment has one
 of its own, \code{samplyr_warning_panel_small_pool}, documented with
 \code{small_pool}: it is about a pool too small to \emph{rotate} rather than too

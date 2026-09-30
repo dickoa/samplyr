@@ -13,7 +13,6 @@ articles:
   - title: "Start here"
     contents:
       - introduction
-      - three-stage-sampling
       - survey-analysis
   - title: "For your design"
     contents:
@@ -27,7 +26,7 @@ articles:
       - validation
 
 reference:
-  - title: "Design Specification"
+  - title: "Design specification"
     desc: "Build a sampling design step by step."
     contents:
       - sampling_design
@@ -43,16 +42,17 @@ reference:
       - validate_frame
       - execution-conditions
 
-  - title: "Panels and Rotation"
+  - title: "Panels and rotation"
     desc: >
       Longitudinal designs: split an executed master into panels, materialize
       the wave each panel is scheduled for, and assemble the waves.
     contents:
+      - panel-assignment
       - rotation_program
       - stack_waves
       - as.data.frame.rotation_wave
 
-  - title: "Indirect Sampling and Overlapping Frames"
+  - title: "Indirect sampling and overlapping frames"
     desc: >
       Estimate for a population other than the one that was sampled, by
       following links to it or by combining frames that overlap on it. Both
@@ -74,15 +74,17 @@ reference:
   - title: "Reference topics"
     desc: >
       Cross-cutting contracts several functions share. Each is the canonical
-      description; the function pages link here rather than restate it.
+      description, and the function pages link here rather than restate it.
     contents:
       - selection-methods
+      - variance-estimation
       - sample-columns
       - frame-input-grammar
 
-  - title: "Survey Export"
+  - title: "Survey export"
     desc: "Convert samples to survey/srvyr objects for analysis."
     contents:
+      - variance_estimators
       - as_svydesign
       - as_svrepdesign
       - as_survey_design.tbl_sample
@@ -137,3 +139,6 @@ reference:
       - bfa_eas_cost
       - zwe_eas
       - ken_enterprises
+
+redirects:
+  - ["articles/three-stage-sampling.html", "articles/introduction.html#a-three-stage-household-sample"]

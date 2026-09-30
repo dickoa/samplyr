@@ -63,7 +63,11 @@ frame_stack_columns <- c(".frame", ".domain")
 #' @param membership A named character vector mapping every frame name to the
 #'   column holding that frame's membership indicator, in the same direction
 #'   as `c(frame_name = "column_name")`. Every component must contain every
-#'   one of the columns.
+#'   one of the columns. A unit selected in more than one component must
+#'   have the same membership in each, matched by `key`, or the stack is
+#'   refused with class `samplyr_error_stack_frames_membership_conflict`. The
+#'   membership of a unit selected in one component only has nothing to be
+#'   compared with, so it is taken as given.
 #' @param key A bare column identifying the target-population unit, present in
 #'   every component. The same unit may be selected from several frames, so
 #'   the key repeats across components on purpose. Within a component it must
@@ -620,6 +624,7 @@ validate_frame_stack <- function(samples, membership, key, overlaps = NULL,
   check_membership_type(samples, cols, call = call)
   check_membership_complete(samples, membership, call = call)
   check_frame_key_columns(samples, key, call = call)
+  check_membership_consistent(samples, membership, key, call = call)
   check_frame_overlaps(samples, membership, overlaps, call = call)
   invisible(NULL)
 }
@@ -892,6 +897,48 @@ check_membership_complete <- function(samples, membership,
     }
   }
   invisible(NULL)
+}
+
+#' One unit, one membership, in every component that selected it
+#'
+#' A unit selected from two frames is described twice, and the composite
+#' weight reads each row. When the rows disagree about which frames list the
+#' unit, the overlap is counted under two different domains: two censuses
+#' whose registers disagreed on 100 overlap units estimated the total 16.6
+#' percent high. With the diagonal already checked, agreement also means a
+#' unit seen in frame F is listed in F on every row. Membership of a unit
+#' seen in one sample only has nothing to be checked against.
+#' @noRd
+check_membership_consistent <- function(samples, membership, key,
+                                        call = caller_env()) {
+  # vec_c() casts the key pairs check_frame_key_columns() allows.
+  keys <- vctrs::vec_c(!!!lapply(unname(samples), function(s) s[[key]]))
+  pattern <- vctrs::vec_c(!!!lapply(unname(samples), function(s) {
+    m <- frame_component_membership(s, membership)
+    apply(m, 1L, function(row) paste(as.integer(row), collapse = ""))
+  }))
+  component <- rep(names(samples), vapply(samples, nrow, integer(1)))
+
+  pairs <- vctrs::vec_unique(data.frame(key = keys, pattern = pattern))
+  conflicted <- unique(pairs$key[vctrs::vec_duplicate_detect(pairs$key)])
+  if (length(conflicted) == 0L) {
+    return(invisible(NULL))
+  }
+  involved <- unique(component[keys %in% conflicted])
+  abort_samplyr(
+    c(
+      "A unit selected in more than one component must have the same
+       membership in each.",
+      "x" = "{length(conflicted)} unit{?s} disagree{?s/} on membership
+             across {.val {involved}}, for example {.field {key}}
+             {.val {utils::head(conflicted, 3)}}.",
+      "i" = "Each component's membership columns come from its own
+             register. Reconcile the registers so that a unit is listed in
+             the same frames wherever it was selected."
+    ),
+    class = "samplyr_error_stack_frames_membership_conflict",
+    call = call
+  )
 }
 
 #' @noRd

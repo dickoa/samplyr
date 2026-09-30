@@ -147,182 +147,139 @@ shared_sample_format_version <- 1L
 #' `read_design()` reads it back into a `sampling_design` that executes
 #' identically to the original.
 #'
-#' The file format is versioned JSON and diffable in version control. It
-#' stores the complete design specification (stages, stratification,
-#' clustering, draw settings, including per-stratum vectors and data frames),
-#' never the frame data itself.
+#' The file is versioned JSON, diffable in version control. It stores the
+#' complete design specification (stages, stratification, clustering, draw
+#' settings, including per-stratum vectors and data frames), never the frame
+#' data itself.
 #'
 #' A file written from an executed sample can also contain its frame digest.
-#' That digest retains selected-unit identifiers and may contain per-unit chance
-#' metadata. Treat an execution receipt as potentially confidential even
-#' though it does not contain the ordinary frame columns.
+#' That digest retains selected-unit identifiers and may contain per-unit
+#' chance metadata. Treat an execution receipt as potentially confidential
+#' even though it does not contain the ordinary frame columns.
 #'
 #' @details
 #' ## Lifecycle
 #'
 #' The serialization interface and its samplyr-native file format are
-#' experimental. They support samplyr persistence and replay. They are not a
-#' finalized cross-tool survey-sampling interchange standard. The structure
-#' may change while that separate specification is developed.
-#'
-#' ## Document validation
-#'
-#' Reads and writes use native R checks generated from the same source as the
-#' bundled JSON Schemas, before reconstruction or file creation. Unknown
-#' executable fields, duplicate JSON keys, malformed structures and contradictory
-#' method descriptors are refused. The reader accepts design format version 3
-#' and version 1 of the frame-stack and shared-sample formats. Earlier design
-#' versions were never released and are refused. Frame-dependent checks still run
-#' in [validate_frame()] and [execute()]. Optional `execution.frame_digest`
-#' contents are exempt from the duplicate-key traversal and contract checks.
-#' They retain their separate native version checks and warn-and-drop policy.
-#' Document validation errors name `read_design()`, including when it is
-#' called inside `replay_design(read_design(path), frame)`.
-#'
-#' Top-level `annotations` and `tools` contain named metadata objects. Unknown
-#' namespaces are preserved, including when saving restored collections and
-#' shared-sample documents. They cannot change selection. A nonempty
-#' `required_extensions` array is refused because no executable extensions are
-#' currently supported, including in nested component or source documents.
-#'
-#' The installed `schema/README.md` describes the schemas and compatibility
-#' rules. Locate it with `system.file("schema", "README.md", package = "samplyr")`.
+#' experimental. They are not a finalized cross-tool interchange standard,
+#' and the structure may change. `vignette("serialization")` walks through
+#' the file contents and the replay workflow.
 #'
 #' ## Frame information
 #'
-#' Designs are frame-independent, and so are design files. Two derived
-#' blocks describe the frame without embedding it:
-#'
-#' - *Requirements* (always written): the columns each stage needs
-#'   (stratification, clustering, `mos`, `prn`, `aux`, and control
-#'   variables), so any candidate frame can be checked before execution
-#'   with [validate_frame()].
-#' - *Fingerprint* (written when `frame` is supplied): portable dimensions
-#'   and column types in `frame`, plus the R source label, native classes, and
-#'   content hash in `tools.samplyr`. Together these can verify that a frame is
-#'   the exact one the design was built against without putting R details in
-#'   the common metadata.
+#' Design files are frame-independent. Every file records the columns each
+#' stage needs (stratification, clustering, `mos`, `prn`, `aux`, and control
+#' variables), so a candidate frame can be checked with [validate_frame()]
+#' before execution. When `frame` is supplied, the file also records a
+#' fingerprint: portable dimensions and column types in `frame`, plus the R
+#' source label, native classes, and content hash in `tools.samplyr`.
 #'
 #' ## Execution receipts
 #'
-#' When `x` is a `tbl_sample`, the file additionally records an execution
-#' receipt: every argument of the [execute()] call that affects the
-#' result (`seed`, executed stages, `panels`, `reps`, and the per
-#' replicate seeds), the execution-time RNG configuration and package
-#' versions, plus the number of selected units and the execution timestamp.
-#' Together with the frame fingerprint this makes a single-call sample
-#' reproducible when the same frame, compatible package implementations, and
-#' any recorded custom methods are available. Running
-#' `replay_design(read_design(path), frame)` then obtains the same
-#' `tbl_sample` (the same rows in the same order, including `.panel` and
-#' `.replicate` assignments) with only the execution timestamp differing.
-#' The sampled rows themselves are not stored. Use a data format (CSV,
-#' parquet) for those.
+#' When `x` is a `tbl_sample`, the file also records an execution receipt:
+#' every [execute()] argument that affects the result (`seed`, executed
+#' stages, `panels`, `reps`, and the per-replicate seeds), the RNG
+#' configuration, package versions, the number of selected units, the
+#' execution timestamp, and how each call mapped its frames to stages. A
+#' receipt without that mapping is read as a one-frame call. With the same
+#' frame, compatible package implementations, and any recorded custom
+#' methods, [replay_design()] reproduces the sample. The sampled rows
+#' themselves are not stored. Use a data format (CSV, parquet) for those.
 #'
-#' Receipts describe one [execute()] call. A sample built by several
-#' calls (a stage continuation or a multi-phase pipeline) is flagged as
-#' `chained` in the receipt and `write_design()` warns: replaying the
-#' final call alone cannot reproduce it, so save and replay each phase
-#' or stage batch separately. A sample whose rows or design columns were
-#' modified after execution is likewise flagged (`modified`). Its
-#' receipt describes the original execution, not the modified object.
+#' A sample built by several [execute()] calls (a stage continuation, a new
+#' phase drawn from an earlier sample, or a materialized panel wave) is
+#' flagged as `chained`. Its receipt records every earlier call in
+#' `earlier_calls`: seed, stages, frame mapping, panel and replicate
+#' arguments, RNG kind, how it used the call before it, and, for a call
+#' followed by a new phase, its own design.
 #'
-#' The receipt also records how frames were mapped to stages: the frame
-#' mode, how many frames were supplied, their optional labels, and the
-#' frame position each executed stage drew from. This is what a
-#' `chained` receipt describes too, for its final call only, so the
-#' mapping never implies that a chained sample can be replayed. A
-#' receipt written before these fields existed is read as the one-frame
-#' call it can only have been.
+#' A sample whose rows or design columns were modified after execution is
+#' flagged `modified`, and its receipt describes the original execution. A
+#' new phase drawn from a modified sample is recorded from that phase on,
+#' with the modified sample as its frame. Two chains cannot be recorded: a
+#' continuation of a modified sample, since replaying the earlier call
+#' rebuilds the sample as it was before the change, and a continuation made
+#' by a samplyr version that did not keep its parent's seed. For these
+#' `write_design()` warns with class `samplyr_warning_receipt_chained` and
+#' gives the recipe of [replay_design()].
 #'
 #' ## Control expressions
 #'
-#' `draw(control = ...)` expressions are stored as declarative JSON terms,
-#' not R code. Each term records an ordering type (`"ascending"`,
-#' `"descending"`, or `"serpentine"`) and its variables. Only bare column
-#' names, `dplyr::desc()`, and [serp()] can be represented.
-#' `write_design()` errors on anything else.
+#' `draw(control = ...)` expressions are stored as declarative JSON terms
+#' (`"ascending"`, `"descending"`, or `"serpentine"`, with their variables),
+#' not R code. Only bare column names, `dplyr::desc()`, and [serp()] can be
+#' represented, and `write_design()` errors on anything else.
 #'
-#' ## Declarative and implementation metadata
+#' ## Collections and shared weights
 #'
-#' The `design`, `frame`, and `execution` blocks use declarative JSON rather
-#' than R expressions. Files use method vocabulary version 2, which records
-#' the first-order quantity and its exact, approximate or unknown quality in
-#' the common descriptor. The
-#' `tools.samplyr` block records exact method names, R classes,
-#' the R-derived frame hash, and execution environment needed to rebuild and
-#' replay the native object. These descriptors are not a finalized external
-#' method vocabulary.
-#'
-#' ## Frame collections
-#'
-#' A `frame_stack` from [stack_frames()] is written as `samplyr/frame-stack`,
-#' its own format. Each component entry is a complete `samplyr/design`
-#' document plus the two fields that make it a component: its name, and the
-#' column saying which frames its units belong to. The collection's key and
-#' any overlaps declared with [declared_overlaps()] are recorded
-#' alongside. Give `frame` as a list keyed by
-#' component name, since the components are separate selections with separate
-#' registers.
-#'
-#' [read_design()] returns the components' designs and receipts rather than
-#' the collection, which needs the registers. [replay_design()] executes each
-#' against its register and stacks the results.
-#'
-#' ## Shared-weight samples
+#' A `frame_stack` from [stack_frames()] is written as `samplyr/frame-stack`.
+#' Each component entry is a complete `samplyr/design` document plus its name
+#' and membership column, and the collection's key and any overlaps declared
+#' with [declared_overlaps()] are recorded alongside. [read_design()] returns
+#' the components' designs and receipts rather than the collection, which
+#' needs the registers.
 #'
 #' A sample carrying shared weights from [share_weights()] is written as
-#' `samplyr/shared-sample`, its own format. It records the source selection
-#' and the transformation's arguments, and nothing else: the links and the
-#' target register are supplied again to [replay_design()], the way a frame
-#' is, so no unit-level data and no linkage is written.
+#' `samplyr/shared-sample`. It records the source selection, the
+#' transformation's arguments, and two integrity records, and nothing else.
+#' The links and the target register are supplied again to
+#' [replay_design()], the way a frame is.
 #'
-#' Two integrity records travel with it, and replay is checked against both.
-#' A source that does not reproduce means `frame` is not the register selected
-#' from. A result that does not means `links` or `targets` is not the table
-#' the transformation was built from.
+#' Frame data, target data and link tables are never written. What would
+#' need them is refused rather than written in part: a collection whose
+#' overlaps come from [exante_overlaps()] (one chance per selected unit, which
+#' is unit-level data), and a shared-weight sample used as a component of a
+#' collection (no place for a link table). Serialize the sample on its own,
+#' or the collection without them, and rebuild afterwards. `saveRDS()`
+#' preserves any of these objects whole.
 #'
-#' ## What the format does not carry
+#' ## Document validation
 #'
-#' A design and one execution receipt per component, and nothing beyond them.
-#' Frame data, target data and link tables are never written. So what cannot
-#' be described that way is refused rather than written in part:
+#' Reads and writes check the document before reconstruction or file
+#' creation, with native R checks generated from the same source as the
+#' bundled JSON Schemas. Unknown executable fields, duplicate JSON keys,
+#' malformed structures and contradictory method descriptors are refused, and
+#' so is a nonempty `required_extensions` array at any level, since no
+#' executable extensions are currently supported. The reader accepts design
+#' format version 3 and version 1 of the frame-stack and shared-sample
+#' formats. An optional `execution.frame_digest` is exempt and keeps its own
+#' version check and warn-and-drop policy. Frame-dependent checks run in
+#' [validate_frame()] and [execute()]. Validation errors name
+#' `read_design()`, also when it is called inside
+#' `replay_design(read_design(path), frame)`.
 #'
-#' * a collection whose overlaps come from [exante_overlaps()]. Those resolve
-#'   to one chance per selected unit when the collection is formed, which is
-#'   unit-level data, and the request that produced them is not kept.
-#' * a shared-weight sample used as a component of a collection. A component
-#'   entry is a design document, and a collection replays from one register
-#'   per component with nowhere to put a link table.
-#'
-#' Serialize the sample on its own, or the collection without them, and
-#' rebuild afterwards. `saveRDS()` preserves any of these objects whole.
+#' The `design`, `frame`, and `execution` blocks are declarative JSON, with
+#' method vocabulary version 2. Its descriptors are not a finalized external
+#' method vocabulary. The `tools.samplyr` block holds what
+#' rebuilding and replaying the native object needs (exact method names, R
+#' classes, the R-derived frame hash, the execution environment). Unknown
+#' namespaces in the top-level `annotations` and `tools` objects are
+#' preserved when a file is written again, but cannot change selection.
+#' `system.file("schema", "README.md", package = "samplyr")` locates the
+#' schema and compatibility notes.
 #'
 #' @param x A `sampling_design`, a `tbl_sample` (the stored design is saved
 #'   along with an execution receipt), a `frame_stack`, or a sample carrying
 #'   shared weights.
 #' @param path File path to write to. Conventionally with a `.json`
 #'   extension.
-#' @param frame Optional sampling frame. A data frame is the one frame
-#'   the design was built against. An ordered list of data frames is the
-#'   stage registers, in the order [execute()] received them, and each
-#'   is fingerprinted separately. One frame written as a one-element list
-#'   is still one frame and is recorded identically. The number of frames
-#'   must be one the design could be executed with, and for an executed
-#'   sample must be the number its receipt records, so a file cannot say
-#'   it was drawn from one frame and carry fingerprints for three. When
-#'   supplied, a fingerprint (name,
-#'   dimensions, column types, content hash) is stored so the frame can
-#'   be verified later. The ordinary frame columns are never written. An
-#'   executed sample's receipt can still contain selected-unit identifiers
-#'   in its frame digest. The content
-#'   hash covers column names, column values, and row order. It does not
-#'   depend on the class of the data frame (tibble or data frame) or on
-#'   the order of its columns. For a `frame_stack`, a list **named** by
-#'   component, holding what each component was drawn from. Matched by name
-#'   rather than position, since a list in the wrong order would fingerprint
-#'   each component against another's register. For a shared-weight sample,
-#'   the register the source selection was drawn from.
+#' @param frame Optional sampling frame, fingerprinted (name, dimensions,
+#'   column types, content hash) so it can be verified later. A data frame is
+#'   the one frame the design was built against. An ordered list of data
+#'   frames is the stage registers, in the order [execute()] received them,
+#'   each fingerprinted separately. A one-element list is one frame (see
+#'   [frame-input-grammar]). The number of frames must be one the design
+#'   could be executed with, and for an executed sample the number its
+#'   receipt records. For a sample built by several calls, one element per
+#'   call that read frames (the first call and each continuation), in call
+#'   order: that call's frame, or the list of its registers. One data frame
+#'   stands for all of them when each read that same frame. For a
+#'   `frame_stack`, a list **named** by component, holding what each
+#'   component was drawn from, matched by name rather than position. For a
+#'   shared-weight sample, the register the source selection was drawn from.
+#'   `vignette("serialization")` states what the hash covers. The ordinary
+#'   frame columns are never written, but an executed sample's receipt can
+#'   still contain selected-unit identifiers in its frame digest.
 #' @param ... These dots are for future extensions and must be empty.
 #'   `pretty` follows `...`, so it is matched exactly and must be named.
 #' @param pretty Whether to pretty-print the JSON. Defaults to `TRUE` for
@@ -368,7 +325,10 @@ shared_sample_format_version <- 1L
 write_design <- function(x, path, frame = NULL, ..., pretty = TRUE) {
   check_keyword_args(enquos(...), "pretty")
   if (!is_character(path) || length(path) != 1) {
-    cli_abort("{.arg path} must be a single file path")
+    cli_abort(
+      "{.arg path} must be a single file path",
+      class = "samplyr_error_serialize_argument"
+    )
   }
   frame_label <- frame_label_for(enquo(frame), frame)
   json <- build_design_json(
@@ -429,7 +389,10 @@ design_json <- function(x, frame = NULL, ..., pretty = FALSE) {
 #' @export
 read_design <- function(file) {
   if (!is_character(file) || length(file) != 1) {
-    cli_abort("{.arg file} must be a single file path or JSON string")
+    cli_abort(
+      "{.arg file} must be a single file path or JSON string",
+      class = "samplyr_error_serialize_argument"
+    )
   }
   # Never let design reading fetch URL-shaped input.
   if (!grepl("^[[:space:]]*[{[]", file)) {
@@ -437,22 +400,26 @@ read_design <- function(file) {
       cli_abort(c(
         "{.arg file} must be a local file path or a JSON string, not a URL.",
         "i" = "Download the file first and read the local copy."
-      ))
+      ), class = "samplyr_error_serialize_argument")
     }
     if (!file.exists(file)) {
       cli_abort(
-        "{.arg file} is not valid JSON or a path to an existing file."
+        "{.arg file} is not valid JSON or a path to an existing file.",
+        class = "samplyr_error_design_file_malformed"
       )
     }
   }
   json <- if (grepl("^[[:space:]]*[{[]", file)) file else
     paste(readLines(file, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+  call <- current_env()
   payload <- tryCatch(
     jsonlite::fromJSON(json, simplifyVector = FALSE),
     error = function(cnd) {
       cli_abort(
         "{.arg file} is not valid JSON or a readable file.",
-        parent = cnd
+        parent = cnd,
+        class = "samplyr_error_design_file_malformed",
+        call = call
       )
     }
   )
@@ -470,72 +437,80 @@ read_design <- function(file) {
 #'
 #' Re-executes a design exactly as recorded in its execution receipt,
 #' passing the stored `seed`, `stages`, `panels`, and `reps` back to
-#' [execute()]. This avoids reconstructing those arguments by hand from
-#' the receipt fields.
+#' [execute()].
 #'
 #' @details
 #' Given the same frame and compatible recorded implementations, the replayed
 #' sample is identical to the original: the same rows in the same order, the
 #' same weights and design columns, and the same `.panel` and `.replicate`
 #' assignments. Only the execution timestamp differs. Replay restores the
-#' execution-time RNG configuration and then restores the caller's RNG state.
-#' It warns when recorded R or package versions differ.
+#' execution-time RNG configuration and then the caller's RNG state. It
+#' warns when recorded R or package versions differ.
 #'
-#' Receipts record a single [execute()] call. A sample produced by
-#' several calls (a stage continuation or a multi-phase pipeline)
-#' carries a `chained` flag in its receipt and cannot be replayed.
-#' Save and replay each phase or stage batch separately.
+#' When the design was saved with a frame fingerprint, `frame` is compared
+#' against it before replaying. A differing frame still yields a valid
+#' sample, but not the recorded one, so the default is to error. Several
+#' frames are compared one by one, and a mismatch names the register by
+#' position and recorded label. A wrong number of frames is
+#' `samplyr_error_replay_frame_count`. After replaying, the row count is
+#' checked against the receipt's `n_selected`.
 #'
-#' A sample carrying shared weights replays in two steps: the source selection
-#' is re-executed against `frame`, then the recorded transformation is
-#' re-applied to the `links` and `targets` given here. Those two are not in
-#' the file, by design, so they cannot be checked before use. The file instead
-#' records what the source and the result hashed to, and replay is checked
-#' against both. A source that does not reproduce means `frame` is wrong, and
-#' a result that does not means `links` or `targets` is. Both a file and a
-#' live shared sample are accepted.
+#' A `chained` sample, produced by several [execute()] calls, is replayed
+#' call by call, each under its own seed, stages and RNG kind. The first
+#' call and each continuation read the frames given here, a new phase reads
+#' the phase replayed before it, and a wave reads its replayed master.
+#' Inherited panels and replicates are carried rather than declared again.
+#' The fingerprints cover every call's frames, and the row count is checked
+#' after each call. An earlier call run without a seed is
+#' `samplyr_error_receipt_no_seed`. When a new phase was drawn from a sample
+#' modified after its execution, the record starts at that phase, and its
+#' frame must be the modified sample as the `tbl_sample` it was
+#' (`samplyr_error_replay_phase_frame` otherwise).
 #'
-#' A frame collection replays component by component and is stacked again
-#' afterwards, so `frame` is a list named by component. Both a collection read
-#' back from a file and a live `frame_stack` are accepted. Every component is
-#' checked before any of them runs, since replaying re-executes each
-#' selection. The collection is rebuilt through [stack_frames()] rather than
-#' by restoring its attributes, so a register that has stopped carrying the
-#' membership column, or whose key is no longer unique, is reported as that.
+#' A chained receipt that does not record its earlier calls (a continuation
+#' of a modified sample, or a file written before receipts recorded earlier
+#' calls) is refused with class `samplyr_error_receipt_chained`. The refusal
+#' carries the final call's `seed` and `stages` as fields and gives the
+#' recipe. Rebuild the sample that call ran on by replaying its own receipt,
+#' or keep it when it was modified, since no receipt rebuilds a modified
+#' sample. Then run
+#' `execute(earlier, frame, seed = seed, stages = stages)` for a continuation,
+#' or `execute(design, earlier, seed = seed)` for a new phase. That
+#' reproduces the sample exactly under the same RNG kind, which the refusal
+#' names since a direct [execute()] does not set it.
 #'
-#' For a design using a registered custom method, the receipt records a
-#' fingerprint of the implementation (the formals and body of the
-#' registered `sample_fn` and `joint_fn`). Replay refuses when the
-#' currently registered function differs from the recorded one, since
-#' identical registry metadata does not imply the same selections.
-#' The fingerprint normalizes formatting and comments and does not
-#' cover the function's enclosing environment: a registered function
-#' that reads from its environment can change behavior without
-#' changing its fingerprint.
+#' A shared-weight sample re-executes the source selection against `frame`,
+#' then re-applies the recorded transformation to `links` and `targets`.
+#' Those are not in the file, so replay checks the source and the result
+#' against the hashes the file records. A source that does not reproduce
+#' means `frame` is wrong, and a result that does not means `links` or
+#' `targets` is.
 #'
-#' A panelized receipt carries a panel assignment record, and it is read
-#' before any panel argument is decoded from it. A record naming an
-#' assignment algorithm or a schema version this samplyr does not know is
-#' `samplyr_error_panel_record_unsupported` rather than a replay under the
-#' current law. A record that does not carry what the version it states
-#' requires, or that is not a set of named fields at all, is
-#' `samplyr_error_panel_record_malformed` rather than a repaired one: the
-#' assignment stage decides what the assignment units are, so filling in a
-#' missing one would replay a different assignment of the same sample.
+#' A frame collection replays each component against its register, with
+#' `frame` a list named by component. Every component is checked before any
+#' runs. The results are stacked through [stack_frames()] rather than by
+#' restoring attributes, so a register that has lost the membership column,
+#' or whose key is no longer unique, is reported as that. Shared-weight
+#' samples and collections are accepted both from a file and live.
 #'
-#' When the design was saved with a frame fingerprint, `frame` is
-#' compared against it before replaying. A differing frame still yields
-#' a valid sample, but not the recorded one, so the default is to error.
-#' Several frames are compared one by one and reported by position and
-#' recorded label, so a mismatch names the register that moved. After
-#' replaying, the row count is checked against the receipt's
-#' `n_selected` as a final consistency check.
+#' For a registered custom method, the receipt records a fingerprint of the
+#' implementation (the formals and body of the registered `sample_fn` and
+#' `joint_fn`). Replay refuses when the currently registered function
+#' differs, since identical registry metadata does not imply the same
+#' selections. The fingerprint normalizes formatting and comments and does
+#' not cover the enclosing environment, so a registered function that reads
+#' from its environment can change behavior without changing its
+#' fingerprint.
 #'
-#' A sample drawn from one register per stage is replayed by passing
-#' those registers back as a list, in the same order. The receipt
-#' records how many frames the call was given, so supplying the wrong
-#' number is `samplyr_error_replay_frame_count` rather than a sample
-#' drawn from the wrong pools.
+#' A panel assignment record naming an algorithm or schema version this
+#' samplyr does not know is `samplyr_error_panel_record_unsupported`. One
+#' that lacks what its stated version requires, or is not a set of named
+#' fields, is `samplyr_error_panel_record_malformed`. Neither is replayed
+#' under the current law or repaired, since the assignment stage decides the
+#' assignment units and filling in a missing one would replay a different
+#' assignment.
+#'
+#' `vignette("serialization")` works through these cases with examples.
 #'
 #' @param x A `sampling_design` carrying an execution receipt, as
 #'   returned by [read_design()] for a file written from a
@@ -544,17 +519,18 @@ read_design <- function(file) {
 #'   without a file round trip.
 #' @param frame The sampling frame the receipt refers to: a data frame
 #'   for a one-frame call, or the ordered list of stage frames for a
-#'   call that supplied one register per stage.
+#'   call that supplied one register per stage. For a sample built by
+#'   several calls, one element per call that read frames, in the form
+#'   `frame` takes in [write_design()].
 #' @param ... Must be empty. Arguments after it are matched by exact name.
 #' @param fingerprint How to respond when `frame` differs from the
 #'   fingerprint stored in the design file: `"error"` (default), `"warn"`,
 #'   `"inform"`, or `"ignore"`.
 #' @param links,targets The link table and the target register, for a
 #'   shared-weight sample only. Both are required there and refused
-#'   elsewhere, since accepting them where nothing uses them would return an
-#'   untransformed sample to someone who believes a transformation was
-#'   re-applied. Supply the tables the transformation was built from, and the
-#'   result is checked against the integrity the file records.
+#'   elsewhere, so a sample is never returned untransformed to a caller
+#'   expecting a transformation. The result is checked against the integrity
+#'   the file records.
 #'
 #' @return The replayed `tbl_sample`, or the rebuilt `frame_stack` for a
 #'   frame collection.
@@ -588,6 +564,16 @@ read_design <- function(file) {
 #'   registers$ea_id
 #' )
 #'
+#' # A second phase replays both calls from the first phase's frame
+#' phase1 <- execute(sampling_design() |> stratify_by(region) |> draw(n = 300),
+#'                   bfa_eas, seed = 7)
+#' phase2 <- sampling_design() |>
+#'   stratify_by(urban_rural) |>
+#'   draw(n = 60) |>
+#'   execute(phase1, seed = 8)
+#' write_design(phase2, path, frame = bfa_eas)
+#' identical(replay_design(read_design(path), bfa_eas)$ea_id, phase2$ea_id)
+#'
 #' unlink(path)
 #' @seealso [write_design()] and [read_design()] for the receipt
 #'   round trip, [validate_frame()] for checking a frame against a
@@ -603,7 +589,10 @@ replay_design <- function(
   targets = NULL
 ) {
   check_keyword_args(enquos(...), c("fingerprint", "links", "targets"))
-  fingerprint <- match.arg(fingerprint)
+  fingerprint <- with_error_class(
+    rlang::arg_match(fingerprint),
+    "samplyr_error_replay_argument"
+  )
 
   if (is_frame_stack(x) || is_frame_stack_design(x)) {
     check_replay_link_args(links, targets, "a frame collection")
@@ -632,7 +621,8 @@ replay_design <- function(
     )$samplyr$execution$environment
   } else {
     cli_abort(
-      "{.arg x} must be a {.cls sampling_design} or a {.cls tbl_sample}"
+      "{.arg x} must be a {.cls sampling_design} or a {.cls tbl_sample}",
+      class = "samplyr_error_design_expected"
     )
   }
 
@@ -660,23 +650,69 @@ replay_design <- function(
     )
   }
 
-  if (isTRUE(receipt$chained)) {
+  calls <- NULL
+  if (isTRUE(receipt$chained) && !is_null(receipt[["earlier_calls"]])) {
+    calls <- c(
+      if (is_tbl_sample(x)) {
+        execution_chain(x)$calls
+      } else {
+        decode_execution_chain(receipt[["earlier_calls"]], design)
+      },
+      list(list(
+        transition = decode_chr(receipt$transition),
+        seed = seed,
+        stages = frame_record_or_default(
+          frame_record, unlist(receipt$stages_executed)
+        )$stages,
+        n_selected = receipt$n_selected,
+        reps = receipt$reps,
+        panels = receipt$panels,
+        panel_assignment = receipt$panel_assignment,
+        frames = frame_record_or_default(
+          frame_record, unlist(receipt$stages_executed)
+        ),
+        wave = receipt$wave,
+        rng = execution_environment$rng,
+        design = design
+      ))
+    )
+    check_chain_seeds(calls)
+  } else if (isTRUE(receipt$chained)) {
+    recipe <- chained_replay_recipe(
+      seed,
+      frame_record_or_default(
+        frame_record, unlist(receipt$stages_executed)
+      )$stages,
+      execution_environment$rng,
+      modified = isTRUE(receipt$earlier_modified)
+    )
     abort_samplyr(
       c(
         "This sample was produced by more than one {.fn execute} call
          (stage continuation or multi-phase).",
         "i" = "The receipt records only the final call and cannot
-               reproduce the sample.",
-        "i" = "Save and replay each phase or stage batch separately."
+               reproduce the sample by itself.",
+        recipe$bullets
       ),
-      class = "samplyr_error_receipt_chained"
+      class = "samplyr_error_receipt_chained",
+      seed = recipe$seed,
+      stages = recipe$stages
     )
   }
 
   check_custom_methods_match_record(design, strict = TRUE)
+  for (cl in calls) {
+    check_custom_methods_match_record(cl$design, strict = TRUE)
+  }
   check_replay_environment(execution_environment)
 
-  frames <- normalize_replay_frames(frame_record, frame)
+  chain_frames <- NULL
+  frames <- if (is_null(calls)) {
+    normalize_replay_frames(frame_record, frame)
+  } else {
+    chain_frames <- flatten_chain_frames(frame, chain_frame_counts(calls))$frames
+    as_frame_list(chain_frames)
+  }
 
   if (!identical(fingerprint, "ignore")) {
     diffs <- fingerprint_diffs(frame_info, frames)
@@ -694,11 +730,15 @@ replay_design <- function(
           class = "samplyr_error_replay_frame_mismatch"
         )
       } else if (identical(fingerprint, "warn")) {
-        cli_warn(msg)
+        cli_warn(msg, class = "samplyr_warning_replay_frame_mismatch")
       } else {
-        cli::cli_inform(msg)
+        cli::cli_inform(msg, class = "samplyr_message_replay_frame_mismatch")
       }
     }
+  }
+
+  if (!is_null(calls)) {
+    return(replay_execution_chain(calls, chain_frames))
   }
 
   stages <- as.integer(unlist(receipt$stages_executed))
@@ -735,7 +775,7 @@ replay_design <- function(
       "The replayed sample has {nrow(result)} row{?s}; the receipt
        recorded {n_recorded}.",
       "i" = "The frame likely differs from the one used originally."
-    ))
+    ), class = "samplyr_warning_replay_rows")
   }
 
   result
@@ -743,6 +783,68 @@ replay_design <- function(
 
 #' Require the replay to supply the frames the recorded call was given
 #'
+#' How to reproduce a sample built by more than one `execute()` call
+#'
+#' A receipt holds the final call only. What that call needs is the sample it
+#' ran on, rebuilt from that sample's own receipt, and the final call's seed
+#' and stages, which the receipt does hold. A continuation's final call starts
+#' after stage 1. A new phase starts again at stage 1, on the earlier phase as
+#' its frame. A direct `execute()` does not set the recorded RNG kind the way
+#' `replay_design()` does, so the recipe names it.
+#' @noRd
+chained_replay_recipe <- function(seed, stages, rng = NULL,
+                                  modified = FALSE) {
+  stages <- as.integer(unlist(stages))
+  stages_txt <- if (length(stages) > 1L &&
+                    identical(stages, seq(min(stages), max(stages)))) {
+    paste0(min(stages), ":", max(stages))
+  } else if (length(stages) == 1L) {
+    as.character(stages)
+  } else {
+    paste0("c(", paste(stages, collapse = ", "), ")")
+  }
+  continuation <- length(stages) > 0L && min(stages) > 1L
+  call_txt <- if (continuation) {
+    paste0(
+      "execute(earlier, frame, seed = ", seed, ", stages = ", stages_txt, ")"
+    )
+  } else {
+    paste0("execute(design, earlier, seed = ", seed, ")")
+  }
+  bullets <- c(
+    "i" = if (continuation && modified) {
+      "The sample this call continued, {.var earlier}, was modified after
+       its execution, so no receipt rebuilds it. Keep that modified sample."
+    } else if (continuation) {
+      "Rebuild the sample this call continued, {.var earlier}, with
+       {.fn replay_design} from its own receipt, written with
+       {.fn write_design} before this call."
+    } else {
+      "Rebuild the earlier phase, {.var earlier}, with {.fn replay_design}
+       from its own receipt, written with {.fn write_design} before this
+       call."
+    },
+    "i" = paste0(
+      "Then run this call again: {.code ", call_txt, "}",
+      if (continuation) ", with the frame this call was given." else "."
+    )
+  )
+  kind <- unlist(rng[c("kind", "normal_kind", "sample_kind")])
+  if (length(kind) == 3L) {
+    kind_txt <- paste0(
+      "RNGkind(\"", kind[[1]], "\", \"", kind[[2]], "\", \"", kind[[3]], "\")"
+    )
+    bullets <- c(
+      bullets,
+      "i" = paste0(
+        "{.fn execute} does not set the recorded RNG kind, as ",
+        "{.fn replay_design} does. It was {.code ", kind_txt, "}."
+      )
+    )
+  }
+  list(bullets = bullets, seed = seed, stages = stages)
+}
+
 #' A receipt from separately supplied registers cannot be replayed against one
 #' frame: the stages would all draw from it and select different units. The
 #' count is checked before any fingerprint so the caller learns the shape is
@@ -898,7 +1000,8 @@ check_replay_environment <- function(recorded, call = caller_env()) {
         "i" = "Replay will be attempted, but an identical realization is
                not guaranteed."
       ),
-      call = call
+      call = call,
+      class = "samplyr_warning_replay_environment"
     )
   }
   invisible(recorded)
@@ -1124,17 +1227,22 @@ replay_shared_sample <- function(x, frame, fingerprint, links, targets,
 #' strings they are stored as.
 #' @noRd
 decode_within_marker <- function(within) {
+  rlang::local_error_call(caller_env())
   switch(
     within$mode,
     singleton = NULL,
     cluster = rlang::sym(within$col),
     extended = rlang::call2("extend_links", rlang::sym(within$col)),
-    cli_abort("Unknown {.arg within} mode {.val {within$mode}}")
+    cli_abort(
+      "Unknown {.arg within} mode {.val {within$mode}}",
+      class = "samplyr_error_design_file_malformed"
+    )
   )
 }
 
 #' @noRd
 decode_multiplicity_marker <- function(multiplicity) {
+  rlang::local_error_call(caller_env())
   switch(
     multiplicity$mode,
     complete_links = rlang::call2("complete_links"),
@@ -1149,7 +1257,10 @@ decode_multiplicity_marker <- function(multiplicity) {
       rlang::sym(multiplicity$col),
       total = rlang::call2("complete_links")
     ),
-    cli_abort("Unknown {.arg multiplicity} mode {.val {multiplicity$mode}}")
+    cli_abort(
+      "Unknown {.arg multiplicity} mode {.val {multiplicity$mode}}",
+      class = "samplyr_error_design_file_malformed"
+    )
   )
 }
 
@@ -1274,8 +1385,8 @@ encode_weight_share_call <- function(record) {
       total_col = spec$multiplicity$total_col
     ),
     target_scope = spec$target_scope,
-    source_integrity = record$source_integrity,
-    result_integrity = record$result_integrity
+    source_integrity = integrity_for_file(record$source_integrity),
+    result_integrity = integrity_for_file(record$result_integrity)
   )
 }
 
@@ -1345,8 +1456,7 @@ frame_stack_payload <- function(
 
   components <- lapply(seq_along(x), function(i) {
     nm <- names_x[[i]]
-    # `design_payload()` applies the component weight gate.
-    # Use the component name as its frame label.
+    # design_payload() applies the component weight gate.
     component <- design_payload(
       x[[i]],
       frame = frames[[nm]],
@@ -1504,16 +1614,43 @@ design_payload <- function(
         "{.arg x} was executed without a seed.",
         "i" = "The execution receipt cannot reproduce the sample. Re-run
                {.fn execute} with {.arg seed} for a reproducible receipt."
-      ))
+      ), class = "samplyr_warning_receipt_no_seed")
     }
-    if (isTRUE(execution$chained)) {
-      cli_warn(c(
-        "{.arg x} was produced by more than one {.fn execute} call
-         (stage continuation or multi-phase).",
-        "i" = "The receipt records only the final call, so
-               {.fn replay_design} cannot reproduce this sample.
-               Save and replay each phase or stage batch separately."
-      ))
+    if (isTRUE(execution$chained) && !is_null(execution[["earlier_calls"]])) {
+      unseeded <- vapply(execution[["earlier_calls"]], function(entry) {
+        !identical(entry$transition, "wave") && is_null(entry$seed)
+      }, logical(1))
+      if (any(unseeded)) {
+        cli_warn(c(
+          "An earlier {.fn execute} call behind {.arg x} ran without a
+           seed.",
+          "i" = "The execution receipt cannot reproduce the sample. Re-run
+                 that call and the ones after it with {.arg seed} for a
+                 reproducible receipt."
+        ), class = "samplyr_warning_receipt_no_seed")
+      }
+    } else if (isTRUE(execution$chained)) {
+      recipe <- chained_replay_recipe(
+        execution$seed,
+        frame_record_or_default(
+          attr(x, "metadata")$frame_schedule, get_stages_executed(x)
+        )$stages,
+        execution_environment$rng,
+        modified = isTRUE(execution$earlier_modified)
+      )
+      cli_warn(
+        c(
+          "{.arg x} was produced by more than one {.fn execute} call
+           (stage continuation or multi-phase).",
+          "i" = "The receipt records only the final call, so
+                 {.fn replay_design} cannot reproduce this sample by
+                 itself.",
+          recipe$bullets
+        ),
+        class = "samplyr_warning_receipt_chained",
+        seed = recipe$seed,
+        stages = recipe$stages
+      )
     }
     if (isTRUE(execution$modified)) {
       cli_warn(c(
@@ -1522,11 +1659,15 @@ design_payload <- function(
         "i" = "The receipt describes the original execution;
                {.fn replay_design} reproduces the full original sample,
                not this object."
-      ))
+      ), class = "samplyr_warning_modified_sample")
     }
     design <- get_design(x)
     if (is_null(design)) {
-      cli_abort("{.arg x} does not carry a stored design", call = call)
+      cli_abort(
+        "{.arg x} does not carry a stored design",
+        call = call,
+        class = "samplyr_error_tbl_sample_missing_attributes"
+      )
     }
   } else if (is_sampling_design(x)) {
     design <- x
@@ -1541,14 +1682,28 @@ design_payload <- function(
   } else {
     cli_abort(
       "{.arg x} must be a {.cls sampling_design} or a {.cls tbl_sample}",
-      call = call
+      call = call,
+      class = "samplyr_error_design_expected"
     )
   }
   validate_sampling_design(design, call = call)
   check_controls_serializable(design, call = call)
 
   # Refuse frame counts inconsistent with the design or receipt.
-  if (!is_null(frame)) {
+  if (!is_null(frame) && !is_null(execution[["earlier_calls"]])) {
+    flat <- flatten_chain_frames(
+      frame,
+      chain_frame_counts(encoded_chain_calls(execution)),
+      labels = frame_label,
+      class = c(
+        "samplyr_error_serialization_frame_count",
+        "samplyr_error_frame_count"
+      ),
+      call = call
+    )
+    frame <- flat$frames
+    frame_label <- flat$labels
+  } else if (!is_null(frame)) {
     supplied <- normalize_frame_input(frame, call = call)
     check_serialization_frame_count(
       x, design, supplied$n_supplied, call = call
@@ -1564,7 +1719,7 @@ design_payload <- function(
              verify that the supplied frame is the one originally sampled.",
       "i" = "Supply {.arg frame} to {.fn write_design} for verifiable
              replay."
-    ))
+    ), class = "samplyr_warning_no_fingerprint")
   }
 
   payload <- list(
@@ -1772,7 +1927,10 @@ encode_value <- function(x) {
     return(x)
   }
   if (!is.atomic(x)) {
-    cli_abort("Cannot serialize a value of class {.cls {class(x)}}")
+    cli_abort(
+      "Cannot serialize a value of class {.cls {class(x)}}",
+      class = "samplyr_error_serialize_unsupported"
+    )
   }
   nms <- names(x)
   if (!is_null(nms)) {
@@ -1800,7 +1958,8 @@ check_controls_serializable <- function(design, call = caller_env()) {
             "i" = "Namespace prefixes are not supported: write
                    {.code desc(pop)}, not {.code dplyr::desc(pop)}."
           ),
-          call = call
+          call = call,
+          class = "samplyr_error_serialize_unsupported"
         )
       }
     }
@@ -1831,14 +1990,15 @@ encode_control <- function(control_quos) {
 }
 
 #' @noRd
-decode_control <- function(control) {
+decode_control <- function(control, call = caller_env()) {
+  rlang::local_error_call(call)
   if (is_null(control)) {
     return(NULL)
   }
 
   env <- control_eval_env()
   lapply(control, function(term) {
-    expr <- decode_control_term(term)
+    expr <- decode_control_term(term, call = call)
     new_quosure(expr, env)
   })
 }
@@ -1881,7 +2041,8 @@ decode_control_term <- function(term, call = caller_env()) {
   if (type != "serpentine" && length(variables) != 1) {
     cli_abort(
       "Control type {.val {type}} requires exactly one variable.",
-      call = call
+      call = call,
+      class = "samplyr_error_serialize_unsupported"
     )
   }
 
@@ -2199,9 +2360,16 @@ encode_execution <- function(sample, call = caller_env()) {
   if (!is_null(meta$wave)) {
     receipt$wave <- encode_wave(meta$wave)
   }
-  # One receipt cannot replay a chain of execution calls.
+  # A chain records every earlier call it can replay.
   if (!is_null(meta$continued_from) || !is_null(meta$prev_phase)) {
     receipt$chained <- TRUE
+    chain <- execution_chain(sample)
+    if (!is_null(chain)) {
+      receipt$transition <- chain$transition
+      receipt[["earlier_calls"]] <- encode_execution_chain(chain)
+    } else if (isTRUE(meta$continued_from$realization_modified)) {
+      receipt$earlier_modified <- TRUE
+    }
   }
   # Do not encode a receipt invalidated by sample changes.
   if (!sample_realization_status(sample)$ok) {
@@ -2224,11 +2392,9 @@ encode_execution <- function(sample, call = caller_env()) {
 #' denominators a later activation of a subset of panels is computed against.
 #'
 #' The record is read here under the version it states, exactly as a reader
-#' reads it. A writer that filled in a field the record does not carry would
-#' produce a well-formed file describing an assignment nothing recorded: a
-#' stage-less record used to be written out as stage 1, and then replayed as a
-#' first-stage assignment of a sample that was not assigned at the first
-#' stage.
+#' reads it. A writer that filled in a field the record does not carry, such
+#' as a stage, would produce a well-formed file describing an assignment
+#' nothing recorded.
 #' @noRd
 encode_panel_assignment <- function(record, call = caller_env()) {
   record <- prepare_panel_record(record, "An execution receipt", call = call)
@@ -2568,7 +2734,8 @@ decode_shared_sample_payload <- function(payload, call = caller_env()) {
                {.val {shared_sample_format_version}}. Update samplyr to read
                this file."
       ),
-      call = call
+      call = call,
+      class = "samplyr_error_design_file_unsupported"
     )
   }
   spec <- decode_weight_share_call(payload$transformation, call = call)
@@ -2584,6 +2751,7 @@ decode_shared_sample_payload <- function(payload, call = caller_env()) {
 
 #' @noRd
 decode_weight_share_call <- function(transformation, call = caller_env()) {
+  rlang::local_error_call(call)
   algorithm <- decode_chr(transformation$algorithm)
   version <- transformation$version
   # Check transformation type before reading its fields.
@@ -2644,7 +2812,8 @@ decode_weight_share_call <- function(transformation, call = caller_env()) {
                denominator is formed, and the scope. None can be inferred
                from the others."
       ),
-      call = call
+      call = call,
+      class = "samplyr_error_design_file_malformed"
     )
   }
   spec
@@ -2669,6 +2838,7 @@ decode_integrity <- function(x) {
 #' needs the registers. `replay_design()` turns one into the other.
 #' @noRd
 decode_frame_stack_payload <- function(payload, call = caller_env()) {
+  rlang::local_error_call(call)
   version <- payload$format_version
   if (
     !is.numeric(version) || length(version) != 1 || is.na(version) ||
@@ -2683,21 +2853,24 @@ decode_frame_stack_payload <- function(payload, call = caller_env()) {
                {.val {frame_stack_format_version}}. Update samplyr to read
                this file."
       ),
-      call = call
+      call = call,
+      class = "samplyr_error_design_file_unsupported"
     )
   }
   components <- payload$components
   if (!is.list(components) || length(components) == 0) {
     cli_abort(
       "Frame collection file has no {.field components} entry",
-      call = call
+      call = call,
+      class = "samplyr_error_design_file_malformed"
     )
   }
   key <- decode_chr(payload$key)
   if (!is_scalar_string(key)) {
     cli_abort(
       "Frame collection file has no {.field key} entry",
-      call = call
+      call = call,
+      class = "samplyr_error_design_file_malformed"
     )
   }
 
@@ -2716,7 +2889,8 @@ decode_frame_stack_payload <- function(payload, call = caller_env()) {
                frames its units belong to. Neither can be inferred from the
                other components."
       ),
-      call = call
+      call = call,
+      class = "samplyr_error_design_file_malformed"
     )
   }
   names(membership) <- names_x
@@ -2738,6 +2912,7 @@ decode_frame_stack_payload <- function(payload, call = caller_env()) {
 
 #' @noRd
 decode_overlap_spec <- function(overlaps, frames, call = caller_env()) {
+  rlang::local_error_call(call)
   if (is_null(overlaps)) {
     return(NULL)
   }
@@ -2753,7 +2928,8 @@ decode_overlap_spec <- function(overlaps, frames, call = caller_env()) {
                on. A partial mapping would export under a different
                estimator."
       ),
-      call = call
+      call = call,
+      class = "samplyr_error_design_file_malformed"
     )
   }
   # Validate decoded specifications through the constructor.
@@ -2762,11 +2938,13 @@ decode_overlap_spec <- function(overlaps, frames, call = caller_env()) {
 
 #' @noRd
 decode_design_payload <- function(payload, call = caller_env()) {
+  rlang::local_error_call(call)
   if (!identical(payload$format, design_format_id)) {
     cli_abort(
       "This is not a samplyr design file
        (expected {.field format} = {.val {design_format_id}}).",
-      call = call
+      call = call,
+      class = "samplyr_error_design_file_malformed"
     )
   }
   version <- payload$format_version
@@ -2805,21 +2983,11 @@ decode_design_payload <- function(payload, call = caller_env()) {
   }
 
   samplyr_tools <- payload$tools$samplyr
-  tool_stages <- samplyr_tools$design$stages %||% list()
-  stages <- lapply(seq_along(payload$design$stages), function(i) {
-    tool_stage <- if (length(tool_stages) >= i) tool_stages[[i]] else NULL
-    decode_stage(
-      payload$design$stages[[i]],
-      tool_stage = tool_stage
-    )
-  })
-  design <- new_sampling_design(
-    title = decode_chr(payload$design$title),
-    stages = stages,
-    current_stage = length(stages),
-    validated = FALSE
+  design <- decode_design_body(
+    payload$design,
+    samplyr_tools$design$stages,
+    call = call
   )
-  design <- validate_sampling_design(design, call = call)
 
   attr(design, "frame_info") <- decode_frame_info(
     payload$frame,
@@ -2840,7 +3008,7 @@ decode_design_payload <- function(payload, call = caller_env()) {
           "The frame digest stored with this design could not be read
            and was dropped.",
           "i" = conditionMessage(e)
-        ))
+        ), class = "samplyr_warning_digest_unavailable")
         NULL
       }
     )
@@ -2850,11 +3018,35 @@ decode_design_payload <- function(payload, call = caller_env()) {
   design
 }
 
+#' A design from its `title` and `stages`, with the samplyr method record of
+#' each stage beside it
+#'
+#' Shared by the file's design and the design of each earlier phase of a
+#' chained receipt.
+#' @noRd
+decode_design_body <- function(body, tool_stages, call = caller_env()) {
+  rlang::local_error_call(call)
+  tool_stages <- tool_stages %||% list()
+  stages <- lapply(seq_along(body$stages), function(i) {
+    tool_stage <- if (length(tool_stages) >= i) tool_stages[[i]] else NULL
+    decode_stage(body$stages[[i]], tool_stage = tool_stage, call = call)
+  })
+  design <- new_sampling_design(
+    title = decode_chr(body$title),
+    stages = stages,
+    current_stage = length(stages),
+    validated = FALSE
+  )
+  validate_sampling_design(design, call = call)
+}
+
 #' @noRd
 decode_stage <- function(
   stage,
-  tool_stage = NULL
+  tool_stage = NULL,
+  call = caller_env()
 ) {
+  rlang::local_error_call(call)
   strata <- NULL
   if (!is_null(stage$strata)) {
     strata <- new_stratum_spec(
@@ -2923,6 +3115,7 @@ decode_method <- function(
   tool_method = NULL,
   call = caller_env()
 ) {
+  rlang::local_error_call(call)
   if (!is.list(method) || !is.character(method$id) || length(method$id) != 1) {
     abort_samplyr(
       "Design file contains an invalid sampling method.",
@@ -2950,7 +3143,8 @@ decode_method <- function(
       cli_abort(
         "Common sampling method {.val {common_id}} has contradictory
          properties.",
-        call = call
+        call = call,
+        class = "samplyr_error_design_file_malformed"
       )
     }
   }
@@ -2980,21 +3174,27 @@ decode_method <- function(
           "i" = "Common method {.val {common_id}} does not describe
                  samplyr method {.val {name}}."
         ),
-        call = call
+        call = call,
+        class = "samplyr_error_design_file_malformed"
       )
     }
     if (is_null(known) && !identical(common_id, "tool_specific")) {
       cli_abort(
         "Unknown samplyr method {.val {name}} must use common method
          {.val tool_specific}.",
-        call = call
+        call = call,
+        class = "samplyr_error_design_file_malformed"
       )
     }
     quality <- method$probability_quality
     native_quality <- decode_chr(tool_method$probabilities)
     if (!is_null(quality) && !is_null(native_quality) &&
         !identical(quality, native_quality)) {
-      cli_abort("Common and samplyr probability quality disagree.", call = call)
+      cli_abort(
+        "Common and samplyr probability quality disagree.",
+        call = call,
+        class = "samplyr_error_design_file_malformed"
+      )
     }
     return(list(
       name = name,
@@ -3013,7 +3213,8 @@ decode_method <- function(
         "i" = "Add a {.field tools.samplyr} method extension to reproduce
                a tool-specific method."
       ),
-      call = call
+      call = call,
+      class = "samplyr_error_design_file_malformed"
     )
   }
   list(
@@ -3110,6 +3311,7 @@ portable_type_to_r <- function(type) {
 #' Decode a per-stratum value: scalar, named vector, or data frame
 #' @noRd
 decode_value <- function(x) {
+  rlang::local_error_call(caller_env())
   if (is_null(x) || (is.list(x) && length(x) == 0)) {
     return(NULL)
   }
@@ -3134,6 +3336,7 @@ decode_value <- function(x) {
 #' columns, wrong types, takes that are not positive whole numbers.
 #' @noRd
 decode_certainty_plan <- function(x, call = caller_env()) {
+  rlang::local_error_call(call)
   if (is_null(x)) {
     return(NULL)
   }
@@ -3225,6 +3428,7 @@ decode_certainty_plan <- function(x, call = caller_env()) {
 #' Rebuild a data frame from JSON row objects
 #' @noRd
 decode_rows <- function(rows) {
+  rlang::local_error_call(caller_env())
   cols <- names(rows[[1]])
   consistent <- vapply(
     rows,

@@ -35,18 +35,19 @@ outputs convert via `as_svydesign()`, `as_svrepdesign()`, and
 
 ## Learn samplyr
 
-Follow three articles: [Get
+Follow two articles: [Get
 started](https://dickoa.gitlab.io/samplyr/articles/introduction.html)
-for the grammar, [Select a three-stage
-sample](https://dickoa.gitlab.io/samplyr/articles/three-stage-sampling.html)
-for a complete fieldwork example, then [Analyze the
+for the grammar and a complete three-stage fieldwork example, then
+[Analyze the
 sample](https://dickoa.gitlab.io/samplyr/articles/survey-analysis.html)
 for the handoff to `survey` and `srvyr`.
 
 Choose the planning, coordination or rotating-panel article when your
 design needs it. The [selection-methods
 reference](https://dickoa.gitlab.io/samplyr/reference/selection-methods.html)
-contains the compact selection and inference comparison. Serialization,
+compares the methods, and the [variance-estimation
+reference](https://dickoa.gitlab.io/samplyr/reference/variance-estimation.html)
+gives how each one's variance is estimated. Serialization,
 semantics and validation are references to consult as needed.
 
 ## Why samplyr?
@@ -131,10 +132,10 @@ design
 The two MOS names distinguish district totals from village totals. This
 is a design declaration. Execution also needs compatible registers and
 compound listings. For a complete runnable example using bundled data,
-see [Select a Three-Stage Household
-Sample](https://dickoa.gitlab.io/samplyr/articles/three-stage-sampling.html)
-(`vignette("three-stage-sampling")`): communes, EAs and synthetic
-household listings, followed by observations and survey export.
+see [A three-stage household
+sample](https://dickoa.gitlab.io/samplyr/articles/introduction.html#a-three-stage-household-sample)
+in `vignette("introduction")`: communes, EAs and synthetic household
+listings, followed by observations and survey export.
 
 *Lohr, S. L. (2022). Sampling: Design and Analysis (3rd ed.). CRC
 Press.*
@@ -142,8 +143,8 @@ Press.*
 ## Installation
 
 ``` r
-# Install sondage first (sampling algorithms backend)
-pak::pkg_install("gitlab::dickoa/sondage")
+# sondage, the sampling algorithms backend, is on CRAN
+install.packages("sondage")
 
 # Install svyplan (sample size, precision, power, and stratification)
 pak::pkg_install("gitlab::dickoa/svyplan")
@@ -565,17 +566,16 @@ their inputs and limits:
 | Spatially balanced | `draw(method = "lpm2" or "scps", spread = c(lon, lat))` | `?selection-methods` |
 | Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across waves | `vignette("sampling-coordination")` |
 | Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `?draw`, `sondage::register_method()` |
-| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `vignette("rotating-panels")` |
+| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `?panel-assignment`, `vignette("rotating-panels")` |
 | Replicated draws | `execute(reps = 5)` | `?execute` |
 | Two-phase | pipe a `tbl_sample` into a new design’s `execute()` | `vignette("survey-analysis")` |
 | Indirect sampling | `share_weights()`, to estimate for a population linked to the one that was sampled | `vignette("design-semantics")` |
 | Overlapping frames | `stack_frames()`, for two registers of one population | `vignette("survey-analysis")` |
 
-The [selection-methods
-reference](https://dickoa.gitlab.io/samplyr/reference/selection-methods.html)
-(`?selection-methods`) compares first-order and joint probability
-quality and variance routes, with links to the detailed stage/phase
-restrictions.
+The [variance-estimation
+reference](https://dickoa.gitlab.io/samplyr/reference/variance-estimation.html)
+(`?variance-estimation`) compares first-order and joint probability
+quality and variance estimators, with the stage and phase restrictions.
 
 ``` r
 # Balanced on auxiliary totals, PPS on size

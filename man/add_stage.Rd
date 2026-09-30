@@ -64,6 +64,10 @@ Each stage can have its own:
 \subsection{Validation rules}{
 \itemize{
 \item Each stage must end with \code{\link[=draw]{draw()}} before the next \code{add_stage()} or \code{\link[=execute]{execute()}}
+\item \code{\link[=draw]{draw()}} closes a stage. \code{\link[=stratify_by]{stratify_by()}}, \code{\link[=cluster_by]{cluster_by()}}, or a second
+\code{draw()} after it are refused, so a design, including one from
+\code{\link[=read_design]{read_design()}}, is extended with \code{add_stage()}. \code{\link[=sampling_design]{sampling_design()}}
+gives the reason.
 \item An untouched, unlabeled initial stage is reused by \code{add_stage()}.
 Repeated unlabeled calls there do not create empty stages. Once a stage
 has a label or specification, it needs \code{draw()} before another is added.

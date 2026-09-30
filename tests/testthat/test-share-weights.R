@@ -1,23 +1,13 @@
-## G2. share_weights(): the generalized weight share method
+## share_weights(): the generalized weight share method
 
-# The oracle is exact enumeration, not Monte Carlo. Both features are weight
-# transformations with closed-form expectations, so the source population is
-# small enough to enumerate every possible sample, and the expectation is an
-# average over known probabilities rather than an approximation.
+# The oracle is exact enumeration, not Monte Carlo. The source population is
+# small enough that every sample is listed, so each expectation is an average
+# over known probabilities.
 
 ## The worked population
-#
-# Source U^A = {a, b, c, d}, srswor n = 2. Every one of the six samples has
-# probability 1/6 and every unit has pi = 1/2, so every design weight is 2.
-#
-# Target U^B, three clusters:
-#   H1 = {t1, t2, t5}   t1 <- a, b   t2 <- a   t5 has no link of its own
-#   H2 = {t3}           t3 <- c, d
-#   H3 = {t4}           no links at all: Constraint 2.1 is violated for it
-#
-# `a` links twice into H1, which is what makes the clustered and the extended
-# methods disagree; H1 has three units, which is what makes the singleton
-# method disagree with both.
+# Source {a, b, c, d}, srswor n = 2, so six samples at 1/6 and every weight 2.
+# Target clusters: H1 = {t1 <- a b, t2 <- a, t5 unlinked}, H2 = {t3 <- c d}
+# and H3 = {t4}, which has no links. `a` links twice into H1.
 
 gwsm_source_frame <- function() {
   data.frame(unit = c("a", "b", "c", "d"), stringsAsFactors = FALSE)
@@ -40,9 +30,8 @@ gwsm_links <- function() {
   )
 }
 
-# One executed tbl_sample per distinct subset of size 2. The seeds are only a
-# way to obtain a valid sample object for each subset; the enumeration itself
-# is exact, because srswor gives all six subsets probability 1/6.
+# One executed tbl_sample per subset of size 2. The seeds only produce sample
+# objects, and srswor gives all six subsets probability 1/6.
 gwsm_all_samples <- function() {
   frame <- gwsm_source_frame()
   seen <- list()
@@ -66,9 +55,7 @@ gwsm_share <- function(sample, within_mode, ...) {
     multiplicity = quote(complete_links()),
     ...
   )
-  # `args$within <- NULL` would drop the element and leave `within` missing,
-  # which is a different call. Single-bracket assignment of a list holding
-  # NULL is what passes NULL through.
+  # `args$within <- NULL` would drop the element, so single brackets pass NULL.
   args["within"] <- list(switch(
     within_mode,
     cluster = quote(hh),
@@ -89,8 +76,7 @@ test_that("the clustered estimator is exactly unbiased for reachable clusters", 
     sum(r$.weight * r$y)
   }, numeric(1))
 
-  # H1 and H2 are reachable; H3 is not. Averaging over the six equally likely
-  # samples must give their total exactly, not approximately.
+  # The mean over the six equally likely samples is exactly the reachable total.
   reachable <- sum(gwsm_targets()$y[gwsm_targets()$hh != "H3"])
   expect_equal(mean(totals), reachable)
   expect_equal(mean(totals), 1111)
@@ -103,9 +89,7 @@ test_that("the downward bias from an unreachable cluster is exactly its total", 
     sum(r$.weight * r$y)
   }, numeric(1))
 
-  # A test that only confirmed the good case would pass against an
-  # implementation that ignored Constraint 2.1 entirely. Pin the size of the
-  # failure, not just its presence.
+  # Pin the size of the failure, not just its presence.
   population <- sum(gwsm_targets()$y)
   expect_equal(population - mean(totals), 10000)
 })
@@ -125,9 +109,7 @@ test_that("cluster elimination is unbiased too, and is not the clustered method"
   # Both unbiased over the same reachable population...
   expect_equal(mean(extended), 1111)
   expect_equal(mean(clustered), 1111)
-  # ...and different sample by sample. Asserting they agree would be
-  # asserting the bug: section 5.3 yields a different weight, not a
-  # simplification of the same one.
+  # ...and different sample by sample: clustering gives a different weight.
   expect_false(isTRUE(all.equal(extended, clustered)))
 })
 
@@ -138,8 +120,7 @@ test_that("singleton clusters lose the units that have no link of their own", {
     sum(r$.weight * r$y)
   }, numeric(1))
 
-  # With every unit its own cluster, t5 has no link and is uncovered, so the
-  # bias is H3 plus t5 rather than H3 alone.
+  # Every unit its own cluster leaves t5 uncovered, so the bias is H3 plus t5.
   expect_equal(mean(totals), 1111 - 100)
 })
 
@@ -151,15 +132,12 @@ test_that("the three within modes give three distinct weights", {
     stats::setNames(r$.weight, r$tid)
   })
 
-  # Sample {a, c}: clustered gives H1 the weight 2 * 2/3; extended counts the
-  # source units reaching H1 rather than the links into it, giving 2 * 1/2;
-  # singleton splits t1 and t2 apart entirely.
+  # Sample {a, c}: t1 gets 2 * 2/3 clustered, 2 * 1/2 extended, 1 singleton.
   expect_equal(unname(w[[1]][["t1"]]), 4 / 3)
   expect_equal(unname(w[[3]][["t1"]]), 1)
   expect_equal(unname(w[[2]][["t1"]]), 1)
   expect_equal(unname(w[[2]][["t2"]]), 2)
-  # t1 and t2 share a cluster, so the clustered and extended forms give them
-  # one weight and the singleton form does not.
+  # t1 and t2 share a cluster, so only the singleton form separates them.
   expect_equal(unname(w[[1]][["t1"]]), unname(w[[1]][["t2"]]))
   expect_false(isTRUE(all.equal(
     unname(w[[2]][["t1"]]), unname(w[[2]][["t2"]])
@@ -175,8 +153,7 @@ test_that("a unit with no link of its own carries its cluster's weight", {
   t5 <- r[r$tid == "t5", ]
   t1 <- r[r$tid == "t1", ]
 
-  # Lavallee Figure 2.1, unit 7. This is correct, not a defect, and producing
-  # a weight for exactly these units is a reason to use the method.
+  # Lavallee Figure 2.1, unit 7: a weight for these units is intended.
   expect_equal(nrow(t5), 1L)
   expect_identical(t5$.unit_links, 0)
   expect_equal(t5$.weight, t1$.weight)
@@ -186,8 +163,7 @@ test_that("an unreached cluster contributes no rows rather than zero-weight rows
   s <- gwsm_all_samples()[["ac"]]
   r <- gwsm_share(s, "cluster")
 
-  # H2 is reachable but was not reached by {a, c}... c links to t3, so it is.
-  # H3 is unreachable and must simply be absent.
+  # c links to t3, so H2 is reached. H3 is unreachable and absent.
   expect_false("t4" %in% r$tid)
   expect_true(all(r$.weight > 0))
 })
@@ -197,9 +173,7 @@ test_that("the link columns report the unit and the cluster separately", {
   r <- gwsm_share(s, "cluster")
   h1 <- r[r$hh == "H1", ]
 
-  # L[t1] = 2 (a and b), L[t2] = 1 (a), L[t5] = 0; the cluster denominator is
-  # their sum. A single column would conflate the quantity the weight uses
-  # with the quantity the coverage diagnostics use.
+  # L[t1] = 2, L[t2] = 1, L[t5] = 0, and the cluster denominator is their sum.
   expect_identical(
     stats::setNames(h1$.unit_links, h1$tid),
     c(t1 = 2, t2 = 1, t5 = 0)
@@ -212,8 +186,7 @@ test_that("the link columns report the unit and the cluster separately", {
 test_that("a supplied multiplicity that differs from the links is used as given", {
   s <- gwsm_all_samples()[["ab"]]
   targets <- gwsm_targets()
-  # The observed link table is incomplete: t1 really has four links in the
-  # population, not the two that were recorded.
+  # t1 has four links in the population, not the two recorded.
   targets$L <- c(4, 1, 0, 2, 0)
 
   supplied <- share_weights(
@@ -223,16 +196,14 @@ test_that("a supplied multiplicity that differs from the links is used as given"
   )
   counted <- gwsm_share(s, "cluster")
 
-  # Constructed rather than assumed: the two must disagree, or the test would
-  # pass against an implementation that ignored the supplied column.
+  # The two must disagree, or ignoring the supplied column would pass.
   expect_identical(supplied$.unit_links[supplied$tid == "t1"], 4)
   expect_identical(counted$.unit_links[counted$tid == "t1"], 2)
   expect_false(isTRUE(all.equal(
     supplied$.weight[supplied$tid == "t1"],
     counted$.weight[counted$tid == "t1"]
   )))
-  # Cluster denominator 5 rather than 3. Sample {a, b}: `a` carries two links
-  # into H1 and `b` one, each at weight 2, so w = 2*(2/5) + 2*(1/5).
+  # Cluster denominator 5, not 3: `a` carries two links into H1 and `b` one.
   expect_equal(supplied$.weight[supplied$tid == "t1"], 2 * (2 / 5) + 2 * (1 / 5))
   expect_equal(counted$.weight[counted$tid == "t1"], 2 * (2 / 3) + 2 * (1 / 3))
 })
@@ -272,8 +243,7 @@ test_that("extend_links refuses a supplied multiplicity that varies in a cluster
   targets <- gwsm_targets()
   targets$L <- c(2, 1, 0, 2, 0)
 
-  # After extension every unit of a cluster has the same links, so a value
-  # varying inside a cluster is the un-extended multiplicity.
+  # After extension a cluster shares its links, so a varying L is un-extended.
   expect_error(
     share_weights(
       s, targets, gwsm_links(),
@@ -366,9 +336,7 @@ test_that("a link from a selected unit to an unknown target is refused", {
   s <- gwsm_all_samples()[["ab"]]
   targets <- gwsm_targets()[gwsm_targets()$tid != "t2", ]
 
-  # Dropping t2 from the register leaves a's link pointing nowhere. Silently
-  # ignoring it would return H1 without all of its members and understate its
-  # weight.
+  # Dropping t2 leaves a's link pointing nowhere, which would understate H1.
   expect_error(
     share_weights(
       s, targets, gwsm_links(),
@@ -513,9 +481,10 @@ test_that("a reached-scope summary states that coverage is not established", {
   expect_no_match(txt, "cannot be reached")
 })
 
-## The gates from G1 apply to what this verb produces
+## The gates apply to what this verb produces
 
-test_that("a real shared sample meets the gates from G1", {
+test_that("a real shared sample meets the weight gates", {
+  skip_if_not_installed("survey")
   s <- gwsm_all_samples()[["ab"]]
   r <- gwsm_share(s, "cluster")
 
@@ -545,9 +514,7 @@ test_that("a marker may be namespace qualified", {
     ))
   }
 
-  # A marker is read as an expression and never evaluated, so the qualified
-  # spelling has to be matched rather than working by accident. It used to be
-  # reported as though the spelling were wrong.
+  # A marker is never evaluated, so the qualified spelling must be matched.
   plain <- share(quote(complete_links()))
   expect_identical(share(quote(samplyr::complete_links()))$.weight, plain$.weight)
   expect_identical(
@@ -559,8 +526,7 @@ test_that("a marker may be namespace qualified", {
     share(quote(weighted_links(imp, total = complete_links())))$.weight
   )
 
-  # Only samplyr's own namespace. Another package's call of the same name is
-  # not this marker.
+  # Another package's call of the same name is not this marker.
   expect_error(
     share(quote(otherpkg::complete_links())),
     class = "samplyr_error_share_weights_multiplicity"
@@ -568,7 +534,6 @@ test_that("a marker may be namespace qualified", {
 })
 
 test_that("every declarative marker refuses the same way", {
-  # They were four bare cli_abort() calls, catchable only by message.
   for (call in list(
     function() complete_links(),
     function() weighted_links(a, total = b),

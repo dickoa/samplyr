@@ -1,11 +1,8 @@
-## F5. Probabilities resolved from a design, without drawing
+## Probabilities resolved from a design, without drawing
 
-# The oracle is the execution engine, not a second calculation: `.weight` is
-# exactly 1 / pi for the units a design selected, so a resolver that agrees
-# with it unit by unit agrees with the allocation, the chance method, the
-# certainty handling and the multistage compounding at once. Every design
-# shape below is checked that way, and a reimplementation of any one of those
-# would be a worse test than the engine itself.
+# The oracle is the execution engine: `.weight` is exactly 1 / pi for the
+# selected units, so unit-by-unit agreement checks allocation, chance method,
+# certainty handling and multistage compounding at once.
 
 exante_register <- function(n = 60) {
   data.frame(
@@ -63,9 +60,7 @@ test_that("stratified designs resolve through their allocation", {
 })
 
 test_that("unequal-probability designs resolve exactly", {
-  # The case the frame digest cannot answer: a varying element-level chance is
-  # stored there as quantile bins, so `frame_summary(detail = "unit")` returns
-  # no rows at all. This resolver keeps the vector.
+  # The digest stores a varying element chance as quantile bins, not a vector.
   design <- sampling_design() |>
     draw(n = 12, method = "pps_brewer", mos = size)
   register <- exante_register()
@@ -106,8 +101,7 @@ test_that("a multistage design resolves as the product of its stages", {
 
   resolved <- expect_matches_execution(design, register)
 
-  # Stage 2 takes 2 of the 5 rows of any cluster, so the compound is the
-  # cluster's own chance times 0.4 and every row of a cluster shares it.
+  # Stage 2 takes 2 of the 5 rows of any cluster, so each row gets pi * 0.4.
   by_cluster <- split(resolved$probability, register$ea)
   expect_true(all(vapply(by_cluster, function(p) {
     length(unique(p)) == 1L
@@ -152,7 +146,6 @@ test_that("no random numbers are drawn", {
   resolved <- exante_probabilities(design, register, key = uid)
   expect_identical(.Random.seed, before)
 
-  # And so the answer does not depend on the seed at all.
   set.seed(1)
   expect_identical(exante_probabilities(design, register, key = uid), resolved)
 })
@@ -162,7 +155,7 @@ test_that("no random numbers are drawn", {
 test_that("a with-replacement stage has no probability to resolve", {
   register <- exante_register()
   for (method in c("srswr", "pps_multinomial", "pps_chromy")) {
-    # `mos` means nothing to srswr, which warns; the refusal is the subject.
+    # srswr ignores `mos` with a warning.
     design <- suppressWarnings(
       sampling_design() |> draw(n = 10, method = method, mos = size)
     )
@@ -195,8 +188,7 @@ test_that("an incomplete design is refused", {
 })
 
 test_that("one register per stage is refused", {
-  # The probability is compounded along the rows of one register, and the rows
-  # of two do not correspond.
+  # The probability compounds along the rows of a single register.
   register <- exante_register()
   design <- sampling_design() |>
     add_stage() |>
@@ -346,8 +338,7 @@ test_that("the resolved chances are stored, and read by both routes", {
   # A unit's own-frame chance is what its design weight says it was.
   expect_equal(matrix[, "a"], 1 / frames[["a"]]$.weight)
 
-  # A PPS frame moves the whole stack onto a type its own design supports,
-  # which is the F3 rule about `type` being one choice for the stack.
+  # A PPS frame moves the whole stack onto a type its own design supports.
   expect_equal(
     coef(survey::svytotal(~y, as_svydesign(frames, estimator = "expected"))),
     coef(survey::svytotal(
@@ -361,14 +352,11 @@ test_that("the resolved chances are stored, and read by both routes", {
 })
 
 test_that("a register that is not what the design drew from is caught", {
-  # The resolved own-frame chance has to be the selection that happened, so a
-  # register missing units, or holding different sizes, cannot pass.
   population <- exante_stack_population()
   register_a <- population[population$in_a, , drop = FALSE]
   register_b <- population[population$in_b, , drop = FALSE]
 
-  # Same units, different sizes: every key resolves, so the only thing that
-  # can catch it is the diagonal.
+  # Same units, different sizes: only the diagonal can catch it.
   altered <- register_a
   altered$size <- rev(altered$size)
 
@@ -418,8 +406,7 @@ test_that("a member missing from another frame's register is refused", {
       membership = c(a = "in_a", b = "in_b"),
       key = person_id,
       overlaps = exante_overlaps(
-        # Drops the overlap, so a sampled frame-a unit that is also in b has
-        # no resolvable chance there.
+        # Drops the overlap, so frame-a units also in b have no chance there.
         frames = list(
           a = register_a,
           b = register_b[register_b$person_id > 40, ]
@@ -494,4 +481,19 @@ test_that("the registers must match the frames, and carry the key", {
 test_that("print says the chances were resolved rather than declared", {
   output <- capture.output(print(exante_stack()))
   expect_true(any(grepl("resolved from the registers", output)))
+})
+
+test_that("a pool the design cannot resolve is refused with its stage", {
+  frame <- data.frame(id = 1:4, size = 100)
+  design <- sampling_design() |>
+    draw(n = 2, method = "pps_brewer", mos = size, certainty_size = 50)
+  for (attempt in list(
+    function() exante_probabilities(design, frame, key = id),
+    function() frame_summary(design, frame)
+  )) {
+    err <- tryCatch(attempt(), error = identity)
+    expect_s3_class(err, "samplyr_error_exante_unsupported")
+    expect_match(conditionMessage(err), "Stage 1", fixed = TRUE)
+    expect_match(conditionMessage(err), "certainty overflow", fixed = TRUE)
+  }
 })

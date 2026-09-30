@@ -1,16 +1,10 @@
-# Tests for on_empty empty-selection semantics (review issue 3)
-#
-# When a random-size method selects zero units, on_empty = "warn"/
-# "silent" returns an empty sample. An empty realization contributes
-# zero to Horvitz-Thompson totals, which keeps the estimator unbiased
-# over repeated executions. The former fallback (one SRS unit with
-# weight N) biased HT totals upward by N * (1 - p)^N.
+# on_empty: an empty random-size realization contributes zero, which keeps
+# Horvitz-Thompson totals unbiased over repeated executions.
 
 test_that("Bernoulli HT totals are unbiased under on_empty = 'silent'", {
   skip_on_cran()
 
-  # The review's analytic case: N = 2, p = 0.1, y = c(1, 1).
-  # True total = 2. The old fallback gave E[estimate] = 3.62.
+  # N = 2, p = 0.1, y = c(1, 1): the true total is 2.
   frame <- data.frame(id = 1:2, y = c(1, 1))
   estimates <- vapply(seq_len(4000), function(seed) {
     s <- sampling_design() |>
@@ -217,11 +211,13 @@ test_that("an extracted nonempty replicate can enter a later phase", {
   phase1 <- suppressWarnings(
     sampling_design() |>
       draw(frac = 0.05, method = "bernoulli", on_empty = "silent") |>
-      execute(frame, seed = 42, reps = 10)
+      execute(frame, seed = 1, reps = 10)
   )
   counts <- attr(phase1, "metadata")$replicate_rows
   nonempty <- as.integer(names(counts)[counts > 0])
-  expect_gt(length(nonempty), 0)
+  # With one nonempty replicate the filter keeps every row and extracts
+  # nothing, so the fixture needs two.
+  expect_gt(length(nonempty), 1)
 
   extracted <- dplyr::filter(phase1, .replicate == nonempty[1])
   phase2 <- sampling_design() |> draw(n = 1) |> execute(extracted, seed = 5)

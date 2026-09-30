@@ -1,18 +1,20 @@
 ---
-title: "Analyze a samplyr Sample"
+title: "Analyze a samplyr sample"
 output: rmarkdown::html_vignette
 bibliography: references.bib
 link-citations: true
 vignette: >
-  %\VignetteIndexEntry{Analyze a samplyr Sample}
+  %\VignetteIndexEntry{Analyze a samplyr sample}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
 ```{r, include = FALSE}
+has_suggests <- requireNamespace("survey", quietly = TRUE)
 knitr::opts_chunk$set(
   collapse = TRUE,
-  comment = "#>"
+  comment = "#>",
+  eval = has_suggests
 )
 ```
 
@@ -32,8 +34,8 @@ corrections during selection. A safe one-to-one join preserves that metadata.
 An operation that adds, removes, or duplicates sampled rows changes the
 realization and prevents export.
 
-The main path reaches this article after `vignette("introduction")` and
-`vignette("three-stage-sampling")`. The sections on joins, export and domains
+The main path reaches this article after `vignette("introduction")`, which
+ends with a three-stage household sample. The sections on joins, export and domains
 apply to an ordinary sample. Read the later two-phase or overlapping-frame
 examples when your design uses them.
 
@@ -45,6 +47,16 @@ sample <- sampling_design(title = "Burkina Faso EA survey") |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 300) |>
   execute(bfa_eas, seed = 1)
+```
+
+`variance_estimators()` reports, from the design and the frame and before
+anything is drawn, which variance estimators the design supports, which only
+approximately, and which the export would refuse, with the condition each
+would raise. A stratified first stage rules out survey's JK1, for instance.
+
+```{r}
+estimators <- variance_estimators(get_design(sample), bfa_eas)
+estimators[c("estimator", "status", "class")]
 ```
 
 ## Join collected outcomes
@@ -76,14 +88,57 @@ The result remains a `tbl_sample` because the join is one to one and leaves
 the selected rows intact. Check key uniqueness before joining when collected
 data can contain repeated visits, roster members, or duplicate submissions.
 
-Keep the issued rows when some units do not respond: use a left join and
-record a response indicator. Missing outcomes do not change the selection
-weights. Neither dropping those rows before export nor using `na.rm = TRUE`
-is, by itself, a nonresponse adjustment. Choosing response adjustments or
-calibration belongs to the downstream analysis and its assumptions.
+### Nonresponse and calibration
 
-The compact selection and inference table is in `?selection-methods`.
-`?as_svydesign` and `?as_svrepdesign` give the detailed export restrictions.
+Keep every issued row and record each unit's disposition next to its
+outcomes. Missing outcomes do not change the selection weights, and neither
+dropping nonrespondents before export nor `na.rm = TRUE` is a nonresponse
+adjustment. The adjustment and any calibration belong to the analysis. Applied
+to the exported design, they leave `.weight` holding the base weights while
+the adjusted weights live in the design object.
+
+```{r nonresponse, eval = has_suggests && requireNamespace("svrep", quietly = TRUE)}
+set.seed(3)
+issued <- sample_with_data |>
+  mutate(disposition = if_else(runif(n()) < 0.85, "respondent",
+                               "nonrespondent"))
+issued |> as.data.frame() |> count(disposition)
+
+set.seed(4)
+issued_replicates <- as_svrepdesign(issued, type = "rwyb", replicates = 500)
+adjusted <- svrep::redistribute_weights(
+  issued_replicates,
+  reduce_if = disposition == "nonrespondent",
+  increase_if = disposition == "respondent",
+  by = "region"
+)
+respondents <- subset(adjusted, disposition == "respondent")
+```
+
+The adjustment moves each nonrespondent's weight to the respondents of its
+region, in every replicate as well as in the full-sample weights, so the
+replicate variance carries it. It assumes that response is unrelated to the
+outcome within a region, which the analyst has to justify. `survey` warns
+that the respondent subset has fewer rows than the design's degrees of
+freedom. The replicate variance is computed as for any domain and is not
+affected. Calibration then matches the respondents to known population
+totals, here the number of urban EAs in the frame.
+
+```{r calibration, eval = has_suggests && requireNamespace("svrep", quietly = TRUE)}
+ea_totals <- c(`(Intercept)` = nrow(bfa_eas),
+               urban_ruralUrban = sum(bfa_eas$urban_rural == "Urban"))
+calibrated <- calibrate(respondents, ~urban_rural, population = ea_totals)
+svymean(~consumption_per_capita, calibrated)
+```
+
+`weights(calibrated)` returns the adjusted and calibrated weights, while
+`issued$.weight` keeps the base weights, so the two stay apart for reporting.
+The example uses RWYB replicates because svrep's weight adjustments act on a
+replicate design. `?variance-estimation` gives what RWYB assumes for each
+selection method.
+
+How each selection method's variance is estimated is in `?variance-estimation`,
+and `?as_svydesign` and `?as_svrepdesign` give the export restrictions.
 
 ## Export to survey
 
@@ -113,10 +168,38 @@ selection algorithm. The approximation's accuracy depends on the population
 and design. Exact joint inclusion probabilities can be supplied for methods
 that provide them.
 
-Equal-probability systematic sampling uses an SRS-style variance approximation.
-Its direction depends on frame ordering. `as_svydesign()` warns unless the
-caller explicitly accepts or refuses that approximation through
-`systematic_variance`.
+Systematic sampling uses an SRS-style variance approximation, and systematic
+PPS uses Brewer's. Neither sees frame order, so the direction of the error
+depends on it. `as_svydesign()` warns unless the caller explicitly accepts or
+refuses the approximation through `systematic_variance`.
+
+### Strata with one sampled unit
+
+A stratum that ends up with one sampled unit outside certainty, because its
+allocation was one or because certainty units took the rest, has no
+within-stratum variance estimate. `execute()` says so when it selects such a
+stratum, and `as_svydesign()` warns again at export
+(`samplyr_warning_lonely_psu`) while `survey` is left at its default
+`survey.lonely.psu = "fail"`, under which estimation would stop.
+
+```{r lonely}
+one_per_region <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 1) |>
+  execute(bfa_eas, seed = 5)
+
+old <- options(survey.lonely.psu = "adjust")
+svytotal(~households, as_svydesign(one_per_region))
+options(old)
+```
+
+`"adjust"` centers a lonely unit at the population mean, which is
+conservative. Collapsing each such stratum with a similar one before export
+is the other usual choice, and it is a design decision the analyst has to
+make. Allocating at least two units outside certainty to every stratum avoids
+the problem at the source. RWYB replicates refuse a singleton whose variance
+is needed, except under Poisson sampling and, with `lonely.psu =
+"certainty"`, at the final stage. `?variance-estimation` gives the certainty case.
 
 ## Estimate a domain correctly
 
@@ -146,7 +229,7 @@ not.
 With `srvyr`, use the same order. Convert first and then filter the survey
 object.
 
-```{r, eval=requireNamespace("srvyr", quietly = TRUE)}
+```{r, eval = has_suggests && requireNamespace("srvyr", quietly = TRUE)}
 library(srvyr)
 
 sample_with_data |>
@@ -170,12 +253,12 @@ z <- qnorm(0.975)
 exp(log(urban_estimate) + c(-1, 1) * z * urban_se / urban_estimate)
 ```
 
-This transformation does not repair a poor variance estimator. It applies
-only when the estimate is positive. Extended PPS qualification found a clear
-coverage improvement for positive domain totals, but not for full-population
-totals. Log-ratio and Fieller intervals did not provide a uniformly reliable
-correction for skewed ratios, whose point estimators can also have material
-finite-sample bias.
+This transformation does not repair a poor variance estimator, and it
+applies only when the estimate is positive. It helps where the sampling
+distribution of a positive total is skewed, as for a small domain, and
+matters little for a full-population total. For a skewed ratio, neither a
+log-ratio nor a Fieller interval is uniformly reliable, and the ratio
+estimator itself can carry material finite-sample bias.
 
 ## Replicate weights and PPS variance
 
@@ -192,13 +275,13 @@ Replicate methods are not automatic proofs of exactness. Generic PPS
 bootstraps do not recreate spatial selection, hard cube constraints, or a
 random Poisson sample size. `as_svydesign()` and `as_svrepdesign()` report or
 refuse combinations that cannot be represented under their documented
-contracts. See their reference pages before selecting a variance route for an
-advanced design.
+contracts. `?variance-estimation` gives how each selection method's variance
+is estimated and how exact it is.
 
 For independent Poisson selection, including clustered and multistage
 designs, request Rao-Wu-Yue-Beaumont replicates explicitly:
 
-```{r, eval=requireNamespace("svrep", quietly = TRUE)}
+```{r, eval = has_suggests && requireNamespace("svrep", quietly = TRUE)}
 poisson_sample <- sampling_design() |>
   draw(frac = 0.4, method = "bernoulli") |>
   execute(data.frame(id = 1:100, y = 1:100), seed = 12)
@@ -263,7 +346,7 @@ phase-one sample so the two-phase export can reconstruct the selection pools.
 ```{r detailed-interview}
 interview_design <- sampling_design("Detailed establishment interview") |>
   stratify_by(priority) |>
-  draw(n = c(high = 90, ordinary = 60))
+  draw(n = c(high = 60, ordinary = 90))
 
 phase2 <- execute(interview_design, phase1, seed = 73)
 
@@ -293,8 +376,10 @@ stopifnot(isTRUE(all.equal(
 
 These estimates illustrate inference for the synthetic establishment
 population, not substantive estimates for Kenya. The example uses SRS at
-phase 1 and stratified SRS at phase 2, a supported two-phase path. PPS, WR and
-Poisson phase designs have additional export restrictions. Phase chains longer
+phase 1 and stratified SRS at phase 2, a supported two-phase path. A phase 2
+drawn by Sampford, CPS, Brewer, SPS or Pareto also exports, with joint
+probabilities computed on the phase-1 sample. PPS at phase 1, WR and Poisson
+phase designs have additional export restrictions. Phase chains longer
 than two and two-phase replicate export are currently unsupported. See
 `?as_svydesign` before changing the selection methods.
 

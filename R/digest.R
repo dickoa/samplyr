@@ -1248,58 +1248,41 @@ get_frame_digest <- function(x) {
   digest
 }
 
-#' Attach a frame digest to a tbl_sample
-#' @noRd
-set_frame_digest <- function(x, digest, validate = TRUE) {
-  if (validate) {
-    validate_frame_digest(digest)
-  }
-  meta <- attr(x, "metadata") %||% list()
-  meta$frame_digest <- digest
-  attr(x, "metadata") <- meta
-  x
-}
-
 #' Summarize the population structure recorded with a sample
 #'
-#' An executed sample can carry a frame digest: a compact record of the
+#' An executed sample can carry a frame digest, a compact record of the
 #' frames, selection pools, resolved selection chances, and allocation
 #' that each stage encountered at execution time. `frame_summary()`
-#' turns that record into documented tibbles, so the structure of the
-#' selection remains intelligible after the original frame has gone
-#' away.
+#' turns that record into tibbles, so the structure of the selection
+#' stays readable after the original frame has gone away.
 #'
 #' @param x A `tbl_sample` produced by [execute()] that carries a
 #'   frame digest, or a `sampling_design` restored by [read_design()]
-#'   whose file was written from an executed sample: the execution
-#'   receipt carries the digest, so a shipped design file supports
-#'   next-wave planning without the frame or the sample. With `frame`,
-#'   any complete `sampling_design` will do.
-#' @param frame Optional frame to preview the design against: one data
-#'   frame for a shared hierarchy, or an ordered list of stage
-#'   registers, as [execute()] takes them. When supplied, the report
-#'   describes what the design *would* do on that frame rather than
-#'   what it did, and no sampling is performed: no random numbers are
-#'   drawn and `.Random.seed` is left as it was. See "Previewing a
-#'   design" below.
+#'   from a file written from an executed sample. That file's execution
+#'   receipt carries the digest, so it supports next-wave planning
+#'   without the frame or the sample. With `frame`, any complete
+#'   `sampling_design` will do.
+#' @param frame Optional frame on which to preview what the design
+#'   *would* do, in a form [execute()] accepts: one data frame for a
+#'   shared hierarchy, or an ordered list of stage registers. No
+#'   sampling is performed, no random numbers are drawn, and
+#'   `.Random.seed` is left as it was. See "Previewing a design" below.
 #' @param ... These dots are for future extensions and must be empty.
-#'   `stages` and the arguments after it follow `...`, so each must be
-#'   named exactly: the singular `stage` is reported rather than
-#'   prefix-matched.
+#'   The arguments after them must be named exactly, so the singular
+#'   `stage` is reported rather than prefix-matched.
 #' @param stages An integer vector of stage numbers to report, or
 #'   `NULL` (default) for all recorded stages.
 #' @param scope Denominator basis for population sizes and take rates.
-#'   With `"eligible"` (default), denominators cover the units that
-#'   were eligible for the recorded execution. With `"universe"`,
-#'   denominators are reported only where the digest covers the full
-#'   population hierarchy. Denominators that the recorded scope cannot
-#'   support are `NA`, never invented.
+#'   `"eligible"` (default) counts the units eligible for the recorded
+#'   execution. `"universe"` reports denominators only where the digest
+#'   covers the full population hierarchy. A denominator the recorded
+#'   scope cannot support is `NA`, never invented.
 #' @param detail Resolution of the report: `"stage"` (one row per
 #'   stage), `"pool"` (one row per selection pool and realization), or
 #'   `"unit"` (one row per population unit, only for stages that
 #'   retained a unit-level representation).
 #'
-#' @return A tibble. The `scope` column always states how complete the
+#' @return A tibble. Its `scope` column states how complete the
 #'   underlying representation is (`"eligible"`, `"universe"`,
 #'   `"conditional"`, `"partial"`, or `"unknown"`).
 #'
@@ -1315,46 +1298,36 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #'   applies, `NA` otherwise), `take_rate`, and `capped`. `replicate` is
 #'   `1` for an ordinary execution. In a replicated execution, `pool_id`
 #'   identifies the shared structural pool and the key is `stage`,
-#'   `pool_id`, and `replicate`. Stratum columns of stages that do not
-#'   use them are `NA`.
+#'   `pool_id`, and `replicate`. Stratum columns are `NA` for stages that
+#'   do not use them.
 #'
-#'   `capped` marks a pool that held fewer units than the stage asked
-#'   for. It is always `FALSE` on a random-size stage, which realizes a
-#'   count around its target rather than running out of units, and `NA`
-#'   where the target fell short but the design recording which kind of
-#'   stage it is was not available.
-#'
-#'   `capped` is a statement about selection: it marks a pool that could
-#'   not supply the executable target it was given. A stratum whose
-#'   target an allocation method had already reduced to the stratum
-#'   population is therefore `FALSE`, because `n_target` records the
-#'   post-redistribution target and the pool delivered it in full. That
-#'   event is reported by `execute()` instead, as a message of class
-#'   `samplyr_message_allocation_capped` or, when the stage ends up
-#'   taking everything within reach, `samplyr_warning_census`. The
-#'   digest does not retain the pre-redistribution allocation target,
-#'   so the distinction is available from the conditions rather than
-#'   from this table.
+#'   `capped` marks a pool that could not supply the executable target
+#'   it was given. It is always `FALSE` on a random-size stage, and `NA`
+#'   for a shortfall when no design is available to record which kind of
+#'   stage it is. A stratum that an allocation method had already
+#'   reduced to its population is `FALSE`, because `n_target` records
+#'   the post-redistribution target. `execute()` reports that event as
+#'   `samplyr_message_allocation_capped` or, when the stage takes
+#'   everything within reach, `samplyr_warning_census` (see
+#'   [execution-conditions]).
 #'
 #'   For `detail = "unit"`, one row per population unit of each stage
 #'   that stored units, with `stage`, `pool_id`, `unit_id`,
 #'   `unit_order`, `chance`, `is_certainty`, `n_descendants`,
 #'   `is_selected`, and `n_hits`. Stages that stored only a constant or a
-#'   chance distribution contribute no rows. Requesting such a stage
-#'   explicitly is an error rather than a silently empty result.
+#'   chance distribution contribute no rows, and requesting such a stage
+#'   explicitly is an error.
 #'
 #' @details
-#' `take_rate` is `n_realized / N`. It is a take rate, not an
-#' inclusion probability: for unequal-probability designs the two
-#' differ by design. `chance_kind` states what the recorded chances
-#' mean: first-order inclusion probabilities for without-replacement
-#' stages, expected hits for with-replacement stages. `probabilities`
-#' states how well the stage's method honors them: `"exact"` when the
-#' recorded chances equal the design's true first-order chances,
-#' `"approximate"` when the method treats them as a target achieved to
-#' a documented approximation (`"pps_sps"`, `"pps_pareto"`, and
-#' registered methods declared `probabilities = "approximate"`), and
-#' `NA` for digests recorded before the field existed.
+#' `take_rate` is `n_realized / N`, not an inclusion probability, and
+#' the two differ for unequal-probability designs. `chance_kind` states
+#' what the recorded chances mean: first-order inclusion probabilities
+#' for without-replacement stages, expected hits for with-replacement
+#' stages. `probabilities` is the stage's probability tier (see
+#' [sample-columns]): `"exact"` when the recorded chances equal the
+#' design's true first-order chances, `"approximate"` when the method
+#' achieves them only to a documented approximation, and `NA` for
+#' digests recorded before the field existed.
 #'
 #' The allocation columns distinguish three quantities:
 #'
@@ -1363,64 +1336,53 @@ set_frame_digest <- function(x, digest, validate = TRUE) {
 #'   certainty overflow. For a random-size design specified with
 #'   `frac`, it is `N * frac` and may be fractional.
 #' - `n_expected` is the sum of the final resolved inclusion
-#'   probabilities or expected hits. It can differ from `n_target`
-#'   after probability capping or other feasibility adjustments.
-#' - `n_realized` is the number of selected units or occurrences in
-#'   the realization.
+#'   probabilities or expected hits. Probability capping or other
+#'   feasibility adjustments can make it differ from `n_target`.
+#' - `n_realized` is the number of selected units or occurrences.
 #'
-#' These quantities often coincide for a feasible fixed-size design.
-#' For Bernoulli and Poisson sampling, `n_realized` varies around
-#' `n_expected`. `n_target` still records the nominal requested
-#' expectation. It is `NA` only when no nominal count can be recovered,
-#' for example from an older digest or a method with unspecified target
-#' semantics.
+#' The three often coincide for a feasible fixed-size design. Under
+#' Bernoulli and Poisson sampling, `n_realized` varies around
+#' `n_expected` and `n_target` keeps the nominal expectation.
+#' `n_target` is `NA` only when no nominal count can be recovered, as
+#' from an older digest or a method with unspecified target semantics.
 #'
-#' Stage detail stays compact for replicated executions: a common
-#' per-replicate realized allocation is reported, while varying
-#' `n_realized` and `take_rate` are `NA`. Pool detail is the drill-down:
-#' it returns one row per pool and replicate with scalar realized
-#' values, even when all replicates happen to agree. Population and
-#' design columns repeat across those rows, so select one replicate
-#' before using a replicated pool table as a next-wave planning frame.
-#' Unit detail spans the stacked replicates:
-#' `is_selected` marks units selected in at least one replicate and
-#' `n_hits` counts occurrences across all replicates, so a
-#' without-replacement unit can show `n_hits > 1`. The per-replicate
-#' trace is the `replicate` column of the digest's selected units.
-#' A replicated multi-stage execution records only the stage prefix
-#' shared by every replicate: later-stage pools hang off each
-#' replicate's own selected parents, so those stages are not part of
-#' the manifest and `frame_summary()` says so.
+#' In a replicated execution, stage detail reports the realized
+#' allocation when every replicate shares it, and `NA` for `n_realized`
+#' and `take_rate` otherwise. Pool detail has one row per pool and
+#' replicate even when the replicates agree, with population and design
+#' columns repeated, so select one replicate before using it as a
+#' next-wave planning frame. Unit detail spans the stacked replicates:
+#' `is_selected` marks units selected in at least one and `n_hits`
+#' counts occurrences across all, so a without-replacement unit can show
+#' `n_hits > 1`. The per-replicate trace is the `replicate` column of
+#' the digest's selected units. A replicated multi-stage execution
+#' records only the stage prefix every replicate shares, because
+#' later-stage pools hang off each replicate's own selected parents, and
+#' `frame_summary()` says so.
 #'
 #' A digest whose sample was modified after execution (rows, weights,
-#' or design columns changed) is reported as invalidated and refused:
-#' a stale digest is worse than no digest.
+#' or design columns changed) is reported as invalidated and refused.
 #'
 #' @section Previewing a design:
-#' With `frame`, the report is resolved from the design and the frame
-#' without drawing: every selection pool is enumerated and every chance
-#' resolved, but nothing is selected. This makes an allocation
-#' inspectable before it is committed to, and lets a design restored from
-#' a file be checked against next wave's frame.
-#'
-#' Because there is no realization, `n_realized` and `take_rate` are `NA`,
-#' as are `is_selected` and `n_hits` at `detail = "unit"`. Every other
-#' column, and the shape of the table, is the same as for a recorded
-#' digest, so the two are directly comparable.
+#' With `frame`, every selection pool is enumerated and every chance
+#' resolved, but nothing is selected. An allocation can be inspected
+#' before it is committed to, and a design restored from a file can be
+#' checked against next wave's frame. `n_realized` and `take_rate` are
+#' `NA`, as are `is_selected` and `n_hits` at `detail = "unit"`. Every
+#' other column, and the shape of the table, matches a recorded digest,
+#' so the two are directly comparable.
 #'
 #' At `detail = "pool"`, a stage below a clustered stage reports one pool
 #' per *candidate* parent, and its `n_target` is what that stage would
-#' take **given that parent is selected**. This is what field planning
-#' needs: how many households to list in a selected cluster.
-#'
-#' At `detail = "stage"`, those conditional pools are rolled up weighted
-#' by the probability each parent is selected, so the row reports the
-#' **expected** size of the stage rather than the total across every
-#' candidate. A design taking 10 of 100 clusters and 5 units in each
-#' reports `n_target = 50` at stage 2, not 500. For a design whose stage
-#' sizes are fixed this is also the exact size. Where per-parent takes
-#' vary (`frac` over unequal clusters, for instance) the realized size
-#' varies around it.
+#' take **given that parent is selected**, such as how many households
+#' to list in a selected cluster. At `detail = "stage"`, those pools are
+#' rolled up weighted by the probability each parent is selected, so the
+#' row reports the **expected** stage size rather than the total over
+#' every candidate. A design taking 10 of 100 clusters and 5 units in
+#' each reports `n_target = 50` at stage 2, not 500. With fixed stage
+#' sizes this is also the exact size. Where per-parent takes vary (`frac`
+#' over unequal clusters, for instance) the realized size varies around
+#' it.
 #'
 #' Not every design can be previewed. A stage below a with-replacement
 #' stage is refused, because the number of times each parent is hit is
@@ -1497,8 +1459,14 @@ frame_summary <- function(
   detail = c("stage", "pool", "unit")
 ) {
   check_keyword_args(enquos(...), c("stages", "scope", "detail"))
-  scope <- match.arg(scope)
-  detail <- match.arg(detail)
+  scope <- with_error_class(
+    rlang::arg_match(scope),
+    "samplyr_error_summary_argument"
+  )
+  detail <- with_error_class(
+    rlang::arg_match(detail),
+    "samplyr_error_summary_argument"
+  )
 
   # A supplied frame requests an ex-ante preview of the resolved design.
   exante <- !is_null(frame)
@@ -1512,7 +1480,7 @@ frame_summary <- function(
         "{.arg x} must be a {.cls sampling_design} or a {.cls tbl_sample}."
       )
     }
-    digest <- exante_digest(design, frame)
+    digest <- exante_digest(design, frame, call = current_env())
     return(frame_summary_report(
       x, digest, stages, scope, detail, exante = TRUE
     ))
@@ -1580,6 +1548,7 @@ frame_summary <- function(
 #' @noRd
 frame_summary_report <- function(x, digest, stages, scope, detail,
                                  exante = FALSE) {
+  rlang::local_error_call(caller_env())
   stage_records <- digest$stages
   stage_ids <- vapply(stage_records, function(s) s$stage_id, integer(1))
   execution <- if (exante) {
@@ -1610,7 +1579,7 @@ frame_summary_report <- function(x, digest, stages, scope, detail,
       } else {
         "The remaining stages are not part of this manifest."
       }
-    ))
+    ), class = "samplyr_message_digest_partial")
   }
 
   if (!is_null(stages)) {
@@ -1912,6 +1881,7 @@ capped_from_shortfall <- function(n_expected, n_target, random_size) {
 
 #' @noRd
 frame_summary_unit <- function(stages, explicit, exante = FALSE) {
+  rlang::local_error_call(caller_env())
   has_units <- vapply(
     stages,
     function(s) identical(s$storage, "units"),

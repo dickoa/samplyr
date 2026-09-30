@@ -37,9 +37,369 @@ schema_wrappers <- function() {
   )
 }
 
+# Written by format 3 and kept verbatim, so it reads as an old file does.
+frozen_v3_document <- function() {
+  r"---({
+  "format": "samplyr/design",
+  "format_version": 3,
+  "schema": {
+    "method_vocabulary": {
+      "id": "samplyr/common-sampling-method",
+      "version": 2
+    }
+  },
+  "design": {
+    "title": "Legacy certainty plan",
+    "stages": [
+      {
+        "strata": {
+          "vars": [
+            "stratum"
+          ]
+        },
+        "clusters": {
+          "vars": [
+            "psu_id"
+          ]
+        },
+        "draw": {
+          "n": {
+            "A": 7,
+            "B": 6
+          },
+          "method": {
+            "id": "systematic_probability_proportional_to_size",
+            "family": "probability_proportional_to_size",
+            "algorithm": "systematic",
+            "replacement": "without_replacement",
+            "sample_size": "fixed",
+            "probabilities": "unequal",
+            "probability_quantity": "inclusion_probability",
+            "probability_quality": "exact",
+            "standards": [
+              {
+                "vocabulary": "DDI SamplingProcedure",
+                "version": "1.1.4",
+                "code": "Probability",
+                "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+              }
+            ]
+          },
+          "mos": "N",
+          "round": "up",
+          "certainty_overflow": "error",
+          "certainty_plan": {
+            "role": "select",
+            "register": [
+              {
+                "psu_id": "A01",
+                "stratum": "A",
+                "N": 600,
+                "certainty": true,
+                "n_take": 26
+              },
+              {
+                "psu_id": "A02",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "A03",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "A04",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "A05",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "A06",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "A07",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "A08",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B01",
+                "stratum": "B",
+                "N": 450,
+                "certainty": true,
+                "n_take": 19
+              },
+              {
+                "psu_id": "B02",
+                "stratum": "B",
+                "N": 220,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B03",
+                "stratum": "B",
+                "N": 165,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B04",
+                "stratum": "B",
+                "N": 153,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B05",
+                "stratum": "B",
+                "N": 153,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B06",
+                "stratum": "B",
+                "N": 153,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B07",
+                "stratum": "B",
+                "N": 153,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B08",
+                "stratum": "B",
+                "N": 153,
+                "certainty": false,
+                "n_take": 10
+              }
+            ],
+            "n_psu_draw": {
+              "A": 6,
+              "B": 5
+            },
+            "n_per_psu": {
+              "A": 10,
+              "B": 10
+            },
+            "strata_var": "stratum",
+            "id_var": "psu_id",
+            "svyplan_version": "0.13.0"
+          },
+          "on_empty": "error"
+        }
+      },
+      {
+        "draw": {
+          "method": {
+            "id": "simple_random_without_replacement",
+            "family": "equal_probability",
+            "algorithm": "simple_random",
+            "replacement": "without_replacement",
+            "sample_size": "fixed",
+            "probabilities": "equal",
+            "probability_quantity": "inclusion_probability",
+            "probability_quality": "exact",
+            "standards": [
+              {
+                "vocabulary": "DDI SamplingProcedure",
+                "version": "1.1.4",
+                "code": "Probability.SimpleRandom",
+                "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/38e8e88"
+              }
+            ]
+          },
+          "round": "up",
+          "certainty_overflow": "error",
+          "certainty_plan": {
+            "role": "take",
+            "register": [
+              {
+                "psu_id": "A01",
+                "stratum": "A",
+                "N": 600,
+                "certainty": true,
+                "n_take": 26
+              },
+              {
+                "psu_id": "A02",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "A03",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "A04",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "A05",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "A06",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "A07",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "A08",
+                "stratum": "A",
+                "N": 200,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B01",
+                "stratum": "B",
+                "N": 450,
+                "certainty": true,
+                "n_take": 19
+              },
+              {
+                "psu_id": "B02",
+                "stratum": "B",
+                "N": 220,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B03",
+                "stratum": "B",
+                "N": 165,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B04",
+                "stratum": "B",
+                "N": 153,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B05",
+                "stratum": "B",
+                "N": 153,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B06",
+                "stratum": "B",
+                "N": 153,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B07",
+                "stratum": "B",
+                "N": 153,
+                "certainty": false,
+                "n_take": 10
+              },
+              {
+                "psu_id": "B08",
+                "stratum": "B",
+                "N": 153,
+                "certainty": false,
+                "n_take": 10
+              }
+            ],
+            "n_psu_draw": {
+              "A": 6,
+              "B": 5
+            },
+            "n_per_psu": {
+              "A": 10,
+              "B": 10
+            },
+            "strata_var": "stratum",
+            "id_var": "psu_id",
+            "svyplan_version": "0.13.0"
+          },
+          "on_empty": "error"
+        }
+      }
+    ]
+  },
+  "frame": {
+    "required_variables": [
+      {
+        "name": "stratum",
+        "role": "strata",
+        "stage": 1
+      },
+      {
+        "name": "psu_id",
+        "role": "clusters",
+        "stage": 1
+      },
+      {
+        "name": "N",
+        "role": "mos",
+        "stage": 1
+      }
+    ]
+  }
+}
+)---"
+}
+
 test_that("the frozen version 3 document remains executable", {
-  path <- test_path("fixtures", "serialization", "design-v3.json")
-  s <- execute(read_design(path), certainty_element_frame(), seed = 12)
+  s <- execute(read_design(frozen_v3_document()), certainty_element_frame(),
+               seed = 12)
   certain <- certainty_plan_fixture()$psu
   expect_setequal(unique(s$psu_id[s$.certainty_1]),
                   certain$psu_id[certain$certainty])
@@ -147,7 +507,8 @@ test_that("contradictory or missing probability facets cannot be downgraded", {
   expect_error(read_design(schema_json(p)), "probability_quality")
   p <- schema_document("pps_sps")
   p$tools$samplyr$design$stages[[1]]$method$probabilities <- "exact"
-  expect_error(read_design(schema_json(p)), "probability quality disagree")
+  cnd <- expect_error(read_design(schema_json(p)), "probability quality disagree")
+  expect_identical(condition_header(cnd), "read_design")
   p <- schema_document("pps_sps")
   p$design$stages[[1]]$draw$method$probability_quantity <- NULL
   expect_error(read_design(schema_json(p)), "probability_quantity")
@@ -202,4 +563,11 @@ test_that("native contract validation does not need samplyr constructors", {
     p$unknown_selection_rule <- "ignored?"
     expect_gt(length(serialization_contract_errors(p)), 0)
   }
+})
+
+test_that("a broken installed contract is an internal error", {
+  expect_error(
+    serialization_contract_errors(list(), format = "not-a-format"),
+    class = "samplyr_error_internal"
+  )
 })

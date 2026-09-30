@@ -88,18 +88,18 @@ design <- sampling_design() |>
     cluster_by(ea_id) |>
     draw(n = 3, method = "pps_systematic", mos = households) |>
   add_stage(label = "Households") |>
-    draw(n = 20)
+    draw(n = 10)
 
 selected <- execute(design, zwe_eas, stages = 1, seed = 123)
 
-# listing after fieldwork
+# A household listing of the selected EAs, made after fieldwork
 library(dplyr)
 listing <- selected |>
-  slice(rep(seq_len(n()), households)) |>
-  mutate(hh_id = row_number())
+  as.data.frame() |>
+  reframe(hh_id = seq_len(households), .by = ea_id)
 
-# final sample
-smpl <- execute(design, listing, seed = 1234)
+# Continue the same design on the listing
+smpl <- execute(selected, listing, seed = 1234)
 smpl
 
 }

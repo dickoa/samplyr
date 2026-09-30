@@ -1,19 +1,10 @@
-# Normalized stage registers and stage-continuation linkage: one register per
-# STAGE, which is what "multi-frame" means in this file's sense. The other
-# sense, several frames covering one population, is `stack_frames()` and lives
-# in test-stack-frames*.R. Every `multiframe` identifier in R/ carries that
-# other sense; this file was named before it existed.
-#
+# One register per stage, and the continuation linkage between them.
 # Fixtures live in helper-stage-registers.R.
-# for the contract these tests enforce.
 
-## T0. Golden equivalence
+## Golden equivalence
 #
-# The one-call form is shorthand for the continuation chain. The three frame
-# shapes must select the same elements and produce the same weights under one
-# shared RNG stream with an explicit stages = on every intermediate call.
-# This holds today and must keep holding through every phase of the linkage
-# refactor: it is the regression harness for the whole change.
+# The three frame shapes select the same elements and weights under one RNG
+# stream, with an explicit `stages` on every intermediate call.
 
 test_that("all three frame spellings select identically under one RNG stream", {
   design <- mf_design()
@@ -69,7 +60,7 @@ test_that("the fixture reproduces its documented compound weights", {
   expect_equal(sum(sample$.weight), nrow(mf_students()))
 })
 
-## P1. Frame scheduling
+## Frame scheduling
 
 test_that("the frame count must be one or one per executed stage", {
   design <- mf_design()
@@ -182,12 +173,10 @@ test_that("an element stage may be terminal but cannot be continued", {
   )
 })
 
-## P2. Strict stage transitions
+## Strict stage transitions
 
 test_that("linkage never reaches a join without a resolved key", {
-  # A design with no parent identity cannot be executed at all, so this
-  # exercises the guard directly. It is what keeps a join from being called
-  # with an empty `by`, which dplyr would treat as a cross join.
+  # The guard keeps a join from an empty `by`, which dplyr takes as cross join.
   design <- sampling_design() |>
     draw(n = 5) |>
     add_stage() |>
@@ -201,17 +190,14 @@ test_that("linkage never reaches a join without a resolved key", {
 })
 
 test_that("a row with no parent is filtered, not treated as a frame defect", {
-  # Supplying several frames says nothing about their granularity, so an
-  # unlinked row cannot be grounds for rejecting the frame. It matches no
-  # complete selected key and drops out like any other unrelated row.
+  # An unlinked row matches no selected key and drops out like any other.
   classes <- mf_classes()
   classes$school_id[3] <- NA
 
   sample <- execute(mf_design(), mf_schools(), classes, mf_students(), seed = 7)
 
   expect_identical(nrow(sample), 4L)
-  # Every selected class comes from a row that named its school. The unlinked
-  # row is simply not part of any pool, so S2 draws from what remains.
+  # Every selected class comes from a row that named its school.
   linked <- classes[!is.na(classes$school_id), , drop = FALSE]
   selected <- unique(sample[, c("school_id", "class_id")])
   expect_identical(
@@ -221,8 +207,7 @@ test_that("a row with no parent is filtered, not treated as a frame defect", {
 })
 
 test_that("a parent whose only rows are unlinked is a coverage failure", {
-  # When the missing key is the sole representation of a selected unit, the
-  # coverage check reports it. There is no separate NA rule to reach.
+  # The coverage check reports a unit represented only by a missing key.
   classes <- mf_classes()
   classes$school_id[classes$school_id == "S4"] <- NA
 
@@ -236,8 +221,7 @@ test_that("a parent whose only rows are unlinked is a coverage failure", {
 })
 
 test_that("ancestry NA reporting stays available for explicit preflight", {
-  # Strictness belongs where the user asked for frames to be checked rather
-  # than sampled. This is the primitive validate_frame() will call.
+  # Strictness belongs to preflight checks, not to sampling.
   classes <- mf_classes()
   classes$school_id[3] <- NA
 
@@ -261,8 +245,7 @@ test_that("ancestry types must be join-compatible", {
 })
 
 test_that("compound keys survive punctuation and braces", {
-  # Frame values are data. A key containing cli markup must not be read as a
-  # template, in the sample or in any diagnostic.
+  # A key containing cli markup is data, not a template.
   schools <- mf_schools()
   schools$school_id <- c("S/1", "S{2}", "S 3", "S-4")
   classes <- mf_classes()
@@ -276,8 +259,7 @@ test_that("compound keys survive punctuation and braces", {
 })
 
 test_that("extra rows for unselected parents do not change the sample", {
-  # A complete national register may be handed to a design that sampled one
-  # region. Users must not have to pre-filter.
+  # A national register may serve a design that sampled one region.
   extra_schools <- data.frame(
     school_id = paste0("X", 1:3), class_id = "C1", stringsAsFactors = FALSE
   )
@@ -306,8 +288,7 @@ test_that("every selected parent missing is reported, not just the first", {
 })
 
 test_that("with-replacement parents are covered once per population unit", {
-  # Draw occurrences repeat a parent. Coverage is a property of the population
-  # key, so a parent hit twice needs one set of rows, not two.
+  # Coverage is per population key, so a parent hit twice needs one set of rows.
   frame <- data.frame(
     psu = rep(1:6, each = 10),
     mos = rep(c(50, 40, 30, 20, 10, 5), each = 10),
@@ -344,10 +325,7 @@ test_that("the candidate-register warning fires once per call", {
 })
 
 test_that("one hierarchy sampled three ways gives one sample", {
-  # Frame count schedules stages; cluster_by() identifies the sampling unit.
-  # The same finer-grained hierarchy therefore samples identically whether it
-  # is supplied once, once per stage, or across a continuation. Repeated
-  # compound keys are what a hierarchy is, and must not be penalized.
+  # Frame count schedules stages, and cluster_by() identifies the unit.
   design <- mf_design()
   hierarchy <- mf_hierarchy()
 
@@ -376,11 +354,9 @@ test_that("one hierarchy sampled three ways gives one sample", {
   expect_identical(n_classes(once), n_classes(continued))
 })
 
-## P3. Carry-forward of prior design variables
+## Carry-forward of prior design variables
 
 test_that("a stratum introduced at a later stage also survives", {
-  # Not just stage 1: every completed stage's strata must reach the sample,
-  # wherever they were introduced.
   classes <- mf_classes()
   classes$track <- rep(c("Science", "Arts"), times = 4)
 
@@ -425,9 +401,7 @@ test_that("a disagreeing copy in the lower frame is an error", {
 })
 
 test_that("carrying a variable does not reorder the frame it samples from", {
-  # Systematic selection reads frame order, so a join that reorders rows
-  # would silently change the sample. Compare a frame that needs the join
-  # against one that already carries the value and skips it.
+  # Systematic selection reads frame order, so the join must not reorder rows.
   design <- sampling_design() |>
     add_stage("Schools") |>
       stratify_by(school_type) |> cluster_by(school_id) |> draw(n = 2) |>
@@ -478,20 +452,10 @@ test_that("an unstratified stage between stratified stages carries both", {
   expect_true(all(c("school_type", "sex") %in% names(sample)))
 })
 
-## T1. Reproductions of the four verified defects
-#
-# These fail until the linkage refactor lands. They are written against the
-# contract, not against current behavior. Expected to turn green in:
-#   parent coverage  -> phase 2
-#   ancestry         -> phase 2
-#   strata carry     -> phase 3
+## Parent coverage, ancestry and carried strata
 
 test_that("a realized parent with no rows in the next register is an error", {
-  # Before the linkage refactor this returned 2 rows for S1 alone, silently
-  # dropping the Private stratum that S4 represented.
-  #
-  # The register gap is visible before sampling and the selection realizes it,
-  # so the call warns about the incomplete register and then fails.
+  # The gap is visible before sampling and the selection realizes it.
   expect_warning(
     expect_error(
       execute(
@@ -505,7 +469,6 @@ test_that("a realized parent with no rows in the next register is an error", {
 })
 
 test_that("an unrealized candidate gap warns once and still samples", {
-  # Today: succeeds with no diagnostic at all.
   expect_warning(
     incomplete <- execute(
       mf_design(), mf_schools(), mf_classes_without_s4(), mf_students(),
@@ -524,8 +487,6 @@ test_that("an unrealized candidate gap warns once and still samples", {
 })
 
 test_that("a register missing parent ancestry fails as a samplyr error", {
-  # Today: two dplyr `by = character()` cross-join deprecation warnings,
-  # then base R's "undefined columns selected".
   classes_no_ancestry <- mf_classes()[, "class_id", drop = FALSE]
 
   expect_error(
@@ -535,12 +496,7 @@ test_that("a register missing parent ancestry fails as a samplyr error", {
     class = "samplyr_error_frame_missing_ancestry"
   )
 
-  # The failure must not arrive as base R subsetting. The companion dplyr
-  # cross-join deprecation is not assertable here: dplyr signals it once per
-  # session and lifecycle_verbosity does not override that, so any expectation
-  # on it would pass or fail according to test order. Phase 2 covers it
-  # directly instead, by asserting that the transition helper refuses an empty
-  # key before it can reach a join.
+  # The failure must not arrive as base R subsetting.
   err <- tryCatch(
     execute(
       mf_design(), mf_schools(), classes_no_ancestry, mf_students(), seed = 7
@@ -551,8 +507,6 @@ test_that("a register missing parent ancestry fails as a samplyr error", {
 })
 
 test_that("a stage-1 stratum held only in the school register survives", {
-  # Today: school_type never reaches the sample, so as_svydesign() fails
-  # with "object 'school_type' not found".
   sample <- execute(
     mf_design(), mf_schools(), mf_classes(), mf_students(), seed = 7
   )
@@ -567,6 +521,8 @@ test_that("a stage-1 stratum held only in the school register survives", {
 
 test_that("normalized registers export to survey with carried strata", {
   skip_if_not_installed("survey")
+  # One school per type makes the strata lonely, which is tested elsewhere.
+  withr::local_options(survey.lonely.psu = "adjust")
 
   sample <- execute(
     mf_design(), mf_schools(), mf_classes(), mf_students(), seed = 7
@@ -575,11 +531,10 @@ test_that("normalized registers export to survey with carried strata", {
   expect_no_error(as_svydesign(sample))
 })
 
-## P4. Execution paths, metadata and digest
+## Execution paths, metadata and digest
 
 test_that("a carried column is not attributed to the frame it was joined onto", {
-  # school_type reaches the sample from the school register. The class
-  # register never contained it, and its digest record must say so.
+  # school_type comes from the school register, never the class register.
   sample <- execute(
     mf_design(), mf_schools(), mf_classes(), mf_students(),
     seed = 7, frame_digest = "full"
@@ -624,8 +579,7 @@ test_that("each register is recorded as its own frame", {
 })
 
 test_that("replicates check parent coverage independently", {
-  # Coverage depends on what each replicate selected, so it cannot be
-  # decided once for the call.
+  # Coverage depends on what each replicate selected.
   expect_s3_class(
     execute(mf_design(), mf_schools(), mf_classes(), mf_students(),
             seed = 7, reps = 3),
@@ -680,8 +634,7 @@ test_that("a continuation keeps the digest of the stages it did not run", {
 ## Compound keys, temporary names and pre-RNG guarantees
 
 test_that("compound ancestry keys are matched exactly, not as pasted text", {
-  # ("a/b", "c") and ("a", "b/c") render identically if a compound key is
-  # flattened to a string, which both invents conflicts and hides real ones.
+  # ("a/b", "c") and ("a", "b/c") collide if flattened to a string.
   schools <- data.frame(
     school_id = c("a/b", "a"), school_type = c("P", "Q"),
     stringsAsFactors = FALSE
@@ -719,8 +672,7 @@ test_that("compound ancestry keys are matched exactly, not as pasted text", {
 })
 
 test_that("a static frame failure does not consume the RNG stream", {
-  # No explicit seed, so nothing restores the stream afterwards. A missing
-  # column is knowable before sampling and must be reported before it.
+  # No explicit seed, so nothing restores the stream afterwards.
   design <- mf_design()
   set.seed(4)
   before <- .Random.seed
@@ -767,8 +719,7 @@ test_that("a previous-phase frame is fingerprinted as supplied", {
     cluster_by(psu) |> draw(n = 2) |>
     execute(phase1, seed = 2, frame_digest = "full")
 
-  # Preparing the frame strips generated columns and adds an internal weight;
-  # the digest must describe what the user passed, not that intermediate.
+  # The digest describes what the user passed, not the prepared frame.
   digest <- get_frame_digest(phase2)
   expect_false(is.null(digest))
   expect_identical(
@@ -810,8 +761,7 @@ test_that("a single frame for a single stage is neither shared nor separate", {
 })
 
 test_that("clustered PRN and control variables must be cluster-constant", {
-  # Selection reads one representative row per cluster, so a value that varies
-  # within a cluster makes the result depend on descendant row order.
+  # Selection reads one row per cluster, so varying values depend on row order.
   frame <- data.frame(
     cluster = rep(1:6, each = 4),
     mos = rep(c(50, 40, 30, 20, 10, 5), each = 4),
@@ -848,11 +798,10 @@ test_that("clustered PRN and control variables must be cluster-constant", {
   )
 })
 
-## P5. Phase linkage and two-phase export
+## Phase linkage and two-phase export
 
 test_that("phase-1 identifiers survive a normalized later register", {
-  # The element register carries hh but not psu. Without phase-key carry the
-  # phase-1 identifier is lost and the two-phase export has no bridge.
+  # The element register carries hh but not psu.
   frame <- data.frame(
     psu = rep(1:10, each = 20), hh = rep(1:100, each = 2),
     id = seq_len(200), y = as.numeric(seq_len(200))
@@ -873,9 +822,7 @@ test_that("phase-1 identifiers survive a normalized later register", {
 })
 
 test_that("an ambiguous phase key is refused before any stage draws", {
-  # Carry is only valid when each unit maps to one phase-1 unit. A clustered
-  # stage keeps one representative row, so this cannot be left to the carry:
-  # by then the second value is already gone.
+  # A clustered stage keeps one row, so the carry would lose the second value.
   frame <- data.frame(
     psu = rep(1:10, each = 20), hh = rep(1:100, each = 2),
     id = seq_len(200), y = 1
@@ -883,8 +830,7 @@ test_that("an ambiguous phase key is refused before any stage draws", {
   phase1 <- sampling_design() |>
     cluster_by(psu) |> draw(n = 5) |>
     execute(frame, seed = 1)
-  # Break the hierarchy so every household spans two PSUs, whichever the
-  # stage selects.
+  # Every household now spans two PSUs, whichever the stage selects.
   odd <- seq_len(nrow(phase1)) %% 2 == 1
   phase1$psu[odd] <- 999L
 
@@ -915,7 +861,7 @@ test_that("phase weights compound exactly once through a multistage phase 2", {
     add_stage() |> draw(n = 1) |>
     execute(phase1, seed = 2)
 
-  # 2 (phase 1) x 12.5 (10 of 50 households wait, per selected psu) x 2
+  # Phase 1 (2) x 4 of its 50 households (12.5) x 1 of 2 persons (2).
   expect_equal(unique(phase2$.weight_1), 12.5)
   expect_equal(unique(phase2$.weight_2), 2)
   expect_equal(unique(phase2$.weight), 2 * 12.5 * 2)
@@ -991,8 +937,7 @@ test_that("a mistyped or missing bridge key is reported as a bridge failure", {
     class = "samplyr_error_twophase_bridge"
   )
 
-  # A phase-2 key with no phase-1 row is an orphan, even though other keys
-  # match: a left join would drop it silently.
+  # A phase-2 key with no phase-1 row is an orphan that a left join drops.
   df2_orphan <- data.frame(psu = c(1L, 2L, 99L), hh = c(1L, 2L, 3L))
   expect_error(
     samplyr:::resolve_phase_bridge("psu", "hh", df1, df2_orphan),
@@ -1009,8 +954,7 @@ test_that("a mistyped or missing bridge key is reported as a bridge failure", {
 
 test_that("two-phase export agrees with a hand-built survey reference", {
   skip_if_not_installed("survey")
-  # 10 PSUs, 5 households each, 4 elements each: enough units per stage that
-  # survey has no lonely PSU to complain about.
+  # Enough units per stage that survey has no lonely PSU.
   frame <- data.frame(
     psu = rep(1:10, each = 20),
     hh = rep(1:50, each = 4),
@@ -1021,17 +965,16 @@ test_that("two-phase export agrees with a hand-built survey reference", {
     cluster_by(psu) |> draw(n = 5) |>
     execute(frame, seed = 1)
 
-  # Phase 2 declares its own units; the bridge is (psu, hh, id).
+  # Phase 2 declares its own units, so the bridge is (psu, hh, id).
   phase2 <- sampling_design() |>
     add_stage() |> cluster_by(hh) |> draw(n = 3) |>
     add_stage() |> cluster_by(id) |> draw(n = 2) |>
     execute(phase1, seed = 2)
 
-  exported <- as_svydesign(phase2, method = "simple")
+  exported <- quiet_across(as_svydesign(phase2, method = "simple"))
   expect_s3_class(exported, "twophase")
-  # The default method builds a per-stage covariance and must survive a
-  # multistage phase 2, not only the weight-based methods.
-  exported_full <- as_svydesign(phase2)
+  # The default method must also survive a multistage phase 2.
+  exported_full <- quiet_across(as_svydesign(phase2))
   expect_s3_class(exported_full, "twophase2")
 
   # The same design, built directly with survey.
@@ -1039,11 +982,7 @@ test_that("two-phase export agrees with a hand-built survey reference", {
   df2 <- as.data.frame(phase2)
   key <- function(d) paste(d$psu, d$hh, d$id)
   df1$.in2 <- key(df1) %in% key(df2)
-  # Phase 2 has two clustered stages, so its id formula names both. The
-  # finite-population corrections are stated from the known structure rather
-  # than read back off the exported object: 10 PSUs in the population; phase 2
-  # draws its 3 households from the 25 the phase-1 sample contains (5 PSUs of
-  # 5), not 3 per PSU; and 2 of the 4 elements in each household.
+  # FPCs: 10 PSUs, 3 of the 25 phase-1 households, 2 of 4 elements each.
   df1$fpc_psu <- 10
   df1$fpc_hh <- 25
   df1$fpc_id <- 4
@@ -1078,9 +1017,7 @@ test_that("two-phase export agrees with a hand-built survey reference", {
 
 test_that("a legacy mid-stage element sample is still refused at export", {
   skip_if_not_installed("survey")
-  # This shape can no longer be executed, so it is fabricated the way an
-  # object saved by an older version would arrive. The export guard exists
-  # for exactly those objects.
+  # This shape cannot be executed, so it is fabricated as a saved object.
   frame <- data.frame(
     psu = rep(1:10, each = 20), id = seq_len(200), y = as.numeric(seq_len(200))
   )
@@ -1109,11 +1046,15 @@ test_that("a legacy mid-stage element sample is still refused at export", {
     as_svydesign(legacy),
     class = "samplyr_error_survey_midstage_element"
   )
+  skip_if_not_installed("svrep")
+  expect_error(
+    as_svrepdesign(legacy, type = "rwyb"),
+    class = "samplyr_error_survey_midstage_element"
+  )
 })
 
 test_that("replicated multiphase records no digest, as documented", {
-  # Not a defect to fix here: merging replicate-conditional manifests would
-  # overstate provenance, since each replicate has its own population.
+  # Each replicate has its own population, so no merged manifest exists.
   frame <- data.frame(psu = rep(1:10, each = 4), id = seq_len(40), y = 1)
   phase1 <- sampling_design() |>
     cluster_by(psu) |> draw(n = 3) |>
@@ -1128,9 +1069,7 @@ test_that("replicated multiphase records no digest, as documented", {
 })
 
 test_that("every stage variable family is preflighted before any draw", {
-  # No seed: nothing restores the stream, so an advance is observable. A
-  # column that is simply absent is knowable before sampling, whichever
-  # family it belongs to.
+  # No seed, so nothing restores the stream and an advance is observable.
   frame <- data.frame(
     psu = rep(1:8, each = 5), id = seq_len(40),
     x = as.numeric(seq_len(40)), lon = 1, lat = 2,
@@ -1165,8 +1104,7 @@ test_that("every stage variable family is preflighted before any draw", {
 })
 
 test_that("a previous-phase frame is preflighted on its stripped schema", {
-  # A tbl_sample frame is not exempt from the preflight: what matters is the
-  # schema that survives once its generated columns are removed.
+  # The checked schema is what is left once generated columns are removed.
   frame <- data.frame(
     psu = rep(1:8, each = 5), id = seq_len(40), x = as.numeric(seq_len(40))
   )
@@ -1187,7 +1125,7 @@ test_that("a previous-phase frame is preflighted on its stripped schema", {
   expect_identical(.Random.seed, before)
 })
 
-test_that("a phase key the previous phase no longer carries is refused", {
+test_that("a phase key the previous phase does not carry is refused", {
   frame <- data.frame(
     psu = rep(1:8, each = 5), hh = rep(1:20, each = 2), id = seq_len(40), y = 1
   )
@@ -1209,11 +1147,7 @@ test_that("a phase key the previous phase no longer carries is refused", {
 })
 
 test_that("an ambiguous replicate is caught before any replicate draws", {
-  # Replicate 1 is fine and replicate 2 is not. Without prevalidation the
-  # first would draw before the second failed. No seed, so the advance would
-  # be observable.
-  # Households nest inside PSUs, so replicate 1 is well formed and only the
-  # corruption below makes replicate 2 ambiguous.
+  # Households nest inside PSUs, so only the edit below breaks replicate 2.
   frame <- data.frame(
     psu = rep(1:8, each = 6), hh = rep(1:24, each = 2), id = seq_len(48), y = 1
   )
@@ -1239,7 +1173,7 @@ test_that("an ambiguous replicate is caught before any replicate draws", {
   expect_identical(.Random.seed, before)
 })
 
-## P6. Downstream frame consumers
+## Downstream frame consumers
 
 test_that("validate_frame accepts an ordered list of stage registers", {
   design <- mf_design()
@@ -1247,7 +1181,7 @@ test_that("validate_frame accepts an ordered list of stage registers", {
     validate_frame(design, list(mf_schools(), mf_classes(), mf_students()))
   )
 
-  # Names are diagnostics; position is what maps a register to a stage.
+  # Names are diagnostics, and position maps a register to a stage.
   expect_true(validate_frame(design, list(
     schools = mf_schools(), classes = mf_classes(), students = mf_students()
   )))
@@ -1259,8 +1193,7 @@ test_that("validate_frame accepts an ordered list of stage registers", {
 })
 
 test_that("a finer-grained register with repeated cluster keys validates", {
-  # class_id is local: C1 exists under every school. Grouping on the local
-  # identifier alone would compare classes that are not the same class.
+  # class_id is local, so C1 exists under every school.
   design <- mf_design()
   expect_true(
     validate_frame(design, list(mf_schools(), mf_students(), mf_students()))
@@ -1285,8 +1218,7 @@ test_that("validate_frame rejects cluster-level variables that vary", {
     class = "samplyr_error_frame_cluster_invariant"
   )
 
-  # One value per (school, class) is accepted; the same values keyed on
-  # class_id alone would not be.
+  # One value per (school, class) is accepted.
   classes$size <- rep(seq_len(8), times = 2)
   expect_true(validate_frame(design, list(mf_schools(), classes)))
 })
@@ -1310,8 +1242,7 @@ test_that("validate_frame rejects ancestry that names no parent", {
 })
 
 test_that("an uncovered candidate parent is an error, not a warning", {
-  # Seed 2 never selects S4, so execute() draws a complete sample and only
-  # warns. Explicit validation judges the registers, not one realization.
+  # Seed 2 never selects S4, so execute() only warns.
   design <- mf_design()
   registers <- list(mf_schools(), mf_classes_without_s4(), mf_students())
 
@@ -1341,9 +1272,7 @@ test_that("a partial sample preflights the register that would continue it", {
 
   expect_true(validate_frame(stage1, mf_classes(), stages = 2))
 
-  # `stages` is required for the same reason execute() requires it: two
-  # stages remain, and one frame cannot say whether it is the stage 2
-  # register or a hierarchy covering both.
+  # With two stages left, one frame may be a stage 2 register or a hierarchy.
   expect_error(
     validate_frame(stage1, mf_classes()),
     class = "samplyr_error_ambiguous_continuation"
@@ -1353,8 +1282,7 @@ test_that("a partial sample preflights the register that would continue it", {
     class = "samplyr_error_ambiguous_continuation"
   )
 
-  # Scoped to stage 2, stage 1's own strata are not required of a class
-  # register.
+  # Stage 1's strata are not required of a stage 2 register.
   expect_false("school_type" %in% names(mf_classes()))
 
   no_ancestry <- mf_classes()
@@ -1388,10 +1316,19 @@ test_that("a partial sample preflights the register that would continue it", {
 })
 
 test_that("a partial sample is not compared against the recorded frame", {
-  # The digest describes the school register. A class register is a different
-  # table by design, so reporting drift would fire on every correct call.
+  # The digest describes the school register, not the class register.
   stage1 <- execute(mf_design(), mf_schools(), stages = 1, seed = 2)
-  expect_no_message(validate_frame(stage1, mf_classes(), stages = 2))
+  classes <- character()
+  withCallingHandlers(
+    validate_frame(stage1, mf_classes(), stages = 2),
+    message = function(m) {
+      classes <<- c(classes, class(m))
+      invokeRestart("muffleMessage")
+    }
+  )
+  expect_false("samplyr_message_digest_drift" %in% classes)
+  # Validation reports the unselected rows that execution sets aside.
+  expect_true("samplyr_message_frame_unselected_rows" %in% classes)
 
   # A completed sample still reports drift.
   full <- execute(mf_design(), mf_hierarchy(), seed = 2)
@@ -1402,8 +1339,7 @@ test_that("a partial sample is not compared against the recorded frame", {
 })
 
 test_that("a continuation preflights one register per remaining stage", {
-  # A continuation is not limited to one stage batch, only to a contiguous
-  # one, so validation preflights the same schedule execution accepts.
+  # A continuation may run any contiguous batch of the remaining stages.
   stage1 <- execute(mf_design(), mf_schools(), stages = 1, seed = 2)
   expect_true(validate_frame(stage1, list(mf_classes(), mf_students())))
   expect_s3_class(
@@ -1488,7 +1424,7 @@ test_that("the receipt records the frame mode and the stage mapping", {
   expect_identical(shared_record$stage_frame_index, rep(1L, 3))
 })
 
-test_that("a chained receipt records its final call and stays unreplayable", {
+test_that("a chained receipt takes the registers of every call, in call order", {
   schools <- mf_schools()
   stage1 <- execute(mf_design(), schools, stages = 1, seed = 2)
   continued <- execute(stage1, mf_classes(), mf_students(), stages = 2:3,
@@ -1498,16 +1434,35 @@ test_that("a chained receipt records its final call and stays unreplayable", {
   expect_identical(record$mode, "separate_frames")
   expect_identical(record$stages, 2:3)
 
-  # The mapping describes the final call. Replayability is decided by
-  # `chained`, which the mapping must not contradict.
+  # The final call's registers alone describe only one of the two calls.
   path <- withr::local_tempfile(fileext = ".json")
-  expect_warning(
+  expect_error(
     write_design(continued, path, frame = list(mf_classes(), mf_students())),
-    "more than one"
+    class = "samplyr_error_serialization_frame_count"
+  )
+  frames <- list(schools, list(mf_classes(), mf_students()))
+  write_design(continued, path, frame = frames)
+  expect_length(
+    attr(read_design(path), "portable_frame_info")[["fingerprints"]], 3L
   )
   expect_error(
     replay_design(read_design(path), list(mf_classes(), mf_students())),
-    class = "samplyr_error_receipt_chained"
+    class = "samplyr_error_replay_frame_count"
+  )
+  expect_error(
+    replay_design(read_design(path), list(mf_classes(), schools, mf_students())),
+    class = "samplyr_error_replay_frame_count"
+  )
+  # Registers in the wrong call are caught by their fingerprints.
+  expect_error(
+    replay_design(read_design(path),
+                  list(mf_classes(), list(schools, mf_students()))),
+    class = "samplyr_error_replay_frame_mismatch"
+  )
+  replayed <- replay_design(read_design(path), frames)
+  expect_identical(
+    lapply(as.data.frame(replayed), identity),
+    lapply(as.data.frame(continued), identity)
   )
 })
 
@@ -1533,8 +1488,7 @@ test_that("registers round trip through a design file and replay", {
     attr(restored, "execution")$frames$stage_frame_index, 1:3
   )
 
-  # Every file declares the current format version, including one
-  # written without fingerprints.
+  # A file written without fingerprints declares the current version too.
   bare <- withr::local_tempfile(fileext = ".json")
   expect_warning(write_design(sample, bare), "without a frame fingerprint")
   expect_identical(
@@ -1562,8 +1516,7 @@ test_that("frame labels survive as diagnostics only", {
   )
   expect_identical(recorded, c("schools", "classes", "students"))
 
-  # A label names the position in a message and nothing else: the same frames
-  # under different names replay identically.
+  # The same frames under different names replay identically.
   path2 <- withr::local_tempfile(fileext = ".json")
   write_design(sample, path2, frame = list(a = schools, b = classes,
                                            c = students))
@@ -1633,12 +1586,10 @@ test_that("a sample carrying no frame record is read as one frame", {
                    mf_keys(sample))
 })
 
-## P6b. Validation models the transitions execution performs
+## Validation models the transitions execution performs
 
 test_that("a carried stratum absent from a lower register is not a defect", {
-  # Stage 2 stratifies on a variable only the school register holds. Execution
-  # carries it across the transition, so validation must judge stage 2 against
-  # the frame it will actually see, not the raw register.
+  # Stage 2 is judged against the frame it sees, which carries the stratum.
   design <- sampling_design() |>
     add_stage("Schools") |>
       stratify_by(school_type) |> cluster_by(school_id) |> draw(n = 1) |>
@@ -1707,8 +1658,6 @@ test_that("an ambiguous phase key is refused by validation too", {
 
 test_that("a continuation reports gaps only among units it can reach", {
   # Candidacy for a continuation is bounded by what the earlier call selected.
-  # A register covering exactly those units is complete, whatever the rest of
-  # the population looks like.
   stage1 <- execute(mf_design(), mf_schools(), stages = 1, seed = 2)
   selected <- unique(stage1$school_id)
   students <- mf_students()
@@ -1720,9 +1669,7 @@ test_that("a continuation reports gaps only among units it can reach", {
   )
   expect_true(validate_frame(stage1, list(mf_classes(), reachable)))
 
-  # A unit that is reachable but not selected is still reported: seed 3 takes
-  # S1/C1 and S3/C2, so dropping S1/C2 leaves a candidate gap that this
-  # realization never needs.
+  # Seed 3 takes S1/C1 and S3/C2, so dropping S1/C2 is a gap it never needs.
   short <- reachable[
     !(reachable$school_id == "S1" & reachable$class_id == "C2"), ,
     drop = FALSE
@@ -1737,7 +1684,7 @@ test_that("a continuation reports gaps only among units it can reach", {
   )
 })
 
-## P6b. execute() accepts the frames as one list
+## execute() accepts the frames as one list
 
 test_that("a single unnamed list is the same call as separate frames", {
   design <- mf_design()
@@ -1807,11 +1754,9 @@ test_that("mixing a list with separate frames is refused", {
   expect_error(execute(design, list(), seed = 7), "At least one data frame")
 })
 
-## P6b. The list form reaches every preflight the dots form does
+## The list form reaches every preflight the dots form does
 
 test_that("the two-phase preflight runs for the list form too", {
-  # Returning early from the list branch skipped it entirely, so a design
-  # that cannot be linked validated silently when its phase arrived in a list.
   frame <- data.frame(psu = rep(1:10, each = 5), id = 1:50, x = 1)
 
   non_unique <- sampling_design() |>
@@ -1873,7 +1818,7 @@ test_that("a name inside the frame list is a label, not an argument", {
   )
 })
 
-## P6b. Stage arguments are named exactly, never prefix-matched
+## Stage arguments are named exactly, never prefix-matched
 
 test_that("the singular stage is refused and names the plural", {
   sample <- execute(mf_design(), mf_hierarchy(), seed = 7,
@@ -1920,21 +1865,19 @@ test_that("arguments after the dots must be named", {
     frame_summary(sample, frame, 1),
     class = "samplyr_error_unnamed_argument"
   )
-  # `frame_summary()` takes `frame` second, like the other two, so a bare
-  # positional value is read as a frame and reported as one.
+  # `frame_summary()` takes `frame` second, so a bare value is read as one.
   expect_error(
     frame_summary(sample, 1),
     class = "samplyr_error_frame_not_data_frame"
   )
 
-  # Named, they are the same calls as before.
+  # Named, the same calls succeed.
   expect_true(validate_frame(design, frame, stages = 1))
   expect_identical(nrow(frame_summary(sample, stages = 1)), 1L)
 })
 
 test_that("a stray argument is diagnosed without being evaluated", {
-  # Forcing the dots to read their names lets a stray argument's expression
-  # fail first, replacing the diagnosis with whatever that expression did.
+  # Reading the names of the dots must not force a stray expression.
   sample <- execute(mf_design(), mf_hierarchy(), seed = 7,
                     frame_digest = "full")
   design <- mf_design()
@@ -1961,12 +1904,10 @@ test_that("a stray argument is diagnosed without being evaluated", {
   )
 })
 
-## P0. Fingerprint extraction is exact, and a shape mismatch is a difference
+## Fingerprint extraction is exact, and a shape mismatch is a difference
 
 test_that("a multi-frame file does not answer a request for one fingerprint", {
-  # `fingerprint` is a prefix of `fingerprints`, so `$` on a file that
-  # recorded several returns all of them. The comparison then read the list
-  # as one fingerprint and reported every column of the frame as new.
+  # `fingerprint` is a prefix of `fingerprints`, so `$` would return them all.
   schools <- mf_schools()
   classes <- mf_classes()
   students <- mf_students()
@@ -1985,8 +1926,7 @@ test_that("a multi-frame file does not answer a request for one fingerprint", {
     validate_frame(restored, list(schools, classes, students))
   )
 
-  # One register against a three-register file is a shape difference, not a
-  # frame full of new columns.
+  # One register against a three-register file is a shape difference.
   msg <- cli::ansi_strip(paste(
     testthat::capture_messages(validate_frame(restored, schools, stages = 1)),
     collapse = ""
@@ -1996,10 +1936,7 @@ test_that("a multi-frame file does not answer a request for one fingerprint", {
 })
 
 test_that("a fingerprint count that cannot match is reported, not skipped", {
-  # Silently skipping let a replay certify a sample it never checked.
-  # samplyr can no longer write a file whose fingerprint count contradicts
-  # its receipt, so the artifacts are doctored here. The replay check exists
-  # for exactly that: files written by an earlier or foreign implementation.
+  # samplyr cannot write such a file, so the artifacts are doctored here.
   schools <- mf_schools()
   classes <- mf_classes()
   students <- mf_students()
@@ -2008,9 +1945,7 @@ test_that("a fingerprint count that cannot match is reported, not skipped", {
     jsonlite::toJSON(edit(payload), auto_unbox = TRUE, null = "null")
   }
 
-  # Three frames recorded as one, replayed with the three real registers.
-  # No digest: a jsonlite round-trip cannot preserve it exactly, and this
-  # test is about fingerprint counts.
+  # No digest, since a jsonlite round trip cannot preserve it exactly.
   multi <- execute(mf_design(), schools, classes, students, seed = 7,
                    frame_digest = "none")
   doctored <- redo(
@@ -2046,7 +1981,7 @@ test_that("a fingerprint count that cannot match is reported, not skipped", {
   expect_match(cli::ansi_strip(conditionMessage(err2)),
                "1 frame supplied; 2 recorded")
 
-  # The write side now refuses to create either artifact.
+  # The write side refuses to create either artifact.
   path <- withr::local_tempfile(fileext = ".json")
   expect_error(
     write_design(multi, path, frame = schools),
@@ -2068,8 +2003,7 @@ test_that("recorded fingerprints normalize to one shape", {
   expect_null(samplyr:::recorded_fingerprints(list()))
   expect_null(samplyr:::recorded_fingerprints(NULL))
 
-  # A file with no fingerprint at all still compares clean rather than
-  # inventing a difference.
+  # A file with no fingerprint at all compares clean.
   expect_identical(
     samplyr:::fingerprint_diffs(list(), list(schools)), character(0)
   )
@@ -2094,18 +2028,7 @@ test_that("saving without a frame warns only when none was ever recorded", {
 })
 
 test_that("an optional field is never shadowed by a longer sibling", {
-  # `$` on a list is prefix matching: an absent name resolves to a sibling
-  # when exactly one sibling starts with it. That silently returned the wrong
-  # object once, when `frame_info$fingerprint` met a file recording
-  # `fingerprints` and reported an unchanged frame as entirely new columns.
-  #
-  # A field that is always present is safe, because an exact name beats a
-  # partial one. So is a field explicitly set to `NULL`, which keeps its name
-  # and is therefore still matched exactly. The hazard is narrower: a name
-  # genuinely absent from the list in some shape, with exactly one longer
-  # sibling. Every pair recorded below is read with `[[` at every site. A new
-  # pair failing this test is a decision to make, not a nuisance to silence:
-  # rename the field, or read it exactly.
+  # `$` resolves an absent name to its only longer sibling, so read with `[[`.
   schools <- mf_schools()
   classes <- mf_classes()
   students <- mf_students()
@@ -2124,8 +2047,7 @@ test_that("an optional field is never shadowed by a longer sibling", {
   restored_multi <- read_design(path_multi)
   restored_one <- read_design(path_one)
 
-  # Several shapes of each structure, so a field absent from any one of them
-  # counts as optional.
+  # A field absent from any one shape counts as optional.
   variants <- list(
     metadata = list(
       attr(multi, "metadata"), attr(one, "metadata"),
