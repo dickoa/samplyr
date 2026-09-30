@@ -625,10 +625,10 @@ test_that("joint expectations give certainty PSUs probability one", {
 })
 
 test_that("the disagreement gate uses the tolerance selection uses", {
-  # 3 * 6.6 / 19.8 falls 2.2e-16 short of one, and selection takes it for sure.
+  # The sizes sum exactly on every platform, so 3 / sum falls 1e-15 short of one.
   register <- data.frame(
     psu_id = c("a", "b", "c", "d"), stratum = "A",
-    N = c(2.5, 6.6, 4.3, 6.4), certainty = FALSE
+    N = c(0.75, 1, 0.625, 0.625 + 14 * 2^-52), certainty = FALSE
   )
   pik <- 3 * register$N / sum(register$N)
   expect_lt(pik[2], 1)
