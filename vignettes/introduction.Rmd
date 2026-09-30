@@ -47,7 +47,7 @@ The frame has one row per enumeration area. The result keeps its frame columns
 and adds the design information needed for analysis.
 
 `.weight` is the overall design weight. In a one-stage sample it equals
-`.weight_1`. A multistage sample also carries one weight column per stage and
+`.weight_1`. A multi-stage sample also carries one weight column per stage and
 multiplies them into `.weight`.
 
 ## The design grammar
@@ -138,7 +138,7 @@ nrow(pps_sample)
 `mos` is the measure of size. A large measure gives a unit a larger selection
 probability. If a resolved probability reaches one, that unit is selected with
 certainty and contributes no variance at that stage. Certainty at one stage
-does not make the final multistage weight equal to one.
+does not make the final multi-stage weight equal to one.
 
 `pps_brewer` is one fixed-size PPS method. Method choice also depends on the
 second-order information required for variance estimation, whether a random
@@ -314,8 +314,10 @@ roster rows. By default that refuses the stage, because a missing roster is
 more often an error than an empty household. `on_empty = "silent"` or
 `"warn"` accepts such households: they stay in the design, contribute zero to
 every total, and are counted by `summary()`. An EA in which no household has
-an eligible member is different: it has no row at all, and the survey export
-refuses the sample, because the variance between EAs would lose its zero.
+an eligible member is left with no row at all. `as_svydesign()` then warns
+(`samplyr_warning_export_empty_parent`), because survey computes that EA's
+term within its commune without it, and RWYB refuses the sample. A commune
+left with no row is refused by every export route.
 
 ### Set a household take per EA before selection
 
@@ -327,10 +329,11 @@ selected ones will be listed.
 
 ```{r per-ea-take}
 takes <- ea_register |>
-  transmute(
+  mutate(
     ea_id,
     # Never more than the EA's modeled count.
-    n = pmin(if_else(ea_households < 150, 8, 12), ea_households)
+    n = pmin(if_else(ea_households < 150, 8, 12), ea_households),
+    .keep = "none"
   )
 
 per_ea_design <- sampling_design("Three-stage survey, take per EA") |>
@@ -457,14 +460,11 @@ design afterwards. See `vignette("survey-analysis")` for that workflow.
 
 ## Choose your next step
 
-The main learning path is:
-
-1. **Get started**: the design grammar and a first sample, covered here.
-2. **Select a three-stage sample**: the household example above follows
-   fieldwork from area registers to households and observations.
-3. **Analyze the sample**: `vignette("survey-analysis")` covers outcome joins,
-   domain estimates and variance choices, with optional two-phase and
-   overlapping-frame examples.
+This article covered the design grammar, a first sample, and a three-stage
+household sample followed from area registers to households and
+observations. The next step on the main path is to analyze the sample:
+`vignette("survey-analysis")` covers outcome joins, domain estimates and
+variance choices, with optional two-phase and overlapping-frame examples.
 
 Use the other articles when their task arises:
 
@@ -475,7 +475,8 @@ Use the other articles when their task arises:
 | Schedule panels and refreshment cohorts | `vignette("rotating-panels")` |
 | Save or replay a design | `vignette("serialization")` |
 
-For a method or inference lookup, use `?selection-methods`. Consult
+For a method lookup, use `?selection-methods`, and for how each method's
+variance is estimated, `?variance-estimation`. Consult
 `vignette("design-semantics")` for the underlying contracts and
 `vignette("validation")` for simulation diagnostics.
 

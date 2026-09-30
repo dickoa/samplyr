@@ -73,8 +73,8 @@
 #' replacement. That overstates the variance when its sampling fractions are
 #' large (`samplyr_warning_replicate_wr_first_stage`). `"mrbbootstrap"` and
 #' `"rwyb"` read every stage. RWYB supports SRS, draws with replacement,
-#' Poisson selection and fixed-size PPS without replacement, the last with
-#' approximate joint probabilities and a warning. It is used only for
+#' Poisson selection, and Brewer, CPS, Sampford and systematic PPS, the last
+#' four with approximate joint probabilities and a warning. It is used only for
 #' `type = "rwyb"`, never by `"auto"`, and needs the svrep package.
 #' Replicates do not recreate ordering, balancing, spatial spreading or hard
 #' constraints, and [as_svrepdesign()] states the adapter's limits.
@@ -154,7 +154,7 @@
 #' ## Chromy's sequential method
 #'
 #' `pps_chromy` gives each unit \eqn{\lfloor E(n_i) \rfloor}{floor(E(n_i))} or
-#' \eqn{\lfloor E(n_i) \rfloor + 1}{floor(E(n_i)) + 1} hits, which is neither
+#' \eqn{\lceil E(n_i) \rceil}{ceiling(E(n_i))} hits, which is neither
 #' with nor without replacement. Following Chromy (2009), it is exported like a
 #' with-replacement stage, with no FPC and no `pps` argument. That
 #' Hansen-Hurwitz treatment can be strongly conservative when the frame order

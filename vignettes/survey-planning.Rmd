@@ -184,7 +184,7 @@ allocation_frame <- ken_enterprises |>
     sd = sd(revenue_millions),
     .by = sector
   ) |>
-  transmute(stratum = sector, N, sd)
+  mutate(stratum = sector, N, sd, .keep = "none")
 
 allocation <- n_alloc(
   allocation_frame,
@@ -407,8 +407,8 @@ sampling_design() |>
     draw(n = cluster_alloc)
 ```
 
-See `?n_cluster` and `?n_alloc` for the feasibility checks and
-`vignette("introduction")` for multistage execution.
+See `?svyplan::n_cluster` and `?svyplan::n_alloc` for the feasibility checks and
+`vignette("introduction")` for multi-stage execution.
 
 ## Field a certainty-aware allocation
 
@@ -542,8 +542,8 @@ the rotation pattern.
 
 For recruitment, retention and refreshment, continue with
 `vignette("rotating-panels")`. It covers `n_panel()` and the distinction
-between the start-up sample and each later intake, then executes the whole
-schedule. Use `vignette("sampling-coordination")` when overlap is controlled
+between the start-up sample and each later intake, then draws the start-up
+sample and the first refreshment cohort. Use `vignette("sampling-coordination")` when overlap is controlled
 through PRNs instead of a panel schedule.
 
 ## What planning does not decide

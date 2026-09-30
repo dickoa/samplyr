@@ -25,7 +25,9 @@ A `sampling_design` describes how to sample without embedding the confidential
 frame. Saving it creates a versioned JSON recipe that can be inspected,
 reviewed, and executed later.
 
-That statement applies to a design-only recipe. A file written from an
+That statement applies to a design-only recipe, with one exception: a design
+holding an svyplan certainty plan carries that plan's PSU register (the PSU
+identifiers, strata, sizes and certainty flags). A file written from an
 executed sample can carry its frame digest. The digest does not contain the
 ordinary frame columns, but it retains selected-unit identifiers and may contain
 per-unit chance metadata. Treat an execution receipt as potentially
@@ -223,8 +225,8 @@ archive each cohort execution and the schedule used to rebuild the
 registry.
 
 A sample carrying shared weights from `share_weights()` has a format of its
-own, `samplyr/shared-sample`. It records the source selection and the
-transformation's arguments, and nothing else. The links and the target
+own, `samplyr/shared-sample`. It records the source selection, the
+transformation's arguments and two integrity hashes, and nothing else. The links and the target
 register are supplied again at replay, the way a frame is, so the file
 contains no target unit and no link:
 

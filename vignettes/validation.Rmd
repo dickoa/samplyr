@@ -23,7 +23,7 @@ This vignette runs a set of smoke tests for `samplyr` on synthetic finite popula
 1. Deterministic checks on design metadata and invariants.
 2. Monte Carlo checks for estimator bias, standard-error calibration, and 95% CI coverage.
 
-The goal is not to benchmark speed, and it is not a proof of correctness. A run at `R = 199` can detect a design that is plainly wrong. It cannot establish that one is right. A pass says that the package behaved consistently with correctness on these three designs at this replication count. That is the level of assurance a smoke test provides. The scale of the Monte Carlo uncertainty is reported below so the bands can be read for what they are.
+The goal is not to benchmark speed, and it is not a proof of correctness. A run at `R = 199` can detect a design that is plainly wrong. It cannot establish that one is right. A pass says that the package behaved consistently with correctness on these four designs at this replication count. That is the level of assurance a smoke test provides. The scale of the Monte Carlo uncertainty is reported below so the bands can be read for what they are.
 
 ## Synthetic population with known properties
 
@@ -293,19 +293,22 @@ measure simulation uncertainty, not uncertainty in a particular survey estimate.
 ```{r mc-precision}
 precision <- bind_rows(
   mc_results |>
-    transmute(design, metric = "Relative bias (%)", estimate = rel_bias_pct,
-              lower = estimate - 1.96 * mcse_rel_bias_pct,
-              upper = estimate + 1.96 * mcse_rel_bias_pct,
-              acceptable_lower = -2, acceptable_upper = 2),
+    mutate(design, metric = "Relative bias (%)", estimate = rel_bias_pct,
+           lower = estimate - 1.96 * mcse_rel_bias_pct,
+           upper = estimate + 1.96 * mcse_rel_bias_pct,
+           acceptable_lower = -2, acceptable_upper = 2,
+           .keep = "none"),
   mc_results |>
-    transmute(design, metric = "SD / mean SE", estimate = se_ratio,
-              lower = pmax(0, estimate - 1.96 * mcse_se_ratio),
-              upper = estimate + 1.96 * mcse_se_ratio,
-              acceptable_lower = 0.85, acceptable_upper = 1.15),
+    mutate(design, metric = "SD / mean SE", estimate = se_ratio,
+           lower = pmax(0, estimate - 1.96 * mcse_se_ratio),
+           upper = estimate + 1.96 * mcse_se_ratio,
+           acceptable_lower = 0.85, acceptable_upper = 1.15,
+           .keep = "none"),
   mc_results |>
-    transmute(design, metric = "95% coverage", estimate = coverage_95,
-              lower = coverage_lower, upper = coverage_upper,
-              acceptable_lower = 0.92, acceptable_upper = 0.98)
+    mutate(design, metric = "95% coverage", estimate = coverage_95,
+           lower = coverage_lower, upper = coverage_upper,
+           acceptable_lower = 0.92, acceptable_upper = 0.98,
+           .keep = "none")
 ) |>
   mutate(assessment = case_when(
     lower >= acceptable_lower & upper <= acceptable_upper ~ "Within tolerance",

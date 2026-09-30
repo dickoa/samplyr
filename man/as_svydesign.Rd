@@ -127,8 +127,8 @@ design, exported with \code{\link[survey:svydesign]{survey::svydesign()}}.
 An unclustered element-sampling stage \emph{followed by further stages} is
 not nested cluster sampling, because the later selections are
 conditional on the realized element sample, which is phase sampling.
-\code{as_svydesign()} raises an error on it. Express it as a two-phase sample
-instead: execute the element stage under its first-phase design, then a
+\code{\link[=execute]{execute()}} refuses it (\code{samplyr_error_stage_parent_id}). Express it as a
+two-phase sample instead: execute the element stage under its first-phase design, then a
 new second-phase design with that sample as its frame.
 }
 

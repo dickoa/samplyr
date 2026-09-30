@@ -78,8 +78,9 @@ frame_stack_columns <- c(".frame", ".domain")
 #'   from. Name the columns holding them with [declared_overlaps()], which
 #'   states the scale, since it is never inferred from the values. Or name the
 #'   registers with [exante_overlaps()] and let samplyr resolve the chances
-#'   from each component's own design, which is exact and is checked against
-#'   what the execution produced. Required by `estimator = "expected"` at
+#'   from each component's own design, exact by default (approximate targets
+#'   need `allow_approximate = TRUE`) and checked against what the execution
+#'   produced. Required by `estimator = "expected"` at
 #'   export and unused by the default estimator, which reads membership
 #'   alone.
 #'

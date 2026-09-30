@@ -31,8 +31,9 @@ replicates rows with replacement.}
 from. Name the columns holding them with \code{\link[=declared_overlaps]{declared_overlaps()}}, which
 states the scale, since it is never inferred from the values. Or name the
 registers with \code{\link[=exante_overlaps]{exante_overlaps()}} and let samplyr resolve the chances
-from each component's own design, which is exact and is checked against
-what the execution produced. Required by \code{estimator = "expected"} at
+from each component's own design, exact by default (approximate targets
+need \code{allow_approximate = TRUE}) and checked against what the execution
+produced. Required by \code{estimator = "expected"} at
 export and unused by the default estimator, which reads membership
 alone.}
 }

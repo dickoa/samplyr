@@ -35,12 +35,13 @@ An operation that adds, removes, or duplicates sampled rows changes the
 realization and prevents export.
 
 The main path reaches this article after `vignette("introduction")`, which
-ends with a three-stage household sample. The sections on joins, export and domains
+includes a three-stage household sample. The sections on joins, export and domains
 apply to an ordinary sample. Read the later two-phase or overlapping-frame
 examples when your design uses them.
 
 We use a small stratified EA sample so the analysis examples run independently.
-Sample inspection is covered in the selection tutorials.
+Sample inspection is covered in the "Inspecting the result" section of
+`vignette("introduction")`.
 
 ```{r analysis-sample}
 sample <- sampling_design(title = "Burkina Faso EA survey") |>
@@ -158,11 +159,12 @@ svymean(~below_threshold, svy)
 svytotal(~population, svy)
 ```
 
-For a multistage sample, every represented stage contributes its sampling-unit
+For a multi-stage sample, every represented stage contributes its sampling-unit
 and finite-population terms. This preserves the stage structure. It does not
 turn an approximate stage variance treatment into an exact one.
 
-Fixed-size PPS methods use Brewer's approximation by default. In that phrase,
+Fixed-size PPS methods without replacement use Brewer's approximation by
+default. In that phrase,
 Brewer names the `survey` variance approximation and not necessarily the
 selection algorithm. The approximation's accuracy depends on the population
 and design. Exact joint inclusion probabilities can be supplied for methods
@@ -180,7 +182,8 @@ allocation was one or because certainty units took the rest, has no
 within-stratum variance estimate. `execute()` says so when it selects such a
 stratum, and `as_svydesign()` warns again at export
 (`samplyr_warning_lonely_psu`) while `survey` is left at its default
-`survey.lonely.psu = "fail"`, under which estimation would stop.
+`survey.lonely.psu = "fail"`, under which estimation would stop. Setting the
+option, as below, also silences that export warning.
 
 ```{r lonely}
 one_per_region <- sampling_design() |>
@@ -263,8 +266,9 @@ estimator itself can carry material finite-sample bias.
 ## Replicate weights and PPS variance
 
 For a supported single-phase design, `as_svrepdesign()` creates replicate
-weights through `survey::as.svrepdesign()`, or through the optional **svrep**
-package when `type = "rwyb"` is requested.
+weights through `survey::as.svrepdesign()`, through the optional **svrep**
+package when `type = "rwyb"` is requested, or from the replicates of
+`execute(reps = R)` when `type = "random_groups"` is requested.
 
 ```{r}
 replicate_design <- as_svrepdesign(sample, type = "auto")
@@ -278,8 +282,9 @@ refuse combinations that cannot be represented under their documented
 contracts. `?variance-estimation` gives how each selection method's variance
 is estimated and how exact it is.
 
-For independent Poisson selection, including clustered and multistage
-designs, request Rao-Wu-Yue-Beaumont replicates explicitly:
+For independent Poisson selection, including clustered and multi-stage
+designs, the generic replicate types, `"auto"` included, refuse the sample,
+so request Rao-Wu-Yue-Beaumont replicates explicitly:
 
 ```{r, eval = has_suggests && requireNamespace("svrep", quietly = TRUE)}
 poisson_sample <- sampling_design() |>
@@ -292,14 +297,14 @@ poisson_replicates <- as_svrepdesign(
 svytotal(~y, poisson_replicates)
 ```
 
-RWYB retains the variation in Poisson sample size that generic fixed-size
-bootstraps can lose. It also supports mixed SRS, independent draws with
-replacement, and fixed-size PPS WOR stages. PPS WOR variance is an
+RWYB retains the variation in Poisson sample size. It also supports SRS,
+independent draws with replacement, and Brewer, CPS, Sampford and systematic
+PPS stages, alone or mixed across stages. PPS WOR variance is an
 approximation and is reported as such. Increase the replicate count to reduce
 simulation error. svrep's `estimate_boot_sim_cv()` helps assess it for chosen
 estimates. No new sampling verbs are needed.
 
-Two-phase replicate export is not yet supported. Multistage RWYB export
+Two-phase replicate export is not yet supported. Multi-stage RWYB export
 requires every selected parent to remain represented in the final sample.
 Later Poisson stages require a complete frame digest to check this. A
 noncertainty singleton is refused when its variance is not estimable, while
@@ -378,8 +383,9 @@ These estimates illustrate inference for the synthetic establishment
 population, not substantive estimates for Kenya. The example uses SRS at
 phase 1 and stratified SRS at phase 2, a supported two-phase path. A phase 2
 drawn by Sampford, CPS, Brewer, SPS or Pareto also exports, with joint
-probabilities computed on the phase-1 sample. PPS at phase 1, WR and Poisson
-phase designs have additional export restrictions. Phase chains longer
+probabilities computed on the phase-1 sample. A phase 1 drawn with unequal
+probabilities without replacement is refused, and so is Poisson selection at
+either phase. Phase chains longer
 than two and two-phase replicate export are currently unsupported. See
 `?as_svydesign` before changing the selection methods.
 
@@ -418,10 +424,11 @@ population pairs have zero probability, so `as_svydesign()` warns when a
 `ppsmat` object is supplied for systematic PPS. It does not refuse the route,
 because full pair positivity can hold at high sampling fractions.
 
-A user-supplied `pps` matrix describes one stage. For a multistage design,
-supplying it exports only the represented PPS stage. Omit it when the intended
-analysis is the full multistage linearization with the default stage-level
-variance treatment.
+A user-supplied `pps` matrix describes stage 1. For a multi-stage sample it is
+applied to stage 1 alone, with a warning, and only when the sample has one row
+per stage-1 unit. Otherwise it is refused (`samplyr_error_pps_rows_per_psu`).
+Omit it when the intended analysis is the full multi-stage linearization with
+the default stage-level variance treatment.
 
 ## Frames that overlap on one population
 
@@ -483,8 +490,8 @@ svytotal(~spend, as_svydesign(frames, theta = 0.74))
 
 The expected multiframe estimator instead needs each unit's selection
 probability in every frame containing it. Supply the original registers through
-`overlaps = exante_overlaps(list(area = area_register, list = list_register),
-by = c(person_id = "person_id"))` when building the stack, using the stack's
+`overlaps = exante_overlaps(list(landline = landline_register,
+cell = cell_register), by = c(person_id = "person_id"))` when building the stack, using the stack's
 component names and key, then export with `estimator = "expected"`.
 The resolver requires exact inclusion probabilities by default. SPS and Pareto
 targets require `allow_approximate = TRUE` in `exante_overlaps()`. This accepts

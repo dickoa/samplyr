@@ -103,8 +103,8 @@
 #' An unclustered element-sampling stage *followed by further stages* is
 #' not nested cluster sampling, because the later selections are
 #' conditional on the realized element sample, which is phase sampling.
-#' `as_svydesign()` raises an error on it. Express it as a two-phase sample
-#' instead: execute the element stage under its first-phase design, then a
+#' [execute()] refuses it (`samplyr_error_stage_parent_id`). Express it as a
+#' two-phase sample instead: execute the element stage under its first-phase design, then a
 #' new second-phase design with that sample as its frame.
 #'
 #' ## Two-phase samples and waves

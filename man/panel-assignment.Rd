@@ -130,7 +130,9 @@ interviewing all increase. It matters only with a schedule, since a panel
 count declares no wave to protect, and it governs positivity only. A pool
 with a single active unit is still assigned, and is marked as carrying no
 within-block variance estimate. An \code{svyplan_schedule} refuses
-\code{"permanent"}, because its overlap describes a fully rotating life.
+\code{"permanent"}, and selection-certainty units
+(\code{samplyr_error_plan_certainty}), because its overlap describes a fully
+rotating life.
 }
 
 \subsection{Weights of a subset of panels}{

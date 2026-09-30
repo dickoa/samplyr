@@ -667,7 +667,7 @@ one.
 
 For statistical validation on synthetic populations with known truths,
 see `vignette("validation")`. It combines deterministic invariants
-(weights, FPC, certainty, stage compounding) with Monte Carlo checks of
+(weights, certainty, stage compounding) with Monte Carlo checks of
 bias, standard-error calibration, and coverage.
 
 ## Included Datasets

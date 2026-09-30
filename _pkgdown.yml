@@ -139,6 +139,3 @@ reference:
       - bfa_eas_cost
       - zwe_eas
       - ken_enterprises
-
-redirects:
-  - ["articles/three-stage-sampling.html", "articles/introduction.html#a-three-stage-household-sample"]

@@ -128,7 +128,7 @@ selection_sizes <- c(
 selection_sizes
 ```
 
-`startup` is the number issued across the two cohorts present at the first
+`startup` is the number issued across the two panels present at the first
 occasion. `intake_each_occasion` is the fresh cohort added later. They are not
 two names for the same sample size.
 
@@ -190,13 +190,14 @@ class(as_svydesign(startup_wave_2))
 Certainty units and permanent small pools do not follow the overlap declared by
 this automatic route, so it refuses them. They can still use an explicit
 data-frame panel schedule when their operational and inference treatment has
-been decided. Unequal-probability and multistage designs also need care in
+been decided. Unequal-probability and multi-stage designs also need care in
 variance estimation. `as_svydesign()` refuses unsupported combinations rather
 than silently replacing their variance estimator.
 
 ## Add a refreshment cohort
 
-At occasion 2, the older start-up cohort has left and a fresh cohort enters.
+At occasion 2, the start-up panel with a one-interview life has left and a
+fresh cohort enters.
 For a dynamic population, that cohort should be drawn from the frame vintage
 and eligibility definition specified by the survey design.
 
@@ -241,8 +242,8 @@ estimator.
 
 For a longer run, increase `horizon` when creating `fieldwork_plan`, repeat the
 intake step once per occasion, and register the cohorts through the latest
-fielded occasion. The planned value `panel_plan$n_entrants` is the steady-state
-intake for each draw.
+fielded occasion. `ceiling(panel_plan$n_entrants)` is the steady-state intake
+for each draw.
 
 ## Check overlap in an executed master
 
@@ -283,12 +284,14 @@ interview by `enterprise_id`. The join preserves the issued rows.
 set.seed(101)
 interviews_1 <- startup_wave_1 |>
   as.data.frame() |>
-  transmute(enterprise_id,
-            revenue_millions = revenue_millions * exp(rnorm(n(), 0, 0.1)))
+  mutate(enterprise_id,
+         revenue_millions = revenue_millions * exp(rnorm(n(), 0, 0.1)),
+         .keep = "none")
 interviews_2 <- startup_wave_2 |>
   as.data.frame() |>
-  transmute(enterprise_id,
-            revenue_millions = revenue_millions * exp(rnorm(n(), 0.05, 0.1)))
+  mutate(enterprise_id,
+         revenue_millions = revenue_millions * exp(rnorm(n(), 0.05, 0.1)),
+         .keep = "none")
 
 observed_wave_1 <- startup_wave_1 |>
   rename(revenue_baseline = revenue_millions) |>
@@ -394,7 +397,7 @@ more or fewer units with the current draw.”
 ## The short workflow
 
 1. Use `design_rotation()` to describe the cohort life.
-2. Use `n_panel()` to obtain `n_in_sample` and `n_entrants`.
+2. Use `n_panel()` to obtain `n_entrants` and `n_cohorts`.
 3. Draw the start-up sample and partition it with `panels`.
 4. Materialize scheduled occasions with `execute(wave = )`.
 5. Draw each refreshment cohort against its intended frame vintage.

@@ -61,7 +61,9 @@ identically to the original.
 The file is versioned JSON, diffable in version control. It stores the
 complete design specification (stages, stratification, clustering, draw
 settings, including per-stratum vectors and data frames), never the frame
-data itself.
+data itself. A certainty plan from svyplan is the exception: its PSU
+register (identifiers, strata, sizes and certainty flags) is part of the
+design and is written with it.
 
 A file written from an executed sample can also contain its frame digest.
 That digest retains selected-unit identifiers and may contain per-unit

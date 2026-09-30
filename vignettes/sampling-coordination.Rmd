@@ -43,7 +43,8 @@ for business surveys. `samplyr` accepts PRNs with `bernoulli`, `pps_poisson`,
 Coordination is not the same as a longitudinal design. A PRN controls overlap
 between draws. A longitudinal plan also decides how long units remain in the
 sample, how many units enter at each wave, and how change will be estimated.
-See `vignette("rotating-panels")` for that workflow.
+See `vignette("rotating-panels")` for the retention and intake schedule. The
+estimator of change is left to the analysis.
 
 ## Prepare the register
 

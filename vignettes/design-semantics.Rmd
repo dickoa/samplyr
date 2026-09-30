@@ -23,7 +23,7 @@ library(samplyr)
 library(dplyr)
 ```
 
-This vignette documents what each `samplyr` operation assumes, what it computes, and what is preserved or lost at `survey` export. The contracts stated here are asserted. `vignette("validation")` checks them against synthetic populations with known truths and reports what a run at that replication count can and cannot establish.
+This vignette documents what each `samplyr` operation assumes, what it computes, and what is preserved or lost at `survey` export. The contracts stated here are asserted. `vignette("validation")` checks several of them against synthetic populations with known truths and reports what a run at that replication count can and cannot establish.
 
 Use this as a topic reference while working through the tutorials. The main
 reading path is `vignette("introduction")`, then
@@ -61,7 +61,7 @@ marginal inclusion probabilities.
 
 ## Assumptions at a glance
 
-For a compact selection and inference table, see `?selection-methods`. A complete three-stage fieldwork example is in
+For a compact selection table, see `?selection-methods`, and for how each method's variance is estimated, `?variance-estimation`. A complete three-stage fieldwork example is in
 `vignette("introduction")`.
 
 The following table summarizes what `samplyr` assumes and what the user must verify. Each row is expanded in the sections below.
@@ -69,7 +69,7 @@ The following table summarizes what `samplyr` assumes and what the user must ver
 | Assumption                                 | Applies to                 | samplyr behavior                                                                                     | User must verify                                                                                      |
 |:-------------------------------------------|:---------------------------|:-----------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------|
 | Strata are exhaustive and disjoint         | `stratify_by()`            | Partitions the frame by unique combinations of strata variables                                      | Strata variables define a valid partition                                                             |
-| Independent sampling across strata         | `stratify_by() |> draw()` | Each stratum sampled with a separate call to `sondage`                                                 | Correct by construction when strata are disjoint                                                      |
+| Independent sampling across strata         | `stratify_by() |> draw()` | Each stratum sampled with a separate call to `sondage`, except stratified `cube`                      | Correct by construction when strata are disjoint. Stratified `cube` balances across strata in one call |
 | Cluster variables constant within clusters | `cluster_by()`             | Validated at execution: MOS and strata variables may not vary within a cluster                       | Cluster ID uniquely identifies the group                                                              |
 | Conditional selection laws | `add_stage()` | Stage \(k\) sampling depends only on the units selected at stage \(k - 1\) and its declared inputs | Later frame construction and selection depend on prior randomization only through selected ancestors and recorded design variables |
 | FPC records method-specific stage information | `execute()` | Stores a population or cluster count for WOR and `Inf` for WR or PMR. PPS WOR is converted to \(\pi_i\) at survey export | Frame size at execution is treated as the population, one of several definitions when a population changes between waves |
@@ -127,7 +127,7 @@ U = U_1 \cup U_2 \cup \cdots \cup U_H, \qquad U_h \cap U_{h'} = \emptyset
 \; \text{for } h \neq h'.
 $$
 
-Sampling within each stratum is independent. This holds by construction because `samplyr` invokes `sondage` algorithms separately for each stratum.
+Sampling within each stratum is independent. This holds by construction because `samplyr` invokes `sondage` algorithms separately for each stratum. Stratified `cube` is the exception: its global flight phase balances across strata, so its strata are not selected independently.
 
 When an allocation method is specified, the total sample size \(n\) is distributed across strata:
 
@@ -233,7 +233,7 @@ When `prn` is specified, the permanent random numbers are passed through to `son
 1. For each stage \(k\), the frame is restricted to units belonging to clusters selected at stage \(k - 1\) (or the full frame for \(k = 1\)).
 2. Strata and cluster groupings are resolved against the (subsetted) frame.
 3. The selection algorithm from `draw()` is invoked via `sondage`.
-4. The `.weight`, `.fpc`, `.draw`, and `.certainty` columns are computed and suffixed with the stage number.
+4. The `.weight`, `.fpc`, `.draw`, and `.certainty` columns are computed where they apply and suffixed with the stage number (`?sample-columns`).
 
 **One frame or one per stage.** The number of frames schedules the stages. `execute(design, hierarchy)` runs every stage against one table, and `execute(design, schools, classes, students)` gives each stage its own register, mapped by position. Any other count is refused. The frames may equally be held as a value with `execute(design, list(schools, classes, students))`. A name on a list element is a diagnostic label for that frame.
 
@@ -311,12 +311,14 @@ The warning is the design meeting the frame. Bulawayo is a single-district provi
 |:------------------------------|:-----------------------|:--------------------|:--------------------------------------|
 | EP-WOR (srswor, systematic)   | \(N_h\) (stage units)  | \(N_h\) directly    | Sampling fraction \(f_h = n_h / N_h\) |
 | PPS-WOR (pps_brewer, ...)     | \(N_h\) (stage units)  | \(1 / w_k = \pi_i\) | Inclusion probability                 |
-| WR / PMR (srswr, chromy, ...) | \(\infty\) (synthetic) | \(\infty\)          | No FPC (Hansen-Hurwitz variance)     |
+| WR / PMR (srswr, pps_chromy, ...) | \(\infty\) (synthetic) | \(\infty\)          | No FPC (Hansen-Hurwitz variance)     |
 
 The PPS conversion merits explanation. `survey::svydesign()` interprets FPC values less than 1 as inclusion probabilities and values \(\geq 1\) as
-population sizes. `samplyr` stores \(N_h\) uniformly for all methods, then at export time, `as_svydesign()` creates a per-row column `.fpc_pi_k = 1 / .weight_k = \pi_i` for PPS-WOR stages. The transformation is lossless: the per-stage weight already encodes \(\pi_i\), so nothing is approximated in converting it. What is approximate for `pps_sps` and `pps_pareto` is the quantity being transformed, since their \(\pi_i\) is a target rather than the realized inclusion probability.
+population sizes. `samplyr` stores \(N_h\) for every without-replacement method, then at export time, `as_svydesign()` creates a per-row column `.fpc_pi_k = 1 / .weight_k = \pi_i` for PPS-WOR stages. The transformation is lossless: the per-stage weight already encodes \(\pi_i\), so nothing is approximated in converting it. What is approximate for `pps_sps` and `pps_pareto` is the quantity being transformed, since their \(\pi_i\) is a target rather than the realized inclusion probability.
 
 For WR and PMR methods, a synthetic column filled with `Inf` is created. The survey package interprets this as "no finite population correction," which gives the Hansen-Hurwitz variance estimator.
+
+The table describes one represented stage, or several without a PPS-WOR stage. `survey::svydesign()` needs every FPC term on the same scale, so a multi-stage design with a PPS-WOR stage passes fractions instead: \(1 / w_k\) for every without-replacement stage and 0 for WR and PMR stages. `?as_svydesign` gives both encodings.
 
 **The population the correction refers to.** `samplyr` treats the frame as executed as the population, so \(N_h\) is counted from the frame the stage drew from. That is one convention among several. Where the sampling fraction is not negligible and the population itself changes between occasions, the finite population correction matters more and admits several competing definitions, particularly for measures of change across coordinated or overlapping samples [@tam1984; @laniel1988; @nordberg2000; @berger2004change]. `samplyr` does not choose among them for you: it records the frame size it saw, and a different convention has to be imposed downstream.
 
@@ -344,7 +346,8 @@ nested in it contribute nothing beyond the between-draw variability, which the
 Hansen-Hurwitz estimator already captures.
 
 Bounded cube, LPM2, and SCPS do not currently have supported linearization
-estimators. They use the generic bootstrap approximation described below.
+estimators. Their variance needs `as_svrepdesign(type = "subbootstrap")` or
+`"mrbbootstrap"`, which `?variance-estimation` describes.
 
 ## Weights for a population other than the one sampled
 
@@ -408,8 +411,9 @@ people_sample <- share_weights(
   multiplicity = complete_links()
 )
 
-# Each person is linked to the one dwelling they live in, so the target
-# weight is the source weight and the totals agree.
+# Each person is linked to the one dwelling they live in, so a person's
+# weight is their dwelling's. The sums estimate the 200 dwellings and the
+# 400 people.
 c(
   dwellings = sum(dwelling_sample$.weight),
   people = sum(people_sample$.weight)
@@ -463,13 +467,16 @@ The reason is the composed case. A transformation cannot know whether its
 result will stand alone or become one component of a design over several
 frames, and there a cluster one frame cannot reach is the entire reason the
 second frame exists. So the warning fires where the estimate is formed:
-`as_svrepdesign()` reports it for a single transformation, and for a
+`as_svydesign()` and `as_svrepdesign()` report it for a single
+transformation, and for a
 `stack_frames()` collection it is evaluated over the union of the frames and
 fires once, naming only the clusters no frame reaches.
 
 One component's silence about a cluster counts as coverage only if that
 component was describing the same target clusters. Where that cannot be
 established the union is reported as not established, rather than guessed.
+
+### Variance of a shared-weight estimate
 
 There are two ways to estimate the variance, and each is correct for a
 different reason.
@@ -533,14 +540,15 @@ carry.
 
 ### 1. Element sampling before later stages
 
-An unclustered element-sampling stage followed by further stages is not nested cluster sampling: the later selections operate on the realized element sample, not within larger units, so there is no hierarchy for the multi-stage variance recursion (or for replicate-weight resampling) to use. This is phase sampling. `as_svydesign()` raises an error for this shape and the supported path is a two-phase sample: execute the element stage under its first-phase design, execute a new second-phase design with that sample as its frame, and export with `as_svydesign()`, which uses `survey::twophase()`. A *final* unclustered stage is fully supported: it is exported with a synthesized row-identity `ids` term and its own FPC.
+An unclustered element-sampling stage followed by further stages is not nested cluster sampling: the later selections operate on the realized element sample, not within larger units, so there is no hierarchy for the multi-stage variance recursion (or for replicate-weight resampling) to use. This is phase sampling. `execute()` refuses this shape (`samplyr_error_stage_parent_id`), and the supported path is a two-phase sample: execute the element stage under its first-phase design, execute a new second-phase design with that sample as its frame, and export with `as_svydesign()`, which uses `survey::twophase()`. A *final* unclustered stage is fully supported: it is exported with a synthesized row-identity `ids` term and its own FPC.
 
 ### 2. Variance by selection method
 
 How each selection method is linearized, what a joint matrix from
 `joint_expectation()` changes, how with-replacement and Chromy stages are
 represented, and how certainty units form a take-all stratum are in
-`?variance-estimation`, with the measured error of each approximation.
+`?variance-estimation`, with the measured error of the approximations that
+were measured.
 
 ### 3. Panel assignments
 
