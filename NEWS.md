@@ -321,7 +321,6 @@ needed for weighting, replay, and export to the survey and srvyr packages.
 
 ## Vignettes
 
-Nine vignettes: get started, a three-stage household sample, analysis with
-`survey` and `srvyr`, planning with `svyplan`, coordination with permanent random
-numbers, rotating panels, saving and replaying designs, design semantics,
-and validation on synthetic populations.
+Eight vignettes: get started, analysis with `survey` and `srvyr`, planning with `svyplan`,
+coordination with permanent random numbers, rotating panels, saving and replaying designs,
+design semantics, and validation on synthetic populations.

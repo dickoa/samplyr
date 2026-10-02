@@ -25,13 +25,27 @@ certainty_plan_fixture <- function(psu = certainty_plan_register()) {
   svyplan::n_alloc(frame, measures = measures, targets = targets, psu = psu)
 }
 
-## The remainder of stratum B holds a 230-size PSU whose fielded inclusion
-## probability is exactly one (5 * 230 / 1150), while svyplan's threshold
-## leaves it noncertainty: the executable rule and the plan disagree.
-certainty_disagreement_fixture <- function() {
+## The default register with two stratum B sizes changed. Its fitted plan
+## is a different plan from the default one.
+certainty_altered_register <- function() {
   psu <- certainty_plan_register()
   psu$N[psu$psu_id %in% c("B02", "B03")] <- c(230, 155)
-  certainty_plan_fixture(psu)
+  psu
+}
+
+## The plan an older svyplan fitted on the altered register, which held B02
+## noncertainty and drew 5 of stratum B's remaining 7 PSUs. B02's fielded
+## inclusion probability is then exactly one (5 * 230 / 1150), so the
+## executable rule and the plan disagree at the boundary. svyplan now
+## classifies certainty under the draw it fields and flags B02, but a
+## stored, edited or older plan can still carry this split.
+certainty_disagreement_fixture <- function() {
+  plan <- certainty_plan_fixture(certainty_altered_register())
+  b <- plan$detail$stratum == "B"
+  plan$psu$certainty[plan$psu$psu_id == "B02"] <- FALSE
+  plan$detail$n_psu_certain[b] <- 1
+  plan$detail$n_psu_draw[b] <- 5
+  plan
 }
 
 ## One element row per ultimate unit, carrying the register's stratum, id,

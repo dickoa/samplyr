@@ -584,7 +584,7 @@ test_that("take-stage contexts the bridge does not serve are refused", {
   )
   # A different fitted plan than stage 1's is a different register.
   expect_error(
-    stage2() |> draw(n = certainty_disagreement_fixture()),
+    stage2() |> draw(n = certainty_plan_fixture(certainty_altered_register())),
     class = "samplyr_error_svyplan_certainty_plan"
   )
   # Without a bridged stage 1 the takes have no selection to sit inside.
