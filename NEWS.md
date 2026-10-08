@@ -59,15 +59,22 @@ needed for weighting, replay, and export to the survey and srvyr packages.
   `pps_pareto`. PPS with or minimum replacement: `pps_multinomial`,
   `pps_chromy`. Balanced: `cube`, `lpm2`, `scps`.
 * Permanent random numbers for coordinated sampling with `bernoulli`,
-  `pps_poisson`, `pps_sps`, and `pps_pareto`.
+  `pps_poisson`, `pps_sps`, `pps_pareto`, and `scps`. With `prn`, `scps`
+  visits each pool in the frame's row order, or the `control` order, so
+  coordinated draws need the same order.
+* Spreading `scps` on a measure of response burden and drawing a second
+  survey with `1 - prn` gives the adapted SCP sampling of Matei, Smith,
+  Smeets and Klingwort (2023), which keeps the number of burdened units
+  steady across samples and rarely takes them twice.
 * Random-size methods accept `n` as an expected size or `frac` as a
   sampling fraction, and `on_empty` governs an empty realization.
 * `bound()` markers inside `aux` add integer count constraints to cube
   sampling, and `spread = c(x, y)` gives spatially balanced draws.
 * Custom methods registered with `sondage::register_method()` are available
   as `pps_<name>` or `balanced_<name>`. Their declared probability tier,
-  size behavior, PRN support, and variance family flow through validation,
-  execution, joint probabilities, and export. A method declaring unknown
+  size behavior, PRN support (balanced methods included), and variance
+  family flow through validation, execution, joint probabilities, and
+  export. A method declaring unknown
   first-order probabilities is refused, since its weights would be biased.
 * Every method states whether its first-order probabilities are exact or
   approximate. `pps_sps` and `pps_pareto` are approximate, and the digest,
@@ -275,6 +282,25 @@ needed for weighting, replay, and export to the survey and srvyr packages.
   `alloc` to be distributed. Without it `draw()` refuses with
   `samplyr_error_svyplan_total_per_stratum`, since the size would otherwise
   be taken in every stratum.
+* A certainty-aware plan solved with `n_psu_per_zone = 2` is fielded zone
+  by zone. Stage 1 draws two PSUs from every zone, each with probability
+  twice its share of the zone's size, and records the zone in `.zone_1`.
+  The survey export uses stratum by zone as the variance strata, so every
+  stratum outside certainty holds two sampled PSUs.
+* A plan solved with `n_psu_per_zone = 1` draws one PSU from every zone and
+  records the variance group svyplan fixed for its zone in `.pair_1`. The
+  export collapses the zones in those groups, which may cross strata, and
+  gives the zones' PSUs no finite population correction, since one draw
+  per zone has the with-replacement variance. Linearization, RWYB and the
+  replicate types all read it that way, and balanced half-samples are
+  refused when a group holds three zones. A single selection is reported
+  per group, not per stratum.
+* `joint_expectation()` computes a stage drawing two PSUs per zone from
+  the frame, each zone a draw of its own. It refuses a stage drawing one
+  PSU per zone, since no unbiased variance estimator can use that matrix.
+  Design files carry the zones, the groups and the PSUs per zone.
+* PSUs smaller than their take are merged before the register is built with
+  `svyplan::merge_psus()`, and the merged frame is fielded as planned.
 * `design_effect()`, `effective_n()`, and `varcomp()` have `tbl_sample`
   methods. The first two report Kish's weighting design effect from
   `.weight`. `varcomp()` estimates design-based variance components from an
@@ -321,6 +347,7 @@ needed for weighting, replay, and export to the survey and srvyr packages.
 
 ## Vignettes
 
-Eight vignettes: get started, analysis with `survey` and `srvyr`, planning with `svyplan`,
-coordination with permanent random numbers, rotating panels, saving and replaying designs,
-design semantics, and validation on synthetic populations.
+Eight vignettes: get started, analysis with `survey` and `srvyr`, planning
+with `svyplan`, coordination with permanent random numbers, rotating panels,
+saving and replaying designs, design semantics, and validation on synthetic
+populations.

@@ -416,7 +416,9 @@ sample_stratified <- function(
 #' designer while the allocation can still change. Certainty units are
 #' split into their own take-all stratum at export, so the count is of the
 #' units drawn outside certainty, and a stratum whose remainder is taken
-#' whole has no variance to estimate.
+#' whole has no variance to estimate. A bridge stage drawing one PSU per
+#' zone is exported by its variance groups, so it counts per group and
+#' reports the strata of a group holding one selection.
 #' @noRd
 signal_singleton_strata <- function(frame, strata_vars, sample, draw_spec,
                                     label_vars = strata_vars) {
@@ -438,6 +440,15 @@ signal_singleton_strata <- function(frame, strata_vars, sample, draw_spec,
   n_certain <- tabulate(sample_pool[certain], length(pool_keys))
   n_drawn <- tabulate(sample_pool[!certain], length(pool_keys))
   single <- n_drawn == 1L & population - n_certain > 1L
+  pair <- if (".pair" %in% names(sample)) sample$.pair
+  if (draws_one_per_zone(draw_spec) && !is_null(pair)) {
+    # One PSU per zone: the variance groups fixed before selection, which
+    # may cross strata, are what needs two selections.
+    drawn <- !certain & !is.na(pair)
+    per_group <- tabulate(pair[drawn], max(c(0L, pair[drawn])))
+    alone <- drawn & per_group[pair] == 1L
+    single <- tabulate(sample_pool[alone], length(pool_keys)) > 0L
+  }
   if (!any(single)) {
     return(invisible(NULL))
   }
@@ -917,6 +928,14 @@ resolve_stratum_draw_spec <- function(
     reg <- draw_spec$certainty_plan$register
     in_stratum <- reg$stratum == stratum_id
     stratum_draw_spec$certainty_ids <- reg$psu_id[in_stratum & reg$certainty]
+    if (!is_null(draw_spec$certainty_plan$n_psu_per_zone)) {
+      zoned <- in_stratum & !is.na(reg$zone)
+      stratum_draw_spec$certainty_zones <- list(
+        psu_id = reg$psu_id[zoned],
+        zone = reg$zone[zoned],
+        pair = reg$pair[zoned]
+      )
+    }
   }
 
   stratum_draw_spec
@@ -1113,7 +1132,8 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
         pik,
         aux = aux_mat,
         spread = spread_mat,
-        method = sondage_name
+        method = sondage_name,
+        prn = prn_vals
       )$sample
     } else {
       mos_vals <- data[[mos]]
@@ -1212,10 +1232,12 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
           rep(n / N, N)
         }
         spread_mat <- as.matrix(data[, draw_spec$spread, drop = FALSE])
+        prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
         idx <- sondage::balanced_wor(
           pik,
           spread = spread_mat,
-          method = method
+          method = method,
+          prn = prn_vals
         )$sample
       },
       cube = {
@@ -1303,11 +1325,8 @@ draw_sample_pps_certainty <- function(
     draw_spec$frac <- NULL
   }
 
-  forced_idx <- NULL
-  if (!is_null(draw_spec$certainty_ids)) {
-    id_var <- draw_spec$certainty_plan$id_var
-    forced_idx <- which(data[[id_var]] %in% draw_spec$certainty_ids)
-  }
+  pool <- certainty_pool_rows(draw_spec, data)
+  forced_idx <- pool$forced_idx
 
   cert <- identify_certainty(
     mos_vals = mos_vals,
@@ -1363,13 +1382,25 @@ draw_sample_pps_certainty <- function(
     if (length(cert$certainty_idx) > 0) {
       remainder_spec$on_empty <- "silent"
     }
-    prob_res <- draw_pps_method(
-      data = remaining_data,
-      n = n_prob,
-      method = method,
-      mos_vals = remaining_mos,
-      draw_spec = remainder_spec
-    )
+    prob_res <- if (is_null(pool$zone)) {
+      draw_pps_method(
+        data = remaining_data,
+        n = n_prob,
+        method = method,
+        mos_vals = remaining_mos,
+        draw_spec = remainder_spec
+      )
+    } else {
+      draw_pps_zones(
+        remaining_data,
+        n_prob,
+        method,
+        remaining_mos,
+        remainder_spec,
+        zone = pool$zone[cert$remaining_idx],
+        m = draw_spec$certainty_plan$n_psu_per_zone
+      )
+    }
     prob_result <- prob_res$sample
     # Recompute capping after removing explicit certainty units.
     prob_result$.certainty <- is_certainty_probability(prob_result$.pik)
@@ -1424,8 +1455,58 @@ draw_sample_pps_certainty <- function(
     return(list(sample = result, trace = trace))
   }
 
+  if (!is_null(pool$zone) && !is_null(certainty_result)) {
+    certainty_result$.zone <- rep(NA_integer_, nrow(certainty_result))
+  }
   result <- dplyr::bind_rows(certainty_result, prob_result)
+  zones <- draw_spec$certainty_zones
+  if (!is_null(zones$pair) && ".zone" %in% names(result)) {
+    result$.pair <- zones$pair[match(result$.zone, zones$zone)]
+  }
   list(sample = result, trace = trace)
+}
+
+#' Draw a zoned remainder: m units from each zone, zone by zone
+#'
+#' Zones are drawn in increasing zone order, which replay relies on. Each
+#' zone is its own fixed-size draw, so a unit's chance is `m * N_i / N_zone`
+#' and draws in different zones are independent. The result has the shape
+#' of `draw_pps_method()`'s, with each sampled unit's zone in `.zone`.
+#' @noRd
+draw_pps_zones <- function(data, n, method, mos_vals, draw_spec, zone, m) {
+  parts <- split(seq_len(nrow(data)), zone)
+  if (anyNA(zone) || n != m * length(parts)) {
+    cli_abort(
+      "Internal error: the zoned remainder does not draw {m} unit{?s} from every zone.",
+      call = NULL,
+      class = "samplyr_error_internal"
+    )
+  }
+  chance <- numeric(nrow(data))
+  selected <- integer(0)
+  samples <- vector("list", length(parts))
+  n_clipped <- 0L
+  for (z in seq_along(parts)) {
+    rows <- parts[[z]]
+    res <- draw_pps_method(
+      data = data[rows, , drop = FALSE],
+      n = m,
+      method = method,
+      mos_vals = mos_vals[rows],
+      draw_spec = draw_spec
+    )
+    res$sample$.zone <- rep(as.integer(names(parts)[z]), nrow(res$sample))
+    samples[[z]] <- res$sample
+    chance[rows] <- res$chance
+    selected <- c(selected, rows[res$selected])
+    n_clipped <- n_clipped + res$n_clipped
+  }
+  list(
+    sample = dplyr::bind_rows(samples),
+    chance = chance,
+    selected = selected,
+    n_clipped = n_clipped
+  )
 }
 
 #' @noRd

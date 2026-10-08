@@ -128,6 +128,22 @@
 #' stratum (`samplyr_error_rwyb_singleton`) unless the stage is Poisson or
 #' `lonely.psu = "certainty"` is given at the final stage.
 #'
+#' ## One PSU per zone
+#'
+#' A certainty plan solved with `svyplan::n_alloc(n_psu_per_zone = 1)`
+#' draws one PSU from each zone, so no zone has a variance of its own. The
+#' export collapses the zones in the variance groups the plan fixed before
+#' selection, recorded in `.pair_1`, which may cross strata (Valliant,
+#' Dever and Kreuter 2018, sec. 15.5.3). One draw per zone has the
+#' with-replacement variance, so the remainder PSUs carry no finite
+#' population correction under linearization, RWYB or the generic replicate
+#' types, while certainty PSUs keep theirs and contribute their later
+#' stages. The collapsed estimator overestimates the variance by a term in
+#' the squared differences between the totals of the zones grouped together
+#' (Wolter 2007, sec. 2.5), most where a group joins zones of different
+#' sizes.
+#' A group of three zones rules out balanced half-samples.
+#'
 #' ## Selected units with nothing below them
 #'
 #' A unit accepted by `on_empty` with nothing selected under it keeps its
@@ -168,10 +184,10 @@
 #'
 #' Unconstrained `cube` is linearized with the high-entropy approximation,
 #' which ignores the balancing. The more closely an outcome follows the
-#' balancing variables, the more the reported variance overstates. In
-#' `vignette("validation")` the standard error was about five times the true
-#' spread for an outcome correlated 0.98 with the balancing variable, and
-#' close to right for a weakly related one.
+#' balancing variables, the more the reported variance overstates. In a
+#' simulation the standard error was about five times the true spread for an
+#' outcome correlated 0.98 with the balancing variable, and close to right
+#' for a weakly related one.
 #' Bounded `cube`, `lpm2` and `scps` change pairwise selection beyond that
 #' approximation, so linearization and [joint_expectation()] refuse them, and
 #' `type = "subbootstrap"` or `"mrbbootstrap"` gives a generic PPS bootstrap
@@ -247,6 +263,12 @@
 #'
 #' Sarndal, C.-E., Swensson, B. and Wretman, J. (1992). *Model Assisted
 #' Survey Sampling*. Springer.
+#'
+#' Valliant, R., Dever, J.A. and Kreuter, F. (2018). *Practical Tools for
+#' Designing and Weighting Survey Samples*. 2nd edition. Springer.
+#'
+#' Wolter, K.M. (2007). *Introduction to Variance Estimation*. 2nd edition.
+#' Springer.
 #'
 #' @seealso [as_svydesign()], [as_svrepdesign()], [joint_expectation()],
 #'   `?selection-methods`

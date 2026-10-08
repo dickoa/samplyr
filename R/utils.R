@@ -14,7 +14,7 @@ pps_wor_methods <- c(
 )
 pps_wr_methods <- c("pps_multinomial", "pps_chromy")
 pps_methods <- c(pps_wor_methods, pps_wr_methods)
-prn_methods <- c("bernoulli", "pps_poisson", "pps_sps", "pps_pareto")
+prn_methods <- c("bernoulli", "pps_poisson", "pps_sps", "pps_pareto", "scps")
 spatial_balanced_methods <- c("lpm2", "scps")
 balanced_methods <- c("cube", spatial_balanced_methods)
 builtin_methods <- c(equal_prob_methods, pps_methods, balanced_methods)
@@ -915,9 +915,10 @@ check_forwarded_args <- function(
 samplyr_reserved_names <- function(nms) {
   exact <- c(
     ".weight", ".fpc", ".pik", ".sample_id", ".stage", ".panel",
-    ".replicate", ".draw", ".certainty", "._prev_phase_weight"
+    ".replicate", ".draw", ".certainty", ".zone", ".pair",
+    "._prev_phase_weight"
   )
-  generated <- grepl("^\\.(weight|fpc|draw|certainty)_[0-9]+$", nms)
+  generated <- grepl("^\\.(weight|fpc|draw|certainty|zone|pair)_[0-9]+$", nms)
   unique(c(intersect(nms, exact), nms[generated]))
 }
 
@@ -1053,7 +1054,7 @@ check_single_replicate <- function(x, fn_name, call = caller_env()) {
 #' Stripped from reused frames, guarded by `dplyr_col_modify.tbl_sample()`.
 #' @noRd
 samplyr_internal_col_pattern <-
-  "^\\.(weight|fpc|sample_id|stage|draw|certainty|replicate|panel)"
+  "^\\.(weight|fpc|sample_id|stage|draw|certainty|zone|pair|replicate|panel)"
 
 #' Detect a tbl_sample whose class was stripped
 #'

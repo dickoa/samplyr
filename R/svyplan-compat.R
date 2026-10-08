@@ -404,7 +404,39 @@ certainty_bridge_spec <- function(
   if (!isTRUE(all.equal(unname(held), unname(n_psu_certain)))) {
     refuse(
       "The plan's register and its {.code $detail} disagree on the certainty split.",
-      "i" = "The plan object is inconsistent; rebuild it with {.code svyplan::n_alloc()}."
+      "i" = "The plan object is inconsistent. Rebuild it with {.code svyplan::n_alloc()}."
+    )
+  }
+
+  zone_m <- plan$params$n_psu_per_zone
+  if (is_null(zone_m) != is_null(register$zone)) {
+    refuse(
+      "The plan's zones and its {.code n_psu_per_zone} disagree: one is recorded without the other.",
+      "i" = "The plan object is inconsistent. Rebuild it with {.code svyplan::n_alloc()}."
+    )
+  }
+  if (!is_null(zone_m)) {
+    if (!is.numeric(zone_m) || length(zone_m) != 1L || !zone_m %in% c(1, 2)) {
+      refuse(
+        "A zoned certainty plan must draw one or two PSUs per zone.",
+        "x" = "The plan records {.code n_psu_per_zone = {zone_m}}."
+      )
+    }
+    zone_m <- as.integer(zone_m)
+    if ("n_zone" %in% names(detail) &&
+          !isTRUE(all.equal(as.numeric(detail$n_zone) * zone_m, unname(n_psu_draw)))) {
+      refuse(
+        "The plan's {.code $detail} disagrees with itself: {.code n_psu_draw} is not {zone_m} PSU{?s} per zone.",
+        "i" = "The plan object is inconsistent. Rebuild it with {.code svyplan::n_alloc()}."
+      )
+    }
+  }
+  problem <- certainty_zoning_problem(register, n_psu_draw, zone_m)
+  if (!is_null(problem)) {
+    refuse(
+      "The plan's zones break the zoned design.",
+      "x" = "{problem}",
+      "i" = "The plan object is inconsistent. Rebuild it with {.code svyplan::n_alloc()}."
     )
   }
 
@@ -412,6 +444,7 @@ certainty_bridge_spec <- function(
     register,
     n_psu_draw,
     method = method,
+    zone_m = zone_m,
     call = call
   )
 
@@ -422,18 +455,144 @@ certainty_bridge_spec <- function(
     rep_len(as.numeric(n_per_psu), length(strata))
   }
 
-  list(
-    spec = list(
-      role = "select",
-      register = register,
-      n_psu_draw = n_psu_draw,
-      n_per_psu = stats::setNames(n_per_psu, strata),
-      strata_var = strata_vars,
-      id_var = cluster_vars,
-      svyplan_version = as.character(utils::packageVersion("svyplan"))
-    ),
-    n_total = n_psu_certain + n_psu_draw
+  spec <- list(
+    role = "select",
+    register = register,
+    n_psu_draw = n_psu_draw,
+    n_per_psu = stats::setNames(n_per_psu, strata),
+    strata_var = strata_vars,
+    id_var = cluster_vars,
+    svyplan_version = as.character(utils::packageVersion("svyplan"))
   )
+  if (!is_null(zone_m)) {
+    spec$n_psu_per_zone <- zone_m
+  }
+  list(spec = spec, n_total = n_psu_certain + n_psu_draw)
+}
+
+#' The first way a register breaks its zones or variance groups, or NULL
+#'
+#' The one contract `draw()` and the execute gate both apply. `m` is NULL
+#' for an unzoned plan.
+#' @noRd
+certainty_zoning_problem <- function(register, n_psu_draw, m) {
+  if (!is_null(m)) {
+    problem <- certainty_zone_problem(register, n_psu_draw, m)
+    if (!is_null(problem)) {
+      return(problem)
+    }
+  }
+  certainty_pair_problem(register, m)
+}
+
+#' The first way a register breaks the variance groups, or NULL
+#'
+#' A plan drawing one PSU per zone fixes, before selection, the groups of
+#' zones its variance is collapsed in: `pair` is constant within a zone,
+#' numbered from 1, and each group holds two or three zones. A plan with a
+#' single zone in total has one group of one zone. Other plans carry no
+#' groups.
+#' @noRd
+certainty_pair_problem <- function(register, m) {
+  pair <- register$pair
+  if (is_null(pair)) {
+    if (identical(m, 1L)) {
+      return("The plan draws one PSU per zone but records no variance groups.")
+    }
+    return(NULL)
+  }
+  if (!identical(m, 1L)) {
+    return(cli::format_inline(
+      "The plan records variance groups, which only a plan drawing one PSU per zone has."
+    ))
+  }
+  zone <- register$zone
+  if (!identical(is.na(pair), is.na(zone))) {
+    bad <- register$psu_id[is.na(pair) != is.na(zone)]
+    return(cli::format_inline(
+      "PSU {.val {head(bad, 5)}} {?has/have} a zone without a variance group, or a group without a zone."
+    ))
+  }
+  zoned <- !is.na(zone)
+  cells <- unique(data.frame(
+    stratum = register$stratum[zoned],
+    zone = zone[zoned],
+    pair = pair[zoned],
+    stringsAsFactors = FALSE
+  ))
+  split_zone <- duplicated(cells[c("stratum", "zone")])
+  if (any(split_zone)) {
+    at <- which(split_zone)[1]
+    return(cli::format_inline(
+      "Zone {.val {cells$zone[at]}} of stratum {.val {cells$stratum[at]}} is split across variance groups."
+    ))
+  }
+  groups <- sort(unique(cells$pair))
+  if (!identical(as.numeric(groups), as.numeric(seq_along(groups)))) {
+    return(cli::format_inline(
+      "The variance groups must be numbered from 1 without gaps, but they are {.val {groups}}."
+    ))
+  }
+  if (nrow(cells) == 1L) {
+    return(NULL)
+  }
+  size <- tabulate(cells$pair, length(groups))
+  bad <- which(size < 2L | size > 3L)
+  if (length(bad) > 0) {
+    return(cli::format_inline(
+      "Variance group {.val {bad[1]}} holds {size[bad[1]]} zone{?s}, but each group needs two or three."
+    ))
+  }
+  NULL
+}
+
+#' The first way a register breaks the zoned design, or NULL
+#'
+#' A stratum that draws cuts its remainder into `n_psu_draw / m` zones,
+#' numbered from 1, each holding more than `m` PSUs, since a zone of `m` or
+#' fewer is a census and its PSUs are certainty. Certainty PSUs and the
+#' remainder of a stratum that draws nothing have no zone. Read from the
+#' register alone, so `draw()` and the execute gate apply the same contract.
+#' @noRd
+certainty_zone_problem <- function(register, n_psu_draw, m) {
+  zone <- register$zone
+  stray <- !is.na(zone) & register$certainty
+  if (any(stray)) {
+    return(cli::format_inline(
+      "Certainty PSU {.val {head(register$psu_id[stray], 5)}} {?has/have} a zone."
+    ))
+  }
+  for (h in names(n_psu_draw)) {
+    draw_h <- n_psu_draw[[h]]
+    rest <- register$stratum == h & !register$certainty
+    z <- zone[rest]
+    if (draw_h <= 0) {
+      if (any(!is.na(z))) {
+        return(cli::format_inline(
+          "Stratum {.val {h}} draws no PSU but has zones."
+        ))
+      }
+      next
+    }
+    if (anyNA(z)) {
+      return(cli::format_inline(
+        "Stratum {.val {h}} draws PSUs, but {sum(is.na(z))} of its noncertainty PSU{?s} {?has/have} no zone."
+      ))
+    }
+    n_zone <- draw_h %/% m
+    if (draw_h != n_zone * m || !setequal(z, seq_len(n_zone))) {
+      return(cli::format_inline(
+        "Stratum {.val {h}} draws {.val {draw_h}} PSUs, which needs zones 1 to {.val {draw_h / m}}, but its zones are {.val {sort(unique(z))}}."
+      ))
+    }
+    small <- which(tabulate(z, n_zone) <= m)
+    if (length(small) > 0) {
+      return(cli::format_inline(
+        "In stratum {.val {h}}, {length(small)} zone{?s} ({.val {small}}) hold{?s/} {.val {m}} or fewer PSUs, which is a census, not a draw."
+      ))
+    }
+  }
+  NULL
 }
 
 #' The register a bridge stage stores, in one normalized shape
@@ -458,7 +617,7 @@ normalize_certainty_register <- function(plan, refuse) {
   if (anyDuplicated(register$psu_id)) {
     refuse("The plan's register has duplicated {.code psu_id} values.")
   }
-  data.frame(
+  out <- data.frame(
     psu_id = register$psu_id,
     stratum = as.character(register$stratum),
     N = as.numeric(register$N),
@@ -466,6 +625,21 @@ normalize_certainty_register <- function(plan, refuse) {
     n_take = as.numeric(register$n_take),
     stringsAsFactors = FALSE
   )
+  if (!is_null(register$.zone)) {
+    zone <- register$.zone
+    if (!is.numeric(zone) || any(!is.na(zone) & zone != floor(zone))) {
+      refuse("The plan's register has zones that are not whole numbers.")
+    }
+    out$zone <- as.integer(zone)
+  }
+  if (!is_null(register$.pair)) {
+    pair <- register$.pair
+    if (!is.numeric(pair) || any(!is.na(pair) & (pair < 1 | pair != floor(pair)))) {
+      refuse("The plan's register has variance groups that are not positive whole numbers.")
+    }
+    out$pair <- as.integer(pair)
+  }
+  out
 }
 
 #' Build the take spec a certainty plan hands to a stage-2 draw()
@@ -562,15 +736,17 @@ certainty_take_spec <- function(
 #' Refuse a plan whose executable selection rule caps a noncertainty PSU
 #'
 #' The plan classifies by svyplan's element-fraction threshold. The fielded
-#' remainder caps by `n_psu_draw * N_i / sum(N_rest)`. The rules differ, and
-#' ceiling effects near the threshold can push the largest noncertainty PSU
-#' to probability one. Fielding it would silently alter the plan, so the
-#' refusal runs before any RNG is consumed, from the register alone.
+#' remainder caps by `n_psu_draw * N_i / sum(N_rest)`, or in a zoned plan by
+#' `m * N_i / N_zone` within each zone. The rules differ, and ceiling effects
+#' near the threshold can push the largest noncertainty PSU to probability
+#' one. Fielding it would silently alter the plan, so the refusal runs
+#' before any RNG is consumed, from the register alone.
 #' @noRd
 check_certainty_plan_disagreement <- function(
   register,
   n_psu_draw,
   method,
+  zone_m = NULL,
   call = NULL
 ) {
   for (h in names(n_psu_draw)) {
@@ -579,18 +755,31 @@ check_certainty_plan_disagreement <- function(
       next
     }
     rest <- register$stratum == h & !register$certainty
-    sizes <- register$N[rest]
-    if (length(sizes) == 0) {
+    if (!any(rest)) {
       next
     }
-    pik <- draw_h * sizes / sum(sizes)
+    pik <- certainty_remainder_chance(
+      register$N[rest],
+      draw_h,
+      if (is_null(zone_m)) NULL else register$zone[rest],
+      zone_m
+    )
     capped <- is_certainty_probability(pik)
     if (any(capped)) {
       ids <- register$psu_id[rest][capped]
+      where <- if (is_null(zone_m)) {
+        cli::format_inline(
+          "In stratum {.val {h}}, drawing {draw_h} of the noncertainty PSUs"
+        )
+      } else {
+        cli::format_inline(
+          "In stratum {.val {h}}, drawing {zone_m} PSU{?s} per zone"
+        )
+      }
       abort_samplyr(
         c(
           "The plan's classification and the executable selection rule disagree.",
-          "x" = "In stratum {.val {h}}, drawing {draw_h} of the noncertainty PSUs by {.val {method}} gives PSU {.val {ids}} an inclusion probability of at least one, but the plan holds {?it/them} noncertainty.",
+          "x" = "{where} by {.val {method}} gives PSU {.val {ids}} an inclusion probability of at least one, but the plan holds {?it/them} noncertainty.",
           "i" = "Flag the PSU in the register's {.code certainty} column and refit the plan with {.code svyplan::n_alloc()}."
         ),
         class = "samplyr_error_certainty_plan_disagreement",
@@ -599,6 +788,52 @@ check_certainty_plan_disagreement <- function(
     }
   }
   invisible(NULL)
+}
+
+#' A bridge pool's forced certainty rows and each row's zone
+#'
+#' Selection, the digest and joint quantities all read a stratum pool's
+#' certainty plan through this, so they agree on which rows are certain and
+#' which zone each of the others is drawn in. `zone` is NULL for an unzoned
+#' plan.
+#' @noRd
+certainty_pool_rows <- function(draw_spec, data) {
+  if (is_null(draw_spec$certainty_ids)) {
+    return(list(forced_idx = NULL, zone = NULL))
+  }
+  ids <- data[[draw_spec$certainty_plan$id_var]]
+  zones <- draw_spec$certainty_zones
+  list(
+    forced_idx = which(ids %in% draw_spec$certainty_ids),
+    zone = if (!is_null(zones)) zones$zone[match(ids, zones$psu_id)]
+  )
+}
+
+#' Does this stage draw a certainty plan's zones one PSU at a time?
+#'
+#' Only the selecting stage. The take stage carries the same plan.
+#' @noRd
+draws_one_per_zone <- function(draw_spec) {
+  plan <- draw_spec$certainty_plan
+  identical(plan$role, "select") && identical(plan$n_psu_per_zone, 1L)
+}
+
+#' First-order chances of a bridge stratum's noncertainty PSUs
+#'
+#' Unzoned, the remainder draws `n_draw` PSUs proportional to size. Zoned,
+#' each zone draws `m` of its own PSUs proportional to size, so a PSU's
+#' chance is `m * N_i / N_zone`. The one rule the disagreement check,
+#' selection and the digest share.
+#' @noRd
+certainty_remainder_chance <- function(sizes, n_draw, zone = NULL, m = NULL) {
+  if (is_null(zone)) {
+    return(n_draw * sizes / sum(sizes))
+  }
+  pik <- numeric(length(sizes))
+  for (rows in split(seq_along(sizes), zone)) {
+    pik[rows] <- m * sizes[rows] / sum(sizes[rows])
+  }
+  pik
 }
 
 #' Resolve the per-parent take identically for execution and previews
@@ -684,10 +919,28 @@ validate_certainty_bridge <- function(design, schedule, call = NULL) {
       stage = entry$stage,
       call = call
     )
+    if (is_null(spec$n_psu_per_zone) != is_null(spec$register$zone)) {
+      abort_samplyr(
+        "The certainty plan's zones and its PSUs per zone disagree: one is recorded without the other.",
+        class = "samplyr_error_svyplan_certainty_plan",
+        call = call
+      )
+    }
+    problem <- certainty_zoning_problem(
+      spec$register, spec$n_psu_draw, spec$n_psu_per_zone
+    )
+    if (!is_null(problem)) {
+      abort_samplyr(
+        c("The certainty plan's zones break the zoned design.", "x" = "{problem}"),
+        class = "samplyr_error_svyplan_certainty_plan",
+        call = call
+      )
+    }
     check_certainty_plan_disagreement(
       spec$register,
       spec$n_psu_draw,
       method = stage_spec$draw_spec$method,
+      zone_m = spec$n_psu_per_zone,
       call = call
     )
   }

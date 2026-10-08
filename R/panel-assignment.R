@@ -140,7 +140,7 @@
 #' occasions overlap from the same record.
 #'
 #' @seealso [execute()], [rotation_program()] for cohort programs,
-#'   `vignette("rotating-panels")`
+#'   [stack_waves()] for stacking materialized waves.
 #'
 #' @name panel-assignment
 NULL

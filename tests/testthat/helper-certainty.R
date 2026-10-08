@@ -58,3 +58,116 @@ certainty_element_frame <- function(psu = certainty_plan_register()) {
   rownames(frame) <- NULL
   frame
 }
+
+## A register large enough for zones. With two PSUs drawn per zone, the
+## plan holds A01 and B01 certain and cuts A's remainder into 4 zones and
+## B's into 2, each of 4 to 11 PSUs. Seed-free, like the unzoned fixture.
+certainty_zone_register <- function() {
+  data.frame(
+    psu_id = c(sprintf("A%02d", 1:24), sprintf("B%02d", 1:18)),
+    stratum = rep(c("A", "B"), c(24, 18)),
+    N = c(400, 60 + 5 * (1:23), 300, 50 + 4 * (1:17)),
+    stringsAsFactors = FALSE
+  )
+}
+
+certainty_zone_fixture <- function(psu = certainty_zone_register(), m = 2) {
+  frame <- data.frame(
+    stratum = c("A", "B"), N = c(3160, 1762), n_per_psu = 8,
+    stringsAsFactors = FALSE
+  )
+  measures <- data.frame(
+    stratum = c("A", "B"), name = "y", p = c(0.5, 0.4), icc_psu = 0.05,
+    stringsAsFactors = FALSE
+  )
+  targets <- data.frame(name = "y", cv = 0.12)
+  svyplan::n_alloc(
+    frame, measures = measures, targets = targets, psu = psu,
+    n_psu_per_zone = m
+  )
+}
+
+## The zone register with a small third stratum. Drawing one PSU per zone,
+## A's remainder is cut into 5 zones grouped (1, 2) and (3, 4, 5), B's into
+## 3, and C's into one, which has no partner inside C. So C's zone joins B's
+## zones, and one variance group crosses strata. Groups hold 2, 3, 2 and 2
+## zones.
+certainty_pair_register <- function() {
+  rbind(
+    certainty_zone_register(),
+    data.frame(
+      psu_id = sprintf("C%02d", 1:6), stratum = "C", N = 40 + 3 * (1:6),
+      stringsAsFactors = FALSE
+    )
+  )
+}
+
+certainty_pair_fixture <- function(psu = certainty_pair_register()) {
+  frame <- stats::aggregate(N ~ stratum, psu, sum)
+  frame$n_per_psu <- 8
+  measures <- data.frame(
+    stratum = c("A", "B", "C"), name = "y", p = c(0.5, 0.4, 0.3),
+    icc_psu = 0.05, stringsAsFactors = FALSE
+  )
+  targets <- data.frame(name = "y", cv = 0.15)
+  svyplan::n_alloc(
+    frame, measures = measures, targets = targets, psu = psu,
+    n_psu_per_zone = 1
+  )
+}
+
+## A hash of a bridge sample's rows, weights, zones and certainty flags,
+## in a fixed row order. Weights are rounded so the pin does not depend on
+## the last bit of a division.
+certainty_sample_key <- function(s) {
+  d <- as.data.frame(s)
+  cols <- grep(
+    "^(psu_id|person|\\.weight(_[0-9]+)?|\\.(zone|pair|certainty)_[0-9]+)$",
+    names(d),
+    value = TRUE
+  )
+  d <- d[order(d$psu_id, d$person), cols]
+  for (cn in grep("^\\.weight", cols, value = TRUE)) {
+    d[[cn]] <- signif(d[[cn]], 12)
+  }
+  rownames(d) <- NULL
+  rlang::hash(d)
+}
+
+## Each register PSU's planned stage-1 inclusion probability: one for
+## certainty, the PSUs per zone times its share of its zone otherwise.
+certainty_zone_pik <- function(plan) {
+  psu <- plan$psu
+  zone_key <- paste(psu$stratum, psu$.zone)
+  ifelse(
+    psu$certainty, 1,
+    plan$params$n_psu_per_zone * psu$N / ave(psu$N, zone_key, FUN = sum)
+  )
+}
+
+certainty_zone_design <- function(plan = certainty_zone_fixture(),
+                                  method = "pps_brewer") {
+  sampling_design() |>
+    add_stage() |>
+    stratify_by(stratum) |>
+    cluster_by(psu_id) |>
+    draw(n = plan, method = method, mos = N) |>
+    add_stage() |>
+    draw(n = plan)
+}
+
+## One stratum whose plan draws a single PSU, so the whole design has one
+## zone and its one variance group has no partner.
+certainty_single_zone_fixture <- function() {
+  psu <- data.frame(
+    psu_id = sprintf("A%02d", 1:10), stratum = "A",
+    N = c(400, 60 + 5 * (1:9)), stringsAsFactors = FALSE
+  )
+  frame <- data.frame(stratum = "A", N = sum(psu$N), n_per_psu = 8)
+  measures <- data.frame(stratum = "A", name = "y", p = 0.5, icc_psu = 0.05)
+  targets <- data.frame(name = "y", cv = 0.5)
+  svyplan::n_alloc(
+    frame, measures = measures, targets = targets, psu = psu,
+    n_psu_per_zone = 1
+  )
+}

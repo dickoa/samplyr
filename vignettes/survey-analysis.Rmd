@@ -35,9 +35,8 @@ An operation that adds, removes, or duplicates sampled rows changes the
 realization and prevents export.
 
 The main path reaches this article after `vignette("introduction")`, which
-includes a three-stage household sample. The sections on joins, export and domains
-apply to an ordinary sample. Read the later two-phase or overlapping-frame
-examples when your design uses them.
+includes a three-stage household sample. The sections on joins, export and
+domains apply to any supported sample.
 
 We use a small stratified EA sample so the analysis examples run independently.
 Sample inspection is covered in the "Inspecting the result" section of
@@ -316,227 +315,17 @@ columns in the retained first-phase sample. Missing current measurements
 remain missing. Keep earlier measurements under separate names if you need
 both. Identifiers and sampling metadata retain their design meanings.
 
-## Two phases: screening followed by a detailed interview
+## Other designs
 
-A second phase samples units already selected at phase 1, using information
-collected in that phase. It is a new selection law on the realized sample.
-A later stage in a household design instead samples children within selected
-parents. Continuing that design with a household listing is not a new phase.
+The same export functions handle designs this article does not work through,
+and each help page carries a runnable example.
 
-The bundled `ken_enterprises` is entirely synthetic. Here a cheap screening
-interview determines phase-two strata, and only the subsample receives a
-detailed interview. The stable `enterprise_id` links the phases. At phase 1,
-`cluster_by(enterprise_id)` declares that identity. Each such unit has one row.
-
-```{r screening}
-screening_design <- sampling_design("Establishment screening") |>
-  cluster_by(enterprise_id) |>
-  draw(n = 500)
-
-phase1 <- execute(screening_design, ken_enterprises, seed = 71)
-set.seed(72)
-phase1 <- phase1 |>
-  mutate(
-    revenue_baseline = revenue_millions,
-    screen_score = log1p(employees) + rnorm(n(), sd = 0.5),
-    priority = if_else(screen_score >= 4, "high", "ordinary")
-  )
-phase1 |> as.data.frame() |> count(priority)
-```
-
-The synthetic screening variables are observed for every phase-one unit,
-including those that will not enter phase 2. They remain in the retained
-phase-one sample so the two-phase export can reconstruct the selection pools.
-
-```{r detailed-interview}
-interview_design <- sampling_design("Detailed establishment interview") |>
-  stratify_by(priority) |>
-  draw(n = c(high = 60, ordinary = 90))
-
-phase2 <- execute(interview_design, phase1, seed = 73)
-
-set.seed(74)
-phase2 <- phase2 |>
-  mutate(
-    revenue_millions = revenue_baseline * exp(rnorm(n(), 0, 0.15)),
-    audit_hours = rgamma(n(), shape = 3, rate = 0.5)
-  )
-```
-
-`audit_hours` is a new phase-two measurement. `revenue_millions` is an updated
-measurement with the same name as its baseline counterpart. Export uses the
-current phase-two values. `revenue_baseline` keeps the earlier values available
-explicitly. All detailed interviews are complete in this example.
-
-```{r two-phase-estimation}
-two_phase_svy <- as_svydesign(phase2)
-svytotal(~revenue_millions + audit_hours, two_phase_svy)
-
-# The export uses the current observations and the combined phase weights.
-stopifnot(isTRUE(all.equal(
-  unname(coef(svytotal(~revenue_millions, two_phase_svy))),
-  sum(phase2$.weight * phase2$revenue_millions)
-)))
-```
-
-These estimates illustrate inference for the synthetic establishment
-population, not substantive estimates for Kenya. The example uses SRS at
-phase 1 and stratified SRS at phase 2, a supported two-phase path. A phase 2
-drawn by Sampford, CPS, Brewer, SPS or Pareto also exports, with joint
-probabilities computed on the phase-1 sample. A phase 1 drawn with unequal
-probabilities without replacement is refused, and so is Poisson selection at
-either phase. Phase chains longer
-than two and two-phase replicate export are currently unsupported. See
-`?as_svydesign` before changing the selection methods.
-
-## Joint information for PPS variance
-
-For supported PPS methods, `joint_expectation()` reconstructs exact or
-approximate second-order quantities according to the method.
-
-```{r}
-sampford_sample <- sampling_design() |>
-  stratify_by(region) |>
-  cluster_by(ea_id) |>
-  draw(n = 5, method = "pps_sampford", mos = households) |>
-  execute(bfa_eas, seed = 2025)
-
-joints <- joint_expectation(sampford_sample, bfa_eas, stages = 1)
-
-exact_pps_design <- as_svydesign(
-  sampford_sample,
-  pps = ppsmat(joints[[1]])
-)
-
-svymean(~households, exact_pps_design)
-```
-
-The Sampford matrix above is exact. CPS, systematic PPS, and Poisson selection
-also have exact second-order calculations in the supported cases.
-Generalized Brewer, SPS, Pareto, and unconstrained cube use the documented
-high-entropy approximation. Spatial methods and bounded cube do not provide a
-joint matrix. `?joint_expectation` is the authoritative method table.
-
-An exact systematic PPS matrix can contain zero pair probabilities. Exact
-design quantities do not then guarantee an estimable or stable sample variance
-through `survey::ppsmat()`. A sampled matrix cannot show whether unseen
-population pairs have zero probability, so `as_svydesign()` warns when a
-`ppsmat` object is supplied for systematic PPS. It does not refuse the route,
-because full pair positivity can hold at high sampling fractions.
-
-A user-supplied `pps` matrix describes stage 1. For a multi-stage sample it is
-applied to stage 1 alone, with a warning, and only when the sample has one row
-per stage-1 unit. Otherwise it is refused (`samplyr_error_pps_rows_per_psu`).
-Omit it when the intended analysis is the full multi-stage linearization with
-the default stage-level variance treatment.
-
-## Frames that overlap on one population
-
-Two registers of the same population, each incomplete: a landline frame and a
-cell frame, an area frame and a list frame. The samples are selected
-independently, one design and one seed each, and everything the feature
-contains happens after that.
-
-`stack_frames()` records which frames each sampled unit belongs to. Every
-component has to carry every frame's membership column, not only its own,
-because a unit selected from frame A has to say whether it was also listed in
-frame B, and that is the information the compositing needs.
-
-```{r frames}
-population <- data.frame(
-  person_id = 1:600,
-  spend = round(stats::rlnorm(600, log(120), 0.4), 2),
-  in_landline = rep(c(TRUE, FALSE), times = c(400, 200)),
-  in_cell = rep(c(FALSE, TRUE), times = c(150, 450))
-)
-
-frames <- stack_frames(
-  landline = sampling_design() |>
-    draw(n = 80) |>
-    execute(population[population$in_landline, ], seed = 1),
-  cell = sampling_design() |>
-    draw(n = 120) |>
-    execute(population[population$in_cell, ], seed = 2),
-  membership = c(landline = "in_landline", cell = "in_cell"),
-  key = person_id
-)
-
-summary(frames)
-```
-
-The domain counts are rows, not distinct people. Someone listed in both frames
-and selected from both appears twice, once per frame that selected them, and
-that is exactly the double count a composite weight has to resolve.
-
-### Two export routes
-
-`as_svydesign()` hands the stack to `survey::multiframe()`. Each component is
-exported on its own, so it keeps its strata, clusters and variance treatment,
-and the compositing sits on top.
-
-```{r frames-linearized}
-svytotal(~spend, as_svydesign(frames))
-```
-
-`theta = NULL`, the default, is the multiplicity estimator: a unit reached by
-both frames contributes half its weight through each. An explicit `theta` is
-Hartley's constant factor [@hartley1962], and it belongs to the **first** frame
-of the stack, so reversing the components and wanting the same estimator means
-asking for `1 - theta`.
-
-```{r frames-hartley}
-svytotal(~spend, as_svydesign(frames, theta = 0.74))
-```
-
-The expected multiframe estimator instead needs each unit's selection
-probability in every frame containing it. Supply the original registers through
-`overlaps = exante_overlaps(list(landline = landline_register,
-cell = cell_register), by = c(person_id = "person_id"))` when building the stack, using the stack's
-component names and key, then export with `estimator = "expected"`.
-The resolver requires exact inclusion probabilities by default. SPS and Pareto
-targets require `allow_approximate = TRUE` in `exante_overlaps()`. This accepts
-an approximation that can affect design unbiasedness. The stack records quality
-by frame, and exported designs retain it in their
-`samplyr_overlap_probability_quality` attribute. For inspecting one register,
-`exante_probabilities()` returns the same quality beside each probability.
-
-`samplyr` never forwards a missing `theta` to `survey`. Left unset there, it
-defaults to the ratio of the frames' mean sampling weights, which is a
-data-dependent stand-in for frame size over sample size rather than a neutral
-choice.
-
-The replicate route builds one system per frame and combines them in blocks: in
-a replicate column belonging to one frame, only that frame varies and every
-other stays at its full-sample weight. The combined variance is then the sum of
-the frames' own contributions, which is what independent selection from each
-frame gives.
-
-```{r frames-replicate}
-svytotal(~spend, as_svrepdesign(frames, type = "bootstrap", replicates = 100))
-```
-
-The two routes are not interchangeable, and the differences are the reason to
-know which one you are on.
-
-| | `as_svydesign()` | `as_svrepdesign()` |
-|---|---|---|
-| Number of frames | Two. `survey::multiframe()` composites two | Any number |
-| Compositing | Multiplicity, or Hartley with a stated `theta` | The same, with `theta` above two frames refused |
-| A component with shared weights | Refused | Supported |
-| Replicate methods | Not applicable | May differ between frames. `type = "auto"` picks one per component |
-
-The two-frame limit belongs to the export and is stated there, not at the
-design layer: `stack_frames()` records any number, exactly as `execute()`
-chains any number of phases while the two-phase export stops at two.
-
-### Where the theory comes from
-
-The multiplicity estimator for overlapping frames is the generalized weight
-share method with the standardized link matrix, because the number of links to
-a unit is the number of frames containing it [@lohr2021, section 3.2;
-@mecatti2007]. That is why a stack composed of frames and a sample whose
-weights were shared through a link table are handled by one mechanism rather
-than two, and why `vignette("design-semantics")` documents them together.
+| Design | Where it is documented |
+|:--|:--|
+| A second phase selected from the first-phase sample | `?execute` for the selection, `?as_svydesign` for the `survey::twophase()` export |
+| Exact or approximate joint inclusion probabilities for PPS | `?joint_expectation`, passed to `as_svydesign(pps = )` |
+| Independent samples from frames that overlap on one population | `?stack_frames`, `?as_svydesign.frame_stack` and `?as_svrepdesign.frame_stack` |
+| Weights shared to a linked population | `?share_weights` |
 
 ## Analysis checklist
 
@@ -550,8 +339,7 @@ than two, and why `vignette("design-semantics")` documents them together.
    and which frame an explicit `theta` was applied to.
 
 Use `vignette("serialization")` to archive the selection and
-`vignette("design-semantics")` for the detailed export contracts, the weight
-share method, and the contract separating design weights from estimation
-weights.
+`vignette("design-semantics")` for the detailed export contracts and the
+contract separating design weights from estimation weights.
 
 ## References

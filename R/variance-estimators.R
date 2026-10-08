@@ -157,7 +157,9 @@ stage_variance_traits <- function(design, stages) {
       method = draw$method,
       kind = kind,
       unequal = stage_is_unequal(draw, kind),
-      systematic = draw$method %in% c("systematic", "pps_systematic"),
+      # A systematic draw of one PSU per zone is a draw proportional to size.
+      systematic = draw$method %in% c("systematic", "pps_systematic") &&
+        !draws_one_per_zone(draw),
       clustered = !is_null(stage$clusters),
       stratified = !is_null(stage$strata),
       midstage_element = is_null(stage$clusters) &&
@@ -498,6 +500,9 @@ brewer_findings <- function(traits) {
     } else if (identical(t$method, "pps_chromy")) {
       paste0("Chromy's ", t$name, " is treated as drawn with replacement,",
              " which can be strongly conservative")
+    } else if (draws_one_per_zone(t$draw)) {
+      paste0("One PSU per zone at ", t$name, ", collapsed in variance",
+             " groups, which errs toward too large a variance")
     } else if (identical(t$kind, "pps_wor") && !t$systematic) {
       paste0("Brewer's approximation at ", t$name)
     }
@@ -750,6 +755,17 @@ brr_findings <- function(traits, facts) {
   fact <- stage_fact(facts, traits[[1]]$stage)
   note <- "Balanced half-samples need an even number of sampled units, at
     least two, in every first-stage stratum"
+  draw <- traits[[1]]$draw
+  if (draws_one_per_zone(draw)) {
+    # The plan fixes the variance groups, one sampled PSU per zone.
+    reg <- draw$certainty_plan$register
+    zoned <- !is.na(reg$pair)
+    cells <- unique(data.frame(zone = paste(reg$stratum, reg$zone), pair = reg$pair)[zoned, ])
+    if (any(tabulate(cells$pair) %% 2L != 0L)) {
+      return(list(finding("refused", "samplyr_error_svrep_conversion_failed",
+                          note, stage = traits[[1]]$stage)))
+    }
+  }
   if (is_null(fact) || !fact$fixed ||
       (fact$n_certainty > 0 && length(traits) > 1L)) {
     return(list(finding("risk", "samplyr_error_svrep_conversion_failed",

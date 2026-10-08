@@ -765,6 +765,44 @@
               "n_take": {
                 "type": "integer",
                 "minimum": 1
+              },
+              "zone": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "array",
+                    "maxItems": 0
+                  },
+                  {
+                    "type": "object",
+                    "maxProperties": 0
+                  }
+                ]
+              },
+              "pair": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "array",
+                    "maxItems": 0
+                  },
+                  {
+                    "type": "object",
+                    "maxProperties": 0
+                  }
+                ]
               }
             },
             "required": [
@@ -834,6 +872,12 @@
               "type": "object",
               "maxProperties": 0
             }
+          ]
+        },
+        "n_psu_per_zone": {
+          "enum": [
+            1,
+            2
           ]
         }
       },

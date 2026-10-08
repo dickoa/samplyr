@@ -44,6 +44,15 @@
 #'     by the probability calculation. Present for unequal-probability and
 #'     balanced stages. Always FALSE for WR/PMR stages, where the recorded
 #'     chance is an expected hit rather than a probability.
+#'   - `.zone_1`: The zone a PSU was drawn from, when stage 1 fields a
+#'     certainty plan solved with `svyplan::n_alloc(n_psu_per_zone = )`.
+#'     Zones are numbered within each stratum, one or two PSUs are drawn
+#'     from each, and certainty PSUs have `NA`. With two per zone the survey
+#'     export uses stratum by zone as the variance strata.
+#'   - `.pair_1`: The variance group of the PSU's zone, when the plan draws
+#'     one PSU per zone. svyplan fixes the groups before selection, two or
+#'     three zones each, numbered across strata, and certainty PSUs have
+#'     `NA`. The survey export uses the groups as the variance strata.
 #'   - `.replicate`: Replicate identifier (only when `reps` is specified)
 #'   - `.panel`: Panel assignment (only when `panels` is specified), described
 #'     in [panel-assignment]
@@ -784,10 +793,10 @@ dplyr_row_slice.tbl_sample <- function(data, i, ...) {
 #'
 #' mutate() and friends funnel through dplyr_col_modify(). Overwriting
 #' or dropping an internal design column (`.weight`, `.weight_k`,
-#' `.fpc_k`, `.draw_k`, `.certainty_k`, `.replicate`, `.sample_id`,
-#' `.panel`) breaks the link between the data and the stored design,
-#' so the result is marked as modified. Adding or changing ordinary
-#' data columns is unaffected.
+#' `.fpc_k`, `.draw_k`, `.certainty_k`, `.zone_k`, `.pair_k`, `.replicate`,
+#' `.sample_id`, `.panel`) breaks the link between the data and the
+#' stored design, so the result is marked as modified. Adding or changing
+#' ordinary data columns is unaffected.
 #'
 #' @param data A `tbl_sample` object.
 #' @param cols Named list of modified columns, as passed by dplyr

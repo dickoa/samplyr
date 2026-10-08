@@ -438,6 +438,10 @@ systematic_approximated_stages <- function(design, stages_executed, df,
     if (!method %in% c("systematic", "pps_systematic")) {
       return(FALSE)
     }
+    # A systematic draw of one PSU is a draw proportional to size.
+    if (draws_one_per_zone(design$stages[[stage_idx]]$draw_spec)) {
+      return(FALSE)
+    }
     # A census has no variance to approximate.
     !spec_stage_census(df, stage_idx)
   }, logical(1))
@@ -1880,9 +1884,16 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices,
     }
 
     if (kind %in% c("pps_wor", "rs_poisson_first", "unsupported_first")) {
+      prob <- 1 / df[[weight_col]]
+      if (draws_one_per_zone(design$stages[[stage_idx]]$draw_spec)) {
+        # One draw per zone has the with-replacement variance, so the
+        # remainder carries no correction. Certainty PSUs keep theirs, which
+        # brings their later stages in.
+        prob[!is_certainty_probability(prob)] <- 0
+      }
       fpc_vars <- c(
         fpc_vars,
-        add_term(paste0(".fpc_pi_", stage_idx), 1 / df[[weight_col]])
+        add_term(paste0(".fpc_pi_", stage_idx), prob)
       )
       next
     }

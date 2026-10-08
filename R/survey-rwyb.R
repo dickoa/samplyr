@@ -105,8 +105,16 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
       ), class = "samplyr_error_rwyb_missing_parents")
     }
     prob <- entry$prob
-    wr <- methods[pos] %in% c("SRSWR", "PPSWR")
+    method <- methods[pos]
+    wr <- method %in% c("SRSWR", "PPSWR")
     if (wr) prob[] <- 0
+    if (draws_one_per_zone(design$stages[[i]]$draw_spec)) {
+      # One draw per zone has the with-replacement variance within each
+      # variance group. Certainty PSUs keep probability one.
+      wr <- TRUE
+      method <- "PPSWR"
+      prob[!is_certainty_probability(prob)] <- 0
+    }
     if (length(prob) != nrow(df) || any(!is.finite(prob)) ||
         any(prob < 0 | prob > 1) || (!wr && any(prob == 0))) {
       abort_samplyr("Invalid recorded stage-{i} probabilities for RWYB export.",
@@ -124,7 +132,7 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
       # Count sampling units, not their rows of surviving descendants.
       final <- pos == length(stages)
       allow_singletons <- final && identical(lonely.psu, "certainty")
-      if (methods[pos] != "Poisson" && !allow_singletons &&
+      if (method != "Poisson" && !allow_singletons &&
           any(tabulate(pool[active & !duplicated(unit)]) == 1L)) {
         abort_samplyr(c(
           "RWYB cannot estimate variance for a noncertainty singleton stratum at stage {i}.",
@@ -144,7 +152,7 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
         samp_unit_ids = matrix(unit[active], ncol = 1L),
         strata_ids = matrix(pool[active], ncol = 1L),
         samp_unit_sel_probs = matrix(prob[active], ncol = 1L),
-        samp_method_by_stage = methods[pos],
+        samp_method_by_stage = method,
         allow_final_stage_singletons = allow_singletons,
         output = "factors"
       )

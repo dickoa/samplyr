@@ -757,7 +757,8 @@ abort_unresolvable <- function(reason) {
 #' first-order chances. Errors when the chance is not deterministic
 #' from (method, mos, n, frac).
 #' @noRd
-resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL) {
+resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL,
+                                zone = NULL) {
   rlang::local_error_call(caller_env())
   if (identical(draw_spec$method_probabilities, "unknown")) {
     abort_unresolvable(paste0(
@@ -854,9 +855,17 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL) {
   chance[cert$certainty_idx] <- 1
   if (cert$n_remaining > 0 && length(cert$remaining_idx) > 0) {
     n_prob <- min(cert$n_remaining, length(cert$remaining_idx))
-    chance[cert$remaining_idx] <- base_chance(
-      mos_vals[cert$remaining_idx], n_prob, length(cert$remaining_idx)
-    )
+    if (is_null(zone)) {
+      chance[cert$remaining_idx] <- base_chance(
+        mos_vals[cert$remaining_idx], n_prob, length(cert$remaining_idx)
+      )
+    } else {
+      # A zoned remainder draws its fixed count from each zone.
+      m <- draw_spec$certainty_plan$n_psu_per_zone
+      for (rows in split(cert$remaining_idx, zone[cert$remaining_idx])) {
+        chance[rows] <- base_chance(mos_vals[rows], m, length(rows))
+      }
+    }
   }
   list(chance = chance, n_target = n_target)
 }
@@ -1165,10 +1174,10 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
     mos_vals <- if (!is_null(draw_spec$mos)) {
       frame[[draw_spec$mos]][urows]
     }
-    forced_idx <- if (!is_null(pool_spec$certainty_ids)) {
-      which(frame[[pool_spec$certainty_plan$id_var]][urows] %in% pool_spec$certainty_ids)
-    } else NULL
-    resolved <- resolve_pool_chance(pool_spec, mos_vals, length(urows), forced_idx)
+    pool <- certainty_pool_rows(pool_spec, frame[urows, , drop = FALSE])
+    resolved <- resolve_pool_chance(
+      pool_spec, mos_vals, length(urows), pool$forced_idx, pool$zone
+    )
     pools_acc[[length(pools_acc) + 1L]] <<- list(
       parent = parent,
       first_row = urows[1],

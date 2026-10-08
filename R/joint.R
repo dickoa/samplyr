@@ -157,6 +157,14 @@
 #' constraints and spatial spreading alter pairwise selection beyond the
 #' approximation. [variance-estimation] gives their replicate variance.
 #'
+#' A stage that draws a certainty plan's zones treats each zone as a draw
+#' of its own, so PSUs of different zones have the product of their
+#' chances. It needs `frame`, since the digest does not record the zone
+#' mates of a selected PSU. A plan drawing one PSU per zone is refused
+#' (`samplyr_error_joint_method_unsupported`). Two PSUs of one zone are
+#' never drawn together, so no unbiased variance estimator can use its
+#' matrix.
+#'
 #' ## WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})
 #'
 #' | samplyr method     | sondage function              | Quality                            |
@@ -412,6 +420,27 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
             "i" = "Controlled count bounds and spatial spreading alter pairwise selection behavior beyond the available approximation."
           ),
           class = "samplyr_error_joint_method_unsupported"
+        )
+      }
+
+      if (draws_one_per_zone(draw_spec)) {
+        cli_abort(
+          c(
+            "Joint inclusion probabilities are not computed for a stage that draws one PSU per zone.",
+            "i" = "Two PSUs of one zone are never drawn together, so no unbiased variance estimator can use the matrix. The Sen-Yates-Grundy form is zero for the remainder.",
+            "i" = "The default {.fn as_svydesign} export collapses the zones in the plan's variance groups instead."
+          ),
+          class = "samplyr_error_joint_method_unsupported"
+        )
+      }
+      if (!is_null(draw_spec$certainty_plan$n_psu_per_zone) && is_null(frame)) {
+        abort_samplyr(
+          c(
+            "The frame digest cannot give the joint probabilities of a stage that draws a certainty plan's zones.",
+            "i" = "It identifies the selected PSUs only, and a zone's joint probabilities depend on all of its PSUs.",
+            "i" = "Pass the original {.arg frame}."
+          ),
+          class = "samplyr_error_digest_unavailable"
         )
       }
 
@@ -1200,15 +1229,11 @@ compute_joint_matrix <- function(
   }
 
   # The digest's own computation, so the frame path matches selection.
-  forced_idx <- NULL
-  if (!is_null(draw_spec$certainty_ids)) {
-    id_var <- draw_spec$certainty_plan$id_var
-    forced_idx <- which(frame[[id_var]] %in% draw_spec$certainty_ids)
-  }
+  pool <- certainty_pool_rows(draw_spec, frame)
   pool_spec <- draw_spec
   pool_spec$n <- as.double(n)
   pik <- tryCatch(
-    resolve_pool_chance(pool_spec, mos_vals, N, forced_idx)$chance,
+    resolve_pool_chance(pool_spec, mos_vals, N, pool$forced_idx, pool$zone)$chance,
     # Both refusals fire before a sample can exist.
     error = function(e) {
       abort_samplyr(
@@ -1221,6 +1246,9 @@ compute_joint_matrix <- function(
       )
     }
   )
+  if (!is_null(pool$zone)) {
+    return(assemble_jip_zoned(pik, pool$zone, method, sampled_idx, draw_spec))
+  }
   compute_jip_from_pik(
     pik, method, sampled_idx, draw_spec = draw_spec, nsim = nsim
   )
@@ -1379,6 +1407,38 @@ assemble_jip_with_certainty <- function(pik, cert_idx, method, sampled_idx, draw
     result[non_cert_pos, non_cert_pos] <- pik[sampled_non_cert_idx]
   }
 
+  result
+}
+
+#' Assemble the sampled joint matrix of a pool drawn zone by zone
+#'
+#' Each zone is a draw of its own, independent of the others. Two units of
+#' one zone take the method's joint probability computed on that zone alone,
+#' units of different zones the product of their chances, and a certainty
+#' unit the other unit's chance. `zone` is NA for certainty units.
+#' @noRd
+assemble_jip_zoned <- function(pik, zone, method, sampled_idx, draw_spec = NULL) {
+  sampled_idx <- as.integer(sampled_idx)
+  if (length(sampled_idx) == 0L) {
+    return(NULL)
+  }
+  p <- pik[sampled_idx]
+  result <- outer(p, p)
+  diag(result) <- p
+  sampled_zone <- zone[sampled_idx]
+  for (z in unique(sampled_zone[!is.na(sampled_zone)])) {
+    pos <- which(sampled_zone %in% z)
+    if (length(pos) < 2L) {
+      next
+    }
+    units <- which(zone %in% z)
+    result[pos, pos] <- compute_jip_by_method(
+      pik = pik[units],
+      method = method,
+      sampled_idx = match(sampled_idx[pos], units),
+      draw_spec = draw_spec
+    )
+  }
   result
 }
 

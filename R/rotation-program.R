@@ -121,8 +121,7 @@
 #' execute(program, wave = 2)
 #'
 #' @seealso [execute()] for drawing a master and materializing a wave,
-#'   `vignette("rotating-panels")` for the design taxonomy this fits
-#'   into.
+#'   [panel-assignment] for partitioning one execution into rotation groups.
 #' @family execution
 #' @export
 rotation_program <- function(cohorts, entry_wave = NULL, schedule = NULL,

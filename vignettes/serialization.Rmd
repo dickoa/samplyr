@@ -370,7 +370,7 @@ Keep these artifacts together:
 6. schedules linking separately executed longitudinal cohorts
 
 Use `vignette("design-semantics")` for the detailed design contract and
-`vignette("rotating-panels")` for cohort-specific persistence rules.
+`?rotation_program` for cohort-specific persistence rules.
 
 ```{r, include = FALSE}
 unlink(path)

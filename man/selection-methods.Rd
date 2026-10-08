@@ -27,7 +27,7 @@ Sixteen methods are built in, in three families: equal probability, PPS
    \code{pps_chromy} \tab Min. repl. \tab Fixed \tab Required \tab - \tab As SAS \code{PPS_SEQ} \cr
    \code{cube} \tab Without \tab Fixed \tab Optional \tab \code{aux} optional \tab Deville & \enc{Tillé}{Tille} 2004 \cr
    \code{lpm2} \tab Without \tab Fixed \tab Optional \tab \code{spread} required \tab Spatial spread \cr
-   \code{scps} \tab Without \tab Fixed \tab Optional \tab \code{spread} required \tab Spatial spread \cr
+   \code{scps} \tab Without \tab Fixed \tab Optional \tab \code{spread} required, \code{prn} \tab Spatial spread \cr
 }
 
 
@@ -154,6 +154,13 @@ Schelin, L. (2012). Spatially balanced sampling through the pivotal method.
 \enc{Grafström}{Grafstrom}, A. (2012). Spatially correlated Poisson
 sampling. \emph{Journal of Statistical Planning and Inference}, 142(1),
 139-147. \doi{10.1016/j.jspi.2011.07.003}
+
+\enc{Grafström}{Grafstrom}, A. and Matei, A. (2018). Coordination of
+spatially balanced samples. \emph{Survey Methodology}, 44(2), 215-238.
+
+Matei, A., Smith, P.A., Smeets, M.J.E. and Klingwort, J. (2023).
+Targetted double control of burden in multiple surveys. \emph{Survey
+Methodology}, 49(2), 363-384.
 }
 \seealso{
 \code{\link[=draw]{draw()}} to set a method on a stage,

@@ -181,6 +181,14 @@ Pareto also enter it with approximate first-order targets.
 Bounded cube, LPM2, and SCPS designs are refused, because count
 constraints and spatial spreading alter pairwise selection beyond the
 approximation. \link{variance-estimation} gives their replicate variance.
+
+A stage that draws a certainty plan's zones treats each zone as a draw
+of its own, so PSUs of different zones have the product of their
+chances. It needs \code{frame}, since the digest does not record the zone
+mates of a selected PSU. A plan drawing one PSU per zone is refused
+(\code{samplyr_error_joint_method_unsupported}). Two PSUs of one zone are
+never drawn together, so no unbiased variance estimator can use its
+matrix.
 }
 
 \subsection{WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})}{\tabular{lll}{

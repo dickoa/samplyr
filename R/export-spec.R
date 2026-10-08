@@ -18,10 +18,13 @@
 #'   with draw identifiers (its id is the `.draw_k` column), `"cluster"`
 #'   (ids in order of first appearance), or `"element"` (the row).
 #'   `midstage_element` flags an element stage with stages below it.
-#' - `strata`: the user's stratification variables, the take-all flag when
-#'   the stage's certainty units form a stratum of their own, and the
-#'   partition of rows they give together, numbered in order of first
-#'   appearance.
+#' - `strata`: the user's stratification variables (with the `.zone_k`
+#'   column when the stage drew a certainty plan's zones, each zone being a
+#'   stratum of the design), the take-all flag when the stage's certainty
+#'   units form a stratum of their own, and the partition of rows they give
+#'   together, numbered in order of first appearance. A stage drawing one
+#'   PSU per zone is stratified by its `.pair_k` variance groups alone,
+#'   since a group may cross the user's strata.
 #' - `prob`: the conditional inclusion probability, or for a
 #'   with-replacement stage the reciprocal of the stage weight. `census` is
 #'   TRUE when every row was taken with certainty.
@@ -84,11 +87,13 @@ stage_is_unequal <- function(draw_spec, kind = survey_stage_kind(draw_spec)) {
 #' is read as with replacement. Unequal probabilities at later stages, and a
 #' first stage drawn with replacement, reach the variance through the
 #' weights: in a simulation a PPS second stage gave the same replicate
-#' variance as its SRS counterpart.
+#' variance as its SRS counterpart. A stage drawing one PSU per zone has the
+#' with-replacement variance within its groups, so it loses nothing.
 #' @noRd
 stage_replicated_as_wr <- function(draw_spec,
                                    kind = survey_stage_kind(draw_spec)) {
-  identical(kind, "pps_wor") || identical(draw_spec$method, "pps_chromy")
+  (identical(kind, "pps_wor") && !draws_one_per_zone(draw_spec)) ||
+    identical(draw_spec$method, "pps_chromy")
 }
 
 #' @noRd
@@ -116,6 +121,13 @@ spec_stage_unit <- function(df, stage_spec, stage_idx) {
 #' @noRd
 spec_stage_strata <- function(df, stage_spec, stage_idx, kind) {
   user <- stage_spec$strata$vars %||% character(0)
+  zone_col <- paste0(".zone_", stage_idx)
+  pair_col <- paste0(".pair_", stage_idx)
+  if (pair_col %in% names(df)) {
+    user <- pair_col
+  } else if (zone_col %in% names(df)) {
+    user <- c(user, zone_col)
+  }
   cert_col <- paste0(".certainty_", stage_idx)
   # Certainty units are a take-all stratum at every stage.
   certainty <- if (

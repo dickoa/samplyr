@@ -151,5 +151,5 @@ occasions overlap from the same record.
 }
 \seealso{
 \code{\link[=execute]{execute()}}, \code{\link[=rotation_program]{rotation_program()}} for cohort programs,
-\code{vignette("rotating-panels")}
+\code{\link[=stack_waves]{stack_waves()}} for stacking materialized waves.
 }

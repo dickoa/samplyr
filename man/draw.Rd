@@ -49,18 +49,22 @@ matches no selected parent passes unnoticed.
 coercions and stage-aware for cluster and stratified two-stage plans.
 A plan giving one size for a stage stratified without \code{alloc} is
 refused (\code{samplyr_error_svyplan_total_per_stratum}) rather than taken
-in every stratum. \code{vignette("survey-planning")} gives the handoff by
-plan type.
+in every stratum.
 \item A certainty-aware \code{svyplan::n_alloc()} plan (solved with a \code{psu}
 register carrying \code{psu_id}), at a clustered, stratified stage 1 and
 again at stage 2 for the per-PSU takes. Stage 1 takes every certainty
-PSU and draws exactly the plan's remainder per stratum. Its method
+PSU and draws exactly the plan's remainder per stratum. A plan solved
+with \code{n_psu_per_zone = 2} draws two PSUs from each of its zones
+instead, records the zone in \code{.zone_1}, and exports one variance
+stratum per zone. With \code{n_psu_per_zone = 1} it draws one PSU per zone,
+records the plan's variance group in \code{.pair_1}, and exports the
+groups as variance strata (\link{variance-estimation}). Its method
 must be \code{pps_systematic}, \code{pps_brewer}, \code{pps_cps}, or \code{pps_sampford},
 with \code{mos} equal to the register's \code{N}. Stage 2 selects by \code{srswor} or
 \code{systematic}, and stratifying there requires an \code{alloc} method.
 Arguments the plan owns (\code{frac}, \code{certainty_size}, \code{certainty_prop},
 \code{min_n}, \code{max_n}, and at stage 1 \code{alloc}) are refused alongside it.
-\code{vignette("survey-planning")} shows the workflow and the frame checks.
+\code{\link[svyplan:merge_psus]{svyplan::merge_psus()}} merges PSUs smaller than the take.
 }}
 
 \item{frac}{Sampling fraction: a scalar for all strata, a named vector of
@@ -135,9 +139,12 @@ refused with class \code{samplyr_error_draw_string_column}.}
 
 \item{prn}{Permanent random numbers for sample coordination, a bare
 numeric column with values in the open interval (0, 1) and no missing
-values. Supported by \code{"bernoulli"}, \code{"pps_poisson"}, \code{"pps_sps"}, and
-\code{"pps_pareto"}. The sample is then deterministic for a given set of PRN
-values, which coordinates samples across survey waves.}
+values. Supported by \code{"bernoulli"}, \code{"pps_poisson"}, \code{"pps_sps"},
+\code{"pps_pareto"}, and \code{"scps"}. The sample is then deterministic for a
+given set of PRN values, which coordinates samples across survey waves.
+With \code{"scps"} it is also fixed by the order the pool's units are
+visited in, the frame's row order or the \code{control} order, so
+coordinated draws need the same order.}
 
 \item{aux}{Cube balancing declarations for \code{method = "cube"}, or ordinary
 balancing variables for a registered balanced method that declares

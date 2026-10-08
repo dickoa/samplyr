@@ -123,9 +123,10 @@ receipt as potentially confidential.}
 A \code{tbl_sample}: a data frame subclass carrying the selected rows,
 the design that produced them, and generated columns recording the
 selection. Those are \code{.sample_id}, \code{.weight}, the per-stage \code{.weight_k},
-\code{.fpc_k}, \code{.draw_k} and \code{.certainty_k}, and \code{.replicate} or \code{.panel}
-when \code{reps} or \code{panels} is used. \link{sample-columns} documents what each
-one holds.
+\code{.fpc_k}, \code{.draw_k} and \code{.certainty_k}, \code{.zone_1} and \code{.pair_1} for a
+zoned certainty plan, and \code{.replicate} or \code{.panel} when \code{reps} or
+\code{panels} is used.
+\link{sample-columns} documents what each one holds.
 }
 \description{
 \code{execute()} runs a sampling design against one or more data frames,

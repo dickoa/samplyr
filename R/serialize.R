@@ -1908,7 +1908,7 @@ encode_stage <- function(stage) {
 #' restores.
 #' @noRd
 encode_certainty_plan <- function(spec) {
-  list(
+  out <- list(
     role = spec$role,
     register = spec$register,
     n_psu_draw = as.list(spec$n_psu_draw),
@@ -1917,6 +1917,11 @@ encode_certainty_plan <- function(spec) {
     id_var = spec$id_var,
     svyplan_version = spec$svyplan_version
   )
+  # Only a zoned plan writes these, so an unzoned block is unchanged.
+  if (!is_null(spec$n_psu_per_zone)) {
+    out$n_psu_per_zone <- spec$n_psu_per_zone
+  }
+  out
 }
 
 #' Encode a per-stratum value (scalar, named vector, or data frame)
@@ -3372,7 +3377,12 @@ decode_certainty_plan <- function(x, call = caller_env()) {
         nrow(register) == 0) {
     malformed("the register must have psu_id, stratum, N, certainty, n_take")
   }
-  register <- as.data.frame(register[, needed], stringsAsFactors = FALSE)
+  zoned <- "zone" %in% names(register)
+  paired <- "pair" %in% names(register)
+  register <- as.data.frame(
+    register[, c(needed, if (zoned) "zone", if (paired) "pair")],
+    stringsAsFactors = FALSE
+  )
   register$stratum <- as.character(register$stratum)
   if (anyNA(register$psu_id) || anyDuplicated(register$psu_id)) {
     malformed("register PSU ids must be present and unique")
@@ -3416,7 +3426,35 @@ decode_certainty_plan <- function(x, call = caller_env()) {
   n_psu_draw <- decode_named_counts(x$n_psu_draw, "n_psu_draw")
   n_per_psu <- decode_named_counts(x$n_per_psu, "n_per_psu", allow_na = TRUE)
 
-  list(
+  zone_m <- x$n_psu_per_zone
+  if (zoned != !is_null(zone_m)) {
+    malformed("zones and PSUs per zone must be recorded together")
+  }
+  if (zoned) {
+    zone <- register$zone
+    if (all(is.na(zone))) {
+      zone <- as.integer(zone)
+    }
+    if (!is.numeric(zone) || any(!is.na(zone) & (zone < 1 | zone != floor(zone)))) {
+      malformed("register zones must be positive whole numbers or null")
+    }
+    register$zone <- as.integer(zone)
+    if (!is.numeric(zone_m) || length(zone_m) != 1 || !zone_m %in% c(1, 2)) {
+      malformed("a zoned plan must draw one or two PSUs per zone")
+    }
+  }
+  if (paired != (zoned && identical(as.numeric(zone_m), 1))) {
+    malformed("variance groups are recorded exactly for a plan drawing one PSU per zone")
+  }
+  if (paired) {
+    pair <- register$pair
+    if (!is.numeric(pair) || any(!is.na(pair) & (pair < 1 | pair != floor(pair)))) {
+      malformed("register variance groups must be positive whole numbers or null")
+    }
+    register$pair <- as.integer(pair)
+  }
+
+  out <- list(
     role = role,
     register = register,
     n_psu_draw = n_psu_draw,
@@ -3425,6 +3463,10 @@ decode_certainty_plan <- function(x, call = caller_env()) {
     id_var = id_var,
     svyplan_version = decode_chr(x$svyplan_version)
   )
+  if (zoned) {
+    out$n_psu_per_zone <- as.integer(zone_m)
+  }
+  out
 }
 
 #' Rebuild a data frame from JSON row objects

@@ -9,21 +9,23 @@ template:
   bootstrap: 5
   math-rendering: mathjax
 
+navbar:
+  structure:
+    left: [intro, reference, articles, tutorials, book, news]
+  components:
+    book:
+      text: Book
+      href: https://www.ahmadoudicko.com/sampling-design-r-book/
+
 articles:
   - title: "Start here"
     contents:
       - introduction
       - survey-analysis
-  - title: "For your design"
-    contents:
-      - survey-planning
-      - sampling-coordination
-      - rotating-panels
   - title: "Reference and reproducibility"
     contents:
       - serialization
       - design-semantics
-      - validation
 
 reference:
   - title: "Design specification"

@@ -231,9 +231,10 @@ NULL
 #' @return A `tbl_sample`: a data frame subclass carrying the selected rows,
 #'   the design that produced them, and generated columns recording the
 #'   selection. Those are `.sample_id`, `.weight`, the per-stage `.weight_k`,
-#'   `.fpc_k`, `.draw_k` and `.certainty_k`, and `.replicate` or `.panel`
-#'   when `reps` or `panels` is used. [sample-columns] documents what each
-#'   one holds.
+#'   `.fpc_k`, `.draw_k` and `.certainty_k`, `.zone_1` and `.pair_1` for a
+#'   zoned certainty plan, and `.replicate` or `.panel` when `reps` or
+#'   `panels` is used.
+#'   [sample-columns] documents what each one holds.
 #'
 #' @details
 #' ## Multi-stage with a single frame
@@ -2013,6 +2014,12 @@ execute_single_stage_impl <- function(
       if (".certainty" %in% names(result)) {
         join_cols <- c(join_cols, ".certainty")
       }
+      if (".zone" %in% names(result)) {
+        join_cols <- c(join_cols, ".zone")
+      }
+      if (".pair" %in% names(result)) {
+        join_cols <- c(join_cols, ".pair")
+      }
       cluster_data <- result[, join_cols, drop = FALSE]
       result <- dplyr::inner_join(
         frame,
@@ -2090,6 +2097,16 @@ execute_single_stage_impl <- function(
     result$.certainty <- NULL
   }
 
+  if (".zone" %in% names(result)) {
+    result[[paste0(".zone_", stage_num)]] <- result$.zone
+    result$.zone <- NULL
+  }
+
+  if (".pair" %in% names(result)) {
+    result[[paste0(".pair_", stage_num)]] <- result$.pair
+    result$.pair <- NULL
+  }
+
   if (!is_null(previous_sample) && ".weight" %in% names(previous_sample)) {
     result <- compound_stage_weights(
       result,
@@ -2146,6 +2163,8 @@ find_carry_forward_cols <- function(previous_sample) {
     grep("^\\.draw_\\d+$", nms, value = TRUE),
     grep("^\\.fpc_\\d+$", nms, value = TRUE),
     grep("^\\.certainty_\\d+$", nms, value = TRUE),
+    grep("^\\.zone_\\d+$", nms, value = TRUE),
+    grep("^\\.pair_\\d+$", nms, value = TRUE),
     intersect(".panel", nms),
     intersect("._prev_phase_weight", nms)
   )

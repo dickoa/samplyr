@@ -137,8 +137,7 @@ execute(program, wave = 2)
 }
 \seealso{
 \code{\link[=execute]{execute()}} for drawing a master and materializing a wave,
-\code{vignette("rotating-panels")} for the design taxonomy this fits
-into.
+\link{panel-assignment} for partitioning one execution into rotation groups.
 
 Other execution:
 \code{\link[=execute]{execute()}},

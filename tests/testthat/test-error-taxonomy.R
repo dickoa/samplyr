@@ -1026,7 +1026,6 @@ test_that("every condition class the package can raise is asserted by a test", {
   # Unreachable guards, spelled as suffixes so this list asserts nothing.
   untested <- paste0("samplyr_error_", c(
     "digest_no_stage",
-    "digest_unavailable",
     "alloc_ambiguous_matches",
     "aux_ambiguous_matches"
   ))

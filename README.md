@@ -42,13 +42,15 @@ for the grammar and a complete three-stage fieldwork example, then
 sample](https://dickoa.gitlab.io/samplyr/articles/survey-analysis.html)
 for the handoff to `survey` and `srvyr`.
 
-Choose the planning, coordination or rotating-panel article when your
-design needs it. The [selection-methods
+The book [Survey Sampling Design with
+R](https://www.ahmadoudicko.com/sampling-design-r-book/) covers planning
+with `svyplan`, coordination, rotating panels and validation. The
+[selection-methods
 reference](https://dickoa.gitlab.io/samplyr/reference/selection-methods.html)
 compares the methods, and the [variance-estimation
 reference](https://dickoa.gitlab.io/samplyr/reference/variance-estimation.html)
-gives how each one's variance is estimated. Serialization,
-semantics and validation are references to consult as needed.
+gives how each one's variance is estimated. Serialization and design
+semantics are references to consult as needed.
 
 ## Why samplyr?
 
@@ -564,9 +566,9 @@ their inputs and limits:
 |----|----|----|
 | Balanced sampling | `draw(method = "cube", aux = ...)`, with `bound()` for hard count constraints | `?draw`, `?bound` |
 | Spatially balanced | `draw(method = "lpm2" or "scps", spread = c(lon, lat))` | `?selection-methods` |
-| Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across waves | `vignette("sampling-coordination")` |
+| Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across waves | `?draw`, [Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/coordination.html) |
 | Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `?draw`, `sondage::register_method()` |
-| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `?panel-assignment`, `vignette("rotating-panels")` |
+| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `?panel-assignment`, `?rotation_program`, [Plan and run a rotating panel](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/rotating-panels.html) |
 | Replicated draws | `execute(reps = 5)` | `?execute` |
 | Two-phase | pipe a `tbl_sample` into a new design’s `execute()` | `vignette("survey-analysis")` |
 | Indirect sampling | `share_weights()`, to estimate for a population linked to the one that was sampled | `vignette("design-semantics")` |
@@ -666,9 +668,11 @@ one.
 ## Validation
 
 For statistical validation on synthetic populations with known truths,
-see `vignette("validation")`. It combines deterministic invariants
-(weights, certainty, stage compounding) with Monte Carlo checks of
-bias, standard-error calibration, and coverage.
+see [Validation on synthetic
+populations](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/validation.html)
+in the book. It combines deterministic invariants (weights, certainty,
+stage compounding) with Monte Carlo checks of bias, standard-error
+calibration, and coverage.
 
 ## Included Datasets
 

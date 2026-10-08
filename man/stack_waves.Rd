@@ -24,8 +24,7 @@ Verifies that two or more materialized waves come from one executed master
 and stacks them into a plain long table, one row per active master row per
 wave. This is the structural handoff to an inference layer. Which estimator
 of change is appropriate, and under what conditions, is a separate question
-that depends on the design and the overlap. See
-\code{vignette("rotating-panels")}.
+that depends on the design and the overlap.
 
 Row-binding waves by hand does not reproduce the checks this performs. Two
 executions of one design produce identical \code{.sample_id} values, so waves of

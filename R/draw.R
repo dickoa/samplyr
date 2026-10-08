@@ -24,7 +24,7 @@
 #' | `pps_chromy` | Min. repl. | Fixed | Required | - | As SAS `PPS_SEQ` |
 #' | `cube` | Without | Fixed | Optional | `aux` optional | Deville & \enc{Tillé}{Tille} 2004 |
 #' | `lpm2` | Without | Fixed | Optional | `spread` required | Spatial spread |
-#' | `scps` | Without | Fixed | Optional | `spread` required | Spatial spread |
+#' | `scps` | Without | Fixed | Optional | `spread` required, `prn` | Spatial spread |
 #'
 #' Every method takes either `n` or `frac`, except `pps_cps`, which requires
 #' `n`. For fixed-size methods, `frac` follows the `round` parameter (ceiling
@@ -150,6 +150,13 @@
 #' sampling. *Journal of Statistical Planning and Inference*, 142(1),
 #' 139-147. \doi{10.1016/j.jspi.2011.07.003}
 #'
+#' \enc{Grafström}{Grafstrom}, A. and Matei, A. (2018). Coordination of
+#' spatially balanced samples. *Survey Methodology*, 44(2), 215-238.
+#'
+#' Matei, A., Smith, P.A., Smeets, M.J.E. and Klingwort, J. (2023).
+#' Targetted double control of burden in multiple surveys. *Survey
+#' Methodology*, 49(2), 363-384.
+#'
 #'
 #' @name selection-methods
 #' @family design specification
@@ -190,18 +197,22 @@ NULL
 #'     coercions and stage-aware for cluster and stratified two-stage plans.
 #'     A plan giving one size for a stage stratified without `alloc` is
 #'     refused (`samplyr_error_svyplan_total_per_stratum`) rather than taken
-#'     in every stratum. `vignette("survey-planning")` gives the handoff by
-#'     plan type.
+#'     in every stratum.
 #'   - A certainty-aware `svyplan::n_alloc()` plan (solved with a `psu`
 #'     register carrying `psu_id`), at a clustered, stratified stage 1 and
 #'     again at stage 2 for the per-PSU takes. Stage 1 takes every certainty
-#'     PSU and draws exactly the plan's remainder per stratum. Its method
+#'     PSU and draws exactly the plan's remainder per stratum. A plan solved
+#'     with `n_psu_per_zone = 2` draws two PSUs from each of its zones
+#'     instead, records the zone in `.zone_1`, and exports one variance
+#'     stratum per zone. With `n_psu_per_zone = 1` it draws one PSU per zone,
+#'     records the plan's variance group in `.pair_1`, and exports the
+#'     groups as variance strata ([variance-estimation]). Its method
 #'     must be `pps_systematic`, `pps_brewer`, `pps_cps`, or `pps_sampford`,
 #'     with `mos` equal to the register's `N`. Stage 2 selects by `srswor` or
 #'     `systematic`, and stratifying there requires an `alloc` method.
 #'     Arguments the plan owns (`frac`, `certainty_size`, `certainty_prop`,
 #'     `min_n`, `max_n`, and at stage 1 `alloc`) are refused alongside it.
-#'     `vignette("survey-planning")` shows the workflow and the frame checks.
+#'     [svyplan::merge_psus()] merges PSUs smaller than the take.
 #' @param frac Sampling fraction: a scalar for all strata, a named vector of
 #'   stratum-specific fractions, or a data frame with every stratification
 #'   column and a `frac` column. Give `n` or `frac`, not both.
@@ -269,9 +280,12 @@ NULL
 #'   refused with class `samplyr_error_draw_string_column`.
 #' @param prn Permanent random numbers for sample coordination, a bare
 #'   numeric column with values in the open interval (0, 1) and no missing
-#'   values. Supported by `"bernoulli"`, `"pps_poisson"`, `"pps_sps"`, and
-#'   `"pps_pareto"`. The sample is then deterministic for a given set of PRN
-#'   values, which coordinates samples across survey waves.
+#'   values. Supported by `"bernoulli"`, `"pps_poisson"`, `"pps_sps"`,
+#'   `"pps_pareto"`, and `"scps"`. The sample is then deterministic for a
+#'   given set of PRN values, which coordinates samples across survey waves.
+#'   With `"scps"` it is also fixed by the order the pool's units are
+#'   visited in, the frame's row order or the `control` order, so
+#'   coordinated draws need the same order.
 #' @param aux Cube balancing declarations for `method = "cube"`, or ordinary
 #'   balancing variables for a registered balanced method that declares
 #'   `supports_aux = TRUE`. Bare numeric columns, such as

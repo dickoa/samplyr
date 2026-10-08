@@ -52,6 +52,15 @@ came from a \code{certainty_size}/\code{certainty_prop} rule or was capped at on
 by the probability calculation. Present for unequal-probability and
 balanced stages. Always FALSE for WR/PMR stages, where the recorded
 chance is an expected hit rather than a probability.
+\item \code{.zone_1}: The zone a PSU was drawn from, when stage 1 fields a
+certainty plan solved with \code{svyplan::n_alloc(n_psu_per_zone = )}.
+Zones are numbered within each stratum, one or two PSUs are drawn
+from each, and certainty PSUs have \code{NA}. With two per zone the survey
+export uses stratum by zone as the variance strata.
+\item \code{.pair_1}: The variance group of the PSU's zone, when the plan draws
+one PSU per zone. svyplan fixes the groups before selection, two or
+three zones each, numbered across strata, and certainty PSUs have
+\code{NA}. The survey export uses the groups as the variance strata.
 \item \code{.replicate}: Replicate identifier (only when \code{reps} is specified)
 \item \code{.panel}: Panel assignment (only when \code{panels} is specified), described
 in \link{panel-assignment}

@@ -17,9 +17,9 @@ A tbl_sample, marked as modified if a design column changed
 \description{
 mutate() and friends funnel through dplyr_col_modify(). Overwriting
 or dropping an internal design column (\code{.weight}, \code{.weight_k},
-\code{.fpc_k}, \code{.draw_k}, \code{.certainty_k}, \code{.replicate}, \code{.sample_id},
-\code{.panel}) breaks the link between the data and the stored design,
-so the result is marked as modified. Adding or changing ordinary
-data columns is unaffected.
+\code{.fpc_k}, \code{.draw_k}, \code{.certainty_k}, \code{.zone_k}, \code{.pair_k}, \code{.replicate},
+\code{.sample_id}, \code{.panel}) breaks the link between the data and the
+stored design, so the result is marked as modified. Adding or changing
+ordinary data columns is unaffected.
 }
 \keyword{internal}
