@@ -82,8 +82,10 @@
 #'   - `NULL` for non-PPS stages (SRS, systematic) or stages not
 #'     requested via the `stages` argument.
 #'
-#'   Rows and columns represent stage-specific sampled units in first
-#'   appearance order. At a WR stage, repeated hits of the same
+#'   Rows and columns are the stage's sampled units in the order they first
+#'   appear in the sample. For a sample with one row per stage-1 unit, the
+#'   stage-1 matrix therefore follows the sample rows, which is how
+#'   [survey::ppsmat()] reads it. At a WR stage, repeated hits of the same
 #'   population unit appear once, so dimensions match the number of
 #'   distinct sampled units (or clusters). At a later stage below a WR
 #'   parent, each parent draw occurrence defines a separate conditional
@@ -104,9 +106,10 @@
 #' sondage joint function then gives the submatrix of sampled units.
 #'
 #' For stratified or conditional (within-cluster) stages, joint
-#' quantities are computed independently within each group. Blocks follow
-#' their first appearance in the sample, as do units within a block, and
-#' cross-block entries are products of the marginal chances. Below a WR
+#' quantities are computed independently within each group, and
+#' cross-group entries are products of the marginal chances. The rows are
+#' then put in the order the units first appear in the sample, so the units
+#' of one group need not be contiguous. Below a WR
 #' parent, pair the matrix with stage-specific identities in this order,
 #' not blindly with every sample row when descendants duplicate a
 #' selected unit.
@@ -661,8 +664,8 @@ normalize_joint_frames <- function(x, frame, stages_executed,
 #' Row order matches first appearance in the sample. The sample rows
 #' themselves say where each selection appears (the verified
 #' sample_row locator for element stages, the selected ancestry keys
-#' matched against the sample columns for cluster stages), so blocks
-#' and selections within blocks both follow their minimum sample rank.
+#' matched against the sample columns for cluster stages). Blocks are
+#' assembled pool by pool, then rows are ordered by that sample rank.
 #'
 #' Refuses summarized chance representations rather than turning them
 #' into apparently exact joint probabilities.
@@ -839,17 +842,18 @@ compute_stage_jip_digest <- function(
       pik <- rep(p$chance, p$N)
       sampled_idx <- in_pool$unit_id
     }
-    compute_jip_from_pik(
+    # Repeated hits of a unit share one row, at its first hit.
+    with_joint_rank(compute_jip_from_pik(
       pik = pik,
       method = draw_spec$method,
       sampled_idx = sampled_idx,
       n = if (is.na(p$n_target)) NULL else as.integer(p$n_target),
       draw_spec = draw_spec,
       nsim = nsim
-    )
+    ), in_pool$.rank[!duplicated(sampled_idx)])
   })
 
-  assemble_block_diagonal(blocks)
+  order_by_joint_rank(assemble_block_diagonal(blocks))
 }
 
 #' Compute joint inclusion probabilities for a single stage
@@ -911,6 +915,11 @@ compute_stage_jip <- function(
       distinct(across(all_of(sample_dedup_vars)), .keep_all = TRUE)
   }
 
+  # Rows are the stage's units, deduplicated in first-appearance order. A
+  # free name, since a user column may be called `.joint_rank`.
+  rank_col <- free_column_name(sample_df, ".joint_rank")
+  sample_df[[rank_col]] <- seq_len(nrow(sample_df))
+
   # Later stages condition independently on each parent occurrence.
   ancestor_split <- intersect(
     ancestor_vars, intersect(names(effective_frame), names(sample_df))
@@ -952,21 +961,23 @@ compute_stage_jip <- function(
         draw_spec,
         cluster_spec,
         ancestor_vars,
+        rank_col,
         nsim
       )
     })
-    return(assemble_block_diagonal(blocks))
+    return(order_by_joint_rank(assemble_block_diagonal(blocks)))
   }
 
-  compute_stage_jip_pool(
+  order_by_joint_rank(compute_stage_jip_pool(
     effective_frame,
     sample_df,
     strata_spec,
     draw_spec,
     cluster_spec,
     ancestor_vars,
+    rank_col,
     nsim
-  )
+  ))
 }
 
 #' Joint matrix of one parent's pool (or the whole stage-1 frame)
@@ -978,6 +989,7 @@ compute_stage_jip_pool <- function(
   draw_spec,
   cluster_spec,
   ancestor_vars,
+  rank_col,
   nsim = 10000L
 ) {
   if (!is_null(strata_spec)) {
@@ -988,6 +1000,7 @@ compute_stage_jip_pool <- function(
       draw_spec,
       cluster_spec,
       ancestor_cluster_vars = ancestor_vars,
+      rank_col = rank_col,
       nsim = nsim
     )
   } else {
@@ -1000,6 +1013,7 @@ compute_stage_jip_pool <- function(
       strata_vars = NULL,
       cluster_spec = cluster_spec,
       ancestor_cluster_vars = ancestor_vars,
+      rank_col = rank_col,
       nsim = nsim
     )
   }
@@ -1019,6 +1033,7 @@ compute_stratified_jip <- function(
   draw_spec,
   cluster_spec,
   ancestor_cluster_vars = character(0),
+  rank_col,
   nsim = 10000L
 ) {
   strata_vars <- strata_spec$vars
@@ -1077,6 +1092,7 @@ compute_stratified_jip <- function(
       strata_vars = NULL,
       cluster_spec,
       ancestor_cluster_vars = ancestor_cluster_vars,
+      rank_col = rank_col,
       nsim = nsim
     )
   })
@@ -1097,10 +1113,13 @@ make_strata_group_ids <- function(data, strata_vars) {
 #' @noRd
 resolve_unstratified_n <- function(frame, draw_spec) {
   N <- nrow(frame)
-  round_method <- draw_spec$round %||% "up"
 
   if (!is_null(draw_spec$n)) {
-    n_val <- as.integer(draw_spec$n)
+    n_val <- if (is_random_size_method(draw_spec)) {
+      as.double(draw_spec$n)
+    } else {
+      as.integer(draw_spec$n)
+    }
     is_wr <- draw_spec$method %in% pps_wr_methods ||
       identical(draw_spec$method_type, "wr")
     return(if (is_wr) n_val else min(n_val, N))
@@ -1109,7 +1128,7 @@ resolve_unstratified_n <- function(frame, draw_spec) {
   if (!is_null(draw_spec$frac)) {
     frac <- draw_spec$frac
     if (is.numeric(frac) && length(frac) == 1) {
-      return(round_sample_size(N * frac, round_method))
+      return(frac_pool_size(N, frac, draw_spec))
     }
   }
 
@@ -1162,6 +1181,7 @@ compute_group_jip <- function(
   strata_vars,
   cluster_spec,
   ancestor_cluster_vars = character(0),
+  rank_col,
   nsim = 10000L
 ) {
   # Order-dependent methods ran on the pool sorted by `control`.
@@ -1174,20 +1194,21 @@ compute_group_jip <- function(
     sample_df,
     strata_vars,
     cluster_spec,
-    ancestor_cluster_vars = ancestor_cluster_vars
+    ancestor_cluster_vars = ancestor_cluster_vars,
+    rank_col = rank_col
   )
 
   if (length(sampled_idx) == 0) {
     return(NULL)
   }
 
-  compute_joint_matrix(
+  with_joint_rank(compute_joint_matrix(
     frame = group_frame,
     n = n_target,
     draw_spec = draw_spec,
-    sampled_idx = sampled_idx,
+    sampled_idx = as.vector(sampled_idx),
     nsim = nsim
-  )
+  ), attr(sampled_idx, "rank"))
 }
 
 #' Compute the sampled joint matrix for one group
@@ -1449,7 +1470,8 @@ match_sampled_units <- function(
   sample_df,
   strata_vars,
   cluster_spec,
-  ancestor_cluster_vars = character(0)
+  ancestor_cluster_vars = character(0),
+  rank_col
 ) {
   if (!is_null(cluster_spec)) {
     match_vars <- unique(c(ancestor_cluster_vars, cluster_spec$vars))
@@ -1501,9 +1523,13 @@ match_sampled_units <- function(
     if (is.factor(sample_key)) {
       sample_key <- as.character(sample_key)
     }
-    sample_key <- unique(sample_key)
-    sampled_idx <- match(sample_key, frame_key)
-    return(sampled_idx[!is.na(sampled_idx)])
+    first <- !duplicated(sample_key)
+    sampled_idx <- match(sample_key[first], frame_key)
+    found <- !is.na(sampled_idx)
+    return(structure(
+      sampled_idx[found],
+      rank = group_sample[[rank_col]][first][found]
+    ))
   }
 
   n_unique <- nrow(distinct(group_frame, across(all_of(match_vars))))
@@ -1520,16 +1546,18 @@ match_sampled_units <- function(
   frame_keys <- group_frame |>
     select(all_of(match_vars))
   sample_keys <- group_sample |>
-    select(all_of(match_vars)) |>
-    distinct()
+    select(all_of(c(match_vars, rank_col))) |>
+    distinct(across(all_of(match_vars)), .keep_all = TRUE)
 
-  matched <- inner_join(
-    sample_keys |> mutate(.sample_row = row_number()),
-    frame_keys |> mutate(.frame_row = row_number()),
-    by = match_vars
-  )
+  # Row counters under names no key column uses.
+  sample_row <- free_name(c(match_vars, rank_col), ".sample_row")
+  frame_row <- free_name(c(match_vars, rank_col, sample_row), ".frame_row")
+  sample_keys[[sample_row]] <- seq_len(nrow(sample_keys))
+  frame_keys[[frame_row]] <- seq_len(nrow(frame_keys))
+  matched <- inner_join(sample_keys, frame_keys, by = match_vars)
+  matched <- matched[order(matched[[sample_row]]), , drop = FALSE]
 
-  matched$.frame_row[order(matched$.sample_row)]
+  structure(matched[[frame_row]], rank = matched[[rank_col]])
 }
 
 #' Assemble joint probability matrix from per-group matrices
@@ -1561,5 +1589,49 @@ assemble_block_diagonal <- function(matrices) {
     offset <- offset + n_block
   }
 
+  ranks <- lapply(matrices, attr, "rank")
+  ranked <- !vapply(ranks, is.null, logical(1))
+  if (all(ranked)) {
+    attr(result, "rank") <- unlist(ranks)
+  } else if (any(ranked)) {
+    abort_samplyr(
+      "Joint blocks disagree on whether their rows carry a sample rank.",
+      class = "samplyr_error_internal"
+    )
+  }
   result
+}
+
+#' Attach the sample rank of each row of one pool's joint block
+#'
+#' The rank is the row's first appearance among the stage's sampled units.
+#' Blocks are built parent by parent and stratum by stratum, and
+#' `order_by_joint_rank()` puts the assembled matrix back in sample order,
+#' which is the order survey pairs matrix rows with sample rows in.
+#' @noRd
+with_joint_rank <- function(mat, rank) {
+  if (is_null(mat)) {
+    return(mat)
+  }
+  if (length(rank) != nrow(mat)) {
+    abort_samplyr(
+      "A joint block has {nrow(mat)} row{?s} but {length(rank)} sample rank{?s}.",
+      class = "samplyr_error_internal"
+    )
+  }
+  attr(mat, "rank") <- rank
+  mat
+}
+
+#' Order a stage's joint matrix by first appearance in the sample
+#' @noRd
+order_by_joint_rank <- function(mat) {
+  rank <- attr(mat, "rank")
+  if (is_null(mat) || is_null(rank)) {
+    return(mat)
+  }
+  ord <- order(rank)
+  mat <- mat[ord, ord, drop = FALSE]
+  attr(mat, "rank") <- NULL
+  mat
 }

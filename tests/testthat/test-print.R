@@ -206,4 +206,8 @@ test_that("a truncated key list never quotes its remainder", {
   keys <- data.frame(st = paste0("s", 1:100), g = "x")
   expect_identical(format_key_labels(keys, "st"), keys$st)
   expect_identical(format_key_preview(keys), paste0(keys$st, "/x"))
+  expect_identical(
+    format_key_preview(data.frame(a = c(1, 10, 100), b = "x")),
+    c("1/x", "10/x", "100/x")
+  )
 })

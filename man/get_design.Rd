@@ -16,6 +16,9 @@ The \code{sampling_design} object stored in \code{x}.
 Returns the \code{sampling_design} metadata attached to a \code{tbl_sample}. This is
 the original design object used to create the sample, including all stage
 specifications, labels, stratification, clustering, and draw settings.
+One difference is possible: at a stage whose cluster ids repeat across its
+strata, the cluster key also holds the strata it was read within, and
+prints as \verb{town (within county)}. See \code{\link[=cluster_by]{cluster_by()}}.
 }
 \details{
 This is especially useful for:

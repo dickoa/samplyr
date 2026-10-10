@@ -945,12 +945,11 @@ resolve_stratum_draw_spec <- function(
 sample_unstratified <- function(frame, draw_spec, trace_mode = "full") {
   rlang::local_error_call(caller_env())
   N <- nrow(frame)
-  round_method <- draw_spec$round %||% "up"
 
   n <- if (!is_null(draw_spec$n)) {
     draw_spec$n
   } else if (!is_null(draw_spec$frac)) {
-    round_sample_size(N * draw_spec$frac, round_method)
+    frac_pool_size(N, draw_spec$frac, draw_spec)
   } else {
     cli_abort(
       "Cannot determine sample size",
@@ -1050,6 +1049,9 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
   mos <- draw_spec$mos
   N <- nrow(data)
   random_size <- is_random_size_method(draw_spec)
+  if (random_size && is.numeric(draw_spec$frac) && length(draw_spec$frac) == 1L) {
+    draw_spec$frac <- frac_pool_rate(N, draw_spec$frac, draw_spec)
+  }
   # Preserve nominal random-size targets before probability capping.
   n_target <- if (
     random_size &&

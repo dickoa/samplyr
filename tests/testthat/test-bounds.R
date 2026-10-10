@@ -87,14 +87,22 @@ test_that("min_n and max_n warn when no allocation method", {
     sampling_design() |>
       stratify_by(region) |>
       draw(n = 100, min_n = 2),
-    "only applies when an allocation method"
+    "applies only with `frac` or with an allocation method",
+    class = "samplyr_warning_draw_argument_ignored"
   )
 
   expect_warning(
     sampling_design() |>
       stratify_by(region) |>
       draw(n = 100, max_n = 50),
-    "only applies when an allocation method"
+    "applies only with `frac` or with an allocation method",
+    class = "samplyr_warning_draw_argument_ignored"
+  )
+
+  expect_no_warning(
+    sampling_design() |>
+      stratify_by(region) |>
+      draw(frac = 0.1, min_n = 2, max_n = 50)
   )
 })
 
@@ -863,4 +871,215 @@ test_that("the capping message names the strata and the units moved", {
       execute(frame, seed = 1) |>
       invisible()
   )
+})
+
+## Bounds on a sampling fraction
+
+# Five counties of 13, 13, 15, 6 and 6 towns, town ids restarting in each
+# county, and neighbourhoods numbered within each town.
+spss_poll_frame <- function() {
+  towns <- data.frame(
+    county = rep(c("Central", "Eastern", "Northern", "Southern", "Western"),
+                 c(13, 13, 15, 6, 6))
+  )
+  towns$town <- stats::ave(seq_len(nrow(towns)), towns$county, FUN = seq_along)
+  towns$n_nbr <- (seq_len(nrow(towns)) %% 4L) + 2L
+  frame <- towns[rep(seq_len(nrow(towns)), towns$n_nbr), c("county", "town")]
+  frame$nbrhood <- stats::ave(seq_len(nrow(frame)),
+                              frame$county, frame$town, FUN = seq_along)
+  sizes <- 20L + (seq_len(nrow(frame)) * 7L) %% 31L
+  frame <- frame[rep(seq_len(nrow(frame)), sizes), ]
+  frame$voteid <- stats::ave(seq_len(nrow(frame)),
+                             frame$county, frame$town, frame$nbrhood,
+                             FUN = seq_along)
+  frame$town_size <- stats::ave(frame$voteid, frame$county, frame$town,
+                                FUN = length)
+  rownames(frame) <- NULL
+  frame
+}
+
+test_that("frac with min_n and max_n reproduces the SPSS rate rule", {
+  frame <- spss_poll_frame()
+  design <- sampling_design() |>
+    add_stage("Town") |>
+    stratify_by(county) |>
+    cluster_by(county, town) |>
+    draw(frac = 0.3, min_n = 3, max_n = 5, round = "nearest",
+         method = "pps_sampford", mos = town_size) |>
+    add_stage("Voters") |>
+    stratify_by(nbrhood) |>
+    draw(frac = 0.2, round = "nearest")
+
+  s1 <- execute(design, frame, seed = 1, stages = 1)
+  towns <- unique(as.data.frame(s1)[c("county", "town", "town_size", ".weight")])
+  expect_identical(
+    c(table(towns$county)),
+    c(Central = 4L, Eastern = 4L, Northern = 5L, Southern = 3L, Western = 3L)
+  )
+  M_h <- c(table(frame$county))
+  n_h <- c(table(towns$county))
+  expect_equal(
+    1 / towns$.weight,
+    unname(n_h[towns$county] * towns$town_size / M_h[towns$county])
+  )
+
+  s <- as.data.frame(execute(design, frame, seed = 1))
+  picked <- unique(s[c("county", "town")])
+  pop <- merge(frame, picked)
+  N <- stats::aggregate(voteid ~ county + town + nbrhood, pop, length)
+  n <- stats::aggregate(voteid ~ county + town + nbrhood, s, length)
+  both <- merge(N, n, by = c("county", "town", "nbrhood"))
+  expect_identical(nrow(both), nrow(N))
+  expect_identical(both$voteid.y, as.integer(floor(0.2 * both$voteid.x + 0.5)))
+
+  pools <- frame_summary(design, frame, detail = "pool")
+  stage1 <- pools[pools$stage == 1L, ]
+  expect_identical(
+    stats::setNames(stage1$n_target, stage1$county)[names(n_h)],
+    stats::setNames(as.double(n_h), names(n_h))
+  )
+})
+
+test_that("frac bounds apply per stratum without moving units", {
+  frame <- data.frame(st = rep(c("a", "b", "c"), c(4, 20, 60)), id = 1:84)
+  take <- function(...) {
+    s <- execute(sampling_design() |> stratify_by(st) |> draw(...), frame,
+                 seed = 1)
+    c(table(s$st))
+  }
+  expect_identical(take(frac = 0.1, min_n = 5, max_n = 8),
+                   c(a = 4L, b = 5L, c = 6L))
+  expect_identical(take(frac = 0.5, max_n = 10), c(a = 2L, b = 10L, c = 10L))
+  expect_identical(take(frac = c(a = 0.5, b = 0.1, c = 0.5), max_n = 10),
+                   c(a = 2L, b = 2L, c = 10L))
+  expect_identical(
+    take(frac = data.frame(st = c("a", "b", "c"), frac = c(0.5, 0.1, 0.5)),
+         min_n = 3, max_n = 10),
+    c(a = 3L, b = 3L, c = 10L)
+  )
+  # Without replacement a stratum below min_n is a census, silently.
+  design <- sampling_design() |>
+    stratify_by(st) |>
+    draw(frac = 0.1, min_n = 5)
+  expect_silent(s <- execute(design, frame, seed = 1))
+  expect_identical(unique(s$.weight[s$st == "a"]), 1)
+  # With replacement min_n is not capped by the stratum.
+  expect_identical(take(frac = 0.1, min_n = 6, method = "srswr"),
+                   c(a = 6L, b = 6L, c = 6L))
+})
+
+test_that("frac bounds apply to unstratified and later-stage pools", {
+  frame <- data.frame(id = 1:84, x = seq(1, 10, length.out = 84))
+  design <- sampling_design() |>
+    draw(frac = 0.01, min_n = 5, method = "pps_brewer", mos = x)
+  s <- execute(design, frame, seed = 1)
+  expect_identical(nrow(s), 5L)
+  expect_equal(1 / s$.weight, sondage::inclusion_prob(frame$x, 5)[s$id])
+  expect_equal(diag(joint_expectation(s, frame)$stage_1), 1 / s$.weight)
+
+  psus <- data.frame(psu = rep(1:6, each = 10), id = 1:60)
+  design <- sampling_design() |>
+    add_stage() |>
+    cluster_by(psu) |>
+    draw(n = 3) |>
+    add_stage() |>
+    draw(frac = 0.1, min_n = 2)
+  s <- execute(design, psus, seed = 1)
+  expect_identical(unname(c(table(s$psu))), c(2L, 2L, 2L))
+})
+
+test_that("frac bounds on a random-size method bound the expected size", {
+  frame <- data.frame(st = rep(c("a", "b", "c"), c(4, 20, 60)), id = 1:84)
+  design <- sampling_design() |>
+    stratify_by(st) |>
+    draw(frac = 0.1, min_n = 3, max_n = 4, method = "bernoulli")
+  rates <- c(a = 3 / 4, b = 3 / 20, c = 4 / 60)
+  s <- execute(design, frame, seed = 1)
+  expect_equal(c(tapply(1 / s$.weight, s$st, unique))[names(rates)], rates)
+  pools <- frame_summary(design, frame, detail = "pool")
+  expect_equal(stats::setNames(pools$chance, pools$st)[names(rates)], rates)
+  expect_equal(stats::setNames(pools$n_target, pools$st)[names(rates)],
+               c(a = 3, b = 3, c = 4))
+})
+
+test_that("printed designs show min_n and max_n", {
+  design <- sampling_design() |>
+    stratify_by(region) |>
+    draw(frac = 0.1, min_n = 3, max_n = 5)
+  expect_match(
+    paste(cli::ansi_strip(capture.output(print(design))), collapse = "\n"),
+    "frac = 0.1 (per stratum), min_n = 3, max_n = 5, method = srswor",
+    fixed = TRUE
+  )
+})
+
+## Per-stratum n and an allocation method
+
+test_that("per-stratum n is refused alongside alloc, as a table or a vector", {
+  frame <- data.frame(id = 1:30, st = rep(c("a", "b"), c(10, 20)))
+  table_n <- data.frame(st = c("a", "b"), n = c(5, 1))
+
+  cnd <- expect_error(
+    sampling_design() |>
+      stratify_by(st, alloc = "proportional") |>
+      draw(n = table_n),
+    class = "samplyr_error_alloc_named_n_with_alloc"
+  )
+  msg <- cli::ansi_strip(conditionMessage(cnd))
+  expect_match(msg, "`n` is a table of stratum sizes", fixed = TRUE)
+  expect_match(msg, "alloc = \"proportional\"", fixed = TRUE)
+  expect_match(msg, "remove `alloc`", fixed = TRUE)
+  expect_match(msg, "such as their total `n = 6`", fixed = TRUE)
+
+  cnd <- expect_error(
+    sampling_design() |>
+      stratify_by(st, alloc = "equal") |>
+      draw(n = c(a = 5, b = 1)),
+    class = "samplyr_error_alloc_named_n_with_alloc"
+  )
+  expect_match(cli::ansi_strip(conditionMessage(cnd)),
+               "`n` is a named vector of stratum sizes", fixed = TRUE)
+
+  # A design file that combines them is refused at execute().
+  design <- sampling_design() |> stratify_by(st) |> draw(n = table_n)
+  design$stages[[1]]$strata$alloc <- "proportional"
+  expect_error(execute(design, frame, seed = 1),
+               class = "samplyr_error_alloc_named_n_with_alloc")
+
+  # Without alloc the table is drawn as given.
+  s <- execute(sampling_design() |> stratify_by(st) |> draw(n = table_n),
+               frame, seed = 1)
+  expect_identical(c(table(s$st)), c(a = 5L, b = 1L))
+})
+
+test_that("a single named value is a stratum size, not a total", {
+  frame <- data.frame(id = 1:30, st = rep(c("a", "b"), c(10, 20)),
+                      g = rep(1:2, 15))
+  # The name was dropped and 6 split as 2 and 4.
+  cnd <- expect_error(
+    sampling_design() |>
+      stratify_by(st, alloc = "proportional") |>
+      draw(n = c(a = 6)),
+    class = "samplyr_error_alloc_named_n_with_alloc"
+  )
+  expect_match(cli::ansi_strip(conditionMessage(cnd)),
+               "`n` is a named vector of stratum sizes", fixed = TRUE)
+  # Unstratified, 6 was drawn from the whole frame.
+  expect_error(sampling_design() |> draw(n = c(a = 6)),
+               "Named `n` requires stratification",
+               class = "samplyr_error_alloc_invalid_input_type")
+  expect_error(sampling_design() |> draw(frac = c(a = 0.2)),
+               "Named `frac` requires stratification",
+               class = "samplyr_error_alloc_invalid_input_type")
+  expect_error(sampling_design() |> stratify_by(st, g) |> draw(n = c(a = 6)),
+               class = "samplyr_error_alloc_invalid_input_type")
+  expect_error(sampling_design() |> stratify_by(st, g) |>
+                 draw(frac = c(a = 0.2)),
+               class = "samplyr_error_alloc_invalid_input_type")
+
+  # A name that matches the one stratum is a valid take.
+  one <- frame[frame$st == "a", ]
+  s <- execute(sampling_design() |> stratify_by(st) |> draw(n = c(a = 6)),
+               one, seed = 1)
+  expect_identical(nrow(s), 6L)
 })

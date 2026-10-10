@@ -47,7 +47,8 @@ as.list.sampling_design <- function(x, ...) {
 
     if (!is_null(stage$clusters)) {
       stage_list$clusters <- list(
-        vars = stage$clusters$vars
+        vars = declared_cluster_vars(stage$clusters),
+        nest = stage$clusters$nest
       )
     }
 
@@ -535,7 +536,15 @@ read_design <- function(file) {
 #'   the file records.
 #'
 #' @return The replayed `tbl_sample`, or the rebuilt `frame_stack` for a
-#'   frame collection.
+#'   frame collection. When the receipt carries a frame digest, the replay
+#'   captures its own digest in the same mode (`"summary"` or `"full"`) and
+#'   compares pool sizes, targets, expected sizes and chances, plus chance
+#'   quantiles or every unit's chance. A difference warns with
+#'   `samplyr_warning_replay_digest`. That catches
+#'   a frame saved without its fingerprint, and a version of samplyr or its
+#'   dependencies that resolves the design differently. The comparison is
+#'   skipped under `fingerprint = "ignore"` and once a frame difference has
+#'   been reported.
 #'
 #' @examples
 #' sample <- sampling_design() |>
@@ -610,6 +619,7 @@ replay_design <- function(
     frame_record <- get_frame_schedule(x)
     frame_info <- NULL
     execution_environment <- attr(x, "metadata")$execution_environment
+    recorded_digest <- get_frame_digest(x)
   } else if (is_sampling_design(x)) {
     design <- x
     receipt <- attr(x, "execution")
@@ -621,6 +631,7 @@ replay_design <- function(
       x,
       "design_tools"
     )$samplyr$execution$environment
+    recorded_digest <- receipt$frame_digest
   } else {
     cli_abort(
       "{.arg x} must be a {.cls sampling_design} or a {.cls tbl_sample}",
@@ -716,9 +727,12 @@ replay_design <- function(
     as_frame_list(chain_frames)
   }
 
+  # A frame already reported as different explains any digest difference.
+  check_digest <- !identical(fingerprint, "ignore")
   if (!identical(fingerprint, "ignore")) {
     diffs <- fingerprint_diffs(frame_info, frames)
     if (length(diffs) > 0) {
+      check_digest <- FALSE
       msg <- c(
         "{.arg frame} differs from the
          {cli::qty(length(frames))}frame{?s} recorded with the design:",
@@ -739,8 +753,20 @@ replay_design <- function(
     }
   }
 
+  # Capture what the recording captured, so the two digests compare in full.
+  digest_mode <- recorded_digest$privacy$mode
+  if (!(is.character(digest_mode) && length(digest_mode) == 1L &&
+          digest_mode %in% c("summary", "full"))) {
+    digest_mode <- "summary"
+  }
+
   if (!is_null(calls)) {
-    return(replay_execution_chain(calls, chain_frames))
+    result <- replay_execution_chain(calls, chain_frames,
+                                     frame_digest = digest_mode)
+    if (check_digest) {
+      check_replay_digest(recorded_digest, get_frame_digest(result))
+    }
+    return(result)
   }
 
   stages <- as.integer(unlist(receipt$stages_executed))
@@ -767,7 +793,8 @@ replay_design <- function(
       panels = panels,
       panel_stage = panel_stage,
       small_pool = small_pool,
-      reps = reps
+      reps = reps,
+      frame_digest = digest_mode
     )
   )
 
@@ -779,8 +806,83 @@ replay_design <- function(
       "i" = "The frame likely differs from the one used originally."
     ), class = "samplyr_warning_replay_rows")
   }
+  if (check_digest) {
+    check_replay_digest(recorded_digest, get_frame_digest(result))
+  }
 
   result
+}
+
+#' Compare a replayed sample's frame digest with the recorded one
+#'
+#' The row count alone passed a replay that drew the same units with other
+#' probabilities, after the way `frac` resolves for a custom random-size
+#' method changed. The digest records each pool's size, target, expectation,
+#' realization and chance, and either every unit's chance or chance quantiles
+#' per pool, so comparing them catches a change in what was drawn or how,
+#' whatever caused it. The replay captures in the recorded mode so that the
+#' unit chances of a full digest are compared too. For a design saved without its frame it
+#' is also the only check that the frame is the recorded one. Nothing is
+#' compared when either side has no complete digest, as with
+#' `frame_digest = "none"`, under `fingerprint = "ignore"`, or once a frame
+#' difference has been reported.
+#' @noRd
+check_replay_digest <- function(recorded, replayed) {
+  complete <- function(d) !is_null(d) && identical(d$status, "complete")
+  if (!complete(recorded) || !complete(replayed)) {
+    return(invisible(NULL))
+  }
+  same <- function(a, b) {
+    isTRUE(all.equal(as.numeric(a), as.numeric(b), tolerance = 1e-9,
+                     check.attributes = FALSE))
+  }
+  diffs <- character()
+  if (length(recorded$stages) != length(replayed$stages)) {
+    diffs <- cli::format_inline(
+      "{length(recorded$stages)} stage record{?s} at execution,
+       {length(replayed$stages)} in the replay"
+    )
+  }
+  fields <- c("N", "n_target", "n_expected", "n_realized", "chance")
+  for (k in seq_len(min(length(recorded$stages), length(replayed$stages)))) {
+    a <- recorded$stages[[k]]
+    b <- replayed$stages[[k]]
+    if (NROW(a$pools) != NROW(b$pools)) {
+      diffs <- c(diffs, cli::format_inline(
+        "stage {k}: {NROW(a$pools)} pool{?s} at execution,
+         {NROW(b$pools)} in the replay"
+      ))
+      next
+    }
+    for (field in intersect(fields, intersect(names(a$pools), names(b$pools)))) {
+      if (!same(a$pools[[field]], b$pools[[field]])) {
+        diffs <- c(diffs, cli::format_inline("stage {k}: {.field {field}}"))
+      }
+    }
+    if (!is_null(a$units$chance) && !is_null(b$units$chance) &&
+          !same(a$units$chance, b$units$chance)) {
+      diffs <- c(diffs, cli::format_inline("stage {k}: unit chances"))
+    }
+    # A summary digest keeps chance quantiles per pool instead of units.
+    qa <- a$chance_distribution
+    qb <- b$chance_distribution
+    if (!is_null(qa) && !is_null(qb) &&
+          (NROW(qa) != NROW(qb) || !same(qa$chance, qb$chance) ||
+             !same(qa$n_units, qb$n_units))) {
+      diffs <- c(diffs, cli::format_inline("stage {k}: chance distribution"))
+    }
+  }
+  if (length(diffs) > 0) {
+    cli_warn(c(
+      "The replay does not match the digest recorded at execution:",
+      setNames(diffs, rep("*", length(diffs))),
+      "i" = "The replay drew with other pool sizes or probabilities. Either
+             the frame differs, or this version of samplyr or its
+             dependencies resolves the design differently from the one that
+             recorded it."
+    ), class = "samplyr_warning_replay_digest")
+  }
+  invisible(NULL)
 }
 
 #' Require the replay to supply the frames the recorded call was given
@@ -1861,7 +1963,11 @@ encode_stage <- function(stage) {
   }
 
   if (!is_null(stage$clusters)) {
-    out$clusters <- list(vars = I(stage$clusters$vars))
+    out$clusters <- list(vars = I(declared_cluster_vars(stage$clusters)))
+    # Absent means nested, so files written before the field read the same.
+    if (isFALSE(stage$clusters$nest)) {
+      out$clusters$nest <- FALSE
+    }
   }
 
   if (!is_null(stage$draw_spec)) {
@@ -2243,7 +2349,7 @@ design_requirements <- function(design) {
     reqs <- c(
       reqs,
       add_req(stage$strata$vars, "strata", i),
-      add_req(stage$clusters$vars, "clusters", i),
+      add_req(declared_cluster_vars(stage$clusters), "clusters", i),
       add_req(spec$mos, "mos", i),
       add_req(spec$prn, "prn", i),
       add_req(spec$aux, "aux", i),
@@ -3069,7 +3175,10 @@ decode_stage <- function(
 
   clusters <- NULL
   if (!is_null(stage$clusters)) {
-    clusters <- new_cluster_spec(vars = decode_chr(stage$clusters$vars))
+    clusters <- new_cluster_spec(
+      vars = decode_chr(stage$clusters$vars),
+      nest = !isFALSE(stage$clusters$nest)
+    )
   }
 
   draw_spec <- NULL

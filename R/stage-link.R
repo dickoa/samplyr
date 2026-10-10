@@ -6,7 +6,8 @@
 #' key is returned, and a message bounds the list with `format_pool_sample()`.
 #' @noRd
 format_key_preview <- function(keys) {
-  unname(apply(keys, 1, function(row) paste(row, collapse = "/")))
+  # apply() would pad numbers to a common width.
+  do.call(paste, c(lapply(unname(as.list(keys)), as.character), sep = "/"))
 }
 
 #' Require the full declared ancestry on both sides of a transition

@@ -40,7 +40,15 @@ the file records.}
 }
 \value{
 The replayed \code{tbl_sample}, or the rebuilt \code{frame_stack} for a
-frame collection.
+frame collection. When the receipt carries a frame digest, the replay
+captures its own digest in the same mode (\code{"summary"} or \code{"full"}) and
+compares pool sizes, targets, expected sizes and chances, plus chance
+quantiles or every unit's chance. A difference warns with
+\code{samplyr_warning_replay_digest}. That catches
+a frame saved without its fingerprint, and a version of samplyr or its
+dependencies that resolves the design differently. The comparison is
+skipped under \code{fingerprint = "ignore"} and once a frame difference has
+been reported.
 }
 \description{
 Re-executes a design exactly as recorded in its execution receipt,

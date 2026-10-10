@@ -28,8 +28,12 @@ draw(
 \item{.data}{A \code{sampling_design} object (piped from \code{\link[=sampling_design]{sampling_design()}},
 \code{\link[=add_stage]{add_stage()}}, \code{\link[=stratify_by]{stratify_by()}}, or \code{\link[=cluster_by]{cluster_by()}}).}
 
-\item{n}{Sample size. For random-size methods (\code{bernoulli}, \code{pps_poisson}),
-\code{n} is the \strong{expected} sample size, converted to \code{frac = n / N}.
+\item{n}{Sample size. For random-size methods (\code{bernoulli}, \code{pps_poisson},
+or a custom method registered with \code{fixed_size = FALSE}), \code{n} is the
+\strong{expected} sample size, converted to \code{frac = n / N}, and may be
+fractional (\code{n = 2.6}) when no allocation method is given. At a later
+stage it is the expected take in each parent unit, whatever the parent's
+size. Fixed-size methods and allocation methods need whole units.
 \link{selection-methods} explains the fixed versus random distinction and the
 warning raised when \code{pps_poisson} falls short of \code{n}. Can be:
 \itemize{
@@ -37,6 +41,8 @@ warning raised when \code{pps_poisson} falls short of \code{n}. Can be:
 \item A named vector: stratum-specific sizes (for single stratification
 variable). A name, or a data frame row, for a stratum the stage cannot
 reach is refused at execution (\code{samplyr_error_alloc_unknown_strata}).
+A named vector or a data frame gives the sizes itself, so it is
+refused alongside \code{alloc} (\code{samplyr_error_alloc_named_n_with_alloc}).
 \item A data frame: stratum-specific sizes, with every stratification column
 of \code{\link[=stratify_by]{stratify_by()}} and an \code{n} column. For a take per parent unit,
 stratify the stage by the parent's cluster id:
@@ -76,9 +82,10 @@ Arguments after \code{...} must be named in full, so a positional fourth
 argument is refused rather than taken for \code{min_n}.}
 
 \item{min_n}{Minimum sample size per stratum, \code{NULL} (no minimum) by
-default. When an allocation method would assign fewer units to a
-stratum, the stratum is raised to \code{min_n} and the other strata give up
-the difference. For without-replacement designs a \code{min_n} above a
+default. With \code{frac}, a stratum whose rounded \code{N_h * frac} falls short
+is raised to \code{min_n}. With an allocation method, a stratum assigned
+fewer units is raised to \code{min_n} and the other strata give up the
+difference. For without-replacement designs a \code{min_n} above a
 stratum's population makes that stratum a census. \code{min_n} counts the
 stratum's whole take, certainty units included, so a stratum can hold
 fewer than \code{min_n} units drawn outside certainty, and \code{execute()} names
@@ -89,11 +96,19 @@ differ by stratum, compute the sizes and pass them as a named \code{n} or a
 data frame.}
 
 \item{max_n}{Maximum sample size per stratum, \code{NULL} (no maximum) by
-default. When an allocation method would assign more, the stratum is
-capped and the surplus goes to the other strata.
+default. With \code{frac}, a stratum's rounded take is capped at \code{max_n}.
+With an allocation method, a stratum assigned more is capped and the
+surplus goes to the other strata.
 
-Both bounds apply only with an allocation method in \code{\link[=stratify_by]{stratify_by()}},
-and narrow a range the stratum population already caps. The
+With \code{frac}, the bounds follow SPSS CSPLAN (\code{RATE} with \code{MINSIZE} and
+\code{MAXSIZE}) and SAS SURVEYSELECT (\verb{SAMPRATE=} with \verb{NMIN=} and \verb{NMAX=}).
+Each stratum, or each parent unit at a later stage, is bounded on its
+own after \code{round}, with no fixed total. A random-size method bounds its
+expected size. With \code{n} and no allocation method, the bounds are
+ignored with a warning.
+
+Under an allocation method the bounds narrow a range the stratum
+population already caps. The
 "Population bounds and redistribution" section of \code{\link[=stratify_by]{stratify_by()}} gives
 how the surplus is shared and why with-replacement methods differ.
 \code{frame_summary(design, frame, detail = "pool")} reports the per-stratum
@@ -164,17 +179,20 @@ which requires them. Bare numeric columns such as
 placed on comparable scales. With \code{cluster_by()}, coordinates must be
 constant within each cluster.}
 
-\item{round}{Rounding when \code{frac} is converted to sample sizes. One of:
+\item{round}{Rounding when \code{frac} is converted to the sample size of a
+fixed-size method. One of:
 \itemize{
 \item \code{"up"} (default): ceiling, the SAS SURVEYSELECT default.
 \item \code{"down"}: floor.
-\item \code{"nearest"}: nearest integer, halves up.
+\item \code{"nearest"}: nearest integer, halves up, as SPSS rounds a rate.
 }
 
 An \code{n} given directly is not rounded. A product within floating-point
 error of an integer counts as that integer, so \code{frac = 0.07} of 100
 units draws 7 under every rule. After rounding, every stratum or group
-receives at least 1 unit.}
+receives at least 1 unit. A random-size method, built in or registered
+with \code{fixed_size = FALSE}, takes the expected size \code{N * frac} unrounded,
+which may be fractional or below 1.}
 
 \item{control}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Variables for
 sorting the frame before selection. Can be:
@@ -368,6 +386,12 @@ sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   draw(n = 200, min_n = 10, max_n = 50) |>
   execute(bfa_eas, seed = 1)
+
+# 0.5\% of the EAs in each province, at least 3 and at most 8 (SPSS rule)
+sampling_design() |>
+  stratify_by(province) |>
+  draw(frac = 0.005, min_n = 3, max_n = 8, round = "nearest") |>
+  execute(bfa_eas, seed = 4)
 
 # Control sorting with serpentine ordering (implicit stratification)
 sampling_design() |>

@@ -272,3 +272,117 @@ test_that("a sample without a digest is computed but not checked", {
     joint_expectation(execute(design, frame, seed = 3), frame)
   )
 })
+
+test_that("both routes order units by first appearance when pools interleave", {
+  # Two strata inside each PSU, and rows shuffled, so the sampled blocks of
+  # one (PSU, stratum) pool are not contiguous in the sample.
+  frame <- expand.grid(
+    hh = 1:3, blk = 1:6, psu = 1:3, st = c("a", "b"),
+    stringsAsFactors = FALSE
+  )
+  frame$m1 <- frame$psu + 2 + (frame$st == "b")
+  frame$m2 <- (frame$blk * 3 + frame$psu) %% 5 + 1
+  frame$s2 <- ifelse(frame$blk <= 3, "x", "y")
+  frame <- frame[c(37L, 5L, 90L, 61L, 12L, 100L, 1L, 74L, 49L, 28L,
+                   setdiff(seq_len(nrow(frame)),
+                           c(37L, 5L, 90L, 61L, 12L, 100L, 1L, 74L, 49L, 28L))), ]
+  frame <- frame[order(frame$blk %% 2, decreasing = TRUE), ]
+  design <- sampling_design() |>
+    add_stage() |>
+    stratify_by(st) |>
+    cluster_by(psu) |>
+    draw(n = 2, method = "pps_brewer", mos = m1) |>
+    add_stage() |>
+    stratify_by(s2) |>
+    cluster_by(blk) |>
+    draw(n = 2, method = "pps_cps", mos = m2)
+  s <- suppressMessages(execute(design, frame, seed = 3, frame_digest = "full"))
+
+  units <- as.data.frame(s)
+  units <- units[!duplicated(units[c("st", "psu", "blk")]), ]
+  pool <- paste(units$st, units$psu, units$s2)
+  expect_true(anyDuplicated(rle(pool)$values) > 0L)
+
+  from_frame <- suppressMessages(joint_expectation(s, frame))$stage_2
+  from_digest <- suppressMessages(joint_expectation(s))$stage_2
+  expect_equal(from_frame, from_digest)
+
+  # An independent reference built with sondage, pool by pool.
+  blocks <- unique(frame[c("st", "psu", "s2", "blk", "m2")])
+  expected <- outer(1 / units$.weight_2, 1 / units$.weight_2)
+  for (key in unique(pool)) {
+    pool_units <- blocks[paste(blocks$st, blocks$psu, blocks$s2) == key, ]
+    pik <- sondage::inclusion_prob(pool_units$m2, 2)
+    joint <- sondage::joint_inclusion_prob(
+      sondage::unequal_prob_wor(pik, method = "cps")
+    )
+    rows <- which(pool == key)
+    at <- match(units$blk[rows], pool_units$blk)
+    expected[rows, rows] <- joint[at, at]
+  }
+  expect_equal(unname(diag(from_frame)), 1 / units$.weight_2)
+  expect_equal(unname(from_frame), expected)
+})
+
+test_that("survey pairs a stage-1 matrix with the right rows", {
+  skip_if_not_installed("survey")
+  # One row per PSU, strata interleaved in the frame and so in the sample.
+  psus <- data.frame(
+    st = rep(c("a", "b", "c"), times = 6),
+    psu = 1:18,
+    mos = c(4, 9, 2, 7, 3, 8, 6, 1, 5, 9, 4, 7, 2, 6, 8, 3, 5, 1)
+  )
+  psus$y <- psus$mos * 10 + psus$psu
+  s <- sampling_design() |>
+    stratify_by(st) |>
+    cluster_by(psu) |>
+    draw(n = 2, method = "pps_cps", mos = mos) |>
+    execute(psus, seed = 4)
+  rows <- as.data.frame(s)
+  expect_true(anyDuplicated(rle(rows$st)$values) > 0L)
+
+  jip <- joint_expectation(s, psus)[[1]]
+  pik <- 1 / rows$.weight
+  expect_equal(unname(diag(jip)), pik)
+
+  # Horvitz-Thompson with each row paired with its own matrix row.
+  y_pik <- rows$y / pik
+  v <- as.numeric(t(y_pik) %*% ((jip - outer(pik, pik)) / jip) %*% y_pik)
+  svy <- as_svydesign(s, pps = survey::ppsmat(jip))
+  expect_equal(as.numeric(stats::vcov(survey::svytotal(~y, svy))), v)
+})
+
+test_that("key columns named like internal counters are matched as keys", {
+  frame <- data.frame(.joint_rank = 1:10, mos = 1:10)
+  s <- sampling_design() |>
+    cluster_by(.joint_rank) |>
+    draw(n = 3, method = "pps_brewer", mos = mos) |>
+    execute(frame, seed = 2, frame_digest = "full")
+  expect_identical(s$.joint_rank, c(5L, 6L, 8L))
+  from_frame <- joint_expectation(s, frame)[[1]]
+  expect_equal(unname(diag(from_frame)), 1 / s$.weight)
+  expect_equal(from_frame, joint_expectation(s)[[1]])
+
+  # Two key columns take the joined path, which numbers rows internally.
+  for (name in c(".sample_row", ".frame_row", ".joint_rank")) {
+    frame <- expand.grid(k = 1:6, psu = 1:4)
+    frame[[name]] <- c(5L, 2L, 6L, 1L, 4L, 3L)[frame$k]
+    frame$m1 <- frame$psu + 1
+    frame$m2 <- frame$k
+    design <- sampling_design() |>
+      add_stage() |>
+      cluster_by(psu) |>
+      draw(n = 2, method = "pps_brewer", mos = m1) |>
+      add_stage()
+    design <- do.call(cluster_by, list(design, as.name(name))) |>
+      draw(n = 3, method = "pps_brewer", mos = m2)
+    s <- suppressMessages(
+      execute(design, frame, seed = 2, frame_digest = "full")
+    )
+    units <- as.data.frame(s)
+    units <- units[!duplicated(units[c("psu", name)]), ]
+    from_frame <- joint_expectation(s, frame)[[2]]
+    expect_equal(unname(diag(from_frame)), 1 / units$.weight_2, label = name)
+    expect_equal(from_frame, joint_expectation(s)[[2]], label = name)
+  }
+})

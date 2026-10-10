@@ -238,7 +238,11 @@ stratify_by <- function(
     )
   }
 
-  check_stratify_dots(vars_quo)
+  check_grouping_dots(
+    vars_quo, "stratify_by",
+    c("alloc", "variance", "cost", "cv", "importance", "power"),
+    "Stratification variables are passed as bare column names."
+  )
 
   is_bare_name <- vapply(
     vars_quo,
@@ -352,16 +356,14 @@ stratify_by <- function(
 
 #' Catch a misspelled reserved argument before it is read as a variable
 #'
-#' `alloc` and the auxiliary inputs all sit after `...`, so a near miss such
-#' as `allocc` is captured as a stratification variable and then reported as
-#' a bad variable expression. Naming the argument is the useful diagnosis.
-#' Names that resemble no reserved argument are left alone: they are ignored
-#' labels, as in `stratify_by(reg = region)`.
+#' The reserved arguments of `stratify_by()` and `cluster_by()` sit after
+#' `...`, so a near miss such as `allocc` or `Nest` is captured as a grouping
+#' variable and then reported as a bad variable expression. Naming the
+#' argument is the useful diagnosis. Names that resemble no reserved argument
+#' are left alone: they are ignored labels, as in `stratify_by(reg = region)`.
 #' @noRd
-check_stratify_dots <- function(vars_quo, call = rlang::caller_env()) {
-  reserved <- c(
-    "alloc", "variance", "cost", "cv", "importance", "power"
-  )
+check_grouping_dots <- function(vars_quo, fn, reserved, hint,
+                                call = rlang::caller_env()) {
   nms <- names(vars_quo) %||% rep("", length(vars_quo))
 
   for (i in seq_along(vars_quo)) {
@@ -371,9 +373,9 @@ check_stratify_dots <- function(vars_quo, call = rlang::caller_env()) {
     }
     abort_samplyr(
       c(
-        "{.fn stratify_by} received an unexpected argument.",
+        "{.fn {fn}} received an unexpected argument.",
         stray_arg_bullets(name, reserved),
-        "i" = "Stratification variables are passed as bare column names."
+        "i" = hint
       ),
       class = "samplyr_error_unknown_argument",
       call = call

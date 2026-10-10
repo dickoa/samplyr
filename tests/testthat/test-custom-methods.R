@@ -1004,3 +1004,193 @@ test_that("a plain error inside a stratum is reported verbatim", {
   expect_match(msg, "no {unit} to draw", fixed = TRUE)
   expect_match(msg, "In stratum \"a\"", fixed = TRUE)
 })
+
+## Expected size of a custom random-size method
+
+register_frac_rs <- function(env = parent.frame()) {
+  sondage::register_method(
+    "frac_rs", "wor",
+    sample_fn = toy_random_wor_fn, joint_fn = toy_joint_fn,
+    fixed_size = FALSE, probabilities = "exact", variance_family = "poisson"
+  )
+  withr::defer(sondage::unregister_method("frac_rs"), envir = env)
+}
+
+frac_rs_chances <- function(design, frame) {
+  pools <- frame_summary(design, frame, detail = "pool")
+  s <- execute(design, frame, seed = 1)
+  list(
+    n_target = pools$n_target,
+    n_expected = pools$n_expected,
+    chance = unique(pools$chance),
+    drawn = unique(1 / s$.weight)
+  )
+}
+
+test_that("a custom random-size frac keeps its expected size unrounded", {
+  register_frac_rs()
+  frame <- data.frame(id = 1:10, size = 1)
+  take <- function(...) {
+    frac_rs_chances(
+      sampling_design() |> draw(..., method = "pps_frac_rs", mos = size),
+      frame
+    )
+  }
+
+  # Rounding gave 3 units and chance 0.3 while the target read 2.6.
+  expect_equal(take(frac = 0.26),
+               list(n_target = 2.6, n_expected = 2.6, chance = 0.26,
+                    drawn = 0.26))
+  # round governs fixed-size methods only.
+  expect_equal(take(frac = 0.26, round = "down")$chance, 0.26)
+  # Bounds act on the expectation.
+  expect_equal(take(frac = 0.26, min_n = 1, max_n = 9)$chance, 0.26)
+  expect_equal(take(frac = 0.26, min_n = 3)$chance, 0.3)
+  expect_equal(take(frac = 0.26, max_n = 2)$chance, 0.2)
+  # An expectation below one is not raised to one.
+  pools <- frame_summary(
+    sampling_design() |>
+      draw(frac = 0.05, method = "pps_frac_rs", mos = size,
+           on_empty = "silent"),
+    frame, detail = "pool"
+  )
+  expect_equal(c(pools$n_target, pools$n_expected), c(0.5, 0.5))
+
+  strata <- frac_rs_chances(
+    sampling_design() |>
+      stratify_by(st) |>
+      draw(frac = 0.26, method = "pps_frac_rs", mos = size),
+    transform(frame, st = rep(c("a", "b"), each = 5))
+  )
+  expect_equal(strata$n_target, c(1.3, 1.3))
+  expect_equal(strata$drawn, 0.26)
+})
+
+test_that("a custom random-size expectation survives capping and certainty", {
+  register_frac_rs()
+  frame <- data.frame(id = 1:10, size = c(rep(1, 9), 200))
+  rest <- 1.6 / 9
+
+  for (cert in list(NULL, 100)) {
+    design <- sampling_design() |>
+      draw(frac = 0.26, method = "pps_frac_rs", mos = size,
+           certainty_size = cert)
+    pools <- frame_summary(design, frame, detail = "pool")
+    expect_equal(c(pools$n_target, pools$n_expected), c(2.6, 2.6))
+    s <- execute(design, frame, seed = 3)
+    expect_equal(1 / s$.weight[s$id == 10], 1)
+    expect_equal(unique(1 / s$.weight[s$id != 10]), rest)
+    expect_equal(diag(joint_expectation(s, frame)$stage_1), 1 / s$.weight)
+  }
+})
+
+test_that("built-in methods keep their frac behaviour", {
+  frame <- data.frame(id = 1:10, size = 1)
+  chances <- function(design) {
+    unlist(frame_summary(design, frame, detail = "pool")[c("n_target", "chance")])
+  }
+  expect_equal(
+    chances(sampling_design() |> draw(frac = 0.26, method = "bernoulli")),
+    c(n_target = 2.6, chance = 0.26)
+  )
+  expect_equal(
+    chances(sampling_design() |>
+              draw(frac = 0.26, method = "pps_poisson", mos = size)),
+    c(n_target = 2.6, chance = 0.26)
+  )
+  expect_equal(
+    chances(sampling_design() |> draw(frac = 0.26)),
+    c(n_target = 3, chance = 0.3)
+  )
+})
+
+## A fractional n is an expected size for random-size methods
+
+test_that("random-size methods take a fractional n as their expected size", {
+  register_frac_rs()
+  frame <- data.frame(id = 1:10, size = 1)
+  designs <- list(
+    sampling_design() |> draw(n = 2.6, method = "bernoulli"),
+    sampling_design() |> draw(n = 2.6, method = "pps_poisson", mos = size),
+    sampling_design() |> draw(n = 2.6, method = "pps_frac_rs", mos = size)
+  )
+  for (design in designs) {
+    expect_equal(frac_rs_chances(design, frame),
+                 list(n_target = 2.6, n_expected = 2.6, chance = 0.26,
+                      drawn = 0.26))
+  }
+  pools <- frame_summary(
+    sampling_design() |>
+      draw(n = 0.4, method = "bernoulli", on_empty = "silent"),
+    frame, detail = "pool"
+  )
+  expect_equal(c(pools$n_target, pools$chance), c(0.4, 0.04))
+})
+
+test_that("a fractional n per parent expects the same size in every PSU", {
+  # No single frac gives 2.6 in PSUs of 5, 10 and 20 units.
+  frame <- data.frame(psu = rep(1:3, c(5, 10, 20)), id = 1:35)
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 3) |>
+    add_stage() |> draw(n = 2.6, method = "bernoulli")
+  s <- execute(design, frame, seed = 1)
+  expect_equal(c(tapply(s$.weight_1 / s$.weight, s$psu, unique)),
+               c(`1` = 0.52, `2` = 0.26, `3` = 0.13))
+  pools <- frame_summary(design, frame, detail = "pool")
+  expect_equal(pools$n_target[pools$stage == 2], rep(2.6, 3))
+})
+
+test_that("named and table n give fractional expected sizes per stratum", {
+  register_frac_rs()
+  frame <- data.frame(id = 1:30, st = rep(c("a", "b"), c(10, 20)), size = 1)
+  for (n in list(c(a = 1.3, b = 2.6),
+                 data.frame(st = c("a", "b"), n = c(1.3, 2.6)))) {
+    design <- sampling_design() |>
+      stratify_by(st) |>
+      draw(n = n, method = "pps_frac_rs", mos = size)
+    pools <- frame_summary(design, frame, detail = "pool")
+    expect_equal(pools$n_target, c(1.3, 2.6))
+    s <- execute(design, frame, seed = 1)
+    expect_equal(unname(c(tapply(1 / s$.weight, s$st, unique))), c(0.13, 0.13))
+  }
+})
+
+test_that("a fractional n keeps certainty, joint probabilities and replay", {
+  register_frac_rs()
+  frame <- data.frame(id = 1:10, size = c(rep(1, 9), 200))
+  design <- sampling_design() |>
+    draw(n = 2.6, method = "pps_frac_rs", mos = size, certainty_size = 100)
+  s <- execute(design, frame, seed = 3)
+  expect_equal(1 / s$.weight[s$id == 10], 1)
+  expect_equal(unique(1 / s$.weight[s$id != 10]), 1.6 / 9)
+  expect_equal(diag(joint_expectation(s, frame)$stage_1), 1 / s$.weight)
+
+  path <- tempfile(fileext = ".json")
+  write_design(s, path, frame = frame)
+  restored <- read_design(path)
+  expect_identical(restored$stages[[1]]$draw_spec$n, 2.6)
+  replayed <- expect_no_warning(replay_design(restored, frame))
+  expect_identical(replayed$id, s$id)
+  expect_equal(replayed$.weight, s$.weight)
+})
+
+test_that("fixed-size methods and allocation still need a whole n", {
+  frame <- data.frame(id = 1:30, st = rep(c("a", "b"), c(10, 20)))
+  refused <- list(
+    function() sampling_design() |> draw(n = 2.6),
+    function() sampling_design() |> stratify_by(st) |>
+      draw(n = c(a = 1.3, b = 2)),
+    function() sampling_design() |> stratify_by(st) |>
+      draw(n = data.frame(st = c("a", "b"), n = c(1.3, 2))),
+    function() sampling_design() |> stratify_by(st, alloc = "proportional") |>
+      draw(n = 2.6, method = "bernoulli"),
+    function() sampling_design() |> stratify_by(st, alloc = "proportional") |>
+      draw(n = data.frame(st = c("a", "b"), n = c(1.3, 2)),
+           method = "bernoulli")
+  )
+  for (f in refused) {
+    cnd <- expect_error(f(), class = "samplyr_error_alloc_n_integer")
+    expect_match(cli::ansi_strip(conditionMessage(cnd)),
+                 "Only a random-size method without `alloc`", fixed = TRUE)
+  }
+})

@@ -689,21 +689,32 @@ test_that("PPS cluster sampling errors when MOS varies within cluster", {
   )
 })
 
-test_that("cluster sampling errors when strata vary within cluster", {
+test_that("a cluster coded into two strata is refused only under nest = FALSE", {
   frame <- data.frame(
     cluster_id = c(1, 1, 2, 2),
     id = 1:4,
     region = c("A", "B", "A", "A")
   )
-
-  expect_error(
+  design <- function(nest) {
     sampling_design() |>
       stratify_by(region) |>
-      cluster_by(cluster_id) |>
-      draw(n = 1) |>
-      execute(frame, seed = 42),
-    "must be constant within each cluster"
+      cluster_by(cluster_id, nest = nest) |>
+      draw(n = 1)
+  }
+
+  expect_error(
+    execute(design(FALSE), frame, seed = 42),
+    "Cluster ids in cluster_id repeat across strata of region",
+    class = "samplyr_error_frame_cluster_invariant"
   )
+
+  # Nested, cluster 1 becomes one unit in A and another in B.
+  s <- suppressMessages(execute(design(TRUE), frame, seed = 42))
+  expect_identical(
+    get_design(s)$stages[[1]]$clusters$vars, c("region", "cluster_id")
+  )
+  expect_true("B" %in% s$region)
+  expect_identical(s$.weight[s$region == "B"], 1)
 })
 
 test_that("cluster sampling works when MOS is constant within cluster", {

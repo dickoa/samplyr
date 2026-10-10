@@ -81,8 +81,10 @@ square matrix of joint expected hits
 requested via the \code{stages} argument.
 }
 
-Rows and columns represent stage-specific sampled units in first
-appearance order. At a WR stage, repeated hits of the same
+Rows and columns are the stage's sampled units in the order they first
+appear in the sample. For a sample with one row per stage-1 unit, the
+stage-1 matrix therefore follows the sample rows, which is how
+\code{\link[survey:ppsmat]{survey::ppsmat()}} reads it. At a WR stage, repeated hits of the same
 population unit appear once, so dimensions match the number of
 distinct sampled units (or clusters). At a later stage below a WR
 parent, each parent draw occurrence defines a separate conditional
@@ -129,9 +131,10 @@ optimal, etc.), so they match those at sampling time. The matching
 sondage joint function then gives the submatrix of sampled units.
 
 For stratified or conditional (within-cluster) stages, joint
-quantities are computed independently within each group. Blocks follow
-their first appearance in the sample, as do units within a block, and
-cross-block entries are products of the marginal chances. Below a WR
+quantities are computed independently within each group, and
+cross-group entries are products of the marginal chances. The rows are
+then put in the order the units first appear in the sample, so the units
+of one group need not be contiguous. Below a WR
 parent, pair the matrix with stage-specific identities in this order,
 not blindly with every sample row when descendants duplicate a
 selected unit.

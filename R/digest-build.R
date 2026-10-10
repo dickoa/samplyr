@@ -773,11 +773,10 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL,
   n <- draw_spec$n
   frac <- draw_spec$frac
   if (is_null(n) && !is_null(frac)) {
-    n <- if (method %in% c("bernoulli", "pps_poisson")) {
-      N * frac
-    } else {
-      round_sample_size(N * frac, draw_spec$round %||% "up")
-    }
+    n <- frac_pool_size(N, frac, draw_spec)
+  }
+  if (random_size && is.numeric(frac) && length(frac) == 1L) {
+    frac <- frac_pool_rate(N, frac, draw_spec)
   }
   n_target <- if (
     random_size && !is.null(frac) &&
@@ -1035,6 +1034,7 @@ exante_digest <- function(design, frame,
   schedule <- stage_frame_schedule(
     design, supplied$frames, stages = NULL, executed = NULL, call = call
   )
+  design <- resolve_cluster_nesting(design, schedule$entries)
   stage_frames <- effective_register_frames(schedule, design, call = call)
   effective_frames_by_stage <- vector("list", length(stages_spec))
   frame_index_by_stage <- integer(length(stages_spec))

@@ -1800,18 +1800,22 @@ test_that("replay reports which of the three inputs was wrong", {
     stringsAsFactors = FALSE
   )
   unfingerprinted <- read_design(suppressWarnings(design_json(shared)))
-  expect_error(
-    replay_design(
-      unfingerprinted, frame = bigger,
-      links = wider_people, targets = wider_people
+  # Without a fingerprint, the recorded digest is what notices the frame.
+  expect_warning(
+    expect_error(
+      replay_design(
+        unfingerprinted, frame = bigger,
+        links = wider_people, targets = wider_people
+      ),
+      class = "samplyr_error_replay_weight_share_mismatch"
     ),
-    class = "samplyr_error_replay_weight_share_mismatch"
+    class = "samplyr_warning_replay_digest"
   )
   expect_error(
-    replay_design(
+    suppressWarnings(replay_design(
       unfingerprinted, frame = bigger,
       links = wider_people, targets = wider_people
-    ),
+    )),
     "replayed selection"
   )
 
@@ -1922,4 +1926,75 @@ test_that("the three formats stay distinguishable", {
   restored <- read_design(shared_file)
   expect_s3_class(restored, "sampling_design")
   expect_length(restored$stages, 1L)
+})
+
+## Replay checks its result against the recorded digest
+
+test_that("a replay that draws with other probabilities warns", {
+  frame <- data.frame(id = 1:40, st = rep(c("a", "b"), each = 20),
+                      x = seq(1, 10, length.out = 40))
+  design <- sampling_design() |>
+    stratify_by(st) |>
+    draw(n = 3, method = "pps_brewer", mos = x)
+  sample <- execute(design, frame, seed = 1)
+  expect_no_warning(replay_design(sample, frame))
+
+  # As if the recording had resolved the design differently.
+  recorded <- sample
+  digest <- attr(recorded, "metadata")$frame_digest
+  digest$stages[[1]]$pools$n_expected[2] <- 4
+  attr(recorded, "metadata")$frame_digest <- digest
+  cnd <- expect_warning(replay_design(recorded, frame),
+                        class = "samplyr_warning_replay_digest")
+  expect_match(cli::ansi_strip(conditionMessage(cnd)),
+               "stage 1: n_expected", fixed = TRUE)
+  # The caller opted out of frame checks.
+  expect_no_warning(replay_design(recorded, frame, fingerprint = "ignore"))
+})
+
+test_that("a design saved without its frame warns when replayed on another", {
+  frame <- data.frame(id = 1:40, st = rep(c("a", "b"), each = 20))
+  design <- sampling_design() |> stratify_by(st) |> draw(n = 3)
+  sample <- execute(design, frame, seed = 1)
+  path <- tempfile(fileext = ".json")
+  suppressWarnings(write_design(sample, path))
+  restored <- read_design(path)
+  expect_no_warning(replay_design(restored, frame))
+
+  wider <- data.frame(id = 1:50, st = rep(c("a", "b"), each = 25))
+  cnd <- expect_warning(replay_design(restored, wider),
+                        class = "samplyr_warning_replay_digest")
+  expect_match(cli::ansi_strip(conditionMessage(cnd)), "stage 1: N",
+               fixed = TRUE)
+})
+
+test_that("a replay compares unequal chances in the recorded capture mode", {
+  frame <- data.frame(id = 1:20, st = rep(c("a", "b"), each = 10),
+                      x = c(1:10, (1:10)^2))
+  design <- sampling_design() |>
+    stratify_by(st) |>
+    draw(n = 2, method = "pps_brewer", mos = x)
+
+  for (mode in c("summary", "full")) {
+    sample <- execute(design, frame, seed = 1, frame_digest = mode)
+    path <- tempfile(fileext = ".json")
+    write_design(sample, path, frame = frame)
+    replayed <- expect_no_warning(replay_design(read_design(path), frame))
+    expect_identical(attr(replayed, "metadata")$frame_digest$privacy$mode,
+                     mode)
+
+    # Same expected sizes and units, other chances.
+    recorded <- sample
+    digest <- attr(recorded, "metadata")$frame_digest
+    field <- if (mode == "summary") "chance_distribution" else "units"
+    digest$stages[[1]][[field]]$chance <- rev(digest$stages[[1]][[field]]$chance)
+    attr(recorded, "metadata")$frame_digest <- digest
+    cnd <- expect_warning(replay_design(recorded, frame),
+                          class = "samplyr_warning_replay_digest")
+    expect_match(
+      cli::ansi_strip(conditionMessage(cnd)),
+      if (mode == "summary") "stage 1: chance distribution" else "stage 1: unit chances",
+      fixed = TRUE
+    )
+  }
 })

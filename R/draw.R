@@ -177,14 +177,20 @@ NULL
 #'
 #' @param .data A `sampling_design` object (piped from [sampling_design()],
 #'   [add_stage()], [stratify_by()], or [cluster_by()]).
-#' @param n Sample size. For random-size methods (`bernoulli`, `pps_poisson`),
-#'   `n` is the **expected** sample size, converted to `frac = n / N`.
+#' @param n Sample size. For random-size methods (`bernoulli`, `pps_poisson`,
+#'   or a custom method registered with `fixed_size = FALSE`), `n` is the
+#'   **expected** sample size, converted to `frac = n / N`, and may be
+#'   fractional (`n = 2.6`) when no allocation method is given. At a later
+#'   stage it is the expected take in each parent unit, whatever the parent's
+#'   size. Fixed-size methods and allocation methods need whole units.
 #'   [selection-methods] explains the fixed versus random distinction and the
 #'   warning raised when `pps_poisson` falls short of `n`. Can be:
 #'   - A scalar: applies per stratum (if no `alloc`) or as total (if `alloc` specified)
 #'   - A named vector: stratum-specific sizes (for single stratification
 #'     variable). A name, or a data frame row, for a stratum the stage cannot
 #'     reach is refused at execution (`samplyr_error_alloc_unknown_strata`).
+#'     A named vector or a data frame gives the sizes itself, so it is
+#'     refused alongside `alloc` (`samplyr_error_alloc_named_n_with_alloc`).
 #'   - A data frame: stratum-specific sizes, with every stratification column
 #'     of [stratify_by()] and an `n` column. For a take per parent unit,
 #'     stratify the stage by the parent's cluster id:
@@ -220,9 +226,10 @@ NULL
 #'   Arguments after `...` must be named in full, so a positional fourth
 #'   argument is refused rather than taken for `min_n`.
 #' @param min_n Minimum sample size per stratum, `NULL` (no minimum) by
-#'   default. When an allocation method would assign fewer units to a
-#'   stratum, the stratum is raised to `min_n` and the other strata give up
-#'   the difference. For without-replacement designs a `min_n` above a
+#'   default. With `frac`, a stratum whose rounded `N_h * frac` falls short
+#'   is raised to `min_n`. With an allocation method, a stratum assigned
+#'   fewer units is raised to `min_n` and the other strata give up the
+#'   difference. For without-replacement designs a `min_n` above a
 #'   stratum's population makes that stratum a census. `min_n` counts the
 #'   stratum's whole take, certainty units included, so a stratum can hold
 #'   fewer than `min_n` units drawn outside certainty, and `execute()` names
@@ -232,11 +239,19 @@ NULL
 #'   differ by stratum, compute the sizes and pass them as a named `n` or a
 #'   data frame.
 #' @param max_n Maximum sample size per stratum, `NULL` (no maximum) by
-#'   default. When an allocation method would assign more, the stratum is
-#'   capped and the surplus goes to the other strata.
+#'   default. With `frac`, a stratum's rounded take is capped at `max_n`.
+#'   With an allocation method, a stratum assigned more is capped and the
+#'   surplus goes to the other strata.
 #'
-#'   Both bounds apply only with an allocation method in [stratify_by()],
-#'   and narrow a range the stratum population already caps. The
+#'   With `frac`, the bounds follow SPSS CSPLAN (`RATE` with `MINSIZE` and
+#'   `MAXSIZE`) and SAS SURVEYSELECT (`SAMPRATE=` with `NMIN=` and `NMAX=`).
+#'   Each stratum, or each parent unit at a later stage, is bounded on its
+#'   own after `round`, with no fixed total. A random-size method bounds its
+#'   expected size. With `n` and no allocation method, the bounds are
+#'   ignored with a warning.
+#'
+#'   Under an allocation method the bounds narrow a range the stratum
+#'   population already caps. The
 #'   "Population bounds and redistribution" section of [stratify_by()] gives
 #'   how the surplus is shared and why with-replacement methods differ.
 #'   `frame_summary(design, frame, detail = "pool")` reports the per-stratum
@@ -302,15 +317,18 @@ NULL
 #'   `spread = c(longitude, latitude)`, finite, with no missing values, and
 #'   placed on comparable scales. With `cluster_by()`, coordinates must be
 #'   constant within each cluster.
-#' @param round Rounding when `frac` is converted to sample sizes. One of:
+#' @param round Rounding when `frac` is converted to the sample size of a
+#'   fixed-size method. One of:
 #'   - `"up"` (default): ceiling, the SAS SURVEYSELECT default.
 #'   - `"down"`: floor.
-#'   - `"nearest"`: nearest integer, halves up.
+#'   - `"nearest"`: nearest integer, halves up, as SPSS rounds a rate.
 #'
 #'   An `n` given directly is not rounded. A product within floating-point
 #'   error of an integer counts as that integer, so `frac = 0.07` of 100
 #'   units draws 7 under every rule. After rounding, every stratum or group
-#'   receives at least 1 unit.
+#'   receives at least 1 unit. A random-size method, built in or registered
+#'   with `fixed_size = FALSE`, takes the expected size `N * frac` unrounded,
+#'   which may be fractional or below 1.
 #'
 #' @param control <[`data-masking`][dplyr::dplyr_data_masking]> Variables for
 #'   sorting the frame before selection. Can be:
@@ -487,6 +505,12 @@ NULL
 #'   stratify_by(region, alloc = "proportional") |>
 #'   draw(n = 200, min_n = 10, max_n = 50) |>
 #'   execute(bfa_eas, seed = 1)
+#'
+#' # 0.5% of the EAs in each province, at least 3 and at most 8 (SPSS rule)
+#' sampling_design() |>
+#'   stratify_by(province) |>
+#'   draw(frac = 0.005, min_n = 3, max_n = 8, round = "nearest") |>
+#'   execute(bfa_eas, seed = 4)
 #'
 #' # Control sorting with serpentine ordering (implicit stratification)
 #' sampling_design() |>
@@ -713,7 +737,7 @@ draw <- function(
   }
   # svyplan names each stratum in one column.
   if (
-    from_plan && !is.data.frame(n) && length(n) > 1L && !is_null(names(n)) &&
+    from_plan && !is.data.frame(n) && !is_null(names(n)) &&
       length(strata_vars) > 1L
   ) {
     abort_samplyr(
@@ -759,6 +783,7 @@ draw <- function(
     certainty_overflow = certainty_overflow,
     on_empty = on_empty,
     has_alloc = has_alloc,
+    alloc = current_stage$strata$alloc,
     strata_vars = strata_vars,
     aux = aux_names,
     bounds = bound_names,
@@ -992,6 +1017,40 @@ resolve_draw_method <- function(method, call = rlang::caller_env()) {
   list(method = method, custom_spec = custom_spec)
 }
 
+#' Whether `n` is an expected size, which may be fractional
+#'
+#' A random-size method, built in or registered with `fixed_size = FALSE`,
+#' reads `n` as its expected sample size, so 2.6 is a valid request. A
+#' fixed-size method and an allocation method need whole units.
+#' @noRd
+n_is_expected_size <- function(method, custom_spec, has_alloc) {
+  !has_alloc &&
+    (method %in% rs_poisson_methods || identical(custom_spec$fixed_size, FALSE))
+}
+
+#' Refuse a fractional `n` where whole units are required
+#' @noRd
+check_n_integer <- function(n, method, custom_spec, has_alloc,
+                            table = FALSE, call = caller_env()) {
+  if (n_is_expected_size(method, custom_spec, has_alloc) ||
+        is_integerish_numeric(n)) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      if (table) {
+        "{.arg n} values must be integer-valued"
+      } else {
+        "{.arg n} must be integer-valued"
+      },
+      "i" = "Only a random-size method without {.arg alloc} takes a
+             fractional {.arg n}, as an expected sample size."
+    ),
+    class = "samplyr_error_alloc_n_integer",
+    call = call
+  )
+}
+
 #' @noRd
 validate_draw_df <- function(
   df,
@@ -1000,6 +1059,7 @@ validate_draw_df <- function(
   method = NULL,
   custom_spec = NULL,
   check_keys = TRUE,
+  has_alloc = FALSE,
   call = rlang::caller_env()
 ) {
   if (!is.data.frame(df)) {
@@ -1101,13 +1161,8 @@ validate_draw_df <- function(
         call = call
       )
     }
-    if (!is_integerish_numeric(values)) {
-      abort_samplyr(
-        "{.arg n} values must be integer-valued",
-        class = "samplyr_error_alloc_n_integer",
-        call = call
-      )
-    }
+    check_n_integer(values, method, custom_spec, has_alloc,
+                    table = TRUE, call = call)
   }
 
   if (value_col == "frac") {
@@ -1159,6 +1214,7 @@ validate_draw_configuration <- function(
   warn_ignored = TRUE,
   certainty_plan = NULL,
   parent_vars = character(0),
+  alloc = NULL,
   call = rlang::caller_env()
 ) {
   # A take stage stores no size: the plan supplies each pool's take.
@@ -1201,6 +1257,7 @@ validate_draw_configuration <- function(
         method = method,
         custom_spec = custom_spec,
         check_keys = TRUE,
+        has_alloc = has_alloc,
         call = call
       )
     }
@@ -1232,12 +1289,14 @@ validate_draw_configuration <- function(
     custom_spec = custom_spec,
     warn_ignored = warn_ignored,
     provides_take = provides_take,
+    alloc = alloc,
     call = call
   )
   validate_bounds(
     min_n,
     max_n,
     has_alloc,
+    has_frac = !is_null(frac),
     warn_ignored = warn_ignored,
     call = call
   )
@@ -1294,6 +1353,7 @@ validate_draw_args <- function(
   custom_spec = NULL,
   warn_ignored = TRUE,
   provides_take = FALSE,
+  alloc = NULL,
   call = rlang::caller_env()
 ) {
   if (has_alloc && is_null(n) && !is_null(frac)) {
@@ -1307,13 +1367,28 @@ validate_draw_args <- function(
     )
   }
 
-  if (
-    has_alloc && !is_null(n) && !n_is_df && length(n) > 1 && !is_null(names(n))
-  ) {
+  # A name makes even a single value a stratum's size.
+  per_stratum <- n_is_df || !is_null(names(n))
+  if (has_alloc && !is_null(n) && per_stratum) {
+    sizes <- if (n_is_df) n$n else n
+    method_txt <- if (is_null(alloc)) {
+      "the allocation method"
+    } else {
+      cli::format_inline("{.code alloc = \"{alloc}\"}")
+    }
+    total_hint <- if (is_integerish_numeric(sizes)) {
+      cli::format_inline(", such as their total {.code n = {sum(sizes)}}")
+    } else {
+      ""
+    }
     abort_samplyr(
       c(
         "Per-stratum {.arg n} cannot be combined with {.arg alloc} in {.fn stratify_by}.",
-        "i" = "Remove {.arg alloc} when providing per-stratum allocations, or pass a scalar {.arg n} for samplyr to allocate."
+        "x" = "{.arg n} is a {if (n_is_df) 'table' else 'named vector'} of
+               stratum sizes, while {method_txt} computes those sizes from a
+               single total. One of the two would be ignored.",
+        "i" = "To draw these sizes, remove {.arg alloc} from {.fn stratify_by}.",
+        "i" = "To let {method_txt} split a total, pass one number{total_hint}."
       ),
       class = "samplyr_error_alloc_named_n_with_alloc",
       call = call
@@ -1487,7 +1562,7 @@ validate_draw_args <- function(
         call = call
       )
     }
-    if (length(n) > 1 && !is_null(names(n)) && is_null(strata_vars)) {
+    if (!is_null(names(n)) && is_null(strata_vars)) {
       abort_samplyr(
         c(
           "Named {.arg n} requires stratification at this stage.",
@@ -1497,7 +1572,7 @@ validate_draw_args <- function(
         call = call
       )
     }
-    if (length(n) > 1 && !is_null(names(n)) && length(strata_vars) > 1) {
+    if (!is_null(names(n)) && length(strata_vars) > 1) {
       abort_samplyr(
         c(
           "Named {.arg n} vectors are only supported for single stratification variables.",
@@ -1521,13 +1596,7 @@ validate_draw_args <- function(
         call = call
       )
     }
-    if (!is_integerish_numeric(n)) {
-      abort_samplyr(
-        "{.arg n} must be integer-valued",
-        class = "samplyr_error_alloc_n_integer",
-        call = call
-      )
-    }
+    check_n_integer(n, method, custom_spec, has_alloc, call = call)
   }
 
   if (!is_null(frac) && !frac_is_df) {
@@ -1545,18 +1614,24 @@ validate_draw_args <- function(
         call = call
       )
     }
-    if (length(frac) > 1 && (is_null(names(frac)) || is_null(strata_vars))) {
+    if (!is_null(names(frac)) && is_null(strata_vars)) {
+      abort_samplyr(
+        c(
+          "Named {.arg frac} requires stratification at this stage.",
+          "i" = "Add {.fn stratify_by} before this {.fn draw} (per-stage; stage-1 strata do not carry over), or pass a scalar."
+        ),
+        class = "samplyr_error_alloc_invalid_input_type",
+        call = call
+      )
+    }
+    if (length(frac) > 1 && is_null(names(frac))) {
       abort_samplyr(
         "{.arg frac} must be a scalar, a named vector, or a data frame",
         class = "samplyr_error_alloc_invalid_input_type",
         call = call
       )
     }
-    if (
-      length(frac) > 1 &&
-        !is_null(names(frac)) &&
-        length(strata_vars) > 1
-    ) {
+    if (!is_null(names(frac)) && length(strata_vars) > 1) {
       abort_samplyr(
         c(
           "Named {.arg frac} vectors are only supported for single stratification variables.",
@@ -1595,6 +1670,7 @@ validate_bounds <- function(
   min_n,
   max_n,
   has_alloc,
+  has_frac = FALSE,
   warn_ignored = TRUE,
   call = rlang::caller_env()
 ) {
@@ -1613,9 +1689,9 @@ validate_bounds <- function(
         class = "samplyr_error_draw_argument"
       )
     }
-    if (warn_ignored && !has_alloc) {
+    if (warn_ignored && !has_alloc && !has_frac) {
       cli_warn(
-        "{.arg min_n} only applies when an allocation method is specified in {.fn stratify_by}",
+        "{.arg min_n} applies only with {.arg frac} or with an allocation method in {.fn stratify_by}",
         class = "samplyr_warning_draw_argument_ignored"
       )
     }
@@ -1636,9 +1712,9 @@ validate_bounds <- function(
         class = "samplyr_error_draw_argument"
       )
     }
-    if (warn_ignored && !has_alloc) {
+    if (warn_ignored && !has_alloc && !has_frac) {
       cli_warn(
-        "{.arg max_n} only applies when an allocation method is specified in {.fn stratify_by}",
+        "{.arg max_n} applies only with {.arg frac} or with an allocation method in {.fn stratify_by}",
         class = "samplyr_warning_draw_argument_ignored"
       )
     }

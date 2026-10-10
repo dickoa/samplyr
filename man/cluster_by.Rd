@@ -4,7 +4,7 @@
 \alias{cluster_by}
 \title{Define sampling units (clusters)}
 \usage{
-cluster_by(.data, ...)
+cluster_by(.data, ..., nest = TRUE)
 }
 \arguments{
 \item{.data}{A \code{sampling_design} object (piped from \code{\link[=sampling_design]{sampling_design()}},
@@ -13,6 +13,12 @@ cluster_by(.data, ...)
 \item{...}{Clustering variable(s) specified as bare column names that
 identify the sampling units. In most cases this is a single variable
 (e.g., school_id, household_id).}
+
+\item{nest}{Whether cluster ids are read within the stage's strata. \code{TRUE}
+(the default) makes town 1 of county A and town 1 of county B two
+different units. \code{FALSE} declares the ids unique across the strata and
+refuses a frame where they repeat. Without \code{\link[=stratify_by]{stratify_by()}} at the stage,
+\code{nest} has no effect.}
 }
 \value{
 A modified \code{sampling_design} object with clustering specified.
@@ -43,18 +49,37 @@ In multi-stage designs, each stage typically has its own clustering variable:
 \item Stage 2: Select classrooms within schools (\code{cluster_by(classroom_id)})
 \item Stage 3: Select students within classrooms (no clustering, sample individuals)
 }
+}
 
-Child-stage IDs do not need to be globally unique across the entire frame.
-For example, \code{classroom_id = 1} can appear in more than one school. At
-execution time, \code{samplyr} resolves lower-stage clusters using the full
-ancestry from earlier stages, so IDs can be unique within parent clusters
-rather than globally unique.
+\subsection{Ids numbered within strata and parents}{
 
-In practice, this means the frame must represent a valid hierarchy through
-the combination of parent-stage and current-stage IDs. If a lower-stage ID is
-only meaningful within a parent, that is supported. If users want a stage's
-cluster variable to be globally unique on its own, they should provide a
-globally unique ID or include multiple columns in \code{cluster_by()}.
+Many frames number units within the level above them: towns 1, 2, 3 in
+every county, households 1, 2, 3 in every enumeration area. A unit is
+identified by its own id together with the strata of its stage and the
+units that earlier stages selected.
+\itemize{
+\item \strong{Within earlier stages.} A stage's units are always identified within
+the units of earlier stages, so \code{classroom_id = 1} can appear in every
+school.
+\item \strong{Within the stage's strata.} With \code{nest = TRUE}, a stage's ids are
+read within its own strata, so \code{stratify_by(county) |> cluster_by(town)} selects towns as county and town pairs. When the
+ids already differ across strata the key stays as declared, and frames
+for later stages can link by it alone. When they repeat, the strata join
+the key, and a separate register for a later stage must then carry them
+too. The executed design prints the result as \verb{town (within county)}.
+}
+
+Nesting only uses the variables the design names. If town ids restart in
+every district but the stage is stratified by region alone, towns of
+different districts with the same id are merged into one unit. List each
+level the ids restart under, either as strata or in \code{cluster_by()}, for
+example \code{cluster_by(district, town)}.
+
+Set \code{nest = FALSE} when the ids are meant to be unique across strata.
+It then works as a check. A cluster coded into two strata, such as an
+enumeration area whose households were given different urban and rural
+codes, is refused instead of being split into two units with part of the
+rows each.
 }
 }
 \section{Order of operations}{
@@ -84,6 +109,18 @@ sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 50, method = "pps_brewer", mos = households) |>
   execute(zwe_eas, seed = 2026)
+
+# Town ids restart in every county: each county's town 1 is its own unit
+towns <- data.frame(
+  county = rep(c("A", "B"), each = 6),
+  town = rep(1:3, times = 4),
+  household = 1:12
+)
+sampling_design() |>
+  stratify_by(county) |>
+  cluster_by(town) |>
+  draw(n = 2) |>
+  execute(towns, seed = 1)
 
 # Two-stage cluster sample
 zwe_frame <- zwe_eas |>

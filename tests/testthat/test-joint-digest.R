@@ -231,15 +231,10 @@ test_that("clustered children deduplicate within each WR parent occurrence", {
     execute(frame, seed = 24, frame_digest = "full")
 
   sample_df <- as.data.frame(s)
+  # One row per child of each parent draw, in first appearance order.
   selected_children <- dplyr::distinct(
     sample_df, parent, .draw_1, child, .weight_2
   )
-  child_blocks <- samplyr:::split_row_indices(
-    selected_children, c("parent", ".draw_1")
-  )
-  selected_children <- selected_children[
-    unlist(child_blocks$indices, use.names = FALSE), , drop = FALSE
-  ]
   expect_identical(nrow(selected_children), 6L)
   expect_gt(nrow(sample_df), nrow(selected_children))
 

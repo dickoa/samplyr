@@ -154,6 +154,7 @@ resolve_exante_probabilities <- function(design, frame, key_col,
   schedule <- stage_frame_schedule(
     design, supplied$frames, stages = NULL, executed = NULL, call = call
   )
+  design <- resolve_cluster_nesting(design, schedule$entries)
   validate_certainty_bridge(design, schedule, call = call)
   stage_frames <- effective_register_frames(schedule, design, call = call)
   frames_by_stage <- vector("list", length(design$stages))

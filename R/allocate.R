@@ -23,6 +23,47 @@ round_sample_size <- function(x, round_method = "up") {
   pmax(as.integer(result), 1L)
 }
 
+#' Size of one `frac` pool, bounded by `min_n` and `max_n`
+#'
+#' The rule of SPSS CSPLAN (`RATE` with `MINSIZE`/`MAXSIZE`) and SAS
+#' SURVEYSELECT (`SAMPRATE=` with `NMIN=`/`NMAX=`): each pool takes its
+#' rounded `N * frac`, raised to `min_n` and capped at `max_n`, with no fixed
+#' total and nothing moved between pools. Without replacement a `min_n` above
+#' the pool makes it a census. A random-size method, built in or registered
+#' with `fixed_size = FALSE`, keeps its expected size `N * frac` unrounded,
+#' and the bounds apply to that expectation. `alloc` refuses `frac`, so these
+#' bounds never meet an allocation.
+#' @noRd
+frac_pool_size <- function(N, frac, draw_spec,
+                           rounded = !is_random_size_method(draw_spec)) {
+  n <- N * frac
+  if (rounded) {
+    n <- round_sample_size(n, draw_spec$round %||% "up")
+  }
+  if (is_null(draw_spec$min_n) && is_null(draw_spec$max_n)) {
+    return(n)
+  }
+  if (!is_null(draw_spec$min_n)) {
+    n <- pmax(n, draw_spec$min_n)
+  }
+  if (!is_null(draw_spec$max_n)) {
+    n <- pmin(n, draw_spec$max_n)
+  }
+  if (!is_multi_hit_method(draw_spec)) {
+    n <- pmin(n, N)
+  }
+  if (rounded) as.integer(n) else n
+}
+
+#' Selection rate of a random-size `frac` pool after `min_n` and `max_n`
+#' @noRd
+frac_pool_rate <- function(N, frac, draw_spec) {
+  if (is_null(draw_spec$min_n) && is_null(draw_spec$max_n)) {
+    return(frac)
+  }
+  frac_pool_size(N, frac, draw_spec, rounded = FALSE) / N
+}
+
 #' Bounded largest-remainder rounding (Hare-Niemeyer with bounds)
 #'
 #' Rounds real-valued allocations to integers that sum to n while respecting
@@ -340,7 +381,6 @@ allocate_strata <- function(
   frac <- draw_spec$frac
   min_n <- draw_spec$min_n
   max_n <- draw_spec$max_n
-  round_method <- draw_spec$round %||% "up"
 
   N <- sum(stratum_info$.N_h)
   H <- nrow(stratum_info)
@@ -475,6 +515,8 @@ allocate_strata <- function(
 
   n_is_df <- is.data.frame(n_total)
   frac_is_df <- is.data.frame(frac)
+  # A random-size method reads n as an expected size, which may be fractional.
+  expected_size <- is_null(alloc) && is_random_size_method(draw_spec)
 
   stratum_info$.n_h <- if (n_is_df) {
     stratum_info <- join_aux_to_strata(
@@ -500,14 +542,17 @@ allocate_strata <- function(
         class = "samplyr_error_alloc_n_bounds"
       )
     }
-    if (!is_integerish_numeric(n_values)) {
-      abort_samplyr(
-        "{.arg n} values must be integer-valued",
-        class = "samplyr_error_alloc_n_integer"
-      )
+    if (expected_size) {
+      as.double(n_values)
+    } else {
+      if (!is_integerish_numeric(n_values)) {
+        abort_samplyr(
+          "{.arg n} values must be integer-valued",
+          class = "samplyr_error_alloc_n_integer"
+        )
+      }
+      as.integer(n_values)
     }
-
-    as.integer(n_values)
   } else if (frac_is_df) {
     stratum_info <- join_aux_to_strata(
       stratum_info = stratum_info,
@@ -539,7 +584,7 @@ allocate_strata <- function(
       )
     }
 
-    round_sample_size(stratum_info$.N_h * frac_values, round_method)
+    frac_pool_size(stratum_info$.N_h, frac_values, draw_spec)
   } else if (is_null(alloc)) {
     if (!is_null(n_total)) {
       if (!is_null(names(n_total))) {
@@ -557,7 +602,7 @@ allocate_strata <- function(
             "x" = "Missing allocation for: {format_pool_sample(missing)}"
           ), class = "samplyr_error_alloc_missing_coverage", call = NULL)
         }
-        as.integer(matched)
+        if (expected_size) as.double(matched) else as.integer(matched)
       } else {
         rep(n_total, H)
       }
@@ -577,9 +622,9 @@ allocate_strata <- function(
             "x" = "Missing allocation for: {format_pool_sample(missing)}"
           ), class = "samplyr_error_alloc_missing_coverage", call = NULL)
         }
-        round_sample_size(stratum_info$.N_h * frac_matched, round_method)
+        frac_pool_size(stratum_info$.N_h, frac_matched, draw_spec)
       } else {
-        round_sample_size(stratum_info$.N_h * frac, round_method)
+        frac_pool_size(stratum_info$.N_h, frac, draw_spec)
       }
     } else {
       cli_abort(

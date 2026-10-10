@@ -551,6 +551,15 @@ execute <- function(
 
   # Resolve frames before consuming RNG state.
   schedule <- stage_frame_schedule(design, frames, stages, executed)
+  design <- resolve_cluster_nesting(
+    design, schedule$entries,
+    previous_sample = if (is_tbl_sample(.data)) as.data.frame(.data)
+  )
+  if (is_sampling_design(.data)) {
+    .data <- design
+  } else {
+    attr(.data, "design") <- design
+  }
 
   # Before any RNG, so deserialized designs are covered too.
   validate_certainty_bridge(design, schedule)
@@ -588,7 +597,7 @@ execute <- function(
       same_partial_design <-
         identical(role, "frame") &&
         is_sampling_design(.data) &&
-        identical(get_design(obj), .data) &&
+        identical(declared_design(get_design(obj)), declared_design(.data)) &&
         length(get_stages_executed(obj)) < length(.data$stages)
 
       stage_hint <- if (same_partial_design) {
@@ -2399,6 +2408,7 @@ validate_stored_draw_spec <- function(stage, call = rlang::caller_env()) {
     certainty_overflow = draw_spec$certainty_overflow,
     on_empty = draw_spec$on_empty,
     has_alloc = !is_null(stage$strata) && !is_null(stage$strata$alloc),
+    alloc = stage$strata$alloc,
     strata_vars = stage$strata$vars,
     aux = draw_spec$aux,
     bounds = draw_spec$bounds,

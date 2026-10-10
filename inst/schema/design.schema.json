@@ -1901,6 +1901,9 @@
                     "minLength": 1
                   },
                   "minItems": 1
+                },
+                "nest": {
+                  "type": "boolean"
                 }
               },
               "required": [

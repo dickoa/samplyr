@@ -298,7 +298,7 @@ summary_design_line <- function(stage_spec) {
     parts <- c(
       parts,
       paste0(
-        "cluster ", paste(stage_spec$clusters$vars, collapse = "/")
+        "cluster ", paste(declared_cluster_vars(stage_spec$clusters), collapse = "/")
       )
     )
   }

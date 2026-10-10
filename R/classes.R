@@ -243,12 +243,15 @@ new_stratum_spec <- function(
 #' Create a cluster specification
 #'
 #' @param vars Character vector of clustering variable names
+#' @param nest Whether ids are read within the stage's strata
+#' @param within Strata variables that frame resolution added to `vars`.
+#'   `NULL` until the stage has been resolved against a frame.
 #'
 #' @return A cluster_spec object
 #' @noRd
-new_cluster_spec <- function(vars) {
+new_cluster_spec <- function(vars, nest = TRUE, within = NULL) {
   structure(
-    list(vars = vars),
+    list(vars = vars, nest = nest, within = within),
     class = "cluster_spec"
   )
 }
@@ -478,6 +481,9 @@ as_tbl_sample.data.frame <- function(x, ...) {
 #' Returns the `sampling_design` metadata attached to a `tbl_sample`. This is
 #' the original design object used to create the sample, including all stage
 #' specifications, labels, stratification, clustering, and draw settings.
+#' One difference is possible: at a stage whose cluster ids repeat across its
+#' strata, the cluster key also holds the strata it was read within, and
+#' prints as `town (within county)`. See [cluster_by()].
 #'
 #' This is especially useful for:
 #' - inspecting the design after execution

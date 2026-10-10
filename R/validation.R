@@ -247,11 +247,16 @@ remaining_stages <- function(sample) {
 #' @param tolerate_gaps Link a candidate parent with no rows in the next
 #'   register to nothing instead of refusing it. `execute()` tolerates such a
 #'   gap until a unit it selects falls in one.
+#' @param check A function of the entry index and its effective frame, run on
+#'   each frame before the next one is linked to it, or `NULL`. A defect in a
+#'   stage's frame is then reported as itself, not as the linkage failure it
+#'   would cause at the stage below.
 #' @return One effective frame per scheduled entry.
 #' @noRd
 effective_register_frames <- function(schedule, design, previous_sample = NULL,
                                       phase_link_vars = character(0),
                                       tolerate_gaps = FALSE,
+                                      check = NULL,
                                       call = caller_env()) {
   entries <- schedule$entries
   effective <- vector("list", length(entries))
@@ -268,6 +273,9 @@ effective_register_frames <- function(schedule, design, previous_sample = NULL,
         phase_link_vars = phase_link_vars, check_coverage = !tolerate_gaps,
         call = call
       )$frame
+    }
+    if (!is_null(check)) {
+      check(i, effective[[i]])
     }
     parent <- effective[[i]]
   }
@@ -302,6 +310,7 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
   schedule <- stage_frame_schedule(
     design, frames, stages, executed = executed, call = call
   )
+  design <- resolve_cluster_nesting(design, schedule$entries, previous_sample)
 
   # Compare drift only for frames already used by executed stages.
   if (is_null(partial_sample)) {
@@ -331,7 +340,6 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
 
   # Check supplied-register ancestry before linkage filters rows.
   for (entry in schedule$entries) {
-    check_register_cluster_invariants(design, entry, call = call)
     parent_vars <- collect_ancestor_cluster_vars(design, entry$stage)
     check_parent_key_na(
       entry$frame, intersect(parent_vars, names(entry$frame)), design,
@@ -345,7 +353,14 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
 
   # Judge each stage on its effective linked frame.
   effective <- effective_register_frames(
-    schedule, design, previous_sample, phase_link_vars, call = call
+    schedule, design, previous_sample, phase_link_vars,
+    check = function(i, frame) {
+      check_clusters_within_strata(design, schedule$entries[[i]], frame,
+                                   call = call)
+      check_register_cluster_invariants(design, schedule$entries[[i]], frame,
+                                        call = call)
+    },
+    call = call
   )
 
   issues <- list()
@@ -393,7 +408,7 @@ check_stage_positive_targets <- function(design, stage_idx, frame) {
     sizes <- if (length(strata)) {
       calculate_stratum_sizes(stratum_info_from_groups(units, strata, groups), spec$strata, draw)$.n_h
     } else {
-      draw$n %||% round_sample_size(nrow(units) * draw$frac, draw$round %||% "up")
+      draw$n %||% frac_pool_size(nrow(units), draw$frac, draw)
     }
     if (is_null(draw$certainty_size) && is_null(draw$certainty_prop)) next
     lookup <- prepare_stratum_draw_lookup(draw, strata)
@@ -410,20 +425,87 @@ check_stage_positive_targets <- function(design, stage_idx, frame) {
   invisible(NULL)
 }
 
+#' Require each cluster to sit inside one stratum under `nest = FALSE`
+#'
+#' `cluster_by(town, nest = FALSE)` declares town ids unique across the
+#' strata of the stage. Ids numbered within each stratum (town 1 in every
+#' county) contradict that, and so does a cluster coded into two strata. The
+#' generic invariant check reports either as a stratum column that varies,
+#' and a multistage execution reports it first as a carry conflict at stage
+#' 2. This check runs before both and names the cause. Under `nest = TRUE`
+#' the stage was resolved within its strata and never reaches the refusal.
+#'
+#' `frame` is the stage's effective frame, the rows it can reach: rows under a
+#' parent the stage above cannot select can never form a cluster.
+#' @noRd
+check_clusters_within_strata <- function(design, entry, frame = entry$frame,
+                                         call = caller_env()) {
+  spec <- design$stages[[entry$stage]]
+  strata_vars <- spec$strata$vars
+  cluster_vars <- spec$clusters$vars
+  if (
+    is_null(cluster_vars) || isTRUE(spec$clusters$nest) ||
+      length(strata_vars) == 0L ||
+      !all(c(cluster_vars, strata_vars) %in% names(frame))
+  ) {
+    return(invisible(NULL))
+  }
+  unit_vars <- intersect(
+    unique(c(collect_ancestor_cluster_vars(design, entry$stage), cluster_vars)),
+    names(frame)
+  )
+  if (length(setdiff(strata_vars, unit_vars)) == 0L) {
+    return(invisible(NULL))
+  }
+
+  pairs <- vctrs::vec_unique(vctrs::new_data_frame(
+    .subset(frame, unique(c(unit_vars, strata_vars))),
+    n = nrow(frame)
+  ))
+  # Missing keys and strata have their own refusals.
+  pairs <- pairs[stats::complete.cases(pairs), , drop = FALSE]
+  units <- pairs[, unit_vars, drop = FALSE]
+  spanning <- vctrs::vec_duplicate_detect(units)
+  if (!any(spanning)) {
+    return(invisible(NULL))
+  }
+
+  offenders <- vctrs::vec_unique(units[spanning, , drop = FALSE])
+  n_strata <- sum(vctrs::vec_equal(units, offenders[1L, , drop = FALSE]))
+  example <- format_key_preview(offenders[1L, , drop = FALSE])
+  abort_samplyr(
+    c(
+      "Cluster ids in {.field {cluster_vars}} repeat across strata of
+       {.field {strata_vars}} in {frame_token(entry$frame_index, entry$frame_label)}.",
+      "x" = "{stage_token(design, entry$stage)} declares them unique with
+             {.code nest = FALSE}, so cluster {.val {example}} would join rows
+             from {n_strata} strata.",
+      "i" = "Clusters found in more than one stratum:
+             {format_pool_sample(format_key_preview(offenders))}.",
+      "i" = "If the ids are numbered within each stratum, drop
+             {.code nest = FALSE}.",
+      "i" = "If a cluster really spans strata, give it one stratum in the frame."
+    ),
+    class = "samplyr_error_frame_cluster_invariant",
+    call = call
+  )
+}
+
 #' Require cluster-level design variables to be constant within each unit
 #'
 #' A register supplied on its own is not yet restricted to one parent, so the
 #' unit is the full ancestry plus this stage's cluster: `C1` under one school
 #' and `C1` under another are different classes, and grouping on the local
-#' identifier alone would compare their values.
+#' identifier alone would compare their values. `frame` is the stage's
+#' effective frame, so rows no selection can reach are not judged.
 #' @noRd
 check_register_cluster_invariants <- function(design, entry,
+                                              frame = entry$frame,
                                               call = caller_env()) {
   spec <- design$stages[[entry$stage]]
   if (is_null(spec$clusters)) {
     return(invisible(NULL))
   }
-  frame <- entry$frame
   unit_vars <- intersect(
     unique(c(
       collect_ancestor_cluster_vars(design, entry$stage), spec$clusters$vars
@@ -905,13 +987,23 @@ preflight_later_stages <- function(schedule, design, sample = NULL,
     schedule$entries[[i]]$frame <- narrow(schedule$entries[[i]]$frame)
   }
 
+  # The first scheduled stage keeps its selection-time invariant check, which
+  # already sees every unit it can reach.
+  effective <- effective_register_frames(
+    schedule, design,
+    previous_sample = if (is_null(sample)) NULL else narrow(sample),
+    tolerate_gaps = TRUE,
+    check = function(i, frame) {
+      check_clusters_within_strata(design, schedule$entries[[i]], frame,
+                                   call = call)
+      if (i > 1L) {
+        check_register_cluster_invariants(design, schedule$entries[[i]],
+                                          frame, call = call)
+      }
+    },
+    call = call
+  )
   if (length(schedule$entries) >= 2L) {
-    effective <- effective_register_frames(
-      schedule, design,
-      previous_sample = if (is_null(sample)) NULL else narrow(sample),
-      tolerate_gaps = TRUE,
-      call = call
-    )
     issues <- list()
     for (i in seq_along(schedule$entries)[-1L]) {
       stage_idx <- schedule$entries[[i]]$stage
@@ -922,8 +1014,6 @@ preflight_later_stages <- function(schedule, design, sample = NULL,
     if (length(issues) > 0L) {
       report_validation_issues(issues)
     }
-  } else {
-    effective <- list(schedule$entries[[1]]$frame)
   }
   check_schedule_strata_known(
     schedule, effective, design, selected = sample, call = call

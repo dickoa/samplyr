@@ -59,8 +59,10 @@ print_stage <- function(stage, num, design = NULL) {
   }
 
   if (!is_null(stage$clusters)) {
-    vars_str <- paste(stage$clusters$vars, collapse = ", ")
-    cli::cat_bullet(paste0("Cluster: ", vars_str), bullet = "bullet")
+    cli::cat_bullet(
+      paste0("Cluster: ", format_cluster_vars(stage$clusters)),
+      bullet = "bullet"
+    )
   }
 
   if (!is_null(stage$draw_spec)) {
@@ -135,6 +137,12 @@ format_draw_spec <- function(draw, has_strata = FALSE, alloc = NULL,
     } else {
       parts <- c(parts, format_scalar("frac", draw$frac, has_strata, alloc))
     }
+  }
+  if (!is_null(draw$min_n)) {
+    parts <- c(parts, paste0("min_n = ", draw$min_n))
+  }
+  if (!is_null(draw$max_n)) {
+    parts <- c(parts, paste0("max_n = ", draw$max_n))
   }
 
   parts <- c(parts, paste0("method = ", draw$method))
@@ -639,10 +647,24 @@ nearest_parent_units <- function(design, stage_idx) {
     return(NULL)
   }
   for (k in rev(seq_len(stage_idx - 1L))) {
-    vars <- design$stages[[k]]$clusters$vars
+    vars <- declared_cluster_vars(design$stages[[k]]$clusters)
     if (length(vars) > 0L) {
       return(vars)
     }
   }
   NULL
+}
+
+#' A stage's cluster variables as declared, with the strata frame
+#' resolution nested them in and the opt-out
+#' @noRd
+format_cluster_vars <- function(spec) {
+  out <- paste(declared_cluster_vars(spec), collapse = ", ")
+  if (length(spec$within) > 0L) {
+    out <- paste0(out, " (within ", paste(spec$within, collapse = ", "), ")")
+  }
+  if (isFALSE(spec$nest)) {
+    out <- paste0(out, ", nest = FALSE")
+  }
+  out
 }

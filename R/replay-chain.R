@@ -280,7 +280,8 @@ flatten_chain_frames <- function(frame, counts, labels = NULL,
 #' passed again, because execute() refuses them: panels on a sample that
 #' already carries an assignment, and replicates on a replicated input.
 #' @noRd
-replay_execution_chain <- function(calls, frames, call = caller_env()) {
+replay_execution_chain <- function(calls, frames, frame_digest = "summary",
+                                   call = caller_env()) {
   counts <- chain_frame_counts(calls)
   offsets <- cumsum(c(0L, counts))
   slot <- 0L
@@ -336,7 +337,8 @@ replay_execution_chain <- function(calls, frames, call = caller_env()) {
           panels = panels,
           panel_stage = panel_stage,
           small_pool = small_pool,
-          reps = reps
+          reps = reps,
+          frame_digest = frame_digest
         )
       }
       result <- with_replay_rng(cl$rng, switch(
