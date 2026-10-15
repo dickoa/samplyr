@@ -55,10 +55,10 @@ such strata, each counted once in every parent it appears in.
 
 \code{samplyr_message_absent_strata} names the strata that an explicit \code{n}
 (a named vector or a data frame) gives a positive take but a selected
-parent does not hold, such as a district with no PHC village under
-\code{n = data.frame(phc = c("PHC", "non-PHC"), n = c(2, 2))}. That parent's
-take falls short of the table's total. It is a message, because a parent
-can lack a category by design. Its payload carries \code{pool_keys}, each a
+parent does not hold, such as a province with no urban EA under
+\code{n = data.frame(urban_rural = c("Urban", "Rural"), n = c(2, 2))}. That
+parent's take falls short of the table's total. It is a message, because
+a parent can lack a category by design. Its payload carries \code{pool_keys}, each a
 parent and the stratum it lacks, and \code{n_absent}, the number of such
 pairs. A stratum missing from the whole stage is refused instead
 (\code{samplyr_error_alloc_unknown_strata}).

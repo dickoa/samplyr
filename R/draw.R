@@ -429,8 +429,8 @@ NULL
 #'   explicitly, for example by executing each nonempty replicate separately
 #'   and accounting for the empty ones in the analysis.
 #' @param on_capped What to do when a fixed take `n`, drawn without
-#'   replacement, exceeds the units of a pool, such as a take of six
-#'   compounds in a village of five. One of:
+#'   replacement, exceeds the units of a pool, such as a take of 12
+#'   households in an EA that lists 10. One of:
 #'   - `"warn"` (default): take every unit of the pool and warn with
 #'     `samplyr_warning_size_capped` (or `samplyr_warning_census` when every
 #'     pool of the stage is exhausted). The inclusion probabilities describe

@@ -280,8 +280,8 @@ explicitly, for example by executing each nonempty replicate separately
 and accounting for the empty ones in the analysis.}
 
 \item{on_capped}{What to do when a fixed take \code{n}, drawn without
-replacement, exceeds the units of a pool, such as a take of six
-compounds in a village of five. One of:
+replacement, exceeds the units of a pool, such as a take of 12
+households in an EA that lists 10. One of:
 \itemize{
 \item \code{"warn"} (default): take every unit of the pool and warn with
 \code{samplyr_warning_size_capped} (or \code{samplyr_warning_census} when every

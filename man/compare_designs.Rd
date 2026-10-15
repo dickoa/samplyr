@@ -80,15 +80,15 @@ would select.
 \subsection{Allocation}{
 
 Pools are matched by the frame rows they hold, never by the names of the
-stratification variables. \code{stratify_by(district, phc)} and
-\code{stratify_by(phc)} under a district parent form the same pools, and
-\code{cluster_by(region, district)} and \code{cluster_by(district)} form the same
-units when district ids are nested in regions. When the units of a stage
-differ, its pools and takes are not compared. When the pools differ, the
-check names the pools of \code{x} that \code{y} splits or merges.
+stratification variables. \code{stratify_by(province, urban_rural)} and
+\code{stratify_by(urban_rural)} under a province parent form the same pools,
+and \code{cluster_by(region, province)} and \code{cluster_by(province)} form the
+same units when province ids are nested in regions. When the units of a
+stage differ, its pools and takes are not compared. When the pools
+differ, the check names the pools of \code{x} that \code{y} splits or merges.
 
 Two designs on the same frame see the same pools, so a comparison cannot
-find a category the frame lacks. A district without PHC villages forms one
+find a category the frame lacks. A province without urban EAs forms one
 pool in both designs, and they agree. \code{\link[=execute]{execute()}} and \code{\link[=validate_frame]{validate_frame()}}
 report such a parent with \code{samplyr_message_absent_strata} when the
 requirement names its strata in an explicit \code{n} table.
