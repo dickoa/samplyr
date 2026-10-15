@@ -364,7 +364,10 @@ calculate_stratum_sizes <- function(
   out <- allocate_strata(
     stratum_info[ord, , drop = FALSE], strata_spec, draw_spec, signal
   )
-  out[order(ord), , drop = FALSE]
+  moved <- attr(out, "n_moved")
+  out <- out[order(ord), , drop = FALSE]
+  attr(out, "n_moved") <- moved
+  out
 }
 
 #' @noRd
@@ -389,6 +392,8 @@ allocate_strata <- function(
 
   N <- sum(stratum_info$.N_h)
   H <- nrow(stratum_info)
+  # Units an allocation method moved past saturated strata, NA without one.
+  n_moved <- NA_real_
 
   validate_target <- function(target, alloc_name, hint = NULL) {
     if (length(target) != H || any(!is.finite(target))) {
@@ -482,8 +487,9 @@ allocate_strata <- function(
 
     n_h <- allocate_bounded(factors, n_total, lower, upper)
 
+    n_moved <<- 0
     # Report redistribution once when population bounds change the named rule.
-    if (signal && !wr && !population_limited) {
+    if (!wr && !population_limited) {
       # Re-solve without population bounds to assess redistribution.
       relaxed_upper <- if (is_null(max_n)) {
         rep(n_total, H)
@@ -492,8 +498,9 @@ allocate_strata <- function(
       }
       unbounded <- allocate_bounded(factors, n_total, lower, relaxed_upper)
       capped <- unbounded > n_h
-      if (any(capped)) {
-        moved <- sum(unbounded[capped] - n_h[capped])
+      n_moved <<- sum(unbounded[capped] - n_h[capped])
+      if (signal && any(capped)) {
+        moved <- n_moved
         labels <- format_key_labels(
           stratum_info[capped, , drop = FALSE],
           strata_label_vars(strata_spec)
@@ -811,5 +818,6 @@ allocate_strata <- function(
       class = "samplyr_error_zero_allocation"
     )
   }
+  attr(stratum_info, "n_moved") <- n_moved
   stratum_info
 }

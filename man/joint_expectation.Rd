@@ -336,6 +336,7 @@ sampling without replacement. \emph{Journal of Applied Statistics},
 approximation, \code{\link[survey:ppsmat]{survey::ppsmat()}} for wrapping joint matrices
 
 Other diagnostics:
+\code{\link[=compare_designs]{compare_designs()}},
 \code{\link{design_effect}},
 \code{\link[=frame_summary]{frame_summary()}},
 \code{\link{sample-columns}},

@@ -403,6 +403,13 @@ test_that("the frozen version 3 document remains executable", {
   certain <- certainty_plan_fixture()$psu
   expect_setequal(unique(s$psu_id[s$.certainty_1]),
                   certain$psu_id[certain$certainty])
+  # The document predates on_capped, so it keeps the take-all policy.
+  restored <- read_design(frozen_v3_document())
+  expect_true(all(vapply(
+    restored$stages,
+    function(stage) identical(stage$draw_spec$on_capped, "warn"),
+    logical(1)
+  )))
 })
 
 test_that("unreleased design format versions are refused", {

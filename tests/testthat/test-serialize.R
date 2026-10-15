@@ -62,6 +62,38 @@ test_that("as.list records scalar frac, control, and non-default on_empty", {
   expect_equal(draw$on_empty, "warn")
 })
 
+test_that("as.list records on_capped only when it is not the default", {
+  strict <- as.list(sampling_design() |> draw(n = 5, on_capped = "error"))
+  expect_equal(strict$stages[[1]]$draw$on_capped, "error")
+  default <- as.list(sampling_design() |> draw(n = 5))
+  expect_null(default$stages[[1]]$draw$on_capped)
+})
+
+test_that("on_capped survives a write and read, and reads as warn when absent", {
+  design <- sampling_design() |>
+    add_stage() |>
+    cluster_by(psu) |>
+    draw(n = 2) |>
+    add_stage() |>
+    draw(n = 3, on_capped = "error")
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(design, path)
+  restored <- read_design(path)
+  expect_identical(restored$stages[[1]]$draw_spec$on_capped, "warn")
+  expect_identical(restored$stages[[2]]$draw_spec$on_capped, "error")
+  # Only the strict stage writes the field, so a default design file stays
+  # readable by a reader that predates it.
+  expect_identical(sum(grepl('"on_capped"', readLines(path), fixed = TRUE)), 1L)
+
+  text <- paste(readLines(path), collapse = "\n")
+  # Drop the field with the comma before it, so the JSON stays valid.
+  text <- gsub(',\\s*"on_capped": "[a-z]+"', "", text, perl = TRUE)
+  expect_false(grepl("on_capped", text, fixed = TRUE))
+  writeLines(text, path)
+  absent <- read_design(path)
+  expect_identical(absent$stages[[2]]$draw_spec$on_capped, "warn")
+})
+
 ## write_design() / read_design() / design_json()
 
 test_that("a simple design round-trips through a file", {

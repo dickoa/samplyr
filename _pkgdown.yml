@@ -97,6 +97,7 @@ reference:
     contents:
       - summary.tbl_sample
       - frame_summary
+      - compare_designs
       - joint_expectation
       - design_effect
       - varcomp.tbl_sample

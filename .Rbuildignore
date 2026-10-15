@@ -3,7 +3,7 @@
 ^NEWS\.md$
 ^NEWS$
 ^cran-comments\.md$
-^README\.Rmd$
+^README\.qmd$
 ^README\.html$
 ^\.appveyor\.yml$
 ^\.gitlab-ci\.yml$
@@ -13,7 +13,6 @@
 ^revdep$
 ^docs$
 ^public$
-^README\.html$
 ^CODE\_OF\_CONDUCT\.md$
 ^CONTRIBUTING.md$
 ^\_pkgdown\.yml$

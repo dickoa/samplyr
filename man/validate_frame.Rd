@@ -64,6 +64,22 @@ Validation checks include:
 \item Positive values for MOS variables
 }
 
+A fixed-size stage drawn without replacement whose take exceeds the
+population of a candidate pool is not an error by default, because
+\code{\link[=execute]{execute()}} takes every unit of that pool and warns. A stage that sets
+\code{on_capped = "error"} in \code{\link[=draw]{draw()}} is refused here with
+\code{samplyr_error_size_capped}, as \code{\link[=execute]{execute()}} refuses it. Otherwise
+\code{validate_frame()} names such pools in
+a message of class \code{samplyr_message_capped_pools}, with the \code{stage} and a
+\code{payload} holding \code{pool_keys}, \code{n_capped} and \code{n_pools}. A candidate pool
+is one the stage would draw from if its parent were selected, so the
+message does not depend on the seed. The labels are the \code{pool_key}
+column of \code{frame_summary(design, frame, detail = "pool")}.
+
+In the same way, a candidate parent that lacks a stratum an explicit \code{n}
+names is reported with \code{samplyr_message_absent_strata}, the message
+\code{\link[=execute]{execute()}} raises for a selected parent (see \link{execution-conditions}).
+
 For designs restored with \code{\link[=read_design]{read_design()}}, if the design file carries a
 frame fingerprint, \code{validate_frame()} also compares it against \code{frame}
 and reports what changed (rows, columns, column types, or content).

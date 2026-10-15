@@ -21,7 +21,8 @@ draw(
   certainty_size = NULL,
   certainty_prop = NULL,
   certainty_overflow = "error",
-  on_empty = "error"
+  on_empty = "error",
+  on_capped = "warn"
 )
 }
 \arguments{
@@ -37,7 +38,10 @@ size. Fixed-size methods and allocation methods need whole units.
 \link{selection-methods} explains the fixed versus random distinction and the
 warning raised when \code{pps_poisson} falls short of \code{n}. Can be:
 \itemize{
-\item A scalar: applies per stratum (if no \code{alloc}) or as total (if \code{alloc} specified)
+\item A scalar: the size taken in each stratum when \code{\link[=stratify_by]{stratify_by()}} has no
+\code{alloc}, or the total shared across the strata when it has one. At a
+later stage either reading applies within each selected parent, so a
+total is a total per parent, not one for the whole survey.
 \item A named vector: stratum-specific sizes (for single stratification
 variable). A name, or a data frame row, for a stratum the stage cannot
 reach is refused at execution (\code{samplyr_error_alloc_unknown_strata}).
@@ -274,6 +278,32 @@ A replicated execution with empty replicates cannot feed a later
 condition downstream results on nonempty realizations. Handle them
 explicitly, for example by executing each nonempty replicate separately
 and accounting for the empty ones in the analysis.}
+
+\item{on_capped}{What to do when a fixed take \code{n}, drawn without
+replacement, exceeds the units of a pool, such as a take of six
+compounds in a village of five. One of:
+\itemize{
+\item \code{"warn"} (default): take every unit of the pool and warn with
+\code{samplyr_warning_size_capped} (or \code{samplyr_warning_census} when every
+pool of the stage is exhausted). The inclusion probabilities describe
+that take-all rule, so the weights stay valid.
+\item \code{"error"}: refuse before anything is drawn
+(\code{samplyr_error_size_capped}), naming the stage and the short pools.
+}
+
+The check covers every pool the stage would draw from if its parent
+were selected, so whether a design runs does not depend on the seed.
+An allocation total above the population of the stage counts as
+capped. A stratum an allocation method fills to its population and
+whose surplus goes to other strata does not, because the total is
+delivered, and neither does a \code{min_n} above the population with
+\code{frac}, which the rule above makes a census. \code{\link[=execute]{execute()}} checks a stage
+when it receives that stage's frame, so in staged execution a later
+stage is checked by the call that lists it. \code{\link[=validate_frame]{validate_frame()}} and
+\code{\link[=exante_probabilities]{exante_probabilities()}} refuse the same designs, while
+\code{\link[=frame_summary]{frame_summary()}} still reports their short pools. \code{"error"} is refused
+with a random-size method, a method with replacement, or \code{frac}, where
+no fixed take can fall short.}
 }
 \value{
 A modified \code{sampling_design} object with selection parameters specified.

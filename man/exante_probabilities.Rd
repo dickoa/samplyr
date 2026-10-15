@@ -64,7 +64,9 @@ is an expected number of hits rather than an inclusion probability, and a
 method whose registered probabilities are \code{"unknown"}. It also refuses a
 design given several registers, one per stage: the compounding runs along
 the rows of one register and there is no correspondence between the rows of
-two.
+two. A stage that sets \code{on_capped = "error"} in \code{\link[=draw]{draw()}} and has a candidate
+pool smaller than its take cannot be executed on the frame, so it is refused
+with \code{samplyr_error_size_capped}, as \code{\link[=execute]{execute()}} refuses it.
 
 \code{\link[=frame_summary]{frame_summary()}} answers a different question. It reports the pools and
 chances a design resolves, at whatever resolution the digest retained, and

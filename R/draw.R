@@ -185,7 +185,10 @@ NULL
 #'   size. Fixed-size methods and allocation methods need whole units.
 #'   [selection-methods] explains the fixed versus random distinction and the
 #'   warning raised when `pps_poisson` falls short of `n`. Can be:
-#'   - A scalar: applies per stratum (if no `alloc`) or as total (if `alloc` specified)
+#'   - A scalar: the size taken in each stratum when [stratify_by()] has no
+#'     `alloc`, or the total shared across the strata when it has one. At a
+#'     later stage either reading applies within each selected parent, so a
+#'     total is a total per parent, not one for the whole survey.
 #'   - A named vector: stratum-specific sizes (for single stratification
 #'     variable). A name, or a data frame row, for a stratum the stage cannot
 #'     reach is refused at execution (`samplyr_error_alloc_unknown_strata`).
@@ -404,6 +407,29 @@ NULL
 #'   condition downstream results on nonempty realizations. Handle them
 #'   explicitly, for example by executing each nonempty replicate separately
 #'   and accounting for the empty ones in the analysis.
+#' @param on_capped What to do when a fixed take `n`, drawn without
+#'   replacement, exceeds the units of a pool, such as a take of six
+#'   compounds in a village of five. One of:
+#'   - `"warn"` (default): take every unit of the pool and warn with
+#'     `samplyr_warning_size_capped` (or `samplyr_warning_census` when every
+#'     pool of the stage is exhausted). The inclusion probabilities describe
+#'     that take-all rule, so the weights stay valid.
+#'   - `"error"`: refuse before anything is drawn
+#'     (`samplyr_error_size_capped`), naming the stage and the short pools.
+#'
+#'   The check covers every pool the stage would draw from if its parent
+#'   were selected, so whether a design runs does not depend on the seed.
+#'   An allocation total above the population of the stage counts as
+#'   capped. A stratum an allocation method fills to its population and
+#'   whose surplus goes to other strata does not, because the total is
+#'   delivered, and neither does a `min_n` above the population with
+#'   `frac`, which the rule above makes a census. [execute()] checks a stage
+#'   when it receives that stage's frame, so in staged execution a later
+#'   stage is checked by the call that lists it. [validate_frame()] and
+#'   [exante_probabilities()] refuse the same designs, while
+#'   [frame_summary()] still reports their short pools. `"error"` is refused
+#'   with a random-size method, a method with replacement, or `frac`, where
+#'   no fixed take can fall short.
 #'
 #' @return A modified `sampling_design` object with selection parameters specified.
 #'
@@ -586,7 +612,8 @@ draw <- function(
   certainty_size = NULL,
   certainty_prop = NULL,
   certainty_overflow = "error",
-  on_empty = "error"
+  on_empty = "error",
+  on_capped = "warn"
 ) {
   # Match all modifiers after `...` exactly.
   check_keyword_args(
@@ -594,7 +621,7 @@ draw <- function(
     c(
       "min_n", "max_n", "method", "mos", "prn", "aux", "spread", "round",
       "control", "certainty_size", "certainty_prop", "certainty_overflow",
-      "on_empty"
+      "on_empty", "on_capped"
     )
   )
   if (is.data.frame(.data)) {
@@ -768,6 +795,10 @@ draw <- function(
     rlang::arg_match(certainty_overflow, c("error", "allow")),
     "samplyr_error_draw_argument"
   )
+  on_capped <- with_error_class(
+    rlang::arg_match(on_capped, c("warn", "error")),
+    "samplyr_error_draw_argument"
+  )
 
   validate_draw_configuration(
     n = n,
@@ -782,6 +813,7 @@ draw <- function(
     round = round,
     certainty_overflow = certainty_overflow,
     on_empty = on_empty,
+    on_capped = on_capped,
     has_alloc = has_alloc,
     alloc = current_stage$strata$alloc,
     strata_vars = strata_vars,
@@ -811,6 +843,7 @@ draw <- function(
     certainty_overflow = certainty_overflow,
     certainty_plan = certainty_plan,
     on_empty = on_empty,
+    on_capped = on_capped,
     method_type = custom_spec$type,
     method_fixed = custom_spec$fixed_size,
     method_variance = custom_spec$variance_family,
@@ -1206,6 +1239,7 @@ validate_draw_configuration <- function(
   certainty_overflow,
   on_empty,
   has_alloc,
+  on_capped = "warn",
   strata_vars = NULL,
   aux = NULL,
   bounds = NULL,
@@ -1316,12 +1350,14 @@ validate_draw_configuration <- function(
   choices <- list(
     round = c("up", "down", "nearest"),
     certainty_overflow = c("error", "allow"),
-    on_empty = c("warn", "error", "silent")
+    on_empty = c("warn", "error", "silent"),
+    on_capped = c("warn", "error")
   )
   values <- list(
     round = round,
     certainty_overflow = certainty_overflow,
-    on_empty = on_empty
+    on_empty = on_empty,
+    on_capped = on_capped
   )
   for (name in names(choices)) {
     value <- values[[name]]
@@ -1333,8 +1369,49 @@ validate_draw_configuration <- function(
       )
     }
   }
+  check_on_capped_applies(on_capped, method, n, custom_spec, call = call)
 
   invisible(NULL)
+}
+
+#' Refuse a strict shortfall policy where no fixed take can fall short
+#'
+#' Only a fixed number of units drawn without replacement can exceed a pool.
+#' A random-size method has an expected size, a with-replacement method can
+#' take more units than a pool holds, and a rate never exceeds one, so
+#' `on_capped = "error"` would never act there.
+#' @noRd
+check_on_capped_applies <- function(on_capped, method, n, custom_spec,
+                                    call = caller_env()) {
+  if (!identical(on_capped, "error")) {
+    return(invisible(NULL))
+  }
+  kind <- list(
+    method = method,
+    method_type = custom_spec$type,
+    method_fixed = custom_spec$fixed_size
+  )
+  reason <- if (is_random_size_method(kind)) {
+    "{.val {method}} draws a random number of units, so it has no fixed
+     take to fall short of."
+  } else if (is_multi_hit_method(kind)) {
+    "{.val {method}} draws with replacement, so a take can exceed the
+     units a pool holds."
+  } else if (is_null(n)) {
+    "{.arg frac} gives a rate, which never exceeds a pool."
+  }
+  if (is_null(reason)) {
+    return(invisible(NULL))
+  }
+  cli_abort(
+    c(
+      "{.code on_capped = \"error\"} applies to a fixed take {.arg n}
+       drawn without replacement.",
+      "x" = reason
+    ),
+    call = call,
+    class = "samplyr_error_draw_argument"
+  )
 }
 
 #' @noRd

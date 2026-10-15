@@ -1,5 +1,6 @@
 
-<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+<!-- README.md is generated from README.qmd. Please edit that file -->
 
 # samplyr <img src="man/figures/samplyr_hex.gif" align="right" width="140" alt="samplyr hex sticker, animating a sampling design being built up one verb at a time" />
 
@@ -79,13 +80,13 @@ overview_sample |>
 ```
 
 Consider a real survey design from Lohr (2022, Example 7.1), based on a
-1991 study of bed net use in rural Gambia (D’Alessandro et al., 1994):
+1991 study of bed net use in rural Gambia (D'Alessandro et al., 1994):
 
 > Malaria morbidity can be reduced by using bed nets impregnated with
 > insecticide, but this is only effective if the bed nets are in
 > widespread use. In 1991, a nationwide survey was designed to estimate
 > the prevalence of bed net use in rural areas of the Gambia
-> (D’Alessandro et al., 1994).
+> (D'Alessandro et al., 1994).
 >
 > The sampling frame consisted of all rural villages of fewer than 3,000
 > people. The villages were **stratified by three geographic regions**
@@ -125,10 +126,10 @@ design
 #> ── Stage 2 ──────────────────────────────────────────────────────
 #> • Strata: phc
 #> • Cluster: village
-#> • Draw: n = 2 (per stratum), method = pps_brewer, mos = village_population
+#> • Draw: n = 2 (per stratum, per district), method = pps_brewer, mos = village_population
 #> 
 #> ── Stage 3 ──────────────────────────────────────────────────────
-#> • Draw: n = 6, method = srswor
+#> • Draw: n = 6 (per village), method = srswor
 ```
 
 The two MOS names distinguish district totals from village totals. This
@@ -184,6 +185,7 @@ design <- sampling_design() |>
 sample <- execute(design, bfa_eas, seed = 2)
 sample
 #> # A tbl_sample: 300 × 18
+#> # Sampling:     1 stage | 300 units
 #> # Weights:      148.57 [146.5, 151.22]
 #>    ea_id region           province commune urban_rural population
 #>  * <int> <fct>            <fct>    <fct>   <fct>            <int>
@@ -276,6 +278,7 @@ cluster_smpl <- sampling_design() |>
 
 cluster_smpl
 #> # A tbl_sample: 50 × 19
+#> # Sampling:     1 stage | 50 units
 #> # Weights:      779.3 [188.64, 2999.41]
 #>    ea_id region           province commune urban_rural population
 #>  * <int> <fct>            <fct>    <fct>   <fct>            <int>
@@ -362,6 +365,7 @@ selected_eas <- execute(design, zwe_eas, stages = 1, seed = 1)
 selected_eas
 #> # A tbl_sample: 20 × 18
 #> # Stages:       1/2
+#> # Sampling:     1 stage | 20 units
 #> # Weights:      6492.06 [591.31, 14492.74]
 #>    ea_id province      district ward_pcode urban_rural population
 #>  * <int> <fct>         <fct>    <chr>      <fct>            <int>
@@ -402,7 +406,7 @@ final_sample <- selected_eas |>
   execute(selected_eas_list, seed = 2)
 final_sample
 #> # A tbl_sample: 100 × 21
-#> # Sampling:     2 stages | 100/107,250 units
+#> # Sampling:     2 stages | 100 units
 #> # Weights:      38147.25 [35714.84, 40579.66]
 #>    ea_id province district ward_pcode urban_rural population
 #>  * <int> <fct>    <fct>    <chr>      <fct>            <int>
@@ -431,7 +435,7 @@ multi-stage design. The expanded listing is only the candidate frame for
 stage 2. Starting from a new design with a prior `tbl_sample` as its
 frame instead denotes a new sampling phase.
 
-If `tidyr::uncount()` or another operation drops the listing’s
+If `tidyr::uncount()` or another operation drops the listing's
 `tbl_sample` class, keep using that plain object as the second argument
 above. `execute()` recognizes its inherited sampling attributes and
 generated columns and refuses to run it as a fresh frame from `design`,
@@ -458,16 +462,71 @@ used the same way.
 
 ## Allocation Methods
 
-When stratifying, control how the total sample is distributed:
+When stratifying, `n` in `draw()` has one of two meanings. Without an
+allocation method it is the size taken in each stratum. With one, it is
+the total for the stage, shared across the strata by the method.
 
 | Method         | Description                                             |
 |----------------|---------------------------------------------------------|
-| (none)         | `n` applies per stratum                                 |
-| `equal`        | Same sample size in each stratum                        |
+| (none)         | `n` is taken in each stratum                            |
+| `equal`        | Splits the total `n` as evenly as the strata allow      |
 | `proportional` | Proportional to stratum size                            |
 | `neyman`       | Minimize variance (requires `variance`)                 |
 | `optimal`      | Minimize cost-variance (requires `variance` and `cost`) |
 | `power`        | Compromise allocation (requires `cv` and `importance`)  |
+
+The same `n = 8` gives 24 units without a method and 8 with one.
+
+``` r
+frame <- data.frame(region = rep(c("A", "B", "C"), each = 10), id = 1:30)
+
+per_stratum <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 8) |>
+  execute(frame, seed = 1)
+table(per_stratum$region)
+#> 
+#> A B C 
+#> 8 8 8
+
+total <- sampling_design() |>
+  stratify_by(region, alloc = "equal") |>
+  draw(n = 8) |>
+  execute(frame, seed = 1)
+table(total$region)
+#> 
+#> A B C 
+#> 3 3 2
+```
+
+At a later stage, both readings apply within each selected parent. A
+total at stage 2 is a total per selected district, not one for the whole
+survey. The printed design states the scope of every `n`.
+
+``` r
+sampling_design() |>
+  add_stage(label = "District") |>
+    stratify_by(region) |>
+    cluster_by(district) |>
+    draw(n = 5) |>
+  add_stage(label = "Village") |>
+    stratify_by(urban, alloc = "equal") |>
+    cluster_by(village) |>
+    draw(n = 4)
+#> ── Sampling Design ──────────────────────────────────────────────
+#> 
+#> ℹ 2 stages
+#> 
+#> ── Stage 1: District ────────────────────────────────────────────
+#> • Strata: region
+#> • Cluster: district
+#> • Draw: n = 5 (per stratum), method = srswor
+#> 
+#> ── Stage 2: Village ─────────────────────────────────────────────
+#> • Strata: urban (equal)
+#> • Cluster: village
+#> • Draw: n = 4 (total, per district), method = srswor
+```
 
 ### Sample Size Bounds
 
@@ -570,7 +629,7 @@ their inputs and limits:
 | Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `?draw`, `sondage::register_method()` |
 | Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `?panel-assignment`, `?rotation_program`, [Plan and run a rotating panel](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/rotating-panels.html) |
 | Replicated draws | `execute(reps = 5)` | `?execute` |
-| Two-phase | pipe a `tbl_sample` into a new design’s `execute()` | `vignette("survey-analysis")` |
+| Two-phase | pipe a `tbl_sample` into a new design's `execute()` | `vignette("survey-analysis")` |
 | Indirect sampling | `share_weights()`, to estimate for a population linked to the one that was sampled | `vignette("design-semantics")` |
 | Overlapping frames | `stack_frames()`, for two registers of one population | `vignette("survey-analysis")` |
 
@@ -664,6 +723,100 @@ condition also carries the affected pools and the counts behind them in
 a `payload`, which is what remains under `frame_digest = "none"`. See
 `?execution-conditions` for the payload contract and for how to capture
 one.
+
+## Checking a Design Before Drawing
+
+A design can be checked against its frame before any unit is drawn, and
+none of the checks below uses random numbers. A few points are worth
+checking in any design. A scalar `n` is taken in each stratum unless an
+allocation method shares it as a total (see Allocation Methods). At a
+later stage, sizes apply within each selected parent, and the printed
+design says so. A measure of size belongs to the sampling unit, so it
+may repeat on every row of a cluster but must be the same on each. At
+the final stage the frame rows are the units and need no `cluster_by()`.
+
+``` r
+villages <- data.frame(
+  village = rep(c("v1", "v2", "v3", "v4"), c(6, 8, 5, 9)),
+  household = 1:28
+)
+villages$size <- ave(villages$household, villages$village, FUN = length)
+
+plan <- sampling_design() |>
+  add_stage(label = "Village") |>
+    cluster_by(village) |>
+    draw(n = 2, method = "pps_brewer", mos = size) |>
+  add_stage(label = "Household") |>
+    draw(n = 6)
+
+validate_frame(plan, villages)
+#> Stage 2: the take exceeds the pool population in 1 of 4
+#> candidate pools.
+#> ℹ Short pools: "v3".
+#> ℹ `execute()` takes every unit of a short pool and warns.
+#>   Inspect with `frame_summary(design, frame, detail = "pool")`.
+frame_summary(plan, villages)[c("stage", "n_pools", "n_capped", "n_target")]
+#> # A tibble: 2 × 4
+#>   stage n_pools n_capped n_target
+#>   <int>   <int>    <int>    <dbl>
+#> 1     1       1        0        2
+#> 2     2       4        1       12
+```
+
+The `pool_key` column of
+`frame_summary(plan, villages, detail = "pool")` names the short pools
+as `execute()` will. By default `execute()` takes every unit of a short
+pool and warns. With `on_capped = "error"` in the stage's `draw()`, it
+refuses before anything is drawn.
+
+``` r
+strict <- sampling_design() |>
+  add_stage(label = "Village") |>
+    cluster_by(village) |>
+    draw(n = 2, method = "pps_brewer", mos = size) |>
+  add_stage(label = "Household") |>
+    draw(n = 6, on_capped = "error")
+
+execute(strict, villages, seed = 1)
+#> Error in `execute()`:
+#> ! Stage 2: the take exceeds the pool population in 1 of 4
+#>   candidate pools.
+#> ℹ Short pools: "v3".
+#> ℹ The stage sets `on_capped = "error"`, so nothing was drawn.
+#> ℹ Lower the take, merge the short pools in the frame, or set
+#>   `on_capped = "warn"` to take every unit of a short pool.
+```
+
+A requirement of the protocol, such as two villages and five households
+in each, can be written as a design with the default method and compared
+with the design to field. `compare_designs()` matches pools by the frame
+rows they hold and compares each pool's take, without looking at the
+selection method. With `level = "probabilities"` it compares the
+inclusion probability of every unit instead.
+
+``` r
+requirement <- sampling_design() |>
+  add_stage() |>
+    cluster_by(village) |>
+    draw(n = 2) |>
+  add_stage() |>
+    draw(n = 5)
+
+compare_designs(requirement, plan, villages, key = household)
+#> ── Design comparison ────────────────────────────────────────────
+#> Allocations differ on this frame.
+#> Selection methods and measures of size were not compared.
+#> 
+#> ✔ Stage 1 units: agree. 4 units.
+#> ✔ Stage 1 pools: agree. 1 pool.
+#> ✔ Stage 1 targets: agree. Every pool takes the same. x takes 2 units in all, y 2.
+#> ✔ Stage 2 units: agree. 28 units.
+#> ✔ Stage 2 pools: agree. 4 pools.
+#> ✖ Stage 2 targets: differ. 4 of 4 pools differ ("v1", "v2", "v3" and 1 more).
+```
+
+The plan takes six households in each village where the requirement asks
+for five, and the comparison names the villages.
 
 ## Validation
 

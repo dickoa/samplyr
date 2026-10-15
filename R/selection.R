@@ -515,6 +515,40 @@ signal_singleton_strata <- function(frame, strata_vars, sample, draw_spec,
   invisible(NULL)
 }
 
+#' Strata an explicit `n` names with a positive take that a parent lacks
+#'
+#' Only a named vector or a data frame names strata. Stratum variables that
+#' repeat the parent (`label_vars` leaves them out) select the table rows for
+#' this parent, as in a per-parent take table. Values compare as text, so a
+#' named vector matches a numeric or factor column. Rows are matched on the
+#' collision-safe group key and labeled only once found missing.
+#' @noRd
+absent_named_strata <- function(frame, strata_vars, label_vars, n) {
+  label_vars <- intersect(label_vars, strata_vars)
+  if (length(label_vars) == 0L || nrow(frame) == 0L) {
+    return(character(0))
+  }
+  named <- if (is.data.frame(n) && all(strata_vars %in% names(n))) {
+    n[!is.na(n$n) & n$n > 0, strata_vars, drop = FALSE]
+  } else if (is.numeric(n) && !is_null(names(n)) && length(strata_vars) == 1L) {
+    stats::setNames(
+      data.frame(names(n)[!is.na(n) & n > 0], stringsAsFactors = FALSE),
+      strata_vars
+    )
+  }
+  if (is_null(named) || nrow(named) == 0L) {
+    return(character(0))
+  }
+  parent_vars <- setdiff(strata_vars, label_vars)
+  if (length(parent_vars) > 0L) {
+    here <- make_group_key(frame, parent_vars)
+    named <- named[make_group_key(named, parent_vars) %in% here, , drop = FALSE]
+  }
+  wanted <- make_group_key(named, label_vars)
+  missing <- !wanted %in% make_group_key(frame, label_vars) & !duplicated(wanted)
+  key_labels(named[missing, , drop = FALSE], label_vars)
+}
+
 #' The pools of a frame, their keys and their row counts
 #' @noRd
 pool_population <- function(frame, strata_vars) {
@@ -687,10 +721,18 @@ stratum_plan <- function(frame, strata_spec, draw_spec) {
     stratum_info, strata_spec, draw_spec,
     signal = TRUE
   )
+  absent <- absent_named_strata(
+    frame, strata_vars, strata_label_vars(strata_spec), draw_spec$n
+  )
+  if (length(absent) > 0L) {
+    signal_selection_event(
+      "absent_strata",
+      pool_keys = absent,
+      n_absent = length(absent)
+    )
+  }
 
-  if (
-    !identical(draw_spec$method, "cube") && !is_multi_hit_method(draw_spec)
-  ) {
+  if (!is_multi_hit_method(draw_spec)) {
     capped <- stratum_info$.n_h > stratum_info$.N_h
     if (any(capped)) {
       # Store full keys and let the reporter truncate them.

@@ -14,7 +14,9 @@
 #' @param alloc Character string naming the allocation method. With a method,
 #'   `n` in [draw()] is the *total* sample size to distribute. One of:
 #'   - `NULL` (default): No allocation. `n` in [draw()] is *per stratum*
-#'   - `"equal"`: Equal allocation across strata
+#'   - `"equal"`: Splits the total as evenly as integer rounding, `min_n`,
+#'     `max_n` and the stratum populations allow, so the final sizes can
+#'     differ
 #'   - `"proportional"`: Proportional to the number of the stage's sampling
 #'     units in each stratum, or to `importance` when it is supplied
 #'   - `"neyman"`: Neyman optimal allocation (requires `variance`)
@@ -131,6 +133,14 @@
 #'   stratify_by(region) |>
 #'   draw(n = 20) |>
 #'   execute(bfa_eas, seed = 1234)
+#'
+#' # With an allocation method the same n is a total: 20 EAs in all,
+#' # shared as evenly as possible across the 13 regions
+#' shared <- sampling_design() |>
+#'   stratify_by(region, alloc = "equal") |>
+#'   draw(n = 20) |>
+#'   execute(bfa_eas, seed = 1234)
+#' table(shared$region)
 #'
 #' # Proportional allocation across regions
 #' sampling_design() |>

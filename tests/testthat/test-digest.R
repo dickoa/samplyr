@@ -528,8 +528,8 @@ test_that("stage detail reports the selection chain", {
   expect_s3_class(fs, "tbl_df")
   expect_named(fs, c(
     "stage", "unit_level", "scope", "chance_kind", "probabilities",
-    "storage", "n_pools", "N", "n_target", "n_expected", "n_realized",
-    "take_rate"
+    "storage", "n_pools", "n_capped", "N", "n_target", "n_expected",
+    "n_moved", "n_realized", "take_rate"
   ))
   expect_identical(nrow(fs), 1L)
   expect_identical(fs$n_pools, 4L)

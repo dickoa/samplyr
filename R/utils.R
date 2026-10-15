@@ -509,6 +509,7 @@ report_selection_outcome <- function(outcome, stage, x) {
     nominal_cap = warn_nominal_capped(stage, x),
     poisson_shortfall = warn_poisson_shortfall(stage, x),
     singleton_pool = inform_singleton_strata(stage, x),
+    absent_strata = inform_absent_strata(stage, x),
     empty_parent = warn_empty_parents(stage, x),
     allocation_cap = inform_allocation_capped(stage, x),
     cli_abort(
@@ -546,7 +547,8 @@ summarize_selection_events <- function(group) {
     n_clipped = total("n_clipped"),
     n_moved = total("n_moved"),
     n_singleton = total("n_singleton"),
-    n_empty = total("n_empty")
+    n_empty = total("n_empty"),
+    n_absent = total("n_absent")
   )
 
   # Only capped pools signal, so add their shortfall to the selection.
@@ -747,6 +749,29 @@ inform_singleton_strata <- function(stage, x) {
     class = "samplyr_message_singleton_pool",
     stage = stage,
     operation = "singleton_pool",
+    payload = x
+  )
+}
+
+#' Report strata an explicit `n` names that a parent lacks
+#'
+#' A message, since a parent can lack a category by design. Counted per
+#' parent and stratum. `candidate` words it for `validate_frame()`, which
+#' checks every parent the stage could draw from.
+#' @noRd
+inform_absent_strata <- function(stage, x, candidate = FALSE) {
+  parent <- if (candidate) "candidate" else "selected"
+  cli_inform(
+    c(
+      "Stage {stage}: {x$n_absent} strat{?um/a} named in {.arg n}
+       {?has/have} no units in {?its/their} {parent} parent.",
+      pool_lines(x, "Absent strata"),
+      "i" = "Such a stratum takes nothing in that parent, so the parent's
+             take falls short of the table's total."
+    ),
+    class = "samplyr_message_absent_strata",
+    stage = stage,
+    operation = "absent_strata",
     payload = x
   )
 }

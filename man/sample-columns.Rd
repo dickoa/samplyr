@@ -113,6 +113,7 @@ population structure behind them, \code{\link[=as_svydesign]{as_svydesign()}} fo
 translated for \pkg{survey}
 
 Other diagnostics:
+\code{\link[=compare_designs]{compare_designs()}},
 \code{\link{design_effect}},
 \code{\link[=frame_summary]{frame_summary()}},
 \code{\link[=joint_expectation]{joint_expectation()}},

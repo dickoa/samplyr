@@ -95,6 +95,7 @@ svyplan::n_cluster(stage_cost = c(500, 50), icc = vc,
 conventions, \code{\link[svyplan:n_cluster]{svyplan::n_cluster()}} for planning with the result
 
 Other diagnostics:
+\code{\link[=compare_designs]{compare_designs()}},
 \code{\link{design_effect}},
 \code{\link[=frame_summary]{frame_summary()}},
 \code{\link[=joint_expectation]{joint_expectation()}},

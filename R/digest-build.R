@@ -1225,6 +1225,8 @@ exante_digest <- function(design, frame, call = rlang::current_env()) {
 
   stages_out <- vector("list", length(stages_spec))
   pool_keys <- vector("list", length(stages_spec))
+  pool_labels <- vector("list", length(stages_spec))
+  pool_moved <- vector("list", length(stages_spec))
   registry <- NULL
   for (stage_idx in seq_along(stages_spec)) {
     if (stage_idx > 1L) {
@@ -1271,6 +1273,8 @@ exante_digest <- function(design, frame, call = rlang::current_env()) {
     stages_out[[stage_idx]] <- built$stage
     registry <- built$registry
     pool_keys[[stage_idx]] <- built$pool_keys
+    pool_labels[[stage_idx]] <- built$pool_labels
+    pool_moved[[stage_idx]] <- built$pool_moved
   }
 
   digest <- new_frame_digest(
@@ -1282,6 +1286,8 @@ exante_digest <- function(design, frame, call = rlang::current_env()) {
   validate_frame_digest(digest)
   # Keep ex-ante parent ancestry as an internal attribute.
   attr(digest, "exante_pool_keys") <- pool_keys
+  attr(digest, "exante_pool_labels") <- pool_labels
+  attr(digest, "exante_pool_moved") <- pool_moved
   digest
 }
 
@@ -1357,7 +1363,8 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
     n_desc,
     keys,
     rows = urows,
-    row_units = seq_along(urows)
+    row_units = seq_along(urows),
+    moved = NA_real_
   ) {
     rlang::local_error_call(caller_env())
     mos_vals <- if (!is_null(draw_spec$mos)) {
@@ -1380,7 +1387,8 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
       n_desc = n_desc,
       keys = keys,
       rows = rows,
-      row_units = row_units
+      row_units = row_units,
+      moved = moved
     )
   }
 
@@ -1433,6 +1441,8 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
     )
     info <- calculate_stratum_sizes(info, strata_spec, parent_draw)
     info_keys <- make_group_key(info, strata_vars)
+    # Attribute a parent's redistribution to its first pool.
+    parent_moved <- attr(info, "n_moved")
 
     for (s in seq_along(sgroups)) {
       urows <- unit_rows[sgroups[[s]]]
@@ -1460,7 +1470,8 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
           match(ckeys[ckeys %in% pool_keys], pool_keys)
         } else {
           seq_along(pool_rows)
-        }
+        },
+        moved = if (s == 1L) parent_moved else parent_moved * 0
       )
     }
   }
@@ -1602,7 +1613,36 @@ build_exante_stage <- function(
   } else {
     digest_path_keys(frame, first_rows, ancestor_vars)
   }
-  list(stage = stage, registry = registry, pool_keys = pool_parent_key)
+  list(
+    stage = stage,
+    registry = registry,
+    pool_keys = pool_parent_key,
+    pool_labels = exante_pool_labels(
+      design, stage_idx, frame, first_rows, strata_vars, ancestor_vars
+    ),
+    pool_moved = vapply(pools_acc, function(p) as.double(p$moved), numeric(1))
+  )
+}
+
+#' Each ex-ante pool as execution names it in a condition's `pool_keys`
+#'
+#' The parent path in the user's values, then the stratum, leaving out
+#' stratum variables that repeat the parent. A stage-1 pool without strata
+#' has nothing to name and reads `NA`.
+#' @noRd
+exante_pool_labels <- function(design, stage_idx, frame, first_rows,
+                               strata_vars, ancestor_vars) {
+  label_vars <- setdiff(strata_vars %||% character(0), ancestor_vars)
+  stratum <- key_labels(frame[first_rows, label_vars, drop = FALSE], label_vars)
+  if (stage_idx == 1L) {
+    return(ifelse(nzchar(stratum), stratum, NA_character_))
+  }
+  parent <- path_labels(
+    frame[first_rows, ancestor_vars, drop = FALSE],
+    ancestor_vars,
+    ancestor_cluster_levels(design, stage_idx)
+  )
+  ifelse(nzchar(stratum), paste(parent, stratum, sep = " > "), parent)
 }
 
 #' Ex-ante mirror of the per-cluster invariance check of

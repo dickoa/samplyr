@@ -173,6 +173,10 @@ format_draw_spec <- function(draw, has_strata = FALSE, alloc = NULL,
     parts <- c(parts, paste0("control = ", control_str))
   }
 
+  if (identical(draw$on_capped, "error")) {
+    parts <- c(parts, "on_capped = error")
+  }
+
   paste(parts, collapse = ", ")
 }
 
@@ -667,4 +671,51 @@ format_cluster_vars <- function(spec) {
     out <- paste0(out, ", nest = FALSE")
   }
   out
+}
+
+#' @export
+print.samplyr_design_comparison <- function(x, ...) {
+  cli::cat_rule("Design comparison")
+  approximate <- identical(x$probability_quality, "approximate")
+  what <- if (identical(x$level, "allocation")) {
+    "Allocations"
+  } else if (approximate) {
+    "First-order inclusion probability targets"
+  } else {
+    "First-order inclusion probabilities"
+  }
+  cli::cat_line(switch(
+    x$verdict,
+    agree = paste(what, "agree on this frame."),
+    differ = paste(what, "differ on this frame."),
+    unresolved = paste(what, "could not be compared in full on this frame.")
+  ))
+  if (identical(x$level, "allocation")) {
+    cli::cat_line("Selection methods and measures of size were not compared.")
+  }
+  if (approximate) {
+    cli::cat_line(
+      "Both designs use methods that meet these targets only approximately."
+    )
+  }
+  cli::cat_line()
+  checks <- x$checks
+  for (i in seq_len(nrow(checks))) {
+    where <- if (is.na(checks$stage[[i]])) {
+      check <- checks$check[[i]]
+      paste0(toupper(substr(check, 1, 1)), substring(check, 2))
+    } else {
+      paste0("Stage ", checks$stage[[i]], " ", checks$check[[i]])
+    }
+    cli::cat_bullet(
+      paste0(where, ": ", checks$status[[i]], ". ", checks$detail[[i]]),
+      bullet = switch(
+        checks$status[[i]],
+        agree = "tick",
+        differ = "cross",
+        "info"
+      )
+    )
+  }
+  invisible(x)
 }

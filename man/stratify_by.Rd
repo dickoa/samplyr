@@ -28,7 +28,9 @@ arguments follow \code{...} and are matched exactly.}
 \code{n} in \code{\link[=draw]{draw()}} is the \emph{total} sample size to distribute. One of:
 \itemize{
 \item \code{NULL} (default): No allocation. \code{n} in \code{\link[=draw]{draw()}} is \emph{per stratum}
-\item \code{"equal"}: Equal allocation across strata
+\item \code{"equal"}: Splits the total as evenly as integer rounding, \code{min_n},
+\code{max_n} and the stratum populations allow, so the final sizes can
+differ
 \item \code{"proportional"}: Proportional to the number of the stage's sampling
 units in each stratum, or to \code{importance} when it is supplied
 \item \code{"neyman"}: Neyman optimal allocation (requires \code{variance})
@@ -171,6 +173,14 @@ sampling_design() |>
   stratify_by(region) |>
   draw(n = 20) |>
   execute(bfa_eas, seed = 1234)
+
+# With an allocation method the same n is a total: 20 EAs in all,
+# shared as evenly as possible across the 13 regions
+shared <- sampling_design() |>
+  stratify_by(region, alloc = "equal") |>
+  draw(n = 20) |>
+  execute(bfa_eas, seed = 1234)
+table(shared$region)
 
 # Proportional allocation across regions
 sampling_design() |>

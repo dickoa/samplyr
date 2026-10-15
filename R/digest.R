@@ -1288,15 +1288,26 @@ get_frame_digest <- function(x) {
 #'
 #'   For `detail = "stage"`, one row per stage with `stage`,
 #'   `unit_level`, `scope`, `chance_kind`, `probabilities`, `storage`,
-#'   `n_pools`, `N`, `n_target`, `n_expected`, `n_realized`, and
-#'   `take_rate`.
+#'   `n_pools`, `n_capped`, `N`, `n_target`, `n_expected`, `n_moved`,
+#'   `n_realized`, and `take_rate`. `n_capped` counts the stage's pools
+#'   whose `capped` is `TRUE` at `detail = "pool"`, and is `NA` when any
+#'   of them is `NA`. Like `n_pools`, it counts pools without weighting,
+#'   so in a preview it counts candidate pools. `n_moved` is the number
+#'   of units an allocation method moved away from strata it saturated,
+#'   which `n_target` no longer shows. A preview reports it, rolled up
+#'   like `n_target`. It is `NA` for a stage without an allocation method
+#'   and on a recorded digest, which does not keep it.
 #'
 #'   For `detail = "pool"`, one row per selection pool and realization
-#'   with `stage`, `pool_id`, `replicate`, `parent_unit`, any stratum
-#'   label columns, `N`, `n_target`, `n_expected`, `n_realized`, `scope`,
-#'   `chance_status`, `chance` (the constant per-unit chance where one
-#'   applies, `NA` otherwise), `take_rate`, and `capped`. `replicate` is
-#'   `1` for an ordinary execution. In a replicated execution, `pool_id`
+#'   with `stage`, `pool_id`, `replicate`, `parent_unit`, `pool_key`, any
+#'   stratum label columns, `N`, `n_target`, `n_expected`, `n_realized`,
+#'   `scope`, `chance_status`, `chance` (the constant per-unit chance where
+#'   one applies, `NA` otherwise), `take_rate`, and `capped`. `replicate` is
+#'   `1` for an ordinary execution. `pool_key` names the pool in the
+#'   frame's values, its parent path then its stratum, as the
+#'   `pool_keys` field of a condition from [execute()] does. Only a
+#'   preview can name pools, so it is `NA` on a recorded digest, and on a
+#'   first-stage pool without strata. In a replicated execution, `pool_id`
 #'   identifies the shared structural pool and the key is `stage`,
 #'   `pool_id`, and `replicate`. Stratum columns are `NA` for stages that
 #'   do not use them.
@@ -1420,6 +1431,22 @@ get_frame_digest <- function(x) {
 #'   frame_summary(planned, frame, detail = "pool")[allocation_columns],
 #'   width = Inf
 #' )
+#'
+#' # A short pool before drawing: one of three villages holds fewer
+#' # households than the take of 4, and the preview names it.
+#' villages <- data.frame(
+#'   village = rep(c("v1", "v2", "v3"), c(6, 3, 8)),
+#'   household = 1:17
+#' )
+#' two_stage <- sampling_design() |>
+#'   add_stage() |>
+#'   cluster_by(village) |>
+#'   draw(n = 2) |>
+#'   add_stage() |>
+#'   draw(n = 4)
+#' frame_summary(two_stage, villages)[c("stage", "n_pools", "n_capped")]
+#' short <- frame_summary(two_stage, villages, detail = "pool")
+#' short[short$capped, c("stage", "pool_key", "N", "n_target")]
 #'
 #' # Random-size allocation: one scalar row per pool and replicate.
 #' random_sample <- sampling_design() |>
@@ -1605,10 +1632,16 @@ frame_summary_report <- function(x, digest, stages, scope, detail,
 
   switch(
     detail,
-    stage = frame_summary_stage(stage_records, scope, exante = exante),
+    stage = frame_summary_stage(
+      stage_records, scope,
+      random_size = stage_random_size(x, stage_records),
+      moved = attr(digest, "exante_pool_moved"),
+      exante = exante
+    ),
     pool = frame_summary_pool(
       stage_records, scope, replicate_ids,
       random_size = stage_random_size(x, stage_records),
+      labels = attr(digest, "exante_pool_labels"),
       exante = exante
     ),
     unit = frame_summary_unit(
@@ -1684,11 +1717,19 @@ exante_pool_weights <- function(stages) {
 }
 
 #' @noRd
-frame_summary_stage <- function(stages, scope, exante = FALSE) {
+frame_summary_stage <- function(stages, scope, random_size = NULL,
+                                moved = NULL, exante = FALSE) {
   pool_weights <- if (exante) exante_pool_weights(stages) else NULL
   rows <- lapply(seq_along(stages), function(stage_pos) {
     s <- stages[[stage_pos]]
     pools <- s$pools
+    rs <- if (is_null(random_size)) NA else random_size[[stage_pos]]
+    capped <- capped_from_shortfall(
+      as.double(pools$n_expected),
+      as.double(pools$n_target),
+      rs
+    )
+    pool_moved <- if (is_null(moved)) NA_real_ else moved[[s$stage_id]]
     # Weight ex-ante pools by parent selection chance.
     w <- if (is_null(pool_weights)) {
       as.numeric(pools$chance_status != "design_resolved")
@@ -1717,9 +1758,11 @@ frame_summary_stage <- function(stages, scope, exante = FALSE) {
       probabilities = s$probabilities %||% NA_character_,
       storage = s$storage,
       n_pools = nrow(pools),
+      n_capped = if (anyNA(capped)) NA_integer_ else sum(capped),
       N = N,
       n_target = sum_or_na(pools$n_target * w),
       n_expected = sum_or_na(pools$n_expected * w),
+      n_moved = sum_or_na(pool_moved * w),
       n_realized = n_realized,
       take_rate = take_rate
     )
@@ -1772,12 +1815,19 @@ frame_summary_pool <- function(
   scope,
   replicate_ids = 1L,
   random_size = NULL,
+  labels = NULL,
   exante = FALSE
 ) {
   rows <- lapply(seq_along(stages), function(stage_idx) {
     s <- stages[[stage_idx]]
     rs <- if (is_null(random_size)) NA else random_size[[stage_idx]]
     pools <- s$pools
+    # The digest is anonymous, so only a preview can name its pools.
+    pool_key <- if (is_null(labels)) {
+      rep(NA_character_, nrow(pools))
+    } else {
+      labels[[s$stage_id]]
+    }
     n_reps <- length(replicate_ids)
     pool_rows <- rep(seq_len(nrow(pools)), each = n_reps)
     row_reps <- rep(replicate_ids, times = nrow(pools))
@@ -1824,6 +1874,7 @@ frame_summary_pool <- function(
       pool_id = as.integer(pools$pool_id[pool_rows]),
       replicate = as.integer(row_reps),
       parent_unit = as.integer(pools$parent_unit[pool_rows]),
+      pool_key = pool_key[pool_rows],
       N = as.double(pools$N[pool_rows]),
       n_target = as.double(pools$n_target[pool_rows]),
       n_expected = as.double(pools$n_expected[pool_rows]),

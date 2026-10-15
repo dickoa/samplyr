@@ -81,6 +81,7 @@ summary(sample)
 \code{\link[=as_svydesign]{as_svydesign()}} for exporting to the survey package
 
 Other diagnostics:
+\code{\link[=compare_designs]{compare_designs()}},
 \code{\link{design_effect}},
 \code{\link[=frame_summary]{frame_summary()}},
 \code{\link[=joint_expectation]{joint_expectation()}},

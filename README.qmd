@@ -1,16 +1,24 @@
 ---
-output: github_document
+format:
+  gfm:
+    from: markdown-smart
+    wrap: auto
+    columns: 72
+# Keep image URLs as written (quarto-dev/quarto-cli#6092).
+default-image-extension: ""
 ---
 
-<!-- README.md is generated from README.Rmd. Please edit that file -->
+<!-- README.md is generated from README.qmd. Please edit that file -->
 
-```{r, include = FALSE}
+```{r}
+#| include: false
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
   fig.path = "man/figures/README-",
   out.width = "100%"
 )
+options(width = 65)
 ```
 
 # samplyr <img src="man/figures/samplyr_hex.gif" align="right" width="140" alt="samplyr hex sticker, animating a sampling design being built up one verb at a time" />
@@ -51,7 +59,8 @@ semantics are references to consult as needed.
 
 `samplyr` is built around a simple idea: sampling code should read like its English description.
 
-```{r overview}
+```{r}
+#| label: overview
 library(samplyr)
 data(bfa_eas)
 
@@ -101,7 +110,8 @@ listings, followed by observations and survey export.
 
 ## Installation
 
-```{r, eval = FALSE}
+```{r}
+#| eval: false
 # sondage, the sampling algorithms backend, is on CRAN
 install.packages("sondage")
 
@@ -130,7 +140,8 @@ pak::pkg_install("gitlab::dickoa/samplyr")
 `stratify_by()` and `cluster_by()` take bare column names. The design is stored as a specification and resolved only when a frame is available
 (`validate_frame()`, `execute()`, `as_svydesign()`), so design specification stays separate from execution.
 
-```{r frame-independent}
+```{r}
+#| label: frame-independent
 design <- sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
   cluster_by(ea_id) |>
@@ -142,7 +153,8 @@ sample
 
 ## Quick Start
 
-```{r quick-start}
+```{r}
+#| label: quick-start
 library(samplyr)
 data(bfa_eas)
 
@@ -174,7 +186,8 @@ cluster_smpl
 
 Use `add_stage()` to define multi-stage designs. This example selects districts with PPS, then samples EAs within each:
 
-```{r multi-stage}
+```{r}
+#| label: multi-stage
 library(dplyr, warn.conflicts = FALSE)
 data(zwe_eas)
 
@@ -198,7 +211,8 @@ sample
 
 Execute stages separately when fieldwork happens between stages:
 
-```{r operational}
+```{r}
+#| label: operational
 design <- sampling_design() |>
   add_stage(label = "EA") |>
     stratify_by(urban_rural) |>
@@ -254,22 +268,61 @@ methods registered with `sondage::register_method()` are used the same way.
 
 ## Allocation Methods
 
-When stratifying, control how the total sample is distributed:
+When stratifying, `n` in `draw()` has one of two meanings. Without an
+allocation method it is the size taken in each stratum. With one, it is
+the total for the stage, shared across the strata by the method.
 
 | Method         | Description                                             |
 |----------------|---------------------------------------------------------|
-| (none)         | `n` applies per stratum                                 |
-| `equal`        | Same sample size in each stratum                        |
+| (none)         | `n` is taken in each stratum                            |
+| `equal`        | Splits the total `n` as evenly as the strata allow      |
 | `proportional` | Proportional to stratum size                            |
 | `neyman`       | Minimize variance (requires `variance`)                 |
 | `optimal`      | Minimize cost-variance (requires `variance` and `cost`) |
 | `power`        | Compromise allocation (requires `cv` and `importance`)  |
 
+The same `n = 8` gives 24 units without a method and 8 with one.
+
+```{r}
+#| label: scope-of-n
+frame <- data.frame(region = rep(c("A", "B", "C"), each = 10), id = 1:30)
+
+per_stratum <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 8) |>
+  execute(frame, seed = 1)
+table(per_stratum$region)
+
+total <- sampling_design() |>
+  stratify_by(region, alloc = "equal") |>
+  draw(n = 8) |>
+  execute(frame, seed = 1)
+table(total$region)
+```
+
+At a later stage, both readings apply within each selected parent. A total
+at stage 2 is a total per selected district, not one for the whole survey.
+The printed design states the scope of every `n`.
+
+```{r}
+#| label: scope-of-n-stages
+sampling_design() |>
+  add_stage(label = "District") |>
+    stratify_by(region) |>
+    cluster_by(district) |>
+    draw(n = 5) |>
+  add_stage(label = "Village") |>
+    stratify_by(urban, alloc = "equal") |>
+    cluster_by(village) |>
+    draw(n = 4)
+```
+
 ### Sample Size Bounds
 
 Use `min_n` and `max_n` in `draw()` to constrain stratum sample sizes when using allocation methods:
 
-```{r bounds}
+```{r}
+#| label: bounds
 data(bfa_eas_variance)
 
 # Ensure at least 2 per stratum (minimum for variance estimation)
@@ -283,7 +336,9 @@ sampling_design() |>
 
 For custom stratum-specific sizes or rates, pass a data frame to `n` or `frac` in `draw()`:
 
-```{r custom-alloc, eval = FALSE}
+```{r}
+#| label: custom-alloc
+#| eval: false
 # Custom allocation with data frame
 sizes_df <- data.frame(
   region = c("North", "South", "East", "West"),
@@ -296,7 +351,8 @@ sample <- sampling_design() |>
   execute(frame, seed = 42)
 ```
 
-```{r neyman}
+```{r}
+#| label: neyman
 # Neyman allocation
 data(bfa_eas_variance)
 
@@ -329,7 +385,9 @@ The [variance-estimation reference](https://dickoa.gitlab.io/samplyr/reference/v
 (`?variance-estimation`) compares first-order and joint probability quality and
 variance estimators, with the stage and phase restrictions.
 
-```{r beyond, eval = FALSE}
+```{r}
+#| label: beyond
+#| eval: false
 # Balanced on auxiliary totals, PPS on size
 sampling_design() |>
   stratify_by(region, alloc = "proportional") |>
@@ -349,7 +407,9 @@ execute(two_stage_design, frame, seed = 1, panels = 4, panel_stage = 2)
 
 Convert to `survey` or `srvyr` for estimation:
 
-```{r survey-export, eval = FALSE}
+```{r}
+#| label: survey-export
+#| eval: false
 svy <- as_svydesign(sample)
 survey::svymean(~y, svy)
 
@@ -371,7 +431,8 @@ replicate design that varies one frame at a time.
 
 ## Diagnostics
 
-```{r diagnostics}
+```{r}
+#| label: diagnostics
 summary(strata_smpl)
 ```
 
@@ -403,6 +464,76 @@ carries the affected pools and the counts behind them in a `payload`, which is
 what remains under `frame_digest = "none"`. See `?execution-conditions` for
 the payload contract and for how to capture one.
 
+## Checking a Design Before Drawing
+
+A design can be checked against its frame before any unit is drawn, and
+none of the checks below uses random numbers. A few points are worth
+checking in any design. A scalar `n` is taken in each stratum unless an
+allocation method shares it as a total (see Allocation Methods). At a later
+stage, sizes apply within each selected parent, and the printed design says
+so. A measure of size belongs to the sampling unit, so it may repeat on
+every row of a cluster but must be the same on each. At the final stage the
+frame rows are the units and need no `cluster_by()`.
+
+```{r}
+#| label: check-before
+villages <- data.frame(
+  village = rep(c("v1", "v2", "v3", "v4"), c(6, 8, 5, 9)),
+  household = 1:28
+)
+villages$size <- ave(villages$household, villages$village, FUN = length)
+
+plan <- sampling_design() |>
+  add_stage(label = "Village") |>
+    cluster_by(village) |>
+    draw(n = 2, method = "pps_brewer", mos = size) |>
+  add_stage(label = "Household") |>
+    draw(n = 6)
+
+validate_frame(plan, villages)
+frame_summary(plan, villages)[c("stage", "n_pools", "n_capped", "n_target")]
+```
+
+The `pool_key` column of `frame_summary(plan, villages, detail = "pool")`
+names the short pools as `execute()` will. By default `execute()` takes
+every unit of a short pool and warns. With `on_capped = "error"` in the
+stage's `draw()`, it refuses before anything is drawn.
+
+```{r}
+#| label: check-strict
+#| error: true
+strict <- sampling_design() |>
+  add_stage(label = "Village") |>
+    cluster_by(village) |>
+    draw(n = 2, method = "pps_brewer", mos = size) |>
+  add_stage(label = "Household") |>
+    draw(n = 6, on_capped = "error")
+
+execute(strict, villages, seed = 1)
+```
+
+A requirement of the protocol, such as two villages and five households in
+each, can be written as a design with the default method and compared with
+the design to field. `compare_designs()` matches pools by the frame rows
+they hold and compares each pool's take, without looking at the selection
+method. With `level = "probabilities"` it compares the inclusion
+probability of every unit instead.
+
+```{r}
+#| label: check-compare
+requirement <- sampling_design() |>
+  add_stage() |>
+    cluster_by(village) |>
+    draw(n = 2) |>
+  add_stage() |>
+    draw(n = 5)
+
+compare_designs(requirement, plan, villages, key = household)
+```
+
+The plan takes six households in each village where the requirement asks
+for five, and the comparison names the villages.
+
 ## Validation
 
 For statistical validation on synthetic populations with known truths, see [Validation on synthetic populations](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/validation.html) in the book. It combines deterministic invariants (weights, certainty, stage compounding) with Monte Carlo checks of bias, standard-error calibration, and coverage.
@@ -431,7 +562,9 @@ proc surveyselect data=frame method=pps n=50 seed=12345;
 run;
 ```
 
-```{r sas-compare, eval = FALSE}
+```{r}
+#| label: sas-compare
+#| eval: false
 sampling_design() |>
   stratify_by(region) |>
   cluster_by(school) |>
@@ -447,7 +580,9 @@ proc surveyselect data=frame method=srs n=500 seed=42;
 run;
 ```
 
-```{r sas-bounds, eval = FALSE}
+```{r}
+#| label: sas-bounds
+#| eval: false
 sampling_design() |>
   stratify_by(region, alloc = "neyman", variance = variance_data) |>
   draw(n = 500, min_n = 2, max_n = 100) |>
@@ -462,7 +597,9 @@ proc surveyselect data=frame method=sys samprate=0.02 seed=2 round=nearest;
 run;
 ```
 
-```{r sas-rounding, eval = FALSE}
+```{r}
+#| label: sas-rounding
+#| eval: false
 sampling_design() |>
   stratify_by(State) |>
   draw(frac = 0.02, method = "systematic", round = "nearest") |>
@@ -480,7 +617,9 @@ CSPLAN SAMPLE
   /MOS VARIABLE=enrollment.
 ```
 
-```{r spss-compare, eval = FALSE}
+```{r}
+#| label: spss-compare
+#| eval: false
 sampling_design() |>
   stratify_by(region) |>
   cluster_by(school) |>

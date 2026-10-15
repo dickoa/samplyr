@@ -228,6 +228,67 @@ test_that("the digest marks exactly the pools that capped", {
   expect_true(all(stage2$n_expected[stage2$capped] < 10))
 })
 
+test_that("the stage summary counts the pools that capped", {
+  sample <- suppressWarnings(
+    execute(short_psu_design(), short_psu_frame(), seed = 1,
+            frame_digest = "full")
+  )
+  recorded <- frame_summary(sample)
+  expect_identical(recorded$n_capped, c(0L, 3L))
+
+  preview <- frame_summary(short_psu_design(), short_psu_frame())
+  expect_identical(preview$n_capped, c(0L, 3L))
+
+  fits <- frame_summary(short_psu_design(take = 2), short_psu_frame())
+  expect_identical(fits$n_capped, c(0L, 0L))
+
+  poisson <- sampling_design() |>
+    draw(n = 5, method = "pps_poisson", mos = mos, on_empty = "silent")
+  skewed <- data.frame(id = 1:20, mos = c(100, rep(1, 19)))
+  expect_identical(frame_summary(poisson, skewed)$n_capped, 0L)
+})
+
+test_that("a preview names its pools as execution reports them", {
+  frame <- data.frame(
+    district = rep(c("d1", "d2"), each = 12),
+    urban = rep(rep(c("no", "yes"), each = 6), 2),
+    village = rep(paste0("v", 1:8), c(3, 3, 3, 3, 3, 3, 5, 1)),
+    id = 1:24
+  )
+  design <- sampling_design() |>
+    add_stage() |>
+    cluster_by(district) |>
+    draw(n = 2) |>
+    add_stage() |>
+    stratify_by(urban) |>
+    cluster_by(village) |>
+    draw(n = 2) |>
+    add_stage() |>
+    draw(n = 4)
+
+  preview <- frame_summary(design, frame, detail = "pool")
+  expect_identical(
+    preview$pool_key[preview$stage == 2],
+    c("d1 > no", "d1 > yes", "d2 > no", "d2 > yes")
+  )
+  expect_true(all(is.na(preview$pool_key[preview$stage == 1])))
+  expect_identical(
+    preview$pool_key[preview$capped],
+    c("d1 > v1", "d1 > v2", "d1 > v3", "d1 > v4", "d2 > v5", "d2 > v6",
+      "d2 > v8")
+  )
+
+  events <- capture_capped(
+    sample <- execute(design, frame, seed = 1, frame_digest = "full")
+  )
+  expect_length(events, 1L)
+  expect_setequal(
+    events[[1]]$payload$pool_keys,
+    preview$pool_key[preview$capped]
+  )
+  expect_true(all(is.na(frame_summary(sample, detail = "pool")$pool_key)))
+})
+
 test_that("nothing is marked capped when nothing caps", {
   sample <- execute(
     short_psu_design(take = 2), short_psu_frame(), seed = 1,
@@ -236,6 +297,33 @@ test_that("nothing is marked capped when nothing caps", {
 
   pools <- frame_summary(sample, detail = "pool")
   expect_false(any(pools$capped))
+})
+
+test_that("a stratified cube stage reports the pools it caps", {
+  frame <- data.frame(stratum = rep(c("A", "B"), c(10, 3)), x = c(1:10, 1:3))
+  design <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = 5, method = "cube", aux = x)
+
+  events <- capture_capped(sample <- execute(design, frame, seed = 1))
+  expect_length(events, 1L)
+  expect_identical(events[[1]]$payload$pool_keys, "B")
+  expect_identical(events[[1]]$payload$n_actual, 8L)
+  expect_identical(as.vector(table(sample$stratum)), c(5L, 3L))
+
+  preview <- frame_summary(design, frame, detail = "pool")
+  expect_identical(preview$stratum[preview$capped], "B")
+
+  exhausted <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = 11, method = "cube", aux = x)
+  expect_equal(
+    count_conditions(
+      execute(exhausted, frame, seed = 1),
+      "samplyr_warning_census"
+    ),
+    1L
+  )
 })
 
 test_that("a random-size shortfall is not marked capped", {
@@ -1084,4 +1172,365 @@ test_that("a pool label steps down the hierarchy once per level", {
     "samplyr_warning_size_capped"
   )
   expect_identical(w$payload$pool_keys, "a/b > 1 > f")
+})
+
+## Short candidate pools before drawing
+
+test_that("validate_frame() names the candidate pools a take cannot fill", {
+  found <- capture_one(
+    result <- withVisible(
+      validate_frame(short_psu_design(), short_psu_frame())
+    ),
+    "samplyr_message_capped_pools"
+  )
+  expect_identical(result, list(value = TRUE, visible = FALSE))
+  expect_identical(found$stage, 2L)
+  expect_identical(found$payload$n_capped, 3L)
+  expect_identical(found$payload$n_pools, 6L)
+  preview <- frame_summary(
+    short_psu_design(), short_psu_frame(), detail = "pool"
+  )
+  expect_identical(found$payload$pool_keys, preview$pool_key[preview$capped])
+
+  strata <- data.frame(stratum = rep(c("A", "B"), c(10, 3)), id = 1:13)
+  stratified <- sampling_design() |> stratify_by(stratum) |> draw(n = 5)
+  found <- capture_one(
+    validate_frame(stratified, strata),
+    "samplyr_message_capped_pools"
+  )
+  expect_identical(found$stage, 1L)
+  expect_identical(found$payload$pool_keys, "B")
+})
+
+test_that("validate_frame() is silent on pools a take fits or cannot cap", {
+  quiet <- function(design, frame) {
+    count_conditions(
+      validate_frame(design, frame),
+      "samplyr_message_capped_pools"
+    )
+  }
+  expect_identical(quiet(short_psu_design(take = 2), short_psu_frame()), 0L)
+
+  strata <- data.frame(stratum = rep(c("A", "B"), c(10, 3)), id = 1:13)
+  expect_identical(
+    quiet(sampling_design() |> stratify_by(stratum) |> draw(frac = 0.5), strata),
+    0L
+  )
+  expect_identical(
+    quiet(
+      sampling_design() |>
+        stratify_by(stratum) |>
+        draw(n = 5, method = "bernoulli", on_empty = "silent"),
+      strata
+    ),
+    0L
+  )
+  expect_identical(
+    quiet(
+      sampling_design() |> stratify_by(stratum) |> draw(n = 5, method = "srswr"),
+      strata
+    ),
+    0L
+  )
+})
+
+## Strata an explicit n names that a parent lacks
+
+# Four districts of six villages, PHC and non-PHC alternating, except
+# district 4, which has no PHC village. Each village holds eight compounds.
+absent_phc_frame <- function() {
+  villages <- data.frame(
+    district = rep(paste0("d", 1:4), each = 6),
+    village = sprintf("v%02d", 1:24),
+    phc = rep(c("PHC", "non-PHC"), 12)
+  )
+  villages$phc[villages$district == "d4"] <- "non-PHC"
+  frame <- villages[rep(seq_len(nrow(villages)), each = 8), ]
+  frame$compound <- seq_len(nrow(frame))
+  rownames(frame) <- NULL
+  frame
+}
+
+absent_phc_design <- function(n, districts = 4) {
+  sampling_design() |>
+    add_stage() |>
+    cluster_by(district) |>
+    draw(n = districts) |>
+    add_stage() |>
+    stratify_by(phc) |>
+    cluster_by(village) |>
+    draw(n = n)
+}
+
+test_that("a selected parent lacking a named stratum is reported", {
+  tables <- list(
+    data.frame(phc = c("PHC", "non-PHC"), n = c(2, 2)),
+    c(PHC = 2, `non-PHC` = 2)
+  )
+  for (n in tables) {
+    found <- capture_one(
+      sample <- execute(absent_phc_design(n), absent_phc_frame(), seed = 1),
+      "samplyr_message_absent_strata"
+    )
+    expect_identical(found$stage, 2L)
+    expect_identical(found$payload$pool_keys, "d4 > PHC")
+    expect_identical(found$payload$n_absent, 1L)
+    villages <- unique(sample[c("district", "village")])
+    expect_identical(as.vector(table(villages$district)), c(4L, 4L, 4L, 2L))
+  }
+})
+
+test_that("validate_frame() reports the candidate parents lacking a stratum", {
+  design <- absent_phc_design(
+    data.frame(phc = c("PHC", "non-PHC"), n = c(2, 2)),
+    districts = 2
+  )
+  found <- capture_one(
+    validate_frame(design, absent_phc_frame()),
+    "samplyr_message_absent_strata"
+  )
+  expect_identical(found$stage, 2L)
+  expect_identical(found$payload$pool_keys, "d4 > PHC")
+})
+
+test_that("strata a parent need not hold are not reported", {
+  count_absent <- function(design) {
+    count_conditions(
+      execute(design, absent_phc_frame(), seed = 1),
+      "samplyr_message_absent_strata"
+    ) +
+      count_conditions(
+        validate_frame(design, absent_phc_frame()),
+        "samplyr_message_absent_strata"
+      )
+  }
+  # A scalar n names no strata.
+  expect_identical(count_absent(absent_phc_design(2)), 0L)
+  # Per-parent takes keyed by the parent's own identifier.
+  per_parent <- sampling_design() |>
+    add_stage() |>
+    cluster_by(district) |>
+    draw(n = 4) |>
+    add_stage() |>
+    stratify_by(district) |>
+    cluster_by(village) |>
+    draw(n = data.frame(district = paste0("d", 1:4), n = 3))
+  expect_identical(count_absent(per_parent), 0L)
+})
+
+test_that("replicates report an absent stratum once", {
+  n <- data.frame(phc = c("PHC", "non-PHC"), n = c(2, 2))
+  expect_identical(
+    count_conditions(
+      execute(absent_phc_design(n), absent_phc_frame(), seed = 1, reps = 3),
+      "samplyr_message_absent_strata"
+    ),
+    1L
+  )
+})
+
+## Units an allocation moved, before drawing
+
+test_that("a preview counts the units an allocation moved", {
+  frame <- data.frame(stratum = rep(c("A", "B", "C"), c(1, 10, 10)), id = 1:21)
+  equal <- sampling_design() |>
+    stratify_by(stratum, alloc = "equal") |>
+    draw(n = 9)
+  preview <- frame_summary(equal, frame)
+  expect_identical(preview$n_moved, 2)
+  pools <- frame_summary(equal, frame, detail = "pool")
+  expect_identical(pools$n_target, c(1, 4, 4))
+  expect_false(any(pools$capped))
+
+  fits <- sampling_design() |>
+    stratify_by(stratum, alloc = "equal") |>
+    draw(n = 3)
+  expect_identical(frame_summary(fits, frame)$n_moved, 0)
+
+  per_stratum <- sampling_design() |> stratify_by(stratum) |> draw(n = 1)
+  expect_identical(frame_summary(per_stratum, frame)$n_moved, NA_real_)
+
+  sample <- suppressMessages(execute(equal, frame, seed = 1))
+  expect_identical(frame_summary(sample)$n_moved, NA_real_)
+})
+
+test_that("a later stage's moved units roll up like its target", {
+  # Two districts, one drawn. Each moves 2 units under equal allocation.
+  frame <- data.frame(
+    district = rep(c("d1", "d2"), each = 21),
+    stratum = rep(rep(c("A", "B", "C"), c(1, 10, 10)), 2),
+    id = 1:42
+  )
+  design <- sampling_design() |>
+    add_stage() |>
+    cluster_by(district) |>
+    draw(n = 1) |>
+    add_stage() |>
+    stratify_by(stratum, alloc = "equal") |>
+    draw(n = 9)
+  preview <- frame_summary(design, frame)
+  expect_identical(preview$n_moved, c(NA_real_, 2))
+  expect_identical(preview$n_target, c(1, 9))
+})
+
+## A declared shortfall policy
+
+strict_psu_design <- function(on_capped = "error") {
+  sampling_design() |>
+    add_stage("psu") |>
+    cluster_by(psu) |>
+    draw(n = 2) |>
+    add_stage("unit") |>
+    draw(n = 10, on_capped = on_capped)
+}
+
+test_that("on_capped = \"error\" refuses before anything is drawn", {
+  set.seed(99)
+  before <- .Random.seed
+  err <- expect_error(
+    execute(strict_psu_design(), short_psu_frame(), seed = 1),
+    class = "samplyr_error_size_capped"
+  )
+  expect_identical(.Random.seed, before)
+  expect_identical(err$stage, 2L)
+  expect_identical(err$payload$n_capped, 3L)
+  expect_identical(err$payload$n_pools, 6L)
+  expect_identical(err$payload$pool_keys, c("c1", "c2", "c3"))
+
+  # Every seed is refused, whether or not it would reach a short pool.
+  for (seed in 1:5) {
+    expect_error(
+      execute(strict_psu_design(), short_psu_frame(), seed = seed),
+      class = "samplyr_error_size_capped"
+    )
+  }
+})
+
+test_that("on_capped = \"warn\" keeps the take-all rule", {
+  strict <- strict_psu_design("warn")
+  default <- sampling_design() |>
+    add_stage("psu") |>
+    cluster_by(psu) |>
+    draw(n = 2) |>
+    add_stage("unit") |>
+    draw(n = 10)
+  a <- suppressWarnings(execute(strict, short_psu_frame(), seed = 1))
+  b <- suppressWarnings(execute(default, short_psu_frame(), seed = 1))
+  expect_identical(a$id, b$id)
+  expect_identical(a$.weight, b$.weight)
+  expect_identical(
+    exante_probabilities(strict, short_psu_frame(), key = id),
+    exante_probabilities(default, short_psu_frame(), key = id)
+  )
+})
+
+test_that("the strict policy refuses alike in validation and probabilities", {
+  expect_error(
+    validate_frame(strict_psu_design(), short_psu_frame()),
+    class = "samplyr_error_size_capped"
+  )
+  expect_error(
+    exante_probabilities(strict_psu_design(), short_psu_frame(), key = id),
+    class = "samplyr_error_size_capped"
+  )
+  # The preview stays available, to find the short pools.
+  preview <- frame_summary(strict_psu_design(), short_psu_frame())
+  expect_identical(preview$n_capped, c(0L, 3L))
+})
+
+test_that("a staged execution checks a stage when its frame arrives", {
+  frame <- short_psu_frame()
+  # Stage 1 alone has no take to check, so it runs.
+  first <- execute(strict_psu_design(), frame, stages = 1, seed = 1)
+  expect_identical(sort(unique(first$psu)), c("c1", "c4"))
+  listing <- frame[frame$psu %in% first$psu, ]
+  expect_error(
+    execute(first, listing, seed = 2),
+    class = "samplyr_error_size_capped"
+  )
+
+  full <- data.frame(psu = rep(paste0("c", 1:6), each = 50), id = 1:300)
+  fits <- execute(strict_psu_design(), full, stages = 1, seed = 1)
+  expect_no_error(
+    execute(fits, full[full$psu %in% fits$psu, ], seed = 2)
+  )
+})
+
+test_that("an allocated total above the population counts as capped", {
+  frame <- data.frame(stratum = rep(c("A", "B"), c(3, 4)), id = 1:7)
+  over <- sampling_design() |>
+    stratify_by(stratum, alloc = "proportional") |>
+    draw(n = 9, on_capped = "error")
+  err <- expect_error(
+    execute(over, frame, seed = 1),
+    class = "samplyr_error_size_capped"
+  )
+  expect_identical(err$payload$pool_keys, c("A", "B"))
+
+  # Redistribution that delivers the total is the allocation rule.
+  moved <- sampling_design() |>
+    stratify_by(stratum, alloc = "equal") |>
+    draw(n = 7, min_n = 1, on_capped = "error")
+  expect_no_error(suppressMessages(execute(moved, frame, seed = 1)))
+})
+
+test_that("on_capped = \"error\" is refused where no fixed take falls short", {
+  base <- sampling_design()
+  for (design in list(
+    function() base |> draw(n = 5, method = "bernoulli", on_capped = "error"),
+    function() {
+      base |>
+        draw(n = 5, method = "pps_poisson", mos = m, on_capped = "error")
+    },
+    function() base |> draw(n = 5, method = "srswr", on_capped = "error"),
+    function() base |> draw(frac = 0.1, on_capped = "error")
+  )) {
+    expect_error(design(), class = "samplyr_error_draw_argument")
+  }
+})
+
+test_that("the design prints a strict policy and nothing by default", {
+  expect_match(
+    paste(capture.output(print(strict_psu_design())), collapse = "\n"),
+    "on_capped = error",
+    fixed = TRUE
+  )
+  expect_no_match(
+    paste(capture.output(print(short_psu_design())), collapse = "\n"),
+    "on_capped",
+    fixed = TRUE
+  )
+})
+
+test_that("absent strata are matched on values, not on their labels", {
+  # Joined with "/", the two strata read "a/b/c" alike.
+  frame <- data.frame(
+    parent = rep(c("P1", "P2"), each = 4),
+    a = rep(c("a/b", "a"), each = 4),
+    b = rep(c("c", "b/c"), each = 4),
+    id = 1:8
+  )
+  sizes <- data.frame(a = c("a/b", "a"), b = c("c", "b/c"), n = c(2, 2))
+  design <- sampling_design() |>
+    cluster_by(parent) |>
+    draw(n = 2) |>
+    add_stage() |>
+    stratify_by(a, b) |>
+    draw(n = sizes)
+  found <- capture_one(
+    validate_frame(design, frame),
+    "samplyr_message_absent_strata"
+  )
+  expect_identical(found$payload$n_absent, 2L)
+  expect_setequal(found$payload$pool_keys, c("P1 > a/b/c", "P2 > a/b/c"))
+})
+
+test_that("a named vector matches a numeric stratum column", {
+  frame <- absent_phc_frame()
+  frame$phc <- as.integer(frame$phc == "PHC")
+  found <- capture_one(
+    validate_frame(absent_phc_design(c(`0` = 2, `1` = 2), districts = 2), frame),
+    "samplyr_message_absent_strata"
+  )
+  expect_identical(found$payload$pool_keys, "d4 > 1")
 })

@@ -43,6 +43,22 @@
 #' - Non-empty frame
 #' - Positive values for MOS variables
 #'
+#' A fixed-size stage drawn without replacement whose take exceeds the
+#' population of a candidate pool is not an error by default, because
+#' [execute()] takes every unit of that pool and warns. A stage that sets
+#' `on_capped = "error"` in [draw()] is refused here with
+#' `samplyr_error_size_capped`, as [execute()] refuses it. Otherwise
+#' `validate_frame()` names such pools in
+#' a message of class `samplyr_message_capped_pools`, with the `stage` and a
+#' `payload` holding `pool_keys`, `n_capped` and `n_pools`. A candidate pool
+#' is one the stage would draw from if its parent were selected, so the
+#' message does not depend on the seed. The labels are the `pool_key`
+#' column of `frame_summary(design, frame, detail = "pool")`.
+#'
+#' In the same way, a candidate parent that lacks a stratum an explicit `n`
+#' names is reported with `samplyr_message_absent_strata`, the message
+#' [execute()] raises for a selected parent (see [execution-conditions]).
+#'
 #' For designs restored with [read_design()], if the design file carries a
 #' frame fingerprint, `validate_frame()` also compares it against `frame`
 #' and reports what changed (rows, columns, column types, or content).
@@ -379,24 +395,38 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
   inform_unselected_rows(schedule, effective, partial_sample)
 
   for (i in seq_along(schedule$entries)) {
-    check_stage_positive_targets(
-      design, schedule$entries[[i]]$stage, effective[[i]]
-    )
+    stage_idx <- schedule$entries[[i]]$stage
+    targets <- check_stage_targets(design, stage_idx, effective[[i]])
+    refuse_capped_stage(design, stage_idx, targets$capped, call = call)
+    inform_capped_pools(stage_idx, targets$capped)
+    if (targets$absent$n_absent > 0L) {
+      inform_absent_strata(stage_idx, targets$absent, candidate = TRUE)
+    }
   }
 
   invisible(TRUE)
 }
 
-#' Reject deterministic exclusions without simulating a selection
+#' Check every candidate pool's take without simulating a selection
+#'
+#' Rejects deterministic exclusions. Returns the pools whose fixed take
+#' without replacement exceeds their population (`capped`), and the strata
+#' an explicit `n` names that a parent lacks (`absent`), both named as
+#' execution names them.
 #' @noRd
-check_stage_positive_targets <- function(design, stage_idx, frame) {
+check_stage_targets <- function(design, stage_idx, frame) {
   rlang::local_error_call(caller_env())
+  short <- list(pool_keys = character(0), n_capped = 0L, n_pools = 0L)
+  absent <- list(pool_keys = character(0), n_absent = 0L)
+  out <- function() list(capped = short, absent = absent)
   spec <- design$stages[[stage_idx]]
   draw <- spec$draw_spec
-  if (is_null(draw) || nrow(frame) == 0L) return(invisible(NULL))
+  if (is_null(draw) || nrow(frame) == 0L) return(out())
   # Stored certainty plans are validated by the planning bridge.
-  if (!is_null(draw$certainty_plan)) return(invisible(NULL))
+  if (!is_null(draw$certainty_plan)) return(out())
   ancestors <- collect_ancestor_cluster_vars(design, stage_idx)
+  fixed_take <- !is_null(draw$n) && !is_random_size_method(draw) &&
+    !is_multi_hit_method(draw)
   parents <- if (length(ancestors)) split_row_indices(frame, ancestors)$indices else list(seq_len(nrow(frame)))
   for (rows in parents) {
     units <- frame[rows, , drop = FALSE]
@@ -410,6 +440,39 @@ check_stage_positive_targets <- function(design, stage_idx, frame) {
     } else {
       draw$n %||% frac_pool_size(nrow(units), draw$frac, draw)
     }
+    if (fixed_take) {
+      over <- which(sizes > lengths(groups))
+      # An allocated total above the population exhausts every stratum.
+      if (
+        !is_null(spec$strata$alloc) && !is.data.frame(draw$n) &&
+          length(draw$n) == 1L && draw$n > sum(lengths(groups))
+      ) {
+        over <- seq_along(groups)
+      }
+      short$n_pools <- short$n_pools + length(groups)
+      short$n_capped <- short$n_capped + length(over)
+      first <- vapply(groups[over], function(g) g[[1]], integer(1))
+      labels <- exante_pool_labels(
+        design, stage_idx, units, first, strata, ancestors
+      )
+      short$pool_keys <- c(short$pool_keys, labels[!is.na(labels)])
+    }
+    if (length(ancestors) > 0L && length(strata) > 0L) {
+      missing <- absent_named_strata(
+        units, strata, setdiff(strata, ancestors), draw$n
+      )
+      if (length(missing) > 0L) {
+        parent <- path_labels(
+          units[1, ancestors, drop = FALSE],
+          ancestors,
+          ancestor_cluster_levels(design, stage_idx)
+        )
+        absent$pool_keys <- c(
+          absent$pool_keys, paste(parent, missing, sep = " > ")
+        )
+        absent$n_absent <- absent$n_absent + length(missing)
+      }
+    }
     if (is_null(draw$certainty_size) && is_null(draw$certainty_prop)) next
     lookup <- prepare_stratum_draw_lookup(draw, strata)
     for (j in seq_along(groups)) {
@@ -422,6 +485,75 @@ check_stage_positive_targets <- function(design, stage_idx, frame) {
         pool_draw$certainty_size, pool_draw$certainty_prop)
     }
   }
+  out()
+}
+
+#' Refuse a stage under `on_capped = "error"` that has short candidate pools
+#'
+#' `capped` is what `check_stage_targets()` found for the stage. Call before
+#' any random number is used.
+#' @noRd
+refuse_capped_stage <- function(design, stage_idx, capped,
+                                call = caller_env()) {
+  strict <- identical(design$stages[[stage_idx]]$draw_spec$on_capped, "error")
+  if (!strict || capped$n_capped == 0L) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "Stage {stage_idx}: the take exceeds the pool population in
+       {capped$n_capped} of {capped$n_pools} candidate pool{?s}.",
+      pool_lines(capped, "Short pools"),
+      "i" = "The stage sets {.code on_capped = \"error\"}, so nothing was
+             drawn.",
+      "i" = "Lower the take, merge the short pools in the frame, or set
+             {.code on_capped = \"warn\"} to take every unit of a short
+             pool."
+    ),
+    class = "samplyr_error_size_capped",
+    call = call,
+    stage = stage_idx,
+    operation = "population_cap",
+    payload = capped
+  )
+}
+
+#' Refuse every strict stage of a schedule before anything is drawn
+#'
+#' `frames` holds the effective frame of each stage in `stage_ids`.
+#' @noRd
+refuse_capped_stages <- function(design, stage_ids, frames,
+                                 call = caller_env()) {
+  for (i in seq_along(stage_ids)) {
+    stage_idx <- stage_ids[[i]]
+    if (!identical(design$stages[[stage_idx]]$draw_spec$on_capped, "error")) {
+      next
+    }
+    targets <- check_stage_targets(design, stage_idx, frames[[i]])
+    refuse_capped_stage(design, stage_idx, targets$capped, call = call)
+  }
+  invisible(NULL)
+}
+
+#' Name the candidate pools a fixed take cannot fill
+#' @noRd
+inform_capped_pools <- function(stage_idx, x) {
+  if (x$n_capped == 0L) {
+    return(invisible(NULL))
+  }
+  cli::cli_inform(
+    c(
+      "Stage {stage_idx}: the take exceeds the pool population in
+       {x$n_capped} of {x$n_pools} candidate pool{?s}.",
+      pool_lines(x, "Short pools"),
+      "i" = "{.fn execute} takes every unit of a short pool and warns.
+             Inspect with {.code frame_summary(design, frame, detail =
+             \"pool\")}."
+    ),
+    class = "samplyr_message_capped_pools",
+    stage = stage_idx,
+    payload = x
+  )
   invisible(NULL)
 }
 
@@ -1017,6 +1149,12 @@ preflight_later_stages <- function(schedule, design, sample = NULL,
   }
   check_schedule_strata_known(
     schedule, effective, design, selected = sample, call = call
+  )
+  refuse_capped_stages(
+    design,
+    vapply(schedule$entries, function(e) e$stage, integer(1)),
+    effective,
+    call = call
   )
   invisible(NULL)
 }

@@ -90,6 +90,7 @@ Kish, L. (1965). \emph{Survey Sampling}. Wiley.
 outcome-specific design effect
 
 Other diagnostics:
+\code{\link[=compare_designs]{compare_designs()}},
 \code{\link[=frame_summary]{frame_summary()}},
 \code{\link[=joint_expectation]{joint_expectation()}},
 \code{\link{sample-columns}},

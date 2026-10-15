@@ -1388,6 +1388,25 @@
             }
           ]
         },
+        "on_capped": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
         "aux": {
           "anyOf": [
             {

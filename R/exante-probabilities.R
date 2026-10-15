@@ -45,7 +45,9 @@
 #' method whose registered probabilities are `"unknown"`. It also refuses a
 #' design given several registers, one per stage: the compounding runs along
 #' the rows of one register and there is no correspondence between the rows of
-#' two.
+#' two. A stage that sets `on_capped = "error"` in [draw()] and has a candidate
+#' pool smaller than its take cannot be executed on the frame, so it is refused
+#' with `samplyr_error_size_capped`, as [execute()] refuses it.
 #'
 #' [frame_summary()] answers a different question. It reports the pools and
 #' chances a design resolves, at whatever resolution the digest retained, and
@@ -125,7 +127,35 @@ resolve_exante_probabilities <- function(design, frame, key_col,
   rlang::local_error_call(call)
   check_exante_design_complete(design, call = call)
   quality <- exante_probability_quality(design, allow_approximate, call = call)
+  walked <- resolve_exante_register(
+    design, frame, key_col,
+    frame_label = frame_label,
+    check_stage = check_exante_stage_resolvable,
+    call = call
+  )
 
+  n_rows <- nrow(walked$register)
+  probability <- rep(1, n_rows)
+  for (resolved in walked$stages) {
+    probability <- probability * exante_stage_chances(resolved, n_rows)
+  }
+
+  list(keys = walked$keys, probability = probability, probability_quality = quality)
+}
+
+#' Every stage's pools on one register, resolved without drawing
+#'
+#' The walk `exante_probabilities()` and `compare_designs()` share. Returns
+#' the register, its keys, the design with its cluster nesting resolved, the
+#' effective frame of each stage, and what `resolve_exante_pools()` returns
+#' for each stage. `check_stage` runs on each stage as soon as it is
+#' resolved, before the next one is attempted.
+#' @noRd
+resolve_exante_register <- function(design, frame, key_col,
+                                    frame_label = NULL,
+                                    check_stage = NULL,
+                                    call = caller_env()) {
+  rlang::local_error_call(call)
   supplied <- normalize_frame_input(frame, call = call)
   if (supplied$n_supplied > 1L) {
     abort_samplyr(
@@ -161,10 +191,28 @@ resolve_exante_probabilities <- function(design, frame, key_col,
   for (i in seq_along(schedule$entries)) {
     frames_by_stage[[schedule$entries[[i]]$stage]] <- stage_frames[[i]]
   }
+  # A design that refuses to execute on this frame has no probabilities.
+  refuse_capped_stages(
+    design, seq_along(frames_by_stage), frames_by_stage, call = call
+  )
 
-  probability <- rep(1, nrow(register))
+  stages <- vector("list", length(design$stages))
   registry <- NULL
   for (stage_idx in seq_along(design$stages)) {
+    if (
+      stage_idx > 1L &&
+        is_multi_hit_method(design$stages[[stage_idx - 1L]]$draw_spec)
+    ) {
+      abort_samplyr(
+        c(
+          "Stage {stage_idx} cannot be resolved ex-ante.",
+          "x" = "Stage {stage_idx - 1L} draws with replacement, so the
+                 occurrence count of each parent cluster is random."
+        ),
+        class = "samplyr_error_exante_unsupported",
+        call = call
+      )
+    }
     stage_frame <- frames_by_stage[[stage_idx]]
     resolved <- tryCatch(
       resolve_exante_pools(design, stage_idx, stage_frame, registry),
@@ -182,12 +230,20 @@ resolve_exante_probabilities <- function(design, frame, key_col,
         )
       }
     )
-    check_exante_stage_resolvable(resolved, stage_idx, call = call)
-    probability <- probability * exante_stage_chances(resolved, nrow(register))
+    if (!is_null(check_stage)) {
+      check_stage(resolved, stage_idx, call = call)
+    }
+    stages[[stage_idx]] <- resolved
     registry <- exante_parent_registry(resolved)
   }
 
-  list(keys = keys, probability = probability, probability_quality = quality)
+  list(
+    design = design,
+    register = register,
+    keys = keys,
+    frames = frames_by_stage,
+    stages = stages
+  )
 }
 
 #' Compound probabilities inherit the weakest stage's probability contract

@@ -16,7 +16,10 @@
 #'
 #' \describe{
 #'   \item{`samplyr_warning_size_capped`}{Some pools ran short. The stage left
-#'     units behind in the pools it did not exhaust.}
+#'     units behind in the pools it did not exhaust. A stage that sets
+#'     `on_capped = "error"` in [draw()] refuses instead, before anything is
+#'     drawn, with `samplyr_error_size_capped` and the same `stage` and
+#'     `payload` fields, counted over the candidate pools.}
 #'   \item{`samplyr_warning_census`}{The stage selected every unit available
 #'     in the pools it executed, so it contributes no sampling variance. This
 #'     is a claim about the stage: above the first stage those pools are the
@@ -45,6 +48,16 @@
 #' again. It is a message because one unit per stratum is sometimes the
 #' design. Its payload carries `pool_keys` and `n_singleton`, the number of
 #' such strata, each counted once in every parent it appears in.
+#'
+#' `samplyr_message_absent_strata` names the strata that an explicit `n`
+#' (a named vector or a data frame) gives a positive take but a selected
+#' parent does not hold, such as a district with no PHC village under
+#' `n = data.frame(phc = c("PHC", "non-PHC"), n = c(2, 2))`. That parent's
+#' take falls short of the table's total. It is a message, because a parent
+#' can lack a category by design. Its payload carries `pool_keys`, each a
+#' parent and the stratum it lacks, and `n_absent`, the number of such
+#' pairs. A stratum missing from the whole stage is refused instead
+#' (`samplyr_error_alloc_unknown_strata`).
 #'
 #' A selected unit that has no rows in the next stage's frame is reported the
 #' same way under that stage's `on_empty = "warn"`:
@@ -76,6 +89,8 @@
 #'     by an explicit `certainty_size`/`certainty_prop` rule sit at one by
 #'     instruction and are not counted here.}
 #'   \item{`n_moved`}{Units redistributed by an allocation method.}
+#'   \item{`n_absent`}{Parent and stratum pairs an explicit `n` names that
+#'     the frame does not hold.}
 #'   \item{`n_replicates`, `varied`}{How many replicates reported this finding,
 #'     and whether they reported it identically. When `varied` is `TRUE` the
 #'     pool list is the union across those replicates while the counts describe
@@ -2538,6 +2553,7 @@ validate_stored_draw_spec <- function(stage, call = rlang::caller_env()) {
     round = draw_spec$round,
     certainty_overflow = draw_spec$certainty_overflow,
     on_empty = draw_spec$on_empty,
+    on_capped = draw_spec$on_capped %||% "warn",
     has_alloc = !is_null(stage$strata) && !is_null(stage$strata$alloc),
     alloc = stage$strata$alloc,
     strata_vars = stage$strata$vars,

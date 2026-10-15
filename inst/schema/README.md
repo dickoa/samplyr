@@ -82,6 +82,13 @@ relevant format version. Earlier readers that ignore an unfamiliar requirement
 field must not execute a document with new semantics. Descriptive metadata
 alone does not require a format-version change.
 
+A draw field with an execution meaning is written only when it departs from
+the default, so a document that keeps the default stays readable by a reader
+that predates the field. `draw.on_capped` is the case in point. It is written
+only as `"error"`, and an absent field reads as `"warn"`. A reader that
+predates it refuses a document that sets it, as an unknown executable field,
+rather than run the stage under the take-all rule.
+
 ## Method vocabulary
 
 `sampling-methods-v2.json` is the maintained source of built-in descriptors.

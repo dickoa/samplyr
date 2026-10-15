@@ -17,7 +17,15 @@ needed for weighting, replay, and export to the survey and srvyr packages.
   ids unique across strata and checks it.
 * `validate_frame()` runs every check `execute()` would run, and
   `frame_summary()` previews pool sizes and selection chances without
-  drawing.
+  drawing. Both name the pools too small for their take, and
+  `validate_frame()` also names the strata an explicit size table gives a
+  take that a parent does not hold.
+* `draw(on_capped = "error")` refuses a stage before anything is drawn when
+  a fixed take exceeds a pool the stage could reach. By default such a pool
+  is taken whole, with a warning.
+* `compare_designs()` compares two designs on one frame, by allocation or
+  by first-order inclusion probabilities. A protocol requirement written
+  as a design can be checked this way without a reference implementation.
 * Errors name the argument or frame column at fault and suggest the fix.
   Every condition carries a stable class for programmatic handling.
 

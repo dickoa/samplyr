@@ -111,6 +111,9 @@ as.list.sampling_design <- function(x, ...) {
       ) {
         stage_list$draw$on_empty <- stage$draw_spec$on_empty
       }
+      if (identical(stage$draw_spec$on_capped, "error")) {
+        stage_list$draw$on_capped <- stage$draw_spec$on_capped
+      }
     }
     stage_list
   })
@@ -2000,6 +2003,10 @@ encode_stage <- function(stage) {
       draw$certainty_plan <- encode_certainty_plan(spec$certainty_plan)
     }
     draw$on_empty <- spec$on_empty
+    # The default stays unwritten, so readers that predate it read the file.
+    if (identical(spec$on_capped, "error")) {
+      draw$on_capped <- spec$on_capped
+    }
     out$draw <- draw
   }
 
@@ -3206,6 +3213,7 @@ decode_stage <- function(
       certainty_overflow = decode_chr(draw$certainty_overflow) %||% "error",
       certainty_plan = decode_certainty_plan(draw$certainty_plan),
       on_empty = decode_chr(draw$on_empty) %||% "error",
+      on_capped = decode_chr(draw$on_capped) %||% "warn",
       method_type = method$registry_type,
       method_fixed = method$fixed_size,
       method_variance = method$variance_family,

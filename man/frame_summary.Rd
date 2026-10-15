@@ -52,15 +52,26 @@ underlying representation is (\code{"eligible"}, \code{"universe"},
 
 For \code{detail = "stage"}, one row per stage with \code{stage},
 \code{unit_level}, \code{scope}, \code{chance_kind}, \code{probabilities}, \code{storage},
-\code{n_pools}, \code{N}, \code{n_target}, \code{n_expected}, \code{n_realized}, and
-\code{take_rate}.
+\code{n_pools}, \code{n_capped}, \code{N}, \code{n_target}, \code{n_expected}, \code{n_moved},
+\code{n_realized}, and \code{take_rate}. \code{n_capped} counts the stage's pools
+whose \code{capped} is \code{TRUE} at \code{detail = "pool"}, and is \code{NA} when any
+of them is \code{NA}. Like \code{n_pools}, it counts pools without weighting,
+so in a preview it counts candidate pools. \code{n_moved} is the number
+of units an allocation method moved away from strata it saturated,
+which \code{n_target} no longer shows. A preview reports it, rolled up
+like \code{n_target}. It is \code{NA} for a stage without an allocation method
+and on a recorded digest, which does not keep it.
 
 For \code{detail = "pool"}, one row per selection pool and realization
-with \code{stage}, \code{pool_id}, \code{replicate}, \code{parent_unit}, any stratum
-label columns, \code{N}, \code{n_target}, \code{n_expected}, \code{n_realized}, \code{scope},
-\code{chance_status}, \code{chance} (the constant per-unit chance where one
-applies, \code{NA} otherwise), \code{take_rate}, and \code{capped}. \code{replicate} is
-\code{1} for an ordinary execution. In a replicated execution, \code{pool_id}
+with \code{stage}, \code{pool_id}, \code{replicate}, \code{parent_unit}, \code{pool_key}, any
+stratum label columns, \code{N}, \code{n_target}, \code{n_expected}, \code{n_realized},
+\code{scope}, \code{chance_status}, \code{chance} (the constant per-unit chance where
+one applies, \code{NA} otherwise), \code{take_rate}, and \code{capped}. \code{replicate} is
+\code{1} for an ordinary execution. \code{pool_key} names the pool in the
+frame's values, its parent path then its stratum, as the
+\code{pool_keys} field of a condition from \code{\link[=execute]{execute()}} does. Only a
+preview can name pools, so it is \code{NA} on a recorded digest, and on a
+first-stage pool without strata. In a replicated execution, \code{pool_id}
 identifies the shared structural pool and the key is \code{stage},
 \code{pool_id}, and \code{replicate}. Stratum columns are \code{NA} for stages that
 do not use them.
@@ -195,6 +206,22 @@ print(
   width = Inf
 )
 
+# A short pool before drawing: one of three villages holds fewer
+# households than the take of 4, and the preview names it.
+villages <- data.frame(
+  village = rep(c("v1", "v2", "v3"), c(6, 3, 8)),
+  household = 1:17
+)
+two_stage <- sampling_design() |>
+  add_stage() |>
+  cluster_by(village) |>
+  draw(n = 2) |>
+  add_stage() |>
+  draw(n = 4)
+frame_summary(two_stage, villages)[c("stage", "n_pools", "n_capped")]
+short <- frame_summary(two_stage, villages, detail = "pool")
+short[short$capped, c("stage", "pool_key", "N", "n_target")]
+
 # Random-size allocation: one scalar row per pool and replicate.
 random_sample <- sampling_design() |>
   stratify_by(stratum) |>
@@ -226,6 +253,7 @@ head(frame_summary(full, detail = "unit"))
 \code{\link[=execute]{execute()}}, \code{\link[=validate_frame]{validate_frame()}}
 
 Other diagnostics:
+\code{\link[=compare_designs]{compare_designs()}},
 \code{\link{design_effect}},
 \code{\link[=joint_expectation]{joint_expectation()}},
 \code{\link{sample-columns}},

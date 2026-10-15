@@ -103,3 +103,43 @@ pages:
       - public
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+      pages:
+  stage: pkgdown
+  image: rocker/r-ver:4.6.1
+  variables:
+    # pandoc 3.11 and 3.12.1 flatten the code of the LLM docs, 3.1.3 does not.
+    PANDOC_DEB: "https://github.com/jgm/pandoc/releases/download/3.1.3/pandoc-3.1.3-1-amd64.deb"
+    PANDOC_SHA256: "caa7e0410f9e2cb1da2eb8db13cc97b5548fe455985e2c944e3929d22f99bcdc"
+  before_script:
+    - apt-get update && apt-get install -y
+        curl
+        ca-certificates
+        qpdf
+        libcurl4-openssl-dev
+        libssl-dev
+        libxml2-dev
+        libuv1-dev
+        libfontconfig1-dev
+        libharfbuzz-dev
+        libfribidi-dev
+        libfreetype6-dev
+        libpng-dev
+        libtiff5-dev
+        libjpeg-dev
+        cmake
+    - curl -fsSL -o /tmp/pandoc.deb "$PANDOC_DEB"
+    - echo "$PANDOC_SHA256  /tmp/pandoc.deb" | sha256sum -c -
+    - dpkg -i /tmp/pandoc.deb
+    - pandoc --version | head -n 1
+    - mkdir -p $R_LIBS_USER
+    - Rscript -e "install.packages(c('pak', 'pkgdown', 'bslib', 'rmarkdown', 'fs'), repos='https://cloud.r-project.org')"
+    - Rscript -e 'pak::local_install_dev_deps(dependencies = TRUE)'
+  script:
+    - Rscript -e "pkgdown::build_site()"
+    - mv docs public
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

@@ -1234,6 +1234,26 @@ test_that("draw() arguments are classed by what is wrong with them", {
     execute(read_design(path), taxonomy_frame(), seed = 1),
     class = "samplyr_error_draw_argument"
   )
+
+  expect_error(base |> draw(n = 2, on_capped = "zzz"),
+               class = "samplyr_error_draw_argument")
+  design <- base |> draw(n = 2, on_capped = "error")
+  path <- corrupt_design_file(
+    design, '"on_capped": "error"', '"on_capped": "zzz"'
+  )
+  expect_error(
+    execute(read_design(path), taxonomy_frame(), seed = 1),
+    class = "samplyr_error_draw_argument"
+  )
+  # A file can pair the strict policy with a method it does not apply to.
+  random <- base |> draw(n = 2, method = "bernoulli", on_empty = "silent")
+  path <- corrupt_design_file(
+    random, '"on_empty": "silent"', '"on_empty": "silent", "on_capped": "error"'
+  )
+  expect_error(
+    execute(read_design(path), taxonomy_frame(), seed = 1),
+    class = "samplyr_error_draw_argument"
+  )
 })
 
 test_that("selection refusals carry a class", {

@@ -20,7 +20,10 @@ package noticed:
 
 \describe{
 \item{\code{samplyr_warning_size_capped}}{Some pools ran short. The stage left
-units behind in the pools it did not exhaust.}
+units behind in the pools it did not exhaust. A stage that sets
+\code{on_capped = "error"} in \code{\link[=draw]{draw()}} refuses instead, before anything is
+drawn, with \code{samplyr_error_size_capped} and the same \code{stage} and
+\code{payload} fields, counted over the candidate pools.}
 \item{\code{samplyr_warning_census}}{The stage selected every unit available
 in the pools it executed, so it contributes no sampling variance. This
 is a claim about the stage: above the first stage those pools are the
@@ -49,6 +52,16 @@ survey stops on it unless strata are collapsed, and the export warns
 again. It is a message because one unit per stratum is sometimes the
 design. Its payload carries \code{pool_keys} and \code{n_singleton}, the number of
 such strata, each counted once in every parent it appears in.
+
+\code{samplyr_message_absent_strata} names the strata that an explicit \code{n}
+(a named vector or a data frame) gives a positive take but a selected
+parent does not hold, such as a district with no PHC village under
+\code{n = data.frame(phc = c("PHC", "non-PHC"), n = c(2, 2))}. That parent's
+take falls short of the table's total. It is a message, because a parent
+can lack a category by design. Its payload carries \code{pool_keys}, each a
+parent and the stratum it lacks, and \code{n_absent}, the number of such
+pairs. A stratum missing from the whole stage is refused instead
+(\code{samplyr_error_alloc_unknown_strata}).
 
 A selected unit that has no rows in the next stage's frame is reported the
 same way under that stage's \code{on_empty = "warn"}:
@@ -80,6 +93,8 @@ a \code{pps_poisson} shortfall is measured against.}
 by an explicit \code{certainty_size}/\code{certainty_prop} rule sit at one by
 instruction and are not counted here.}
 \item{\code{n_moved}}{Units redistributed by an allocation method.}
+\item{\code{n_absent}}{Parent and stratum pairs an explicit \code{n} names that
+the frame does not hold.}
 \item{\code{n_replicates}, \code{varied}}{How many replicates reported this finding,
 and whether they reported it identically. When \code{varied} is \code{TRUE} the
 pool list is the union across those replicates while the counts describe
