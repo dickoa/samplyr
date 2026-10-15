@@ -42,14 +42,14 @@ reference:
     contents:
       - execute
       - validate_frame
-      - execution-conditions
+      - execution_conditions
 
   - title: "Panels and rotation"
     desc: >
       Longitudinal designs: split an executed master into panels, materialize
       the wave each panel is scheduled for, and assemble the waves.
     contents:
-      - panel-assignment
+      - panel_assignment
       - rotation_program
       - stack_waves
       - as.data.frame.rotation_wave
@@ -78,10 +78,10 @@ reference:
       Cross-cutting contracts several functions share. Each is the canonical
       description, and the function pages link here rather than restate it.
     contents:
-      - selection-methods
-      - variance-estimation
-      - sample-columns
-      - frame-input-grammar
+      - selection_methods
+      - variance_estimation
+      - sample_columns
+      - frame_input_grammar
 
   - title: "Survey export"
     desc: "Convert samples to survey/srvyr objects for analysis."
@@ -136,7 +136,7 @@ reference:
   - title: "Datasets"
     desc: "Survey frames derived from public data, for learning and testing."
     contents:
-      - samplyr-datasets
+      - samplyr_datasets
       - bfa_eas
       - bfa_eas_variance
       - bfa_eas_cost

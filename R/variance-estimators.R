@@ -55,7 +55,7 @@
 #' The report reads the same rules the exports apply, and a test compares it
 #' with the conditions the exports actually raise on executed samples. It
 #' does not certify an estimator's accuracy beyond that:
-#' `?variance-estimation` gives the measured error of each approximation.
+#' `?variance_estimation` gives the measured error of each approximation.
 #'
 #' @param x A `sampling_design`, or a `tbl_sample` standing for its design.
 #' @param frame Optional. The frame the design will be executed on, as
@@ -92,7 +92,7 @@
 #'                                      mos = households)
 #' variance_estimators(phase2, phase1)[c("estimator", "status", "note")]
 #'
-#' @seealso `?variance-estimation` for how each selection method's variance
+#' @seealso `?variance_estimation` for how each selection method's variance
 #'   is estimated, [frame_summary()] and [validate_frame()] for the checks
 #'   before execution.
 #' @family survey export

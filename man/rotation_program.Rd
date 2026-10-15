@@ -137,11 +137,11 @@ execute(program, wave = 2)
 }
 \seealso{
 \code{\link[=execute]{execute()}} for drawing a master and materializing a wave,
-\link{panel-assignment} for partitioning one execution into rotation groups.
+\link{panel_assignment} for partitioning one execution into rotation groups.
 
 Other execution:
 \code{\link[=execute]{execute()}},
-\code{\link{execution-conditions}},
+\code{\link{execution_conditions}},
 \code{\link[=validate_frame]{validate_frame()}}
 }
 \concept{execution}

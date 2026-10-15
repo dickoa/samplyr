@@ -7,30 +7,51 @@
 #' Sixteen methods are built in, in three families: equal probability, PPS
 #' (probability proportional to size, all requiring `mos`), and balanced.
 #'
-#' | Method | Replacement | Size | `mos` | Other input | Notes |
-#' |--------|-------------|------|-------|-------------|-------|
-#' | `srswor` | Without | Fixed | - | - | The default. Standard SRS |
-#' | `srswr` | With | Fixed | - | - | Allows duplicates |
-#' | `systematic` | Without | Fixed | - | - | Periodic selection |
-#' | `bernoulli` | Without | Random | - | `prn` | Independent trial per unit |
-#' | `pps_systematic` | Without | Fixed | Required | - | Order-sensitive, exact first-order probabilities |
-#' | `pps_brewer` | Without | Fixed | Required | - | Exact first-order, approximate joint probabilities |
-#' | `pps_cps` | Without | Fixed | Required | - | Highest entropy, exact joint probabilities |
-#' | `pps_sampford` | Without | Fixed | Required | - | Exact Sampford joint probabilities |
-#' | `pps_poisson` | Without | Random | Required | `prn` | PPS analog of Bernoulli |
-#' | `pps_sps` | Without | Fixed | Required | `prn` | Sequential Poisson with approximate probability targets |
-#' | `pps_pareto` | Without | Fixed | Required | `prn` | Pareto with approximate probability targets |
-#' | `pps_multinomial` | With | Fixed | Required | - | Any hit count, Hansen-Hurwitz |
-#' | `pps_chromy` | Min. repl. | Fixed | Required | - | As SAS `PPS_SEQ` |
-#' | `cube` | Without | Fixed | Optional | `aux` optional | Deville & \enc{Tillé}{Tille} 2004 |
-#' | `lpm2` | Without | Fixed | Optional | `spread` required | Spatial spread |
-#' | `scps` | Without | Fixed | Optional | `spread` required, `prn` | Spatial spread |
+#' | Method            | Replacement | Size   | `mos`    | Also takes    |
+#' |-------------------|-------------|--------|----------|---------------|
+#' | `srswor`          | Without     | Fixed  | -        | -             |
+#' | `srswr`           | With        | Fixed  | -        | -             |
+#' | `systematic`      | Without     | Fixed  | -        | -             |
+#' | `bernoulli`       | Without     | Random | -        | `prn`         |
+#' | `pps_systematic`  | Without     | Fixed  | Required | -             |
+#' | `pps_brewer`      | Without     | Fixed  | Required | -             |
+#' | `pps_cps`         | Without     | Fixed  | Required | -             |
+#' | `pps_sampford`    | Without     | Fixed  | Required | -             |
+#' | `pps_poisson`     | Without     | Random | Required | `prn`         |
+#' | `pps_sps`         | Without     | Fixed  | Required | `prn`         |
+#' | `pps_pareto`      | Without     | Fixed  | Required | `prn`         |
+#' | `pps_multinomial` | With        | Fixed  | Required | -             |
+#' | `pps_chromy`      | Minimum     | Fixed  | Required | -             |
+#' | `cube`            | Without     | Fixed  | Optional | `aux`         |
+#' | `lpm2`            | Without     | Fixed  | Optional | `spread`      |
+#' | `scps`            | Without     | Fixed  | Optional | `spread`, `prn` |
 #'
 #' Every method takes either `n` or `frac`, except `pps_cps`, which requires
 #' `n`. For fixed-size methods, `frac` follows the `round` parameter (ceiling
 #' by default). Bernoulli and PPS Poisson use an unrounded expected target.
-#' The `prn` column marks the methods that accept permanent random
-#' numbers for coordination. It is always optional.
+#' `prn` in the last column marks the methods that accept permanent random
+#' numbers for coordination, and it is always optional. `cube` takes `aux`
+#' optionally, whereas `lpm2` and `scps` require `spread`.
+#'
+#' ## What each method does
+#'
+#' - `srswor`, the default, is simple random sampling.
+#' - `srswr` allows a unit to be drawn more than once.
+#' - `systematic` selects at a fixed interval.
+#' - `bernoulli` makes an independent trial for each unit.
+#' - `pps_systematic` is order-sensitive, with exact first-order
+#'   probabilities.
+#' - `pps_brewer` has exact first-order and approximate joint probabilities.
+#' - `pps_cps` has the highest entropy and exact joint probabilities.
+#' - `pps_sampford` has exact Sampford joint probabilities.
+#' - `pps_poisson` is the PPS analog of Bernoulli sampling.
+#' - `pps_sps` (sequential Poisson) and `pps_pareto` meet their probability
+#'   targets only approximately.
+#' - `pps_multinomial` allows any number of hits, with the Hansen-Hurwitz
+#'   estimator.
+#' - `pps_chromy` is the method of SAS `PPS_SEQ`.
+#' - `cube` is the cube method of Deville and \enc{Tillé}{Tille} (2004).
+#' - `lpm2` and `scps` spread the sample in space.
 #'
 #' "Min. repl." is probability minimum replacement: `pps_chromy` draws a unit
 #' either \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
@@ -40,7 +61,7 @@
 #' ## Selection and inference
 #'
 #' Every method above draws a sample when its inputs are met, but selection
-#' support and variance support are separate contracts. [variance-estimation]
+#' support and variance support are separate contracts. [variance_estimation]
 #' gives how each method's variance is estimated and how exact it is.
 #'
 #' SPS, Pareto and custom approximate targets require
@@ -158,10 +179,10 @@
 #' Methodology*, 49(2), 363-384.
 #'
 #'
-#' @name selection-methods
+#' @name selection_methods
 #' @family design specification
 #' @seealso [draw()] to set a method on a stage,
-#'   [variance-estimation] for how each method's variance is estimated,
+#'   [variance_estimation] for how each method's variance is estimated,
 #'   [joint_expectation()] for which methods yield exact second-order
 #'   quantities
 NULL
@@ -183,7 +204,7 @@ NULL
 #'   fractional (`n = 2.6`) when no allocation method is given. At a later
 #'   stage it is the expected take in each parent unit, whatever the parent's
 #'   size. Fixed-size methods and allocation methods need whole units.
-#'   [selection-methods] explains the fixed versus random distinction and the
+#'   [selection_methods] explains the fixed versus random distinction and the
 #'   warning raised when `pps_poisson` falls short of `n`. Can be:
 #'   - A scalar: the size taken in each stratum when [stratify_by()] has no
 #'     `alloc`, or the total shared across the strata when it has one. At a
@@ -215,7 +236,7 @@ NULL
 #'     instead, records the zone in `.zone_1`, and exports one variance
 #'     stratum per zone. With `n_psu_per_zone = 1` it draws one PSU per zone,
 #'     records the plan's variance group in `.pair_1`, and exports the
-#'     groups as variance strata ([variance-estimation]). Its method
+#'     groups as variance strata ([variance_estimation]). Its method
 #'     must be `pps_systematic`, `pps_brewer`, `pps_cps`, or `pps_sampford`,
 #'     with `mos` equal to the register's `N`. Stage 2 selects by `srswor` or
 #'     `systematic`, and stratifying there requires an `alloc` method.
@@ -261,7 +282,7 @@ NULL
 #'   target each bound produces, without selecting or consuming random
 #'   numbers.
 #' @param method Selection method, `"srswor"` by default.
-#'   [selection-methods] lists the sixteen built-ins with what each one
+#'   [selection_methods] lists the sixteen built-ins with what each one
 #'   requires and the paper behind each.
 #'
 #'   `"cube"` balances the sample on `aux` so that Horvitz-Thompson
@@ -398,7 +419,7 @@ NULL
 #'   every total. It is recorded in the sample, counted by [summary()],
 #'   exempt from the incomplete-register checks of [validate_frame()] and
 #'   [execute()], and named at export by [as_svydesign()].
-#'   [variance-estimation] gives how the export treats such units, and why
+#'   [variance_estimation] gives how the export treats such units, and why
 #'   a primary unit left with no row is refused.
 #'
 #'   A replicated execution with empty replicates cannot feed a later
@@ -439,7 +460,7 @@ NULL
 #' In PPS without-replacement sampling, very large units can have
 #' theoretical inclusion probabilities above 1. Certainty selection takes
 #' them with probability 1 before sampling the remainder, and marks them in
-#' the `.certainty_k` column described in [sample-columns]. It is available
+#' the `.certainty_k` column described in [sample_columns]. It is available
 #' for the WOR PPS methods (`pps_systematic`, `pps_brewer`, `pps_cps`,
 #' `pps_sampford`, `pps_poisson`, `pps_sps`, `pps_pareto`). With-replacement
 #' (`pps_multinomial`) and PMR (`pps_chromy`) methods handle large units
@@ -591,7 +612,7 @@ NULL
 #' [cluster_by()] for clustering,
 #' [execute()] for running designs,
 #' [serp()] for serpentine sorting,
-#' [variance-estimation] for how each method's variance is estimated
+#' [variance_estimation] for how each method's variance is estimated
 #'
 #' @family design specification
 #' @export

@@ -111,7 +111,7 @@ Other datasets:
 \code{\link{bfa_eas_cost}},
 \code{\link{bfa_eas_variance}},
 \code{\link{ken_enterprises}},
-\code{\link{samplyr-datasets}}
+\code{\link{samplyr_datasets}}
 }
 \concept{datasets}
 \keyword{datasets}

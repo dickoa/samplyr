@@ -22,7 +22,7 @@ column types, content hash) so it can be verified later. A data frame is
 the one frame the design was built against. An ordered list of data
 frames is the stage registers, in the order \code{\link[=execute]{execute()}} received them,
 each fingerprinted separately. A one-element list is one frame (see
-\link{frame-input-grammar}). The number of frames must be one the design
+\link{frame_input_grammar}). The number of frames must be one the design
 could be executed with, and for an executed sample the number its
 receipt records. For a sample built by several calls, one element per
 call that read frames (the first call and each continuation), in call

@@ -20,7 +20,7 @@
 #'     values. The meaning depends on the method and context:
 #'     - **Equal-probability WOR** (srswor, systematic): \eqn{N_h} (stratum
 #'       population size), or \eqn{N} if unstratified. The sampling fraction
-#'       \eqn{f = n / N} is derived from this at variance-estimation time.
+#'       \eqn{f = n / N} is derived from this at variance_estimation time.
 #'     - **PPS WOR** (pps_brewer, pps_cps, etc.): \eqn{N_h} (stratum
 #'       population size), converted to \eqn{\pi_i = 1/w_i}{pi_i = 1/w_i}
 #'       at survey export, because `survey::svydesign()` expects inclusion
@@ -55,7 +55,7 @@
 #'     `NA`. The survey export uses the groups as the variance strata.
 #'   - `.replicate`: Replicate identifier (only when `reps` is specified)
 #'   - `.panel`: Panel assignment (only when `panels` is specified), described
-#'     in [panel-assignment]
+#'     in [panel_assignment]
 #'   - Stage and stratum identifiers as appropriate
 #'
 #' ## How the weights are computed
@@ -97,7 +97,7 @@
 #' \eqn{w_i = w_i^{(1)} \times w_i^{(2 \mid 1)}}{w_i = w_i(1) * w_i(2 | 1)},
 #' which gives the Horvitz-Thompson estimator for WOR phases.
 #'
-#' @name sample-columns
+#' @name sample_columns
 #' @family diagnostics
 #' @seealso [execute()] which produces them, [frame_summary()] for the
 #'   population structure behind them, [as_svydesign()] for how they are

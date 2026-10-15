@@ -142,5 +142,5 @@
 #' @seealso [execute()], [rotation_program()] for cohort programs,
 #'   [stack_waves()] for stacking materialized waves.
 #'
-#' @name panel-assignment
+#' @name panel_assignment
 NULL

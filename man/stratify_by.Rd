@@ -42,7 +42,7 @@ Every method caps a stratum at its population and redistributes the
 surplus, so \code{"equal"} on populations \eqn{(10, 490, 500)} with \code{n = 300}
 gives 10/145/145 rather than 100/100/100. \code{execute()} reports this with
 a message of class \code{samplyr_message_allocation_capped} (see
-\link{execution-conditions}).
+\link{execution_conditions}).
 
 An input the method does not read is refused with class
 \code{samplyr_error_alloc_unused_aux} rather than ignored: \code{variance}
@@ -148,7 +148,7 @@ rows nor the session locale, so a permuted frame gets the same allocation.
 Requesting more than the frame holds allocates every unit rather than
 failing, and \code{execute()} warns with class \code{samplyr_warning_census}, or
 \code{samplyr_warning_nominal_cap} for a random-size method (see
-\link{execution-conditions}). Bounds that make the request impossible are
+\link{execution_conditions}). Bounds that make the request impossible are
 errors of class \code{samplyr_error_alloc_min_infeasible} or
 \code{samplyr_error_alloc_max_infeasible}.
 
@@ -263,6 +263,6 @@ Other design specification:
 \code{\link[=cluster_by]{cluster_by()}},
 \code{\link[=draw]{draw()}},
 \code{\link[=sampling_design]{sampling_design()}},
-\code{\link{selection-methods}}
+\code{\link{selection_methods}}
 }
 \concept{design specification}

@@ -158,8 +158,10 @@ identical(
 )
 
 # A second phase replays both calls from the first phase's frame
-phase1 <- execute(sampling_design() |> stratify_by(region) |> draw(n = 300),
-                  bfa_eas, seed = 7)
+phase1 <- sampling_design() |>
+  stratify_by(region) |>
+  draw(n = 300) |>
+  execute(bfa_eas, seed = 7)
 phase2 <- sampling_design() |>
   stratify_by(urban_rural) |>
   draw(n = 60) |>

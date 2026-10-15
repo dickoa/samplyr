@@ -78,7 +78,7 @@ column of \code{frame_summary(design, frame, detail = "pool")}.
 
 In the same way, a candidate parent that lacks a stratum an explicit \code{n}
 names is reported with \code{samplyr_message_absent_strata}, the message
-\code{\link[=execute]{execute()}} raises for a selected parent (see \link{execution-conditions}).
+\code{\link[=execute]{execute()}} raises for a selected parent (see \link{execution_conditions}).
 
 For designs restored with \code{\link[=read_design]{read_design()}}, if the design file carries a
 frame fingerprint, \code{validate_frame()} also compares it against \code{frame}
@@ -157,7 +157,7 @@ downstream looks, the disagreement is gone.
 }
 }
 \examples{
-# Create a design requiring region stratification and PPS by household count
+# A design stratified by region, with PPS on household counts
 design <- sampling_design() |>
   stratify_by(region) |>
   cluster_by(ea_id) |>
@@ -209,7 +209,7 @@ unlink(path)
 \seealso{
 Other execution:
 \code{\link[=execute]{execute()}},
-\code{\link{execution-conditions}},
+\code{\link{execution_conditions}},
 \code{\link[=rotation_program]{rotation_program()}}
 }
 \concept{execution}

@@ -81,7 +81,7 @@ resample first-stage units within first-stage strata and read nothing
 below, whereas \code{"mrbbootstrap"} and \code{"rwyb"} read every stage. A PPS
 first stage drawn without replacement is read as drawn with replacement,
 which errs toward too large a variance at large sampling fractions
-(\code{samplyr_warning_replicate_wr_first_stage}, see \link{variance-estimation}).
+(\code{samplyr_warning_replicate_wr_first_stage}, see \link{variance_estimation}).
 Chromy's method is read as with replacement too. Unequal probabilities
 at later stages, and a first stage drawn with replacement, reach the
 variance through the weights and draw no warning. In a simulation with
@@ -157,7 +157,7 @@ The generic types are refused for Poisson sampling, which needs
 \code{"rwyb"}. Bounded cube, LPM2 and SCPS have only the generic PPS bootstrap
 of \code{"subbootstrap"} and \code{"mrbbootstrap"}, which does not recreate their
 constraints or spatial algorithm. Only \code{"random_groups"} redraws a
-systematic start. \link{variance-estimation} has each case and the measured
+systematic start. \link{variance_estimation} has each case and the measured
 error.
 }
 }
@@ -194,7 +194,7 @@ Other survey export:
 \code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
 \code{\link[=as_svydesign]{as_svydesign()}},
 \code{\link[=stack_waves]{stack_waves()}},
-\code{\link{variance-estimation}},
+\code{\link{variance_estimation}},
 \code{\link[=variance_estimators]{variance_estimators()}}
 }
 \concept{survey export}

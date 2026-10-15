@@ -51,7 +51,7 @@ Other survey export:
 \code{\link[=as_svrepdesign]{as_svrepdesign()}},
 \code{\link[=as_svydesign]{as_svydesign()}},
 \code{\link[=stack_waves]{stack_waves()}},
-\code{\link{variance-estimation}},
+\code{\link{variance_estimation}},
 \code{\link[=variance_estimators]{variance_estimators()}}
 }
 \concept{survey export}

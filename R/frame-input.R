@@ -59,7 +59,7 @@
 #'
 #' @seealso [execute()], [validate_frame()], [frame_summary()],
 #'   [write_design()], `vignette("introduction")`
-#' @name frame-input-grammar
+#' @name frame_input_grammar
 NULL
 
 #' Bring one supplied frame to the form every consumer reads

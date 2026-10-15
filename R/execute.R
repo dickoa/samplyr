@@ -139,7 +139,7 @@
 #' ```
 #'
 #'
-#' @name execution-conditions
+#' @name execution_conditions
 #' @family execution
 #' @seealso [execute()] which raises them, [frame_summary()] whose `capped`
 #'   column is the ordinary way to read capping, [validate_frame()] to catch
@@ -169,7 +169,7 @@ NULL
 #'   already holds the frames, such as a loop over registers or
 #'   [replay_design()]. Mixing it with separate frames is refused. Names
 #'   inside the list are frame labels, so a misspelled argument must be
-#'   written outside it to be reported as one. See [frame-input-grammar].
+#'   written outside it to be reported as one. See [frame_input_grammar].
 #' @param stages Integer vector of the stages to execute, or `NULL`
 #'   (default) for all remaining stages. From a `sampling_design` it must
 #'   start at stage 1, so an operational workflow can stop after its first
@@ -187,20 +187,20 @@ NULL
 #'   `.panel` column, and only a sample drawn with a schedule can be
 #'   materialized by `wave`. Default `NULL` means no panels. Cannot be
 #'   combined with `reps`, or redeclared on a sample that already carries an
-#'   assignment. [panel-assignment] describes the assignment and the
+#'   assignment. [panel_assignment] describes the assignment and the
 #'   schedules.
 #' @param panel_stage Stage whose selected units are assigned to panels, as a
 #'   single stage number, or `NULL` (the default) for the first executed
 #'   stage. Accepted only alongside `panels`, and the stage must be one the
 #'   execution completes. Later stages inherit their ancestor's panel, so
 #'   assigning below stage 1 rotates units inside parents that stay in the
-#'   survey. [panel-assignment] explains what that changes, including how it
+#'   survey. [panel_assignment] explains what that changes, including how it
 #'   can bias estimates over time.
 #' @param small_pool What to do when a rotation schedule would leave a pool
 #'   with no unit to activate at some wave. `"error"` (the default, reached by
 #'   `NULL`) refuses the assignment, and `"permanent"` activates those units
 #'   at every wave and warns with `samplyr_warning_panel_small_pool`.
-#'   Meaningful only with a schedule. See [panel-assignment].
+#'   Meaningful only with a schedule. See [panel_assignment].
 #' @param wave Integer wave of a scheduled master to materialize, or `NULL`
 #'   (default). `execute(master, wave = t)` activates the panels the stored
 #'   schedule declares active at `t` and compounds the exact activation
@@ -249,7 +249,7 @@ NULL
 #'   `.fpc_k`, `.draw_k` and `.certainty_k`, `.zone_1` and `.pair_1` for a
 #'   zoned certainty plan, and `.replicate` or `.panel` when `reps` or
 #'   `panels` is used.
-#'   [sample-columns] documents what each one holds.
+#'   [sample_columns] documents what each one holds.
 #'
 #' @details
 #' ## Multi-stage with a single frame
@@ -283,7 +283,7 @@ NULL
 #' ## Partial execution (operational sampling)
 #' `stages` executes only the stages named, returning a partial `tbl_sample`.
 #' Fieldwork then produces the next stage's frame, and passing the partial
-#' sample back as `.data` continues the same design. [frame-input-grammar]
+#' sample back as `.data` continues the same design. [frame_input_grammar]
 #' states how a continuation reads its frame, when it asks for `stages`, and
 #' how it differs from starting a new phase on a sample.
 #'
@@ -296,7 +296,7 @@ NULL
 #' ## Weights
 #'
 #' `.weight` is the product of the per-stage weights and of the phase weights
-#' across phases. [sample-columns] gives the formulas.
+#' across phases. [sample_columns] gives the formulas.
 #'
 #' ## When a design cannot be realized as written
 #'
@@ -305,7 +305,7 @@ NULL
 #' four related outcomes as classed conditions carrying a `payload`. With the
 #' default digest, the `capped` column of
 #' `frame_summary(sample, detail = "pool")` shows capping after the fact.
-#' [execution-conditions] gives the five classes, their payload fields, and
+#' [execution_conditions] gives the five classes, their payload fields, and
 #' how to capture one when no digest is kept.
 #'
 #' @examples
@@ -357,7 +357,7 @@ NULL
 #' nrow(sample)  # 12 households in each selected EA
 #'
 #' ## One frame per stage
-#' # Frames map to stages by position: a district register, then an EA register
+#' # Frames map to stages by position: districts first, then EAs
 #' districts <- dplyr::distinct(zwe_eas, province, district)
 #' two_stage <- sampling_design() |>
 #'   add_stage(label = "Districts") |>
@@ -397,9 +397,9 @@ NULL
 #'
 #' @seealso
 #' [sampling_design()] for creating designs,
-#' [frame-input-grammar] for the frame forms every verb accepts,
-#' [sample-columns] for what the generated columns hold,
-#' [execution-conditions] for what `execute()` signals when a design cannot
+#' [frame_input_grammar] for the frame forms every verb accepts,
+#' [sample_columns] for what the generated columns hold,
+#' [execution_conditions] for what `execute()` signals when a design cannot
 #' be realized as written,
 #' [get_design()] for extracting metadata
 #'

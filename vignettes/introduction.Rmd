@@ -143,7 +143,7 @@ does not make the final multi-stage weight equal to one.
 `pps_brewer` is one fixed-size PPS method. Method choice also depends on the
 second-order information required for variance estimation, whether a random
 sample size is acceptable, and whether permanent random numbers are needed.
-The comparison is in `?selection-methods`.
+The comparison is in `?selection_methods`.
 
 `cluster_by()` also names each unit's identifier, and a frame with one row per
 unit can use it too. With the same seed, the design below selects the same EAs
@@ -289,7 +289,7 @@ survey::svymean(~consumption, as_svydesign(observed))
 ```
 
 This export uses Brewer's variance approximation for the PPS stages.
-`?variance-estimation` gives the alternatives, including RWYB replicates, and
+`?variance_estimation` gives the alternatives, including RWYB replicates, and
 `vignette("survey-analysis")` continues with outcome joins, domains and
 nonresponse.
 
@@ -376,11 +376,11 @@ Use the other articles when their task arises:
 |:--|:--|
 | Choose sizes and allocations before selection | `vignette("svyplan", package = "svyplan")`, then [Plan a sample with svyplan](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/plan-to-draw.html) |
 | Coordinate new draws with permanent random numbers | `?draw`, argument `prn`, and [Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/coordination.html) |
-| Schedule panels and refreshment cohorts | `?panel-assignment`, `?rotation_program`, and [Plan and run a rotating panel](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/rotating-panels.html) |
+| Schedule panels and refreshment cohorts | `?panel_assignment`, `?rotation_program`, and [Plan and run a rotating panel](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/rotating-panels.html) |
 | Save or replay a design | `vignette("serialization")` |
 
-For a method lookup, use `?selection-methods`, and for how each method's
-variance is estimated, `?variance-estimation`. Consult
+For a method lookup, use `?selection_methods`, and for how each method's
+variance is estimated, `?variance_estimation`. Consult
 `vignette("design-semantics")` for the underlying contracts and
 [Validation on synthetic populations](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/validation.html)
 for simulation diagnostics. The book

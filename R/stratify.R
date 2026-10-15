@@ -27,7 +27,7 @@
 #'   surplus, so `"equal"` on populations \eqn{(10, 490, 500)} with `n = 300`
 #'   gives 10/145/145 rather than 100/100/100. `execute()` reports this with
 #'   a message of class `samplyr_message_allocation_capped` (see
-#'   [execution-conditions]).
+#'   [execution_conditions]).
 #'
 #'   An input the method does not read is refused with class
 #'   `samplyr_error_alloc_unused_aux` rather than ignored: `variance`
@@ -111,7 +111,7 @@
 #' Requesting more than the frame holds allocates every unit rather than
 #' failing, and `execute()` warns with class `samplyr_warning_census`, or
 #' `samplyr_warning_nominal_cap` for a random-size method (see
-#' [execution-conditions]). Bounds that make the request impossible are
+#' [execution_conditions]). Bounds that make the request impossible are
 #' errors of class `samplyr_error_alloc_min_infeasible` or
 #' `samplyr_error_alloc_max_infeasible`.
 #'

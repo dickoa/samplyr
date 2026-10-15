@@ -274,7 +274,7 @@ shared_sample_format_version <- 1L
 #'   the one frame the design was built against. An ordered list of data
 #'   frames is the stage registers, in the order [execute()] received them,
 #'   each fingerprinted separately. A one-element list is one frame (see
-#'   [frame-input-grammar]). The number of frames must be one the design
+#'   [frame_input_grammar]). The number of frames must be one the design
 #'   could be executed with, and for an executed sample the number its
 #'   receipt records. For a sample built by several calls, one element per
 #'   call that read frames (the first call and each continuation), in call
@@ -579,8 +579,10 @@ read_design <- function(file) {
 #' )
 #'
 #' # A second phase replays both calls from the first phase's frame
-#' phase1 <- execute(sampling_design() |> stratify_by(region) |> draw(n = 300),
-#'                   bfa_eas, seed = 7)
+#' phase1 <- sampling_design() |>
+#'   stratify_by(region) |>
+#'   draw(n = 300) |>
+#'   execute(bfa_eas, seed = 7)
 #' phase2 <- sampling_design() |>
 #'   stratify_by(urban_rural) |>
 #'   draw(n = 60) |>

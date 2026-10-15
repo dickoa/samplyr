@@ -84,7 +84,7 @@ reduced to its population is \code{FALSE}, because \code{n_target} records
 the post-redistribution target. \code{execute()} reports that event as
 \code{samplyr_message_allocation_capped} or, when the stage takes
 everything within reach, \code{samplyr_warning_census} (see
-\link{execution-conditions}).
+\link{execution_conditions}).
 
 For \code{detail = "unit"}, one row per population unit of each stage
 that stored units, with \code{stage}, \code{pool_id}, \code{unit_id},
@@ -106,7 +106,7 @@ the two differ for unequal-probability designs. \code{chance_kind} states
 what the recorded chances mean: first-order inclusion probabilities
 for without-replacement stages, expected hits for with-replacement
 stages. \code{probabilities} is the stage's probability tier (see
-\link{sample-columns}): \code{"exact"} when the recorded chances equal the
+\link{sample_columns}): \code{"exact"} when the recorded chances equal the
 design's true first-order chances, \code{"approximate"} when the method
 achieves them only to a documented approximation, and \code{NA} for
 digests recorded before the field existed.
@@ -256,7 +256,7 @@ Other diagnostics:
 \code{\link[=compare_designs]{compare_designs()}},
 \code{\link{design_effect}},
 \code{\link[=joint_expectation]{joint_expectation()}},
-\code{\link{sample-columns}},
+\code{\link{sample_columns}},
 \code{\link[=summary.tbl_sample]{summary.tbl_sample()}},
 \code{\link[=varcomp.tbl_sample]{varcomp.tbl_sample()}}
 }

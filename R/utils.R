@@ -717,7 +717,7 @@ warn_poisson_shortfall <- function(stage, x) {
       pool_lines(x, "Affected pools"),
       "i" = "Handle dominant units explicitly with {.arg certainty_size} or
              {.arg certainty_prop}.",
-      "i" = "See {.topic selection-methods} for the {.val pps_poisson}
+      "i" = "See {.topic selection_methods} for the {.val pps_poisson}
              contract."
     ),
     class = "samplyr_warning_poisson_shortfall",

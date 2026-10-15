@@ -121,7 +121,7 @@
 #' execute(program, wave = 2)
 #'
 #' @seealso [execute()] for drawing a master and materializing a wave,
-#'   [panel-assignment] for partitioning one execution into rotation groups.
+#'   [panel_assignment] for partitioning one execution into rotation groups.
 #' @family execution
 #' @export
 rotation_program <- function(cohorts, entry_wave = NULL, schedule = NULL,

@@ -83,7 +83,7 @@ within a stage's term. Trailing unstratified stages are omitted, and
 unstratified stages before a stratified stage get a constant
 placeholder column.
 \item \strong{Weights} (\code{weights}): the \code{.weight} column, the product of the
-per-stage weights described in \link{sample-columns}.
+per-stage weights described in \link{sample_columns}.
 \item \strong{FPC} (\code{fpc}): aligned with \code{ids}. \code{\link[survey:svydesign]{survey::svydesign()}} requires
 every FPC term on the same scale, so one of two encodings is used:
 \itemize{
@@ -118,7 +118,7 @@ the exported call is equivalent to:
 \subsection{Multi-stage designs}{
 
 Exactness depends on the variance treatment available for each method
-(\link{variance-estimation}). A design whose first stage is a census of PSUs
+(\link{variance_estimation}). A design whose first stage is a census of PSUs
 correctly attributes all variance to the later stages. Executing stages
 separately, as \code{stage1 <- execute(design, psu_frame, stages = 1)} then
 \code{sample <- execute(stage1, listing_frame)}, still gives one multi-stage
@@ -165,7 +165,7 @@ units, with \verb{stratify_by(<unit>)}, or by taking whole phase-1 units
 before sampling inside them. In a simulation both gave 0.93 to 1.03 of
 the true variance and never a negative one. When phase 2 draws smaller
 units across the phase-1 clusters, the estimator is right over repeated
-samples but not in one (\link{variance-estimation} has the measured error),
+samples but not in one (\link{variance_estimation} has the measured error),
 and the export warns (\code{samplyr_warning_twophase_across_units}). The
 weights are exact either way.
 
@@ -180,7 +180,7 @@ included, has a replicate export. The weights of a refused sample are
 exact, so totals and means are right. For a variance, an ultimate-cluster
 approximation treats phase 1's units as drawn with replacement and
 carries everything below in them. It is conservative, by the margins
-\link{variance-estimation} reports, and much more so when phase 2 was drawn
+\link{variance_estimation} reports, and much more so when phase 2 was drawn
 across the phase-1 units:
 
 \if{html}{\out{<div class="sourceCode r">}}\preformatted{survey::svydesign(ids = ~ea_id, strata = ~region, weights = ~.weight,
@@ -219,7 +219,7 @@ as_survey_design(sample) |> filter(domain) |> summarise(...)
 \subsection{Variance by selection method}{
 
 Which estimator each selection method reaches, how exact it is, and which
-designs are refused are in \link{variance-estimation}.
+designs are refused are in \link{variance_estimation}.
 
 \code{pps} is read as follows. \code{"brewer"} is the default treatment and keeps
 every stage. \code{FALSE} states that no stage is PPS, so it is refused on a
@@ -318,7 +318,7 @@ Other survey export:
 \code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
 \code{\link[=as_svrepdesign]{as_svrepdesign()}},
 \code{\link[=stack_waves]{stack_waves()}},
-\code{\link{variance-estimation}},
+\code{\link{variance_estimation}},
 \code{\link[=variance_estimators]{variance_estimators()}}
 }
 \concept{survey export}

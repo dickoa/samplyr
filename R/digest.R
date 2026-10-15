@@ -1320,7 +1320,7 @@ get_frame_digest <- function(x) {
 #'   the post-redistribution target. `execute()` reports that event as
 #'   `samplyr_message_allocation_capped` or, when the stage takes
 #'   everything within reach, `samplyr_warning_census` (see
-#'   [execution-conditions]).
+#'   [execution_conditions]).
 #'
 #'   For `detail = "unit"`, one row per population unit of each stage
 #'   that stored units, with `stage`, `pool_id`, `unit_id`,
@@ -1335,7 +1335,7 @@ get_frame_digest <- function(x) {
 #' what the recorded chances mean: first-order inclusion probabilities
 #' for without-replacement stages, expected hits for with-replacement
 #' stages. `probabilities` is the stage's probability tier (see
-#' [sample-columns]): `"exact"` when the recorded chances equal the
+#' [sample_columns]): `"exact"` when the recorded chances equal the
 #' design's true first-order chances, `"approximate"` when the method
 #' achieves them only to a documented approximation, and `NA` for
 #' digests recorded before the field existed.

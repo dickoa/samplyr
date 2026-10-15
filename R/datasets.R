@@ -22,7 +22,7 @@
 #'   \item [bfa_eas_cost]: Relative fieldwork costs for optimal allocation
 #' }
 #'
-#' @name samplyr-datasets
+#' @name samplyr_datasets
 #' @family datasets
 #' @keywords datasets
 NULL

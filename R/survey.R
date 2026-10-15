@@ -61,7 +61,7 @@
 #'   unstratified stages before a stratified stage get a constant
 #'   placeholder column.
 #' - **Weights** (`weights`): the `.weight` column, the product of the
-#'   per-stage weights described in [sample-columns].
+#'   per-stage weights described in [sample_columns].
 #' - **FPC** (`fpc`): aligned with `ids`. [survey::svydesign()] requires
 #'   every FPC term on the same scale, so one of two encodings is used:
 #'   - **Count scale** (designs without unequal-probability WOR
@@ -94,7 +94,7 @@
 #' ## Multi-stage designs
 #'
 #' Exactness depends on the variance treatment available for each method
-#' ([variance-estimation]). A design whose first stage is a census of PSUs
+#' ([variance_estimation]). A design whose first stage is a census of PSUs
 #' correctly attributes all variance to the later stages. Executing stages
 #' separately, as `stage1 <- execute(design, psu_frame, stages = 1)` then
 #' `sample <- execute(stage1, listing_frame)`, still gives one multi-stage
@@ -140,7 +140,7 @@
 #' before sampling inside them. In a simulation both gave 0.93 to 1.03 of
 #' the true variance and never a negative one. When phase 2 draws smaller
 #' units across the phase-1 clusters, the estimator is right over repeated
-#' samples but not in one ([variance-estimation] has the measured error),
+#' samples but not in one ([variance_estimation] has the measured error),
 #' and the export warns (`samplyr_warning_twophase_across_units`). The
 #' weights are exact either way.
 #'
@@ -155,7 +155,7 @@
 #' exact, so totals and means are right. For a variance, an ultimate-cluster
 #' approximation treats phase 1's units as drawn with replacement and
 #' carries everything below in them. It is conservative, by the margins
-#' [variance-estimation] reports, and much more so when phase 2 was drawn
+#' [variance_estimation] reports, and much more so when phase 2 was drawn
 #' across the phase-1 units:
 #'
 #' ```r
@@ -193,7 +193,7 @@
 #' ## Variance by selection method
 #'
 #' Which estimator each selection method reaches, how exact it is, and which
-#' designs are refused are in [variance-estimation].
+#' designs are refused are in [variance_estimation].
 #'
 #' `pps` is read as follows. `"brewer"` is the default treatment and keeps
 #' every stage. `FALSE` states that no stage is PPS, so it is refused on a
@@ -501,7 +501,7 @@ check_systematic_variance <- function(
              interval has been measured at 0.0006 of the true variance for
              {.val systematic} and 0.003 for {.val pps_systematic}, with 95%
              intervals covering about 10% of the time. See
-             {.topic variance-estimation}."
+             {.topic variance_estimation}."
     )
   } else {
     c(
@@ -512,7 +512,7 @@ check_systematic_variance <- function(
       "i" = "Frame ordering or periodicity can make the resulting standard
              errors too small or too large. The size of that gap has been
              measured for the linearization export only: see
-             {.topic variance-estimation}."
+             {.topic variance_estimation}."
     )
   }
 
@@ -3365,7 +3365,7 @@ multiframe_overlaps <- function(x) {
 #' below, whereas `"mrbbootstrap"` and `"rwyb"` read every stage. A PPS
 #' first stage drawn without replacement is read as drawn with replacement,
 #' which errs toward too large a variance at large sampling fractions
-#' (`samplyr_warning_replicate_wr_first_stage`, see [variance-estimation]).
+#' (`samplyr_warning_replicate_wr_first_stage`, see [variance_estimation]).
 #' Chromy's method is read as with replacement too. Unequal probabilities
 #' at later stages, and a first stage drawn with replacement, reach the
 #' variance through the weights and draw no warning. In a simulation with
@@ -3438,7 +3438,7 @@ multiframe_overlaps <- function(x) {
 #' `"rwyb"`. Bounded cube, LPM2 and SCPS have only the generic PPS bootstrap
 #' of `"subbootstrap"` and `"mrbbootstrap"`, which does not recreate their
 #' constraints or spatial algorithm. Only `"random_groups"` redraws a
-#' systematic start. [variance-estimation] has each case and the measured
+#' systematic start. [variance_estimation] has each case and the measured
 #' error.
 #'
 #' @examplesIf requireNamespace("survey", quietly = TRUE)

@@ -148,24 +148,30 @@ pairs.
 \subsection{Exact vs. approximate computation}{
 
 The accuracy of the returned matrix depends on the sampling method, as
-the two tables below show. \link{variance-estimation} covers how a matrix
+the two tables below show. \link{variance_estimation} covers how a matrix
 enters a variance estimate.
 }
 
-\subsection{WOR methods (\eqn{\pi_{kl}}{pi_kl})}{\tabular{lll}{
-   samplyr method \tab sondage function \tab Quality \cr
-   \code{pps_cps} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (Aires' formula via C) \cr
-   \code{pps_sampford} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (Sampford design) \cr
-   \code{pps_systematic} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (circular-interval overlap) \cr
-   \code{pps_poisson} \tab \code{joint_inclusion_prob()} \tab \strong{Exact} (\eqn{\pi_{kl} = \pi_k \pi_l}{pi_kl = pi_k * pi_l}, independent draws) \cr
-   \code{pps_brewer} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate}\eqn{^*} (high-entropy) \cr
-   \code{pps_sps} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy) \cr
-   \code{pps_pareto} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} (high-entropy) \cr
-   \code{cube} \tab \code{joint_inclusion_prob()} \tab \strong{Approximate} when unconstrained (high-entropy) \cr
-   \code{lpm2} \tab unavailable \tab Spatial spreading is not represented \cr
-   \code{scps} \tab unavailable \tab Spatial spreading is not represented \cr
+\subsection{WOR methods (\eqn{\pi_{kl}}{pi_kl})}{
+
+Every matrix here comes from \code{sondage::joint_inclusion_prob()}.\tabular{ll}{
+   Method \tab Quality \cr
+   \code{pps_cps} \tab \strong{Exact}, Aires' formula \cr
+   \code{pps_sampford} \tab \strong{Exact}, Sampford design \cr
+   \code{pps_systematic} \tab \strong{Exact}, circular-interval overlap \cr
+   \code{pps_poisson} \tab \strong{Exact}, independent draws \cr
+   \code{pps_brewer} \tab \strong{Approximate}\eqn{^*}, high-entropy \cr
+   \code{pps_sps} \tab \strong{Approximate}, high-entropy \cr
+   \code{pps_pareto} \tab \strong{Approximate}, high-entropy \cr
+   \code{cube} \tab \strong{Approximate} when unconstrained \cr
+   \code{lpm2} \tab Unavailable, spatial spreading not represented \cr
+   \code{scps} \tab Unavailable, spatial spreading not represented \cr
 }
 
+
+Poisson draws are independent, so
+\eqn{\pi_{kl} = \pi_k \pi_l}{pi_kl = pi_k * pi_l}. Unconstrained cube
+uses the high-entropy approximation too.
 
 Systematic PPS commonly has zero pair probabilities. Its exact matrix
 describes the design, but a zero pair probability rules out a
@@ -183,7 +189,7 @@ Pareto also enter it with approximate first-order targets.
 
 Bounded cube, LPM2, and SCPS designs are refused, because count
 constraints and spatial spreading alter pairwise selection beyond the
-approximation. \link{variance-estimation} gives their replicate variance.
+approximation. \link{variance_estimation} gives their replicate variance.
 
 A stage that draws a certainty plan's zones treats each zone as a draw
 of its own, so PSUs of different zones have the product of their
@@ -194,13 +200,17 @@ never drawn together, so no unbiased variance estimator can use its
 matrix.
 }
 
-\subsection{WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})}{\tabular{lll}{
-   samplyr method \tab sondage function \tab Quality \cr
-   \code{pps_multinomial} \tab \code{joint_expected_hits()} \tab \strong{Exact} (analytic: \eqn{n(n-1) p_k p_l + n p_k \mathbf{1}_{k=l}}{n(n-1) p_k p_l + n p_k 1(k=l)}) \cr
-   \code{pps_chromy} \tab \code{joint_expected_hits()} \tab \strong{Approximate} (Monte Carlo simulation, 10 000 replicates) \cr
+\subsection{WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})}{
+
+Both matrices come from \code{sondage::joint_expected_hits()}.\tabular{ll}{
+   Method \tab Quality \cr
+   \code{pps_multinomial} \tab \strong{Exact}, analytic \cr
+   \code{pps_chromy} \tab \strong{Approximate}, Monte Carlo, 10 000 draws \cr
 }
 
 
+For \code{pps_multinomial},
+\eqn{E(n_k \cdot n_l) = n(n-1) p_k p_l + n p_k \mathbf{1}_{k=l}}{E(n_k * n_l) = n(n-1) p_k p_l + n p_k 1(k=l)}.
 The sequential dependence of \code{pps_chromy} admits no closed form for
 \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}, so sondage estimates it by Monte
 Carlo simulation under \code{nsim} and \code{seed}.
@@ -339,7 +349,7 @@ Other diagnostics:
 \code{\link[=compare_designs]{compare_designs()}},
 \code{\link{design_effect}},
 \code{\link[=frame_summary]{frame_summary()}},
-\code{\link{sample-columns}},
+\code{\link{sample_columns}},
 \code{\link[=summary.tbl_sample]{summary.tbl_sample()}},
 \code{\link[=varcomp.tbl_sample]{varcomp.tbl_sample()}}
 }

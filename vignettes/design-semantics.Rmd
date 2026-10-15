@@ -61,7 +61,7 @@ marginal inclusion probabilities.
 
 ## Assumptions at a glance
 
-For a compact selection table, see `?selection-methods`, and for how each method's variance is estimated, `?variance-estimation`. A complete three-stage fieldwork example is in
+For a compact selection table, see `?selection_methods`, and for how each method's variance is estimated, `?variance_estimation`. A complete three-stage fieldwork example is in
 `vignette("introduction")`.
 
 The following table summarizes what `samplyr` assumes and what the user must verify. Each row is expanded in the sections below.
@@ -235,7 +235,7 @@ When `prn` is specified, the permanent random numbers are passed through to `son
 1. For each stage \(k\), the frame is restricted to units belonging to clusters selected at stage \(k - 1\) (or the full frame for \(k = 1\)).
 2. Strata and cluster groupings are resolved against the (subsetted) frame.
 3. The selection algorithm from `draw()` is invoked via `sondage`.
-4. The `.weight`, `.fpc`, `.draw`, and `.certainty` columns are computed where they apply and suffixed with the stage number (`?sample-columns`).
+4. The `.weight`, `.fpc`, `.draw`, and `.certainty` columns are computed where they apply and suffixed with the stage number (`?sample_columns`).
 
 **One frame or one per stage.** The number of frames schedules the stages. `execute(design, hierarchy)` runs every stage against one table, and `execute(design, schools, classes, students)` gives each stage its own register, mapped by position. Any other count is refused. The frames may equally be held as a value with `execute(design, list(schools, classes, students))`. A name on a list element is a diagnostic label for that frame.
 
@@ -349,7 +349,7 @@ Hansen-Hurwitz estimator already captures.
 
 Bounded cube, LPM2, and SCPS do not currently have supported linearization
 estimators. Their variance needs `as_svrepdesign(type = "subbootstrap")` or
-`"mrbbootstrap"`, which `?variance-estimation` describes.
+`"mrbbootstrap"`, which `?variance_estimation` describes.
 
 ## Weights for a population other than the one sampled
 
@@ -425,7 +425,7 @@ An unclustered element-sampling stage followed by further stages is not nested c
 How each selection method is linearized, what a joint matrix from
 `joint_expectation()` changes, how with-replacement and Chromy stages are
 represented, and how certainty units form a take-all stratum are in
-`?variance-estimation`, with the measured error of the approximations that
+`?variance_estimation`, with the measured error of the approximations that
 were measured.
 
 ### 3. Panel assignments
@@ -453,7 +453,7 @@ and quotas are recorded with the sample.
 
 Neither operation replenishes the sample. A program that draws refreshment
 cohorts against later frame vintages is a registry of separate executions, not
-a partition of one. See `rotation_program()`. `?panel-assignment` gives the assignment rules,
+a partition of one. See `rotation_program()`. `?panel_assignment` gives the assignment rules,
 the choice of assignment stage and what it costs, certainty units, schedules
 and small pools.
 

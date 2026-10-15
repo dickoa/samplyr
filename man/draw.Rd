@@ -35,7 +35,7 @@ or a custom method registered with \code{fixed_size = FALSE}), \code{n} is the
 fractional (\code{n = 2.6}) when no allocation method is given. At a later
 stage it is the expected take in each parent unit, whatever the parent's
 size. Fixed-size methods and allocation methods need whole units.
-\link{selection-methods} explains the fixed versus random distinction and the
+\link{selection_methods} explains the fixed versus random distinction and the
 warning raised when \code{pps_poisson} falls short of \code{n}. Can be:
 \itemize{
 \item A scalar: the size taken in each stratum when \code{\link[=stratify_by]{stratify_by()}} has no
@@ -68,7 +68,7 @@ with \code{n_psu_per_zone = 2} draws two PSUs from each of its zones
 instead, records the zone in \code{.zone_1}, and exports one variance
 stratum per zone. With \code{n_psu_per_zone = 1} it draws one PSU per zone,
 records the plan's variance group in \code{.pair_1}, and exports the
-groups as variance strata (\link{variance-estimation}). Its method
+groups as variance strata (\link{variance_estimation}). Its method
 must be \code{pps_systematic}, \code{pps_brewer}, \code{pps_cps}, or \code{pps_sampford},
 with \code{mos} equal to the register's \code{N}. Stage 2 selects by \code{srswor} or
 \code{systematic}, and stratifying there requires an \code{alloc} method.
@@ -120,7 +120,7 @@ target each bound produces, without selecting or consuming random
 numbers.}
 
 \item{method}{Selection method, \code{"srswor"} by default.
-\link{selection-methods} lists the sixteen built-ins with what each one
+\link{selection_methods} lists the sixteen built-ins with what each one
 requires and the paper behind each.
 
 \code{"cube"} balances the sample on \code{aux} so that Horvitz-Thompson
@@ -269,7 +269,7 @@ in the design with nothing selected under it and contributes zero to
 every total. It is recorded in the sample, counted by \code{\link[=summary]{summary()}},
 exempt from the incomplete-register checks of \code{\link[=validate_frame]{validate_frame()}} and
 \code{\link[=execute]{execute()}}, and named at export by \code{\link[=as_svydesign]{as_svydesign()}}.
-\link{variance-estimation} gives how the export treats such units, and why
+\link{variance_estimation} gives how the export treats such units, and why
 a primary unit left with no row is refused.
 
 A replicated execution with empty replicates cannot feed a later
@@ -322,7 +322,7 @@ stage in a sampling design ends with \code{draw()}, which closes it. A second
 In PPS without-replacement sampling, very large units can have
 theoretical inclusion probabilities above 1. Certainty selection takes
 them with probability 1 before sampling the remainder, and marks them in
-the \code{.certainty_k} column described in \link{sample-columns}. It is available
+the \code{.certainty_k} column described in \link{sample_columns}. It is available
 for the WOR PPS methods (\code{pps_systematic}, \code{pps_brewer}, \code{pps_cps},
 \code{pps_sampford}, \code{pps_poisson}, \code{pps_sps}, \code{pps_pareto}). With-replacement
 (\code{pps_multinomial}) and PMR (\code{pps_chromy}) methods handle large units
@@ -477,13 +477,13 @@ sampling_design() |>
 \code{\link[=cluster_by]{cluster_by()}} for clustering,
 \code{\link[=execute]{execute()}} for running designs,
 \code{\link[=serp]{serp()}} for serpentine sorting,
-\link{variance-estimation} for how each method's variance is estimated
+\link{variance_estimation} for how each method's variance is estimated
 
 Other design specification:
 \code{\link[=add_stage]{add_stage()}},
 \code{\link[=cluster_by]{cluster_by()}},
 \code{\link[=sampling_design]{sampling_design()}},
-\code{\link{selection-methods}},
+\code{\link{selection_methods}},
 \code{\link[=stratify_by]{stratify_by()}}
 }
 \concept{design specification}

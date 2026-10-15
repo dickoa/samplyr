@@ -37,7 +37,7 @@ A single unnamed list of data frames is the same call, for code that
 already holds the frames, such as a loop over registers or
 \code{\link[=replay_design]{replay_design()}}. Mixing it with separate frames is refused. Names
 inside the list are frame labels, so a misspelled argument must be
-written outside it to be reported as one. See \link{frame-input-grammar}.}
+written outside it to be reported as one. See \link{frame_input_grammar}.}
 
 \item{stages}{Integer vector of the stages to execute, or \code{NULL}
 (default) for all remaining stages. From a \code{sampling_design} it must
@@ -58,7 +58,7 @@ and \code{wave} columns and an optional logical \code{active} column), or an
 \code{.panel} column, and only a sample drawn with a schedule can be
 materialized by \code{wave}. Default \code{NULL} means no panels. Cannot be
 combined with \code{reps}, or redeclared on a sample that already carries an
-assignment. \link{panel-assignment} describes the assignment and the
+assignment. \link{panel_assignment} describes the assignment and the
 schedules.}
 
 \item{panel_stage}{Stage whose selected units are assigned to panels, as a
@@ -66,14 +66,14 @@ single stage number, or \code{NULL} (the default) for the first executed
 stage. Accepted only alongside \code{panels}, and the stage must be one the
 execution completes. Later stages inherit their ancestor's panel, so
 assigning below stage 1 rotates units inside parents that stay in the
-survey. \link{panel-assignment} explains what that changes, including how it
+survey. \link{panel_assignment} explains what that changes, including how it
 can bias estimates over time.}
 
 \item{small_pool}{What to do when a rotation schedule would leave a pool
 with no unit to activate at some wave. \code{"error"} (the default, reached by
 \code{NULL}) refuses the assignment, and \code{"permanent"} activates those units
 at every wave and warns with \code{samplyr_warning_panel_small_pool}.
-Meaningful only with a schedule. See \link{panel-assignment}.}
+Meaningful only with a schedule. See \link{panel_assignment}.}
 
 \item{reps}{Integer number of independent replicate samples to draw (>= 2),
 or \code{NULL} (default) for a single sample. The replicates are stacked in
@@ -126,7 +126,7 @@ selection. Those are \code{.sample_id}, \code{.weight}, the per-stage \code{.wei
 \code{.fpc_k}, \code{.draw_k} and \code{.certainty_k}, \code{.zone_1} and \code{.pair_1} for a
 zoned certainty plan, and \code{.replicate} or \code{.panel} when \code{reps} or
 \code{panels} is used.
-\link{sample-columns} documents what each one holds.
+\link{sample_columns} documents what each one holds.
 }
 \description{
 \code{execute()} runs a sampling design against one or more data frames,
@@ -169,7 +169,7 @@ sample.
 
 \code{stages} executes only the stages named, returning a partial \code{tbl_sample}.
 Fieldwork then produces the next stage's frame, and passing the partial
-sample back as \code{.data} continues the same design. \link{frame-input-grammar}
+sample back as \code{.data} continues the same design. \link{frame_input_grammar}
 states how a continuation reads its frame, when it asks for \code{stages}, and
 how it differs from starting a new phase on a sample.
 }
@@ -185,7 +185,7 @@ exports this path through \code{\link[survey:twophase]{survey::twophase()}}.
 \subsection{Weights}{
 
 \code{.weight} is the product of the per-stage weights and of the phase weights
-across phases. \link{sample-columns} gives the formulas.
+across phases. \link{sample_columns} gives the formulas.
 }
 
 \subsection{When a design cannot be realized as written}{
@@ -195,7 +195,7 @@ which makes the design non-self-weighting. \code{execute()} reports this and
 four related outcomes as classed conditions carrying a \code{payload}. With the
 default digest, the \code{capped} column of
 \code{frame_summary(sample, detail = "pool")} shows capping after the fact.
-\link{execution-conditions} gives the five classes, their payload fields, and
+\link{execution_conditions} gives the five classes, their payload fields, and
 how to capture one when no digest is kept.
 }
 }
@@ -248,7 +248,7 @@ sample <- selected_eas |> execute(listing, seed = 43)
 nrow(sample)  # 12 households in each selected EA
 
 ## One frame per stage
-# Frames map to stages by position: a district register, then an EA register
+# Frames map to stages by position: districts first, then EAs
 districts <- dplyr::distinct(zwe_eas, province, district)
 two_stage <- sampling_design() |>
   add_stage(label = "Districts") |>
@@ -289,14 +289,14 @@ table(sample$.panel)  # 50 per panel
 }
 \seealso{
 \code{\link[=sampling_design]{sampling_design()}} for creating designs,
-\link{frame-input-grammar} for the frame forms every verb accepts,
-\link{sample-columns} for what the generated columns hold,
-\link{execution-conditions} for what \code{execute()} signals when a design cannot
+\link{frame_input_grammar} for the frame forms every verb accepts,
+\link{sample_columns} for what the generated columns hold,
+\link{execution_conditions} for what \code{execute()} signals when a design cannot
 be realized as written,
 \code{\link[=get_design]{get_design()}} for extracting metadata
 
 Other execution:
-\code{\link{execution-conditions}},
+\code{\link{execution_conditions}},
 \code{\link[=rotation_program]{rotation_program()}},
 \code{\link[=validate_frame]{validate_frame()}}
 }

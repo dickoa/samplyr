@@ -134,10 +134,10 @@ svymean(~consumption_per_capita, calibrated)
 `weights(calibrated)` returns the adjusted and calibrated weights, while
 `issued$.weight` keeps the base weights, so the two stay apart for reporting.
 The example uses RWYB replicates because svrep's weight adjustments act on a
-replicate design. `?variance-estimation` gives what RWYB assumes for each
+replicate design. `?variance_estimation` gives what RWYB assumes for each
 selection method.
 
-How each selection method's variance is estimated is in `?variance-estimation`,
+How each selection method's variance is estimated is in `?variance_estimation`,
 and `?as_svydesign` and `?as_svrepdesign` give the export restrictions.
 
 ## Export to survey
@@ -201,7 +201,7 @@ is the other usual choice, and it is a design decision the analyst has to
 make. Allocating at least two units outside certainty to every stratum avoids
 the problem at the source. RWYB replicates refuse a singleton whose variance
 is needed, except under Poisson sampling and, with `lonely.psu =
-"certainty"`, at the final stage. `?variance-estimation` gives the certainty case.
+"certainty"`, at the final stage. `?variance_estimation` gives the certainty case.
 
 ## Estimate a domain correctly
 
@@ -278,7 +278,7 @@ Replicate methods are not automatic proofs of exactness. Generic PPS
 bootstraps do not recreate spatial selection, hard cube constraints, or a
 random Poisson sample size. `as_svydesign()` and `as_svrepdesign()` report or
 refuse combinations that cannot be represented under their documented
-contracts. `?variance-estimation` gives how each selection method's variance
+contracts. `?variance_estimation` gives how each selection method's variance
 is estimated and how exact it is.
 
 For independent Poisson selection, including clustered and multi-stage

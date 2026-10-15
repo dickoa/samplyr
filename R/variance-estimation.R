@@ -2,7 +2,7 @@
 #'
 #' Which variance estimator each selection method reaches at export, and how
 #' exact it is. Selection support and variance support are separate
-#' contracts. Every method in `?selection-methods` draws a sample, but not
+#' contracts. Every method in `?selection_methods` draws a sample, but not
 #' every one has an exact variance estimator in the survey framework.
 #'
 #' A sample reaches `survey` in three ways. [as_svydesign()] linearizes,
@@ -17,19 +17,52 @@
 #'
 #' ## Method families and their variance estimators
 #'
-#' | Method or family | First-order quantity | Joint information | Variance estimation |
-#' |---|---|---|---|
-#' | `srswor` | Exact inclusion probabilities | SRS formulas (not exposed by the joint helper) | SRS with FPC, standard replicates or RWYB |
-#' | `srswr`, `pps_multinomial` | Exact expected hit counts | Exact joint hits for PPS | WR draw occurrences with standard replicates or RWYB |
-#' | `systematic` | Exact inclusion probabilities | Not exposed by the joint helper | SRS approximation under `systematic_variance`, or generic replicates |
-#' | `pps_systematic` | Exact inclusion probabilities | Exact order-specific matrix (zero pairs may occur) | Brewer's approximation under `systematic_variance`, a joint matrix, or generic replicates |
-#' | `bernoulli`, `pps_poisson` | Exact independent probabilities | Exact Poisson matrix for PPS | Analytic single-stage Poisson variance, or RWYB for supported clustered/multistage designs |
-#' | `pps_brewer`, `pps_cps`, `pps_sampford` | Exact inclusion probabilities | Approximate for Brewer, exact for CPS/Sampford | Brewer by default, an explicit joint matrix, or PPS-compatible replicates (including approximate RWYB) |
-#' | `pps_sps`, `pps_pareto` | Approximate targets | High-entropy approximation using targets | Brewer or generic PPS-compatible replicates (no built-in RWYB mapping) |
-#' | `pps_chromy` | Exact expected hit counts | Monte Carlo joint hits | WR or generic replicate approximation to PMR (no built-in RWYB mapping) |
-#' | Unconstrained `cube` | Exact inclusion probabilities under the method contract | High-entropy approximation | Approximate linearization or generic replicates (no built-in RWYB mapping) |
-#' | Bounded `cube`, `lpm2`, `scps` | Exact inclusion probabilities under the method contract | Refused | Generic `subbootstrap` or `mrbbootstrap` only (linearization refused) |
-#' | Custom methods | Declared exact or approximate quality | Registered joint support | Depends on the variance-family declaration and adapter checks |
+#' Each entry gives the first-order chances of a method or family, what
+#' [joint_expectation()] gives for pairs of units, and how the export
+#' estimates the variance.
+#'
+#' \describe{
+#'   \item{`srswor`}{Exact inclusion probabilities. Pair probabilities follow
+#'     from SRS formulas, which [joint_expectation()] does not expose. The
+#'     variance uses SRS with an FPC, standard replicates or RWYB.}
+#'   \item{`srswr`, `pps_multinomial`}{Exact expected hit counts, and exact
+#'     joint hits for PPS. The variance treats each draw as an occurrence with
+#'     replacement, with standard replicates or RWYB.}
+#'   \item{`systematic`}{Exact inclusion probabilities. Pair probabilities are
+#'     not exposed. The variance uses the SRS approximation under
+#'     `systematic_variance`, or generic replicates.}
+#'   \item{`pps_systematic`}{Exact inclusion probabilities, and an exact
+#'     order-specific joint matrix, in which zero pairs may occur. The
+#'     variance uses Brewer's approximation under `systematic_variance`, a
+#'     joint matrix, or generic replicates.}
+#'   \item{`bernoulli`, `pps_poisson`}{Exact independent probabilities, and an
+#'     exact Poisson joint matrix for PPS. The variance is the analytic
+#'     Poisson variance of a single stage, or RWYB for the supported clustered
+#'     and multistage designs.}
+#'   \item{`pps_brewer`, `pps_cps`, `pps_sampford`}{Exact inclusion
+#'     probabilities. Pair probabilities are approximate for Brewer and exact
+#'     for CPS and Sampford. The variance uses Brewer's approximation by
+#'     default, an explicit joint matrix, or PPS-compatible replicates,
+#'     including an approximate RWYB.}
+#'   \item{`pps_sps`, `pps_pareto`}{Approximate targets, and pair
+#'     probabilities from the high-entropy approximation using those targets.
+#'     The variance uses Brewer's approximation or generic PPS-compatible
+#'     replicates, with no built-in RWYB mapping.}
+#'   \item{`pps_chromy`}{Exact expected hit counts, and joint hits by Monte
+#'     Carlo. The variance uses a with-replacement or generic replicate
+#'     approximation to minimum replacement, with no built-in RWYB mapping.}
+#'   \item{Unconstrained `cube`}{Exact inclusion probabilities under the
+#'     method contract, and pair probabilities from the high-entropy
+#'     approximation. The variance uses approximate linearization or generic
+#'     replicates, with no built-in RWYB mapping.}
+#'   \item{Bounded `cube`, `lpm2`, `scps`}{Exact inclusion probabilities under
+#'     the method contract. Pair probabilities are refused, and so is
+#'     linearization. The variance uses the generic `subbootstrap` or
+#'     `mrbbootstrap` only.}
+#'   \item{Custom methods}{First-order quality as declared, exact or
+#'     approximate, and joint support as registered. The variance depends on
+#'     the variance-family declaration and the adapter checks.}
+#' }
 #'
 #' Joint information means [joint_expectation()], which exposes PPS and
 #' balanced-family quantities. A stage's joint matrix does not cover the
@@ -89,14 +122,16 @@
 #' `systematic` stages are linearized with the SRSWOR estimator and
 #' `pps_systematic` stages with Brewer's approximation. A systematic design
 #' with interval \eqn{k}{k} has only \eqn{k}{k} distinct samples per stratum,
-#' so its true variance for one frame need not be near either value. Over
-#' repeated draws of 90 per stratum from 1800 with an interval of 20:
+#' so its true variance for one frame need not be near either value. The
+#' table below comes from repeated draws of 90 per stratum from 1800, with
+#' an interval of 20. The ratio is the reported variance over the true
+#' variance, and the coverage is that of a 95% interval.
 #'
-#' | frame order | reported / true variance | coverage of a 95% interval |
-#' |---|---|---|
-#' | random | 0.73 | 90.2% |
-#' | ordered by a trend | 1.76 | 100.0% |
-#' | period equal to the interval | 0.0006 | 9.8% |
+#' | Frame order                  | Ratio  | Coverage |
+#' |------------------------------|--------|----------|
+#' | Random                       | 0.73   | 90.2%    |
+#' | Ordered by a trend           | 1.76   | 100.0%   |
+#' | Period equal to the interval | 0.0006 | 9.8%     |
 #'
 #' `pps_systematic` behaves the same way. Brewer's approximation gave 0.003
 #' of the true variance with 9% coverage on a frame whose period matched the
@@ -271,8 +306,8 @@
 #' Springer.
 #'
 #' @seealso [as_svydesign()], [as_svrepdesign()], [joint_expectation()],
-#'   `?selection-methods`
+#'   `?selection_methods`
 #'
 #' @family survey export
-#' @name variance-estimation
+#' @name variance_estimation
 NULL
