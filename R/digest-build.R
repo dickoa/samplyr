@@ -1227,6 +1227,7 @@ exante_digest <- function(design, frame, call = rlang::current_env()) {
   pool_keys <- vector("list", length(stages_spec))
   pool_labels <- vector("list", length(stages_spec))
   pool_moved <- vector("list", length(stages_spec))
+  pool_tied <- vector("list", length(stages_spec))
   registry <- NULL
   for (stage_idx in seq_along(stages_spec)) {
     if (stage_idx > 1L) {
@@ -1275,6 +1276,7 @@ exante_digest <- function(design, frame, call = rlang::current_env()) {
     pool_keys[[stage_idx]] <- built$pool_keys
     pool_labels[[stage_idx]] <- built$pool_labels
     pool_moved[[stage_idx]] <- built$pool_moved
+    pool_tied[[stage_idx]] <- built$pool_tied
   }
 
   digest <- new_frame_digest(
@@ -1288,6 +1290,7 @@ exante_digest <- function(design, frame, call = rlang::current_env()) {
   attr(digest, "exante_pool_keys") <- pool_keys
   attr(digest, "exante_pool_labels") <- pool_labels
   attr(digest, "exante_pool_moved") <- pool_moved
+  attr(digest, "exante_pool_tied") <- pool_tied
   digest
 }
 
@@ -1364,7 +1367,8 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
     keys,
     rows = urows,
     row_units = seq_along(urows),
-    moved = NA_real_
+    moved = NA_real_,
+    tied = NA
   ) {
     rlang::local_error_call(caller_env())
     mos_vals <- if (!is_null(draw_spec$mos)) {
@@ -1388,7 +1392,8 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
       keys = keys,
       rows = rows,
       row_units = row_units,
-      moved = moved
+      moved = moved,
+      tied = tied
     )
   }
 
@@ -1471,7 +1476,8 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
         } else {
           seq_along(pool_rows)
         },
-        moved = if (s == 1L) parent_moved else parent_moved * 0
+        moved = if (s == 1L) parent_moved else parent_moved * 0,
+        tied = attr(info, "tied")[match(skey, info_keys)]
       )
     }
   }
@@ -1620,7 +1626,8 @@ build_exante_stage <- function(
     pool_labels = exante_pool_labels(
       design, stage_idx, frame, first_rows, strata_vars, ancestor_vars
     ),
-    pool_moved = vapply(pools_acc, function(p) as.double(p$moved), numeric(1))
+    pool_moved = vapply(pools_acc, function(p) as.double(p$moved), numeric(1)),
+    pool_tied = vapply(pools_acc, function(p) as.logical(p$tied), logical(1))
   )
 }
 

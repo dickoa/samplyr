@@ -1289,22 +1289,24 @@ get_frame_digest <- function(x) {
 #'   For `detail = "stage"`, one row per stage with `stage`,
 #'   `unit_level`, `scope`, `chance_kind`, `probabilities`, `storage`,
 #'   `n_pools`, `n_capped`, `N`, `n_target`, `n_expected`, `n_moved`,
-#'   `n_realized`, and `take_rate`. `n_capped` counts the stage's pools
+#'   `n_tied`, `n_realized`, and `take_rate`. `n_capped` counts the stage's pools
 #'   whose `capped` is `TRUE` at `detail = "pool"`, and is `NA` when any
 #'   of them is `NA`. Like `n_pools`, it counts pools without weighting,
 #'   so in a preview it counts candidate pools. `n_moved` is the number
 #'   of units an allocation method moved away from strata it saturated,
 #'   which `n_target` no longer shows. A preview reports it, rolled up
 #'   like `n_target`. It is `NA` for a stage without an allocation method
-#'   and on a recorded digest, which does not keep it.
+#'   and on a recorded digest, which does not keep it. `n_tied` counts the
+#'   pools marked `tied` at `detail = "pool"`, without weighting, and is
+#'   `NA` in the same cases.
 #'
 #'   For `detail = "pool"`, one row per selection pool and realization
 #'   with `stage`, `pool_id`, `replicate`, `parent_unit`, `pool_key`, any
 #'   stratum label columns, `N`, `n_target`, `n_expected`, `n_realized`,
 #'   `scope`, `chance_status`, `chance` (the constant per-unit chance where
-#'   one applies, `NA` otherwise), `take_rate`, and `capped`. `replicate` is
-#'   `1` for an ordinary execution. `pool_key` names the pool in the
-#'   frame's values, its parent path then its stratum, as the
+#'   one applies, `NA` otherwise), `take_rate`, `capped`, and `tied`.
+#'   `replicate` is `1` for an ordinary execution. `pool_key` names the
+#'   pool in the frame's values, its parent path then its stratum, as the
 #'   `pool_keys` field of a condition from [execute()] does. Only a
 #'   preview can name pools, so it is `NA` on a recorded digest, and on a
 #'   first-stage pool without strata. In a replicated execution, `pool_id`
@@ -1321,6 +1323,12 @@ get_frame_digest <- function(x) {
 #'   `samplyr_message_allocation_capped` or, when the stage takes
 #'   everything within reach, `samplyr_warning_census` (see
 #'   [execution_conditions]).
+#'
+#'   `tied` marks a pool whose allocated take was decided by a tie in the
+#'   rounding: its remainder equals that of a stratum on the other side of
+#'   the cut, and the rule in [stratify_by()] chose which got the extra
+#'   unit. A preview reports it under an allocation method, and it is `NA`
+#'   otherwise and on a recorded digest.
 #'
 #'   For `detail = "unit"`, one row per population unit of each stage
 #'   that stored units, with `stage`, `pool_id`, `unit_id`,
@@ -1636,12 +1644,14 @@ frame_summary_report <- function(x, digest, stages, scope, detail,
       stage_records, scope,
       random_size = stage_random_size(x, stage_records),
       moved = attr(digest, "exante_pool_moved"),
+      tied = attr(digest, "exante_pool_tied"),
       exante = exante
     ),
     pool = frame_summary_pool(
       stage_records, scope, replicate_ids,
       random_size = stage_random_size(x, stage_records),
       labels = attr(digest, "exante_pool_labels"),
+      tied = attr(digest, "exante_pool_tied"),
       exante = exante
     ),
     unit = frame_summary_unit(
@@ -1718,7 +1728,7 @@ exante_pool_weights <- function(stages) {
 
 #' @noRd
 frame_summary_stage <- function(stages, scope, random_size = NULL,
-                                moved = NULL, exante = FALSE) {
+                                moved = NULL, tied = NULL, exante = FALSE) {
   pool_weights <- if (exante) exante_pool_weights(stages) else NULL
   rows <- lapply(seq_along(stages), function(stage_pos) {
     s <- stages[[stage_pos]]
@@ -1730,6 +1740,7 @@ frame_summary_stage <- function(stages, scope, random_size = NULL,
       rs
     )
     pool_moved <- if (is_null(moved)) NA_real_ else moved[[s$stage_id]]
+    pool_tied <- if (is_null(tied)) NA else tied[[s$stage_id]]
     # Weight ex-ante pools by parent selection chance.
     w <- if (is_null(pool_weights)) {
       as.numeric(pools$chance_status != "design_resolved")
@@ -1763,6 +1774,8 @@ frame_summary_stage <- function(stages, scope, random_size = NULL,
       n_target = sum_or_na(pools$n_target * w),
       n_expected = sum_or_na(pools$n_expected * w),
       n_moved = sum_or_na(pool_moved * w),
+      # Counted like n_capped, without weighting.
+      n_tied = if (all(is.na(pool_tied))) NA_integer_ else sum(pool_tied),
       n_realized = n_realized,
       take_rate = take_rate
     )
@@ -1816,6 +1829,7 @@ frame_summary_pool <- function(
   replicate_ids = 1L,
   random_size = NULL,
   labels = NULL,
+  tied = NULL,
   exante = FALSE
 ) {
   rows <- lapply(seq_along(stages), function(stage_idx) {
@@ -1827,6 +1841,11 @@ frame_summary_pool <- function(
       rep(NA_character_, nrow(pools))
     } else {
       labels[[s$stage_id]]
+    }
+    pool_tied <- if (is_null(tied)) {
+      rep(NA, nrow(pools))
+    } else {
+      tied[[s$stage_id]]
     }
     n_reps <- length(replicate_ids)
     pool_rows <- rep(seq_len(nrow(pools)), each = n_reps)
@@ -1888,7 +1907,8 @@ frame_summary_pool <- function(
         as.double(pools$n_expected[pool_rows]),
         as.double(pools$n_target[pool_rows]),
         rs
-      )
+      ),
+      tied = pool_tied[pool_rows]
     )
     strata <- s$strata %||% character(0)
     if (length(strata) > 0) {

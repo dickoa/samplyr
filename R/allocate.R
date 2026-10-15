@@ -72,6 +72,11 @@ frac_pool_rate <- function(N, frac, draw_spec) {
 #' Multiple passes handle cases where bounds clamping creates a shortfall
 #' exceeding the number of eligible strata in a single round.
 #'
+#' Equal scores go to the stratum with the larger current size, then to the
+#' first in stratum order. The `tied` attribute marks the strata whose size
+#' that order decided: those whose score equals the last one served when a
+#' stratum with the same score was left out.
+#'
 #' @noRd
 round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
   lo <- as.integer(ceiling(snap_integer(min_vals)))
@@ -81,6 +86,20 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
   a <- pmax(as.integer(floor(snap_integer(x))), lo)
   a <- pmin(a, hi)
   shortfall <- n - sum(a)
+  tied <- rep(FALSE, length(x))
+
+  # Strata level with the last one served, when one of them was left out.
+  split_tie <- function(eligible, scores, ord, k) {
+    if (length(ord) <= k) {
+      return(tied)
+    }
+    last <- scores[[ord[[k]]]]
+    level <- abs(scores - last) <= sqrt(.Machine$double.eps) * max(1, abs(last))
+    if (level[[ord[[k + 1L]]]]) {
+      tied[eligible[level]] <- TRUE
+    }
+    tied
+  }
 
   # Increment strata furthest below target.
   while (shortfall > 0L) {
@@ -88,7 +107,9 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
     if (length(eligible) == 0L) break
     scores <- (x - a)[eligible]
     k <- min(shortfall, length(eligible))
-    top <- eligible[order(scores, a[eligible], decreasing = TRUE, method = "radix")[seq_len(k)]]
+    ord <- order(scores, a[eligible], decreasing = TRUE, method = "radix")
+    tied <- split_tie(eligible, scores, ord, k)
+    top <- eligible[ord[seq_len(k)]]
     a[top] <- a[top] + 1L
     shortfall <- n - sum(a)
   }
@@ -98,21 +119,26 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
     if (length(eligible) == 0L) break
     scores <- (a - x)[eligible]
     k <- min(-shortfall, length(eligible))
-    top <- eligible[order(scores, a[eligible], decreasing = TRUE, method = "radix")[seq_len(k)]]
+    ord <- order(scores, a[eligible], decreasing = TRUE, method = "radix")
+    tied <- split_tie(eligible, scores, ord, k)
+    top <- eligible[ord[seq_len(k)]]
     a[top] <- a[top] - 1L
     shortfall <- n - sum(a)
   }
 
+  attr(a, "tied") <- tied
   a
 }
 
 #' Bounded allocation that preserves the method's own factors
 #'
 #' Solves `n_h = clamp(lambda * factor_h, lower_h, upper_h)` by bisection, then
-#' integerizes while preserving the total.
+#' integerizes while preserving the total. With `report_tie`, the result
+#' keeps the `tied` attribute of the rounding.
 #'
 #' @noRd
-allocate_bounded <- function(factors, total, lower, upper) {
+allocate_bounded <- function(factors, total, lower, upper,
+                             report_tie = FALSE) {
   f <- factors
   f[!is.finite(f) | f < 0] <- 0
 
@@ -202,6 +228,9 @@ allocate_bounded <- function(factors, total, lower, upper) {
       call = NULL,
       class = "samplyr_error_internal"
     )
+  }
+  if (!report_tie) {
+    attr(n_h, "tied") <- NULL
   }
   n_h
 }
@@ -365,8 +394,10 @@ calculate_stratum_sizes <- function(
     stratum_info[ord, , drop = FALSE], strata_spec, draw_spec, signal
   )
   moved <- attr(out, "n_moved")
+  tied <- attr(out, "tied")
   out <- out[order(ord), , drop = FALSE]
   attr(out, "n_moved") <- moved
+  attr(out, "tied") <- tied[order(ord)]
   out
 }
 
@@ -394,6 +425,8 @@ allocate_strata <- function(
   H <- nrow(stratum_info)
   # Units an allocation method moved past saturated strata, NA without one.
   n_moved <- NA_real_
+  # Strata whose size the order of the strata decided, NA without a method.
+  tied <- rep(NA, H)
 
   validate_target <- function(target, alloc_name, hint = NULL) {
     if (length(target) != H || any(!is.finite(target))) {
@@ -485,7 +518,9 @@ allocate_strata <- function(
       }
     }
 
-    n_h <- allocate_bounded(factors, n_total, lower, upper)
+    n_h <- allocate_bounded(factors, n_total, lower, upper, report_tie = TRUE)
+    tied <<- attr(n_h, "tied")
+    attr(n_h, "tied") <- NULL
 
     n_moved <<- 0
     # Report redistribution once when population bounds change the named rule.
@@ -819,5 +854,6 @@ allocate_strata <- function(
     )
   }
   attr(stratum_info, "n_moved") <- n_moved
+  attr(stratum_info, "tied") <- tied
   stratum_info
 }

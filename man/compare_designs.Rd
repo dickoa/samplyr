@@ -58,6 +58,11 @@ share, with \code{stage}, \code{pool_key}, \code{N}, \code{n_target_x}, \code{n_
 \item \code{units}: at the probability level, one row per register row, with the
 key column, \code{probability_x}, \code{probability_y}, \code{abs_diff}, \code{rel_diff}
 and \code{agree}.
+\item \code{specification}: two rows per stage the designs both have, with
+\code{stage}, \code{aspect} (\code{"method"} or \code{"mos"}), \code{x}, \code{y} and \code{status}.
+The status is \code{"same"}, \code{"differ"}, or for two measures of size in
+different columns, \code{"proportional"} when one is a constant multiple
+of the other on every row of \code{frame}. It does not enter the verdict.
 }
 
 The verdict is \code{"differ"} when any check differs, \code{"unresolved"} when
@@ -77,6 +82,12 @@ requirement of a protocol, such as five districts in every region, and be
 compared with a design that draws the districts with probability
 proportional to size. The probability level compares the designs as they
 would select.
+
+At either level, the method and the measure of size of each stage are
+listed side by side, outside the verdict. Two designs can agree on their
+probabilities with different methods, and a requirement written with the
+default method differs from the design that meets it by construction, so
+the list describes the two specifications without judging them.
 \subsection{Allocation}{
 
 Pools are matched by the frame rows they hold, never by the names of the

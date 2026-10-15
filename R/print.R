@@ -690,9 +690,6 @@ print.samplyr_design_comparison <- function(x, ...) {
     differ = paste(what, "differ on this frame."),
     unresolved = paste(what, "could not be compared in full on this frame.")
   ))
-  if (identical(x$level, "allocation")) {
-    cli::cat_line("Selection methods and measures of size were not compared.")
-  }
   if (approximate) {
     cli::cat_line(
       "Both designs use methods that meet these targets only approximately."
@@ -717,5 +714,37 @@ print.samplyr_design_comparison <- function(x, ...) {
       )
     )
   }
+  print_specification(x$specification)
   invisible(x)
+}
+
+#' The side-by-side methods and measures of size, outside the verdict
+#' @noRd
+print_specification <- function(spec) {
+  # A stage without a measure of size in either design has nothing to show.
+  shown <- !(spec$aspect == "mos" & is.na(spec$x) & is.na(spec$y))
+  spec <- spec[shown, , drop = FALSE]
+  if (nrow(spec) == 0L) {
+    return(invisible(NULL))
+  }
+  cli::cat_line()
+  cli::cat_line("Methods and measures of size, outside the verdict:")
+  for (i in seq_len(nrow(spec))) {
+    what <- if (spec$aspect[[i]] == "method") "method" else "measure of size"
+    value <- function(v) if (is.na(v)) "none" else v
+    text <- switch(
+      spec$status[[i]],
+      same = paste0(value(spec$x[[i]]), " in both"),
+      proportional = paste0(
+        spec$x[[i]], " in x, ", spec$y[[i]],
+        " in y, proportional on this frame"
+      ),
+      paste0(value(spec$x[[i]]), " in x, ", value(spec$y[[i]]), " in y")
+    )
+    cli::cat_bullet(
+      paste0("Stage ", spec$stage[[i]], " ", what, ": ", text, "."),
+      bullet = if (spec$status[[i]] == "differ") "info" else "tick"
+    )
+  }
+  invisible(NULL)
 }

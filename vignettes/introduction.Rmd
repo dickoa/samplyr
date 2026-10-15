@@ -76,7 +76,8 @@ validate_frame(stratified_design, bfa_eas)
 ```
 
 `validate_frame()` returns invisibly when the required columns and values are
-usable. It reports problems before selection begins.
+usable. It reports problems before selection begins, and under an allocation
+method it states how `n` was shared across the strata.
 
 ## Stratified sampling
 

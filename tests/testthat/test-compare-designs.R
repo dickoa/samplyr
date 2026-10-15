@@ -311,9 +311,68 @@ test_that("the comparison prints its verdict and each check", {
   )
   text <- paste(capture.output(print(result)), collapse = "\n")
   expect_match(text, "Allocations agree on this frame.", fixed = TRUE)
-  expect_match(text, "Selection methods and measures of size were not compared.",
-               fixed = TRUE)
   expect_match(text, "Stage 3 targets: agree.", fixed = TRUE)
+  expect_match(
+    text, "Stage 1 method: srswor in x, pps_brewer in y.", fixed = TRUE
+  )
+  expect_match(
+    text, "Stage 1 measure of size: none in x, district_pop in y.",
+    fixed = TRUE
+  )
+  # Stage 3 has no measure of size in either design.
+  expect_no_match(text, "Stage 3 measure of size", fixed = TRUE)
+})
+
+test_that("methods and measures of size are listed outside the verdict", {
+  frame <- compare_frame()
+  frame$district_hh <- frame$district_pop * 4
+  brewer <- compare_reference()
+  systematic <- compare_reference("pps_systematic")
+  systematic$stages[[1]]$draw_spec$mos <- "district_hh"
+
+  # Systematic PPS on a proportional size gives Brewer's probabilities.
+  result <- compare_designs(
+    brewer, systematic, frame,
+    key = compound, level = "probabilities"
+  )
+  expect_identical(result$verdict, "agree")
+  spec <- result$specification
+  expect_identical(spec$stage, rep(1:3, each = 2L))
+  expect_identical(spec$aspect, rep(c("method", "mos"), 3L))
+  expect_identical(
+    spec$status,
+    c("differ", "proportional", "same", "same", "same", "same")
+  )
+  expect_identical(spec$x[1:2], c("pps_brewer", "district_pop"))
+  expect_identical(spec$y[1:2], c("pps_systematic", "district_hh"))
+  expect_identical(spec$x[6], NA_character_)
+  text <- paste(capture.output(print(result)), collapse = "\n")
+  expect_match(
+    text, "Stage 1 method: pps_brewer in x, pps_systematic in y.",
+    fixed = TRUE
+  )
+  expect_match(
+    text,
+    "district_pop in x, district_hh in y, proportional on this frame.",
+    fixed = TRUE
+  )
+
+  # The same listing comes with the allocation level.
+  allocation <- compare_designs(brewer, systematic, frame, key = compound)
+  expect_identical(allocation$specification, spec)
+
+  # A size that is not a multiple of the other differs.
+  frame$district_hh[frame$district == "d01"] <- 1
+  spec <- compare_designs(
+    brewer, systematic, frame, key = compound
+  )$specification
+  expect_identical(spec$status[2], "differ")
+
+  # Designs of different depths are listed on the stages they share.
+  one <- sampling_design() |> draw(n = 2)
+  spec <- compare_designs(one, brewer, frame, key = compound)$specification
+  expect_identical(spec$stage, c(1L, 1L))
+  expect_identical(spec$status, c("differ", "differ"))
 })
 
 test_that("approximate probabilities are compared as targets", {

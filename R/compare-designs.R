@@ -13,6 +13,12 @@
 #' proportional to size. The probability level compares the designs as they
 #' would select.
 #'
+#' At either level, the method and the measure of size of each stage are
+#' listed side by side, outside the verdict. Two designs can agree on their
+#' probabilities with different methods, and a requirement written with the
+#' default method differs from the design that meets it by construction, so
+#' the list describes the two specifications without judging them.
+#'
 #' @param x,y Two `sampling_design` objects, each with a complete [draw()] on
 #'   every stage. A design restored with [read_design()] is one. An executed
 #'   sample is refused.
@@ -46,6 +52,11 @@
 #'   - `units`: at the probability level, one row per register row, with the
 #'     key column, `probability_x`, `probability_y`, `abs_diff`, `rel_diff`
 #'     and `agree`.
+#'   - `specification`: two rows per stage the designs both have, with
+#'     `stage`, `aspect` (`"method"` or `"mos"`), `x`, `y` and `status`.
+#'     The status is `"same"`, `"differ"`, or for two measures of size in
+#'     different columns, `"proportional"` when one is a constant multiple
+#'     of the other on every row of `frame`. It does not enter the verdict.
 #'
 #'   The verdict is `"differ"` when any check differs, `"unresolved"` when
 #'   none differs but one could not run, and `"agree"` otherwise.
@@ -180,8 +191,69 @@ compare_designs <- function(x, y, frame, ..., key,
   }
   new_design_comparison(
     level, result$checks, result$pools, result$units,
-    probability_quality = result$probability_quality %||% NA_character_
+    probability_quality = result$probability_quality %||% NA_character_,
+    specification = compare_specifications(x, y, frame)
   )
+}
+
+#' The method and measure of size of each stage, side by side
+#'
+#' A description outside the verdict. Measures of size in different columns
+#' are proportional when one is a constant multiple of the other on every
+#' row of the frame, which gives the same probabilities.
+#' @noRd
+compare_specifications <- function(x, y, frame) {
+  rows <- lapply(
+    seq_len(min(length(x$stages), length(y$stages))),
+    function(k) {
+      dx <- x$stages[[k]]$draw_spec
+      dy <- y$stages[[k]]$draw_spec
+      mos_x <- dx$mos %||% NA_character_
+      mos_y <- dy$mos %||% NA_character_
+      mos_status <- if (identical(mos_x, mos_y)) {
+        "same"
+      } else if (!anyNA(c(mos_x, mos_y)) &&
+                   proportional_columns(frame, mos_x, mos_y)) {
+        "proportional"
+      } else {
+        "differ"
+      }
+      tibble::tibble(
+        stage = k,
+        aspect = c("method", "mos"),
+        x = c(dx$method, mos_x),
+        y = c(dy$method, mos_y),
+        status = c(
+          if (identical(dx$method, dy$method)) "same" else "differ",
+          mos_status
+        )
+      )
+    }
+  )
+  if (length(rows) == 0L) {
+    return(tibble::tibble(
+      stage = integer(), aspect = character(), x = character(),
+      y = character(), status = character()
+    ))
+  }
+  do.call(rbind, rows)
+}
+
+#' Is one numeric column a constant multiple of another on every row?
+#' @noRd
+proportional_columns <- function(frame, a, b) {
+  if (!all(c(a, b) %in% names(frame))) {
+    return(FALSE)
+  }
+  u <- frame[[a]]
+  v <- frame[[b]]
+  if (!is.numeric(u) || !is.numeric(v) || anyNA(u) || anyNA(v) ||
+      sum(v) <= 0) {
+    return(FALSE)
+  }
+  scale <- sum(u) / sum(v)
+  tol <- sqrt(.Machine$double.eps)
+  all(within_tolerance(u, scale * v, tol * max(abs(u)), tol))
 }
 
 #' Refusals that make a comparison unresolved rather than fail
@@ -547,7 +619,8 @@ format_label_sample <- function(labels, max_shown = 3L) {
 
 #' @noRd
 new_design_comparison <- function(level, checks, pools = NULL, units = NULL,
-                                  probability_quality = NA_character_) {
+                                  probability_quality = NA_character_,
+                                  specification = NULL) {
   verdict <- if (any(checks$status == "differ")) {
     "differ"
   } else if (any(checks$status %in% c("unresolved", "not_run"))) {
@@ -562,7 +635,8 @@ new_design_comparison <- function(level, checks, pools = NULL, units = NULL,
       probability_quality = probability_quality,
       checks = checks,
       pools = pools,
-      units = units
+      units = units,
+      specification = specification
     ),
     class = "samplyr_design_comparison"
   )

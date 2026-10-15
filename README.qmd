@@ -300,6 +300,12 @@ total <- sampling_design() |>
 table(total$region)
 ```
 
+Shares are rounded by largest remainder, which keeps the total. Equal
+remainders go to the larger target first, then in label order, so the
+three equal shares of 8 become 3, 3 and 2. `validate_frame()` states the
+split before anything is drawn, and the `tied` column of
+`frame_summary(detail = "pool")` marks the strata a tie decided.
+
 At a later stage, both readings apply within each selected parent. A total
 at stage 2 is a total per selected district, not one for the whole survey.
 The printed design states the scope of every `n`.
@@ -515,9 +521,10 @@ execute(strict, villages, seed = 1)
 A requirement of the protocol, such as two villages and five households in
 each, can be written as a design with the default method and compared with
 the design to field. `compare_designs()` matches pools by the frame rows
-they hold and compares each pool's take, without looking at the selection
-method. With `level = "probabilities"` it compares the inclusion
-probability of every unit instead.
+they hold and compares each pool's take. The selection methods and
+measures of size are listed side by side but do not enter the verdict.
+With `level = "probabilities"` it compares the inclusion probability of
+every unit instead.
 
 ```{r}
 #| label: check-compare

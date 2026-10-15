@@ -53,22 +53,24 @@ underlying representation is (\code{"eligible"}, \code{"universe"},
 For \code{detail = "stage"}, one row per stage with \code{stage},
 \code{unit_level}, \code{scope}, \code{chance_kind}, \code{probabilities}, \code{storage},
 \code{n_pools}, \code{n_capped}, \code{N}, \code{n_target}, \code{n_expected}, \code{n_moved},
-\code{n_realized}, and \code{take_rate}. \code{n_capped} counts the stage's pools
+\code{n_tied}, \code{n_realized}, and \code{take_rate}. \code{n_capped} counts the stage's pools
 whose \code{capped} is \code{TRUE} at \code{detail = "pool"}, and is \code{NA} when any
 of them is \code{NA}. Like \code{n_pools}, it counts pools without weighting,
 so in a preview it counts candidate pools. \code{n_moved} is the number
 of units an allocation method moved away from strata it saturated,
 which \code{n_target} no longer shows. A preview reports it, rolled up
 like \code{n_target}. It is \code{NA} for a stage without an allocation method
-and on a recorded digest, which does not keep it.
+and on a recorded digest, which does not keep it. \code{n_tied} counts the
+pools marked \code{tied} at \code{detail = "pool"}, without weighting, and is
+\code{NA} in the same cases.
 
 For \code{detail = "pool"}, one row per selection pool and realization
 with \code{stage}, \code{pool_id}, \code{replicate}, \code{parent_unit}, \code{pool_key}, any
 stratum label columns, \code{N}, \code{n_target}, \code{n_expected}, \code{n_realized},
 \code{scope}, \code{chance_status}, \code{chance} (the constant per-unit chance where
-one applies, \code{NA} otherwise), \code{take_rate}, and \code{capped}. \code{replicate} is
-\code{1} for an ordinary execution. \code{pool_key} names the pool in the
-frame's values, its parent path then its stratum, as the
+one applies, \code{NA} otherwise), \code{take_rate}, \code{capped}, and \code{tied}.
+\code{replicate} is \code{1} for an ordinary execution. \code{pool_key} names the
+pool in the frame's values, its parent path then its stratum, as the
 \code{pool_keys} field of a condition from \code{\link[=execute]{execute()}} does. Only a
 preview can name pools, so it is \code{NA} on a recorded digest, and on a
 first-stage pool without strata. In a replicated execution, \code{pool_id}
@@ -85,6 +87,12 @@ the post-redistribution target. \code{execute()} reports that event as
 \code{samplyr_message_allocation_capped} or, when the stage takes
 everything within reach, \code{samplyr_warning_census} (see
 \link{execution_conditions}).
+
+\code{tied} marks a pool whose allocated take was decided by a tie in the
+rounding: its remainder equals that of a stratum on the other side of
+the cut, and the rule in \code{\link[=stratify_by]{stratify_by()}} chose which got the extra
+unit. A preview reports it under an allocation method, and it is \code{NA}
+otherwise and on a recorded digest.
 
 For \code{detail = "unit"}, one row per population unit of each stage
 that stored units, with \code{stage}, \code{pool_id}, \code{unit_id},

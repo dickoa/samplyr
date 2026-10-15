@@ -1053,6 +1053,9 @@ test_that("strata taking one unit are named once per stage", {
   expect_identical(found[[1]]$payload$pool_keys, c("A", "B"))
   expect_identical(found[[1]]$payload$n_singleton, 2L)
   expect_identical(found[[1]]$stage, 1L)
+  # The allocation set the sizes, so the message names it.
+  expect_identical(found[[1]]$payload$alloc, "proportional")
+  expect_match(conditionMessage(found[[1]]), "shares `n` across the strata")
 
   # Replicates report the shared finding once.
   found <- capture_singletons(
@@ -1082,6 +1085,9 @@ test_that("certainty units do not count as the stratum's selections", {
   )
   expect_length(found, 1L)
   expect_identical(found[[1]]$payload$pool_keys, "a")
+  # The sizes were given per stratum, so no allocation is blamed.
+  expect_null(found[[1]]$payload$alloc)
+  expect_no_match(conditionMessage(found[[1]]), "`alloc", fixed = TRUE)
 })
 
 test_that("a stratum of one unit, taken whole, is not reported", {
@@ -1371,6 +1377,183 @@ test_that("a later stage's moved units roll up like its target", {
   preview <- frame_summary(design, frame)
   expect_identical(preview$n_moved, c(NA_real_, 2))
   expect_identical(preview$n_target, c(1, 9))
+})
+
+## The split an allocation gives a stage
+
+# validate_frame() states what a shared n became, since reading a total as
+# a per-stratum count is the most common misreading of a stratified design.
+capture_allocation <- function(expr) {
+  found <- list()
+  withCallingHandlers(
+    force(expr),
+    samplyr_message_allocation = function(m) {
+      found[[length(found) + 1L]] <<- m
+      invokeRestart("muffleMessage")
+    }
+  )
+  found
+}
+
+test_that("validate_frame() states the split of a shared n", {
+  frame <- data.frame(
+    id = 1:11,
+    region = rep(c("North", "South", "West"), c(4, 4, 3))
+  )
+  equal <- sampling_design() |>
+    stratify_by(region, alloc = "equal") |>
+    draw(n = 5)
+  found <- capture_allocation(validate_frame(equal, frame))
+  expect_length(found, 1L)
+  x <- found[[1]]$payload
+  expect_identical(found[[1]]$stage, 1L)
+  expect_identical(x$alloc, "equal")
+  expect_identical(x$n_parents, 1L)
+  expect_identical(x$pool_keys, c("North", "South", "West"))
+  expect_identical(x$sizes, c(2, 2, 1))
+  # Three equal remainders for two units: label order decided.
+  expect_identical(x$n_tied, 1L)
+  text <- conditionMessage(found[[1]])
+  expect_match(text, "`n = 5` would be taken in each stratum", fixed = TRUE)
+  expect_match(text, "equal remainders", fixed = TRUE)
+
+  # The message comes from the check, not from drawing.
+  expect_length(
+    suppressMessages(capture_allocation(execute(equal, frame, seed = 1))),
+    0L
+  )
+  per_stratum <- sampling_design() |> stratify_by(region) |> draw(n = 2)
+  expect_length(capture_allocation(validate_frame(per_stratum, frame)), 0L)
+})
+
+test_that("an equal remainder goes to the larger target first", {
+  # 9 and 7 units share 8 as 4.5 and 3.5. The larger target gets the unit,
+  # whatever the labels, and the message says a tie was broken.
+  village <- function(first, second) {
+    data.frame(id = 1:16, kind = rep(c(first, second), c(9, 7)))
+  }
+  design <- sampling_design() |>
+    stratify_by(kind, alloc = "proportional") |>
+    draw(n = 8)
+  for (labels in list(c("a", "b"), c("b", "a"))) {
+    frame <- village(labels[[1]], labels[[2]])
+    x <- capture_allocation(validate_frame(design, frame))[[1]]$payload
+    expect_identical(x$pool_keys, labels)
+    expect_identical(x$sizes, c(5, 3))
+    expect_identical(x$n_tied, 1L)
+  }
+
+  # 10 and 6 share 8 as 5 and 3 with no remainder to break.
+  frame <- data.frame(id = 1:16, kind = rep(c("a", "b"), c(10, 6)))
+  x <- capture_allocation(validate_frame(design, frame))[[1]]$payload
+  expect_identical(x$sizes, c(5, 3))
+  expect_identical(x$n_tied, 0L)
+  expect_no_match(
+    conditionMessage(capture_allocation(validate_frame(design, frame))[[1]]),
+    "remainders"
+  )
+})
+
+test_that("a later stage reports its split across the candidate parents", {
+  frame <- data.frame(
+    district = rep(c("d1", "d2", "d3"), each = 10),
+    kind = rep(rep(c("a", "b"), c(5, 5)), 3),
+    id = 1:30
+  )
+  frame$kind[frame$district == "d3"] <- rep(c("a", "b"), c(7, 3))
+  design <- sampling_design() |>
+    add_stage() |>
+    cluster_by(district) |>
+    draw(n = 2) |>
+    add_stage() |>
+    stratify_by(kind, alloc = "proportional") |>
+    draw(n = 4)
+  found <- capture_allocation(validate_frame(design, frame))
+  expect_length(found, 1L)
+  x <- found[[1]]$payload
+  expect_identical(found[[1]]$stage, 2L)
+  expect_identical(x$n_parents, 3L)
+  # d1 and d2 split 4 as 2 and 2, d3 as 2.8 and 1.2.
+  expect_identical(x$sizes, c(2, 2, 2, 2, 3, 1))
+  expect_identical(x$n_tied, 0L)
+  expect_match(
+    conditionMessage(found[[1]]),
+    "Stratum takes range from 1 to 3.", fixed = TRUE
+  )
+})
+
+test_that("rounding marks the strata a tie decided", {
+  tied <- function(x, n) {
+    attr(round_preserve_total_bounded(x, n, rep(0, length(x)), rep(n, length(x))), "tied")
+  }
+  expect_identical(tied(c(1.5, 1.5), 3), c(TRUE, TRUE))
+  expect_identical(tied(c(5, 5, 5) / 3, 5), c(TRUE, TRUE, TRUE))
+  expect_identical(tied(c(4.5, 3.5), 8), c(TRUE, TRUE))
+  # Only the strata level with the cut were decided by the order.
+  expect_identical(tied(c(1.5, 1.5, 1.2), 4), c(TRUE, TRUE, FALSE))
+  expect_identical(tied(c(1.7, 1.5, 1.5, 1.3), 6), c(FALSE, TRUE, TRUE, FALSE))
+  expect_identical(tied(c(1.6, 1.4), 3), c(FALSE, FALSE))
+  expect_identical(tied(c(2, 2, 2), 6), c(FALSE, FALSE, FALSE))
+  # Every unit placed, so nothing was left out to tie with.
+  expect_identical(tied(c(1.5, 1.5), 4), c(FALSE, FALSE))
+})
+
+test_that("a preview marks the pools a tie decided", {
+  frame <- data.frame(id = 1:16, kind = rep(c("a", "b", "c"), c(6, 6, 4)))
+  # 6, 6 and 4 share 5 as 1.875, 1.875 and 1.25: a and b tie for one unit.
+  design <- sampling_design() |>
+    stratify_by(kind, alloc = "proportional") |>
+    draw(n = 5)
+  pools <- frame_summary(design, frame, detail = "pool")
+  expect_identical(pools$n_target, c(2, 2, 1))
+  expect_identical(pools$tied, c(FALSE, FALSE, FALSE))
+  design4 <- sampling_design() |>
+    stratify_by(kind, alloc = "proportional") |>
+    draw(n = 4)
+  # 1.5, 1.5 and 1: the floors take 3 and a and b tie for the fourth.
+  pools <- frame_summary(design4, frame, detail = "pool")
+  expect_identical(pools$n_target, c(2, 1, 1))
+  expect_identical(pools$tied, c(TRUE, TRUE, FALSE))
+  expect_identical(frame_summary(design4, frame)$n_tied, 2L)
+
+  # Pools follow the frame, the allocation the labels: the marks follow
+  # each pool, not the position.
+  reversed <- frame[nrow(frame):1, ]
+  pools <- frame_summary(design4, reversed, detail = "pool")
+  expect_identical(pools$pool_key, c("c", "b", "a"))
+  expect_identical(pools$n_target, c(1, 1, 2))
+  expect_identical(pools$tied, c(FALSE, TRUE, TRUE))
+
+  # Without an allocation method, and once drawn, nothing is known.
+  per_stratum <- sampling_design() |> stratify_by(kind) |> draw(n = 1)
+  expect_identical(frame_summary(per_stratum, frame)$n_tied, NA_integer_)
+  expect_true(all(is.na(frame_summary(per_stratum, frame, detail = "pool")$tied)))
+  sample <- suppressMessages(execute(design4, frame, seed = 1))
+  expect_identical(frame_summary(sample)$n_tied, NA_integer_)
+  expect_true(all(is.na(frame_summary(sample, detail = "pool")$tied)))
+})
+
+test_that("a later stage counts the tied pools of every candidate parent", {
+  # d1 and d2 split 3 over 2 and 2 villages (a tie), d3 over 3 and 1.
+  frame <- data.frame(
+    district = rep(c("d1", "d2", "d3"), each = 4),
+    kind = c(rep(c("a", "b"), 2, each = 2)[1:8], "a", "a", "a", "b"),
+    id = 1:12
+  )
+  design <- sampling_design() |>
+    add_stage() |>
+    cluster_by(district) |>
+    draw(n = 2) |>
+    add_stage() |>
+    stratify_by(kind, alloc = "proportional") |>
+    draw(n = 3)
+  pools <- frame_summary(design, frame, detail = "pool")
+  pools <- pools[pools$stage == 2L, ]
+  expect_identical(pools$tied, c(TRUE, TRUE, TRUE, TRUE, FALSE, FALSE))
+  summary <- frame_summary(design, frame)
+  expect_identical(summary$n_tied, c(NA_integer_, 4L))
+  found <- capture_allocation(validate_frame(design, frame))
+  expect_identical(found[[1]]$payload$n_tied, 2L)
 })
 
 ## A declared shortfall policy

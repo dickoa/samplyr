@@ -451,7 +451,7 @@ sample_stratified <- function(
   res <- sample_stratified_impl(frame, strata_spec, draw_spec, trace_mode)
   signal_singleton_strata(
     frame, strata_spec$vars, res$sample, draw_spec,
-    label_vars = strata_label_vars(strata_spec)
+    label_vars = strata_label_vars(strata_spec), alloc = strata_spec$alloc
   )
   res
 }
@@ -466,10 +466,11 @@ sample_stratified <- function(
 #' units drawn outside certainty, and a stratum whose remainder is taken
 #' whole has no variance to estimate. A bridge stage drawing one PSU per
 #' zone is exported by its variance groups, so it counts per group and
-#' reports the strata of a group holding one selection.
+#' reports the strata of a group holding one selection. `alloc` names the
+#' allocation method that set the sizes, if any.
 #' @noRd
 signal_singleton_strata <- function(frame, strata_vars, sample, draw_spec,
-                                    label_vars = strata_vars) {
+                                    label_vars = strata_vars, alloc = NULL) {
   if (!is_wor_method(draw_spec) || is_random_size_method(draw_spec) ||
       nrow(sample) == 0L) {
     return(invisible(NULL))
@@ -510,7 +511,8 @@ signal_singleton_strata <- function(frame, strata_vars, sample, draw_spec,
     pool_keys = format_key_labels(
       pools[single, , drop = FALSE], label_vars
     ),
-    n_singleton = sum(single)
+    n_singleton = sum(single),
+    alloc = alloc
   )
   invisible(NULL)
 }

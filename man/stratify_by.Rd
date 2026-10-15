@@ -141,7 +141,8 @@ keeps the stated criterion after saturation. When the free strata all
 carry zero factors, the remainder is split equally in stratum order.
 
 Real-valued targets become integers by largest remainder, which keeps the
-total. Strata tied for a unit are served in a fixed order of their labels,
+total. Among strata with equal remainders the larger target is served
+first, and strata still tied are served in a fixed order of their labels,
 the "stratum order" above. It depends on neither the order of the frame's
 rows nor the session locale, so a permuted frame gets the same allocation.
 

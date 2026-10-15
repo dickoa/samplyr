@@ -398,6 +398,7 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
     stage_idx <- schedule$entries[[i]]$stage
     targets <- check_stage_targets(design, stage_idx, effective[[i]])
     refuse_capped_stage(design, stage_idx, targets$capped, call = call)
+    inform_allocation(stage_idx, targets$allocation)
     inform_capped_pools(stage_idx, targets$capped)
     if (targets$absent$n_absent > 0L) {
       inform_absent_strata(stage_idx, targets$absent, candidate = TRUE)
@@ -412,15 +413,20 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
 #' Rejects deterministic exclusions. Returns the pools whose fixed take
 #' without replacement exceeds their population (`capped`), and the strata
 #' an explicit `n` names that a parent lacks (`absent`), both named as
-#' execution names them.
+#' execution names them. Under an allocation method, `allocation` holds the
+#' sizes it gave in each parent.
 #' @noRd
 check_stage_targets <- function(design, stage_idx, frame) {
   rlang::local_error_call(caller_env())
   short <- list(pool_keys = character(0), n_capped = 0L, n_pools = 0L)
   absent <- list(pool_keys = character(0), n_absent = 0L)
-  out <- function() list(capped = short, absent = absent)
   spec <- design$stages[[stage_idx]]
   draw <- spec$draw_spec
+  allocation <- list(
+    alloc = spec$strata$alloc, n = draw$n, n_parents = 0L, n_tied = 0L,
+    pool_keys = character(0), sizes = numeric(0)
+  )
+  out <- function() list(capped = short, absent = absent, allocation = allocation)
   if (is_null(draw) || nrow(frame) == 0L) return(out())
   # Stored certainty plans are validated by the planning bridge.
   if (!is_null(draw$certainty_plan)) return(out())
@@ -436,9 +442,21 @@ check_stage_targets <- function(design, stage_idx, frame) {
     strata <- spec$strata$vars
     groups <- if (length(strata)) split_row_indices(units, strata)$indices else list(seq_len(nrow(units)))
     sizes <- if (length(strata)) {
-      calculate_stratum_sizes(stratum_info_from_groups(units, strata, groups), spec$strata, draw)$.n_h
+      info <- calculate_stratum_sizes(
+        stratum_info_from_groups(units, strata, groups), spec$strata, draw
+      )
+      info$.n_h
     } else {
       draw$n %||% frac_pool_size(nrow(units), draw$frac, draw)
+    }
+    if (!is_null(spec$strata$alloc) && length(strata)) {
+      allocation$n_parents <- allocation$n_parents + 1L
+      allocation$n_tied <- allocation$n_tied + any(attr(info, "tied") %in% TRUE)
+      allocation$sizes <- c(allocation$sizes, sizes)
+      allocation$pool_keys <- c(
+        allocation$pool_keys,
+        key_labels(info, strata_label_vars(spec$strata))
+      )
     }
     if (fixed_take) {
       over <- which(sizes > lengths(groups))
@@ -486,6 +504,73 @@ check_stage_targets <- function(design, stage_idx, frame) {
     }
   }
   out()
+}
+
+#' State the sizes an allocation method gave a stage
+#'
+#' The scope of `n` is the most common misreading of a stratified design,
+#' and the split is the evidence for it. Information, not a warning, since
+#' the split cannot tell which reading was meant.
+#' @noRd
+inform_allocation <- function(stage_idx, x) {
+  if (is_null(x$alloc) || x$n_parents == 0L) {
+    return(invisible(NULL))
+  }
+  alloc_text <- paste0("alloc = \"", x$alloc, "\"")
+  n_text <- if (is.numeric(x$n) && length(x$n) == 1L) {
+    paste("n =", format(x$n))
+  } else {
+    "n"
+  }
+  if (x$n_parents == 1L) {
+    shown <- min(length(x$sizes), 8L)
+    takes <- paste(
+      paste0("\"", x$pool_keys[seq_len(shown)], "\" = ", x$sizes[seq_len(shown)]),
+      collapse = ", "
+    )
+    if (length(x$sizes) > shown) {
+      takes <- paste0(takes, ", and ", length(x$sizes) - shown, " more")
+    }
+    header <- "Stage {stage_idx}: {.code {alloc_text}} shares
+               {.code {n_text}} across {length(x$sizes)} strat{?um/a}."
+    detail <- c("i" = paste0("Stratum takes: ", takes, "."))
+  } else {
+    range <- range(x$sizes)
+    header <- "Stage {stage_idx}: {.code {alloc_text}} shares
+               {.code {n_text}} across the strata of each of {x$n_parents}
+               parents."
+    detail <- c("i" = cli::format_inline(
+      "Stratum takes range from {range[[1]]} to {range[[2]]}."
+    ))
+  }
+  tie <- if (x$n_tied == 0L) {
+    NULL
+  } else if (x$n_parents == 1L) {
+    c("i" = "Strata with equal remainders were served by larger target,
+             then in the order of their labels. The {.field tied} column of
+             {.code frame_summary(design, frame, detail = \"pool\")} marks
+             them.")
+  } else {
+    c("i" = cli::format_inline(
+      "In {x$n_tied} parent{?s}, strata with equal remainders were served
+       by larger target, then in the order of their labels. The
+       {.field tied} column of {.code frame_summary(design, frame, detail =
+       \"pool\")} marks them."
+    ))
+  }
+  cli::cli_inform(
+    c(
+      header,
+      detail,
+      "i" = "Without {.arg alloc}, {.code {n_text}} would be taken in each
+             stratum.",
+      tie
+    ),
+    class = "samplyr_message_allocation",
+    stage = stage_idx,
+    payload = x
+  )
+  invisible(NULL)
 }
 
 #' Refuse a stage under `on_capped = "error"` that has short candidate pools

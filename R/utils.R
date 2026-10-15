@@ -548,7 +548,8 @@ summarize_selection_events <- function(group) {
     n_moved = total("n_moved"),
     n_singleton = total("n_singleton"),
     n_empty = total("n_empty"),
-    n_absent = total("n_absent")
+    n_absent = total("n_absent"),
+    alloc = unlist(field("alloc"))[1]
   )
 
   # Only capped pools signal, so add their shortfall to the selection.
@@ -738,6 +739,13 @@ inform_singleton_strata <- function(stage, x) {
       "Stage {stage}: {x$n_singleton} strat{?um/a} {?takes/take} a single
        unit outside certainty.",
       pool_lines(x, "Strata with one unit"),
+      if (!is_null(x$alloc) && !is.na(x$alloc)) {
+        c("i" = cli::format_inline(
+          "These sizes come from {.code alloc = {.val {x$alloc}}}, which
+           shares {.arg n} across the strata. Without {.arg alloc}, {.arg n}
+           is taken in each stratum."
+        ))
+      },
       "i" = "A stratum needs two selections for its variance to be
              estimated. survey stops on a stratum with one unless its
              strata are collapsed, and a replicate method has nothing to
