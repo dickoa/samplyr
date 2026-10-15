@@ -94,6 +94,27 @@ cluster_invariant_vars <- function(frame, draw_spec, strata_vars) {
   )
 }
 
+#' Whether the clusters of every parent hold their invariant values
+#'
+#' A later stage selects clusters within each parent unit, and
+#' `cluster_plan()` checks each parent's rows. Counting once over the whole
+#' frame, grouped by parent and cluster, gives the same answer, since no
+#' parent can have fewer combinations than clusters. When this is FALSE,
+#' the check per parent runs and reports the offending columns.
+#' @noRd
+cluster_invariants_hold <- function(frame, split_vars, cluster_vars,
+                                    strata_vars, draw_spec) {
+  invariant_vars <- cluster_invariant_vars(frame, draw_spec, strata_vars)
+  if (length(invariant_vars) == 0) {
+    return(TRUE)
+  }
+  group_vars <- unique(c(split_vars, cluster_vars))
+  vctrs::vec_unique_count(frame[, group_vars, drop = FALSE]) ==
+    vctrs::vec_unique_count(
+      frame[, unique(c(group_vars, invariant_vars)), drop = FALSE]
+    )
+}
+
 #' @noRd
 abort_cluster_invariants <- function(varying, cluster_vars) {
   cli_abort(
@@ -113,17 +134,61 @@ sample_clusters <- function(
   strata_spec,
   cluster_spec,
   draw_spec,
-  trace_mode = "full"
+  trace_mode = "full",
+  check_invariants = TRUE
 ) {
   cluster_vars <- cluster_spec$vars
+  plan <- memo_call(
+    "cluster_plan", cluster_plan, frame, cluster_vars, strata_spec$vars,
+    draw_spec, check_invariants
+  )
+  groups <- plan$groups
+  cluster_indices <- groups$indices
+  first_rows <- plan$first_rows
+  cluster_frame <- plan$cluster_frame
+
+  inner_trace_mode <- if (identical(trace_mode, "summary")) {
+    "full"
+  } else {
+    trace_mode
+  }
+  res <- sample_units(
+    cluster_frame,
+    strata_spec,
+    draw_spec,
+    trace_mode = inner_trace_mode
+  )
+  list(
+    sample = res$sample,
+    trace = if (identical(trace_mode, "none")) {
+      NULL
+    } else {
+      trace_clusters(
+        by = cluster_vars,
+        keys = groups$keys,
+        first_rows = first_rows,
+        sizes = lengths(cluster_indices),
+        node = res$trace
+      )
+    }
+  )
+}
+
+
+#' One row per cluster, checked for the values it must hold constant
+#'
+#' Depends only on the frame and the specs, so the replicates of one
+#' execution share it. `check_invariants = FALSE` when the caller has
+#' checked them already, see `cluster_invariants_hold()`.
+#' @noRd
+cluster_plan <- function(frame, cluster_vars, strata_vars, draw_spec,
+                         check_invariants = TRUE) {
   groups <- split_row_indices(frame, cluster_vars)
   cluster_indices <- groups$indices
 
-  invariant_vars <- cluster_invariant_vars(
-    frame, draw_spec, strata_spec$vars
-  )
+  invariant_vars <- cluster_invariant_vars(frame, draw_spec, strata_vars)
 
-  if (length(invariant_vars) > 0) {
+  if (check_invariants && length(invariant_vars) > 0) {
     check_vars <- c(cluster_vars, invariant_vars)
     n_clusters <- length(cluster_indices)
     n_combos <- frame |>
@@ -158,33 +223,12 @@ sample_clusters <- function(
     }
   }
 
-  inner_trace_mode <- if (identical(trace_mode, "summary")) {
-    "full"
-  } else {
-    trace_mode
-  }
-  res <- sample_units(
-    cluster_frame,
-    strata_spec,
-    draw_spec,
-    trace_mode = inner_trace_mode
-  )
   list(
-    sample = res$sample,
-    trace = if (identical(trace_mode, "none")) {
-      NULL
-    } else {
-      trace_clusters(
-        by = cluster_vars,
-        keys = groups$keys,
-        first_rows = first_rows,
-        sizes = lengths(cluster_indices),
-        node = res$trace
-      )
-    }
+    groups = groups,
+    first_rows = first_rows,
+    cluster_frame = cluster_frame
   )
 }
-
 
 #' @noRd
 sample_within_clusters <- function(
@@ -245,15 +289,19 @@ sample_within_clusters <- function(
     ))
   }
 
+  cols <- selection_columns(frame, strata_spec$vars, draw_spec)
+  row_col <- selection_row_column(names(frame))
   results_list <- lapply(seq_along(indices_list), function(i) {
-    data <- frame[indices_list[[i]], , drop = FALSE]
+    data <- narrow_rows(frame, indices_list[[i]], cols, row_col)
     qualify_pool_events(
       sample_units(data, strata_spec, pool_spec(data), trace_mode = trace_mode),
       parent_labels[[i]]
     )
   })
 
-  result <- bind_rows(lapply(results_list, function(r) r$sample))
+  result <- widen_drawn(
+    frame, lapply(results_list, function(r) r$sample), cols, row_col
+  )
   if (nrow(result) > 0) {
     result$.sample_id <- seq_len(nrow(result))
   }
@@ -431,12 +479,17 @@ signal_singleton_strata <- function(frame, strata_vars, sample, draw_spec,
   } else {
     rep(FALSE, nrow(sample))
   }
-  pools <- vctrs::vec_unique(frame[, strata_vars, drop = FALSE])
-  pool_keys <- make_group_key(pools, strata_vars)
-  population <- tabulate(
-    match(make_group_key(frame, strata_vars), pool_keys), length(pool_keys)
-  )
-  sample_pool <- match(make_group_key(sample, strata_vars), pool_keys)
+  counted <- memo_call("pool_population", pool_population, frame, strata_vars)
+  pools <- counted$pools
+  pool_keys <- counted$pool_keys
+  population <- counted$population
+  # Sampled rows come from the frame, so each matches one of its pools.
+  sample_pool <- vctrs::vec_match(sample[, strata_vars, drop = FALSE], pools)
+  sample_pool <- if (anyNA(sample_pool)) {
+    match(make_group_key(sample, strata_vars), pool_keys)
+  } else {
+    match(pool_keys, pool_keys)[sample_pool]
+  }
   n_certain <- tabulate(sample_pool[certain], length(pool_keys))
   n_drawn <- tabulate(sample_pool[!certain], length(pool_keys))
   single <- n_drawn == 1L & population - n_certain > 1L
@@ -462,6 +515,20 @@ signal_singleton_strata <- function(frame, strata_vars, sample, draw_spec,
   invisible(NULL)
 }
 
+#' The pools of a frame, their keys and their row counts
+#' @noRd
+pool_population <- function(frame, strata_vars) {
+  # Key the pools only. Rows of one vctrs group share their key.
+  frame_keys <- frame[, strata_vars, drop = FALSE]
+  pools <- vctrs::vec_unique(frame_keys)
+  pool_keys <- make_group_key(pools, strata_vars)
+  population <- tabulate(
+    match(pool_keys, pool_keys)[vctrs::vec_group_id(frame_keys)],
+    length(pool_keys)
+  )
+  list(pools = pools, pool_keys = pool_keys, population = population)
+}
+
 #' @noRd
 sample_stratified_impl <- function(
   frame,
@@ -471,14 +538,9 @@ sample_stratified_impl <- function(
 ) {
   rlang::local_error_call(caller_env())
   strata_vars <- strata_spec$vars
-  groups <- split_row_indices(frame, strata_vars)
-  stratum_info <- stratum_info_from_groups(frame, strata_vars, groups$indices)
-
-  # Signal only during selection to avoid replay duplicates.
-  stratum_info <- calculate_stratum_sizes(
-    stratum_info, strata_spec, draw_spec,
-    signal = TRUE
-  )
+  plan <- memo_call("stratum_plan", stratum_plan, frame, strata_spec, draw_spec)
+  groups <- plan$groups
+  stratum_info <- plan$stratum_info
 
   if (identical(draw_spec$method, "cube")) {
     return(draw_balanced_stratified(
@@ -489,36 +551,6 @@ sample_stratified_impl <- function(
       draw_spec,
       trace_mode = trace_mode
     ))
-  }
-
-  if (!is_multi_hit_method(draw_spec)) {
-    capped <- stratum_info$.n_h > stratum_info$.N_h
-    if (any(capped)) {
-      # Store full keys and let the reporter truncate them.
-      keys <- format_key_labels(
-        stratum_info[capped, , drop = FALSE],
-        strata_label_vars(strata_spec)
-      )
-      if (is_random_size_method(draw_spec)) {
-        signal_nominal_cap(
-          pool_keys = keys,
-          n_capped = sum(capped),
-          n_pools = nrow(stratum_info),
-          n_requested = sum(stratum_info$.n_h),
-          n_available = sum(pmin(stratum_info$.n_h, stratum_info$.N_h))
-        )
-      } else {
-        signal_population_cap(
-          pool_keys = keys,
-          n_capped = sum(capped),
-          n_pools = nrow(stratum_info),
-          n_requested = sum(stratum_info$.n_h),
-          n_actual = sum(pmin(stratum_info$.n_h, stratum_info$.N_h)),
-          # A census leaves nothing reachable behind in any stratum.
-          n_available = sum(stratum_info$.N_h)
-        )
-      }
-    }
   }
 
   if (is_simple_srswor_draw(draw_spec)) {
@@ -556,10 +588,22 @@ sample_stratified_impl <- function(
   }
 
   draw_lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars)
+  cols <- selection_columns(frame, strata_vars, draw_spec)
+  row_col <- selection_row_column(names(frame))
+  # Replicates keep every stratum's rows. A single run builds one at a time.
+  parts <- if (replicate_memo_active()) {
+    memo_call(
+      "stratum_parts", stratum_parts, frame, groups, strata_vars, draw_spec
+    )
+  }
   results_list <- lapply(seq_along(groups$indices), function(i) {
     idxs <- groups$indices[[i]]
     stratum_key <- groups$keys[[i]]
-    data <- frame[idxs, , drop = FALSE]
+    part <- parts[[i]] %||% stratum_part(
+      frame, idxs, stratum_key, strata_vars, draw_spec, draw_lookup,
+      cols, row_col
+    )
+    data <- part$data
 
     n_h <- stratum_info$.n_h[[i]]
     if (is_null(n_h) || length(n_h) == 0 || is.na(n_h)) {
@@ -570,14 +614,8 @@ sample_stratified_impl <- function(
     }
 
     N_h <- nrow(data)
-    keys <- data[1, strata_vars, drop = FALSE]
-    stratum_draw_spec <- resolve_stratum_draw_spec(
-      draw_spec = draw_spec,
-      keys = keys,
-      strata_vars = strata_vars,
-      stratum_key = stratum_key,
-      lookup = draw_lookup
-    )
+    keys <- part$keys
+    stratum_draw_spec <- part$draw_spec
 
     # Qualify draw events by stratum and outer parent.
     res <- qualify_pool_events(
@@ -619,7 +657,9 @@ sample_stratified_impl <- function(
     )
   })
 
-  result <- bind_rows(lapply(results_list, function(r) r$sample))
+  result <- widen_drawn(
+    frame, lapply(results_list, function(r) r$sample), cols, row_col
+  )
 
   result$.sample_id <- seq_len(nrow(result))
   list(
@@ -629,6 +669,192 @@ sample_stratified_impl <- function(
       groups = lapply(results_list, function(r) r$group)
     )
   )
+}
+
+#' Pools, their sizes and their allocated sizes
+#'
+#' Depends only on the frame and the specs, so the replicates of one
+#' execution share it. Signals the allocation and population-cap events.
+#' @noRd
+stratum_plan <- function(frame, strata_spec, draw_spec) {
+  rlang::local_error_call(caller_env())
+  strata_vars <- strata_spec$vars
+  groups <- split_row_indices(frame, strata_vars)
+  stratum_info <- stratum_info_from_groups(frame, strata_vars, groups$indices)
+
+  # Signal only during selection to avoid replay duplicates.
+  stratum_info <- calculate_stratum_sizes(
+    stratum_info, strata_spec, draw_spec,
+    signal = TRUE
+  )
+
+  if (
+    !identical(draw_spec$method, "cube") && !is_multi_hit_method(draw_spec)
+  ) {
+    capped <- stratum_info$.n_h > stratum_info$.N_h
+    if (any(capped)) {
+      # Store full keys and let the reporter truncate them.
+      keys <- format_key_labels(
+        stratum_info[capped, , drop = FALSE],
+        strata_label_vars(strata_spec)
+      )
+      if (is_random_size_method(draw_spec)) {
+        signal_nominal_cap(
+          pool_keys = keys,
+          n_capped = sum(capped),
+          n_pools = nrow(stratum_info),
+          n_requested = sum(stratum_info$.n_h),
+          n_available = sum(pmin(stratum_info$.n_h, stratum_info$.N_h))
+        )
+      } else {
+        signal_population_cap(
+          pool_keys = keys,
+          n_capped = sum(capped),
+          n_pools = nrow(stratum_info),
+          n_requested = sum(stratum_info$.n_h),
+          n_actual = sum(pmin(stratum_info$.n_h, stratum_info$.N_h)),
+          # A census leaves nothing reachable behind in any stratum.
+          n_available = sum(stratum_info$.N_h)
+        )
+      }
+    }
+  }
+
+  list(groups = groups, stratum_info = stratum_info)
+}
+
+#' Frame columns a pool's draw reads
+#'
+#' A stratum or a parent unit draws on these columns only, so copying,
+#' ordering and subsetting it costs the same however wide the frame is.
+#' Execution has already checked that every `control` variable is a frame
+#' column. A `control` that `control_reads_named_columns()` cannot vouch
+#' for keeps every column, since it may read one by name at run time, as
+#' `get("x")` does.
+#' @noRd
+selection_columns <- function(frame, strata_vars, draw_spec) {
+  control <- draw_spec$control
+  if (!all(vapply(control, control_reads_named_columns, logical(1)))) {
+    return(names(frame))
+  }
+  control_vars <- lapply(control, function(q) all.vars(quo_get_expr(q)))
+  intersect(
+    names(frame),
+    c(
+      strata_vars, draw_spec$mos, draw_spec$prn, draw_spec$aux,
+      draw_spec$spread, draw_spec$bounds, draw_spec$certainty_plan$id_var,
+      unlist(control_vars)
+    )
+  )
+}
+
+#' Whether a `control` reads only the columns it names
+#'
+#' True for the grammar `draw()` documents: column names combined with
+#' `c()`, `desc()` and `serp()`. `control_order()` strips a top-level
+#' `desc()` without calling it. Every other call is evaluated with the
+#' functions of the quosure's environment, so each must be the function
+#' samplyr expects, not a local one of the same name.
+#' @noRd
+control_reads_named_columns <- function(quo) {
+  expr <- quo_get_expr(quo)
+  if (is_call(expr, "desc", n = 1L, ns = c("", "dplyr"))) {
+    expr <- expr[[2L]]
+  }
+  control_names_its_columns(expr, quo_get_env(quo))
+}
+
+#' @noRd
+control_names_its_columns <- function(expr, env) {
+  if (is.symbol(expr)) {
+    return(TRUE)
+  }
+  trusted <- list(c = base::c, desc = dplyr::desc, serp = serp)
+  if (!is.call(expr) || !is.symbol(expr[[1L]])) {
+    return(FALSE)
+  }
+  fn <- as.character(expr[[1L]])
+  fn %in% names(trusted) &&
+    identical(
+      rlang::env_get(env, fn, default = NULL, inherit = TRUE),
+      trusted[[fn]]
+    ) &&
+    all(vapply(
+      as.list(expr)[-1L], control_names_its_columns, logical(1),
+      env = env
+    ))
+}
+
+#' A column name for frame row positions, distinct from the frame's names
+#'
+#' Distinct from every frame column, not only the narrow ones, so a
+#' `control` that reads a column by name cannot reach the positions.
+#' @noRd
+selection_row_column <- function(taken) {
+  name <- ".row"
+  while (name %in% taken) {
+    name <- paste0(".", name)
+  }
+  name
+}
+
+#' A frame's `cols` at rows `idxs`, with the row positions in `row_col`
+#' @noRd
+narrow_rows <- function(frame, idxs, cols, row_col) {
+  data <- vctrs::new_data_frame(
+    lapply(setNames(cols, cols), function(col) {
+      vctrs::vec_slice(frame[[col]], idxs)
+    }),
+    n = length(idxs)
+  )
+  data[[row_col]] <- idxs
+  data
+}
+
+#' The frame rows that draws on narrow rows selected
+#'
+#' Takes the selected rows from the frame in one slice and appends the
+#' columns the draws added, in the order they added them.
+#' @noRd
+widen_drawn <- function(frame, samples, cols, row_col) {
+  drawn <- vctrs::vec_rbind(!!!samples)
+  result <- vctrs::vec_slice(frame, drawn[[row_col]])
+  for (col in setdiff(names(drawn), c(cols, row_col))) {
+    result[[col]] <- drawn[[col]]
+  }
+  result
+}
+
+#' One stratum's narrow rows, keys and resolved draw specification
+#' @noRd
+stratum_part <- function(frame, idxs, stratum_key, strata_vars, draw_spec,
+                         lookup, cols, row_col) {
+  data <- narrow_rows(frame, idxs, cols, row_col)
+  keys <- frame[idxs[1], strata_vars, drop = FALSE]
+  list(
+    data = data,
+    keys = keys,
+    draw_spec = resolve_stratum_draw_spec(
+      draw_spec = draw_spec,
+      keys = keys,
+      strata_vars = strata_vars,
+      stratum_key = stratum_key,
+      lookup = lookup
+    )
+  )
+}
+
+#' @noRd
+stratum_parts <- function(frame, groups, strata_vars, draw_spec) {
+  lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars)
+  cols <- selection_columns(frame, strata_vars, draw_spec)
+  row_col <- selection_row_column(names(frame))
+  lapply(seq_along(groups$indices), function(i) {
+    stratum_part(
+      frame, groups$indices[[i]], groups$keys[[i]], strata_vars, draw_spec,
+      lookup, cols, row_col
+    )
+  })
 }
 
 #' Balanced sampling with stratified cube (single call to sondage::balanced_wor)
@@ -979,7 +1205,11 @@ sample_unstratified <- function(frame, draw_spec, trace_mode = "full") {
     }
   }
 
-  res <- draw_sample(frame, n, draw_spec, trace_mode = trace_mode)
+  res <- if (is_simple_srswor_draw(draw_spec) && N > 0L) {
+    draw_srswor_compact(frame, n, trace_mode = trace_mode)
+  } else {
+    draw_sample(frame, n, draw_spec, trace_mode = trace_mode)
+  }
   result <- res$sample
   result$.weight <- 1 / result$.pik
   result$.pik <- NULL
@@ -990,6 +1220,34 @@ sample_unstratified <- function(frame, draw_spec, trace_mode = "full") {
   }
   result$.sample_id <- seq_len(nrow(result))
   list(sample = result, trace = res$trace)
+}
+
+#' Simple SRS of a whole frame without a chance vector per unit
+#'
+#' Draws as `sondage::equal_prob_wor()` does, with one `sample.int()` call,
+#' so the random stream and the sample are the same. The chance stays a
+#' scalar unless a full trace records it per unit, which matters on very
+#' large frames. The stratified and clustered paths draw SRS the same way.
+#' @noRd
+draw_srswor_compact <- function(data, n, trace_mode = "full") {
+  N <- nrow(data)
+  n_target <- as.double(n)
+  n <- min(n, N)
+  idx <- if (n == 0L) integer(0) else sample.int(N, n)
+  result <- data[idx, , drop = FALSE]
+  result$.pik <- rep.int(n / N, length(idx))
+  list(
+    sample = result,
+    trace = trace_pool(
+      N = N,
+      n_target = n_target,
+      chance = if (identical(trace_mode, "full")) rep.int(n / N, N) else n / N,
+      chance_kind = "inclusion_probability",
+      order_kind = "input",
+      selected = idx,
+      trace_mode = trace_mode
+    )
+  )
 }
 
 #' Handle zero-selection outcomes for random-size methods

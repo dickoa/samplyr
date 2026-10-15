@@ -16,21 +16,41 @@
 #' @param mode "summary" or "full".
 #' @param sample The realized sample rows, used only to attach a
 #'   verified sample_row locator to the final-stage trace.
+#' @param depth How many reached stages to build. A replicated execution
+#'   passes the prefix its merge can still keep. A shorter build has no
+#'   sample_row locator, which belongs to the last reached stage, and
+#'   records the reached count in its `reached_stages` attribute.
+#' @param validate Whether to validate the digest. A replicated execution
+#'   validates only the merged digest, which holds every stage it keeps.
 #' @noRd
-build_frame_digest <- function(design, stage_ids, stage_traces,
-                               stage_frames, input_frames, mode,
-                               sample = NULL) {
+build_frame_digest <- function(
+  design,
+  stage_ids,
+  stage_traces,
+  stage_frames,
+  input_frames,
+  mode,
+  sample = NULL,
+  depth = Inf,
+  validate = TRUE
+) {
   reached <- which(!vapply(stage_traces, is_null, logical(1)))
   stage_ids <- stage_ids[reached]
   stage_traces <- stage_traces[reached]
   stage_frames <- stage_frames[reached]
   input_frames <- input_frames[reached]
 
-  frames_reg <- build_digest_frames(design, input_frames)
+  frames_reg <- memo_call(
+    "digest_frames",
+    build_digest_frames,
+    design,
+    input_frames
+  )
 
-  stages_out <- vector("list", length(stage_ids))
+  n_built <- min(length(stage_ids), depth)
+  stages_out <- vector("list", n_built)
   parent_registry <- NULL
-  for (pos in seq_along(stage_ids)) {
+  for (pos in seq_len(n_built)) {
     built <- build_digest_stage(
       design = design,
       stage_idx = stage_ids[pos],
@@ -51,7 +71,8 @@ build_frame_digest <- function(design, stage_ids, stage_traces,
         identical(stages_out[[pos - 1L]]$scope, "universe") &&
         identical(stages_out[[pos - 1L]]$unit_level, "cluster") &&
         identical(
-          stages_out[[pos - 1L]]$chance_kind, "inclusion_probability"
+          stages_out[[pos - 1L]]$chance_kind,
+          "inclusion_probability"
         )
     ) {
       expanded <- tryCatch(
@@ -75,9 +96,15 @@ build_frame_digest <- function(design, stage_ids, stage_traces,
     parent_registry <- registry
   }
 
-  if (!is_null(sample) && length(stages_out) > 0) {
+  if (
+    !is_null(sample) &&
+      length(stages_out) > 0 &&
+      n_built == length(stage_ids)
+  ) {
     stages_out[[length(stages_out)]] <- attach_sample_rows(
-      stages_out, design, sample
+      stages_out,
+      design,
+      sample
     )
   }
 
@@ -85,9 +112,15 @@ build_frame_digest <- function(design, stage_ids, stage_traces,
     frames = frames_reg$records,
     stages = stages_out,
     privacy = digest_privacy(mode = mode),
-    status = "complete"
+    # A shortened build may record frames of stages it did not build.
+    status = if (n_built < length(stage_ids)) "partial" else "complete"
   )
-  validate_frame_digest(digest)
+  if (validate) {
+    validate_frame_digest(digest)
+  }
+  if (n_built < length(stage_ids)) {
+    attr(digest, "reached_stages") <- length(stage_ids)
+  }
   digest
 }
 
@@ -96,8 +129,7 @@ build_frame_digest <- function(design, stage_ids, stage_traces,
 build_digest_frames <- function(design, input_frames) {
   reqs <- design_requirements(design)
   req_df <- if (length(reqs) == 0) {
-    data.frame(column = character(0), role = character(0),
-               stage = integer(0))
+    data.frame(column = character(0), role = character(0), stage = integer(0))
   } else {
     data.frame(
       column = vapply(reqs, function(r) r$name, character(1)),
@@ -196,15 +228,24 @@ occurrence_index <- function(unit_ids) {
 }
 
 #' @noRd
-build_digest_stage <- function(design, stage_idx, pos, trace, frame,
-                               frame_ref, parent_registry, mode) {
+build_digest_stage <- function(
+  design,
+  stage_idx,
+  pos,
+  trace,
+  frame,
+  frame_ref,
+  parent_registry,
+  mode
+) {
   stage_spec <- design$stages[[stage_idx]]
   draw_spec <- stage_spec$draw_spec
   strata_vars <- stage_spec$strata$vars
   cluster_vars <- stage_spec$clusters$vars
   is_cluster <- !is_null(cluster_vars)
   ancestor_vars <- intersect(
-    collect_ancestor_cluster_vars(design, stage_idx), names(frame)
+    collect_ancestor_cluster_vars(design, stage_idx),
+    names(frame)
   )
 
   records <- flatten_stage_trace(trace, seq_len(nrow(frame)))
@@ -230,18 +271,123 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
     }
   }
 
+  # Without its selections, a stage-1 trace is the same in every replicate.
+  unselected <- lapply(records, function(r) {
+    r$leaf$selected <- NULL
+    r
+  })
+  skeleton <- if (pos == 1L) {
+    memo_call(
+      "digest_stage_skeleton",
+      digest_stage_skeleton,
+      design, stage_idx, pos, unselected, frame, parent_registry, mode
+    )
+  } else {
+    digest_stage_skeleton(
+      design, stage_idx, pos, unselected, frame, parent_registry, mode
+    )
+  }
+  chance_kind <- skeleton$chance_kind
+  registry <- skeleton$registry
+  unit_ids_by_pool <- skeleton$unit_ids_by_pool
+  pools <- skeleton$pools
+  pools$n_realized <- vapply(
+    records,
+    function(r) length(r$leaf$selected),
+    integer(1)
+  )
+
+  sel_by_pool <- lapply(records, function(r) r$leaf$selected)
+  n_sel <- lengths(sel_by_pool)
+  selected <- NULL
+  if (sum(n_sel) > 0L) {
+    unit_ids <- if (!is_null(unit_ids_by_pool)) {
+      Map(function(ids, sel) ids[sel], unit_ids_by_pool, sel_by_pool)
+    } else {
+      lapply(sel_by_pool, as.integer)
+    }
+    selected <- data.frame(
+      pool_id = rep.int(seq_along(records), n_sel),
+      unit_id = unlist(unit_ids, use.names = FALSE),
+      occurrence = if (identical(chance_kind, "inclusion_probability")) {
+        rep(1L, sum(n_sel))
+      } else {
+        unlist(lapply(unit_ids, occurrence_index), use.names = FALSE)
+      }
+    )
+    if (!is_null(registry)) {
+      # Store only selected cluster ancestry used by continuation.
+      selected$key <- names(registry)[selected$unit_id]
+    }
+  }
+
+  stage <- new_digest_stage(
+    stage_id = stage_idx,
+    frame_ref = frame_ref,
+    unit_level = if (is_cluster) "cluster" else "element",
+    scope = if (pos == 1L) "universe" else "eligible",
+    chance_kind = chance_kind,
+    probabilities = draw_spec$method_probabilities,
+    order_kind = skeleton$order_kind,
+    storage = skeleton$storage,
+    pools = pools,
+    units = skeleton$units,
+    chance_distribution = skeleton$chance_distribution,
+    selected = selected,
+    strata = strata_vars,
+    diagnostics = build_stage_diagnostics(
+      draw_spec,
+      frame,
+      records,
+      is_cluster = is_cluster,
+      ancestor_vars = ancestor_vars,
+      cluster_vars = cluster_vars
+    )
+  )
+  list(stage = stage, registry = registry)
+}
+
+#' The part of a digest stage that does not depend on the selections
+#'
+#' `records` are the flattened pools without their `selected` vectors. The
+#' pools carry an `n_realized` placeholder, which the caller fills.
+#' @noRd
+digest_stage_skeleton <- function(
+  design,
+  stage_idx,
+  pos,
+  records,
+  frame,
+  parent_registry,
+  mode
+) {
+  stage_spec <- design$stages[[stage_idx]]
+  strata_vars <- stage_spec$strata$vars
+  cluster_vars <- stage_spec$clusters$vars
+  is_cluster <- !is_null(cluster_vars)
+  ancestor_vars <- intersect(
+    collect_ancestor_cluster_vars(design, stage_idx),
+    names(frame)
+  )
+
   first_leaf <- records[[1]]$leaf
   chance_kind <- first_leaf$chance_kind
   order_kind <- first_leaf$order_kind
 
   # Record NA chances as unavailable rather than inventing values.
   unavailable <- vapply(
-    records, function(r) anyNA(r$leaf$chance), logical(1)
+    records,
+    function(r) anyNA(r$leaf$chance),
+    logical(1)
   )
-  is_const <- vapply(records, function(r) {
-    ch <- r$leaf$chance
-    length(ch) <= 1L || anyNA(ch) || max(ch) - min(ch) < 1e-12
-  }, logical(1))
+  is_const <- vapply(
+    records,
+    function(r) {
+      ch <- r$leaf$chance
+      length(ch) <= 1L || anyNA(ch) || max(ch) - min(ch) < 1e-12
+    },
+    logical(1)
+  )
   storage <- if (is_cluster) {
     "units"
   } else if (all(is_const)) {
@@ -253,7 +399,9 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
   }
 
   pool_first_rows <- vapply(
-    records, function(r) r$rows[1], integer(1)
+    records,
+    function(r) r$rows[1],
+    integer(1)
   )
 
   # Only cluster stages retain a parent unit registry.
@@ -296,7 +444,9 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
   }
   pools$N <- vapply(records, function(r) as.integer(r$leaf$N), integer(1))
   pools$n_target <- vapply(
-    records, function(r) as.double(r$leaf$n_target), numeric(1)
+    records,
+    function(r) as.double(r$leaf$n_target),
+    numeric(1)
   )
   pools$n_expected <- vapply(
     records,
@@ -310,26 +460,27 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
     },
     numeric(1)
   )
-  pools$n_realized <- vapply(
-    records, function(r) length(r$leaf$selected), integer(1)
-  )
-  pools$scope <- rep(if (pos == 1L) "universe" else "eligible",
-                     length(records))
+  pools$n_realized <- rep(NA_integer_, length(records))
+  pools$scope <- rep(if (pos == 1L) "universe" else "eligible", length(records))
   pools$chance_status <- ifelse(
     unavailable,
     "unavailable",
     if (identical(storage, "quantiles")) "summarized" else "executed"
   )
   if (identical(storage, "constant")) {
-    pools$chance <- vapply(records, function(r) {
-      if (anyNA(r$leaf$chance)) {
-        NA_real_
-      } else if (r$leaf$N == 0) {
-        0
-      } else {
-        r$leaf$chance[1]
-      }
-    }, numeric(1))
+    pools$chance <- vapply(
+      records,
+      function(r) {
+        if (anyNA(r$leaf$chance)) {
+          NA_real_
+        } else if (r$leaf$N == 0) {
+          0
+        } else {
+          r$leaf$chance[1]
+        }
+      },
+      numeric(1)
+    )
   }
 
   units <- NULL
@@ -343,7 +494,8 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
       seq.int(starts[i], length.out = counts[i])
     })
     chance_all <- unlist(
-      lapply(records, function(r) r$leaf$chance), use.names = FALSE
+      lapply(records, function(r) r$leaf$chance),
+      use.names = FALSE
     )
     units <- data.frame(
       unit_id = seq_len(sum(counts)),
@@ -358,12 +510,14 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
     )
     if (is_cluster) {
       units$n_descendants <- as.integer(unlist(
-        lapply(records, function(r) r$exec_sizes), use.names = FALSE
+        lapply(records, function(r) r$exec_sizes),
+        use.names = FALSE
       ))
       # Register full ancestry for the next stage.
       key_vars <- c(ancestor_vars, cluster_vars)
       all_exec_rows <- unlist(
-        lapply(records, function(r) r$exec_rows), use.names = FALSE
+        lapply(records, function(r) r$exec_rows),
+        use.names = FALSE
       )
       registry <- setNames(
         units$unit_id,
@@ -374,69 +528,25 @@ build_digest_stage <- function(design, stage_idx, pos, trace, frame,
 
   chance_distribution <- NULL
   if (identical(storage, "quantiles")) {
-    chance_distribution <- digest_quantile_bins(
+    chance_distribution <- memo_call(
+      paste0("quantile_bins_", pos),
+      digest_quantile_bins,
       chance_by_pool = lapply(records, function(r) r$leaf$chance),
       pool_ids = seq_along(records),
       pool_sizes = pools$N
     )
   }
 
-  sel_list <- lapply(seq_along(records), function(i) {
-    sel <- records[[i]]$leaf$selected
-    if (length(sel) == 0) {
-      return(NULL)
-    }
-    unit_ids <- if (!is_null(unit_ids_by_pool)) {
-      unit_ids_by_pool[[i]][sel]
-    } else {
-      as.integer(sel)
-    }
-    out <- data.frame(
-      pool_id = i,
-      unit_id = unit_ids,
-      occurrence = if (identical(chance_kind, "inclusion_probability")) {
-        rep(1L, length(sel))
-      } else {
-        occurrence_index(unit_ids)
-      }
-    )
-    if (!is_null(registry)) {
-      # Store only selected cluster ancestry used by continuation.
-      out$key <- names(registry)[unit_ids]
-    }
-    out
-  })
-  sel_list <- sel_list[!vapply(sel_list, is_null, logical(1))]
-  selected <- if (length(sel_list) == 0) {
-    NULL
-  } else {
-    out <- do.call(rbind, sel_list)
-    rownames(out) <- NULL
-    out
-  }
-
-  stage <- new_digest_stage(
-    stage_id = stage_idx,
-    frame_ref = frame_ref,
-    unit_level = if (is_cluster) "cluster" else "element",
-    scope = if (pos == 1L) "universe" else "eligible",
+  list(
     chance_kind = chance_kind,
-    probabilities = draw_spec$method_probabilities,
     order_kind = order_kind,
     storage = storage,
     pools = pools,
     units = units,
-    chance_distribution = chance_distribution,
-    selected = selected,
-    strata = strata_vars,
-    diagnostics = build_stage_diagnostics(
-      draw_spec, frame, records,
-      is_cluster = is_cluster,
-      ancestor_vars = ancestor_vars,
-      cluster_vars = cluster_vars
-    )
+    registry = registry,
+    unit_ids_by_pool = unit_ids_by_pool,
+    chance_distribution = chance_distribution
   )
-  list(stage = stage, registry = registry)
 }
 
 #' Attach a verified sample_row locator to the final-stage trace
@@ -480,10 +590,12 @@ attach_sample_rows <- function(stages, design, sample) {
     prev <- stages[[length(stages) - 1L]]
     prev_sel <- prev$selected
     ancestor_vars <- collect_ancestor_cluster_vars(
-      design, stage$stage_id
+      design,
+      stage$stage_id
     )
     if (
-      is_null(prev_sel) || !"key" %in% names(prev_sel) ||
+      is_null(prev_sel) ||
+        !"key" %in% names(prev_sel) ||
         !all(ancestor_vars %in% names(sample))
     ) {
       return(stage)
@@ -493,7 +605,9 @@ attach_sample_rows <- function(stages, design, sample) {
     ]
     expected <- key_of_unit[block_pool]
     actual <- digest_path_keys(
-      sample, seq_len(nrow(sample)), ancestor_vars
+      sample,
+      seq_len(nrow(sample)),
+      ancestor_vars
     )
     if (!identical(actual, expected)) {
       return(stage)
@@ -541,8 +655,14 @@ group_rows_by_key <- function(df, key_of) {
 #' Resolved pools carry chance_status "design_resolved", scope
 #' "universe", and n_realized 0. The stage scope becomes "universe".
 #' @noRd
-expand_stage_universe <- function(design, stage_idx, stage, frame,
-                                  parent_registry, registry) {
+expand_stage_universe <- function(
+  design,
+  stage_idx,
+  stage,
+  frame,
+  parent_registry,
+  registry
+) {
   spec <- design$stages[[stage_idx]]
   draw_spec <- spec$draw_spec
   strata_vars <- spec$strata$vars
@@ -554,17 +674,20 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
     all(c(ancestor_vars, strata_vars, cluster_vars) %in% names(frame)) &&
     identical(stage$order_kind, "input") &&
     is_null(spec$strata$alloc) &&
-    is_null(draw_spec$min_n) && is_null(draw_spec$max_n) &&
-    !is.data.frame(draw_spec$n) && !is.data.frame(draw_spec$frac) &&
+    is_null(draw_spec$min_n) &&
+    is_null(draw_spec$max_n) &&
+    !is.data.frame(draw_spec$n) &&
+    !is.data.frame(draw_spec$frac) &&
     !is.data.frame(draw_spec$certainty_size) &&
     !is.data.frame(draw_spec$certainty_prop) &&
     length(draw_spec$n %||% 1) == 1 &&
     length(draw_spec$frac %||% 1) == 1 &&
-    is_null(names(draw_spec$n)) && is_null(names(draw_spec$frac)) &&
+    is_null(names(draw_spec$n)) &&
+    is_null(names(draw_spec$frac)) &&
     # A certainty plan's takes come from the plan at selection.
     is_null(draw_spec$certainty_plan) &&
     (identical(stage$storage, "units") ||
-       identical(stage$storage, "constant"))
+      identical(stage$storage, "constant"))
   if (!resolvable) {
     abort_unresolvable("stage is not deterministically resolvable")
   }
@@ -574,14 +697,19 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
   }
 
   ancestry <- vctrs::new_data_frame(
-    stats::setNames(lapply(ancestor_vars, function(v) frame[[v]]), ancestor_vars)
+    stats::setNames(
+      lapply(ancestor_vars, function(v) frame[[v]]),
+      ancestor_vars
+    )
   )
   ancestry_first <- vctrs::vec_unique_loc(ancestry)
   parent_first <- unname(parent_registry[
     digest_path_keys(frame, ancestry_first, ancestor_vars)
   ])
   if (anyNA(parent_first)) {
-    abort_unresolvable("universe frame contains parents the previous stage did not record")
+    abort_unresolvable(
+      "universe frame contains parents the previous stage did not record"
+    )
   }
   parent_all <- parent_first[vctrs::vec_group_id(ancestry)]
 
@@ -606,7 +734,7 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
   pools <- stage$pools
   units <- stage$units
   next_pool <- max(pools$pool_id) + 1L
-  first_rows <- vapply(groups[new_keys], function(r) r[1], integer(1))
+  first_rows <- first_row_indices_by_group(groups[new_keys])
 
   make_pools <- function(N, n_target, n_expected, chance = NULL) {
     out <- data.frame(
@@ -640,31 +768,45 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
     }
     N_vec <- lengths(groups[new_keys])
     sizes <- unique(N_vec)
-    value <- vapply(sizes, function(N) {
-      resolve_pool_chance(draw_spec, NULL, N)$chance[1]
-    }, numeric(1))[match(N_vec, sizes)]
+    value <- vapply(
+      sizes,
+      function(N) {
+        resolve_pool_chance(draw_spec, NULL, N)$chance[1]
+      },
+      numeric(1)
+    )[match(N_vec, sizes)]
     random_size <- is_random_size_method(draw_spec)
     n_target <- if (
-      random_size && !is.null(draw_spec$n) &&
-        is.numeric(draw_spec$n) && length(draw_spec$n) == 1L
+      random_size &&
+        !is.null(draw_spec$n) &&
+        is.numeric(draw_spec$n) &&
+        length(draw_spec$n) == 1L
     ) {
       rep(as.double(draw_spec$n), length(N_vec))
     } else if (
-      random_size && !is.null(draw_spec$frac) &&
-        is.numeric(draw_spec$frac) && length(draw_spec$frac) == 1L
+      random_size &&
+        !is.null(draw_spec$frac) &&
+        is.numeric(draw_spec$frac) &&
+        length(draw_spec$frac) == 1L
     ) {
       as.double(N_vec * draw_spec$frac)
     } else if (!is.null(draw_spec$n)) {
       rep(as.double(draw_spec$n), length(N_vec))
     } else {
-      vapply(N_vec, function(N) {
-        as.double(round_sample_size(
-          N * draw_spec$frac, draw_spec$round %||% "up"
-        ))
-      }, numeric(1))
+      vapply(
+        N_vec,
+        function(N) {
+          as.double(round_sample_size(
+            N * draw_spec$frac,
+            draw_spec$round %||% "up"
+          ))
+        },
+        numeric(1)
+      )
     }
     stage$pools <- rbind(
-      pools, make_pools(N_vec, n_target, value * N_vec, chance = value)
+      pools,
+      make_pools(N_vec, n_target, value * N_vec, chance = value)
     )
     rownames(stage$pools) <- NULL
     stage$scope <- "universe"
@@ -678,7 +820,10 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
   pool_of_row <- rep.int(seq_along(new_keys), lengths(pool_rows))
   child_frame <- vctrs::new_data_frame(c(
     list(.pool = pool_of_row),
-    stats::setNames(lapply(child_vars, function(v) frame[[v]][rows]), child_vars)
+    stats::setNames(
+      lapply(child_vars, function(v) frame[[v]][rows]),
+      child_vars
+    )
   ))
   # Units follow their pool, then their first row inside it.
   unit_keys <- NULL
@@ -697,14 +842,20 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
   }
   N_vec <- tabulate(child_pool, nbins = length(new_keys))
   mos_all <- if (!is_null(mos)) frame[[mos]][child_first_rows]
-  pool_children <- split(seq_along(child_pool), factor(
-    child_pool, levels = seq_along(new_keys)
-  ))
+  pool_children <- split(
+    seq_along(child_pool),
+    factor(
+      child_pool,
+      levels = seq_along(new_keys)
+    )
+  )
 
   resolved <- if (is_null(mos)) {
     # Without a size measure a pool's chances depend on its size alone.
     sizes <- unique(N_vec)
-    by_size <- lapply(sizes, function(N) resolve_pool_chance(draw_spec, NULL, N))
+    by_size <- lapply(sizes, function(N) {
+      resolve_pool_chance(draw_spec, NULL, N)
+    })
     by_size[match(N_vec, sizes)]
   } else {
     lapply(seq_along(new_keys), function(i) {
@@ -721,9 +872,7 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
     pool_id = next_pool + child_pool - 1L,
     unit_order = sequence(N_vec),
     chance = chance,
-    is_certainty = if (
-      identical(stage$chance_kind, "inclusion_probability")
-    ) {
+    is_certainty = if (identical(stage$chance_kind, "inclusion_probability")) {
       is_certainty_probability(chance)
     } else {
       rep(NA, length(chance))
@@ -733,7 +882,8 @@ expand_stage_universe <- function(design, stage_idx, stage, frame,
   new_reg <- setNames(ids, child_keys)
 
   stage$pools <- rbind(
-    pools, make_pools(N_vec, n_target_vec, expected_vec)
+    pools,
+    make_pools(N_vec, n_target_vec, expected_vec)
   )
   rownames(stage$pools) <- NULL
   stage$units <- rbind(units, new_units)
@@ -757,8 +907,13 @@ abort_unresolvable <- function(reason) {
 #' first-order chances. Errors when the chance is not deterministic
 #' from (method, mos, n, frac).
 #' @noRd
-resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL,
-                                zone = NULL) {
+resolve_pool_chance <- function(
+  draw_spec,
+  mos_vals,
+  N,
+  forced_idx = NULL,
+  zone = NULL
+) {
   rlang::local_error_call(caller_env())
   if (identical(draw_spec$method_probabilities, "unknown")) {
     abort_unresolvable(paste0(
@@ -779,8 +934,7 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL,
     frac <- frac_pool_rate(N, frac, draw_spec)
   }
   n_target <- if (
-    random_size && !is.null(frac) &&
-      is.numeric(frac) && length(frac) == 1L
+    random_size && !is.null(frac) && is.numeric(frac) && length(frac) == 1L
   ) {
     as.double(N * frac)
   } else if (!is.null(n)) {
@@ -812,7 +966,8 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL,
       srswr = rep(n / N, N),
       bernoulli = rep(frac %||% (n / N), N),
       pps_poisson = pmin(
-        (frac %||% (n / N)) * mos_vals / sum(mos_vals) * N, 1
+        (frac %||% (n / N)) * mos_vals / sum(mos_vals) * N,
+        1
       ),
       pps_multinomial = ,
       pps_chromy = sondage::expected_hits(mos_vals, n),
@@ -828,7 +983,8 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL,
   }
 
   has_cert <- !is_null(draw_spec$certainty_size) ||
-    !is_null(draw_spec$certainty_prop) || !is_null(draw_spec$certainty_ids)
+    !is_null(draw_spec$certainty_prop) ||
+    !is_null(draw_spec$certainty_ids)
   if (!has_cert) {
     return(list(chance = base_chance(mos_vals, n, N), n_target = n_target))
   }
@@ -848,7 +1004,9 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL,
     cert$n_remaining < 0 &&
       !identical(draw_spec$certainty_overflow, "allow")
   ) {
-    abort_unresolvable("certainty overflow cannot be resolved without executing")
+    abort_unresolvable(
+      "certainty overflow cannot be resolved without executing"
+    )
   }
   chance <- numeric(N)
   chance[cert$certainty_idx] <- 1
@@ -856,7 +1014,9 @@ resolve_pool_chance <- function(draw_spec, mos_vals, N, forced_idx = NULL,
     n_prob <- min(cert$n_remaining, length(cert$remaining_idx))
     if (is_null(zone)) {
       chance[cert$remaining_idx] <- base_chance(
-        mos_vals[cert$remaining_idx], n_prob, length(cert$remaining_idx)
+        mos_vals[cert$remaining_idx],
+        n_prob,
+        length(cert$remaining_idx)
       )
     } else {
       # A zoned remainder draws its fixed count from each zone.
@@ -917,7 +1077,7 @@ digest_quantile_bins <- function(chance_by_pool, pool_ids, pool_sizes) {
       )
     }
     if (pool_size == 0L) {
-      return(data.frame(
+      return(list(
         pool_id = pool_ids[i][0],
         quantile = numeric(0),
         chance = numeric(0),
@@ -925,7 +1085,7 @@ digest_quantile_bins <- function(chance_by_pool, pool_ids, pool_sizes) {
       ))
     }
     if (length(ch) == 1L && pool_size > 1L) {
-      return(data.frame(
+      return(list(
         pool_id = pool_ids[i],
         quantile = 0.5,
         chance = as.double(ch),
@@ -938,8 +1098,8 @@ digest_quantile_bins <- function(chance_by_pool, pool_ids, pool_sizes) {
     k <- min(101L, n)
     ends <- as.integer(floor(n * seq_len(k) / k))
     starts <- c(1L, ends[-k] + 1L)
-    data.frame(
-      pool_id = pool_ids[i],
+    list(
+      pool_id = rep(pool_ids[i], k),
       quantile = ((starts + ends) / 2 - 0.5) / n,
       chance = vapply(
         seq_len(k),
@@ -949,9 +1109,16 @@ digest_quantile_bins <- function(chance_by_pool, pool_ids, pool_sizes) {
       n_units = ends - starts + 1L
     )
   })
-  out <- do.call(rbind, dist_list)
-  rownames(out) <- NULL
-  out
+  # One table for all pools, not one per pool.
+  column <- function(name) {
+    vctrs::list_unchop(lapply(dist_list, `[[`, name))
+  }
+  data.frame(
+    pool_id = column("pool_id"),
+    quantile = column("quantile"),
+    chance = column("chance"),
+    n_units = column("n_units")
+  )
 }
 
 #' Resolve a design's full ex-ante digest from a frame, without drawing
@@ -998,8 +1165,7 @@ digest_quantile_bins <- function(chance_by_pool, pool_ids, pool_sizes) {
 #' digest$status
 #' digest$stages[[1]]$scope
 #' @export
-exante_digest <- function(design, frame,
-                                call = rlang::current_env()) {
+exante_digest <- function(design, frame, call = rlang::current_env()) {
   # Pointing the frame at itself would never resolve.
   if (!identical(call, rlang::current_env())) {
     rlang::local_error_call(call)
@@ -1007,7 +1173,9 @@ exante_digest <- function(design, frame,
   stages_spec <- design$stages
   incomplete <- length(stages_spec) == 0 ||
     any(vapply(
-      stages_spec, function(s) is_null(s$draw_spec), logical(1)
+      stages_spec,
+      function(s) is_null(s$draw_spec),
+      logical(1)
     ))
   if (incomplete) {
     abort_samplyr(
@@ -1032,7 +1200,11 @@ exante_digest <- function(design, frame,
     call = call
   )
   schedule <- stage_frame_schedule(
-    design, supplied$frames, stages = NULL, executed = NULL, call = call
+    design,
+    supplied$frames,
+    stages = NULL,
+    executed = NULL,
+    call = call
   )
   design <- resolve_cluster_nesting(design, schedule$entries)
   stage_frames <- effective_register_frames(schedule, design, call = call)
@@ -1075,7 +1247,10 @@ exante_digest <- function(design, frame,
     # Preserve samplyr errors and qualify plain resolver errors by stage.
     built <- tryCatch(
       build_exante_stage(
-        design, stage_idx, effective_frames_by_stage[[stage_idx]], registry,
+        design,
+        stage_idx,
+        effective_frames_by_stage[[stage_idx]],
+        registry,
         frame_ref = frames_reg$ref[[stage_idx]]
       ),
       error = function(e) {
@@ -1135,7 +1310,8 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
 
   if (
     is_null(strata_vars) &&
-      is_null(draw_spec$n) && is_null(draw_spec$frac) &&
+      is_null(draw_spec$n) &&
+      is_null(draw_spec$frac) &&
       !identical(draw_spec$certainty_plan$role, "take")
   ) {
     cli_abort(
@@ -1147,7 +1323,11 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
 
   if (is_cluster) {
     check_exante_cluster_invariants(
-      frame, draw_spec, strata_vars, ancestor_vars, cluster_vars
+      frame,
+      draw_spec,
+      strata_vars,
+      ancestor_vars,
+      cluster_vars
     )
   }
 
@@ -1156,7 +1336,9 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
     parent_ids <- NA_integer_
   } else {
     keys_all <- digest_path_keys(
-      frame, seq_len(nrow(frame)), ancestor_vars
+      frame,
+      seq_len(nrow(frame)),
+      ancestor_vars
     )
     parent_all <- unname(parent_registry[keys_all])
     parent_groups <- split(seq_len(nrow(frame)), parent_all)
@@ -1168,15 +1350,26 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
   }
 
   pools_acc <- list()
-  add_pool <- function(parent, urows, pool_spec, n_desc, keys,
-                       rows = urows, row_units = seq_along(urows)) {
+  add_pool <- function(
+    parent,
+    urows,
+    pool_spec,
+    n_desc,
+    keys,
+    rows = urows,
+    row_units = seq_along(urows)
+  ) {
     rlang::local_error_call(caller_env())
     mos_vals <- if (!is_null(draw_spec$mos)) {
       frame[[draw_spec$mos]][urows]
     }
     pool <- certainty_pool_rows(pool_spec, frame[urows, , drop = FALSE])
     resolved <- resolve_pool_chance(
-      pool_spec, mos_vals, length(urows), pool$forced_idx, pool$zone
+      pool_spec,
+      mos_vals,
+      length(urows),
+      pool$forced_idx,
+      pool$zone
     )
     pools_acc[[length(pools_acc) + 1L]] <<- list(
       parent = parent,
@@ -1193,10 +1386,15 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
 
   for (g in seq_along(parent_groups)) {
     rows <- parent_groups[[g]]
-    parent_draw <- resolve_parent_draw_spec(draw_spec, frame[rows, , drop = FALSE])
+    parent_draw <- resolve_parent_draw_spec(
+      draw_spec,
+      frame[rows, , drop = FALSE]
+    )
     if (is_cluster) {
       ckeys <- digest_path_keys(
-        frame, rows, c(ancestor_vars, cluster_vars)
+        frame,
+        rows,
+        c(ancestor_vars, cluster_vars)
       )
       first_of <- !duplicated(ckeys)
       unit_rows <- rows[first_of]
@@ -1212,7 +1410,11 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
 
     if (is_null(strata_vars)) {
       add_pool(
-        parent_ids[g], unit_rows, parent_draw, n_desc, unit_keys,
+        parent_ids[g],
+        unit_rows,
+        parent_draw,
+        n_desc,
+        unit_keys,
         rows = rows,
         row_units = if (is_cluster) match(ckeys, unit_keys) else seq_along(rows)
       )
@@ -1221,10 +1423,12 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
 
     skeys <- digest_path_keys(frame, unit_rows, strata_vars)
     sgroups <- split(
-      seq_along(unit_rows), factor(skeys, levels = unique(skeys))
+      seq_along(unit_rows),
+      factor(skeys, levels = unique(skeys))
     )
     info <- stratum_info_from_groups(
-      frame, strata_vars,
+      frame,
+      strata_vars,
       lapply(sgroups, function(ix) unit_rows[ix])
     )
     info <- calculate_stratum_sizes(info, strata_spec, parent_draw)
@@ -1246,7 +1450,8 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
       pool_keys <- if (is_null(unit_keys)) NULL else unit_keys[sgroups[[s]]]
       pool_rows <- if (is_cluster) rows[ckeys %in% pool_keys] else urows
       add_pool(
-        parent_ids[g], urows,
+        parent_ids[g],
+        urows,
         pool_spec,
         if (is_null(n_desc)) NULL else n_desc[sgroups[[s]]],
         pool_keys,
@@ -1272,11 +1477,19 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
 
 #' One ex-ante stage record: every pool enumerated, chances resolved
 #' @noRd
-build_exante_stage <- function(design, stage_idx, frame,
-                               parent_registry, frame_ref = 1L) {
+build_exante_stage <- function(
+  design,
+  stage_idx,
+  frame,
+  parent_registry,
+  frame_ref = 1L
+) {
   rlang::local_error_call(caller_env())
   resolved <- resolve_exante_pools(
-    design, stage_idx, frame, parent_registry
+    design,
+    stage_idx,
+    frame,
+    parent_registry
   )
   pools_acc <- resolved$pools
   draw_spec <- resolved$draw_spec
@@ -1292,7 +1505,9 @@ build_exante_stage <- function(design, stage_idx, frame,
   pools <- data.frame(
     pool_id = seq_len(n_pools),
     parent_unit = vapply(
-      pools_acc, function(p) as.integer(p$parent), integer(1)
+      pools_acc,
+      function(p) as.integer(p$parent),
+      integer(1)
     )
   )
   if (!is_null(strata_vars)) {
@@ -1301,7 +1516,9 @@ build_exante_stage <- function(design, stage_idx, frame,
   }
   pools$N <- vapply(pools_acc, function(p) as.integer(p$N), integer(1))
   pools$n_target <- vapply(
-    pools_acc, function(p) as.double(p$n_target), numeric(1)
+    pools_acc,
+    function(p) as.double(p$n_target),
+    numeric(1)
   )
   pools$n_expected <- vapply(chance_by_pool, sum, numeric(1))
   pools$n_realized <- 0L
@@ -1309,9 +1526,13 @@ build_exante_stage <- function(design, stage_idx, frame,
   pools$chance_status <- "design_resolved"
 
   chance_kind <- if (wr) "expected_hits" else "inclusion_probability"
-  is_const <- vapply(chance_by_pool, function(ch) {
-    length(ch) <= 1L || max(ch) - min(ch) < 1e-12
-  }, logical(1))
+  is_const <- vapply(
+    chance_by_pool,
+    function(ch) {
+      length(ch) <= 1L || max(ch) - min(ch) < 1e-12
+    },
+    logical(1)
+  )
   storage <- if (is_cluster) {
     "units"
   } else if (all(is_const)) {
@@ -1324,9 +1545,13 @@ build_exante_stage <- function(design, stage_idx, frame,
   registry <- NULL
   chance_distribution <- NULL
   if (identical(storage, "constant")) {
-    pools$chance <- vapply(chance_by_pool, function(ch) {
-      if (length(ch) == 0) 0 else ch[1]
-    }, numeric(1))
+    pools$chance <- vapply(
+      chance_by_pool,
+      function(ch) {
+        if (length(ch) == 0) 0 else ch[1]
+      },
+      numeric(1)
+    )
   } else if (identical(storage, "quantiles")) {
     chance_distribution <- digest_quantile_bins(
       chance_by_pool = chance_by_pool,
@@ -1341,15 +1566,14 @@ build_exante_stage <- function(design, stage_idx, frame,
       pool_id = rep.int(pools$pool_id, counts),
       unit_order = sequence(counts),
       chance = chance_all,
-      is_certainty = if (
-        identical(chance_kind, "inclusion_probability")
-      ) {
+      is_certainty = if (identical(chance_kind, "inclusion_probability")) {
         is_certainty_probability(chance_all)
       } else {
         rep(NA, sum(counts))
       },
       n_descendants = as.integer(unlist(
-        lapply(pools_acc, function(p) p$n_desc), use.names = FALSE
+        lapply(pools_acc, function(p) p$n_desc),
+        use.names = FALSE
       ))
     )
     registry <- setNames(
@@ -1385,9 +1609,13 @@ build_exante_stage <- function(design, stage_idx, frame,
 #' sample_clusters(): the resolved chances read one value per cluster,
 #' which is only valid when the frame carries one value per cluster.
 #' @noRd
-check_exante_cluster_invariants <- function(frame, draw_spec,
-                                            strata_vars, ancestor_vars,
-                                            cluster_vars) {
+check_exante_cluster_invariants <- function(
+  frame,
+  draw_spec,
+  strata_vars,
+  ancestor_vars,
+  cluster_vars
+) {
   invariant_vars <- cluster_invariant_vars(frame, draw_spec, strata_vars)
   if (length(invariant_vars) == 0) {
     return(invisible(NULL))
@@ -1395,14 +1623,54 @@ check_exante_cluster_invariants <- function(frame, draw_spec,
   all_rows <- seq_len(nrow(frame))
   key_vars <- c(ancestor_vars, cluster_vars)
   n_clusters <- length(unique(digest_path_keys(frame, all_rows, key_vars)))
-  varying <- invariant_vars[vapply(invariant_vars, function(v) {
-    length(unique(digest_path_keys(frame, all_rows, c(key_vars, v)))) !=
-      n_clusters
-  }, logical(1))]
+  varying <- invariant_vars[vapply(
+    invariant_vars,
+    function(v) {
+      length(unique(digest_path_keys(frame, all_rows, c(key_vars, v)))) !=
+        n_clusters
+    },
+    logical(1)
+  )]
   if (length(varying) > 0) {
     abort_cluster_invariants(varying, cluster_vars)
   }
   invisible(NULL)
+}
+
+#' Structure of a stage manifest that replicates must share
+#' @noRd
+digest_stage_structure <- function(stage) {
+  pools <- stage$pools
+  list(
+    pools = pools[setdiff(names(pools), "n_realized")],
+    units = stage$units
+  )
+}
+
+#' Narrow the stages later replicates need to build
+#'
+#' merge_replicated_digests() keeps the stages before the first one whose
+#' structure differs between two replicates. Equality is transitive, so
+#' comparing each replicate with the first one that reached a stage finds
+#' that difference, and later replicates can stop building there. The
+#' depth never drops below one stage.
+#' @noRd
+update_digest_prefix <- function(tracker, digest) {
+  if (is_null(digest)) {
+    return(tracker)
+  }
+  for (k in seq_len(min(length(digest$stages), tracker$depth))) {
+    stage <- digest$stages[[k]]
+    key <- as.character(stage$stage_id)
+    structure <- digest_stage_structure(stage)
+    if (is_null(tracker$seen[[key]])) {
+      tracker$seen[[key]] <- structure
+    } else if (!identical(tracker$seen[[key]], structure)) {
+      tracker$depth <- max(k - 1L, 1L)
+      break
+    }
+  }
+  tracker
 }
 
 #' Merge per-replicate digests into one manifest
@@ -1424,12 +1692,15 @@ merge_replicated_digests <- function(digests) {
   ) {
     return(NULL)
   }
-  n_stages <- vapply(digests, function(d) length(d$stages), integer(1))
+  # A shortened build records how many stages it reached.
+  n_stages <- vapply(
+    digests,
+    function(d) attr(d, "reached_stages") %||% length(d$stages),
+    integer(1)
+  )
   base <- digests[[which.max(n_stages)]]
-
-  structural_cols <- function(pools) {
-    pools[setdiff(names(pools), "n_realized")]
-  }
+  base_reached <- max(n_stages)
+  attr(base, "reached_stages") <- NULL
 
   keep <- length(base$stages)
   for (k in seq_along(base$stages)) {
@@ -1443,7 +1714,9 @@ merge_replicated_digests <- function(digests) {
     shared <- TRUE
     for (r in seq_along(digests)) {
       ids_r <- vapply(
-        digests[[r]]$stages, function(s) s$stage_id, integer(1)
+        digests[[r]]$stages,
+        function(s) s$stage_id,
+        integer(1)
       )
       pos <- match(sid, ids_r)
       if (is.na(pos)) {
@@ -1453,10 +1726,9 @@ merge_replicated_digests <- function(digests) {
       st <- digests[[r]]$stages[[pos]]
       if (
         !identical(
-          structural_cols(st$pools),
-          structural_cols(base$stages[[k]]$pools)
-        ) ||
-          !identical(st$units, base$stages[[k]]$units)
+          digest_stage_structure(st),
+          digest_stage_structure(base$stages[[k]])
+        )
       ) {
         shared <- FALSE
         break
@@ -1474,8 +1746,7 @@ merge_replicated_digests <- function(digests) {
     }
     merged_sel <- NULL
     if (length(sel_parts) > 0) {
-      merged_sel <- do.call(rbind, sel_parts)
-      rownames(merged_sel) <- NULL
+      merged_sel <- vctrs::vec_rbind(!!!sel_parts)
     }
     base$stages[[k]]$selected <- merged_sel
 
@@ -1491,7 +1762,7 @@ merge_replicated_digests <- function(digests) {
   if (keep == 0L) {
     return(NULL)
   }
-  if (keep < length(base$stages)) {
+  if (keep < base_reached) {
     base$stages <- base$stages[seq_len(keep)]
     base$status <- "partial"
   }
@@ -1507,9 +1778,14 @@ merge_replicated_digests <- function(digests) {
 #' last stage's units through the ancestry keys stored with its
 #' selected trace.
 #' @noRd
-merge_continuation_digest <- function(prior, design, stage_ids,
-                                      stage_traces, stage_frames,
-                                      input_frames) {
+merge_continuation_digest <- function(
+  prior,
+  design,
+  stage_ids,
+  stage_traces,
+  stage_frames,
+  input_frames
+) {
   reached <- which(!vapply(stage_traces, is_null, logical(1)))
   stage_ids <- stage_ids[reached]
   stage_traces <- stage_traces[reached]
@@ -1527,7 +1803,9 @@ merge_continuation_digest <- function(prior, design, stage_ids,
     character(1)
   )
   next_id <- max(vapply(
-    prior$frames, function(f) f$frame_id, integer(1)
+    prior$frames,
+    function(f) f$frame_id,
+    integer(1)
   ))
   kept <- list()
   id_map <- integer(length(new_reg$records))
@@ -1591,9 +1869,14 @@ merge_continuation_digest <- function(prior, design, stage_ids,
 #' adjacent-integer bounds, and the realized count. Spatial:
 #' coordinate variable names, ranges, and duplicate-coordinate count.
 #' @noRd
-build_stage_diagnostics <- function(draw_spec, frame, records,
-                                    is_cluster, ancestor_vars,
-                                    cluster_vars) {
+build_stage_diagnostics <- function(
+  draw_spec,
+  frame,
+  records,
+  is_cluster,
+  ancestor_vars,
+  cluster_vars
+) {
   if (!is_balanced_method(draw_spec)) {
     return(NULL)
   }
@@ -1671,7 +1954,8 @@ build_stage_diagnostics <- function(draw_spec, frame, records,
   spread_vars <- draw_spec$spread
   if (!is_null(spread_vars)) {
     all_rows <- unlist(
-      lapply(records, function(r) r$rows), use.names = FALSE
+      lapply(records, function(r) r$rows),
+      use.names = FALSE
     )
     coords <- frame[all_rows, spread_vars, drop = FALSE]
     ranges <- data.frame(

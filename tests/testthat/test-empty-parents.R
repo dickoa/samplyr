@@ -39,6 +39,23 @@ test_that("the default still refuses, and names on_empty", {
   expect_match(conditionMessage(err), "on_empty", fixed = TRUE)
 })
 
+test_that("a refused continuation names execute() in its header", {
+  design <- ep_design("error", frac = 1)
+  frames <- list(ep_eas(), ep_households())
+  two <- execute(design, frames, stages = 1:2, seed = 4)
+  two_reps <- execute(design, frames, stages = 1:2, seed = 4, reps = 2)
+  attempts <- list(
+    single = function() execute(two, ep_persons(), seed = 5),
+    plain_reps = function() execute(two, ep_persons(), seed = 5, reps = 2),
+    replicated = function() execute(two_reps, ep_persons(), seed = 5)
+  )
+  for (nm in names(attempts)) {
+    err <- tryCatch(suppressWarnings(attempts[[nm]]()), error = identity)
+    expect_s3_class(err, "samplyr_error_frame_missing_parent")
+    expect_identical(condition_header(err), "execute", info = nm)
+  }
+})
+
 test_that("empty households contribute zero and are recorded exactly", {
   persons <- ep_persons()
   two <- execute(

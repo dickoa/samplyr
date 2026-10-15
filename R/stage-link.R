@@ -174,6 +174,11 @@ check_parent_key_na <- function(frame, parent_vars, design, stage_idx,
   invisible(NULL)
 }
 
+#' @noRd
+distinct_parent_units <- function(frame, parent_vars) {
+  unique(frame[, parent_vars, drop = FALSE])
+}
+
 #' Require every selected parent to have an eligible population
 #' @noRd
 check_realized_parent_coverage <- function(frame, previous_sample, parent_vars,
@@ -181,7 +186,13 @@ check_realized_parent_coverage <- function(frame, previous_sample, parent_vars,
                                            frame_label, call = caller_env()) {
   # Collapse WR multiplicity before checking population coverage.
   selected <- unique(previous_sample[, parent_vars, drop = FALSE])
-  available <- unique(frame[, parent_vars, drop = FALSE])
+  # The frame is the same in every replicate. Its units are not.
+  available <- memo_call(
+    paste0("parent_units_", stage_idx),
+    distinct_parent_units,
+    frame,
+    parent_vars
+  )
   missing <- dplyr::anti_join(selected, available, by = parent_vars)
 
   if (nrow(missing) == 0) {
@@ -349,23 +360,15 @@ carry_vars_by_parent <- function(frame, previous_sample, carry_vars, design,
     return(frame)
   }
 
-  # Restore frame order after joining.
-  pos <- free_column_name(frame, ".samplyr_row_pos")
-  n_before <- nrow(frame)
-  frame[[pos]] <- seq_len(n_before)
-  frame <- dplyr::left_join(
-    frame, lookup[, c(parent_vars, to_join), drop = FALSE], by = parent_vars
-  )
-  if (nrow(frame) != n_before) {
-    abort_samplyr(
-      "Carrying {.field {to_join}} changed the frame from {n_before} to
-       {nrow(frame)} rows.",
-      class = "samplyr_error_frame_parent_conflict",
-      call = call
+  # Keys take their common type, as a join would give them.
+  for (var in parent_vars) {
+    frame[[var]] <- vctrs::vec_cast(
+      frame[[var]], vctrs::vec_ptype2(frame[[var]], lookup[[var]])
     )
   }
-  frame <- frame[order(frame[[pos]]), , drop = FALSE]
-  frame[[pos]] <- NULL
+  for (var in to_join) {
+    frame[[var]] <- vctrs::vec_slice(lookup[[var]], parent_row)
+  }
   rownames(frame) <- NULL
   frame
 }
@@ -514,11 +517,10 @@ link_stage_frame <- function(frame, previous_sample, design, stage_idx,
     )
   }
 
-  linked <- dplyr::semi_join(
-    frame,
-    unique(previous_sample[, parent_vars, drop = FALSE]),
-    by = parent_vars
-  )
+  linked <- vctrs::vec_slice(frame, which(vctrs::vec_in(
+    frame[, parent_vars, drop = FALSE],
+    previous_sample[, parent_vars, drop = FALSE]
+  )))
 
   # Design variables of completed stages of this design.
   linked <- carry_vars_by_parent(

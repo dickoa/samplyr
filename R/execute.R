@@ -637,12 +637,14 @@ execute <- function(
     }
     # Empty replicates otherwise disappear from the stacked sample.
     if (is_tbl_sample(.data)) {
+      check_replicate_ids(.data, "input")
       warn_if_modified(.data, "input")
       check_no_empty_replicates(.data, blocked = "stages")
     } else {
       # Prior-phase sample frames retain provenance. Listing frames do not.
       for (f in frames) {
         if (is_tbl_sample(f)) {
+          check_replicate_ids(f, "frame")
           warn_if_modified(f, "frame")
           check_no_empty_replicates(f, blocked = "phase")
         }
@@ -933,6 +935,8 @@ capture_execution_environment <- function() {
   )
 }
 
+#' A replicate part skips its integrity record and digest validation. The
+#' stacked sample gets both.
 #' @noRd
 execute_design <- function(
   design,
@@ -941,6 +945,8 @@ execute_design <- function(
   panels,
   execution_environment,
   frame_digest = "summary",
+  digest_depth = Inf,
+  replicate_part = FALSE,
   call = caller_env()
 ) {
   rlang::local_error_call(call)
@@ -1071,7 +1077,9 @@ execute_design <- function(
         stage_frames = stage_used_frames,
         input_frames = supplied_frames,
         mode = frame_digest,
-        sample = current_sample
+        sample = current_sample,
+        depth = digest_depth,
+        validate = !replicate_part
       ),
       error = function(e) {
         cli_warn(c(
@@ -1095,7 +1103,9 @@ execute_design <- function(
       panel_assignment = panel_assignment,
       prev_phase = prev_phase,
       execution_environment = execution_environment,
-      integrity = sample_integrity_record(current_sample, design, stages),
+      integrity = if (!replicate_part) {
+        sample_integrity_record(current_sample, design, stages)
+      },
       frame_digest = digest,
       frame_schedule = schedule_record(schedule),
       empty_parents = empty_parents
@@ -1115,6 +1125,7 @@ execute_replicated <- function(
   call = caller_env()
 ) {
   rlang::local_error_call(call)
+  local_replicate_memo()
   results <- vector("list", reps)
   rep_digests <- vector("list", reps)
   collect_digest <- executor == "design" &&
@@ -1126,6 +1137,8 @@ execute_replicated <- function(
   }
   empty_parents <- inherited_empty
   rep_seeds <- replicate_seed_values(seed, reps)
+  # Stages whose structure differs between replicates are merged away.
+  prefix <- list(depth = Inf, seen = list())
 
   for (r in seq_len(reps)) {
     rep_seed <- rep_seeds[r]
@@ -1139,7 +1152,9 @@ execute_replicated <- function(
           rep_seed,
           panels = NULL,
           execution_environment = execution_environment,
-          frame_digest = if (collect_digest) frame_digest else "none"
+          frame_digest = if (collect_digest) frame_digest else "none",
+          digest_depth = prefix$depth,
+          replicate_part = TRUE
         )
       } else {
         execute_continuation(
@@ -1147,7 +1162,8 @@ execute_replicated <- function(
           schedule,
           rep_seed,
           panels = NULL,
-          execution_environment = execution_environment
+          execution_environment = execution_environment,
+          replicate_part = TRUE
         )
       }
     }
@@ -1163,6 +1179,7 @@ execute_replicated <- function(
 
     if (collect_digest) {
       rep_digests[[r]] <- attr(result, "metadata")$frame_digest
+      prefix <- update_digest_prefix(prefix, rep_digests[[r]])
     }
     # Keep only what this replicate added to the carried record.
     added <- attr(result, "metadata")$empty_parents
@@ -1188,7 +1205,7 @@ execute_replicated <- function(
     )
   }
 
-  combined <- do.call(rbind, results)
+  combined <- stack_replicates(results)
   combined$.sample_id <- seq_len(nrow(combined))
 
   # Derive metadata from inputs, not the last loop iteration.
@@ -1203,7 +1220,8 @@ execute_replicated <- function(
   integrity$replicate_hashes <- replicate_integrity_hashes(
     combined,
     integrity$cols,
-    seq_len(reps)
+    seq_len(reps),
+    rows = replicate_blocks(results)
   )
 
   new_tbl_sample(
@@ -1236,6 +1254,8 @@ execute_replicated <- function(
   )
 }
 
+#' A replicate part skips its integrity record and digest validation. The
+#' stacked sample gets both.
 #' @noRd
 execute_continuation <- function(
   sample,
@@ -1244,8 +1264,10 @@ execute_continuation <- function(
   panels,
   execution_environment,
   frame_digest = "none",
+  replicate_part = FALSE,
   call = caller_env()
 ) {
+  rlang::local_error_call(call)
   design <- get_design(sample)
   executed <- get_stages_executed(sample)
   stages <- schedule$stages
@@ -1435,11 +1457,9 @@ execute_continuation <- function(
       # Preserve the earlier phase link across stage continuation.
       prev_phase = parent_meta$prev_phase,
       execution_environment = execution_environment,
-      integrity = sample_integrity_record(
-        current_sample,
-        design,
-        c(executed, stages)
-      ),
+      integrity = if (!replicate_part) {
+        sample_integrity_record(current_sample, design, c(executed, stages))
+      },
       frame_schedule = schedule_record(schedule),
       empty_parents = c(parent_meta$empty_parents, empty_parents)
     )
@@ -1496,6 +1516,28 @@ find_empty_replicates <- function(sample) {
     return(as.character(setdiff(seq_len(reps), present)))
   }
   character(0)
+}
+
+#' Refuse a sample whose rows do not all name their replicate
+#'
+#' The replicate loop would give a row without a replicate to every
+#' replicate.
+#' @noRd
+check_replicate_ids <- function(x, role, call = caller_env()) {
+  if (!".replicate" %in% names(x) || !anyNA(x$.replicate)) {
+    return(invisible(NULL))
+  }
+  n_missing <- sum(is.na(x$.replicate))
+  abort_samplyr(
+    c(
+      "The {role} sample has {n_missing} row{?s} with a missing
+       {.field .replicate}.",
+      "i" = "Each row of a replicated sample must name the replicate that
+             drew it."
+    ),
+    class = "samplyr_error_replicated_sample_unsupported",
+    call = call
+  )
 }
 
 #' Check that a tbl_sample entering execution has no empty replicates
@@ -1581,6 +1623,70 @@ abort_empty_replicate <- function(
   )
 }
 
+#' Stack the per-replicate results of one execution
+#'
+#' One `vctrs::vec_rbind()` pass, which `rbind()` made quadratic in the
+#' number of replicates through factor reassignment. It follows `rbind()`
+#' on data frames: blocks with no rows are ignored, since a replicate that
+#' ended at an earlier stage lacks the later stages' columns, and when
+#' every block is empty the first one is returned. Nonempty blocks come
+#' from one frame and design, so a column mismatch among them is refused
+#' rather than filled with `NA`.
+#' @noRd
+stack_replicates <- function(results) {
+  if (length(results) == 0L) {
+    return(NULL)
+  }
+  filled <- results[vapply(results, nrow, integer(1)) > 0L]
+  if (length(filled) == 0L) {
+    return(results[[1]])
+  }
+  cols <- names(filled[[1]])
+  same <- vapply(
+    filled,
+    function(df) length(df) == length(cols) && all(names(df) %in% cols),
+    logical(1)
+  )
+  if (!all(same)) {
+    cli_abort(
+      "Internal error: replicate results have different columns.",
+      call = NULL,
+      class = "samplyr_error_internal"
+    )
+  }
+  stacked <- vctrs::vec_rbind(!!!filled)
+  # vctrs drops the dimension names of matrix columns. The blocks come from
+  # one frame, so give back the names they share.
+  for (col in cols) {
+    first <- dimnames(filled[[1]][[col]])
+    if (!is.array(stacked[[col]]) || is_null(first)) {
+      next
+    }
+    blocks <- lapply(filled, function(df) dimnames(df[[col]]))
+    if (!all(vapply(blocks, function(d) identical(d[-1L], first[-1L]), TRUE))) {
+      next
+    }
+    rows <- lapply(blocks, function(d) d[[1L]])
+    if (any(vapply(rows, is_null, TRUE))) {
+      rows <- list(NULL)
+    }
+    values <- stacked[[col]]
+    dimnames(values) <- c(list(unlist(rows)), first[-1L])
+    stacked[[col]] <- values
+  }
+  stacked
+}
+
+#' Row locations of each replicate in its stack, in replicate order
+#' @noRd
+replicate_blocks <- function(results) {
+  sizes <- vapply(results, nrow, integer(1))
+  starts <- cumsum(sizes) - sizes + 1L
+  lapply(seq_along(sizes), function(k) {
+    seq.int(starts[[k]], length.out = sizes[[k]])
+  })
+}
+
 #' Seeds for the replicates of one execution
 #'
 #' Consecutive seeds do not give independent first draws in R: a start taken
@@ -1617,6 +1723,7 @@ execute_replicated_continuation <- function(
   frame_digest = "none",
   call = caller_env()
 ) {
+  rlang::local_error_call(call)
   if (!is_null(panels)) {
     cli_abort(
       "{.arg panels} cannot be used with a replicated sample.",
@@ -1630,10 +1737,11 @@ execute_replicated_continuation <- function(
   inherited_empty <- attr(sample, "metadata")$empty_parents
   empty_parents <- inherited_empty
   rep_seeds <- replicate_seed_values(seed, length(rep_ids))
+  rep_rows <- replicate_row_locations(sample$.replicate, rep_ids)
 
   for (i in seq_along(rep_ids)) {
     r <- rep_ids[i]
-    rep_sample <- sample[sample$.replicate == r, ]
+    rep_sample <- sample[rep_rows[[i]], ]
     rep_sample$.replicate <- NULL
 
     # Restore the sample class after subsetting.
@@ -1648,12 +1756,14 @@ execute_replicated_continuation <- function(
     rep_seed <- rep_seeds[i]
 
     run_one <- function() {
+      rlang::local_error_call(caller_env())
       execute_continuation(
         rep_sample,
         schedule,
         rep_seed,
         panels = NULL,
-        execution_environment = execution_environment
+        execution_environment = execution_environment,
+        replicate_part = TRUE
       )
     }
 
@@ -1674,7 +1784,7 @@ execute_replicated_continuation <- function(
     results[[i]] <- df
   }
 
-  combined <- do.call(rbind, results)
+  combined <- stack_replicates(results)
   combined$.sample_id <- seq_len(nrow(combined))
 
   # Derive metadata from inputs.
@@ -1722,7 +1832,8 @@ execute_replicated_continuation <- function(
         integrity$replicate_hashes <- replicate_integrity_hashes(
           combined,
           integrity$cols,
-          rep_ids
+          rep_ids,
+          rows = replicate_blocks(results)
         )
         integrity
       }
@@ -1735,8 +1846,8 @@ execute_replicated_continuation <- function(
 #' Restores the `tbl_sample` class so `prepare_multiphase_frame()` recognizes
 #' it as a phase rather than an ordinary frame.
 #' @noRd
-replicate_phase_source <- function(source_sample, replicate) {
-  sub <- source_sample[source_sample$.replicate == replicate, ]
+replicate_phase_source <- function(source_sample, rows) {
+  sub <- source_sample[rows, ]
   sub$.replicate <- NULL
   new_tbl_sample(
     data = sub,
@@ -1770,8 +1881,9 @@ execute_replicated_multiphase <- function(
   rep_ids <- sort(unique(source_sample$.replicate))
 
   # Validate all replicate phase keys before drawing.
-  replicate_frames <- lapply(rep_ids, function(r) {
-    replicate_phase_source(source_sample, r)
+  rep_rows <- replicate_row_locations(source_sample$.replicate, rep_ids)
+  replicate_frames <- lapply(rep_rows, function(rows) {
+    replicate_phase_source(source_sample, rows)
   })
   prev_design <- get_design(source_sample)
   phase_link_vars <- phase_link_vars_of(list(
@@ -1815,7 +1927,8 @@ execute_replicated_multiphase <- function(
         rep_seed,
         panels = NULL,
         execution_environment = execution_environment,
-        frame_digest = "none"
+        frame_digest = "none",
+        replicate_part = TRUE
       )
     }
 
@@ -1837,7 +1950,7 @@ execute_replicated_multiphase <- function(
     results[[i]] <- df
   }
 
-  combined <- do.call(rbind, results)
+  combined <- stack_replicates(results)
   combined$.sample_id <- seq_len(nrow(combined))
 
   the_stages <- schedule$stages
@@ -1871,7 +1984,8 @@ execute_replicated_multiphase <- function(
         integrity$replicate_hashes <- replicate_integrity_hashes(
           combined,
           integrity$cols,
-          rep_ids
+          rep_ids,
+          rows = replicate_blocks(results)
         )
         integrity
       }
@@ -1926,13 +2040,17 @@ execute_single_stage_impl <- function(
   trace_mode = "full"
 ) {
   rlang::local_error_call(caller_env())
+  # Only stage 1 sees the same frame in every replicate.
+  if (!is_null(previous_sample)) {
+    local_replicate_memo_paused()
+  }
   strata_spec <- stage_spec$strata
   cluster_spec <- stage_spec$clusters
   draw_spec <- stage_spec$draw_spec
   # The parent pools a lower stage runs in, none at stage 1.
   split_vars <- character(0)
 
-  validate_frame_vars(frame, stage_spec)
+  memo_call("frame_vars", validate_frame_vars, frame, stage_spec)
 
   stage_totals <- NULL
   if (!is_null(cluster_spec)) {
@@ -1962,6 +2080,10 @@ execute_single_stage_impl <- function(
       if (!is_null(strata_spec)) {
         strata_spec$label_vars <- setdiff(strata_spec$vars, split_vars)
       }
+      # One check over all parents instead of one per parent.
+      check_invariants <- !cluster_invariants_hold(
+        frame, split_vars, cluster_spec$vars, strata_spec$vars, draw_spec
+      )
 
       results_list <- lapply(seq_along(indices_list), function(i) {
         data <- frame[indices_list[[i]], , drop = FALSE]
@@ -1971,7 +2093,8 @@ execute_single_stage_impl <- function(
             strata_spec,
             cluster_spec,
             draw_spec,
-            trace_mode = trace_mode
+            trace_mode = trace_mode,
+            check_invariants = check_invariants
           ),
           parent_labels[[i]]
         )
@@ -2146,6 +2269,15 @@ execute_single_stage_impl <- function(
 #' @noRd
 stage_pool_totals <- function(frame, split_vars, strata_vars, cluster_vars,
                               n_selected) {
+  sizes <- memo_call(
+    "pool_sizes", stage_pool_sizes, frame, split_vars, strata_vars,
+    cluster_vars
+  )
+  c(sizes, list(n_actual = n_selected))
+}
+
+#' @noRd
+stage_pool_sizes <- function(frame, split_vars, strata_vars, cluster_vars) {
   distinct_rows <- function(vars) {
     if (length(vars) == 0L) {
       return(if (nrow(frame) > 0L) 1L else 0L)
@@ -2158,8 +2290,7 @@ stage_pool_totals <- function(frame, split_vars, strata_vars, cluster_vars,
       distinct_rows(c(split_vars, cluster_vars))
     } else {
       nrow(frame)
-    },
-    n_actual = n_selected
+    }
   )
 }
 

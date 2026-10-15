@@ -236,6 +236,76 @@ signal_nominal_cap <- function(
   )
 }
 
+#' Values of pure calls reused across the replicates of one execution
+#'
+#' Some calls receive the same arguments in every replicate. While
+#' `local_replicate_memo()` is active, each slot keeps its last arguments
+#' and value, and a call whose arguments are bitwise identical returns the
+#' stored value. Only calls that consume no random numbers may go through
+#' `memo_call()`. The selection events a call signals are stored and
+#' signaled again on each reuse. A call that signals any other condition,
+#' or fails, is not stored.
+#' @noRd
+replicate_memo <- new.env(parent = emptyenv())
+
+#' @noRd
+local_replicate_memo <- function(frame = caller_env()) {
+  previous <- replicate_memo$slots
+  replicate_memo$slots <- new.env(parent = emptyenv())
+  withr::defer(replicate_memo$slots <- previous, envir = frame)
+  invisible(NULL)
+}
+
+#' @noRd
+replicate_memo_active <- function() {
+  !is_null(replicate_memo$slots)
+}
+
+#' Turn the memo off for the rest of the calling frame
+#' @noRd
+local_replicate_memo_paused <- function(frame = caller_env()) {
+  previous <- replicate_memo$slots
+  replicate_memo$slots <- NULL
+  withr::defer(replicate_memo$slots <- previous, envir = frame)
+  invisible(NULL)
+}
+
+#' @noRd
+memo_call <- function(slot, fn, ...) {
+  rlang::local_error_call(caller_env())
+  slots <- replicate_memo$slots
+  if (is_null(slots)) {
+    return(fn(...))
+  }
+  args <- list(...)
+  stored <- slots[[slot]]
+  if (
+    !is_null(stored) &&
+      identical(stored$args, args, num.eq = FALSE, attrib.as.set = FALSE)
+  ) {
+    for (cnd in stored$events) {
+      rlang::cnd_signal(cnd)
+    }
+    return(stored$value)
+  }
+  events <- list()
+  storable <- TRUE
+  value <- withCallingHandlers(
+    fn(...),
+    condition = function(cnd) {
+      if (inherits(cnd, "samplyr_condition_selection_event")) {
+        events[[length(events) + 1L]] <<- cnd
+      } else {
+        storable <<- FALSE
+      }
+    }
+  )
+  if (storable) {
+    slots[[slot]] <- list(args = args, value = value, events = events)
+  }
+  value
+}
+
 #' Tag selection events with the replicate that produced them
 #' @noRd
 tag_replicate_events <- function(expr, replicate) {
@@ -1167,14 +1237,39 @@ integrity_for_file <- function(integrity) {
 
 #' Per-replicate hashes for the complete-replicate exemption
 #' @noRd
-replicate_integrity_hashes <- function(data, cols, rep_ids) {
-  hashes <- lapply(rep_ids, function(r) {
-    protected_values_hash(
-      data[data$.replicate == r, , drop = FALSE],
-      cols
-    )
+replicate_integrity_hashes <- function(
+  data,
+  cols,
+  rep_ids,
+  rows = replicate_row_locations(data$.replicate, rep_ids)
+) {
+  hashes <- lapply(rows, function(i) {
+    protected_values_hash(data[i, cols, drop = FALSE], cols)
   })
   setNames(hashes, as.character(rep_ids))
+}
+
+#' Row locations of each replicate, found in one pass
+#'
+#' Element `k` equals `seq_along(replicate)[replicate == rep_ids[k]]`, so a
+#' missing id gives an `NA` location in every replicate, as subsetting by
+#' `==` does.
+#' @noRd
+replicate_row_locations <- function(replicate, rep_ids) {
+  group <- match(replicate, rep_ids, incomparables = NA)
+  rows <- unname(split(
+    seq_along(replicate),
+    factor(group, levels = seq_along(rep_ids))
+  ))
+  missing <- which(is.na(replicate))
+  if (length(missing) > 0L) {
+    rows <- lapply(rows, function(r) {
+      r <- sort(c(r, missing))
+      r[r %in% missing] <- NA_integer_
+      r
+    })
+  }
+  rows
 }
 
 #' Compare a sample against its stored integrity record

@@ -168,5 +168,19 @@ split_row_indices <- function(df, vars) {
 
 #' @noRd
 first_row_indices_by_group <- function(indices_list) {
-  vapply(indices_list, function(idx) idx[[1L]], integer(1))
+  if (length(indices_list) == 0L) {
+    return(integer(0))
+  }
+  sizes <- lengths(indices_list)
+  if (any(sizes == 0L)) {
+    cli_abort(
+      "Internal error: a row group has no rows.",
+      call = NULL,
+      class = "samplyr_error_internal"
+    )
+  }
+  rows <- unlist(indices_list, use.names = FALSE)
+  first <- rows[cumsum(c(1L, sizes[-length(sizes)]))]
+  names(first) <- names(indices_list)
+  first
 }

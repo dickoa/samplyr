@@ -154,10 +154,15 @@ allocate_bounded <- function(factors, total, lower, upper) {
     span <- c(0, top)
     for (step in seq_len(200L)) {
       mid <- sum(span) / 2
+      before <- span
       if (sum(at_scale(mid, f, lo, hi)) < total) {
         span[1] <- mid
       } else {
         span[2] <- mid
+      }
+      # An unchanged bracket repeats itself, so the result is final.
+      if (identical(span, before)) {
+        break
       }
     }
     sum(span) / 2

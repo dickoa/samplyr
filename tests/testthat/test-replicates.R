@@ -470,6 +470,44 @@ test_that("check_single_replicate errors on NA in .replicate", {
   expect_error(as_svydesign(result), "NA")
 })
 
+test_that("execute refuses a sample with a missing replicate id", {
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(cl) |> draw(n = 4) |>
+    add_stage() |> draw(n = 2)
+  frame <- data.frame(cl = rep(1:20, each = 5), id = 1:100)
+  stage1 <- execute(design, frame, stages = 1, seed = 1, reps = 3)
+  stage1$.replicate[c(1, 5)] <- NA_integer_
+  phase1 <- sampling_design() |>
+    draw(n = 40) |>
+    execute(frame, seed = 2, reps = 3)
+  phase1$.replicate[2] <- NA_integer_
+  unnamed <- dplyr::filter(phase1, .replicate %in% 1)
+  unnamed$.replicate <- NA_integer_
+
+  attempts <- list(
+    continuation = function() execute(stage1, frame, seed = 3),
+    phase = function() {
+      execute(sampling_design() |> draw(n = 10), phase1, seed = 3)
+    },
+    all_missing = function() {
+      execute(sampling_design() |> draw(n = 10), unnamed, seed = 3)
+    }
+  )
+  expected <- c(
+    continuation = "input sample has 2 rows",
+    phase = "frame sample has 1 row",
+    all_missing = "frame sample has 39 rows"
+  )
+  for (nm in names(attempts)) {
+    err <- expect_error(
+      attempts[[nm]](),
+      class = "samplyr_error_replicated_sample_unsupported"
+    )
+    expect_match(conditionMessage(err), expected[[nm]], fixed = TRUE)
+    expect_identical(condition_header(err), "execute", info = nm)
+  }
+})
+
 ## Print and summary
 
 test_that("tbl_sum shows replicate count for multi-replicate", {
@@ -684,4 +722,68 @@ test_that("tbl_sum omits replicate line when .replicate has NA", {
 
   header <- tbl_sum(result)
   expect_false("Replicates" %in% names(header))
+})
+
+test_that("replicates that end at an empty first stage stack with the others", {
+  frame <- data.frame(cl = rep(1:40, each = 5), id = 1:200)
+  design <- sampling_design() |>
+    add_stage() |>
+    cluster_by(cl) |>
+    draw(frac = 0.03, method = "bernoulli", on_empty = "silent") |>
+    add_stage() |>
+    draw(n = 2)
+
+  result <- execute(design, frame, seed = 2, reps = 6)
+  meta <- attr(result, "metadata")
+  expect_identical(
+    unname(meta$replicate_rows),
+    c(0L, 2L, 4L, 0L, 4L, 2L)
+  )
+  expect_true(all(c(".weight_1", ".weight_2") %in% names(result)))
+
+  single <- execute(design, frame, seed = meta$replicate_seeds[[3]])
+  stacked <- as.data.frame(result)[result$.replicate == 3L, names(single)]
+  stacked$.sample_id <- seq_len(nrow(stacked))
+  rownames(stacked) <- NULL
+  expect_identical(stacked$id, single$id)
+  expect_identical(stacked$.weight, single$.weight)
+})
+
+test_that("replicates keep a matrix column as the frame holds it", {
+  set.seed(8)
+  frame <- data.frame(
+    id = 1:80,
+    st = rep(c("a", "b"), each = 40),
+    psu = rep(1:16, each = 5),
+    m = runif(80, 1, 5)
+  )
+  frame$xy <- I(cbind(easting = frame$id, northing = 80 - frame$id))
+  same_rows <- function(x, source = frame) {
+    expect_identical(x$xy, source$xy[x$id, , drop = FALSE])
+  }
+  designs <- list(
+    sampling_design() |> draw(n = 4),
+    sampling_design() |>
+      stratify_by(st) |>
+      draw(n = 2, method = "pps_systematic", mos = m),
+    sampling_design() |>
+      add_stage() |>
+      cluster_by(psu) |>
+      draw(n = 3) |>
+      add_stage() |>
+      draw(n = 2)
+  )
+  for (design in designs) {
+    same_rows(execute(design, frame, seed = 1))
+    same_rows(execute(design, frame, seed = 1, reps = 3))
+  }
+
+  first <- execute(designs[[3]], frame, stages = 1, seed = 2, reps = 3)
+  same_rows(execute(first, frame, seed = 3))
+  phase_1 <- execute(sampling_design() |> draw(n = 30), frame, seed = 4, reps = 2)
+  same_rows(execute(sampling_design() |> draw(n = 5), phase_1, seed = 5))
+
+  plain <- tibble::tibble(id = 1:20, xy = cbind(easting = 1:20, northing = 20:1))
+  s <- execute(sampling_design() |> draw(n = 4), plain, seed = 6, reps = 2)
+  expect_identical(s$xy, plain$xy[s$id, , drop = FALSE])
 })
