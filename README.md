@@ -46,10 +46,10 @@ for the handoff to `survey` and `srvyr`.
 The book [Survey Sampling Design with
 R](https://www.ahmadoudicko.com/sampling-design-r-book/) covers planning
 with `svyplan`, coordination, rotating panels and validation. The
-[selection-methods
-reference](https://dickoa.gitlab.io/samplyr/reference/selection-methods.html)
-compares the methods, and the [variance-estimation
-reference](https://dickoa.gitlab.io/samplyr/reference/variance-estimation.html)
+[selection_methods
+reference](https://dickoa.gitlab.io/samplyr/reference/selection_methods.html)
+compares the methods, and the [variance_estimation
+reference](https://dickoa.gitlab.io/samplyr/reference/variance_estimation.html)
 gives how each one's variance is estimated. Serialization and design
 semantics are references to consult as needed.
 
@@ -454,7 +454,7 @@ Sixteen methods ship in three families:
   `pps_pareto`, `pps_multinomial`, `pps_chromy`
 - **Balanced**: `cube`, plus the spatial `lpm2` and `scps`
 
-`?selection-methods` is the reference: which take `n` or `frac`, which
+`?selection_methods` is the reference: which take `n` or `frac`, which
 need `mos`, `aux` or `spread`, which have a random rather than fixed
 sample size, which accept permanent random numbers, and the paper behind
 each. Custom methods registered with `sondage::register_method()` are
@@ -624,18 +624,18 @@ their inputs and limits:
 | Capability | How | Where |
 |----|----|----|
 | Balanced sampling | `draw(method = "cube", aux = ...)`, with `bound()` for hard count constraints | `?draw`, `?bound` |
-| Spatially balanced | `draw(method = "lpm2" or "scps", spread = c(lon, lat))` | `?selection-methods` |
+| Spatially balanced | `draw(method = "lpm2" or "scps", spread = c(lon, lat))` | `?selection_methods` |
 | Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across waves | `?draw`, [Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/coordination.html) |
 | Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `?draw`, `sondage::register_method()` |
-| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `?panel-assignment`, `?rotation_program`, [Plan and run a rotating panel](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/rotating-panels.html) |
+| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `?panel_assignment`, `?rotation_program`, [Plan and run a rotating panel](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/rotating-panels.html) |
 | Replicated draws | `execute(reps = 5)` | `?execute` |
 | Two-phase | pipe a `tbl_sample` into a new design's `execute()` | `vignette("survey-analysis")` |
 | Indirect sampling | `share_weights()`, to estimate for a population linked to the one that was sampled | `vignette("design-semantics")` |
 | Overlapping frames | `stack_frames()`, for two registers of one population | `vignette("survey-analysis")` |
 
-The [variance-estimation
-reference](https://dickoa.gitlab.io/samplyr/reference/variance-estimation.html)
-(`?variance-estimation`) compares first-order and joint probability
+The [variance_estimation
+reference](https://dickoa.gitlab.io/samplyr/reference/variance_estimation.html)
+(`?variance_estimation`) compares first-order and joint probability
 quality and variance estimators, with the stage and phase restrictions.
 
 ``` r
@@ -721,7 +721,7 @@ ran:
 is the `capped` column of `frame_summary(sample, detail = "pool")`. Each
 condition also carries the affected pools and the counts behind them in
 a `payload`, which is what remains under `frame_digest = "none"`. See
-`?execution-conditions` for the payload contract and for how to capture
+`?execution_conditions` for the payload contract and for how to capture
 one.
 
 ## Checking a Design Before Drawing
