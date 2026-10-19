@@ -11,8 +11,12 @@
 #'   Its fields hold the figures the print shows: `n`, `stages`, `seed`,
 #'   `weights` (mean, minimum, maximum and coefficient of variation of
 #'   `.weight`), `design_effect` and `effective_n` (as [design_effect()] and
-#'   [effective_n()] give them), and `certainty`, the units taken with
-#'   certainty at each executed stage. Weight figures are `NULL` for an
+#'   [effective_n()] give them), `certainty`, the units taken with
+#'   certainty at each executed stage, and `single_unit_pools`, the pools of
+#'   one unit each stage took whole. Such a unit is certain too, as
+#'   `.certainty_k` records, but it is counted only in `single_unit_pools`,
+#'   so a stage of unsegmented EAs does not read as large units taken for
+#'   their size. Weight figures are `NULL` for an
 #'   empty sample and for stacked replicates, which the print also leaves
 #'   out. `sample` is the summarized sample itself.
 #'
@@ -89,7 +93,13 @@ summary.tbl_sample <- function(object, ...) {
       effective_n = if (weighted) effective_n(weights = w),
       certainty = stats::setNames(
         vapply(stages, function(k) {
-          as.integer(summary_certainty_count(object, design, k))
+          summary_certainty_count(object, design, k)[["certainty"]]
+        }, integer(1)),
+        paste0("stage_", stages)
+      ),
+      single_unit_pools = stats::setNames(
+        vapply(stages, function(k) {
+          summary_certainty_count(object, design, k)[["single_unit"]]
         }, integer(1)),
         paste0("stage_", stages)
       )
@@ -361,7 +371,7 @@ summary_range <- function(v, fmt = function(x) format(x, trim = TRUE)) {
 #' diagnostics (balance, bounds, spatial) follow as their own bullets.
 #' @noRd
 summary_stage_realization <- function(st, is_replicated, random_size = NULL,
-                                      n_cert = 0L) {
+                                      n_cert = no_certainty()) {
   pools <- st$pools
   fmt_f <- function(f) sprintf("%.4f", f)
   fmt_n <- function(v) format(v, big.mark = ",", trim = TRUE)
@@ -533,7 +543,8 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL,
 #' stages have no sampling fraction because their FPC is Inf.
 #' @noRd
 summary_stage_fallback <- function(object_for_alloc, design, stage_spec,
-                                   stage_idx, is_replicated, n_cert = 0L) {
+                                   stage_idx, is_replicated,
+                                   n_cert = no_certainty()) {
   fpc_col <- paste0(".fpc_", stage_idx)
   if (!fpc_col %in% names(object_for_alloc)) {
     cli::cat_bullet("FPC information unavailable.", bullet = "warning")
@@ -850,28 +861,53 @@ summary_empty_parents <- function(records, stage_idx) {
 #' saw certainty only under `frame_digest = "full"`, so the default summary
 #' hid 194 certainty selections. A clustered stage counts its units, keyed
 #' by their ancestry. A stage with replacement has no certainty column.
+#'
+#' A certain unit whose pool holds only itself (`.fpc_k` of 1) is counted
+#' apart, as `single_unit`, because a reader takes "certainty" to mean a
+#' unit large enough to be taken for its size.
 #' @noRd
 summary_certainty_count <- function(sample, design, stage_idx) {
   col <- paste0(".certainty_", stage_idx)
   if (!col %in% names(sample) || nrow(sample) == 0L) {
-    return(0L)
+    return(no_certainty())
   }
   certain <- sample[[col]] %in% TRUE
+  fpc <- sample[[paste0(".fpc_", stage_idx)]]
+  single <- if (is_null(fpc)) rep(FALSE, length(certain)) else fpc %in% 1
   spec <- design$stages[[stage_idx]]
-  if (is_null(spec$clusters)) {
-    return(sum(certain))
+  count <- if (is_null(spec$clusters)) {
+    function(rows) sum(rows)
+  } else {
+    keys <- intersect(
+      unique(c(
+        collect_ancestor_cluster_vars(design, stage_idx), spec$clusters$vars
+      )),
+      names(sample)
+    )
+    df <- as.data.frame(sample)
+    function(rows) nrow(vctrs::vec_unique(df[rows, keys, drop = FALSE]))
   }
-  keys <- intersect(
-    unique(c(collect_ancestor_cluster_vars(design, stage_idx), spec$clusters$vars)),
-    names(sample)
+  c(
+    certainty = as.integer(count(certain & !single)),
+    single_unit = as.integer(count(certain & single))
   )
-  nrow(vctrs::vec_unique(as.data.frame(sample)[certain, keys, drop = FALSE]))
+}
+
+#' @noRd
+no_certainty <- function() {
+  c(certainty = 0L, single_unit = 0L)
 }
 
 #' @noRd
 summary_certainty_text <- function(n_cert) {
-  if (n_cert <= 0L) {
-    return(character(0))
-  }
-  paste0(n_cert, " certainty selection", if (n_cert > 1L) "s")
+  n <- n_cert[["certainty"]]
+  n_single <- n_cert[["single_unit"]]
+  c(
+    if (n > 0L) paste0(n, " certainty selection", if (n > 1L) "s"),
+    if (n_single > 0L) {
+      paste0(
+        n_single, " pool", if (n_single > 1L) "s", " of one unit taken whole"
+      )
+    }
+  )
 }

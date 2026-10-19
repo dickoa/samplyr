@@ -926,7 +926,7 @@ draw_balanced_stratified <- function(
     n_h <- min(n_h, N_h)
 
     if (!is_null(mos)) {
-      pik[idxs] <- sondage::inclusion_prob(frame[[mos]][idxs], n_h)
+      pik[idxs] <- mos_chances(frame[[mos]][idxs], n_h, draw_spec)$pik
     } else {
       pik[idxs] <- rep(n_h / N_h, N_h)
     }
@@ -1410,7 +1410,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
     prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
     if (draw_spec$method_type == "wr") {
       mos_vals <- data[[mos]]
-      pik <- sondage::expected_hits(mos_vals, n)
+      pik <- mos_chances(mos_vals, n, draw_spec)$pik
       idx <- sondage::unequal_prob_wr(
         pik,
         method = sondage_name,
@@ -1418,7 +1418,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
       )$sample
     } else if (draw_spec$method_type == "balanced") {
       pik <- if (!is_null(mos)) {
-        sondage::inclusion_prob(data[[mos]], n)
+        mos_chances(data[[mos]], n, draw_spec)$pik
       } else {
         rep(n / N, N)
       }
@@ -1441,7 +1441,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
       )$sample
     } else {
       mos_vals <- data[[mos]]
-      pik <- sondage::inclusion_prob(mos_vals, n)
+      pik <- mos_chances(mos_vals, n, draw_spec)$pik
       idx <- sondage::unequal_prob_wor(
         pik,
         method = sondage_name,
@@ -1481,12 +1481,11 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
         }
       },
       pps_poisson = {
-        mos_vals <- data[[mos]]
-        frac <- draw_spec$frac %||% (n / N)
-        raw_pik <- frac * mos_vals / sum(mos_vals) * N
-        # Count clipping before values become exactly one.
-        n_clipped <- sum(raw_pik > 1)
-        pik <- pmin(raw_pik, 1)
+        # Clipping is counted before values become exactly one.
+        chances <- mos_chances(data[[mos]], n, draw_spec,
+                               frac = draw_spec$frac)
+        n_clipped <- chances$n_clipped
+        pik <- chances$pik
         check_poisson_shortfall(
           pik,
           n_requested = n_target,
@@ -1509,8 +1508,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
       pps_sampford = ,
       pps_sps = ,
       pps_pareto = {
-        mos_vals <- data[[mos]]
-        pik <- sondage::inclusion_prob(mos_vals, n)
+        pik <- mos_chances(data[[mos]], n, draw_spec)$pik
         prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
         idx <- sondage::unequal_prob_wor(
           pik,
@@ -1521,8 +1519,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
       pps_multinomial = ,
       pps_chromy = {
         # Only registered WR methods may declare PRN support.
-        mos_vals <- data[[mos]]
-        pik <- sondage::expected_hits(mos_vals, n)
+        pik <- mos_chances(data[[mos]], n, draw_spec)$pik
         idx <- sondage::unequal_prob_wr(
           pik,
           method = sondage_method_name(method)
@@ -1531,7 +1528,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
       lpm2 = ,
       scps = {
         pik <- if (!is_null(mos)) {
-          sondage::inclusion_prob(data[[mos]], n)
+          mos_chances(data[[mos]], n, draw_spec)$pik
         } else {
           rep(n / N, N)
         }
@@ -1546,7 +1543,7 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
       },
       cube = {
         pik <- if (!is_null(mos)) {
-          sondage::inclusion_prob(data[[mos]], n)
+          mos_chances(data[[mos]], n, draw_spec)$pik
         } else {
           rep(n / N, N)
         }
@@ -1814,7 +1811,7 @@ draw_pps_zones <- function(data, n, method, mos_vals, draw_spec, zone, m) {
 }
 
 #' @noRd
-draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
+draw_pps_method <- function(data, n, method, mos_vals, draw_spec) {
   N <- nrow(data)
   # Only PPS Poisson clamps computed chances.
   n_clipped <- 0L
@@ -1837,14 +1834,14 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
     sondage_name <- sondage_method_name(method)
     prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
     if (draw_spec$method_type == "wr") {
-      pik <- sondage::expected_hits(mos_vals, n)
+      pik <- mos_chances(mos_vals, n, draw_spec)$pik
       idx <- sondage::unequal_prob_wr(
         pik,
         method = sondage_name,
         prn = prn_vals
       )$sample
     } else {
-      pik <- sondage::inclusion_prob(mos_vals, n)
+      pik <- mos_chances(mos_vals, n, draw_spec)$pik
       idx <- sondage::unequal_prob_wor(
         pik,
         method = sondage_name,
@@ -1858,10 +1855,9 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
     switch(
       method,
       pps_poisson = {
-        frac <- draw_spec$frac %||% (n / N)
-        raw_pik <- frac * mos_vals / sum(mos_vals) * N
-        n_clipped <- sum(raw_pik > 1)
-        pik <- pmin(raw_pik, 1)
+        chances <- mos_chances(mos_vals, n, draw_spec, frac = draw_spec$frac)
+        n_clipped <- chances$n_clipped
+        pik <- chances$pik
         prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
         idx <- sondage::unequal_prob_wor(
           pik,
@@ -1878,7 +1874,7 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
       pps_sampford = ,
       pps_sps = ,
       pps_pareto = {
-        pik <- sondage::inclusion_prob(mos_vals, n)
+        pik <- mos_chances(mos_vals, n, draw_spec)$pik
         prn_vals <- if (!is_null(draw_spec$prn)) data[[draw_spec$prn]] else NULL
         idx <- sondage::unequal_prob_wor(
           pik,
@@ -1889,7 +1885,7 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec = NULL) {
       pps_multinomial = ,
       pps_chromy = {
         # Built-in WR methods do not accept PRN.
-        pik <- sondage::expected_hits(mos_vals, n)
+        pik <- mos_chances(mos_vals, n, draw_spec)$pik
         idx <- sondage::unequal_prob_wr(
           pik,
           method = sondage_method_name(method)

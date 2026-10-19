@@ -106,8 +106,13 @@ test_that("later-stage cluster ids are judged within their parent", {
       cluster_by(block, nest = nest) |>
       draw(n = 1)
   }
-  # Block ids repeat across towns, and each block lies in one stratum.
-  expect_identical(nrow(execute(later(FALSE), frame, seed = 1)), 30L)
+  # Block ids repeat across towns, and each block lies in one stratum, so
+  # the stage takes every block.
+  expect_warning(
+    s <- execute(later(FALSE), frame, seed = 1),
+    class = "samplyr_warning_census"
+  )
+  expect_identical(nrow(s), 30L)
 
   # Block ids restart in every stratum of the stage.
   frame$block <- (frame$hh - 1L) %% 2L + 1L

@@ -127,13 +127,16 @@
 #' meanings. Keep earlier measurements under separate names if both are
 #' needed.
 #'
-#' On a stratified master whose stratum means differ strongly relative to
-#' the variation within them, the two-phase variance of a *total* can be
-#' negative, and [survey::svytotal()] returns `NaN` with base R's
-#' `sqrt(v): NaNs produced`. That is [survey::twophase()]'s exact estimator,
-#' computed only when an estimator is called, so samplyr cannot intercept
-#' it. `method = "approx"` gives a finite standard error. A mean is
-#' unaffected.
+#' When phase 2 keeps unequal shares of the phase-1 strata, survey 4.5
+#' gives each phase-1 stratum another stratum's sample size in the phase-1
+#' part of this variance. The variance of a *total* then depends on the
+#' outcome's level. In simulations of a wave it averaged a quarter of the
+#' true variance or less and was often negative. The export rebuilds that
+#' part by survey's own formula with the sizes in place, which changes
+#' nothing where survey's result was already right. A phase 2 stratified
+#' across the phase-1 strata can still give a negative variance in some
+#' samples, from the instability of the Horvitz-Thompson form, and
+#' `method = "approx"` gives a finite standard error there.
 #'
 #' A clustered first phase needs its second phase drawn inside each of its
 #' units, with `stratify_by(<unit>)`, or by taking whole phase-1 units
@@ -144,14 +147,31 @@
 #' and the export warns (`samplyr_warning_twophase_across_units`). The
 #' weights are exact either way.
 #'
-#' [survey::twophase()] takes no `pps` for the first phase, so a two-phase
-#' sample or wave whose phase 1 was drawn with unequal probabilities without
-#' replacement is refused (`samplyr_error_twophase_phase1_pps`,
+#' One shape is not exported as two phases. Phase 1's final stage draws
+#' elements by `srswor` or `systematic`, and phase 2 draws the same way,
+#' without clusters, with one stratum per final-stage pool of phase 1, as in
+#' `stratify_by(ea_id)` when the final stage draws households within EAs. A
+#' simple random subsample of a simple random sample is a simple random
+#' sample, so the two phases are phase 1's multistage design with a smaller
+#' final take. `as_svydesign()` and `as_svrepdesign()` export it that way,
+#' with phase 1's strata, clusters and finite population corrections and
+#' phase 2's weights, whatever phase 1's earlier stages drew. Half of each
+#' EA's households kept for a second questionnaire is this shape. `method`
+#' does not apply to it, and no row identifier is needed to link the
+#' phases. When phase 2 is `systematic`, the final take is a systematic
+#' one, and `systematic_variance` applies to it, unless phase 2 took every
+#' unit of every pool. A phase 2 stratified more coarsely or more finely than the pools,
+#' clustered, or drawn with unequal probabilities keeps the two-phase route.
+#'
+#' [survey::twophase()] takes no `pps` for the first phase, so any other
+#' two-phase sample or wave whose phase 1 was drawn with unequal
+#' probabilities without replacement is refused (`samplyr_error_twophase_phase1_pps`,
 #' `samplyr_error_wave_phase1_pps`). So are `cube`, first-stage
 #' `pps_poisson` and the spatial methods, which are unsupported at either
 #' phase. Equal-probability first phases export, stratified, clustered,
 #' multistage and with-replacement alike. No two-phase sample, a wave
-#' included, has a replicate export. The weights of a refused sample are
+#' included, has a replicate export, except the subsample within pools
+#' above, which is exported as one phase. The weights of a refused sample are
 #' exact, so totals and means are right. For a variance, an ultimate-cluster
 #' approximation treats phase 1's units as drawn with replacement and
 #' carries everything below in them. It is conservative, by the margins
@@ -265,6 +285,14 @@
 #'
 #' # Brewer's variance approximation at the PPS stage
 #' svy <- as_svydesign(sample)
+#'
+#' # Half of each EA's households, kept as a second phase. It is exported as
+#' # the two-stage design with a take of 4.
+#' half <- sampling_design() |>
+#'   stratify_by(ea_id) |>
+#'   draw(n = 4) |>
+#'   execute(sample, seed = 2027)
+#' svy_half <- as_svydesign(half)
 #'
 #' # A joint-probability matrix instead, for a single-stage Sampford sample,
 #' # whose matrix is exact. A matrix needs one row per stage-1 unit.
@@ -1003,7 +1031,7 @@ build_activation_twophase <- function(
     ),
     dots
   )
-  result <- do.call(survey::twophase, args)
+  result <- twophase_phase1_aligned(do.call(survey::twophase, args))
   result$call <- survey_export_call("twophase", args)
   result
 }
@@ -1157,6 +1185,172 @@ warn_twophase_across_units <- function(design1, stages1,
     ),
     class = "samplyr_warning_twophase_across_units",
     call = call
+  )
+}
+
+#' Phase 1's final-stage pool variables, when phase 2 subsamples within them
+#'
+#' A simple random subsample of a simple random sample is a simple random
+#' sample. So a phase 2 that draws by equal probability, without clusters,
+#' within each final-stage pool of a phase 1 whose final stage draws elements
+#' the same way, one phase-2 stratum per pool, is phase 1's multistage design
+#' with a smaller final take. Read on the phase-1 rows, which carry the
+#' phase-2 design's variables because they were its frame. `NULL` for any
+#' other shape.
+#' @noRd
+within_pool_subsample_vars <- function(design2, stages2, phase1) {
+  if (!is_null(attr(phase1, "metadata")$prev_phase)) {
+    return(NULL)
+  }
+  equal_wor_elements <- function(spec) {
+    is_null(spec$clusters) &&
+      spec$draw_spec$method %in% c("srswor", "systematic") &&
+      is_null(spec$draw_spec$prn) &&
+      is_null(spec$draw_spec$method_type)
+  }
+  if (
+    length(design2$stages) != 1L ||
+      !identical(as.integer(stages2), 1L) ||
+      !equal_wor_elements(design2$stages[[1]])
+  ) {
+    return(NULL)
+  }
+  design1 <- get_design(phase1)
+  stages1 <- get_stages_executed(phase1)
+  last <- length(design1$stages)
+  if (
+    !identical(as.integer(stages1), seq_len(last)) ||
+      !equal_wor_elements(design1$stages[[last]]) ||
+      any(vapply(
+        design1$stages,
+        function(spec) is_multi_hit_method(spec$draw_spec),
+        logical(1)
+      ))
+  ) {
+    return(NULL)
+  }
+
+  pool_vars <- unique(c(
+    collect_ancestor_cluster_vars(design1, last),
+    design1$stages[[last]]$strata$vars
+  ))
+  strata2 <- design2$stages[[1]]$strata$vars %||% character(0)
+  df1 <- as.data.frame(phase1)
+  if (!all(c(pool_vars, strata2) %in% names(df1))) {
+    return(NULL)
+  }
+  n_groups <- function(vars) {
+    if (length(vars) == 0L) 1L else nrow(vctrs::vec_unique(df1[vars]))
+  }
+  n_pools <- n_groups(pool_vars)
+  if (
+    n_groups(strata2) != n_pools ||
+      n_groups(unique(c(pool_vars, strata2))) != n_pools
+  ) {
+    return(NULL)
+  }
+  pool_vars
+}
+
+#' Phase 1's design as the composed export reads it
+#'
+#' A systematic phase 2 makes the composed final take systematic. The final
+#' stage carries that method, so every export and `variance_estimators()`
+#' treat its variance as the approximation it is. A phase 2 that took every
+#' unit of every pool (`census`) selected nothing and leaves phase 1's method.
+#' @noRd
+composed_design <- function(design1, design2, census) {
+  if (
+    identical(design2$stages[[1]]$draw_spec$method, "systematic") &&
+      !isTRUE(census)
+  ) {
+    last <- length(design1$stages)
+    design1$stages[[last]]$draw_spec$method <- "systematic"
+  }
+  design1
+}
+
+#' The single-phase sample a two-phase export stands for, if there is one
+#' @noRd
+composed_subsample <- function(x) {
+  phase_info <- survey_phase_info(x)
+  if (!phase_info$is_twophase || survey_is_activation(phase_info)) {
+    return(NULL)
+  }
+  compose_within_pool_subsample(x)
+}
+
+#' A subsample within phase 1's final-stage pools, as phase 1's sample
+#'
+#' Every phase-1 quantity the export reads (each stage's weight, fpc,
+#' certainty, zone and pair, and the ids and strata) is constant within a
+#' final-stage pool, so phase 2's rows take them from their pool and no row
+#' identifier is needed. The final stage's weight absorbs phase 2's, so its
+#' take, probability and weight agree. `NULL` when the shape does not apply.
+#' @noRd
+compose_within_pool_subsample <- function(x) {
+  phase1 <- attr(x, "metadata")$prev_phase$sample
+  design2 <- get_design(x)
+  stages2 <- get_stages_executed(x)
+  pool_vars <- within_pool_subsample_vars(design2, stages2, phase1)
+  if (is_null(pool_vars)) {
+    return(NULL)
+  }
+  design1 <- get_design(phase1)
+  stages1 <- get_stages_executed(phase1)
+  df1 <- as.data.frame(phase1)
+  df2 <- as.data.frame(x)
+
+  stage_cols <- intersect(
+    paste0(
+      c(".weight_", ".fpc_", ".certainty_", ".zone_", ".pair_"),
+      rep(stages1, each = 5L)
+    ),
+    names(df1)
+  )
+  lookup <- vctrs::vec_unique(df1[c(pool_vars, stage_cols)])
+  if (vctrs::vec_duplicate_any(lookup[pool_vars])) {
+    return(NULL)
+  }
+  row <- if (length(pool_vars) == 0L) {
+    rep(1L, nrow(df2))
+  } else {
+    vctrs::vec_match(df2[pool_vars], lookup[pool_vars])
+  }
+  if (anyNA(row)) {
+    return(NULL)
+  }
+
+  weight <- df2$.weight
+  factor2 <- df2[[paste0(".weight_", stages2)]]
+  df2 <- df2[setdiff(names(df2), samplyr_reserved_names(names(df2)))]
+  for (col in stage_cols) {
+    df2[[col]] <- lookup[[col]][row]
+  }
+  last <- paste0(".weight_", max(stages1))
+  df2[[last]] <- df2[[last]] * factor2
+  df2$.weight <- weight
+  df2$.sample_id <- seq_len(nrow(df2))
+  df2$.stage <- max(stages1)
+
+  product <- Reduce(`*`, df2[paste0(".weight_", stages1)])
+  if (!isTRUE(all.equal(product, weight))) {
+    cli_abort(
+      "Internal error: the composed stage weights do not multiply to
+       {.field .weight}.",
+      call = NULL,
+      class = "samplyr_error_internal"
+    )
+  }
+  new_tbl_sample(
+    df2,
+    composed_design(
+      design1, design2,
+      census = spec_stage_census(as.data.frame(x), stages2)
+    ),
+    stages1,
+    seed = attr(phase1, "seed"),
+    metadata = attr(phase1, "metadata")
   )
 }
 
@@ -2247,6 +2441,22 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
     ))
   }
 
+  composed <- composed_subsample(x)
+  if (!is_null(composed)) {
+    if (!is_null(method)) {
+      abort_samplyr(
+        c(
+          "{.arg method} is only valid when converting a two-phase sample.",
+          "i" = "This second phase draws within each final-stage pool of
+                 phase 1, so it exports as phase 1's multistage design with a
+                 smaller final take, not through {.fn survey::twophase}."
+        ),
+        class = "samplyr_error_survey_argument"
+      )
+    }
+    x <- composed
+  }
+
   phase_info <- survey_validate_phase_support(
     x,
     allow_twophase = TRUE,
@@ -2721,7 +2931,7 @@ build_twophase_svydesign <- function(
   if (twophase_across_units(df1, spec1, design2, stages_executed)) {
     warn_twophase_across_units(design1, stages1, call = call)
   }
-  result <- do.call(survey::twophase, args)
+  result <- twophase_phase1_aligned(do.call(survey::twophase, args))
   if (joint_route) {
     result <- twophase_phase2_syg(result, sum(in_phase2), call = call)
   }
@@ -2769,6 +2979,88 @@ twophase_phase2_syg <- function(result, n2, call = caller_env()) {
   result$dcheck$phase2 <- Matrix::forceSymmetric(dcheck$phase2 - lower)
   result$dcheck$full <- Matrix::forceSymmetric(dcheck$full - lower)
   result
+}
+
+#' Rebuild the phase-1 term of a two-phase variance
+#'
+#' survey 4.5 counts the units of each phase-1 stratum over every phase-1
+#' row but reads those counts by position among the phase-2 rows. Once
+#' phase 2 drops units unevenly, later strata take a neighbor's count, the
+#' matrix stops cancelling a constant, and the variance of a total depends
+#' on the outcome's level. It can then be negative in every sample. The
+#' phase-1 matrix is rebuilt here by survey's own formula with the counts
+#' aligned, and the full matrix recombined from it as survey combines them.
+#' Where the counts were already aligned the result is survey's own, so the
+#' export stays right once survey corrects this.
+#' @noRd
+twophase_phase1_aligned <- function(result) {
+  design1 <- result$phase1$full
+  if (
+    !inherits(result, "twophase2") ||
+      !is.null(design1$dcheck) ||
+      isTRUE(design1$phase1_is_iid)
+  ) {
+    return(result)
+  }
+  subset <- result$subset
+  n <- sum(subset)
+  with_replacement <- is.null(design1$fpc$popsize)
+  phase1 <- Matrix::sparseMatrix(
+    i = integer(), j = integer(), x = numeric(), dims = c(n, n)
+  )
+  for (stage in seq_len(NCOL(design1$cluster))) {
+    id <- design1$cluster[, stage]
+    strata <- design1$strata[, stage]
+    first <- rep(FALSE, length(id))
+    first[subset] <- !duplicated(id[subset])
+    count <- stats::ave(seq_along(id), strata, FUN = function(k) {
+      rep(length(unique(id[k])), length(k))
+    })
+    stage_check <- stratified_dcheck(
+      strata[first],
+      design1$allprob[first, stage],
+      count[first],
+      with_replacement
+    )
+    expand <- Matrix::sparseMatrix(
+      i = seq_len(n),
+      j = match(id[subset], id[first]),
+      x = 1,
+      dims = c(n, sum(first))
+    )
+    this_stage <- expand %*% stage_check %*% Matrix::t(expand)
+    phase1 <- phase1 + this_stage - phase1 * this_stage
+  }
+  phase2 <- result$dcheck$phase2
+  result$dcheck$phase1 <- phase1
+  result$dcheck$full <- phase1 + phase2 - phase1 * phase2
+  result
+}
+
+#' One stage's phase-1 check matrix, by stratum
+#'
+#' Units of a stratum pair at `-(1 - p) / (n - 1)` under sampling without
+#' replacement, and the diagonal is `1 - p`, as survey writes it.
+#' @noRd
+stratified_dcheck <- function(strata, prob, count, with_replacement) {
+  n <- length(strata)
+  pairs <- if (with_replacement) {
+    list(i = integer(), j = integer())
+  } else {
+    members <- split(seq_len(n), strata)
+    list(
+      i = unlist(lapply(members, function(k) rep(k, times = length(k)))),
+      j = unlist(lapply(members, function(k) rep(k, each = length(k))))
+    )
+  }
+  off <- pairs$i != pairs$j
+  i <- pairs$i[off]
+  Matrix::sparseMatrix(
+    i = c(i, seq_len(n)),
+    j = c(pairs$j[off], seq_len(n)),
+    x = c(-(1 - prob[i]) / (count[i] - 1), 1 - prob),
+    dims = c(n, n)
+  )
 }
 
 #' Build a single-phase survey.design from a tbl_sample.
@@ -3345,7 +3637,7 @@ multiframe_overlaps <- function(x) {
 #'   builds them and warns once per call, naming every affected stage.
 #'   `"approximate"` builds them silently, for a caller who has acknowledged
 #'   the approximation, and `"error"` refuses. Naming a `type` is not an
-#'   acknowledgement, since no type reproduces systematic selection. Census
+#'   acknowledgment, since no type reproduces systematic selection. Census
 #'   stages are exempt, as in [as_svydesign()]. The choice and the affected
 #'   stages are recorded in the `"samplyr_systematic_variance"` attribute of
 #'   the result.
@@ -3355,7 +3647,10 @@ multiframe_overlaps <- function(x) {
 #' @details
 #' Replicate conversion supports single-phase designs, including multistage
 #' samples, shared weights and independent frame stacks. Two-phase replicate
-#' export is unsupported. `"auto"` keeps survey's method choice, whether or
+#' export is unsupported, except for a second phase drawn within each
+#' final-stage pool of phase 1, which is phase 1's multistage design with a
+#' smaller final take and is replicated as that design ([as_svydesign()]
+#' describes the shape). `"auto"` keeps survey's method choice, whether or
 #' not svrep is installed.
 #'
 #' ## The first stage under the generic types
@@ -3536,6 +3831,7 @@ as_svrepdesign.tbl_sample <- function(
     ))
   }
 
+  x <- composed_subsample(x) %||% x
   survey_validate_phase_support(
     x,
     allow_twophase = FALSE,

@@ -32,7 +32,7 @@ Imports:
     dplyr (>= 1.1.0),
     jsonlite,
     sondage (>= 0.11.0),
-    svyplan (>= 0.15.0),
+    svyplan (>= 0.16.0),
     withr
 Suggests:
    covr,
@@ -53,4 +53,4 @@ BugReports: https://gitlab.com/dickoa/samplyr/-/work_items
 Remotes:
     gitlab::dickoa/sondage,
     gitlab::dickoa/svyplan
-Config/roxygen2/version: 8.1.0
+Config/roxygen2/version: 8.1.1

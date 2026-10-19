@@ -1682,3 +1682,49 @@ test_that("a wave export takes no pps", {
     class = "samplyr_error_twophase_phase2_pps"
   )
 })
+
+## Phase-1 strata of unequal size
+#
+# A wave keeps a fixed share of each phase-1 stratum, so its weights add up
+# to the stratum size in every sample and adding a constant to the outcome
+# cannot change the variance of its total. With unequal takes, survey 4.5's
+# own phase-1 term changed by a factor of 190 under that shift and was
+# negative in 283 of 300 samples.
+
+unequal_take_wave <- function(takes, seed = 3) {
+  pop <- data.frame(
+    id = 1:4000,
+    region = rep(c("a", "b", "c", "d"), each = 1000)
+  )
+  pop$y <- 100 + stats::rnorm(nrow(pop), 0, 20)
+  pop$y_shifted <- pop$y + 1000
+  rotation <- expand.grid(panel = 1:4, wave = 1:8)
+  rotation$active <- ((rotation$wave - rotation$panel) %% 4) < 2
+  master <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = takes) |>
+    execute(pop, seed = seed, panels = rotation)
+  execute(master, wave = 5)
+}
+
+test_that("a two-phase total's variance ignores the outcome's level", {
+  skip_if_not_installed("survey")
+  svy <- as_svydesign(unequal_take_wave(c(a = 5, b = 6, c = 7, d = 9)))
+  v <- stats::vcov(survey::svytotal(~y, svy))[1, 1]
+  v_shifted <- stats::vcov(survey::svytotal(~y_shifted, svy))[1, 1]
+  expect_gt(v, 0)
+  expect_equal(v_shifted, v, tolerance = 1e-8)
+})
+
+test_that("the phase-1 term is survey's own where its stratum counts align", {
+  skip_if_not_installed("survey")
+  wave <- unequal_take_wave(8)
+  rebuilt <- as_svydesign(wave)
+  local_mocked_bindings(twophase_phase1_aligned = function(result) result)
+  as_built <- as_svydesign(wave)
+  expect_equal(
+    as.matrix(rebuilt$dcheck$full),
+    as.matrix(as_built$dcheck$full),
+    tolerance = 1e-12
+  )
+})

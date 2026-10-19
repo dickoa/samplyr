@@ -61,7 +61,13 @@ Validation checks include:
 \item Presence of required clustering variables
 \item Presence of measure of size (MOS) variables for PPS sampling
 \item Non-empty frame
-\item Positive values for MOS variables
+\item Finite, non-negative values for MOS variables
+\item In every candidate pool of a stage drawn by size, after any certainty
+selection, a positive total measure of size
+(\code{samplyr_error_mos_zero_sum}), and for a draw without replacement
+other than \code{pps_poisson}, whose probabilities sum to the take, at
+least as many units of positive size as the take
+(\code{samplyr_error_mos_positive_short})
 }
 
 A fixed-size stage drawn without replacement whose take exceeds the

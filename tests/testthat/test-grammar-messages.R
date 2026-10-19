@@ -63,7 +63,11 @@ test_that("a svyplan allocation at a stage with two strata says what to do", {
     error = identity
   )
   expect_s3_class(err, "samplyr_error_svyplan_multivariable_strata")
-  expect_match(conditionMessage(err), "one column", fixed = TRUE)
+  expect_match(
+    cli::ansi_strip(conditionMessage(err)),
+    "has no column \"sex\".",
+    fixed = TRUE
+  )
 })
 
 ## The frame goes to execute()

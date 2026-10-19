@@ -25,7 +25,9 @@
 #' @param frame The register both designs are resolved on, a data frame.
 #' @param ... Must be empty. Arguments after it are matched by exact name.
 #' @param key A bare column of `frame` identifying the population unit. It
-#'   must be unique and have no missing values.
+#'   must be unique, have no missing values, and not share a name with a
+#'   column the unit table adds (`probability_x`, `probability_y`,
+#'   `abs_diff`, `rel_diff`, `agree`).
 #' @param level What to compare, `"allocation"` (default) or
 #'   `"probabilities"`.
 #' @param atol,rtol Absolute and relative tolerances. Two values `a` and `b`
@@ -180,6 +182,18 @@ compare_designs <- function(x, y, frame, ..., key,
     rlang::enquo(key),
     class = "samplyr_error_exante_key"
   )
+  generated <- c("probability_x", "probability_y", "abs_diff", "rel_diff",
+                 "agree")
+  if (key_col %in% generated) {
+    abort_samplyr(
+      c(
+        "{.arg key} must not be named {.field {key_col}}.",
+        "i" = "The unit table adds the columns {.field {generated}}.
+               Rename the key column in {.arg frame}."
+      ),
+      class = "samplyr_error_exante_key"
+    )
+  }
 
   result <- if (identical(level, "allocation")) {
     compare_allocations(x, y, frame, key_col, atol, rtol, call = call)

@@ -72,11 +72,12 @@ ve_designs <- function() {
 
 # What an estimator's export raised: the first samplyr error class, and the
 # samplyr warning classes.
-ve_outcome <- function(key, sample, frame, twophase = FALSE) {
+ve_outcome <- function(key, sample, frame, twophase = FALSE,
+                       joint_source = sample) {
   pps <- if (twophase) {
     "brewer"
   } else if (identical(key, "joint")) {
-    joint <- suppressWarnings(joint_expectation(sample, frame))
+    joint <- suppressWarnings(joint_expectation(joint_source, frame))
     survey::ppsmat(joint[[1]])
   }
   warnings <- character(0)
@@ -222,11 +223,18 @@ ve_check_twophase <- function(label, design1, design2, frame, seeds = 1:2) {
     sample <- suppressMessages(suppressWarnings(
       execute(design2, phase1, seed = seed)
     ))
+    # A subsample within phase 1's final pools exports as phase 1's design.
+    composed <- samplyr:::composed_subsample(sample)
     for (i in seq_along(keys)) {
-      if (keys[i] == "random_groups") {
+      if (keys[i] == "random_groups" || report$status[i] == "not applicable") {
         next
       }
-      outcome <- ve_outcome(keys[i], sample, NULL, twophase = TRUE)
+      # Its stage-1 matrix is the phase-1 sample's.
+      outcome <- if (is.null(composed)) {
+        ve_outcome(keys[i], sample, NULL, twophase = TRUE)
+      } else {
+        ve_outcome(keys[i], sample, frame, joint_source = phase1)
+      }
       why <- ve_disagreement(report[i, ], outcome)
       if (!is_null(why)) {
         problems <- c(problems, paste0(label, " seed ", seed, " ", keys[i],
@@ -275,7 +283,14 @@ test_that("every two-phase row agrees with what its export raises", {
                               add_stage() |> cluster_by(id) |> draw(n = 2)),
     wr_phase1 = list(sampling_design() |> cluster_by(cluster) |>
                        draw(n = 8, method = "srswr"),
-                     sampling_design() |> cluster_by(id) |> draw(n = 10))
+                     sampling_design() |> cluster_by(id) |> draw(n = 10)),
+    # A subsample within each final-stage pool exports as phase 1's design.
+    within_pools = list(sampling_design() |>
+                          add_stage() |> cluster_by(cluster) |>
+                          draw(n = 8, method = "pps_brewer", mos = mos) |>
+                          add_stage() |> draw(n = 4),
+                        sampling_design() |> stratify_by(cluster) |>
+                          draw(n = 2))
   )
   problems <- unlist(Map(function(label, case) {
     ve_check_twophase(label, case[[1]], case[[2]], frame)

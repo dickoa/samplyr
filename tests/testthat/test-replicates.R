@@ -164,6 +164,41 @@ test_that("reps on continuation is allowed when PRN was on a prior stage", {
   expect_equal(sort(unique(result$.replicate)), 1:3)
 })
 
+test_that("inherited replicates + PRN on an executed stage is an error", {
+  tf <- data.frame(
+    psu = rep(1:10, each = 10),
+    id = 1:100,
+    u = ((1:100 * 37) %% 100 + 0.5) / 100
+  )
+  prn_stage <- sampling_design() |>
+    draw(frac = 0.5, method = "bernoulli", prn = u)
+
+  # A replicated phase 1 used as the frame of a PRN phase 2.
+  phase1 <- sampling_design() |> draw(n = 60) |> execute(tf, seed = 1, reps = 4)
+  expect_error(
+    execute(prn_stage, phase1, seed = 2),
+    class = "samplyr_error_replicated_sample_unsupported"
+  )
+  expect_error(execute(prn_stage, phase1, seed = 2), "permanent random")
+
+  # A replicated partial sample continued into a PRN stage.
+  design <- sampling_design() |>
+    add_stage() |>
+      cluster_by(psu) |>
+      draw(n = 5) |>
+    add_stage() |>
+      draw(frac = 0.5, method = "bernoulli", prn = u)
+  stage1 <- execute(design, tf, stages = 1, seed = 1, reps = 4)
+  expect_error(
+    execute(stage1, tf, seed = 2),
+    class = "samplyr_error_replicated_sample_unsupported"
+  )
+
+  # Without PRN, each replicate draws on its own.
+  plain <- sampling_design() |> draw(frac = 0.5, method = "bernoulli")
+  expect_equal(sort(unique(execute(plain, phase1, seed = 2)$.replicate)), 1:4)
+})
+
 ## Multi-stage designs
 
 test_that("two-stage replicated sampling", {

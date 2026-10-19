@@ -689,3 +689,136 @@ test_that("a joint-target cluster plan fields its fixed take at stage 2", {
     stats::setNames(as.data.frame(plan)$n_psu_int, c("a", "b"))
   )
 })
+
+## Plans on several stratification variables
+
+two_key_plan_frame <- function() {
+  data.frame(
+    stratum = c("North.Urban", "North.Rural", "South.Urban", "South.Rural"),
+    region = c("North", "North", "South", "South"),
+    residence = c("Urban", "Rural", "Urban", "Rural"),
+    N = c(400, 600, 300, 700),
+    sd = c(1, 1.2, 0.9, 1.1)
+  )
+}
+
+two_key_element_frame <- function() {
+  strata <- two_key_plan_frame()
+  frame <- strata[rep(seq_len(nrow(strata)), strata$N), c("region", "residence")]
+  frame$id <- seq_len(nrow(frame))
+  frame$cell <- paste(frame$region, frame$residence, sep = ".")
+  frame
+}
+
+test_that("a plan carrying the strata columns fields a two-variable stage", {
+  plan <- svyplan::n_alloc(two_key_plan_frame(), n = 200)
+  d <- as.data.frame(plan)
+  frame <- two_key_element_frame()
+
+  design <- sampling_design() |>
+    stratify_by(region, residence) |>
+    draw(n = plan)
+  expect_identical(design$stages[[1]]$strata$vars, c("region", "residence"))
+  expect_identical(
+    design$stages[[1]]$draw_spec$n,
+    data.frame(region = d$region, residence = d$residence, n = d$n_int)
+  )
+  expect_match(
+    paste(capture.output(print(design)), collapse = "\n"),
+    "region, residence",
+    fixed = TRUE
+  )
+
+  s <- execute(design, frame, seed = 3)
+  pasted <- sampling_design() |>
+    stratify_by(cell) |>
+    draw(n = stats::setNames(d$n_int, d$stratum)) |>
+    execute(frame, seed = 3)
+  got <- table(paste(s$region, s$residence, sep = "."))
+  expect_identical(as.integer(got[d$stratum]), as.integer(d$n_int))
+  expect_identical(
+    as.integer(table(pasted$cell)[d$stratum]),
+    as.integer(got[d$stratum])
+  )
+})
+
+test_that("a two-stage plan keys both stages on the strata columns", {
+  fr <- data.frame(
+    stratum = c("North.Urban", "North.Rural", "South.Urban", "South.Rural"),
+    region = c("North", "North", "South", "South"),
+    residence = c("Urban", "Rural", "Urban", "Rural"),
+    N = 2000, sd = c(14, 16, 15, 13), mean = c(58, 62, 60, 59),
+    icc_psu = c(0.04, 0.06, 0.05, 0.03),
+    cost_psu = c(400, 550, 450, 500), cost_ssu = c(45, 60, 50, 55)
+  )
+  plan <- svyplan::n_alloc(fr, cv = 0.02)
+  d <- as.data.frame(plan)
+  expect_identical(
+    coerce_svyplan_n(plan, stage_index = 1L, clustered = TRUE,
+                     strata_vars = c("region", "residence")),
+    data.frame(region = d$region, residence = d$residence, n = d$n_psu_int)
+  )
+  expect_identical(
+    coerce_svyplan_n(plan, stage_index = 2L,
+                     strata_vars = c("residence", "region")),
+    data.frame(residence = d$residence, region = d$region,
+               n = as.integer(d$n_per_psu_int))
+  )
+
+  frame <- data.frame(
+    region = rep(c("North", "South"), each = 4000),
+    residence = rep(rep(c("Urban", "Rural"), each = 2000), 2),
+    ea = rep(sprintf("EA%03d", 1:400), each = 20),
+    hh = 1:8000
+  )
+  # Each EA lies in one cell, so the other three are absent from it.
+  expect_message(
+    res <- sampling_design() |>
+      stratify_by(region, residence) |>
+      cluster_by(ea) |>
+      draw(n = plan) |>
+      add_stage() |>
+      stratify_by(region, residence) |>
+      draw(n = plan) |>
+      execute(frame, seed = 2),
+    class = "samplyr_message_absent_strata"
+  )
+  key <- paste(res$region, res$residence, sep = ".")
+  eas <- unique(data.frame(ea = res$ea, key = key))
+  expect_identical(as.integer(table(eas$key)[d$stratum]), d$n_psu_int)
+  expect_identical(
+    as.integer(table(key)[d$stratum]),
+    d$n_psu_int * as.integer(d$n_per_psu_int)
+  )
+})
+
+test_that("a plan without a strata column is refused and names it", {
+  fr <- two_key_plan_frame()
+  fr$region <- match(fr$region, c("North", "South"))
+  plan <- svyplan::n_alloc(fr, n = 200)
+  expect_false("region" %in% names(as.data.frame(plan)))
+  err <- tryCatch(
+    sampling_design() |> stratify_by(region, residence) |> draw(n = plan),
+    error = identity
+  )
+  expect_s3_class(err, "samplyr_error_svyplan_multivariable_strata")
+  msg <- cli::ansi_strip(conditionMessage(err))
+  expect_match(msg, "has no column \"region\".", fixed = TRUE)
+  expect_match(msg, "factor()", fixed = TRUE)
+})
+
+test_that("strata columns that do not tell the plan's rows apart are refused", {
+  fr <- two_key_plan_frame()
+  fr$residence <- "All"
+  plan <- svyplan::n_alloc(fr, n = 200)
+  err <- tryCatch(
+    sampling_design() |> stratify_by(region, residence) |> draw(n = plan),
+    error = identity
+  )
+  expect_s3_class(err, "samplyr_error_svyplan_multivariable_strata")
+  expect_match(
+    cli::ansi_strip(conditionMessage(err)),
+    "do not tell its strata apart",
+    fixed = TRUE
+  )
+})

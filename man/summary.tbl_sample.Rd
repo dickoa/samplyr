@@ -21,8 +21,12 @@ A \code{summary_tbl_sample} object, which prints the summary below.
 Its fields hold the figures the print shows: \code{n}, \code{stages}, \code{seed},
 \code{weights} (mean, minimum, maximum and coefficient of variation of
 \code{.weight}), \code{design_effect} and \code{effective_n} (as \code{\link[=design_effect]{design_effect()}} and
-\code{\link[=effective_n]{effective_n()}} give them), and \code{certainty}, the units taken with
-certainty at each executed stage. Weight figures are \code{NULL} for an
+\code{\link[=effective_n]{effective_n()}} give them), \code{certainty}, the units taken with
+certainty at each executed stage, and \code{single_unit_pools}, the pools of
+one unit each stage took whole. Such a unit is certain too, as
+\code{.certainty_k} records, but it is counted only in \code{single_unit_pools},
+so a stage of unsegmented EAs does not read as large units taken for
+their size. Weight figures are \code{NULL} for an
 empty sample and for stacked replicates, which the print also leaves
 out. \code{sample} is the summarized sample itself.
 }

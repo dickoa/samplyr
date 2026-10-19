@@ -453,6 +453,228 @@ test_that("as_svydesign errors for two-phase with PPS at phase 1", {
   expect_false(grepl("separately", conditionMessage(err), fixed = TRUE))
 })
 
+## A subsample within the final-stage pools exports as phase 1's design
+
+# 40 EAs in two regions, each listing 25 to 60 households. EAs are drawn by
+# PPS, 12 households in each, and phase 2 keeps half of them in every EA.
+subsample_frame <- function() {
+  eas <- data.frame(
+    ea = sprintf("e%02d", 1:40),
+    region = rep(c("North", "South"), each = 20),
+    size = 25 + (seq_len(40) * 7) %% 36
+  )
+  hh <- eas[rep(seq_len(nrow(eas)), eas$size), ]
+  hh$hh <- seq_len(nrow(hh))
+  hh$y <- (hh$hh %% 11) + (hh$region == "South") * 3
+  rownames(hh) <- NULL
+  hh
+}
+
+subsample_phase1 <- function(method = "pps_systematic", take = 12) {
+  design <- sampling_design() |>
+    add_stage("EAs") |>
+    stratify_by(region) |>
+    cluster_by(ea) |>
+    draw(n = 5, method = method, mos = size) |>
+    add_stage("Households") |>
+    draw(n = take, method = "systematic")
+  execute(design, subsample_frame(), seed = 1)
+}
+
+half_by_ea <- function(frac = 0.5) {
+  sampling_design() |>
+    stratify_by(ea) |>
+    draw(frac = frac, method = "systematic")
+}
+
+test_that("a half sample of each EA's households exports as a multistage design", {
+  skip_if_not_installed("survey")
+  phase1 <- subsample_phase1()
+  # The EA id repeats over households, and the pools link the phases.
+  expect_no_warning(validate_frame(half_by_ea(), phase1))
+  phase2 <- execute(half_by_ea(), phase1, seed = 2)
+
+  svy <- as_svydesign(phase2, systematic_variance = "approximate")
+  expect_s3_class(svy, "survey.design2")
+  expect_false(inherits(svy, "twophase2"))
+  expect_equal(unname(weights(svy)), phase2$.weight)
+
+  # The household stage now takes 6 of each EA's listing.
+  per_ea <- table(phase2$ea)
+  expect_true(all(per_ea == 6L))
+  listed <- table(subsample_frame()$ea)
+  expect_equal(
+    unname(svy$fpc$sampsize[, 2]),
+    rep(6, nrow(phase2))
+  )
+  expect_equal(
+    unname(svy$fpc$popsize[, 2]),
+    as.numeric(listed[phase2$ea])
+  )
+
+  # Analysis columns added to phase 2 are carried.
+  phase2$male <- phase2$y > 5
+  expect_true("male" %in% names(as_svydesign(
+    phase2, systematic_variance = "approximate"
+  )$variables))
+})
+
+test_that("a subsample that keeps every household exports phase 1 itself", {
+  skip_if_not_installed("survey")
+  phase1 <- subsample_phase1(method = "pps_brewer")
+  everything <- execute(half_by_ea(frac = 1), phase1, seed = 2)
+
+  se <- function(x) {
+    unname(survey::SE(survey::svytotal(
+      ~y, as_svydesign(x, systematic_variance = "approximate")
+    )))
+  }
+  expect_equal(se(everything), se(phase1))
+  half <- execute(half_by_ea(), phase1, seed = 2)
+  expect_false(isTRUE(all.equal(se(half), se(phase1))))
+})
+
+test_that("the subsample has a replicate export", {
+  skip_if_not_installed("survey")
+  phase2 <- execute(half_by_ea(), subsample_phase1(), seed = 2)
+  # JKn treats the PPS first stage as drawn with replacement, and says so.
+  expect_warning(
+    rep <- as_svrepdesign(phase2, type = "JKn",
+                          systematic_variance = "approximate"),
+    class = "samplyr_warning_replicate_wr_first_stage"
+  )
+  expect_s3_class(rep, "svyrep.design")
+  expect_equal(unname(weights(rep, type = "sampling")), phase2$.weight)
+})
+
+test_that("a systematic subsample keeps its approximation in every export", {
+  skip_if_not_installed("survey")
+  # Phase 1 draws its final stage by srswor, so only phase 2 is systematic.
+  frame <- data.frame(id = 1:100, y = rep(c(1, 0, 0, 0, 0), 20))
+  phase1 <- sampling_design() |> draw(n = 80) |> execute(frame, seed = 1)
+  systematic <- sampling_design() |>
+    draw(n = 20, method = "systematic", control = id)
+  phase2 <- execute(systematic, phase1, seed = 2)
+
+  expect_error(
+    as_svydesign(phase2, systematic_variance = "error"),
+    class = "samplyr_error_systematic_variance"
+  )
+  for (type in c("JK1", "rwyb")) {
+    expect_error(
+      as_svrepdesign(phase2, type = type, systematic_variance = "error"),
+      class = "samplyr_error_systematic_variance"
+    )
+  }
+  svy <- as_svydesign(phase2, systematic_variance = "approximate")
+  expect_identical(
+    attr(svy, "samplyr_systematic_variance")$stages,
+    "stage 1"
+  )
+  expect_identical(
+    variance_estimators(systematic, phase1)$status[1],
+    "approximate"
+  )
+
+  # An srswor phase 2 has no approximation to report.
+  srs <- sampling_design() |> draw(n = 20)
+  expect_no_warning(as_svydesign(execute(srs, phase1, seed = 2)))
+  expect_identical(variance_estimators(srs, phase1)$status[1], "supported")
+})
+
+test_that("a systematic phase 2 that takes every unit adds no approximation", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:100, y = 1:100, s = rep(1:4, 25))
+  phase1 <- sampling_design() |>
+    stratify_by(s) |>
+    draw(n = 20) |>
+    execute(frame, seed = 1)
+  by_s <- function(n) {
+    sampling_design() |>
+      stratify_by(s) |>
+      draw(n = n, method = "systematic")
+  }
+  # Every unit of every pool, by fraction or by a take the pool caps.
+  for (design in list(
+    sampling_design() |> stratify_by(s) |> draw(frac = 1, method = "systematic"),
+    by_s(25)
+  )) {
+    phase2 <- suppressWarnings(execute(design, phase1, seed = 2))
+    expect_s3_class(
+      as_svydesign(phase2, systematic_variance = "error"),
+      "survey.design2"
+    )
+    expect_s3_class(
+      as_svrepdesign(phase2, type = "JKn", systematic_variance = "error"),
+      "svyrep.design"
+    )
+    expect_identical(variance_estimators(design, phase1)$status[1],
+                     "supported")
+  }
+
+  # One pool subsampled keeps the approximation.
+  partial <- by_s(c("1" = 20, "2" = 20, "3" = 20, "4" = 5))
+  phase2 <- execute(partial, phase1, seed = 2)
+  expect_error(
+    as_svydesign(phase2, systematic_variance = "error"),
+    class = "samplyr_error_systematic_variance"
+  )
+  expect_identical(variance_estimators(partial, phase1)$status[1],
+                   "approximate")
+})
+
+test_that("method is refused on a subsample that exports as multistage", {
+  skip_if_not_installed("survey")
+  phase2 <- execute(half_by_ea(), subsample_phase1(), seed = 2)
+  err <- expect_error(
+    as_svydesign(phase2, method = "full",
+                 systematic_variance = "approximate"),
+    class = "samplyr_error_survey_argument"
+  )
+  expect_match(conditionMessage(err), "multistage", fixed = TRUE)
+})
+
+test_that("other second phases keep the two-phase route", {
+  skip_if_not_installed("survey")
+  phase1 <- subsample_phase1()
+  refused <- function(design2) {
+    phase2 <- suppressWarnings(suppressMessages(
+      execute(design2, phase1, seed = 2)
+    ))
+    expect_error(
+      as_svydesign(phase2, systematic_variance = "approximate"),
+      class = "samplyr_error_twophase_phase1_pps"
+    )
+  }
+  # Coarser than the pools: one stratum holds several EAs.
+  refused(sampling_design() |> stratify_by(region) |> draw(n = 20))
+  # Finer than the pools: a pool split in two.
+  phase1$half <- phase1$hh %% 2
+  refused(sampling_design() |> stratify_by(ea, half) |> draw(n = 2))
+  # As many strata as pools, cutting across them: ten teams, ten EAs.
+  phase1$team <- seq_len(nrow(phase1)) %% 10
+  expect_identical(length(unique(phase1$ea)), 10L)
+  refused(sampling_design() |> stratify_by(team) |> draw(n = 4))
+  # Unequal probabilities at phase 2.
+  refused(sampling_design() |> stratify_by(ea) |>
+            draw(n = 4, method = "pps_brewer", mos = hh))
+  # Clustered phase 2.
+  refused(sampling_design() |> stratify_by(ea) |> cluster_by(hh) |>
+            draw(n = 4))
+
+  # A PPS final stage at phase 1.
+  pps_last <- sampling_design() |>
+    add_stage() |> stratify_by(region) |> cluster_by(ea) |>
+    draw(n = 5, method = "pps_brewer", mos = size) |>
+    add_stage() |> draw(n = 12, method = "pps_brewer", mos = hh) |>
+    execute(subsample_frame(), seed = 1)
+  expect_error(
+    as_svydesign(execute(half_by_ea(), pps_last, seed = 2),
+                 systematic_variance = "approximate"),
+    class = "samplyr_error_twophase_phase1_pps"
+  )
+})
+
 test_that("a PPS phase 1 is named before a linkage problem behind it", {
   skip_if_not_installed("survey")
   # The EA key does not identify phase-1 rows, but phase-1 PPS has no route.

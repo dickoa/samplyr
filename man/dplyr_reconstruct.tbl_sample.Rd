@@ -17,7 +17,7 @@ A tbl_sample if essential columns present, otherwise a tibble
 \description{
 This method ensures that the tbl_sample class is only preserved
 when the essential column (.weight) is still present.
-Operations like summarise() or count() that remove this column
+Operations like \code{summarise()} or \code{count()} that remove this column
 will return a regular tibble instead.
 }
 \details{

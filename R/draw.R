@@ -227,10 +227,14 @@ NULL
 #'     coercions and stage-aware for cluster and stratified two-stage plans.
 #'     A plan giving one size for a stage stratified without `alloc` is
 #'     refused (`samplyr_error_svyplan_total_per_stratum`) rather than taken
-#'     in every stratum.
+#'     in every stratum. A plan for a stage stratified by several variables
+#'     is matched on those columns of its table, which svyplan carries from
+#'     the frame's character and factor columns. A plan without them is
+#'     refused (`samplyr_error_svyplan_multivariable_strata`).
 #'   - A certainty-aware `svyplan::n_alloc()` plan (solved with a `psu`
-#'     register carrying `psu_id`), at a clustered, stratified stage 1 and
-#'     again at stage 2 for the per-PSU takes. Stage 1 takes every certainty
+#'     register carrying `psu_id`), at a clustered stage 1 stratified by the
+#'     plan's one stratum column, and again at stage 2 for the per-PSU
+#'     takes. Stage 1 takes every certainty
 #'     PSU and draws exactly the plan's remainder per stratum. A plan solved
 #'     with `n_psu_per_zone = 2` draws two PSUs from each of its zones
 #'     instead, records the zone in `.zone_1`, and exports one variance
@@ -350,9 +354,10 @@ NULL
 #'   An `n` given directly is not rounded. A product within floating-point
 #'   error of an integer counts as that integer, so `frac = 0.07` of 100
 #'   units draws 7 under every rule. After rounding, every stratum or group
-#'   receives at least 1 unit. A random-size method, built in or registered
-#'   with `fixed_size = FALSE`, takes the expected size `N * frac` unrounded,
-#'   which may be fractional or below 1.
+#'   receives at least 1 unit. When that takes every pool whole, [execute()]
+#'   warns with `samplyr_warning_census`. A random-size method, built in or
+#'   registered with `fixed_size = FALSE`, takes the expected size
+#'   `N * frac` unrounded, which may be fractional or below 1.
 #'
 #' @param control <[`data-masking`][dplyr::dplyr_data_masking]> Variables for
 #'   sorting the frame before selection. Can be:
@@ -483,9 +488,13 @@ NULL
 #' ## Control sorting
 #'
 #' Control sorting orders the frame before selection, giving implicit
-#' stratification. It is most effective with the systematic and sequential
-#' methods (`systematic`, `pps_systematic`, `pps_chromy`), where the sample
-#' spreads evenly across the sorted variables.
+#' stratification with the systematic and sequential methods (`systematic`,
+#' `pps_systematic`, `pps_chromy`), where the sample spreads evenly across the
+#' sorted variables. Other methods accept `control` but get no implicit
+#' stratification from it. The sort can change which units a given seed
+#' draws, but the sample does not spread over the sorted variables. A
+#' coordinated `pps_sps` draw with `prn`, for example, keeps nothing of a
+#' sort by district.
 #'
 #' Nested sorting (the default, `control = c(var1, var2, var3)`) sorts
 #' ascending by each variable in turn. Serpentine sorting
@@ -758,10 +767,12 @@ draw <- function(
   }
 
   from_plan <- inherits(n, c("svyplan_n", "svyplan_power", "svyplan_cluster"))
+  plan <- n
   n <- coerce_svyplan_n(
     n,
     stage_index = current,
-    clustered = !is_null(current_stage$clusters)
+    clustered = !is_null(current_stage$clusters),
+    strata_vars = strata_vars
   )
   # Only draw() knows a scalar came from a plan.
   if (
@@ -783,19 +794,28 @@ draw <- function(
       class = "samplyr_error_svyplan_total_per_stratum"
     )
   }
-  # svyplan names each stratum in one column.
+  # A plan keys several strata only through the columns its table carries.
   if (
     from_plan && !is.data.frame(n) && !is_null(names(n)) &&
       length(strata_vars) > 1L
   ) {
+    problem <- svyplan_strata_key_problem(as.data.frame(plan), strata_vars)
     abort_samplyr(
       c(
-        "This svyplan plan names its strata in one column, and this stage
-         is stratified by {.val {strata_vars}}.",
-        "i" = "Stratify by the one column the plan was built on, for example
-               a combined {.code paste(region, urban_rural)}, or give
-               {.arg n} as a data frame built from the plan, with columns
-               {.val {strata_vars}}, plus an {.val n} column."
+        "This svyplan plan does not name the strata of this stage, which is
+         stratified by {.val {strata_vars}}.",
+        "x" = if (!is_null(problem$missing)) {
+          "The plan's table has no column {.val {problem$missing}}."
+        } else {
+          "Columns {.val {strata_vars}} of the plan's table do not tell its
+           strata apart."
+        },
+        "i" = "svyplan carries the frame's character and factor columns into
+               the plan. An integer code, such as a region number, is
+               carried once converted with {.fn factor} in the svyplan
+               frame.",
+        "i" = "Or stratify by the one column the plan was built on, for
+               example a combined {.code paste(region, urban_rural)}."
       ),
       class = "samplyr_error_svyplan_multivariable_strata"
     )

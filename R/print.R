@@ -83,6 +83,35 @@ print_stage <- function(stage, num, design = NULL) {
   }
 }
 
+#' The sizes a certainty-aware svyplan plan gives its stage
+#'
+#' Stage 1 selects by the plan's classification, so it shows the certainty
+#' and drawn PSU counts. The stage below takes each PSU's own take, named by
+#' the PSU id column.
+#' @noRd
+format_certainty_plan <- function(plan) {
+  register <- plan$register
+  if (identical(plan$role, "take")) {
+    takes <- range(register$n_take)
+    size <- if (takes[1] == takes[2]) {
+      takes[1]
+    } else {
+      paste(takes[1], "to", takes[2])
+    }
+    return(paste0("<svyplan plan, ", size, " per ", plan$id_var, ">"))
+  }
+  zone <- if (!is_null(plan$n_psu_per_zone)) {
+    paste(plan$n_psu_per_zone, "per zone")
+  }
+  paste0("<", paste(c(
+    "svyplan plan",
+    paste(sum(register$certainty), "certainty"),
+    paste(sum(plan$n_psu_draw), "drawn"),
+    zone,
+    "per stratum"
+  ), collapse = ", "), ">")
+}
+
 #' Qualify a scalar n/frac with its scope when the stage is stratified
 #'
 #' Without stratification, `n = 300` is unambiguous.
@@ -124,7 +153,9 @@ format_draw_spec <- function(draw, has_strata = FALSE, alloc = NULL,
     "<custom data frame, ",
     paste(c("per stratum", per_parent), collapse = ", "), ">"
   )
-  if (!is_null(draw$n)) {
+  if (!is_null(draw$certainty_plan)) {
+    parts <- c(parts, paste0("n = ", format_certainty_plan(draw$certainty_plan)))
+  } else if (!is_null(draw$n)) {
     if (is.data.frame(draw$n)) {
       parts <- c(parts, paste0("n = ", table_form))
     } else {

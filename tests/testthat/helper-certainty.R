@@ -71,7 +71,8 @@ certainty_zone_register <- function() {
   )
 }
 
-certainty_zone_fixture <- function(psu = certainty_zone_register(), m = 2) {
+certainty_zone_fixture <- function(psu = certainty_zone_register(), m = 2,
+                                   cv = 0.12) {
   frame <- data.frame(
     stratum = c("A", "B"), N = c(3160, 1762), n_per_psu = 8,
     stringsAsFactors = FALSE
@@ -80,7 +81,7 @@ certainty_zone_fixture <- function(psu = certainty_zone_register(), m = 2) {
     stratum = c("A", "B"), name = "y", p = c(0.5, 0.4), icc_psu = 0.05,
     stringsAsFactors = FALSE
   )
-  targets <- data.frame(name = "y", cv = 0.12)
+  targets <- data.frame(name = "y", cv = cv)
   svyplan::n_alloc(
     frame, measures = measures, targets = targets, psu = psu,
     n_psu_per_zone = m

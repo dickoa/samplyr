@@ -24,7 +24,14 @@
 #'     in the pools it executed, so it contributes no sampling variance. This
 #'     is a claim about the stage: above the first stage those pools are the
 #'     ones a sampled ancestor supplied, and the design as a whole is a census
-#'     only if every stage is.}
+#'     only if every stage is. It is raised when a take exceeded a pool, and
+#'     also when none did but every pool was taken whole anyway: a fraction
+#'     below 1 that rounding or `min_n` raised to every pool's size, or a
+#'     stage below the first whose pools each hold one unit, as when units an
+#'     earlier stage selected are subsampled as a new stage instead of a
+#'     second phase. Its payload then carries `cause`, one of `"frac"`,
+#'     `"min_n"` or `"single_unit"`. A take equal to every pool's size, or
+#'     `frac = 1`, asks for the census and is not reported.}
 #'   \item{`samplyr_warning_nominal_cap`}{A random-size method asked for more
 #'     units than the pool holds. Clamping every chance at one caps the target
 #'     the stage aims at. It does not select that many units, and the realized
@@ -215,7 +222,10 @@ NULL
 #'   independent draws in R, and recorded in the `replicate_seeds` element
 #'   of the sample's metadata, so replicate `r` alone is
 #'   `execute(design, frame, seed = replicate_seeds[r])`. Cannot be combined
-#'   with `panels` or with stages that use permanent random numbers.
+#'   with `panels` or with stages that use permanent random numbers. A
+#'   replicated sample continued, or used as a phase-2 frame, carries its
+#'   replicates into the stages run now, and these cannot use permanent
+#'   random numbers either.
 #'   `as_svrepdesign(type = "random_groups")` estimates variance from the
 #'   spread of the replicates, for any selection method.
 #' @param frame_digest Controls the frame digest, a compact execution
@@ -270,6 +280,10 @@ NULL
 #' onto it, so a lower register need not be pre-filtered or duplicate the
 #' upper stages' stratification columns. A register may legitimately omit a
 #' carried stratum, but one whose own copy of it disagrees is an error.
+#' Each earlier stage's measure of size (`mos`) is carried too, so the sample
+#' keeps what every stage's inclusion probabilities were computed from. A
+#' register holding a column of the same name keeps its own, and a stage
+#' that selects on that name must find it in its own register.
 #'
 #' Before any stage draws, every later stage is checked on all the units it
 #' could reach, as [validate_frame()] checks them, so a defect in a unit the
@@ -666,8 +680,19 @@ execute <- function(
       }
     }
 
+    # Detect replicated samples used as phase frames.
+    frame_has_reps <- any(vapply(
+      frames,
+      function(f) {
+        is_tbl_sample(f) && has_multiple_replicates(f)
+      },
+      logical(1)
+    ))
+    inherits_reps <- frame_has_reps ||
+      (is_tbl_sample(.data) && has_multiple_replicates(.data))
+
     # Check PRN conflicts only for stages executed now.
-    if (!is_null(reps)) {
+    if (!is_null(reps) || inherits_reps) {
       valid_stages <- schedule$stages
       if (length(valid_stages) > 0) {
         has_prn <- any(vapply(
@@ -677,24 +702,26 @@ execute <- function(
           },
           logical(1)
         ))
-        if (has_prn) {
+        if (has_prn && !is_null(reps)) {
           cli_abort(c(
             "{.arg reps} cannot be used when an executed stage uses permanent random numbers.",
             "i" = "PRN produces identical samples across replicates.",
             "i" = "Use a loop with different PRN vectors for coordinated repeated sampling."
           ), class = "samplyr_error_execute_argument")
         }
+        if (has_prn) {
+          cli_abort(c(
+            "A replicated sample cannot run a stage that uses permanent
+             random numbers.",
+            "i" = "Each replicate would draw the same units wherever the
+                   replicates share a pool, so they would not be
+                   independent.",
+            "i" = "Run the stage on each replicate with its own PRN vector,
+                   or draw the stage without {.arg prn}."
+          ), class = "samplyr_error_replicated_sample_unsupported")
+        }
       }
     }
-
-    # Detect replicated samples used as phase frames.
-    frame_has_reps <- any(vapply(
-      frames,
-      function(f) {
-        is_tbl_sample(f) && has_multiple_replicates(f)
-      },
-      logical(1)
-    ))
 
     if (is_sampling_design(.data)) {
       if (frame_has_reps) {
@@ -2038,7 +2065,8 @@ execute_single_stage <- function(
       parent_levels = parent_levels,
       trace_mode = trace_mode
     ),
-    stage = stage_num
+    stage = stage_num,
+    draw_spec = stage_spec$draw_spec
   )
 }
 
@@ -2638,6 +2666,13 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
     if (any(mos_vals < 0)) {
       cli_abort(
         "MOS variable {.var {mos_var}} contains negative values",
+        call = call,
+        class = "samplyr_error_frame_invalid"
+      )
+    }
+    if (any(is.infinite(mos_vals))) {
+      cli_abort(
+        "MOS variable {.var {mos_var}} contains infinite values",
         call = call,
         class = "samplyr_error_frame_invalid"
       )

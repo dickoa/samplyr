@@ -152,13 +152,16 @@ identifiers, strata and internal sampling columns keep their recorded
 meanings. Keep earlier measurements under separate names if both are
 needed.
 
-On a stratified master whose stratum means differ strongly relative to
-the variation within them, the two-phase variance of a \emph{total} can be
-negative, and \code{\link[survey:svytotal]{survey::svytotal()}} returns \code{NaN} with base R's
-\verb{sqrt(v): NaNs produced}. That is \code{\link[survey:twophase]{survey::twophase()}}'s exact estimator,
-computed only when an estimator is called, so samplyr cannot intercept
-it. \code{method = "approx"} gives a finite standard error. A mean is
-unaffected.
+When phase 2 keeps unequal shares of the phase-1 strata, survey 4.5
+gives each phase-1 stratum another stratum's sample size in the phase-1
+part of this variance. The variance of a \emph{total} then depends on the
+outcome's level. In simulations of a wave it averaged a quarter of the
+true variance or less and was often negative. The export rebuilds that
+part by survey's own formula with the sizes in place, which changes
+nothing where survey's result was already right. A phase 2 stratified
+across the phase-1 strata can still give a negative variance in some
+samples, from the instability of the Horvitz-Thompson form, and
+\code{method = "approx"} gives a finite standard error there.
 
 A clustered first phase needs its second phase drawn inside each of its
 units, with \verb{stratify_by(<unit>)}, or by taking whole phase-1 units
@@ -169,14 +172,31 @@ samples but not in one (\link{variance_estimation} has the measured error),
 and the export warns (\code{samplyr_warning_twophase_across_units}). The
 weights are exact either way.
 
-\code{\link[survey:twophase]{survey::twophase()}} takes no \code{pps} for the first phase, so a two-phase
-sample or wave whose phase 1 was drawn with unequal probabilities without
-replacement is refused (\code{samplyr_error_twophase_phase1_pps},
+One shape is not exported as two phases. Phase 1's final stage draws
+elements by \code{srswor} or \code{systematic}, and phase 2 draws the same way,
+without clusters, with one stratum per final-stage pool of phase 1, as in
+\code{stratify_by(ea_id)} when the final stage draws households within EAs. A
+simple random subsample of a simple random sample is a simple random
+sample, so the two phases are phase 1's multistage design with a smaller
+final take. \code{as_svydesign()} and \code{as_svrepdesign()} export it that way,
+with phase 1's strata, clusters and finite population corrections and
+phase 2's weights, whatever phase 1's earlier stages drew. Half of each
+EA's households kept for a second questionnaire is this shape. \code{method}
+does not apply to it, and no row identifier is needed to link the
+phases. When phase 2 is \code{systematic}, the final take is a systematic
+one, and \code{systematic_variance} applies to it, unless phase 2 took every
+unit of every pool. A phase 2 stratified more coarsely or more finely than the pools,
+clustered, or drawn with unequal probabilities keeps the two-phase route.
+
+\code{\link[survey:twophase]{survey::twophase()}} takes no \code{pps} for the first phase, so any other
+two-phase sample or wave whose phase 1 was drawn with unequal
+probabilities without replacement is refused (\code{samplyr_error_twophase_phase1_pps},
 \code{samplyr_error_wave_phase1_pps}). So are \code{cube}, first-stage
 \code{pps_poisson} and the spatial methods, which are unsupported at either
 phase. Equal-probability first phases export, stratified, clustered,
 multistage and with-replacement alike. No two-phase sample, a wave
-included, has a replicate export. The weights of a refused sample are
+included, has a replicate export, except the subsample within pools
+above, which is exported as one phase. The weights of a refused sample are
 exact, so totals and means are right. For a variance, an ultimate-cluster
 approximation treats phase 1's units as drawn with replacement and
 carries everything below in them. It is conservative, by the margins
@@ -290,6 +310,14 @@ sample <- execute(selected, listing, seed = 2026)
 
 # Brewer's variance approximation at the PPS stage
 svy <- as_svydesign(sample)
+
+# Half of each EA's households, kept as a second phase. It is exported as
+# the two-stage design with a take of 4.
+half <- sampling_design() |>
+  stratify_by(ea_id) |>
+  draw(n = 4) |>
+  execute(sample, seed = 2027)
+svy_half <- as_svydesign(half)
 
 # A joint-probability matrix instead, for a single-stage Sampford sample,
 # whose matrix is exact. A matrix needs one row per stage-1 unit.

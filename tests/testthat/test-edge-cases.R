@@ -935,6 +935,16 @@ test_that("execute() errors on MOS with negative values", {
   expect_error(execute(design, frame, seed = 1), "negative")
 })
 
+test_that("execute() errors on MOS with infinite values", {
+  design <- sampling_design() |>
+    draw(n = 3, method = "pps_brewer", mos = size)
+  frame <- data.frame(id = 1:10, size = c(Inf, 1:9))
+  expect_error(
+    execute(design, frame, seed = 1),
+    class = "samplyr_error_frame_invalid"
+  )
+})
+
 test_that("pps_poisson certainty counts toward the fraction's total target", {
   # One unit dominates, so certainty selection triggers.
   frame <- data.frame(

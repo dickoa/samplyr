@@ -400,9 +400,12 @@ frozen_v3_document <- function() {
 test_that("the frozen version 3 document remains executable", {
   s <- execute(read_design(frozen_v3_document()), certainty_element_frame(),
                seed = 12)
-  certain <- certainty_plan_fixture()$psu
+  # The document carries its own classification, which a plan refitted
+  # by a later svyplan need not repeat.
+  stored <- read_design(frozen_v3_document())$stages[[1]]$draw_spec$
+    certainty_plan$register
   expect_setequal(unique(s$psu_id[s$.certainty_1]),
-                  certain$psu_id[certain$certainty])
+                  stored$psu_id[stored$certainty])
   # The document predates on_capped, so it keeps the take-all policy.
   restored <- read_design(frozen_v3_document())
   expect_true(all(vapply(

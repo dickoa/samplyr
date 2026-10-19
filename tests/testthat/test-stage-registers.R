@@ -356,6 +356,103 @@ test_that("one hierarchy sampled three ways gives one sample", {
 
 ## Carry-forward of prior design variables
 
+## Twenty EAs in two strata, each split into one or three segments, and the
+## households listed in each segment. Three registers, one per stage.
+mos_registers <- function() {
+  eas <- data.frame(
+    ea = sprintf("e%02d", 1:20),
+    stratum = rep(c("A", "B"), each = 10),
+    mos = c(seq(60, 240, by = 20), seq(55, 235, by = 20))
+  )
+  segments <- data.frame(
+    ea = rep(eas$ea, ifelse(eas$mos > 150, 3, 1))
+  )
+  segments$segment <- stats::ave(seq_along(segments$ea), segments$ea,
+                                 FUN = seq_along)
+  segments$segment_count <- 20 + 10 * segments$segment
+  households <- segments[rep(seq_len(nrow(segments)),
+                             segments$segment_count + 5), c("ea", "segment")]
+  households$hh <- seq_len(nrow(households))
+  rownames(households) <- NULL
+  list(eas = eas, segments = segments, households = households)
+}
+
+mos_design <- function(segment_mos = "segment_count") {
+  sampling_design() |>
+    add_stage("EAs") |>
+    stratify_by(stratum) |>
+    cluster_by(ea) |>
+    draw(n = 4, method = "pps_systematic", mos = mos) |>
+    add_stage("Segments") |>
+    cluster_by(segment) |>
+    draw(n = 1, method = "pps_systematic", mos = .data[[segment_mos]]) |>
+    add_stage("Households") |>
+    draw(n = 10, method = "systematic")
+}
+
+test_that("a continuation keeps the measure of size of every completed stage", {
+  r <- mos_registers()
+  s <- mos_design() |>
+    execute(r$eas, seed = 1, stages = 1) |>
+    execute(r$segments, seed = 2, stages = 2) |>
+    execute(r$households, seed = 3)
+
+  expect_true(all(c("mos", "segment_count") %in% names(s)))
+  ea_mos <- stats::setNames(r$eas$mos, r$eas$ea)
+  expect_identical(s$mos, unname(ea_mos[s$ea]))
+  seg_key <- paste(r$segments$ea, r$segments$segment)
+  seg_count <- stats::setNames(r$segments$segment_count, seg_key)
+  expect_identical(
+    s$segment_count,
+    unname(seg_count[paste(s$ea, s$segment)])
+  )
+
+  # The stage 1 probability follows from the carried measure:
+  # n_h * M_hi / M_h, with M_h the stratum total on the EA register.
+  m_h <- tapply(r$eas$mos, r$eas$stratum, sum)
+  expect_equal(1 / s$.weight_1, 4 * s$mos / as.vector(m_h[s$stratum]))
+  expect_equal(
+    1 / s$.weight_2,
+    s$segment_count / as.vector(tapply(
+      r$segments$segment_count, r$segments$ea, sum
+    )[s$ea])
+  )
+})
+
+test_that("a lower register's own column of the same name is kept", {
+  r <- mos_registers()
+  # The segment register names its own measure mos, and stage 2 uses it.
+  segments <- r$segments
+  names(segments)[names(segments) == "segment_count"] <- "mos"
+
+  s1 <- mos_design("mos") |> execute(r$eas, seed = 1, stages = 1)
+  s2 <- execute(s1, segments, seed = 2, stages = 2)
+  seg_key <- paste(segments$ea, segments$segment)
+  own <- stats::setNames(segments$mos, seg_key)
+  expect_identical(s2$mos, unname(own[paste(s2$ea, s2$segment)]))
+
+  # A household register holding a mos column of its own, which no stage
+  # selects on, keeps it without a conflict.
+  households <- r$households
+  households$mos <- 1L
+  s <- mos_design() |>
+    execute(r$eas, seed = 1, stages = 1) |>
+    execute(r$segments, seed = 2, stages = 2) |>
+    execute(households, seed = 3)
+  expect_true(all(s$mos == 1L))
+  expect_true("segment_count" %in% names(s))
+})
+
+test_that("an earlier stage's measure never stands in for this stage's", {
+  r <- mos_registers()
+  # Stage 2 asks for mos, and the segment register does not have it.
+  s1 <- mos_design("mos") |> execute(r$eas, seed = 1, stages = 1)
+  expect_error(
+    execute(s1, r$segments, seed = 2, stages = 2),
+    class = "samplyr_error_frame_missing_vars"
+  )
+})
+
 test_that("a stratum introduced at a later stage also survives", {
   classes <- mf_classes()
   classes$track <- rep(c("Science", "Arts"), times = 4)
@@ -367,7 +464,11 @@ test_that("a stratum introduced at a later stage also survives", {
       stratify_by(track) |> cluster_by(class_id) |> draw(n = 1) |>
     add_stage("Students") |> draw(n = 2)
 
-  sample <- execute(design, mf_schools(), classes, mf_students(), seed = 7)
+  # Each school holds one class per track, so the class stage takes them all.
+  expect_warning(
+    sample <- execute(design, mf_schools(), classes, mf_students(), seed = 7),
+    class = "samplyr_warning_census"
+  )
 
   expect_true(all(c("school_type", "track") %in% names(sample)))
   expect_false(any(grepl("\\.[xy]$", names(sample))))
@@ -655,12 +756,15 @@ test_that("compound ancestry keys are matched exactly, not as pasted text", {
     add_stage() |> cluster_by(class_id) |> draw(n = 1) |>
     add_stage() |> draw(n = 1)
 
-  # Correct values must not be read as a conflict.
+  # Correct values must not be read as a conflict. Each school holds one
+  # class, so the class stage takes them all.
   agreeing <- students
   agreeing$school_type <- rep(c("P", "Q"), each = 2)
-  expect_s3_class(
-    execute(design, schools, classes, agreeing, seed = 3), "tbl_sample"
+  expect_warning(
+    s <- execute(design, schools, classes, agreeing, seed = 3),
+    class = "samplyr_warning_census"
   )
+  expect_s3_class(s, "tbl_sample")
 
   # A real disagreement must not be masked by a colliding key.
   conflicting <- students
@@ -1774,7 +1878,9 @@ test_that("the two-phase preflight runs for the list form too", {
 
   elements <- data.frame(id = 1:100, x = 1)
   no_bridge <- sampling_design() |> draw(n = 40) |> execute(elements, seed = 1)
-  unlinkable <- sampling_design() |> draw(n = 10)
+  # A simple random subsample would be phase 1's design, linked without ids.
+  unlinkable <- sampling_design() |>
+    draw(n = 10, method = "pps_brewer", mos = x)
   expect_warning(
     validate_frame(unlinkable, no_bridge),
     class = "samplyr_warning_phase_linkage"

@@ -30,7 +30,7 @@ Returns the probability that each unit of a register would be selected,
 computed from the design rather than observed from a sample. It draws no
 random numbers, and it needs no execution.
 By default, every stage must supply exact inclusion probabilities.
-Approximate targets require \code{allow_approximate = TRUE} and are labelled
+Approximate targets require \code{allow_approximate = TRUE} and are labeled
 in the result.
 
 The intended use is a survey covering one population through several
@@ -51,7 +51,7 @@ the method's actual inclusion probabilities.
 \code{pps_sps} and \code{pps_pareto}, and custom methods declaring approximate
 probabilities, are refused by default. With \code{allow_approximate = TRUE},
 their targets are returned and compounded across stages. The whole result
-is labelled \code{"approximate"} if any stage has this probability contract,
+is labeled \code{"approximate"} if any stage has this probability contract,
 including rows selected with certainty. Estimators using these targets
 need not be design-unbiased. Methods declaring \code{"unknown"} probabilities
 remain unsupported even with this opt-in.

@@ -26,7 +26,9 @@ sample is refused.}
 \item{...}{Must be empty. Arguments after it are matched by exact name.}
 
 \item{key}{A bare column of \code{frame} identifying the population unit. It
-must be unique and have no missing values.}
+must be unique, have no missing values, and not share a name with a
+column the unit table adds (\code{probability_x}, \code{probability_y},
+\code{abs_diff}, \code{rel_diff}, \code{agree}).}
 
 \item{level}{What to compare, \code{"allocation"} (default) or
 \code{"probabilities"}.}

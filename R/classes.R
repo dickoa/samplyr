@@ -565,7 +565,7 @@ get_stages_executed <- function(x) {
 #'
 #' This method ensures that the tbl_sample class is only preserved
 #' when the essential column (.weight) is still present.
-#' Operations like summarise() or count() that remove this column
+#' Operations like `summarise()` or `count()` that remove this column
 #' will return a regular tibble instead.
 #'
 #' Operations that change the number of rows (filtering, joins that

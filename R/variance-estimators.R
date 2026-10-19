@@ -121,6 +121,21 @@ variance_estimators <- function(x, frame = NULL) {
 
   rows <- if (is_null(phase1)) {
     singlephase_estimator_rows(design, traits, facts)
+  } else if (!is_null(within_pool_subsample_vars(design, stages, phase1))) {
+    # Exported as phase 1's multistage design with a smaller final take.
+    # Phase 1's rows are phase 2's frame, so they show a census.
+    rows1 <- as.data.frame(phase1)
+    rows1 <- rows1[setdiff(names(rows1), samplyr_reserved_names(names(rows1)))]
+    facts2 <- frame_variance_facts(design, rows1, traits, call = current_env())
+    design1 <- composed_design(
+      get_design(phase1), design,
+      census = stage_fact(facts2, 1L)$census
+    )
+    traits1 <- stage_variance_traits(design1, seq_along(design1$stages))
+    singlephase_estimator_rows(
+      design1, traits1,
+      frame_variance_facts(design1, NULL, traits1, call = current_env())
+    )
   } else {
     twophase_estimator_rows(design, traits, phase1)
   }

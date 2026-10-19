@@ -41,7 +41,13 @@
 #' - Presence of required clustering variables
 #' - Presence of measure of size (MOS) variables for PPS sampling
 #' - Non-empty frame
-#' - Positive values for MOS variables
+#' - Finite, non-negative values for MOS variables
+#' - In every candidate pool of a stage drawn by size, after any certainty
+#'   selection, a positive total measure of size
+#'   (`samplyr_error_mos_zero_sum`), and for a draw without replacement
+#'   other than `pps_poisson`, whose probabilities sum to the take, at
+#'   least as many units of positive size as the take
+#'   (`samplyr_error_mos_positive_short`)
 #'
 #' A fixed-size stage drawn without replacement whose take exceeds the
 #' population of a candidate pool is not an error by default, because
@@ -397,6 +403,7 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
   for (i in seq_along(schedule$entries)) {
     stage_idx <- schedule$entries[[i]]$stage
     targets <- check_stage_targets(design, stage_idx, effective[[i]])
+    refuse_mos_pools(stage_idx, targets, call = call)
     refuse_capped_stage(design, stage_idx, targets$capped, call = call)
     inform_allocation(stage_idx, targets$allocation)
     inform_capped_pools(stage_idx, targets$capped)
@@ -411,28 +418,47 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
 #' Check every candidate pool's take without simulating a selection
 #'
 #' Rejects deterministic exclusions. Returns the pools whose fixed take
-#' without replacement exceeds their population (`capped`), and the strata
-#' an explicit `n` names that a parent lacks (`absent`), both named as
-#' execution names them. Under an allocation method, `allocation` holds the
+#' without replacement exceeds their population (`capped`), the pools drawn
+#' by size with no positive measure of size (`zero_mos`) or with fewer units
+#' of positive size than a take their probabilities must sum to
+#' (`short_mos`), and
+#' the strata an explicit `n` names that a parent lacks (`absent`), all named
+#' as execution names them. Under an allocation method, `allocation` holds the
 #' sizes it gave in each parent.
 #' @noRd
 check_stage_targets <- function(design, stage_idx, frame) {
   rlang::local_error_call(caller_env())
   short <- list(pool_keys = character(0), n_capped = 0L, n_pools = 0L)
   absent <- list(pool_keys = character(0), n_absent = 0L)
+  zero_mos <- list(pool_keys = character(0), n_pools = 0L, n_found = 0L)
+  short_mos <- zero_mos
   spec <- design$stages[[stage_idx]]
   draw <- spec$draw_spec
   allocation <- list(
     alloc = spec$strata$alloc, n = draw$n, n_parents = 0L, n_tied = 0L,
     pool_keys = character(0), sizes = numeric(0)
   )
-  out <- function() list(capped = short, absent = absent, allocation = allocation)
+  out <- function() {
+    list(capped = short, zero_mos = zero_mos, short_mos = short_mos,
+         absent = absent, allocation = allocation)
+  }
   if (is_null(draw) || nrow(frame) == 0L) return(out())
   # Stored certainty plans are validated by the planning bridge.
   if (!is_null(draw$certainty_plan)) return(out())
   ancestors <- collect_ancestor_cluster_vars(design, stage_idx)
   fixed_take <- !is_null(draw$n) && !is_random_size_method(draw) &&
     !is_multi_hit_method(draw)
+  route <- mos_route(draw)
+  by_size <- !is.na(route)
+  pool_record <- function(record, units, groups, which, strata) {
+    first <- vapply(groups[which], function(g) g[[1]], integer(1))
+    labels <- exante_pool_labels(
+      design, stage_idx, units, first, strata, ancestors
+    )
+    record$pool_keys <- c(record$pool_keys, labels[!is.na(labels)])
+    record$n_found <- record$n_found + length(which)
+    record
+  }
   parents <- if (length(ancestors)) split_row_indices(frame, ancestors)$indices else list(seq_len(nrow(frame)))
   for (rows in parents) {
     units <- frame[rows, , drop = FALSE]
@@ -491,7 +517,41 @@ check_stage_targets <- function(design, stage_idx, frame) {
         absent$n_absent <- absent$n_absent + length(missing)
       }
     }
-    if (is_null(draw$certainty_size) && is_null(draw$certainty_prop)) next
+    has_certainty <- !is_null(draw$certainty_size) ||
+      !is_null(draw$certainty_prop)
+    if (by_size) {
+      findings <- rep(NA_character_, length(groups))
+      lookup <- if (has_certainty) prepare_stratum_draw_lookup(draw, strata)
+      for (j in seq_along(groups)) {
+        mos_vals <- units[[draw$mos]][groups[[j]]]
+        take <- min(sizes[j], length(mos_vals))
+        if (has_certainty && sum(mos_vals) > 0) {
+          pool <- units[groups[[j]], , drop = FALSE]
+          pool_draw <- if (length(strata)) resolve_stratum_draw_spec(
+            draw, pool[1, strata, drop = FALSE], strata,
+            make_group_key(pool[1, strata, drop = FALSE], strata), lookup
+          ) else draw
+          cert <- identify_certainty(mos_vals, sizes[j],
+            pool_draw$certainty_size, pool_draw$certainty_prop)
+          mos_vals <- mos_vals[cert$remaining_idx]
+          take <- min(max(cert$n_remaining, 0), length(mos_vals))
+        }
+        # The take sondage spreads over the pool, after any certainty.
+        findings[j] <- mos_shortfall(mos_vals, take, route)
+      }
+      zero_mos$n_pools <- zero_mos$n_pools + length(groups)
+      short_mos$n_pools <- short_mos$n_pools + length(groups)
+      zero <- which(findings %in% "zero")
+      few <- which(findings %in% "short")
+      if (length(zero)) {
+        zero_mos <- pool_record(zero_mos, units, groups, zero, strata)
+      }
+      if (length(few)) {
+        short_mos <- pool_record(short_mos, units, groups, few, strata)
+      }
+      next
+    }
+    if (!has_certainty) next
     lookup <- prepare_stratum_draw_lookup(draw, strata)
     for (j in seq_along(groups)) {
       pool <- units[groups[[j]], , drop = FALSE]
@@ -601,6 +661,51 @@ refuse_capped_stage <- function(design, stage_idx, capped,
     operation = "population_cap",
     payload = capped
   )
+}
+
+#' Refuse a stage drawn by size with a candidate pool it cannot draw from
+#'
+#' `targets` is what `check_stage_targets()` found for the stage.
+#' `execute()` refuses the same pools, with the same classes, when it
+#' reaches them.
+#' @noRd
+refuse_mos_pools <- function(stage_idx, targets, call = caller_env()) {
+  zero <- targets$zero_mos
+  if (zero$n_found > 0L) {
+    abort_samplyr(
+      c(
+        "Stage {stage_idx}: no unit with a positive measure of size is left
+         to draw in {zero$n_found} of {zero$n_pools} candidate pool{?s}.",
+        pool_lines(zero, "Pools without size"),
+        "i" = "A draw by size needs a positive measure of size in every
+               pool it draws from, after any certainty selection."
+      ),
+      class = "samplyr_error_mos_zero_sum",
+      call = call,
+      stage = stage_idx,
+      payload = zero
+    )
+  }
+  few <- targets$short_mos
+  if (few$n_found > 0L) {
+    abort_samplyr(
+      c(
+        "Stage {stage_idx}: the take exceeds the number of units with a
+         positive measure of size in {few$n_found} of {few$n_pools}
+         candidate pool{?s}.",
+        pool_lines(few, "Pools short of sized units"),
+        "i" = "A unit of size zero is never selected, so probabilities
+               that sum to the take need as many units of positive size,
+               after any certainty selection. Only {.val pps_poisson} caps
+               them instead, and its expected size falls short."
+      ),
+      class = "samplyr_error_mos_positive_short",
+      call = call,
+      stage = stage_idx,
+      payload = few
+    )
+  }
+  invisible(NULL)
 }
 
 #' Refuse every strict stage of a schedule before anything is drawn
@@ -873,6 +978,16 @@ stage_frame_issues <- function(stage_spec, frame, stage_idx) {
             ))
           )
         }
+        if (any(is.infinite(mos_vals))) {
+          issues <- c(
+            issues,
+            list(list(
+              stage = label,
+              type = "mos_infinite",
+              vars = mos_var
+            ))
+          )
+        }
       }
     }
   }
@@ -1044,10 +1159,17 @@ stage_frame_issues <- function(stage_spec, frame, stage_idx) {
 #' name different levels of the same hierarchy.
 #'
 #' Warnings, not errors: validation still passes because the phase-2
-#' sample itself is valid without linkage.
+#' sample itself is valid without linkage. A subsample within phase 1's
+#' final-stage pools exports as phase 1's design, linked by pool, so it needs
+#' no row identifier.
 #' @noRd
 check_phase_linkage <- function(design, frame) {
   if (!is_tbl_sample(frame)) {
+    return(invisible(NULL))
+  }
+  if (!is_null(within_pool_subsample_vars(
+    design, seq_along(design$stages), frame
+  ))) {
     return(invisible(NULL))
   }
 
@@ -1129,6 +1251,9 @@ report_validation_issues <- function(issues) {
       ),
       "mos_negative" = cli::format_inline(
         "{stage}: MOS variable {.var {vars}} contains negative values"
+      ),
+      "mos_infinite" = cli::format_inline(
+        "{stage}: MOS variable {.var {vars}} contains infinite values"
       ),
       "aux" = cli::format_inline(
         "{stage}: missing auxiliary variable: {.var {vars}}"

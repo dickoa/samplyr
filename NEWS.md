@@ -78,7 +78,8 @@ needed for weighting, replay, and export to the survey and srvyr packages.
 ## Planning with svyplan
 
 * `draw()` takes svyplan sample-size and allocation objects directly,
-  including multistage, multi-domain and certainty-aware plans.
+  including multistage, multi-domain and certainty-aware plans, and
+  allocations over strata crossed from several variables.
 * `design_effect()`, `effective_n()` and `varcomp()` measure an executed
   sample for the next round of planning.
 

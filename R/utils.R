@@ -141,6 +141,102 @@ is_random_size_method <- function(draw_spec) {
     identical(draw_spec$method_fixed, FALSE)
 }
 
+#' How a stage turns its measure of size into chances
+#'
+#' `"clipped"` scales sizes to the take and caps them at one, so the
+#' expected size can fall short (`pps_poisson`). `"calibrated"` spreads the
+#' take exactly, by `sondage::inclusion_prob()`, so it needs as many units
+#' of positive size as the take, whether the realized size is fixed or
+#' random. `"hits"` gives expected hits with replacement, by
+#' `sondage::expected_hits()`. `NA` for a stage whose chances do not come
+#' from a measure of size.
+#' @noRd
+mos_route <- function(draw_spec) {
+  if (is_null(draw_spec$mos) || draw_spec$method %in% equal_prob_methods) {
+    return(NA_character_)
+  }
+  if (identical(draw_spec$method, "pps_poisson")) {
+    "clipped"
+  } else if (is_multi_hit_method(draw_spec)) {
+    "hits"
+  } else {
+    "calibrated"
+  }
+}
+
+#' Chances from a measure of size, on the stage's route
+#'
+#' The one place a measure of size becomes inclusion probabilities or
+#' expected hits, for execution, previews and ex-ante probabilities. On the
+#' clipped route `frac` is the pool's rate (`n / N` when `NULL`), and
+#' `n_clipped` counts the units capped at one. The other routes refuse a
+#' pool `mos_shortfall()` finds, as `validate_frame()` does ahead of time.
+#' @noRd
+mos_chances <- function(mos_vals, n, draw_spec, frac = NULL,
+                        call = caller_env()) {
+  route <- mos_route(draw_spec)
+  if (identical(route, "clipped")) {
+    N <- length(mos_vals)
+    raw <- (frac %||% (n / N)) * mos_vals / sum(mos_vals) * N
+    return(list(pik = pmin(raw, 1), n_clipped = sum(raw > 1)))
+  }
+  refuse_mos_shortfall(mos_vals, n, route, call = call)
+  pik <- switch(
+    route,
+    calibrated = sondage::inclusion_prob(mos_vals, n),
+    hits = sondage::expected_hits(mos_vals, n),
+    abort_samplyr(
+      "Internal error: no measure of size sets this stage's chances.",
+      class = "samplyr_error_internal",
+      call = NULL
+    )
+  )
+  list(pik = pik, n_clipped = 0L)
+}
+
+#' Why a pool cannot take `n` by size on `route`, or `NA`
+#'
+#' `"zero"` when no size is left to draw from. `"short"` when the
+#' calibrated route must spread `n` over fewer units of positive size, since
+#' a unit of size zero is never selected.
+#' @noRd
+mos_shortfall <- function(mos_vals, n, route) {
+  if (n > 0 && sum(mos_vals) <= 0) {
+    "zero"
+  } else if (identical(route, "calibrated") && n > sum(mos_vals > 0)) {
+    "short"
+  } else {
+    NA_character_
+  }
+}
+
+#' @noRd
+refuse_mos_shortfall <- function(mos_vals, n, route, call = caller_env()) {
+  switch(
+    mos_shortfall(mos_vals, n, route),
+    zero = abort_samplyr(
+      c(
+        "Cannot use PPS sampling: sum of MOS values is zero.",
+        "i" = "At least one unit must have a positive measure of size."
+      ),
+      class = "samplyr_error_mos_zero_sum",
+      call = call
+    ),
+    short = abort_samplyr(
+      c(
+        "Cannot draw {format(n)} {cli::qty(n)}unit{?s} by size from
+         {sum(mos_vals > 0)} unit{?s} with a positive measure of size.",
+        "i" = "A unit of size zero is never selected, so a pool needs at
+               least as many units of positive size as its take.",
+        "i" = "{.fn validate_frame} names the pools."
+      ),
+      class = "samplyr_error_mos_positive_short",
+      call = call
+    )
+  )
+  invisible(NULL)
+}
+
 #' Check if a method belongs to the balanced family
 #' @noRd
 is_balanced_method <- function(draw_spec) {
@@ -334,7 +430,7 @@ tag_replicate_events <- function(expr, replicate) {
 #'
 #' A population cap also carries the stage totals, which replace leaf sums.
 #' @noRd
-collect_stage_events <- function(expr, stage) {
+collect_stage_events <- function(expr, stage, draw_spec = NULL) {
   events <- list()
   result <- withCallingHandlers(
     expr,
@@ -356,7 +452,60 @@ collect_stage_events <- function(expr, stage) {
       payload = payload
     )
   }
+  signal_stage_exhausted(result$stage_totals, draw_spec, stage)
   result
+}
+
+#' Report a stage that took every unit, with the cause a cap cannot see
+#'
+#' A population cap is signalled only where a request exceeds a pool. A
+#' fraction below 1, rounded up or raised to `min_n`, can empty every pool
+#' without that, and so can any take below the first stage when every pool
+#' holds one unit, which is how subsampling an earlier stage's units as a new
+#' stage looks. A take equal to every pool's size, or a fraction of exactly 1,
+#' asks for the census and is not reported. On a stage that also capped, the
+#' event joins the cap's and adds only its cause.
+#' @noRd
+signal_stage_exhausted <- function(totals, draw_spec, stage) {
+  if (
+    is_null(totals) || is_null(draw_spec) ||
+      !is_wor_method(draw_spec) || is_random_size_method(draw_spec) ||
+      identical(draw_spec$certainty_overflow, "allow")
+  ) {
+    return(invisible(NULL))
+  }
+  if (
+    is.na(totals$n_available) || totals$n_available == 0L ||
+      totals$n_actual < totals$n_available
+  ) {
+    return(invisible(NULL))
+  }
+  frac <- draw_spec$frac
+  if (is.data.frame(frac)) {
+    frac <- frac$frac
+  }
+  if (!is_null(frac) && all(frac == 1)) {
+    return(invisible(NULL))
+  }
+  cause <- if (stage > 1L && totals$n_pools == totals$n_available) {
+    "single_unit"
+  } else if (!is_null(frac)) {
+    if (is_null(draw_spec$min_n)) "frac" else "min_n"
+  } else {
+    return(invisible(NULL))
+  }
+  signal_selection_event(
+    "population_cap",
+    pool_keys = character(0),
+    n_capped = 0L,
+    n_pools = totals$n_pools,
+    n_requested = totals$n_actual,
+    n_actual = totals$n_actual,
+    n_available = totals$n_available,
+    stage_totals = totals,
+    cause = cause,
+    stage = stage
+  )
 }
 
 #' Report a PPS Poisson pool that cannot reach the size it was asked for
@@ -549,7 +698,8 @@ summarize_selection_events <- function(group) {
     n_singleton = total("n_singleton"),
     n_empty = total("n_empty"),
     n_absent = total("n_absent"),
-    alloc = unlist(field("alloc"))[1]
+    alloc = unlist(field("alloc"))[1],
+    cause = unlist(field("cause"))[1]
   )
 
   # Only capped pools signal, so add their shortfall to the selection.
@@ -668,6 +818,7 @@ warn_census <- function(stage, x) {
       "x" = "Requested {x$n_requested} unit{?s}, selected all
              {x$n_actual} available.",
       pool_lines(x, "Exhausted pools"),
+      census_cause_lines(x),
       "i" = "This stage contributes no sampling variance. Earlier stages are
              unaffected: the design as a whole is a census only if every
              stage is."
@@ -676,6 +827,29 @@ warn_census <- function(stage, x) {
     stage = stage,
     operation = "population_cap",
     payload = x
+  )
+}
+
+#' Say why a stage that requested no more than its pools took them whole
+#' @noRd
+census_cause_lines <- function(x) {
+  switch(
+    x$cause %||% "",
+    single_unit = c(
+      "i" = "Every pool holds a single unit, so each was taken whole.",
+      "i" = "If this stage was meant to subsample units an earlier stage
+             selected, execute that stage on its own and start a new design on
+             the result, which records a second phase."
+    ),
+    frac = c(
+      "i" = "The fraction is below 1, but rounding it gave every pool its
+             whole size."
+    ),
+    min_n = c(
+      "i" = "The fraction is below 1, but rounding it or raising it to
+             {.arg min_n} gave every pool its whole size."
+    ),
+    NULL
   )
 }
 

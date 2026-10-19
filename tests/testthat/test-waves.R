@@ -839,9 +839,10 @@ test_that("a wave of a master with no schedule is refused, so `panel` is never N
   expect_false(anyNA(stacked$panel))
 })
 
-test_that("the two-phase variance of a total can be negative, and approx is finite", {
+test_that("a wave total's variance is positive and ignores the outcome's level", {
   skip_if_not_installed("survey")
-  # survey computes this variance after export, so samplyr cannot intercept it.
+  # Unequal stratum takes: survey 4.5's own phase-1 term made this variance
+  # negative and dependent on the outcome's level.
   set.seed(20260820)
   population <- data.frame(
     uid = sprintf("a%04d", 1:1000),
@@ -850,25 +851,22 @@ test_that("the two-phase variance of a total can be negative, and approx is fini
       1000, mean = rep(c(80, 120, 160), times = c(450, 300, 250)), sd = 25
     ), 3)
   )
+  population$y_shifted <- population$y + 1000
   master <- sampling_design() |>
     stratify_by(stratum) |>
     draw(n = c(N = 70, C = 90, S = 110)) |>
     execute(population, seed = 5150, panels = rotation_2_2())
   wave <- execute(master, wave = 4)
 
-  # SE() and vcov() each re-emit base R's sqrt warning, so read them quietly.
-  total <- suppressWarnings(survey::svytotal(~y, as_svydesign(wave)))
-  total_se <- suppressWarnings(survey::SE(total)[[1]])
-  total_var <- suppressWarnings(vcov(total)[1, 1])
-  expect_true(is.nan(total_se))
-  expect_lt(total_var, 0)
+  svy <- as_svydesign(wave)
+  total_var <- vcov(survey::svytotal(~y, svy))[1, 1]
+  expect_gt(total_var, 0)
+  expect_equal(
+    vcov(survey::svytotal(~y_shifted, svy))[1, 1], total_var,
+    tolerance = 1e-8
+  )
 
-  # The alternative the documentation names has to work.
   approx <- survey::svytotal(~y, as_svydesign(wave, method = "approx"))
   expect_true(is.finite(survey::SE(approx)[[1]]))
-  expect_equal(coef(approx)[[1]], coef(total)[[1]])
-
-  # A mean is unaffected, which is the other half of the claim.
-  mean_est <- survey::svymean(~y, as_svydesign(wave))
-  expect_true(is.finite(survey::SE(mean_est)[[1]]))
+  expect_equal(coef(approx)[[1]], coef(survey::svytotal(~y, svy))[[1]])
 })

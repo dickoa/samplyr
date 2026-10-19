@@ -257,6 +257,25 @@ prior_design_carry_vars <- function(design, stage_idx) {
   unique(vars)
 }
 
+#' Measures of size of completed stages, kept on a continued sample
+#'
+#' A one-frame execution keeps every frame column, so its sample carries what
+#' each stage's inclusion probabilities were computed from. A continuation
+#' carries these too. Unlike strata, they are not exempt from the frame
+#' preflight, so an earlier stage's measure never stands in for a variable
+#' this stage selects on.
+#' @noRd
+prior_stage_mos_vars <- function(design, stage_idx) {
+  if (stage_idx <= 1L) {
+    return(character(0))
+  }
+  vars <- unlist(lapply(
+    design$stages[seq_len(stage_idx - 1L)],
+    function(spec) spec$draw_spec$mos
+  ))
+  setdiff(unique(vars), prior_design_carry_vars(design, stage_idx))
+}
+
 #' A temporary column name no frame is using
 #' @noRd
 free_column_name <- function(frame, base) {
@@ -297,12 +316,18 @@ values_agree <- function(x, y) {
 #' does not, so no `.x`/`.y` pair can hide a disagreement.
 #'
 #' @param carry_vars Names to carry. What they mean is the caller's business.
+#' @param keep_present `TRUE` leaves a name the lower frame already holds to
+#'   that frame, unchecked, for a variable that may mean something else there.
 #' @noRd
 carry_vars_by_parent <- function(frame, previous_sample, carry_vars, design,
                                  stage_idx, parent_vars, frame_index = 1L,
-                                 frame_label = NULL, call = caller_env()) {
+                                 frame_label = NULL, keep_present = FALSE,
+                                 call = caller_env()) {
   carry_vars <- setdiff(carry_vars, parent_vars)
   carry_vars <- intersect(carry_vars, names(previous_sample))
+  if (keep_present) {
+    carry_vars <- setdiff(carry_vars, names(frame))
+  }
   if (length(carry_vars) == 0 || nrow(frame) == 0) {
     return(frame)
   }
@@ -527,6 +552,12 @@ link_stage_frame <- function(frame, previous_sample, design, stage_idx,
     linked, previous_sample,
     prior_design_carry_vars(design, stage_idx),
     design, stage_idx, parent_vars, frame_index, frame_label, call = call
+  )
+
+  linked <- carry_vars_by_parent(
+    linked, previous_sample, prior_stage_mos_vars(design, stage_idx),
+    design, stage_idx, parent_vars, frame_index, frame_label,
+    keep_present = TRUE, call = call
   )
 
   # Preserve prior-phase identifiers across normalized registers.

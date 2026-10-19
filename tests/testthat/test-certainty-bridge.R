@@ -153,14 +153,17 @@ test_that("the bridge requires one stratum variable and one cluster variable", {
       draw(n = plan, method = "pps_systematic", mos = N),
     class = "samplyr_error_svyplan_certainty_plan"
   )
-  expect_error(
+  err <- tryCatch(
     sampling_design() |>
       add_stage() |>
       stratify_by(stratum, person) |>
       cluster_by(psu_id) |>
       draw(n = plan, method = "pps_systematic", mos = N),
-    class = "samplyr_error_svyplan_certainty_plan"
+    error = identity
   )
+  expect_s3_class(err, "samplyr_error_svyplan_certainty_plan")
+  expect_match(conditionMessage(err), "names its strata in one column",
+               fixed = TRUE)
   expect_error(
     sampling_design() |>
       add_stage() |>
@@ -605,6 +608,105 @@ test_that("take-stage contexts the bridge does not serve are refused", {
   )
 })
 
+test_that("below an intermediate stage the refusal names the take table", {
+  plan <- certainty_plan_fixture()
+  segments <- sampling_design() |>
+    add_stage() |>
+    stratify_by(stratum) |>
+    cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_systematic", mos = N) |>
+    add_stage() |>
+    cluster_by(segment) |>
+    draw(n = 1, method = "pps_systematic", mos = segment_size) |>
+    add_stage()
+
+  err <- expect_error(
+    segments |> draw(n = plan),
+    class = "samplyr_error_svyplan_certainty_plan"
+  )
+  msg <- cli::ansi_strip(conditionMessage(err))
+  expect_match(msg, "stage 3", fixed = TRUE)
+  expect_match(msg, "stratify_by(psu_id)", fixed = TRUE)
+  expect_no_match(msg, "stage 1 with", fixed = TRUE)
+
+  # The route it names fields every PSU's own take.
+  frame <- certainty_element_frame()
+  frame$segment <- ceiling(frame$person / 100)
+  frame$segment_size <- ave(
+    frame$person, frame$psu_id, frame$segment, FUN = length
+  )
+  takes <- data.frame(psu_id = plan$psu$psu_id, n = plan$psu$n_take)
+  s <- segments |>
+    stratify_by(psu_id) |>
+    draw(n = takes) |>
+    execute(frame, seed = 1)
+  per_psu <- table(s$psu_id)
+  expect_identical(
+    as.integer(per_psu),
+    as.integer(stats::setNames(takes$n, takes$psu_id)[names(per_psu)])
+  )
+
+  # At stage 1 without clusters the advice is the stage 1 bridge only.
+  err <- expect_error(
+    sampling_design() |> stratify_by(stratum) |> draw(n = plan),
+    class = "samplyr_error_svyplan_certainty_plan"
+  )
+  msg <- cli::ansi_strip(conditionMessage(err))
+  expect_no_match(msg, "stratify_by(psu_id)", fixed = TRUE)
+  expect_match(msg, "stage 1 with", fixed = TRUE)
+})
+
+## The printed design shows the plan's sizes
+
+test_that("the print shows a certainty plan's classification and takes", {
+  plan <- certainty_plan_fixture()
+  d <- sampling_design() |>
+    add_stage() |>
+    stratify_by(stratum) |>
+    cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_systematic", mos = N) |>
+    add_stage() |>
+    draw(n = plan)
+  printed <- cli::ansi_strip(utils::capture.output(print(d)))
+
+  n_certain <- sum(plan$psu$certainty)
+  n_drawn <- sum(plan$detail$n_psu_draw)
+  expect_equal(c(n_certain, n_drawn), c(9, 4))
+  expect_true(any(grepl(
+    "n = <svyplan plan, 9 certainty, 4 drawn, per stratum>", printed,
+    fixed = TRUE
+  )))
+  takes <- range(plan$psu$n_take)
+  expect_equal(takes, c(9, 26))
+  expect_true(any(grepl(
+    "n = <svyplan plan, 9 to 26 per psu_id>", printed, fixed = TRUE
+  )))
+
+  # A file round trip prints the same design.
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(d, path)
+  expect_identical(
+    cli::ansi_strip(utils::capture.output(print(read_design(path)))),
+    printed
+  )
+})
+
+test_that("the print shows the zone size of a zoned plan", {
+  plan <- certainty_zone_fixture()
+  d <- sampling_design() |>
+    add_stage() |>
+    stratify_by(stratum) |>
+    cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_systematic", mos = N)
+  printed <- cli::ansi_strip(utils::capture.output(print(d)))
+
+  expected <- sprintf(
+    "n = <svyplan plan, %d certainty, %d drawn, 2 per zone, per stratum>",
+    sum(plan$psu$certainty), sum(plan$detail$n_psu_draw)
+  )
+  expect_true(any(grepl(expected, printed, fixed = TRUE)))
+})
+
 ## Joint expectations decompose the forced set
 
 test_that("joint expectations give certainty PSUs probability one", {
@@ -645,8 +747,8 @@ test_that("an unzoned plan selects the same sample as before zones existed", {
   plan <- certainty_plan_fixture()
   frame <- certainty_element_frame()
   pins <- c(
-    pps_brewer = "c671d4147356ac0ca0829445a072b736",
-    pps_systematic = "2e2821816a3155e82c8ff3f753ab507b"
+    pps_brewer = "c4669a265bb10cd720cac895fbe79070",
+    pps_systematic = "2cb810449490a4b86dd9fe11097ccc07"
   )
   for (method in names(pins)) {
     s <- sampling_design() |>
@@ -708,8 +810,8 @@ test_that("zones are drawn in a fixed order, so a seed fixes the sample", {
   plan <- certainty_zone_fixture()
   frame <- certainty_element_frame(certainty_zone_register())
   pins <- c(
-    pps_brewer = "7750c50a69339767fc76191a7cba5500",
-    pps_systematic = "3731210b3b7f9c40f9c06239279b8b46"
+    pps_brewer = "9bdbd83715a73602dce7c0cbea10aa63",
+    pps_systematic = "c66f93c970453dd57864039213932976"
   )
   for (method in names(pins)) {
     s <- execute(certainty_zone_design(plan, method), frame, seed = 7)
@@ -727,16 +829,16 @@ test_that("unzoned and two-per-zone samples keep their rows and weights", {
   zplan <- certainty_zone_fixture()
   zframe <- certainty_element_frame(certainty_zone_register())
   unzoned <- c(
-    pps_systematic = "5a3481bbade6fab364b674340e354fb6",
-    pps_brewer = "58701f1b2729524a2a007af660908908",
-    pps_cps = "289408485df844fd4b831e4e85d1215c",
-    pps_sampford = "0eefbf6de1736610e33cae9056cb24f9"
+    pps_systematic = "fb9d289b5c88d3007cc517404ed1b576",
+    pps_brewer = "091c376010e8f543028cec82395f0a75",
+    pps_cps = "b0adca7558370accb4ce33d9213208bf",
+    pps_sampford = "44027a6aee085e497b959ae785bb12a8"
   )
   zoned <- c(
-    pps_systematic = "5205df5217e8f38ae106b23c848cf81f",
-    pps_brewer = "186e41de1c9a305755daa56deeeae0f7",
-    pps_cps = "926bdc79f36815d1963d6f7ee4aa10bc",
-    pps_sampford = "366111637ef02b4715c76945b61a8bfa"
+    pps_systematic = "ff50191188e46b778f0f82352a661d83",
+    pps_brewer = "ec926bdac65a45ca78ddff3997c103c2",
+    pps_cps = "2df90c13fbb2c8b95becf5b8ceff8e47",
+    pps_sampford = "c08f3c1eb0a1c5ef2cbb77331a7139a3"
   )
   for (method in certainty_bridge_methods) {
     s <- sampling_design() |>
@@ -797,7 +899,7 @@ test_that("a zoned sample exports one variance stratum per zone", {
   expect_length(intersect(units$id[units$cert], units$id[!units$cert]), 0L)
 
   expect_no_warning(e <- as_svydesign(s))
-  expect_identical(length(unique(e$strata[, 1])), 8L)
+  expect_identical(length(unique(e$strata[, 1])), 7L)
   expect_no_warning(survey::svymean(~y, e))
 })
 
@@ -882,7 +984,8 @@ test_that("zoned joint probabilities agree with repeated zoned draws", {
     hits <- matrix(0, length(pik), length(pik))
     withr::with_seed(17, for (r in seq_len(R)) {
       taken <- draw_pps_zones(
-        data, 2L * max(zone), method, mos, list(method = method), zone, 2L
+        data, 2L * max(zone), method, mos,
+        list(method = method, mos = "mos"), zone, 2L
       )$selected
       hits[taken, taken] <- hits[taken, taken] + 1
     })
@@ -1117,10 +1220,10 @@ test_that("a one-per-zone sample is fixed by its seed, whatever the digest mode"
   # At one draw, sondage's systematic, Brewer and Sampford draws read the
   # same uniform the same way, so they select the same PSUs.
   pins <- c(
-    pps_systematic = "5de029ad09f19da53d5be4d4f073e7ae",
-    pps_brewer = "5de029ad09f19da53d5be4d4f073e7ae",
-    pps_cps = "103bd92ad8838565d63b2d5cfd024a1c",
-    pps_sampford = "5de029ad09f19da53d5be4d4f073e7ae"
+    pps_systematic = "2ca07097da34312851d4fd5cc490675d",
+    pps_brewer = "2ca07097da34312851d4fd5cc490675d",
+    pps_cps = "27bf7e2d1d238478f55da0016cc46426",
+    pps_sampford = "2ca07097da34312851d4fd5cc490675d"
   )
   for (method in certainty_bridge_methods) {
     d <- certainty_zone_design(plan, method)
@@ -1201,15 +1304,15 @@ test_that("a plan whose variance groups break the design is refused at draw()", 
   p$psu$.pair[p$psu$.pair %in% 4] <- 5L
   refused(p, "numbered from 1 without gaps")
 
-  # Zone A2 moves to the triple: group 1 is left with one zone.
+  # Zone A2 joins group 2, so group 1 is left with one zone.
   p <- plan
   p$psu$.pair[in_zone(p, "A", 2)] <- 2L
   refused(p, "group 1 holds 1 zone")
 
-  # Groups 3 and 4 merged: B's three zones and C's one.
+  # Groups 3 and 4 merged, A's last two zones with the triple of B and C.
   p <- plan
   p$psu$.pair[p$psu$.pair %in% 4] <- 3L
-  refused(p, "group 3 holds 4 zones")
+  refused(p, "group 3 holds 5 zones")
 
   p <- plan
   p$psu$.pair[in_zone(p, "C", 1)] <- 4.5
@@ -1287,7 +1390,7 @@ test_that("a one-per-zone sample exports its variance groups as strata", {
   # One stratum per group, holding its two or three zones' PSUs.
   expect_identical(
     as.vector(table(drawn$pair)[as.character(1:4)]),
-    c(2L, 3L, 2L, 2L)
+    c(2L, 2L, 2L, 3L)
   )
   expect_identical(nrow(unique(drawn[c("id", "pair")])), 4L)
   expect_length(unique(drawn$id), 4L)
@@ -1363,8 +1466,11 @@ test_that("variance_estimators() refuses half-samples when a group is a triple",
     as_svrepdesign(s, type = "BRR"),
     class = "samplyr_error_svrep_conversion_failed"
   )
-  # Every group of the zone fixture is a pair, so the groups do not refuse.
-  plan <- certainty_zone_fixture(m = 1)
+  # At a cv of 0.13 every group of the zone fixture is a pair, so the
+  # groups do not refuse.
+  plan <- certainty_zone_fixture(m = 1, cv = 0.13)
+  groups <- unique(plan$psu[!is.na(plan$psu$.pair), c("stratum", ".zone", ".pair")])
+  expect_true(all(table(groups$.pair) == 2L))
   frame <- certainty_element_frame(certainty_zone_register())
   v <- variance_estimators(execute(certainty_zone_design(plan), frame, seed = 4))
   expect_false(identical(v$status[v$estimator == "Balanced repeated replication"], "refused"))

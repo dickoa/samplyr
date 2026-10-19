@@ -947,39 +947,14 @@ resolve_pool_chance <- function(
   }
 
   base_chance <- function(mos_vals, n, N) {
-    if (!is_null(draw_spec$method_type)) {
-      return(switch(
-        draw_spec$method_type,
-        wr = sondage::expected_hits(mos_vals, n),
-        balanced = if (!is_null(draw_spec$mos)) {
-          sondage::inclusion_prob(mos_vals, n)
-        } else {
-          rep(n / N, N)
-        },
-        sondage::inclusion_prob(mos_vals, n)
-      ))
+    if (!is.na(mos_route(draw_spec))) {
+      return(mos_chances(mos_vals, n, draw_spec, frac = frac)$pik)
     }
-    switch(
-      method,
-      srswor = ,
-      systematic = rep(n / N, N),
-      srswr = rep(n / N, N),
-      bernoulli = rep(frac %||% (n / N), N),
-      pps_poisson = pmin(
-        (frac %||% (n / N)) * mos_vals / sum(mos_vals) * N,
-        1
-      ),
-      pps_multinomial = ,
-      pps_chromy = sondage::expected_hits(mos_vals, n),
-      lpm2 = ,
-      scps = ,
-      cube = if (!is_null(draw_spec$mos)) {
-        sondage::inclusion_prob(mos_vals, n)
-      } else {
-        rep(n / N, N)
-      },
-      sondage::inclusion_prob(mos_vals, n)
-    )
+    if (identical(method, "bernoulli")) {
+      rep(frac %||% (n / N), N)
+    } else {
+      rep(n / N, N)
+    }
   }
 
   has_cert <- !is_null(draw_spec$certainty_size) ||

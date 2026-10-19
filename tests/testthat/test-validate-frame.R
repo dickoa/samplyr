@@ -105,6 +105,174 @@ test_that("validate_frame detects MOS problems", {
   neg_frame <- good_frame
   neg_frame$size <- -neg_frame$size
   expect_error(validate_frame(base, neg_frame), "contains negative values")
+
+  inf_frame <- good_frame
+  inf_frame$size[1] <- Inf
+  expect_error(
+    validate_frame(base, inf_frame),
+    class = "samplyr_error_frame_invalid"
+  )
+  expect_error(validate_frame(base, inf_frame), "contains infinite values")
+})
+
+test_that("validate_frame refuses a PPS pool with no positive size", {
+  frame <- data.frame(
+    id = 1:20,
+    s = rep(c("a", "b"), each = 10),
+    size = c(1:10, rep(0, 10))
+  )
+  # A positive total in stratum a does not make stratum b drawable.
+  stratified <- sampling_design() |>
+    stratify_by(s) |>
+    draw(n = 2, method = "pps_brewer", mos = size)
+  err <- expect_error(
+    validate_frame(stratified, frame),
+    class = "samplyr_error_mos_zero_sum"
+  )
+  expect_match(conditionMessage(err), "1 of 2 candidate pools")
+  expect_identical(err$payload$pool_keys, "b")
+  expect_error(
+    suppressWarnings(execute(stratified, frame, seed = 1)),
+    class = "samplyr_error_mos_zero_sum"
+  )
+
+  # Certainty can take every unit with a positive size.
+  certain <- sampling_design() |>
+    draw(n = 3, method = "pps_brewer", mos = size, certainty_size = 4)
+  one_big <- data.frame(id = 1:10, size = c(5, rep(0, 9)))
+  expect_error(
+    validate_frame(certain, one_big),
+    class = "samplyr_error_mos_zero_sum"
+  )
+  expect_error(
+    suppressWarnings(execute(certain, one_big, seed = 1)),
+    class = "samplyr_error_mos_zero_sum"
+  )
+
+  # Zero sizes are fine where some size remains, and outside PPS.
+  frame$size <- frame$size + 1
+  expect_true(validate_frame(stratified, frame))
+  frame$size <- 0
+  expect_true(validate_frame(sampling_design() |> draw(n = 2), frame))
+})
+
+test_that("a random-size draw follows the route of its probabilities", {
+  on.exit(sondage::unregister_method("sized_random"), add = TRUE)
+  sondage::register_method(
+    "sized_random", "wor",
+    fixed_size = FALSE,
+    probabilities = "exact",
+    variance_family = "poisson",
+    sample_fn = function(pik, ...) {
+      sondage::unequal_prob_wor(pik, method = "poisson")$sample
+    }
+  )
+  frame <- data.frame(id = 1:10, size = c(5, 2, rep(0, 8)))
+  # A registered random-size method spreads its take by inclusion_prob().
+  for (design in list(
+    sampling_design() |>
+      draw(n = 3, method = "pps_sized_random", mos = size,
+           on_empty = "silent"),
+    sampling_design() |>
+      draw(frac = 0.3, method = "pps_sized_random", mos = size,
+           on_empty = "silent")
+  )) {
+    expect_error(
+      validate_frame(design, frame),
+      class = "samplyr_error_mos_positive_short"
+    )
+    expect_error(
+      suppressWarnings(execute(design, frame, seed = 1)),
+      class = "samplyr_error_mos_positive_short"
+    )
+  }
+  # pps_poisson caps its probabilities instead, so the same take proceeds.
+  for (design in list(
+    sampling_design() |> draw(n = 3, method = "pps_poisson", mos = size),
+    sampling_design() |> draw(frac = 0.3, method = "pps_poisson", mos = size)
+  )) {
+    expect_true(validate_frame(design, frame))
+    expect_s3_class(
+      suppressWarnings(execute(design, frame, seed = 1)),
+      "tbl_sample"
+    )
+  }
+})
+
+test_that("validate_frame refuses a take above the units of positive size", {
+  on.exit(sondage::unregister_method("sized_wor"), add = TRUE)
+  sondage::register_method(
+    "sized_wor", "wor",
+    sample_fn = function(pik, ...) {
+      sondage::unequal_prob_wor(pik, method = "brewer")$sample
+    },
+    probabilities = "exact"
+  )
+  # Two units carry all the size, and each design takes three.
+  frame <- data.frame(
+    id = 1:10,
+    size = c(5, 2, rep(0, 8)),
+    lon = seq(0, 1, length.out = 10),
+    lat = rev(seq(0, 1, length.out = 10))
+  )
+  designs <- list(
+    sampling_design() |> draw(n = 3, method = "pps_brewer", mos = size),
+    sampling_design() |> draw(n = 3, method = "cube", mos = size),
+    sampling_design() |>
+      draw(n = 3, method = "lpm2", mos = size, spread = c(lon, lat)),
+    sampling_design() |> draw(n = 3, method = "pps_sized_wor", mos = size)
+  )
+  for (design in designs) {
+    expect_error(
+      validate_frame(design, frame),
+      class = "samplyr_error_mos_positive_short"
+    )
+    expect_error(
+      suppressWarnings(execute(design, frame, seed = 1)),
+      class = "samplyr_error_mos_positive_short"
+    )
+  }
+
+  # The same holds for a registered method and a balanced one at zero size.
+  frame$size <- 0
+  for (design in designs[c(2, 4)]) {
+    expect_error(
+      validate_frame(design, frame),
+      class = "samplyr_error_mos_zero_sum"
+    )
+    expect_error(
+      suppressWarnings(execute(design, frame, seed = 1)),
+      class = "samplyr_error_mos_zero_sum"
+    )
+  }
+
+  # A draw with replacement, or of random size, needs only a positive total.
+  frame$size <- c(5, 2, rep(0, 8))
+  expect_true(validate_frame(
+    sampling_design() |> draw(n = 3, method = "pps_multinomial", mos = size),
+    frame
+  ))
+  expect_true(validate_frame(
+    sampling_design() |> draw(frac = 0.3, method = "pps_poisson", mos = size),
+    frame
+  ))
+
+  # The message counts the take, not the units of positive size.
+  expect_error(
+    suppressWarnings(execute(designs[[1]], frame, seed = 1)),
+    "Cannot draw 3 units by size from 2 units"
+  )
+
+  # Certainty takes the largest unit, and the rest of the take is short.
+  certain <- sampling_design() |>
+    draw(n = 3, method = "pps_brewer", mos = size, certainty_size = 4)
+  err <- expect_error(
+    validate_frame(certain, frame),
+    class = "samplyr_error_mos_positive_short"
+  )
+  expect_identical(err$payload$n_found, 1L)
+  frame$size[3] <- 1
+  expect_true(validate_frame(certain, frame))
 })
 
 test_that("validate_frame detects auxiliary variable NA values", {
@@ -298,13 +466,17 @@ test_that("a phase-2 design that declares no unit still links through phase 1", 
 })
 
 test_that("a design warns when neither phase declares a unit", {
-  frame <- data.frame(id = 1:100, x = rnorm(100))
+  frame <- data.frame(id = 1:100, x = rnorm(100), size = 1:100)
   phase1 <- sampling_design() |>
     draw(n = 40) |>
     execute(frame, seed = 1)
 
+  # A simple random subsample is phase 1's design and needs no link.
+  srs <- sampling_design() |> draw(n = 10)
+  expect_no_warning(validate_frame(srs, phase1))
+
   phase2_design <- sampling_design() |>
-    draw(n = 10)
+    draw(n = 10, method = "pps_brewer", mos = size)
 
   expect_warning(
     validate_frame(phase2_design, phase1),
@@ -500,12 +672,17 @@ test_that("a later stage is judged on every parent it could reach", {
   }
 
   # A fraction keyed on every unit of the frame, as a take-all table is.
+  # Every pool holds one unit, so the half rounds up to all of them.
   frame$ea <- frame$id
   by_ea <- data.frame(ea = frame$ea, frac = 0.5)
   design <- sampling_design() |>
     add_stage() |> cluster_by(psu) |> draw(n = 3) |>
     add_stage() |> stratify_by(ea) |> draw(frac = by_ea)
-  expect_s3_class(execute(design, frame, seed = 1), "tbl_sample")
+  expect_warning(
+    s <- execute(design, frame, seed = 1),
+    class = "samplyr_warning_census"
+  )
+  expect_s3_class(s, "tbl_sample")
 })
 
 test_that("a continuation is judged on the register it is given", {

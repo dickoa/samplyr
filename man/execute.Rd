@@ -82,7 +82,10 @@ Their seeds are drawn from \code{seed}, since consecutive seeds do not give
 independent draws in R, and recorded in the \code{replicate_seeds} element
 of the sample's metadata, so replicate \code{r} alone is
 \code{execute(design, frame, seed = replicate_seeds[r])}. Cannot be combined
-with \code{panels} or with stages that use permanent random numbers.
+with \code{panels} or with stages that use permanent random numbers. A
+replicated sample continued, or used as a phase-2 frame, carries its
+replicates into the stages run now, and these cannot use permanent
+random numbers either.
 \code{as_svrepdesign(type = "random_groups")} estimates variance from the
 spread of the replicates, for any selection method.}
 
@@ -154,6 +157,10 @@ stage selected, and the variables earlier stages introduced are carried
 onto it, so a lower register need not be pre-filtered or duplicate the
 upper stages' stratification columns. A register may legitimately omit a
 carried stratum, but one whose own copy of it disagrees is an error.
+Each earlier stage's measure of size (\code{mos}) is carried too, so the sample
+keeps what every stage's inclusion probabilities were computed from. A
+register holding a column of the same name keeps its own, and a stage
+that selects on that name must find it in its own register.
 
 Before any stage draws, every later stage is checked on all the units it
 could reach, as \code{\link[=validate_frame]{validate_frame()}} checks them, so a defect in a unit the

@@ -235,7 +235,7 @@ share_weights <- function(
 #' links of the sampled units, and so authorizes samplyr to count it.
 #'
 #' It makes the same assertion inside [weighted_links()]'s `total` argument,
-#' where what is totalled is the link importances rather than the links.
+#' where what is totaled is the link importances rather than the links.
 #'
 #' Named for the assertion rather than for the counting it triggers, because
 #' the assertion is what a reader has to check.

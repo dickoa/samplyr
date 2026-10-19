@@ -49,7 +49,7 @@
 #'
 #' ## Certainty units
 #'
-#' Certainty units are labelled from their own pools and consume no rotating
+#' Certainty units are labeled from their own pools and consume no rotating
 #' quota. A certainty unit is in the sample at every occasion, since a
 #' schedule that rotated it out would drop the very units the certainty
 #' stratum exists to enumerate. Certainty counts only at the assignment

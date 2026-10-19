@@ -1,3 +1,25 @@
+# the message for a stage taken whole names its cause
+
+    Code
+      invisible(execute(subsample_households(frac = 0.5, method = "systematic",
+        round = "nearest"), one_household_pools(), seed = 1))
+    Condition
+      Warning:
+      Stage 3: selected every unit available in the pools it executed.
+      x Requested 6 units, selected all 6 available.
+      i Every pool holds a single unit, so each was taken whole.
+      i If this stage was meant to subsample units an earlier stage selected, execute that stage on its own and start a new design on the result, which records a second phase.
+      i This stage contributes no sampling variance. Earlier stages are unaffected: the design as a whole is a census only if every stage is.
+    Code
+      invisible(execute(draw(stratify_by(sampling_design(), g), frac = 0.2, min_n = 3),
+      data.frame(g = rep(1:5, each = 3), id = 1:15), seed = 1))
+    Condition
+      Warning:
+      Stage 1: selected every unit available in the pools it executed.
+      x Requested 15 units, selected all 15 available.
+      i The fraction is below 1, but rounding it or raising it to `min_n` gave every pool its whole size.
+      i This stage contributes no sampling variance. Earlier stages are unaffected: the design as a whole is a census only if every stage is.
+
 # the aggregated messages read as intended
 
     Code

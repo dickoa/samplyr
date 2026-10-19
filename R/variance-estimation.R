@@ -249,7 +249,7 @@
 #' On other populations the across case reached 4 to 15 times, higher when
 #' little of the outcome's variation lies between phase-1 units.
 #' [as_svydesign()] gives the call. No two-phase sample has a replicate
-#' export.
+#' export, except the subsample within pools below.
 #'
 #' Phase 2 is drawn from the phase-1 sample, so its joint inclusion
 #' probabilities are computed there. A single-stage phase 2 drawn with
@@ -272,6 +272,16 @@
 #' unit. Drawn across them, survey's variance was negative in 26% to 51% of
 #' samples and 1.4 to 5 times the true variance otherwise, and the export
 #' warns (`samplyr_warning_twophase_across_units`).
+#'
+#' A second phase drawn by equal probability within each final-stage pool of
+#' phase 1, whose final stage draws elements by equal probability, is
+#' exported as phase 1's multistage design with the smaller final take
+#' ([as_svydesign()] states the shape). In a simulation with 8 EAs drawn by
+#' `pps_brewer` in each of 2 strata, 20 households in each and half of them
+#' kept, the estimated variance of a total was 0.99 of the true variance,
+#' against 1.22 for the ultimate-cluster call. With `srswor` EAs it was 0.98,
+#' as [survey::twophase()] gave on the same design (0.98), against 1.21 for
+#' the ultimate cluster.
 #'
 #' @references
 #' Berger, Y.G. (2004). A simple variance estimator for unequal probability

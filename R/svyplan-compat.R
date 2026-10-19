@@ -177,7 +177,11 @@ check_svyplan_schedule <- function(x, arg = "schedule",
 #' - `n_alloc()` results: named per-stratum vector. For stratified
 #'   two-stage plans (cluster mode), stage 1 gets `n_psu_int` and
 #'   stage 2 gets `n_per_psu_int`, both named by stratum (the jointly
-#'   integerized field design, svyplan >= 0.8.8).
+#'   integerized field design, svyplan >= 0.8.8). A stage stratified by
+#'   several variables gets a data frame keyed on them instead, when the
+#'   plan's table carries them all and they identify its rows (svyplan >=
+#'   0.16.0 carries the frame's label columns). Otherwise the vector is
+#'   returned and `draw()` refuses it.
 #' - Certainty-aware `n_alloc()` results (solved with a `psu` register,
 #'   svyplan >= 0.12.0): never coerced. `draw()` intercepts them before
 #'   this function runs: a clustered, stratified stage 1 fields the plan's
@@ -194,18 +198,43 @@ check_svyplan_schedule <- function(x, arg = "schedule",
 #'   continuous stages, which are ceiled.
 #' - Other svyplan objects: scalar total via `as.integer()`.
 #' @noRd
-coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
+coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE,
+                             strata_vars = NULL) {
   rlang::local_error_call(caller_env())
   stage_aware <- clustered || stage_index > 1L
 
   if (inherits(n, "svyplan_n") && identical(n$type, "alloc")) {
     detail <- as.data.frame(n)
+    keyed <- length(strata_vars) > 1L &&
+      is_null(svyplan_strata_key_problem(detail, strata_vars))
+    per_stratum <- function(values) {
+      if (!keyed) {
+        return(stats::setNames(values, detail$stratum))
+      }
+      out <- detail[strata_vars]
+      out$n <- values
+      out
+    }
     if (is_certainty_alloc_plan(n)) {
+      deeper <- if (stage_index > 2L) {
+        c(
+          "x" = "At stage {stage_index}, the plan's per-PSU takes have no
+                 stage to attach to. They apply only at stage 2, directly
+                 below the PSUs, and a stage in between, such as a segment
+                 selection, separates them.",
+          "i" = "To field the takes here, stratify this stage by the PSU id
+                 and pass them as a table:
+                 {.code stratify_by(psu_id) |> draw(n = data.frame(psu_id =
+                 plan$psu$psu_id, n = plan$psu$n_take))}."
+        )
+      }
       abort_samplyr(
         c(
           "This svyplan allocation is certainty-aware and cannot be a stage size.",
           "x" = "The plan takes every certainty PSU whole, at its own take, and draws the remaining PSUs by PPS; coercing it to per-stratum totals would field a different design.",
-          "i" = "Pass it to {.fn draw} at a clustered, stratified stage 1 with an exact-pik PPS method, and samplyr fields the plan's own classification."
+          deeper %||% c(
+            "i" = "Pass it to {.fn draw} at a clustered, stratified stage 1 with an exact-pik PPS method, and samplyr fields the plan's own classification."
+          )
         ),
         class = "samplyr_error_svyplan_certainty_plan"
       )
@@ -221,12 +250,12 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
         )
       }
       if (stage_index == 1L) {
-        return(stats::setNames(detail$n_psu_int, detail$stratum))
+        return(per_stratum(detail$n_psu_int))
       }
       if (stage_index == 2L) {
         # A joint-target plan fixes a whole take and reports no rounded one.
         take <- detail$n_per_psu_int %||% detail$n_per_psu
-        return(stats::setNames(as.integer(take), detail$stratum))
+        return(per_stratum(as.integer(take)))
       }
       abort_samplyr(
         c(
@@ -236,7 +265,7 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
         class = "samplyr_error_svyplan_stage"
       )
     }
-    return(stats::setNames(detail$n_int, detail$stratum))
+    return(per_stratum(detail$n_int))
   }
 
   if (inherits(n, "svyplan_n") && identical(n$type, "multi") &&
@@ -295,6 +324,22 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE) {
   n
 }
 
+#' Why an allocation table cannot key a stage's strata, or NULL
+#'
+#' The table must hold every stratification variable, and together they must
+#' tell its rows apart.
+#' @noRd
+svyplan_strata_key_problem <- function(detail, strata_vars) {
+  missing <- setdiff(strata_vars, names(detail))
+  if (length(missing) > 0L) {
+    return(list(missing = missing))
+  }
+  if (anyDuplicated(detail[strata_vars]) > 0L) {
+    return(list(duplicated = TRUE))
+  }
+  NULL
+}
+
 #' Detect a certainty-aware svyplan allocation
 #'
 #' The register in `$params$psu` is svyplan's documented stable mark
@@ -346,10 +391,16 @@ certainty_bridge_spec <- function(
     )
   }
 
-  if (is_null(strata_vars) || length(strata_vars) != 1L) {
+  if (is_null(strata_vars)) {
     refuse(
       "A certainty plan needs the stage stratified by the plan's stratum variable.",
       "i" = "Use {.fn stratify_by} with the single variable whose values match the register's {.code stratum}."
+    )
+  }
+  if (length(strata_vars) > 1L) {
+    refuse(
+      "A certainty plan names its strata in one column, and this stage is stratified by {.val {strata_vars}}.",
+      "i" = "Stratify by the one column the plan was built on, for example a combined {.code paste(region, urban_rural)}, whose values match the register's {.code stratum}."
     )
   }
   if (length(cluster_vars) != 1L) {
@@ -735,12 +786,13 @@ certainty_take_spec <- function(
 
 #' Refuse a plan whose executable selection rule caps a noncertainty PSU
 #'
-#' The plan classifies by svyplan's element-fraction threshold. The fielded
-#' remainder caps by `n_psu_draw * N_i / sum(N_rest)`, or in a zoned plan by
-#' `m * N_i / N_zone` within each zone. The rules differ, and ceiling effects
-#' near the threshold can push the largest noncertainty PSU to probability
-#' one. Fielding it would silently alter the plan, so the refusal runs
-#' before any RNG is consumed, from the register alone.
+#' The plan fixes its certainty PSUs, and the fielded remainder caps by
+#' `n_psu_draw * N_i / sum(N_rest)`, or in a zoned plan by
+#' `m * N_i / N_zone` within each zone. svyplan plans a remainder no PSU
+#' of which reaches probability one, but a plan edited or built elsewhere
+#' can push the largest noncertainty PSU there. Fielding it would silently
+#' alter the plan, so the refusal runs before any RNG is consumed, from
+#' the register alone.
 #' @noRd
 check_certainty_plan_disagreement <- function(
   register,

@@ -55,7 +55,7 @@ built for \code{systematic} and \code{pps_systematic} stages. \code{"warn"} (def
 builds them and warns once per call, naming every affected stage.
 \code{"approximate"} builds them silently, for a caller who has acknowledged
 the approximation, and \code{"error"} refuses. Naming a \code{type} is not an
-acknowledgement, since no type reproduces systematic selection. Census
+acknowledgment, since no type reproduces systematic selection. Census
 stages are exempt, as in \code{\link[=as_svydesign]{as_svydesign()}}. The choice and the affected
 stages are recorded in the \code{"samplyr_systematic_variance"} attribute of
 the result.}
@@ -72,7 +72,10 @@ directly from recorded stage mechanisms. Other methods first build a
 \details{
 Replicate conversion supports single-phase designs, including multistage
 samples, shared weights and independent frame stacks. Two-phase replicate
-export is unsupported. \code{"auto"} keeps survey's method choice, whether or
+export is unsupported, except for a second phase drawn within each
+final-stage pool of phase 1, which is phase 1's multistage design with a
+smaller final take and is replicated as that design (\code{\link[=as_svydesign]{as_svydesign()}}
+describes the shape). \code{"auto"} keeps survey's method choice, whether or
 not svrep is installed.
 \subsection{The first stage under the generic types}{
 

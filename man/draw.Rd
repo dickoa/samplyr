@@ -59,10 +59,14 @@ matches no selected parent passes unnoticed.
 coercions and stage-aware for cluster and stratified two-stage plans.
 A plan giving one size for a stage stratified without \code{alloc} is
 refused (\code{samplyr_error_svyplan_total_per_stratum}) rather than taken
-in every stratum.
+in every stratum. A plan for a stage stratified by several variables
+is matched on those columns of its table, which svyplan carries from
+the frame's character and factor columns. A plan without them is
+refused (\code{samplyr_error_svyplan_multivariable_strata}).
 \item A certainty-aware \code{svyplan::n_alloc()} plan (solved with a \code{psu}
-register carrying \code{psu_id}), at a clustered, stratified stage 1 and
-again at stage 2 for the per-PSU takes. Stage 1 takes every certainty
+register carrying \code{psu_id}), at a clustered stage 1 stratified by the
+plan's one stratum column, and again at stage 2 for the per-PSU
+takes. Stage 1 takes every certainty
 PSU and draws exactly the plan's remainder per stratum. A plan solved
 with \code{n_psu_per_zone = 2} draws two PSUs from each of its zones
 instead, records the zone in \code{.zone_1}, and exports one variance
@@ -194,9 +198,10 @@ fixed-size method. One of:
 An \code{n} given directly is not rounded. A product within floating-point
 error of an integer counts as that integer, so \code{frac = 0.07} of 100
 units draws 7 under every rule. After rounding, every stratum or group
-receives at least 1 unit. A random-size method, built in or registered
-with \code{fixed_size = FALSE}, takes the expected size \code{N * frac} unrounded,
-which may be fractional or below 1.}
+receives at least 1 unit. When that takes every pool whole, \code{\link[=execute]{execute()}}
+warns with \code{samplyr_warning_census}. A random-size method, built in or
+registered with \code{fixed_size = FALSE}, takes the expected size
+\code{N * frac} unrounded, which may be fractional or below 1.}
 
 \item{control}{<\code{\link[dplyr:dplyr_data_masking]{data-masking}}> Variables for
 sorting the frame before selection. Can be:
@@ -346,9 +351,13 @@ below the target. \code{\link[=frame_summary]{frame_summary()}} reports both \co
 \subsection{Control sorting}{
 
 Control sorting orders the frame before selection, giving implicit
-stratification. It is most effective with the systematic and sequential
-methods (\code{systematic}, \code{pps_systematic}, \code{pps_chromy}), where the sample
-spreads evenly across the sorted variables.
+stratification with the systematic and sequential methods (\code{systematic},
+\code{pps_systematic}, \code{pps_chromy}), where the sample spreads evenly across the
+sorted variables. Other methods accept \code{control} but get no implicit
+stratification from it. The sort can change which units a given seed
+draws, but the sample does not spread over the sorted variables. A
+coordinated \code{pps_sps} draw with \code{prn}, for example, keeps nothing of a
+sort by district.
 
 Nested sorting (the default, \code{control = c(var1, var2, var3)}) sorts
 ascending by each variable in turn. Serpentine sorting

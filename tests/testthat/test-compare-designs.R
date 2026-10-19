@@ -287,6 +287,23 @@ test_that("compare_designs() refuses invalid inputs", {
   )
 })
 
+test_that("compare_designs() refuses a key named like a unit-table column", {
+  frame <- data.frame(id = 1:20)
+  design <- sampling_design() |> draw(n = 5)
+  for (name in c("probability_x", "probability_y", "abs_diff", "rel_diff",
+                 "agree")) {
+    renamed <- stats::setNames(frame, name)
+    expect_error(
+      compare_designs(design, design, renamed, key = !!rlang::sym(name),
+                      level = "probabilities"),
+      class = "samplyr_error_exante_key"
+    )
+  }
+  units <- compare_designs(design, design, frame, key = id,
+                           level = "probabilities")$units
+  expect_false(anyDuplicated(names(units)) > 0)
+})
+
 test_that("compare_designs() draws nothing", {
   frame <- compare_frame()
   set.seed(42)

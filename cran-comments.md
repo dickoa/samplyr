@@ -11,6 +11,10 @@
   the GitHub convention and is not one GitLab serves. The URL is correct
   as given.
 
+  The README links its CRAN badge to
+  `https://CRAN.R-project.org/package=samplyr`, which returns 404 until
+  the package is published.
+
   The NOTE also lists possibly misspelled words in DESCRIPTION. All are
   correct: Burkina Faso is a country, Deville and Tille (spelled with an
   acute accent in DESCRIPTION) are the authors of the balanced-sampling
@@ -27,7 +31,7 @@
 ## Dependencies
 
 `samplyr` imports `sondage` (selection algorithms) and `svyplan` (sample
-size and precision planning). This package requires `sondage (>= 0.10.0)` and `svyplan (>= 0.15.0)`.
+size and precision planning). This package requires `sondage (>= 0.11.0)` and `svyplan (>= 0.16.0)`.
 
 ## Downstream dependencies
 

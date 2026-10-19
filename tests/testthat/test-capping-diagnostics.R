@@ -816,6 +816,228 @@ test_that("the allocation path does not warn on its own", {
   )
 })
 
+## A stage that took everything without a request above any pool
+
+# Six EAs of four households, three EAs then two households taken, so the
+# third stage runs on 6 pools that each hold one household.
+one_household_pools <- function() {
+  frame <- data.frame(ea = rep(sprintf("e%d", 1:6), each = 4))
+  frame$hh <- seq_len(nrow(frame))
+  frame
+}
+
+subsample_households <- function(...) {
+  sampling_design() |>
+    add_stage("EAs") |>
+    cluster_by(ea) |>
+    draw(n = 3) |>
+    add_stage("Households") |>
+    cluster_by(hh) |>
+    draw(n = 2) |>
+    add_stage("Subsample") |>
+    draw(...)
+}
+
+test_that("a fraction that rounds every pool of one unit up is a census", {
+  s <- NULL
+  w <- capture_one(
+    s <- execute(
+      subsample_households(frac = 0.5, method = "systematic",
+                           round = "nearest"),
+      one_household_pools(),
+      seed = 1
+    ),
+    "samplyr_warning_census"
+  )
+
+  expect_identical(nrow(s), 6L)
+  expect_true(all(s$.weight_3 == 1))
+  expect_false(is.null(w))
+  expect_identical(w$stage, 3L)
+  expect_identical(w$payload$cause, "single_unit")
+  expect_equal(
+    unlist(w$payload[c("n_pools", "n_actual", "n_available")]),
+    c(n_pools = 6, n_actual = 6, n_available = 6)
+  )
+  expect_match(conditionMessage(w), "single unit")
+  expect_match(conditionMessage(w), "second phase")
+})
+
+test_that("a capped stage of single-unit pools reports one census with its cause", {
+  run <- function() {
+    execute(subsample_households(n = 2), one_household_pools(), seed = 1)
+  }
+  expect_identical(count_conditions(run(), "samplyr_warning_census"), 1L)
+  w <- capture_one(run(), "samplyr_warning_census")
+  expect_identical(w$payload$cause, "single_unit")
+  expect_equal(
+    unlist(w$payload[c("n_requested", "n_actual", "n_available")]),
+    c(n_requested = 12, n_actual = 6, n_available = 6)
+  )
+})
+
+test_that("a take of one in pools of one unit is a census", {
+  expect_identical(
+    count_conditions(
+      execute(subsample_households(n = 1), one_household_pools(), seed = 1),
+      "samplyr_warning_census"
+    ),
+    1L
+  )
+})
+
+test_that("a fraction is a census only when it reaches every pool whole", {
+  frame <- data.frame(g = rep(1:5, each = 3), id = 1:15)
+  partial <- sampling_design() |>
+    stratify_by(g) |>
+    draw(frac = 0.2)
+  raised <- sampling_design() |>
+    stratify_by(g) |>
+    draw(frac = 0.2, min_n = 3)
+
+  expect_identical(
+    count_conditions(
+      execute(partial, frame, seed = 1),
+      "samplyr_warning_census"
+    ),
+    0L
+  )
+  w <- capture_one(
+    execute(raised, frame, seed = 1),
+    "samplyr_warning_census"
+  )
+  expect_identical(w$payload$cause, "min_n")
+  expect_match(conditionMessage(w), "min_n")
+
+  # 0.6 of 2 rounds up to 2 in every pool.
+  pairs <- data.frame(g = rep(1:4, each = 2), id = 1:8)
+  w <- capture_one(
+    execute(
+      sampling_design() |> stratify_by(g) |> draw(frac = 0.6),
+      pairs,
+      seed = 1
+    ),
+    "samplyr_warning_census"
+  )
+  expect_identical(w$payload$cause, "frac")
+  expect_no_match(conditionMessage(w), "min_n")
+})
+
+test_that("a take equal to every pool's size is not reported", {
+  pairs <- data.frame(g = rep(1:3, each = 2), id = 1:6)
+  singles <- data.frame(g = 1:3, id = 1:3)
+
+  # At stage 1, strata of one unit are the frame as given, not a subsample.
+  for (case in list(list(pairs, 2), list(singles, 1))) {
+    design <- sampling_design() |>
+      stratify_by(g) |>
+      draw(n = case[[2]])
+    expect_identical(
+      count_conditions(
+        execute(design, case[[1]], seed = 1),
+        "samplyr_warning_census"
+      ),
+      0L
+    )
+  }
+})
+
+test_that("a stage taking only some pools whole is not a census", {
+  frame <- data.frame(g = rep(1:2, times = c(1, 4)), id = 1:5)
+  design <- sampling_design() |>
+    stratify_by(g) |>
+    draw(frac = 0.5)
+
+  expect_identical(
+    count_conditions(
+      execute(design, frame, seed = 1),
+      "samplyr_warning_census"
+    ),
+    0L
+  )
+})
+
+test_that("a fraction of one declares the census and is not reported", {
+  frame <- data.frame(g = rep(1:3, each = 2), id = 1:6)
+  scalar <- sampling_design() |>
+    stratify_by(g) |>
+    draw(frac = 1)
+  table <- sampling_design() |>
+    stratify_by(g) |>
+    draw(frac = data.frame(g = 1:3, frac = 1))
+
+  for (design in list(scalar, table)) {
+    expect_identical(
+      count_conditions(
+        execute(design, frame, seed = 1),
+        "samplyr_warning_census"
+      ),
+      0L
+    )
+  }
+  expect_identical(
+    count_conditions(
+      execute(subsample_households(frac = 1), one_household_pools(),
+              seed = 1),
+      "samplyr_warning_census"
+    ),
+    0L
+  )
+})
+
+test_that("random-size and with-replacement stages are not judged", {
+  for (draw_args in list(
+    list(frac = 0.5, method = "bernoulli", on_empty = "silent"),
+    list(n = 1, method = "srswr")
+  )) {
+    expect_identical(
+      count_conditions(
+        execute(
+          do.call(subsample_households, draw_args),
+          one_household_pools(),
+          seed = 1
+        ),
+        "samplyr_warning_census"
+      ),
+      0L,
+      label = draw_args$method
+    )
+  }
+})
+
+test_that("replicates report a stage taken whole once", {
+  expect_identical(
+    count_conditions(
+      execute(
+        subsample_households(frac = 0.5, method = "systematic"),
+        one_household_pools(),
+        seed = 1,
+        reps = 3
+      ),
+      "samplyr_warning_census"
+    ),
+    1L
+  )
+})
+
+test_that("the message for a stage taken whole names its cause", {
+  expect_snapshot({
+    invisible(execute(
+      subsample_households(frac = 0.5, method = "systematic",
+                           round = "nearest"),
+      one_household_pools(),
+      seed = 1
+    ))
+    invisible(execute(
+      sampling_design() |>
+        stratify_by(g) |>
+        draw(frac = 0.2, min_n = 3),
+      data.frame(g = rep(1:5, each = 3), id = 1:15),
+      seed = 1
+    ))
+  })
+})
+
 ## Hierarchical pool identities
 
 test_that("capped pools inside a cluster loop keep their parent", {

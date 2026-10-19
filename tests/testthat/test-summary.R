@@ -234,10 +234,14 @@ test_that("realization ranges use fixed decimals for small fractions", {
 
 test_that("large reached and universe pool counts use separators", {
   frame <- data.frame(parent = seq_len(2000), unit = 1L)
-  sample <- sampling_design() |>
-    add_stage() |> cluster_by(parent) |> draw(n = 1200) |>
-    add_stage() |> draw(n = 1) |>
-    execute(frame, seed = 8)
+  # One unit per parent, so stage 2 takes them all.
+  expect_warning(
+    sample <- sampling_design() |>
+      add_stage() |> cluster_by(parent) |> draw(n = 1200) |>
+      add_stage() |> draw(n = 1) |>
+      execute(frame, seed = 8),
+    class = "samplyr_warning_census"
+  )
 
   txt <- paste(capture.output(summary(sample)), collapse = "\n")
   expect_match(txt, "1,200/2,000 pools", fixed = TRUE)
@@ -279,4 +283,75 @@ test_that("summary flags approximate-probabilities methods", {
   txt <- paste(capture.output(summary(exact)), collapse = "\n")
   expect_match(txt, "pps_brewer", fixed = TRUE)
   expect_false(grepl("approximate probabilities", txt, fixed = TRUE))
+})
+
+## Pools of one unit taken whole
+
+# Twelve EAs, all taken. EAs 1 to 8 are one segment, EAs 9 to 12 three
+# segments of 20, 30 and 50 households.
+segmented_eas <- function() {
+  segments <- data.frame(
+    ea = c(1:8, rep(9:12, each = 3)),
+    segment = c(rep(1L, 8), rep(1:3, times = 4)),
+    size = c(rep(40, 8), rep(c(20, 30, 50), times = 4))
+  )
+  frame <- segments[rep(seq_len(nrow(segments)), segments$size), ]
+  frame$hh <- seq_len(nrow(frame))
+  rownames(frame) <- NULL
+  frame
+}
+
+segment_design <- function() {
+  sampling_design() |>
+    add_stage("EAs") |>
+    cluster_by(ea) |>
+    draw(n = 12) |>
+    add_stage("Segments") |>
+    cluster_by(segment) |>
+    draw(n = 1, method = "pps_systematic", mos = size) |>
+    add_stage("Households") |>
+    draw(n = 2)
+}
+
+test_that("pools of one unit are counted apart from certainty selections", {
+  s <- execute(segment_design(), segmented_eas(), seed = 1)
+  x <- summary(s)
+
+  # Every one-segment EA is certain at stage 2, and nothing else is.
+  certain <- unique(as.data.frame(s)[s$.certainty_2, c("ea", "segment")])
+  expect_identical(nrow(certain), 8L)
+  expect_identical(x$certainty, c(stage_1 = 0L, stage_2 = 0L, stage_3 = 0L))
+  expect_identical(
+    x$single_unit_pools,
+    c(stage_1 = 0L, stage_2 = 8L, stage_3 = 0L)
+  )
+
+  printed <- cli::ansi_strip(utils::capture.output(print(x)))
+  expect_true(any(grepl("8 pools of one unit taken whole", printed,
+                        fixed = TRUE)))
+  expect_false(any(grepl("certainty selection", printed, fixed = TRUE)))
+})
+
+test_that("a stage with both reports both counts", {
+  # Stratum A is one unit. In B, 2 * 100 / 130 exceeds one, so the large
+  # unit is certain in a pool of four.
+  frame <- data.frame(
+    h = c("A", rep("B", 4)),
+    id = 1:5,
+    size = c(10, 100, 10, 10, 10)
+  )
+  s <- sampling_design() |>
+    stratify_by(h) |>
+    draw(n = c(A = 1, B = 2), method = "pps_brewer", mos = size) |>
+    execute(frame, seed = 1)
+  x <- summary(s)
+
+  expect_identical(sum(s$.certainty_1), 2L)
+  expect_identical(x$certainty, c(stage_1 = 1L))
+  expect_identical(x$single_unit_pools, c(stage_1 = 1L))
+  printed <- cli::ansi_strip(utils::capture.output(print(x)))
+  expect_true(any(grepl(
+    "1 certainty selection | 1 pool of one unit taken whole", printed,
+    fixed = TRUE
+  )))
 })

@@ -812,7 +812,6 @@ requirement <- sampling_design() |>
 compare_designs(requirement, plan, villages, key = household)
 #> ── Design comparison ────────────────────────────────────────────
 #> Allocations differ on this frame.
-#> Selection methods and measures of size were not compared.
 #> 
 #> ✔ Stage 1 units: agree. 4 units.
 #> ✔ Stage 1 pools: agree. 1 pool.
@@ -820,6 +819,11 @@ compare_designs(requirement, plan, villages, key = household)
 #> ✔ Stage 2 units: agree. 28 units.
 #> ✔ Stage 2 pools: agree. 4 pools.
 #> ✖ Stage 2 targets: differ. 4 of 4 pools differ ("v1", "v2", "v3" and 1 more).
+#> 
+#> Methods and measures of size, outside the verdict:
+#> ℹ Stage 1 method: srswor in x, pps_brewer in y.
+#> ℹ Stage 1 measure of size: none in x, size in y.
+#> ✔ Stage 2 method: srswor in both.
 ```
 
 The plan takes six households in each village where the requirement asks

@@ -28,7 +28,14 @@ drawn, with \code{samplyr_error_size_capped} and the same \code{stage} and
 in the pools it executed, so it contributes no sampling variance. This
 is a claim about the stage: above the first stage those pools are the
 ones a sampled ancestor supplied, and the design as a whole is a census
-only if every stage is.}
+only if every stage is. It is raised when a take exceeded a pool, and
+also when none did but every pool was taken whole anyway: a fraction
+below 1 that rounding or \code{min_n} raised to every pool's size, or a
+stage below the first whose pools each hold one unit, as when units an
+earlier stage selected are subsampled as a new stage instead of a
+second phase. Its payload then carries \code{cause}, one of \code{"frac"},
+\code{"min_n"} or \code{"single_unit"}. A take equal to every pool's size, or
+\code{frac = 1}, asks for the census and is not reported.}
 \item{\code{samplyr_warning_nominal_cap}}{A random-size method asked for more
 units than the pool holds. Clamping every chance at one caps the target
 the stage aims at. It does not select that many units, and the realized
