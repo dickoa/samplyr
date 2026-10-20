@@ -35,6 +35,8 @@ reference:
       - stratify_by
       - cluster_by
       - draw
+      - serp
+      - bound
       - add_stage
 
   - title: "Execution"
@@ -112,10 +114,8 @@ reference:
       - as.list.sampling_design
 
   - title: "Helpers"
-    desc: "Sorting and class checks."
+    desc: "Class checks and accessors."
     contents:
-      - serp
-      - bound
       - is_sampling_design
       - is_tbl_sample
       - as_tbl_sample

@@ -111,7 +111,11 @@ The generic types (\code{"JK1"}, \code{"JKn"}, \code{"BRR"}, \code{"Fay"}, \code
 \code{"subbootstrap"}) resample first-stage units within first-stage strata,
 treating a PPS first stage drawn without replacement as drawn with
 replacement. That overstates the variance when its sampling fractions are
-large (\code{samplyr_warning_replicate_wr_first_stage}). \code{"mrbbootstrap"} and
+large (\code{samplyr_warning_replicate_wr_first_stage}). Under an
+equal-probability first stage, \code{"JK1"}, \code{"JKn"} and \code{"bootstrap"} apply
+its finite population correction to the variance of the later stages too,
+which understates it when the first-stage fraction is large
+(\code{samplyr_warning_replicate_first_stage_fpc}). \code{"mrbbootstrap"} and
 \code{"rwyb"} read every stage. RWYB supports SRS, draws with replacement,
 Poisson selection, and Brewer, CPS, Sampford and systematic PPS, the last
 four with approximate joint probabilities and a warning. It is used only for

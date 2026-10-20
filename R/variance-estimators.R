@@ -24,7 +24,8 @@
 #' `status` is `"supported"` when the export carries the design with no
 #' approximation of its own, `"approximate"` when it knowingly approximates
 #' part of it (Brewer's approximation for a PPS stage, a systematic stage,
-#' a first stage treated as drawn with replacement), `"refused"` when the
+#' a first stage treated as drawn with replacement, a first-stage correction
+#' that also scales the later stages' variance), `"refused"` when the
 #' export stops, and `"not applicable"` for the joint-probability route when
 #' stage 1 has no unequal probabilities to supply. `decided_by` says what
 #' settles it: `"design"` for the methods and the stage and phase structure,
@@ -700,6 +701,16 @@ generic_replicate_findings <- function(type, traits, facts, common) {
       stage = first$stage
     )))
   }
+  if (type %in% c("JK1", "JKn", "bootstrap") &&
+      identical(first$kind, "equal_wor") &&
+      later_stage_may_sample(traits, facts)) {
+    out <- c(out, list(finding(
+      "approximate", "samplyr_warning_replicate_first_stage_fpc",
+      "The first stage's finite population correction also scales the
+       variance later stages add, which errs toward too small a variance",
+      stage = first$stage
+    )))
+  }
   out <- c(out, common$systematic, common$refusals)
   unsupported <- Filter(function(t) identical(t$kind, "unsupported"), traits)
   if (length(unsupported) > 0) {
@@ -752,6 +763,16 @@ generic_replicate_findings <- function(type, traits, facts, common) {
     out <- c(out, brr_findings(traits, facts))
   }
   c(out, common$risks)
+}
+
+#' Does a stage below the first add variance?
+#'
+#' Without a frame, a later stage is taken to sample.
+#' @noRd
+later_stage_may_sample <- function(traits, facts) {
+  any(vapply(traits[-1], function(t) {
+    !isTRUE(stage_fact(facts, t$stage)$census)
+  }, logical(1)))
 }
 
 #' Is the first stage the replicate types resample stratified?

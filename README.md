@@ -662,13 +662,21 @@ execute(two_stage_design, frame, seed = 1, panels = 4, panel_stage = 2)
 
 ## Survey Export
 
-Convert to `survey` or `srvyr` for estimation:
+Convert to `survey` or `srvyr` for estimation. Here the Neyman sample
+above estimates the mean number of households per EA:
 
 ``` r
 svy <- as_svydesign(sample)
-survey::svymean(~y, svy)
+survey::svymean(~households, svy)
+#>              mean     SE
+#> households 64.165 2.8661
 
-as_survey_design(sample) |> dplyr::summarise(mean_y = srvyr::survey_mean(y))
+srvyr::as_survey_design(sample) |>
+  dplyr::summarise(mean_households = srvyr::survey_mean(households))
+#> # A tibble: 1 × 2
+#>   mean_households mean_households_se
+#>             <dbl>              <dbl>
+#> 1            64.2               2.87
 ```
 
 For fixed-size PPS WOR stages, `as_svydesign()` uses the Brewer variance
@@ -711,35 +719,18 @@ See `vignette("introduction")` for examples.
 `execute()` also reports when the frame could not deliver what the
 design asked for. A pool holding fewer units than the stage requested is
 selected whole, which makes the design non-self-weighting, so this is a
-warning rather than a silent adjustment. Each finding is reported once
-per stage, however many pools were affected and however many replicates
-ran:
-
-| Condition | Meaning |
-|----|----|
-| `samplyr_warning_size_capped` | Some pools held fewer units than requested |
-| `samplyr_warning_census` | The stage selected every unit within reach, so it contributes no sampling variance |
-| `samplyr_warning_nominal_cap` | A random-size method asked for more units than the pool holds |
-| `samplyr_warning_poisson_shortfall` | Dominant units saturated a `pps_poisson` stage below its reachable target |
-| `samplyr_message_allocation_capped` | A feasible allocation was redistributed past a saturated stratum |
-
-`frame_digest` defaults to `"summary"`, so the usual way to read capping
-is the `capped` column of `frame_summary(sample, detail = "pool")`. Each
-condition also carries the affected pools and the counts behind them in
-a `payload`, which is what remains under `frame_digest = "none"`. See
-`?execution_conditions` for the payload contract and for how to capture
-one.
+warning rather than a silent adjustment. The `capped` column of
+`frame_summary(sample, detail = "pool")` names the affected pools.
+`?execution_conditions` lists every such condition and the payload it
+carries.
 
 ## Checking a Design Before Drawing
 
 A design can be checked against its frame before any unit is drawn, and
-none of the checks below uses random numbers. A few points are worth
-checking in any design. A scalar `n` is taken in each stratum unless an
-allocation method shares it as a total (see Allocation Methods). At a
-later stage, sizes apply within each selected parent, and the printed
-design says so. A measure of size belongs to the sampling unit, so it
-may repeat on every row of a cluster but must be the same on each. At
-the final stage the frame rows are the units and need no `cluster_by()`.
+none of the checks below uses random numbers. A measure of size belongs
+to the sampling unit, so it may repeat on every row of a cluster but
+must be the same on each. At the final stage the frame rows are the
+units and need no `cluster_by()`.
 
 ``` r
 villages <- data.frame(

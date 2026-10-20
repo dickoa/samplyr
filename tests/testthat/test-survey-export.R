@@ -261,8 +261,11 @@ test_that("as_svrepdesign works for multi-stage non-PPS design", {
     execute(frame, seed = 42)
 
   expect_warning(
-    rep_svy <- as_svrepdesign(sample, type = "auto"),
-    "Finite population corrections after first stage have been dropped"
+    expect_warning(
+      rep_svy <- as_svrepdesign(sample, type = "auto"),
+      "Finite population corrections after first stage have been dropped"
+    ),
+    class = "samplyr_warning_replicate_first_stage_fpc"
   )
   expect_s3_class(rep_svy, "svyrep.design")
 })
@@ -338,11 +341,75 @@ test_that("unequal probabilities below stage 1 draw no first-stage warning", {
     expect_no_warning(
       suppressWarnings(
         as_svrepdesign(sample, type = "JKn"),
-        classes = "simpleWarning"
+        classes = c("simpleWarning",
+                    "samplyr_warning_replicate_first_stage_fpc")
       ),
       class = "samplyr_warning_replicate_wr_first_stage"
     )
   }
+})
+
+test_that("a first-stage correction scaling later-stage variance warns", {
+  skip_if_not_installed("survey")
+  # Every PSU has total 4, so all of the variance comes from stage 2.
+  frame <- data.frame(
+    psu = rep(1:8, each = 4),
+    id = 1:32,
+    y = rep(c(0, 0, 2, 2), 8)
+  )
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 6) |>
+    add_stage() |> draw(n = 2)
+  sample <- execute(design, frame, seed = 3)
+  raised <- function(type) {
+    classes <- character(0)
+    withCallingHandlers(
+      as_svrepdesign(sample, type = type, replicates = 20),
+      warning = function(w) {
+        classes <<- c(classes, grep("^samplyr_", class(w), value = TRUE))
+        invokeRestart("muffleWarning")
+      }
+    )
+    classes
+  }
+  for (type in c("auto", "JK1", "bootstrap")) {
+    expect_identical(raised(type),
+                     "samplyr_warning_replicate_first_stage_fpc")
+  }
+  for (type in c("subbootstrap", "mrbbootstrap")) {
+    expect_identical(raised(type), character(0))
+  }
+
+  # The jackknife is the uncorrected one times 1 - 6/8, stage 2 included.
+  rep_jk1 <- suppressWarnings(as_svrepdesign(sample, type = "JK1"))
+  uncorrected <- survey::as.svrepdesign(
+    survey::svydesign(ids = ~psu, weights = ~.weight,
+                      data = as.data.frame(sample)),
+    type = "JK1"
+  )
+  v_jk1 <- as.numeric(vcov(survey::svytotal(~y, rep_jk1)))
+  v_uncorrected <- as.numeric(vcov(survey::svytotal(~y, uncorrected)))
+  expect_gt(v_uncorrected, 0)
+  expect_equal(v_jk1, v_uncorrected * (1 - 6 / 8))
+
+  report <- variance_estimators(design, frame)
+  expect_identical(
+    report$status[report$estimator %in% c("Jackknife (JK1)", "Bootstrap")],
+    c("approximate", "approximate")
+  )
+
+  # A later stage that takes every unit adds no variance.
+  census <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 6) |>
+    add_stage() |> draw(n = 4)
+  expect_no_warning(
+    suppressWarnings(
+      as_svrepdesign(execute(census, frame, seed = 3), type = "JK1"),
+      classes = "simpleWarning"
+    ),
+    class = "samplyr_warning_replicate_first_stage_fpc"
+  )
+  expect_identical(variance_estimators(census, frame)$status[3], "supported")
 })
 
 test_that("as_survey_rep.tbl_sample returns srvyr replicate object", {

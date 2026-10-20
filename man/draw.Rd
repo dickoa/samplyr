@@ -29,14 +29,7 @@ draw(
 \item{.data}{A \code{sampling_design} object (piped from \code{\link[=sampling_design]{sampling_design()}},
 \code{\link[=add_stage]{add_stage()}}, \code{\link[=stratify_by]{stratify_by()}}, or \code{\link[=cluster_by]{cluster_by()}}).}
 
-\item{n}{Sample size. For random-size methods (\code{bernoulli}, \code{pps_poisson},
-or a custom method registered with \code{fixed_size = FALSE}), \code{n} is the
-\strong{expected} sample size, converted to \code{frac = n / N}, and may be
-fractional (\code{n = 2.6}) when no allocation method is given. At a later
-stage it is the expected take in each parent unit, whatever the parent's
-size. Fixed-size methods and allocation methods need whole units.
-\link{selection_methods} explains the fixed versus random distinction and the
-warning raised when \code{pps_poisson} falls short of \code{n}. Can be:
+\item{n}{Sample size. Can be:
 \itemize{
 \item A scalar: the size taken in each stratum when \code{\link[=stratify_by]{stratify_by()}} has no
 \code{alloc}, or the total shared across the strata when it has one. At a
@@ -79,7 +72,16 @@ with \code{mos} equal to the register's \code{N}. Stage 2 selects by \code{srswo
 Arguments the plan owns (\code{frac}, \code{certainty_size}, \code{certainty_prop},
 \code{min_n}, \code{max_n}, and at stage 1 \code{alloc}) are refused alongside it.
 \code{\link[svyplan:merge_psus]{svyplan::merge_psus()}} merges PSUs smaller than the take.
-}}
+}
+
+Fixed-size methods and allocation methods need whole units. For
+random-size methods (\code{bernoulli}, \code{pps_poisson}, or a custom method
+registered with \code{fixed_size = FALSE}), \code{n} is the \strong{expected} sample
+size, converted to \code{frac = n / N}, and may be fractional (\code{n = 2.6})
+when no allocation method is given. At a later stage it is the expected
+take in each parent unit, whatever the parent's size.
+\link{selection_methods} explains the fixed versus random distinction and the
+warning raised when \code{pps_poisson} falls short of \code{n}.}
 
 \item{frac}{Sampling fraction: a scalar for all strata, a named vector of
 stratum-specific fractions, or a data frame with every stratification

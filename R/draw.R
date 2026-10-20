@@ -198,14 +198,7 @@ NULL
 #'
 #' @param .data A `sampling_design` object (piped from [sampling_design()],
 #'   [add_stage()], [stratify_by()], or [cluster_by()]).
-#' @param n Sample size. For random-size methods (`bernoulli`, `pps_poisson`,
-#'   or a custom method registered with `fixed_size = FALSE`), `n` is the
-#'   **expected** sample size, converted to `frac = n / N`, and may be
-#'   fractional (`n = 2.6`) when no allocation method is given. At a later
-#'   stage it is the expected take in each parent unit, whatever the parent's
-#'   size. Fixed-size methods and allocation methods need whole units.
-#'   [selection_methods] explains the fixed versus random distinction and the
-#'   warning raised when `pps_poisson` falls short of `n`. Can be:
+#' @param n Sample size. Can be:
 #'   - A scalar: the size taken in each stratum when [stratify_by()] has no
 #'     `alloc`, or the total shared across the strata when it has one. At a
 #'     later stage either reading applies within each selected parent, so a
@@ -247,6 +240,15 @@ NULL
 #'     Arguments the plan owns (`frac`, `certainty_size`, `certainty_prop`,
 #'     `min_n`, `max_n`, and at stage 1 `alloc`) are refused alongside it.
 #'     [svyplan::merge_psus()] merges PSUs smaller than the take.
+#'
+#'   Fixed-size methods and allocation methods need whole units. For
+#'   random-size methods (`bernoulli`, `pps_poisson`, or a custom method
+#'   registered with `fixed_size = FALSE`), `n` is the **expected** sample
+#'   size, converted to `frac = n / N`, and may be fractional (`n = 2.6`)
+#'   when no allocation method is given. At a later stage it is the expected
+#'   take in each parent unit, whatever the parent's size.
+#'   [selection_methods] explains the fixed versus random distinction and the
+#'   warning raised when `pps_poisson` falls short of `n`.
 #' @param frac Sampling fraction: a scalar for all strata, a named vector of
 #'   stratum-specific fractions, or a data frame with every stratification
 #'   column and a `frac` column. Give `n` or `frac`, not both.

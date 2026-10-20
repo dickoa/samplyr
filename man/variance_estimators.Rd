@@ -44,7 +44,8 @@ Rao-Wu-Yue-Beaumont bootstrap (\code{"rwyb"}) and random groups
 \code{status} is \code{"supported"} when the export carries the design with no
 approximation of its own, \code{"approximate"} when it knowingly approximates
 part of it (Brewer's approximation for a PPS stage, a systematic stage,
-a first stage treated as drawn with replacement), \code{"refused"} when the
+a first stage treated as drawn with replacement, a first-stage correction
+that also scales the later stages' variance), \code{"refused"} when the
 export stops, and \code{"not applicable"} for the joint-probability route when
 stage 1 has no unequal probabilities to supply. \code{decided_by} says what
 settles it: \code{"design"} for the methods and the stage and phase structure,

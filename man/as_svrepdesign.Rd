@@ -87,7 +87,17 @@ which errs toward too large a variance at large sampling fractions
 (\code{samplyr_warning_replicate_wr_first_stage}, see \link{variance_estimation}).
 Chromy's method is read as with replacement too. Unequal probabilities
 at later stages, and a first stage drawn with replacement, reach the
-variance through the weights and draw no warning. In a simulation with
+variance through the weights and draw no warning.
+
+\code{"JK1"}, \code{"JKn"} and \code{"bootstrap"}, and so \code{"auto"}, keep the
+finite population correction of an equal-probability first stage drawn
+without replacement. With stages below, that correction also scales the
+variance the later stages add, so the variance errs toward too small as
+the first-stage sampling fraction grows
+(\code{samplyr_warning_replicate_first_stage_fpc}). When 6 of 8 PSUs were
+drawn and all variance came from stage 2, \code{"JK1"} gave 0.26 of the true
+variance and \code{"mrbbootstrap"} 0.98. With 4 PSUs of 40 drawn, both gave
+0.97. In a simulation with
 \code{"JKn"}, a PPS second stage gave 0.98 of the true variance, as its SRS
 counterpart did, while a Brewer first stage with a sampling fraction of
 0.4 gave 1.43. A certainty PSU is a stratum of its own whose stage-two

@@ -3663,7 +3663,17 @@ multiframe_overlaps <- function(x) {
 #' (`samplyr_warning_replicate_wr_first_stage`, see [variance_estimation]).
 #' Chromy's method is read as with replacement too. Unequal probabilities
 #' at later stages, and a first stage drawn with replacement, reach the
-#' variance through the weights and draw no warning. In a simulation with
+#' variance through the weights and draw no warning.
+#'
+#' `"JK1"`, `"JKn"` and `"bootstrap"`, and so `"auto"`, keep the
+#' finite population correction of an equal-probability first stage drawn
+#' without replacement. With stages below, that correction also scales the
+#' variance the later stages add, so the variance errs toward too small as
+#' the first-stage sampling fraction grows
+#' (`samplyr_warning_replicate_first_stage_fpc`). When 6 of 8 PSUs were
+#' drawn and all variance came from stage 2, `"JK1"` gave 0.26 of the true
+#' variance and `"mrbbootstrap"` 0.98. With 4 PSUs of 40 drawn, both gave
+#' 0.97. In a simulation with
 #' `"JKn"`, a PPS second stage gave 0.98 of the true variance, as its SRS
 #' counterpart did, while a Brewer first stage with a sampling fraction of
 #' 0.4 gave 1.43. A certainty PSU is a stratum of its own whose stage-two
@@ -3891,6 +3901,22 @@ as_svrepdesign.tbl_sample <- function(
     # These types misread a first-stage no-correction term.
     omit_uncorrected_fpc = type %in% c("JK1", "JKn", "bootstrap")
   )
+  if (first_stage_fpc_scales_later_stages(svydesign_obj, spec, type)) {
+    cli_warn(
+      c(
+        "{.fn as_svrepdesign} with {.val {type}} applies the first stage's
+         finite population correction to the whole variance, including the
+         part that later stages add.",
+        "i" = "That part shrinks with the first-stage sampling fraction, so
+               the variance errs toward too small when the fraction is
+               large.",
+        "i" = "{.val mrbbootstrap} and {.val rwyb} use every stage's
+               probabilities, and {.fn as_svydesign} gives the
+               linearization variance."
+      ),
+      class = "samplyr_warning_replicate_first_stage_fpc"
+    )
+  }
 
   call <- current_env()
   result <- tryCatch(
@@ -3914,6 +3940,23 @@ as_svrepdesign.tbl_sample <- function(
   record_systematic_variance(
     result, systematic_stages, systematic_variance, "generic_replicates"
   )
+}
+
+#' Does a first-stage correction reach the later stages' variance?
+#'
+#' JK1, JKn and the bootstrap multiply the spread of the first-stage units
+#' by one minus the first-stage sampling fraction. That spread also carries
+#' the variance the later stages add, which no first-stage correction
+#' applies to. A later stage that takes every unit adds none.
+#' @noRd
+first_stage_fpc_scales_later_stages <- function(svydesign_obj, spec, type) {
+  if (!type %in% c("auto", "JK1", "JKn", "bootstrap") ||
+      needs_first_stage_rebuild(spec, type) || length(spec$stage) < 2L) {
+    return(FALSE)
+  }
+  popsize <- svydesign_obj$fpc$popsize
+  !is_null(popsize) && any(is.finite(popsize[, 1])) &&
+    !all(vapply(spec$stage[-1], `[[`, logical(1), "census"))
 }
 
 
