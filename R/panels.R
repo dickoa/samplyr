@@ -26,6 +26,9 @@ normalize_panel_input <- function(panels, panel_stage = NULL,
       call = call
     ))
   }
+  if (inherits(panels, "samplyr_periods")) {
+    return(normalize_periods(panels, stage, small_pool, call = call))
+  }
   if (is.data.frame(panels)) {
     spec <- normalize_panel_schedule(panels, call = call)
     spec$small_pool <- normalize_small_pool(small_pool, call = call)
@@ -50,11 +53,13 @@ normalize_panel_input <- function(panels, panel_stage = NULL,
     !is.numeric(panels) ||
       length(panels) != 1 ||
       !is_integerish_numeric(panels) ||
-      panels < 2
+      panels < 2 ||
+      panels > .Machine$integer.max
   ) {
     abort_samplyr(
       c(
-        "{.arg panels} must be a single integer >= 2, or a rotation schedule.",
+        "{.arg panels} must be a single integer >= 2, a rotation schedule, or
+         {.fn periods}.",
         "i" = "One panel is no partition, so there is nothing to rotate."
       ),
       class = "samplyr_error_panel_count",
@@ -72,6 +77,38 @@ normalize_panel_input <- function(panels, panel_stage = NULL,
     small_pool = NULL,
     stage = stage
   )
+}
+
+#' Periods as a schedule: period `p` is active at wave `p` only
+#'
+#' The schedule gives every period a wave of its own, and `certainty =
+#' "assigned"` keeps certainty units in their stratum's pool, so each unit
+#' belongs to one period.
+#' @noRd
+normalize_periods <- function(periods, stage, small_pool, call = caller_env()) {
+  policy <- normalize_small_pool(small_pool, call = call)
+  if (identical(policy, "permanent")) {
+    abort_samplyr(
+      c(
+        "{.arg small_pool} cannot be {.val permanent} with {.fn periods}.",
+        "i" = "A unit active in every period is visited in each of them, and
+               periods are visited once.",
+        "i" = "Give each stratum at least as many units as periods, or use
+               fewer periods."
+      ),
+      class = "samplyr_error_periods_small_pool",
+      call = call
+    )
+  }
+  k <- periods$k
+  spec <- normalize_panel_schedule(
+    data.frame(panel = seq_len(k), wave = seq_len(k)),
+    call = call
+  )
+  spec$small_pool <- policy
+  spec$stage <- stage
+  spec$certainty <- "assigned"
+  spec
 }
 
 #' Translate the startup partition from a planning schedule
@@ -588,6 +625,49 @@ abort_panel_missing_identity <- function(stage_num, columns, occurrence,
   )
 }
 
+#' Say what a panel count does with certainty units
+#'
+#' A count declares no waves, so it reads as rotation groups or as a
+#' one-visit split alike. Only certainty units tell the two apart, and
+#' periods() is what the second needs. A schedule states rotation, so it is
+#' not reported.
+#' @noRd
+inform_panel_certainty <- function(pools, k, stage) {
+  certain <- Filter(function(pool) identical(pool$class, "certainty"), pools)
+  if (length(certain) == 0L) {
+    return(invisible(NULL))
+  }
+  n_certainty <- sum(vapply(certain, function(pool) length(pool$indices),
+                            integer(1)))
+  n_pools <- length(certain)
+  labels <- vapply(certain, format_pool_stratum, character(1))
+  stratified <- !all(labels == "(unstratified)")
+  cli_inform(
+    c(
+      "Stage {stage}: {n_certainty} certainty unit{?s} in {n_pools}
+       pool{?s} {qty(n_certainty)}{?is/are} kept apart from the rotating
+       panels.",
+      "i" = "{qty(n_certainty)}{?It/They} will be active at every wave of a
+             rotation schedule.",
+      "i" = "Panel sizes in {qty(n_pools)}{?that pool/those pools} can differ
+             by two.",
+      if (stratified) {
+        c("i" = cli::format_inline("Pools: {.val {labels}}."))
+      },
+      "i" = "For a one-visit partition such as fieldwork months, use
+             {.code panels = periods({k})}."
+    ),
+    class = "samplyr_message_panel_certainty",
+    stage = stage,
+    operation = "panel_certainty",
+    payload = list(
+      pool_keys = if (stratified) labels else character(0),
+      n_certainty = n_certainty,
+      n_pools = n_pools
+    )
+  )
+}
+
 #' Assign panel labels by blocked random quota within frozen pools
 #'
 #' @return The sample with a `.panel` column, and the record for the receipt.
@@ -607,10 +687,14 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
   }
 
   units <- result[unit_rows, , drop = FALSE]
-  pools <- panel_pools(units, context)
+  pools <- panel_pools(units, context,
+                       split_certainty = !is_periods_spec(spec))
 
   # Resolve every pool before consuming RNG state.
   pools <- resolve_small_pools(pools, spec, call = call)
+  if (is_null(spec$schedule)) {
+    inform_panel_certainty(pools, k, context$stage_num)
+  }
 
   panel <- integer(length(unit_rows))
   pool_records <- vector("list", length(pools))
@@ -635,7 +719,9 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
 
   record <- list(
     algorithm = "blocked_random_quota",
-    version = 3L,
+    # Version 4 adds certainty = "assigned". Rotation records stay at 3, so
+    # earlier builds still read them.
+    version = if (is_periods_spec(spec)) 4L else 3L,
     panels = k,
     assignment_stage = context$stage_num,
     block_size = block,
@@ -645,7 +731,7 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
     pool_vars = context$pool_vars,
     control_ordered = length(context$control) > 0L,
     # Permanence is defined at the assignment stage.
-    certainty = "permanent",
+    certainty = if (is_periods_spec(spec)) "assigned" else "permanent",
     small_pool_policy = spec$small_pool %||% "error",
     schedule = spec$schedule,
     pools = pool_records
@@ -664,7 +750,7 @@ panel_record_algorithm <- "blocked_random_quota"
 #'
 #' A set, not a ceiling. A version below any that existed is unreadable too.
 #' @noRd
-supported_panel_record_versions <- c(1L, 2L, 3L)
+supported_panel_record_versions <- c(1L, 2L, 3L, 4L)
 
 #' Read an assignment record under the law it names
 #'
@@ -770,8 +856,20 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
 #' `assignment_stage` can come from a design file. Pools are not checked.
 #' @noRd
 check_panel_record_fields <- function(record, what, call = caller_env()) {
-  if (is_null(record) || !record_states_version(record, 3L)) {
+  if (is_null(record) || !(record_states_version(record, 3L) ||
+                             record_states_version(record, 4L))) {
     return(invisible(NULL))
+  }
+
+  if (record_states_version(record, 4L) &&
+      !(length(record$certainty) == 1L &&
+        record$certainty %in% c("permanent", "assigned"))) {
+    abort_panel_record_malformed(
+      "must state {.field certainty} as {.val permanent} or {.val assigned}",
+      record$certainty,
+      what = what,
+      call = call
+    )
   }
 
   stage <- record$assignment_stage
@@ -986,6 +1084,21 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
     " (", sizes, ")"
   )
 
+  if (identical(policy, "error") && is_periods_spec(spec)) {
+    abort_samplyr(
+      c(
+        "Every period needs units from every pool.",
+        "x" = "{qty(n_short)}{n_short} pool{?s} hold{?s/} fewer units than
+               the {spec$k} periods, so some period would hold none of
+               {qty(n_short)}{?its/their} units: {.val {labels}}.",
+        "i" = "Give each stratum at least {spec$k} units, ideally a multiple
+               of {spec$k} so every period gets the same number, or use
+               fewer periods."
+      ),
+      class = "samplyr_error_panel_small_pool",
+      call = call
+    )
+  }
   if (identical(policy, "error")) {
     abort_samplyr(
       c(
@@ -1058,6 +1171,9 @@ normalize_panel_record <- function(record) {
   if (is_null(record$small_pool_policy)) {
     record$small_pool_policy <- "error"
   }
+  if (is_null(record$certainty)) {
+    record$certainty <- "permanent"
+  }
   if (record_states_version(record, 1L) || record_states_version(record, 2L)) {
     record$assignment_stage <- 1L
   }
@@ -1079,9 +1195,11 @@ normalize_panel_record <- function(record) {
 #' Split assignment units into frozen pools
 #'
 #' Strata within the realized ancestor occurrence, each split into rotating
-#' and certainty parts. Pool order is deterministic for seed reproducibility.
+#' and certainty parts unless the assignment is periods, which keeps
+#' certainty units with the others. Pool order is deterministic for seed
+#' reproducibility.
 #' @noRd
-panel_pools <- function(units, context) {
+panel_pools <- function(units, context, split_certainty = TRUE) {
   if (length(context$pool_vars) == 0L) {
     indices <- list(seq_len(nrow(units)))
     key_df <- NULL
@@ -1091,7 +1209,11 @@ panel_pools <- function(units, context) {
     key_df <- groups$key_df
   }
 
-  certainty <- panel_certainty_flag(units, context$certainty_col)
+  certainty <- if (split_certainty) {
+    panel_certainty_flag(units, context$certainty_col)
+  } else {
+    rep(FALSE, nrow(units))
+  }
 
   pools <- list()
   for (g in seq_along(indices)) {

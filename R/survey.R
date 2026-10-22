@@ -3661,7 +3661,12 @@ multiframe_overlaps <- function(x) {
 #' first stage drawn without replacement is read as drawn with replacement,
 #' which errs toward too large a variance at large sampling fractions
 #' (`samplyr_warning_replicate_wr_first_stage`, see [variance_estimation]).
-#' Chromy's method is read as with replacement too. Unequal probabilities
+#' `"BRR"`, `"Fay"` and `"subbootstrap"` read an equal-probability first
+#' stage drawn without replacement that way too, since they carry no
+#' finite population correction, and raise the same warning. With 60 of 80
+#' units drawn, the rescaled bootstrap gave four times the linearization
+#' variance, the factor `1 / (1 - 60/80)`. Chromy's method is read as with
+#' replacement too. Unequal probabilities
 #' at later stages, and a first stage drawn with replacement, reach the
 #' variance through the weights and draw no warning.
 #'
@@ -3861,10 +3866,14 @@ as_svrepdesign.tbl_sample <- function(
   }
   first <- spec$stage[[1]]
   pps_safe_types <- c("subbootstrap", "mrbbootstrap")
+  # BRR, Fay and the rescaled bootstrap carry no first-stage correction,
+  # so they read an equal-probability first stage as drawn with replacement.
+  fpc_dropped <- identical(first$kind, "equal_wor") &&
+    type %in% c("BRR", "Fay", "subbootstrap")
   if (
-    stage_replicated_as_wr(design$stages[[first$stage]]$draw_spec,
-                           first$kind) &&
-      !type %in% pps_safe_types
+    (stage_replicated_as_wr(design$stages[[first$stage]]$draw_spec,
+                            first$kind) &&
+       !type %in% pps_safe_types) || fpc_dropped
   ) {
     cli_warn(
       c(
@@ -3920,11 +3929,22 @@ as_svrepdesign.tbl_sample <- function(
 
   call <- current_env()
   result <- tryCatch(
-    if (needs_first_stage_rebuild(spec, type)) {
-      svrep_from_first_stage(svydesign_obj, spec, type, ...)
-    } else {
-      survey::as.svrepdesign(design = svydesign_obj, type = type, ...)
-    },
+    withCallingHandlers(
+      if (needs_first_stage_rebuild(spec, type)) {
+        svrep_from_first_stage(svydesign_obj, spec, type, ...)
+      } else {
+        survey::as.svrepdesign(design = svydesign_obj, type = type, ...)
+      },
+      # The classed warning above already says the correction is dropped.
+      warning = function(w) {
+        if (fpc_dropped && identical(
+          conditionMessage(w),
+          "Finite population correction dropped in conversion"
+        )) {
+          invokeRestart("muffleWarning")
+        }
+      }
+    ),
     error = function(e) {
       abort_samplyr(
         c(

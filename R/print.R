@@ -378,6 +378,8 @@ tbl_sum.tbl_sample <- function(x, ...) {
 
   result <- c(result, digest_coverage_line(x))
 
+  result <- c(result, panel_header_line(x))
+
   if (has_multiple_replicates(x) && !anyNA(x$.replicate)) {
     n_reps <- length(unique(x$.replicate))
     result <- c(result, "Replicates" = as.character(n_reps))
@@ -425,6 +427,41 @@ tbl_sum.tbl_sample <- function(x, ...) {
   }
 
   result
+}
+
+#' The header line naming a sample's panels, periods or wave
+#'
+#' A periods sample names its periods and the column that holds them. A
+#' rotation sample names its groups and whether a schedule declares their
+#' waves. A materialized wave or period names which one it is.
+#' @noRd
+panel_header_line <- function(x) {
+  metadata <- attr(x, "metadata")
+  record <- metadata$panel_assignment
+  if (is_null(record)) {
+    return(NULL)
+  }
+  k <- as.integer(record$panels)
+  periods <- identical(record$certainty, "assigned")
+  wave <- metadata$wave
+  if (!is_null(wave)) {
+    if (periods) {
+      return(c("Period" = paste0(wave$wave, " of ", k)))
+    }
+    n_waves <- max(as.integer(unlist(record$schedule$wave)))
+    return(c("Wave" = paste0(wave$wave, " of ", n_waves)))
+  }
+  if (periods) {
+    return(c("Periods" = paste0(k, " (in .panel)")))
+  }
+  schedule <- record$schedule
+  if (is_null(schedule) || length(schedule) == 0L) {
+    return(c("Panels" = paste0(k, " rotation groups, no schedule")))
+  }
+  n_waves <- max(as.integer(unlist(schedule$wave)))
+  c("Panels" = paste0(
+    k, " rotation groups over ", n_waves, plural_suffix(n_waves, " wave")
+  ))
 }
 
 #' @rdname print.samplyr

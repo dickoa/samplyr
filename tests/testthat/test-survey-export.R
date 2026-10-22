@@ -376,9 +376,11 @@ test_that("a first-stage correction scaling later-stage variance warns", {
     expect_identical(raised(type),
                      "samplyr_warning_replicate_first_stage_fpc")
   }
-  for (type in c("subbootstrap", "mrbbootstrap")) {
-    expect_identical(raised(type), character(0))
-  }
+  # The rescaled bootstrap drops the correction instead, reading the first
+  # stage as drawn with replacement.
+  expect_identical(raised("subbootstrap"),
+                   "samplyr_warning_replicate_wr_first_stage")
+  expect_identical(raised("mrbbootstrap"), character(0))
 
   # The jackknife is the uncorrected one times 1 - 6/8, stage 2 included.
   rep_jk1 <- suppressWarnings(as_svrepdesign(sample, type = "JK1"))
@@ -2418,7 +2420,10 @@ test_that("replicate weights say they do not reproduce a systematic stage", {
   # Naming a type is not an acknowledgement, whichever type it is.
   for (type in c("auto", "bootstrap", "subbootstrap", "mrbbootstrap")) {
     expect_warning(
-      as_svrepdesign(systematic, type = type),
+      suppressWarnings(
+        as_svrepdesign(systematic, type = type),
+        classes = "samplyr_warning_replicate_wr_first_stage"
+      ),
       class = "samplyr_warning_systematic_variance"
     )
   }
@@ -2661,4 +2666,62 @@ test_that("the stored call keeps every argument and rebuilds the design", {
   joint <- joint_expectation(one, frame)[[1]]
   svy <- as_svydesign(one, pps = survey::ppsmat(joint))
   expect_identical(svy$call$pps, quote(pps))
+})
+
+## Replicate types that drop an equal-probability first-stage correction
+
+test_that("BRR, Fay and the rescaled bootstrap disclose a dropped correction", {
+  skip_if_not_installed("survey")
+  warned <- function(sample, type, ...) {
+    classes <- character(0)
+    rep <- withCallingHandlers(
+      as_svrepdesign(sample, type = type, ...),
+      warning = function(w) {
+        classes <<- c(classes, if (any(grepl("^samplyr_", class(w)))) {
+          grep("^samplyr_", class(w), value = TRUE)
+        } else {
+          conditionMessage(w)
+        })
+        invokeRestart("muffleWarning")
+      }
+    )
+    list(rep = rep, classes = classes)
+  }
+
+  # 60 of 80 units: dropping 1 - 60/80 multiplies the variance by four.
+  frame <- data.frame(id = 1:80, y = 1:80)
+  design <- sampling_design() |> draw(n = 60)
+  sample <- execute(design, frame, seed = 1)
+  report <- variance_estimators(design, frame)
+  row <- report$estimator == "Rescaled bootstrap"
+  expect_identical(report$status[row], "approximate")
+  expect_identical(report$class[row],
+                   "samplyr_warning_replicate_wr_first_stage")
+  set.seed(5)
+  sub <- warned(sample, "subbootstrap", replicates = 4000)
+  expect_identical(sub$classes, "samplyr_warning_replicate_wr_first_stage")
+  ratio <- as.numeric(vcov(survey::svytotal(~y, sub$rep))) /
+    as.numeric(vcov(survey::svytotal(~y, as_svydesign(sample))))
+  expect_gt(ratio, 3.5)
+  expect_lt(ratio, 4.5)
+  for (type in c("bootstrap", "JK1")) {
+    expect_identical(warned(sample, type, replicates = 50)$classes,
+                     character(0))
+  }
+
+  # Two per stratum: survey's own warning is muted behind the classed one.
+  frame <- data.frame(st = rep(1:10, each = 3), id = 1:30, y = 1:30)
+  design <- sampling_design() |> stratify_by(st) |> draw(n = 2)
+  sample <- execute(design, frame, seed = 1)
+  report <- variance_estimators(design, frame)
+  for (estimator in c("Balanced repeated replication",
+                      "Fay's balanced repeated replication")) {
+    expect_identical(report$status[report$estimator == estimator],
+                     "approximate")
+  }
+  for (type in c("BRR", "Fay")) {
+    expect_identical(warned(sample, type)$classes,
+                     "samplyr_warning_replicate_wr_first_stage")
+  }
+  expect_identical(warned(sample, "JKn")$classes, character(0))
 })

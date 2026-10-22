@@ -378,6 +378,7 @@ Use the other articles when their task arises:
 | Choose sizes and allocations before selection | `vignette("svyplan", package = "svyplan")`, then [Plan a sample with svyplan](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/plan-to-draw.html) |
 | Coordinate new draws with permanent random numbers | `?draw`, argument `prn`, and [Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/coordination.html) |
 | Schedule panels and refreshment cohorts | `?panel_assignment`, `?rotation_program`, and [Plan and run a rotating panel](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/rotating-panels.html) |
+| Spread fieldwork over months or quarters | `?periods` |
 | Save or replay a design | `vignette("serialization")` |
 
 For a method lookup, use `?selection_methods`, and for how each method's

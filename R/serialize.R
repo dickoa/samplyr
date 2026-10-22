@@ -2590,14 +2590,20 @@ decode_small_pool_argument <- function(record, panels) {
 
 #' Rebuild the `panels` argument a receipt recorded
 #'
-#' Reads back the same shape the original call was given: a schedule when the
-#' master declared one, otherwise the panel count. A receipt written before
+#' Reads back the same shape the original call was given: `periods()` when
+#' the record assigned certainty units, a schedule when the master declared
+#' one, otherwise the panel count. A receipt written before
 #' schedules existed carries only the count, which is what it was executed
 #' with.
 #' @noRd
 decode_panel_argument <- function(receipt, record) {
   if (is_null(receipt$panels)) {
     return(NULL)
+  }
+  # Periods store their diagonal schedule, but replaying it as a schedule
+  # would keep certainty units apart and active at every wave.
+  if (identical(record$certainty, "assigned")) {
+    return(periods(as.integer(receipt$panels)))
   }
   schedule <- record$schedule
   if (is_null(schedule) || length(schedule) == 0) {

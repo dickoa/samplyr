@@ -490,7 +490,10 @@ test_that("a real shared sample meets the weight gates", {
 
   # The linearized route takes it as its source-target contributions.
   expect_false(is_null(attr(as_svydesign(r), "samplyr_weight_share")))
-  expect_no_error(as_svrepdesign(r, type = "subbootstrap"))
+  expect_no_error(suppressWarnings(
+    as_svrepdesign(r, type = "subbootstrap"),
+    classes = "samplyr_warning_replicate_wr_first_stage"
+  ))
   expect_error(
     r |> execute(gwsm_source_frame(), seed = 1),
     class = "samplyr_error_execute_weight_contract"

@@ -692,7 +692,10 @@ generic_replicate_findings <- function(type, traits, facts, common) {
   }
   pps_safe <- type %in% c("subbootstrap", "mrbbootstrap")
   first <- traits[[1]]
-  if (stage_replicated_as_wr(first$draw, first$kind) && !pps_safe) {
+  fpc_dropped <- identical(first$kind, "equal_wor") &&
+    type %in% c("BRR", "Fay", "subbootstrap")
+  if ((stage_replicated_as_wr(first$draw, first$kind) && !pps_safe) ||
+      fpc_dropped) {
     out <- c(out, list(finding(
       "approximate", "samplyr_warning_replicate_wr_first_stage",
       paste0("The first stage, drawn with ", first$method, ", is treated as",

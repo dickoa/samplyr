@@ -54,9 +54,10 @@ sample because its receipt cannot reproduce it.}
 \item{panels}{Rotation groups (panels) to partition the sample into, as an
 integer count, a rotation schedule (a data frame with integer \code{panel}
 and \code{wave} columns and an optional logical \code{active} column), or an
-\code{svyplan_schedule} from \code{\link[svyplan:design_schedule]{svyplan::design_schedule()}}. The output gains a
-\code{.panel} column, and only a sample drawn with a schedule can be
-materialized by \code{wave}. Default \code{NULL} means no panels. Cannot be
+\code{svyplan_schedule} from \code{\link[svyplan:design_schedule]{svyplan::design_schedule()}}. \code{\link[=periods]{periods()}}
+partitions it into fieldwork periods instead, each unit visited once.
+The output gains a \code{.panel} column, and only a sample drawn with a
+schedule or periods can be materialized by \code{wave}. Default \code{NULL} means no panels. Cannot be
 combined with \code{reps}, or redeclared on a sample that already carries an
 assignment. \link{panel_assignment} describes the assignment and the
 schedules.}

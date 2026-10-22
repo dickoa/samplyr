@@ -36,7 +36,8 @@ needed for weighting, replay, and export to the survey and srvyr packages.
   replacement, and balanced sampling (cube, local pivotal, spatially
   correlated Poisson).
 * Certainty selection for large units through absolute or proportional
-  thresholds.
+  thresholds. Units a fixed-size PPS draw takes with certainty by their
+  size are reported, and `frame_summary()` counts them before drawing.
 * Permanent random numbers coordinate samples across surveys and waves.
 * Custom methods registered with `sondage::register_method()` work
   throughout the package.
@@ -52,6 +53,8 @@ needed for weighting, replay, and export to the survey and srvyr packages.
 
 * Panel assignment, rotation schedules, wave materialization with exact
   activation weights, and replenishing panels across frame vintages.
+  `periods()` spreads a sample over fieldwork periods visited once, such as
+  the months of a yearly survey.
 * `execute(reps = R)` draws independent replicate samples.
 
 ## Analysis and export

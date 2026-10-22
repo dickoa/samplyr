@@ -502,8 +502,12 @@ test_that("an empty primary unit is refused where survey would drop it", {
   expect_identical(cnd$n_units, 1L)
   expect_identical(condition_header(cnd), "as_svydesign")
   for (type in c("bootstrap", "JK1", "subbootstrap")) {
+    # The rescaled bootstrap first warns that it drops the correction.
     expect_error(
-      as_svrepdesign(sample, type = type, replicates = 20),
+      suppressWarnings(
+        as_svrepdesign(sample, type = type, replicates = 20),
+        classes = "samplyr_warning_replicate_wr_first_stage"
+      ),
       class = "samplyr_error_export_empty_psu"
     )
   }

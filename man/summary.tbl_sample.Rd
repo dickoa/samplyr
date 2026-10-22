@@ -26,7 +26,10 @@ certainty at each executed stage, and \code{single_unit_pools}, the pools of
 one unit each stage took whole. Such a unit is certain too, as
 \code{.certainty_k} records, but it is counted only in \code{single_unit_pools},
 so a stage of unsegmented EAs does not read as large units taken for
-their size. Weight figures are \code{NULL} for an
+their size. \code{periods} is \code{NULL} unless the sample is split into
+\code{\link[=periods]{periods()}}. It then holds \code{k} and a \code{pools} table with each pool's
+fewest and most units per period (\code{min}, \code{max}). Weight figures are
+\code{NULL} for an
 empty sample and for stacked replicates, which the print also leaves
 out. \code{sample} is the summarized sample itself.
 }
@@ -39,6 +42,15 @@ diagnostics.
 The header line shows the total sample size (with the universe size
 when the frame digest records a complete denominator and the executed
 path has no with-replacement stage), the stages executed, and the seed.
+
+A sample split into \code{\link[=periods]{periods()}} gets one more line, which says whether
+each stratum has the same number of units in every period and names the
+strata that do not, for example "Periods: 12, even in 10 of 13 strata."
+followed by "Uneven: Cascades (2 to 3 per period), Centre-Nord (3 to
+4)." When every stratum is even, the line gives the range of units per
+period instead. This is the table fieldwork is planned from, and an
+uneven stratum shows an allocation that is not a multiple of the number
+of periods.
 
 Each stage section has two lines:
 \itemize{

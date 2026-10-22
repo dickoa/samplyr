@@ -1288,8 +1288,8 @@ get_frame_digest <- function(x) {
 #'
 #'   For `detail = "stage"`, one row per stage with `stage`,
 #'   `unit_level`, `scope`, `chance_kind`, `probabilities`, `storage`,
-#'   `n_pools`, `n_capped`, `N`, `n_target`, `n_expected`, `n_moved`,
-#'   `n_tied`, `n_realized`, and `take_rate`. `n_capped` counts the stage's pools
+#'   `n_pools`, `n_capped`, `N`, `n_target`, `n_expected`, `n_certainty`,
+#'   `n_moved`, `n_tied`, `n_realized`, and `take_rate`. `n_capped` counts the stage's pools
 #'   whose `capped` is `TRUE` at `detail = "pool"`, and is `NA` when any
 #'   of them is `NA`. Like `n_pools`, it counts pools without weighting,
 #'   so in a preview it counts candidate pools. `n_moved` is the number
@@ -1298,13 +1298,15 @@ get_frame_digest <- function(x) {
 #'   like `n_target`. It is `NA` for a stage without an allocation method
 #'   and on a recorded digest, which does not keep it. `n_tied` counts the
 #'   pools marked `tied` at `detail = "pool"`, without weighting, and is
-#'   `NA` in the same cases.
+#'   `NA` in the same cases. `n_certainty` adds up the pools' `n_certainty`,
+#'   rolled up like `n_target`.
 #'
 #'   For `detail = "pool"`, one row per selection pool and realization
 #'   with `stage`, `pool_id`, `replicate`, `parent_unit`, `pool_key`, any
-#'   stratum label columns, `N`, `n_target`, `n_expected`, `n_realized`,
-#'   `scope`, `chance_status`, `chance` (the constant per-unit chance where
-#'   one applies, `NA` otherwise), `take_rate`, `capped`, and `tied`.
+#'   stratum label columns, `N`, `n_target`, `n_expected`, `n_certainty`,
+#'   `n_realized`, `scope`, `chance_status`, `chance` (the constant per-unit
+#'   chance where one applies, `NA` otherwise), `take_rate`, `capped`, and
+#'   `tied`.
 #'   `replicate` is `1` for an ordinary execution. `pool_key` names the
 #'   pool in the frame's values, its parent path then its stratum, as the
 #'   `pool_keys` field of a condition from [execute()] does. Only a
@@ -1323,6 +1325,14 @@ get_frame_digest <- function(x) {
 #'   `samplyr_message_allocation_capped` or, when the stage takes
 #'   everything within reach, `samplyr_warning_census` (see
 #'   [execution_conditions]).
+#'
+#'   `n_certainty` counts the units of a pool whose chance is 1, so a
+#'   pool taken whole counts all of its units. Before the draw it shows
+#'   which pools a fixed-size PPS stage will take units from with
+#'   certainty (see the certainty section of [draw()]). After the draw it
+#'   comes from the stored chances or from the sample's `.certainty_k`
+#'   column, and it is `NA` when neither is available, as for a
+#'   with-replacement stage, whose chances are expected hits.
 #'
 #'   `tied` marks a pool whose allocated take was decided by a tie in the
 #'   rounding: its remainder equals that of a stratum on the other side of
@@ -1482,6 +1492,16 @@ get_frame_digest <- function(x) {
 #'   execute(frame, seed = 42, frame_digest = "full")
 #' head(frame_summary(full, detail = "unit"))
 #'
+#' # Before drawing, the pools a PPS stage will take units from with
+#' # certainty. Poura's largest urban EA holds more than 1/12 of its
+#' # households, so 12 EAs drawn by size include it for sure.
+#' poura <- subset(bfa_eas, commune == "Poura" & urban_rural == "Urban")
+#' by_size <- sampling_design() |>
+#'   draw(n = 12, method = "pps_systematic", mos = households)
+#' frame_summary(by_size, poura, detail = "pool")[
+#'   c("N", "n_target", "n_certainty")
+#' ]
+#'
 #' @seealso [execute()], [validate_frame()]
 #' @family diagnostics
 #' @export
@@ -1638,6 +1658,12 @@ frame_summary_report <- function(x, digest, stages, scope, detail,
     stage_records <- stage_records[stage_ids %in% stages]
   }
 
+  # An unmodified sample still holds the rows its digest points at.
+  recorded_sample <- if (!exante && is_tbl_sample(x) &&
+                         length(sample_modifications(x)) == 0L) {
+    x
+  }
+
   switch(
     detail,
     stage = frame_summary_stage(
@@ -1645,6 +1671,8 @@ frame_summary_report <- function(x, digest, stages, scope, detail,
       random_size = stage_random_size(x, stage_records),
       moved = attr(digest, "exante_pool_moved"),
       tied = attr(digest, "exante_pool_tied"),
+      certain = attr(digest, "exante_pool_certain"),
+      sample = recorded_sample,
       exante = exante
     ),
     pool = frame_summary_pool(
@@ -1652,12 +1680,64 @@ frame_summary_report <- function(x, digest, stages, scope, detail,
       random_size = stage_random_size(x, stage_records),
       labels = attr(digest, "exante_pool_labels"),
       tied = attr(digest, "exante_pool_tied"),
+      certain = attr(digest, "exante_pool_certain"),
+      sample = recorded_sample,
       exante = exante
     ),
     unit = frame_summary_unit(
       stage_records, explicit = !is_null(stages), exante = exante
     )
   )
+}
+
+#' Units with chance one in each pool of a stage
+#'
+#' A preview counts them as it resolves the chances. A recorded digest knows
+#' them from its stored units or a constant chance. Otherwise the sample it
+#' was recorded with does, since a unit with chance one is always selected.
+#' Expected hits are not chances, so a with-replacement stage has none.
+#' @noRd
+pool_certainty_counts <- function(s, certain = NULL, sample = NULL) {
+  pools <- s$pools
+  if (!is_null(certain)) {
+    return(as.integer(certain[[s$stage_id]]))
+  }
+  if (!identical(s$chance_kind, "inclusion_probability")) {
+    return(rep(NA_integer_, nrow(pools)))
+  }
+  if (!is_null(s$units) && "is_certainty" %in% names(s$units)) {
+    hit <- !is.na(s$units$is_certainty) & s$units$is_certainty
+    return(tabulate(
+      match(s$units$pool_id[hit], pools$pool_id), nrow(pools)
+    ))
+  }
+  if (identical(s$storage, "constant") && "chance" %in% names(pools)) {
+    return(ifelse(
+      is_certainty_probability(as.double(pools$chance)),
+      as.integer(pools$N), 0L
+    ))
+  }
+  column <- paste0(".certainty_", s$stage_id)
+  selected <- s$selected
+  if (!is_null(sample) && column %in% names(sample) &&
+      ".sample_id" %in% names(sample) && !is_null(selected) &&
+      all(c("pool_id", "unit_id", "sample_row") %in% names(selected))) {
+    # `sample_row` is the `.sample_id` of the row, which survives reordering.
+    in_rep <- rep(TRUE, nrow(sample))
+    if ("replicate" %in% names(selected) && ".replicate" %in% names(sample)) {
+      # Chance one is fixed by the design, so the first replicate holds
+      # every such unit.
+      selected <- selected[selected$replicate == selected$replicate[1], ,
+                           drop = FALSE]
+      in_rep <- sample$.replicate == selected$replicate[1]
+    }
+    rows <- which(in_rep)[match(selected$sample_row, sample$.sample_id[in_rep])]
+    flag <- sample[[column]][rows]
+    hit <- !is.na(flag) & flag
+    units <- unique(selected[hit, c("pool_id", "unit_id"), drop = FALSE])
+    return(tabulate(match(units$pool_id, pools$pool_id), nrow(pools)))
+  }
+  rep(NA_integer_, nrow(pools))
 }
 
 #' Sum that refuses to invent a total from incomplete parts
@@ -1728,7 +1808,8 @@ exante_pool_weights <- function(stages) {
 
 #' @noRd
 frame_summary_stage <- function(stages, scope, random_size = NULL,
-                                moved = NULL, tied = NULL, exante = FALSE) {
+                                moved = NULL, tied = NULL, certain = NULL,
+                                sample = NULL, exante = FALSE) {
   pool_weights <- if (exante) exante_pool_weights(stages) else NULL
   rows <- lapply(seq_along(stages), function(stage_pos) {
     s <- stages[[stage_pos]]
@@ -1773,6 +1854,7 @@ frame_summary_stage <- function(stages, scope, random_size = NULL,
       N = N,
       n_target = sum_or_na(pools$n_target * w),
       n_expected = sum_or_na(pools$n_expected * w),
+      n_certainty = sum_or_na(pool_certainty_counts(s, certain, sample) * w),
       n_moved = sum_or_na(pool_moved * w),
       # Counted like n_capped, without weighting.
       n_tied = if (all(is.na(pool_tied))) NA_integer_ else sum(pool_tied),
@@ -1830,6 +1912,8 @@ frame_summary_pool <- function(
   random_size = NULL,
   labels = NULL,
   tied = NULL,
+  certain = NULL,
+  sample = NULL,
   exante = FALSE
 ) {
   rows <- lapply(seq_along(stages), function(stage_idx) {
@@ -1897,6 +1981,7 @@ frame_summary_pool <- function(
       N = as.double(pools$N[pool_rows]),
       n_target = as.double(pools$n_target[pool_rows]),
       n_expected = as.double(pools$n_expected[pool_rows]),
+      n_certainty = pool_certainty_counts(s, certain, sample)[pool_rows],
       n_realized = n_realized,
       scope = pools$scope[pool_rows],
       chance_status = pools$chance_status[pool_rows],

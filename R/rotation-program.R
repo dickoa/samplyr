@@ -361,6 +361,20 @@ check_cohort_registry <- function(cohorts, call = caller_env()) {
         call = call
       )
     }
+    if (identical(metadata$panel_assignment$certainty, "assigned")) {
+      abort_samplyr(
+        c(
+          "Cohort {.val {nm}} is split into {.fn periods}, not rotation
+           groups.",
+          "i" = "A period is visited once, and its certainty units are
+                 assigned like the others rather than kept in every wave.",
+          "i" = "Draw the cohort with {.code panels = <count>} or a schedule
+                 to rotate it."
+        ),
+        class = "samplyr_error_program_periods",
+        call = call
+      )
+    }
     remaining <- setdiff(
       seq_along(get_design(sample)$stages),
       get_stages_executed(sample)

@@ -60,6 +60,23 @@ again. It is a message because one unit per stratum is sometimes the
 design. Its payload carries \code{pool_keys} and \code{n_singleton}, the number of
 such strata, each counted once in every parent it appears in.
 
+\code{samplyr_message_certainty_selected} names the pools where a fixed-size
+PPS draw without replacement took units with certainty because their
+share of the pool's size is above \code{1 / n} (see the certainty section of
+\code{\link[=draw]{draw()}}). It is a message, since such units are part of the design. A
+stage that declares \code{certainty_size} or \code{certainty_prop} states its rule
+and is not reported, and neither is a pool taken whole. Its payload
+carries \code{pool_keys}, \code{n_certain}, the number of such units, and
+\code{n_pools}.
+
+\code{samplyr_message_panel_certainty} comes from a panel count, \code{panels = k},
+that keeps certainty units in a pool of their own. Such units are active
+at every wave once a schedule rotates the panels, and the panel sizes of
+their stratum can differ by two. The message points to \code{\link[=periods]{periods()}} for a
+partition visited once, such as fieldwork months. A schedule states
+rotation and is not reported. Its payload carries \code{pool_keys},
+\code{n_certainty} and \code{n_pools}.
+
 \code{samplyr_message_absent_strata} names the strata that an explicit \code{n}
 (a named vector or a data frame) gives a positive take but a selected
 parent does not hold, such as a province with no urban EA under

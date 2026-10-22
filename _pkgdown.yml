@@ -46,12 +46,14 @@ reference:
       - validate_frame
       - execution_conditions
 
-  - title: "Panels and rotation"
+  - title: "Panels, rotation and periods"
     desc: >
       Longitudinal designs: split an executed master into panels, materialize
-      the wave each panel is scheduled for, and assemble the waves.
+      the wave each panel is scheduled for, and assemble the waves. Periods
+      spread a sample over fieldwork months instead.
     contents:
       - panel_assignment
+      - periods
       - rotation_program
       - stack_waves
       - as.data.frame.rotation_wave

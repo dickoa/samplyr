@@ -85,7 +85,12 @@ below, whereas \code{"mrbbootstrap"} and \code{"rwyb"} read every stage. A PPS
 first stage drawn without replacement is read as drawn with replacement,
 which errs toward too large a variance at large sampling fractions
 (\code{samplyr_warning_replicate_wr_first_stage}, see \link{variance_estimation}).
-Chromy's method is read as with replacement too. Unequal probabilities
+\code{"BRR"}, \code{"Fay"} and \code{"subbootstrap"} read an equal-probability first
+stage drawn without replacement that way too, since they carry no
+finite population correction, and raise the same warning. With 60 of 80
+units drawn, the rescaled bootstrap gave four times the linearization
+variance, the factor \code{1 / (1 - 60/80)}. Chromy's method is read as with
+replacement too. Unequal probabilities
 at later stages, and a first stage drawn with replacement, reach the
 variance through the weights and draw no warning.
 

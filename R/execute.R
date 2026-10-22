@@ -56,6 +56,23 @@
 #' design. Its payload carries `pool_keys` and `n_singleton`, the number of
 #' such strata, each counted once in every parent it appears in.
 #'
+#' `samplyr_message_certainty_selected` names the pools where a fixed-size
+#' PPS draw without replacement took units with certainty because their
+#' share of the pool's size is above `1 / n` (see the certainty section of
+#' [draw()]). It is a message, since such units are part of the design. A
+#' stage that declares `certainty_size` or `certainty_prop` states its rule
+#' and is not reported, and neither is a pool taken whole. Its payload
+#' carries `pool_keys`, `n_certain`, the number of such units, and
+#' `n_pools`.
+#'
+#' `samplyr_message_panel_certainty` comes from a panel count, `panels = k`,
+#' that keeps certainty units in a pool of their own. Such units are active
+#' at every wave once a schedule rotates the panels, and the panel sizes of
+#' their stratum can differ by two. The message points to [periods()] for a
+#' partition visited once, such as fieldwork months. A schedule states
+#' rotation and is not reported. Its payload carries `pool_keys`,
+#' `n_certainty` and `n_pools`.
+#'
 #' `samplyr_message_absent_strata` names the strata that an explicit `n`
 #' (a named vector or a data frame) gives a positive take but a selected
 #' parent does not hold, such as a province with no urban EA under
@@ -190,9 +207,10 @@ NULL
 #' @param panels Rotation groups (panels) to partition the sample into, as an
 #'   integer count, a rotation schedule (a data frame with integer `panel`
 #'   and `wave` columns and an optional logical `active` column), or an
-#'   `svyplan_schedule` from [svyplan::design_schedule()]. The output gains a
-#'   `.panel` column, and only a sample drawn with a schedule can be
-#'   materialized by `wave`. Default `NULL` means no panels. Cannot be
+#'   `svyplan_schedule` from [svyplan::design_schedule()]. [periods()]
+#'   partitions it into fieldwork periods instead, each unit visited once.
+#'   The output gains a `.panel` column, and only a sample drawn with a
+#'   schedule or periods can be materialized by `wave`. Default `NULL` means no panels. Cannot be
 #'   combined with `reps`, or redeclared on a sample that already carries an
 #'   assignment. [panel_assignment] describes the assignment and the
 #'   schedules.
@@ -1063,6 +1081,7 @@ execute_design <- function(
       is_final_stage = is_final_stage,
       all_prior_cluster_vars = all_prior_cluster_vars,
       parent_levels = ancestor_cluster_levels(design, stage_idx),
+      inherited_strata = collect_ancestor_strata_vars(design, stage_idx),
       trace_mode = frame_digest
     )
     current_sample <- step$sample
@@ -1421,6 +1440,7 @@ execute_continuation <- function(
       is_final_stage = is_final_stage,
       all_prior_cluster_vars = all_prior_cluster_vars,
       parent_levels = ancestor_cluster_levels(design, stage_idx),
+      inherited_strata = collect_ancestor_strata_vars(design, stage_idx),
       trace_mode = frame_digest
     )
     current_sample <- step$sample
@@ -2050,6 +2070,7 @@ execute_single_stage <- function(
   is_final_stage = FALSE,
   all_prior_cluster_vars = character(0),
   parent_levels = list(),
+  inherited_strata = character(0),
   trace_mode = "full"
 ) {
   rlang::local_error_call(caller_env())
@@ -2063,6 +2084,7 @@ execute_single_stage <- function(
       is_final_stage = is_final_stage,
       all_prior_cluster_vars = all_prior_cluster_vars,
       parent_levels = parent_levels,
+      inherited_strata = inherited_strata,
       trace_mode = trace_mode
     ),
     stage = stage_num,
@@ -2080,6 +2102,7 @@ execute_single_stage_impl <- function(
   is_final_stage = FALSE,
   all_prior_cluster_vars = character(0),
   parent_levels = list(),
+  inherited_strata = character(0),
   trace_mode = "full"
 ) {
   rlang::local_error_call(caller_env())
@@ -2122,6 +2145,8 @@ execute_single_stage_impl <- function(
       parent_labels <- path_labels(split$key_df, split_vars, parent_levels)
       if (!is_null(strata_spec)) {
         strata_spec$label_vars <- setdiff(strata_spec$vars, split_vars)
+        strata_spec$inherited_vars <- intersect(strata_spec$vars,
+                                                inherited_strata)
       }
       # One check over all parents instead of one per parent.
       check_invariants <- !cluster_invariants_hold(
@@ -2224,6 +2249,8 @@ execute_single_stage_impl <- function(
 
     if (!is_null(strata_spec)) {
       strata_spec$label_vars <- setdiff(strata_spec$vars, split_vars)
+      strata_spec$inherited_vars <- intersect(strata_spec$vars,
+                                              inherited_strata)
     }
     res <- sample_within_clusters(
       frame,

@@ -59,7 +59,13 @@ expect_export_invariants <- function(svy, sample, y, reference = NULL,
 mc_variance_ratio <- function(design, frame, y, reps, export, seed0 = 1000L) {
   f <- stats::reformulate(y)
   draws <- vapply(seq_len(reps), function(r) {
-    s <- suppressWarnings(execute(design, frame, seed = seed0 + r))
+    # The designs hold certainty units on purpose, reported on every run.
+    s <- withCallingHandlers(
+      suppressWarnings(execute(design, frame, seed = seed0 + r)),
+      samplyr_message_certainty_selected = function(m) {
+        invokeRestart("muffleMessage")
+      }
+    )
     t <- survey::svytotal(f, export(s))
     c(unname(coef(t)), unname(vcov(t))[1, 1])
   }, numeric(2))

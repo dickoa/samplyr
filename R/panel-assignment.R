@@ -4,6 +4,23 @@
 #' `panel_stage` puts the assignment, what a rotation schedule declares, and
 #' how `execute(master, wave = t)` weights the wave it materializes.
 #'
+#' ## Periods and rotation groups
+#'
+#' `panels` takes three forms.
+#'
+#' | `panels =` | Declares | Waves | A certainty unit is in |
+#' |---|---|---|---|
+#' | `12` | rotation groups | declared later | every wave |
+#' | a schedule | rotation groups | as scheduled | every wave |
+#' | `periods(12)` | periods | one per period | one period |
+#'
+#' Rotation groups are for a sample interviewed again, where a unit selected
+#' with certainty stays in every wave. [periods()] is for a sample spread
+#' over fieldwork periods and visited once, such as the months of a yearly
+#' survey, where a certainty unit belongs to one period like any other. A
+#' count that keeps certainty units apart says so with
+#' `samplyr_message_panel_certainty`.
+#'
 #' ## How units are assigned
 #'
 #' Assignment is randomized with fixed quotas. Within each selection stratum
@@ -49,8 +66,10 @@
 #'
 #' ## Certainty units
 #'
-#' Certainty units are labeled from their own pools and consume no rotating
-#' quota. A certainty unit is in the sample at every occasion, since a
+#' Under a count or a schedule, certainty units are labeled from their own
+#' pools and consume no rotating quota. Under [periods()] they are assigned
+#' with the other units of their stratum, so each belongs to one period and
+#' the periods stay even. A certainty unit is in the sample at every occasion, since a
 #' schedule that rotated it out would drop the very units the certainty
 #' stratum exists to enumerate. Certainty counts only at the assignment
 #' stage, in both directions: a certainty primary unit does not make the
@@ -109,6 +128,11 @@
 #' one whole startup cohort and needs no partition.
 #'
 #' ## Pools too small for a schedule
+#'
+#' Periods activate one period per wave, so a stratum with fewer units than
+#' periods would leave a period without any of its units. It is refused,
+#' and `small_pool = "permanent"` is refused with [periods()], since a unit
+#' active in every period is not visited once.
 #'
 #' A pool of `m` units leaves `panels - m` panels empty, so a wave activating
 #' `r` of them selects nothing from that pool when `m <= panels - r`. Those

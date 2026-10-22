@@ -197,7 +197,11 @@ test_that("the srvyr bridges take a shared-weight sample", {
 
   expect_s3_class(srvyr::as_survey_design(shared), "tbl_svy")
   expect_s3_class(
-    srvyr::as_survey_rep(shared, type = "subbootstrap"), "tbl_svy"
+    suppressWarnings(
+      srvyr::as_survey_rep(shared, type = "subbootstrap"),
+      classes = "samplyr_warning_replicate_wr_first_stage"
+    ),
+    "tbl_svy"
   )
 })
 

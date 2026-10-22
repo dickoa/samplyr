@@ -338,6 +338,16 @@ through their hit mechanism. A pool censused under
 design the final \code{.weight} can still exceed 1 because it compounds all
 stage weights.
 
+Without a declared rule, the fixed-size methods spread \code{n} by
+\code{sondage::inclusion_prob()}. A unit whose share of its pool's size is
+above \code{1 / n} gets chance 1, and the rest of the take is spread over the
+other units, repeatedly until no chance exceeds 1. Such units are
+selected with certainty, marked in \code{.certainty_k}, and counted in \code{n}.
+\code{\link[=execute]{execute()}} reports them with \code{samplyr_message_certainty_selected}.
+\code{certainty_size} and \code{certainty_prop} state a rule in the design instead,
+which also lets the threshold sit below 1. A unit drawn with chance 0.98
+is in practice a certainty unit with an unstable weight.
+
 \strong{Certainty with \code{pps_poisson}.} Both \code{n} and \code{frac} give a target
 expected total that includes certainty units, \code{frac} as the unrounded
 \code{frac * N} over the original pool. After \code{n_cert} certainty units are

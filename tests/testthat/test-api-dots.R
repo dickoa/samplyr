@@ -240,7 +240,10 @@ test_that("as_svrepdesign() refuses a misspelled type but keeps survey's own", {
     "svyrep.design"
   )
   expect_s3_class(
-    as_svrepdesign(s, type = "subbootstrap", replicates = 10),
+    suppressWarnings(
+      as_svrepdesign(s, type = "subbootstrap", replicates = 10),
+      classes = "samplyr_warning_replicate_wr_first_stage"
+    ),
     "svyrep.design"
   )
   expect_s3_class(

@@ -771,8 +771,9 @@ test_that("a two-stage plan keys both stages on the strata columns", {
     ea = rep(sprintf("EA%03d", 1:400), each = 20),
     hh = 1:8000
   )
-  # Each EA lies in one cell, so the other three are absent from it.
-  expect_message(
+  # Each EA lies in one cell, which stage 1 stratified by, so stage 2 looks
+  # up that cell's take and no stratum is absent.
+  expect_no_message(
     res <- sampling_design() |>
       stratify_by(region, residence) |>
       cluster_by(ea) |>

@@ -503,7 +503,10 @@ check_stage_targets <- function(design, stage_idx, frame) {
     }
     if (length(ancestors) > 0L && length(strata) > 0L) {
       missing <- absent_named_strata(
-        units, strata, setdiff(strata, ancestors), draw$n
+        units, strata,
+        setdiff(strata, c(ancestors,
+                          collect_ancestor_strata_vars(design, stage_idx))),
+        draw$n
       )
       if (length(missing) > 0L) {
         parent <- path_labels(

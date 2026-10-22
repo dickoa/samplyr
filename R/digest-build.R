@@ -1203,6 +1203,7 @@ exante_digest <- function(design, frame, call = rlang::current_env()) {
   pool_labels <- vector("list", length(stages_spec))
   pool_moved <- vector("list", length(stages_spec))
   pool_tied <- vector("list", length(stages_spec))
+  pool_certain <- vector("list", length(stages_spec))
   registry <- NULL
   for (stage_idx in seq_along(stages_spec)) {
     if (stage_idx > 1L) {
@@ -1252,6 +1253,7 @@ exante_digest <- function(design, frame, call = rlang::current_env()) {
     pool_labels[[stage_idx]] <- built$pool_labels
     pool_moved[[stage_idx]] <- built$pool_moved
     pool_tied[[stage_idx]] <- built$pool_tied
+    pool_certain[[stage_idx]] <- built$pool_certain
   }
 
   digest <- new_frame_digest(
@@ -1266,6 +1268,7 @@ exante_digest <- function(design, frame, call = rlang::current_env()) {
   attr(digest, "exante_pool_labels") <- pool_labels
   attr(digest, "exante_pool_moved") <- pool_moved
   attr(digest, "exante_pool_tied") <- pool_tied
+  attr(digest, "exante_pool_certain") <- pool_certain
   digest
 }
 
@@ -1602,7 +1605,16 @@ build_exante_stage <- function(
       design, stage_idx, frame, first_rows, strata_vars, ancestor_vars
     ),
     pool_moved = vapply(pools_acc, function(p) as.double(p$moved), numeric(1)),
-    pool_tied = vapply(pools_acc, function(p) as.logical(p$tied), logical(1))
+    pool_tied = vapply(pools_acc, function(p) as.logical(p$tied), logical(1)),
+    pool_certain = if (wr) {
+      rep(NA_integer_, length(pools_acc))
+    } else {
+      vapply(
+        chance_by_pool,
+        function(ch) sum(is_certainty_probability(ch)),
+        integer(1)
+      )
+    }
   )
 }
 

@@ -476,6 +476,16 @@ NULL
 #' design the final `.weight` can still exceed 1 because it compounds all
 #' stage weights.
 #'
+#' Without a declared rule, the fixed-size methods spread `n` by
+#' `sondage::inclusion_prob()`. A unit whose share of its pool's size is
+#' above `1 / n` gets chance 1, and the rest of the take is spread over the
+#' other units, repeatedly until no chance exceeds 1. Such units are
+#' selected with certainty, marked in `.certainty_k`, and counted in `n`.
+#' [execute()] reports them with `samplyr_message_certainty_selected`.
+#' `certainty_size` and `certainty_prop` state a rule in the design instead,
+#' which also lets the threshold sit below 1. A unit drawn with chance 0.98
+#' is in practice a certainty unit with an unstable weight.
+#'
 #' **Certainty with `pps_poisson`.** Both `n` and `frac` give a target
 #' expected total that includes certainty units, `frac` as the unrounded
 #' `frac * N` over the original pool. After `n_cert` certainty units are

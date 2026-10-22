@@ -658,6 +658,7 @@ report_selection_outcome <- function(outcome, stage, x) {
     nominal_cap = warn_nominal_capped(stage, x),
     poisson_shortfall = warn_poisson_shortfall(stage, x),
     singleton_pool = inform_singleton_strata(stage, x),
+    certainty_selected = inform_certainty_selected(stage, x),
     absent_strata = inform_absent_strata(stage, x),
     empty_parent = warn_empty_parents(stage, x),
     allocation_cap = inform_allocation_capped(stage, x),
@@ -696,6 +697,7 @@ summarize_selection_events <- function(group) {
     n_clipped = total("n_clipped"),
     n_moved = total("n_moved"),
     n_singleton = total("n_singleton"),
+    n_certain = total("n_certain"),
     n_empty = total("n_empty"),
     n_absent = total("n_absent"),
     alloc = unlist(field("alloc"))[1],
@@ -898,6 +900,35 @@ warn_poisson_shortfall <- function(stage, x) {
     class = "samplyr_warning_poisson_shortfall",
     stage = stage,
     operation = "poisson_shortfall",
+    payload = x
+  )
+}
+
+#' Report units a fixed-size PPS draw took with certainty by their size
+#'
+#' A message, since certainty by size is part of the design, not a fault.
+#' @noRd
+inform_certainty_selected <- function(stage, x) {
+  n_hit <- length(x$pool_keys)
+  cli_inform(
+    c(
+      if (n_hit > 0L) {
+        "Stage {stage}: {x$n_certain} unit{?s} in {n_hit} of {x$n_pools}
+         pool{?s} {qty(x$n_certain)}{?is/are} selected with certainty."
+      } else {
+        "Stage {stage}: {x$n_certain} unit{?s} {?is/are} selected with
+         certainty."
+      },
+      "i" = "A unit whose share of its pool's size is above 1 / n has chance
+             1, and the rest of the take is spread over the other units.",
+      pool_lines(x, "Pools"),
+      "i" = "Set {.arg certainty_size} or {.arg certainty_prop} in
+             {.fn draw} to state the rule in the design, or check before
+             drawing with {.fn frame_summary}."
+    ),
+    class = "samplyr_message_certainty_selected",
+    stage = stage,
+    operation = "certainty_selected",
     payload = x
   )
 }
@@ -1252,6 +1283,21 @@ collect_ancestor_cluster_vars <- function(design, stage_idx) {
   for (i in seq_len(stage_idx - 1L)) {
     spec <- design$stages[[i]]
     if (!is_null(spec$clusters)) vars <- c(vars, spec$clusters$vars)
+  }
+  unique(vars)
+}
+
+#' Stratum variables of the stages above, fixed within each of their units
+#'
+#' A later stage that stratifies by one of them again uses it to pick each
+#' parent's row of a take table, not as a category the parent must hold.
+#' @noRd
+collect_ancestor_strata_vars <- function(design, stage_idx) {
+  if (stage_idx <= 1L) return(character(0))
+  vars <- character(0)
+  for (i in seq_len(stage_idx - 1L)) {
+    spec <- design$stages[[i]]
+    if (!is_null(spec$strata)) vars <- c(vars, spec$strata$vars)
   }
   unique(vars)
 }

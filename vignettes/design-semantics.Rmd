@@ -451,7 +451,14 @@ activated, the factor is 2. It is exact and generally not the nominal
 \(k / r\) for \(r\) active panels of \(k\), and it is why the block sizes
 and quotas are recorded with the sample.
 
-Neither operation replenishes the sample. A program that draws refreshment
+**Periods** (`panels = periods(k)`) are a partition visited once, such as
+the months of a yearly survey. They differ from rotation groups in one
+respect. A rotation group keeps a unit selected with certainty in every
+wave, while a period assigns it like any other unit, so it is visited in
+one period. Each period is a wave of its own, and `execute(wave = t)` gives
+its sample with the exact activation weights described above.
+
+None of these replenishes the sample. A program that draws refreshment
 cohorts against later frame vintages is a registry of separate executions, not
 a partition of one. See `rotation_program()`. `?panel_assignment` gives the assignment rules,
 the choice of assignment stage and what it costs, certainty units, schedules

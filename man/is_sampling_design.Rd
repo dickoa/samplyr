@@ -27,6 +27,7 @@ Other helpers:
 \code{\link[=get_design]{get_design()}},
 \code{\link[=get_stages_executed]{get_stages_executed()}},
 \code{\link[=is_tbl_sample]{is_tbl_sample()}},
+\code{\link[=periods]{periods()}},
 \code{\link{print.samplyr}},
 \code{\link[=serp]{serp()}}
 }

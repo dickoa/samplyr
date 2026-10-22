@@ -453,6 +453,10 @@ sample_stratified <- function(
     frame, strata_spec$vars, res$sample, draw_spec,
     label_vars = strata_label_vars(strata_spec), alloc = strata_spec$alloc
   )
+  signal_certainty_selected(
+    frame, strata_spec$vars, res$sample, draw_spec,
+    label_vars = strata_label_vars(strata_spec)
+  )
   res
 }
 
@@ -513,6 +517,58 @@ signal_singleton_strata <- function(frame, strata_vars, sample, draw_spec,
     ),
     n_singleton = sum(single),
     alloc = alloc
+  )
+  invisible(NULL)
+}
+
+#' Report units a fixed-size PPS draw took with certainty by their size
+#'
+#' Calibration sets a unit's chance to 1 when its share of the pool's size
+#' is above `1 / n`, and no rule in the design says so. A stage that states
+#' a rule (`certainty_size`, `certainty_prop` or a certainty plan) is not
+#' reported, and neither is a pool taken whole.
+#' @noRd
+signal_certainty_selected <- function(frame, strata_vars, sample, draw_spec,
+                                      label_vars = strata_vars) {
+  if (!identical(mos_route(draw_spec), "calibrated") ||
+      is_multi_hit_method(draw_spec) ||
+      !is_null(draw_spec$certainty_size) ||
+      !is_null(draw_spec$certainty_prop) ||
+      !is_null(draw_spec$certainty_plan) ||
+      nrow(sample) == 0L || !".certainty" %in% names(sample)) {
+    return(invisible(NULL))
+  }
+  certain <- !is.na(sample$.certainty) & sample$.certainty
+  if (!any(certain)) {
+    return(invisible(NULL))
+  }
+  if (length(strata_vars) == 0L) {
+    if (sum(certain) >= nrow(frame)) {
+      return(invisible(NULL))
+    }
+    signal_selection_event(
+      "certainty_selected",
+      pool_keys = character(0),
+      n_certain = sum(certain),
+      n_pools = 1L
+    )
+    return(invisible(NULL))
+  }
+  counted <- memo_call("pool_population", pool_population, frame, strata_vars)
+  pools <- counted$pools
+  pool_keys <- counted$pool_keys
+  sample_pool <- match(make_group_key(sample, strata_vars), pool_keys)
+  n_certain <- tabulate(sample_pool[certain], length(pool_keys))
+  # A pool taken whole holds certain units by its size, not theirs.
+  hit <- n_certain > 0L & n_certain < counted$population
+  if (!any(hit)) {
+    return(invisible(NULL))
+  }
+  signal_selection_event(
+    "certainty_selected",
+    pool_keys = format_key_labels(pools[hit, , drop = FALSE], label_vars),
+    n_certain = sum(n_certain[hit]),
+    n_pools = length(pool_keys)
   )
   invisible(NULL)
 }
@@ -723,8 +779,11 @@ stratum_plan <- function(frame, strata_spec, draw_spec) {
     stratum_info, strata_spec, draw_spec,
     signal = TRUE
   )
+  # A stratum the parent inherits picks its rows of the table.
   absent <- absent_named_strata(
-    frame, strata_vars, strata_label_vars(strata_spec), draw_spec$n
+    frame, strata_vars,
+    setdiff(strata_label_vars(strata_spec), strata_spec$inherited_vars),
+    draw_spec$n
   )
   if (length(absent) > 0L) {
     signal_selection_event(
@@ -1254,6 +1313,7 @@ sample_unstratified <- function(frame, draw_spec, trace_mode = "full") {
   } else {
     draw_sample(frame, n, draw_spec, trace_mode = trace_mode)
   }
+  signal_certainty_selected(frame, character(0), res$sample, draw_spec)
   result <- res$sample
   result$.weight <- 1 / result$.pik
   result$.pik <- NULL

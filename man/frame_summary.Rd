@@ -52,8 +52,8 @@ underlying representation is (\code{"eligible"}, \code{"universe"},
 
 For \code{detail = "stage"}, one row per stage with \code{stage},
 \code{unit_level}, \code{scope}, \code{chance_kind}, \code{probabilities}, \code{storage},
-\code{n_pools}, \code{n_capped}, \code{N}, \code{n_target}, \code{n_expected}, \code{n_moved},
-\code{n_tied}, \code{n_realized}, and \code{take_rate}. \code{n_capped} counts the stage's pools
+\code{n_pools}, \code{n_capped}, \code{N}, \code{n_target}, \code{n_expected}, \code{n_certainty},
+\code{n_moved}, \code{n_tied}, \code{n_realized}, and \code{take_rate}. \code{n_capped} counts the stage's pools
 whose \code{capped} is \code{TRUE} at \code{detail = "pool"}, and is \code{NA} when any
 of them is \code{NA}. Like \code{n_pools}, it counts pools without weighting,
 so in a preview it counts candidate pools. \code{n_moved} is the number
@@ -62,13 +62,15 @@ which \code{n_target} no longer shows. A preview reports it, rolled up
 like \code{n_target}. It is \code{NA} for a stage without an allocation method
 and on a recorded digest, which does not keep it. \code{n_tied} counts the
 pools marked \code{tied} at \code{detail = "pool"}, without weighting, and is
-\code{NA} in the same cases.
+\code{NA} in the same cases. \code{n_certainty} adds up the pools' \code{n_certainty},
+rolled up like \code{n_target}.
 
 For \code{detail = "pool"}, one row per selection pool and realization
 with \code{stage}, \code{pool_id}, \code{replicate}, \code{parent_unit}, \code{pool_key}, any
-stratum label columns, \code{N}, \code{n_target}, \code{n_expected}, \code{n_realized},
-\code{scope}, \code{chance_status}, \code{chance} (the constant per-unit chance where
-one applies, \code{NA} otherwise), \code{take_rate}, \code{capped}, and \code{tied}.
+stratum label columns, \code{N}, \code{n_target}, \code{n_expected}, \code{n_certainty},
+\code{n_realized}, \code{scope}, \code{chance_status}, \code{chance} (the constant per-unit
+chance where one applies, \code{NA} otherwise), \code{take_rate}, \code{capped}, and
+\code{tied}.
 \code{replicate} is \code{1} for an ordinary execution. \code{pool_key} names the
 pool in the frame's values, its parent path then its stratum, as the
 \code{pool_keys} field of a condition from \code{\link[=execute]{execute()}} does. Only a
@@ -87,6 +89,14 @@ the post-redistribution target. \code{execute()} reports that event as
 \code{samplyr_message_allocation_capped} or, when the stage takes
 everything within reach, \code{samplyr_warning_census} (see
 \link{execution_conditions}).
+
+\code{n_certainty} counts the units of a pool whose chance is 1, so a
+pool taken whole counts all of its units. Before the draw it shows
+which pools a fixed-size PPS stage will take units from with
+certainty (see the certainty section of \code{\link[=draw]{draw()}}). After the draw it
+comes from the stored chances or from the sample's \code{.certainty_k}
+column, and it is \code{NA} when neither is available, as for a
+with-replacement stage, whose chances are expected hits.
 
 \code{tied} marks a pool whose allocated take was decided by a tie in the
 rounding: its remainder equals that of a stratum on the other side of
@@ -255,6 +265,16 @@ full <- sampling_design() |>
   draw(n = 5, method = "pps_brewer", mos = id) |>
   execute(frame, seed = 42, frame_digest = "full")
 head(frame_summary(full, detail = "unit"))
+
+# Before drawing, the pools a PPS stage will take units from with
+# certainty. Poura's largest urban EA holds more than 1/12 of its
+# households, so 12 EAs drawn by size include it for sure.
+poura <- subset(bfa_eas, commune == "Poura" & urban_rural == "Urban")
+by_size <- sampling_design() |>
+  draw(n = 12, method = "pps_systematic", mos = households)
+frame_summary(by_size, poura, detail = "pool")[
+  c("N", "n_target", "n_certainty")
+]
 
 }
 \seealso{

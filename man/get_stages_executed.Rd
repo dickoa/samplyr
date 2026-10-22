@@ -47,6 +47,7 @@ Other helpers:
 \code{\link[=get_design]{get_design()}},
 \code{\link[=is_sampling_design]{is_sampling_design()}},
 \code{\link[=is_tbl_sample]{is_tbl_sample()}},
+\code{\link[=periods]{periods()}},
 \code{\link{print.samplyr}},
 \code{\link[=serp]{serp()}}
 }

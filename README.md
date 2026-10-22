@@ -321,6 +321,13 @@ sample <- sampling_design() |>
   add_stage(label = "EAs") |>
     draw(n = 5) |>
   execute(zwe_frame, seed = 12345)
+#> Stage 1: 1 unit is selected with certainty.
+#> ℹ A unit whose share of its pool's size is above 1 / n has
+#>   chance 1, and the rest of the take is spread over the other
+#>   units.
+#> ℹ Set `certainty_size` or `certainty_prop` in `draw()` to state
+#>   the rule in the design, or check before drawing with
+#>   `frame_summary()`.
 
 sample
 #> # A tbl_sample: 50 × 21

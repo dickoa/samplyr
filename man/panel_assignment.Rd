@@ -9,6 +9,24 @@ How \code{\link[=execute]{execute()}} partitions a sample into panels with \code
 how \code{execute(master, wave = t)} weights the wave it materializes.
 }
 \details{
+\subsection{Periods and rotation groups}{
+
+\code{panels} takes three forms.\tabular{llll}{
+   \verb{panels =} \tab Declares \tab Waves \tab A certainty unit is in \cr
+   \code{12} \tab rotation groups \tab declared later \tab every wave \cr
+   a schedule \tab rotation groups \tab as scheduled \tab every wave \cr
+   \code{periods(12)} \tab periods \tab one per period \tab one period \cr
+}
+
+
+Rotation groups are for a sample interviewed again, where a unit selected
+with certainty stays in every wave. \code{\link[=periods]{periods()}} is for a sample spread
+over fieldwork periods and visited once, such as the months of a yearly
+survey, where a certainty unit belongs to one period like any other. A
+count that keeps certainty units apart says so with
+\code{samplyr_message_panel_certainty}.
+}
+
 \subsection{How units are assigned}{
 
 Assignment is randomized with fixed quotas. Within each selection stratum
@@ -56,8 +74,10 @@ parents is balanced for net change but not for gross change.
 
 \subsection{Certainty units}{
 
-Certainty units are labeled from their own pools and consume no rotating
-quota. A certainty unit is in the sample at every occasion, since a
+Under a count or a schedule, certainty units are labeled from their own
+pools and consume no rotating quota. Under \code{\link[=periods]{periods()}} they are assigned
+with the other units of their stratum, so each belongs to one period and
+the periods stay even. A certainty unit is in the sample at every occasion, since a
 schedule that rotated it out would drop the very units the certainty
 stratum exists to enumerate. Certainty counts only at the assignment
 stage, in both directions: a certainty primary unit does not make the
@@ -117,6 +137,11 @@ one whole startup cohort and needs no partition.
 }
 
 \subsection{Pools too small for a schedule}{
+
+Periods activate one period per wave, so a stratum with fewer units than
+periods would leave a period without any of its units. It is refused,
+and \code{small_pool = "permanent"} is refused with \code{\link[=periods]{periods()}}, since a unit
+active in every period is not visited once.
 
 A pool of \code{m} units leaves \code{panels - m} panels empty, so a wave activating
 \code{r} of them selects nothing from that pool when \code{m <= panels - r}. Those

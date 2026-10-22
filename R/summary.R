@@ -16,7 +16,10 @@
 #'   one unit each stage took whole. Such a unit is certain too, as
 #'   `.certainty_k` records, but it is counted only in `single_unit_pools`,
 #'   so a stage of unsegmented EAs does not read as large units taken for
-#'   their size. Weight figures are `NULL` for an
+#'   their size. `periods` is `NULL` unless the sample is split into
+#'   [periods()]. It then holds `k` and a `pools` table with each pool's
+#'   fewest and most units per period (`min`, `max`). Weight figures are
+#'   `NULL` for an
 #'   empty sample and for stacked replicates, which the print also leaves
 #'   out. `sample` is the summarized sample itself.
 #'
@@ -24,6 +27,15 @@
 #' The header line shows the total sample size (with the universe size
 #' when the frame digest records a complete denominator and the executed
 #' path has no with-replacement stage), the stages executed, and the seed.
+#'
+#' A sample split into [periods()] gets one more line, which says whether
+#' each stratum has the same number of units in every period and names the
+#' strata that do not, for example "Periods: 12, even in 10 of 13 strata."
+#' followed by "Uneven: Cascades (2 to 3 per period), Centre-Nord (3 to
+#' 4)." When every stratum is even, the line gives the range of units per
+#' period instead. This is the table fieldwork is planned from, and an
+#' uneven stratum shows an allocation that is not a multiple of the number
+#' of periods.
 #'
 #' Each stage section has two lines:
 #'
@@ -102,7 +114,8 @@ summary.tbl_sample <- function(object, ...) {
           summary_certainty_count(object, design, k)[["single_unit"]]
         }, integer(1)),
         paste0("stage_", stages)
-      )
+      ),
+      periods = summary_periods(object)
     ),
     class = "summary_tbl_sample"
   )
@@ -180,6 +193,8 @@ render_sample_summary <- function(object) {
     paste(info_parts, collapse = " | "),
     bullet = "info"
   )
+
+  summary_periods_lines(summary_periods(object))
 
   # The recorded design describes source selection, not transformed rows.
   share <- attr(object, "metadata")$weight_share
@@ -276,6 +291,113 @@ render_sample_summary <- function(object) {
   }
 
   cat("\n")
+  invisible(NULL)
+}
+
+#' Units per period in each pool of a periods sample
+#'
+#' `NULL` unless the sample is split into `periods()`, and for a period
+#' materialized by `wave`, which holds one period only. A pool is a stratum
+#' of the assignment stage, within its parent below the first stage.
+#' @noRd
+summary_periods <- function(object) {
+  metadata <- attr(object, "metadata")
+  record <- metadata$panel_assignment
+  if (is_null(record) || !identical(record$certainty, "assigned") ||
+      !is_null(metadata$wave) || !".panel" %in% names(object)) {
+    return(NULL)
+  }
+  k <- as.integer(record$panels)
+  key_vars <- as.character(record$key_vars)
+  pool_vars <- as.character(record$pool_vars %||% character(0))
+  units <- as.data.frame(object)
+  units <- units[!duplicated(units[key_vars]), , drop = FALSE]
+  pool <- if (length(pool_vars) == 0L) {
+    rep("", nrow(units))
+  } else {
+    make_group_key(units, pool_vars)
+  }
+  first <- !duplicated(pool)
+  label <- if (length(pool_vars) == 0L) {
+    ""
+  } else {
+    apply(units[first, pool_vars, drop = FALSE], 1L, function(v) {
+      paste(trimws(as.character(v)), collapse = " > ")
+    })
+  }
+  counts <- lapply(split(units$.panel, factor(pool, unique(pool))),
+                   function(p) tabulate(p, k))
+  list(
+    k = k,
+    pools = data.frame(
+      pool = unname(label),
+      min = vapply(counts, min, integer(1)),
+      max = vapply(counts, max, integer(1)),
+      row.names = NULL
+    ),
+    unit = if (identical(as.integer(record$assignment_stage), 1L)) {
+      "strata"
+    } else {
+      "pools"
+    }
+  )
+}
+
+#' The summary lines of a periods sample
+#'
+#' Evenness first, since strata can hold different numbers of units per
+#' period. The uneven pools are named, the first few of them.
+#' @noRd
+summary_periods_lines <- function(periods, shown = 5L) {
+  if (is_null(periods)) {
+    return(invisible(NULL))
+  }
+  pools <- periods$pools
+  per_period <- function(lo, hi) {
+    if (lo == hi) paste(lo) else paste(lo, "to", hi)
+  }
+  units_word <- function(lo, hi) if (hi == 1L) "unit" else "units"
+  even <- pools$min == pools$max
+  if (nrow(pools) == 1L) {
+    cli::cat_bullet(
+      paste0(
+        "Periods: ", periods$k, ", ", per_period(pools$min, pools$max), " ",
+        units_word(pools$min, pools$max), " per period."
+      ),
+      bullet = "info"
+    )
+    return(invisible(NULL))
+  }
+  if (all(even)) {
+    lo <- min(pools$min)
+    hi <- max(pools$max)
+    cli::cat_bullet(
+      paste0(
+        "Periods: ", periods$k, ", even in all ", nrow(pools), " ",
+        periods$unit, " (", per_period(lo, hi), " ", units_word(lo, hi),
+        " per period)."
+      ),
+      bullet = "info"
+    )
+    return(invisible(NULL))
+  }
+  uneven <- pools[!even, , drop = FALSE]
+  ranges <- paste0(
+    uneven$pool, " (", uneven$min, " to ", uneven$max,
+    c(" per period", rep("", nrow(uneven) - 1L)), ")"
+  )
+  if (length(ranges) > shown) {
+    ranges <- c(ranges[seq_len(shown)],
+                paste(length(ranges) - shown, "more"))
+  }
+  cli::cat_bullet(
+    paste0(
+      "Periods: ", periods$k, ", even in ", sum(even), " of ", nrow(pools),
+      " ", periods$unit, "."
+    ),
+    bullet = "info"
+  )
+  cat("  Uneven: ", paste(ranges, collapse = ", "), ".\n", sep = "")
   invisible(NULL)
 }
 

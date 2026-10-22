@@ -1939,3 +1939,48 @@ test_that("a named vector matches a numeric stratum column", {
   )
   expect_identical(found$payload$pool_keys, "d4 > 1")
 })
+
+## A stratum the parent inherits picks its row of the table
+
+inherited_region_frame <- function() {
+  frame <- data.frame(
+    region = rep(c("North", "South"), each = 40),
+    psu = rep(1:8, each = 10),
+    id = 1:80
+  )
+  # PSUs 1, 2 and 5 are wholly urban and PSU 3 wholly rural.
+  frame$ur <- ifelse(frame$psu %in% c(1, 2, 5) | frame$id %% 2 == 0,
+                     "Urban", "Rural")
+  frame$ur[frame$psu == 3] <- "Rural"
+  frame
+}
+
+test_that("a take looked up by an inherited stratum is no absence", {
+  frame <- inherited_region_frame()
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(region) |> cluster_by(psu) |> draw(n = 2) |>
+    add_stage() |> stratify_by(region) |> draw(n = c(North = 3, South = 4))
+  expect_null(capture_one(validate_frame(design, frame),
+                          "samplyr_message_absent_strata"))
+  sample <- NULL
+  expect_null(capture_one(sample <- execute(design, frame, seed = 1),
+                          "samplyr_message_absent_strata"))
+  takes <- table(sample$region, sample$psu)
+  expect_identical(as.vector(takes[takes > 0]), c(3L, 3L, 4L, 4L))
+})
+
+test_that("a category missing within the parent is still reported", {
+  frame <- inherited_region_frame()
+  n <- data.frame(region = rep(c("North", "South"), each = 2),
+                  ur = rep(c("Urban", "Rural"), 2), n = c(2, 1, 2, 2))
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(region) |> cluster_by(psu) |> draw(n = 4) |>
+    add_stage() |> stratify_by(region, ur) |> draw(n = n)
+  expected <- c("1 > Rural", "2 > Rural", "3 > Urban", "5 > Rural")
+  found <- capture_one(validate_frame(design, frame),
+                       "samplyr_message_absent_strata")
+  expect_setequal(found$payload$pool_keys, expected)
+  found <- capture_one(execute(design, frame, seed = 1),
+                       "samplyr_message_absent_strata")
+  expect_setequal(found$payload$pool_keys, expected)
+})

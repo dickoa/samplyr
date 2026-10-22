@@ -900,3 +900,204 @@ test_that("a refusal inside a stratum keeps its class and names the stratum", {
     cli::ansi_strip(unname(err$body[[3]])), "In stratum \"b\""
   )
 })
+
+## Units taken with certainty by their size, without a declared rule
+
+capture_certainty_selected <- function(expr) {
+  found <- list()
+  withCallingHandlers(
+    force(expr),
+    samplyr_message_certainty_selected = function(m) {
+      found[[length(found) + 1L]] <<- m
+      invokeRestart("muffleMessage")
+    }
+  )
+  found
+}
+
+calibrated_frame <- function() {
+  # In "a" the first unit's share is 100/108, above 1/3, so it is certain.
+  # In "b" every share is 1/8, below 1/3.
+  data.frame(
+    st = rep(c("a", "b"), each = 9),
+    id = 1:18,
+    size = c(100, rep(1, 8), rep(1, 9))
+  )
+}
+
+test_that("units certain by their size are reported once, by pool", {
+  sample <- NULL
+  found <- capture_certainty_selected(
+    sample <- sampling_design() |>
+      stratify_by(st) |>
+      draw(n = 3, method = "pps_systematic", mos = size) |>
+      execute(calibrated_frame(), seed = 1)
+  )
+  expect_length(found, 1L)
+  expect_identical(found[[1]]$stage, 1L)
+  expect_identical(found[[1]]$payload$pool_keys, "a")
+  expect_identical(found[[1]]$payload$n_certain, 1L)
+  expect_identical(found[[1]]$payload$n_pools, 2L)
+  expect_identical(sample$id[sample$.certainty_1], 1L)
+  expect_match(conditionMessage(found[[1]]), "1 unit in 1 of 2 pools")
+
+  # Replicates report the shared finding once.
+  found <- capture_certainty_selected(
+    sampling_design() |>
+      stratify_by(st) |>
+      draw(n = 3, method = "pps_systematic", mos = size) |>
+      execute(calibrated_frame(), seed = 1, reps = 3)
+  )
+  expect_length(found, 1L)
+})
+
+test_that("an unstratified draw reports its certain units without pools", {
+  frame <- calibrated_frame()[1:9, ]
+  found <- capture_certainty_selected(
+    sampling_design() |>
+      draw(n = 3, method = "pps_brewer", mos = size) |>
+      execute(frame, seed = 1)
+  )
+  expect_length(found, 1L)
+  expect_identical(found[[1]]$payload$pool_keys, character(0))
+  expect_identical(found[[1]]$payload$n_certain, 1L)
+  expect_match(conditionMessage(found[[1]]), "1 unit is selected")
+})
+
+test_that("a declared rule, a pool taken whole and other routes are silent", {
+  frame <- calibrated_frame()
+  run <- function(...) {
+    capture_certainty_selected(suppressWarnings(
+      sampling_design() |>
+        stratify_by(st) |>
+        draw(...) |>
+        execute(frame, seed = 1)
+    ))
+  }
+  expect_length(run(n = 3, method = "pps_systematic", mos = size,
+                    certainty_size = 50), 0L)
+  expect_length(run(n = 3, method = "pps_systematic", mos = size,
+                    certainty_prop = 0.5), 0L)
+  expect_length(run(n = 9, method = "pps_systematic", mos = size), 0L)
+  expect_length(run(n = 3, method = "pps_poisson", mos = size), 0L)
+  expect_length(run(n = 3, method = "pps_multinomial", mos = size), 0L)
+  expect_length(run(n = 3), 0L)
+})
+
+test_that("a later stage reports its pools under their parent", {
+  frame <- calibrated_frame()
+  found <- capture_certainty_selected(
+    sampling_design() |>
+      add_stage() |>
+        cluster_by(st) |>
+        draw(n = 2) |>
+      add_stage() |>
+        draw(n = 3, method = "pps_systematic", mos = size) |>
+      execute(frame, seed = 1)
+  )
+  expect_length(found, 1L)
+  expect_identical(found[[1]]$stage, 2L)
+  expect_identical(found[[1]]$payload$n_certain, 1L)
+})
+
+test_that("a pool taken whole adds nothing to the count of another", {
+  frame <- rbind(
+    calibrated_frame(),
+    data.frame(st = "c", id = 19:21, size = c(5, 6, 7))
+  )
+  found <- capture_certainty_selected(
+    sampling_design() |>
+      stratify_by(st) |>
+      draw(n = c(a = 3, b = 3, c = 3), method = "pps_systematic",
+           mos = size) |>
+      execute(frame, seed = 1)
+  )
+  expect_length(found, 1L)
+  expect_identical(found[[1]]$payload$pool_keys, "a")
+  expect_identical(found[[1]]$payload$n_certain, 1L)
+  expect_identical(found[[1]]$payload$n_pools, 3L)
+})
+
+## The units each pool takes with certainty, in frame_summary()
+
+late_certain_frame <- function() {
+  # The dominant unit is the last of the second pool, so it is the last
+  # row of the sample and the first once rows are sorted by size.
+  data.frame(
+    st = rep(c("a", "b"), each = 9),
+    id = 1:18,
+    size = c(rep(1, 9), rep(1, 8), 100)
+  )
+}
+
+test_that("a preview counts the units each pool will take with certainty", {
+  design <- sampling_design() |>
+    stratify_by(st) |>
+    draw(n = 3, method = "pps_systematic", mos = size)
+  pools <- frame_summary(design, late_certain_frame(), detail = "pool")
+  expect_identical(pools$st, c("a", "b"))
+  expect_identical(pools$n_certainty, c(0L, 1L))
+  expect_identical(frame_summary(design, late_certain_frame())$n_certainty, 1)
+})
+
+test_that("after the draw the count follows the sample's rows by id", {
+  design <- sampling_design() |>
+    stratify_by(st) |>
+    draw(n = 3, method = "pps_systematic", mos = size)
+  sample <- suppressMessages(execute(design, late_certain_frame(), seed = 1))
+  expect_identical(sample$id[sample$.certainty_1], 18L)
+  expect_identical(frame_summary(sample, detail = "pool")$n_certainty,
+                   c(0L, 1L))
+  sorted <- dplyr::arrange(sample, dplyr::desc(size))
+  expect_identical(frame_summary(sorted, detail = "pool")$n_certainty,
+                   c(0L, 1L))
+
+  replicated <- suppressMessages(
+    execute(design, late_certain_frame(), seed = 1, reps = 2)
+  )
+  pools <- frame_summary(replicated, detail = "pool")
+  expect_identical(pools$n_certainty[pools$st == "b"], c(1L, 1L))
+  expect_identical(pools$n_certainty[pools$st == "a"], c(0L, 0L))
+
+  # Replicates can record the certain unit under different unit ids.
+  poura <- bfa_eas[bfa_eas$commune == "Poura" &
+                     bfa_eas$urban_rural == "Urban", ]
+  replicated <- suppressMessages(
+    sampling_design() |>
+      draw(n = 12, method = "pps_systematic", mos = households) |>
+      execute(poura, seed = 1, reps = 3)
+  )
+  expect_identical(frame_summary(replicated, detail = "pool")$n_certainty,
+                   c(1L, 1L, 1L))
+})
+
+test_that("a pool taken whole counts all its units, expected hits none", {
+  frame <- late_certain_frame()
+  whole <- sampling_design() |>
+    stratify_by(st) |>
+    draw(n = c(a = 9, b = 3), method = "pps_systematic", mos = size)
+  expect_identical(frame_summary(whole, frame, detail = "pool")$n_certainty,
+                   c(9L, 1L))
+  hits <- sampling_design() |>
+    stratify_by(st) |>
+    draw(n = 3, method = "pps_multinomial", mos = size)
+  expect_identical(frame_summary(hits, frame, detail = "pool")$n_certainty,
+                   c(NA_integer_, NA_integer_))
+  drawn <- execute(hits, frame, seed = 1)
+  expect_identical(frame_summary(drawn, detail = "pool")$n_certainty,
+                   c(NA_integer_, NA_integer_))
+})
+
+test_that("a clustered stage counts its certain clusters", {
+  frame <- late_certain_frame()
+  frame$cl <- frame$id
+  design <- sampling_design() |>
+    stratify_by(st) |>
+    cluster_by(cl) |>
+    draw(n = 3, method = "pps_systematic", mos = size)
+  expect_identical(frame_summary(design, frame, detail = "pool")$n_certainty,
+                   c(0L, 1L))
+  sample <- suppressMessages(execute(design, frame, seed = 1))
+  expect_identical(frame_summary(sample, detail = "pool")$n_certainty,
+                   c(0L, 1L))
+})

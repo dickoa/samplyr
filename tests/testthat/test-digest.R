@@ -529,7 +529,7 @@ test_that("stage detail reports the selection chain", {
   expect_named(fs, c(
     "stage", "unit_level", "scope", "chance_kind", "probabilities",
     "storage", "n_pools", "n_capped", "N", "n_target", "n_expected",
-    "n_moved", "n_tied", "n_realized", "take_rate"
+    "n_certainty", "n_moved", "n_tied", "n_realized", "take_rate"
   ))
   expect_identical(nrow(fs), 1L)
   expect_identical(fs$n_pools, 4L)
