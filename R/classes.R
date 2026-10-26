@@ -53,9 +53,17 @@
 #'     one PSU per zone. svyplan fixes the groups before selection, two or
 #'     three zones each, numbered across strata, and certainty PSUs have
 #'     `NA`. The survey export uses the groups as the variance strata.
+#'   - `.stage`: The last stage executed, the same on every row. It is 1
+#'     after `execute(..., stages = 1)` and 2 once a continuation runs the
+#'     second stage. A new phase counts its own stages, so it starts at 1.
 #'   - `.replicate`: Replicate identifier (only when `reps` is specified)
 #'   - `.panel`: Panel assignment (only when `panels` is specified), described
 #'     in [panel_assignment]
+#'   - `.wave`: The wave a row was observed at, in a window of several waves
+#'     materialized with `execute(master, wave = )`
+#'   - `.visit`: The interview number of the row's unit within its tenure, in
+#'     a materialized wave, from the schedule's `visit`. Permanent units have
+#'     `NA`.
 #'   - Stage and stratum identifiers as appropriate
 #'
 #' ## How the weights are computed
@@ -386,8 +394,9 @@ is_tbl_sample <- function(x) {
 #'
 #' @section Class preservation:
 #'
-#' All dplyr verbs (`mutate`, `filter`, `select`, `*_join`, etc.)
-#' preserve the `tbl_sample` class automatically.
+#' dplyr verbs that keep the `.weight` column (`mutate()`, `filter()`,
+#' `select()`, `arrange()`, the joins) return a `tbl_sample`. Verbs that
+#' drop it, such as `summarise()` and `count()`, return a plain tibble.
 #'
 #' Preserving the class does not mean the sample remains analyzable:
 #' operations that remove, add, or duplicate rows, or overwrite
@@ -774,6 +783,46 @@ dplyr_row_slice.tbl_sample <- function(data, i, ...) {
     }
   }
   out
+}
+
+#' Extract one replicate of a stack with `filter()`
+#'
+#' When random-size draws leave one replicate of a stack with rows, a
+#' filter to it keeps every row, so the row set does not show the choice.
+#' A filter whose conditions name `.replicate` and whose result holds one
+#' replicate is then marked as an extraction of it, which the integrity
+#' record verifies as for any other replicate. Other filters, reorderings
+#' and base subsetting keep the stack. `.by` and `.preserve` are not
+#' conditions: grouping by `.replicate` selects nothing.
+#'
+#' @exportS3Method dplyr::filter
+#' @noRd
+filter.tbl_sample <- function(.data, ...) {
+  # `.by` and `.preserve` stay in `...`, so the default method still reads
+  # them as the caller wrote them.
+  conditions <- rlang::enquos(...)
+  conditions <- conditions[!names(conditions) %in% c(".by", ".preserve")]
+  out <- NextMethod()
+  names_replicate <- any(vapply(
+    conditions,
+    function(q) ".replicate" %in% all.vars(rlang::quo_get_expr(q)),
+    logical(1)
+  ))
+  if (names_replicate && takes_one_replicate(out, .data)) {
+    out <- mark_sample_modified(out, "rows")
+  }
+  out
+}
+
+#' Whether a filter result holds one replicate of a stack with several
+#' @noRd
+takes_one_replicate <- function(out, data) {
+  is_tbl_sample(out) &&
+    ".replicate" %in% names(out) &&
+    nrow(out) > 0L &&
+    !anyNA(out$.replicate) &&
+    length(unique(out$.replicate)) == 1L &&
+    recorded_replicates(data) > 1L
 }
 
 #' Track renames of internal design columns

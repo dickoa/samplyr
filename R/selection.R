@@ -191,9 +191,7 @@ cluster_plan <- function(frame, cluster_vars, strata_vars, draw_spec,
   if (check_invariants && length(invariant_vars) > 0) {
     check_vars <- c(cluster_vars, invariant_vars)
     n_clusters <- length(cluster_indices)
-    n_combos <- frame |>
-      distinct(across(all_of(check_vars))) |>
-      nrow()
+    n_combos <- length(unique_key_loc(frame, check_vars))
 
     if (n_combos != n_clusters) {
       varying <- invariant_vars[vapply(
@@ -1499,6 +1497,9 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
         method = sondage_name,
         prn = prn_vals
       )$sample
+      if (length(idx) == 0) {
+        handle_empty_selection(method, draw_spec$on_empty %||% "error")
+      }
     } else {
       mos_vals <- data[[mos]]
       pik <- mos_chances(mos_vals, n, draw_spec)$pik
@@ -1997,7 +1998,7 @@ identify_certainty <- function(
         break
       }
 
-      props <- mos_remaining / total_mos
+      props <- mos_shares(mos_remaining, total_mos)
       above_threshold <- props >= certainty_prop
       if (!any(above_threshold)) {
         break

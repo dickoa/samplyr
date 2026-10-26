@@ -156,9 +156,9 @@ is_svyplan_schedule <- function(x) {
 #' @noRd
 check_svyplan_schedule <- function(x, arg = "schedule",
                                    call = caller_env()) {
-  if (!is_svyplan_schedule(x) || !identical(x$schema_version, 1L)) {
+  if (!is_svyplan_schedule(x) || !identical(x$schema_version, 2L)) {
     abort_samplyr(
-      "{.arg {arg}} must be an {.cls svyplan_schedule} with schema version 1.",
+      "{.arg {arg}} must be an {.cls svyplan_schedule} with schema version 2.",
       class = "samplyr_error_svyplan_schedule",
       call = call
     )
@@ -878,12 +878,15 @@ draws_one_per_zone <- function(draw_spec) {
 #' selection and the digest share.
 #' @noRd
 certainty_remainder_chance <- function(sizes, n_draw, zone = NULL, m = NULL) {
+  share <- function(x, k) {
+    if (is.finite(sum(x))) k * x / sum(x) else k * mos_shares(x)
+  }
   if (is_null(zone)) {
-    return(n_draw * sizes / sum(sizes))
+    return(share(sizes, n_draw))
   }
   pik <- numeric(length(sizes))
   for (rows in split(seq_along(sizes), zone)) {
-    pik[rows] <- m * sizes[rows] / sum(sizes[rows])
+    pik[rows] <- share(sizes[rows], m)
   }
   pik
 }
@@ -893,7 +896,8 @@ certainty_remainder_chance <- function(sizes, n_draw, zone = NULL, m = NULL) {
 resolve_parent_draw_spec <- function(draw_spec, data, call = caller_env()) {
   plan <- draw_spec$certainty_plan
   if (!identical(plan$role, "take")) return(draw_spec)
-  ids <- unique(as.character(data[[plan$id_var]]))
+  # Deduplicating before formatting saves a string per frame row.
+  ids <- unique(as.character(unique(data[[plan$id_var]])))
   at <- match(ids, plan$register$psu_id)
   if (length(ids) != 1L || anyNA(at)) {
     abort_samplyr(
@@ -1025,7 +1029,9 @@ reconcile_certainty_take <- function(spec, frame, stage, call = NULL) {
   }
 
   register <- spec$register
-  ids <- unique(frame[[spec$id_var]])
+  ids <- vctrs::vec_slice(
+    frame[[spec$id_var]], unique_key_loc(frame, spec$id_var)
+  )
   extra <- setdiff(ids, register$psu_id)
   if (length(extra) > 0) {
     refuse(
@@ -1033,11 +1039,7 @@ reconcile_certainty_take <- function(spec, frame, stage, call = NULL) {
     )
   }
   if (spec$strata_var %in% names(frame)) {
-    seen <- unique(data.frame(
-      psu_id = frame[[spec$id_var]],
-      stratum = as.character(frame[[spec$strata_var]]),
-      stringsAsFactors = FALSE
-    ))
+    seen <- first_register_rows(frame, spec$id_var, spec$strata_var)
     at <- match(seen$psu_id, register$psu_id)
     moved <- seen$stratum != register$stratum[at]
     if (any(moved)) {
@@ -1047,6 +1049,27 @@ reconcile_certainty_take <- function(spec, frame, stage, call = NULL) {
     }
   }
   invisible(NULL)
+}
+
+#' The distinct PSU, stratum and MOS values of a frame, as the register
+#' states them
+#'
+#' Deduplicates the frame's own columns first, through the execution's key
+#' cache, then the coerced values of those rows. The result is the
+#' deduplication of the coerced columns over every row: a value's first
+#' appearance is also the first appearance of the columns it came from.
+#' @noRd
+first_register_rows <- function(frame, id_var, strata_var, mos_var = NULL) {
+  loc <- unique_key_loc(frame, unique(c(id_var, strata_var, mos_var)))
+  seen <- data.frame(
+    psu_id = vctrs::vec_slice(frame[[id_var]], loc),
+    stratum = as.character(vctrs::vec_slice(frame[[strata_var]], loc)),
+    stringsAsFactors = FALSE
+  )
+  if (!is_null(mos_var)) {
+    seen$N <- as.numeric(vctrs::vec_slice(frame[[mos_var]], loc))
+  }
+  vctrs::vec_unique(seen)
 }
 
 #' @noRd
@@ -1069,12 +1092,7 @@ reconcile_certainty_register <- function(
     )
   }
 
-  seen <- unique(data.frame(
-    psu_id = frame[[spec$id_var]],
-    stratum = as.character(frame[[spec$strata_var]]),
-    N = as.numeric(frame[[mos_var]]),
-    stringsAsFactors = FALSE
-  ))
+  seen <- first_register_rows(frame, spec$id_var, spec$strata_var, mos_var)
 
   dup <- unique(seen$psu_id[duplicated(seen$psu_id)])
   if (length(dup) > 0) {
@@ -1152,13 +1170,15 @@ reconcile_certainty_register <- function(
 #'
 #' @param x A `tbl_sample` with at least one executed clustered stage.
 #' @param ... The outcome as a one-sided formula, e.g.
-#'   `varcomp(x, ~y)`, mirroring the survey.design method. Nothing else
+#'   `varcomp(x, ~y)`, mirroring the survey.design method. The expression
+#'   is evaluated on the sample, so `~log(y)` analyzes the log of `y`, and
+#'   every variable it names must be a column of the sample. Nothing else
 #'   belongs here: `strata` follows the `...` and so is matched exactly, so
 #'   a near miss such as `strat` or a second positional formula is reported
 #'   rather than silently dropped.
-#' @param strata Optional one-sided formula naming a column to
-#'   estimate per-stratum components by, when the first stage was not
-#'   stratified. Stage-1 design strata are picked up automatically.
+#' @param strata Optional one-sided formula over columns of the sample,
+#'   such as `~region` or `~interaction(region, urban_rural)`, to estimate
+#'   per-stratum components by, when the first stage was not stratified. Stage-1 design strata are picked up automatically.
 #'   Combining them with `strata` is an error, because per-stratum
 #'   components crossed with design strata are ambiguous.
 #'
@@ -1196,6 +1216,55 @@ reconcile_certainty_register <- function(
 #' @importFrom svyplan varcomp
 #' @export
 svyplan::varcomp
+
+#' Evaluate a varcomp() formula on the sample
+#'
+#' The expression is evaluated, as svyplan's `varcomp()` evaluates it, so
+#' `~log(y)` is the log of `y`. Every variable it names must be a column of
+#' the sample, so that one missing from the sample is not read from the
+#' calling environment instead.
+#' @noRd
+varcomp_formula_values <- function(fml, x, what, call = caller_env()) {
+  data <- as.data.frame(x)
+  vars <- all.vars(fml)
+  missing <- setdiff(vars, names(data))
+  if (length(vars) == 0L || length(missing) > 0L) {
+    abort_samplyr(
+      c(
+        "{what} must be computed from columns of the sample.",
+        "x" = if (length(missing) > 0L) {
+          "Not in the sample: {.var {missing}}."
+        } else {
+          "The formula names no column."
+        }
+      ),
+      class = "samplyr_error_varcomp_formula",
+      call = call
+    )
+  }
+  values <- tryCatch(
+    rlang::eval_tidy(rlang::f_rhs(fml), data = data, env = rlang::f_env(fml)),
+    error = function(e) {
+      abort_samplyr(
+        c(
+          "{what} could not be computed on the sample.",
+          "x" = "{conditionMessage(e)}"
+        ),
+        class = "samplyr_error_varcomp_formula",
+        call = call
+      )
+    }
+  )
+  if (length(values) != nrow(data)) {
+    abort_samplyr(
+      "{what} must give one value per row of the sample, not
+       {length(values)}.",
+      class = "samplyr_error_varcomp_formula",
+      call = call
+    )
+  }
+  values
+}
 
 #' Refuse anything in varcomp()'s dots but the outcome formula
 #'
@@ -1302,16 +1371,13 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
       class = "samplyr_error_varcomp_formula"
     )
   }
-  y_name <- all.vars(fml)
-  if (length(y_name) != 1L) {
+  y <- varcomp_formula_values(fml, x, "The outcome")
+  if (!is.numeric(y) && !is.logical(y)) {
     abort_samplyr(
-      "The outcome formula must reference exactly one variable."
+      "The outcome must be numeric.",
+      class = "samplyr_error_varcomp_formula"
     )
   }
-  if (!y_name %in% names(x)) {
-    abort_samplyr("Variable {.var {y_name}} not found in the sample.")
-  }
-  y <- x[[y_name]]
 
   design <- get_design(x)
   stages_executed <- get_stages_executed(x)
@@ -1429,16 +1495,13 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
       make_group_key(x, design_strata)
     }
   } else if (!is_null(strata)) {
-    if (!inherits(strata, "formula") || length(all.vars(strata)) != 1L) {
+    if (!inherits(strata, "formula") || length(strata) != 2L) {
       abort_samplyr(
-        "{.arg strata} must be a one-sided formula naming one column."
+        "{.arg strata} must be a one-sided formula, such as {.code ~region}.",
+        class = "samplyr_error_varcomp_formula"
       )
     }
-    s_name <- all.vars(strata)
-    if (!s_name %in% names(x)) {
-      abort_samplyr("Variable {.var {s_name}} not found in the sample.")
-    }
-    strata_vec <- x[[s_name]]
+    strata_vec <- varcomp_formula_values(strata, x, "{.arg strata}")
   }
 
   # Recover unequal-probability stage-1 shares from stage weights.

@@ -1,3 +1,34 @@
+#' @description
+#' samplyr states a survey sampling design as a pipeline of verbs and runs
+#' it on a frame with [execute()]. A design is built with
+#' [sampling_design()], [add_stage()], [stratify_by()], [cluster_by()] and
+#' [draw()], independently of any frame. The same design can then be
+#' previewed against a frame with [frame_summary()], executed on several
+#' frames, and saved with [write_design()]. The sample [execute()] returns
+#' carries its weights and its design, and [as_svydesign()] and
+#' [as_svrepdesign()] export it for analysis with the survey package.
+#'
+#' @section Where to start:
+#' `vignette("introduction", package = "samplyr")` builds designs from a
+#' single draw to a three-stage household sample.
+#' `vignette("survey-analysis", package = "samplyr")` exports a sample and
+#' estimates from it.
+#'
+#' The reference topics answer narrower questions. [selection_methods]
+#' compares the selection methods, [frame_input_grammar] says how frames
+#' and stage registers are passed, [sample_columns] lists the columns a
+#' sample carries and how its weights are computed, and
+#' [variance_estimation] gives how each method's variance is estimated.
+#'
+#' @examples
+#' # 300 EAs allocated proportionally across the 13 regions
+#' design <- sampling_design(title = "EA survey") |>
+#'   stratify_by(region, alloc = "proportional") |>
+#'   draw(n = 300)
+#' design
+#'
+#' sample <- execute(design, bfa_eas, seed = 1)
+#' sample
 #' @keywords internal
 "_PACKAGE"
 

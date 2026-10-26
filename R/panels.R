@@ -148,16 +148,15 @@ normalize_plan_panels <- function(plan, stage, small_pool,
     ,
     drop = FALSE
   ]
+  # A schema 2 schedule numbers its visits, and a restart opens a tenure.
+  cols <- intersect(c("panel", "wave", "active", "visit"), names(startup))
   if (nrow(tail) > 0L) {
     tail$active <- TRUE
-    startup <- rbind(
-      startup[c("panel", "wave", "active")],
-      tail[c("panel", "wave", "active")]
-    )
+    cols <- intersect(cols, names(tail))
+    startup <- rbind(startup[cols], tail[cols])
   }
   last_active <- max(startup$wave[startup$active])
-  startup <- startup[startup$wave <= last_active,
-                     c("panel", "wave", "active")]
+  startup <- startup[startup$wave <= last_active, cols]
   spec <- normalize_panel_schedule(startup, min_panels = 1L, call = call)
   same <- identical(spec$k, expected$k) &&
     identical(spec$r_min, expected$r_min) &&
@@ -364,6 +363,7 @@ normalize_panel_schedule <- function(schedule, min_panels = 2L,
     detail = "No panel is active at wave {idle}.",
     call = call
   )
+  grid$visit <- schedule_grid_visit(grid, schedule, call = call)
 
   r_min <- min(per_wave)
   list(
@@ -372,6 +372,169 @@ normalize_panel_schedule <- function(schedule, min_panels = 2L,
     block_size = panel_block_size(k, r_min),
     schedule = grid
   )
+}
+
+#' The visit number of every grid cell, given or counted
+#'
+#' A tenure opens where `visit` is 1, and its units are kept until the next
+#' opening. Without the column each panel has one tenure, opened at its
+#' first active wave, and visits count its active waves.
+#' @noRd
+schedule_grid_visit <- function(grid, schedule, call = caller_env()) {
+  if (!"visit" %in% names(schedule)) {
+    return(counted_visits(grid))
+  }
+  given <- schedule$visit
+  ok <- (is.numeric(given) || all(is.na(given))) &&
+    all(is.na(given) | (is_integerish_numeric(given[!is.na(given)]) &
+                          given >= 1))
+  if (!ok) {
+    abort_samplyr(
+      c(
+        "{.field visit} must hold whole numbers of 1 or more, or {.val NA}.",
+        "i" = "It numbers a panel's interviews within a tenure, and a tenure
+               opens where it is 1."
+      ),
+      class = "samplyr_error_schedule_visit",
+      call = call
+    )
+  }
+  at <- match(
+    paste(grid$panel, grid$wave, sep = "|"),
+    paste(schedule$panel, schedule$wave, sep = "|")
+  )
+  visit <- as.integer(given[at])
+
+  bad <- which(grid$active != !is.na(visit))
+  if (length(bad) > 0L) {
+    b <- bad[1L]
+    abort_samplyr(
+      c(
+        "{.field visit} must be given exactly where a panel is active.",
+        "x" = "Panel {grid$panel[b]} at wave {grid$wave[b]} is
+               {if (grid$active[b]) \"active with no visit\" else
+               \"inactive with a visit\"}."
+      ),
+      class = "samplyr_error_schedule_visit",
+      call = call
+    )
+  }
+
+  for (p in unique(grid$panel)) {
+    rows <- which(grid$panel == p & grid$active)
+    rows <- rows[order(grid$wave[rows])]
+    v <- visit[rows]
+    step <- v[-1L] == v[-length(v)] + 1L | v[-1L] == 1L
+    if (v[1L] != 1L || !all(step)) {
+      b <- rows[if (v[1L] != 1L) 1L else which(!step)[1L] + 1L]
+      abort_samplyr(
+        c(
+          "{.field visit} must start at 1 and rise by one at each active
+           wave of a tenure.",
+          "x" = "Panel {p} has visit {visit[b]} at wave {grid$wave[b]}.",
+          "i" = "A visit of 1 after the first opens a new tenure, where the
+                 panel's later stages are drawn again."
+        ),
+        class = "samplyr_error_schedule_visit",
+        call = call
+      )
+    }
+  }
+  visit
+}
+
+#' A schedule with tenures redraws the stages below its panels
+#'
+#' Each tenure draws them at the wave it opens, from that wave's listing, so
+#' a design with nothing below the panels has nothing to redraw, and drawing
+#' those stages in the assigning call would give every tenure the same units.
+#' @param executed The stages drawn once this call ends.
+#' @noRd
+check_tenure_stages <- function(spec, design, assignment_stage, executed,
+                                call = caller_env()) {
+  if (is_null(spec) || !schedule_has_tenures(spec$schedule)) {
+    return(invisible(NULL))
+  }
+  n_stages <- length(design$stages)
+  if (assignment_stage >= n_stages) {
+    abort_samplyr(
+      c(
+        "A schedule that opens several tenures per panel needs a stage below
+         the panels.",
+        "x" = "The panels are assigned at stage {assignment_stage}, the last
+               stage of the design.",
+        "i" = "A tenure draws new units under its panel's units, at the wave
+               it opens. Without {.field visit}, each panel keeps its units
+               for its whole life."
+      ),
+      class = "samplyr_error_tenure_stages",
+      call = call
+    )
+  }
+  # A new tenure leaves out the units drawn before, and its weights reach
+  # the whole listing only for an equal-probability draw of named units.
+  tenure_stage <- design$stages[[assignment_stage + 1L]]
+  method <- tenure_stage$draw_spec$method
+  if (is_null(tenure_stage$clusters) ||
+        !method %in% c("srswor", "systematic")) {
+    abort_samplyr(
+      c(
+        "A schedule that opens several tenures per panel needs the stage
+         below the panels to draw named units with equal probabilities.",
+        "x" = if (is_null(tenure_stage$clusters)) {
+          "Stage {assignment_stage + 1L} names no units with
+           {.fn cluster_by}."
+        } else {
+          "Stage {assignment_stage + 1L} draws by {.val {method}}."
+        },
+        "i" = "A new tenure leaves out the units earlier tenures drew, and
+               its weights count those units back only when every unit of the
+               listing had the same chance: {.val srswor} or
+               {.val systematic}, with {.fn cluster_by} naming the units."
+      ),
+      class = "samplyr_error_tenure_stages",
+      call = call
+    )
+  }
+  below <- executed[executed > assignment_stage]
+  if (length(below) > 0L) {
+    abort_samplyr(
+      c(
+        "A schedule that opens several tenures per panel draws the stages
+         below the panels one tenure at a time.",
+        "x" = "This call also draws {cli::qty(length(below))}stage{?s}
+               {below}.",
+        "i" = "Execute through stage {assignment_stage} now, then draw each
+               tenure where it opens:
+               {.code execute(master, listing, wave = t)}."
+      ),
+      class = "samplyr_error_tenure_stages",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' Visits of a schedule with one tenure per panel
+#' @noRd
+counted_visits <- function(grid) {
+  visit <- rep(NA_integer_, nrow(grid))
+  for (p in unique(grid$panel)) {
+    rows <- which(grid$panel == p & grid$active)
+    rows <- rows[order(grid$wave[rows])]
+    visit[rows] <- seq_along(rows)
+  }
+  visit
+}
+
+#' Does a schedule open more than one tenure in some panel?
+#' @noRd
+schedule_has_tenures <- function(schedule) {
+  if (is_null(schedule$visit)) {
+    return(FALSE)
+  }
+  opens <- schedule$active & schedule$visit %in% 1L
+  any(tabulate(schedule$panel[opens]) > 1L)
 }
 
 ## Shared schedule validation
@@ -719,9 +882,15 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
 
   record <- list(
     algorithm = "blocked_random_quota",
-    # Version 4 adds certainty = "assigned". Rotation records stay at 3, so
-    # earlier builds still read them.
-    version = if (is_periods_spec(spec)) 4L else 3L,
+    # Version 4 adds certainty = "assigned" and version 5 a panel with
+    # several tenures. Other records keep the version earlier builds read.
+    version = if (schedule_has_tenures(spec$schedule)) {
+      5L
+    } else if (is_periods_spec(spec)) {
+      4L
+    } else {
+      3L
+    },
     panels = k,
     assignment_stage = context$stage_num,
     block_size = block,
@@ -750,7 +919,7 @@ panel_record_algorithm <- "blocked_random_quota"
 #'
 #' A set, not a ceiling. A version below any that existed is unreadable too.
 #' @noRd
-supported_panel_record_versions <- c(1L, 2L, 3L, 4L)
+supported_panel_record_versions <- c(1L, 2L, 3L, 4L, 5L)
 
 #' Read an assignment record under the law it names
 #'
@@ -857,11 +1026,13 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
 #' @noRd
 check_panel_record_fields <- function(record, what, call = caller_env()) {
   if (is_null(record) || !(record_states_version(record, 3L) ||
-                             record_states_version(record, 4L))) {
+                             record_states_version(record, 4L) ||
+                             record_states_version(record, 5L))) {
     return(invisible(NULL))
   }
 
-  if (record_states_version(record, 4L) &&
+  if ((record_states_version(record, 4L) ||
+         record_states_version(record, 5L)) &&
       !(length(record$certainty) == 1L &&
         record$certainty %in% c("permanent", "assigned"))) {
     abort_panel_record_malformed(
@@ -1176,6 +1347,10 @@ normalize_panel_record <- function(record) {
   }
   if (record_states_version(record, 1L) || record_states_version(record, 2L)) {
     record$assignment_stage <- 1L
+  }
+  # A record before version 5 has one tenure per panel.
+  if (is.data.frame(record$schedule) && is_null(record$schedule$visit)) {
+    record$schedule$visit <- counted_visits(record$schedule)
   }
   record$pools <- lapply(record$pools, function(pool) {
     if (is_null(pool$activation)) {

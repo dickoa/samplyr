@@ -208,6 +208,29 @@ test_that("a supplied multiplicity that differs from the links is used as given"
   expect_equal(counted$.weight[counted$tid == "t1"], 2 * (2 / 3) + 2 * (1 / 3))
 })
 
+test_that("a supplied multiplicity must be a finite whole count", {
+  s <- gwsm_all_samples()[["ab"]]
+  share <- function(L) {
+    targets <- gwsm_targets()
+    targets$L <- L
+    share_weights(
+      s, targets = targets, links = gwsm_links(),
+      by = c(unit = "unit"), to = c(tid = "tid"),
+      within = hh, multiplicity = L
+    )
+  }
+
+  for (bad in list(0.5, Inf, -Inf, -1, NA)) {
+    expect_error(
+      share(c(bad, 1, 0, 2, 0)),
+      class = "samplyr_error_share_weights_multiplicity",
+      info = format(bad)
+    )
+  }
+  # Zero and large whole counts are counts.
+  expect_no_error(share(c(1e6, 1, 0, 2, 0)))
+})
+
 test_that("multiplicity has no default and says why", {
   s <- gwsm_all_samples()[["ab"]]
 

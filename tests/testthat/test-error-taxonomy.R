@@ -1300,6 +1300,15 @@ test_that("argument refusals carry the class of the function they reach", {
                class = "samplyr_error_design_argument")
   expect_error(sampling_design() |> add_stage(label = 1),
                class = "samplyr_error_design_argument")
+  # Missing and empty strings are refused like other bad values.
+  for (bad in list(NA_character_, "")) {
+    expect_error(sampling_design(title = bad),
+                 class = "samplyr_error_design_argument")
+    expect_error(sampling_design() |> add_stage(label = bad),
+                 class = "samplyr_error_design_argument")
+  }
+  expect_error(sampling_design() |> draw(n = 1, method = NA_character_),
+               class = "samplyr_error_draw_argument")
   expect_error(get_design(frame), class = "samplyr_error_sample_expected")
   expect_error(frame_summary(sample, scope = "zzz"),
                class = "samplyr_error_summary_argument")

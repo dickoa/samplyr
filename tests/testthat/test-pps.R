@@ -496,3 +496,55 @@ test_that("the shortfall message reads as intended", {
     invisible(execute(poisson_design(n = 40), skewed_pps_frame(), seed = 1))
   )
 })
+
+## Measures of size whose total overflows
+
+# Each value is finite, their sum is not. Two equal units share every
+# chance equally, so the exact answers are known.
+overflow_frame <- function() data.frame(id = 1:2, mos = c(1e308, 1e308))
+
+test_that("PPS Poisson chances survive a total beyond double range", {
+  frame <- overflow_frame()
+  by_rate <- sampling_design() |>
+    draw(frac = 0.5, method = "pps_poisson", mos = mos, on_empty = "silent")
+  by_size <- sampling_design() |>
+    draw(n = 1, method = "pps_poisson", mos = mos, on_empty = "silent")
+
+  expect_identical(exante_probabilities(by_rate, frame, key = id)$probability,
+                   c(0.5, 0.5))
+  expect_identical(exante_probabilities(by_size, frame, key = id)$probability,
+                   c(0.5, 0.5))
+  # Chances of zero would leave every realization empty.
+  sizes <- vapply(1:20, function(s) nrow(execute(by_rate, frame, seed = s)),
+                  integer(1))
+  expect_true(any(sizes > 0L))
+  drawn <- execute(by_rate, frame, seed = which(sizes > 0L)[1])
+  expect_identical(drawn$.weight, rep(2, nrow(drawn)))
+})
+
+test_that("certainty by share finds its units when the total overflows", {
+  design <- sampling_design() |>
+    draw(n = 1, method = "pps_brewer", mos = mos, certainty_prop = 0.5,
+         certainty_overflow = "allow")
+  sample <- execute(design, overflow_frame(), seed = 1)
+
+  expect_identical(sample$id, 1:2)
+  expect_identical(sample$.weight, c(1, 1))
+  expect_true(all(sample$.certainty_1))
+  expect_identical(
+    exante_probabilities(design, overflow_frame(), key = id)$probability,
+    c(1, 1)
+  )
+})
+
+test_that("a certainty plan's remainder chance survives an overflowing total", {
+  sizes <- c(1e308, 1e308, 1e308, 1e308)
+  expect_identical(certainty_remainder_chance(sizes, 2), rep(0.5, 4))
+  expect_identical(
+    certainty_remainder_chance(sizes, NULL, zone = c(1, 1, 2, 2), m = 1),
+    rep(0.5, 4)
+  )
+  # A finite total keeps the arithmetic it had.
+  finite <- c(3, 5, 7, 11)
+  expect_identical(certainty_remainder_chance(finite, 2), 2 * finite / 26)
+})

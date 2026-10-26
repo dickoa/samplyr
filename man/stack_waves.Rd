@@ -11,8 +11,8 @@ stack_waves(...)
 \code{execute(master, wave = t)}, all of one master realization.}
 }
 \value{
-A tibble with \code{wave}, \code{master_id}, \code{panel} and \code{design_weight}
-first, then the columns of the waves themselves. One row per active
+A tibble with \code{wave}, \code{master_id}, \code{panel}, \code{visit} and
+\code{design_weight} first, then the columns of the waves themselves. One row per active
 master row per wave: under with-replacement selection a population unit
 may occupy several master rows, so a row is a selection occurrence rather
 than necessarily a distinct population unit. \code{master_id} is unique within
@@ -35,7 +35,7 @@ it. Both are refused here.
 \details{
 \subsection{What the columns mean}{
 
-Four columns are generated, and their names are chosen to prevent the two
+Five columns are generated, and their names are chosen to prevent the two
 substitutions that would quietly invalidate a downstream estimate:
 
 \describe{
@@ -51,6 +51,10 @@ materialize, so it has no waves to stack. That unit is the one the
 master's \code{panel_stage} names, so several rows can share one panel: all
 the members of a rotating household under a retained primary unit carry
 its label, not one of their own.}
+\item{\code{visit}}{The interview number of the row's unit within its
+tenure, from the schedule, as agencies publish it to measure rotation
+group bias. Permanent units are active at every wave outside the
+rotation and have \code{NA}.}
 \item{\code{design_weight}}{samplyr's exact design weight for that wave,
 including the activation factor. It is \strong{not} a final weight: nothing
 here is adjusted for nonresponse or calibrated, so a consumer asking

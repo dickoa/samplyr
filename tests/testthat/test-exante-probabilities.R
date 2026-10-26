@@ -497,3 +497,46 @@ test_that("a pool the design cannot resolve is refused with its stage", {
     expect_match(conditionMessage(err), "certainty overflow", fixed = TRUE)
   }
 })
+
+## A frame execution refuses has no ex-ante probabilities
+
+test_that("ex-ante resolution refuses the frame values execution refuses", {
+  frame <- data.frame(
+    id = 1:4,
+    g = c("a", NA, "b", "a"),
+    mos = c(1, 2, NA, 4),
+    prn = c(0.1, 0.2, 1.5, 0.4)
+  )
+  designs <- list(
+    missing_stratum = sampling_design() |> stratify_by(g) |> draw(n = 1),
+    missing_mos = sampling_design() |>
+      draw(n = 1, method = "pps_brewer", mos = mos),
+    prn_out_of_range = sampling_design() |>
+      draw(n = 1, method = "pps_poisson", mos = id, prn = prn)
+  )
+  for (nm in names(designs)) {
+    d <- designs[[nm]]
+    expect_error(execute(d, frame, seed = 1),
+                 class = "samplyr_error_frame_invalid", info = nm)
+    expect_error(exante_probabilities(d, frame, key = id),
+                 class = "samplyr_error_frame_invalid", info = nm)
+    expect_error(exante_digest(d, frame),
+                 class = "samplyr_error_frame_invalid", info = nm)
+    expect_error(frame_summary(d, frame),
+                 class = "samplyr_error_frame_invalid", info = nm)
+  }
+})
+
+test_that("a later stage's missing values are refused over the whole register", {
+  frame <- data.frame(
+    psu = rep(1:4, each = 3),
+    id = 1:12,
+    h = c(rep("a", 9), "b", NA, "b")
+  )
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 2) |>
+    add_stage() |> stratify_by(h) |> draw(n = 1)
+  # Every unit needs a chance, including those under PSUs a draw may skip.
+  expect_error(exante_probabilities(design, frame, key = id),
+               class = "samplyr_error_frame_invalid")
+})

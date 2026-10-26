@@ -209,6 +209,18 @@ shared_sample_format_version <- 1L
 #' `write_design()` warns with class `samplyr_warning_receipt_chained` and
 #' gives the recipe of [replay_design()].
 #'
+#' ## File size
+#'
+#' A receipt carries the sample's frame digest, which [execute()] records
+#' by default (`frame_digest = "summary"`) with one entry per frame unit of a
+#' cluster stage. The file grows with the frame, by about 120 bytes per unit
+#' written compactly and twice that pretty-printed. A stage-1 sample of the
+#' 107,250 EAs of `zwe_eas` gives 12.5 MB with `pretty = FALSE`. A path
+#' ending in `.gz` writes the file compressed, about 1 MB here in either
+#' layout, and `read_design()` reads it as it is. A sample executed with
+#' `frame_digest = "none"` writes a file of a few kilobytes, without the
+#' digest that [frame_summary()] and [replay_design()] read.
+#'
 #' ## Control expressions
 #'
 #' `draw(control = ...)` expressions are stored as declarative JSON terms
@@ -268,7 +280,8 @@ shared_sample_format_version <- 1L
 #'   along with an execution receipt), a `frame_stack`, or a sample carrying
 #'   shared weights.
 #' @param path File path to write to. Conventionally with a `.json`
-#'   extension.
+#'   extension. A path ending in `.gz`, such as `design.json.gz`, is written
+#'   gzip-compressed.
 #' @param frame Optional sampling frame, fingerprinted (name, dimensions,
 #'   column types, content hash) so it can be verified later. A data frame is
 #'   the one frame the design was built against. An ordered list of data
@@ -344,7 +357,13 @@ write_design <- function(x, path, frame = NULL, ..., pretty = TRUE) {
     pretty = pretty,
     fn_name = "write_design"
   )
-  writeLines(json, path, useBytes = TRUE)
+  if (grepl("\\.gz$", path, ignore.case = TRUE)) {
+    con <- gzfile(path, "w")
+    on.exit(close(con), add = TRUE)
+    writeLines(json, con, useBytes = TRUE)
+  } else {
+    writeLines(json, path, useBytes = TRUE)
+  }
   invisible(x)
 }
 
@@ -388,9 +407,10 @@ design_json <- function(x, frame = NULL, ..., pretty = FALSE) {
   )
 }
 
-#' @param file A path to a local file, or a JSON string produced by
-#'   [design_json()]. URLs are refused: `read_design()` never fetches
-#'   remote files. Download the file first and read the local copy.
+#' @param file A path to a local file, plain or gzip-compressed, or a JSON
+#'   string produced by [design_json()]. URLs are refused: `read_design()`
+#'   never fetches remote files. Download the file first and read the local
+#'   copy.
 #' @rdname write_design
 #' @export
 read_design <- function(file) {
@@ -621,9 +641,15 @@ replay_design <- function(
   if (is_tbl_sample(x)) {
     design <- get_design(x)
     receipt <- encode_execution(x)
-    frame_record <- get_frame_schedule(x)
+    final <- wave_draw_final_call(x)
+    frame_record <- if (is_null(final)) {
+      get_frame_schedule(x)
+    } else {
+      frame_record_or_default(final$frame_schedule, final$stages)
+    }
     frame_info <- NULL
-    execution_environment <- attr(x, "metadata")$execution_environment
+    execution_environment <- final$execution_environment %||%
+      attr(x, "metadata")$execution_environment
     recorded_digest <- get_frame_digest(x)
   } else if (is_sampling_design(x)) {
     design <- x
@@ -1354,6 +1380,7 @@ decode_multiplicity_marker <- function(multiplicity) {
   rlang::local_error_call(caller_env())
   switch(
     multiplicity$mode,
+    supplied = rlang::sym(multiplicity$col),
     complete_links = rlang::call2("complete_links"),
     weighted_links = rlang::call2(
       "weighted_links",
@@ -1717,7 +1744,8 @@ design_payload <- function(
     # Refuse transformed samples before receipt encoding.
     check_weight_contract_serialize(x, fn_name, call = call)
     execution <- encode_execution(x, call = call)
-    execution_environment <- attr(x, "metadata")$execution_environment
+    execution_environment <- wave_draw_final_call(x)$execution_environment %||%
+      attr(x, "metadata")$execution_environment
     if (is_null(execution$seed)) {
       cli_warn(c(
         "{.arg x} was executed without a seed.",
@@ -2450,6 +2478,31 @@ frame_content_hash <- function(frame, columns = NULL) {
 #' @noRd
 encode_execution <- function(sample, call = caller_env()) {
   meta <- attr(sample, "metadata") %||% list()
+  if (isTRUE(meta[["wave"]]$provisional)) {
+    abort_samplyr(
+      c(
+        "A wave of a master whose later stages are not all drawn has no
+         receipt.",
+        "i" = "Write the master instead. Its receipt records every wave
+               drawn so far, and {.code execute(master, wave = t)} gives the
+               wave again."
+      ),
+      class = "samplyr_error_serialize_wave_provisional",
+      call = call
+    )
+  }
+  if (is_wave_window(sample)) {
+    abort_samplyr(
+      c(
+        "A window of several waves has no receipt.",
+        "i" = "Write the master instead. {.code execute(master, wave =
+               {wave_code(meta[[\"wave\"]]$wave)})} gives the window
+               again."
+      ),
+      class = "samplyr_error_serialize_wave_window",
+      call = call
+    )
+  }
   receipt <- list()
   receipt$seed <- attr(sample, "seed")
   receipt$stages_executed <- I(as.integer(get_stages_executed(sample)))
@@ -2479,11 +2532,24 @@ encode_execution <- function(sample, call = caller_env()) {
       meta$frame_schedule, get_stages_executed(sample)
     )
   )
-  if (!is_null(meta$wave)) {
-    receipt$wave <- encode_wave(meta$wave)
+  if (!is_null(meta[["wave"]])) {
+    receipt$wave <- encode_wave(meta[["wave"]])
+  }
+  # The last wave's draw is the final call.
+  final <- wave_draw_final_call(sample)
+  if (!is_null(final)) {
+    receipt$seed <- final$seed
+    receipt$executed_at <- format(
+      final$executed_at, "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"
+    )
+    receipt$frames <- encode_frame_schedule(
+      frame_record_or_default(final$frame_schedule, final$stages)
+    )
+    receipt$wave <- encode_wave_draw(final)
   }
   # A chain records every earlier call it can replay.
-  if (!is_null(meta$continued_from) || !is_null(meta$prev_phase)) {
+  if (!is_null(meta$continued_from) || !is_null(meta$prev_phase) ||
+      !is_null(final)) {
     receipt$chained <- TRUE
     chain <- execution_chain(sample)
     if (!is_null(chain)) {
@@ -2493,8 +2559,8 @@ encode_execution <- function(sample, call = caller_env()) {
       receipt$earlier_modified <- TRUE
     }
   }
-  # Do not encode a receipt invalidated by sample changes.
-  if (!sample_realization_status(sample)$ok) {
+  # A modified parent is recorded as earlier_modified, not here.
+  if (length(sample_realization_status(sample)$mods) > 0L) {
     receipt$modified <- TRUE
   }
   # Do not encode an invalidated frame digest.
@@ -2537,11 +2603,16 @@ encode_panel_assignment <- function(record, call = caller_env()) {
     small_pool_policy = record$small_pool_policy %||% "error",
     # Store the schedule needed to reproduce panel blocks.
     schedule = if (!is_null(record$schedule)) {
-      data.frame(
+      out <- data.frame(
         wave = as.integer(record$schedule$wave),
         panel = as.integer(record$schedule$panel),
         active = as.logical(record$schedule$active)
       )
+      # Only a record with several tenures states its visits.
+      if (record_states_version(record, 5L)) {
+        out$visit <- as.integer(record$schedule$visit)
+      }
+      out
     }
     # Store the assignment law, not reproducible realized pools.
   )
@@ -2610,13 +2681,32 @@ decode_panel_argument <- function(receipt, record) {
     return(as.integer(receipt$panels))
   }
   if (!is.data.frame(schedule)) {
-    schedule <- do.call(rbind, lapply(schedule, as.data.frame))
+    # A row of an inactive wave writes its visit as null.
+    field <- function(name, missing) {
+      vapply(schedule, function(row) {
+        value <- if (name %in% names(row)) row[[name]]
+        if (length(value) == 0L) missing else value
+      }, missing)
+    }
+    visits <- field("visit", NA_integer_)
+    schedule <- data.frame(
+      wave = field("wave", NA_integer_),
+      panel = field("panel", NA_integer_),
+      active = field("active", NA)
+    )
+    if (!all(is.na(visits))) {
+      schedule$visit <- visits
+    }
   }
-  data.frame(
+  out <- data.frame(
     wave = as.integer(schedule$wave),
     panel = as.integer(schedule$panel),
     active = as.logical(schedule$active)
   )
+  if (!is_null(schedule$visit)) {
+    out$visit <- as.integer(schedule$visit)
+  }
+  out
 }
 
 #' The wave a materialized sample realizes
@@ -2725,7 +2815,7 @@ decode_frame_digest <- function(x) {
     strata <- chrs(s$strata)
     pool_spec <- c(
       pool_id = "int", parent_unit = "int", parent_occurrence = "int",
-      N = "int",
+      tenure = "int", n_excluded = "int", N = "int",
       n_target = "dbl", n_expected = "dbl", n_realized = "int",
       scope = "chr", chance_status = "chr", chance = "dbl",
       n_descendants = "int",

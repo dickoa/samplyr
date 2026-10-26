@@ -472,15 +472,15 @@ test_that("the rotation-wave export names a route that works", {
     as_svydesign(wave),
     class = "samplyr_error_rotation_wave_not_combinable"
   )
-  # The component route the message recommends returns a two-phase design.
-  expect_error(as_svydesign(wave), regexp = "second phase")
+  # The component route the message recommends exports the cohort's wave.
+  expect_error(as_svydesign(wave), regexp = "cohort's wave")
   expect_no_match(
     conditionMessage(tryCatch(as_svydesign(wave), error = identity)),
     "once the activation phase is supported",
     fixed = TRUE
   )
   skip_if_not_installed("survey")
-  expect_s3_class(as_svydesign(wave[["startup"]]), "twophase2")
+  expect_s3_class(as_svydesign(wave[["startup"]]), "survey.design2")
 })
 
 test_that("a cohort drawn whole leaves the wave when its panel is idle", {

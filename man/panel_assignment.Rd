@@ -123,8 +123,9 @@ probability one and their weights are untouched.
 
 A materialized wave is a sample in its own right, with its own integrity
 record, so \code{\link[=frame_summary]{frame_summary()}} and the weight diagnostics work on it. It
-retains the master as its first phase, and \code{\link[=as_svydesign]{as_svydesign()}} exports it
-through \code{\link[survey:twophase]{survey::twophase()}} with the activation as the second phase. Its
+retains the master as its first phase. \code{\link[=as_svydesign]{as_svydesign()}} exports it by
+ultimate clusters, or through \code{\link[survey:twophase]{survey::twophase()}} with the activation as
+the second phase when \code{method} is given. Its
 receipt records the master's execution, so \code{\link[=replay_design]{replay_design()}} rebuilds the
 master and materializes the wave again.
 
@@ -134,6 +135,88 @@ and steady-state replenishment is a fresh \code{execute()} against a later
 frame. For an \code{svyplan_schedule}, \code{execute()} takes the startup activity
 and checks its panel parameters before assignment. A gradual launch has
 one whole startup cohort and needs no partition.
+}
+
+\subsection{Windows of several waves}{
+
+\code{execute(master, wave = 1:3)} pools several waves into one sample, such
+as a quarter written as three monthly waves, a moving window, or a year
+of quarters. Each row carries the wave it was observed at in \code{.wave}, and
+totals estimate the average over the window of each wave's total. The
+schedule decides between two forms.
+
+When no panel is active at more than one wave of the window, as for the
+months of a quarter where each unit keeps its own month, the window is
+one activation over the union of its panels. Each unit has one row, at
+its wave, and its weight uses the block's quota for the union over the
+block size, so a stratum's weights add up to its size. When every block
+fills the window's waves evenly, this equals the average of the waves.
+When a partial block fills them unevenly, the two differ in a given
+sample, and in a simulation both were unbiased for the average and
+about as variable.
+
+When some panel is active at more than one wave, as in a year of quarters
+under a rotation that keeps units for several quarters, each unit keeps
+a row for every wave it is active, weighted by that wave's weight over
+the number of waves. A unit seen at two waves then counts at both.
+Permanent units are active at every wave and always take this form.
+
+A window is exported by ultimate clusters, with a unit's rows in one
+cluster (\code{\link[=as_svydesign]{as_svydesign()}}). It needs a master whose stages are all
+drawn. It has no receipt of its own, so \code{\link[=write_design]{write_design()}} refuses it and
+the master's receipt gives it again, and \code{\link[=stack_waves]{stack_waves()}} takes single
+waves only.
+}
+
+\subsection{Tenures}{
+
+In most rotating household surveys the rotation group is a set of primary
+units, and a unit's households are drawn when its group enters, from a
+listing updated then, and kept for a run of visits, a tenure. When the
+tenure ends the primary unit either leaves or gets new households from a
+new listing. A schedule states this with an optional \code{visit} column, the
+interview number within the tenure, \code{NA} where a panel is inactive. A
+tenure opens where \code{visit} is 1. Without the column each panel has one
+tenure, opened at its first active wave. A materialized wave carries
+\code{.visit}, the number agencies publish to measure rotation group bias.
+
+The stages below the panels are then drawn where tenures open, with
+\code{execute(master, listing, wave = t)} (see \code{\link[=execute]{execute()}}), from the full
+listing of the primary units. A new tenure in a primary unit leaves out
+the units its earlier tenures drew, as rotating surveys do, and draws from
+the rest. Each of the \code{M} units of the listing then has the chance \code{n / M} of a single draw, so the stage's weight and population count are
+those of the whole listing, and every tenure estimates the whole
+population. That holds exactly for simple random sampling on a listing
+that only loses the units drawn before, and for the first-order chances
+of systematic sampling. Units built since the earlier tenures are
+weighted the same way, which approximates their larger chance.
+
+A schedule with several tenures per panel therefore needs the stage
+below the panels to name its units with \code{\link[=cluster_by]{cluster_by()}} and draw them by
+\code{"srswor"} or \code{"systematic"}, and refuses drawing that stage up front,
+since every tenure would then hold the same units
+(\code{samplyr_error_tenure_stages}). A listing already cut of the units
+drawn before is refused (\code{samplyr_error_tenure_listing}), since its
+weights could not count them back. Permanent units are active at every
+wave outside the rotation, keep the units drawn under them at the first
+wave drawn, and have no visit.
+
+A wave reads each active panel's current tenure, and is exported by
+ultimate clusters from its own rows (\code{\link[=as_svydesign]{as_svydesign()}}) as soon as those
+tenures are drawn. The master is never complete when a panel has several
+tenures, as rotating surveys never complete. Its record is version 5,
+which earlier builds refuse rather than read as one tenure per panel.
+Its frame digest records every tenure drawn so far, keyed by the wave
+each opened at, so \code{\link[=frame_summary]{frame_summary()}} reports the stages below the panels
+by tenure and \code{\link[=replay_design]{replay_design()}} checks every tenure's draw. That digest
+is schema version 3, which earlier builds refuse for the same reason.
+
+The digest of a later tenure records the draw as it was made. A pool's
+\code{N} counts the units left after the exclusion, and its chances are
+those of a draw from them. Its \code{n_excluded} counts the units left out,
+so \code{N + n_excluded} is the listing that the weights and \code{.fpc_k}
+count, and \code{chance * N / (N + n_excluded)} is the chance a weight
+inverts. \code{\link[=summary]{summary()}} shows both, as in \verb{N_h 8 of 10 listed}.
 }
 
 \subsection{Pools too small for a schedule}{

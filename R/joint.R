@@ -233,8 +233,8 @@
 #' on the phase-1 units and the frozen quotas, not the unconditional joint
 #' inclusion probabilities of the two-phase design, which also carry the
 #' master's own pairwise term. How the two combine for a variance of change
-#' is not settled here. [as_svydesign()] carries the activation as a second
-#' phase for ordinary totals.
+#' is not settled here. [as_svydesign()] exports a wave for ordinary
+#' totals.
 #'
 #' Activation mode takes a master, not a materialized wave, so neither of
 #' the two waves needs to have been materialized.
@@ -464,7 +464,8 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
         next
       }
 
-      result[[stage_idx]] <- if (is_null(frame)) {
+      # `[<-` with list() keeps a NULL result, which `[[<-` would delete.
+      result[stage_idx] <- list(if (is_null(frame)) {
         compute_stage_jip_digest(digest, design, stage_idx, x, nsim)
       } else {
         compute_stage_jip(
@@ -475,7 +476,7 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
           stages_executed,
           nsim
         )
-      }
+      })
     }
     result
   })
@@ -762,16 +763,23 @@ compute_stage_jip_digest <- function(
       group_first_rows <- first_row_indices_by_group(sample_groups)
       available_groups <- rep(TRUE, length(sample_groups))
       matched_pool <- FALSE
+      rows_by_pool <- split(seq_len(nrow(sel)), sel$pool_id)
+      # The groups holding each key, ascending, so the groups holding all
+      # of a pool's keys are their intersection.
+      row_group <- rep(seq_along(sample_groups), lengths(sample_groups))
+      groups_by_key <- lapply(
+        split(row_group, sample_keys[unlist(sample_groups)]),
+        function(g) unique(sort(g))
+      )
 
       for (i in seq_along(trace_pools)) {
         pid <- trace_pools[[i]]
-        sel_rows <- which(sel$pool_id == pid)
+        sel_rows <- rows_by_pool[[as.character(pid)]]
         pool_keys <- unique(sel$key[sel_rows])
-        candidates <- which(vapply(
-          sample_groups,
-          function(rows) all(pool_keys %in% sample_keys[rows]),
-          logical(1)
-        ))
+        candidates <- Reduce(
+          intersect,
+          lapply(pool_keys, function(k) groups_by_key[[k]] %||% integer(0))
+        )
         pool_pos <- match(pid, pools$pool_id)
         if (
           length(candidates) > 0 &&
@@ -833,17 +841,22 @@ compute_stage_jip_digest <- function(
     )
   }
 
+  sel_by_pool <- split(seq_len(nrow(sel)), sel$pool_id)
+  units_by_pool <- if (identical(st$storage, "units")) {
+    split(seq_len(nrow(st$units)), st$units$pool_id)
+  }
   pool_min_rank <- vapply(sel_pools, function(pid) {
-    min(sel$.rank[sel$pool_id == pid])
+    min(sel$.rank[sel_by_pool[[as.character(pid)]]])
   }, numeric(1))
   block_order <- order(pool_min_rank)
 
   blocks <- lapply(sel_pools[block_order], function(pid) {
-    p <- pools[pools$pool_id == pid, , drop = FALSE]
-    in_pool <- sel[sel$pool_id == pid, , drop = FALSE]
+    p <- pools[match(pid, pools$pool_id), , drop = FALSE]
+    in_pool <- sel[sel_by_pool[[as.character(pid)]], , drop = FALSE]
     in_pool <- in_pool[order(in_pool$.rank), , drop = FALSE]
     if (identical(st$storage, "units")) {
-      u <- st$units[st$units$pool_id == pid, , drop = FALSE]
+      u <- st$units[units_by_pool[[as.character(pid)]] %||% integer(0), ,
+                    drop = FALSE]
       u <- u[order(u$unit_order), , drop = FALSE]
       pik <- u$chance
       sampled_idx <- match(in_pool$unit_id, u$unit_id)
@@ -890,6 +903,14 @@ compute_stage_jip <- function(
   cluster_spec <- stage_spec$clusters
   strata_vars <- if (!is_null(strata_spec)) strata_spec$vars else character()
   sample_df <- as.data.frame(x)
+  # Match units on the values execution gave them, not on later edits. The
+  # design's columns and samplyr's own are guarded by the integrity checks.
+  changed <- sample_changed_columns(x) %||% character(0)
+  changed <- changed[!startsWith(changed, ".")]
+  changed <- setdiff(changed, unlist(lapply(
+    design$stages, function(s) unname(stage_required_vars(s))
+  )))
+  sample_df <- sample_df[setdiff(names(sample_df), changed)]
 
   ancestor_vars <- collect_ancestor_cluster_vars(design, stage_idx)
   stage_pos <- match(stage_idx, stages_executed)
@@ -1535,14 +1556,18 @@ match_sampled_units <- function(
     }
     first <- !duplicated(sample_key)
     sampled_idx <- match(sample_key[first], frame_key)
-    found <- !is.na(sampled_idx)
+    refuse_unmatched_units(sum(is.na(sampled_idx)), match_vars)
     return(structure(
-      sampled_idx[found],
-      rank = group_sample[[rank_col]][first][found]
+      sampled_idx,
+      rank = group_sample[[rank_col]][first]
     ))
   }
 
-  n_unique <- nrow(distinct(group_frame, across(all_of(match_vars))))
+  frame_cols <- vctrs::new_data_frame(
+    .subset(group_frame, match_vars),
+    n = nrow(group_frame)
+  )
+  n_unique <- vctrs::vec_unique_count(frame_cols)
   if (n_unique != nrow(group_frame)) {
     cli_abort(c(
       "Frame rows are not uniquely identified by columns {.val {match_vars}}.",
@@ -1551,6 +1576,25 @@ match_sampled_units <- function(
     ), call = NULL,
       class = "samplyr_error_joint_frame_key"
     )
+  }
+
+  # Keys of one type on both sides match as the join below does.
+  sample_cols <- vctrs::new_data_frame(
+    .subset(group_sample, match_vars),
+    n = nrow(group_sample)
+  )
+  if (identical(lapply(sample_cols, vctrs::vec_ptype),
+                lapply(frame_cols, vctrs::vec_ptype))) {
+    first <- vctrs::vec_unique_loc(sample_cols)
+    sampled_idx <- vctrs::vec_match(
+      vctrs::vec_slice(sample_cols, first),
+      frame_cols
+    )
+    refuse_unmatched_units(sum(is.na(sampled_idx)), match_vars)
+    return(structure(
+      sampled_idx,
+      rank = vctrs::vec_slice(group_sample[[rank_col]], first)
+    ))
   }
 
   frame_keys <- group_frame |>
@@ -1565,9 +1609,32 @@ match_sampled_units <- function(
   sample_keys[[sample_row]] <- seq_len(nrow(sample_keys))
   frame_keys[[frame_row]] <- seq_len(nrow(frame_keys))
   matched <- inner_join(sample_keys, frame_keys, by = match_vars)
+  refuse_unmatched_units(nrow(sample_keys) - nrow(matched), match_vars)
   matched <- matched[order(matched[[sample_row]]), , drop = FALSE]
 
   structure(matched[[frame_row]], rank = matched[[rank_col]])
+}
+
+#' Refuse sampled units that no frame row matches
+#'
+#' Dropping them would shrink the matrix without a word.
+#' @noRd
+refuse_unmatched_units <- function(n_unmatched, match_vars) {
+  if (n_unmatched == 0L) {
+    return(invisible(NULL))
+  }
+  cli_abort(
+    c(
+      "{n_unmatched} sampled unit{?s} match{?es/} no row of the frame.",
+      "i" = "Units are matched on {.val {match_vars}}, the columns the
+             sample still holds as execution drew them.",
+      "i" = "The frame's values differ there from the sampled rows'. Pass
+             the frame the sample was drawn from, or drop the differing
+             columns from the sample."
+    ),
+    call = NULL,
+    class = "samplyr_error_joint_frame_key"
+  )
 }
 
 #' Assemble joint probability matrix from per-group matrices

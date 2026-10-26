@@ -456,7 +456,11 @@ the months of a yearly survey. They differ from rotation groups in one
 respect. A rotation group keeps a unit selected with certainty in every
 wave, while a period assigns it like any other unit, so it is visited in
 one period. Each period is a wave of its own, and `execute(wave = t)` gives
-its sample with the exact activation weights described above.
+its sample with the exact activation weights described above. When the
+periods are assigned at the first stage, the later stages can be drawn one
+period at a time as listing proceeds, with `execute(master, listing, wave =
+t)`. The call that draws the last period returns the same design as one
+continuation of every unit, and `?execute` states the rules.
 
 None of these replenishes the sample. A program that draws refreshment
 cohorts against later frame vintages is a registry of separate executions, not
@@ -469,8 +473,32 @@ and small pools.
 `samplyr` passes permanent random numbers through to `sondage` without transformation. PRN-compatible methods (`bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`, `scps`) produce a deterministic selection given the PRN values, and for `scps` the visiting order. When PRN is supplied, the `seed` argument to `execute()` does not affect selection.
 
 Positive and negative coordination across survey waves is a user-level
-workflow, not a package feature. `samplyr` passes PRNs to the selection method,
-the user manages their persistence and update. The negative-coordination
-update is \(u_{\text{new}} = (u - \pi) \bmod 1\) [@ohlsson1995].
+workflow, not a package feature. `samplyr` passes PRNs to the selection
+method, and the user manages their persistence and update. Drawing the next
+sample with the same PRNs gives positive coordination. For negative
+coordination, the update depends on how the method selects.
+
+`bernoulli` and `pps_poisson` select a unit when \(u < \pi\). The update
+\(u_{\text{new}} = (u - \pi) \bmod 1\) moves every selected unit to the top
+of the scale, and a second sample with probabilities \(\pi'\) shares no unit
+with the first when \(\pi + \pi' \leq 1\) for every unit [@ohlsson1995].
+
+`pps_sps` and `pps_pareto` select the \(n\) units of each pool with the
+smallest ranks, \(u / \pi\) for sequential Poisson sampling [@ohlsson1998]
+and a related transform for Pareto sampling [@rosen1997a]. The largest rank selected is often slightly
+above 1. A unit selected with a rank between 1 and that cut-off gets, after
+the shift by \(\pi\), a PRN just above 0, and the next survey takes it
+first. Reverse the PRN instead, \(u_{\text{new}} = 1 - u\), which puts every
+selected unit at the top of the scale. On `bfa_eas`, two `pps_sps` surveys
+stratified by region, of 40 and 20 EAs per region, shared 6 EAs on average
+with independent PRNs, 32 after the shift by \(\pi\), and none after the
+reversal. `scps` is coordinated by the reversal as well [@grafstrom2018].
+
+Reversing twice gives back the original PRNs, so a series of surveys under
+sequential Poisson sampling shifts each unit by its selection threshold,
+\(u_{\text{new}} = (u - \min(1, \xi^* \pi)) \bmod 1\), where \(\xi^*\) is the
+largest rank selected in the unit's pool. The unit at the cut-off lands on
+0, which a PRN cannot be, so lower the threshold by a small amount, such as
+\(10^{-9}\).
 
 ## References

@@ -170,6 +170,102 @@ test_that("a pool whose certainty units were taken is never empty", {
   )
 })
 
+test_that("an empty realization keeps one NULL entry per stage", {
+  frame <- data.frame(id = 1:5, mos = 1:5)
+  empty <- sampling_design() |>
+    draw(frac = 0.001, method = "pps_poisson", mos = mos, on_empty = "silent") |>
+    execute(frame, seed = 1, frame_digest = "full")
+  expect_identical(nrow(empty), 0L)
+  expect_identical(joint_expectation(empty, frame), list(stage_1 = NULL))
+  expect_identical(joint_expectation(empty), list(stage_1 = NULL))
+
+  frame2 <- data.frame(
+    psu = rep(1:10, each = 5), id = 1:50,
+    size = rep(1:10, each = 5), m = 1:50
+  )
+  empty2 <- sampling_design() |>
+    add_stage() |>
+    cluster_by(psu) |>
+    draw(n = 3, method = "pps_brewer", mos = size) |>
+    add_stage() |>
+    draw(frac = 1e-6, method = "pps_poisson", mos = m, on_empty = "silent") |>
+    execute(frame2, seed = 2)
+  expect_identical(nrow(empty2), 0L)
+  expect_identical(
+    joint_expectation(empty2, frame2),
+    list(stage_1 = NULL, stage_2 = NULL)
+  )
+})
+
+test_that("edits to the sample after execution leave the matrix unchanged", {
+  frame <- data.frame(id = 1:30, mos = 1:30, y = 1:30)
+  sample <- sampling_design() |>
+    draw(n = 10, method = "pps_sampford", mos = mos) |>
+    execute(frame, seed = 3)
+  reference <- joint_expectation(sample, frame)[[1]]
+
+  edited <- sample
+  edited$y <- -edited$y
+  expect_identical(joint_expectation(edited, frame)[[1]], reference)
+  one <- sample
+  one$y[1] <- 0
+  expect_identical(joint_expectation(one, frame)[[1]], reference)
+  # A column of the same name added on both sides with other values.
+  added <- sample
+  added$z <- 1
+  frame_z <- frame
+  frame_z$z <- 2
+  expect_identical(joint_expectation(added, frame_z)[[1]], reference)
+
+  # Reordered and edited: the same matrix in the new row order.
+  turned <- dplyr::arrange(dplyr::mutate(sample, y = 2 * y), dplyr::desc(id))
+  back <- order(-sample$id)
+  expect_equal(
+    unname(joint_expectation(turned, frame)[[1]]),
+    unname(reference[back, back])
+  )
+})
+
+test_that("dropping unused levels of a factor id keeps the matrix", {
+  # The factor id is the only column that tells the frame rows apart.
+  frame <- data.frame(
+    id = factor(sprintf("u%02d", 1:40)),
+    y = 1,
+    size = rep(1:4, 10)
+  )
+  sample <- sampling_design() |>
+    draw(n = 8, method = "pps_sampford", mos = size) |>
+    execute(frame, seed = 1)
+  reference <- joint_expectation(sample, frame)[[1]]
+
+  dropped <- droplevels(sample)
+  expect_length(levels(dropped$id), 8L)
+  expect_identical(samplyr:::sample_changed_columns(dropped), character(0))
+  expect_identical(joint_expectation(dropped, frame)[[1]], reference)
+
+  # A changed label is still a change.
+  relabeled <- dropped
+  levels(relabeled$id)[1] <- "u99"
+  expect_identical(samplyr:::sample_changed_columns(relabeled), "id")
+})
+
+test_that("a sampled unit no frame row matches is refused, not dropped", {
+  frame <- data.frame(id = 1:30, mos = 1:30, y = 1:30)
+  sample <- sampling_design() |>
+    draw(n = 10, method = "pps_sampford", mos = mos) |>
+    execute(frame, seed = 3)
+  # The frame changed outside the design's columns, which the fingerprint
+  # does not cover, so the sample's rows no longer match it.
+  changed <- frame
+  changed$y <- -changed$y
+  expect_error(joint_expectation(sample, changed),
+               class = "samplyr_error_joint_frame_key")
+  changed$y[] <- frame$y
+  changed$y[sample$id[1]] <- 0
+  expect_error(joint_expectation(sample, changed),
+               "1 sampled unit matches no row")
+})
+
 ## The frame must be the one the sample was drawn from
 
 # One case per reason a frame can differ. The fingerprint recorded at

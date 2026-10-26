@@ -53,7 +53,8 @@ sample because its receipt cannot reproduce it.}
 
 \item{panels}{Rotation groups (panels) to partition the sample into, as an
 integer count, a rotation schedule (a data frame with integer \code{panel}
-and \code{wave} columns and an optional logical \code{active} column), or an
+and \code{wave} columns, an optional logical \code{active} column and an optional
+integer \code{visit} column that opens tenures), or an
 \code{svyplan_schedule} from \code{\link[svyplan:design_schedule]{svyplan::design_schedule()}}. \code{\link[=periods]{periods()}}
 partitions it into fieldwork periods instead, each unit visited once.
 The output gains a \code{.panel} column, and only a sample drawn with a
@@ -90,13 +91,22 @@ random numbers either.
 \code{as_svrepdesign(type = "random_groups")} estimates variance from the
 spread of the replicates, for any selection method.}
 
-\item{wave}{Integer wave of a scheduled master to materialize, or \code{NULL}
-(default). \code{execute(master, wave = t)} activates the panels the stored
-schedule declares active at \code{t} and compounds the exact activation
-factor into \code{.weight}. A wave selects units the master already assigned,
-under the policy the master froze, so it takes no frame and none of
-\code{seed}, \code{stages}, \code{panels}, \code{panel_stage}, \code{small_pool}, \code{reps} or
-\code{frame_digest}. Each is refused by name rather than ignored.}
+\item{wave}{Integer wave of a master that carries a panel assignment, or
+\code{NULL} (default). It has two uses, told apart by whether a frame is
+given. Without a frame, \code{execute(master, wave = t)} materializes wave
+\code{t}. It activates the panels the stored schedule declares active at \code{t}
+and compounds the exact activation factor into \code{.weight}. A wave selects
+units the master already assigned, under the policy the master froze, so
+it takes none of \code{seed}, \code{stages}, \code{panels}, \code{panel_stage}, \code{small_pool},
+\code{reps} or \code{frame_digest}. Each is refused by name rather than ignored.
+Several distinct waves, as \code{wave = 1:3}, pool those waves into one
+sample with a \code{.wave} column (\link{panel_assignment} gives the weights).
+With a frame, \code{execute(master, listing, wave = t)} draws the master's
+remaining stages under the units whose tenure opens at \code{t}, the units
+of period \code{t} for \code{\link[=periods]{periods()}}, and returns the master. It accepts
+\code{seed} and \code{stages}, refuses the other arguments, and takes a master
+with a rotation schedule or periods. See "Drawing the later stages wave
+by wave" below.}
 
 \item{frame_digest}{Controls the frame digest, a compact execution
 manifest recorded with the sample and read by \code{\link[=frame_summary]{frame_summary()}}. The
@@ -105,7 +115,9 @@ digest never affects selection, weights, or estimation. \code{"summary"}
 stages, constant or quantile-compressed for element stages), and the
 selected-unit trace. \code{"full"} keeps exact per-unit chances for element
 stages too. \code{"none"} records no digest and skips trace construction for
-minimum execution overhead.
+minimum execution overhead. \code{"summary"} saves storage, not time.
+Compressing the chances can take longer than keeping them all, so
+\code{"none"} is the mode for repeated executions such as a simulation loop.
 
 When one universe frame feeds every stage, later stages also record the
 pools their realization never reached, with chances resolved from the
@@ -128,8 +140,8 @@ A \code{tbl_sample}: a data frame subclass carrying the selected rows,
 the design that produced them, and generated columns recording the
 selection. Those are \code{.sample_id}, \code{.weight}, the per-stage \code{.weight_k},
 \code{.fpc_k}, \code{.draw_k} and \code{.certainty_k}, \code{.zone_1} and \code{.pair_1} for a
-zoned certainty plan, and \code{.replicate} or \code{.panel} when \code{reps} or
-\code{panels} is used.
+zoned certainty plan, \code{.replicate} or \code{.panel} when \code{reps} or
+\code{panels} is used, and \code{.wave} for a window of several waves.
 \link{sample_columns} documents what each one holds.
 }
 \description{
@@ -182,6 +194,63 @@ states how a continuation reads its frame, when it asks for \code{stages}, and
 how it differs from starting a new phase on a sample.
 }
 
+\subsection{Drawing the later stages wave by wave}{
+
+A master split into \code{\link[=periods]{periods()}} at its first stage can have its later
+stages drawn period by period, as listing proceeds in the field.
+\code{execute(master, listing, wave = t)} draws every remaining stage under the
+units of period \code{t} and returns the master, so the calls are chained, as
+in \code{master <- execute(master, listing_3, wave = 3, seed = 103)}.
+\itemize{
+\item The listing needs rows for every unit of period \code{t}. Rows under units
+of other periods are ignored, so one growing listing file can be passed
+every time. A unit of period \code{t} with no row is refused
+(\code{samplyr_error_frame_missing_parent}) unless its stage sets
+\code{on_empty}.
+\item The listing keys its rows to the master's units by their cluster ids,
+such as \code{ea_id}, and carries what the later stages select on. Strata
+and weights come from the master.
+\item Each period is drawn once (\code{samplyr_error_wave_already_drawn}), in any
+order, with its own \code{seed}. \code{stages} may be given, and must name every
+remaining stage.
+\item Until every period is drawn, the master keeps its first-stage rows and
+every other verb reads it as the first-stage sample. \code{print()} and
+\link[=summary.tbl_sample]{summary()} say which periods are drawn, and an
+ordinary continuation is refused
+(\code{samplyr_error_wave_draws_in_progress}). \code{execute(master, wave = t)}
+gives a drawn period's sample with exact weights. That sample is
+provisional. \code{\link[=as_svydesign]{as_svydesign()}} and \code{\link[=as_svrepdesign]{as_svrepdesign()}} export it by
+ultimate clusters from its own rows, and the two-phase export, which
+reads the whole master, \code{\link[=stack_waves]{stack_waves()}} and \code{\link[=write_design]{write_design()}} refuse it
+(\code{samplyr_error_wave_provisional},
+\code{samplyr_error_serialize_wave_provisional}).
+\item The call that draws the last period returns the completed sample, as
+one continuation would, with every stage executed, rows in the master's
+order of their units and \code{.sample_id} numbered once. It is the design of
+\code{execute(master, listing)}, drawn with other random numbers.
+\item The completed sample's frame digest holds every period's pools and
+selections, so \code{\link[=frame_summary]{frame_summary()}} reports each stage as for one call. A
+listing passed for every period keeps its frame record. Separate
+listings share one record of the rows the periods drew from, with no
+fingerprint, since no single frame holds them.
+\item \code{\link[=write_design]{write_design()}} records the master's call and each period's call in
+the order they were made, and \code{\link[=replay_design]{replay_design()}} replays them with one
+frame per call, the master's frame and then each period's listing. A
+master with some periods drawn is written and replayed the same way.
+\item A master with a rotation schedule is drawn the same way, tenure by
+tenure. The call at wave \code{t} draws the units of the panels whose tenure
+opens there, where the schedule's \code{visit} is 1, and the first call also
+draws the permanent units, which keep one tenure throughout. A wave
+that opens no tenure is refused (\code{samplyr_error_wave_already_drawn})
+with the waves that drew its units. When a panel has several tenures,
+the master never closes: its draws accumulate, and
+\code{execute(master, wave = t)} reads each panel's current tenure. A new
+tenure takes the full listing: samplyr leaves out the units earlier
+tenures drew and weights the rest to the whole listing.
+\link{panel_assignment} describes tenures.
+}
+}
+
 \subsection{Multi-phase sampling}{
 
 \code{execute(new_design, previous_sample)} starts a new phase, with the
@@ -194,6 +263,31 @@ exports this path through \code{\link[survey:twophase]{survey::twophase()}}.
 
 \code{.weight} is the product of the per-stage weights and of the phase weights
 across phases. \link{sample_columns} gives the formulas.
+}
+
+\subsection{Large frames}{
+
+A partial execution on one frame keeps every row under the units it
+selected, because the continuation draws the next stage from those
+rows. On a frame of persons, the stage-1 sample of a two-stage design
+holds every person of the selected EAs. Drawing stage 1 from a register
+of the EAs, one row per EA, keeps the partial sample to one row per
+selected EA, and the person frame is passed when the design continues,
+as in \code{execute(partial, persons)}. It is the same design.
+\link{frame_input_grammar} states how a continuation reads its frame.
+
+A factor column keeps all of its levels in the sample, as R keeps them
+in any subset of a factor. A household id stored as a factor with a
+million levels therefore weighs about as much in a sample of a few
+thousand rows as in the frame. samplyr leaves the levels as they are,
+since they are part of the data. \code{droplevels()} on the sample removes
+them, and ids stored as character in the frame avoid them.
+
+A materialized wave keeps its master as its first phase, which its
+survey export reads. \code{saveRDS()} of a wave therefore writes the master
+too, again in every file and for every wave saved. Saving the master
+alone is enough, since \code{execute(master, wave = t)} gives back the same
+wave and draws no random numbers.
 }
 
 \subsection{When a design cannot be realized as written}{
@@ -254,6 +348,19 @@ listing <- selected_eas |>
   dplyr::reframe(hh_id = seq_len(20), .by = ea_id)
 sample <- selected_eas |> execute(listing, seed = 43)
 nrow(sample)  # 12 households in each selected EA
+
+## Later stages drawn one period at a time
+monthly <- sampling_design() |>
+  add_stage() |> stratify_by(region) |> cluster_by(ea_id) |>
+    draw(n = 12, method = "pps_systematic", mos = households) |>
+  add_stage() |> draw(n = 5) |>
+  execute(bfa_eas, stages = 1, seed = 1, panels = periods(12))
+# The EAs of month 3 go to the listing team
+month_3 <- dplyr::filter(as.data.frame(monthly), .panel == 3)
+listing_3 <- dplyr::reframe(month_3, hh_id = seq_len(20), .by = ea_id)
+monthly <- execute(monthly, listing_3, wave = 3, seed = 103)
+monthly  # the master, with month 3's households drawn
+nrow(execute(monthly, wave = 3))  # month 3's sample
 
 ## One frame per stage
 # Frames map to stages by position: districts first, then EAs

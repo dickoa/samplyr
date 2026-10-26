@@ -71,7 +71,10 @@ directly from recorded stage mechanisms. Other methods first build a
 }
 \details{
 Replicate conversion supports single-phase designs, including multistage
-samples, shared weights and independent frame stacks. Two-phase replicate
+samples, shared weights and independent frame stacks, and materialized
+waves, which are replicated by ultimate clusters as \code{\link[=as_svydesign]{as_svydesign()}}
+exports them. \code{"rwyb"} is refused for a wave
+(\code{samplyr_error_wave_replicate_type}). Two-phase replicate
 export is unsupported, except for a second phase drawn within each
 final-stage pool of phase 1, which is phase 1's multistage design with a
 smaller final take and is replicated as that design (\code{\link[=as_svydesign]{as_svydesign()}}

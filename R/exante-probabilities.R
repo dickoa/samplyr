@@ -191,6 +191,7 @@ resolve_exante_register <- function(design, frame, key_col,
   for (i in seq_along(schedule$entries)) {
     frames_by_stage[[schedule$entries[[i]]$stage]] <- stage_frames[[i]]
   }
+  check_exante_stage_frames(design, frames_by_stage, call = call)
   # A design that refuses to execute on this frame has no probabilities.
   refuse_capped_stages(
     design, seq_along(frames_by_stage), frames_by_stage, call = call

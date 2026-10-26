@@ -176,7 +176,10 @@ check_parent_key_na <- function(frame, parent_vars, design, stage_idx,
 
 #' @noRd
 distinct_parent_units <- function(frame, parent_vars) {
-  unique(frame[, parent_vars, drop = FALSE])
+  vctrs::vec_slice(
+    frame[, parent_vars, drop = FALSE],
+    unique_key_loc(frame, parent_vars)
+  )
 }
 
 #' Require every selected parent to have an eligible population
@@ -318,10 +321,16 @@ values_agree <- function(x, y) {
 #' @param carry_vars Names to carry. What they mean is the caller's business.
 #' @param keep_present `TRUE` leaves a name the lower frame already holds to
 #'   that frame, unchecked, for a variable that may mean something else there.
+#' @param same_rows `TRUE` when `frame` holds the rows of `previous_sample`.
+#'   Every variable is then present and agrees with its parent's once it is
+#'   constant within the parent, so only that is checked.
+#' @param parent_row For each row of `frame`, the first row of
+#'   `previous_sample` with its parent key, when the caller has matched them.
 #' @noRd
 carry_vars_by_parent <- function(frame, previous_sample, carry_vars, design,
                                  stage_idx, parent_vars, frame_index = 1L,
                                  frame_label = NULL, keep_present = FALSE,
+                                 same_rows = FALSE, parent_row = NULL,
                                  call = caller_env()) {
   carry_vars <- setdiff(carry_vars, parent_vars)
   carry_vars <- intersect(carry_vars, names(previous_sample))
@@ -333,8 +342,10 @@ carry_vars_by_parent <- function(frame, previous_sample, carry_vars, design,
   }
 
   # vec_unique() keeps first occurrences in order.
-  lookup <- vctrs::vec_unique(
-    previous_sample[, c(parent_vars, carry_vars), drop = FALSE]
+  loc <- unique_key_loc(previous_sample, c(parent_vars, carry_vars))
+  lookup <- vctrs::vec_slice(
+    previous_sample[, c(parent_vars, carry_vars), drop = FALSE],
+    loc
   )
 
   # Parent variables must be invariant within parent.
@@ -352,13 +363,20 @@ carry_vars_by_parent <- function(frame, previous_sample, carry_vars, design,
       call = call
     )
   }
+  if (same_rows) {
+    return(frame)
+  }
 
   present <- intersect(carry_vars, names(frame))
-  # Match compound keys by rows to avoid string collisions.
-  parent_row <- vctrs::vec_match(
-    frame[, parent_vars, drop = FALSE],
-    lookup[, parent_vars, drop = FALSE]
-  )
+  # A parent's first row is the lookup row of its key, which is unique.
+  parent_row <- if (is_null(parent_row)) {
+    vctrs::vec_match(
+      frame[, parent_vars, drop = FALSE],
+      lookup[, parent_vars, drop = FALSE]
+    )
+  } else {
+    match(parent_row, loc)
+  }
   for (var in present) {
     parent_value <- lookup[[var]][parent_row]
     # Remaining unmatched rows indicate linkage failure.
@@ -542,31 +560,73 @@ link_stage_frame <- function(frame, previous_sample, design, stage_idx,
     )
   }
 
-  linked <- vctrs::vec_slice(frame, which(vctrs::vec_in(
-    frame[, parent_vars, drop = FALSE],
-    previous_sample[, parent_vars, drop = FALSE]
-  )))
+  # A frame linked to its own rows keeps every row, as a stage of one
+  # hierarchy does before anything is drawn. The slice would copy the frame
+  # to return the same rows.
+  same_rows <- rlang::is_reference(frame, previous_sample) &&
+    slice_keeps_frame(frame)
+  parent_row <- NULL
+  linked <- if (same_rows) {
+    sliced_row_names(frame)
+  } else {
+    parent_row <- vctrs::vec_match(
+      frame[, parent_vars, drop = FALSE],
+      previous_sample[, parent_vars, drop = FALSE]
+    )
+    rows <- which(!is.na(parent_row))
+    parent_row <- parent_row[rows]
+    vctrs::vec_slice(frame, rows)
+  }
 
   # Design variables of completed stages of this design.
   linked <- carry_vars_by_parent(
     linked, previous_sample,
     prior_design_carry_vars(design, stage_idx),
-    design, stage_idx, parent_vars, frame_index, frame_label, call = call
+    design, stage_idx, parent_vars, frame_index, frame_label,
+    same_rows = same_rows, parent_row = parent_row, call = call
   )
 
   linked <- carry_vars_by_parent(
     linked, previous_sample, prior_stage_mos_vars(design, stage_idx),
     design, stage_idx, parent_vars, frame_index, frame_label,
-    keep_present = TRUE, call = call
+    keep_present = TRUE, same_rows = same_rows, parent_row = parent_row,
+    call = call
   )
 
   # Preserve prior-phase identifiers across normalized registers.
   linked <- carry_vars_by_parent(
     linked, previous_sample, phase_link_vars,
-    design, stage_idx, parent_vars, frame_index, frame_label, call = call
+    design, stage_idx, parent_vars, frame_index, frame_label,
+    same_rows = same_rows, parent_row = parent_row, call = call
   )
 
   list(frame = linked, parent_vars = parent_vars, empty_parents = empty_parents)
+}
+
+#' Whether slicing every row gives back the frame
+#'
+#' True for columns `vctrs::vec_slice()` returns unchanged when it takes
+#' every row: atomic vectors, factors, dates and date-times. Anything else
+#' goes through the slice.
+#' @noRd
+slice_keeps_frame <- function(frame) {
+  all(vapply(frame, function(col) {
+    is.atomic(col) && !is.array(col) &&
+      (!is.object(col) || inherits(col, c("factor", "Date", "POSIXct")))
+  }, logical(1)))
+}
+
+#' A frame with the row names `vctrs::vec_slice()` would give it
+#'
+#' A slice keeps character row names and replaces integer ones with the
+#' automatic form.
+#' @noRd
+sliced_row_names <- function(frame) {
+  rn <- attr(frame, "row.names")
+  if (is.integer(rn)) {
+    attr(frame, "row.names") <- .set_row_names(length(rn))
+  }
+  frame
 }
 
 #' Selected units a later stage found empty, per stage and replicate

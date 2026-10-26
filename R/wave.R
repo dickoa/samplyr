@@ -31,10 +31,42 @@ materialize_wave <- function(
     frame_digest_given = frame_digest_given,
     call = call
   )
-  wave <- check_wave_declared(wave, record$schedule, call = call)
+  wave <- check_wave_declared(
+    wave, record$schedule, window = TRUE, call = call
+  )
 
   schedule <- record$schedule
+  remaining <- setdiff(
+    seq_along(get_design(master)$stages), get_stages_executed(master)
+  )
+  if (length(wave) > 1L) {
+    if (length(remaining) > 0 && length(wave_draws(master)) == 0L) {
+      abort_samplyr(
+        c(
+          "A window of waves needs a master whose stages are all drawn.",
+          "x" = "The design has unexecuted stages: {remaining}.",
+          "i" = "Draw them, {.code execute(master, listing)}, or for every
+                 wave, {.code execute(master, listing, wave = t)}, then ask
+                 for {.code execute(master, wave = {wave_code(wave)})}."
+        ),
+        class = "samplyr_error_wave_incomplete_master",
+        call = call
+      )
+    }
+    return(build_window_sample(
+      master, record, wave, execution_environment,
+      remaining = remaining,
+      call = call
+    ))
+  }
   active <- schedule$panel[schedule$wave == wave & schedule$active]
+
+  if (length(remaining) > 0) {
+    return(materialize_drawn_wave(
+      master, record, wave, active, remaining, execution_environment,
+      call = call
+    ))
+  }
 
   build_wave_sample(
     source = master,
@@ -58,12 +90,135 @@ build_wave_sample <- function(
   activation,
   schedule_digest,
   execution_environment,
-  extra = list()
+  extra = list(),
+  digest = readable_digest(wave_master_digest(source))
 ) {
   data <- as.data.frame(source)[activation$keep, , drop = FALSE]
   data$.weight <- data$.weight * activation$factor[activation$keep]
+  if (!is_null(record)) {
+    data$.visit <- wave_row_visits(
+      record, data$.panel, wave, activation$permanent[activation$keep]
+    )
+  }
   rownames(data) <- NULL
 
+  new_wave_sample(
+    source,
+    record,
+    data,
+    wave = c(
+      list(
+        wave = wave,
+        active_panels = activation$active,
+        schedule_digest = schedule_digest,
+        pools = activation$pools,
+        # Bind activation to the exact master realization.
+        master_digest = wave_source_digest(source)
+      ),
+      extra
+    ),
+    execution_environment = execution_environment,
+    digest = digest
+  )
+}
+
+#' The sample a set of waves realizes, over one master
+#'
+#' Each rotating unit active once in the window is drawn by one activation
+#' over the union of the window's panels, with its row at the wave it is
+#' active. When some panel is active at more than one wave, every unit keeps
+#' a row per wave it is active, weighted by its wave weight over the number
+#' of waves. Permanent units are active at every wave and always take that
+#' second form.
+#' @noRd
+build_window_sample <- function(
+  master,
+  record,
+  waves,
+  execution_environment,
+  remaining = integer(0),
+  call = caller_env()
+) {
+  schedule <- record$schedule
+  active_at <- lapply(waves, function(t) {
+    schedule$panel[schedule$wave == t & schedule$active]
+  })
+  repeated <- anyDuplicated(unlist(active_at)) > 0L
+  n_waves <- length(waves)
+  union_panels <- sort(unique(unlist(active_at)))
+
+  # A master drawn one wave at a time gives each wave its own rows.
+  sources <- lapply(waves, function(t) {
+    if (length(remaining) == 0L) {
+      master
+    } else {
+      wave_draw_source(master, record, t, remaining, call = call)
+    }
+  })
+  union <- NULL
+  parts <- lapply(seq_len(n_waves), function(j) {
+    activation <- activate_cohort(sources[[j]], record, active_at[[j]],
+                                  call = call)
+    rows <- which(activation$keep)
+    factor <- if (repeated) {
+      activation$factor[rows] / n_waves
+    } else {
+      union <<- activate_cohort(sources[[j]], record, union_panels,
+                                call = call)
+      ifelse(activation$permanent[rows], 1 / n_waves, union$factor[rows])
+    }
+    part <- as.data.frame(sources[[j]])[rows, , drop = FALSE]
+    part$.weight <- part$.weight * factor
+    part$.wave <- waves[j]
+    part$.visit <- wave_row_visits(
+      record, part$.panel, waves[j], activation$permanent[rows]
+    )
+    part
+  })
+  data <- vctrs::vec_rbind(!!!parts)
+  rownames(data) <- NULL
+  digest <- readable_digest(wave_rows_digest(
+    master,
+    vctrs::vec_rbind(!!!lapply(sources, as.data.frame))
+  ))
+
+  new_wave_sample(
+    sources[[1L]],
+    record,
+    data,
+    wave = list(
+      wave = waves,
+      window = if (repeated) "average" else "union",
+      active_panels = union_panels,
+      schedule_digest = rlang::hash(schedule),
+      pools = if (!repeated) union$pools,
+      master_digest = wave_source_digest(master),
+      provisional = if (length(remaining) > 0L) TRUE
+    ),
+    execution_environment = execution_environment,
+    digest = digest
+  )
+}
+
+#' A wave's digest, or none when its master's cannot be read
+#'
+#' A wave is materialized from the master's assignment record, and an
+#' unreadable digest only leaves the wave without one.
+#' @noRd
+readable_digest <- function(digest) {
+  tryCatch(digest, error = function(e) NULL)
+}
+
+#' Wrap a wave's rows as a sample that keeps its master as phase 1
+#' @noRd
+new_wave_sample <- function(
+  source,
+  record,
+  data,
+  wave,
+  execution_environment,
+  digest = NULL
+) {
   design <- get_design(source)
   stages_executed <- get_stages_executed(source)
 
@@ -78,17 +233,8 @@ build_wave_sample <- function(
         executed_at = Sys.time(),
         panels = record$panels,
         panel_assignment = record,
-        wave = c(
-          list(
-            wave = wave,
-            active_panels = activation$active,
-            schedule_digest = schedule_digest,
-            pools = activation$pools,
-            # Bind activation to the exact master realization.
-            master_digest = wave_source_digest(source)
-          ),
-          extra
-        ),
+        wave = wave,
+        frame_digest = digest,
         # Retain the master as phase 1.
         prev_phase = list(
           transition = "panel_activation",
@@ -225,8 +371,8 @@ check_wave_call <- function(
   if (!is_null(metadata$wave)) {
     abort_samplyr(
       c(
-        "This sample is already the materialization of wave
-         {metadata$wave$wave}.",
+        "This sample is already the materialization of
+         {wave_phrase(metadata$wave$wave)}.",
         "i" = "Materialize each wave from the master:
                {.code execute(master, wave = t)}."
       ),
@@ -235,20 +381,6 @@ check_wave_call <- function(
     )
   }
 
-  design <- get_design(master)
-  remaining <- setdiff(seq_along(design$stages), get_stages_executed(master))
-  if (length(remaining) > 0) {
-    abort_samplyr(
-      c(
-        "A wave can only be materialized from a completed master.",
-        "x" = "The design has unexecuted stages: {remaining}.",
-        "i" = "Finish the design first:
-               {.code execute(master, <listing frame>)}."
-      ),
-      class = "samplyr_error_wave_incomplete_master",
-      call = call
-    )
-  }
 
   # Validate record version before checking whether it declares waves.
   record <- metadata$panel_assignment
@@ -275,17 +407,34 @@ check_wave_call <- function(
   record
 }
 
+#' Check the waves asked for against the schedule
+#'
+#' @param window Whether several distinct waves may be asked for at once.
 #' @noRd
-check_wave_declared <- function(wave, schedule, call = caller_env()) {
-  declared <- sort(unique(schedule$wave))
-  ok <- is.numeric(wave) &&
-    length(wave) == 1L &&
-    !anyNA(wave) &&
-    is_integerish_numeric(wave)
-  if (!ok || !as.integer(wave) %in% declared) {
+check_wave_declared <- function(wave, schedule, window = FALSE,
+                                call = caller_env()) {
+  if (!window && is.numeric(wave) && length(wave) > 1L) {
     abort_samplyr(
       c(
-        "{.arg wave} must be one of the waves the schedule declares.",
+        "{.arg wave} takes a single wave here.",
+        "i" = "A window of several waves is materialized from a master,
+               {.code execute(master, wave = c(...))}, without a listing."
+      ),
+      class = "samplyr_error_wave_window_unsupported",
+      call = call
+    )
+  }
+  declared <- sort(unique(schedule$wave))
+  ok <- is.numeric(wave) &&
+    length(wave) >= 1L &&
+    !anyNA(wave) &&
+    is_integerish_numeric(wave) &&
+    !anyDuplicated(wave)
+  if (!ok || !all(as.integer(wave) %in% declared)) {
+    abort_samplyr(
+      c(
+        "{.arg wave} must be {if (window) \"distinct waves\" else
+         \"one of the waves\"} the schedule declares.",
         "i" = "This master declares
                {cli::qty(length(declared))}wave{?s} {declared}."
       ),
@@ -293,7 +442,87 @@ check_wave_declared <- function(wave, schedule, call = caller_env()) {
       call = call
     )
   }
-  as.integer(wave)
+  sort(as.integer(wave))
+}
+
+#' Waves as a message reads them: `2`, `1 and 2`, `1 to 3`, or `1, 3 and 5`
+#' @noRd
+wave_span <- function(waves) {
+  waves <- sort(as.integer(waves))
+  n <- length(waves)
+  if (n == 1L) {
+    return(as.character(waves))
+  }
+  if (n > 2L && all(diff(waves) == 1L)) {
+    return(paste(waves[1L], "to", waves[n]))
+  }
+  paste(paste(waves[-n], collapse = ", "), "and", waves[n])
+}
+
+#' @noRd
+wave_phrase <- function(waves) {
+  paste(if (length(waves) == 1L) "wave" else "waves", wave_span(waves))
+}
+
+#' Waves as code that asks for them again: `2`, `1:3`, or `c(1, 3)`
+#' @noRd
+wave_code <- function(waves) {
+  waves <- sort(as.integer(waves))
+  n <- length(waves)
+  if (n == 1L) {
+    return(as.character(waves))
+  }
+  if (all(diff(waves) == 1L)) {
+    return(paste0(waves[1L], ":", waves[n]))
+  }
+  paste0("c(", paste(waves, collapse = ", "), ")")
+}
+
+#' Does this sample pool several waves?
+#' @noRd
+is_wave_window <- function(x) {
+  length(attr(x, "metadata")[["wave"]]$wave) > 1L
+}
+
+#' The sample rows each pool of an assignment record holds
+#'
+#' One match of the keys against every pool's keys, split by pool. Keys
+#' that are not all character, or a key listed twice, are matched pool by
+#' pool instead, since each pool then reads its own first match.
+#' @return One element per pool: `rows`, the sample rows in the pool in
+#'   order, and `at`, each row's position in the pool's keys.
+#' @noRd
+record_pool_rows <- function(keys, pools) {
+  pool_keys <- lapply(pools, function(pool) pool$keys)
+  flat <- unlist(pool_keys, use.names = FALSE)
+  character_keys <- vapply(
+    pool_keys,
+    function(k) is_null(k) || is.character(k),
+    logical(1)
+  )
+  one_match <- is.character(keys) && all(character_keys) &&
+    anyDuplicated(flat) == 0L
+  if (!one_match) {
+    return(lapply(pool_keys, function(k) {
+      at <- match(keys, k)
+      rows <- which(!is.na(at))
+      list(rows = rows, at = at[rows])
+    }))
+  }
+  sizes <- lengths(pool_keys)
+  hit <- match(keys, flat)
+  rows <- which(!is.na(hit))
+  hit <- hit[rows]
+  offset <- cumsum(c(0L, sizes))
+  pool_of <- rep.int(seq_along(pool_keys), sizes)[hit]
+  by_pool <- split(
+    seq_along(rows),
+    factor(pool_of, levels = seq_along(pool_keys))
+  )
+  lapply(seq_along(pool_keys), function(p) {
+    i <- by_pool[[p]]
+    list(rows = rows[i], at = hit[i] - offset[p])
+  })
 }
 
 #' Which rows an activation keeps, and at what conditional probability
@@ -314,6 +543,7 @@ activate_cohort <- function(sample, record, active, call = caller_env()) {
     return(list(
       keep = rep(live, n),
       factor = rep(1, n),
+      permanent = rep(FALSE, n),
       active = if (live) 1L else integer(0),
       pools = list()
     ))
@@ -325,17 +555,19 @@ activate_cohort <- function(sample, record, active, call = caller_env()) {
 
   keep <- rep(FALSE, nrow(data))
   factor <- rep(NA_real_, nrow(data))
+  permanent <- rep(FALSE, nrow(data))
   pools <- vector("list", length(record$pools))
+  located <- record_pool_rows(keys, record$pools)
 
   for (p in seq_along(record$pools)) {
     pool <- record$pools[[p]]
-    at <- match(keys, pool$keys)
-    rows <- which(!is.na(at))
+    rows <- located[[p]]$rows
 
     if (identical(pool$activation, "permanent")) {
       # Exclude permanent pools from randomized quota denominators.
       keep[rows] <- TRUE
       factor[rows] <- 1
+      permanent[rows] <- TRUE
       take <- pool$blocks
       probability <- rep(1, length(pool$blocks))
     } else {
@@ -359,7 +591,7 @@ activate_cohort <- function(sample, record, active, call = caller_env()) {
       }
       probability <- take / pool$blocks
       block_of_unit <- rep(seq_along(pool$blocks), pool$blocks)
-      block <- block_of_unit[at[rows]]
+      block <- block_of_unit[located[[p]]$at]
       selected <- panel[rows] %in% active
       keep[rows[selected]] <- TRUE
       factor[rows[selected]] <- 1 / probability[block[selected]]
@@ -376,5 +608,27 @@ activate_cohort <- function(sample, record, active, call = caller_env()) {
     )
   }
 
-  list(keep = keep, factor = factor, active = active, pools = pools)
+  list(
+    keep = keep,
+    factor = factor,
+    permanent = permanent,
+    active = active,
+    pools = pools
+  )
+}
+
+#' The visit each row of a wave is at
+#'
+#' Read from the schedule by panel. A permanent unit is active at every wave
+#' outside the rotation, so it has no visit number.
+#' @noRd
+wave_row_visits <- function(record, panel, wave, permanent) {
+  schedule <- record$schedule
+  at <- match(
+    paste(panel, wave, sep = "|"),
+    paste(schedule$panel, schedule$wave, sep = "|")
+  )
+  visit <- as.integer(schedule$visit[at])
+  visit[permanent] <- NA_integer_
+  visit
 }

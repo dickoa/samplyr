@@ -130,6 +130,128 @@ test_that("replicated executions record empty replicates", {
   expect_true(any(counts == 0L))
 })
 
+test_that("a stack is replicated even when its rows show one replicate or none", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:5)
+  design <- sampling_design() |>
+    draw(frac = 0.2, method = "bernoulli", on_empty = "silent")
+
+  none <- sampling_design() |>
+    draw(frac = 0.01, method = "bernoulli", on_empty = "silent") |>
+    execute(frame, seed = 1, reps = 3)
+  expect_identical(attr(none, "metadata")$replicate_rows, c(`1` = 0L, `2` = 0L, `3` = 0L))
+  expect_true(has_multiple_replicates(none))
+
+  one <- NULL
+  for (seed in 1:200) {
+    s <- execute(design, frame, seed = seed, reps = 3)
+    if (nrow(s) > 0L && length(unique(s$.replicate)) == 1L) {
+      one <- s
+      break
+    }
+  }
+  expect_false(is.null(one), info = "Expected one visible replicate within 200 seeds")
+  expect_true(has_multiple_replicates(one))
+  expect_true(any(cli::ansi_strip(format(one)) == "# Replicates:   3"))
+  expect_null(summary(one)$weights)
+  expect_null(summary(one)$design_effect)
+  printed <- cli::ansi_strip(capture.output(print(summary(one))))
+  expect_false(any(grepl("Kish DEFF", printed, fixed = TRUE)))
+  expect_error(design_effect(one),
+               class = "samplyr_error_replicated_sample_unsupported")
+  expect_error(as_svydesign(one),
+               class = "samplyr_error_replicated_sample_unsupported")
+  expect_error(as_svydesign(one), "3 replicates")
+})
+
+test_that("advice on a stack names a replicate that has rows", {
+  frame <- data.frame(id = 1:20, y = 1:20)
+  design <- sampling_design() |>
+    draw(frac = 0.01, method = "bernoulli", on_empty = "silent")
+  none <- execute(design, frame, seed = 1, reps = 3)
+  one <- execute(design, frame, seed = 3, reps = 3)
+  expect_identical(attr(none, "metadata")$replicate_rows,
+                   c(`1` = 0L, `2` = 0L, `3` = 0L))
+  expect_identical(attr(one, "metadata")$replicate_rows,
+                   c(`1` = 0L, `2` = 0L, `3` = 1L))
+
+  expect_no_warning(printed <- capture.output(print(summary(none))))
+  expect_false(any(grepl("filter(", printed, fixed = TRUE)))
+  printed <- cli::ansi_strip(capture.output(print(summary(one))))
+  expect_true(any(grepl("filter(.replicate == 3)", printed, fixed = TRUE)))
+
+  err <- tryCatch(design_effect(one), error = identity)
+  expect_s3_class(err, "samplyr_error_replicated_sample_unsupported")
+  expect_match(cli::ansi_strip(conditionMessage(err)),
+               "filter(.replicate == 3)", fixed = TRUE)
+  err <- tryCatch(design_effect(none), error = identity)
+  expect_s3_class(err, "samplyr_error_replicated_sample_unsupported")
+  expect_match(conditionMessage(err), "Every replicate is empty")
+})
+
+test_that("one complete replicate filtered from the stack is a single sample", {
+  skip_if_not_installed("survey")
+  stack <- sampling_design() |>
+    draw(n = 2) |>
+    execute(data.frame(id = 1:5), seed = 1, reps = 3)
+  one <- dplyr::filter(stack, .replicate == 2)
+  expect_false(has_multiple_replicates(one))
+  expect_s3_class(as_svydesign(one), "survey.design2")
+})
+
+test_that("a filter on .replicate extracts the one replicate with rows", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:20, y = 1:20)
+  stack <- sampling_design() |>
+    draw(frac = 0.05, method = "bernoulli", on_empty = "silent") |>
+    execute(frame, seed = 3, reps = 3)
+  expect_identical(attr(stack, "metadata")$replicate_rows,
+                   c(`1` = 0L, `2` = 0L, `3` = 2L))
+  # The stack itself stays three replicates.
+  expect_error(design_effect(stack),
+               class = "samplyr_error_replicated_sample_unsupported")
+
+  for (one in list(dplyr::filter(stack, .replicate == 3),
+                   dplyr::filter(stack, .data$.replicate > 1),
+                   dplyr::filter(stack, .replicate == 3, .by = id))) {
+    expect_identical(nrow(one), 2L)
+    expect_false(has_multiple_replicates(one))
+    expect_type(design_effect(one), "double")
+    expect_s3_class(as_svydesign(one), "survey.design")
+    phase2 <- sampling_design() |> draw(n = 1) |> execute(one, seed = 5)
+    expect_identical(nrow(phase2), 1L)
+    expect_true(phase2$id %in% one$id)
+  }
+
+  # The same rows reached without naming .replicate keep the stack, so
+  # the empty replicates still count.
+  kept <- list(
+    arrange = dplyr::arrange(stack, dplyr::desc(id)),
+    permuted = stack[rev(seq_len(nrow(stack))), ],
+    filter_true = dplyr::filter(stack, TRUE),
+    filter_id = dplyr::filter(stack, id > 0),
+    # Grouping by .replicate says how to evaluate, not what to select.
+    by_replicate = dplyr::filter(stack, TRUE, .by = .replicate),
+    id_by_replicate = dplyr::filter(stack, id > 0, .by = .replicate),
+    slice = dplyr::slice(stack, seq_len(nrow(stack))),
+    bracket = stack[stack$.replicate == 3, ]
+  )
+  for (nm in names(kept)) {
+    expect_true(has_multiple_replicates(kept[[nm]]), info = nm)
+    expect_error(as_svydesign(kept[[nm]]),
+                 class = "samplyr_error_replicated_sample_unsupported",
+                 info = nm)
+  }
+
+  # Part of that replicate, or an empty stack, is not one replicate.
+  part <- dplyr::filter(stack, .replicate == 3, id == min(id))
+  expect_error(as_svydesign(part), class = "samplyr_error_modified_sample")
+  none <- sampling_design() |>
+    draw(frac = 0.01, method = "bernoulli", on_empty = "silent") |>
+    execute(frame, seed = 1, reps = 3)
+  expect_true(has_multiple_replicates(dplyr::filter(none, .replicate == 1)))
+})
+
 test_that("custom random-size WOR methods honor on_empty", {
   on.exit(sondage::unregister_method("always_empty"), add = TRUE)
   sondage::register_method(
@@ -163,6 +285,35 @@ test_that("custom random-size WOR methods honor on_empty", {
     execute(cert_frame, seed = 1)
   expect_identical(nrow(cert_only), 1L)
   expect_true(cert_only$.certainty_1)
+})
+
+test_that("custom random-size balanced methods honor on_empty", {
+  on.exit(sondage::unregister_method("always_empty"), add = TRUE)
+  sondage::register_method(
+    "always_empty", "balanced",
+    sample_fn = function(pik, aux = NULL, ...) integer(0),
+    fixed_size = FALSE,
+    probabilities = "exact"
+  )
+  frame <- data.frame(id = 1:5, size = rep(1, 5))
+  design <- function(...) {
+    sampling_design() |>
+      draw(n = 2, method = "balanced_always_empty", mos = size, ...)
+  }
+
+  expect_error(
+    execute(design(), frame, seed = 1),
+    class = "samplyr_error_empty_selection"
+  )
+  expect_warning(
+    empty <- execute(design(on_empty = "warn"), frame, seed = 1),
+    class = "samplyr_warning_empty_selection"
+  )
+  expect_identical(nrow(empty), 0L)
+  expect_no_condition(
+    empty <- execute(design(on_empty = "silent"), frame, seed = 1)
+  )
+  expect_identical(nrow(empty), 0L)
 })
 
 test_that("empty replicates block later phases with a contextual error", {
@@ -215,10 +366,6 @@ test_that("an extracted nonempty replicate can enter a later phase", {
   )
   counts <- attr(phase1, "metadata")$replicate_rows
   nonempty <- as.integer(names(counts)[counts > 0])
-  # With one nonempty replicate the filter keeps every row and extracts
-  # nothing, so the fixture needs two.
-  expect_gt(length(nonempty), 1)
-
   extracted <- dplyr::filter(phase1, .replicate == nonempty[1])
   phase2 <- sampling_design() |> draw(n = 1) |> execute(extracted, seed = 5)
   expect_s3_class(phase2, "tbl_sample")

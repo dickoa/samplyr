@@ -369,8 +369,8 @@ test_that("a wave activating every panel also reduces to single phase", {
   expect_s3_class(full, "survey.design2")
   expect_false(inherits(full, "twophase2"))
 
-  # Wave 2 subsamples, so it keeps the two-phase representation.
-  partial <- as_svydesign(execute(master, wave = 2))
+  # Wave 2 subsamples, so it has a second phase, exported on request.
+  partial <- as_svydesign(execute(master, wave = 2), method = "full")
   expect_s3_class(partial, "twophase2")
 })
 
@@ -400,7 +400,10 @@ test_that("a mixed wave keeps its second phase", {
     character(1)
   )
   expect_setequal(activations, c("permanent", "rotating"))
-  expect_s3_class(as_svydesign(execute(master, wave = 1)), "twophase2")
+  expect_s3_class(
+    as_svydesign(execute(master, wave = 1), method = "full"),
+    "twophase2"
+  )
 })
 
 ## Diagnostics name the public call

@@ -29,8 +29,9 @@ example after a tidyr operation such as \code{\link[tidyr:uncount]{tidyr::uncoun
 \section{Class preservation}{
 
 
-All dplyr verbs (\code{mutate}, \code{filter}, \code{select}, \verb{*_join}, etc.)
-preserve the \code{tbl_sample} class automatically.
+dplyr verbs that keep the \code{.weight} column (\code{mutate()}, \code{filter()},
+\code{select()}, \code{arrange()}, the joins) return a \code{tbl_sample}. Verbs that
+drop it, such as \code{summarise()} and \code{count()}, return a plain tibble.
 
 Preserving the class does not mean the sample remains analyzable:
 operations that remove, add, or duplicate rows, or overwrite

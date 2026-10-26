@@ -328,3 +328,24 @@ test_that("a single pool and samples without periods print no strata", {
   expect_null(summary(plain)$periods)
   expect_null(summary(execute(sample, wave = 1))$periods)
 })
+
+test_that("periods of a first stage list their units before the next stage", {
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(region) |> cluster_by(ea_id) |>
+    draw(n = 24, method = "pps_systematic", mos = households) |>
+    add_stage() |> draw(n = 12, method = "systematic")
+  selected <- execute(design, bfa_eas, stages = 1, seed = 1,
+                      panels = periods(12))
+  month <- dplyr::filter(as.data.frame(selected), .panel == 3)
+  expect_identical(nrow(month), 26L)
+  listing <- function(eas) {
+    eas <- as.data.frame(eas)[c("ea_id", "region")]
+    eas[rep(seq_len(nrow(eas)), each = 15), ]
+  }
+  expect_error(execute(selected, listing(month), seed = 2),
+               class = "samplyr_error_frame_missing_parent")
+  expect_error(execute(selected, wave = 3),
+               class = "samplyr_error_wave_incomplete_master")
+  complete <- execute(selected, listing(selected), seed = 2)
+  expect_setequal(execute(complete, wave = 3)$ea_id, month$ea_id)
+})

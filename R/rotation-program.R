@@ -747,8 +747,8 @@ abort_rotation_wave_export <- function(fn_name, call = caller_env()) {
              them needs the probability that a unit was selected into at
              least one, which no receipt carries.",
       "i" = "Export a component instead:
-             {.code as_svydesign(wave[[\"<cohort name>\"]])}, which carries
-             the activation as its second phase."
+             {.code as_svydesign(wave[[\"<cohort name>\"]])}, which exports
+             that cohort's wave on its own."
     ),
     class = "samplyr_error_rotation_wave_not_combinable",
     call = call

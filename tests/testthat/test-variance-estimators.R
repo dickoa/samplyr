@@ -426,3 +426,124 @@ test_that("a systematic stage that takes every unit is exempt once the frame sho
   skip_if_not_installed("survey")
   expect_no_warning(as_svydesign(execute(design, frame, seed = 1)))
 })
+
+test_that("a frame of primary units settles the first stage only", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("svrep")
+  primary <- ve_frame()[c("id", "stratum", "cluster", "mos", "x", "y")]
+  full <- primary
+  full$segment <- full$x %% 2
+  full$segment_mos <- ifelse(full$segment == 1, 3, 2)
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(cluster) |>
+    draw(n = 2, method = "pps_systematic", mos = mos) |>
+    add_stage() |> cluster_by(segment) |>
+    draw(n = 1, method = "pps_brewer", mos = segment_mos) |>
+    add_stage() |> draw(n = 2)
+  report <- variance_estimators(design, primary)
+  expect_identical(
+    ve_check("primary frame", design, full, report = report),
+    character(0)
+  )
+  # Stage 1 is read from the frame, the stages below from the design.
+  expect_match(report$note[1],
+               "stage 1 has no design-unbiased variance estimator. Its variance is approximated. ",
+               fixed = TRUE)
+  expect_match(variance_estimators(design)$note[1],
+               "stage 1 has no design-unbiased variance estimator. Its variance is approximated, unless",
+               fixed = TRUE)
+  expect_identical(report$status[2], variance_estimators(design)$status[2])
+  expect_match(report$sample_risk[1], "A frame that reaches stage 2",
+               fixed = TRUE)
+  expect_error(variance_estimators(design, primary["stratum"]),
+               class = "samplyr_error_frame_missing_vars")
+})
+
+test_that("a certainty PSU keeping one unit below it is refused by the stratified types", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("svrep")
+  primary <- ve_frame()[c("id", "stratum", "cluster", "mos", "x", "y")]
+  full <- primary
+  full$segment <- full$x %% 2
+  full$segment_mos <- ifelse(full$segment == 1, 3, 2)
+  # Three of six clusters per stratum puts the largest one at certainty.
+  segments <- function(take) {
+    sampling_design() |>
+      add_stage() |> stratify_by(stratum) |> cluster_by(cluster) |>
+      draw(n = 3, method = "pps_systematic", mos = mos) |>
+      add_stage() |> cluster_by(segment) |>
+      draw(n = take, method = "pps_brewer", mos = segment_mos) |>
+      add_stage() |> draw(n = 2)
+  }
+  elements <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(cluster) |>
+    draw(n = 3, method = "pps_systematic", mos = mos) |>
+    add_stage() |> draw(n = 1)
+  cases <- list(one_segment = segments(1), two_segments = segments(2),
+                one_element = elements)
+  for (label in names(cases)) {
+    expect_identical(ve_check(label, cases[[label]], full), character(0))
+  }
+  expect_identical(
+    ve_check("primary frame", segments(1), full,
+             report = variance_estimators(segments(1), primary)),
+    character(0)
+  )
+
+  stratified <- c(4, 5, 6, 8)
+  report <- variance_estimators(segments(1), full)
+  expect_identical(report$status[stratified], rep("refused", 4))
+  expect_match(report$note[4],
+               "4 stage-2 pools under a PSU taken with certainty take a single unit",
+               fixed = TRUE)
+  expect_identical(report$status[c(7, 9)], c("approximate", "approximate"))
+  expect_false(any(variance_estimators(segments(2), full)$status[stratified] ==
+                     "refused"))
+  partial <- variance_estimators(segments(1), primary)
+  expect_identical(partial$status[stratified], rep("approximate", 4))
+  expect_match(partial$sample_risk[4],
+               "A PSU taken with certainty is a stratum of its stage-2 units",
+               fixed = TRUE)
+})
+
+## Samples whose export follows rules of its own
+
+test_that("waves and windows are refused, not reported as their master", {
+  frame <- data.frame(id = 1:600, h = rep(c("a", "b", "c"), each = 200))
+  schedule <- expand.grid(panel = 1:6, wave = 1:3)
+  schedule$active <- (schedule$wave - 1) %% 3 == (schedule$panel - 1) %% 3
+  master <- sampling_design() |>
+    stratify_by(h) |>
+    draw(n = 15) |>
+    execute(frame, seed = 1, panels = schedule)
+
+  expect_no_error(variance_estimators(master))
+  for (wave in list(1, 1:2)) {
+    w <- execute(master, wave = wave)
+    expect_error(variance_estimators(w),
+                 class = "samplyr_error_variance_estimators_input")
+    expect_error(
+      variance_estimators(sampling_design() |> draw(n = 3), frame = w),
+      class = "samplyr_error_variance_estimators_input"
+    )
+  }
+})
+
+test_that("a shared-weight sample is refused, not reported as its source", {
+  source_frame <- data.frame(unit = letters[1:12], mos = 1:12)
+  source <- sampling_design() |>
+    draw(n = 4, method = "pps_sampford", mos = mos) |>
+    execute(source_frame, seed = 2)
+  shared <- share_weights(
+    source,
+    targets = data.frame(tid = paste0("t", 1:12),
+                         hh = rep(paste0("H", 1:6), each = 2)),
+    links = data.frame(unit = letters[1:12], tid = paste0("t", 1:12)),
+    by = c(unit = "unit"), to = c(tid = "tid"),
+    within = hh, multiplicity = complete_links()
+  )
+
+  expect_no_error(variance_estimators(source))
+  expect_error(variance_estimators(shared),
+               class = "samplyr_error_variance_estimators_input")
+})

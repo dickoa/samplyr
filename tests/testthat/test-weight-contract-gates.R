@@ -15,6 +15,7 @@ tbl_sample_verdicts <- c(
   "dplyr_col_modify" = "preserve",
   "dplyr_reconstruct" = "preserve",
   "dplyr_row_slice" = "preserve",
+  "filter" = "preserve",
   "group_by" = "preserve",
   "ungroup" = "preserve",
   "vec_restore" = "preserve",

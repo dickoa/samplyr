@@ -690,13 +690,23 @@ test_that("a survey export reads the version before the quotas it exports", {
   skip_if_not_installed("survey")
   master <- prv_master(prv_schedule())
   wave <- execute(master, wave = 1)
-  expect_s3_class(as_svydesign(wave), "twophase2")
+  expect_s3_class(as_svydesign(wave), "survey.design2")
+  expect_s3_class(as_svydesign(wave, method = "full"), "twophase2")
 
   # A misread record would export as an object that looks estimable.
   for (case in names(prv_broken)) {
     spec <- prv_broken[[case]]
+    broken <- prv_mutated(wave, spec[[1]], spec[[2]])
     expect_error(
-      as_svydesign(prv_mutated(wave, spec[[1]], spec[[2]])),
+      as_svydesign(broken),
+      class = prv_class(spec), info = case
+    )
+    expect_error(
+      as_svydesign(broken, method = "full"),
+      class = prv_class(spec), info = case
+    )
+    expect_error(
+      as_svrepdesign(broken),
       class = prv_class(spec), info = case
     )
   }

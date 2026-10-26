@@ -38,7 +38,6 @@ test_that("panel planning counts hand off to a multi-cohort program", {
   startup_n <- plan$n_cohorts * intake_n
   schedule <- svyplan::design_schedule(
     plan,
-    svyplan::design_rotation("4"),
     horizon = 6,
     horizon_policy = "continuing",
     refreshment = "entrant_register",
@@ -102,7 +101,7 @@ test_that("the planning route has one source for entries and one prefix", {
     start = "immediate"
   )
   schedule <- svyplan::design_schedule(
-    plan, svyplan::design_rotation("4"), 6, "continuing",
+    plan, 6, "continuing",
     refreshment = "entrant_register", rounding = "ceiling"
   )
   intake_n <- ceiling(plan$n_entrants)
@@ -193,7 +192,7 @@ test_that("the planning route refuses permanent activation", {
     start = "immediate"
   )
   schedule <- svyplan::design_schedule(
-    plan, svyplan::design_rotation("4"), 4, "continuing",
+    plan, 4, "continuing",
     refreshment = "entrant_register", rounding = "ceiling"
   )
   startup_n <- plan$n_cohorts * ceiling(plan$n_entrants)
@@ -227,7 +226,7 @@ test_that("the planning route refuses permanent activation", {
   )
 
   unsupported <- unclass(schedule)
-  unsupported$schema_version <- 2L
+  unsupported$schema_version <- 1L
   class(unsupported) <- c("svyplan_schedule", "list")
   expect_error(
     execute(design, data.frame(id = 1:200), panels = unsupported),
@@ -257,7 +256,7 @@ test_that("a gradual plan uses the same interface with one startup panel", {
     start = "gradual"
   )
   schedule <- svyplan::design_schedule(
-    plan, svyplan::design_rotation("4"), 4, "continuing",
+    plan, 4, "continuing",
     refreshment = "entrant_register", rounding = "ceiling"
   )
   startup_n <- ceiling(plan$n_entrants)
@@ -282,7 +281,7 @@ test_that("a continuing plan freezes startup activity beyond a short horizon", {
     start = "immediate"
   )
   schedule <- svyplan::design_schedule(
-    plan, svyplan::design_rotation("4"), 2, "continuing",
+    plan, 2, "continuing",
     refreshment = "entrant_register", rounding = "ceiling"
   )
   startup_n <- plan$n_cohorts * ceiling(plan$n_entrants)
@@ -306,7 +305,7 @@ test_that("whole-vintage refreshment does not gain a combined-weight route", {
     start = "immediate"
   )
   schedule <- svyplan::design_schedule(
-    plan, svyplan::design_rotation("4"), 2, "continuing",
+    plan, 2, "continuing",
     refreshment = "whole_vintage", rounding = "ceiling"
   )
   intake_n <- ceiling(plan$n_entrants)
@@ -327,4 +326,47 @@ test_that("whole-vintage refreshment does not gain a combined-weight route", {
     as_svydesign(execute(program, wave = 2)),
     class = "samplyr_error_rotation_wave_not_combinable"
   )
+})
+
+test_that("a plan with a gap in its rotation runs with its planned overlap", {
+  plan <- svyplan::n_panel(
+    svyplan::n_prop(p = 0.5, moe = 0.25),
+    retention = c(0.90, 0.85, 0.90),
+    resp_rate = 0.80,
+    design = "rotating",
+    start = "immediate",
+    rotation = "2-2-2"
+  )
+  schedule <- svyplan::design_schedule(
+    plan, 8, "continuing",
+    refreshment = "entrant_register", rounding = "ceiling"
+  )
+  intake_n <- schedule$components$panel_issue[[1L]]
+  # a gapped startup holds a panel for every stage of the life, so it draws
+  # more than the cohorts in sample
+  startup_n <- schedule$components$operational_issue[[1L]]
+  expect_equal(startup_n, schedule$life_length * intake_n)
+
+  cohorts <- list(
+    startup = sampling_design() |>
+      draw(n = startup_n) |>
+      execute(data.frame(id = sprintf("S%03d", 1:400)), seed = 31,
+              panels = schedule)
+  )
+  for (t in 2:8) {
+    cohorts[[paste0("intake_", t)]] <- sampling_design() |>
+      draw(n = intake_n) |>
+      execute(data.frame(id = sprintf("I%d_%03d", t, 1:100)), seed = 30 + t)
+  }
+  program <- rotation_program(cohorts, schedule = schedule, through = 8)
+  ids <- lapply(1:8, function(t) {
+    unlist(lapply(execute(program, wave = t), function(z) z$id))
+  })
+
+  planned <- tapply(schedule$schedule$active, schedule$schedule$wave, sum)
+  expect_equal(lengths(ids), as.vector(planned) * intake_n)
+  realized <- vapply(1:5, function(lag) {
+    length(intersect(ids[[1L]], ids[[1L + lag]])) / length(ids[[1L]])
+  }, numeric(1))
+  expect_equal(realized, as.double(svyplan::design_overlap("2-2-2")))
 })

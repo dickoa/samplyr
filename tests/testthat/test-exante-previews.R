@@ -184,3 +184,40 @@ test_that("custom ex-ante quality uses the registered probability contract", {
     }
   }
 })
+
+test_that("a frame of primary units previews the first stage of a deeper design", {
+  primary <- data.frame(
+    stratum = rep(c("A", "B"), each = 30),
+    cluster = rep(1:12, each = 5),
+    mos = rep(c(5, 40, 12, 90, 7, 33, 21, 60, 15, 8, 50, 11), each = 5),
+    x = rep(1:5, 12)
+  )
+  # The segments exist only once the clusters are listed.
+  full <- primary
+  full$segment <- full$x %% 2
+  full$segment_mos <- ifelse(full$segment == 1, 3, 2)
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(cluster) |>
+    draw(n = 3, method = "pps_systematic", mos = mos) |>
+    add_stage() |> cluster_by(segment) |>
+    draw(n = 1, method = "pps_brewer", mos = segment_mos) |>
+    add_stage() |> draw(n = 1)
+
+  for (detail in c("stage", "pool", "unit")) {
+    expect_identical(
+      frame_summary(design, primary, stages = 1, detail = detail),
+      frame_summary(design, full, stages = 1, detail = detail)
+    )
+  }
+  expect_identical(
+    frame_summary(design, full, stages = 1, detail = "pool"),
+    frame_summary(design, full, detail = "pool") |>
+      dplyr::filter(stage == 1)
+  )
+  expect_error(frame_summary(design, primary),
+               class = "samplyr_error_frame_missing_vars")
+  expect_error(frame_summary(design, primary, stages = 2),
+               class = "samplyr_error_frame_missing_vars")
+  expect_error(frame_summary(design, primary, stages = 4),
+               class = "samplyr_error_stage_selector")
+})

@@ -169,7 +169,10 @@ values. Supported by \code{"bernoulli"}, \code{"pps_poisson"}, \code{"pps_sps"},
 given set of PRN values, which coordinates samples across survey waves.
 With \code{"scps"} it is also fixed by the order the pool's units are
 visited in, the frame's row order or the \code{control} order, so
-coordinated draws need the same order.}
+coordinated draws need the same order. Keeping two samples apart
+needs an update of the PRNs that depends on the method, \code{1 - prn} for
+\code{"pps_sps"}, \code{"pps_pareto"} and \code{"scps"}. \code{vignette("design-semantics")}
+gives the rules.}
 
 \item{aux}{Cube balancing declarations for \code{method = "cube"}, or ordinary
 balancing variables for a registered balanced method that declares

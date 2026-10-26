@@ -303,14 +303,15 @@ approximation and is reported as such. Increase the replicate count to reduce
 simulation error. svrep's `estimate_boot_sim_cv()` helps assess it for chosen
 estimates. No new sampling verbs are needed.
 
-Two-phase replicate export is not yet supported. Multi-stage RWYB export
+Two-phase replicate export is not yet supported. A materialized wave is
+replicated by ultimate clusters, as `as_svydesign()` exports it. Multi-stage RWYB export
 requires every selected parent to remain represented in the final sample.
 Later Poisson stages require a complete frame digest to check this. A
 noncertainty singleton is refused when its variance is not estimable, while
 a singleton Poisson sample can contribute a valid variance estimate.
 
-When exporting a materialized wave or a second-phase sample with
-`as_svydesign()`, current analysis columns take precedence over same-named
+When exporting a second-phase sample, or a materialized wave as two phases,
+with `as_svydesign()`, current analysis columns take precedence over same-named
 columns in the retained first-phase sample. Missing current measurements
 remain missing. Keep earlier measurements under separate names if you need
 both. Identifiers and sampling metadata retain their design meanings.

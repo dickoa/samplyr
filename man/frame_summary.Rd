@@ -32,7 +32,9 @@ The arguments after them must be named exactly, so the singular
 \code{stage} is reported rather than prefix-matched.}
 
 \item{stages}{An integer vector of stage numbers to report, or
-\code{NULL} (default) for all recorded stages.}
+\code{NULL} (default) for all recorded stages. With \code{frame}, only the
+stages up to the last one named are resolved, so the frame needs the
+variables of those stages only, as \code{\link[=execute]{execute()}} does with \code{stages}.}
 
 \item{scope}{Denominator basis for population sizes and take rates.
 \code{"eligible"} (default) counts the units eligible for the recorded
@@ -161,6 +163,17 @@ records only the stage prefix every replicate shares, because
 later-stage pools hang off each replicate's own selected parents, and
 \code{frame_summary()} says so.
 
+A materialized wave carries the digest of the realization it was
+activated from: its master's, or, while the master's later stages are
+drawn one wave at a time, the master's stages and the pools of the
+tenures or periods it reads. A master whose panels hold several tenures
+records every tenure drawn so far, its pools keyed by the wave the
+tenure opened at. Stage detail then has a \code{tenure} column and one row
+per tenure of a stage drawn by tenure, and pool detail a \code{tenure}
+column. Both also have \code{n_excluded}, the units of the listing that the
+tenure left out because earlier tenures drew them (see
+\link{panel_assignment}). These columns are absent otherwise.
+
 A digest whose sample was modified after execution (rows, weights,
 or design columns changed) is reported as invalidated and refused.
 }
@@ -173,6 +186,11 @@ checked against next wave's frame. \code{n_realized} and \code{take_rate} are
 \code{NA}, as are \code{is_selected} and \code{n_hits} at \code{detail = "unit"}. Every
 other column, and the shape of the table, matches a recorded digest,
 so the two are directly comparable.
+
+A frame of primary units can be previewed before the frames below it
+exist. \code{frame_summary(design, frame, stages = 1)} checks the chances of
+the first stage, certainty included, on a frame that lacks the cluster
+or size variables of later stages.
 
 At \code{detail = "pool"}, a stage below a clustered stage reports one pool
 per \emph{candidate} parent, and its \code{n_target} is what that stage would

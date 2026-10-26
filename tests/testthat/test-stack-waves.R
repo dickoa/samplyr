@@ -39,8 +39,8 @@ test_that("waves stack into one row per observed unit-wave", {
   expect_false(inherits(tab, "tbl_sample"))
   expect_identical(nrow(tab), nrow(w1) + nrow(w2))
   expect_identical(
-    names(tab)[1:4],
-    c("wave", "master_id", "panel", "design_weight")
+    names(tab)[1:5],
+    c("wave", "master_id", "panel", "visit", "design_weight")
   )
   expect_setequal(unique(tab$wave), c(1L, 2L))
 
@@ -51,6 +51,10 @@ test_that("waves stack into one row per observed unit-wave", {
     expect_equal(
       part$design_weight[order(part$master_id)],
       as.data.frame(w)$.weight[order(as.data.frame(w)$.sample_id)]
+    )
+    expect_identical(
+      part$visit[order(part$master_id)],
+      as.data.frame(w)$.visit[order(as.data.frame(w)$.sample_id)]
     )
   }
 
@@ -195,7 +199,7 @@ test_that("an unreadable assignment record refuses", {
 test_that("a data column named for a generated one refuses", {
   # None is reserved, and vctrs would rename them to panel...3 and panel...8.
   master <- stack_master()
-  for (column in c("wave", "master_id", "panel", "design_weight")) {
+  for (column in c("wave", "master_id", "panel", "visit", "design_weight")) {
     w1 <- execute(master, wave = 1)
     w2 <- execute(master, wave = 2)
     w1[[column]] <- "user data"
@@ -217,7 +221,8 @@ test_that("the stack is not a sample and does not export as one", {
 })
 
 test_that("masters of different frames refuse, at the same seed and schedule", {
-  # Identical design, seed, schedule and integrity record over disjoint frames.
+  # Identical design, seed, schedule and protected integrity record over
+  # disjoint frames. Only the in-memory hashes of the id column differ.
   design <- sampling_design() |> stratify_by(region) |> draw(n = 60)
   frame_a <- stack_frame()
   frame_b <- stack_frame()
@@ -228,8 +233,8 @@ test_that("masters of different frames refuse, at the same seed and schedule", {
 
   expect_length(intersect(as.data.frame(a)$id, as.data.frame(b)$id), 0L)
   expect_identical(
-    attr(a, "metadata")$integrity,
-    attr(b, "metadata")$integrity
+    integrity_for_file(attr(a, "metadata")$integrity),
+    integrity_for_file(attr(b, "metadata")$integrity)
   )
   expect_false(identical(
     attr(execute(a, wave = 1), "metadata")$wave$master_digest,

@@ -636,8 +636,13 @@ test_that("an empty primary unit in phase 2 or in a wave's master is refused", {
     by_psu, list(empty_psu_areas(), roster), seed = 1, panels = schedule
   )
   expect_false(1L %in% master$psu)
+  wave <- execute(master, wave = 1)
   expect_error(
-    as_svydesign(execute(master, wave = 1)),
+    as_svydesign(wave),
+    class = "samplyr_error_export_empty_psu"
+  )
+  expect_error(
+    as_svydesign(wave, method = "full"),
     class = "samplyr_error_export_empty_psu"
   )
 })
@@ -953,7 +958,7 @@ test_that("a wave of a master with later-stage strata keeps them", {
   )
 
   expect_export_invariants(
-    as_svydesign(wave), wave, "y",
+    as_svydesign(wave, method = "full"), wave, "y",
     reference = by_hand, stages = c(2, 1)
   )
 })
@@ -1215,6 +1220,12 @@ test_that("wave generated names never overwrite a user column", {
       ".activation_block_N", ".active", ".activation_prob",
       ".activation_weight", ".prob_1"
     ),
+    function(s) as_svydesign(s, method = "full"),
+    sample_cols = union(names(master), names(wave))
+  )
+  expect_collision_free(
+    wave,
+    ".id_1",
     as_svydesign,
     sample_cols = union(names(master), names(wave))
   )
@@ -1683,6 +1694,10 @@ test_that("a wave export takes no pps", {
   expect_no_error(as_svydesign(wave))
   expect_error(
     as_svydesign(wave, pps = "brewer"),
+    class = "samplyr_error_survey_argument"
+  )
+  expect_error(
+    as_svydesign(wave, pps = "brewer", method = "full"),
     class = "samplyr_error_twophase_phase2_pps"
   )
 })
@@ -1713,7 +1728,10 @@ unequal_take_wave <- function(takes, seed = 3) {
 
 test_that("a two-phase total's variance ignores the outcome's level", {
   skip_if_not_installed("survey")
-  svy <- as_svydesign(unequal_take_wave(c(a = 5, b = 6, c = 7, d = 9)))
+  svy <- as_svydesign(
+    unequal_take_wave(c(a = 5, b = 6, c = 7, d = 9)),
+    method = "full"
+  )
   v <- stats::vcov(survey::svytotal(~y, svy))[1, 1]
   v_shifted <- stats::vcov(survey::svytotal(~y_shifted, svy))[1, 1]
   expect_gt(v, 0)
@@ -1723,9 +1741,9 @@ test_that("a two-phase total's variance ignores the outcome's level", {
 test_that("the phase-1 term is survey's own where its stratum counts align", {
   skip_if_not_installed("survey")
   wave <- unequal_take_wave(8)
-  rebuilt <- as_svydesign(wave)
+  rebuilt <- as_svydesign(wave, method = "full")
   local_mocked_bindings(twophase_phase1_aligned = function(result) result)
-  as_built <- as_svydesign(wave)
+  as_built <- as_svydesign(wave, method = "full")
   expect_equal(
     as.matrix(rebuilt$dcheck$full),
     as.matrix(as_built$dcheck$full),

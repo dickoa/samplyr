@@ -292,6 +292,33 @@ test_that("negative and missing importances are refused", {
   )
 })
 
+test_that("infinite importances and totals are refused", {
+  s <- wl_all_samples()[["ab"]]
+
+  infinite <- wl_links()
+  infinite$B[1] <- Inf
+  expect_error(
+    wl_share(s, links = infinite),
+    class = "samplyr_error_share_weights_multiplicity"
+  )
+
+  targets <- wl_targets()
+  targets$total <- c(Inf, 4, 10)
+  expect_error(
+    share_weights(
+      s, targets, wl_links(),
+      by = c(unit = "unit"), to = c(tid = "tid"),
+      within = hh, multiplicity = weighted_links(B, total = total)
+    ),
+    class = "samplyr_error_share_weights_multiplicity"
+  )
+
+  # Importances need not be whole numbers.
+  fractional <- wl_links()
+  fractional$B <- fractional$B / 4
+  expect_no_error(wl_share(s, links = fractional))
+})
+
 test_that("weighted_links refuses columns and totals that do not exist", {
   s <- wl_all_samples()[["ab"]]
 

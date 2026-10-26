@@ -51,7 +51,9 @@
 #' To assess a second phase, give the phase-1 sample as `frame`: the report
 #' then covers the two-phase export. A `tbl_sample` passed as `x` stands for
 #' its design, and when it is itself a later phase, its earlier phase is used.
-#' Materialized panel waves are not assessed.
+#' Materialized waves and shared-weight samples are refused, as `x` or as
+#' `frame`. Their exports follow rules of their own, so the report of the
+#' design they come from does not describe them.
 #'
 #' The report reads the same rules the exports apply, and a test compares it
 #' with the conditions the exports actually raise on executed samples. It
@@ -116,6 +118,9 @@ variance_estimators <- function(x, frame = NULL) {
     phase1 <- frame
     frame <- NULL
   }
+  for (s in list(if (is_tbl_sample(x)) x, phase1)) {
+    if (!is_null(s)) refuse_unassessed_sample(s)
+  }
   stages <- seq_along(design$stages)
   traits <- stage_variance_traits(design, stages)
   facts <- frame_variance_facts(design, frame, traits, call = current_env())
@@ -151,6 +156,42 @@ variance_estimators <- function(x, frame = NULL) {
     note = vapply(rows, `[[`, "", "note"),
     sample_risk = vapply(rows, `[[`, "", "sample_risk")
   )
+}
+
+#' Refuse a sample whose export the report does not describe
+#'
+#' A wave exports by ultimate clusters and refuses `"rwyb"`, and a
+#' shared-weight sample exports by replicating its source design. The
+#' report reads the design's rules, which neither follows.
+#' @noRd
+refuse_unassessed_sample <- function(s, call = caller_env()) {
+  if (!is_null(attr(s, "metadata")[["wave"]])) {
+    abort_samplyr(
+      c(
+        "{.fn variance_estimators} does not assess a materialized wave.",
+        "i" = "A wave's export follows rules of its own: ultimate clusters
+               by default, and no {.val rwyb} replicates.",
+        "i" = "Call {.fn as_svydesign} or {.fn as_svrepdesign} on the wave
+               to see whether an estimator is supported."
+      ),
+      class = "samplyr_error_variance_estimators_input",
+      call = call
+    )
+  }
+  if (identical(sample_weight_contract(s), "shared")) {
+    abort_samplyr(
+      c(
+        "{.fn variance_estimators} does not assess a shared-weight sample.",
+        "i" = "Its export replicates the source design and shares the
+               weights inside every replicate, so the source design's report
+               does not describe it.",
+        "i" = "Use {.fn as_svrepdesign} on the shared sample."
+      ),
+      class = "samplyr_error_variance_estimators_input",
+      call = call
+    )
+  }
+  invisible(NULL)
 }
 
 ## What each stage is, from the design
@@ -192,17 +233,31 @@ stage_variance_traits <- function(design, stages) {
 #'
 #' `NULL` without a frame, or when the design cannot be resolved ex ante (a
 #' stage below a with-replacement stage), in which case every frame check is
-#' left to the sample.
+#' left to the sample. A frame of the first stages only, lacking the
+#' variables of a later stage, gives facts for the stages above that one.
 #' @noRd
 frame_variance_facts <- function(design, frame, traits, call = caller_env()) {
   if (is_null(frame)) {
     return(NULL)
   }
+  resolve <- function(depth) {
+    tryCatch(
+      resolve_exante_digest(design, frame, depth = depth, call = call),
+      samplyr_error_exante_unsupported = function(e) NULL,
+      samplyr_exante_unresolvable = function(e) NULL
+    )
+  }
   digest <- tryCatch(
-    exante_digest(design, frame, call = call),
-    samplyr_error_exante_unsupported = function(e) NULL,
-    samplyr_exante_unresolvable = function(e) NULL
+    resolve(NULL),
+    samplyr_error_frame_missing_vars = function(e) e,
+    samplyr_error_frame_missing_ancestry = function(e) e
   )
+  if (inherits(digest, "condition")) {
+    if (is_null(digest$stage) || digest$stage < 2L) {
+      rlang::cnd_signal(digest)
+    }
+    digest <- resolve(digest$stage - 1L)
+  }
   if (is_null(digest)) {
     return(NULL)
   }
@@ -239,6 +294,12 @@ frame_variance_facts <- function(design, frame, traits, call = caller_env()) {
   for (pos in seq_along(facts)[-1]) {
     facts[[pos]]$empty_parents <- facts[[pos - 1L]]$n_units -
       length(facts[[pos]]$parents)
+    parents <- digest$stages[[pos - 1L]]$units
+    certain <- if (!is_null(parents) && "is_certainty" %in% names(parents)) {
+      parents$unit_id[parents$is_certainty]
+    }
+    under <- digest$stages[[pos]]$pools$parent_unit %in% certain
+    facts[[pos]]$certain_parent_takes <- facts[[pos]]$takes[under]
   }
   facts
 }
@@ -411,6 +472,13 @@ empty_unit_findings <- function(traits, facts) {
        to see whether any candidate has none"
     )))
   }
+  if (is_null(stage_fact(facts, traits[[2]]$stage))) {
+    return(list(finding(
+      "risk", "samplyr_error_export_empty_psu",
+      "A selected primary unit with no rows below it is refused. A frame
+       that reaches stage 2 shows whether any candidate has none"
+    )))
+  }
   out <- list()
   for (fact in facts[-1]) {
     if (fact$empty_parents <= 0) {
@@ -563,12 +631,14 @@ singleton_findings <- function(traits, facts, class, effect, advice,
     )))
   }
   out <- list()
+  uncovered <- FALSE
   for (t in traits) {
     if (skip(t)) {
       next
     }
     fact <- stage_fact(facts, t$stage)
     if (is_null(fact)) {
+      uncovered <- TRUE
       next
     }
     n_single <- sum(fact$singleton)
@@ -587,6 +657,13 @@ singleton_findings <- function(traits, facts, class, effect, advice,
         paste0("A stratum at ", t$name, " may be left with one sampled unit")
       )))
     }
+  }
+  if (uncovered) {
+    out <- c(out, list(finding(
+      "risk", class,
+      "A stratum left with one sampled unit outside certainty. A frame that
+       reaches every stage shows whether the allocation fixes one"
+    )))
   }
   out
 }
@@ -659,23 +736,28 @@ joint_rows_per_unit_findings <- function(traits, facts) {
     }
     return(list())
   }
-  if (is_null(facts)) {
-    below_one <- all(vapply(traits[-1], function(t) {
+  # A stage the frame does not reach is judged by its design take.
+  takes_more <- vapply(traits[-1], function(t) {
+    fact <- stage_fact(facts, t$stage)
+    if (is_null(fact)) {
       n <- t$draw$n
-      is.numeric(n) && length(n) == 1L && n == 1 && is_null(t$draw$frac)
-    }, logical(1)))
-    if (below_one) {
-      return(list())
+      return(!(is.numeric(n) && length(n) == 1L && n == 1 &&
+                 is_null(t$draw$frac)))
     }
-    return(list(finding("refused", "samplyr_error_pps_rows_per_psu", note,
-                        stage = 1L)))
+    length(fact$takes) > 0 && any(fact$takes > 1)
+  }, logical(1))
+  if (!any(takes_more)) {
+    return(list())
   }
-  takes <- unlist(lapply(facts[-1], `[[`, "takes"))
-  if (length(takes) > 0 && any(takes > 1)) {
+  by_frame <- vapply(traits[-1][takes_more], function(t) {
+    !is_null(stage_fact(facts, t$stage))
+  }, logical(1))
+  if (any(by_frame)) {
     return(list(finding("refused", "samplyr_error_pps_rows_per_psu", note,
                         stage = 1L, decided_by = "frame")))
   }
-  list()
+  list(finding("refused", "samplyr_error_pps_rows_per_psu", note,
+               stage = 1L))
 }
 
 #' The generic replicate types
@@ -760,12 +842,53 @@ generic_replicate_findings <- function(type, traits, facts, common) {
       class = "samplyr_error_svrep_conversion_failed",
       effect = "refused",
       advice = "survey cannot form replicates from it"
-    ))
+    ), certainty_singleton_findings(traits, facts))
   }
   if (type %in% c("BRR", "Fay")) {
     out <- c(out, brr_findings(traits, facts))
   }
   c(out, common$risks)
+}
+
+#' A PSU taken with certainty that keeps a single unit below it
+#'
+#' The generic replicate types make each certainty PSU a stratum of its
+#' stage-2 units, so a take of one there leaves a stratum with one unit.
+#' Without a frame, `singleton_findings()` already reports the risk.
+#' @noRd
+certainty_singleton_findings <- function(traits, facts) {
+  if (length(traits) < 2L) {
+    return(list())
+  }
+  first <- stage_fact(facts, traits[[1]]$stage)
+  if (is_null(first) || first$n_certainty == 0) {
+    return(list())
+  }
+  note <- "A PSU taken with certainty is a stratum of its stage-2 units in
+    the replicate design, and one that keeps a single unit cannot be
+    resampled"
+  second <- stage_fact(facts, traits[[2]]$stage)
+  if (is_null(second)) {
+    return(list(finding("risk", "samplyr_error_svrep_conversion_failed",
+                        note)))
+  }
+  single <- sum(second$certain_parent_takes == 1)
+  if (second$fixed && single > 0) {
+    return(list(finding(
+      "refused", "samplyr_error_svrep_conversion_failed",
+      paste0(single, " stage-2 pool", if (single > 1) "s" else "",
+             " under a PSU taken with certainty take",
+             if (single > 1) "" else "s", " a single unit. Each such PSU",
+             " is a stratum of its stage-2 units in the replicate design,",
+             " so survey cannot form replicates from it"),
+      stage = traits[[2]]$stage, decided_by = "frame"
+    )))
+  }
+  if (!second$fixed && length(second$certain_parent_takes) > 0) {
+    return(list(finding("risk", "samplyr_error_svrep_conversion_failed",
+                        note)))
+  }
+  list()
 }
 
 #' Does a stage below the first add variance?

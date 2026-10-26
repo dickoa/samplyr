@@ -71,7 +71,9 @@ random numbers.
 To assess a second phase, give the phase-1 sample as \code{frame}: the report
 then covers the two-phase export. A \code{tbl_sample} passed as \code{x} stands for
 its design, and when it is itself a later phase, its earlier phase is used.
-Materialized panel waves are not assessed.
+Materialized waves and shared-weight samples are refused, as \code{x} or as
+\code{frame}. Their exports follow rules of their own, so the report of the
+design they come from does not describe them.
 
 The report reads the same rules the exports apply, and a test compares it
 with the conditions the exports actually raise on executed samples. It

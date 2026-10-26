@@ -245,10 +245,10 @@ nest_stage_clusters <- function(design, stage_idx, frame) {
     unique(c(collect_ancestor_cluster_vars(design, stage_idx), spec$vars)),
     names(frame)
   )
-  pairs <- vctrs::vec_unique(vctrs::new_data_frame(
-    .subset(frame, c(unit_vars, added)),
-    n = nrow(frame)
-  ))
+  pairs <- vctrs::vec_slice(
+    vctrs::new_data_frame(.subset(frame, c(unit_vars, added)), n = nrow(frame)),
+    unique_key_loc(frame, c(unit_vars, added))
+  )
   pairs <- pairs[stats::complete.cases(pairs), , drop = FALSE]
   if (anyDuplicated(pairs[, unit_vars, drop = FALSE]) > 0L) {
     design$stages[[stage_idx]]$clusters <- new_cluster_spec(

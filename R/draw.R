@@ -330,7 +330,10 @@ NULL
 #'   given set of PRN values, which coordinates samples across survey waves.
 #'   With `"scps"` it is also fixed by the order the pool's units are
 #'   visited in, the frame's row order or the `control` order, so
-#'   coordinated draws need the same order.
+#'   coordinated draws need the same order. Keeping two samples apart
+#'   needs an update of the PRNs that depends on the method, `1 - prn` for
+#'   `"pps_sps"`, `"pps_pareto"` and `"scps"`. `vignette("design-semantics")`
+#'   gives the rules.
 #' @param aux Cube balancing declarations for `method = "cube"`, or ordinary
 #'   balancing variables for a registered balanced method that declares
 #'   `supports_aux = TRUE`. Bare numeric columns, such as
@@ -1047,7 +1050,7 @@ suggest_method_names <- function(name, candidates, max_dist = 2L) {
 
 #' @noRd
 resolve_draw_method <- function(method, call = rlang::caller_env()) {
-  if (!is_character(method) || length(method) != 1) {
+  if (!is_character(method) || length(method) != 1 || is.na(method)) {
     cli_abort(
       "{.arg method} must be a single character string",
       call = call,
@@ -1274,6 +1277,37 @@ validate_draw_df <- function(
     }
   }
 
+  invisible(NULL)
+}
+
+#' Refuse a named size vector whose names do not each name one stratum
+#'
+#' Allocation tables refuse duplicate keys. Indexing a named vector by name
+#' takes the first match, so a repeated name would drop a request silently.
+#' @noRd
+check_allocation_names <- function(x, arg, call = caller_env()) {
+  nms <- names(x)
+  if (is_null(nms)) {
+    return(invisible(NULL))
+  }
+  if (anyNA(nms) || any(nms == "")) {
+    abort_samplyr(
+      "Every element of a named {.arg {arg}} needs a stratum name.",
+      class = "samplyr_error_alloc_invalid_input_type",
+      call = call
+    )
+  }
+  dup <- unique(nms[duplicated(nms)])
+  if (length(dup) > 0L) {
+    abort_samplyr(
+      c(
+        "Named {.arg {arg}} gives more than one value for the same stratum.",
+        "x" = "Repeated: {.val {dup}}."
+      ),
+      class = "samplyr_error_alloc_duplicate_keys",
+      call = call
+    )
+  }
   invisible(NULL)
 }
 
@@ -1702,6 +1736,7 @@ validate_draw_args <- function(
         call = call
       )
     }
+    check_allocation_names(n, "n", call = call)
     if (!is_null(names(n)) && length(strata_vars) > 1) {
       abort_samplyr(
         c(
@@ -1761,6 +1796,7 @@ validate_draw_args <- function(
         call = call
       )
     }
+    check_allocation_names(frac, "frac", call = call)
     if (!is_null(names(frac)) && length(strata_vars) > 1) {
       abort_samplyr(
         c(

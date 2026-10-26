@@ -292,7 +292,8 @@ test_that("cross-wave joint probabilities are exact", {
 
 test_that("the exported wave keeps its structure, estimate and error", {
   skip_if_not_installed("survey")
-  design <- as_svydesign(execute(baseline_clustered(), wave = 2))
+  wave <- execute(baseline_clustered(), wave = 2)
+  design <- as_svydesign(wave, method = "full")
 
   expect_s3_class(design, "twophase2")
   # Degrees of freedom, not the SE, distinguish a two-phase export.
@@ -301,6 +302,27 @@ test_that("the exported wave keeps its structure, estimate and error", {
   total <- survey::svytotal(~y, design)
   expect_equal(as.numeric(coef(total)), 1815, tolerance = 1e-9)
   expect_equal(as.numeric(survey::SE(total)), 409.383683114, tolerance = 1e-9)
+
+  # The default is the ultimate-cluster design on the wave's own rows.
+  default <- as_svydesign(wave)
+  expect_false(inherits(default, "twophase2"))
+  reference <- survey::svydesign(
+    ids = ~cluster,
+    strata = ~stratum,
+    weights = ~.weight,
+    nest = TRUE,
+    data = as.data.frame(wave)
+  )
+  expect_identical(survey::degf(default), survey::degf(reference))
+  expect_equal(
+    survey::svytotal(~y, default),
+    survey::svytotal(~y, reference),
+    ignore_attr = TRUE
+  )
+  expect_equal(
+    as.numeric(survey::SE(survey::svytotal(~y, default))),
+    as.numeric(survey::SE(survey::svytotal(~y, reference)))
+  )
 })
 
 ## Multi-hit ancestor

@@ -265,7 +265,7 @@ test_that("modified, two-phase, and unclustered samples are refused", {
   )
 
   expect_error(varcomp(s, "y"), "one-sided formula")
-  expect_error(varcomp(s, ~nope), "not found")
+  expect_error(varcomp(s, ~nope), class = "samplyr_error_varcomp_formula")
 })
 
 test_that("a third clustered stage is refused, a second is not", {
@@ -368,4 +368,57 @@ test_that("a stratified WR first stage qualifies draw keys by stratum", {
       tolerance = 1e-12
     )
   }
+})
+
+## Formulas are evaluated on the sample
+
+test_that("an outcome expression is the outcome analyzed", {
+  frame <- varcomp_frame()
+  frame$y <- exp(frame$y)
+  s <- two_stage_pps(frame)
+  s$log_y <- log(s$y)
+  expect_equal(
+    as.data.frame(varcomp(s, ~log(y))),
+    as.data.frame(varcomp(s, ~log_y))
+  )
+  expect_false(isTRUE(all.equal(
+    as.data.frame(varcomp(s, ~log(y))),
+    as.data.frame(varcomp(s, ~y))
+  )))
+  s$y2 <- s$y * 100
+  expect_equal(
+    as.data.frame(varcomp(s, ~I(y * 100))),
+    as.data.frame(varcomp(s, ~y2))
+  )
+})
+
+test_that("a strata expression is the grouping used", {
+  frame <- varcomp_frame()
+  frame$zone <- rep(c("a", "b"), each = 60)
+  frame$part <- rep(c("x", "y"), times = 60)
+  s <- sampling_design() |>
+    add_stage() |> cluster_by(cl) |> draw(n = 12) |>
+    add_stage() |> draw(n = 3) |>
+    execute(frame, seed = 71)
+  s$zone_up <- toupper(s$zone)
+  expect_equal(
+    as.data.frame(varcomp(s, ~y, strata = ~toupper(zone))),
+    as.data.frame(varcomp(s, ~y, strata = ~zone_up))
+  )
+})
+
+test_that("a formula over anything but the sample's columns is refused", {
+  s <- two_stage_pps(varcomp_frame())
+  # A variable of the calling environment is not read in place of a column.
+  absent <- rep(1, nrow(s))
+  expect_error(varcomp(s, ~absent), class = "samplyr_error_varcomp_formula")
+  expect_error(varcomp(s, ~1), class = "samplyr_error_varcomp_formula")
+  expect_error(varcomp(s, ~mean(y)), class = "samplyr_error_varcomp_formula")
+  expect_error(varcomp(s, ~log("y")), class = "samplyr_error_varcomp_formula")
+  s$label <- "a"
+  expect_error(varcomp(s, ~label), class = "samplyr_error_varcomp_formula")
+  expect_error(
+    varcomp(s, ~y, strata = y ~ cl),
+    class = "samplyr_error_varcomp_formula"
+  )
 })

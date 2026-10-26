@@ -1943,3 +1943,92 @@ test_that("execute() errors on multi-stage cluster variable with NA", {
     "NA"
   )
 })
+
+## Numeric group values that print alike
+
+# 0.1 + 0.2 and 0.3 differ as doubles but print as "0.3", so a key built
+# from either would merge two strata. The same holds for 1 and 1 + 1e-15.
+alike_frame <- function() {
+  data.frame(
+    id = 1:6,
+    h = rep(c(0.1 + 0.2, 0.3), each = 3),
+    cl = rep(c(1, 1 + 1e-15), c(2, 4)),
+    mos = 10
+  )
+}
+
+test_that("strata whose values print alike are refused, not merged", {
+  frame <- alike_frame()
+  thresholds <- data.frame(h = c(0.1 + 0.2, 0.3), certainty_size = c(5, 20))
+  certainty <- sampling_design() |>
+    stratify_by(h) |>
+    draw(n = 1, method = "pps_brewer", mos = mos,
+         certainty_size = thresholds, certainty_overflow = "allow")
+  plain <- sampling_design() |> stratify_by(h) |> draw(n = 1)
+
+  expect_error(execute(certainty, frame, seed = 1),
+               class = "samplyr_error_key_precision")
+  expect_error(execute(plain, frame, seed = 1),
+               class = "samplyr_error_key_precision")
+  expect_error(exante_probabilities(plain, frame, key = id),
+               class = "samplyr_error_key_precision")
+  expect_error(frame_summary(plain, frame),
+               class = "samplyr_error_key_precision")
+  expect_error(validate_frame(plain, frame),
+               "equal to 15 significant digits")
+  # One component of a compound stratum is enough.
+  frame$b <- "x"
+  expect_error(
+    execute(sampling_design() |> stratify_by(h, b) |> draw(n = 1), frame,
+            seed = 1),
+    class = "samplyr_error_key_precision"
+  )
+})
+
+test_that("clusters whose ids print alike are refused, not merged", {
+  frame <- alike_frame()
+  design <- sampling_design() |> cluster_by(cl) |> draw(n = 1)
+
+  expect_error(execute(design, frame, seed = 1),
+               class = "samplyr_error_key_precision")
+  expect_error(exante_probabilities(design, frame, key = id),
+               class = "samplyr_error_key_precision")
+  expect_error(validate_frame(design, frame),
+               "equal to 15 significant digits")
+  two_stage <- sampling_design() |>
+    add_stage() |> cluster_by(cl) |> draw(n = 1) |>
+    add_stage() |> draw(n = 1)
+  expect_error(execute(two_stage, frame, seed = 1),
+               class = "samplyr_error_key_precision")
+})
+
+test_that("the refusal names the column and both values", {
+  err <- expect_error(
+    execute(sampling_design() |> stratify_by(h) |> draw(n = 1),
+            alike_frame(), seed = 1),
+    class = "samplyr_error_frame_invalid"
+  )
+  msg <- cli::ansi_strip(conditionMessage(err))
+  expect_match(msg, "h has distinct values", fixed = TRUE)
+  expect_match(msg, "0.30000000000000004", fixed = TRUE)
+  expect_match(msg, "0.29999999999999999", fixed = TRUE)
+  expect_identical(deparse(conditionCall(err)[[1]]), "execute")
+})
+
+test_that("ordinary numeric and date groups are accepted", {
+  frame <- data.frame(
+    id = 1:40,
+    # Signed zero prints as "0" and is one value.
+    h = rep(c(0.1, 0.2, 0.3, -0), each = 10),
+    cl = as.double(rep(1:20, each = 2)),
+    d = rep(as.Date("2020-01-01") + 0:3, 10)
+  )
+  frame$h[frame$h == 0] <- c(rep(0, 5), rep(-0, 5))
+  sample <- sampling_design() |>
+    stratify_by(h) |> cluster_by(cl) |> draw(n = 1) |>
+    execute(frame, seed = 1)
+  expect_identical(length(unique(sample$h)), 4L)
+  expect_no_error(
+    execute(sampling_design() |> stratify_by(d) |> draw(n = 1), frame, seed = 1)
+  )
+})

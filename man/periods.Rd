@@ -60,13 +60,27 @@ otherwise, so multiplying by \code{k} by hand is not generally valid.
 \link[=summary.tbl_sample]{summary()} reports how evenly each stratum fills the
 periods.
 
-A period of a sample drawn with equal probabilities exports to survey as a
-two-phase design, the activation as its second phase. A period of a
-sample drawn with unequal probabilities, such as EAs drawn by size, has
-exact weights for totals, but \code{\link[=as_svydesign]{as_svydesign()}} refuses it
-(\code{samplyr_error_wave_phase1_pps}), since survey's two-phase design takes
-no unequal probabilities at its first phase. Its variance has no exact
-export, and the whole sample's does.
+A period exports to survey as one phase by ultimate clusters, whatever
+method drew the sample, EAs drawn by size included. \code{\link[=as_svydesign]{as_svydesign()}}
+describes the design. A period of a sample drawn with equal probabilities
+also has a two-phase export, the activation as its second phase, with
+\code{as_svydesign(method = "full")}.
+}
+
+\subsection{Periods in a multistage design}{
+
+Periods assigned at the first stage of a multistage design give the field
+teams their work plan. \code{dplyr::filter(sample, .panel == t)} lists the
+primary units of period \code{t}, which is what the listing teams need. That
+table is a work list, not a sample to continue. Its weights describe the
+whole year without the period's activation factor, and \code{\link[=as_svydesign]{as_svydesign()}}
+refuses a stage drawn from it (\code{samplyr_error_modified_sample}).
+
+The later stages are drawn from the sample itself, either for one period
+with that period's listing, \code{sample <- execute(sample, listing, wave = t)}, or for every period at once, \code{execute(sample, listing)}. The section
+"Drawing the later stages wave by wave" of \code{\link[=execute]{execute()}} states the rules
+of the first form. \code{execute(sample, wave = t)} gives a period's
+sample and weights once its later stages are drawn.
 }
 }
 \examples{

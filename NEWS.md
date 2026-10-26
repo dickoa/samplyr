@@ -10,8 +10,9 @@ needed for weighting, replay, and export to the survey and srvyr packages.
   `stratify_by()`, `cluster_by()` and `draw()`, independently of any frame,
   and run with `execute()`. The same design can be reused across frames.
 * Multistage designs run against one hierarchical frame or one register per
-  stage. Stages can be executed one at a time, and a sample piped into
-  `execute()` starts a second phase.
+  stage. Stages can be executed one at a time, and `execute()` on a
+  partial sample runs the remaining stages. A sample passed as the frame
+  of a new design starts a second phase.
 * Cluster ids may be numbered within the level above them, so town 1 of
   every county is its own unit. `cluster_by(nest = FALSE)` instead declares
   ids unique across strata and checks it.
@@ -52,9 +53,12 @@ needed for weighting, replay, and export to the survey and srvyr packages.
 ## Panels and replication
 
 * Panel assignment, rotation schedules, wave materialization with exact
-  activation weights, and replenishing panels across frame vintages.
+  activation weights, windows of several waves pooled into one sample, and
+  replenishing panels across frame vintages.
   `periods()` spreads a sample over fieldwork periods visited once, such as
-  the months of a yearly survey.
+  the months of a yearly survey, and the later stages can be drawn one
+  period or tenure at a time as listing proceeds, a schedule's `visit`
+  column opening new tenures in primary units that stay in the survey.
 * `execute(reps = R)` draws independent replicate samples.
 
 ## Analysis and export
@@ -66,6 +70,9 @@ needed for weighting, replay, and export to the survey and srvyr packages.
   Rao-Wu-Yue-Beaumont, random groups) cover multistage, PPS, certainty,
   balanced and two-phase designs. `variance_estimators()` reports before
   sampling which estimators a design supports.
+* A materialized wave exports by ultimate clusters, the variance rotating
+  surveys publish, whatever method drew its master, and its replicate
+  weights follow the same design. `method` gives its two-phase export.
 * `joint_expectation()` gives joint inclusion probabilities.
 * A sample edited after execution is detected and refused at export.
 
@@ -74,9 +81,10 @@ needed for weighting, replay, and export to the survey and srvyr packages.
 * `write_design()` and `read_design()` save designs and samples as
   versioned JSON with an execution receipt, and `replay_design()`
   reproduces a sample from its frame.
-* Every execution records a digest of the frame, so `summary()` and the
+* Most executions record a digest of the frame, so `summary()` and the
   diagnostics describe a sample without its frame and `validate_frame()`
-  detects a frame that changed.
+  detects a frame that changed. `frame_digest = "none"` turns it off, and
+  `?execute` lists the executions that record none.
 
 ## Planning with svyplan
 

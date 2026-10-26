@@ -18,7 +18,7 @@
 #' @details
 #' ## What the columns mean
 #'
-#' Four columns are generated, and their names are chosen to prevent the two
+#' Five columns are generated, and their names are chosen to prevent the two
 #' substitutions that would quietly invalidate a downstream estimate:
 #'
 #' \describe{
@@ -34,6 +34,10 @@
 #'     master's `panel_stage` names, so several rows can share one panel: all
 #'     the members of a rotating household under a retained primary unit carry
 #'     its label, not one of their own.}
+#'   \item{`visit`}{The interview number of the row's unit within its
+#'     tenure, from the schedule, as agencies publish it to measure rotation
+#'     group bias. Permanent units are active at every wave outside the
+#'     rotation and have `NA`.}
 #'   \item{`design_weight`}{samplyr's exact design weight for that wave,
 #'     including the activation factor. It is **not** a final weight: nothing
 #'     here is adjusted for nonresponse or calibrated, so a consumer asking
@@ -56,8 +60,8 @@
 #' @param ... Two or more materialized waves, each from
 #'   `execute(master, wave = t)`, all of one master realization.
 #'
-#' @return A tibble with `wave`, `master_id`, `panel` and `design_weight`
-#'   first, then the columns of the waves themselves. One row per active
+#' @return A tibble with `wave`, `master_id`, `panel`, `visit` and
+#'   `design_weight` first, then the columns of the waves themselves. One row per active
 #'   master row per wave: under with-replacement selection a population unit
 #'   may occupy several master rows, so a row is a selection occurrence rather
 #'   than necessarily a distinct population unit. `master_id` is unique within
@@ -118,6 +122,20 @@ stack_waves_provenance <- function(wave, call = caller_env()) {
                program.",
         "i" = "Identity across cohorts is not established, so units of
                different cohorts cannot be matched by {.field master_id}."
+      ),
+      class = "samplyr_error_stack_waves_input",
+      call = call
+    )
+  }
+
+  if (is_wave_window(wave)) {
+    abort_samplyr(
+      c(
+        "{.fn stack_waves} stacks single waves.",
+        "x" = "This sample pools {wave_phrase(metadata$wave$wave)} already,
+               with a row per unit and wave it is active.",
+        "i" = "Pass the waves one at a time, as
+               {.code execute(master, wave = t)} gives them."
       ),
       class = "samplyr_error_stack_waves_input",
       call = call
@@ -263,7 +281,9 @@ check_stack_waves_agreement <- function(records, call = caller_env()) {
 }
 
 #' @noRd
-stack_waves_columns <- c("wave", "master_id", "panel", "design_weight")
+stack_waves_columns <- c(
+  "wave", "master_id", "panel", "visit", "design_weight"
+)
 
 #' One wave's rows, with the generated columns in front
 #' @noRd
@@ -271,7 +291,7 @@ stack_waves_rows <- function(wave, label, call = caller_env()) {
   data <- as.data.frame(wave)
   carried <- setdiff(names(data), samplyr_internal_cols(data))
 
-  # Refuse collisions with the four interchange columns.
+  # Refuse collisions with the generated interchange columns.
   clash <- intersect(carried, stack_waves_columns)
   if (length(clash) > 0) {
     abort_samplyr(
@@ -296,6 +316,11 @@ stack_waves_rows <- function(wave, label, call = caller_env()) {
       rep(NA_integer_, nrow(data))
     } else {
       as.integer(data$.panel)
+    },
+    visit = if (is_null(data$.visit)) {
+      rep(NA_integer_, nrow(data))
+    } else {
+      as.integer(data$.visit)
     },
     design_weight = data$.weight
   )

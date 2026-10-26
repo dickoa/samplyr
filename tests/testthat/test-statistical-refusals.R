@@ -37,7 +37,8 @@ test_that("wave and phase exports use current observations including missing val
   wave <- execute(master, wave = 2)
   phase1 <- sampling_design() |> cluster_by(id) |> draw(n = 20) |> execute(frame, seed = 12)
   phase2 <- sampling_design() |> draw(n = 10) |> execute(phase1, seed = 13)
-  for (s in list(wave, phase2)) {
+  for (case in list(list(wave, "full"), list(phase2, NULL))) {
+    s <- case[[1]]
     s$y <- 100 + s$id
     s$y[2] <- NA_real_
     s$label <- factor(rep("new", nrow(s)))
@@ -45,7 +46,7 @@ test_that("wave and phase exports use current observations including missing val
     s$.active <- "reported"
     # Row order must not determine which observation replaces an old value.
     s <- s[nrow(s):1, ]
-    fit <- as_svydesign(s)
+    fit <- as_svydesign(s, method = case[[2]])
     out <- fit$phase1$sample$variables
     at <- match(out$id, s$id)
     expect_equal(out$y, s$y[at])
@@ -55,6 +56,12 @@ test_that("wave and phase exports use current observations including missing val
     expect_equal(unname(coef(suppressWarnings(survey::svytotal(~y, fit, na.rm = TRUE)))),
       sum(s$.weight * s$y, na.rm = TRUE))
   }
+  # The ultimate-cluster export of a wave is built on the wave's own rows.
+  wave$y <- 100 + wave$id
+  wave$y[2] <- NA_real_
+  out <- as_svydesign(wave)$variables
+  expect_equal(out$y[match(wave$id, out$id)], wave$y)
+
   expect_equal(master$y, rep(1, 20))
   expect_equal(phase1$y, rep(1, 20))
 })

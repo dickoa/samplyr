@@ -160,10 +160,17 @@ screened <- execute(screening, bfa_eas, seed = 25)
 nrow(screened)
 ```
 
-Declare it whenever a second phase may later subsample this sample. The two
-phases are linked through an identifier both designs declare. An ID column
-the design does not name does not link them, so the survey export of the
-second phase would be refused. The examples in `?execute` select a second
+Declare it whenever a second phase may later subsample this sample. The
+survey export links the two phases on every identifier that either design
+declares with `cluster_by()` and both samples carry, taken together. The
+phases need not declare the same identifier, but together the identifiers
+must pick out unique phase-1 rows. An ID column neither design names does not link them, so the
+survey export of the second phase would be refused.
+
+One shape needs no identifier. Phase 1's last stage draws elements by simple
+random or systematic sampling, and phase 2 draws the same way with one
+stratum per pool of that stage. Such a second phase exports as phase 1's
+design with a smaller final take. The examples in `?execute` select a second
 phase, and `?as_svydesign` gives its export.
 
 ## A three-stage household sample

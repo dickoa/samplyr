@@ -206,7 +206,8 @@ NULL
 #'   sample because its receipt cannot reproduce it.
 #' @param panels Rotation groups (panels) to partition the sample into, as an
 #'   integer count, a rotation schedule (a data frame with integer `panel`
-#'   and `wave` columns and an optional logical `active` column), or an
+#'   and `wave` columns, an optional logical `active` column and an optional
+#'   integer `visit` column that opens tenures), or an
 #'   `svyplan_schedule` from [svyplan::design_schedule()]. [periods()]
 #'   partitions it into fieldwork periods instead, each unit visited once.
 #'   The output gains a `.panel` column, and only a sample drawn with a
@@ -226,13 +227,22 @@ NULL
 #'   `NULL`) refuses the assignment, and `"permanent"` activates those units
 #'   at every wave and warns with `samplyr_warning_panel_small_pool`.
 #'   Meaningful only with a schedule. See [panel_assignment].
-#' @param wave Integer wave of a scheduled master to materialize, or `NULL`
-#'   (default). `execute(master, wave = t)` activates the panels the stored
-#'   schedule declares active at `t` and compounds the exact activation
-#'   factor into `.weight`. A wave selects units the master already assigned,
-#'   under the policy the master froze, so it takes no frame and none of
-#'   `seed`, `stages`, `panels`, `panel_stage`, `small_pool`, `reps` or
-#'   `frame_digest`. Each is refused by name rather than ignored.
+#' @param wave Integer wave of a master that carries a panel assignment, or
+#'   `NULL` (default). It has two uses, told apart by whether a frame is
+#'   given. Without a frame, `execute(master, wave = t)` materializes wave
+#'   `t`. It activates the panels the stored schedule declares active at `t`
+#'   and compounds the exact activation factor into `.weight`. A wave selects
+#'   units the master already assigned, under the policy the master froze, so
+#'   it takes none of `seed`, `stages`, `panels`, `panel_stage`, `small_pool`,
+#'   `reps` or `frame_digest`. Each is refused by name rather than ignored.
+#'   Several distinct waves, as `wave = 1:3`, pool those waves into one
+#'   sample with a `.wave` column ([panel_assignment] gives the weights).
+#'   With a frame, `execute(master, listing, wave = t)` draws the master's
+#'   remaining stages under the units whose tenure opens at `t`, the units
+#'   of period `t` for [periods()], and returns the master. It accepts
+#'   `seed` and `stages`, refuses the other arguments, and takes a master
+#'   with a rotation schedule or periods. See "Drawing the later stages wave
+#'   by wave" below.
 #' @param reps Integer number of independent replicate samples to draw (>= 2),
 #'   or `NULL` (default) for a single sample. The replicates are stacked in
 #'   one `tbl_sample` with a `.replicate` column (integer 1 through `reps`).
@@ -253,7 +263,9 @@ NULL
 #'   stages, constant or quantile-compressed for element stages), and the
 #'   selected-unit trace. `"full"` keeps exact per-unit chances for element
 #'   stages too. `"none"` records no digest and skips trace construction for
-#'   minimum execution overhead.
+#'   minimum execution overhead. `"summary"` saves storage, not time.
+#'   Compressing the chances can take longer than keeping them all, so
+#'   `"none"` is the mode for repeated executions such as a simulation loop.
 #'
 #'   When one universe frame feeds every stage, later stages also record the
 #'   pools their realization never reached, with chances resolved from the
@@ -275,8 +287,8 @@ NULL
 #'   the design that produced them, and generated columns recording the
 #'   selection. Those are `.sample_id`, `.weight`, the per-stage `.weight_k`,
 #'   `.fpc_k`, `.draw_k` and `.certainty_k`, `.zone_1` and `.pair_1` for a
-#'   zoned certainty plan, and `.replicate` or `.panel` when `reps` or
-#'   `panels` is used.
+#'   zoned certainty plan, `.replicate` or `.panel` when `reps` or
+#'   `panels` is used, and `.wave` for a window of several waves.
 #'   [sample_columns] documents what each one holds.
 #'
 #' @details
@@ -319,6 +331,60 @@ NULL
 #' states how a continuation reads its frame, when it asks for `stages`, and
 #' how it differs from starting a new phase on a sample.
 #'
+#' ## Drawing the later stages wave by wave
+#' A master split into [periods()] at its first stage can have its later
+#' stages drawn period by period, as listing proceeds in the field.
+#' `execute(master, listing, wave = t)` draws every remaining stage under the
+#' units of period `t` and returns the master, so the calls are chained, as
+#' in `master <- execute(master, listing_3, wave = 3, seed = 103)`.
+#'
+#' - The listing needs rows for every unit of period `t`. Rows under units
+#'   of other periods are ignored, so one growing listing file can be passed
+#'   every time. A unit of period `t` with no row is refused
+#'   (`samplyr_error_frame_missing_parent`) unless its stage sets
+#'   `on_empty`.
+#' - The listing keys its rows to the master's units by their cluster ids,
+#'   such as `ea_id`, and carries what the later stages select on. Strata
+#'   and weights come from the master.
+#' - Each period is drawn once (`samplyr_error_wave_already_drawn`), in any
+#'   order, with its own `seed`. `stages` may be given, and must name every
+#'   remaining stage.
+#' - Until every period is drawn, the master keeps its first-stage rows and
+#'   every other verb reads it as the first-stage sample. `print()` and
+#'   [summary()][summary.tbl_sample] say which periods are drawn, and an
+#'   ordinary continuation is refused
+#'   (`samplyr_error_wave_draws_in_progress`). `execute(master, wave = t)`
+#'   gives a drawn period's sample with exact weights. That sample is
+#'   provisional. [as_svydesign()] and [as_svrepdesign()] export it by
+#'   ultimate clusters from its own rows, and the two-phase export, which
+#'   reads the whole master, [stack_waves()] and [write_design()] refuse it
+#'   (`samplyr_error_wave_provisional`,
+#'   `samplyr_error_serialize_wave_provisional`).
+#' - The call that draws the last period returns the completed sample, as
+#'   one continuation would, with every stage executed, rows in the master's
+#'   order of their units and `.sample_id` numbered once. It is the design of
+#'   `execute(master, listing)`, drawn with other random numbers.
+#' - The completed sample's frame digest holds every period's pools and
+#'   selections, so [frame_summary()] reports each stage as for one call. A
+#'   listing passed for every period keeps its frame record. Separate
+#'   listings share one record of the rows the periods drew from, with no
+#'   fingerprint, since no single frame holds them.
+#' - [write_design()] records the master's call and each period's call in
+#'   the order they were made, and [replay_design()] replays them with one
+#'   frame per call, the master's frame and then each period's listing. A
+#'   master with some periods drawn is written and replayed the same way.
+#' - A master with a rotation schedule is drawn the same way, tenure by
+#'   tenure. The call at wave `t` draws the units of the panels whose tenure
+#'   opens there, where the schedule's `visit` is 1, and the first call also
+#'   draws the permanent units, which keep one tenure throughout. A wave
+#'   that opens no tenure is refused (`samplyr_error_wave_already_drawn`)
+#'   with the waves that drew its units. When a panel has several tenures,
+#'   the master never closes: its draws accumulate, and
+#'   `execute(master, wave = t)` reads each panel's current tenure. A new
+#'   tenure takes the full listing: samplyr leaves out the units earlier
+#'   tenures drew and weights the rest to the whole listing.
+#'   [panel_assignment] describes tenures.
+#'
 #' ## Multi-phase sampling
 #' `execute(new_design, previous_sample)` starts a new phase, with the
 #' earlier sample as the frame of a new design rather than `.data` carrying
@@ -329,6 +395,30 @@ NULL
 #'
 #' `.weight` is the product of the per-stage weights and of the phase weights
 #' across phases. [sample_columns] gives the formulas.
+#'
+#' ## Large frames
+#'
+#' A partial execution on one frame keeps every row under the units it
+#' selected, because the continuation draws the next stage from those
+#' rows. On a frame of persons, the stage-1 sample of a two-stage design
+#' holds every person of the selected EAs. Drawing stage 1 from a register
+#' of the EAs, one row per EA, keeps the partial sample to one row per
+#' selected EA, and the person frame is passed when the design continues,
+#' as in `execute(partial, persons)`. It is the same design.
+#' [frame_input_grammar] states how a continuation reads its frame.
+#'
+#' A factor column keeps all of its levels in the sample, as R keeps them
+#' in any subset of a factor. A household id stored as a factor with a
+#' million levels therefore weighs about as much in a sample of a few
+#' thousand rows as in the frame. samplyr leaves the levels as they are,
+#' since they are part of the data. `droplevels()` on the sample removes
+#' them, and ids stored as character in the frame avoid them.
+#'
+#' A materialized wave keeps its master as its first phase, which its
+#' survey export reads. `saveRDS()` of a wave therefore writes the master
+#' too, again in every file and for every wave saved. Saving the master
+#' alone is enough, since `execute(master, wave = t)` gives back the same
+#' wave and draws no random numbers.
 #'
 #' ## When a design cannot be realized as written
 #'
@@ -387,6 +477,19 @@ NULL
 #'   dplyr::reframe(hh_id = seq_len(20), .by = ea_id)
 #' sample <- selected_eas |> execute(listing, seed = 43)
 #' nrow(sample)  # 12 households in each selected EA
+#'
+#' ## Later stages drawn one period at a time
+#' monthly <- sampling_design() |>
+#'   add_stage() |> stratify_by(region) |> cluster_by(ea_id) |>
+#'     draw(n = 12, method = "pps_systematic", mos = households) |>
+#'   add_stage() |> draw(n = 5) |>
+#'   execute(bfa_eas, stages = 1, seed = 1, panels = periods(12))
+#' # The EAs of month 3 go to the listing team
+#' month_3 <- dplyr::filter(as.data.frame(monthly), .panel == 3)
+#' listing_3 <- dplyr::reframe(month_3, hh_id = seq_len(20), .by = ea_id)
+#' monthly <- execute(monthly, listing_3, wave = 3, seed = 103)
+#' monthly  # the master, with month 3's households drawn
+#' nrow(execute(monthly, wave = 3))  # month 3's sample
 #'
 #' ## One frame per stage
 #' # Frames map to stages by position: districts first, then EAs
@@ -449,6 +552,7 @@ execute <- function(
   wave = NULL,
   frame_digest = c("summary", "full", "none")
 ) {
+  local_key_loc_cache()
   # Read this before `match.arg()` fills its default.
   frame_digest_given <- !missing(frame_digest)
   frame_digest <- with_error_class(
@@ -493,6 +597,23 @@ execute <- function(
       reps = reps,
       frame_digest_given = frame_digest_given,
       execution_environment = execution_environment
+    ))
+  }
+
+  # A listing with a wave draws that wave's later stages.
+  if (!is_null(wave) && length(dots) > 0L && is_tbl_sample(.data) &&
+      length(remaining_stages(.data)) > 0L) {
+    return(draw_wave(
+      .data,
+      wave,
+      frames = dots,
+      stages = stages,
+      seed = seed,
+      panels = panels,
+      panel_stage = panel_stage,
+      small_pool = small_pool,
+      reps = reps,
+      frame_digest_given = frame_digest_given
     ))
   }
 
@@ -587,6 +708,7 @@ execute <- function(
     validate_design_complete(design)
   } else if (is_tbl_sample(.data)) {
     check_weight_contract_execute(.data, "execute")
+    check_no_wave_draws(.data)
     design <- get_design(.data)
     executed <- get_stages_executed(.data)
   } else {
@@ -673,10 +795,14 @@ execute <- function(
       }
 
       if (!status$ok) {
-        mods <- status$mods
+        mods <- union(status$mods, status$inherited)
         cli_warn(c(
           "The {role} sample was modified after execution ({.field {mods}} changed).",
           "i" = "Its weights and design metadata are used as-is for the new selection.",
+          if (identical(role, "input")) {
+            c("i" = "The continued sample keeps this status, so
+                     {.fn as_svydesign} and {.fn as_svrepdesign} refuse it.")
+          },
           stage_hint,
           "i" = "If rows were removed to define a subpopulation, prefer restricting the frame before executing."
         ), class = "samplyr_warning_modified_sample")
@@ -746,7 +872,7 @@ execute <- function(
         if (!is_null(reps)) {
           cli_abort(c(
             "Cannot add new replicates when the frame is already replicated.",
-            "i" = "The frame has {length(unique(frames[[1]]$.replicate))} replicates."
+            "i" = "The frame has {n_replicates(frames[[1]])} replicates."
           ), class = "samplyr_error_replicated_sample_unsupported")
         }
         if (!is_null(panels)) {
@@ -787,7 +913,7 @@ execute <- function(
       if (has_existing_reps && !is_null(reps)) {
         cli_abort(c(
           "Cannot add new replicates to an already-replicated sample.",
-          "i" = "The input sample already has {length(unique(.data$.replicate))} replicates."
+          "i" = "The input sample already has {n_replicates(.data)} replicates."
         ), class = "samplyr_error_replicated_sample_unsupported")
       }
       if (has_existing_reps) {
@@ -973,6 +1099,15 @@ check_execute_dots <- function(
   invisible(frames)
 }
 
+#' The version of a loaded package, written as `packageVersion()` writes it
+#'
+#' The loaded namespace is the code that runs. An update installed during
+#' the session changes the version on disk, not that code.
+#' @noRd
+loaded_version <- function(pkg) {
+  as.character(package_version(unname(getNamespaceVersion(pkg))))
+}
+
 #' Capture the implementation state that affects a sample realization
 #' @noRd
 capture_execution_environment <- function() {
@@ -983,9 +1118,9 @@ capture_execution_environment <- function() {
       version = as.character(getRversion())
     ),
     packages = list(
-      samplyr = as.character(utils::packageVersion("samplyr")),
-      sondage = as.character(utils::packageVersion("sondage")),
-      svyplan = as.character(utils::packageVersion("svyplan"))
+      samplyr = loaded_version("samplyr"),
+      sondage = loaded_version("sondage"),
+      svyplan = loaded_version("svyplan")
     ),
     rng = list(
       kind = unname(rng[[1]]),
@@ -1106,6 +1241,10 @@ execute_design <- function(
 
   panel_assignment <- NULL
   if (!is_null(panels) && nrow(current_sample) > 0) {
+    check_tenure_stages(
+      panels, design, panels$stage %||% stages[1], stages,
+      call = call
+    )
     assigned <- assign_panels(
       current_sample,
       panels,
@@ -1466,6 +1605,10 @@ execute_continuation <- function(
   panel_assignment <- parent_meta$panel_assignment
   if (!is_null(panels) && nrow(current_sample) > 0) {
     assignment_stage <- panels$stage %||% c(executed, stages)[1]
+    check_tenure_stages(
+      panels, design, assignment_stage, c(executed, stages),
+      call = call
+    )
     assigned <- assign_panels(
       current_sample,
       panels,
@@ -1539,7 +1682,9 @@ continuation_parent_record <- function(sample) {
   record <- attr(sample, "metadata") %||% list()
   record$seed <- attr(sample, "seed")
   record$stages_executed <- get_stages_executed(sample)
-  record$realization_modified <- !sample_realization_status(sample)$ok
+  status <- sample_realization_status(sample)
+  record$realization_modified <- !status$ok
+  record$realization_changes <- union(status$mods, status$inherited)
   record
 }
 
@@ -2352,7 +2497,7 @@ stage_pool_sizes <- function(frame, split_vars, strata_vars, cluster_vars) {
     if (length(vars) == 0L) {
       return(if (nrow(frame) > 0L) 1L else 0L)
     }
-    nrow(vctrs::vec_unique(frame[vars]))
+    length(unique_key_loc(frame, vars))
   }
   list(
     n_pools = distinct_rows(c(split_vars, strata_vars)),
@@ -2672,6 +2817,11 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
         class = "samplyr_error_frame_invalid"
       )
     }
+  }
+
+  for (v in c(strata_vars, cluster_vars)) {
+    check_key_precision(frame[[v]], v, call = call,
+                        loc = unique_key_loc(frame, v))
   }
 
   if (!is_null(mos_var)) {

@@ -6,7 +6,38 @@
 \alias{samplyr-package}
 \title{samplyr: A Tidy Grammar for Survey Sampling}
 \description{
-Provides a tidy, composable grammar for specifying and executing complex survey sampling designs. Supports equal-probability and probability-proportional-to-size (PPS) selection, the cube method for balanced sampling following Deville and Tillé (2004) \doi{10.1093/biomet/91.4.893}, spatially balanced sampling with local pivotal and spatially correlated Poisson methods, and controlled category counts. Stratified, clustered, multi-stage, and multi-phase designs compose through a small set of tidy verbs. Includes sampling frames derived for learning and testing from public data for Burkina Faso, Zimbabwe, and Kenya.
+samplyr states a survey sampling design as a pipeline of verbs and runs
+it on a frame with \code{\link[=execute]{execute()}}. A design is built with
+\code{\link[=sampling_design]{sampling_design()}}, \code{\link[=add_stage]{add_stage()}}, \code{\link[=stratify_by]{stratify_by()}}, \code{\link[=cluster_by]{cluster_by()}} and
+\code{\link[=draw]{draw()}}, independently of any frame. The same design can then be
+previewed against a frame with \code{\link[=frame_summary]{frame_summary()}}, executed on several
+frames, and saved with \code{\link[=write_design]{write_design()}}. The sample \code{\link[=execute]{execute()}} returns
+carries its weights and its design, and \code{\link[=as_svydesign]{as_svydesign()}} and
+\code{\link[=as_svrepdesign]{as_svrepdesign()}} export it for analysis with the survey package.
+}
+\section{Where to start}{
+
+\code{vignette("introduction", package = "samplyr")} builds designs from a
+single draw to a three-stage household sample.
+\code{vignette("survey-analysis", package = "samplyr")} exports a sample and
+estimates from it.
+
+The reference topics answer narrower questions. \link{selection_methods}
+compares the selection methods, \link{frame_input_grammar} says how frames
+and stage registers are passed, \link{sample_columns} lists the columns a
+sample carries and how its weights are computed, and
+\link{variance_estimation} gives how each method's variance is estimated.
+}
+
+\examples{
+# 300 EAs allocated proportionally across the 13 regions
+design <- sampling_design(title = "EA survey") |>
+  stratify_by(region, alloc = "proportional") |>
+  draw(n = 300)
+design
+
+sample <- execute(design, bfa_eas, seed = 1)
+sample
 }
 \seealso{
 Useful links:

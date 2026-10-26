@@ -164,6 +164,22 @@ mos_route <- function(draw_spec) {
   }
 }
 
+#' Each unit's share of a pool's total measure of size
+#'
+#' Every value can be finite while their sum is not, and dividing by an
+#' infinite sum gives zero shares. Dividing by the largest value first
+#' keeps the sum finite. Callers keep their own arithmetic when the sum is
+#' finite, so ordinary results do not change in the last bits. A caller
+#' that has the sum already passes it as `total`.
+#' @noRd
+mos_shares <- function(mos_vals, total = sum(mos_vals)) {
+  if (is.finite(total)) {
+    return(mos_vals / total)
+  }
+  scaled <- mos_vals / max(mos_vals)
+  scaled / sum(scaled)
+}
+
 #' Chances from a measure of size, on the stage's route
 #'
 #' The one place a measure of size becomes inclusion probabilities or
@@ -177,7 +193,12 @@ mos_chances <- function(mos_vals, n, draw_spec, frac = NULL,
   route <- mos_route(draw_spec)
   if (identical(route, "clipped")) {
     N <- length(mos_vals)
-    raw <- (frac %||% (n / N)) * mos_vals / sum(mos_vals) * N
+    rate <- frac %||% (n / N)
+    raw <- if (is.finite(sum(mos_vals))) {
+      rate * mos_vals / sum(mos_vals) * N
+    } else {
+      rate * mos_shares(mos_vals) * N
+    }
     return(list(pik = pmin(raw, 1), n_clipped = sum(raw > 1)))
   }
   refuse_mos_shortfall(mos_vals, n, route, call = call)
@@ -1223,7 +1244,8 @@ check_forwarded_args <- function(
 samplyr_reserved_names <- function(nms) {
   exact <- c(
     ".weight", ".fpc", ".pik", ".sample_id", ".stage", ".panel",
-    ".replicate", ".draw", ".certainty", ".zone", ".pair",
+    ".replicate", ".draw", ".certainty", ".zone", ".pair", ".wave",
+    ".visit",
     "._prev_phase_weight"
   )
   generated <- grepl("^\\.(weight|fpc|draw|certainty|zone|pair)_[0-9]+$", nms)
@@ -1337,11 +1359,35 @@ find_duplicate_key_rows <- function(df, vars) {
 
 #' Test whether a tbl_sample contains multiple replicates
 #'
-#' TRUE for `c(1, NA)` by design. Guarded callers reject NA first with
-#' `check_single_replicate()`.
+#' A stack as executed is replicated when execution recorded more than one
+#' replicate, even when random-size draws left all but one of them empty
+#' and the rows show one replicate or none. A row-modified sample is judged
+#' by its rows, so one complete replicate filtered from the stack is a
+#' single sample. TRUE for `c(1, NA)` by design. Guarded callers reject NA
+#' first with `check_single_replicate()`.
 #' @noRd
 has_multiple_replicates <- function(x) {
-  ".replicate" %in% names(x) && length(unique(x$.replicate)) > 1L
+  if (!".replicate" %in% names(x)) {
+    return(FALSE)
+  }
+  length(unique(x$.replicate)) > 1L || recorded_replicates(x) > 1L
+}
+
+#' Replicates execution recorded for a stack whose rows are unmodified
+#'
+#' Zero for a sample without that record or with modified rows.
+#' @noRd
+recorded_replicates <- function(x) {
+  if ("rows" %in% sample_modifications(x)) {
+    return(0L)
+  }
+  length(attr(x, "metadata")$replicate_rows)
+}
+
+#' Number of replicates in a stack, empty replicates included
+#' @noRd
+n_replicates <- function(x) {
+  max(recorded_replicates(x), length(unique(x$.replicate)))
 }
 
 #' Check that a tbl_sample has at most one replicate
@@ -1358,12 +1404,18 @@ check_single_replicate <- function(x, fn_name, call = caller_env()) {
     )
   }
   if (has_multiple_replicates(x)) {
-    n_reps <- length(unique(x$.replicate))
+    n_reps <- n_replicates(x)
+    filled <- unique(x$.replicate)
+    first <- if (length(filled) > 0L) min(filled)
     abort_samplyr(
       c(
         "{.fn {fn_name}} requires a single replicate.",
         "i" = "This sample has {n_reps} replicates.",
-        "i" = "Filter first: {.code x |> filter(.replicate == 1)}"
+        "i" = if (is_null(first)) {
+          "Every replicate is empty."
+        } else {
+          "Filter first: {.code x |> filter(.replicate == {first})}"
+        }
       ),
       class = "samplyr_error_replicated_sample_unsupported",
       call = call
@@ -1377,7 +1429,7 @@ check_single_replicate <- function(x, fn_name, call = caller_env()) {
 #' Stripped from reused frames, guarded by `dplyr_col_modify.tbl_sample()`.
 #' @noRd
 samplyr_internal_col_pattern <-
-  "^\\.(weight|fpc|sample_id|stage|draw|certainty|zone|pair|replicate|panel)"
+  "^\\.(weight|fpc|sample_id|stage|draw|certainty|zone|pair|replicate|panel|wave|visit)"
 
 #' Detect a tbl_sample whose class was stripped
 #'
@@ -1446,8 +1498,57 @@ sample_integrity_record <- function(data, design, stages_executed) {
     n_rows = nrow(data),
     cols = cols,
     hash = protected_values_hash(data, cols),
-    col_hashes = integrity_column_hashes(data, cols)
+    col_hashes = integrity_column_hashes(data, cols),
+    value_hashes = sample_value_hashes(data, setdiff(names(data), cols))
   )
+}
+
+#' One hash per sample column, rows in `.sample_id` order
+#'
+#' Kept in memory only, like `col_hashes`. Taken over the columns the
+#' integrity record does not protect and samplyr did not add, which are
+#' the ones a user may edit freely. It tells which still hold the values
+#' execution gave them, so `joint_expectation()` matches units on those
+#' alone. `.sample_id` survives a reordering, which the hashes then ignore.
+#' A factor is read by its labels, so dropping unused levels changes
+#' nothing. `NULL` without a usable `.sample_id`.
+#' @noRd
+sample_value_hashes <- function(data, cols) {
+  ids <- data$.sample_id
+  if (is_null(ids) || anyNA(ids) || anyDuplicated(ids) > 0L) {
+    return(NULL)
+  }
+  cols <- cols[!startsWith(cols, ".")]
+  ord <- order(ids)
+  vapply(
+    stats::setNames(cols, cols),
+    function(col) {
+      v <- vctrs::vec_slice(data[[col]], ord)
+      rlang::hash(if (is.factor(v)) as.character(v) else v)
+    },
+    character(1)
+  )
+}
+
+#' Sample columns whose values changed since execution
+#'
+#' Compared column by column with the hashes taken at execution, over the
+#' columns those hashes cover. An added column has no hash and counts as
+#' changed. `NULL` when the record cannot say: a sample from before the
+#' record, rows added or removed, or no `.sample_id`.
+#' @noRd
+sample_changed_columns <- function(x) {
+  integrity <- attr(x, "metadata")$integrity
+  recorded <- integrity$value_hashes
+  if (is_null(recorded) || nrow(x) != integrity$n_rows) {
+    return(NULL)
+  }
+  df <- as.data.frame(x)
+  now <- sample_value_hashes(df, setdiff(names(df), integrity$cols))
+  if (is_null(now)) {
+    return(NULL)
+  }
+  names(now)[is.na(recorded[names(now)]) | recorded[names(now)] != now]
 }
 
 #' One hash per protected column, reading a factor by its labels
@@ -1631,33 +1732,48 @@ is_complete_replicate <- function(x) {
 #'
 #' The integrity record decides when present, overriding the marks either way.
 #' One complete replicate counts as intact. Without a record the marks decide.
-#' @return list(ok, mods), mods joining the marks and the integrity failure.
+#' A stage continuation of a modified sample is modified too: its own record
+#' verifies, but its weights carry the parent's change. `inherited` names
+#' that change.
+#' @return list(ok, mods, inherited), mods joining the marks and the
+#'   integrity failure.
 #' @noRd
 sample_realization_status <- function(x) {
   mods <- sample_modifications(x)
-  integrity <- attr(x, "metadata")$integrity
+  meta <- attr(x, "metadata")
+  integrity <- meta$integrity
+  parent <- meta$continued_from
+  inherited <- if (isTRUE(parent$realization_modified)) {
+    parent$realization_changes %||% "rows"
+  } else {
+    character(0)
+  }
+  status_of <- function(mods) {
+    list(ok = length(mods) == 0L && length(inherited) == 0L, mods = mods,
+         inherited = inherited)
+  }
 
   if (!is_null(integrity)) {
     status <- verify_sample_integrity(x, integrity)
     if (identical(status, "ok") || is_complete_replicate(x)) {
-      return(list(ok = TRUE, mods = character(0)))
+      return(status_of(character(0)))
     }
-    return(list(ok = FALSE, mods = union(mods, status)))
+    return(status_of(union(mods, status)))
   }
 
   if (
     length(mods) == 0 ||
       (identical(mods, "rows") && is_complete_replicate(x))
   ) {
-    return(list(ok = TRUE, mods = character(0)))
+    return(status_of(character(0)))
   }
-  list(ok = FALSE, mods = mods)
+  status_of(mods)
 }
 
 #' Refuse a materialized wave where the joint probabilities are not yet built
 #'
-#' First-order probabilities are exact and [as_svydesign()] carries the
-#' activation as a second phase. The second-order joint is not built.
+#' First-order probabilities are exact and [as_svydesign()] exports the
+#' wave. The second-order joint is not built.
 #' @noRd
 check_no_materialized_wave <- function(x, fn_name, call = caller_env()) {
   wave <- attr(x, "metadata")$wave
@@ -1667,11 +1783,11 @@ check_no_materialized_wave <- function(x, fn_name, call = caller_env()) {
   abort_samplyr(
     c(
       "{.fn {fn_name}} does not take a materialized wave.",
-      "x" = "This sample realizes wave {wave$wave}, which is an activation
-             of a master rather than a selection of its own.",
+      "x" = "This sample realizes {wave_phrase(wave$wave)}, which is an
+             activation of a master rather than a selection of its own.",
       "i" = "For how two waves overlap, ask the master, which can also be
              asked about waves it has not materialized:
-             {.code joint_expectation(master, waves = c({wave$wave}, s))}.",
+             {.code joint_expectation(master, waves = c(t, s))}.",
       "i" = "For the master's own joint probabilities:
              {.code joint_expectation(master, frame)}."
     ),
@@ -1681,8 +1797,15 @@ check_no_materialized_wave <- function(x, fn_name, call = caller_env()) {
 }
 
 #' Check that a tbl_sample still matches its executed realization
+#'
+#' @param provisional_ok Whether a wave of a master still being drawn is
+#'   accepted, for a route that reads only the wave's own rows.
 #' @noRd
-check_sample_unmodified <- function(x, fn_name, call = caller_env()) {
+check_sample_unmodified <- function(x, fn_name, provisional_ok = FALSE,
+                                    call = caller_env()) {
+  if (!provisional_ok) {
+    check_wave_not_provisional(x, fn_name, call = call)
+  }
   status <- sample_realization_status(x)
   if (status$ok) {
     return(invisible(NULL))
@@ -1704,16 +1827,17 @@ check_sample_unmodified <- function(x, fn_name, call = caller_env()) {
   }
   if ("columns" %in% mods) {
     gone <- intersect(changed, setdiff(integrity$cols, names(x)))
-    bullets <- c(
-      bullets,
-      "x" = if (length(gone) > 0L) {
-        cli::format_inline(
-          "{.field {gone}} {?was/were} dropped or renamed after {.fn execute}."
-        )
-      } else {
-        "Internal design columns (e.g. {.field .weight}, {.field .fpc_*}) or design-referenced strata/cluster columns were dropped or renamed after {.fn execute}."
-      }
-    )
+    if (length(gone) > 0L) {
+      bullets <- c(bullets, "x" = cli::format_inline(
+        "{.field {gone}} {?was/were} dropped or renamed after {.fn execute}."
+      ))
+    } else if (!("values" %in% mods && length(changed) > 0L)) {
+      # An overwrite is named by the values bullet below.
+      bullets <- c(
+        bullets,
+        "x" = "Internal design columns (e.g. {.field .weight}, {.field .fpc_*}) or design-referenced strata/cluster columns were overwritten, dropped or renamed after {.fn execute}."
+      )
+    }
   }
   if ("values" %in% mods) {
     bullets <- c(
@@ -1728,11 +1852,28 @@ check_sample_unmodified <- function(x, fn_name, call = caller_env()) {
     )
   }
 
+  if (length(status$inherited) > 0L) {
+    bullets <- c(bullets, "x" = cli::format_inline(
+      "It continues a sample whose {.field {status$inherited}} changed after
+       {.fn execute}, and its weights carry that change."
+    ))
+  }
+  weights_only <- identical(changed, ".weight") && !"rows" %in% mods
   # Do not advise operations that also refuse transformed samples.
   advice <- if (identical(sample_weight_contract(x), "shared")) {
     c(
       "i" = "This sample's weights were shared with a linked target population, and the recorded transformation addresses its rows by position.",
       "i" = "Share weights again from the source sample rather than repairing this one: {.code share_weights(source, ...)}."
+    )
+  } else if (length(mods) == 0L) {
+    c(
+      "i" = "Continue the sample as executed, from a listing of every selected unit: {.code execute(sample, listing)}.",
+      "i" = "For domain (subpopulation) analysis, convert the full sample first, then subset the design: {.code subset(as_svydesign(full_sample), condition)}."
+    )
+  } else if (weights_only &&
+             fn_name %in% c("as_svydesign", "as_svrepdesign")) {
+    c(
+      "i" = "Weights adjusted for nonresponse or calibrated belong on the exported design. Export the sample as executed, then adjust the design, for instance with {.fn survey::calibrate} or {.fn survey::postStratify}."
     )
   } else {
     c(

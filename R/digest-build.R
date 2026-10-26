@@ -210,11 +210,13 @@ flatten_stage_trace <- function(node, row_map, sizes = NULL) {
 
 #' Canonical ancestry key strings for frame rows
 #' @noRd
-digest_path_keys <- function(frame, rows, vars) {
+digest_path_keys <- function(frame, rows, vars, call = caller_env()) {
   if (length(vars) == 1L) {
-    return(as.character(frame[[vars]][rows]))
+    values <- frame[[vars]][rows]
+    check_key_precision(values, vars, call = call)
+    return(as.character(values))
   }
-  make_group_key(frame[rows, vars, drop = FALSE], vars)
+  make_group_key(frame[rows, vars, drop = FALSE], vars, call = call)
 }
 
 #' Occurrence counter for a selected-unit vector (1, then 2 for the
@@ -702,7 +704,7 @@ expand_stage_universe <- function(
       ancestor_vars
     )
   )
-  ancestry_first <- vctrs::vec_unique_loc(ancestry)
+  ancestry_first <- unique_key_loc(frame, ancestor_vars)
   parent_first <- unname(parent_registry[
     digest_path_keys(frame, ancestry_first, ancestor_vars)
   ])
@@ -1076,11 +1078,16 @@ digest_quantile_bins <- function(chance_by_pool, pool_ids, pool_sizes) {
     list(
       pool_id = rep(pool_ids[i], k),
       quantile = ((starts + ends) / 2 - 0.5) / n,
-      chance = vapply(
-        seq_len(k),
-        function(j) mean(ch[starts[j]:ends[j]]),
-        numeric(1)
-      ),
+      chance = if (k == n && length(ch) == n) {
+        # A bin of one unit holds its chance as mean() returns it.
+        as.double(ch) + 0
+      } else {
+        vapply(
+          seq_len(k),
+          function(j) mean(ch[starts[j]:ends[j]]),
+          numeric(1)
+        )
+      },
       n_units = ends - starts + 1L
     )
   })
@@ -1141,10 +1148,37 @@ digest_quantile_bins <- function(chance_by_pool, pool_ids, pool_sizes) {
 #' digest$stages[[1]]$scope
 #' @export
 exante_digest <- function(design, frame, call = rlang::current_env()) {
-  # Pointing the frame at itself would never resolve.
-  if (!identical(call, rlang::current_env())) {
-    rlang::local_error_call(call)
+  resolve_exante_digest(design, frame, call = call)
+}
+
+#' Apply execution's checks of stage frame values to an ex-ante walk
+#'
+#' A frame `execute()` refuses, for a missing stratum or MOS value or a PRN
+#' out of range, has no probabilities to resolve. Each stage's effective
+#' frame is checked whole, since every unit needs its chance. An empty
+#' frame is left to the walk.
+#' @noRd
+check_exante_stage_frames <- function(design, frames_by_stage,
+                                      call = caller_env()) {
+  for (i in seq_along(frames_by_stage)) {
+    frame <- frames_by_stage[[i]]
+    if (!is_null(frame) && nrow(frame) > 0L) {
+      validate_frame_vars(frame, design$stages[[i]], call = call)
+    }
   }
+  invisible(NULL)
+}
+
+#' The ex-ante digest of a design's first stages
+#'
+#' A stage's chances depend on the stages above it, so what can be resolved
+#' alone is a prefix. `depth` is its length, `NULL` for every stage. The
+#' frame then needs only the variables of those stages, as `execute()` with
+#' `stages` does.
+#' @noRd
+resolve_exante_digest <- function(design, frame, depth = NULL,
+                                  call = caller_env()) {
+  rlang::local_error_call(call)
   stages_spec <- design$stages
   incomplete <- length(stages_spec) == 0 ||
     any(vapply(
@@ -1174,22 +1208,24 @@ exante_digest <- function(design, frame, call = rlang::current_env()) {
     require_rows = FALSE,
     call = call
   )
+  prefix <- seq_len(depth %||% length(stages_spec))
   schedule <- stage_frame_schedule(
     design,
     supplied$frames,
-    stages = NULL,
+    stages = if (is_null(depth)) NULL else prefix,
     executed = NULL,
     call = call
   )
   design <- resolve_cluster_nesting(design, schedule$entries)
   stage_frames <- effective_register_frames(schedule, design, call = call)
-  effective_frames_by_stage <- vector("list", length(stages_spec))
-  frame_index_by_stage <- integer(length(stages_spec))
+  effective_frames_by_stage <- vector("list", length(prefix))
+  frame_index_by_stage <- integer(length(prefix))
   for (i in seq_along(schedule$entries)) {
     stage <- schedule$entries[[i]]$stage
     effective_frames_by_stage[[stage]] <- stage_frames[[i]]
     frame_index_by_stage[[stage]] <- schedule$entries[[i]]$frame_index
   }
+  check_exante_stage_frames(design, effective_frames_by_stage, call = call)
 
   validate_certainty_bridge(design, schedule, call = call)
   # Fingerprint supplied rather than inherited columns.
@@ -1198,14 +1234,14 @@ exante_digest <- function(design, frame, call = rlang::current_env()) {
   # Record the supplied frame used by each stage.
   frames_reg <- build_digest_frames(design, input_frames_by_stage)
 
-  stages_out <- vector("list", length(stages_spec))
-  pool_keys <- vector("list", length(stages_spec))
-  pool_labels <- vector("list", length(stages_spec))
-  pool_moved <- vector("list", length(stages_spec))
-  pool_tied <- vector("list", length(stages_spec))
-  pool_certain <- vector("list", length(stages_spec))
+  stages_out <- vector("list", length(prefix))
+  pool_keys <- vector("list", length(prefix))
+  pool_labels <- vector("list", length(prefix))
+  pool_moved <- vector("list", length(prefix))
+  pool_tied <- vector("list", length(prefix))
+  pool_certain <- vector("list", length(prefix))
   registry <- NULL
-  for (stage_idx in seq_along(stages_spec)) {
+  for (stage_idx in prefix) {
     if (stage_idx > 1L) {
       prev <- stages_spec[[stage_idx - 1L]]
       # Shared scheduling rejects unlinked intermediate element stages.
@@ -1426,6 +1462,15 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
     info_keys <- make_group_key(info, strata_vars)
     # Attribute a parent's redistribution to its first pool.
     parent_moved <- attr(info, "n_moved")
+    if (is_cluster) {
+      # Each row's pool, through the cluster it belongs to.
+      unit_pool <- rep(NA_integer_, length(unit_rows))
+      unit_pool[unlist(sgroups)] <- rep(seq_along(sgroups), lengths(sgroups))
+      rows_by_pool <- split(
+        seq_along(rows),
+        factor(unit_pool[match(ckeys, unit_keys)], levels = seq_along(sgroups))
+      )
+    }
 
     for (s in seq_along(sgroups)) {
       urows <- unit_rows[sgroups[[s]]]
@@ -1441,7 +1486,7 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
       # Match draw-time precedence for allocated counts and fractions.
       pool_spec$n <- as.double(info$.n_h[match(skey, info_keys)])
       pool_keys <- if (is_null(unit_keys)) NULL else unit_keys[sgroups[[s]]]
-      pool_rows <- if (is_cluster) rows[ckeys %in% pool_keys] else urows
+      pool_rows <- if (is_cluster) rows[rows_by_pool[[s]]] else urows
       add_pool(
         parent_ids[g],
         urows,
@@ -1450,7 +1495,7 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
         pool_keys,
         rows = pool_rows,
         row_units = if (is_cluster) {
-          match(ckeys[ckeys %in% pool_keys], pool_keys)
+          match(ckeys[rows_by_pool[[s]]], pool_keys)
         } else {
           seq_along(pool_rows)
         },
@@ -1893,6 +1938,391 @@ merge_continuation_digest <- function(
   digest$stages <- c(prior$stages, new_stages)
   validate_frame_digest(digest)
   digest
+}
+
+#' Merge the digests of the waves drawn one at a time
+#'
+#' Each wave extended the master's digest with its own later stages, and
+#' `parts` holds what each added: its new frame records and stage records.
+#' The merge keeps one record per later stage, with every wave's pools,
+#' units and selected trace in the order of their parent units, so it does
+#' not depend on the order the waves were drawn in. A listing passed for
+#' every wave keeps its frame record. Distinct listings give one record of
+#' the rows the waves drew from, without a fingerprint, since no single
+#' frame holds them.
+#' @noRd
+merge_wave_draw_digests <- function(prior, parts) {
+  n_new <- unique(vapply(parts, function(p) length(p$stages), integer(1)))
+  if (length(n_new) != 1L || n_new == 0L) {
+    cli_abort(
+      "The waves did not record the same stages.",
+      call = NULL,
+      class = "samplyr_error_internal"
+    )
+  }
+  prior_ids <- vapply(prior$frames, function(f) f$frame_id, integer(1))
+  find_record <- function(part, ref) {
+    pool <- if (ref %in% prior_ids) prior$frames else part$frames
+    pool[[match(ref, vapply(pool, function(f) f$frame_id, integer(1)))]]
+  }
+
+  frames <- prior$frames
+  next_id <- max(prior_ids)
+  record_ids <- list()
+  unit_maps <- NULL
+  stages <- vector("list", n_new)
+  for (i in seq_len(n_new)) {
+    per_wave <- lapply(parts, function(p) p$stages[[i]])
+    refs <- vapply(per_wave, function(s) s$frame_ref, integer(1))
+    key <- paste(refs, collapse = " ")
+    if (is_null(record_ids[[key]])) {
+      recs <- Map(find_record, parts, refs)
+      exact <- vapply(
+        recs, function(f) f$fingerprint_exact %||% NA_character_, ""
+      )
+      if (!anyNA(exact) && all(exact == exact[1]) && refs[1] %in% prior_ids) {
+        record_ids[[key]] <- refs[1]
+      } else {
+        next_id <- next_id + 1L
+        rec <- recs[[1]]
+        if (anyNA(exact) || any(exact != exact[1])) {
+          rows <- Map(function(p, ref) {
+            first <- p$stages[[match(ref, vapply(
+              p$stages, function(s) s$frame_ref, integer(1)
+            ))]]
+            digest_stage_frame_rows(first)
+          }, parts, refs)
+          rec <- new_digest_frame(
+            frame_id = next_id,
+            n_rows = sum(unlist(rows)),
+            roles = rec$roles,
+            scope = "eligible"
+          )
+        }
+        rec$frame_id <- next_id
+        frames <- c(frames, list(rec))
+        record_ids[[key]] <- next_id
+      }
+    }
+    merged <- merge_wave_stage(per_wave, unit_maps)
+    merged$stage$frame_ref <- as.integer(record_ids[[key]])
+    stages[[i]] <- merged$stage
+    unit_maps <- merged$unit_maps
+  }
+
+  digest <- prior
+  digest$frames <- frames
+  digest$stages <- c(prior$stages, stages)
+  digest$version <- digest_schema_version(digest$stages)
+  validate_frame_digest(digest)
+  digest
+}
+
+#' The frame rows a stage record drew from
+#' @noRd
+digest_stage_frame_rows <- function(stage) {
+  if (identical(stage$unit_level, "cluster") &&
+        !is_null(stage$units$n_descendants)) {
+    return(sum(stage$units$n_descendants))
+  }
+  sum(stage$pools$N)
+}
+
+#' One stage record from the same stage of several waves
+#'
+#' `unit_maps` renumbers the parent units of the previous stage, wave by
+#' wave, and the result carries this stage's for the next one.
+#' @noRd
+merge_wave_stage <- function(per_wave, unit_maps) {
+  base <- per_wave[[1]]
+  fields <- c("stage_id", "unit_level", "scope", "chance_kind",
+              "probabilities", "order_kind", "storage", "strata")
+  for (s in per_wave[-1]) {
+    if (!identical(s[fields], base[fields])) {
+      cli_abort(
+        "Stage {base$stage_id} was recorded differently in different waves.",
+        call = NULL,
+        class = "samplyr_error_internal"
+      )
+    }
+  }
+  if (any(vapply(per_wave, function(s) !is_null(s$diagnostics$spatial),
+                 logical(1)))) {
+    cli_abort(
+      "The spatial diagnostics of separate waves do not combine.",
+      call = NULL,
+      class = "samplyr_error_internal"
+    )
+  }
+
+  pools <- vctrs::vec_rbind(!!!lapply(seq_along(per_wave), function(w) {
+    p <- per_wave[[w]]$pools
+    if (!is_null(unit_maps)) {
+      p$parent_unit <- unit_maps[[w]][p$parent_unit]
+    }
+    p$.wave <- w
+    p
+  }))
+  ord <- order(
+    pools$parent_unit,
+    pools$parent_occurrence %||% integer(nrow(pools)),
+    pools$.wave,
+    pools$pool_id
+  )
+  pools <- pools[ord, , drop = FALSE]
+  pool_maps <- lapply(seq_along(per_wave), function(w) {
+    map <- integer(max(per_wave[[w]]$pools$pool_id))
+    here <- pools$.wave == w
+    map[pools$pool_id[here]] <- which(here)
+    map
+  })
+  pools$pool_id <- seq_len(nrow(pools))
+  pools$.wave <- NULL
+  rownames(pools) <- NULL
+
+  tables <- function(field) lapply(per_wave, `[[`, field)
+
+  new_units <- NULL
+  units <- NULL
+  if (identical(base$storage, "units")) {
+    units <- stack_wave_tables(
+      lapply(seq_along(per_wave), function(w) {
+        u <- per_wave[[w]]$units
+        u$.wave <- rep(w, nrow(u))
+        u$.old <- u$unit_id
+        u
+      }),
+      pool_maps
+    )
+    units$unit_id <- seq_len(nrow(units))
+    new_units <- lapply(seq_along(per_wave), function(w) {
+      here <- units$.wave == w
+      map <- integer(max(c(0L, units$.old[here])))
+      map[units$.old[here]] <- units$unit_id[here]
+      map
+    })
+    units$.wave <- units$.old <- NULL
+  }
+
+  diagnostics <- NULL
+  for (name in c("balance", "bounds")) {
+    tab <- stack_wave_tables(
+      lapply(per_wave, function(s) s$diagnostics[[name]]),
+      pool_maps
+    )
+    if (!is_null(tab)) {
+      diagnostics[[name]] <- tab
+    }
+  }
+
+  stage <- base
+  stage$pools <- pools
+  stage$units <- units
+  stage$chance_distribution <- stack_wave_tables(
+    tables("chance_distribution"), pool_maps
+  )
+  stage$selected <- stack_wave_tables(tables("selected"), pool_maps, new_units)
+  stage$diagnostics <- diagnostics
+  list(stage = stage, unit_maps = new_units)
+}
+
+#' The digest of the rows a wave reads from a master drawn wave by wave
+#'
+#' A complete master is the wave's whole first phase, so its digest is the
+#' wave's. Otherwise each draw's later-stage records are cut to the pools
+#' holding the rows, matched by their digest keys, and merged onto the
+#' master's. `NULL` when a record is missing or the keys do not match.
+#' @noRd
+wave_rows_digest <- function(master, rows) {
+  draws <- attr(master, "metadata")$per_wave_draws %||% list()
+  if (length(draws) == 0L || length(remaining_stages(master)) == 0L) {
+    return(wave_master_digest(master))
+  }
+  prior <- master_executed_digest(master)
+  if (is_null(prior)) {
+    return(NULL)
+  }
+  record <- attr(master, "metadata")$panel_assignment
+  design <- draws[[1L]]$design
+  parts <- list()
+  for (d in draws) {
+    if (is_null(d$frame_digest)) {
+      return(NULL)
+    }
+    part <- filter_draw_digest(d$frame_digest, rows, design)
+    if (is_null(part)) {
+      return(NULL)
+    }
+    if (nrow(part$stages[[1L]]$pools) > 0L) {
+      parts <- c(parts, list(tenure_digest_part(part, d, record)))
+    }
+  }
+  if (length(parts) == 0L) {
+    return(NULL)
+  }
+  tryCatch(merge_wave_draw_digests(prior, parts), error = function(e) NULL)
+}
+
+#' The digest of a master whose panels hold several tenures
+#'
+#' Every tenure drawn so far, its pools keyed by the wave it opened at, on
+#' the master's own stages. The master never closes, so this is the record
+#' a design file keeps and a replay checks.
+#' @noRd
+tenure_master_digest <- function(master, draws) {
+  prior <- master_executed_digest(master)
+  if (is_null(prior) || length(draws) == 0L ||
+        any(vapply(draws, function(d) is_null(d$frame_digest), logical(1)))) {
+    return(NULL)
+  }
+  record <- attr(master, "metadata")$panel_assignment
+  parts <- lapply(draws, function(d) {
+    tenure_digest_part(d$frame_digest, d, record)
+  })
+  tryCatch(
+    merge_wave_draw_digests(prior, parts),
+    error = function(e) {
+      cli_warn(c(
+        "The frame digest could not be extended for this tenure.",
+        "i" = conditionMessage(e)
+      ), class = "samplyr_warning_digest_unavailable")
+      NULL
+    }
+  )
+}
+
+#' Key a draw's pools by the tenure it opened, under a schedule with tenures
+#' @noRd
+tenure_digest_part <- function(part, draw, record) {
+  if (!schedule_has_tenures(record$schedule)) {
+    return(part)
+  }
+  part$stages <- lapply(part$stages, function(stage) {
+    stage$pools$tenure <- rep(as.integer(draw$wave), nrow(stage$pools))
+    stage
+  })
+  part
+}
+
+#' A master's digest cut to the stages the master itself executed
+#'
+#' A master with tenures carries the later stages of its draws in its
+#' digest, and each new draw extends only the master's own stages.
+#' @noRd
+master_executed_digest <- function(master) {
+  digest <- wave_master_digest(master)
+  if (is_null(digest)) {
+    return(NULL)
+  }
+  executed <- get_stages_executed(master)
+  ids <- vapply(digest$stages, function(s) s$stage_id, integer(1))
+  if (all(ids %in% executed)) {
+    return(digest)
+  }
+  digest$stages <- digest$stages[ids %in% executed]
+  used <- vapply(digest$stages, function(s) s$frame_ref, integer(1))
+  digest$frames <- Filter(function(f) f$frame_id %in% used, digest$frames)
+  digest$version <- digest_schema_version(digest$stages)
+  digest
+}
+
+#' One draw's later-stage records, cut to the pools holding some rows
+#'
+#' A pool belongs to one parent unit, so it is kept whole when any of its
+#' selected units is among `rows`. Pools and units are renumbered, and each
+#' stage's parents follow the units kept above it.
+#' @noRd
+filter_draw_digest <- function(part, rows, design) {
+  rows <- as.data.frame(rows)
+  unit_map <- NULL
+  stages <- vector("list", length(part$stages))
+  for (i in seq_along(part$stages)) {
+    stage <- part$stages[[i]]
+    selected <- stage$selected
+    vars <- collect_ancestor_cluster_vars(design, stage$stage_id + 1L)
+    if (is_null(selected) || !"key" %in% names(selected) ||
+          length(vars) == 0L || !all(vars %in% names(rows))) {
+      return(NULL)
+    }
+    keys <- unique(digest_path_keys(rows, seq_len(nrow(rows)), vars))
+    keep <- unique(selected$pool_id[selected$key %in% keys])
+    kept <- subset_digest_stage(stage, keep, unit_map)
+    stages[[i]] <- kept$stage
+    unit_map <- kept$unit_map
+  }
+  part$stages <- stages
+  part
+}
+
+#' A stage record restricted to some of its pools, renumbered
+#' @noRd
+subset_digest_stage <- function(stage, keep, parent_map = NULL) {
+  pools <- stage$pools[stage$pools$pool_id %in% keep, , drop = FALSE]
+  pool_map <- integer(max(c(0L, stage$pools$pool_id)))
+  pool_map[pools$pool_id] <- seq_len(nrow(pools))
+  pools$pool_id <- seq_len(nrow(pools))
+  if (!is_null(parent_map)) {
+    pools$parent_unit <- parent_map[pools$parent_unit]
+  }
+  rownames(pools) <- NULL
+
+  cut <- function(tab) {
+    if (is_null(tab) || nrow(tab) == 0L) {
+      return(tab)
+    }
+    tab <- tab[tab$pool_id %in% keep, , drop = FALSE]
+    tab$pool_id <- pool_map[tab$pool_id]
+    rownames(tab) <- NULL
+    tab
+  }
+
+  unit_map <- NULL
+  units <- stage$units
+  if (identical(stage$storage, "units") && !is_null(units)) {
+    units <- cut(units)
+    unit_map <- integer(max(c(0L, stage$units$unit_id)))
+    unit_map[units$unit_id] <- seq_len(nrow(units))
+    units$unit_id <- seq_len(nrow(units))
+  }
+  selected <- cut(stage$selected)
+  if (!is_null(unit_map) && !is_null(selected)) {
+    selected$unit_id <- unit_map[selected$unit_id]
+  }
+
+  stage$pools <- pools
+  stage$units <- units
+  stage$selected <- selected
+  stage$chance_distribution <- cut(stage$chance_distribution)
+  for (name in c("balance", "bounds")) {
+    if (!is_null(stage$diagnostics[[name]])) {
+      stage$diagnostics[[name]] <- cut(stage$diagnostics[[name]])
+    }
+  }
+  list(stage = stage, unit_map = unit_map)
+}
+
+#' Stack per-wave tables keyed by pool, renumbering pools and units
+#' @noRd
+stack_wave_tables <- function(tabs, pool_maps, unit_maps = NULL) {
+  parts <- lapply(seq_along(tabs), function(w) {
+    x <- tabs[[w]]
+    if (is_null(x) || nrow(x) == 0L) {
+      return(NULL)
+    }
+    x$pool_id <- pool_maps[[w]][x$pool_id]
+    if (!is_null(unit_maps)) {
+      x$unit_id <- unit_maps[[w]][x$unit_id]
+    }
+    x
+  })
+  parts <- Filter(Negate(is_null), parts)
+  if (length(parts) == 0L) {
+    return(NULL)
+  }
+  out <- vctrs::vec_rbind(!!!parts)
+  out <- out[order(out$pool_id, seq_len(nrow(out))), , drop = FALSE]
+  rownames(out) <- NULL
+  out
 }
 
 #' Method diagnostics for balanced and spatial stages

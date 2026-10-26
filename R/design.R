@@ -99,6 +99,16 @@ sampling_design <- function(title = NULL) {
     )
   }
 
+  if (!is_null(title) && (is.na(title) || !nzchar(title))) {
+    cli_abort(
+      c(
+        "{.arg title} must not be missing or empty.",
+        "i" = "Leave {.arg title} as {.code NULL} for a design without one."
+      ),
+      class = "samplyr_error_design_argument"
+    )
+  }
+
   design <- new_sampling_design(
     title = title,
     stages = list(),

@@ -35,7 +35,9 @@
 #' 4)." When every stratum is even, the line gives the range of units per
 #' period instead. This is the table fieldwork is planned from, and an
 #' uneven stratum shows an allocation that is not a multiple of the number
-#' of periods.
+#' of periods. While the later stages are drawn one period at a time, a line
+#' such as "Drawn: stage 2 in 3 of 12 periods (1, 2, 5)." says how far they
+#' are.
 #'
 #' Each stage section has two lines:
 #'
@@ -181,7 +183,7 @@ render_sample_summary <- function(object) {
     info_parts <- c(info_parts, paste0("seed = ", seed))
   }
   if (is_replicated) {
-    n_reps <- length(unique(object$.replicate))
+    n_reps <- n_replicates(object)
     n_per_rep <- nrow(object) %/% n_reps
     info_parts <- c(
       info_parts,
@@ -195,6 +197,10 @@ render_sample_summary <- function(object) {
   )
 
   summary_periods_lines(summary_periods(object))
+  progress <- wave_draws_progress(object)
+  if (!is_null(progress)) {
+    cli::cat_bullet(paste0("Drawn: ", progress, "."), bullet = "info")
+  }
 
   # The recorded design describes source selection, not transformed rows.
   share <- attr(object, "metadata")$weight_share
@@ -202,7 +208,8 @@ render_sample_summary <- function(object) {
     summary_weight_share_note(object, share)
   }
 
-  object_for_alloc <- if (is_replicated) {
+  # The first replicate with rows. A stack of empty replicates has none.
+  object_for_alloc <- if (is_replicated && nrow(object) > 0L) {
     object[object$.replicate == min(object$.replicate), ]
   } else {
     object
@@ -262,7 +269,8 @@ render_sample_summary <- function(object) {
       cli::cat_bullet(
         paste0(
           "Weight diagnostics omitted for stacked replicates. ",
-          "Filter to one first: x |> filter(.replicate == 1)"
+          "Filter to one first: x |> filter(.replicate == ",
+          min(object$.replicate), ")"
         ),
         bullet = "info"
       )
@@ -569,8 +577,20 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL,
     } else {
       paste0(fmt_n(nrow(pools)), " ", noun)
     }
+    # A later tenure draws from the units its exclusion left, and its
+    # weights count the whole listing.
+    excluded <- pools$n_excluded
+    listed <- if (!is_null(excluded) && !anyNA(excluded) &&
+                    any(excluded > 0)) {
+      pools$N + excluded
+    }
     parts <- c(
-      paste0("N_h ", summary_range(pools$N, fmt_n)),
+      paste0(
+        "N_h ", summary_range(pools$N, fmt_n),
+        if (!is_null(listed)) {
+          paste0(" of ", summary_range(listed, fmt_n), " listed")
+        }
+      ),
       paste0("n_h ", n_scoped_txt)
     )
     if (
@@ -579,7 +599,15 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL,
     ) {
       parts <- c(
         parts,
-        paste0("f_h ", summary_range(n_realized / pools$N, fmt_f))
+        paste0(
+          "f_h ", summary_range(n_realized / pools$N, fmt_f),
+          if (!is_null(listed)) {
+            paste0(
+              " of eligible, ", summary_range(n_realized / listed, fmt_f),
+              " of listed"
+            )
+          }
+        )
       )
     }
     if (random_size && !anyNA(pools$n_expected)) {

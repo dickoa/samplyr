@@ -2,7 +2,8 @@
 #'
 #' A frame is a data frame or a non-empty ordered list of data frames.
 #' A data frame and a one-element list containing it have the same meaning.
-#' [execute()] also accepts separate data-frame arguments after `frame`.
+#' [execute()] also accepts one data frame per stage as separate arguments
+#' in `...`.
 #'
 #' ## One hierarchy or separate registers
 #'

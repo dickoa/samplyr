@@ -13,14 +13,16 @@ varcomp(x, ...)
 \item{x}{A \code{tbl_sample} with at least one executed clustered stage.}
 
 \item{...}{The outcome as a one-sided formula, e.g.
-\code{varcomp(x, ~y)}, mirroring the survey.design method. Nothing else
+\code{varcomp(x, ~y)}, mirroring the survey.design method. The expression
+is evaluated on the sample, so \code{~log(y)} analyzes the log of \code{y}, and
+every variable it names must be a column of the sample. Nothing else
 belongs here: \code{strata} follows the \code{...} and so is matched exactly, so
 a near miss such as \code{strat} or a second positional formula is reported
 rather than silently dropped.}
 
-\item{strata}{Optional one-sided formula naming a column to
-estimate per-stratum components by, when the first stage was not
-stratified. Stage-1 design strata are picked up automatically.
+\item{strata}{Optional one-sided formula over columns of the sample,
+such as \code{~region} or \code{~interaction(region, urban_rural)}, to estimate
+per-stratum components by, when the first stage was not stratified. Stage-1 design strata are picked up automatically.
 Combining them with \code{strata} is an error, because per-stratum
 components crossed with design strata are ambiguous.}
 }

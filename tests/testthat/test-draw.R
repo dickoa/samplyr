@@ -357,6 +357,32 @@ test_that("draw() limits named frac to one stratification variable", {
   )
 })
 
+test_that("draw() refuses a named n or frac that repeats or omits a name", {
+  strat <- sampling_design() |> stratify_by(group)
+
+  # Equal and conflicting repeats alike: indexing by name keeps the first.
+  expect_error(
+    draw(strat, n = c(A = 1, A = 4, B = 2)),
+    class = "samplyr_error_alloc_duplicate_keys"
+  )
+  expect_error(
+    draw(strat, n = c(A = 2, A = 2, B = 2)),
+    class = "samplyr_error_alloc_duplicate_keys"
+  )
+  expect_error(
+    draw(strat, frac = c(A = 0.1, B = 0.2, B = 0.3)),
+    class = "samplyr_error_alloc_duplicate_keys"
+  )
+  expect_error(
+    draw(strat, n = stats::setNames(c(2, 3), c("A", ""))),
+    class = "samplyr_error_alloc_invalid_input_type"
+  )
+  expect_error(
+    draw(strat, frac = stats::setNames(c(0.1, 0.2), c("A", NA))),
+    class = "samplyr_error_alloc_invalid_input_type"
+  )
+})
+
 test_that("draw() validates round parameter", {
   expect_error(
     sampling_design() |> draw(frac = 0.1, round = "invalid"),

@@ -583,16 +583,19 @@ For custom stratum-specific sizes or rates, pass a data frame to `n` or
 `frac` in `draw()`:
 
 ``` r
-# Custom allocation with data frame
 sizes_df <- data.frame(
-  region = c("North", "South", "East", "West"),
-  n = c(100, 200, 150, 100)
+  region = c("A", "B", "C"),
+  n = c(2, 3, 4)
 )
 
 sample <- sampling_design() |>
   stratify_by(region) |>
   draw(n = sizes_df) |>
   execute(frame, seed = 42)
+table(sample$region)
+#> 
+#> A B C 
+#> 2 3 4
 ```
 
 ``` r

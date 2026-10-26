@@ -17,12 +17,49 @@
 #' @return `NULL`, or a list with `transition` (the final call's) and `calls`.
 #' @noRd
 execution_chain <- function(sample) {
-  view <- chain_view_of_sample(sample)
-  calls <- list()
+  entries <- chain_entries(chain_view_of_sample(sample))
+  if (is_null(entries)) {
+    return(NULL)
+  }
+  n <- length(entries)
+  list(
+    transition = entries[[n]]$view$transition,
+    calls = lapply(entries[-n], function(e) e$call %||% chain_call_of_view(e$view))
+  )
+}
+
+#' The calls behind a view, oldest first and ending with the view itself
+#'
+#' Each entry holds a `view`, which carries the transition from the call
+#' before it, or a ready `call`. A master whose later stages were drawn one
+#' wave at a time stands for its own calls followed by one call per wave, in
+#' the order they were drawn, and the view is the last of those. `NULL` when
+#' the chain cannot be replayed.
+#' @noRd
+chain_entries <- function(view) {
+  entries <- list()
   repeat {
+    draws <- view$meta$per_wave_draws
+    if (length(draws) > 0L) {
+      view$transition <- "wave_draw"
+      master <- wave_draw_master_view(view)
+      if (isTRUE(master$modified)) {
+        return(NULL)
+      }
+      head <- chain_entries(master)
+      if (is_null(head)) {
+        return(NULL)
+      }
+      n_master <- master$meta$n_selected
+      earlier <- lapply(draws[-length(draws)], function(d) {
+        list(call = wave_draw_call(d, n_selected = n_master,
+                                   design = view$design))
+      })
+      return(c(head, earlier, list(list(view = view)), entries))
+    }
     link <- chain_predecessor(view)
     view$transition <- link$transition
-    calls <- c(list(view), calls)
+    entries <- c(list(list(view = view)), entries)
     if (identical(link$transition, "start")) {
       break
     }
@@ -37,11 +74,70 @@ execution_chain <- function(sample) {
     }
     view <- link$view
   }
-  n <- length(calls)
+  entries
+}
+
+#' The master a wave-by-wave draw started from, as a view
+#'
+#' Before the last wave the sample is the master itself, holding the draws.
+#' After it, the master is the record the completed sample continues.
+#' @noRd
+wave_draw_master_view <- function(view) {
+  remaining <- setdiff(seq_along(view$design$stages), view$stages_executed)
+  if (length(remaining) > 0L) {
+    meta <- view$meta
+    meta$per_wave_draws <- NULL
+    return(list(
+      seed = view$seed,
+      stages_executed = view$stages_executed,
+      meta = meta,
+      design = view$design,
+      modified = isTRUE(view$modified)
+    ))
+  }
+  parent <- view$meta$continued_from
   list(
-    transition = calls[[n]]$transition,
-    calls = lapply(calls[-n], chain_call_of_view)
+    seed = parent$seed,
+    stages_executed = parent$stages_executed,
+    meta = parent,
+    design = view$design,
+    modified = isTRUE(parent$realization_modified)
   )
+}
+
+#' One wave's call in the form replay reads
+#' @noRd
+wave_draw_call <- function(draw, n_selected, design) {
+  list(
+    transition = "wave_draw",
+    seed = draw$seed,
+    stages = as.integer(draw$stages),
+    n_selected = n_selected,
+    frames = frame_record_or_default(draw$frame_schedule, draw$stages),
+    wave = encode_wave_draw(draw),
+    rng = draw$execution_environment$rng,
+    design = design
+  )
+}
+
+#' @noRd
+encode_wave_draw <- function(draw) {
+  list(
+    wave = as.integer(draw$wave),
+    active_panels = I(as.integer(draw$active_panels))
+  )
+}
+
+#' What the last wave's call contributes to the receipt of its master
+#'
+#' `NULL` for a sample with no wave drawn this way.
+#' @noRd
+wave_draw_final_call <- function(sample) {
+  draws <- wave_draws(sample)
+  if (length(draws) == 0L) {
+    return(NULL)
+  }
+  draws[[length(draws)]]
 }
 
 #' @noRd
@@ -96,6 +192,12 @@ chain_predecessor <- function(view) {
 #' @noRd
 chain_call_of_view <- function(view) {
   meta <- view$meta
+  # The last wave's draw is the call such a view stands for.
+  if (identical(view$transition, "wave_draw")) {
+    draws <- meta$per_wave_draws
+    return(wave_draw_call(draws[[length(draws)]],
+                          n_selected = meta$n_selected, design = view$design))
+  }
   list(
     transition = view$transition,
     seed = view$seed,
@@ -195,11 +297,12 @@ fill_chain_designs <- function(calls, final_design) {
 #' How many frames each call of a chain took from outside
 #'
 #' The first call reads its frames from the caller, and so does every
-#' continuation. A new phase reads the phase before it, and a wave its master.
+#' continuation and every wave's draw of later stages. A new phase reads the
+#' phase before it, and a wave its master.
 #' @noRd
 chain_frame_counts <- function(calls) {
   takes <- vapply(seq_along(calls), function(k) {
-    k == 1L || identical(calls[[k]]$transition, "continuation")
+    k == 1L || calls[[k]]$transition %in% c("continuation", "wave_draw")
   }, logical(1))
   vapply(calls[takes], function(cl) {
     as.integer(cl$frames$n_supplied %||% 1L)
@@ -274,9 +377,9 @@ flatten_chain_frames <- function(frame, counts, labels = NULL,
 #' Replay every call of a chained receipt in order
 #'
 #' Each call is re-run with its own seed, stages and RNG kind, on what it
-#' originally read: the caller's frames for the first call and for each
-#' continuation, the replayed earlier phase for a new phase, the replayed
-#' master for a wave. Arguments a call inherited rather than declared are not
+#' originally read: the caller's frames for the first call, for each
+#' continuation and for each wave's draw of later stages, the replayed
+#' earlier phase for a new phase, the replayed master for a wave. Arguments a call inherited rather than declared are not
 #' passed again, because execute() refuses them: panels on a sample that
 #' already carries an assignment, and replicates on a replicated input.
 #' @noRd
@@ -290,12 +393,20 @@ replay_execution_chain <- function(calls, frames, frame_digest = "summary",
   for (k in seq_len(n)) {
     cl <- calls[[k]]
     own_frames <- NULL
-    if (k == 1L || identical(cl$transition, "continuation")) {
+    if (k == 1L || cl$transition %in% c("continuation", "wave_draw")) {
       slot <- slot + 1L
       own_frames <- frames[offsets[slot] + seq_len(counts[[slot]])]
     }
     if (identical(cl$transition, "wave")) {
       result <- execute(result, wave = as.integer(cl$wave$wave))
+    } else if (identical(cl$transition, "wave_draw")) {
+      result <- with_replay_rng(cl$rng, execute(
+        result,
+        own_frames,
+        wave = as.integer(cl$wave$wave),
+        stages = cl$stages,
+        seed = cl$seed
+      ), call = call)
     } else {
       input <- switch(
         cl$transition,

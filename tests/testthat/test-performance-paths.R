@@ -413,23 +413,22 @@ test_that("a cluster digest keys each selected cluster", {
   expect_identical(units$unit_id, 1:8)
 })
 
-test_that("the singleton check reads a sampled row's pool by its key", {
-  # 0.1 + 0.2 and 0.3 differ as doubles but share the key "0.3".
+test_that("values that would share a key never reach the singleton check", {
+  # 0.1 + 0.2 and 0.3 differ as doubles but print as "0.3".
   frame <- data.frame(x = c(rep(0.1 + 0.2, 3), rep(0.3, 3), rep(1, 4)))
-  spec <- (sampling_design() |> stratify_by(x) |> draw(n = 1))$stages[[1]]
-  sample <- frame[c(4, 7, 8), , drop = FALSE]
-  events <- list()
-  withCallingHandlers(
-    samplyr:::signal_singleton_strata(
-      frame, "x", sample, spec$draw_spec
-    ),
-    samplyr_condition_selection_event = function(cnd) {
-      events[[length(events) + 1L]] <<- cnd
-      rlang::cnd_muffle(cnd)
-    }
+  design <- sampling_design() |> stratify_by(x) |> draw(n = 1)
+  expect_error(
+    execute(design, frame, seed = 1),
+    class = "samplyr_error_key_precision"
   )
-  expect_length(events, 1L)
-  expect_identical(events[[1]]$payload$n_singleton, 1L)
+  # The check itself builds keys, so it refuses them too.
+  sample <- frame[c(4, 7, 8), , drop = FALSE]
+  expect_error(
+    samplyr:::signal_singleton_strata(
+      frame, "x", sample, design$stages[[1]]$draw_spec
+    ),
+    class = "samplyr_error_key_precision"
+  )
 })
 
 test_that("replicate blocks are the rows each replicate holds in the stack", {
@@ -774,4 +773,92 @@ test_that("a control that reads a column by name sees the frame's column", {
     presorted <- execute(parent(), sorted, seed = 3, reps = reps)
     expect_identical(s$id, presorted$id)
   }
+})
+
+## A frame linked to its own rows
+
+test_that("linking a frame to its own rows matches the general link", {
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(h) |> cluster_by(psu) |> draw(n = 2) |>
+    add_stage() |> draw(n = 1)
+  base <- data.frame(
+    psu = rep(1:6, each = 3),
+    h = rep(c("a", "b"), each = 9),
+    id = 1:18,
+    when = as.Date("2020-01-01") + 0:17
+  )
+  frames <- list(
+    automatic = base,
+    integer_names = base[c(2, 1, 3:18), ],
+    character_names = `rownames<-`(base, paste0("r", 1:18)),
+    tibble = tibble::as_tibble(base),
+    list_column = within(base, extra <- as.list(id))
+  )
+  for (nm in names(frames)) {
+    frame <- frames[[nm]]
+    # An equal copy is a different object, so it takes the general path.
+    copy <- vctrs::vec_slice(frame, seq_len(nrow(frame)))
+    attributes(copy) <- attributes(frame)
+    fast <- link_stage_frame(frame, frame, design, 2L, check_coverage = FALSE)
+    general <- link_stage_frame(frame, copy, design, 2L,
+                                check_coverage = FALSE)
+    # Base identical(): waldo reads explicit 1:n row names as automatic.
+    expect_true(identical(fast, general), info = nm)
+  }
+})
+
+test_that("a stratum varying within a unit is refused on its own rows too", {
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(h) |> cluster_by(psu, nest = FALSE) |>
+    draw(n = 1) |>
+    add_stage() |> draw(n = 1)
+  frame <- data.frame(psu = rep(1:4, each = 2), h = c("a", "b", rep("b", 6)))
+  expect_error(
+    link_stage_frame(frame, frame, design, 2L, check_coverage = FALSE),
+    class = "samplyr_error_frame_parent_conflict"
+  )
+})
+
+## Key locations shared within one execution
+
+test_that("cached key locations equal a direct deduplication", {
+  frame <- data.frame(
+    m = rep(c(3, 1, 2, 1), each = 3),
+    h = rep(c("b", "a", "a", "a"), each = 3),
+    r = rep(c("x", "y"), 6),
+    stringsAsFactors = TRUE
+  )
+  frame$m[5] <- NA
+  direct <- function(vars) vctrs::vec_unique_loc(frame[vars])
+  sets <- list("m", "h", c("m", "h"), c("h", "m"), c("m", "h", "r"), "r")
+
+  # Inactive, and active with each order of first requests.
+  for (vars in sets) {
+    expect_identical(unique_key_loc(frame, vars), direct(vars))
+  }
+  for (order in list(sets, rev(sets))) {
+    local({
+      local_key_loc_cache()
+      for (vars in order) {
+        expect_identical(unique_key_loc(frame, vars), direct(vars),
+                         info = paste(vars, collapse = "+"))
+      }
+    })
+  }
+})
+
+test_that("cached key locations follow the columns, not the frame object", {
+  local_key_loc_cache()
+  frame <- data.frame(m = c(1, 1, 2, 2, 3), h = c("a", "a", "b", "b", "c"))
+  expect_identical(unique_key_loc(frame, c("m", "h")), c(1L, 3L, 5L))
+
+  # A narrowed frame shares the columns, so it reads the cached rows.
+  narrow <- vctrs::new_data_frame(.subset(frame, "m"), n = nrow(frame))
+  expect_identical(unique_key_loc(narrow, "m"), c(1L, 3L, 5L))
+
+  # A changed column is a new vector, so it is deduplicated again.
+  changed <- frame
+  changed$m[2] <- 9
+  expect_identical(unique_key_loc(changed, c("m", "h")), c(1L, 2L, 3L, 5L))
+  expect_identical(unique_key_loc(frame, c("m", "h")), c(1L, 3L, 5L))
 })

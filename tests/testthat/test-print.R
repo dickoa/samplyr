@@ -32,6 +32,39 @@ test_that("print describes a named per-stratum n vector", {
   expect_match(txt, "per stratum")
 })
 
+test_that("print shows certainty and empty-sample settings unless default", {
+  draw_line <- function(design) {
+    out <- cli::ansi_strip(capture.output(print(design)))
+    out[grepl("Draw:", out, fixed = TRUE)]
+  }
+  plain <- sampling_design() |>
+    draw(n = 10, method = "pps_brewer", mos = households)
+  # Nothing follows the measure of size when every setting is the default.
+  expect_match(draw_line(plain),
+               "Draw: n = 10, method = pps_brewer, mos = households$")
+
+  set <- sampling_design() |>
+    draw(frac = 0.1, method = "pps_brewer", mos = households,
+         certainty_size = 800, certainty_overflow = "allow",
+         on_empty = "warn", round = "nearest")
+  line <- draw_line(set)
+  for (part in c("certainty_size = 800", "certainty_overflow = allow",
+                 "on_empty = warn", "round = nearest")) {
+    expect_match(line, part, fixed = TRUE)
+  }
+  # Designs differing only in these settings no longer print alike.
+  expect_false(identical(draw_line(set), draw_line(plain)))
+
+  thresholds <- data.frame(stratum = c("A", "B"), certainty_prop = 0.2)
+  by_stratum <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = 5, method = "pps_brewer", mos = households,
+         certainty_prop = thresholds)
+  expect_match(draw_line(by_stratum),
+               "certainty_prop = <custom data frame, per stratum>",
+               fixed = TRUE)
+})
+
 test_that("print flags a stage with no draw specification", {
   design <- sampling_design() |>
     add_stage(label = "Incomplete")

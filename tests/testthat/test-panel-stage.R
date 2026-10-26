@@ -348,11 +348,11 @@ test_that("an older record keeps the unit vocabulary it was written with", {
   expect_identical(samplyr:::normalize_panel_record(v1)$unit, "psu")
 })
 
-test_that("all four versions are supported and a fifth is not", {
-  expect_identical(samplyr:::supported_panel_record_versions, 1:4)
+test_that("all five versions are supported and a sixth is not", {
+  expect_identical(samplyr:::supported_panel_record_versions, 1:5)
   expect_error(
     samplyr:::check_panel_record_supported(
-      list(algorithm = "blocked_random_quota", version = 5L), "A wave"
+      list(algorithm = "blocked_random_quota", version = 6L), "A wave"
     ),
     class = "samplyr_error_panel_record_unsupported"
   )

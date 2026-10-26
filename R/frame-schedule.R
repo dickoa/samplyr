@@ -376,6 +376,7 @@ check_scheduled_frame_vars <- function(design, entries, call = caller_env()) {
                  already carries the parent identifiers."
         ),
         class = "samplyr_error_frame_missing_ancestry",
+        stage = stage_idx,
         call = call
       )
     }
@@ -402,6 +403,7 @@ check_scheduled_frame_vars <- function(design, entries, call = caller_env()) {
           }
         ),
         class = "samplyr_error_frame_missing_vars",
+        stage = stage_idx,
         call = call
       )
     }

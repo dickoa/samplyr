@@ -141,6 +141,15 @@ add_stage <- function(.data, label = NULL) {
         class = "samplyr_error_design_argument"
       )
     }
+    if (is.na(label) || !nzchar(label)) {
+      cli_abort(
+        c(
+          "{.arg label} must not be missing or empty.",
+          "i" = "Leave {.arg label} as {.code NULL} for a stage without one."
+        ),
+        class = "samplyr_error_design_argument"
+      )
+    }
   }
 
   current <- .data$current_stage

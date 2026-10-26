@@ -331,6 +331,37 @@ test_that("validator rejects a non-monotone chance quantile function", {
   expect_digest_error(d, "chance")
 })
 
+test_that("the first pool whose quantile function breaks names the error", {
+  frame <- data.frame(
+    h = rep(c("a", "b", "c"), each = 60),
+    mos = rep(1 + (1:60) / 7, 3)
+  )
+  s <- sampling_design() |>
+    stratify_by(h) |>
+    draw(n = 4, method = "pps_brewer", mos = mos) |>
+    execute(frame, seed = 1)
+  d <- get_frame_digest(s)
+  expect_identical(d$stages[[1]]$storage, "quantiles")
+  # Pools are judged in pool order, not in the order the table lists them.
+  dist <- d$stages[[1]]$chance_distribution
+  ids <- sort(unique(dist$pool_id))
+  dist <- dist[order(match(dist$pool_id, rev(ids)), dist$quantile), ]
+  d$stages[[1]]$chance_distribution <- dist
+  expect_no_error(samplyr:::validate_frame_digest(d))
+
+  first <- which(dist$pool_id == ids[1])
+  last <- which(dist$pool_id == ids[3])
+  broken <- function(dup_rows, down_rows) {
+    out <- d
+    out$stages[[1]]$chance_distribution$quantile[dup_rows[2]] <-
+      dist$quantile[dup_rows[3]]
+    out$stages[[1]]$chance_distribution$chance[down_rows[2]] <- 0
+    out
+  }
+  expect_digest_error(broken(last, first), "chance")
+  expect_digest_error(broken(first, last), "field")
+})
+
 test_that("validator rejects distributions referencing unknown pools", {
   d <- digest_fixture_quantiles()
   d$stages[[1]]$chance_distribution$pool_id[1] <- 99L

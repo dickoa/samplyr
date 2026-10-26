@@ -234,6 +234,79 @@ test_that("added analysis columns do not report drift", {
   )
 })
 
+test_that("drift pool rows are the rows a comparison row by row finds", {
+  by_row <- function(frame, st, scope_keys = NULL, key_of_pool = NULL) {
+    lapply(seq_len(nrow(st$pools)), function(p) {
+      rows <- if (is.null(scope_keys)) {
+        seq_len(nrow(frame))
+      } else {
+        which(scope_keys == key_of_pool[p])
+      }
+      for (v in st$strata) {
+        rows <- rows[
+          as.character(frame[[v]][rows]) == as.character(st$pools[[v]][p])
+        ]
+      }
+      rows
+    })
+  }
+  both <- function(frame, st, scope_keys = NULL, key_of_pool = NULL) {
+    rows_of <- drift_pool_rows(frame, st, scope_keys, key_of_pool)
+    expect_identical(
+      lapply(seq_len(nrow(st$pools)), rows_of),
+      by_row(frame, st, scope_keys, key_of_pool)
+    )
+  }
+  frame <- data.frame(
+    region = c("N", "S", "N", "S", "N"),
+    size = c(1, 1, 2, 1, 1)
+  )
+  st <- list(
+    strata = c("region", "size"),
+    pools = data.frame(region = c("N", "S", "E"), size = c(1, 1, 1), N = 1)
+  )
+  scope <- c("a", "a", "b", NA, "b")
+  both(frame, st)
+  both(frame, st, scope, c("b", "a", "a"))
+  both(frame, list(strata = NULL, pools = st$pools), scope, c("a", "z", "b"))
+  # A missing label leaves the row in the comparison as NA.
+  frame$size[2] <- NA
+  both(frame, st)
+  both(frame, st, scope, c("b", "a", "a"))
+})
+
+test_that("chance rows by pool are the rows a comparison by id finds", {
+  stg <- list(
+    storage = "units",
+    pools = data.frame(pool_id = 1:3),
+    units = data.frame(pool_id = c(2L, 1L, 2L, 3L), chance = 1:4 / 10)
+  )
+  same <- function(stg, ids) {
+    rows_of <- chance_rows_by_pool(stg)
+    for (pid in ids) {
+      expect_identical(
+        stg$units[rows_of(pid), , drop = FALSE],
+        stg$units[stg$units$pool_id == pid, , drop = FALSE]
+      )
+    }
+  }
+  same(stg, c(1:4, NA))
+  stg$units$pool_id[1] <- NA
+  same(stg, c(1:3, NA))
+  # Quantile bins are read the same way.
+  stg <- list(
+    storage = "quantiles",
+    pools = data.frame(pool_id = 1:2),
+    chance_distribution = data.frame(pool_id = c(2L, 2L, 1L), chance = 1:3)
+  )
+  rows_of <- chance_rows_by_pool(stg)
+  cd <- stg$chance_distribution
+  expect_identical(
+    cd[rows_of(2L), , drop = FALSE],
+    cd[cd$pool_id == 2L, , drop = FALSE]
+  )
+})
+
 test_that("validate_frame reports where the frame drifted", {
   withr::local_options(cli.width = 500)
   s <- serialize_fixture()

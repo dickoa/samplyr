@@ -19,25 +19,27 @@ as_svydesign(x, ...)
 \item{x}{A \code{tbl_sample} object produced by \code{\link[=execute]{execute()}}.}
 
 \item{...}{Additional arguments passed to \code{\link[survey:svydesign]{survey::svydesign()}}, or to
-\code{\link[survey:twophase]{survey::twophase()}} for a two-phase sample. In particular, you can
-pass \code{pps = survey::ppsmat(joint_matrix)} to supply exact joint
-inclusion probabilities instead of the default Brewer approximation
-(see Details). Every argument must be named, and its name must be one
-the receiving function accepts: \code{nest} and \code{method} follow the \code{...}
-and so are matched exactly, and a near miss such as \code{nes} is reported
-rather than forwarded. The design arguments themselves (\code{ids}, \code{strata},
-\code{weights}, \code{probs}, \code{fpc}, \code{data}, and \code{subset} for a two-phase sample)
-are derived from the sample and cannot be given here.}
+\code{\link[survey:twophase]{survey::twophase()}} for a sample exported as two phases. In
+particular, you can pass \code{pps = survey::ppsmat(joint_matrix)} to
+supply exact joint inclusion probabilities instead of the default
+Brewer approximation (see Details). Every argument must be named, and
+its name must be one the receiving function accepts: \code{nest} and
+\code{method} follow the \code{...} and so are matched exactly, and a near miss
+such as \code{nes} is reported rather than forwarded. The design arguments
+themselves (\code{ids}, \code{strata}, \code{weights}, \code{probs}, \code{fpc}, \code{data}, and
+\code{subset} for a two-phase sample) are derived from the sample and cannot
+be given here.}
 
 \item{nest}{If \code{TRUE} (the default), relabel cluster ids to enforce
 nesting within strata, which suits most complex survey designs. Passed
-to \code{\link[survey:svydesign]{survey::svydesign()}}. It has no effect on a two-phase sample, which
-is exported with \code{\link[survey:twophase]{survey::twophase()}}, and giving it there raises a
-warning.}
+to \code{\link[survey:svydesign]{survey::svydesign()}}. It has no effect on a sample exported with
+\code{\link[survey:twophase]{survey::twophase()}}, and giving it there raises a warning.}
 
 \item{method}{For two-phase samples, the variance method passed to
 \code{\link[survey:twophase]{survey::twophase()}}. One of \code{"full"}, \code{"approx"}, or \code{"simple"}.
-This argument is only accepted for two-phase samples.}
+This argument is only accepted for two-phase samples. A materialized
+wave is exported by ultimate clusters unless \code{method} is given, which
+asks for its two-phase export instead.}
 
 \item{systematic_variance}{What to do about the variance approximation
 used for systematic stages: simple random sampling for \code{systematic},
@@ -53,8 +55,9 @@ result. \code{\link[=as_svrepdesign]{as_svrepdesign()}} takes the same argument 
 approximation of these stages.}
 }
 \value{
-A \code{survey.design2} object for single-phase and multi-stage samples,
-or a \code{twophase}/\code{twophase2} object for two-phase samples.
+A \code{survey.design2} object for single-phase and multi-stage samples
+and for materialized waves, or a \code{twophase}/\code{twophase2} object for
+two-phase samples and for waves exported with \code{method}.
 }
 \description{
 Creates a \code{\link[survey:svydesign]{survey::svydesign()}} object from a \code{tbl_sample}, using
@@ -83,7 +86,10 @@ within a stage's term. Trailing unstratified stages are omitted, and
 unstratified stages before a stratified stage get a constant
 placeholder column.
 \item \strong{Weights} (\code{weights}): the \code{.weight} column, the product of the
-per-stage weights described in \link{sample_columns}.
+per-stage weights described in \link{sample_columns}. They are design
+weights. A sample whose \code{.weight} was edited is refused, and weights
+adjusted for nonresponse or calibrated are computed on the exported
+design, with \code{\link[survey:calibrate]{survey::calibrate()}} or \code{\link[survey:postStratify]{survey::postStratify()}}.
 \item \strong{FPC} (\code{fpc}): aligned with \code{ids}. \code{\link[survey:svydesign]{survey::svydesign()}} requires
 every FPC term on the same scale, so one of two encodings is used:
 \itemize{
@@ -132,14 +138,14 @@ two-phase sample instead: execute the element stage under its first-phase design
 new second-phase design with that sample as its frame.
 }
 
-\subsection{Two-phase samples and waves}{
+\subsection{Two-phase samples}{
 
 A \emph{new} phase-2 \code{sampling_design} executed with the phase-1 \code{tbl_sample}
 as its frame, as in \code{phase2 <- execute(design2, phase1)}, records a
 previous-phase link, and \code{as_svydesign()} calls \code{\link[survey:twophase]{survey::twophase()}}.
 
-A materialized wave, \code{execute(master, wave = t)}, is the other two-phase
-case. Its second phase is the panel activation: within a frozen block the
+A materialized wave exported with \code{method} is the other two-phase case.
+Its second phase is the panel activation: within a frozen block the
 master took a simple random sample without replacement of the realized
 quota, so the blocks are the phase-2 strata and their sizes the phase-2
 population counts. The master is retained as the first phase and supplies
@@ -189,23 +195,62 @@ unit of every pool. A phase 2 stratified more coarsely or more finely than the p
 clustered, or drawn with unequal probabilities keeps the two-phase route.
 
 \code{\link[survey:twophase]{survey::twophase()}} takes no \code{pps} for the first phase, so any other
-two-phase sample or wave whose phase 1 was drawn with unequal
-probabilities without replacement is refused (\code{samplyr_error_twophase_phase1_pps},
-\code{samplyr_error_wave_phase1_pps}). So are \code{cube}, first-stage
-\code{pps_poisson} and the spatial methods, which are unsupported at either
-phase. Equal-probability first phases export, stratified, clustered,
-multistage and with-replacement alike. No two-phase sample, a wave
-included, has a replicate export, except the subsample within pools
-above, which is exported as one phase. The weights of a refused sample are
-exact, so totals and means are right. For a variance, an ultimate-cluster
-approximation treats phase 1's units as drawn with replacement and
-carries everything below in them. It is conservative, by the margins
-\link{variance_estimation} reports, and much more so when phase 2 was drawn
-across the phase-1 units:
+two-phase sample, or wave exported with \code{method}, whose phase 1 was drawn
+with unequal probabilities without replacement is refused
+(\code{samplyr_error_twophase_phase1_pps}, \code{samplyr_error_wave_phase1_pps}).
+So are \code{cube}, first-stage \code{pps_poisson} and the spatial methods, which
+are unsupported at either phase. Equal-probability first phases export,
+stratified, clustered, multistage and with-replacement alike. No
+two-phase sample has a replicate export, except the subsample within
+pools above, which is exported as one phase. The weights of a refused
+sample are exact, so totals and means are right. For a variance, an
+ultimate-cluster approximation treats phase 1's units as drawn with
+replacement and carries everything below in them. It is conservative, by
+the margins \link{variance_estimation} reports, and much more so when phase 2
+was drawn across the phase-1 units:
 
 \if{html}{\out{<div class="sourceCode r">}}\preformatted{survey::svydesign(ids = ~ea_id, strata = ~region, weights = ~.weight,
                   data = as.data.frame(phase2))
 }\if{html}{\out{</div>}}
+}
+
+\subsection{Waves}{
+
+A materialized wave, \code{execute(master, wave = t)}, is exported as one
+phase by ultimate clusters. The master's stage-1 units are the clusters,
+its stage-1 stratification variables the strata, and the wave's weights
+the weights, with no finite population correction. Every later stage and
+the activation are carried in the unit totals, so the master may have
+been drawn by any method, with probabilities proportional to size
+included. It is the variance rotating household surveys publish for each
+quarter or month. Zones and variance pairs are not used, since activation
+leaves most zones with one unit or none. Certainty units count as sampled
+units of their stratum. That errs toward too large a variance, as does a
+large sampling fraction in a stratum. In a
+simulation with 8 EAs active per stratum, its standard error was 0.89 of
+the true one with EAs drawn by simple random sampling, where the
+two-phase export gave 0.88, and 1.06 with EAs drawn by size, which has
+no two-phase export.
+
+A window of several waves, \code{execute(master, wave = 1:3)}, is exported
+the same way. A unit's rows over the window are one cluster, and the
+strata are crossed with the number of the window's waves a unit is
+active, which the schedule fixes and which sets the unit's share of the
+window's weight. In a simulation of windows over masters of 16 to 18 EAs
+per stratum, the standard error was 0.95 to 1.12 of the true one, and 95\%
+intervals covered 92\% to 97\%, with EAs drawn by simple random sampling or
+by size. \code{method} is refused for a window.
+
+A wave of a master whose later stages are still drawn one period or
+tenure at a time is exported the same way, from its own rows. The
+two-phase export reads the whole master and refuses it
+(\code{samplyr_error_wave_provisional}).
+
+\code{\link[=as_svrepdesign]{as_svrepdesign()}} replicates the same design, and \code{\link[srvyr:as_survey_design]{as_survey_design()}}
+follows \code{as_svydesign()}. \code{pps} is refused (\code{samplyr_error_survey_argument}),
+and so is a wave holding a single primary unit
+(\code{samplyr_error_wave_one_unit}). A wave that activates every unit is the
+master's own design and is exported as such.
 }
 
 \subsection{Modified samples and domain analysis}{
@@ -222,7 +267,9 @@ overwrite that left every value identical passes. Row reordering,
 one-to-one joins, and adding ordinary data columns do not mark the
 sample. One complete replicate extracted from a replicated execution
 (\code{filter(.replicate == r)}) is verified against the execution metadata
-and remains supported.
+and remains supported. A later stage drawn from a modified sample is
+refused too, since its weights carry the change, and so is every stage
+drawn after it.
 
 Dropping out-of-domain rows before conversion is not domain estimation.
 The point estimate can agree, but its variance estimate is generally
@@ -249,13 +296,43 @@ survey, so a multi-stage sample is exported at stage 1 with a warning. A
 matrix object is indexed by row, so it also needs one row per stage-1
 unit, and a sample with several is refused
 (\code{samplyr_error_pps_rows_per_psu}). Any other value is refused
-(\code{samplyr_error_pps_argument}). A two-phase or wave export takes no \code{pps},
+(\code{samplyr_error_pps_argument}). A two-phase export takes no \code{pps},
 because \code{\link[survey:twophase]{survey::twophase()}} does not apply it to the phase-2 variance
 (\code{samplyr_error_twophase_phase2_pps}). A phase 2 of one stage drawn with
 \code{pps_sampford}, \code{pps_cps}, \code{pps_brewer}, \code{pps_sps} or \code{pps_pareto} is
 exported with its joint inclusion probabilities, computed on the phase-1
 sample, and needs \code{method = "full"}. Any other unequal-probability,
 balanced or spatial phase 2 is refused with the same class.
+}
+
+\subsection{Ultimate-cluster variance}{
+
+Many survey programs publish sampling errors computed as if the primary
+units were drawn with replacement within their strata, without a finite
+population correction. The variance of every later stage is then carried
+by the primary-unit totals, which is why it is called the ultimate-cluster
+variance. It is the variance to reproduce when a new design is compared
+with what an earlier round published. \code{as_svydesign()} builds it for a
+materialized wave only. For other samples it derives \code{ids}, \code{strata} and
+\code{fpc} from the design, and survey builds the ultimate-cluster design from
+the sample's own columns:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{survey::svydesign(
+  ids = ~ea_id,
+  strata = ~interaction(region, urban_rural, drop = TRUE),
+  weights = ~.weight,
+  nest = TRUE,
+  data = as.data.frame(sample)
+)
+}\if{html}{\out{</div>}}
+
+\code{ids} names the first stage's cluster variable and \code{strata} its
+stratification variables. The approximation is conservative. It leaves
+out the finite population correction, so it overstates the variance most
+where a stratum selects a large share of its primary units, and it treats
+certainty units as sampled. A stratum with a single primary unit stops
+survey, as it does for the export, unless \code{options(survey.lonely.psu = )}
+says how to treat it.
 }
 
 \subsection{A shared estimation weight}{

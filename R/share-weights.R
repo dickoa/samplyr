@@ -553,8 +553,8 @@ check_share_source_not_wave <- function(x, call = caller_env()) {
   abort_samplyr(
     c(
       "{.fn share_weights} does not take a materialized wave.",
-      "x" = "This sample realizes wave {wave$wave}, which is an activation of
-             a master rather than a selection of its own.",
+      "x" = "This sample realizes {wave_phrase(wave$wave)}, which is an
+             activation of a master rather than a selection of its own.",
       "i" = "A shared weight is one number per target unit, and a target
              cluster can be reached from source units in different panels, so
              the activation does not describe any target unit.",
@@ -739,11 +739,11 @@ check_weighted_links <- function(targets, links, within, mult,
     )
   }
   value <- links[[mult$col]]
-  if (!is.numeric(value) || anyNA(value) || any(value < 0)) {
+  if (!is.numeric(value) || !all(is.finite(value)) || any(value < 0)) {
     abort_samplyr(
       c(
-        "{.field {mult$col}} must be non-negative numbers with no missing
-         values.",
+        "{.field {mult$col}} must be finite non-negative numbers with no
+         missing values.",
         "i" = "It is the importance of a link, and a negative importance would
                subtract one target unit's representation from another's."
       ),
@@ -762,11 +762,11 @@ check_weighted_links <- function(targets, links, within, mult,
       )
     }
     total <- targets[[mult$total_col]]
-    if (!is.numeric(total) || anyNA(total) || any(total < 0)) {
+    if (!is.numeric(total) || !all(is.finite(total)) || any(total < 0)) {
       abort_samplyr(
         c(
-          "{.field {mult$total_col}} must be non-negative numbers with no
-           missing values.",
+          "{.field {mult$total_col}} must be finite non-negative numbers with
+           no missing values.",
           "i" = "It is the population total of the link importances."
         ),
         class = "samplyr_error_share_weights_multiplicity",
@@ -789,11 +789,16 @@ check_supplied_multiplicity <- function(targets, col, within,
     )
   }
   value <- targets[[col]]
-  if (!is.numeric(value) || anyNA(value) || any(value < 0)) {
+  if (
+    !is.numeric(value) || !all(is.finite(value)) || any(value < 0) ||
+      any(value != trunc(value))
+  ) {
     abort_samplyr(
       c(
-        "{.field {col}} must be non-negative numbers with no missing values.",
-        "i" = "It is a count of links in the source population."
+        "{.field {col}} must be whole numbers, zero or more, with no missing
+         values.",
+        "i" = "It is a count of links in the source population. For links
+               that carry an importance, use {.fn weighted_links}."
       ),
       class = "samplyr_error_share_weights_multiplicity",
       call = call

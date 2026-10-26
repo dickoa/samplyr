@@ -117,6 +117,26 @@ test_that("a simple design round-trips through a file", {
   expect_equal(s2$.weight, s1$.weight)
 })
 
+test_that("a path ending in .gz is written compressed and reads back the same", {
+  design <- sampling_design() |>
+    stratify_by(stratum) |>
+    cluster_by(cluster) |>
+    draw(n = 2)
+  sample <- execute(design, test_frame, seed = 42)
+
+  plain <- withr::local_tempfile(fileext = ".json")
+  packed <- withr::local_tempfile(fileext = ".json.gz")
+  write_design(sample, plain, frame = test_frame)
+  write_design(sample, packed, frame = test_frame)
+
+  expect_identical(readBin(packed, "raw", 2L), as.raw(c(0x1f, 0x8b)))
+  expect_identical(readLines(gzfile(packed)), readLines(plain))
+  expect_identical(read_design(packed), read_design(plain))
+  replayed <- replay_design(read_design(packed), test_frame)
+  expect_identical(replayed$cluster, sample$cluster)
+  expect_identical(replayed$.weight, sample$.weight)
+})
+
 test_that("balanced method alias serializes as canonical cube", {
   design <- sampling_design() |>
     draw(n = 10, method = "balanced", aux = y)
@@ -528,6 +548,20 @@ test_that("saving a tbl_sample records a receipt that reproduces the sample", {
   expect_equal(replay$.weight, sample$.weight)
 })
 
+test_that("the execution record names the loaded versions as before", {
+  recorded <- capture_execution_environment()$packages
+  for (pkg in c("samplyr", "sondage", "svyplan")) {
+    expect_identical(recorded[[pkg]], as.character(utils::packageVersion(pkg)))
+  }
+  # A version with a dash is written with dots, as packageVersion() does.
+  skip_if_not_installed("Matrix")
+  loadNamespace("Matrix")
+  expect_identical(
+    loaded_version("Matrix"),
+    as.character(utils::packageVersion("Matrix"))
+  )
+})
+
 test_that("read_design() validates format and version", {
   expect_error(
     read_design('{"format": "something/else", "format_version": 1}'),
@@ -849,6 +883,8 @@ test_that("a continuation of a modified sample still refuses replay", {
   receipt <- attr(read_design(path), "execution")
   expect_null(receipt[["earlier_calls"]])
   expect_true(receipt$earlier_modified)
+  # The continuation's own rows are as executed.
+  expect_null(receipt$modified)
   refusal <- tryCatch(
     replay_design(read_design(path), test_frame),
     error = identity
@@ -1684,6 +1720,9 @@ shared_target_register <- function() {
     hh = rep(paste0("h", 1:20), each = 2),
     importance = rep(c(1, 2), 20),
     household_total = 3,
+    # Differs from the one link each person has, so a replay that counted
+    # the links instead would change the weights.
+    population_links = rep(c(1, 2), 20),
     stringsAsFactors = FALSE
   )
 }
@@ -1743,6 +1782,7 @@ test_that("every within and multiplicity mode replays to the same sample", {
   register <- shared_source_register()
   people <- shared_target_register()
   modes <- list(
+    supplied = list(within = quote(hh), multiplicity = quote(population_links)),
     cluster = list(within = quote(hh), multiplicity = quote(complete_links())),
     singleton = list(within = NULL, multiplicity = quote(complete_links())),
     extended = list(
@@ -1794,6 +1834,12 @@ test_that("a live shared-weight sample replays without a file", {
     shared, frame = register, links = people, targets = people
   )
   expect_identical(replayed$.weight, shared$.weight)
+
+  supplied <- shared_sample_fixture(within = hh, multiplicity = population_links)
+  replayed <- replay_design(
+    supplied, frame = register, links = people, targets = people
+  )
+  expect_identical(replayed$.weight, supplied$.weight)
 })
 
 test_that("replay reports which of the three inputs was wrong", {

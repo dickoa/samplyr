@@ -29,6 +29,24 @@ NULL
 #' @noRd
 frame_digest_version <- 2L
 
+#' The schema versions this build reads
+#'
+#' Version 3 adds a pool column `tenure`, for the stages of a master whose
+#' primary units hold several tenures, and with it `n_excluded`, the units
+#' each pool's exclusion left out. A digest without them stays at 2, so
+#' earlier builds still read it, and one with them is refused by them rather
+#' than read as tenures drawn at once.
+#' @noRd
+frame_digest_versions <- c(2L, 3L)
+
+#' The version a digest's stage records call for
+#' @noRd
+digest_schema_version <- function(stages) {
+  tenure <- vapply(stages, function(s) "tenure" %in% names(s$pools),
+                   logical(1))
+  if (any(tenure)) 3L else frame_digest_version
+}
+
 #' @noRd
 digest_status_values <- c("complete", "partial", "invalidated")
 
@@ -104,6 +122,8 @@ digest_reserved_pool_cols <- c(
   "parent_occurrence",
   "stage",
   "take_rate",
+  "tenure",
+  "n_excluded",
   "unit_level",
   "chance_kind",
   "probabilities",
@@ -213,7 +233,7 @@ new_frame_digest <- function(
   status = "complete"
 ) {
   list(
-    version = frame_digest_version,
+    version = digest_schema_version(stages),
     status = status,
     privacy = privacy,
     frames = frames,
@@ -266,10 +286,10 @@ check_frame_digest_version <- function(version) {
       "malformed"
     )
   }
-  if (version == frame_digest_version) {
+  if (version %in% frame_digest_versions) {
     return(invisible(NULL))
   }
-  if (version < frame_digest_version) {
+  if (version < min(frame_digest_versions)) {
     abort_digest(
       c(
         "Frame digest schema version {version} is unsupported by this
@@ -285,7 +305,7 @@ check_frame_digest_version <- function(version) {
   abort_digest(
     c(
       "Frame digest schema version {version} is newer than the
-       supported version {frame_digest_version}.",
+       supported version{?s} {frame_digest_versions}.",
       "i" = "Update samplyr to a newer version to read this artifact."
     ),
     "version"
@@ -333,6 +353,13 @@ validate_frame_digest <- function(x, tol = 1e-6, quantile_tol = 0.05) {
     abort_digest(
       "A frame digest needs at least one stage record.",
       "malformed"
+    )
+  }
+  if (!identical(as.integer(x$version), digest_schema_version(stages))) {
+    abort_digest(
+      "A frame digest is version 3 exactly when its pools carry
+       {.field tenure}.",
+      "version"
     )
   }
   stage_ids <- vapply(
@@ -681,6 +708,25 @@ validate_digest_pools <- function(stage, pos, prev, tol) {
   if ("n_descendants" %in% names(pools)) {
     check_nonneg("n_descendants", integerish = TRUE)
   }
+  if ("tenure" %in% names(pools)) {
+    tenure <- pools$tenure
+    if (!is_id_vector(tenure) || any(tenure < 1)) {
+      abort_digest(
+        "Stage {id}: {.field tenure} must be positive integers.",
+        "field"
+      )
+    }
+  }
+  if ("n_excluded" %in% names(pools)) {
+    if (!"tenure" %in% names(pools)) {
+      abort_digest(
+        "Stage {id}: {.field n_excluded} is recorded only with
+         {.field tenure}.",
+        "field"
+      )
+    }
+    check_nonneg("n_excluded", integerish = TRUE)
+  }
   if ("parent_occurrence" %in% names(pools)) {
     occ <- pools$parent_occurrence
     if (!is_id_vector(occ) || any(occ < 1)) {
@@ -984,23 +1030,31 @@ validate_digest_distribution <- function(stage, pools, tol) {
       )
     }
   }
-  for (pool in split(dist, dist$pool_id)) {
-    if (anyDuplicated(pool$quantile)) {
+  # Pools in the order split() visits them, the duplicate check first.
+  group <- as.integer(as.factor(dist$pool_id))
+  duplicated_in <- group[vctrs::vec_duplicate_detect(
+    vctrs::new_data_frame(list(group = group, quantile = q))
+  )]
+  ord <- order(group, q)
+  step_group <- group[ord][-1L]
+  decreasing_in <- step_group[
+    step_group == group[ord][-length(ord)] & diff(dist$chance[ord]) < -tol
+  ]
+  if (length(duplicated_in) > 0L || length(decreasing_in) > 0L) {
+    first <- min(duplicated_in, decreasing_in)
+    if (first %in% duplicated_in) {
       abort_digest(
         "Stage {id}: duplicated {.field quantile} values within a
          pool.",
         "field"
       )
     }
-    ord <- order(pool$quantile)
-    if (any(diff(pool$chance[ord]) < -tol)) {
-      abort_digest(
-        "Stage {id}: {.field chance} must be non-decreasing in
-         {.field quantile}; the table is a quantile function of the
-         resolved chance.",
-        "chance"
-      )
-    }
+    abort_digest(
+      "Stage {id}: {.field chance} must be non-decreasing in
+       {.field quantile}; the table is a quantile function of the
+       resolved chance.",
+      "chance"
+    )
   }
   invisible(NULL)
 }
@@ -1027,15 +1081,13 @@ validate_digest_n_expected <- function(stage, pools, units, tol, quantile_tol) {
     quantiles = {
       dist <- stage$chance_distribution
       has_n <- "n_units" %in% names(dist)
-      by_pool <- split(dist, dist$pool_id)
       vals <- vapply(
-        by_pool,
-        function(p) {
-          if (has_n) sum(p$chance * p$n_units) else mean(p$chance)
-        },
+        split(if (has_n) dist$chance * dist$n_units else dist$chance,
+              dist$pool_id),
+        if (has_n) sum else mean,
         numeric(1)
       )
-      out <- unname(vals[match(as.character(pools$pool_id), names(by_pool))])
+      out <- unname(vals[match(as.character(pools$pool_id), names(vals))])
       if (has_n) out else out * pools$N
     }
   )
@@ -1271,7 +1323,9 @@ get_frame_digest <- function(x) {
 #'   The arguments after them must be named exactly, so the singular
 #'   `stage` is reported rather than prefix-matched.
 #' @param stages An integer vector of stage numbers to report, or
-#'   `NULL` (default) for all recorded stages.
+#'   `NULL` (default) for all recorded stages. With `frame`, only the
+#'   stages up to the last one named are resolved, so the frame needs the
+#'   variables of those stages only, as [execute()] does with `stages`.
 #' @param scope Denominator basis for population sizes and take rates.
 #'   `"eligible"` (default) counts the units eligible for the recorded
 #'   execution. `"universe"` reports denominators only where the digest
@@ -1389,6 +1443,17 @@ get_frame_digest <- function(x) {
 #' later-stage pools hang off each replicate's own selected parents, and
 #' `frame_summary()` says so.
 #'
+#' A materialized wave carries the digest of the realization it was
+#' activated from: its master's, or, while the master's later stages are
+#' drawn one wave at a time, the master's stages and the pools of the
+#' tenures or periods it reads. A master whose panels hold several tenures
+#' records every tenure drawn so far, its pools keyed by the wave the
+#' tenure opened at. Stage detail then has a `tenure` column and one row
+#' per tenure of a stage drawn by tenure, and pool detail a `tenure`
+#' column. Both also have `n_excluded`, the units of the listing that the
+#' tenure left out because earlier tenures drew them (see
+#' [panel_assignment]). These columns are absent otherwise.
+#'
 #' A digest whose sample was modified after execution (rows, weights,
 #' or design columns changed) is reported as invalidated and refused.
 #'
@@ -1400,6 +1465,11 @@ get_frame_digest <- function(x) {
 #' `NA`, as are `is_selected` and `n_hits` at `detail = "unit"`. Every
 #' other column, and the shape of the table, matches a recorded digest,
 #' so the two are directly comparable.
+#'
+#' A frame of primary units can be previewed before the frames below it
+#' exist. `frame_summary(design, frame, stages = 1)` checks the chances of
+#' the first stage, certainty included, on a frame that lacks the cluster
+#' or size variables of later stages.
 #'
 #' At `detail = "pool"`, a stage below a clustered stage reports one pool
 #' per *candidate* parent, and its `n_target` is what that stage would
@@ -1535,7 +1605,14 @@ frame_summary <- function(
         "{.arg x} must be a {.cls sampling_design} or a {.cls tbl_sample}."
       )
     }
-    digest <- exante_digest(design, frame, call = current_env())
+    depth <- if (!is_null(stages)) {
+      max(normalize_stage_selector(
+        stages, seq_along(design$stages), what = "stages of this design"
+      ))
+    }
+    digest <- resolve_exante_digest(
+      design, frame, depth = depth, call = current_env()
+    )
     return(frame_summary_report(
       x, digest, stages, scope, detail, exante = TRUE
     ))
@@ -1543,6 +1620,20 @@ frame_summary <- function(
 
   if (is_tbl_sample(x)) {
     digest <- get_frame_digest(x)
+    wave <- attr(x, "metadata")[["wave"]]
+    if (is_null(digest) && !is_null(wave)) {
+      abort_samplyr(
+        c(
+          "No frame digest is recorded on this sample.",
+          "i" = "The master it was materialized from records none, which a
+                 master executed with {.code frame_digest = \"none\"} does
+                 not.",
+          "i" = "Pass {.arg frame} to report what the design would do
+                 instead of what it did."
+        ),
+        class = "samplyr_error_no_digest"
+      )
+    }
     if (is_null(digest)) {
       abort_samplyr(
         c(
@@ -1828,41 +1919,68 @@ frame_summary_stage <- function(stages, scope, random_size = NULL,
     } else {
       pool_weights[[stage_pos]]
     }
-    N <- if (identical(scope, "universe")) {
-      if (identical(s$scope, "universe")) sum_or_na(pools$N) else NA_real_
-    } else if (digest_scope_supports(s$scope, scope)) {
-      sum_or_na(pools$N * w)
+    certainty <- pool_certainty_counts(s, certain, sample)
+    # A stage drawn by tenure reports each tenure on its own row.
+    groups <- if ("tenure" %in% names(pools)) {
+      split(seq_len(nrow(pools)), pools$tenure)
     } else {
-      NA_real_
+      list(seq_len(nrow(pools)))
     }
-    # A preview has no realization to report or to divide by.
-    n_realized <- if (exante) NA_real_ else sum_or_na(pools$n_realized * w)
-    take_rate <- if (!is.na(N) && N > 0 && !is.na(n_realized)) {
-      n_realized / N
-    } else {
-      NA_real_
-    }
-    data.frame(
-      stage = s$stage_id,
-      unit_level = s$unit_level,
-      scope = s$scope,
-      chance_kind = s$chance_kind,
-      probabilities = s$probabilities %||% NA_character_,
-      storage = s$storage,
-      n_pools = nrow(pools),
-      n_capped = if (anyNA(capped)) NA_integer_ else sum(capped),
-      N = N,
-      n_target = sum_or_na(pools$n_target * w),
-      n_expected = sum_or_na(pools$n_expected * w),
-      n_certainty = sum_or_na(pool_certainty_counts(s, certain, sample) * w),
-      n_moved = sum_or_na(pool_moved * w),
-      # Counted like n_capped, without weighting.
-      n_tied = if (all(is.na(pool_tied))) NA_integer_ else sum(pool_tied),
-      n_realized = n_realized,
-      take_rate = take_rate
-    )
+    pick <- function(v, i) if (length(v) == nrow(pools)) v[i] else v
+    parts <- lapply(groups, function(i) {
+      p <- pools[i, , drop = FALSE]
+      wi <- pick(w, i)
+      N <- if (identical(scope, "universe")) {
+        if (identical(s$scope, "universe")) sum_or_na(p$N) else NA_real_
+      } else if (digest_scope_supports(s$scope, scope)) {
+        sum_or_na(p$N * wi)
+      } else {
+        NA_real_
+      }
+      # A preview has no realization to report or to divide by.
+      n_realized <- if (exante) NA_real_ else sum_or_na(p$n_realized * wi)
+      take_rate <- if (!is.na(N) && N > 0 && !is.na(n_realized)) {
+        n_realized / N
+      } else {
+        NA_real_
+      }
+      tied_i <- pick(pool_tied, i)
+      capped_i <- pick(capped, i)
+      data.frame(
+        stage = s$stage_id,
+        tenure = if ("tenure" %in% names(p)) p$tenure[1L] else NA_integer_,
+        unit_level = s$unit_level,
+        scope = s$scope,
+        chance_kind = s$chance_kind,
+        probabilities = s$probabilities %||% NA_character_,
+        storage = s$storage,
+        n_pools = nrow(p),
+        n_capped = if (anyNA(capped_i)) NA_integer_ else sum(capped_i),
+        N = N,
+        n_excluded = if ("n_excluded" %in% names(p)) {
+          sum_or_na(p$n_excluded * wi)
+        } else {
+          NA_real_
+        },
+        n_target = sum_or_na(p$n_target * wi),
+        n_expected = sum_or_na(p$n_expected * wi),
+        n_certainty = sum_or_na(pick(certainty, i) * wi),
+        n_moved = sum_or_na(pick(pool_moved, i) * wi),
+        # Counted like n_capped, without weighting.
+        n_tied = if (all(is.na(tied_i))) NA_integer_ else sum(tied_i),
+        n_realized = n_realized,
+        take_rate = take_rate
+      )
+    })
+    do.call(rbind, parts)
   })
-  as_tibble(do.call(rbind, rows))
+  out <- do.call(rbind, rows)
+  rownames(out) <- NULL
+  if (all(is.na(out$tenure))) {
+    out$tenure <- NULL
+    out$n_excluded <- NULL
+  }
+  as_tibble(out)
 }
 
 #' Which stages draw a random number of units
@@ -1977,8 +2095,18 @@ frame_summary_pool <- function(
       pool_id = as.integer(pools$pool_id[pool_rows]),
       replicate = as.integer(row_reps),
       parent_unit = as.integer(pools$parent_unit[pool_rows]),
+      tenure = if ("tenure" %in% names(pools)) {
+        as.integer(pools$tenure[pool_rows])
+      } else {
+        NA_integer_
+      },
       pool_key = pool_key[pool_rows],
       N = as.double(pools$N[pool_rows]),
+      n_excluded = if ("n_excluded" %in% names(pools)) {
+        as.double(pools$n_excluded[pool_rows])
+      } else {
+        NA_real_
+      },
       n_target = as.double(pools$n_target[pool_rows]),
       n_expected = as.double(pools$n_expected[pool_rows]),
       n_certainty = pool_certainty_counts(s, certain, sample)[pool_rows],
@@ -2001,7 +2129,12 @@ frame_summary_pool <- function(
     }
     out
   })
-  as_tibble(bind_rows(rows))
+  out <- bind_rows(rows)
+  if (all(is.na(out$tenure))) {
+    out$tenure <- NULL
+    out$n_excluded <- NULL
+  }
+  as_tibble(out)
 }
 
 #' Read a target shortfall as a population cap, given what is known about the

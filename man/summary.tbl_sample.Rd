@@ -50,7 +50,9 @@ followed by "Uneven: Cascades (2 to 3 per period), Centre-Nord (3 to
 4)." When every stratum is even, the line gives the range of units per
 period instead. This is the table fieldwork is planned from, and an
 uneven stratum shows an allocation that is not a multiple of the number
-of periods.
+of periods. While the later stages are drawn one period at a time, a line
+such as "Drawn: stage 2 in 3 of 12 periods (1, 2, 5)." says how far they
+are.
 
 Each stage section has two lines:
 \itemize{

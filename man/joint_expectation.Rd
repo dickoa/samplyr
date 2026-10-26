@@ -260,8 +260,8 @@ These are joint expectations of the activation indicators, conditional
 on the phase-1 units and the frozen quotas, not the unconditional joint
 inclusion probabilities of the two-phase design, which also carry the
 master's own pairwise term. How the two combine for a variance of change
-is not settled here. \code{\link[=as_svydesign]{as_svydesign()}} carries the activation as a second
-phase for ordinary totals.
+is not settled here. \code{\link[=as_svydesign]{as_svydesign()}} exports a wave for ordinary
+totals.
 
 Activation mode takes a master, not a materialized wave, so neither of
 the two waves needs to have been materialized.

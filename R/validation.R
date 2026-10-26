@@ -907,6 +907,15 @@ stage_frame_issues <- function(stage_spec, frame, stage_idx) {
           ))
         )
       }
+      lossy <- Filter(
+        function(v) !is_null(key_precision_clash(frame[[v]])), strata_vars
+      )
+      if (length(lossy) > 0) {
+        issues <- c(
+          issues,
+          list(list(stage = label, type = "key_precision", vars = lossy))
+        )
+      }
     }
   }
 
@@ -932,6 +941,15 @@ stage_frame_issues <- function(stage_spec, frame, stage_idx) {
             type = "cluster_na",
             vars = na_clusters
           ))
+        )
+      }
+      lossy <- Filter(
+        function(v) !is_null(key_precision_clash(frame[[v]])), cluster_vars
+      )
+      if (length(lossy) > 0) {
+        issues <- c(
+          issues,
+          list(list(stage = label, type = "key_precision", vars = lossy))
         )
       }
     }
@@ -1243,6 +1261,10 @@ report_validation_issues <- function(issues) {
       "cluster_na" = cli::format_inline(
         "{stage}: cluster variable{?s} {.var {vars}} contain{?s/} NA values"
       ),
+      "key_precision" = cli::format_inline(
+        "{stage}: {.var {vars}} ha{?s/ve} distinct values that are equal to
+         15 significant digits"
+      ),
       "mos" = cli::format_inline(
         "{stage}: missing MOS variable: {.var {vars}}"
       ),
@@ -1328,8 +1350,19 @@ preflight_later_stages <- function(schedule, design, sample = NULL,
     cols <- intersect(names(df), keep)
     vctrs::new_data_frame(.subset(df, cols), n = nrow(df))
   }
+  # Entries sharing one frame share its narrow copy, so linking a stage to
+  # the rows of the stage above still sees one object.
+  originals <- list()
+  narrowed <- list()
   for (i in seq_along(schedule$entries)) {
-    schedule$entries[[i]]$frame <- narrow(schedule$entries[[i]]$frame)
+    frame <- schedule$entries[[i]]$frame
+    seen <- Position(function(f) rlang::is_reference(f, frame), originals)
+    if (is.na(seen)) {
+      originals <- c(originals, list(frame))
+      narrowed <- c(narrowed, list(narrow(frame)))
+      seen <- length(narrowed)
+    }
+    schedule$entries[[i]]$frame <- narrowed[[seen]]
   }
 
   # The first scheduled stage keeps its selection-time invariant check, which
@@ -1411,12 +1444,16 @@ check_schedule_strata_known <- function(schedule, effective, design,
 check_stage_strata_known <- function(design, stage_idx, frame,
                                      selected = NULL,
                                      call = caller_env()) {
+  rlang::local_error_call(call)
   spec <- design$stages[[stage_idx]]
   strata_vars <- spec$strata$vars
   if (is_null(strata_vars) || !all(strata_vars %in% names(frame))) {
     return(invisible(NULL))
   }
-  present <- vctrs::vec_unique(frame[, strata_vars, drop = FALSE])
+  present <- vctrs::vec_slice(
+    frame[, strata_vars, drop = FALSE],
+    unique_key_loc(frame, strata_vars)
+  )
   present_keys <- make_group_key(present, strata_vars)
 
   # Strata keyed by an ancestor the continued sample already selected. An
@@ -1616,22 +1653,18 @@ digest_frame_drift <- function(digest, design, frame, parts = FALSE) {
       ]
     }
 
+    rows_of_pool <- if (pos == 1L) {
+      drift_pool_rows(frame, st)
+    } else {
+      drift_pool_rows(frame, st, scope_keys, key_of_pool)
+    }
     for (p in seq_len(nrow(st$pools))) {
-      pool <- st$pools[p, , drop = FALSE]
       # Ignore resolved pools under unselected parents.
       if (pos > 1L && is.na(key_of_pool[p])) {
         next
       }
-      rows <- if (pos == 1L) {
-        seq_len(nrow(frame))
-      } else {
-        which(scope_keys == key_of_pool[p])
-      }
-      for (v in st$strata %||% character(0)) {
-        rows <- rows[
-          as.character(frame[[v]][rows]) == as.character(pool[[v]])
-        ]
-      }
+      rows <- rows_of_pool(p)
+      n_recorded <- st$pools$N[p]
       n_now <- if (identical(st$unit_level, "cluster")) {
         cluster_vars <- spec$clusters$vars
         length(unique(digest_path_keys(
@@ -1640,7 +1673,7 @@ digest_frame_drift <- function(digest, design, frame, parts = FALSE) {
       } else {
         length(rows)
       }
-      if (n_now != pool$N) {
+      if (n_now != n_recorded) {
         parent_label <- if (pos > 1L) {
           if (length(ancestor_vars) > 1L) {
             display_path_key(key_of_pool[p])
@@ -1655,7 +1688,7 @@ digest_frame_drift <- function(digest, design, frame, parts = FALSE) {
             },
             vapply(
               st$strata %||% character(0),
-              function(v) paste0(v, " = ", as.character(pool[[v]])),
+              function(v) paste0(v, " = ", as.character(st$pools[[v]][p])),
               character(1)
             )
           ),
@@ -1665,7 +1698,7 @@ digest_frame_drift <- function(digest, design, frame, parts = FALSE) {
           pool_diffs,
           cli::format_inline(
             "{label}{if (nzchar(pool_label)) paste0(' (', pool_label, ')')}:
-             {n_now} units instead of the {pool$N} recorded"
+             {n_now} units instead of the {n_recorded} recorded"
           )
         )
       }
@@ -1716,6 +1749,59 @@ digest_frame_drift <- function(digest, design, frame, parts = FALSE) {
   all_diffs
 }
 
+#' The frame rows of each recorded pool, as the drift check counts them
+#'
+#' A pool's rows are those under its parent whose strata read as the pool's
+#' labels. The frame is grouped once by parent and labels, and each pool is
+#' looked up in the groups. A missing label on either side is compared row
+#' by row instead, since a comparison with `NA` keeps the row as `NA`.
+#' @param scope_keys,key_of_pool Each row's parent key and each pool's, for
+#'   a stage below the first.
+#' @return A function of a pool's position that returns its rows.
+#' @noRd
+drift_pool_rows <- function(frame, st, scope_keys = NULL,
+                            key_of_pool = NULL) {
+  strata <- st$strata %||% character(0)
+  frame_labels <- lapply(strata, function(v) as.character(frame[[v]]))
+  pool_labels <- lapply(strata, function(v) as.character(st$pools[[v]]))
+  scoped <- !is_null(scope_keys)
+
+  if (any(vapply(c(frame_labels, pool_labels), anyNA, logical(1)))) {
+    return(function(p) {
+      rows <- if (scoped) {
+        which(scope_keys == key_of_pool[p])
+      } else {
+        seq_len(nrow(frame))
+      }
+      for (j in seq_along(strata)) {
+        rows <- rows[frame_labels[[j]][rows] == pool_labels[[j]][p]]
+      }
+      rows
+    })
+  }
+  if (!scoped && length(strata) == 0L) {
+    all_rows <- seq_len(nrow(frame))
+    return(function(p) all_rows)
+  }
+
+  as_key <- function(cols) {
+    vctrs::new_data_frame(
+      stats::setNames(cols, paste0("k", seq_along(cols))),
+      n = length(cols[[1]])
+    )
+  }
+  groups <- vctrs::vec_group_loc(as_key(
+    c(if (scoped) list(scope_keys), frame_labels)
+  ))
+  at <- vctrs::vec_match(
+    as_key(c(if (scoped) list(as.character(key_of_pool)), pool_labels)),
+    groups$key
+  )
+  function(p) {
+    if (is.na(at[p])) integer(0) else groups$loc[[at[p]]]
+  }
+}
+
 #' Compare recorded selection chances against the design's ex-ante
 #' resolution over a frame
 #'
@@ -1751,16 +1837,14 @@ digest_chance_drift <- function(digest, design, frame) {
       make_group_key(pools, strata)
     }
   }
-  pool_chances <- function(stg, p) {
+  pool_chances <- function(stg, p, rows_of) {
     pid <- stg$pools$pool_id[p]
     switch(
       stg$storage,
       constant = rep(stg$pools$chance[p], stg$pools$N[p]),
-      units = sort(stg$units$chance[stg$units$pool_id == pid]),
+      units = sort(stg$units$chance[rows_of(pid)]),
       quantiles = {
-        b <- stg$chance_distribution[
-          stg$chance_distribution$pool_id == pid, , drop = FALSE
-        ]
+        b <- stg$chance_distribution[rows_of(pid), , drop = FALSE]
         if (!"n_units" %in% names(b)) {
           return(NULL)
         }
@@ -1811,9 +1895,11 @@ digest_chance_drift <- function(digest, design, frame) {
     n_stage <- 0L
     n_drifted <- 0L
     max_diff <- 0
+    rec_rows <- chance_rows_by_pool(st)
+    ex_rows <- if (!is_null(ex)) chance_rows_by_pool(ex)
     for (p in which(comparable)) {
-      rec_ch <- pool_chances(st, p)
-      ex_ch <- pool_chances(ex, ex_match[p])
+      rec_ch <- pool_chances(st, p, rec_rows)
+      ex_ch <- pool_chances(ex, ex_match[p], ex_rows)
       if (
         is_null(rec_ch) || is_null(ex_ch) || anyNA(rec_ch) ||
           length(rec_ch) != length(ex_ch)
@@ -1852,6 +1938,38 @@ digest_chance_drift <- function(digest, design, frame) {
     }
   }
   list(diffs = diffs, n_compared = n_compared)
+}
+
+#' The rows of a stage's unit chances or chance bins that belong to a pool
+#'
+#' Grouped once by pool id. A missing id, or ids of another type than the
+#' pool's, are compared row by row as before, since `==` then reads them
+#' differently from a grouping.
+#' @return A function of a pool id that returns the rows, in order, or a
+#'   logical mask when compared row by row.
+#' @noRd
+chance_rows_by_pool <- function(stg) {
+  table <- switch(
+    stg$storage %||% "",
+    units = stg$units,
+    quantiles = stg$chance_distribution
+  )
+  ids <- table$pool_id
+  by_row <- function(pid) ids == pid
+  if (
+    is_null(ids) || anyNA(ids) ||
+      !identical(typeof(ids), typeof(stg$pools$pool_id))
+  ) {
+    return(by_row)
+  }
+  groups <- vctrs::vec_group_loc(ids)
+  function(pid) {
+    if (is.na(pid)) {
+      return(by_row(pid))
+    }
+    at <- vctrs::vec_match(pid, groups$key)
+    if (is.na(at)) integer(0) else groups$loc[[at]]
+  }
 }
 
 #' Compare a frame against a stored fingerprint and report differences

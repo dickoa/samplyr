@@ -15,7 +15,8 @@ along with an execution receipt), a \code{frame_stack}, or a sample carrying
 shared weights.}
 
 \item{path}{File path to write to. Conventionally with a \code{.json}
-extension.}
+extension. A path ending in \code{.gz}, such as \code{design.json.gz}, is written
+gzip-compressed.}
 
 \item{frame}{Optional sampling frame, fingerprinted (name, dimensions,
 column types, content hash) so it can be verified later. A data frame is
@@ -41,9 +42,10 @@ still contain selected-unit identifiers in its frame digest.}
 \item{pretty}{Whether to pretty-print the JSON. Defaults to \code{TRUE} for
 files and \code{FALSE} for \code{\link[=design_json]{design_json()}}.}
 
-\item{file}{A path to a local file, or a JSON string produced by
-\code{\link[=design_json]{design_json()}}. URLs are refused: \code{read_design()} never fetches
-remote files. Download the file first and read the local copy.}
+\item{file}{A path to a local file, plain or gzip-compressed, or a JSON
+string produced by \code{\link[=design_json]{design_json()}}. URLs are refused: \code{read_design()}
+never fetches remote files. Download the file first and read the local
+copy.}
 }
 \value{
 \code{write_design()} returns \code{x} invisibly. \code{read_design()} returns
@@ -117,6 +119,19 @@ rebuilds the sample as it was before the change, and a continuation made
 by a samplyr version that did not keep its parent's seed. For these
 \code{write_design()} warns with class \code{samplyr_warning_receipt_chained} and
 gives the recipe of \code{\link[=replay_design]{replay_design()}}.
+}
+
+\subsection{File size}{
+
+A receipt carries the sample's frame digest, which \code{\link[=execute]{execute()}} records
+by default (\code{frame_digest = "summary"}) with one entry per frame unit of a
+cluster stage. The file grows with the frame, by about 120 bytes per unit
+written compactly and twice that pretty-printed. A stage-1 sample of the
+107,250 EAs of \code{zwe_eas} gives 12.5 MB with \code{pretty = FALSE}. A path
+ending in \code{.gz} writes the file compressed, about 1 MB here in either
+layout, and \code{read_design()} reads it as it is. A sample executed with
+\code{frame_digest = "none"} writes a file of a few kilobytes, without the
+digest that \code{\link[=frame_summary]{frame_summary()}} and \code{\link[=replay_design]{replay_design()}} read.
 }
 
 \subsection{Control expressions}{

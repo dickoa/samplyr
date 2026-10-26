@@ -82,6 +82,16 @@
 #' substitute for the joint probabilities, and its accuracy depends on the
 #' design and population. [as_svydesign()] documents each value of `pps`.
 #'
+#' In a simulation of a two-stage design with 14 strata, systematic PPS
+#' clusters sorted by geography and 25 households per cluster, drawn 1,000
+#' times from a synthetic population, the default export's standard error of
+#' a proportion averaged 0.99 of the true standard error in a district whose
+#' stratum took 34 of its 93 clusters, 1.05 in another district and 1.03
+#' nationally. The ultimate-cluster variance, which treats the clusters as
+#' drawn with replacement and which [as_svydesign()] shows how to compute,
+#' gave 1.10, 1.12 and 1.04. Each ratio carries a Monte Carlo error of about
+#' 2%.
+#'
 #' ## Linearization with joint probabilities
 #'
 #' A matrix from [joint_expectation()] is exact for CPS, Sampford, systematic
@@ -170,6 +180,17 @@
 #' stratum (`samplyr_error_rwyb_singleton`) unless the stage is Poisson or
 #' `lonely.psu = "certainty"` is given at the final stage.
 #'
+#' A certainty PSU that keeps one unit at stage 2 is such a stratum.
+#' `"JKn"`, `"BRR"`, `"Fay"` and `"subbootstrap"` then refuse the sample
+#' (`samplyr_error_svrep_conversion_failed`), and so does RWYB.
+#' `"bootstrap"` and `"mrbbootstrap"` accept it, and
+#' `options(survey.lonely.psu = "adjust")` lets `"JKn"` through. Drawing at
+#' least two stage-2 units in every PSU that can be taken with certainty
+#' avoids the refusal under every type. `frame_summary(design, frame,
+#' stages = 1)` shows those PSUs before selection, in `n_certainty`, and
+#' [variance_estimators()] reports the refusal when its frame reaches
+#' stage 2.
+#'
 #' ## One PSU per zone
 #'
 #' A certainty plan solved with `svyplan::n_alloc(n_psu_per_zone = 1)`
@@ -245,14 +266,24 @@
 #'
 #' ## Two-phase samples
 #'
-#' [survey::twophase()] takes no `pps` specification, so a two-phase sample
-#' or a wave whose first phase was drawn with unequal probabilities without
-#' replacement, or by `cube`, `pps_poisson` or a spatial method, is refused,
-#' although its weights are exact. For a variance, an ultimate-cluster design
-#' treating phase-1 units as drawn with replacement is conservative, at 1.3,
-#' 1.8 and 2.1 times the true variance for phase-1 sampling fractions of
-#' 1/6, 1/3 and 1/2 with phase 2 drawn inside each phase-1 unit, and 2.4 to
-#' 3.6 times with phase 2 drawn across the phase-1 sample.
+#' A materialized wave is exported by ultimate clusters, whatever method drew
+#' its master, and replicated the same way. In a simulation with 8 EAs active
+#' per stratum, its standard error was 0.89 of the true one with EAs drawn by
+#' simple random sampling (0.88 for the two-phase export) and 1.06 with EAs
+#' drawn by size. A window of several waves is exported the same way, its
+#' strata crossed with the number of waves a unit is active, at 0.95 to
+#' 1.12 of the true standard error in a simulation. [as_svydesign()] gives
+#' the details.
+#'
+#' [survey::twophase()] takes no `pps` specification, so a two-phase sample,
+#' or a wave exported with `method`, whose first phase was drawn with unequal
+#' probabilities without replacement, or by `cube`, `pps_poisson` or a
+#' spatial method, is refused, although its weights are exact. For a
+#' variance, an ultimate-cluster design treating phase-1 units as drawn with
+#' replacement is conservative, at 1.3, 1.8 and 2.1 times the true variance
+#' for phase-1 sampling fractions of 1/6, 1/3 and 1/2 with phase 2 drawn
+#' inside each phase-1 unit, and 2.4 to 3.6 times with phase 2 drawn across
+#' the phase-1 sample.
 #' On other populations the across case reached 4 to 15 times, higher when
 #' little of the outcome's variation lies between phase-1 units.
 #' [as_svydesign()] gives the call. No two-phase sample has a replicate

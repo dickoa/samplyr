@@ -182,6 +182,24 @@ format_draw_spec <- function(draw, has_strata = FALSE, alloc = NULL,
     parts <- c(parts, paste0("mos = ", draw$mos))
   }
 
+  # Settings that change the draw print when they differ from the default.
+  for (arg in c("certainty_size", "certainty_prop")) {
+    value <- draw[[arg]]
+    if (is.data.frame(value)) {
+      parts <- c(parts, paste0(arg, " = ", table_form))
+    } else if (!is_null(value)) {
+      parts <- c(parts, paste0(arg, " = ", value))
+    }
+  }
+  non_default <- c(certainty_overflow = "error", on_empty = "error",
+                   round = "up")
+  for (arg in names(non_default)) {
+    value <- draw[[arg]]
+    if (!is_null(value) && !identical(value, non_default[[arg]])) {
+      parts <- c(parts, paste0(arg, " = ", value))
+    }
+  }
+
   if (!is_null(draw$prn)) {
     parts <- c(parts, paste0("prn = ", draw$prn))
   }
@@ -381,7 +399,7 @@ tbl_sum.tbl_sample <- function(x, ...) {
   result <- c(result, panel_header_line(x))
 
   if (has_multiple_replicates(x) && !anyNA(x$.replicate)) {
-    n_reps <- length(unique(x$.replicate))
+    n_reps <- n_replicates(x)
     result <- c(result, "Replicates" = as.character(n_reps))
   }
 
@@ -443,25 +461,40 @@ panel_header_line <- function(x) {
   }
   k <- as.integer(record$panels)
   periods <- identical(record$certainty, "assigned")
-  wave <- metadata$wave
+  wave <- metadata[["wave"]]
   if (!is_null(wave)) {
+    several <- length(wave$wave) > 1L
     if (periods) {
-      return(c("Period" = paste0(wave$wave, " of ", k)))
+      label <- if (several) "Periods" else "Period"
+      return(stats::setNames(paste0(
+        wave_span(wave$wave), " of ", k,
+        if (isTRUE(wave$provisional)) ", provisional until every period is drawn"
+      ), label))
     }
     n_waves <- max(as.integer(unlist(record$schedule$wave)))
-    return(c("Wave" = paste0(wave$wave, " of ", n_waves)))
+    label <- if (several) "Waves" else "Wave"
+    return(stats::setNames(
+      paste0(wave_span(wave$wave), " of ", n_waves), label
+    ))
   }
   if (periods) {
-    return(c("Periods" = paste0(k, " (in .panel)")))
+    return(c(
+      "Periods" = paste0(k, " (in .panel)"),
+      "Drawn" = wave_draws_progress(x)
+    ))
   }
   schedule <- record$schedule
   if (is_null(schedule) || length(schedule) == 0L) {
     return(c("Panels" = paste0(k, " rotation groups, no schedule")))
   }
   n_waves <- max(as.integer(unlist(schedule$wave)))
-  c("Panels" = paste0(
-    k, " rotation groups over ", n_waves, plural_suffix(n_waves, " wave")
-  ))
+  c(
+    "Panels" = paste0(
+      k, " rotation groups over ", n_waves, plural_suffix(n_waves, " wave"),
+      if (schedule_has_tenures(schedule)) ", with tenures"
+    ),
+    "Drawn" = wave_draws_progress(x)
+  )
 }
 
 #' @rdname print.samplyr

@@ -270,6 +270,51 @@ test_that("a frame that disagrees with the register is refused before RNG", {
     frame,
     stratum = ifelse(psu_id == "B04", "A", stratum)
   ))
+  # One PSU carrying two sizes across its rows.
+  two_sizes <- frame
+  first_b04 <- which(two_sizes$psu_id == "B04")[1]
+  two_sizes$N[first_b04] <- two_sizes$N[first_b04] + 1
+  refused(two_sizes)
+})
+
+test_that("the register check does not depend on id type or row order", {
+  plan <- certainty_plan_fixture()
+  frame <- certainty_element_frame()
+  d <- sampling_design() |>
+    add_stage() |>
+    stratify_by(stratum) |>
+    cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_systematic", mos = N)
+  base <- execute(d, frame, seed = 1)
+
+  as_factor <- transform(frame, psu_id = factor(psu_id))
+  expect_identical(
+    as.character(execute(d, as_factor, seed = 1)$psu_id),
+    as.character(base$psu_id)
+  )
+  # Systematic selection follows frame order, so only the check is compared.
+  shuffled <- frame[rev(seq_len(nrow(frame))), ]
+  expect_identical(
+    length(unique(execute(d, shuffled, seed = 1)$psu_id)),
+    length(unique(base$psu_id))
+  )
+})
+
+test_that("the register rows deduplicate the values the register compares", {
+  # Two stratum codes that differ as numbers but print alike.
+  frame <- data.frame(
+    psu_id = c("A01", "A01", "A02", "A02"),
+    stratum = c(0.3, 0.1 + 0.2, 0.3, 0.3),
+    N = c(2L, 2L, 3L, 3L)
+  )
+  expect_identical(
+    first_register_rows(frame, "psu_id", "stratum", "N"),
+    data.frame(psu_id = c("A01", "A02"), stratum = "0.3", N = c(2, 3))
+  )
+  expect_identical(
+    first_register_rows(frame, "psu_id", "stratum"),
+    data.frame(psu_id = c("A01", "A02"), stratum = "0.3")
+  )
 })
 
 ## Serialization: design format 3

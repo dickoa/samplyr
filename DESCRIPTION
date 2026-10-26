@@ -32,7 +32,7 @@ Imports:
     dplyr (>= 1.1.0),
     jsonlite,
     sondage (>= 0.11.0),
-    svyplan (>= 0.16.0),
+    svyplan (>= 0.17.0),
     withr
 Suggests:
    covr,

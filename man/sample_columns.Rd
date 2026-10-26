@@ -61,9 +61,17 @@ export uses stratum by zone as the variance strata.
 one PSU per zone. svyplan fixes the groups before selection, two or
 three zones each, numbered across strata, and certainty PSUs have
 \code{NA}. The survey export uses the groups as the variance strata.
+\item \code{.stage}: The last stage executed, the same on every row. It is 1
+after \code{execute(..., stages = 1)} and 2 once a continuation runs the
+second stage. A new phase counts its own stages, so it starts at 1.
 \item \code{.replicate}: Replicate identifier (only when \code{reps} is specified)
 \item \code{.panel}: Panel assignment (only when \code{panels} is specified), described
 in \link{panel_assignment}
+\item \code{.wave}: The wave a row was observed at, in a window of several waves
+materialized with \code{execute(master, wave = )}
+\item \code{.visit}: The interview number of the row's unit within its tenure, in
+a materialized wave, from the schedule's \code{visit}. Permanent units have
+\code{NA}.
 \item Stage and stratum identifiers as appropriate
 }
 \subsection{How the weights are computed}{

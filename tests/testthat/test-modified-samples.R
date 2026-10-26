@@ -476,8 +476,93 @@ test_that("the integrity refusal names the column and not a route", {
   )
 })
 
+test_that("an edited weight is pointed to the exported design", {
+  s <- sampling_design() |>
+    stratify_by(region) |>
+    cluster_by(ea_id) |>
+    draw(n = 2) |>
+    execute(bfa_eas, seed = 1)
+  adjusted <- dplyr::mutate(s, .weight = .weight * 1.1)
+  for (fn in c("as_svydesign", "as_svrepdesign")) {
+    err <- tryCatch(check_sample_unmodified(adjusted, fn), error = identity)
+    expect_s3_class(err, "samplyr_error_modified_sample")
+    text <- cli::ansi_strip(conditionMessage(err))
+    expect_match(text, "The values of .weight no longer match", fixed = TRUE)
+    expect_match(text, "survey::calibrate()", fixed = TRUE)
+    expect_false(grepl("dropped or renamed", text, fixed = TRUE))
+    expect_false(grepl("subpopulation", text, fixed = TRUE))
+  }
+  # Other verbs, and edits beyond the weight, keep the general advice.
+  err <- tryCatch(check_sample_unmodified(adjusted, "joint_expectation"),
+                  error = identity)
+  expect_false(grepl("survey::calibrate", conditionMessage(err), fixed = TRUE))
+  both <- dplyr::mutate(adjusted, ea_id = rev(ea_id))
+  err <- tryCatch(check_sample_unmodified(both, "as_svydesign"),
+                  error = identity)
+  expect_false(grepl("survey::calibrate", conditionMessage(err), fixed = TRUE))
+  expect_match(cli::ansi_strip(conditionMessage(err)), "subpopulation",
+               fixed = TRUE)
+})
+
+test_that("a continuation of a modified sample stays modified", {
+  skip_if_not_installed("survey")
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(region) |> cluster_by(ea_id) |> draw(n = 2) |>
+    add_stage() |> cluster_by(hh) |> draw(n = 3) |>
+    add_stage() |> draw(n = 2)
+  selected <- execute(design, bfa_eas, stages = 1, seed = 1)
+  listing <- function(eas) {
+    eas <- as.data.frame(eas)[c("ea_id", "region")]
+    out <- eas[rep(seq_len(nrow(eas)), each = 12), ]
+    out$hh <- paste(out$ea_id, rep(1:4, each = 3))
+    out$person <- seq_len(nrow(out))
+    out
+  }
+  dropped <- selected[-1, ]
+  expect_warning(
+    households <- execute(dropped, listing(dropped), stages = 2, seed = 2),
+    class = "samplyr_warning_modified_sample"
+  )
+  expect_identical(get_stages_executed(households), 1:2)
+  err <- tryCatch(as_svydesign(households), error = identity)
+  expect_s3_class(err, "samplyr_error_modified_sample")
+  expect_match(cli::ansi_strip(conditionMessage(err)),
+               "It continues a sample whose rows changed", fixed = TRUE)
+  expect_error(as_svrepdesign(households),
+               class = "samplyr_error_modified_sample")
+  # The status survives a second continuation.
+  expect_warning(
+    persons <- execute(households, listing(dropped), seed = 3),
+    class = "samplyr_warning_modified_sample"
+  )
+  expect_error(as_svydesign(persons), class = "samplyr_error_modified_sample")
+
+  intact <- execute(selected, listing(selected), stages = 2, seed = 2) |>
+    execute(listing(selected), seed = 3)
+  expect_no_error(as_svydesign(intact))
+})
+
+test_that("a period filtered out of a master cannot be continued into an export", {
+  skip_if_not_installed("survey")
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(region) |> cluster_by(ea_id) |> draw(n = 24) |>
+    add_stage() |> draw(n = 12)
+  selected <- execute(design, bfa_eas, stages = 1, seed = 1,
+                      panels = periods(12))
+  month <- dplyr::filter(selected, .panel == 3)
+  listing <- as.data.frame(month)[c("ea_id", "region")]
+  listing <- listing[rep(seq_len(nrow(listing)), each = 15), ]
+  expect_warning(continued <- execute(month, listing, seed = 2),
+                 class = "samplyr_warning_modified_sample")
+  expect_error(execute(continued, wave = 3),
+               class = "samplyr_error_modified_sample")
+  expect_error(as_svydesign(continued),
+               class = "samplyr_error_modified_sample")
+})
+
 test_that("a written record carries the file fields only", {
   record <- attr(fix_srs, "metadata")$integrity
-  expect_named(record, c("n_rows", "cols", "hash", "col_hashes"))
+  expect_named(record, c("n_rows", "cols", "hash", "col_hashes",
+                         "value_hashes"))
   expect_named(integrity_for_file(record), c("n_rows", "cols", "hash"))
 })
