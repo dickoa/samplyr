@@ -504,6 +504,47 @@ test_that("a reached-scope summary states that coverage is not established", {
   expect_no_match(txt, "cannot be reached")
 })
 
+test_that("a shared summary describes its stages from the source sample", {
+  # Two stages, so the digest line ("4/12 pools") differs from the line the
+  # .fpc columns give when no digest is recorded.
+  frame <- data.frame(
+    unit = 1:120,
+    ea = rep(1:24, each = 5),
+    h = rep(c("a", "b"), each = 60),
+    size = rep(rep(c(rep(1, 10), 40, 60), 2), each = 5)
+  )
+  targets <- data.frame(tid = 1:240, home = rep(1:120, 2))
+  links <- data.frame(unit = targets$home, tid = targets$tid)
+  design <- sampling_design() |>
+    add_stage() |>
+    stratify_by(h) |>
+    cluster_by(ea) |>
+    draw(n = 4, mos = size, method = "pps_brewer", certainty_size = 30) |>
+    add_stage() |>
+    draw(n = 2)
+  stage_lines <- function(x) {
+    txt <- cli::ansi_strip(capture.output(summary(x)))
+    txt[seq(grep("Stage 1", txt), grep("Weights [^[:alnum:]]", txt) - 1L)]
+  }
+
+  lines <- list()
+  for (digest in c("summary", "none")) {
+    s <- execute(design, frame, seed = 2, frame_digest = digest)
+    r <- share_weights(
+      s, targets, links,
+      by = c(unit = "unit"), to = c(tid = "tid"), within = tid,
+      multiplicity = complete_links()
+    )
+
+    lines[[digest]] <- stage_lines(r)
+    expect_identical(lines[[digest]], stage_lines(s))
+    expect_no_match(lines[[digest]], "unavailable")
+    expect_identical(summary(r)$certainty, c(stage_1 = 4L, stage_2 = 0L))
+    expect_identical(summary(r)$n, 32L)
+  }
+  expect_match(lines$summary, "8/24 pools", all = FALSE)
+})
+
 ## The gates apply to what this verb produces
 
 test_that("a real shared sample meets the weight gates", {

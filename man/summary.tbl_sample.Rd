@@ -76,6 +76,11 @@ the displayed selection pools: strata at a first stratified stage
 and parent-by-stratum pools at later stages. For a replicated
 execution, the pool table has one row per \code{pool_id} and \code{replicate}.
 
+For a sample returned by \code{\link[=share_weights]{share_weights()}}, the rows are target units,
+while the stage sections and the \code{certainty} and \code{single_unit_pools}
+fields describe the source sample the weights were shared from. The
+header line and the weight figures describe the target rows.
+
 \strong{Weights} reports the mean and range, coefficient of variation,
 Kish design effect, and effective sample size on one line. The
 \verb{Kish DEFF} token is the weighting loss alone, as computed by

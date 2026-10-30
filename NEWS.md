@@ -59,6 +59,9 @@ needed for weighting, replay, and export to the survey and srvyr packages.
   the months of a yearly survey, and the later stages can be drawn one
   period or tenure at a time as listing proceeds, a schedule's `visit`
   column opening new tenures in primary units that stay in the survey.
+  A schedule's `period` column groups monthly or weekly waves into
+  reporting periods, so small strata need a unit in each period rather than
+  in each wave.
 * `execute(reps = R)` draws independent replicate samples.
 
 ## Analysis and export

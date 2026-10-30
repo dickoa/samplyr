@@ -103,6 +103,13 @@ A master carrying a panel assignment is accepted, and its assignment
 record does not carry into the result for the same reason: a panel is a
 property of a selected source unit. The result is an ordinary shared
 sample, and \verb{execute(<it>, wave = )} is refused.
+
+A longitudinal panel that follows the people of its first-wave units is
+a different use, and it is supported. The first-wave sample is the
+source, and the people of each later wave's reached households are the
+targets. When their keys and households carry the wave, one call weights
+every wave, and a change estimated from its export keeps the covariance
+between waves. The second example shows it.
 }
 
 \section{Coverage}{
@@ -140,6 +147,46 @@ share_weights(
   within = household,
   multiplicity = complete_links()
 )
+
+# A panel follows the people of the selected dwellings. By wave 2, person
+# 4 has moved in with person 5 of an unselected dwelling, and a baby is
+# born in household 1. Only people present at wave 1 have links.
+wave1 <- data.frame(person_id = 1:40, household = rep(1:20, each = 2))
+wave2 <- rbind(wave1, data.frame(person_id = 41, household = 1))
+wave2$household[wave2$person_id \%in\% c(4, 5)] <- 21
+followed <- wave1[wave1$household \%in\% sample$dwelling_id, ]
+
+# Keys carry the wave, so one call weights both waves, and a change
+# estimated from its as_svrepdesign() export keeps their covariance.
+waves <- list(wave1, wave2)
+targets <- do.call(rbind, lapply(1:2, function(t) {
+  roster <- waves[[t]]
+  roster <- roster[roster$household \%in\%
+    roster$household[roster$person_id \%in\% followed$person_id], ]
+  data.frame(
+    key = paste(t, roster$person_id),
+    wave = t,
+    household = paste(t, roster$household),
+    in_wave1 = as.integer(roster$person_id <= 40)
+  )
+}))
+links <- data.frame(
+  dwelling_id = rep(followed$household, 2),
+  key = paste(rep(1:2, each = nrow(followed)), followed$person_id)
+)
+
+panel <- share_weights(
+  sample,
+  targets = targets,
+  links = links,
+  by = c(dwelling_id = "dwelling_id"),
+  to = c(key = "key"),
+  within = household,
+  multiplicity = in_wave1
+)
+
+# The new household has one link of weight 2.5 and two wave-1 members.
+as.data.frame(panel)[panel$household == "2 21", c("key", ".weight")]
 
 }
 \references{

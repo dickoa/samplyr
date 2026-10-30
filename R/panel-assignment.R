@@ -158,6 +158,30 @@
 #' the master's receipt gives it again, and [stack_waves()] takes single
 #' waves only.
 #'
+#' ## Reporting periods
+#'
+#' A schedule written in fieldwork waves, such as months or weeks, can name
+#' the reporting period of each wave in an optional integer `period` column,
+#' such as `period = ceiling(wave / 3)` for monthly fieldwork and quarterly
+#' estimates. An `svyplan_schedule` built with `subperiods` carries it.
+#' Every row of a wave names the same period, and periods number from 1 in
+#' wave order. A period equal to its wave changes nothing.
+#'
+#' Panels with the same visits in every period form a rotation group, and
+#' the wave within the period tells them apart, their sub-period. The
+#' assignment then checks pools per period rather than per wave. A pool needs
+#' more units than the groups the leanest period leaves inactive. Fifteen
+#' monthly panels kept in every quarter form one group, so a stratum needs one
+#' unit rather than the eleven a check per wave asks. Labels cover the groups
+#' first and the sub-periods second, so the first units of a pool go to
+#' distinct groups and spread over the months.
+#'
+#' A period is materialized as a window of its waves, `execute(master, wave
+#' = 1:3)`. A single wave may then hold none of the units of a small pool,
+#' and is refused (`samplyr_error_panel_small_pool`), since that wave gives
+#' such a stratum no estimate. The record is version 6, which earlier builds
+#' refuse rather than read with the labels of a schedule without periods.
+#'
 #' ## Tenures
 #'
 #' In most rotating household surveys the rotation group is a set of primary
@@ -224,13 +248,22 @@
 #' the pools. `"permanent"` activates them at every wave with probability one
 #' and warns with `samplyr_warning_panel_small_pool`, which is exact but
 #' changes the operational design: wave sizes, overlap and repeated
-#' interviewing all increase. It matters only with a schedule, since a panel
+#' interviewing all increase. With reporting periods the rule counts groups
+#' per period instead, as described above. It matters only with a schedule,
+#' since a panel
 #' count declares no wave to protect, and it governs positivity only. A pool
 #' with a single active unit is still assigned, and is marked as carrying no
 #' within-block variance estimate. An `svyplan_schedule` refuses
 #' `"permanent"`, and selection-certainty units
 #' (`samplyr_error_plan_certainty`), because its overlap describes a fully
 #' rotating life.
+#'
+#' Under `horizon_policy = "continuing"`, an `svyplan_schedule` lists the
+#' interviews owed after its horizon, and the master's schedule includes
+#' them. The check counts those waves too, since every wave of the master
+#' must stand on its own, so the last of them, with few groups active, set
+#' how many units a pool needs. `"truncate_lives"` ends the lives at the
+#' horizon and drops those waves from the check.
 #'
 #' ## Weights of a subset of panels
 #'

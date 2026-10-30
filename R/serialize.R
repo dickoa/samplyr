@@ -2608,9 +2608,13 @@ encode_panel_assignment <- function(record, call = caller_env()) {
         panel = as.integer(record$schedule$panel),
         active = as.logical(record$schedule$active)
       )
-      # Only a record with several tenures states its visits.
-      if (record_states_version(record, 5L)) {
+      # Only a record with tenures or periods states its visits.
+      if (record_states_version(record, 5L) ||
+            record_states_version(record, 6L)) {
         out$visit <- as.integer(record$schedule$visit)
+      }
+      if (record_states_version(record, 6L)) {
+        out$period <- as.integer(record$schedule$period)
       }
       out
     }
@@ -2689,6 +2693,7 @@ decode_panel_argument <- function(receipt, record) {
       }, missing)
     }
     visits <- field("visit", NA_integer_)
+    periods <- field("period", NA_integer_)
     schedule <- data.frame(
       wave = field("wave", NA_integer_),
       panel = field("panel", NA_integer_),
@@ -2696,6 +2701,9 @@ decode_panel_argument <- function(receipt, record) {
     )
     if (!all(is.na(visits))) {
       schedule$visit <- visits
+    }
+    if (!all(is.na(periods))) {
+      schedule$period <- periods
     }
   }
   out <- data.frame(
@@ -2705,6 +2713,9 @@ decode_panel_argument <- function(receipt, record) {
   )
   if (!is_null(schedule$visit)) {
     out$visit <- as.integer(schedule$visit)
+  }
+  if (!is_null(schedule$period)) {
+    out$period <- as.integer(schedule$period)
   }
   out
 }

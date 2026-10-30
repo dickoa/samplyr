@@ -60,6 +60,11 @@
 #' and parent-by-stratum pools at later stages. For a replicated
 #' execution, the pool table has one row per `pool_id` and `replicate`.
 #'
+#' For a sample returned by [share_weights()], the rows are target units,
+#' while the stage sections and the `certainty` and `single_unit_pools`
+#' fields describe the source sample the weights were shared from. The
+#' header line and the weight figures describe the target rows.
+#'
 #' **Weights** reports the mean and range, coefficient of variation,
 #' Kish design effect, and effective sample size on one line. The
 #' `Kish DEFF` token is the weighting loss alone, as computed by
@@ -86,6 +91,7 @@ summary.tbl_sample <- function(object, ...) {
   rlang::check_dots_empty()
   design <- get_design(object)
   stages <- get_stages_executed(object)
+  stage_sample <- summary_stage_sample(object)
   w <- object[[".weight"]]
   weighted <- !is_null(w) && length(w) > 0L &&
     !has_multiple_replicates(object)
@@ -107,13 +113,13 @@ summary.tbl_sample <- function(object, ...) {
       effective_n = if (weighted) effective_n(weights = w),
       certainty = stats::setNames(
         vapply(stages, function(k) {
-          summary_certainty_count(object, design, k)[["certainty"]]
+          summary_certainty_count(stage_sample, design, k)[["certainty"]]
         }, integer(1)),
         paste0("stage_", stages)
       ),
       single_unit_pools = stats::setNames(
         vapply(stages, function(k) {
-          summary_certainty_count(object, design, k)[["single_unit"]]
+          summary_certainty_count(stage_sample, design, k)[["single_unit"]]
         }, integer(1)),
         paste0("stage_", stages)
       ),
@@ -208,11 +214,19 @@ render_sample_summary <- function(object) {
     summary_weight_share_note(object, share)
   }
 
+  stage_sample <- summary_stage_sample(object)
+  if (!is_null(share)) {
+    digest <- get_frame_digest(stage_sample)
+    if (!is_null(digest) && identical(digest$status, "invalidated")) {
+      digest <- NULL
+    }
+  }
+
   # The first replicate with rows. A stack of empty replicates has none.
-  object_for_alloc <- if (is_replicated && nrow(object) > 0L) {
-    object[object$.replicate == min(object$.replicate), ]
+  object_for_alloc <- if (is_replicated && nrow(stage_sample) > 0L) {
+    stage_sample[stage_sample$.replicate == min(stage_sample$.replicate), ]
   } else {
-    object
+    stage_sample
   }
 
   digest_stage_ids <- if (!is_null(digest)) {
@@ -252,7 +266,9 @@ render_sample_summary <- function(object) {
         n_cert = n_cert
       )
     }
-    summary_empty_parents(attr(object, "metadata")$empty_parents, stage_idx)
+    summary_empty_parents(
+      attr(stage_sample, "metadata")$empty_parents, stage_idx
+    )
   }
 
   if (".weight" %in% names(object) && nrow(object) == 0) {
@@ -686,6 +702,16 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL,
   invisible(NULL)
 }
 
+#' The sample the stage sections describe
+#'
+#' The rows of a shared-weight sample are targets, and its stages describe
+#' the source selection, so their figures come from the source sample that
+#' the weight-share record keeps.
+#' @noRd
+summary_stage_sample <- function(object) {
+  attr(object, "metadata")$weight_share$source_sample %||% object
+}
+
 #' Realization line from .fpc columns when no digest is recorded
 #'
 #' f_h = n_h / N_h is the realized sample fraction, not a unit-level
@@ -752,51 +778,50 @@ summary_stage_fallback <- function(object_for_alloc, design, stage_spec,
       ),
       bullet = "bullet"
     )
-  } else if (!is_null(stage_spec$strata)) {
-    strata_vars <- stage_spec$strata$vars
-
+  } else {
+    # A later stage draws within each unit its parent stages selected, once
+    # per hit of a with-replacement parent, so a pool is a parent by stratum.
+    prior <- seq_len(stage_idx - 1L)
+    multi_hit <- vapply(prior, function(i) {
+      is_multi_hit_method(design$stages[[i]]$draw_spec)
+    }, logical(1))
+    pool_vars <- unique(c(
+      ancestor_vars,
+      intersect(paste0(".draw_", prior[multi_hit]), names(object_for_alloc)),
+      stage_strata_vars
+    ))
     count_data <- object_for_alloc
     if (!is_null(stage_unit_vars)) {
-      dedup_vars <- unique(c(strata_vars, stage_unit_vars))
       count_data <- count_data |>
-        distinct(across(all_of(dedup_vars)), .keep_all = TRUE)
+        distinct(across(all_of(unique(c(pool_vars, stage_unit_vars)))),
+                 .keep_all = TRUE)
     }
+    fmt_f <- function(f) sprintf("%.4f", f)
+    fmt_n <- function(v) format(v, big.mark = ",", trim = TRUE)
 
-    alloc_tbl <- count_data |>
-      group_by(across(all_of(strata_vars))) |>
-      summarise(
-        N_h = .data[[fpc_col]][1],
-        n_h = n(),
-        .groups = "drop"
+    if (length(pool_vars) == 0L) {
+      N <- count_data[[fpc_col]][1]
+      main <- paste0(
+        "N = ", fmt_n(N), ", n = ", fmt_n(nrow(count_data)),
+        ", f = ", fmt_f(nrow(count_data) / N)
       )
-
-    cli::cat_bullet(
-      paste0(
-        nrow(alloc_tbl), " strata: ",
-        "N_h ", summary_range(alloc_tbl$N_h), ", ",
-        "n_h ", summary_range(alloc_tbl$n_h), ", ",
-        "f_h ", summary_range(round(alloc_tbl$n_h / alloc_tbl$N_h, 4)),
-        suffix
-      ),
-      bullet = "bullet"
-    )
-  } else {
-    N <- object_for_alloc[[fpc_col]][1]
-    n_sel <- if (!is_null(stage_unit_vars)) {
-      nrow(dplyr::distinct(
-        object_for_alloc, across(all_of(stage_unit_vars))
-      ))
     } else {
-      nrow(object_for_alloc)
+      alloc_tbl <- count_data |>
+        group_by(across(all_of(pool_vars))) |>
+        summarise(
+          N_h = .data[[fpc_col]][1],
+          n_h = n(),
+          .groups = "drop"
+        )
+      noun <- if (length(ancestor_vars) == 0L) "strata" else "pools"
+      main <- paste0(
+        fmt_n(nrow(alloc_tbl)), " ", noun, ": ",
+        "N_h ", summary_range(alloc_tbl$N_h, fmt_n), ", ",
+        "n_h ", summary_range(alloc_tbl$n_h, fmt_n), ", ",
+        "f_h ", summary_range(alloc_tbl$n_h / alloc_tbl$N_h, fmt_f)
+      )
     }
-    cli::cat_bullet(
-      paste0(
-        "N = ", N, ", n = ", n_sel,
-        ", f = ", format(round(n_sel / N, 4), nsmall = 4),
-        suffix
-      ),
-      bullet = "bullet"
-    )
+    cli::cat_bullet(paste0(main, suffix), bullet = "bullet")
   }
 
   invisible(NULL)

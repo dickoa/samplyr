@@ -2302,6 +2302,10 @@
                         "maxProperties": 0
                       }
                     ]
+                  },
+                  "period": {
+                    "type": "integer",
+                    "minimum": 1
                   }
                 },
                 "required": [

@@ -157,8 +157,9 @@ build_window_sample <- function(
   })
   union <- NULL
   parts <- lapply(seq_len(n_waves), function(j) {
+    # The union reaches every unit even where one wave holds none of a pool.
     activation <- activate_cohort(sources[[j]], record, active_at[[j]],
-                                  call = call)
+                                  allow_empty = !repeated, call = call)
     rows <- which(activation$keep)
     factor <- if (repeated) {
       activation$factor[rows] / n_waves
@@ -169,7 +170,7 @@ build_window_sample <- function(
     }
     part <- as.data.frame(sources[[j]])[rows, , drop = FALSE]
     part$.weight <- part$.weight * factor
-    part$.wave <- waves[j]
+    part$.wave <- rep(waves[j], nrow(part))
     part$.visit <- wave_row_visits(
       record, part$.panel, waves[j], activation$permanent[rows]
     )
@@ -531,11 +532,14 @@ record_pool_rows <- function(keys, pools) {
 #'   whole. A cohort that was never partitioned has one implicit panel
 #'   comprising all its rows, and activating it is not a subsample, so its
 #'   factor is one.
+#' @param allow_empty Whether a block with no active unit is kept out
+#'   rather than refused, for a wave read inside a window.
 #' @return A list with `keep`, the row mask, `factor`, the weight multiplier
 #'   for kept rows, `active`, the activated panels, and `pools`, the per-block
 #'   activation record.
 #' @noRd
-activate_cohort <- function(sample, record, active, call = caller_env()) {
+activate_cohort <- function(sample, record, active, allow_empty = FALSE,
+                            call = caller_env()) {
   record <- prepare_panel_record(record, "An activation", call = call)
   if (is_null(record)) {
     n <- nrow(sample)
@@ -572,8 +576,9 @@ activate_cohort <- function(sample, record, active, call = caller_env()) {
       probability <- rep(1, length(pool$blocks))
     } else {
       take <- pool_take(pool, active)
-      # Backstop for older records that did not enforce positive activation.
-      if (any(take == 0L)) {
+      # Reporting periods leave a wave empty legitimately, and older records
+      # did not enforce positive activation.
+      if (any(take == 0L) && !allow_empty) {
         abort_samplyr(
           c(
             "This wave cannot be materialized: some units have no chance of
@@ -581,9 +586,15 @@ activate_cohort <- function(sample, record, active, call = caller_env()) {
             "x" = "Pool {.val {format_pool_stratum(pool)}} has
                    {sum(take == 0L)} block{?s} with no active unit in this
                    wave.",
-            "i" = "The master was drawn before this check existed. Redraw it
-                   with fewer panels, more panels active per wave, a larger
-                   take per pool, or {.code small_pool = \"permanent\"}."
+            "i" = if (record_states_version(record, 6L)) {
+              "The master leaves every pool a unit in each reporting
+               period, not at each wave. Materialize the period as a window
+               of its waves, {.code execute(master, wave = c(...))}."
+            } else {
+              "The master was drawn before this check existed. Redraw it
+               with fewer panels, more panels active per wave, a larger take
+               per pool, or {.code small_pool = \"permanent\"}."
+            }
           ),
           class = "samplyr_error_panel_small_pool",
           call = call
@@ -623,6 +634,10 @@ activate_cohort <- function(sample, record, active, call = caller_env()) {
 #' outside the rotation, so it has no visit number.
 #' @noRd
 wave_row_visits <- function(record, panel, wave, permanent) {
+  # paste() would recycle no panels to one key.
+  if (length(panel) == 0L) {
+    return(integer(0))
+  }
   schedule <- record$schedule
   at <- match(
     paste(panel, wave, sep = "|"),

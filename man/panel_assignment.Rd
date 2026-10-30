@@ -168,6 +168,30 @@ the master's receipt gives it again, and \code{\link[=stack_waves]{stack_waves()
 waves only.
 }
 
+\subsection{Reporting periods}{
+
+A schedule written in fieldwork waves, such as months or weeks, can name
+the reporting period of each wave in an optional integer \code{period} column,
+such as \code{period = ceiling(wave / 3)} for monthly fieldwork and quarterly
+estimates. An \code{svyplan_schedule} built with \code{subperiods} carries it.
+Every row of a wave names the same period, and periods number from 1 in
+wave order. A period equal to its wave changes nothing.
+
+Panels with the same visits in every period form a rotation group, and
+the wave within the period tells them apart, their sub-period. The
+assignment then checks pools per period rather than per wave. A pool needs
+more units than the groups the leanest period leaves inactive. Fifteen
+monthly panels kept in every quarter form one group, so a stratum needs one
+unit rather than the eleven a check per wave asks. Labels cover the groups
+first and the sub-periods second, so the first units of a pool go to
+distinct groups and spread over the months.
+
+A period is materialized as a window of its waves, \code{execute(master, wave = 1:3)}. A single wave may then hold none of the units of a small pool,
+and is refused (\code{samplyr_error_panel_small_pool}), since that wave gives
+such a stratum no estimate. The record is version 6, which earlier builds
+refuse rather than read with the labels of a schedule without periods.
+}
+
 \subsection{Tenures}{
 
 In most rotating household surveys the rotation group is a set of primary
@@ -234,13 +258,22 @@ the default, refuses such an assignment before any panel is drawn and names
 the pools. \code{"permanent"} activates them at every wave with probability one
 and warns with \code{samplyr_warning_panel_small_pool}, which is exact but
 changes the operational design: wave sizes, overlap and repeated
-interviewing all increase. It matters only with a schedule, since a panel
+interviewing all increase. With reporting periods the rule counts groups
+per period instead, as described above. It matters only with a schedule,
+since a panel
 count declares no wave to protect, and it governs positivity only. A pool
 with a single active unit is still assigned, and is marked as carrying no
 within-block variance estimate. An \code{svyplan_schedule} refuses
 \code{"permanent"}, and selection-certainty units
 (\code{samplyr_error_plan_certainty}), because its overlap describes a fully
 rotating life.
+
+Under \code{horizon_policy = "continuing"}, an \code{svyplan_schedule} lists the
+interviews owed after its horizon, and the master's schedule includes
+them. The check counts those waves too, since every wave of the master
+must stand on its own, so the last of them, with few groups active, set
+how many units a pool needs. \code{"truncate_lives"} ends the lives at the
+horizon and drops those waves from the check.
 }
 
 \subsection{Weights of a subset of panels}{

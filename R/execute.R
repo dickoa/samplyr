@@ -206,8 +206,9 @@ NULL
 #'   sample because its receipt cannot reproduce it.
 #' @param panels Rotation groups (panels) to partition the sample into, as an
 #'   integer count, a rotation schedule (a data frame with integer `panel`
-#'   and `wave` columns, an optional logical `active` column and an optional
-#'   integer `visit` column that opens tenures), or an
+#'   and `wave` columns, an optional logical `active` column, an optional
+#'   integer `visit` column that opens tenures and an optional integer
+#'   `period` column that names each wave's reporting period), or an
 #'   `svyplan_schedule` from [svyplan::design_schedule()]. [periods()]
 #'   partitions it into fieldwork periods instead, each unit visited once.
 #'   The output gains a `.panel` column, and only a sample drawn with a

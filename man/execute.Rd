@@ -53,8 +53,9 @@ sample because its receipt cannot reproduce it.}
 
 \item{panels}{Rotation groups (panels) to partition the sample into, as an
 integer count, a rotation schedule (a data frame with integer \code{panel}
-and \code{wave} columns, an optional logical \code{active} column and an optional
-integer \code{visit} column that opens tenures), or an
+and \code{wave} columns, an optional logical \code{active} column, an optional
+integer \code{visit} column that opens tenures and an optional integer
+\code{period} column that names each wave's reporting period), or an
 \code{svyplan_schedule} from \code{\link[svyplan:design_schedule]{svyplan::design_schedule()}}. \code{\link[=periods]{periods()}}
 partitions it into fieldwork periods instead, each unit visited once.
 The output gains a \code{.panel} column, and only a sample drawn with a

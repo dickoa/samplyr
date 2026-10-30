@@ -148,8 +148,12 @@ normalize_plan_panels <- function(plan, stage, small_pool,
     ,
     drop = FALSE
   ]
-  # A schema 2 schedule numbers its visits, and a restart opens a tenure.
-  cols <- intersect(c("panel", "wave", "active", "visit"), names(startup))
+  # A schema 2 schedule numbers its visits, a restart opening a tenure, and
+  # names each wave's reporting period.
+  cols <- intersect(
+    c("panel", "wave", "active", "visit", "period"),
+    names(startup)
+  )
   if (nrow(tail) > 0L) {
     tail$active <- TRUE
     cols <- intersect(cols, names(tail))
@@ -364,13 +368,101 @@ normalize_panel_schedule <- function(schedule, min_panels = 2L,
     call = call
   )
   grid$visit <- schedule_grid_visit(grid, schedule, call = call)
+  grid$period <- schedule_grid_period(grid, schedule, call = call)
 
   r_min <- min(per_wave)
   list(
     k = k,
     r_min = r_min,
     block_size = panel_block_size(k, r_min),
-    schedule = grid
+    schedule = grid,
+    reporting = schedule_period_groups(grid)
+  )
+}
+
+#' The reporting period of every grid cell
+#'
+#' `NULL` without the column or where each wave is its own period, so such a
+#' schedule assigns as one without periods. Every row of a wave names the
+#' same period, and periods number from 1 in wave order without gaps.
+#' @noRd
+schedule_grid_period <- function(grid, schedule, call = caller_env()) {
+  if (!"period" %in% names(schedule)) {
+    return(NULL)
+  }
+  check_schedule_integers(schedule$period, "period", call = call)
+  by_wave <- lapply(split(as.integer(schedule$period), schedule$wave), unique)
+  split_wave <- which(lengths(by_wave) > 1L)
+  if (length(split_wave) > 0L) {
+    w <- split_wave[1L]
+    abort_samplyr(
+      c(
+        "Every row of a wave must name the same {.field period}.",
+        "x" = "Wave {w} names periods {by_wave[[w]]}."
+      ),
+      class = "samplyr_error_schedule_period",
+      call = call
+    )
+  }
+  period <- unlist(by_wave, use.names = FALSE)
+  if (is.unsorted(period)) {
+    w <- which(diff(period) < 0L)[1L] + 1L
+    abort_samplyr(
+      c(
+        "Reporting periods must follow wave order.",
+        "x" = "Wave {w} is in period {period[w]}, after a wave of period
+               {period[w - 1L]}."
+      ),
+      class = "samplyr_error_schedule_period",
+      call = call
+    )
+  }
+  check_schedule_contiguous(period, max(period), "period", call = call)
+  if (identical(period, seq_along(period))) {
+    return(NULL)
+  }
+  period[grid$wave]
+}
+
+#' Rotation groups of a schedule with reporting periods
+#'
+#' Panels with the same visits in every period form a group, since the
+#' schedule tells them apart only by the wave within the period, their
+#' sub-period. A pool reaches every period once it holds more units than
+#' the groups the leanest period leaves inactive.
+#' @return `NULL` without periods, else `group` and `subperiod` per panel,
+#'   `groups`, the number of groups, and `threshold`, the largest pool size
+#'   that can miss a period.
+#' @noRd
+schedule_period_groups <- function(grid) {
+  if (is_null(grid$period)) {
+    return(NULL)
+  }
+  k <- max(grid$panel)
+  start <- vapply(split(grid$wave, grid$period), min, integer(1))
+  grid$subperiod <- grid$wave - start[grid$period] + 1L
+  active <- grid[grid$active, , drop = FALSE]
+  active <- active[order(active$panel, active$wave), , drop = FALSE]
+  by_panel <- split(active, factor(active$panel, levels = seq_len(k)))
+
+  signature <- vapply(by_panel, function(rows) {
+    paste(rows$period, rows$visit, sep = ":", collapse = " ")
+  }, character(1), USE.NAMES = FALSE)
+  group <- match(signature, unique(signature))
+  subperiod <- vapply(by_panel, function(rows) {
+    if (nrow(rows) == 0L) 1L else rows$subperiod[1L]
+  }, integer(1), USE.NAMES = FALSE)
+
+  live <- vapply(
+    split(group[active$panel], active$period),
+    function(g) length(unique(g)),
+    integer(1)
+  )
+  list(
+    group = group,
+    subperiod = subperiod,
+    groups = max(group),
+    threshold = max(group) - min(live)
   )
 }
 
@@ -864,7 +956,7 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
   for (p in seq_along(pools)) {
     pool <- pools[[p]]
     idx <- panel_pool_order(units, pool$indices, context$control)
-    assigned <- assign_blocked_panels(length(idx), k, block)
+    assigned <- assign_blocked_panels(length(idx), k, block, spec$reporting)
     panel[idx] <- assigned$panel
     pool_records[[p]] <- list(
       stratum = pool$stratum,
@@ -882,9 +974,12 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
 
   record <- list(
     algorithm = "blocked_random_quota",
-    # Version 4 adds certainty = "assigned" and version 5 a panel with
-    # several tenures. Other records keep the version earlier builds read.
-    version = if (schedule_has_tenures(spec$schedule)) {
+    # Version 4 adds certainty = "assigned", version 5 a panel with several
+    # tenures and version 6 reporting periods, whose labels cover groups
+    # first. Other records keep the version earlier builds read.
+    version = if (!is_null(spec$reporting)) {
+      6L
+    } else if (schedule_has_tenures(spec$schedule)) {
       5L
     } else if (is_periods_spec(spec)) {
       4L
@@ -919,7 +1014,7 @@ panel_record_algorithm <- "blocked_random_quota"
 #'
 #' A set, not a ceiling. A version below any that existed is unreadable too.
 #' @noRd
-supported_panel_record_versions <- c(1L, 2L, 3L, 4L, 5L)
+supported_panel_record_versions <- c(1L, 2L, 3L, 4L, 5L, 6L)
 
 #' Read an assignment record under the law it names
 #'
@@ -1027,12 +1122,14 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
 check_panel_record_fields <- function(record, what, call = caller_env()) {
   if (is_null(record) || !(record_states_version(record, 3L) ||
                              record_states_version(record, 4L) ||
-                             record_states_version(record, 5L))) {
+                             record_states_version(record, 5L) ||
+                             record_states_version(record, 6L))) {
     return(invisible(NULL))
   }
 
   if ((record_states_version(record, 4L) ||
-         record_states_version(record, 5L)) &&
+         record_states_version(record, 5L) ||
+         record_states_version(record, 6L)) &&
       !(length(record$certainty) == 1L &&
         record$certainty %in% c("permanent", "assigned"))) {
     abort_panel_record_malformed(
@@ -1086,7 +1183,38 @@ check_panel_record_fields <- function(record, what, call = caller_env()) {
     )
   }
 
+  # The labels of a version-6 assignment follow its periods.
+  if (record_states_version(record, 6L) &&
+      !schedule_states_periods(record$schedule)) {
+    abort_panel_record_malformed(
+      "must carry a schedule naming the {.field period} of every row",
+      record$schedule$period,
+      what = what,
+      call = call
+    )
+  }
+
   invisible(NULL)
+}
+
+#' Does a recorded schedule name a period on every row?
+#'
+#' A schedule is a data frame in memory and a list of rows as read from
+#' JSON.
+#' @noRd
+schedule_states_periods <- function(schedule) {
+  period <- if (is.data.frame(schedule)) {
+    schedule$period
+  } else if (is.list(schedule) && length(schedule) > 0L) {
+    lapply(schedule, function(row) if (is.list(row)) row$period)
+  }
+  if (is.list(period)) {
+    if (!all(lengths(period) == 1L)) {
+      return(FALSE)
+    }
+    period <- unlist(period, use.names = FALSE)
+  }
+  length(period) > 0L && is.numeric(period) && !anyNA(period)
 }
 
 #' The unit vocabulary version 3 is authoritative for
@@ -1195,12 +1323,15 @@ describe_record_value <- function(value) {
 
 #' Resolve every pool's activation before any assignment is drawn
 #'
-#' A rotating pool of at most `k - r_min` units is short. A promoted pool is
-#' not selection-certain, so readers branch on `activation`, not `class`.
+#' A rotating pool of at most `k - r_min` units is short, or with reporting
+#' periods, of at most the groups the leanest period leaves inactive. A
+#' promoted pool is not selection-certain, so readers branch on
+#' `activation`, not `class`.
 #' @noRd
 resolve_small_pools <- function(pools, spec, call = caller_env()) {
   policy <- spec$small_pool %||% "error"
-  threshold <- spec$k - spec$r_min
+  reporting <- spec$reporting
+  threshold <- reporting$threshold %||% (spec$k - spec$r_min)
 
   pools <- lapply(pools, function(pool) {
     if (identical(pool$class, "certainty")) {
@@ -1265,6 +1396,25 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
         "i" = "Give each stratum at least {spec$k} units, ideally a multiple
                of {spec$k} so every period gets the same number, or use
                fewer periods."
+      ),
+      class = "samplyr_error_panel_small_pool",
+      call = call
+    )
+  }
+  if (identical(policy, "error") && !is_null(reporting)) {
+    abort_samplyr(
+      c(
+        "A rotation schedule must leave every pool a unit to activate in
+         each reporting period.",
+        "x" = "{qty(n_short)}{n_short} pool{?s} hold{?s/} at most
+               {threshold} unit{?s} against {reporting$groups} rotation
+               groups, of which the leanest period activates
+               {reporting$groups - threshold}, so some period would select
+               none of {qty(n_short)}{?its/their} units: {.val {labels}}.",
+        "i" = "Use fewer rotation groups, activate more groups per period,
+               take more units per pool, or set
+               {.code small_pool = \"permanent\"} to activate
+               {qty(n_short)}{?this pool/these pools} at every wave."
       ),
       class = "samplyr_error_panel_small_pool",
       call = call
@@ -1443,15 +1593,25 @@ panel_pool_order <- function(units, idx, control_quos) {
 #' @param m Pool size in assignment units.
 #' @param k Number of panels.
 #' @param block Block size, from `panel_block_size()`.
+#' @param reporting Rotation groups from `schedule_period_groups()`, or
+#'   `NULL`. With groups, a partial block covers the groups before their
+#'   sub-periods.
 #' @return `panel`, the labels in pool order, and `blocks`, their sizes.
 #' @noRd
-assign_blocked_panels <- function(m, k, block = panel_block_size(k, 1L)) {
+assign_blocked_panels <- function(m, k, block = panel_block_size(k, 1L),
+                                  reporting = NULL) {
   if (m == 0L) {
     return(list(panel = integer(0), blocks = integer(0)))
   }
 
   # Permute panel labels while keeping deterministic quotas.
-  labels <- sample.int(k)[rep_len(seq_len(k), m)]
+  labels <- sample.int(k)
+  if (!is_null(reporting)) {
+    labels <- spread_panel_order(
+      labels, reporting$group, reporting$subperiod
+    )
+  }
+  labels <- labels[rep_len(seq_len(k), m)]
   sizes <- panel_block_sizes(m, block)
 
   panel <- integer(m)
@@ -1463,6 +1623,33 @@ assign_blocked_panels <- function(m, k, block = panel_block_size(k, 1L)) {
     start <- start + size
   }
   list(panel = panel, blocks = sizes)
+}
+
+#' Reorder a random permutation of panels to cover groups first
+#'
+#' Each next label comes from the group used least so far, then from the
+#' sub-period used least, and the permutation breaks the remaining ties. The
+#' first `g` labels then hold `g` distinct groups, spread over sub-periods.
+#' @param perm A random permutation of the panels.
+#' @noRd
+spread_panel_order <- function(perm, group, subperiod) {
+  k <- length(perm)
+  rank <- match(seq_len(k), perm)
+  group_used <- integer(max(group))
+  sub_used <- integer(max(subperiod))
+  left <- rep(TRUE, k)
+  out <- integer(k)
+  for (i in seq_len(k)) {
+    cand <- which(left)
+    pick <- cand[order(
+      group_used[group[cand]], sub_used[subperiod[cand]], rank[cand]
+    )[1L]]
+    out[i] <- pick
+    left[pick] <- FALSE
+    group_used[group[pick]] <- group_used[group[pick]] + 1L
+    sub_used[subperiod[pick]] <- sub_used[subperiod[pick]] + 1L
+  }
+  out
 }
 
 #' Sizes of the consecutive blocks of one pool

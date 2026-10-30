@@ -184,6 +184,61 @@ test_that("WR fallback qualifies restarted draw indices by ancestry", {
   expect_match(txt, "n = 6 draws (no FPC)", fixed = TRUE)
 })
 
+test_that("WOR fallback counts later stages in pools of parent units", {
+  # EA ids restart in each stratum, so a parent is a stratum and an EA.
+  frame <- data.frame(
+    h = rep(c("a", "b", "c"), each = 24),
+    ea = rep(rep(1:4, each = 6), 3),
+    sex = rep(c("m", "f"), 36),
+    size = rep(c(1, 1, 2, 8), each = 6, times = 3)
+  )
+  realization <- function(design, digest) {
+    sample <- suppressMessages(
+      execute(design, frame, seed = 3, frame_digest = digest)
+    )
+    txt <- cli::ansi_strip(capture.output(summary(sample)))
+    lines <- txt[grepl("N_h|N = ", txt)]
+    # Only a digest knows the universe pools and the scope they cover.
+    sub(" [|] .*$", "", sub("^(. [0-9]+)/[0-9]+ ", "\\1 ", lines))
+  }
+
+  stratified <- sampling_design() |>
+    add_stage() |> stratify_by(h) |> cluster_by(ea) |> draw(n = 2) |>
+    add_stage() |> stratify_by(sex) |> draw(n = 1)
+  plain <- sampling_design() |>
+    add_stage() |> stratify_by(h) |> cluster_by(ea) |> draw(n = 2) |>
+    add_stage() |> draw(n = 2)
+  expect_identical(
+    realization(stratified, "none")[2],
+    "* 12 pools: N_h 3, n_h 1, f_h 0.3333"
+  )
+  expect_identical(
+    realization(plain, "none")[2],
+    "* 6 pools: N_h 6, n_h 2, f_h 0.3333"
+  )
+  expect_identical(
+    realization(stratified, "none"), realization(stratified, "summary")
+  )
+  expect_identical(realization(plain, "none"), realization(plain, "summary"))
+
+  # A with-replacement parent hit twice is two pools.
+  repeated <- sampling_design() |>
+    add_stage() |> cluster_by(h, ea) |>
+    draw(n = 4, mos = size, method = "pps_multinomial") |>
+    add_stage() |> draw(n = 2)
+  sample <- suppressMessages(
+    execute(repeated, frame, seed = 3, frame_digest = "none")
+  )
+  expect_lt(nrow(dplyr::distinct(as.data.frame(sample), h, ea)), 4L)
+  expect_identical(
+    realization(repeated, "none")[1],
+    "* 4 pools: N_h 6, n_h 2, f_h 0.3333"
+  )
+  expect_identical(
+    realization(repeated, "none"), realization(repeated, "summary")
+  )
+})
+
 test_that("replicated WR ranges place draws before the qualifier", {
   stage <- list(
     pools = data.frame(
