@@ -36,10 +36,11 @@
 #' `phase` and `stage` locate the first of them.
 #'
 #' `sample_risk` lists what only the realized sample decides and what it
-#' would do to the estimator: a primary unit left with no rows, a stratum left
-#' with one sampled unit at a random-size or later stage. What the frame shows
-#' about the risk is part of the text, such as how many candidate units have
-#' nothing below them.
+#' would do to the estimator: a stratum left with one sampled unit at a
+#' random-size or later stage, or a selected unit with nothing below it,
+#' which is exported as a zero row. What the frame shows about the risk is
+#' part of the text, such as how many candidate units have nothing below
+#' them.
 #'
 #' Without `frame`, the frame checks are not run. A stratum that may take one
 #' unit, the pairing BRR needs, several rows per cluster and candidate units
@@ -52,8 +53,9 @@
 #' then covers the two-phase export. A `tbl_sample` passed as `x` stands for
 #' its design, and when it is itself a later phase, its earlier phase is used.
 #' Materialized waves and shared-weight samples are refused, as `x` or as
-#' `frame`. Their exports follow rules of their own, so the report of the
-#' design they come from does not describe them.
+#' `frame`, and so is a design with a reserve, or its sample. Their exports
+#' follow rules of their own, so the report of the design they come from
+#' does not describe them.
 #'
 #' The report reads the same rules the exports apply, and a test compares it
 #' with the conditions the exports actually raise on executed samples. It
@@ -63,7 +65,10 @@
 #' @param x A `sampling_design`, or a `tbl_sample` standing for its design.
 #' @param frame Optional. The frame the design will be executed on, as
 #'   [execute()] takes it: a data frame, or a list of stage registers. A
-#'   `tbl_sample` is the phase-1 sample of a second phase.
+#'   single data frame may cover only the first stages, and the report then
+#'   reads the frame for those. A list of registers needs every column
+#'   [execute()] would read. A `tbl_sample` is the phase-1 sample of a
+#'   second phase.
 #'
 #' @return A tibble with one row per estimator and the columns `estimator`,
 #'   `call`, `status`, `decided_by`, `phase`, `stage`, `class`, `note` and
@@ -120,6 +125,9 @@ variance_estimators <- function(x, frame = NULL) {
   }
   for (s in list(if (is_tbl_sample(x)) x, phase1)) {
     if (!is_null(s)) refuse_unassessed_sample(s)
+  }
+  for (d in list(design, if (is_tbl_sample(phase1)) get_design(phase1))) {
+    if (!is_null(d)) refuse_reserve_design(d)
   }
   stages <- seq_along(design$stages)
   traits <- stage_variance_traits(design, stages)
@@ -194,6 +202,34 @@ refuse_unassessed_sample <- function(s, call = caller_env()) {
   invisible(NULL)
 }
 
+#' Refuse a design that holds a reserve
+#'
+#' A settled reserve exports by ultimate clusters, whatever the stages
+#' below, so the design's own rules do not describe its export.
+#' @noRd
+refuse_reserve_design <- function(design, call = caller_env()) {
+  reserve <- vapply(
+    design$stages,
+    function(stage) !is_null(stage$draw_spec$reserve),
+    logical(1)
+  )
+  if (!any(reserve)) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "{.fn variance_estimators} does not assess a design with a reserve.",
+      "i" = "A list is exported only once settled, by ultimate clusters, and
+             {.val mrbbootstrap} and {.val rwyb} are refused.",
+      "i" = "Settle it with {.code execute(sample, response_status = col)},
+             then call {.fn as_svydesign} or {.fn as_svrepdesign} to see
+             whether an estimator is supported."
+    ),
+    class = "samplyr_error_variance_estimators_input",
+    call = call
+  )
+}
+
 ## What each stage is, from the design
 
 #' The design-level variance description of each stage
@@ -235,6 +271,7 @@ stage_variance_traits <- function(design, stages) {
 #' stage below a with-replacement stage), in which case every frame check is
 #' left to the sample. A frame of the first stages only, lacking the
 #' variables of a later stage, gives facts for the stages above that one.
+#' A list of several registers gets the error [execute()] would raise.
 #' @noRd
 frame_variance_facts <- function(design, frame, traits, call = caller_env()) {
   if (is_null(frame)) {
@@ -253,7 +290,10 @@ frame_variance_facts <- function(design, frame, traits, call = caller_env()) {
     samplyr_error_frame_missing_ancestry = function(e) e
   )
   if (inherits(digest, "condition")) {
-    if (is_null(digest$stage) || digest$stage < 2L) {
+    # A list of stage registers covers every stage, so it falls back to no
+    # shallower depth.
+    several <- !is.data.frame(frame) && length(frame) > 1L
+    if (several || is_null(digest$stage) || digest$stage < 2L) {
       rlang::cnd_signal(digest)
     }
     digest <- resolve(digest$stage - 1L)
@@ -465,35 +505,59 @@ empty_unit_findings <- function(traits, facts) {
   if (length(traits) < 2L) {
     return(list())
   }
-  if (is_null(facts)) {
-    return(list(finding(
-      "risk", "samplyr_error_export_empty_psu",
-      "A selected primary unit with no rows below it is refused. Pass `frame`
-       to see whether any candidate has none"
-    )))
+  # A primary unit with nothing below it is exported as a zero row, which
+  # the export names under `on_empty = "warn"`. A deeper unit keeps no row,
+  # whatever `on_empty` allows it, and the linearized export warns of its
+  # within-unit term under "warn".
+  named <- Filter(function(t) {
+    on_empty <- t$draw$on_empty %||% "error"
+    if (identical(t$stage, traits[[2]]$stage)) {
+      identical(on_empty, "warn")
+    } else {
+      t$stage > traits[[2]]$stage && !identical(on_empty, "error")
+    }
+  }, traits)
+  if (length(named) == 0L) {
+    return(list())
   }
-  if (is_null(stage_fact(facts, traits[[2]]$stage))) {
-    return(list(finding(
-      "risk", "samplyr_error_export_empty_psu",
-      "A selected primary unit with no rows below it is refused. A frame
-       that reaches stage 2 shows whether any candidate has none"
-    )))
+  effect <- function(t) {
+    if (identical(t$stage, traits[[2]]$stage)) {
+      "is exported as a zero row, so estimates need `na.rm = TRUE`"
+    } else {
+      paste("has no row, so survey computes its parent's within-unit",
+            "variance without it")
+    }
   }
   out <- list()
-  for (fact in facts[-1]) {
+  for (t in named) {
+    class <- if (identical(t$draw$on_empty, "warn")) {
+      "samplyr_warning_export_empty_parent"
+    } else {
+      NA_character_
+    }
+    fact <- stage_fact(facts, t$stage)
+    if (is_null(fact)) {
+      out <- c(out, list(finding(
+        "risk", class,
+        paste0("A selected unit with nothing at ", t$name, " ", effect(t),
+               if (is_null(facts)) {
+                 ". Pass `frame` to see whether any candidate has none"
+               } else {
+                 paste0(". A frame that reaches ", t$name, " shows whether",
+                        " any candidate has none")
+               })
+      )))
+      next
+    }
     if (fact$empty_parents <= 0) {
       next
     }
-    first_level <- identical(fact$stage, 2L)
     out <- c(out, list(finding(
-      "risk",
-      if (first_level) "samplyr_error_export_empty_psu" else
-        "samplyr_warning_export_empty_parent",
+      "risk", class,
       paste0(fact$empty_parents, " candidate unit",
              if (fact$empty_parents > 1) "s have" else " has",
-             " nothing to sample at stage ", fact$stage,
-             if (first_level) ", and a selected one is refused" else
-               ", and a selected one warns")
+             " nothing to sample at ", t$name, ", and a selected one ",
+             effect(t))
     )))
   }
   out
@@ -974,14 +1038,19 @@ rwyb_findings <- function(traits, facts, common) {
       stage = pps[[1]]$stage
     )))
   }
-  out <- c(out, common$refusals)
-  missing <- lapply(common$risks, function(f) {
-    f$class <- "samplyr_error_rwyb_missing_parents"
-    f$note <- sub(", and a selected one (is refused|warns)$",
-                  ", and a selected one is refused", f$note)
-    f
-  })
-  c(out, missing, singleton_findings(
+  out <- c(out, common$refusals, common$risks)
+  # A Poisson stage that selects nothing leaves its parent with no record.
+  poisson <- Filter(function(t) {
+    identical(t$kind, "rs_poisson") && t$stage > traits[[1]]$stage
+  }, traits)
+  if (length(poisson) > 0) {
+    out <- c(out, list(finding(
+      "risk", "samplyr_error_rwyb_missing_parents",
+      paste0("A selected unit in which ", poisson[[1]]$name, " selects",
+             " nothing has no row, and RWYB refuses it")
+    )))
+  }
+  c(out, singleton_findings(
     traits, facts,
     class = "samplyr_error_rwyb_singleton",
     effect = "refused",
@@ -1094,11 +1163,17 @@ twophase_linearization_findings <- function(design, traits, phase1, design1,
       phase = 1L, decided_by = "frame"
     )))
   }
-  if (!is_null(vanished_primary_units(phase1, design1, stages1))) {
-    return(c(out, refuse(
-      "samplyr_error_export_empty_psu",
-      "A selected phase-1 primary unit has no rows",
-      phase = 1L, decided_by = "frame"
+  # A phase-1 primary unit with no rows is a zero row of phase 1, which
+  # the export names under that stage's `on_empty = "warn"`.
+  vanished <- export_empty_records(phase1, design1, stages1, vanished = TRUE)
+  if (any(vapply(vanished, function(r) {
+    identical(design1$stages[[r$stage]]$draw_spec$on_empty, "warn")
+  }, logical(1)))) {
+    out <- c(out, list(finding(
+      "risk", "samplyr_warning_export_empty_parent",
+      "A selected phase-1 primary unit has no rows and is exported as a
+       zero row, so estimates need `na.rm = TRUE`",
+      phase = 1L
     )))
   }
   poisson <- Filter(function(t) identical(t$kind, "rs_poisson"),

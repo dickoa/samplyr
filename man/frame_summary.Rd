@@ -65,14 +65,17 @@ like \code{n_target}. It is \code{NA} for a stage without an allocation method
 and on a recorded digest, which does not keep it. \code{n_tied} counts the
 pools marked \code{tied} at \code{detail = "pool"}, without weighting, and is
 \code{NA} in the same cases. \code{n_certainty} adds up the pools' \code{n_certainty},
-rolled up like \code{n_target}.
+rolled up like \code{n_target}. A design that sets \code{reserve} in \code{\link[=draw]{draw()}} adds
+\code{n_reserve}, the reserve units its pools list after their take, rolled
+up like \code{n_target}. \code{n_expected} and \code{n_realized} then count the whole
+list, take and reserve.
 
 For \code{detail = "pool"}, one row per selection pool and realization
 with \code{stage}, \code{pool_id}, \code{replicate}, \code{parent_unit}, \code{pool_key}, any
 stratum label columns, \code{N}, \code{n_target}, \code{n_expected}, \code{n_certainty},
 \code{n_realized}, \code{scope}, \code{chance_status}, \code{chance} (the constant per-unit
 chance where one applies, \code{NA} otherwise), \code{take_rate}, \code{capped}, and
-\code{tied}.
+\code{tied}, and \code{n_reserve} when the design sets \code{reserve}.
 \code{replicate} is \code{1} for an ordinary execution. \code{pool_key} names the
 pool in the frame's values, its parent path then its stratum, as the
 \code{pool_keys} field of a condition from \code{\link[=execute]{execute()}} does. Only a

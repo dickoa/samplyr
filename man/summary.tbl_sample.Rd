@@ -42,6 +42,12 @@ diagnostics.
 The header line shows the total sample size (with the universe size
 when the frame digest records a complete denominator and the executed
 path has no with-replacement stage), the stages executed, and the seed.
+Under \code{frame_digest = "none"} the header shows the sample size alone,
+since nothing records the size of the frame. When the later stages were
+drawn one wave at a time, the header shows the seeds of the draws the
+rows come from, such as \verb{seeds = 101 to 112} for the completed master.
+A wave shows the seed of the draw that took its units. The header shows
+no seed when one of those draws ran without one.
 
 A sample split into \code{\link[=periods]{periods()}} gets one more line, which says whether
 each stratum has the same number of units in every period and names the
@@ -53,6 +59,14 @@ uneven stratum shows an allocation that is not a multiple of the number
 of periods. While the later stages are drawn one period at a time, a line
 such as "Drawn: stage 2 in 3 of 12 periods (1, 2, 5)." says how far they
 are.
+
+A materialized wave, period or window describes itself. A line such as
+"Period: 2 of 4. It holds 26 of the master's 104 units." names it and
+counts the units its panels were assigned to, each once however many of
+the waves activate it. Its stage sections count the wave's own units,
+with or without a frame digest, since the digest records the master's
+draw. A stage drawn for the wave alone is read from the wave's part of
+the digest. The master's own summary describes its draw.
 
 Each stage section has two lines:
 \itemize{

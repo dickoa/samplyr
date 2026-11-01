@@ -245,22 +245,33 @@ sample_within_clusters <- function(
   # Execution and previews resolve the same per-PSU take.
   pool_spec <- function(data) resolve_parent_draw_spec(draw_spec, data)
 
-  if (
-    is_null(strata_spec) &&
-      is_simple_srswor_draw(draw_spec) &&
-      !is_null(draw_spec$n) &&
-      length(draw_spec$n) == 1 &&
-      is_integerish_numeric(draw_spec$n)
-  ) {
-    draw_n <- as.integer(draw_spec$n)
-    n_per_group <- rep.int(draw_n, length(indices_list))
-    res <- sample_srswor_by_group_indices(
-      frame,
-      indices_list,
-      n_per_group,
-      trace_mode = trace_mode,
-      pool_keys = parent_labels
-    )
+  scalar_n <- is_null(strata_spec) &&
+    !is_null(draw_spec$n) &&
+    length(draw_spec$n) == 1 &&
+    is_integerish_numeric(draw_spec$n)
+  index_draw <- scalar_n && is_equal_index_draw(
+    draw_spec, rep.int(draw_spec$n, length(indices_list)),
+    lengths(indices_list)
+  )
+  if (scalar_n && (is_simple_srswor_draw(draw_spec) || index_draw)) {
+    res <- if (index_draw) {
+      sample_equal_by_group_indices(
+        frame,
+        indices_list,
+        rep.int(draw_spec$n, length(indices_list)),
+        draw_spec,
+        trace_mode = trace_mode,
+        pool_keys = parent_labels
+      )
+    } else {
+      sample_srswor_by_group_indices(
+        frame,
+        indices_list,
+        rep.int(as.integer(draw_spec$n), length(indices_list)),
+        trace_mode = trace_mode,
+        pool_keys = parent_labels
+      )
+    }
     result <- res$sample
     if (nrow(result) > 0) {
       result$.sample_id <- seq_len(nrow(result))
@@ -338,10 +349,112 @@ sample_units <- function(frame, strata_spec, draw_spec, trace_mode = "full") {
 #' @noRd
 is_simple_srswor_draw <- function(draw_spec) {
   identical(draw_spec$method, "srswor") &&
+    is_null(draw_spec$reserve) &&
     is_null(draw_spec$mos) &&
     is_null(draw_spec$control) &&
     is_null(draw_spec$certainty_size) &&
     is_null(draw_spec$certainty_prop)
+}
+
+#' Whether an equal-probability draw can run on row indices alone
+#'
+#' Systematic sampling and a reserve list depend only on each pool's size
+#' and take, as plain `srswor` does. A take below 2 at a reserve stage is
+#' left to `draw_sample()`, which refuses it with the pool named.
+#' @noRd
+is_equal_index_draw <- function(draw_spec, n_per_group, group_sizes) {
+  if (!draw_spec$method %in% c("srswor", "systematic") ||
+        is_simple_srswor_draw(draw_spec) ||
+        !is_null(draw_spec$mos) || !is_null(draw_spec$control) ||
+        !is_null(draw_spec$prn) || !is_null(draw_spec$method_type) ||
+        !is_null(draw_spec$certainty_size) ||
+        !is_null(draw_spec$certainty_prop) ||
+        !is_null(draw_spec$certainty_ids)) {
+    return(FALSE)
+  }
+  is_null(draw_spec$reserve) ||
+    !any(n_per_group < 2 & group_sizes > n_per_group, na.rm = TRUE)
+}
+
+#' Systematic or reserve-list draws of many pools from their row indices
+#'
+#' Each pool draws as `draw_sample()` and `draw_reserve_list()` do, with the
+#' same calls in the same order, so the random stream, the rows, their
+#' columns and the trace leaves are the same. The rows are sliced from the
+#' frame once.
+#' @noRd
+sample_equal_by_group_indices <- function(frame, indices_list, n_per_group,
+                                          draw_spec, trace_mode = "full",
+                                          pool_keys = NULL) {
+  group_sizes <- lengths(indices_list)
+  reserve <- draw_spec$reserve
+  systematic <- identical(draw_spec$method, "systematic")
+  if (!is_null(pool_keys)) {
+    capped <- n_per_group > group_sizes
+    capped[is.na(capped)] <- FALSE
+    if (any(capped)) {
+      signal_population_cap(
+        pool_keys = pool_keys[capped],
+        n_capped = sum(capped),
+        n_pools = length(indices_list),
+        n_requested = sum(as.integer(n_per_group)),
+        n_actual = sum(pmin(as.integer(n_per_group), group_sizes)),
+        n_available = sum(group_sizes)
+      )
+    }
+  }
+  rows <- vector("list", length(indices_list))
+  weights <- vector("list", length(indices_list))
+  fpc <- vector("list", length(indices_list))
+  ranks <- vector("list", length(indices_list))
+  leaves <- vector("list", length(indices_list))
+  for (i in seq_along(indices_list)) {
+    N <- group_sizes[[i]]
+    n <- n_per_group[[i]]
+    asked <- if (is_null(reserve)) n else min(n + reserve, N)
+    m <- min(asked, N)
+    idx <- if (systematic) {
+      sondage::equal_prob_wor(N, m, method = "systematic")$sample
+    } else {
+      sondage::equal_prob_wor(N, m)$sample
+    }
+    pik <- rep(m / N, N)
+    rows[[i]] <- indices_list[[i]][idx]
+    weights[[i]] <- 1 / pik[idx]
+    fpc[[i]] <- rep.int(N, length(idx))
+    leaf <- trace_pool(
+      N = N,
+      n_target = as.double(asked),
+      chance = pik,
+      chance_kind = "inclusion_probability",
+      order_kind = "input",
+      selected = idx,
+      perm = NULL,
+      trace_mode = trace_mode,
+      compact = TRUE
+    )
+    if (!is_null(reserve)) {
+      k <- length(idx)
+      take <- min(n, k)
+      release <- integer(k)
+      if (k > 0L) {
+        release[sample.int(k)] <- seq_len(k)
+      }
+      ranks[[i]] <- pmax(release - as.integer(take), 0L)
+      if (!is_null(leaf)) {
+        leaf$n_target <- as.double(n)
+        leaf$n_reserve <- as.integer(k - take)
+      }
+    }
+    leaves[i] <- list(leaf)
+  }
+  result <- vctrs::vec_slice(frame, unlist(rows, use.names = FALSE))
+  if (!is_null(reserve)) {
+    result$.reserve <- unlist(ranks, use.names = FALSE) %||% integer(0)
+  }
+  result$.weight <- unlist(weights, use.names = FALSE) %||% numeric(0)
+  result$.fpc <- unlist(fpc, use.names = FALSE) %||% integer(0)
+  list(sample = result, leaves = if (identical(trace_mode, "none")) NULL else leaves)
 }
 
 #' @noRd
@@ -643,15 +756,26 @@ sample_stratified_impl <- function(
     ))
   }
 
-  if (is_simple_srswor_draw(draw_spec)) {
-    n_per_group <- as.integer(stratum_info$.n_h)
-
-    res <- sample_srswor_by_group_indices(
-      frame,
-      groups$indices,
-      n_per_group,
-      trace_mode = trace_mode
-    )
+  index_draw <- is_equal_index_draw(
+    draw_spec, stratum_info$.n_h, lengths(groups$indices)
+  )
+  if (is_simple_srswor_draw(draw_spec) || index_draw) {
+    res <- if (index_draw) {
+      sample_equal_by_group_indices(
+        frame,
+        groups$indices,
+        stratum_info$.n_h,
+        draw_spec,
+        trace_mode = trace_mode
+      )
+    } else {
+      sample_srswor_by_group_indices(
+        frame,
+        groups$indices,
+        as.integer(stratum_info$.n_h),
+        trace_mode = trace_mode
+      )
+    }
     result <- res$sample
     result$.sample_id <- seq_len(nrow(result))
     trace_groups <- if (identical(trace_mode, "none")) {
@@ -1402,9 +1526,63 @@ selection_order <- function(data, draw_spec) {
   control_order(data, draw_spec$control)
 }
 
+#' Refuse a pool whose take leaves the settlement weight undefined
+#'
+#' A take from `frac`, an allocation or a plan is known only per pool. A pool
+#' its take covers lists every unit, so it holds no reserve.
+#' @noRd
+check_reserve_take <- function(n, N, call = caller_env()) {
+  if (n >= 2 || N <= n) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "A {.arg reserve} needs a take of at least 2 in every pool.",
+      "x" = "A pool of {N} unit{?s} has a take of {.val {n}}.",
+      "i" = "With a take of 1, a list that stops at its first unit
+             leaves the settlement weight at 0 / 0."
+    ),
+    class = "samplyr_error_draw_argument",
+    call = call
+  )
+}
+
+#' One pool's take and its reserve, as a list in release order
+#'
+#' The list of the take plus `reserve` units is drawn by the stage's method,
+#' so its chance is the list's. A separate permutation, drawn after the
+#' selection, gives the release order: the first `n` units of it form the
+#' take, and `.reserve` ranks the others from 1. A pool too small for the
+#' whole list lists every unit it has.
+#' @noRd
+draw_reserve_list <- function(data, n, draw_spec, trace_mode = "full") {
+  N <- nrow(data)
+  check_reserve_take(n, N)
+  list_spec <- draw_spec
+  list_spec$reserve <- NULL
+  res <- draw_sample(
+    data, min(n + draw_spec$reserve, N), list_spec, trace_mode = trace_mode
+  )
+  m <- nrow(res$sample)
+  take <- min(n, m)
+  release <- integer(m)
+  if (m > 0L) {
+    release[sample.int(m)] <- seq_len(m)
+  }
+  res$sample$.reserve <- pmax(release - as.integer(take), 0L)
+  if (!is_null(res$trace)) {
+    res$trace$n_target <- as.double(n)
+    res$trace$n_reserve <- as.integer(m - take)
+  }
+  res
+}
+
 #' @noRd
 draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
   rlang::local_error_call(caller_env())
+  if (!is_null(draw_spec$reserve)) {
+    return(draw_reserve_list(data, n, draw_spec, trace_mode = trace_mode))
+  }
   method <- draw_spec$method
   mos <- draw_spec$mos
   N <- nrow(data)

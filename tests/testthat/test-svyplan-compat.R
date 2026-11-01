@@ -385,15 +385,48 @@ test_that("cluster domain plans feed both stages", {
     ea = rep(sprintf("EA%03d", 1:300), each = 20),
     hh = 1:6000
   )
-  res <- sampling_design() |>
-    stratify_by(domain) |> cluster_by(ea) |> draw(n = nm) |>
-    add_stage() |> stratify_by(domain) |> draw(n = nm) |>
-    execute(frame, seed = 2)
-  eas <- unique(res[, c("ea", "domain")])
-  expected <- setNames(as.integer(ceiling(nm$domains$n_psu)),
-                       nm$domains$domain)
-  expect_equal(as.integer(table(eas$domain)[names(expected)]),
-               unname(expected))
+  drawn <- function(plan) {
+    res <- sampling_design() |>
+      stratify_by(domain) |> cluster_by(ea) |> draw(n = plan) |>
+      add_stage() |> stratify_by(domain) |> draw(n = plan) |>
+      execute(frame, seed = 2)
+    eas <- unique(as.data.frame(res)[c("ea", "domain")])
+    list(
+      psu = c(table(eas$domain)[c("urban", "rural")]),
+      take = c(table(res$domain)[c("urban", "rural")]) /
+        c(table(eas$domain)[c("urban", "rural")])
+    )
+  }
+
+  # The whole design svyplan rounds within each domain's budget, matched
+  # on the domain rather than the row.
+  whole <- nm$domains[2:1, c("domain", "n_psu", "n_per_psu")]
+  whole$n_psu <- floor(whole$n_psu)
+  whole$n_per_psu <- floor(whole$n_per_psu)
+  nm$operational$domains <- whole
+  continuous <- nm$domains[match(c("urban", "rural"), nm$domains$domain), ]
+  expect_true(all(floor(continuous$n_psu) < continuous$n_psu))
+  expect_equal(
+    drawn(nm),
+    list(
+      psu = c(urban = floor(continuous$n_psu[1]),
+              rural = floor(continuous$n_psu[2])),
+      take = c(urban = floor(continuous$n_per_psu[1]),
+               rural = floor(continuous$n_per_psu[2]))
+    )
+  )
+
+  # A plan without the whole design rounds the continuous sizes up.
+  nm$operational$domains <- NULL
+  expect_equal(
+    drawn(nm),
+    list(
+      psu = c(urban = ceiling(continuous$n_psu[1]),
+              rural = ceiling(continuous$n_psu[2])),
+      take = c(urban = ceiling(continuous$n_per_psu[1]),
+               rural = ceiling(continuous$n_per_psu[2]))
+    )
+  )
 })
 
 test_that("named n without stage strata gets a targeted error", {

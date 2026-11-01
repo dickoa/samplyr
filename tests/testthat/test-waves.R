@@ -514,7 +514,8 @@ test_that("a wave exports by ultimate clusters on its own rows", {
       sampling_design() |> cluster_by(score) |> draw(n = 12),
       ~score, NULL
     ),
-    # Its large units are certainties, a take-all stratum of the master.
+    # Its large units are certainties, the same in every sample, so they
+    # add no variance.
     pps = list(
       sampling_design() |>
         stratify_by(region) |>
@@ -542,14 +543,20 @@ test_that("a wave exports by ultimate clusters on its own rows", {
     expect_s3_class(svy, "survey.design2")
     expect_false(inherits(svy, "twophase2"), info = nm)
 
-    reference <- survey::svydesign(
-      ids = shapes[[nm]][[2]],
-      strata = shapes[[nm]][[3]],
-      weights = ~.weight,
-      nest = TRUE,
-      data = as.data.frame(wave)
-    )
-    expect_identical(survey::degf(svy), survey::degf(reference), info = nm)
+    hand_written <- function(data) {
+      survey::svydesign(
+        ids = shapes[[nm]][[2]],
+        strata = shapes[[nm]][[3]],
+        weights = ~.weight,
+        nest = TRUE,
+        data = data
+      )
+    }
+    data <- as.data.frame(wave)
+    reference <- hand_written(data)
+    sure <- data$.certainty_1 %in% TRUE
+    spread <- if (any(sure)) hand_written(data[!sure, ]) else reference
+    expect_identical(survey::degf(svy), survey::degf(spread), info = nm)
     expect_equal(
       unname(stats::weights(svy)),
       unname(as.data.frame(wave)$.weight),
@@ -560,7 +567,7 @@ test_that("a wave exports by ultimate clusters on its own rows", {
     expect_equal(unname(coef(ours)), unname(coef(theirs)), info = nm)
     expect_equal(
       unname(survey::SE(ours)),
-      unname(survey::SE(theirs)),
+      unname(survey::SE(survey::svytotal(~value, spread))),
       info = nm
     )
   }

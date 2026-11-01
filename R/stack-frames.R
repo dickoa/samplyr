@@ -68,8 +68,10 @@ frame_stack_columns <- c(".frame", ".domain")
 #'   refused with class `samplyr_error_stack_frames_membership_conflict`. The
 #'   membership of a unit selected in one component only has nothing to be
 #'   compared with, so it is taken as given.
-#' @param key A bare column identifying the target-population unit, present in
-#'   every component. The same unit may be selected from several frames, so
+#' @param key The column identifying the target-population unit, present in
+#'   every component, bare, or several with `c()` that together identify
+#'   it, such as `c(region, ea_id)`. The same unit may be selected from
+#'   several frames, so
 #'   the key repeats across components on purpose. Within a component it must
 #'   be unique, or unique per selection occurrence where the component
 #'   replicates rows with replacement.
@@ -450,34 +452,80 @@ parse_overlap_spec <- function(overlaps, frames, call = caller_env()) {
   overlaps
 }
 
+#' Read `key` as one bare column name
+#'
+#' `why` says what the caller needs the key for, shown when it is missing.
 #' @noRd
 parse_frame_key <- function(quo, class = "samplyr_error_stack_frames_key",
+                            why = c(
+                              "i" = "It identifies the target-population unit,
+                                     so that the same unit selected from two
+                                     frames is recognizable as one unit.",
+                              "i" = "Use a bare column present in every
+                                     component, or {.code c()} of columns
+                                     that together name a unit."
+                            ),
                             call = caller_env()) {
   if (rlang::quo_is_missing(quo)) {
     abort_samplyr(
-      c(
-        "{.arg key} must be given.",
-        "i" = "It identifies the target-population unit, so that the same unit
-               selected from two frames is recognizable as one unit.",
-        "i" = "Use a bare column present in every component."
-      ),
+      c("{.arg key} must be given.", why),
       class = class,
       call = call
     )
   }
 
   expr <- quo_get_expr(quo)
-  if (!is.symbol(expr)) {
+  # One column, or several with c() that together name a unit.
+  parts <- if (is.call(expr) && identical(expr[[1L]], quote(c))) {
+    as.list(expr)[-1L]
+  } else {
+    list(expr)
+  }
+  if (length(parts) == 0L || !all(vapply(parts, is.symbol, logical(1))) ||
+      !is_null(names(parts))) {
     abort_samplyr(
       c(
-        "{.arg key} must be a bare column name.",
+        "{.arg key} must be a bare column name, or {.code c()} of bare column
+         names.",
         "x" = "Got {.code {as_label(expr)}}."
       ),
       class = class,
       call = call
     )
   }
-  as_label(expr)
+  key <- vapply(parts, as_label, character(1))
+  if (anyDuplicated(key) > 0L) {
+    abort_samplyr(
+      c(
+        "{.arg key} must name each column once.",
+        "x" = "{.field {unique(key[duplicated(key)])}} is named twice."
+      ),
+      class = class,
+      call = call
+    )
+  }
+  key
+}
+
+#' A key as the call that gives it: a bare column, or `c()` of several
+#' @noRd
+frame_key_expr <- function(key) {
+  if (length(key) == 1L) {
+    return(rlang::sym(key))
+  }
+  rlang::call2("c", !!!rlang::syms(key))
+}
+
+#' The key of a unit as a reader sees it, such as `region = N, ea_id = 3`
+#' @noRd
+key_value_labels <- function(keys) {
+  if (ncol(keys) == 1L) {
+    return(as.character(keys[[1L]]))
+  }
+  do.call(paste, c(
+    lapply(names(keys), function(v) paste0(v, " = ", keys[[v]])),
+    sep = ", "
+  ))
 }
 
 ## Structural checks
@@ -912,27 +960,34 @@ check_membership_complete <- function(samples, membership,
 #' @noRd
 check_membership_consistent <- function(samples, membership, key,
                                         call = caller_env()) {
-  # vec_c() casts the key pairs check_frame_key_columns() allows.
-  keys <- vctrs::vec_c(!!!lapply(unname(samples), function(s) s[[key]]))
+  # vec_rbind() casts the key pairs check_frame_key_columns() allows.
+  keys <- vctrs::vec_rbind(!!!lapply(unname(samples), function(s) {
+    as.data.frame(s)[key]
+  }))
   pattern <- vctrs::vec_c(!!!lapply(unname(samples), function(s) {
     m <- frame_component_membership(s, membership)
-    apply(m, 1L, function(row) paste(as.integer(row), collapse = ""))
+    # One paste per frame column, not one per row.
+    do.call(paste0, lapply(seq_len(ncol(m)), function(j) as.integer(m[, j])))
   }))
   component <- rep(names(samples), vapply(samples, nrow, integer(1)))
 
-  pairs <- vctrs::vec_unique(data.frame(key = keys, pattern = pattern))
-  conflicted <- unique(pairs$key[vctrs::vec_duplicate_detect(pairs$key)])
-  if (length(conflicted) == 0L) {
+  pairs <- vctrs::vec_unique(vctrs::vec_cbind(keys, .pattern = pattern))
+  pair_keys <- pairs[key]
+  conflicted <- vctrs::vec_unique(
+    vctrs::vec_slice(pair_keys, vctrs::vec_duplicate_detect(pair_keys))
+  )
+  if (nrow(conflicted) == 0L) {
     return(invisible(NULL))
   }
-  involved <- unique(component[keys %in% conflicted])
+  involved <- unique(component[vctrs::vec_in(keys, conflicted)])
+  shown <- key_value_labels(utils::head(conflicted, 3))
   abort_samplyr(
     c(
       "A unit selected in more than one component must have the same
        membership in each.",
-      "x" = "{length(conflicted)} unit{?s} disagree{?s/} on membership
+      "x" = "{nrow(conflicted)} unit{?s} disagree{?s/} on membership
              across {.val {involved}}, for example {.field {key}}
-             {.val {utils::head(conflicted, 3)}}.",
+             {.val {shown}}.",
       "i" = "Each component's membership columns come from its own
              register. Reconcile the registers so that a unit is listed in
              the same frames wherever it was selected."
@@ -946,31 +1001,14 @@ check_membership_consistent <- function(samples, membership, key,
 check_frame_key_columns <- function(samples, key, call = caller_env()) {
   frames <- names(samples)
 
-  without <- frames[!vapply(samples, function(s) key %in% names(s),
-                            logical(1))]
-  if (length(without) > 0) {
-    abort_samplyr(
-      c(
-        "{.arg key} must be a column of every component.",
-        "x" = "{.field {key}} is missing from {.val {without}}."
-      ),
-      class = "samplyr_error_stack_frames_key",
-      call = call
-    )
-  }
-
-  reference <- samples[[1]][[key]]
-  for (nm in frames[-1]) {
-    value <- samples[[nm]][[key]]
-    if (!share_key_types_compatible(reference, value)) {
+  for (col in key) {
+    without <- frames[!vapply(samples, function(s) col %in% names(s),
+                              logical(1))]
+    if (length(without) > 0) {
       abort_samplyr(
         c(
-          "{.arg key} must hold the same kind of value in every component.",
-          "x" = "{.field {key}} is {.cls {class(reference)[[1]]}} in
-                 {.val {frames[[1]]}} and {.cls {class(value)[[1]]}} in
-                 {.val {nm}}.",
-          "i" = "Keys are compared as values, so a number and the text of that
-                 number are different units."
+          "{.arg key} must be a column of every component.",
+          "x" = "{.field {col}} is missing from {.val {without}}."
         ),
         class = "samplyr_error_stack_frames_key",
         call = call
@@ -978,19 +1016,43 @@ check_frame_key_columns <- function(samples, key, call = caller_env()) {
     }
   }
 
+  for (col in key) {
+    reference <- samples[[1]][[col]]
+    for (nm in frames[-1]) {
+      value <- samples[[nm]][[col]]
+      if (!share_key_types_compatible(reference, value)) {
+        abort_samplyr(
+          c(
+            "{.arg key} must hold the same kind of value in every component.",
+            "x" = "{.field {col}} is {.cls {class(reference)[[1]]}} in
+                   {.val {frames[[1]]}} and {.cls {class(value)[[1]]}} in
+                   {.val {nm}}.",
+            "i" = "Keys are compared as values, so a number and the text of
+                   that number are different units."
+          ),
+          class = "samplyr_error_stack_frames_key",
+          call = call
+        )
+      }
+    }
+  }
+
   for (nm in frames) {
-    value <- samples[[nm]][[key]]
-    if (anyNA(value)) {
-      abort_samplyr(
-        c(
-          "{.arg key} must be known for every sampled unit.",
-          "x" = "{.val {nm}} has {sum(is.na(value))} missing
-                 {.field {key}} value{?s}.",
-          "i" = "A unit with no key cannot be recognized in another frame."
-        ),
-        class = "samplyr_error_stack_frames_key",
-        call = call
-      )
+    for (col in key) {
+      value <- samples[[nm]][[col]]
+      if (anyNA(value)) {
+        abort_samplyr(
+          c(
+            "{.arg key} must be known for every sampled unit.",
+            "x" = "{.val {nm}} has {sum(is.na(value))} missing
+                   {.field {col}} value{?s}.",
+            "i" = "A unit with no key cannot be recognized in another
+                   frame."
+          ),
+          class = "samplyr_error_stack_frames_key",
+          call = call
+        )
+      }
     }
 
     # WR uniqueness applies to selection occurrences.

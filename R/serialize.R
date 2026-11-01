@@ -114,6 +114,9 @@ as.list.sampling_design <- function(x, ...) {
       if (identical(stage$draw_spec$on_capped, "error")) {
         stage_list$draw$on_capped <- stage$draw_spec$on_capped
       }
+      if (!is_null(stage$draw_spec$reserve)) {
+        stage_list$draw$reserve <- stage$draw_spec$reserve
+      }
     }
     stage_list
   })
@@ -716,6 +719,7 @@ replay_design <- function(
           frame_record, unlist(receipt$stages_executed)
         ),
         wave = receipt$wave,
+        settlement = receipt$settlement,
         rng = execution_environment$rng,
         design = design
       ))
@@ -828,6 +832,7 @@ replay_design <- function(
       frame_digest = digest_mode
     )
   )
+  result <- replay_reserve_settlement(result, receipt$settlement)
 
   n_recorded <- receipt$n_selected
   if (!is_null(n_recorded) && nrow(result) != as.integer(n_recorded)) {
@@ -1556,11 +1561,11 @@ replay_frame_stack <- function(x, frame, fingerprint, call = caller_env()) {
   })
   names(components) <- names_x
 
-  # Restore a stored bare key as a symbol.
+  # Restore a stored key as the bare column, or c() of them, it was given.
   rlang::inject(stack_frames(
     !!!components,
     membership = attr(x, "membership"),
-    key = !!rlang::sym(attr(x, "key")),
+    key = !!frame_key_expr(attr(x, "key")),
     overlaps = attr(x, "overlaps")
   ))
 }
@@ -2037,6 +2042,10 @@ encode_stage <- function(stage) {
     if (identical(spec$on_capped, "error")) {
       draw$on_capped <- spec$on_capped
     }
+    if (!is_null(spec$reserve)) {
+      # JSON has no infinity, so a whole-pool list is written as "Inf".
+      draw$reserve <- if (is.infinite(spec$reserve)) "Inf" else spec$reserve
+    }
     out$draw <- draw
   }
 
@@ -2481,8 +2490,13 @@ encode_execution <- function(sample, call = caller_env()) {
   if (isTRUE(meta[["wave"]]$provisional)) {
     abort_samplyr(
       c(
-        "A wave of a master whose later stages are not all drawn has no
-         receipt.",
+        if (schedule_has_tenures(meta$panel_assignment$schedule)) {
+          "A wave of a master whose panels open several tenures has no
+           receipt, since such a master is never complete."
+        } else {
+          "A wave of a master whose later stages are not all drawn has no
+           receipt."
+        },
         "i" = "Write the master instead. Its receipt records every wave
                drawn so far, and {.code execute(master, wave = t)} gives the
                wave again."
@@ -2535,6 +2549,9 @@ encode_execution <- function(sample, call = caller_env()) {
   if (!is_null(meta[["wave"]])) {
     receipt$wave <- encode_wave(meta[["wave"]])
   }
+  if (settled_here(meta$reserve_settlement)) {
+    receipt$settlement <- encode_reserve_settlement(meta$reserve_settlement)
+  }
   # The last wave's draw is the final call.
   final <- wave_draw_final_call(sample)
   if (!is_null(final)) {
@@ -2569,6 +2586,24 @@ encode_execution <- function(sample, call = caller_env()) {
     receipt$frame_digest <- digest
   }
   receipt
+}
+
+#' Was the settlement made by this call, rather than carried from a parent?
+#' @noRd
+settled_here <- function(record) {
+  !is_null(record) && !isTRUE(record$carried)
+}
+
+#' The outcome category of every listed unit, in `.sample_id` order
+#'
+#' Replay draws the same list from the seed and settles it again, so only
+#' the categories are written, 0 for a unit the field did not release.
+#' @noRd
+encode_reserve_settlement <- function(record) {
+  list(
+    stage = as.integer(record$stage),
+    codes = I(as.integer(record$codes))
+  )
 }
 
 #' The frozen panel assignment
@@ -2827,8 +2862,9 @@ decode_frame_digest <- function(x) {
     pool_spec <- c(
       pool_id = "int", parent_unit = "int", parent_occurrence = "int",
       tenure = "int", n_excluded = "int", N = "int",
-      n_target = "dbl", n_expected = "dbl", n_realized = "int",
-      scope = "chr", chance_status = "chr", chance = "dbl",
+      n_target = "dbl", n_reserve = "int", n_expected = "dbl",
+      n_realized = "int", scope = "chr", chance_status = "chr",
+      chance = "dbl",
       n_descendants = "int",
       setNames(rep("chr", length(strata)), strata)
     )
@@ -3094,8 +3130,10 @@ decode_frame_stack_payload <- function(payload, call = caller_env()) {
       class = "samplyr_error_design_file_malformed"
     )
   }
+  # One column, or the columns of a compound key.
   key <- decode_chr(payload$key)
-  if (!is_scalar_string(key)) {
+  if (!is.character(key) || length(key) == 0L || anyNA(key) ||
+      !all(nzchar(key)) || anyDuplicated(key) > 0L) {
     cli_abort(
       "Frame collection file has no {.field key} entry",
       call = call,
@@ -3323,6 +3361,7 @@ decode_stage <- function(
       certainty_plan = decode_certainty_plan(draw$certainty_plan),
       on_empty = decode_chr(draw$on_empty) %||% "error",
       on_capped = decode_chr(draw$on_capped) %||% "warn",
+      reserve = decode_reserve(draw$reserve),
       method_type = method$registry_type,
       method_fixed = method$fixed_size,
       method_variance = method$variance_family,
@@ -3732,6 +3771,17 @@ decode_num <- function(x) {
     return(NULL)
   }
   as.numeric(unlist(x))
+}
+
+#' @noRd
+decode_reserve <- function(x) {
+  if (is_null(x)) {
+    return(NULL)
+  }
+  if (identical(unlist(x), "Inf")) {
+    return(Inf)
+  }
+  as.integer(decode_num(x))
 }
 
 #' @noRd

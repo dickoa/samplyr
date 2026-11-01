@@ -73,6 +73,36 @@ test_that("a master drawn wave by wave completes into the sample of one call", {
   expect_no_error(suppressWarnings(as_svydesign(complete)))
 })
 
+test_that("a wave's summary shows the seeds of the draws behind its rows", {
+  master <- wave_draw_master()
+  listing <- wave_draw_listing(master)
+  header <- function(x) {
+    grep("stages = ", capture.output(summary(x)), value = TRUE)
+  }
+
+  partial <- execute(master, wave_listing(listing, master, 3), wave = 3,
+                     seed = 103)
+  expect_identical(summary(execute(partial, wave = 3))$seed, 103L)
+
+  complete <- draw_every_wave(master, listing, order = c(3, 1, 12, 2, 4:11))
+  expect_identical(summary(complete)$seed, 101:112)
+  expect_match(header(complete), "seeds = 101 to 112", fixed = TRUE)
+  expect_identical(summary(execute(complete, wave = 3))$seed, 103L)
+  expect_match(header(execute(complete, wave = 3)), "| seed = 103$")
+  window <- execute(complete, wave = 2:3)
+  expect_identical(summary(window)$seed, 102:103)
+  expect_match(header(window), "seeds = 102, 103", fixed = TRUE)
+
+  # A master completed in one call keeps the seed of that call.
+  oneshot <- execute(master, listing, seed = 2)
+  expect_identical(summary(execute(oneshot, wave = 3))$seed, 2L)
+
+  # A draw without a seed leaves its wave without one.
+  unseeded <- execute(master, wave_listing(listing, master, 3), wave = 3)
+  expect_identical(summary(execute(unseeded, wave = 3))$seed, integer(0))
+  expect_no_match(header(execute(unseeded, wave = 3)), "seed")
+})
+
 test_that("an error inside a wave's draw names the call the user wrote", {
   master <- wave_draw_master()
   listing <- wave_draw_listing(master)

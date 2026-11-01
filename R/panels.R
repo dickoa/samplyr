@@ -228,7 +228,11 @@ check_panel_stage_applicable <- function(panel_stage, call = caller_env()) {
 #' execution that stops before the named stage is refused.
 #' @noRd
 resolve_panel_stage <- function(spec, executed, design, call = caller_env()) {
-  if (is_null(spec) || is_null(spec$stage)) {
+  if (is_null(spec)) {
+    return(spec)
+  }
+  if (is_null(spec$stage)) {
+    check_panel_stage_reserve(executed[1], design, call = call)
     return(spec)
   }
   stage <- spec$stage
@@ -250,7 +254,28 @@ resolve_panel_stage <- function(spec, executed, design, call = caller_env()) {
       call = call
     )
   }
+  check_panel_stage_reserve(stage, design, call = call)
   spec
+}
+
+#' Refuse panels assigned at the stage that holds a reserve
+#'
+#' A panel would split a pool's list, so the release order no longer runs
+#' within one work list. Panels at the other stages leave the list whole.
+#' @noRd
+check_panel_stage_reserve <- function(stage, design, call = caller_env()) {
+  if (is.na(stage) || is_null(design$stages[[stage]]$draw_spec$reserve)) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "Panels cannot be assigned at stage {stage}, which holds a
+       {.arg reserve}.",
+      "i" = "Assign them at another stage with {.arg panel_stage}."
+    ),
+    class = "samplyr_error_panel_stage_reserve",
+    call = call
+  )
 }
 
 #' The small-pool policy, and where it does and does not apply
@@ -563,6 +588,27 @@ check_tenure_stages <- function(spec, design, assignment_stage, executed,
       call = call
     )
   }
+  # Its master never completes, and a wave exports no reserve.
+  listed <- which(vapply(design$stages, function(stage) {
+    !is_null(stage$draw_spec$reserve)
+  }, logical(1)))
+  if (length(listed) > 0L) {
+    abort_samplyr(
+      c(
+        "A schedule that opens several tenures per panel cannot take a
+         reserve.",
+        "x" = "{cli::qty(length(listed))}Stage{?s} {listed}
+               {cli::qty(length(listed))}draw{?s/} a {.arg reserve}.",
+        "i" = "Each tenure draws again, so the master is never complete and
+               cannot be settled and exported as a whole, and a wave cannot
+               export a reserve.",
+        "i" = "Without {.field visit}, each panel keeps its units for its
+               whole life, and the completed master settles and exports."
+      ),
+      class = "samplyr_error_tenure_stages",
+      call = call
+    )
+  }
   # A new tenure leaves out the units drawn before, and its weights reach
   # the whole listing only for an equal-probability draw of named units.
   tenure_stage <- design$stages[[assignment_stage + 1L]]
@@ -849,6 +895,50 @@ panel_assignment_context <- function(design, stage_num, sample,
                                  call = call)
   }
   context
+}
+
+#' Assignment-stage units with no row left, from the records of empty parents
+#'
+#' A later stage that found a unit's descendants empty leaves it out of the
+#' sample, so the assignment would split the rest of its pool as if it were
+#' never drawn. One row per unit, from the recorded rows of the stage above
+#' the empty one.
+#' @noRd
+vanished_assignment_units <- function(records, sample, context) {
+  key_vars <- context$key_vars
+  rows <- lapply(records, function(r) {
+    if (r$stage <= context$stage_num || is_null(r$rows) ||
+          !all(key_vars %in% names(r$rows))) {
+      return(NULL)
+    }
+    r$rows
+  })
+  rows <- vctrs::vec_rbind(!!!Filter(Negate(is_null), rows))
+  if (is_null(rows) || nrow(rows) == 0L) {
+    return(sample[0, , drop = FALSE])
+  }
+  rows <- rows[!vctrs::vec_in(rows[key_vars], sample[key_vars]), ,
+               drop = FALSE]
+  rows[!duplicated(rows[key_vars]), intersect(names(sample), names(rows)),
+       drop = FALSE]
+}
+
+#' Carry each unit's panel into the recorded rows of its empty parents
+#'
+#' An export turns those rows into zero rows, which a wave activates with
+#' the panel of their unit.
+#' @noRd
+panel_empty_parents <- function(records, assigned, key_vars) {
+  units <- assigned[!duplicated(assigned[key_vars]), c(key_vars, ".panel"),
+                    drop = FALSE]
+  lapply(records, function(r) {
+    if (is_null(r$rows) || !all(key_vars %in% names(r$rows))) {
+      return(r)
+    }
+    at <- vctrs::vec_match(r$rows[key_vars], units[key_vars])
+    r$rows$.panel <- units$.panel[at]
+    r
+  })
 }
 
 #' Refuse an assignment whose units the sample can no longer tell apart

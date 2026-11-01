@@ -68,6 +68,9 @@ selection, a positive total measure of size
 other than \code{pps_poisson}, whose probabilities sum to the take, at
 least as many units of positive size as the take
 (\code{samplyr_error_mos_positive_short})
+\item At a stage with a \code{reserve}, a take of at least 2 in every candidate
+pool that holds more units than its take, whether the take comes from
+\code{n}, \code{frac} or an allocation (\code{samplyr_error_draw_argument})
 }
 
 A fixed-size stage drawn without replacement whose take exceeds the

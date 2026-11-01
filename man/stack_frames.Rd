@@ -20,8 +20,10 @@ refused with class \code{samplyr_error_stack_frames_membership_conflict}. The
 membership of a unit selected in one component only has nothing to be
 compared with, so it is taken as given.}
 
-\item{key}{A bare column identifying the target-population unit, present in
-every component. The same unit may be selected from several frames, so
+\item{key}{The column identifying the target-population unit, present in
+every component, bare, or several with \code{c()} that together identify
+it, such as \code{c(region, ea_id)}. The same unit may be selected from
+several frames, so
 the key repeats across components on purpose. Within a component it must
 be unique, or unique per selection occurrence where the component
 replicates rows with replacement.}

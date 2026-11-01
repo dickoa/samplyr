@@ -11,6 +11,7 @@ draw(
   ...,
   min_n = NULL,
   max_n = NULL,
+  reserve = NULL,
   method = "srswor",
   mos = NULL,
   prn = NULL,
@@ -124,6 +125,32 @@ how the surplus is shared and why with-replacement methods differ.
 \code{frame_summary(design, frame, detail = "pool")} reports the per-stratum
 target each bound produces, without selecting or consuming random
 numbers.}
+
+\item{reserve}{Number of reserve units listed after the main take of
+each pool, \code{NULL} (no reserve) by default, a whole number of at least
+1, or \code{Inf} to list every unit of the pool. Each pool then draws a
+list of its take plus \code{reserve} units and puts the list in a random
+order. The first units of that order form the take, and the reserve
+units follow in the order the office releases them, one per failed
+unit. \code{n} and \code{frac} keep their meaning, the take to be interviewed,
+and a pool too small for the whole list lists what it has. A svyplan
+plan given as \code{n} with a rate below 1 for the units the reserve
+replaces warns (\code{samplyr_warning_reserve_plan_rates}), since its take
+already makes up for them. A reserve needs \code{method = "srswor"} or
+\code{"systematic"} and a take of at least 2 in every pool, which
+\code{\link[=execute]{execute()}} and \code{\link[=validate_frame]{validate_frame()}} check for a take given by \code{frac},
+an allocation or a plan, before anything is drawn. One stage of a design can carry a reserve, and panels cannot be
+assigned at that stage.
+
+The executed sample holds the whole list. \code{.reserve_k} is 0 for the
+take and 1, 2, ... for the reserve in release order, and \code{.weight_k} is
+the inverse of the list's chance, \code{N / (n + reserve)} in a pool large
+enough for the whole list. That weight describes the list, not the
+units the field ends up interviewing, so \code{\link[=as_svydesign]{as_svydesign()}} and
+\code{\link[=as_svrepdesign]{as_svrepdesign()}} refuse the sample with
+\code{samplyr_error_reserve_unsettled} until \code{\link[=execute]{execute()}} settles it from
+the response status the field recorded. \link{reserve_lists} describes the
+field protocol, the settlement and how to size the reserve.}
 
 \item{method}{Selection method, \code{"srswor"} by default.
 \link{selection_methods} lists the sixteen built-ins with what each one
@@ -262,7 +289,8 @@ with no eligible member. One of:
 signal a design problem, such as a sampling fraction or a stratum
 that is too small.
 \item \code{"warn"}: warn and keep the empty selection.
-\item \code{"silent"}: keep the empty selection without a message.
+\item \code{"silent"}: keep the empty selection without a message, at the
+draw or at export.
 }
 
 An empty selection is a valid realization of a random-size design. It
@@ -278,9 +306,9 @@ A selected unit with no rows in the next frame is refused under
 in the design with nothing selected under it and contributes zero to
 every total. It is recorded in the sample, counted by \code{\link[=summary]{summary()}},
 exempt from the incomplete-register checks of \code{\link[=validate_frame]{validate_frame()}} and
-\code{\link[=execute]{execute()}}, and named at export by \code{\link[=as_svydesign]{as_svydesign()}}.
-\link{variance_estimation} gives how the export treats such units, and why
-a primary unit left with no row is refused.
+\code{\link[=execute]{execute()}}, and, under \code{"warn"}, named at export by \code{\link[=as_svydesign]{as_svydesign()}}.
+A primary unit left with no row is exported as zero rows, which keep
+it in the variance. \link{variance_estimation} gives the details.
 
 A replicated execution with empty replicates cannot feed a later
 \code{\link[=execute]{execute()}} call (a new phase or a stage continuation). It raises

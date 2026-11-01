@@ -11,7 +11,10 @@ variance_estimators(x, frame = NULL)
 
 \item{frame}{Optional. The frame the design will be executed on, as
 \code{\link[=execute]{execute()}} takes it: a data frame, or a list of stage registers. A
-\code{tbl_sample} is the phase-1 sample of a second phase.}
+single data frame may cover only the first stages, and the report then
+reads the frame for those. A list of registers needs every column
+\code{\link[=execute]{execute()}} would read. A \code{tbl_sample} is the phase-1 sample of a
+second phase.}
 }
 \value{
 A tibble with one row per estimator and the columns \code{estimator},
@@ -56,10 +59,11 @@ export meets first, and for an approximation, every one that applies.
 \code{phase} and \code{stage} locate the first of them.
 
 \code{sample_risk} lists what only the realized sample decides and what it
-would do to the estimator: a primary unit left with no rows, a stratum left
-with one sampled unit at a random-size or later stage. What the frame shows
-about the risk is part of the text, such as how many candidate units have
-nothing below them.
+would do to the estimator: a stratum left with one sampled unit at a
+random-size or later stage, or a selected unit with nothing below it,
+which is exported as a zero row. What the frame shows about the risk is
+part of the text, such as how many candidate units have nothing below
+them.
 
 Without \code{frame}, the frame checks are not run. A stratum that may take one
 unit, the pairing BRR needs, several rows per cluster and candidate units
@@ -72,8 +76,9 @@ To assess a second phase, give the phase-1 sample as \code{frame}: the report
 then covers the two-phase export. A \code{tbl_sample} passed as \code{x} stands for
 its design, and when it is itself a later phase, its earlier phase is used.
 Materialized waves and shared-weight samples are refused, as \code{x} or as
-\code{frame}. Their exports follow rules of their own, so the report of the
-design they come from does not describe them.
+\code{frame}, and so is a design with a reserve, or its sample. Their exports
+follow rules of their own, so the report of the design they come from
+does not describe them.
 
 The report reads the same rules the exports apply, and a test compares it
 with the conditions the exports actually raise on executed samples. It

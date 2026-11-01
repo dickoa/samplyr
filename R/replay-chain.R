@@ -214,6 +214,9 @@ chain_call_of_view <- function(view) {
       meta$frame_schedule, view$stages_executed
     ),
     wave = if (!is_null(meta$wave)) encode_wave(meta$wave),
+    settlement = if (settled_here(meta$reserve_settlement)) {
+      encode_reserve_settlement(meta$reserve_settlement)
+    },
     rng = meta$execution_environment$rng,
     design = view$design
   )
@@ -244,6 +247,7 @@ encode_execution_chain <- function(chain) {
     out$panel_assignment <- cl$panel_assignment
     out$frames <- encode_frame_schedule(cl$frames)
     out$wave <- cl$wave
+    out$settlement <- cl$settlement
     if (!is_null(cl$rng)) {
       out$rng <- lapply(
         cl$rng[c("kind", "normal_kind", "sample_kind")],
@@ -275,6 +279,7 @@ decode_execution_chain <- function(entries, final_design, call = caller_env()) {
       panel_assignment = entry$panel_assignment,
       frames = decode_frame_schedule(entry$frames),
       wave = entry$wave,
+      settlement = entry$settlement,
       rng = entry$rng,
       design = if (!is_null(entry$design)) {
         decode_design_body(entry$design, entry$methods, call = call)
@@ -459,6 +464,7 @@ replay_execution_chain <- function(calls, frames, frame_digest = "summary",
         phase = run(cl$design, input)
       ), call = call)
     }
+    result <- replay_reserve_settlement(result, cl$settlement, call = call)
     n_recorded <- cl$n_selected
     if (!is_null(n_recorded) && nrow(result) != as.integer(n_recorded)) {
       cli_warn(c(

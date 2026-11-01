@@ -48,6 +48,9 @@
 #'   other than `pps_poisson`, whose probabilities sum to the take, at
 #'   least as many units of positive size as the take
 #'   (`samplyr_error_mos_positive_short`)
+#' - At a stage with a `reserve`, a take of at least 2 in every candidate
+#'   pool that holds more units than its take, whether the take comes from
+#'   `n`, `frac` or an allocation (`samplyr_error_draw_argument`)
 #'
 #' A fixed-size stage drawn without replacement whose take exceeds the
 #' population of a candidate pool is not an error by default, because
@@ -403,6 +406,7 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
   for (i in seq_along(schedule$entries)) {
     stage_idx <- schedule$entries[[i]]$stage
     targets <- check_stage_targets(design, stage_idx, effective[[i]])
+    refuse_reserve_take(stage_idx, targets$thin_reserve, call = call)
     refuse_mos_pools(stage_idx, targets, call = call)
     refuse_capped_stage(design, stage_idx, targets$capped, call = call)
     inform_allocation(stage_idx, targets$allocation)
@@ -432,6 +436,7 @@ check_stage_targets <- function(design, stage_idx, frame) {
   absent <- list(pool_keys = character(0), n_absent = 0L)
   zero_mos <- list(pool_keys = character(0), n_pools = 0L, n_found = 0L)
   short_mos <- zero_mos
+  thin_reserve <- zero_mos
   spec <- design$stages[[stage_idx]]
   draw <- spec$draw_spec
   allocation <- list(
@@ -440,7 +445,8 @@ check_stage_targets <- function(design, stage_idx, frame) {
   )
   out <- function() {
     list(capped = short, zero_mos = zero_mos, short_mos = short_mos,
-         absent = absent, allocation = allocation)
+         thin_reserve = thin_reserve, absent = absent,
+         allocation = allocation)
   }
   if (is_null(draw) || nrow(frame) == 0L) return(out())
   # Stored certainty plans are validated by the planning bridge.
@@ -467,13 +473,17 @@ check_stage_targets <- function(design, stage_idx, frame) {
     }
     strata <- spec$strata$vars
     groups <- if (length(strata)) split_row_indices(units, strata)$indices else list(seq_len(nrow(units)))
+    # A tenure sizes its take on the whole listing, as the draw does.
+    parent_draw <- resolve_parent_draw_spec(draw, units)
     sizes <- if (length(strata)) {
       info <- calculate_stratum_sizes(
-        stratum_info_from_groups(units, strata, groups), spec$strata, draw
+        stratum_info_from_groups(units, strata, groups), spec$strata,
+        parent_draw
       )
       info$.n_h
     } else {
-      draw$n %||% frac_pool_size(nrow(units), draw$frac, draw)
+      parent_draw$n %||% frac_pool_size(nrow(units), parent_draw$frac,
+                                        parent_draw)
     }
     if (!is_null(spec$strata$alloc) && length(strata)) {
       allocation$n_parents <- allocation$n_parents + 1L
@@ -484,7 +494,15 @@ check_stage_targets <- function(design, stage_idx, frame) {
         key_labels(info, strata_label_vars(spec$strata))
       )
     }
-    if (fixed_take) {
+    # A rate or an allocation can give a reserve pool a take below 2.
+    if (!is_null(draw$reserve)) {
+      thin <- which(sizes < 2 & lengths(groups) > sizes)
+      thin_reserve$n_pools <- thin_reserve$n_pools + length(groups)
+      if (length(thin)) {
+        thin_reserve <- pool_record(thin_reserve, units, groups, thin, strata)
+      }
+    }
+    if (fixed_take || !is_null(draw$tenure_takes)) {
       over <- which(sizes > lengths(groups))
       # An allocated total above the population exhausts every stratum.
       if (
@@ -495,11 +513,14 @@ check_stage_targets <- function(design, stage_idx, frame) {
       }
       short$n_pools <- short$n_pools + length(groups)
       short$n_capped <- short$n_capped + length(over)
-      first <- vapply(groups[over], function(g) g[[1]], integer(1))
-      labels <- exante_pool_labels(
-        design, stage_idx, units, first, strata, ancestors
-      )
-      short$pool_keys <- c(short$pool_keys, labels[!is.na(labels)])
+      # Labels cost a lookup per parent, so only short pools get them.
+      if (length(over)) {
+        first <- vapply(groups[over], function(g) g[[1]], integer(1))
+        labels <- exante_pool_labels(
+          design, stage_idx, units, first, strata, ancestors
+        )
+        short$pool_keys <- c(short$pool_keys, labels[!is.na(labels)])
+      }
     }
     if (length(ancestors) > 0L && length(strata) > 0L) {
       missing <- absent_named_strata(
@@ -713,19 +734,50 @@ refuse_mos_pools <- function(stage_idx, targets, call = caller_env()) {
 
 #' Refuse every strict stage of a schedule before anything is drawn
 #'
-#' `frames` holds the effective frame of each stage in `stage_ids`.
+#' `frames` holds the effective frame of each stage in `stage_ids`. A stage
+#' with a reserve is judged too, since a pool's take below 2 stops its draw.
 #' @noRd
 refuse_capped_stages <- function(design, stage_ids, frames,
                                  call = caller_env()) {
   for (i in seq_along(stage_ids)) {
     stage_idx <- stage_ids[[i]]
-    if (!identical(design$stages[[stage_idx]]$draw_spec$on_capped, "error")) {
+    draw <- design$stages[[stage_idx]]$draw_spec
+    strict <- identical(draw$on_capped, "error")
+    if (!strict && is_null(draw$reserve)) {
       next
     }
     targets <- check_stage_targets(design, stage_idx, frames[[i]])
+    refuse_reserve_take(stage_idx, targets$thin_reserve, call = call)
     refuse_capped_stage(design, stage_idx, targets$capped, call = call)
   }
   invisible(NULL)
+}
+
+#' Refuse a reserve stage with a candidate pool whose take is below 2
+#'
+#' `thin` is what `check_stage_targets()` found for the stage. A rate or an
+#' allocation sets the take per pool, so `draw()` cannot see it.
+#' @noRd
+refuse_reserve_take <- function(stage_idx, thin, call = caller_env()) {
+  if (thin$n_found == 0L) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "Stage {stage_idx}: a {.arg reserve} needs a take of at least 2 in
+       every pool, and the take is below 2 in {thin$n_found} of
+       {thin$n_pools} candidate pool{?s}.",
+      pool_lines(thin, "Pools"),
+      "i" = "With a take of 1, a list that stops at its first unit leaves
+             the settlement weight at 0 / 0.",
+      "i" = "Raise the rate or the stage's {.arg min_n}, or merge the small
+             pools in the frame."
+    ),
+    class = "samplyr_error_draw_argument",
+    call = call,
+    stage = stage_idx,
+    payload = thin
+  )
 }
 
 #' Name the candidate pools a fixed take cannot fill

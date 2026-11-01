@@ -193,23 +193,103 @@ test_that("the report made without a frame agrees too", {
   expect_identical(problems, character(0))
 })
 
-test_that("registers with an empty candidate unit report the risk it runs", {
+test_that("registers with an empty candidate unit report its zero row", {
   skip_if_not_installed("survey")
   skip_if_not_installed("svrep")
   schools <- data.frame(school = 1:6, st = rep(c("a", "b"), each = 3))
   classes <- data.frame(school = rep(1:5, each = 2), class = 1:10)
+  frames <- list(schools, classes)
+  design_for <- function(on_empty) {
+    sampling_design() |>
+      add_stage() |> stratify_by(st) |> cluster_by(school) |> draw(n = 2) |>
+      add_stage() |> cluster_by(class) |> draw(n = 1, on_empty = on_empty)
+  }
+  # A selected school with no class exports as a zero row, so no estimator
+  # is refused for it. The export says so under "warn".
+  loud <- variance_estimators(design_for("warn"), frames)
+  expect_match(
+    loud$sample_risk[1],
+    paste("1 candidate unit has nothing to sample at stage 2, and a selected",
+          "one is exported as a zero row, so estimates need `na.rm = TRUE`",
+          "(samplyr_warning_export_empty_parent)"),
+    fixed = TRUE
+  )
+  quiet <- variance_estimators(design_for("silent"), frames)
+  expect_false(any(grepl("zero row", quiet$sample_risk, fixed = TRUE)))
+  expect_identical(quiet$status, loud$status)
+  for (on_empty in c("warn", "silent")) {
+    expect_identical(
+      ve_check(on_empty, design_for(on_empty), frames, seeds = 1:6),
+      character(0)
+    )
+  }
+  # A sample that drew the empty school is supported, and exports.
+  sample <- suppressWarnings(execute(design_for("warn"), frames, seed = 3))
+  expect_false(is.null(vanished_primary_units(sample)))
+  report <- variance_estimators(sample)
+  expect_identical(report$status[1], "supported")
+  expect_s3_class(suppressWarnings(as_svydesign(sample)), "survey.design")
+})
+
+test_that("an empty unit below a primary unit is reported under silent", {
+  schools <- data.frame(school = 1:6, st = rep(c("a", "b"), each = 3))
+  classes <- data.frame(school = rep(1:6, each = 2), class = 1:12)
+  # Class 1 has no pupil.
+  pupils <- data.frame(class = rep(2:12, each = 3), pupil = 1:33)
+  pupils$school <- classes$school[match(pupils$class, classes$class)]
+  frames <- list(schools, classes, pupils)
+  design_for <- function(on_empty) {
+    sampling_design() |>
+      add_stage() |> stratify_by(st) |> cluster_by(school) |> draw(n = 2) |>
+      add_stage() |> cluster_by(class) |> draw(n = 2) |>
+      add_stage() |> draw(n = 2, on_empty = on_empty)
+  }
+  note <- paste(
+    "1 candidate unit has nothing to sample at stage 3, and a selected one",
+    "has no row, so survey computes its parent's within-unit variance",
+    "without it"
+  )
+  # The export warns of it under "warn" alone.
+  loud <- variance_estimators(design_for("warn"), frames)
+  expect_identical(
+    loud$sample_risk[1],
+    paste0(note, " (samplyr_warning_export_empty_parent)")
+  )
+  quiet <- variance_estimators(design_for("silent"), frames)
+  expect_identical(quiet$sample_risk[1], note)
+  expect_identical(quiet$status, loud$status)
+})
+
+test_that("registers missing a column get the error execute() gives", {
+  schools <- data.frame(school = 1:6, st = rep(c("a", "b"), each = 3))
+  classes <- data.frame(school = rep(1:6, each = 2), class = 1:12, sz = 1:12)
+  pupils <- data.frame(class = 1:12, pupil = 1:12)
+  pupils$school <- classes$school
   design <- sampling_design() |>
     add_stage() |> stratify_by(st) |> cluster_by(school) |> draw(n = 2) |>
-    add_stage() |> cluster_by(class) |> draw(n = 1, on_empty = "silent")
-  frames <- list(schools, classes)
-  report <- variance_estimators(design, frames)
-  expect_match(report$sample_risk[1], "1 candidate unit has nothing to sample")
-  expect_match(report$sample_risk[1], "samplyr_error_export_empty_psu",
-               fixed = TRUE)
-  expect_match(report$sample_risk[10], "samplyr_error_rwyb_missing_parents",
-               fixed = TRUE)
-  expect_identical(ve_check("registers", design, frames, seeds = 1:6),
-                   character(0))
+    add_stage() |> cluster_by(class) |>
+    draw(n = 2, method = "pps_brewer", mos = sz) |>
+    add_stage() |> draw(n = 1)
+  expect_no_error(variance_estimators(design, list(schools, classes, pupils)))
+
+  no_school <- pupils[c("class", "pupil")]
+  no_mos <- classes[c("school", "class")]
+  for (frames in list(
+    list(frames = list(schools, classes, no_school),
+         class = "samplyr_error_frame_missing_ancestry"),
+    list(frames = list(schools, no_mos, pupils),
+         class = "samplyr_error_frame_missing_vars")
+  )) {
+    expect_error(execute(design, frames$frames, seed = 1),
+                 class = frames$class)
+    expect_error(variance_estimators(design, frames$frames),
+                 class = frames$class)
+  }
+
+  # A single frame may cover the first stages only.
+  first <- variance_estimators(design, schools)
+  expect_identical(first, variance_estimators(design, list(schools)))
+  expect_identical(nrow(first), nrow(variance_estimators(design)))
 })
 
 ve_check_twophase <- function(label, design1, design2, frame, seeds = 1:2) {
@@ -453,7 +533,7 @@ test_that("a frame of primary units settles the first stage only", {
                "stage 1 has no design-unbiased variance estimator. Its variance is approximated, unless",
                fixed = TRUE)
   expect_identical(report$status[2], variance_estimators(design)$status[2])
-  expect_match(report$sample_risk[1], "A frame that reaches stage 2",
+  expect_match(report$sample_risk[1], "A frame that reaches every stage",
                fixed = TRUE)
   expect_error(variance_estimators(design, primary["stratum"]),
                class = "samplyr_error_frame_missing_vars")
@@ -546,4 +626,25 @@ test_that("a shared-weight sample is refused, not reported as its source", {
   expect_no_error(variance_estimators(source))
   expect_error(variance_estimators(shared),
                class = "samplyr_error_variance_estimators_input")
+})
+
+test_that("a design with a reserve is refused, listed or settled", {
+  frame <- data.frame(region = rep(c("a", "b"), each = 20), id = 1:40)
+  design <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 4, reserve = 4)
+  listed <- execute(design, frame, seed = 1)
+  listed$result <- ifelse(listed$.reserve_1 == 0, "interview", NA)
+  settled <- execute(listed, response_status = result)
+  for (x in list(design, listed, settled)) {
+    expect_error(variance_estimators(x),
+                 "does not assess a design with a reserve",
+                 class = "samplyr_error_variance_estimators_input")
+  }
+  # A second phase drawn from a settled reserve is refused too.
+  expect_error(
+    variance_estimators(sampling_design() |> draw(n = 3), frame = settled),
+    class = "samplyr_error_variance_estimators_input"
+  )
+  expect_no_error(variance_estimators(sampling_design() |> draw(n = 4)))
 })

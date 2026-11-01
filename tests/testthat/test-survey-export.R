@@ -2725,3 +2725,74 @@ test_that("BRR, Fay and the rescaled bootstrap disclose a dropped correction", {
   }
   expect_identical(warned(sample, "JKn")$classes, character(0))
 })
+
+test_that("every replicate design can be calibrated", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("svrep")
+  # survey's calibration fails on replicate weights held as a plain matrix.
+  calibrates <- function(rep, label) {
+    total <- sum(weights(rep, type = "sampling"))
+    calibrated <- survey::calibrate(
+      rep, ~g, c(`(Intercept)` = total, gv = total / 2)
+    )
+    expect_s3_class(rep$repweights, "repweights_compressed")
+    expect_equal(
+      unname(coef(survey::svytotal(~g, calibrated))),
+      c(total / 2, total / 2),
+      info = label
+    )
+  }
+  frame <- data.frame(
+    id = 1:200, st = rep(c("a", "b"), each = 100), psu = rep(1:40, each = 5),
+    y = (1:200) %% 13, g = rep(c("u", "v"), 100)
+  )
+  sample <- sampling_design() |>
+    stratify_by(st) |> cluster_by(psu) |> draw(n = 6) |>
+    add_stage() |> draw(n = 2) |>
+    execute(frame, seed = 1)
+  calibrates(
+    suppressWarnings(as_svrepdesign(sample, type = "mrbbootstrap")),
+    "mrbbootstrap"
+  )
+  groups <- sampling_design() |>
+    stratify_by(st) |> draw(n = 10) |>
+    execute(frame, seed = 1, reps = 10)
+  calibrates(as_svrepdesign(groups, type = "random_groups"), "random groups")
+
+  population <- data.frame(
+    id = 1:120, y = (1:120) %% 7, g = rep(c("u", "v"), 60),
+    in_a = rep(c(TRUE, FALSE), c(80, 40)),
+    in_b = rep(c(FALSE, TRUE), c(40, 80))
+  )
+  stack <- stack_frames(
+    a = sampling_design() |> draw(n = 20) |>
+      execute(population[population$in_a, ], seed = 1),
+    b = sampling_design() |> draw(n = 20) |>
+      execute(population[population$in_b, ], seed = 2),
+    membership = c(a = "in_a", b = "in_b"),
+    key = id
+  )
+  calibrates(
+    suppressWarnings(as_svrepdesign(stack, type = "bootstrap",
+                                    replicates = 50)),
+    "frame stack"
+  )
+
+  dwellings <- data.frame(dw_id = 1:45, region = rep(c("n", "s"), c(25, 20)))
+  targets <- data.frame(person_id = 1:90, hh = rep(1:45, each = 2),
+                        g = rep(c("u", "v"), 45))
+  shared <- share_weights(
+    sampling_design() |> stratify_by(region) |> draw(n = 10) |>
+      execute(dwellings, seed = 2),
+    targets = targets,
+    links = data.frame(dw_id = rep(1:45, each = 2), person_id = 1:90),
+    by = c(dw_id = "dw_id"),
+    to = c(person_id = "person_id"),
+    within = hh,
+    multiplicity = complete_links()
+  )
+  calibrates(
+    suppressWarnings(as_svrepdesign(shared, type = "JKn")),
+    "shared weights"
+  )
+})

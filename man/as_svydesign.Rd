@@ -224,11 +224,21 @@ the activation are carried in the unit totals, so the master may have
 been drawn by any method, with probabilities proportional to size
 included. It is the variance rotating household surveys publish for each
 quarter or month. Zones and variance pairs are not used, since activation
-leaves most zones with one unit or none. Certainty units count as sampled
-units of their stratum. That errs toward too large a variance, as does a
-large sampling fraction in a stratum. In a
-simulation with 8 EAs active per stratum, its standard error was 0.89 of
-the true one with EAs drawn by simple random sampling, where the
+leaves most zones with one unit or none. A stage-1 unit taken with
+certainty, with a later stage drawn inside it, represents itself. It is a
+stratum of its own, whose clusters are its units of the next stage, since
+only they vary between samples. In a simulation of one certainty EA among
+twelve, that brought the estimated variance of a wave from 1.7 to 1.1
+times the true one, and of a two-wave window, where the EA otherwise
+stood alone among the units active at both waves and survey stopped on
+it, from 5.7 under \code{survey.lonely.psu = "adjust"} to 1.6. A unit taken
+with certainty and nothing drawn inside it, a stage-1 cluster with no
+later stage or an element, is the same in every sample. It is a stratum
+of its own taken as a census, the one stratum with a finite population
+correction, so it adds no variance, as in the master's export. A large
+sampling fraction in a stratum still errs toward too large a variance.
+In a simulation with 8 EAs active per stratum, its standard error was
+0.89 of the true one with EAs drawn by simple random sampling, where the
 two-phase export gave 0.88, and 1.06 with EAs drawn by size, which has
 no two-phase export.
 
@@ -313,7 +323,8 @@ population correction. The variance of every later stage is then carried
 by the primary-unit totals, which is why it is called the ultimate-cluster
 variance. It is the variance to reproduce when a new design is compared
 with what an earlier round published. \code{as_svydesign()} builds it for a
-materialized wave only. For other samples it derives \code{ids}, \code{strata} and
+materialized wave and for a settled reserve only. For other samples it
+derives \code{ids}, \code{strata} and
 \code{fpc} from the design, and survey builds the ultimate-cluster design from
 the sample's own columns:
 
@@ -335,20 +346,141 @@ survey, as it does for the export, unless \code{options(survey.lonely.psu = )}
 says how to treat it.
 }
 
+\subsection{A settled reserve}{
+
+\link{reserve_lists} describes reserve lists and their settlement. A sample
+whose reserve is not settled is refused
+(\code{samplyr_error_reserve_unsettled}), since its weights describe the whole
+list. Once settled with \code{execute(sample, response_status = col)}, it is
+exported by ultimate clusters. The settled stage's respondents are a
+random subset of a respondent count the field never observed, so that
+stage's finite population correction is unknown, and every stage is
+carried in the primary-unit totals. The share of each pool's eligible
+units that responded is treated as fixed. A two-phase sample, shared
+weights, and the \code{"mrbbootstrap"} and \code{"rwyb"} replicates of
+\code{\link[=as_svrepdesign]{as_svrepdesign()}} would build the stages one by one, and refuse a
+settled reserve (\code{samplyr_error_reserve_full_export}). A wave holds no
+settlement of its own, so a wave of a master that draws a reserve is
+refused with the same class, settled or not, and the settled master
+exports as a whole.
+
+With the reserve at the first stage, each pool's eligible units are
+estimated from the units the field worked. The export adds one row for
+each unit found ineligible among those the estimate counts, at the
+pool's size over the number of units counted. The pool's weights then
+add up to its size, and the variance treats the eligible count as
+estimated. These rows hold \code{NA} in every column except the strata, the
+weight and, while the sample still holds it, the response status
+column, which carries the ineligible code in the column's own type (\code{4},
+\code{"ineligible"}, or a factor level of that name, added if absent).
+Estimate for the eligible population as a domain:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{svy <- as_svydesign(settled)
+survey::svytotal(~income, svy, na.rm = TRUE)
+survey::svymean(~income, subset(svy, result != "ineligible"))
+}\if{html}{\out{</div>}}
+
+\code{na.rm = TRUE} and \code{subset()} keep those rows in the variance, and
+removing them before the export understates it. A primary unit of a
+later reserve stage whose units all proved ineligible keeps one such row,
+as a zero total.
+
+A primary unit taken with certainty, with a later stage drawn inside it,
+represents itself as it does in a wave. It is a stratum of its own whose
+clusters are its units of the next stage. With the reserve at that
+stage, its pools are exported as first-stage pools are, times the weight
+of the stage above, so its ineligible units add rows and a placeholder
+is a unit of its own. In a simulation of one certainty EA among twelve,
+this brought the estimated variance from 1.36 to 1.26 times the true
+one. The rest comes from the first stage's finite population
+correction, which the export leaves out.
+
+A pool whose eligible units include no respondent still has an estimated
+eligible count, from the units the field worked. With every worked unit
+of unknown eligibility, it takes the resolved rate of the pools that
+share its strata, or counts every unit as eligible when none of them
+resolved one. A pool estimated to hold no eligible unit, such as one
+whose resolved units all proved ineligible, is exported as ineligible.
+The export adds one placeholder row per other such pool, at the
+weight of the stages above times that count, coded as an eligible
+non-interview (\code{2}, \code{"noninterview"}, or a factor level of that name).
+Its other columns hold \code{NA}, and below the first stage it sits in the
+primary unit of its pool. The export warns
+(\code{samplyr_warning_reserve_no_respondent}) and names the pools. Until a
+nonresponse adjustment moves that weight to respondents, estimates leave
+it out. With replicate weights, \code{\link[svrep:redistribute_weights]{svrep::redistribute_weights()}} makes the
+adjustment in every replicate:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{rep <- as_svrepdesign(settled)
+rep <- svrep::redistribute_weights(
+  rep,
+  reduce_if = result == "noninterview",
+  increase_if = result == "interview",
+  by = "region"
+)
+survey::svytotal(~income, rep, na.rm = TRUE)
+}\if{html}{\out{</div>}}
+
+The adjustment moves the placeholder's weight but leaves its row, with
+\code{NA} in every analysis variable. An estimate therefore needs
+\code{na.rm = TRUE}, as for the ineligible rows. Without it a linearized
+total is \code{NA}, and a replicate design fails with "All replicates
+contained NAs".
+
+With linearization, \code{\link[survey:calibrate]{survey::calibrate()}} to known totals plays that
+role. After a stage below the reserve is drawn, the units of such a
+pool have no weight at that stage, so its export is refused
+(\code{samplyr_error_reserve_no_respondent}). Export before drawing it, or
+combine the stratum with a neighbor in the design.
+
+The rows the export adds hold \code{NA} in the variables a calibration would
+use, so \code{survey::calibrate()}, \code{survey::postStratify()} and
+\code{survey::rake()} stop on them. Calibrate the respondents instead, through
+indicators that are 0 on those rows, and without an intercept, which
+would count them:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{svy <- update(
+  svy,
+  female = as.numeric(sex \%in\% "female"),
+  male = as.numeric(sex \%in\% "male")
+)
+svy <- survey::calibrate(
+  svy, ~ 0 + female + male, c(female = 5200, male = 4800)
+)
+}\if{html}{\out{</div>}}
+
+A row whose indicators are all 0 keeps its weight, under a linear
+calibration as under \code{calfun = "raking"}. The ineligible rows still
+estimate the ineligible count, and the respondents alone carry the known
+totals. The same call works on a replicate design, before or after
+\code{\link[svrep:redistribute_weights]{svrep::redistribute_weights()}}.
+}
+
 \subsection{A shared estimation weight}{
 
 A sample from \code{\link[=share_weights]{share_weights()}} carries weights for a population other
 than the one that was selected, so it is exported as its \strong{source-target
 contributions}: one row per link, weighted by the recorded coefficient
 times the source unit's design weight. This gives the generalized weight
-share total exactly for any link structure, provided every selected
-source unit has at least one contribution. A selected source unit with
-no link must still count in the variance, which contribution rows cannot
-do without inventing a target row, so this route refuses it and names
-\code{\link[=as_svrepdesign]{as_svrepdesign()}} instead. The result has more rows than the
-transformation returned, but no estimate changes: a total sums the same
-terms, and a mean's denominator is the estimated target population size
-either way.
+share total exactly for any link structure. The result has more rows than
+the transformation returned, but no estimate changes: a total sums the
+same terms, and a mean's denominator is the estimated target population
+size either way.
+
+A selected source unit linked to no target, such as a dwelling with
+nobody in the target population, has no contribution. Where no other
+unit of its primary unit contributes, it must still count in the
+variance between primary units, so the export keeps it as a zero row, as
+it keeps a unit found empty: weight 0, its source values, and \code{NA} in
+the target variables, so estimates need \code{na.rm = TRUE}. Inside a primary
+unit that has other contributions, the primary unit's total is right
+without it, and it has no row. The export then warns
+(\code{samplyr_warning_export_empty_parent}) that survey computes the
+variance within that primary unit without it, which matters at large
+first-stage sampling fractions: with 4 of 6 blocks drawn per stratum, a
+test gave a standard error 20 percent short. \code{\link[=as_svrepdesign]{as_svrepdesign()}}
+replicates the complete source design, so its variance holds every
+unit.
 
 An unequal-probability or random-size source design is also refused
 here, because its variance comes from a structure indexed by the

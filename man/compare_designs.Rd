@@ -25,10 +25,14 @@ sample is refused.}
 
 \item{...}{Must be empty. Arguments after it are matched by exact name.}
 
-\item{key}{A bare column of \code{frame} identifying the population unit. It
-must be unique, have no missing values, and not share a name with a
-column the unit table adds (\code{probability_x}, \code{probability_y},
-\code{abs_diff}, \code{rel_diff}, \code{agree}).}
+\item{key}{The column of \code{frame} identifying the population unit, bare,
+or several with \code{c()} that together identify it, such as
+\code{c(region, ea_id)}. Needed at the probability level, where the unit
+table carries it, and optional at the allocation level, which matches
+pools by the rows they hold. Given, it must identify each row once,
+have no missing values, and not share a name with a column the unit
+table adds (\code{probability_x}, \code{probability_y}, \code{abs_diff}, \code{rel_diff},
+\code{agree}).}
 
 \item{level}{What to compare, \code{"allocation"} (default) or
 \code{"probabilities"}.}
@@ -58,10 +62,12 @@ check of the whole design), \code{check}, \code{status} (\code{"agree"}, \code{"
 share, with \code{stage}, \code{pool_key}, \code{N}, \code{n_target_x}, \code{n_target_y},
 \code{n_expected_x}, \code{n_expected_y} and \code{agree}.
 \item \code{units}: at the probability level, one row per register row, with the
-key column, \code{probability_x}, \code{probability_y}, \code{abs_diff}, \code{rel_diff}
+key columns, \code{probability_x}, \code{probability_y}, \code{abs_diff}, \code{rel_diff}
 and \code{agree}.
 \item \code{specification}: two rows per stage the designs both have, with
-\code{stage}, \code{aspect} (\code{"method"} or \code{"mos"}), \code{x}, \code{y} and \code{status}.
+\code{stage}, \code{aspect} (\code{"method"} or \code{"mos"}), \code{x}, \code{y} and \code{status},
+and a third row with aspect \code{"reserve"} when either stage sets
+\code{reserve} in \code{\link[=draw]{draw()}}.
 The status is \code{"same"}, \code{"differ"}, or for two measures of size in
 different columns, \code{"proportional"} when one is a constant multiple
 of the other on every row of \code{frame}. It does not enter the verdict.
@@ -99,6 +105,11 @@ and \code{cluster_by(region, province)} and \code{cluster_by(province)} form the
 same units when province ids are nested in regions. When the units of a
 stage differ, its pools and takes are not compared. When the pools
 differ, the check names the pools of \code{x} that \code{y} splits or merges.
+
+A pool agrees when both designs give it the same take and the same
+expected size. A reserve in \code{\link[=draw]{draw()}} lengthens each pool's list without
+changing its take, so two designs that differ only by a reserve differ
+here, and the check says the lists differ.
 
 Two designs on the same frame see the same pools, so a comparison cannot
 find a category the frame lacks. A province without urban EAs forms one

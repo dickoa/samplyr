@@ -49,6 +49,11 @@
 #' pool smaller than its take cannot be executed on the frame, so it is refused
 #' with `samplyr_error_size_capped`, as [execute()] refuses it.
 #'
+#' At a stage that sets `reserve` in [draw()], the probability is the chance
+#' of the whole list, the take plus its reserve, as `.weight_k` records it.
+#' The take's share of it is `n / (n + reserve)` in a pool large enough for
+#' the whole list.
+#'
 #' [frame_summary()] answers a different question. It reports the pools and
 #' chances a design resolves, at whatever resolution the digest retained, and
 #' returns no unit rows at all where that was a quantile summary.
@@ -56,12 +61,14 @@
 #' @param design A `sampling_design` with a complete [draw()] on every stage.
 #' @param frame The register, a data frame.
 #' @param ... Must be empty. Arguments after it are matched by exact name.
-#' @param key A bare column of `frame` identifying the population unit. It
-#'   must be unique and cannot be named `probability` or `probability_quality`.
+#' @param key The column of `frame` identifying the population unit, bare,
+#'   or several with `c()` that together identify it, such as
+#'   `c(region, ea_id)`. It must identify each row once, and no key column
+#'   can be named `probability` or `probability_quality`.
 #' @param allow_approximate Logical, default `FALSE`. Explicitly accept
 #'   approximate probability targets, with the limitations described above.
 #'
-#' @return A tibble with the key column, `probability`, and
+#' @return A tibble with the key columns, `probability`, and
 #'   `probability_quality` (`"exact"` or `"approximate"`), one row per unit
 #'   in the register's own order. Quality reflects the weakest stage's
 #'   probability contract.
@@ -98,20 +105,26 @@ exante_probabilities <- function(design, frame, ..., key, allow_approximate = FA
   check_keyword_args(enquos(...), c("key", "allow_approximate"))
   key_col <- parse_frame_key(
     rlang::enquo(key),
-    class = "samplyr_error_exante_key"
+    class = "samplyr_error_exante_key",
+    why = c(
+      "i" = "It identifies each unit of {.arg frame} in the result, one row
+             per unit.",
+      "i" = "Use a bare column of {.arg frame} with one value per row, or
+             {.code c()} of columns that together name each row."
+    )
   )
-  if (key_col %in% c("probability", "probability_quality")) {
+  taken <- intersect(key_col, c("probability", "probability_quality"))
+  if (length(taken) > 0L) {
     abort_samplyr("{.arg key} must not be named probability or probability_quality.",
       class = "samplyr_error_exante_key")
   }
   resolved <- resolve_exante_probabilities(design, frame, key_col,
     allow_approximate = allow_approximate)
-  result <- tibble::tibble(
-    key = resolved$keys,
-    probability = resolved$probability,
-    probability_quality = rep(resolved$probability_quality, length(resolved$keys))
+  result <- resolved$keys
+  result$probability <- resolved$probability
+  result$probability_quality <- rep(
+    resolved$probability_quality, nrow(resolved$keys)
   )
-  names(result)[[1]] <- key_col
   result
 }
 
@@ -304,33 +317,40 @@ check_exante_design_complete <- function(design, call = caller_env()) {
 #' @noRd
 check_exante_key <- function(register, key_col, frame_label = NULL,
                              call = caller_env()) {
+  if (is_null(key_col)) {
+    return(NULL)
+  }
   where <- frame_label %||% "the register"
-  if (!key_col %in% names(register)) {
+  absent <- setdiff(key_col, names(register))
+  if (length(absent) > 0L) {
     abort_samplyr(
       c(
         "{.arg key} must be a column of {where}.",
-        "x" = "{.field {key_col}} is not one."
+        "x" = "{.field {absent}} {?is/are} not {?one/columns of it}."
       ),
       class = "samplyr_error_exante_key",
       call = call
     )
   }
-  keys <- register[[key_col]]
-  if (anyNA(keys)) {
+  keys <- tibble::as_tibble(as.data.frame(register)[key_col])
+  unknown <- !stats::complete.cases(keys)
+  if (any(unknown)) {
     abort_samplyr(
       c(
         "{.arg key} must be known for every unit of the register.",
-        "x" = "{.field {key_col}} has {sum(is.na(keys))} missing value{?s}."
+        "x" = "{.field {key_col}} {?has/have} a missing value on
+               {sum(unknown)} row{?s}."
       ),
       class = "samplyr_error_exante_key",
       call = call
     )
   }
-  if (anyDuplicated(keys) > 0) {
+  repeated <- duplicated(keys)
+  if (any(repeated)) {
     abort_samplyr(
       c(
         "{.arg key} must identify a unit once.",
-        "x" = "{.field {key_col}} repeats {sum(duplicated(keys))} value{?s}.",
+        "x" = "{.field {key_col}} repeat{?s/} {sum(repeated)} value{?s}.",
         "i" = "A register enumerates the population, so a repeated key is two
                rows for one unit and the probability would be ambiguous."
       ),
@@ -420,9 +440,10 @@ exante_parent_registry <- function(resolved) {
 #'   as the components of the stack. Each is the population the corresponding
 #'   design would draw from.
 #' @param ... Must be empty. Arguments after it are matched by exact name.
-#' @param by A single named string matching the stack's key to the column
-#'   holding it in the registers, in the same direction as a join:
-#'   `by = c(person_id = "person_id")`.
+#' @param by Named strings matching the stack's key to the columns holding
+#'   it in the registers, in the same direction as a join:
+#'   `by = c(person_id = "person_id")`, or one pair per column of a
+#'   compound key, `by = c(region = "region", ea_id = "ea")`.
 #' @param allow_approximate Logical, default `FALSE`. Allow approximate
 #'   probability targets when resolving the component designs. See
 #'   [exante_probabilities()] for the statistical limitations.
@@ -474,14 +495,18 @@ exante_overlaps <- function(frames, ..., by, allow_approximate = FALSE) {
     )
   }
   if (
-    !is.character(by) || length(by) != 1L ||
-      is_null(names(by)) || !nzchar(names(by)) || is.na(by) || !nzchar(by)
+    !is.character(by) || length(by) == 0L ||
+      is_null(names(by)) || !all(nzchar(names(by))) || anyNA(by) ||
+      !all(nzchar(by)) || anyDuplicated(names(by)) > 0L
   ) {
     abort_samplyr(
       c(
-        "{.arg by} must be a single named string.",
-        "i" = "Match the stack's key to the registers' column as a join
-               does: {.code by = c(key_column = \"register_column\")}."
+        "{.arg by} must be named strings, one per column of the stack's
+         key.",
+        "i" = "Match the stack's key to the registers' columns as a join
+               does: {.code by = c(key_column = \"register_column\")}, or
+               {.code by = c(region = \"region\", ea_id = \"ea\")} for a
+               key of two columns."
       ),
       class = "samplyr_error_stack_frames_overlaps"
     )
@@ -527,13 +552,13 @@ resolve_exante_overlaps <- function(samples, spec, membership,
   key_col <- names(spec$by)
   register_col <- unname(spec$by)
   missing_key <- frames[!vapply(samples, function(component) {
-    key_col %in% names(component)
+    all(key_col %in% names(component))
   }, logical(1))]
   if (length(missing_key) > 0) {
     abort_samplyr(
       c(
         "{.arg by} names a column the components do not have.",
-        "x" = "{.field {key_col}} is missing from {.val {missing_key}}."
+        "x" = "{.field {key_col}} {?is/are} missing from {.val {missing_key}}."
       ),
       class = "samplyr_error_stack_frames_overlaps",
       call = call
@@ -556,7 +581,10 @@ resolve_exante_overlaps <- function(samples, spec, membership,
     component <- samples[[nm]]
     member <- frame_component_membership(component, membership)
     values <- lapply(frames, function(q) {
-      position <- match(component[[key_col]], resolved[[q]]$keys)
+      unit_keys <- stats::setNames(
+        as.data.frame(component)[key_col], register_col
+      )
+      position <- vctrs::vec_match(unit_keys, resolved[[q]]$keys)
       unresolved <- member[, q] & is.na(position)
       if (any(unresolved)) {
         abort_samplyr(

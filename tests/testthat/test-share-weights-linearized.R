@@ -51,13 +51,17 @@ linearized_oracle <- function(shared, source_sample, variable = "y") {
   derived <- rep(0, nrow(source_sample))
   derived[as.integer(rownames(totals))] <- totals[, 1]
   source_sample$.derived <- derived
-  suppressWarnings(survey::svytotal(~.derived, as_svydesign(source_sample)))
+  suppressWarnings(
+    survey::svytotal(~.derived, as_svydesign(source_sample), na.rm = TRUE)
+  )
 }
 
 expect_matches_oracle <- function(source_sample,
                                  targets = linearized_targets()) {
   shared <- linearized_shared(source_sample, targets)
-  got <- suppressWarnings(survey::svytotal(~y, as_svydesign(shared)))
+  got <- suppressWarnings(
+    survey::svytotal(~y, as_svydesign(shared), na.rm = TRUE)
+  )
   want <- linearized_oracle(shared, source_sample)
 
   expect_equal(unname(coef(got)), unname(coef(want)))
@@ -163,7 +167,7 @@ test_that("a source unit is one sampling unit, not one per contribution", {
   )
 })
 
-test_that("linearization refuses a selected source with no contribution", {
+test_that("a source primary unit linked to no target is a zero row", {
   skip_if_not_installed("survey")
   source_sample <- sampling_design() |>
     stratify_by(region) |>
@@ -172,7 +176,6 @@ test_that("linearization refuses a selected source with no contribution", {
   unlinked <- source_sample$dw_id[[1L]]
   links <- linearized_links()
   links <- links[links$dw_id != unlinked, , drop = FALSE]
-
   shared <- share_weights(
     source_sample,
     targets = linearized_targets(),
@@ -183,11 +186,59 @@ test_that("linearization refuses a selected source with no contribution", {
     multiplicity = complete_links()
   )
 
-  expect_error(
-    as_svydesign(shared),
-    class = "samplyr_error_share_weights_zero_contribution_source"
+  # Each dwelling is a primary unit, so the unlinked one keeps a zero row.
+  cnd <- expect_warning(
+    svy <- as_svydesign(shared),
+    "na.rm = TRUE",
+    fixed = TRUE,
+    class = "samplyr_warning_export_empty_parent"
   )
-  expect_no_error(suppressWarnings(as_svrepdesign(shared, type = "JKn")))
+  expect_identical(cnd$n_empty, 1L)
+  zero <- svy$variables[weights(svy) == 0, , drop = FALSE]
+  expect_identical(zero$dw_id, unlinked)
+  expect_true(is.na(zero$person_id))
+  got <- survey::svytotal(~y, svy, na.rm = TRUE)
+  want <- linearized_oracle(shared, source_sample)
+  expect_equal(unname(coef(got)), unname(coef(want)))
+  expect_equal(unname(survey::SE(got)), unname(survey::SE(want)))
+})
+
+test_that("a source unit linked to no target inside a primary unit has no row", {
+  skip_if_not_installed("survey")
+  dwellings <- linearized_dwellings()
+  source_sample <- sampling_design() |>
+    stratify_by(region) |> cluster_by(blk) |> draw(n = 4) |>
+    add_stage() |> cluster_by(dw_id) |> draw(n = 3) |>
+    execute(dwellings, seed = 2)
+  # The fourth dwelling of every block holds nobody.
+  links <- linearized_links()
+  links <- links[links$dw_id %% 5L != 4L, , drop = FALSE]
+  shared <- share_weights(
+    source_sample,
+    targets = linearized_targets(),
+    links = links,
+    by = c(dw_id = "dw_id"),
+    to = c(person_id = "person_id"),
+    within = hh,
+    multiplicity = complete_links()
+  )
+  unlinked <- !source_sample$dw_id %in% links$dw_id
+  expect_true(any(unlinked))
+  expect_true(all(source_sample$blk[unlinked] %in%
+                    source_sample$blk[!unlinked]))
+
+  cnd <- expect_warning(
+    svy <- as_svydesign(shared),
+    "first-stage sampling fractions",
+    class = "samplyr_warning_export_empty_parent"
+  )
+  expect_identical(cnd$n_empty, sum(unlinked))
+  expect_identical(sum(weights(svy) == 0), 0L)
+  # Every block's total is right, so the total is the oracle's.
+  expect_equal(
+    unname(coef(survey::svytotal(~y, svy))),
+    unname(coef(linearized_oracle(shared, source_sample)))
+  )
 })
 
 test_that("the contribution weight is the coefficient times the source's", {
@@ -251,7 +302,7 @@ test_that("a source design whose variance is indexed by its rows is refused", {
   )
 })
 
-test_that("a source sample that lost a primary unit is refused", {
+test_that("a source unit found empty keeps its zero row", {
   skip_if_not_installed("survey")
   # Block b1 has no dwellings in the register, so it has no row.
   dwellings <- linearized_dwellings()
@@ -261,13 +312,25 @@ test_that("a source sample that lost a primary unit is refused", {
     add_stage() |> draw(frac = 1, on_empty = "silent") |>
     execute(list(blocks, dwellings[dwellings$blk != "b1", ]), seed = 1)
   expect_false("b1" %in% source_sample$blk)
-  expect_true(any(vapply(
-    attr(source_sample, "metadata")$empty_parents,
-    function(r) "b1" %in% r$keys$blk, NA
-  )))
-  expect_error(
-    as_svydesign(linearized_shared(source_sample)),
-    class = "samplyr_error_export_empty_psu"
+  shared <- expect_matches_oracle(source_sample)
+
+  # Its row has no target, and the replicates keep it in the source design.
+  data <- as_svydesign(shared)$variables
+  expect_identical(data$blk[is.na(data$person_id)], "b1")
+  operator <- attr(shared, "metadata")$weight_share$operator
+  totals <- rowsum(operator$share * shared$y[operator$target_row],
+                   group = operator$source_row, reorder = FALSE)
+  source_sample$.derived <- 0
+  source_sample$.derived[as.integer(rownames(totals))] <- totals[, 1]
+  # survey drops the second stage's correction, and says so.
+  got <- suppressWarnings(as_svrepdesign(shared, type = "JK1"))
+  source_rep <- suppressWarnings(as_svrepdesign(source_sample, type = "JK1"))
+  expect_identical(nrow(source_rep$variables), nrow(source_sample) + 1L)
+  expect_equal(
+    as.vector(survey::SE(survey::svytotal(~y, got, na.rm = TRUE))),
+    as.vector(survey::SE(
+      survey::svytotal(~.derived, source_rep, na.rm = TRUE)
+    ))
   )
 })
 

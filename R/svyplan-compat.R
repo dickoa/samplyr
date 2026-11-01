@@ -194,8 +194,10 @@ check_svyplan_schedule <- function(x, arg = "schedule",
 #' - `n_cluster()` results: `as.integer()` returns the integerized
 #'   field design as a stage vector. Stage-aware contexts take the
 #'   value for their stage, a flat single-stage design takes the
-#'   product (operational element total). Per-domain plans expose only
-#'   continuous stages, which are ceiled.
+#'   product (operational element total). Per-domain plans take each
+#'   domain's whole stage sizes from `$operational$domains`, which svyplan
+#'   rounds within the domain's budget. A plan without them gives only
+#'   continuous sizes, which are rounded up.
 #' - Other svyplan objects: scalar total via `as.integer()`.
 #' @noRd
 coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE,
@@ -302,7 +304,17 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE,
         )
       }
       out <- dom[, keep, drop = FALSE]
-      out$n <- as.integer(ceiling(dom[[stage_cols[stage_index]]]))
+      stage_col <- stage_cols[stage_index]
+      whole <- n$operational$domains
+      at <- if (!is_null(whole) && all(c(keep, stage_col) %in% names(whole))) {
+        vctrs::vec_match(out[keep], whole[keep])
+      }
+      # Rounding each stage up can exceed the budget the plan was sized to.
+      out$n <- if (!is_null(at) && !anyNA(at)) {
+        as.integer(whole[[stage_col]][at])
+      } else {
+        as.integer(ceiling(dom[[stage_col]]))
+      }
       return(out)
     }
     stages <- as.integer(n)
@@ -322,6 +334,68 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE,
     return(as.integer(n))
   }
   n
+}
+
+#' Warn when a plan's take already covers the losses a reserve covers
+#'
+#' The one place samplyr reads a plan's `params` for rates. A take of PSUs
+#' or SSUs is inflated by `resp_rate_psu` or `resp_rate_ssu`, and a take of
+#' final-stage units by `eligibility_rate` and `resp_rate`. svyplan leaves a
+#' rate of 1 out of `params`.
+#' @noRd
+warn_reserve_plan_rates <- function(plan, reserve, stage_index,
+                                    clustered = FALSE, call = caller_env()) {
+  if (is_null(reserve)) {
+    return(invisible(NULL))
+  }
+  stage_aware <- clustered || stage_index > 1L
+  plan_stages <- if (inherits(plan, "svyplan_cluster") && stage_aware) {
+    plan$stages
+  } else if (
+    inherits(plan, "svyplan_n") && identical(plan$type, "alloc") &&
+      "n_psu_int" %in% names(as.data.frame(plan))
+  ) {
+    2L
+  } else {
+    1L
+  }
+  final <- stage_index >= plan_stages
+  names <- if (final) {
+    c("eligibility_rate", "resp_rate")
+  } else {
+    c("resp_rate_psu", "resp_rate_ssu")[stage_index]
+  }
+  rates <- vapply(names, function(name) {
+    as.numeric(plan$params[[name]] %||% 1)[1]
+  }, numeric(1))
+  below <- rates[!is.na(rates) & rates < 1]
+  if (length(below) == 0L) {
+    return(invisible(NULL))
+  }
+  shown <- paste0("{.code ", names(below), " = ", format(below), "}")
+  cli::cli_warn(
+    c(
+      "The plan behind {.arg n} inflates the take for losses that the
+       {.arg reserve} also covers.",
+      "x" = paste0(
+        "It sets ", paste(shown, collapse = " and "), ", so each pool is
+         worked until it holds more responding units than the plan
+         needed."
+      ),
+      "i" = paste(
+        "Plan the take with",
+        if (length(below) == 1L) "this rate" else "these rates",
+        "at 1 and let the reserve replace the units lost."
+      ),
+      "i" = if (final && "resp_rate" %in% names(below)) {
+        "If {.code resp_rate} holds only the response rate of persons in
+         responding units, the take is right."
+      }
+    ),
+    class = "samplyr_warning_reserve_plan_rates",
+    call = call
+  )
+  invisible(NULL)
 }
 
 #' Why an allocation table cannot key a stage's strata, or NULL
@@ -894,6 +968,9 @@ certainty_remainder_chance <- function(sizes, n_draw, zone = NULL, m = NULL) {
 #' Resolve the per-parent take identically for execution and previews
 #' @noRd
 resolve_parent_draw_spec <- function(draw_spec, data, call = caller_env()) {
+  if (!is_null(draw_spec$tenure_takes)) {
+    return(tenure_parent_draw_spec(draw_spec, data))
+  }
   plan <- draw_spec$certainty_plan
   if (!identical(plan$role, "take")) return(draw_spec)
   # Deduplicating before formatting saves a string per frame row.
@@ -906,6 +983,30 @@ resolve_parent_draw_spec <- function(draw_spec, data, call = caller_env()) {
     )
   }
   draw_spec$n <- as.numeric(plan$register$n_take[at])
+  draw_spec
+}
+
+#' A tenure's take in one parent, sized on the whole listing
+#'
+#' The take replaces `frac`, and a stratified take, a table by stratum,
+#' replaces the allocation, since `allocate_strata()` reads a table first.
+#' @noRd
+tenure_parent_draw_spec <- function(draw_spec, data) {
+  takes <- draw_spec$tenure_takes
+  draw_spec$tenure_takes <- NULL
+  rows <- takes$table[
+    vctrs::vec_in(takes$table[takes$psu_vars], data[takes$psu_vars]), ,
+    drop = FALSE
+  ]
+  if (nrow(rows) == 0L) {
+    return(draw_spec)
+  }
+  draw_spec$frac <- NULL
+  if (length(takes$strata_vars) == 0L) {
+    draw_spec$n <- rows$n[[1L]]
+  } else {
+    draw_spec$n <- rows[c(takes$strata_vars, "n")]
+  }
   draw_spec
 }
 

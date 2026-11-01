@@ -218,11 +218,12 @@ NULL
 #'   schedules.
 #' @param panel_stage Stage whose selected units are assigned to panels, as a
 #'   single stage number, or `NULL` (the default) for the first executed
-#'   stage. Accepted only alongside `panels`, and the stage must be one the
-#'   execution completes. Later stages inherit their ancestor's panel, so
-#'   assigning below stage 1 rotates units inside parents that stay in the
-#'   survey. [panel_assignment] explains what that changes, including how it
-#'   can bias estimates over time.
+#'   stage. Accepted only alongside `panels`. The stage must be one the
+#'   execution completes, and not the stage that sets `reserve` in [draw()]
+#'   (`samplyr_error_panel_stage_reserve`). Later stages inherit their
+#'   ancestor's panel, so assigning below stage 1 rotates units inside
+#'   parents that stay in the survey. [panel_assignment] explains what that
+#'   changes, including how it can bias estimates over time.
 #' @param small_pool What to do when a rotation schedule would leave a pool
 #'   with no unit to activate at some wave. `"error"` (the default, reached by
 #'   `NULL`) refuses the assignment, and `"permanent"` activates those units
@@ -244,6 +245,18 @@ NULL
 #'   `seed` and `stages`, refuses the other arguments, and takes a master
 #'   with a rotation schedule or periods. See "Drawing the later stages wave
 #'   by wave" below.
+#' @param response_status A column of the sample that holds the final
+#'   disposition of each listed unit, in the terms of the AAPOR Standard
+#'   Definitions: whether the unit was eligible and whether it responded.
+#'   It settles the stage that sets `reserve` in [draw()].
+#'   `execute(sample, response_status = col)` takes no other argument. The
+#'   column holds AAPOR final disposition codes, read by their leading digit
+#'   (1 or 1.1 an interview, 2 or 2.24 an eligible non-interview, 3 an
+#'   unknown eligibility, 4 or "4.60" not eligible), or the words
+#'   `"interview"`, `"noninterview"`, `"unknown"` and `"ineligible"`. `NA`
+#'   marks a reserve unit the field did not release. Every unit of the take
+#'   needs a code. See "Settling a reserve" below, and [reserve_lists]
+#'   for the protocol and the codes.
 #' @param reps Integer number of independent replicate samples to draw (>= 2),
 #'   or `NULL` (default) for a single sample. The replicates are stacked in
 #'   one `tbl_sample` with a `.replicate` column (integer 1 through `reps`).
@@ -287,8 +300,9 @@ NULL
 #' @return A `tbl_sample`: a data frame subclass carrying the selected rows,
 #'   the design that produced them, and generated columns recording the
 #'   selection. Those are `.sample_id`, `.weight`, the per-stage `.weight_k`,
-#'   `.fpc_k`, `.draw_k` and `.certainty_k`, `.zone_1` and `.pair_1` for a
-#'   zoned certainty plan, `.replicate` or `.panel` when `reps` or
+#'   `.fpc_k`, `.draw_k` and `.certainty_k`, `.reserve_k` at a stage that
+#'   sets `reserve` in [draw()], `.zone_1` and `.pair_1` for a zoned
+#'   certainty plan, `.replicate` or `.panel` when `reps` or
 #'   `panels` is used, and `.wave` for a window of several waves.
 #'   [sample_columns] documents what each one holds.
 #'
@@ -331,6 +345,39 @@ NULL
 #' sample back as `.data` continues the same design. [frame_input_grammar]
 #' states how a continuation reads its frame, when it asks for `stages`, and
 #' how it differs from starting a new phase on a sample.
+#'
+#' ## Settling a reserve
+#'
+#' A stage that sets `reserve` in [draw()] lists its take and its reserve,
+#' with `.reserve_k` giving the release order. The field works the take, the
+#' office releases one reserve unit, in `.reserve_k` order, for each unit
+#' that fails, and work in a pool stops at its target number of
+#' respondents or when the list runs out. An earlier stop must not depend on
+#' how the pool was going, such as giving up after a run of refusals.
+#'
+#' `execute(sample, response_status = col)` reads the codes, walks each pool in
+#' release order and returns the respondents. Their weight at the stage
+#' estimates the pool's eligible units from the units worked, leaving out
+#' the unit that stopped the list, and divides it among the respondents.
+#' Units released after the stop are dropped, so a pool worked past its
+#' target keeps the weight of the stop rule. A pool stopped early is
+#' settled with the units it worked. How unknowns are coded is the choice
+#' of their eligibility: 3 estimates it from the resolved units of the
+#' pool, 2 counts them as eligible and 4 as ineligible.
+#'
+#' A pool whose eligible units include no respondent returns no rows, but
+#' its eligible units are still estimated from the units worked. When every
+#' unit worked is of unknown eligibility, the estimate takes the resolved
+#' rate of the pools that share its strata, or counts every unit as
+#' eligible when none of them resolved one. The export keeps that weight
+#' in a placeholder row for a nonresponse adjustment (see the "A settled
+#' reserve" section of [as_svydesign()]).
+#'
+#' A sample is settled once. A stage below the reserve is drawn from the
+#' settled sample, `execute(settled, listing)`, and a call that would draw
+#' it from the list is refused (`samplyr_error_reserve_unsettled`).
+#' [summary()] shows the settlement per pool, and [write_design()] records
+#' it for [replay_design()].
 #'
 #' ## Drawing the later stages wave by wave
 #' A master split into [periods()] at its first stage can have its later
@@ -383,7 +430,9 @@ NULL
 #'   the master never closes: its draws accumulate, and
 #'   `execute(master, wave = t)` reads each panel's current tenure. A new
 #'   tenure takes the full listing: samplyr leaves out the units earlier
-#'   tenures drew and weights the rest to the whole listing.
+#'   tenures drew and weights the rest to the whole listing. Such a master
+#'   takes no `reserve` at any stage (`samplyr_error_tenure_stages`), since
+#'   it is never complete and a wave exports no reserve.
 #'   [panel_assignment] describes tenures.
 #'
 #' ## Multi-phase sampling
@@ -551,9 +600,11 @@ execute <- function(
   small_pool = NULL,
   reps = NULL,
   wave = NULL,
+  response_status = NULL,
   frame_digest = c("summary", "full", "none")
 ) {
   local_key_loc_cache()
+  response_status <- rlang::enquo(response_status)
   # Read this before `match.arg()` fills its default.
   frame_digest_given <- !missing(frame_digest)
   frame_digest <- with_error_class(
@@ -570,6 +621,23 @@ execute <- function(
       "execute",
       design_given = any(vapply(dots, is_sampling_design, logical(1)))
     )
+  }
+
+  # Settling reads the codes of a list that is already drawn.
+  if (!quo_is_null(response_status)) {
+    return(settle_reserve(
+      .data,
+      response_status,
+      frames = dots,
+      stages = stages,
+      seed = seed,
+      panels = panels,
+      panel_stage = panel_stage,
+      small_pool = small_pool,
+      reps = reps,
+      wave = wave,
+      frame_digest_given = frame_digest_given
+    ))
   }
 
   execution_environment <- capture_execution_environment()
@@ -733,6 +801,10 @@ execute <- function(
 
   # Before any RNG, so deserialized designs are covered too.
   validate_certainty_bridge(design, schedule)
+  check_reserve_order(
+    design, schedule$stages,
+    sample = if (is_tbl_sample(.data)) .data
+  )
 
   # A deserialized design never ran the draw() validators.
   check_custom_methods_match_record(design, strict = FALSE)
@@ -974,7 +1046,7 @@ execute <- function(
 check_execute_dot_names <- function(dots, call = rlang::caller_env()) {
   reserved <- c(
     "stages", "seed", "panels", "panel_stage", "small_pool", "reps", "wave",
-    "frame_digest"
+    "response_status", "frame_digest"
   )
   nms <- names(dots) %||% rep("", length(dots))
 
@@ -1057,7 +1129,7 @@ check_execute_dots <- function(
 ) {
   reserved <- c(
     "stages", "seed", "panels", "panel_stage", "small_pool", "reps", "wave",
-    "frame_digest"
+    "response_status", "frame_digest"
   )
   nms <- names(frames) %||% rep("", length(frames))
 
@@ -1204,7 +1276,7 @@ execute_design <- function(
       )
       frame <- linked$frame
       empty_parents <- add_empty_parents(
-        empty_parents, stage_idx, linked$empty_parents
+        empty_parents, stage_idx, linked$empty_parents, linked$empty_rows
       )
     }
 
@@ -1246,15 +1318,26 @@ execute_design <- function(
       panels, design, panels$stage %||% stages[1], stages,
       call = call
     )
-    assigned <- assign_panels(
-      current_sample,
-      panels,
-      panel_assignment_context(
-        design, panels$stage %||% stages[1], current_sample, call = call
-      ),
-      call = call
+    context <- panel_assignment_context(
+      design, panels$stage %||% stages[1], current_sample, call = call
     )
-    current_sample <- assigned$sample
+    # A unit whose later stages found nothing is still a unit of its panel,
+    # as it is when the later stages are drawn after the assignment.
+    gone <- vanished_assignment_units(empty_parents, current_sample, context)
+    units <- if (nrow(gone) > 0L) {
+      vctrs::vec_rbind(current_sample, gone)
+    } else {
+      current_sample
+    }
+    assigned <- assign_panels(units, panels, context, call = call)
+    current_sample <- if (nrow(gone) > 0L) {
+      vctrs::vec_slice(assigned$sample, seq_len(nrow(current_sample)))
+    } else {
+      assigned$sample
+    }
+    empty_parents <- panel_empty_parents(
+      empty_parents, assigned$sample, context$key_vars
+    )
     panel_assignment <- assigned$record
   }
 
@@ -1543,8 +1626,12 @@ execute_continuation <- function(
     stage_spec <- design$stages[[stage_idx]]
     prev_stage_for_frame <- design$stages[[previous_stage_idx]]
 
-    # Avoid collisions with inherited sample metadata.
-    internal <- samplyr_internal_cols(frame)
+    # Avoid collisions with inherited sample metadata. A listing derived
+    # from the sample keeps the draws it was listed under.
+    internal <- setdiff(
+      samplyr_internal_cols(frame),
+      grep("^\\.draw_\\d+$", names(current_sample), value = TRUE)
+    )
     if (length(internal) > 0L) {
       frame <- frame[, setdiff(names(frame), internal), drop = FALSE]
     }
@@ -1568,7 +1655,7 @@ execute_continuation <- function(
     )
     frame <- linked$frame
     empty_parents <- add_empty_parents(
-      empty_parents, stage_idx, linked$empty_parents
+      empty_parents, stage_idx, linked$empty_parents, linked$empty_rows
     )
 
     step <- execute_single_stage(
@@ -1667,7 +1754,11 @@ execute_continuation <- function(
         sample_integrity_record(current_sample, design, c(executed, stages))
       },
       frame_schedule = schedule_record(schedule),
-      empty_parents = c(parent_meta$empty_parents, empty_parents)
+      empty_parents = c(parent_meta$empty_parents, empty_parents),
+      # The settlement carries over, but the call that settled replays it.
+      reserve_settlement = if (!is_null(parent_meta$reserve_settlement)) {
+        utils::modifyList(parent_meta$reserve_settlement, list(carried = TRUE))
+      }
     )
   )
 }
@@ -2306,7 +2397,8 @@ execute_single_stage_impl <- function(
             data,
             strata_spec,
             cluster_spec,
-            draw_spec,
+            # Execution and previews resolve the same per-parent take.
+            resolve_parent_draw_spec(draw_spec, data),
             trace_mode = trace_mode,
             check_invariants = check_invariants
           ),
@@ -2359,6 +2451,9 @@ execute_single_stage_impl <- function(
       }
       if (".certainty" %in% names(result)) {
         join_cols <- c(join_cols, ".certainty")
+      }
+      if (".reserve" %in% names(result)) {
+        join_cols <- c(join_cols, ".reserve")
       }
       if (".zone" %in% names(result)) {
         join_cols <- c(join_cols, ".zone")
@@ -2445,6 +2540,11 @@ execute_single_stage_impl <- function(
     result$.certainty <- NULL
   }
 
+  if (".reserve" %in% names(result)) {
+    result[[paste0(".reserve_", stage_num)]] <- result$.reserve
+    result$.reserve <- NULL
+  }
+
   if (".zone" %in% names(result)) {
     result[[paste0(".zone_", stage_num)]] <- result$.zone
     result$.zone <- NULL
@@ -2519,6 +2619,7 @@ find_carry_forward_cols <- function(previous_sample) {
     grep("^\\.draw_\\d+$", nms, value = TRUE),
     grep("^\\.fpc_\\d+$", nms, value = TRUE),
     grep("^\\.certainty_\\d+$", nms, value = TRUE),
+    grep("^\\.reserve_\\d+$", nms, value = TRUE),
     grep("^\\.zone_\\d+$", nms, value = TRUE),
     grep("^\\.pair_\\d+$", nms, value = TRUE),
     intersect(".panel", nms),
@@ -2605,7 +2706,8 @@ compound_stage_weights <- function(
 }
 
 #' @noRd
-attach_draw_assignments <- function(frame, previous_sample, cluster_vars_prev) {
+attach_draw_assignments <- function(frame, previous_sample, cluster_vars_prev,
+                                    call = caller_env()) {
   prev_draw_cols <- grep(
     "^\\.draw_\\d+$",
     names(previous_sample),
@@ -2619,6 +2721,14 @@ attach_draw_assignments <- function(frame, previous_sample, cluster_vars_prev) {
   draw_assignments <- unique(
     previous_sample[, c(cluster_vars_prev, prev_draw_cols), drop = FALSE]
   )
+  # A listing that names the draws gives each draw its own rows. Without
+  # them, every draw of a unit samples all of its rows.
+  given <- intersect(prev_draw_cols, names(frame))
+  if (length(given) > 0L) {
+    check_listed_draws(
+      frame, draw_assignments, cluster_vars_prev, given, call = call
+    )
+  }
 
   # Do not collide with a user `.row_id` column.
   pos <- free_column_name(frame, ".row_id")
@@ -2626,7 +2736,7 @@ attach_draw_assignments <- function(frame, previous_sample, cluster_vars_prev) {
   frame <- dplyr::left_join(
     frame,
     draw_assignments,
-    by = cluster_vars_prev,
+    by = c(cluster_vars_prev, given),
     relationship = "many-to-many"
   )
   frame <- frame[order(frame[[pos]]), , drop = FALSE]
@@ -2634,6 +2744,54 @@ attach_draw_assignments <- function(frame, previous_sample, cluster_vars_prev) {
 
   split_vars <- c(cluster_vars_prev, prev_draw_cols)
   list(frame = frame, split_vars = split_vars)
+}
+
+#' Refuse a listing whose draws are not the draws of its units
+#'
+#' A row under a draw its unit did not have would be sampled as a draw of
+#' its own. A unit listed under some of its draws only would leave the
+#' others empty, although the unit is not.
+#' @noRd
+check_listed_draws <- function(frame, draw_assignments, cluster_vars, given,
+                               call = caller_env()) {
+  keys <- c(cluster_vars, given)
+  listed <- vctrs::vec_unique(frame[keys])
+  drawn <- vctrs::vec_unique(draw_assignments[keys])
+  unknown <- vctrs::vec_slice(listed, !vctrs::vec_in(listed, drawn))
+  if (nrow(unknown) > 0L) {
+    abort_samplyr(
+      c(
+        "The listing names {nrow(unknown)} draw{?s} the previous stage did
+         not make.",
+        "x" = "Keyed on {.field {keys}}:
+               {format_pool_sample(format_key_preview(unknown))}.",
+        "i" = "Keep the {.field {given}} values the sample gave each unit."
+      ),
+      class = "samplyr_error_frame_draws",
+      call = call
+    )
+  }
+  in_listing <- vctrs::vec_in(drawn[cluster_vars], listed[cluster_vars])
+  unlisted <- vctrs::vec_slice(
+    drawn,
+    in_listing & !vctrs::vec_in(drawn, listed)
+  )
+  if (nrow(unlisted) > 0L) {
+    abort_samplyr(
+      c(
+        "{nrow(unlisted)} draw{?s} of a listed unit {?has/have} no rows in
+         the listing.",
+        "x" = "Keyed on {.field {keys}}:
+               {format_pool_sample(format_key_preview(unlisted))}.",
+        "i" = "A listing that keeps {.field {given}} lists every draw of a
+               unit. Without {.field {given}}, it lists each unit once and
+               every draw samples those rows."
+      ),
+      class = "samplyr_error_frame_draws",
+      call = call
+    )
+  }
+  invisible(NULL)
 }
 
 #' @noRd
@@ -2692,6 +2850,7 @@ validate_design_complete <- function(design, call = rlang::caller_env()) {
     }
     validate_stored_draw_spec(stage, call = call)
   }
+  check_one_reserve_stage(design$stages, call = call)
 
   balanced_stages <- which(vapply(
     design$stages,
@@ -2755,6 +2914,7 @@ validate_stored_draw_spec <- function(stage, call = rlang::caller_env()) {
     certainty_overflow = draw_spec$certainty_overflow,
     on_empty = draw_spec$on_empty,
     on_capped = draw_spec$on_capped %||% "warn",
+    reserve = draw_spec$reserve,
     has_alloc = !is_null(stage$strata) && !is_null(stage$strata$alloc),
     alloc = stage$strata$alloc,
     strata_vars = stage$strata$vars,

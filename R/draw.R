@@ -287,6 +287,31 @@ NULL
 #'   `frame_summary(design, frame, detail = "pool")` reports the per-stratum
 #'   target each bound produces, without selecting or consuming random
 #'   numbers.
+#' @param reserve Number of reserve units listed after the main take of
+#'   each pool, `NULL` (no reserve) by default, a whole number of at least
+#'   1, or `Inf` to list every unit of the pool. Each pool then draws a
+#'   list of its take plus `reserve` units and puts the list in a random
+#'   order. The first units of that order form the take, and the reserve
+#'   units follow in the order the office releases them, one per failed
+#'   unit. `n` and `frac` keep their meaning, the take to be interviewed,
+#'   and a pool too small for the whole list lists what it has. A svyplan
+#'   plan given as `n` with a rate below 1 for the units the reserve
+#'   replaces warns (`samplyr_warning_reserve_plan_rates`), since its take
+#'   already makes up for them. A reserve needs `method = "srswor"` or
+#'   `"systematic"` and a take of at least 2 in every pool, which
+#'   [execute()] and [validate_frame()] check for a take given by `frac`,
+#'   an allocation or a plan, before anything is drawn. One stage of a design can carry a reserve, and panels cannot be
+#'   assigned at that stage.
+#'
+#'   The executed sample holds the whole list. `.reserve_k` is 0 for the
+#'   take and 1, 2, ... for the reserve in release order, and `.weight_k` is
+#'   the inverse of the list's chance, `N / (n + reserve)` in a pool large
+#'   enough for the whole list. That weight describes the list, not the
+#'   units the field ends up interviewing, so [as_svydesign()] and
+#'   [as_svrepdesign()] refuse the sample with
+#'   `samplyr_error_reserve_unsettled` until [execute()] settles it from
+#'   the response status the field recorded. [reserve_lists] describes the
+#'   field protocol, the settlement and how to size the reserve.
 #' @param method Selection method, `"srswor"` by default.
 #'   [selection_methods] lists the sixteen built-ins with what each one
 #'   requires and the paper behind each.
@@ -413,7 +438,8 @@ NULL
 #'     signal a design problem, such as a sampling fraction or a stratum
 #'     that is too small.
 #'   - `"warn"`: warn and keep the empty selection.
-#'   - `"silent"`: keep the empty selection without a message.
+#'   - `"silent"`: keep the empty selection without a message, at the
+#'     draw or at export.
 #'
 #'   An empty selection is a valid realization of a random-size design. It
 #'   contributes zero to Horvitz-Thompson totals, so estimates over repeated
@@ -428,9 +454,9 @@ NULL
 #'   in the design with nothing selected under it and contributes zero to
 #'   every total. It is recorded in the sample, counted by [summary()],
 #'   exempt from the incomplete-register checks of [validate_frame()] and
-#'   [execute()], and named at export by [as_svydesign()].
-#'   [variance_estimation] gives how the export treats such units, and why
-#'   a primary unit left with no row is refused.
+#'   [execute()], and, under `"warn"`, named at export by [as_svydesign()].
+#'   A primary unit left with no row is exported as zero rows, which keep
+#'   it in the variance. [variance_estimation] gives the details.
 #'
 #'   A replicated execution with empty replicates cannot feed a later
 #'   [execute()] call (a new phase or a stage continuation). It raises
@@ -647,6 +673,7 @@ draw <- function(
   ...,
   min_n = NULL,
   max_n = NULL,
+  reserve = NULL,
   method = "srswor",
   mos = NULL,
   prn = NULL,
@@ -664,9 +691,14 @@ draw <- function(
   check_keyword_args(
     enquos(...),
     c(
-      "min_n", "max_n", "method", "mos", "prn", "aux", "spread", "round",
-      "control", "certainty_size", "certainty_prop", "certainty_overflow",
-      "on_empty", "on_capped"
+      "min_n", "max_n", "reserve", "method", "mos", "prn", "aux", "spread",
+      "round", "control", "certainty_size", "certainty_prop",
+      "certainty_overflow", "on_empty", "on_capped"
+    ),
+    # An allocation is declared with the strata it splits the take over.
+    elsewhere = c(
+      alloc = "stratify_by", variance = "stratify_by", cost = "stratify_by",
+      cv = "stratify_by", importance = "stratify_by", power = "stratify_by"
     )
   )
   if (is.data.frame(.data)) {
@@ -870,6 +902,7 @@ draw <- function(
     certainty_overflow = certainty_overflow,
     on_empty = on_empty,
     on_capped = on_capped,
+    reserve = reserve,
     has_alloc = has_alloc,
     alloc = current_stage$strata$alloc,
     strata_vars = strata_vars,
@@ -900,6 +933,13 @@ draw <- function(
     certainty_plan = certainty_plan,
     on_empty = on_empty,
     on_capped = on_capped,
+    reserve = if (is_null(reserve)) {
+      NULL
+    } else if (is.infinite(reserve)) {
+      Inf
+    } else {
+      as.integer(round(reserve))
+    },
     method_type = custom_spec$type,
     method_fixed = custom_spec$fixed_size,
     method_variance = custom_spec$variance_family,
@@ -908,8 +948,45 @@ draw <- function(
   )
 
   .data$stages[[current]]$draw_spec <- draw_spec
+  check_one_reserve_stage(.data$stages)
+  if (from_plan) {
+    warn_reserve_plan_rates(
+      plan, reserve,
+      stage_index = current,
+      clustered = !is_null(current_stage$clusters)
+    )
+  }
   .data$validated <- FALSE
   .data
+}
+
+#' Refuse a reserve on more than one stage
+#'
+#' A settlement closes one stage's lists. Version 1 settles one stage per
+#' design, so a second reserve has no settlement to go with it.
+#' @noRd
+check_one_reserve_stage <- function(stages, call = caller_env()) {
+  has_reserve <- vapply(
+    stages,
+    function(stage) !is_null(stage$draw_spec$reserve),
+    logical(1)
+  )
+  if (sum(has_reserve) <= 1L) {
+    return(invisible(NULL))
+  }
+  labels <- vapply(
+    which(has_reserve),
+    function(i) stages[[i]]$label %||% paste("Stage", i),
+    character(1)
+  )
+  cli_abort(
+    c(
+      "Only one stage of a design can carry a {.arg reserve}.",
+      "x" = "Stages {.val {labels}} each set one."
+    ),
+    call = call,
+    class = "samplyr_error_draw_argument"
+  )
 }
 
 #' @noRd
@@ -1327,6 +1404,7 @@ validate_draw_configuration <- function(
   on_empty,
   has_alloc,
   on_capped = "warn",
+  reserve = NULL,
   strata_vars = NULL,
   aux = NULL,
   bounds = NULL,
@@ -1457,7 +1535,78 @@ validate_draw_configuration <- function(
     }
   }
   check_on_capped_applies(on_capped, method, n, custom_spec, call = call)
+  validate_reserve(
+    reserve, method, n,
+    custom_spec = custom_spec,
+    provides_take = provides_take,
+    call = call
+  )
 
+  invisible(NULL)
+}
+
+#' Check a reserve against the method and the take
+#'
+#' The settlement weight drops the unit that stopped the list, so a take of 1
+#' leaves 0 / 0. A take that comes from `frac`, an allocation or a plan is
+#' known only at execution.
+#' @noRd
+validate_reserve <- function(reserve, method, n, custom_spec = NULL,
+                             provides_take = FALSE, call = caller_env()) {
+  if (is_null(reserve)) {
+    return(invisible(NULL))
+  }
+  whole_pool <- is.numeric(reserve) && length(reserve) == 1L &&
+    identical(as.double(reserve), Inf)
+  if (
+    !whole_pool && (
+      !is.numeric(reserve) || length(reserve) != 1L ||
+        !is_integerish_numeric(reserve) || reserve < 1 ||
+        reserve > .Machine$integer.max
+    )
+  ) {
+    cli_abort(
+      c(
+        "{.arg reserve} must be a single whole number of at least 1, or
+         {.code Inf} to list every unit of the pool.",
+        "x" = if (
+          is.numeric(reserve) && length(reserve) == 1L && !is.na(reserve) &&
+            reserve > .Machine$integer.max
+        ) {
+          "{.arg reserve} is above the largest integer R stores."
+        }
+      ),
+      call = call,
+      class = "samplyr_error_draw_argument"
+    )
+  }
+  if (!is_null(custom_spec) || !method %in% c("srswor", "systematic")) {
+    cli_abort(
+      c(
+        "A {.arg reserve} needs {.code method = \"srswor\"} or
+         {.code \"systematic\"}.",
+        "x" = "The stage draws with {.val {method}}."
+      ),
+      call = call,
+      class = "samplyr_error_reserve_method"
+    )
+  }
+  if (provides_take || is_null(n)) {
+    return(invisible(NULL))
+  }
+  takes <- if (is.data.frame(n)) n$n else n
+  if (any(takes < 2)) {
+    cli_abort(
+      c(
+        "A {.arg reserve} needs a take of at least 2 in every pool.",
+        "x" = "{.arg n} sets a take of {.val {min(takes)}}.",
+        "i" = "With a take of 1, a list that stops at its first unit
+               leaves the settlement weight at 0 / 0."
+      ),
+      call = call,
+      class = "samplyr_error_draw_argument"
+    )
+  }
   invisible(NULL)
 }
 

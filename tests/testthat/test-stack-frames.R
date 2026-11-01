@@ -225,6 +225,51 @@ test_that("domains at K = 4 are labelled by the whole frame set", {
 
 ## Components
 
+test_that("a key of several columns names a unit by all of them", {
+  # Unit numbers restart in each region.
+  population <- data.frame(
+    region = rep(c("N", "S"), each = 6),
+    id = rep(1:6, 2),
+    in_a = rep(c(TRUE, TRUE, TRUE, TRUE, FALSE, FALSE), 2),
+    in_b = rep(c(FALSE, FALSE, TRUE, TRUE, TRUE, TRUE), 2)
+  )
+  a <- frame_component("in_a", population, seed = 1)
+  b <- frame_component("in_b", population, seed = 2)
+  frames <- stack_frames(a = a, b = b, membership = c(a = "in_a", b = "in_b"),
+                         key = c(region, id))
+  expect_identical(attr(frames, "key"), c("region", "id"))
+  expect_output(print(frames), "key region and id")
+  expect_error(
+    stack_frames(a = a, b = b, membership = c(a = "in_a", b = "in_b"),
+                 key = id),
+    "repeats",
+    class = "samplyr_error_stack_frames_key"
+  )
+
+  # A unit is matched on both columns: unit 3 of the north disagrees.
+  conflicted <- b
+  conflicted$in_a[conflicted$region == "N" & conflicted$id == 3] <- FALSE
+  expect_error(
+    stack_frames(a = a, b = conflicted,
+                 membership = c(a = "in_a", b = "in_b"),
+                 key = c(region, id)),
+    "region = N, id = 3",
+    class = "samplyr_error_stack_frames_membership_conflict"
+  )
+
+  # The file writes the key as its columns, and replays it.
+  path <- withr::local_tempfile(fileext = ".json")
+  rows <- function(col) population[population[[col]], , drop = FALSE]
+  write_design(frames, path, frame = list(a = rows("in_a"), b = rows("in_b")))
+  expect_true(any(grepl('"key": ["region", "id"]', readLines(path),
+                        fixed = TRUE)))
+  replayed <- replay_design(
+    read_design(path),
+    list(a = rows("in_a"), b = rows("in_b"))
+  )
+  expect_identical(attr(replayed, "key"), c("region", "id"))
+})
+
 test_that("fewer than two frames is refused", {
   expect_error(
     stack_frames(

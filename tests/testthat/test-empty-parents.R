@@ -119,22 +119,32 @@ test_that("registers with empty parents are not incomplete at that stage", {
 
 test_that("the linearized export says what the empty parents change", {
   skip_if_not_installed("survey")
-  s <- execute(
-    ep_design(frac = 1), list(ep_eas(), ep_households(), ep_persons()),
-    seed = 4
+  frames <- list(ep_eas(), ep_households(), ep_persons())
+  caught <- function(s) {
+    out <- NULL
+    withCallingHandlers(
+      as_svydesign(s),
+      samplyr_warning_export_empty_parent = function(w) {
+        out <<- w
+        invokeRestart("muffleWarning")
+      },
+      samplyr_warning_lonely_psu = function(w) invokeRestart("muffleWarning")
+    )
+    out
+  }
+  s <- suppressWarnings(execute(ep_design("warn", frac = 1), frames, seed = 4))
+  w <- caught(s)
+  expect_false(is.null(w))
+  expect_identical(w$stage, 3L)
+  expect_identical(w$n_empty, attr(s, "metadata")$empty_parents[[1]]$n)
+
+  # "silent" holds at export too, and keeps the same units.
+  quiet <- execute(ep_design("silent", frac = 1), frames, seed = 4)
+  expect_identical(
+    attr(quiet, "metadata")$empty_parents,
+    attr(s, "metadata")$empty_parents
   )
-  caught <- NULL
-  withCallingHandlers(
-    as_svydesign(s),
-    samplyr_warning_export_empty_parent = function(w) {
-      caught <<- w
-      invokeRestart("muffleWarning")
-    },
-    samplyr_warning_lonely_psu = function(w) invokeRestart("muffleWarning")
-  )
-  expect_false(is.null(caught))
-  expect_identical(caught$stage, 3L)
-  expect_identical(caught$n_empty, attr(s, "metadata")$empty_parents[[1]]$n)
+  expect_null(caught(quiet))
 
   # Replicates resample whole units, whose totals already hold the zeros.
   classes <- character()
@@ -146,6 +156,51 @@ test_that("the linearized export says what the empty parents change", {
     }
   )
   expect_false("samplyr_warning_export_empty_parent" %in% classes)
+})
+
+test_that("a primary unit found empty is a zero row, named under warn", {
+  skip_if_not_installed("survey")
+  # EA 6 lists no households, so it vanishes whenever it is drawn.
+  households <- ep_households()
+  households <- households[households$ea != 6, ]
+  design_for <- function(on_empty) {
+    sampling_design() |>
+      add_stage() |> cluster_by(ea) |> draw(n = 6) |>
+      add_stage() |> cluster_by(hh) |> draw(n = 2, on_empty = on_empty)
+  }
+  frames <- list(ep_eas(), households)
+  caught <- function(export) {
+    out <- NULL
+    withCallingHandlers(
+      export(),
+      samplyr_warning_export_empty_parent = function(w) {
+        out <<- w
+        invokeRestart("muffleWarning")
+      },
+      warning = function(w) invokeRestart("muffleWarning")
+    )
+    out
+  }
+  loud <- suppressWarnings(execute(design_for("warn"), frames, seed = 1))
+  expect_false(6L %in% loud$ea)
+  for (export in list(
+    function() as_svydesign(loud),
+    function() as_svrepdesign(loud, type = "bootstrap", replicates = 5)
+  )) {
+    w <- caught(export)
+    expect_identical(w$n_empty, 1L)
+    expect_match(conditionMessage(w), "na.rm = TRUE", fixed = TRUE)
+  }
+
+  quiet <- execute(design_for("silent"), frames, seed = 1)
+  expect_null(caught(function() as_svydesign(quiet)))
+  zero <- function(x) {
+    data <- suppressWarnings(as_svydesign(x))$variables
+    data[is.na(data$.sample_id), c("ea", "hh", ".weight")]
+  }
+  expect_identical(zero(quiet), zero(loud))
+  expect_identical(zero(quiet)$ea, 6L)
+  expect_identical(zero(quiet)$.weight, 0)
 })
 
 test_that("summary() counts the parents a stage found empty", {
@@ -230,5 +285,47 @@ test_that("records from earlier calls are carried once, not per replicate", {
   expect_setequal(
     vapply(records[stages == 3L], function(r) r$replicate, 1L),
     1:2
+  )
+})
+
+test_that("a unit its later stages found empty keeps a panel", {
+  # EA 6 lists no households, so it vanishes whenever it is drawn.
+  households <- ep_households()
+  households <- households[households$ea != 6, ]
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(ea) |> draw(n = 4) |>
+    add_stage() |> cluster_by(hh) |> draw(n = 2, on_empty = "silent")
+  schedule <- data.frame(panel = c(1, 2, 1, 2), wave = c(1, 1, 2, 2),
+                         active = c(TRUE, FALSE, FALSE, TRUE))
+  keys <- function(sample) {
+    sort(unlist(lapply(
+      attr(sample, "metadata")$panel_assignment$pools,
+      function(p) p$keys
+    )))
+  }
+  seed <- 1
+  repeat {
+    once <- execute(design, list(ep_eas(), households), seed = seed,
+                    panels = schedule)
+    if (!is.null(vanished_primary_units(once))) break
+    seed <- seed + 1
+  }
+  expect_false(6L %in% once$ea)
+
+  # One call assigns the panels over the four EAs drawn, as stage 1 alone
+  # does before the households are drawn.
+  first <- execute(design, ep_eas(), stages = 1, seed = seed,
+                   panels = schedule)
+  expect_identical(keys(once), keys(first))
+  expect_identical(
+    attr(once, "metadata")$panel_assignment$pools[[1]]$size, 4L
+  )
+  rows <- attr(once, "metadata")$empty_parents[[1]]$rows
+  expect_identical(rows$ea, 6L)
+  expect_true(rows$.panel %in% 1:2)
+  # The two panels share the four EAs evenly.
+  expect_identical(
+    as.vector(table(c(once$.panel[!duplicated(once$ea)], rows$.panel))),
+    c(2L, 2L)
   )
 })

@@ -220,14 +220,54 @@ A group of three zones rules out balanced half-samples.
 \subsection{Selected units with nothing below them}{
 
 A unit accepted by \code{on_empty} with nothing selected under it keeps its
-zero in every total. When it is a stage-two or deeper unit inside a
-primary unit that still has rows, \code{\link[=as_svydesign]{as_svydesign()}} warns
-(\code{samplyr_warning_export_empty_parent}), because survey computes that
-unit's within-parent term without it. This matters only at large
-first-stage sampling fractions. When a whole primary unit has no row, the
-variance between primary units would lose its zero total and could come
-out as zero, so every route refuses it (\code{samplyr_error_export_empty_psu},
-and \code{samplyr_error_rwyb_missing_parents} for RWYB).
+zero in every total, but it has no row, and survey learns its units from
+rows. A primary unit left with no row at all would take its zero total
+out of the variance between primary units, which then comes out too
+small, often zero. The export adds zero rows for it instead, one per
+empty unit it holds and per draw. A zero row carries its unit's values
+for the stages above, its frame variables included, and below it a
+single unit taken whole, so it adds no variance of its own. Its weight is
+0, so totals and counts are unchanged, its \code{.sample_id} is \code{NA}, and its
+analysis variables are \code{NA}, so estimates need \code{na.rm = TRUE}, which
+keeps the row in the variance:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{svy <- as_svydesign(sample)
+survey::svymean(~income, svy, na.rm = TRUE)
+}\if{html}{\out{</div>}}
+
+Every route of \code{\link[=as_svydesign]{as_svydesign()}} and \code{\link[=as_svrepdesign]{as_svrepdesign()}} carries the zero
+rows, RWYB, shared weights, two phases and waves included. A two-phase
+export holds a phase-1 zero row as a unit phase 2 did not reach, and a
+wave holds the zero rows of the panels it activates. Without them
+\code{survey::twophase()} also got the total wrong, since it reads phase 1's
+probabilities from the number of units it holds. In a simulation of two strata of five schools, two of them
+with no class, the estimated variance under simple random sampling went
+from 0.47 of the true variance to 0.97. Under Brewer's method it went
+from 0.56 to 0.77, as it does with the empty schools entered as ordinary
+rows of total zero. Brewer's approximation errs when units with a measure
+of size have a total of zero. Under \code{on_empty = "warn"} the export warns
+(\code{samplyr_warning_export_empty_parent}) and counts the rows it added.
+
+A design that holds zero rows has two limits from survey.
+\code{survey::degf()} leaves out rows of weight 0, so it counts one primary
+unit fewer per empty one, which widens a confidence interval. And
+\code{survey::calibrate()} cannot take a row of weight 0 in a linearized
+design, and the estimates after it fail. \code{survey::postStratify()} and
+\code{survey::rake()} on either design, and \code{survey::calibrate()} on a
+replicate design from \code{\link[=as_svrepdesign]{as_svrepdesign()}}, work once the calibration
+variables have a value on the zero rows. Any value serves, since the
+weight is 0.
+
+An empty unit below the first stage, inside a primary unit that still
+has rows, keeps no row, since a household with no eligible member is the
+common case and its sample has to calibrate. The total of its primary
+unit is right. Survey computes that unit's within-parent term without
+it, which matters only at large first-stage sampling fractions. Under
+\code{on_empty = "warn"}, \code{\link[=as_svydesign]{as_svydesign()}} says so
+(\code{samplyr_warning_export_empty_parent}). RWYB resamples every stage, so
+it gives such a unit a zero row too. RWYB refuses a unit in which a
+Poisson stage selected nothing (\code{samplyr_error_rwyb_missing_parents}),
+since no record names it.
 }
 
 \subsection{Random-size Poisson methods}{

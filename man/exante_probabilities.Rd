@@ -13,14 +13,16 @@ exante_probabilities(design, frame, ..., key, allow_approximate = FALSE)
 
 \item{...}{Must be empty. Arguments after it are matched by exact name.}
 
-\item{key}{A bare column of \code{frame} identifying the population unit. It
-must be unique and cannot be named \code{probability} or \code{probability_quality}.}
+\item{key}{The column of \code{frame} identifying the population unit, bare,
+or several with \code{c()} that together identify it, such as
+\code{c(region, ea_id)}. It must identify each row once, and no key column
+can be named \code{probability} or \code{probability_quality}.}
 
 \item{allow_approximate}{Logical, default \code{FALSE}. Explicitly accept
 approximate probability targets, with the limitations described above.}
 }
 \value{
-A tibble with the key column, \code{probability}, and
+A tibble with the key columns, \code{probability}, and
 \code{probability_quality} (\code{"exact"} or \code{"approximate"}), one row per unit
 in the register's own order. Quality reflects the weakest stage's
 probability contract.
@@ -67,6 +69,11 @@ the rows of one register and there is no correspondence between the rows of
 two. A stage that sets \code{on_capped = "error"} in \code{\link[=draw]{draw()}} and has a candidate
 pool smaller than its take cannot be executed on the frame, so it is refused
 with \code{samplyr_error_size_capped}, as \code{\link[=execute]{execute()}} refuses it.
+
+At a stage that sets \code{reserve} in \code{\link[=draw]{draw()}}, the probability is the chance
+of the whole list, the take plus its reserve, as \code{.weight_k} records it.
+The take's share of it is \code{n / (n + reserve)} in a pool large enough for
+the whole list.
 
 \code{\link[=frame_summary]{frame_summary()}} answers a different question. It reports the pools and
 chances a design resolves, at whatever resolution the digest retained, and

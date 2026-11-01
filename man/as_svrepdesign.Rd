@@ -79,7 +79,9 @@ export is unsupported, except for a second phase drawn within each
 final-stage pool of phase 1, which is phase 1's multistage design with a
 smaller final take and is replicated as that design (\code{\link[=as_svydesign]{as_svydesign()}}
 describes the shape). \code{"auto"} keeps survey's method choice, whether or
-not svrep is installed.
+not svrep is installed. A settled reserve is replicated from its
+ultimate-cluster design, with the rows \code{\link[=as_svydesign]{as_svydesign()}} adds at a
+first-stage reserve.
 \subsection{The first stage under the generic types}{
 
 \code{"JK1"}, \code{"JKn"}, \code{"BRR"}, \code{"Fay"}, \code{"bootstrap"} and \code{"subbootstrap"}

@@ -450,6 +450,13 @@ digest_stage_skeleton <- function(
     function(r) as.double(r$leaf$n_target),
     numeric(1)
   )
+  if (!is_null(stage_spec$draw_spec$reserve)) {
+    pools$n_reserve <- vapply(
+      records,
+      function(r) as.integer(r$leaf$n_reserve %||% 0L),
+      integer(1)
+    )
+  }
   pools$n_expected <- vapply(
     records,
     function(r) {
@@ -738,7 +745,8 @@ expand_stage_universe <- function(
   next_pool <- max(pools$pool_id) + 1L
   first_rows <- first_row_indices_by_group(groups[new_keys])
 
-  make_pools <- function(N, n_target, n_expected, chance = NULL) {
+  make_pools <- function(N, n_target, n_expected, chance = NULL,
+                         n_reserve = NULL) {
     out <- data.frame(
       pool_id = seq.int(next_pool, length.out = length(new_keys)),
       parent_unit = parent_all[first_rows]
@@ -749,6 +757,9 @@ expand_stage_universe <- function(
     }
     out$N <- as.integer(N)
     out$n_target <- n_target
+    if (!is_null(n_reserve)) {
+      out$n_reserve <- as.integer(n_reserve)
+    }
     out$n_expected <- n_expected
     out$n_realized <- 0L
     out$scope <- "universe"
@@ -770,13 +781,19 @@ expand_stage_universe <- function(
     }
     N_vec <- lengths(groups[new_keys])
     sizes <- unique(N_vec)
+    by_size <- lapply(sizes, function(N) {
+      resolve_pool_chance(draw_spec, NULL, N)
+    })
     value <- vapply(
-      sizes,
-      function(N) {
-        resolve_pool_chance(draw_spec, NULL, N)$chance[1]
-      },
+      by_size,
+      function(r) r$chance[1],
       numeric(1)
     )[match(N_vec, sizes)]
+    reserve_vec <- if (!is_null(draw_spec$reserve)) {
+      vapply(by_size, function(r) r$n_reserve %||% 0L, integer(1))[
+        match(N_vec, sizes)
+      ]
+    }
     random_size <- is_random_size_method(draw_spec)
     n_target <- if (
       random_size &&
@@ -808,7 +825,9 @@ expand_stage_universe <- function(
     }
     stage$pools <- rbind(
       pools,
-      make_pools(N_vec, n_target, value * N_vec, chance = value)
+      make_pools(
+        N_vec, n_target, value * N_vec, chance = value, n_reserve = reserve_vec
+      )
     )
     rownames(stage$pools) <- NULL
     stage$scope <- "universe"
@@ -865,6 +884,9 @@ expand_stage_universe <- function(
     })
   }
   n_target_vec <- vapply(resolved, function(r) r$n_target, numeric(1))
+  reserve_vec <- if (!is_null(draw_spec$reserve)) {
+    vapply(resolved, function(r) r$n_reserve %||% 0L, integer(1))
+  }
   expected_vec <- vapply(resolved, function(r) sum(r$chance), numeric(1))
   chance <- unlist(lapply(resolved, `[[`, "chance"), use.names = FALSE)
 
@@ -885,7 +907,7 @@ expand_stage_universe <- function(
 
   stage$pools <- rbind(
     pools,
-    make_pools(N_vec, n_target_vec, expected_vec)
+    make_pools(N_vec, n_target_vec, expected_vec, n_reserve = reserve_vec)
   )
   rownames(stage$pools) <- NULL
   stage$units <- rbind(units, new_units)
@@ -944,6 +966,13 @@ resolve_pool_chance <- function(
   } else {
     NA_real_
   }
+  # A reserve stage selects the whole list, its take plus the reserve.
+  n_reserve <- NULL
+  if (!is_null(draw_spec$reserve) && !is_null(n)) {
+    check_reserve_take(n, N)
+    n_reserve <- as.integer(min(n + draw_spec$reserve, N) - min(n, N))
+    n <- n + draw_spec$reserve
+  }
   if (!wr && !is_null(n)) {
     n <- min(n, N)
   }
@@ -963,7 +992,11 @@ resolve_pool_chance <- function(
     !is_null(draw_spec$certainty_prop) ||
     !is_null(draw_spec$certainty_ids)
   if (!has_cert) {
-    return(list(chance = base_chance(mos_vals, n, N), n_target = n_target))
+    return(list(
+      chance = base_chance(mos_vals, n, N),
+      n_target = n_target,
+      n_reserve = n_reserve
+    ))
   }
 
   if (identical(method, "pps_poisson")) {
@@ -1226,6 +1259,15 @@ resolve_exante_digest <- function(design, frame, depth = NULL,
     frame_index_by_stage[[stage]] <- schedule$entries[[i]]$frame_index
   }
   check_exante_stage_frames(design, effective_frames_by_stage, call = call)
+  # A reserve pool with a take below 2 is refused by name, as execute() does.
+  for (stage in seq_along(effective_frames_by_stage)) {
+    if (!is_null(design$stages[[stage]]$draw_spec$reserve)) {
+      targets <- check_stage_targets(
+        design, stage, effective_frames_by_stage[[stage]]
+      )
+      refuse_reserve_take(stage, targets$thin_reserve, call = call)
+    }
+  }
 
   validate_certainty_bridge(design, schedule, call = call)
   # Fingerprint supplied rather than inherited columns.
@@ -1401,6 +1443,7 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
       first_row = urows[1],
       N = length(urows),
       n_target = resolved$n_target,
+      n_reserve = resolved$n_reserve,
       chance = resolved$chance,
       n_desc = n_desc,
       keys = keys,
@@ -1560,6 +1603,13 @@ build_exante_stage <- function(
     function(p) as.double(p$n_target),
     numeric(1)
   )
+  if (!is_null(draw_spec$reserve)) {
+    pools$n_reserve <- vapply(
+      pools_acc,
+      function(p) as.integer(p$n_reserve %||% 0L),
+      integer(1)
+    )
+  }
   pools$n_expected <- vapply(chance_by_pool, sum, numeric(1))
   pools$n_realized <- 0L
   pools$scope <- "universe"
@@ -1845,6 +1895,7 @@ merge_replicated_digests <- function(digests) {
     base$stages <- base$stages[seq_len(keep)]
     base$status <- "partial"
   }
+  base$version <- digest_schema_version(base$stages)
   validate_frame_digest(base)
   base
 }
@@ -1936,6 +1987,7 @@ merge_continuation_digest <- function(
   digest <- prior
   digest$frames <- c(prior$frames, kept)
   digest$stages <- c(prior$stages, new_stages)
+  digest$version <- digest_schema_version(digest$stages)
   validate_frame_digest(digest)
   digest
 }

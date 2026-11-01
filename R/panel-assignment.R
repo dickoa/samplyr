@@ -31,7 +31,10 @@
 #' differ by at most one. It is a partition of the selected sample, not an
 #' additional probability-sampling phase. It changes no inclusion probability
 #' and no `.weight`, so the combined sample is analyzed with the stored
-#' weights.
+#' weights. A unit whose later stages found nothing to sample, kept by
+#' `on_empty`, is assigned too. It has no row in the sample, but it holds
+#' a panel as it does when the later stages are drawn after the
+#' assignment, and its pool is split over every unit drawn.
 #'
 #' Blocking is what preserves order. Units adjacent in the `control` order of
 #' the assignment stage's `draw()` fall in the same block, so every panel
@@ -204,7 +207,11 @@
 #' population. That holds exactly for simple random sampling on a listing
 #' that only loses the units drawn before, and for the first-order chances
 #' of systematic sampling. Units built since the earlier tenures are
-#' weighted the same way, which approximates their larger chance.
+#' weighted the same way, which approximates their larger chance. A rate
+#' `frac` and an allocation across strata are sized on the whole listing
+#' too, so each tenure takes the same share of a pool as `n` does, rather
+#' than a share of the units left. A take above the units left takes all of
+#' them, and the draw says so (`samplyr_warning_census`).
 #'
 #' A schedule with several tenures per panel therefore needs the stage
 #' below the panels to name its units with [cluster_by()] and draw them by
@@ -212,9 +219,31 @@
 #' since every tenure would then hold the same units
 #' (`samplyr_error_tenure_stages`). A listing already cut of the units
 #' drawn before is refused (`samplyr_error_tenure_listing`), since its
-#' weights could not count them back. Permanent units are active at every
-#' wave outside the rotation, keep the units drawn under them at the first
-#' wave drawn, and have no visit.
+#' weights could not count them back. A listing that holds only units
+#' earlier tenures drew in some pool, a primary unit or a stratum within
+#' one, is refused too (`samplyr_error_tenure_exhausted`), since the draw
+#' would leave that pool out of every total. Permanent units are active
+#' at every wave outside the rotation, keep the units drawn under them at
+#' the first wave drawn, and have no visit.
+#'
+#' A listing that lacks only some of the units drawn before is drawn, and
+#' the missing units are read as gone from the population. The draw warns
+#' (`samplyr_warning_tenure_listing`) for the units of each primary unit's
+#' latest tenure, the last one executed, so each departure is reported
+#' once. A unit of an older tenure that goes missing later does not warn.
+#' It may have left the population or been cut from the listing, and
+#' samplyr cannot tell which. A workflow that must stop on the warning can
+#' turn it into an error with a calling handler, which keeps the warning
+#' as the error's parent.
+#'
+#' ```r
+#' withCallingHandlers(
+#'   execute(master, listing, wave = 5, seed = 5),
+#'   samplyr_warning_tenure_listing = function(w) {
+#'     rlang::abort(conditionMessage(w), parent = w)
+#'   }
+#' )
+#' ```
 #'
 #' A wave reads each active panel's current tenure, and is exported by
 #' ultimate clusters from its own rows ([as_svydesign()]) as soon as those

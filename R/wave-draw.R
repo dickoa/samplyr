@@ -46,6 +46,13 @@ draw_wave <- function(master, wave, frames, stages, seed, panels,
   exclusion <- tenure_exclusion(master, record, draws, frames, view,
                                 call = call)
   frames <- exclusion$frames
+  # The draw sizes its takes on the whole listing.
+  takes <- exclusion$takes
+  if (!is_null(takes)) {
+    sized <- get_design(view)
+    sized$stages[[takes$stage]]$draw_spec$tenure_takes <- takes
+    attr(view, "design") <- sized
+  }
   # The inner call holds the listing as a value, so an error raised there
   # is reported against the call the user wrote.
   piece <- withCallingHandlers(
@@ -58,9 +65,22 @@ draw_wave <- function(master, wave, frames, stages, seed, panels,
         cnd$call <- rlang::frame_call(call)
         rlang::cnd_signal(cnd)
       }
+    },
+    # Units of earlier tenures were left out, so taking the rest is no census.
+    samplyr_warning_census = function(cnd) {
+      if (!is_null(exclusion$pools)) {
+        warn_tenure_census(cnd$stage, cnd$payload, call = call)
+        invokeRestart("muffleWarning")
+      }
     }
   )
 
+  # The design the draw keeps does not carry them.
+  if (!is_null(takes)) {
+    kept <- get_design(piece)
+    kept$stages[[takes$stage]]$draw_spec$tenure_takes <- NULL
+    attr(piece, "design") <- kept
+  }
   meta <- attr(piece, "metadata")
   master_parents <- attr(master, "metadata")$empty_parents
   draw <- list(
@@ -224,7 +244,9 @@ abort_wave_opens_nothing <- function(master, record, wave, opening, drawn,
 #' before. Each pool's count of units left out is kept, so the draw can be
 #' weighted to the whole listing. A primary unit drawn before with none of
 #' its earlier units in the listing is refused: that listing was cut
-#' already, and nothing would count those units back.
+#' already, and nothing would count those units back. One missing some of
+#' them is drawn, and they are read as gone from the population. Only the
+#' units of a primary unit's latest tenure warn, so each is reported once.
 #' @return The frames to draw from and the pools' counts, or `NULL` counts
 #'   when nothing is left out.
 #' @noRd
@@ -282,6 +304,40 @@ tenure_exclusion <- function(master, record, draws, frames, view,
       call = call
     )
   }
+  # Units of a returning primary unit's latest tenure missing from the
+  # listing may have left the population, or the listing may have been cut
+  # of them. Older tenures are left out, so a departure warns once. The
+  # latest tenure is read from the panels each draw opened, since a tenure
+  # that drew no unit leaves no row.
+  position <- rep(seq_along(draws),
+                  vapply(draws, function(d) nrow(d$rows), integer(1)))
+  master_rows <- as.data.frame(master)
+  at <- match(psu_used, make_group_key(master_rows, psu_vars))
+  panel <- master_rows$.panel[at]
+  permanent <- panel_permanent_rows(master, record)[at]
+  last_draw <- integer(length(at))
+  for (d in seq_along(draws)) {
+    took <- (panel %in% draws[[d]]$active_panels & !permanent) |
+      (isTRUE(draws[[d]]$permanent) & permanent)
+    last_draw[took] <- d
+  }
+  latest <- position == last_draw
+  returning <- latest & psu_used %in% drawn_now & psu_used %in% psu_listed
+  missing <- unique(used[returning & !used %in% listed])
+  if (length(missing) > 0L) {
+    n_psu <- length(unique(psu_used[returning & used %in% missing]))
+    cli_warn(
+      c(
+        "The listing for this tenure lacks {length(missing)} unit{?s} that
+         earlier tenures drew, in {n_psu} primary unit{?s}.",
+        "i" = "samplyr reads them as gone from the population and weights
+               the new tenure to the listing.",
+        "i" = "If the listing was cut of them, pass the full listing."
+      ),
+      class = "samplyr_warning_tenure_listing",
+      call = call
+    )
+  }
   if (!any(dropped)) {
     return(none)
   }
@@ -291,10 +347,17 @@ tenure_exclusion <- function(master, record, draws, frames, view,
   pool <- make_group_key(listing, pool_vars)
   remaining <- c(tapply(units & !dropped, pool, sum))
   left_out <- c(tapply(units & dropped, pool, sum))
+  check_tenure_exhausted(
+    listing[pool_vars], pool, psu_listed %in% drawn_now,
+    remaining, left_out, call = call
+  )
   frames[[1L]] <- frames[[1L]][!dropped, , drop = FALSE]
   excluded_key <- tenure_pool_key(psu_listed, listing[strata_vars])
   list(
     frames = frames,
+    takes = tenure_listing_takes(
+      listing[units, , drop = FALSE], spec, stage, psu_vars, strata_vars
+    ),
     pools = list(
       vars = pool_vars,
       stage = stage,
@@ -303,6 +366,97 @@ tenure_exclusion <- function(master, record, draws, frames, view,
       strata_vars = strata_vars,
       excluded = c(tapply(units & dropped, excluded_key, sum))
     )
+  )
+}
+
+#' Each pool's take, sized on the whole listing
+#'
+#' A tenure draws from the units earlier tenures left, but `frac` and an
+#' allocation size its take on every unit listed, as `n` is, so each tenure
+#' takes the same share of the listing. A take above what is left takes it
+#' all, which the draw reports. `NULL` when the take does not depend on the
+#' pool's size.
+#' @noRd
+tenure_listing_takes <- function(units, spec, stage, psu_vars, strata_vars) {
+  draw <- spec$draw_spec
+  if (is_null(draw$frac) && is_null(spec$strata$alloc)) {
+    return(NULL)
+  }
+  parents <- split_row_indices(units, psu_vars)
+  table <- vctrs::vec_rbind(!!!lapply(parents$indices, function(rows) {
+    pool <- units[rows, , drop = FALSE]
+    if (length(strata_vars) == 0L) {
+      out <- pool[1L, psu_vars, drop = FALSE]
+      out$n <- draw$n %||% frac_pool_size(nrow(pool), draw$frac, draw)
+      return(out)
+    }
+    groups <- split_row_indices(pool, strata_vars)$indices
+    info <- calculate_stratum_sizes(
+      stratum_info_from_groups(pool, strata_vars, groups), spec$strata, draw
+    )
+    out <- pool[vapply(groups, `[[`, integer(1), 1L), c(psu_vars, strata_vars),
+                drop = FALSE]
+    out$n <- info$.n_h
+    out
+  }))
+  rownames(table) <- NULL
+  list(stage = stage, psu_vars = psu_vars, strata_vars = strata_vars,
+       table = table)
+}
+
+#' Report a tenure stage that took every unit earlier tenures left
+#'
+#' The census warning says the stage contributes no variance. A tenure is
+#' weighted to the whole listing, so where earlier tenures drew from a pool
+#' its units still vary between samples.
+#' @noRd
+warn_tenure_census <- function(stage, x, call = caller_env()) {
+  cli_warn(
+    c(
+      "Stage {stage}: selected every unit that earlier tenures did not draw,
+       in the pools it executed.",
+      "x" = "Requested {x$n_requested} unit{?s}, selected all
+             {x$n_actual} available.",
+      pool_lines(x, "Exhausted pools"),
+      "i" = "Where earlier tenures drew from a pool, the new tenure is
+             weighted to the whole listing, so the stage still contributes
+             sampling variance there."
+    ),
+    class = "samplyr_warning_census",
+    stage = stage,
+    operation = "population_cap",
+    payload = x,
+    call = call
+  )
+}
+
+#' Refuse a tenure whose pools earlier tenures drew whole
+#'
+#' Leaving out the earlier units leaves no row of such a pool, so the draw
+#' would never see it. A stratum would drop out of the totals, and a
+#' primary unit would read as empty although it is not.
+#' @noRd
+check_tenure_exhausted <- function(keys, pool, now, remaining, left_out,
+                                   call = caller_env()) {
+  gone <- names(remaining)[remaining == 0L & left_out > 0L]
+  at <- now & pool %in% gone
+  if (!any(at)) {
+    return(invisible(NULL))
+  }
+  pools <- vctrs::vec_unique(vctrs::vec_slice(keys, at))
+  n <- nrow(pools)
+  abort_samplyr(
+    c(
+      "{n} pool{?s} of this tenure {?has/have} no unit that earlier tenures
+       did not draw.",
+      "x" = "{cli::qty(n)}Pool{?s}: {format_pool_sample(format_key_preview(pools))}.",
+      "i" = "A tenure draws only units no earlier tenure drew, so the
+             listing needs new units in every pool it draws from.",
+      "i" = "List the units added since, or take fewer units per tenure so
+             the listing lasts the schedule."
+    ),
+    class = "samplyr_error_tenure_exhausted",
+    call = call
   )
 }
 
@@ -512,6 +666,7 @@ complete_wave_draws <- function(master, draws) {
         meta$empty_parents,
         unlist(lapply(draws, `[[`, "empty_parents"), recursive = FALSE)
       ),
+      draw_seeds = draw_seeds(draws),
       per_wave_draws = lapply(draws, function(d) {
         d$rows <- NULL
         d$design <- NULL
@@ -556,6 +711,45 @@ wave_draws <- function(x) {
 #' @noRd
 wave_draws_drawn <- function(draws) {
   vapply(draws, function(d) as.integer(d$wave), integer(1))
+}
+
+#' The seeds of the wave draws a sample's rows come from
+#'
+#' A unit's rows come from the draw where its tenure opened, as of the wave
+#' the row belongs to, and permanent units from the draw that took them.
+#' @noRd
+wave_draw_seeds <- function(draws, record, data, waves) {
+  if (length(draws) == 0L || is_null(record) || nrow(data) == 0L) {
+    return(NULL)
+  }
+  drawn <- wave_draws_drawn(draws)
+  at <- data[[".wave"]] %||% rep(waves[[1L]], nrow(data))
+  permanent <- panel_permanent_rows(data, record)
+  used <- unlist(lapply(unique(at), function(t) {
+    rows <- at == t & !permanent
+    tenure_opening(record, data$.panel[rows], t)
+  }))
+  if (any(permanent)) {
+    holds <- vapply(draws, function(d) isTRUE(d$permanent), logical(1))
+    used <- c(used, drawn[holds])
+  }
+  draw_seeds(draws[drawn %in% used])
+}
+
+#' The seeds of some wave draws, in the order of their waves
+#'
+#' `integer(0)` when one of the draws ran without a seed, so no seed
+#' reproduces the rows, and `NULL` for no draw.
+#' @noRd
+draw_seeds <- function(draws) {
+  if (length(draws) == 0L) {
+    return(NULL)
+  }
+  seeds <- lapply(draws[order(wave_draws_drawn(draws))], `[[`, "seed")
+  if (any(vapply(seeds, is_null, logical(1)))) {
+    return(integer(0))
+  }
+  unique(as.integer(unlist(seeds)))
 }
 
 #' @noRd
@@ -660,12 +854,17 @@ materialize_drawn_wave <- function(master, record, wave, active, remaining,
   source <- wave_draw_source(master, record, wave, remaining, call = call)
   build_wave_sample(
     source = source,
+    draws = wave_draws(master),
     record = record,
     wave = wave,
     activation = activate_cohort(source, record, active, call = call),
     schedule_digest = rlang::hash(record$schedule),
     execution_environment = execution_environment,
-    extra = list(provisional = TRUE),
+    # The digest describes the master at these stages, the wave below.
+    extra = list(
+      provisional = TRUE,
+      master_stages = get_stages_executed(master)
+    ),
     digest = readable_digest(wave_rows_digest(master, source))
   )
 }
@@ -719,6 +918,18 @@ wave_draw_source <- function(master, record, wave, remaining,
   first <- draws[[1L]]
   stages <- sort(unique(c(get_stages_executed(master), first$stages)))
   meta <- attr(master, "metadata")
+
+  # A primary unit its tenure's draw found empty has no row here, and the
+  # export refuses it only if the wave keeps the draw's record of it.
+  vars <- first$design$stages[[1L]]$clusters$vars
+  units <- as.data.frame(master)
+  opened <- tenure_opening(record, units$.panel, wave)
+  empty_parents <- unlist(lapply(draws, function(d) {
+    read <- (!permanent & units$.panel %in% active & opened %in% d$wave) |
+      (permanent & isTRUE(d$permanent))
+    keep_empty_parents(d$empty_parents, vars, units[read, vars, drop = FALSE])
+  }), recursive = FALSE)
+
   new_tbl_sample(
     data = data,
     design = first$design,
@@ -730,9 +941,35 @@ wave_draw_source <- function(master, record, wave, remaining,
       panels = meta$panels,
       panel_assignment = meta$panel_assignment,
       execution_environment = first$execution_environment,
-      integrity = sample_integrity_record(data, first$design, stages)
+      integrity = sample_integrity_record(data, first$design, stages),
+      empty_parents = empty_parents
     )
   )
+}
+
+#' Empty-parent records restricted to some primary units
+#'
+#' Keeps the parents whose primary unit is one of `units`, keyed on `vars`,
+#' or with `inside = FALSE` the parents whose primary unit is not. A record
+#' without those keys is kept whole.
+#' @noRd
+keep_empty_parents <- function(records, vars, units, inside = TRUE) {
+  records <- lapply(records, function(r) {
+    if (length(vars) == 0L || !all(vars %in% names(r$keys))) {
+      return(r)
+    }
+    at <- vctrs::vec_in(r$keys[vars], units) == inside
+    r$keys <- vctrs::vec_slice(r$keys, at)
+    r$n <- nrow(r$keys)
+    if (!is_null(r$rows)) {
+      r$rows <- vctrs::vec_slice(
+        r$rows,
+        vctrs::vec_in(r$rows[vars], units) == inside
+      )
+    }
+    r
+  })
+  Filter(function(r) r$n > 0L, records)
 }
 
 #' Refuse a provisional wave where its first phase would be read
@@ -742,12 +979,19 @@ check_wave_not_provisional <- function(x, fn_name, call = caller_env()) {
   if (!isTRUE(wave$provisional)) {
     return(invisible(NULL))
   }
+  # A master whose panels open several tenures keeps drawing, so it never
+  # closes, even once its schedule is drawn.
+  tenures <- schedule_has_tenures(attr(x, "metadata")$panel_assignment$schedule)
   abort_samplyr(
     c(
       "{.fn {fn_name}} does not take {wave_phrase(wave$wave)} of a master
-       whose later stages are still being drawn.",
-      "x" = "The master's later stages are drawn one wave at a time, and some
-             are not drawn yet.",
+       whose later stages are drawn one wave at a time.",
+      "x" = if (tenures) {
+        "The master's panels open several tenures, so its later stages are
+         drawn one tenure at a time and the master is never complete."
+      } else {
+        "Some of the master's later stages are not drawn yet."
+      },
       "i" = "The weights of this wave are exact, and {.fn as_svydesign} and
              {.fn as_svrepdesign} export it by ultimate clusters from its own
              rows."

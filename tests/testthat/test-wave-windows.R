@@ -141,14 +141,16 @@ test_that("permanent units keep a row per wave in a one-visit window", {
   expect_equal(rows$.weight, master$.weight[at] / 3)
 
   # Every panel at chance one is not the master's design: units repeat.
+  # The units taken with certainty add no variance, so the rest give it.
   skip_if_not_installed("survey")
   svy <- as_svydesign(window)
+  df <- with_visits(window, ".sample_id")
   reference <- survey::svydesign(
     ids = ~.sample_id,
     strata = ~ interaction(h, visits),
     weights = ~.weight,
     nest = TRUE,
-    data = with_visits(window, ".sample_id")
+    data = df[!df$.certainty_1, ]
   )
   expect_identical(survey::degf(svy), survey::degf(reference))
   expect_equal(
@@ -214,6 +216,109 @@ test_that("a clustered window keeps its primary units as clusters", {
   )
 })
 
+test_that("a primary unit taken with certainty represents itself", {
+  skip_if_not_installed("survey")
+  withr::local_options(survey.lonely.psu = "fail")
+  # EA 1 is taken with certainty, so it is active at every wave.
+  frame <- expand.grid(hh = 1:4, psu = 1:9)
+  frame$h <- "a"
+  frame$mos <- ifelse(frame$psu == 1L, 1000, 10)
+  frame$y <- (frame$hh * 3 + frame$psu) %% 7
+  schedule <- data.frame(
+    wave = c(1, 1, 2, 2), panel = c(1, 2, 1, 2),
+    active = c(TRUE, FALSE, FALSE, TRUE)
+  )
+  master <- suppressMessages(
+    sampling_design() |>
+      add_stage() |> stratify_by(h) |> cluster_by(psu) |>
+      draw(n = 5, method = "pps_brewer", mos = mos) |>
+      add_stage() |> cluster_by(hh) |> draw(n = 2) |>
+      execute(frame, seed = 1, panels = schedule)
+  )
+  expect_identical(unique(master$psu[master$.certainty_1]), 1L)
+
+  # Its households are the clusters of a stratum of its own, in a wave and
+  # in a window, where it would otherwise stand alone among its visits.
+  for (waves in list(1, 1:2)) {
+    window <- execute(master, wave = waves)
+    df <- if (length(waves) > 1L) {
+      with_visits(window, "psu")
+    } else {
+      transform(as.data.frame(window), visits = 1L)
+    }
+    df$unit <- ifelse(df$.certainty_1, paste0("hh", df$hh), paste0("ea", df$psu))
+    df$stratum <- interaction(df$h, df$visits, df$.certainty_1)
+    reference <- survey::svydesign(
+      ids = ~unit, strata = ~stratum, weights = ~.weight, data = df
+    )
+    expect_no_warning(svy <- as_svydesign(window))
+    expect_identical(survey::degf(svy), survey::degf(reference))
+    expect_equal(
+      unname(survey::SE(survey::svytotal(~y, svy))),
+      unname(survey::SE(survey::svytotal(~y, reference)))
+    )
+  }
+
+})
+
+test_that("a unit taken with certainty and nothing below adds no variance", {
+  skip_if_not_installed("survey")
+  withr::local_options(survey.lonely.psu = "fail")
+  # EA 1, or element 1, is taken with certainty.
+  eas <- expand.grid(hh = 1:4, psu = 1:9)
+  eas$mos <- ifelse(eas$psu == 1L, 1000, 10)
+  eas$y <- (eas$hh * 3 + eas$psu) %% 7
+  elements <- data.frame(id = 1:30, mos = c(1000, rep(10, 29)))
+  elements$y <- (elements$id * 7) %% 11
+  schedule <- data.frame(
+    wave = c(1, 1, 2, 2), panel = c(1, 2, 1, 2),
+    active = c(TRUE, FALSE, FALSE, TRUE)
+  )
+  masters <- suppressMessages(list(
+    psu = sampling_design() |> cluster_by(psu) |>
+      draw(n = 5, method = "pps_brewer", mos = mos) |>
+      execute(eas, seed = 1, panels = schedule),
+    .sample_id = sampling_design() |>
+      draw(n = 7, method = "pps_brewer", mos = mos) |>
+      execute(elements, seed = 1, panels = schedule)
+  ))
+  for (unit in names(masters)) {
+    master <- masters[[unit]]
+    expect_identical(unique(master[[unit]][master$.certainty_1]), 1L)
+    for (waves in list(1, 1:2)) {
+      window <- execute(master, wave = waves)
+      df <- if (length(waves) > 1L) {
+        with_visits(window, unit)
+      } else {
+        transform(as.data.frame(window), visits = 1L)
+      }
+      # The unit is the same in every sample, so the others give the whole
+      # variance. In a window it would stand alone among its visits.
+      reference <- survey::svydesign(
+        ids = stats::as.formula(paste0("~", unit)),
+        strata = ~visits,
+        weights = ~.weight,
+        data = df[!df$.certainty_1, ]
+      )
+      se <- as.vector(survey::SE(survey::svytotal(~y, reference)))
+      info <- paste(unit, length(waves))
+      expect_no_warning(svy <- as_svydesign(window))
+      expect_equal(as.vector(survey::SE(survey::svytotal(~y, svy))), se,
+                   info = info)
+      jkn <- as_svrepdesign(window, type = "JKn")
+      expect_equal(as.vector(survey::SE(survey::svytotal(~y, jkn))), se,
+                   info = info)
+      boot <- as_svrepdesign(window, type = "subbootstrap", replicates = 20)
+      sure <- boot$variables$.certainty_1
+      expect_equal(
+        unname(weights(boot, type = "analysis")[sure, , drop = FALSE]),
+        matrix(boot$variables$.weight[sure], sum(sure), 20),
+        info = info
+      )
+    }
+  }
+})
+
 ## What a window is not
 
 test_that("a window is refused where it has no meaning yet", {
@@ -256,4 +361,40 @@ test_that("a window prints the waves it pools", {
   master <- window_master(n = 15)
   expect_output(print(execute(master, wave = 1:3)), "Waves:\\s+1 to 3 of 3")
   expect_output(print(execute(master, wave = c(1, 3))), "Waves:\\s+1 and 3 of 3")
+})
+
+test_that("summary() of a wave describes the wave, with or without a digest", {
+  stage_lines <- function(x) {
+    out <- cli::ansi_strip(capture.output(print(summary(x))))
+    out[startsWith(out, "i Wave") | grepl("strata: N_h", out, fixed = TRUE)]
+  }
+  draw_master <- function(frame_digest) {
+    sampling_design() |>
+      stratify_by(h) |>
+      draw(n = 20) |>
+      execute(window_frame(), seed = 2, panels = overlap_schedule(),
+              frame_digest = frame_digest)
+  }
+  full <- draw_master("full")
+  none <- draw_master("none")
+  expect_false(is.null(get_frame_digest(full)))
+  # Panel 2 is active at both waves, so the window revisits its units.
+  for (waves in list(2, 1:2)) {
+    wave <- execute(full, wave = waves)
+    lines <- stage_lines(wave)
+    expect_identical(lines, stage_lines(execute(none, wave = waves)))
+    n_h <- unique(tapply(wave$.sample_id, wave$h, function(id) {
+      length(unique(id))
+    }))
+    expect_length(n_h, 1L)
+    expect_identical(lines[[2]], sprintf(
+      "* 3 strata: N_h 200, n_h %d, f_h %.4f", n_h, n_h / 200
+    ))
+    expect_identical(lines[[1]], sprintf(
+      "i %s: %s of 4. It holds %d of the master's 60 units.",
+      if (length(waves) > 1L) "Waves" else "Wave",
+      wave_span(waves),
+      length(unique(wave$.sample_id))
+    ))
+  }
 })

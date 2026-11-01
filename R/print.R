@@ -226,6 +226,10 @@ format_draw_spec <- function(draw, has_strata = FALSE, alloc = NULL,
     parts <- c(parts, "on_capped = error")
   }
 
+  if (!is_null(draw$reserve)) {
+    parts <- c(parts, paste0("reserve = ", draw$reserve))
+  }
+
   paste(parts, collapse = ", ")
 }
 
@@ -819,7 +823,8 @@ print.samplyr_design_comparison <- function(x, ...) {
   invisible(x)
 }
 
-#' The side-by-side methods and measures of size, outside the verdict
+#' The side-by-side methods, measures of size and reserves, outside the
+#' verdict
 #' @noRd
 print_specification <- function(spec) {
   # A stage without a measure of size in either design has nothing to show.
@@ -829,9 +834,18 @@ print_specification <- function(spec) {
     return(invisible(NULL))
   }
   cli::cat_line()
-  cli::cat_line("Methods and measures of size, outside the verdict:")
+  cli::cat_line(if (any(spec$aspect == "reserve")) {
+    "Methods, measures of size and reserves, outside the verdict:"
+  } else {
+    "Methods and measures of size, outside the verdict:"
+  })
   for (i in seq_len(nrow(spec))) {
-    what <- if (spec$aspect[[i]] == "method") "method" else "measure of size"
+    what <- switch(
+      spec$aspect[[i]],
+      method = "method",
+      mos = "measure of size",
+      reserve = "reserve"
+    )
     value <- function(v) if (is.na(v)) "none" else v
     text <- switch(
       spec$status[[i]],

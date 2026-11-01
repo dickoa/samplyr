@@ -91,7 +91,8 @@ build_wave_sample <- function(
   schedule_digest,
   execution_environment,
   extra = list(),
-  digest = readable_digest(wave_master_digest(source))
+  digest = readable_digest(wave_master_digest(source)),
+  draws = wave_draws(source)
 ) {
   data <- as.data.frame(source)[activation$keep, , drop = FALSE]
   data$.weight <- data$.weight * activation$factor[activation$keep]
@@ -118,7 +119,8 @@ build_wave_sample <- function(
       extra
     ),
     execution_environment = execution_environment,
-    digest = digest
+    digest = digest,
+    draws = draws
   )
 }
 
@@ -183,8 +185,24 @@ build_window_sample <- function(
     vctrs::vec_rbind(!!!lapply(sources, as.data.frame))
   ))
 
+  # The window's first phase is its first wave. On a master drawn wave by
+  # wave, it carries every wave's empty primary units with no row in the
+  # window, so the export refuses them.
+  source <- sources[[1L]]
+  if (length(remaining) > 0L) {
+    vars <- get_design(source)$stages[[1L]]$clusters$vars
+    attr(source, "metadata")$empty_parents <- keep_empty_parents(
+      unlist(lapply(sources, function(s) {
+        attr(s, "metadata")$empty_parents
+      }), recursive = FALSE),
+      vars,
+      data[vars],
+      inside = FALSE
+    )
+  }
+
   new_wave_sample(
-    sources[[1L]],
+    source,
     record,
     data,
     wave = list(
@@ -194,10 +212,14 @@ build_window_sample <- function(
       schedule_digest = rlang::hash(schedule),
       pools = if (!repeated) union$pools,
       master_digest = wave_source_digest(master),
-      provisional = if (length(remaining) > 0L) TRUE
+      provisional = if (length(remaining) > 0L) TRUE,
+      master_stages = if (length(remaining) > 0L) {
+        get_stages_executed(master)
+      }
     ),
     execution_environment = execution_environment,
-    digest = digest
+    digest = digest,
+    draws = wave_draws(master)
   )
 }
 
@@ -218,7 +240,8 @@ new_wave_sample <- function(
   data,
   wave,
   execution_environment,
-  digest = NULL
+  digest = NULL,
+  draws = wave_draws(source)
 ) {
   design <- get_design(source)
   stages_executed <- get_stages_executed(source)
@@ -244,7 +267,14 @@ new_wave_sample <- function(
           stages = stages_executed
         ),
         execution_environment = execution_environment,
-        integrity = sample_integrity_record(data, design, stages_executed)
+        integrity = sample_integrity_record(data, design, stages_executed),
+        # An activation that keeps every unit exports as its first phase's
+        # own design, which refuses the primary units that phase lost.
+        empty_parents = if (activation_is_identity(list(wave = wave))) {
+          attr(source, "metadata")$empty_parents
+        },
+        # The summary shows them, since the seed is the last call's.
+        draw_seeds = wave_draw_seeds(draws, record, data, wave$wave)
       )
     )
   )

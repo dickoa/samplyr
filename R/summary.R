@@ -27,6 +27,12 @@
 #' The header line shows the total sample size (with the universe size
 #' when the frame digest records a complete denominator and the executed
 #' path has no with-replacement stage), the stages executed, and the seed.
+#' Under `frame_digest = "none"` the header shows the sample size alone,
+#' since nothing records the size of the frame. When the later stages were
+#' drawn one wave at a time, the header shows the seeds of the draws the
+#' rows come from, such as `seeds = 101 to 112` for the completed master.
+#' A wave shows the seed of the draw that took its units. The header shows
+#' no seed when one of those draws ran without one.
 #'
 #' A sample split into [periods()] gets one more line, which says whether
 #' each stratum has the same number of units in every period and names the
@@ -38,6 +44,14 @@
 #' of periods. While the later stages are drawn one period at a time, a line
 #' such as "Drawn: stage 2 in 3 of 12 periods (1, 2, 5)." says how far they
 #' are.
+#'
+#' A materialized wave, period or window describes itself. A line such as
+#' "Period: 2 of 4. It holds 26 of the master's 104 units." names it and
+#' counts the units its panels were assigned to, each once however many of
+#' the waves activate it. Its stage sections count the wave's own units,
+#' with or without a frame digest, since the digest records the master's
+#' draw. A stage drawn for the wave alone is read from the wave's part of
+#' the digest. The master's own summary describes its draw.
 #'
 #' Each stage section has two lines:
 #'
@@ -100,7 +114,7 @@ summary.tbl_sample <- function(object, ...) {
       sample = object,
       n = nrow(object),
       stages = stages,
-      seed = attr(object, "seed"),
+      seed = summary_seeds(object),
       weights = if (weighted) {
         list(
           mean = mean(w),
@@ -137,12 +151,39 @@ print.summary_tbl_sample <- function(x, ...) {
   invisible(x)
 }
 
+#' The seeds a summary shows
+#'
+#' Rows drawn one wave at a time show the seeds of the draws they come from,
+#' and none when one of those draws had none. Other samples show their
+#' seed.
+#' @noRd
+summary_seeds <- function(object) {
+  attr(object, "metadata")$draw_seeds %||% attr(object, "seed")
+}
+
+#' Seeds as the header prints them, with a run of three or more as a range
+#' @noRd
+format_seeds <- function(seeds) {
+  if (length(seeds) == 1L) {
+    return(paste0("seed = ", seeds))
+  }
+  runs <- split(seeds, cumsum(c(1L, diff(seeds) != 1L)))
+  parts <- vapply(runs, function(run) {
+    if (length(run) >= 3L) {
+      paste(run[[1L]], "to", run[[length(run)]])
+    } else {
+      paste(run, collapse = ", ")
+    }
+  }, character(1))
+  paste0("seeds = ", paste(parts, collapse = ", "))
+}
+
 #' The printed summary, from the sample
 #' @noRd
 render_sample_summary <- function(object) {
   design <- get_design(object)
   stages_executed <- get_stages_executed(object)
-  seed <- attr(object, "seed")
+  seed <- summary_seeds(object)
 
   if (!is_null(design$title)) {
     cli::cat_rule(paste0("Sample Summary: ", design$title))
@@ -185,8 +226,8 @@ render_sample_summary <- function(object) {
     n_txt,
     paste0("stages = ", length(stages_executed), "/", n_total_stages)
   )
-  if (!is_null(seed)) {
-    info_parts <- c(info_parts, paste0("seed = ", seed))
+  if (length(seed) > 0L) {
+    info_parts <- c(info_parts, format_seeds(seed))
   }
   if (is_replicated) {
     n_reps <- n_replicates(object)
@@ -203,6 +244,7 @@ render_sample_summary <- function(object) {
   )
 
   summary_periods_lines(summary_periods(object))
+  summary_wave_line(object)
   progress <- wave_draws_progress(object)
   if (!is_null(progress)) {
     cli::cat_bullet(paste0("Drawn: ", progress, "."), bullet = "info")
@@ -221,12 +263,30 @@ render_sample_summary <- function(object) {
       digest <- NULL
     }
   }
+  # A wave's stages are counted on its rows where its digest describes the
+  # master, which is every stage the master drew for all its panels.
+  wave <- attr(stage_sample, "metadata")[["wave"]]
+  is_wave <- !is_null(wave)
+  if (is_wave && !is_null(digest)) {
+    master_stages <- wave$master_stages %||% stages_executed
+    digest$stages <- Filter(
+      function(s) !s$stage_id %in% master_stages,
+      digest$stages
+    )
+  }
 
   # The first replicate with rows. A stack of empty replicates has none.
   object_for_alloc <- if (is_replicated && nrow(stage_sample) > 0L) {
     stage_sample[stage_sample$.replicate == min(stage_sample$.replicate), ]
   } else {
     stage_sample
+  }
+  # A window repeats a unit once per wave it is active.
+  if (is_wave && ".sample_id" %in% names(object_for_alloc)) {
+    object_for_alloc <- object_for_alloc[
+      !duplicated(object_for_alloc$.sample_id), ,
+      drop = FALSE
+    ]
   }
 
   digest_stage_ids <- if (!is_null(digest)) {
@@ -268,6 +328,9 @@ render_sample_summary <- function(object) {
     }
     summary_empty_parents(
       attr(stage_sample, "metadata")$empty_parents, stage_idx
+    )
+    summary_reserve_settlement(
+      attr(object, "metadata")$reserve_settlement, stage_idx
     )
   }
 
@@ -318,6 +381,90 @@ render_sample_summary <- function(object) {
   invisible(NULL)
 }
 
+#' The settlement of a reserve stage, as ranges over its pools
+#' @noRd
+summary_reserve_settlement <- function(settlement, stage_idx) {
+  if (is_null(settlement) || !identical(settlement$stage, stage_idx)) {
+    return(invisible(NULL))
+  }
+  pools <- settlement$pools
+  fmt_n <- function(v) format(v, big.mark = ",", trim = TRUE)
+  counts <- c("n_listed", "n_attempted", "n_eligible", "n_unknown",
+              "n_respondents")
+  flags <- c("ran_out", "under_released", "over_released", "no_respondent")
+  cli::cat_bullet(
+    paste0(
+      "Settled: ",
+      paste(
+        paste(counts, vapply(counts, function(v) {
+          summary_range(pools[[v]], fmt_n)
+        }, character(1))),
+        collapse = ", "
+      )
+    ),
+    bullet = "bullet"
+  )
+  cli::cat_bullet(
+    paste0(
+      paste(paste(flags, vapply(flags, function(v) {
+        fmt_n(sum(pools[[v]]))
+      }, character(1))), collapse = ", "),
+      " of ", fmt_n(nrow(pools)), " pools, dropped ", fmt_n(sum(pools$dropped))
+    ),
+    bullet = "bullet"
+  )
+  rates <- reserve_realized_rates(pools)
+  fmt_rate <- function(x) formatC(x, format = "f", digits = 3)
+  cli::cat_bullet(
+    paste0(
+      "Realized eligibility_rate ", fmt_rate(rates[["eligibility_rate"]]),
+      ", resp_rate ", fmt_rate(rates[["resp_rate"]]),
+      ", n_respondents / n_attempted ", fmt_rate(rates[["completes"]]),
+      ", sd between pools ", fmt_rate(rates[["completes_sd"]])
+    ),
+    bullet = "bullet"
+  )
+  invisible(NULL)
+}
+
+#' The realized rates of a settlement, as svyplan names them
+#'
+#' Pooled ratios of totals over the pools, which the stop rule leaves
+#' consistent. Unknowns are allocated by the share of resolved units found
+#' eligible (AAPOR's e), or counted as eligible when none resolved, as the
+#' weights do. `resp_rate` is then RR4, and the two rates multiply to the
+#' respondents per attempted unit.
+#'
+#' `completes_sd` is the spread of that share between pools, net of each
+#' pool's sampling noise. A pool's share is (r - s) / (k - s), unbiased
+#' under the stop rule, with variance estimated by p (1 - p) / (k - s - 1).
+#' The between-pool variance is their spread minus the mean of those
+#' variances, floored at 0. Pools with fewer than 2 units beyond the stop
+#' are left out.
+#' @noRd
+reserve_realized_rates <- function(pools) {
+  attempted <- sum(pools$n_attempted)
+  resolved <- sum(pools$n_eligible) + sum(pools$n_ineligible)
+  e <- if (resolved > 0) sum(pools$n_eligible) / resolved else 1
+  eligible <- e * attempted
+  respondents <- sum(pools$n_respondents)
+  worked <- pools$n_attempted - pools$stopped
+  ok <- worked >= 2L
+  share <- (pools$n_respondents - pools$stopped)[ok] / worked[ok]
+  noise <- share * (1 - share) / (worked[ok] - 1)
+  completes_sd <- if (sum(ok) >= 2L) {
+    sqrt(max(0, stats::var(share) - mean(noise)))
+  } else {
+    NA_real_
+  }
+  c(
+    eligibility_rate = e,
+    resp_rate = if (eligible > 0) respondents / eligible else NA_real_,
+    completes = respondents / attempted,
+    completes_sd = completes_sd
+  )
+}
+
 #' Units per period in each pool of a periods sample
 #'
 #' `NULL` unless the sample is split into `periods()`, and for a period
@@ -365,6 +512,33 @@ summary_periods <- function(object) {
       "pools"
     }
   )
+}
+
+#' The wave a materialized sample holds, and its share of the master
+#'
+#' The units are those the panels were assigned to, counted once however
+#' many of the waves activate them.
+#' @noRd
+summary_wave_line <- function(object) {
+  metadata <- attr(object, "metadata")
+  head <- panel_header_line(object)
+  if (is_null(metadata[["wave"]]) || is_null(head)) {
+    return(invisible(NULL))
+  }
+  line <- paste0(names(head)[1], ": ", head[[1]], ".")
+  record <- metadata$panel_assignment
+  key_vars <- as.character(record$key_vars)
+  if (length(key_vars) > 0L && all(key_vars %in% names(object))) {
+    total <- sum(vapply(record$pools, function(p) length(p$keys), integer(1)))
+    active <- nrow(vctrs::vec_unique(as.data.frame(object)[key_vars]))
+    fmt_n <- function(v) format(v, big.mark = ",", trim = TRUE)
+    line <- paste0(
+      line, " It holds ", fmt_n(active), " of the master's ", fmt_n(total),
+      " units."
+    )
+  }
+  cli::cat_bullet(line, bullet = "info")
+  invisible(NULL)
 }
 
 #' The summary lines of a periods sample
@@ -550,7 +724,15 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL,
       varies <- TRUE
     }
   }
-  n_txt <- summary_range(n_realized, fmt_n)
+  # A reserve stage selects a list, its take followed by its reserve.
+  n_reserve <- pools$n_reserve
+  reserve_txt <- if (!is_null(n_reserve) && !anyNA(n_reserve)) {
+    paste0("n_reserve ", summary_range(n_reserve, fmt_n))
+  }
+  n_txt <- summary_range(
+    if (is_null(reserve_txt)) n_realized else n_realized - n_reserve,
+    fmt_n
+  )
   n_scoped_txt <- paste0(
     n_txt, if (varies) " across replicates" else ""
   )
@@ -568,6 +750,9 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL,
       )
     } else {
       base <- paste0("N = ", fmt_n(pools$N), ", n = ", n_scoped_txt)
+      if (!is_null(reserve_txt)) {
+        base <- paste0(base, ", ", reserve_txt)
+      }
       if (
         !varies && !anyNA(n_realized) && !is.na(pools$N) && pools$N > 0
       ) {
@@ -607,7 +792,8 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL,
           paste0(" of ", summary_range(listed, fmt_n), " listed")
         }
       ),
-      paste0("n_h ", n_scoped_txt)
+      paste0("n_h ", n_scoped_txt),
+      reserve_txt
     )
     if (
       !is_wr && !varies && !anyNA(n_realized) &&
@@ -798,27 +984,42 @@ summary_stage_fallback <- function(object_for_alloc, design, stage_spec,
     }
     fmt_f <- function(f) sprintf("%.4f", f)
     fmt_n <- function(v) format(v, big.mark = ",", trim = TRUE)
+    # A reserve stage lists its take followed by its reserve.
+    reserve_col <- paste0(".reserve_", stage_idx)
+    in_reserve <- if (reserve_col %in% names(count_data)) {
+      count_data[[reserve_col]] > 0L
+    } else {
+      rep(FALSE, nrow(count_data))
+    }
+    has_reserve <- reserve_col %in% names(count_data)
 
     if (length(pool_vars) == 0L) {
       N <- count_data[[fpc_col]][1]
       main <- paste0(
-        "N = ", fmt_n(N), ", n = ", fmt_n(nrow(count_data)),
+        "N = ", fmt_n(N), ", n = ", fmt_n(sum(!in_reserve)),
+        if (has_reserve) paste0(", n_reserve ", fmt_n(sum(in_reserve))),
         ", f = ", fmt_f(nrow(count_data) / N)
       )
     } else {
+      count_data$.in_reserve <- in_reserve
       alloc_tbl <- count_data |>
         group_by(across(all_of(pool_vars))) |>
         summarise(
           N_h = .data[[fpc_col]][1],
-          n_h = n(),
+          n_list = n(),
+          n_reserve = sum(.data$.in_reserve),
           .groups = "drop"
         )
       noun <- if (length(ancestor_vars) == 0L) "strata" else "pools"
       main <- paste0(
         fmt_n(nrow(alloc_tbl)), " ", noun, ": ",
         "N_h ", summary_range(alloc_tbl$N_h, fmt_n), ", ",
-        "n_h ", summary_range(alloc_tbl$n_h, fmt_n), ", ",
-        "f_h ", summary_range(alloc_tbl$n_h / alloc_tbl$N_h, fmt_f)
+        "n_h ", summary_range(alloc_tbl$n_list - alloc_tbl$n_reserve, fmt_n),
+        ", ",
+        if (has_reserve) {
+          paste0("n_reserve ", summary_range(alloc_tbl$n_reserve, fmt_n), ", ")
+        },
+        "f_h ", summary_range(alloc_tbl$n_list / alloc_tbl$N_h, fmt_f)
       )
     }
     cli::cat_bullet(paste0(main, suffix), bullet = "bullet")

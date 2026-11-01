@@ -33,7 +33,16 @@ applies the same rule.
 
 A listing derived from the partial sample, for example with
 \code{\link[dplyr:reframe]{dplyr::reframe()}} or \code{\link[tidyr:uncount]{tidyr::uncount()}}, may carry its generated columns
-(\code{.weight}, \code{.fpc_1}, ...). A continuation strips them before sampling.
+(\code{.weight}, \code{.fpc_1}, ...). A continuation strips them before sampling,
+except \code{.draw_k}. A unit drawn more than once by a with-replacement
+method has one row per draw in the sample, so a listing derived from
+those rows lists the unit once per draw. Its \code{.draw_k} columns tell each
+draw which rows are its own. A listing without them lists each unit
+once, and every draw of the unit samples those rows. Build such a
+listing from the unique selected units, and keep \code{.draw_k} whenever a
+listing expands the sample's rows. A listing that keeps \code{.draw_k} but
+leaves out a draw of a unit it lists, or names a draw that was not made,
+is refused (\code{samplyr_error_frame_draws}).
 Passing the original design as \code{.data} instead starts a new execution at
 stage 1 and treats a \code{tbl_sample} frame as a previous phase. When that
 frame is a strict partial result of the same design, \code{execute()} warns

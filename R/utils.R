@@ -1122,8 +1122,11 @@ stray_arg_bullets <- function(name, candidates) {
 #' @param dots The caller's `...` as quosures from `enquos()`. Forcing them
 #'   would let a stray expression fail first with its own message.
 #' @param candidates The arguments that follow `...`, for suggestions.
+#' @param elsewhere Arguments of another verb, named by the argument, valued
+#'   by the verb, that a user may pass here by mistake.
 #' @noRd
-check_keyword_args <- function(dots, candidates, call = rlang::caller_env()) {
+check_keyword_args <- function(dots, candidates, elsewhere = character(0),
+                               call = rlang::caller_env()) {
   if (length(dots) == 0L) {
     return(invisible(NULL))
   }
@@ -1131,11 +1134,15 @@ check_keyword_args <- function(dots, candidates, call = rlang::caller_env()) {
 
   named <- which(nzchar(nms))
   if (length(named) > 0) {
+    name <- nms[[named[[1]]]]
+    bullets <- stray_arg_bullets(name, candidates)
+    if (name %in% names(elsewhere)) {
+      bullets[["i"]] <- cli::format_inline(
+        "{.arg {name}} is an argument of {.fn {elsewhere[[name]]}}."
+      )
+    }
     abort_samplyr(
-      c(
-        "This function received an unexpected argument.",
-        stray_arg_bullets(nms[[named[[1]]]], candidates)
-      ),
+      c("This function received an unexpected argument.", bullets),
       class = "samplyr_error_unknown_argument",
       call = call
     )
@@ -1244,11 +1251,13 @@ check_forwarded_args <- function(
 samplyr_reserved_names <- function(nms) {
   exact <- c(
     ".weight", ".fpc", ".pik", ".sample_id", ".stage", ".panel",
-    ".replicate", ".draw", ".certainty", ".zone", ".pair", ".wave",
-    ".visit",
+    ".replicate", ".draw", ".certainty", ".reserve", ".zone", ".pair",
+    ".wave", ".visit",
     "._prev_phase_weight"
   )
-  generated <- grepl("^\\.(weight|fpc|draw|certainty|zone|pair)_[0-9]+$", nms)
+  generated <- grepl(
+    "^\\.(weight|fpc|draw|certainty|reserve|zone|pair)_[0-9]+$", nms
+  )
   unique(c(intersect(nms, exact), nms[generated]))
 }
 

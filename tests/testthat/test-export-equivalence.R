@@ -473,15 +473,22 @@ test_that("a wave activating every panel exports as its master", {
   )
 })
 
-## A selected primary unit left with no row
+## A selected unit with nothing below it
 #
 # A PSU with nothing eligible under it has no row, so survey would run the
-# between-PSU variance over the others. The export refuses instead.
+# between-PSU variance over the others. The export adds a zero row instead,
+# at weight 0, so the unit enters the variance as a zero total.
 
 empty_psu_areas <- function() data.frame(psu = 1:4)
 empty_psu_roster <- function() data.frame(psu = 2:4, id = 2:4, y = 10)
 
-test_that("an empty primary unit is refused where survey would drop it", {
+# The rows an export added for the units found empty.
+zero_rows <- function(svy) {
+  data <- svy$variables
+  data[is.na(data$.sample_id), , drop = FALSE]
+}
+
+test_that("an empty primary unit is a zero row where survey would drop it", {
   skip_if_not_installed("survey")
   design <- sampling_design() |>
     cluster_by(psu) |>
@@ -491,34 +498,37 @@ test_that("an empty primary unit is refused where survey would drop it", {
   selected <- execute(design, empty_psu_areas(), stages = 1, seed = 1)
   expect_identical(selected$psu, c(1L, 3L, 4L))
   sample <- execute(selected, empty_psu_roster(), seed = 2)
-  # PSU totals 0, 10, 10: the SRS variance is 44.44, survey's would be 0.
-  totals <- c(0, 10, 10)
-  expect_equal(4^2 * (1 - 3 / 4) * stats::var(totals) / 3, 400 / 9)
 
-  cnd <- expect_error(
-    as_svydesign(sample),
-    class = "samplyr_error_export_empty_psu"
+  # PSU totals 0, 10, 10: the SRS variance is 44.44, survey's was 0.
+  expect_no_warning(svy <- as_svydesign(sample))
+  zero <- zero_rows(svy)
+  expect_identical(zero$psu, 1L)
+  expect_identical(zero$.weight, 0)
+  expect_true(is.na(zero$y))
+  total <- survey::svytotal(~y, svy, na.rm = TRUE)
+  expect_equal(unname(coef(total)), 40 / 3 * 2)
+  expect_equal(as.vector(survey::SE(total))^2, 400 / 9)
+  expect_true(is.na(coef(survey::svytotal(~y, svy))))
+
+  # Every replicate type keeps the unit, as an ordinary row of total zero.
+  reference <- execute(
+    selected, rbind(empty_psu_roster(), data.frame(psu = 1, id = 1, y = 0)),
+    seed = 2
   )
-  expect_identical(cnd$n_units, 1L)
-  expect_identical(condition_header(cnd), "as_svydesign")
-  for (type in c("bootstrap", "JK1", "subbootstrap")) {
-    # The rescaled bootstrap first warns that it drops the correction.
-    expect_error(
-      suppressWarnings(
-        as_svrepdesign(sample, type = type, replicates = 20),
-        classes = "samplyr_warning_replicate_wr_first_stage"
-      ),
-      class = "samplyr_error_export_empty_psu"
-    )
+  for (type in c("bootstrap", "JK1", "subbootstrap", "mrbbootstrap")) {
+    se <- function(x) {
+      set.seed(3)
+      rep <- suppressWarnings(as_svrepdesign(x, type = type, replicates = 20))
+      unname(survey::SE(survey::svytotal(~y, rep, na.rm = TRUE)))
+    }
+    expect_equal(se(sample), se(reference), info = type)
   }
   skip_if_not_installed("svrep")
-  expect_error(
-    as_svrepdesign(sample, type = "rwyb"),
-    class = "samplyr_error_rwyb_missing_parents"
-  )
+  rwyb <- as_svrepdesign(sample, type = "rwyb", replicates = 20)
+  expect_identical(nrow(rwyb$variables), nrow(sample) + 1L)
 })
 
-test_that("a primary unit emptied further down is refused, a thinned one is not", {
+test_that("a primary unit emptied further down keeps zero rows", {
   skip_if_not_installed("survey")
   psus <- data.frame(psu = 1:4)
   dwellings <- data.frame(psu = rep(1:4, each = 2), dw = 1:8)
@@ -526,49 +536,92 @@ test_that("a primary unit emptied further down is refused, a thinned one is not"
     cluster_by(psu) |> draw(n = 3) |>
     add_stage() |> cluster_by(dw) |> draw(frac = 1) |>
     add_stage() |> draw(frac = 1, on_empty = "silent")
+  # Each dwelling holds one person, at y = 10.
+  roster <- function(dw) {
+    people <- data.frame(dw = dw, pid = dw, y = 10)
+    people$psu <- dwellings$psu[people$dw]
+    people
+  }
+  variance <- function(totals) 4^2 * (1 - 3 / 4) * stats::var(totals) / 3
 
-  # PSU 1 loses both dwellings, so it has no row at all.
-  people <- data.frame(dw = 3:8, pid = 3:8, y = 10)
-  people$psu <- dwellings$psu[people$dw]
-  gone <- execute(design, list(psus, dwellings, people), seed = 1)
-  expect_true(1L %in% vapply(
-    attr(gone, "metadata")$empty_parents, function(r) r$keys$psu[1], 1L
-  ))
+  # PSU 1 loses both dwellings, so each is a zero row in it.
+  gone <- execute(design, list(psus, dwellings, roster(3:8)), seed = 1)
   expect_false(1L %in% gone$psu)
-  expect_error(as_svydesign(gone), class = "samplyr_error_export_empty_psu")
+  svy <- as_svydesign(gone)
+  expect_identical(sort(zero_rows(svy)$dw), 1:2)
+  expect_identical(zero_rows(svy)$psu, c(1L, 1L))
+  totals <- c(0, 20, 20)
+  expect_equal(
+    as.vector(survey::SE(survey::svytotal(~y, svy, na.rm = TRUE)))^2,
+    variance(totals)
+  )
 
-  # PSU 1 keeps one dwelling: its total is right and the export warns.
-  people <- data.frame(dw = 2:8, pid = 2:8, y = 10)
-  people$psu <- dwellings$psu[people$dw]
-  thinned <- execute(design, list(psus, dwellings, people), seed = 1)
-  expect_warning(
-    as_svydesign(thinned),
+  # PSU 1 keeps one dwelling. The other keeps no row, as a household with
+  # no eligible member does. Under "silent" the export does not warn of its
+  # within-unit term.
+  thinned <- execute(design, list(psus, dwellings, roster(2:8)), seed = 1)
+  expect_no_warning(
+    svy <- as_svydesign(thinned),
     class = "samplyr_warning_export_empty_parent"
   )
+  expect_identical(nrow(zero_rows(svy)), 0L)
+  # RWYB resamples every stage, so the dwelling is a zero row there.
+  skip_if_not_installed("svrep")
+  rwyb <- as_svrepdesign(thinned, type = "rwyb", replicates = 20)
+  expect_identical(zero_rows(rwyb)$dw, 1L)
 })
 
-test_that("an empty primary unit is refused within a stratum", {
+test_that("an empty primary unit is a zero row within its stratum", {
   skip_if_not_installed("survey")
   areas <- data.frame(psu = 1:8, st = rep(1:2, each = 4))
   roster <- data.frame(psu = 2:8, y = c(10, 10, 10, 1, 2, 3, 4))
   roster$id <- seq_len(nrow(roster))
   roster$st <- areas$st[roster$psu]
-  sample <- sampling_design() |>
+  design <- sampling_design() |>
     stratify_by(st) |>
     cluster_by(psu) |>
     draw(n = 3) |>
     add_stage() |>
-    draw(frac = 1, on_empty = "silent") |>
-    execute(list(areas, roster), seed = 1)
+    draw(frac = 1, on_empty = "warn")
+  sample <- suppressWarnings(execute(design, list(areas, roster), seed = 1))
   expect_false(1L %in% sample$psu)
+  cnd <- expect_warning(
+    svy <- as_svydesign(sample),
+    class = "samplyr_warning_export_empty_parent"
+  )
+  expect_identical(cnd$n_empty, 1L)
+  expect_match(conditionMessage(cnd), "na.rm = TRUE", fixed = TRUE)
+  expect_identical(zero_rows(svy)$st, 1L)
+  # Three PSUs in each of two strata, but survey::degf() leaves out rows
+  # of weight 0.
+  expect_identical(survey::degf(svy), 3L)
+})
+
+test_that("a record that keeps no row is refused, not dropped", {
+  skip_if_not_installed("survey")
+  # An earlier build recorded only the keys of an empty unit, which do not
+  # make a zero row.
+  sample <- sampling_design() |>
+    cluster_by(psu) |>
+    draw(n = 3) |>
+    add_stage() |>
+    draw(frac = 1, on_empty = "silent") |>
+    execute(list(empty_psu_areas(), empty_psu_roster()), seed = 1)
+  expect_false(1L %in% sample$psu)
+  attr(sample, "metadata")$empty_parents[[1]]$rows <- NULL
   cnd <- expect_error(
     as_svydesign(sample),
     class = "samplyr_error_export_empty_psu"
   )
   expect_identical(cnd$n_units, 1L)
+  expect_error(
+    suppressWarnings(as_svrepdesign(sample, type = "bootstrap",
+                                    replicates = 5)),
+    class = "samplyr_error_export_empty_psu"
+  )
 })
 
-test_that("an empty primary unit in phase 1 is refused at two-phase export", {
+test_that("an empty primary unit in phase 1 is a zero row of phase 1", {
   skip_if_not_installed("survey")
   roster <- data.frame(psu = rep(2:4, each = 5), id = 1:15, y = 1:15)
   phase1 <- sampling_design() |>
@@ -580,15 +633,23 @@ test_that("an empty primary unit in phase 1 is refused at two-phase export", {
     cluster_by(id) |>
     draw(n = 5) |>
     execute(phase1, seed = 2)
-  expect_error(
-    quiet_across(as_svydesign(phase2)),
-    class = "samplyr_error_export_empty_psu"
-  )
+  # survey::twophase() reads phase 1's probabilities from its counts, so
+  # without the zero row the total took PSU 1 out of the take of 3.
+  for (method in list(NULL, "approx", "simple")) {
+    svy <- quiet_across(as_svydesign(phase2, method = method))
+    expect_equal(
+      unname(coef(survey::svytotal(~y, svy, na.rm = TRUE))),
+      sum(phase2$.weight * phase2$y),
+      info = paste(method)
+    )
+  }
+  data <- svy$phase1$full$variables
+  expect_identical(data$psu[is.na(data$.sample_id)], 1L)
 })
 
-test_that("RWYB refuses an empty parent without a frame digest", {
+test_that("RWYB keeps an empty parent without a frame digest", {
   skip_if_not_installed("svrep")
-  # The digest is optional, so the refusal reads the recorded empty parents.
+  # The zero rows come from the recorded empty parents, not the digest.
   psus <- data.frame(psu = 1:4)
   dwellings <- data.frame(psu = rep(1:4, each = 2), dw = 1:8)
   design <- sampling_design() |>
@@ -598,19 +659,18 @@ test_that("RWYB refuses an empty parent without a frame digest", {
   for (from in list(3:8, 2:8)) {
     people <- data.frame(dw = from, pid = from, y = 10)
     people$psu <- dwellings$psu[people$dw]
-    sample <- execute(
-      design, list(psus, dwellings, people), seed = 1, frame_digest = "none"
-    )
-    expect_null(get_frame_digest(sample))
-    expect_error(
-      as_svrepdesign(sample, type = "rwyb", replicates = 20),
-      class = "samplyr_error_rwyb_missing_parents",
-      info = paste("people from dwelling", from[1])
-    )
+    se <- function(frame_digest) {
+      sample <- execute(design, list(psus, dwellings, people), seed = 1,
+                        frame_digest = frame_digest)
+      set.seed(4)
+      rep <- as_svrepdesign(sample, type = "rwyb", replicates = 20)
+      unname(survey::SE(survey::svytotal(~y, rep, na.rm = TRUE)))
+    }
+    expect_equal(se("none"), se("full"), info = paste("from", from[1]))
   }
 })
 
-test_that("an empty primary unit in phase 2 or in a wave's master is refused", {
+test_that("an empty primary unit in phase 2 or in a wave's master is a zero row", {
   skip_if_not_installed("survey")
   roster <- data.frame(psu = rep(2:4, each = 5), id = 1:15, y = 1:15)
   by_psu <- sampling_design() |>
@@ -622,12 +682,18 @@ test_that("an empty primary unit in phase 2 or in a wave's master is refused", {
     draw(n = 4) |>
     execute(empty_psu_areas(), seed = 1)
   phase2 <- execute(by_psu, list(whole, roster), seed = 2)
-  expect_false(1L %in% phase2$psu)
-  expect_error(
-    quiet_across(as_svydesign(phase2)),
-    class = "samplyr_error_export_empty_psu"
+  expect_identical(sort(unique(phase2$psu)), 2:3)
+  # Phase 1 takes every PSU, and phase 2 three of four: PSU totals 0, 15
+  # and 40.
+  total <- survey::svytotal(~y, quiet_across(as_svydesign(phase2)),
+                            na.rm = TRUE)
+  expect_equal(unname(coef(total)), 4 / 3 * 55)
+  expect_equal(
+    as.vector(survey::SE(total))^2,
+    4^2 * (1 - 3 / 4) * stats::var(c(0, 15, 40)) / 3
   )
 
+  # Panel p is active at wave p.
   schedule <- data.frame(
     panel = rep(1:2, 2), wave = rep(1:2, each = 2),
     active = c(TRUE, FALSE, FALSE, TRUE)
@@ -636,18 +702,71 @@ test_that("an empty primary unit in phase 2 or in a wave's master is refused", {
     by_psu, list(empty_psu_areas(), roster), seed = 1, panels = schedule
   )
   expect_false(1L %in% master$psu)
-  wave <- execute(master, wave = 1)
-  expect_error(
-    as_svydesign(wave),
-    class = "samplyr_error_export_empty_psu"
+  gone <- attr(master, "metadata")$empty_parents[[1]]$rows
+  expect_identical(gone$psu, 1L)
+  # The empty PSU holds a panel, and the waves of that panel activate it.
+  wave <- execute(master, wave = gone$.panel)
+  expect_identical(zero_rows(as_svydesign(wave))$psu, 1L)
+  window <- execute(master, wave = 1:2)
+  expect_identical(zero_rows(as_svydesign(window))$psu, 1L)
+  zero_filled <- function(svy) update(svy, y = ifelse(is.na(y), 0, y))
+  for (method in list(NULL, "full")) {
+    svy <- suppressWarnings(as_svydesign(wave, method = method))
+    expect_equal(
+      as.vector(survey::SE(suppressWarnings(
+        survey::svytotal(~y, svy, na.rm = TRUE)
+      ))),
+      as.vector(survey::SE(survey::svytotal(~y, zero_filled(svy)))),
+      info = paste(method)
+    )
+  }
+})
+
+test_that("an empty primary unit of a tenure is a zero row where a wave reads it", {
+  skip_if_not_installed("survey")
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 6) |>
+    add_stage() |> cluster_by(hh) |> draw(n = 2, on_empty = "silent")
+  rotating <- expand.grid(panel = 1:2, wave = 1:4)
+  rotating$active <- rotating$panel == (rotating$wave - 1) %% 2 + 1
+  rotating$visit <- ifelse(rotating$active, 1L, NA_integer_)
+  master <- execute(design, data.frame(psu = 1:6), stages = 1,
+                    panels = rotating, seed = 1)
+  # A unit of panel 1 has no household at its first tenure.
+  empty <- master$psu[master$.panel == 1L][1]
+  everyone <- expand.grid(hh = 1:8, psu = 1:6)
+  without <- everyone[everyone$psu != empty, ]
+  master <- execute(master, without, wave = 1, seed = 2)
+  master <- execute(master, without, wave = 2, seed = 3)
+
+  # The unit is a zero row where its first tenure is read.
+  kept <- function(x) empty %in% zero_rows(as_svydesign(x))$psu
+  expect_true(kept(execute(master, wave = 1)))
+  expect_true(kept(execute(master, wave = 1:2)))
+  expect_false(kept(execute(master, wave = 2)))
+
+  # Listed again at its next tenure, the unit is no longer lost.
+  master <- execute(master, everyone, wave = 3, seed = 4)
+  expect_s3_class(as_svydesign(execute(master, wave = 3)), "survey.design")
+  expect_s3_class(as_svydesign(execute(master, wave = 1:3)), "survey.design")
+
+  # A wave that activates every unit exports as the master's own design,
+  # with the unit as a zero row.
+  both <- data.frame(
+    wave = rep(1:2, each = 2), panel = rep(1:2, 2), active = TRUE, visit = 1L
   )
-  expect_error(
-    as_svydesign(wave, method = "full"),
-    class = "samplyr_error_export_empty_psu"
+  master <- execute(design, data.frame(psu = 1:6), stages = 1,
+                    panels = both, seed = 1)
+  master <- execute(master, everyone[everyone$psu != 1L, ], wave = 1, seed = 2)
+  wave <- execute(master, wave = 1)
+  expect_identical(zero_rows(as_svydesign(wave))$psu, 1L)
+  expect_identical(
+    zero_rows(suppressWarnings(as_svrepdesign(wave)))$psu,
+    1L
   )
 })
 
-test_that("a replicate that kept every primary unit still exports", {
+test_that("a replicate exports its own empty units", {
   skip_if_not_installed("survey")
   design <- sampling_design() |>
     cluster_by(psu) |>
@@ -658,20 +777,17 @@ test_that("a replicate that kept every primary unit still exports", {
     design, list(empty_psu_areas(), empty_psu_roster()),
     seed = 4, reps = 6
   )
-  has_psu1 <- vapply(split(reps$psu, reps$.replicate), function(p) 1L %in% p, NA)
   records <- attr(reps, "metadata")$empty_parents
   emptied <- unique(vapply(records, function(r) r$replicate, 1L))
   kept <- setdiff(unique(reps$.replicate), emptied)
   expect_gt(length(emptied), 0L)
   expect_gt(length(kept), 0L)
-  expect_false(any(has_psu1))
 
   one <- function(r) reps[reps$.replicate == r, ]
-  expect_s3_class(as_svydesign(one(kept[1])), "survey.design")
-  expect_error(
-    as_svydesign(one(emptied[1])),
-    class = "samplyr_error_export_empty_psu"
-  )
+  expect_identical(nrow(zero_rows(as_svydesign(one(kept[1])))), 0L)
+  zero <- zero_rows(as_svydesign(one(emptied[1])))
+  expect_identical(zero$psu, 1L)
+  expect_identical(zero$.replicate, emptied[1])
 })
 
 ## A frame-stack component is the component's own export
@@ -994,6 +1110,24 @@ test_that("a lonely probability stratum is named by stage at export", {
 
   withr::local_options(survey.lonely.psu = "adjust")
   expect_no_warning(as_svydesign(sample))
+})
+
+test_that("draws with replacement are counted within their own stratum", {
+  skip_if_not_installed("survey")
+  withr::local_options(survey.lonely.psu = "fail")
+  # Each stratum numbers its draws from 1, so draw 1 of B is not A's unit.
+  frame <- data.frame(st = rep(c("A", "B", "C"), each = 10), ea = 1:30)
+  sample <- sampling_design() |>
+    stratify_by(st) |>
+    cluster_by(ea) |>
+    draw(n = c(A = 1, B = 2, C = 2), method = "srswr") |>
+    execute(frame, seed = 1)
+  expect_identical(sample$.draw_1, c(1L, 1L, 2L, 1L, 2L))
+  expect_warning(
+    as_svydesign(sample),
+    "In stage 1, 1 stratum holds a single sampled unit",
+    class = "samplyr_warning_lonely_psu"
+  )
 })
 
 test_that("a stratum taken whole is a census, not a lonely stratum", {

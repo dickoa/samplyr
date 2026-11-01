@@ -12,8 +12,11 @@ The literal names \code{.weight_k} and \code{.fpc_k} are not themselves reserved
 \details{
 The generated columns are:
 \itemize{
-\item \code{.sample_id}: Sequential identifier for each output row. Under WR or
-PMR, separate occurrences of one population unit have different values.
+\item \code{.sample_id}: Identifier of each output row, numbered from 1 at
+execution. Under WR or PMR, separate occurrences of one population
+unit have different values. A settled reserve and a materialized wave
+keep the numbers of the sample they read, so the rows they drop leave
+gaps and each kept row still names the same unit.
 \item \code{.weight}: Sampling weight. This is inverse inclusion probability for
 WOR and inverse expected hits per output row for WR or PMR.
 \item \code{.weight_1}, \code{.weight_2}, ...: Per-stage sampling weights
@@ -52,6 +55,10 @@ came from a \code{certainty_size}/\code{certainty_prop} rule or was capped at on
 by the probability calculation. Present for unequal-probability and
 balanced stages. Always FALSE for WR/PMR stages, where the recorded
 chance is an expected hit rather than a probability.
+\item \code{.reserve_1}, \code{.reserve_2}, ...: At the stage that sets \code{reserve} in
+\code{\link[=draw]{draw()}}, the unit's place in its pool's list: 0 for the take, and 1,
+2, ... for the reserve units in the order they are released. The
+stage's \code{.weight_k} is then the inverse of the whole list's chance.
 \item \code{.zone_1}: The zone a PSU was drawn from, when stage 1 fields a
 certainty plan solved with \code{svyplan::n_alloc(n_psu_per_zone = )}.
 Zones are numbered within each stratum, one or two PSUs are drawn

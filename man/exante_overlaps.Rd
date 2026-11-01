@@ -13,9 +13,10 @@ design would draw from.}
 
 \item{...}{Must be empty. Arguments after it are matched by exact name.}
 
-\item{by}{A single named string matching the stack's key to the column
-holding it in the registers, in the same direction as a join:
-\code{by = c(person_id = "person_id")}.}
+\item{by}{Named strings matching the stack's key to the columns holding
+it in the registers, in the same direction as a join:
+\code{by = c(person_id = "person_id")}, or one pair per column of a
+compound key, \code{by = c(region = "region", ea_id = "ea")}.}
 
 \item{allow_approximate}{Logical, default \code{FALSE}. Allow approximate
 probability targets when resolving the component designs. See

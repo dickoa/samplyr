@@ -352,6 +352,41 @@ test_that("continued execution accepts its generated sampling columns", {
   expect_true(all(c(".weight_1", ".draw_1", ".weight_2") %in% names(full)))
 })
 
+test_that("a listing derived from a unit drawn twice keeps each draw's rows", {
+  design <- sampling_design() |>
+    add_stage() |>
+    cluster_by(ea) |>
+    draw(n = 2, method = "srswr") |>
+    add_stage() |>
+    draw(n = 2)
+  stage1 <- execute(design, data.frame(ea = 1L, hh = 5L), stages = 1, seed = 1)
+  expect_identical(stage1$.draw_1, 1:2)
+
+  per_draw <- as.data.frame(stage1)[rep(1:2, each = 5), ]
+  per_draw$hh_id <- rep(1:5, 2)
+  once <- data.frame(ea = 1L, hh_id = 1:5)
+  from_draws <- execute(stage1, per_draw, seed = 2)
+  from_once <- execute(stage1, once, seed = 2)
+
+  expect_identical(from_draws$.fpc_2, rep(5, 4))
+  expect_identical(from_draws$.weight, rep(1.25, 4))
+  expect_identical(from_draws$hh_id, from_once$hh_id)
+  expect_identical(from_draws$.weight, from_once$.weight)
+
+  unknown <- per_draw
+  unknown$.draw_1[1] <- 3L
+  expect_error(
+    execute(stage1, unknown, seed = 2),
+    "names 1 draw the previous stage did not make",
+    class = "samplyr_error_frame_draws"
+  )
+  expect_error(
+    execute(stage1, per_draw[per_draw$.draw_1 == 1L, ], seed = 2),
+    "1 draw of a listed unit has no rows",
+    class = "samplyr_error_frame_draws"
+  )
+})
+
 test_that("all strata get exactly min_n when forced", {
   frame <- data.frame(
     id = 1:100,

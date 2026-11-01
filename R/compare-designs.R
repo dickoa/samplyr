@@ -24,10 +24,14 @@
 #'   sample is refused.
 #' @param frame The register both designs are resolved on, a data frame.
 #' @param ... Must be empty. Arguments after it are matched by exact name.
-#' @param key A bare column of `frame` identifying the population unit. It
-#'   must be unique, have no missing values, and not share a name with a
-#'   column the unit table adds (`probability_x`, `probability_y`,
-#'   `abs_diff`, `rel_diff`, `agree`).
+#' @param key The column of `frame` identifying the population unit, bare,
+#'   or several with `c()` that together identify it, such as
+#'   `c(region, ea_id)`. Needed at the probability level, where the unit
+#'   table carries it, and optional at the allocation level, which matches
+#'   pools by the rows they hold. Given, it must identify each row once,
+#'   have no missing values, and not share a name with a column the unit
+#'   table adds (`probability_x`, `probability_y`, `abs_diff`, `rel_diff`,
+#'   `agree`).
 #' @param level What to compare, `"allocation"` (default) or
 #'   `"probabilities"`.
 #' @param atol,rtol Absolute and relative tolerances. Two values `a` and `b`
@@ -52,10 +56,12 @@
 #'     share, with `stage`, `pool_key`, `N`, `n_target_x`, `n_target_y`,
 #'     `n_expected_x`, `n_expected_y` and `agree`.
 #'   - `units`: at the probability level, one row per register row, with the
-#'     key column, `probability_x`, `probability_y`, `abs_diff`, `rel_diff`
+#'     key columns, `probability_x`, `probability_y`, `abs_diff`, `rel_diff`
 #'     and `agree`.
 #'   - `specification`: two rows per stage the designs both have, with
-#'     `stage`, `aspect` (`"method"` or `"mos"`), `x`, `y` and `status`.
+#'     `stage`, `aspect` (`"method"` or `"mos"`), `x`, `y` and `status`,
+#'     and a third row with aspect `"reserve"` when either stage sets
+#'     `reserve` in [draw()].
 #'     The status is `"same"`, `"differ"`, or for two measures of size in
 #'     different columns, `"proportional"` when one is a constant multiple
 #'     of the other on every row of `frame`. It does not enter the verdict.
@@ -73,6 +79,11 @@
 #' same units when province ids are nested in regions. When the units of a
 #' stage differ, its pools and takes are not compared. When the pools
 #' differ, the check names the pools of `x` that `y` splits or merges.
+#'
+#' A pool agrees when both designs give it the same take and the same
+#' expected size. A reserve in [draw()] lengthens each pool's list without
+#' changing its take, so two designs that differ only by a reserve differ
+#' here, and the check says the lists differ.
 #'
 #' Two designs on the same frame see the same pools, so a comparison cannot
 #' find a category the frame lacks. A province without urban EAs forms one
@@ -178,16 +189,31 @@ compare_designs <- function(x, y, frame, ..., key,
   check_exante_approximate_arg(allow_approximate, call = call)
   check_exante_design_complete(x, call = call)
   check_exante_design_complete(y, call = call)
-  key_col <- parse_frame_key(
-    rlang::enquo(key),
-    class = "samplyr_error_exante_key"
-  )
+  # Pools are matched by the rows they hold, so only units need a key.
+  key_quo <- rlang::enquo(key)
+  key_col <- if (identical(level, "allocation") &&
+                   rlang::quo_is_missing(key_quo)) {
+    NULL
+  } else {
+    parse_frame_key(
+      key_quo,
+      class = "samplyr_error_exante_key",
+      why = c(
+        "i" = "At {.code level = \"probabilities\"} it identifies each
+               unit of {.arg frame}, so that the two designs' probabilities
+               are matched unit by unit.",
+        "i" = "Use a bare column of {.arg frame} with one value per row, or
+               {.code c()} of columns that together name each row."
+      )
+    )
+  }
   generated <- c("probability_x", "probability_y", "abs_diff", "rel_diff",
                  "agree")
-  if (key_col %in% generated) {
+  taken <- intersect(key_col, generated)
+  if (length(taken) > 0L) {
     abort_samplyr(
       c(
-        "{.arg key} must not be named {.field {key_col}}.",
+        "{.arg key} must not be named {.field {taken}}.",
         "i" = "The unit table adds the columns {.field {generated}}.
                Rename the key column in {.arg frame}."
       ),
@@ -232,7 +258,7 @@ compare_specifications <- function(x, y, frame) {
       } else {
         "differ"
       }
-      tibble::tibble(
+      out <- tibble::tibble(
         stage = k,
         aspect = c("method", "mos"),
         x = c(dx$method, mos_x),
@@ -242,6 +268,20 @@ compare_specifications <- function(x, y, frame) {
           mos_status
         )
       )
+      # A reserve changes the list, so it shows whenever either stage has one.
+      if (!is_null(dx$reserve) || !is_null(dy$reserve)) {
+        reserve_x <- if (is_null(dx$reserve)) NA_character_ else as.character(dx$reserve)
+        reserve_y <- if (is_null(dy$reserve)) NA_character_ else as.character(dy$reserve)
+        out <- tibble::add_row(
+          out,
+          stage = k,
+          aspect = "reserve",
+          x = reserve_x,
+          y = reserve_y,
+          status = if (identical(reserve_x, reserve_y)) "same" else "differ"
+        )
+      }
+      out
     }
   )
   if (length(rows) == 0L) {
@@ -261,8 +301,14 @@ proportional_columns <- function(frame, a, b) {
   }
   u <- frame[[a]]
   v <- frame[[b]]
-  if (!is.numeric(u) || !is.numeric(v) || anyNA(u) || anyNA(v) ||
-      sum(v) <= 0) {
+  if (!is.numeric(u) || !is.numeric(v) || !all(is.finite(u)) ||
+      !all(is.finite(v)) || max(abs(u)) == 0 || max(abs(v)) == 0) {
+    return(FALSE)
+  }
+  # Scaled first, so that the sums of large sizes cannot overflow.
+  u <- u / max(abs(u))
+  v <- v / max(abs(v))
+  if (sum(v) <= 0) {
     return(FALSE)
   }
   scale <- sum(u) / sum(v)
@@ -430,14 +476,10 @@ compare_allocations <- function(x, y, frame, key_col, atol, rtol, call) {
       split_by_y <- split_pools(px$pool, py$pool, labels_x)
       split_by_x <- split_pools(py$pool, px$pool, labels_y)
       detail <- paste(c(
-        sprintf("x forms %d pools and y forms %d.",
-                length(rx$pools), length(ry$pools)),
-        if (length(split_by_y)) {
-          sprintf("y splits %s.", format_label_sample(split_by_y))
-        },
-        if (length(split_by_x)) {
-          sprintf("x splits %s.", format_label_sample(split_by_x))
-        }
+        sprintf("x forms %s and y forms %d.",
+                pool_count(length(rx$pools)), length(ry$pools)),
+        split_text("y", "x", split_by_y),
+        split_text("x", "y", split_by_x)
       ), collapse = " ")
       checks <- c(checks, list(
         comparison_check(k, "pools", "differ", detail),
@@ -467,6 +509,27 @@ compare_allocations <- function(x, y, frame, key_col, atol, rtol, call) {
       n_expected_y = expected_y,
       agree = agree
     )
+    # Equal takes with different expected sizes come from the list, as a
+    # reserve adds to it, or from a random size.
+    same_take <- (target_x == target_y) %in% TRUE
+    listed <- if (any(!agree & same_take)) {
+      reserve <- !is_null(x$stages[[k]]$draw_spec$reserve) ||
+        !is_null(y$stages[[k]]$draw_spec$reserve)
+      if (k == 1L) {
+        sprintf(
+          " The takes agree, but x %s %s units in all and y %s.",
+          if (reserve) "lists" else "expects",
+          format(round(sum(expected_x), 2), big.mark = ","),
+          format(round(sum(expected_y), 2), big.mark = ",")
+        )
+      } else if (reserve) {
+        " The takes agree, but the lists differ."
+      } else {
+        " The takes agree, but the expected sizes differ."
+      }
+    } else {
+      ""
+    }
     # Takes at a later stage are per candidate parent, so no total is exact.
     totals <- if (k == 1L) {
       sprintf(
@@ -484,12 +547,15 @@ compare_allocations <- function(x, y, frame, key_col, atol, rtol, call) {
         paste0("Every pool takes the same.", totals)
       } else {
         paste0(
-          sprintf(
-            "%d of %d pools differ (%s).",
-            sum(!agree), length(agree),
-            format_label_sample(labels_x[!agree])
-          ),
-          totals
+          if (length(agree) == 1L) {
+            "The pool differs."
+          } else {
+            sprintf(
+              "%d of %d pools differ%s.",
+              sum(!agree), length(agree), label_note(labels_x[!agree])
+            )
+          },
+          if (all(same_take[!agree])) listed else paste0(totals, listed)
         )
       }
     )))
@@ -511,11 +577,13 @@ compare_probabilities <- function(x, y, frame, key_col, atol, rtol,
   }
   rx <- resolve(x)
   ry <- resolve(y)
-  no_units <- tibble::tibble(
-    key = character(), probability_x = double(), probability_y = double(),
-    abs_diff = double(), rel_diff = double(), agree = logical()
-  )
-  names(no_units)[[1]] <- key_col
+  no_units <- tibble::as_tibble(c(
+    stats::setNames(rep(list(character()), length(key_col)), key_col),
+    list(
+      probability_x = double(), probability_y = double(),
+      abs_diff = double(), rel_diff = double(), agree = logical()
+    )
+  ))
   if (!is_null(rx$reason) || !is_null(ry$reason)) {
     reasons <- c(
       if (!is_null(rx$reason)) paste0("x: ", rx$reason),
@@ -553,15 +621,12 @@ compare_probabilities <- function(x, y, frame, key_col, atol, rtol,
 
   diff <- probability_differences(rx$probability, ry$probability, atol, rtol)
   quality <- rx$probability_quality
-  units <- tibble::tibble(
-    key = rx$keys,
-    probability_x = rx$probability,
-    probability_y = ry$probability,
-    abs_diff = diff$abs_diff,
-    rel_diff = diff$rel_diff,
-    agree = diff$agree
-  )
-  names(units)[[1]] <- key_col
+  units <- rx$keys
+  units$probability_x <- rx$probability
+  units$probability_y <- ry$probability
+  units$abs_diff <- diff$abs_diff
+  units$rel_diff <- diff$rel_diff
+  units$agree <- diff$agree
   list(
     checks = comparison_check(
       NA, "probabilities", if (all(diff$agree)) "agree" else "differ",
@@ -618,6 +683,35 @@ probability_differences <- function(p_x, p_y, atol, rtol) {
 #' @noRd
 count_text <- function(n, noun) {
   paste0(format(n, big.mark = ","), " ", plural_suffix(n, noun), ".")
+}
+
+#' A count of pools, as plain text
+#' @noRd
+pool_count <- function(n) {
+  paste(format(n, big.mark = ","), plural_suffix(n, "pool"))
+}
+
+#' The pools of one design another splits, as plain text
+#'
+#' A stage with neither strata nor parents forms one pool, which has no
+#' label.
+#' @noRd
+split_text <- function(by, of, labels) {
+  if (length(labels) == 0L) {
+    return(NULL)
+  }
+  labels <- labels[!is.na(labels)]
+  if (length(labels) == 0L) {
+    return(sprintf("%s splits the pool of %s.", by, of))
+  }
+  sprintf("%s splits %s.", by, format_label_sample(labels))
+}
+
+#' The labels of some pools in parentheses, or nothing for unlabeled pools
+#' @noRd
+label_note <- function(labels) {
+  labels <- labels[!is.na(labels)]
+  if (length(labels) == 0L) "" else paste0(" (", format_label_sample(labels), ")")
 }
 
 #' Name a few labels and count the rest, as plain text

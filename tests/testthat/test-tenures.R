@@ -143,6 +143,15 @@ test_that("a wave draws the panels whose tenure opens there", {
                first$.weight[order(first$hh)])
 })
 
+test_that("a wave's summary shows the seed of its tenure's draw", {
+  master <- draw_tenures(tenure_master(), 1:3)
+  seeds <- vapply(1:6, function(t) {
+    summary(execute(master, wave = t))$seed
+  }, integer(1))
+  # A tenure lasts two quarters, so waves 4 to 6 read the draws of 1 to 3.
+  expect_identical(seeds, c(11L, 12L, 13L, 11L, 12L, 13L))
+})
+
 test_that("a new tenure draws new units from the full listing", {
   master <- draw_tenures(tenure_master(), 1:3)
   # A listing already cut of the used households would lose them.
@@ -154,6 +163,19 @@ test_that("a new tenure draws new units from the full listing", {
     execute(master, cut[!cut$hh %in% used, ], wave = 7, seed = 17),
     class = "samplyr_error_tenure_listing"
   )
+  # One earlier household per EA missing: read as gone, with a warning.
+  first_used <- tapply(used, cut$ea[match(used, cut$hh)], min)
+  trimmed <- cut[!cut$hh %in% first_used, ]
+  returning <- unique(master$ea[master$.panel == 1L])
+  expect_warning(
+    partial <- execute(master, trimmed, wave = 7, seed = 17),
+    paste(length(returning), "units that earlier tenures drew, in",
+          length(returning), "primary units"),
+    class = "samplyr_warning_tenure_listing"
+  )
+  seventh <- execute(partial, wave = 7)
+  expect_false(any(seventh$hh %in% used))
+  expect_no_warning(draw_tenures(master, 7))
   master <- draw_tenures(master, 7)
   seventh <- execute(master, wave = 7)
   first <- execute(master, wave = 1)
@@ -198,6 +220,54 @@ test_that("every tenure estimates the whole population", {
   }
 })
 
+test_that("a rate or an allocation sizes each tenure on the whole listing", {
+  # Two panels, each with a tenure at every one of its waves.
+  schedule <- expand.grid(panel = 1:2, wave = 1:4)
+  schedule$active <- schedule$panel == (schedule$wave - 1) %% 2 + 1
+  schedule$visit <- ifelse(schedule$active, 1L, NA_integer_)
+  # Each EA lists 6 households of type a and 4 of type b.
+  hh <- data.frame(ea = rep(1:4, each = 10), hh = 1:40)
+  hh$type <- rep(rep(c("a", "b"), c(6, 4)), 4)
+  takes <- function(stage2) {
+    design <- sampling_design() |>
+      add_stage() |> cluster_by(ea) |> draw(n = 4) |>
+      add_stage() |> stage2()
+    master <- execute(design, data.frame(ea = 1:4), stages = 1,
+                      panels = schedule, seed = 1)
+    for (t in c(1, 3)) {
+      master <- suppressWarnings(execute(master, hh, wave = t, seed = t))
+    }
+    draws <- attr(master, "metadata")$per_wave_draws
+    lapply(draws, function(d) {
+      rows <- d$rows
+      list(
+        n = as.vector(table(factor(paste(rows$ea, rows$type)))),
+        weight = sort(unique(round(rows$.weight_2, 6)))
+      )
+    })
+  }
+
+  # Half of each EA's 10 households at both tenures, not half of the 5
+  # the first one left.
+  rate <- takes(function(d) d |> cluster_by(hh) |> draw(frac = 0.5))
+  fixed <- takes(function(d) d |> cluster_by(hh) |> draw(n = 5))
+  expect_identical(rate, fixed)
+  expect_identical(rate[[2]]$weight, 2)
+
+  # By type: 3 of 6 and 2 of 4 at both, so the second tenure takes every
+  # unit left.
+  by_type <- takes(function(d) {
+    d |> stratify_by(type) |> cluster_by(hh) |> draw(frac = 0.5)
+  })
+  expect_identical(by_type[[2]]$n, rep(c(3L, 2L), 2))
+  expect_identical(by_type[[2]]$weight, 2)
+  allocated <- takes(function(d) {
+    d |> stratify_by(type, alloc = "proportional") |> cluster_by(hh) |>
+      draw(n = 5)
+  })
+  expect_identical(allocated, by_type)
+})
+
 test_that("a tenure reads strata its listing leaves to the primary units", {
   # Stage 2 repeats stage 1's region, which the listing may leave out: the
   # draw carries it down from the selected EAs.
@@ -227,6 +297,74 @@ test_that("a tenure reads strata its listing leaves to the primary units", {
     expect_equal(unique(without$.weight_2), 5, info = paste("wave", t))
     expect_identical(without, drawn[[2]][[t]], info = paste("wave", t))
   }
+})
+
+test_that("a pool earlier tenures drew whole is refused", {
+  schedule <- data.frame(
+    wave = c(1, 1, 2, 2), panel = c(1, 2, 1, 2), active = TRUE, visit = 1L
+  )
+  # Stratum S1 of each EA holds two households, both drawn at wave 1.
+  stratified <- rbind(
+    expand.grid(hh = 1:2, s = "S1", ea = 1:2, stringsAsFactors = FALSE),
+    expand.grid(hh = 3:6, s = "S2", ea = 1:2, stringsAsFactors = FALSE)
+  )
+  master <- sampling_design() |>
+    add_stage() |> cluster_by(ea) |> draw(n = 2) |>
+    add_stage() |> stratify_by(s) |> cluster_by(hh) |> draw(n = 2) |>
+    execute(data.frame(ea = 1:2), stages = 1, panels = schedule, seed = 1)
+  master <- execute(master, stratified, wave = 1, seed = 10)
+  expect_error(
+    execute(master, stratified, wave = 2, seed = 11),
+    "2 pools of this tenure have no unit",
+    class = "samplyr_error_tenure_exhausted"
+  )
+
+  # EA 1 holds two households, both drawn at wave 1. The draw would read
+  # it as empty, even where empty units are accepted.
+  small <- rbind(
+    data.frame(ea = 1L, hh = 1:2),
+    data.frame(ea = 2L, hh = 1:6)
+  )
+  master <- sampling_design() |>
+    add_stage() |> cluster_by(ea) |> draw(n = 2) |>
+    add_stage() |> cluster_by(hh) |> draw(n = 2, on_empty = "warn") |>
+    execute(data.frame(ea = 1:2), stages = 1, panels = schedule, seed = 1)
+  master <- execute(master, small, wave = 1, seed = 10)
+  expect_error(
+    execute(master, small, wave = 2, seed = 11),
+    "1 pool of this tenure has no unit",
+    class = "samplyr_error_tenure_exhausted"
+  )
+
+  # A listing that adds two households to EA 1 is drawn, and weighted to
+  # the four households it lists there.
+  grown <- rbind(small, data.frame(ea = 1L, hh = 3:4))
+  master <- execute(master, grown, wave = 2, seed = 11)
+  expect_equal(sum(execute(master, wave = 2)$.weight), 10)
+})
+
+test_that("a tenure that takes what earlier tenures left is no census", {
+  schedule <- data.frame(
+    wave = c(1, 1, 2, 2), panel = c(1, 2, 1, 2), active = TRUE, visit = 1L
+  )
+  listing <- expand.grid(hh = 1:6, ea = 1:2)
+  master <- sampling_design() |>
+    add_stage() |> cluster_by(ea) |> draw(n = 2) |>
+    add_stage() |> cluster_by(hh) |> draw(n = 4) |>
+    execute(data.frame(ea = 1:2), stages = 1, panels = schedule, seed = 1)
+  master <- execute(master, listing, wave = 1, seed = 10)
+  # Two households of six are left in each EA, so wave 2 takes both.
+  cnd <- expect_warning(
+    master <- execute(master, listing, wave = 2, seed = 11),
+    "every unit that earlier tenures did not draw",
+    class = "samplyr_warning_census"
+  )
+  expect_match(conditionMessage(cnd), "still contributes sampling variance",
+               fixed = TRUE)
+  expect_no_match(conditionMessage(cnd), "contributes no sampling variance",
+                  fixed = TRUE)
+  expect_identical(cnd$stage, 2L)
+  expect_equal(unique(execute(master, wave = 2)$.weight_2), 3)
 })
 
 test_that("a tenure keeps apart units numbered within strata", {
@@ -336,8 +474,10 @@ test_that("permanent units hold one tenure from the first wave drawn", {
   }
 
   # Each certainty EA's own panel is active at one of these waves.
+  seeds <- list(3L, 3:4, c(3L, 5L))
   for (t in 1:3) {
     rows <- execute(master, wave = t)
+    expect_identical(summary(rows)$seed, seeds[[t]])
     rows <- rows[rows$ea %in% sure, ]
     expect_setequal(unique(rows$ea), sure)
     expect_true(all(rows$hh %in% drawn$hh), info = t)
@@ -383,6 +523,18 @@ test_that("a drawn wave exports by ultimate clusters from its own rows", {
   expect_error(stack_waves(fourth, execute(master, wave = 1)),
                class = "samplyr_error_wave_provisional")
   expect_error(write_design(fourth, withr::local_tempfile(fileext = ".json")),
+               class = "samplyr_error_serialize_wave_provisional")
+
+  # A master with tenures is never complete, so the refusals say that rather
+  # than that some stages are not drawn yet.
+  # Waves 1 to 3 and 7 to 9 open every tenure of the schedule.
+  master <- draw_tenures(tenure_master(), c(1:3, 7:9))
+  first <- execute(master, wave = 1)
+  expect_error(stack_waves(first, execute(master, wave = 4)),
+               "the master is never complete",
+               class = "samplyr_error_wave_provisional")
+  expect_error(write_design(first, withr::local_tempfile(fileext = ".json")),
+               "such a master is never complete",
                class = "samplyr_error_serialize_wave_provisional")
 })
 
@@ -531,6 +683,9 @@ test_that("a later tenure's digest records the units left out", {
     "N_h 8 of 10 listed, n_h 2, f_h 0.2500 of eligible, 0.2000 of listed",
     printed, fixed = TRUE
   )))
+  # The digest's first stage is the master's draw, and the wave holds two of
+  # the four EAs of each region.
+  expect_true("* 2 strata: N_h 6, n_h 2, f_h 0.3333" %in% printed)
   printed <- cli::ansi_strip(capture.output(print(summary(
     execute(master, wave = 1)
   ))))
@@ -605,4 +760,185 @@ test_that("a master with tenures replays from its design file", {
     replay_design(read_design(bare), c(list(tenure_eas()), changed)),
     class = "samplyr_warning_replay_digest"
   )
+})
+
+## Units missing from a tenure's listing
+
+# Two strata of six EAs, six drawn per stratum, then two households per EA.
+missing_design <- function(on_empty = "error") {
+  sampling_design() |>
+    add_stage() |>
+    stratify_by(region) |>
+    cluster_by(ea) |>
+    draw(n = 6) |>
+    add_stage() |>
+    cluster_by(hh) |>
+    draw(n = 2, on_empty = on_empty)
+}
+
+missing_master <- function(schedule) {
+  eas <- data.frame(ea = 1:12, region = rep(c("A", "B"), each = 6))
+  execute(missing_design(), eas, stages = 1, panels = schedule, seed = 1,
+          frame_digest = "none")
+}
+
+missing_households <- function() {
+  data.frame(ea = rep(1:12, each = 10), hh = 1:120)
+}
+
+# One household per EA among those a wave drew.
+one_per_ea <- function(master, wave) {
+  rows <- attr(master, "metadata")$per_wave_draws
+  rows <- rows[[which(vapply(rows, `[[`, 1, "wave") == wave)]]$rows
+  unname(tapply(rows$hh, rows$ea, min))
+}
+
+# The value of a draw and the messages of its listing warnings.
+listing_warnings <- function(expr) {
+  messages <- character(0)
+  value <- withCallingHandlers(
+    expr,
+    samplyr_warning_tenure_listing = function(w) {
+      messages <<- c(messages, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  list(value = value, messages = messages)
+}
+
+two_panels <- function(waves) {
+  schedule <- expand.grid(panel = 1:2, wave = waves)
+  schedule$active <- schedule$panel == (schedule$wave - 1) %% 2 + 1
+  schedule$visit <- ifelse(schedule$active, 1L, NA_integer_)
+  schedule
+}
+
+test_that("a unit missing from its last tenure warns once", {
+  hh <- missing_households()
+  master <- missing_master(two_panels(1:7))
+  master <- execute(master, hh, wave = 1, seed = 2)
+  master <- execute(master, hh, wave = 2, seed = 3)
+  gone <- one_per_ea(master, 1)
+  listing <- hh[!hh$hh %in% gone, ]
+
+  third <- listing_warnings(execute(master, listing, wave = 3, seed = 4))
+  expect_length(third$messages, 1L)
+  expect_match(third$messages, "lacks 6 units that earlier tenures drew, in 6",
+               fixed = TRUE)
+  master <- third$value
+  master <- execute(master, listing, wave = 4, seed = 5)
+
+  # The same units, gone at the next tenure too, warn no more.
+  quiet <- listing_warnings(execute(master, listing, wave = 5, seed = 6))
+  expect_length(quiet$messages, 0L)
+
+  # Units of the third wave gone since warn afresh, and only they.
+  newly <- one_per_ea(master, 3)
+  fifth <- listing_warnings(
+    execute(master, listing[!listing$hh %in% newly, ], wave = 5, seed = 6)
+  )
+  expect_length(fifth$messages, 1L)
+  expect_match(fifth$messages, "lacks 6 units", fixed = TRUE)
+  master <- execute(fifth$value, listing[!listing$hh %in% newly, ],
+                    wave = 6, seed = 7)
+  seventh <- listing_warnings(
+    execute(master, listing[!listing$hh %in% newly, ], wave = 7, seed = 8)
+  )
+  expect_length(seventh$messages, 0L)
+
+  # Exclusion still covers every earlier tenure.
+  drawn <- execute(seventh$value, wave = 7)$hh
+  expect_false(any(drawn %in% c(gone, newly, one_per_ea(master, 1))))
+})
+
+test_that("a listing cut of the last tenure warns, or stops when asked", {
+  hh <- missing_households()
+  master <- missing_master(two_panels(1:3))
+  master <- execute(master, hh, wave = 1, seed = 2)
+  master <- execute(master, hh, wave = 2, seed = 3)
+  cut <- hh[!hh$hh %in% one_per_ea(master, 1), ]
+  expect_warning(
+    execute(master, cut, wave = 3, seed = 4),
+    class = "samplyr_warning_tenure_listing"
+  )
+  err <- expect_error(
+    withCallingHandlers(
+      execute(master, cut, wave = 3, seed = 4),
+      samplyr_warning_tenure_listing = function(w) {
+        rlang::abort(conditionMessage(w), parent = w)
+      }
+    )
+  )
+  expect_s3_class(err$parent, "samplyr_warning_tenure_listing")
+})
+
+test_that("each primary unit is checked against its own latest tenure", {
+  hh <- missing_households()
+  # Out of wave order: the fifth wave is drawn before the third.
+  master <- missing_master(two_panels(1:6))
+  master <- execute(master, hh, wave = 1, seed = 2)
+  master <- execute(master, hh, wave = 5, seed = 3)
+  older <- hh[!hh$hh %in% one_per_ea(master, 1), ]
+  expect_length(
+    listing_warnings(execute(master, older, wave = 3, seed = 4))$messages,
+    0L
+  )
+  latest <- hh[!hh$hh %in% one_per_ea(master, 5), ]
+  expect_length(
+    listing_warnings(execute(master, latest, wave = 3, seed = 4))$messages,
+    1L
+  )
+
+  # Panels 1 and 3 open together at wave 3, after tenures drawn at
+  # different waves. Both lose a unit of their own latest tenure.
+  schedule <- expand.grid(panel = 1:3, wave = 1:3)
+  schedule$active <- with(schedule, (wave == 1 & panel <= 2) |
+                            (wave == 2 & panel == 3) |
+                            (wave == 3 & panel != 2))
+  schedule$visit <- ifelse(schedule$active, 1L, NA_integer_)
+  master <- missing_master(schedule)
+  master <- execute(master, hh, wave = 1, seed = 2)
+  master <- execute(master, hh, wave = 2, seed = 3)
+  first <- one_per_ea(master, 1)
+  first <- first[first %in% hh$hh[hh$ea %in% master$ea[master$.panel == 1L]]]
+  gone <- c(first, one_per_ea(master, 2))
+  out <- listing_warnings(
+    execute(master, hh[!hh$hh %in% gone, ], wave = 3, seed = 4)
+  )
+  expect_length(out$messages, 1L)
+  expect_match(out$messages,
+               paste("lacks", length(gone), "units"), fixed = TRUE)
+})
+
+test_that("a tenure that drew no unit is still the latest", {
+  # An EA of two households, both drawn at wave 1.
+  eas <- data.frame(ea = 1:12, region = rep(c("A", "B"), each = 6))
+  master <- execute(missing_design(on_empty = "silent"), eas, stages = 1, panels = two_panels(1:5),
+                    seed = 1, frame_digest = "none")
+  small <- master$ea[master$.panel == 1L][1]
+  sizes <- ifelse(1:12 == small, 2L, 10L)
+  hh <- data.frame(ea = rep(1:12, sizes), hh = seq_len(sum(sizes)))
+  master <- execute(master, hh, wave = 1, seed = 2)
+  master <- execute(master, hh, wave = 2, seed = 3)
+  listing <- hh[hh$ea != small, ]
+
+  # Both households dissolved, so wave 3 has none to draw. An EA whose
+  # households were drawn before and are still listed is refused instead.
+  third <- listing_warnings(execute(master, listing, wave = 3, seed = 4))
+  master <- third$value
+  expect_false(small %in% execute(master, wave = 3)$ea)
+  master <- execute(master, listing, wave = 4, seed = 5)
+
+  # The EA is listed again with one household of wave 1 and two that moved
+  # in. Wave 3 is its latest tenure, so the other household of wave 1 does
+  # not warn again.
+  back <- rbind(
+    listing,
+    hh[hh$hh == min(hh$hh[hh$ea == small]), ],
+    data.frame(ea = small, hh = max(hh$hh) + 1:2)
+  )
+  fifth <- listing_warnings(execute(master, back, wave = 5, seed = 6))
+  expect_length(fifth$messages, 0L)
+  wave5 <- execute(fifth$value, wave = 5)
+  expect_setequal(wave5$hh[wave5$ea == small], max(hh$hh) + 1:2)
 })

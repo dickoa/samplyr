@@ -6,8 +6,11 @@
 #' The literal names `.weight_k` and `.fpc_k` are not themselves reserved.
 #'
 #' The generated columns are:
-#'   - `.sample_id`: Sequential identifier for each output row. Under WR or
-#'     PMR, separate occurrences of one population unit have different values.
+#'   - `.sample_id`: Identifier of each output row, numbered from 1 at
+#'     execution. Under WR or PMR, separate occurrences of one population
+#'     unit have different values. A settled reserve and a materialized wave
+#'     keep the numbers of the sample they read, so the rows they drop leave
+#'     gaps and each kept row still names the same unit.
 #'   - `.weight`: Sampling weight. This is inverse inclusion probability for
 #'     WOR and inverse expected hits per output row for WR or PMR.
 #'   - `.weight_1`, `.weight_2`, ...: Per-stage sampling weights
@@ -44,6 +47,10 @@
 #'     by the probability calculation. Present for unequal-probability and
 #'     balanced stages. Always FALSE for WR/PMR stages, where the recorded
 #'     chance is an expected hit rather than a probability.
+#'   - `.reserve_1`, `.reserve_2`, ...: At the stage that sets `reserve` in
+#'     [draw()], the unit's place in its pool's list: 0 for the take, and 1,
+#'     2, ... for the reserve units in the order they are released. The
+#'     stage's `.weight_k` is then the inverse of the whole list's chance.
 #'   - `.zone_1`: The zone a PSU was drawn from, when stage 1 fields a
 #'     certainty plan solved with `svyplan::n_alloc(n_psu_per_zone = )`.
 #'     Zones are numbered within each stratum, one or two PSUs are drawn
@@ -299,6 +306,7 @@ new_draw_spec <- function(
   certainty_plan = NULL,
   on_empty = "error",
   on_capped = "warn",
+  reserve = NULL,
   method_type = NULL,
   method_fixed = NULL,
   method_variance = NULL,
@@ -329,6 +337,7 @@ new_draw_spec <- function(
       certainty_plan = certainty_plan,
       on_empty = on_empty,
       on_capped = on_capped,
+      reserve = reserve,
       method_type = method_type,
       method_fixed = method_fixed,
       method_variance = method_variance,

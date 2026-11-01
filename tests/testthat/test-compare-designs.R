@@ -71,6 +71,27 @@ test_that("a sketch requirement agrees with the design it describes", {
   )
 })
 
+test_that("units can be keyed by several columns", {
+  frame <- data.frame(region = rep(c("N", "S"), each = 6), ea = rep(1:6, 2),
+                      size = rep(c(3, 5, 8), 4))
+  srs <- sampling_design() |> stratify_by(region) |> draw(n = 2)
+  pps <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 2, method = "pps_brewer", mos = size)
+  got <- compare_designs(srs, pps, frame, level = "probabilities",
+                         key = c(region, ea))
+  expect_identical(names(got$units)[1:2], c("region", "ea"))
+  frame$unit <- paste(frame$region, frame$ea)
+  pasted <- compare_designs(srs, pps, frame, level = "probabilities",
+                            key = unit)
+  expect_identical(got$units$agree, pasted$units$agree)
+  expect_identical(got$verdict, "differ")
+  # The allocation level needs no key, and checks one it is given.
+  expect_identical(compare_designs(srs, pps, frame)$verdict, "agree")
+  expect_error(compare_designs(srs, pps, frame, key = ea),
+               class = "samplyr_error_exante_key")
+})
+
 test_that("a total read as per stratum is caught at the first stage", {
   shared <- compare_requirement()
   shared$stages[[1]]$strata$alloc <- "equal"
@@ -269,10 +290,15 @@ test_that("compare_designs() refuses invalid inputs", {
     compare_designs(design, design, frame, key = compound, level = "units"),
     class = "samplyr_error_compare_argument"
   )
-  expect_error(
-    compare_designs(design, design, frame),
+  # Units need a key, and pools are matched by the rows they hold.
+  missing_key <- expect_error(
+    compare_designs(design, design, frame, level = "probabilities"),
     class = "samplyr_error_exante_key"
   )
+  expect_match(conditionMessage(missing_key), "matched unit by unit",
+               fixed = TRUE)
+  expect_identical(compare_designs(design, design, frame)$verdict, "agree")
+  expect_no_match(conditionMessage(missing_key), "two frames", fixed = TRUE)
   duplicated <- frame
   duplicated$compound[2] <- duplicated$compound[1]
   expect_error(
@@ -340,6 +366,41 @@ test_that("the comparison prints its verdict and each check", {
   expect_no_match(text, "Stage 3 measure of size", fixed = TRUE)
 })
 
+test_that("a stage of one pool and a reserve are named in plain words", {
+  frame <- data.frame(id = 1:40, st = rep(c("a", "b"), each = 20))
+  printed <- function(x, y) {
+    paste(capture.output(print(
+      compare_designs(x, y, frame, key = id)
+    )), collapse = "\n")
+  }
+  plain <- sampling_design() |> draw(n = 8)
+  text <- printed(plain, sampling_design() |> draw(n = 8, reserve = 4))
+  expect_match(text, "Methods, measures of size and reserves, outside the verdict:",
+               fixed = TRUE)
+  expect_match(text, "Stage 1 reserve: none in x, 4 in y.", fixed = TRUE)
+  expect_no_match(text, "measure of size: none in x, 4", fixed = TRUE)
+  # The reserve lengthens the list, so the targets differ although the takes
+  # agree, and the check says which.
+  expect_match(
+    text,
+    "The takes agree, but x lists 8 units in all and y 12.",
+    fixed = TRUE
+  )
+  expect_no_match(text, "x takes 8 units in all, y 8", fixed = TRUE)
+
+  text <- printed(plain, sampling_design() |> draw(n = 6))
+  expect_match(text, "Stage 1 targets: differ. The pool differs.", fixed = TRUE)
+  expect_match(text, "Methods and measures of size, outside the verdict:",
+               fixed = TRUE)
+
+  text <- printed(plain, sampling_design() |> stratify_by(st) |> draw(n = 4))
+  expect_match(
+    text, "x forms 1 pool and y forms 2. y splits the pool of x.",
+    fixed = TRUE
+  )
+  expect_no_match(text, "NA", fixed = TRUE)
+})
+
 test_that("methods and measures of size are listed outside the verdict", {
   frame <- compare_frame()
   frame$district_hh <- frame$district_pop * 4
@@ -390,6 +451,20 @@ test_that("methods and measures of size are listed outside the verdict", {
   spec <- compare_designs(one, brewer, frame, key = compound)$specification
   expect_identical(spec$stage, c(1L, 1L))
   expect_identical(spec$status, c("differ", "differ"))
+})
+
+test_that("proportional sizes whose sums overflow are compared", {
+  frame <- data.frame(id = 1:4, a = rep(1e308, 4), b = rep(5e307, 4))
+  x <- sampling_design() |> draw(n = 2, method = "pps_poisson", mos = a)
+  y <- sampling_design() |> draw(n = 2, method = "pps_poisson", mos = b)
+  for (level in c("allocation", "probabilities")) {
+    result <- compare_designs(x, y, frame, key = id, level = level)
+    expect_identical(result$verdict, "agree")
+    expect_identical(result$specification$status, c("same", "proportional"))
+  }
+  frame$b[1] <- 1e307
+  spec <- compare_designs(x, y, frame, key = id)$specification
+  expect_identical(spec$status, c("same", "differ"))
 })
 
 test_that("approximate probabilities are compared as targets", {

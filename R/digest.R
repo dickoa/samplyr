@@ -36,15 +36,26 @@ frame_digest_version <- 2L
 #' each pool's exclusion left out. A digest without them stays at 2, so
 #' earlier builds still read it, and one with them is refused by them rather
 #' than read as tenures drawn at once.
+#'
+#' Version 4 adds a pool column `n_reserve`, the reserve units each pool of a
+#' reserve stage lists after its take. A build that predates it refuses the
+#' digest rather than read the list as the take.
 #' @noRd
-frame_digest_versions <- c(2L, 3L)
+frame_digest_versions <- c(2L, 3L, 4L)
 
 #' The version a digest's stage records call for
 #' @noRd
 digest_schema_version <- function(stages) {
-  tenure <- vapply(stages, function(s) "tenure" %in% names(s$pools),
-                   logical(1))
-  if (any(tenure)) 3L else frame_digest_version
+  has_pool_col <- function(col) {
+    any(vapply(stages, function(s) col %in% names(s$pools), logical(1)))
+  }
+  if (has_pool_col("n_reserve")) {
+    4L
+  } else if (has_pool_col("tenure")) {
+    3L
+  } else {
+    frame_digest_version
+  }
 }
 
 #' @noRd
@@ -124,6 +135,7 @@ digest_reserved_pool_cols <- c(
   "take_rate",
   "tenure",
   "n_excluded",
+  "n_reserve",
   "unit_level",
   "chance_kind",
   "probabilities",
@@ -357,7 +369,8 @@ validate_frame_digest <- function(x, tol = 1e-6, quantile_tol = 0.05) {
   }
   if (!identical(as.integer(x$version), digest_schema_version(stages))) {
     abort_digest(
-      "A frame digest is version 3 exactly when its pools carry
+      "A frame digest is version 4 exactly when its pools carry
+       {.field n_reserve}, and otherwise version 3 exactly when they carry
        {.field tenure}.",
       "version"
     )
@@ -707,6 +720,9 @@ validate_digest_pools <- function(stage, pos, prev, tol) {
 
   if ("n_descendants" %in% names(pools)) {
     check_nonneg("n_descendants", integerish = TRUE)
+  }
+  if ("n_reserve" %in% names(pools)) {
+    check_nonneg("n_reserve", integerish = TRUE)
   }
   if ("tenure" %in% names(pools)) {
     tenure <- pools$tenure
@@ -1353,14 +1369,17 @@ get_frame_digest <- function(x) {
 #'   and on a recorded digest, which does not keep it. `n_tied` counts the
 #'   pools marked `tied` at `detail = "pool"`, without weighting, and is
 #'   `NA` in the same cases. `n_certainty` adds up the pools' `n_certainty`,
-#'   rolled up like `n_target`.
+#'   rolled up like `n_target`. A design that sets `reserve` in [draw()] adds
+#'   `n_reserve`, the reserve units its pools list after their take, rolled
+#'   up like `n_target`. `n_expected` and `n_realized` then count the whole
+#'   list, take and reserve.
 #'
 #'   For `detail = "pool"`, one row per selection pool and realization
 #'   with `stage`, `pool_id`, `replicate`, `parent_unit`, `pool_key`, any
 #'   stratum label columns, `N`, `n_target`, `n_expected`, `n_certainty`,
 #'   `n_realized`, `scope`, `chance_status`, `chance` (the constant per-unit
 #'   chance where one applies, `NA` otherwise), `take_rate`, `capped`, and
-#'   `tied`.
+#'   `tied`, and `n_reserve` when the design sets `reserve`.
 #'   `replicate` is `1` for an ordinary execution. `pool_key` names the
 #'   pool in the frame's values, its parent path then its stratum, as the
 #'   `pool_keys` field of a condition from [execute()] does. Only a
@@ -1963,6 +1982,11 @@ frame_summary_stage <- function(stages, scope, random_size = NULL,
           NA_real_
         },
         n_target = sum_or_na(p$n_target * wi),
+        n_reserve = if ("n_reserve" %in% names(p)) {
+          sum_or_na(p$n_reserve * wi)
+        } else {
+          NA_real_
+        },
         n_expected = sum_or_na(p$n_expected * wi),
         n_certainty = sum_or_na(pick(certainty, i) * wi),
         n_moved = sum_or_na(pick(pool_moved, i) * wi),
@@ -1979,6 +2003,9 @@ frame_summary_stage <- function(stages, scope, random_size = NULL,
   if (all(is.na(out$tenure))) {
     out$tenure <- NULL
     out$n_excluded <- NULL
+  }
+  if (all(is.na(out$n_reserve))) {
+    out$n_reserve <- NULL
   }
   as_tibble(out)
 }
@@ -2108,6 +2135,11 @@ frame_summary_pool <- function(
         NA_real_
       },
       n_target = as.double(pools$n_target[pool_rows]),
+      n_reserve = if ("n_reserve" %in% names(pools)) {
+        as.double(pools$n_reserve[pool_rows])
+      } else {
+        NA_real_
+      },
       n_expected = as.double(pools$n_expected[pool_rows]),
       n_certainty = pool_certainty_counts(s, certain, sample)[pool_rows],
       n_realized = n_realized,
@@ -2133,6 +2165,9 @@ frame_summary_pool <- function(
   if (all(is.na(out$tenure))) {
     out$tenure <- NULL
     out$n_excluded <- NULL
+  }
+  if (all(is.na(out$n_reserve))) {
+    out$n_reserve <- NULL
   }
   as_tibble(out)
 }

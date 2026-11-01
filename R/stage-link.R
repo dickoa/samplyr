@@ -600,7 +600,21 @@ link_stage_frame <- function(frame, previous_sample, design, stage_idx,
     same_rows = same_rows, parent_row = parent_row, call = call
   )
 
-  list(frame = linked, parent_vars = parent_vars, empty_parents = empty_parents)
+  # The selected rows of the empty parents, which an export stands in for.
+  empty_rows <- if (!is_null(empty_parents) && nrow(empty_parents) > 0L) {
+    at <- vctrs::vec_in(
+      previous_sample[parent_vars],
+      empty_parents[parent_vars]
+    )
+    as.data.frame(vctrs::vec_slice(previous_sample, at))
+  }
+
+  list(
+    frame = linked,
+    parent_vars = parent_vars,
+    empty_parents = empty_parents,
+    empty_rows = empty_rows
+  )
 }
 
 #' Whether slicing every row gives back the frame
@@ -633,9 +647,11 @@ sliced_row_names <- function(frame) {
 #'
 #' Kept in the sample's metadata rather than its digest, which
 #' `frame_digest = "none"` omits, because export has to say when a stage
-#' ran with empty parents.
+#' ran with empty parents. `rows` holds their rows in the sample of the
+#' stage above, one per draw, which an export turns into zero rows.
 #' @noRd
-add_empty_parents <- function(records, stage, keys, replicate = NA_integer_) {
+add_empty_parents <- function(records, stage, keys, rows = NULL,
+                              replicate = NA_integer_) {
   if (is_null(keys) || nrow(keys) == 0L) {
     return(records)
   }
@@ -643,7 +659,8 @@ add_empty_parents <- function(records, stage, keys, replicate = NA_integer_) {
     stage = as.integer(stage),
     replicate = as.integer(replicate),
     n = nrow(keys),
-    keys = as.data.frame(keys)
+    keys = as.data.frame(keys),
+    rows = rows
   )))
 }
 

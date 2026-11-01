@@ -518,6 +518,27 @@ test_that("varcomp() names the contract when the outcome cannot be evaluated", {
   expect_s3_class(varcomp(sample, ~y), "svyplan_varcomp")
 })
 
+test_that("draw() points an allocation argument to stratify_by()", {
+  for (arg in c("alloc", "variance", "cost", "cv", "importance", "power")) {
+    dots <- stats::setNames(list("proportional"), arg)
+    expect_error(
+      rlang::inject(
+        sampling_design() |> stratify_by(region) |> draw(n = 100, !!!dots)
+      ),
+      paste0("`", arg, "` is an argument of `stratify_by()`"),
+      fixed = TRUE,
+      class = "samplyr_error_unknown_argument"
+    )
+  }
+  # A near miss of draw()'s own argument keeps its suggestion.
+  expect_error(
+    sampling_design() |> draw(n = 2, mehtod = "srswr"),
+    "Did you mean `method`?",
+    fixed = TRUE,
+    class = "samplyr_error_unknown_argument"
+  )
+})
+
 test_that("stratify_by() suggests alloc for an expanded spelling", {
   # `allocation` is five edits from `alloc`, beyond the edit-distance rule.
   err <- expect_error(

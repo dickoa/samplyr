@@ -24,6 +24,11 @@ needed for weighting, replay, and export to the survey and srvyr packages.
 * `draw(on_capped = "error")` refuses a stage before anything is drawn when
   a fixed take exceeds a pool the stage could reach. By default such a pool
   is taken whole, with a warning.
+* `draw(reserve = r)` lists `r` reserve units after the take of each pool,
+  or the whole pool with `reserve = Inf`, in a random release order, so
+  units that fail in the field are replaced inside the design. `execute(sample, response_status = col)` settles the
+  lists from the field's AAPOR disposition codes and weights the
+  respondents, as `?reserve_lists` describes.
 * `compare_designs()` compares two designs on one frame, by allocation or
   by first-order inclusion probabilities. A protocol requirement written
   as a design can be checked this way without a reference implementation.

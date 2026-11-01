@@ -119,7 +119,9 @@ household_design <- sampling_design(title = "Household Survey") |>
   add_stage(label = "Households") |>
     draw(n = 20)
 ea_sample <- execute(household_design, bfa_eas, stages = 1, seed = 2026)
-listing <- data.frame(ea_id = rep(ea_sample$ea_id, ea_sample$households))
+# One row per selected EA, even one drawn more than once
+eas <- unique(as.data.frame(ea_sample)[c("ea_id", "households")])
+listing <- data.frame(ea_id = rep(eas$ea_id, eas$households))
 listing$hh_id <- ave(listing$ea_id, listing$ea_id, FUN = seq_along)
 household_sample <- execute(ea_sample, listing, seed = 2027)
 head(as.data.frame(household_sample)[c("ea_id", "hh_id", ".weight")])

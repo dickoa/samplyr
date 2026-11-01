@@ -61,20 +61,14 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
     ), class = "samplyr_warning_rwyb_pps_approximation")
   }
 
+  # RWYB resamples every stage, so every unit with nothing below it is a
+  # zero row.
+  df <- export_rows(x, design, stages, every_level = TRUE, call = call)
   spec <- export_stage_spec(df, design, stages)
   # Refuse a stage the nested grammar cannot carry before creating factors.
   midstage <- Filter(function(e) e$midstage_element, spec$stage)
   if (length(midstage) > 0L) {
     abort_survey_midstage_element(midstage[[1]]$stage)
-  }
-  # Recorded whatever the digest, which may be absent.
-  empty <- sample_empty_parents(x)
-  if (length(empty) > 0L) {
-    parent_stages <- sort(unique(vapply(empty, function(r) r$stage, 1L))) - 1L
-    abort_samplyr(c(
-      "Some selected stage-{parent_stages} units have no rows in the final sample.",
-      "i" = "RWYB export currently requires every selected parent to be represented. The missing parents cannot be discarded from variance estimation."
-    ), class = "samplyr_error_rwyb_missing_parents")
   }
   factors <- matrix(1, nrow(df), replicates)
   prior_prob <- rep(1, nrow(df))

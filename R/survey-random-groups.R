@@ -79,6 +79,7 @@ build_random_groups_svrepdesign <- function(x, mse = FALSE,
     mse = mse,
     degf = n_groups - 1L
   )
+  result <- compress_replicate_weights(result)
   attr(result, "samplyr_replication") <- list(
     method = "random_groups",
     replicates = n_groups

@@ -43,6 +43,32 @@ test_that("equal-probability designs resolve exactly", {
   )
 })
 
+test_that("a key of several columns names each unit by all of them", {
+  # EA numbers restart in each region, so a unit is a region and an EA.
+  frame <- data.frame(region = rep(c("N", "S"), each = 6), ea = rep(1:6, 2),
+                      size = rep(c(3, 5, 8), 4))
+  design <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 2, method = "pps_brewer", mos = size)
+  got <- exante_probabilities(design, frame, key = c(region, ea))
+  expect_named(got, c("region", "ea", "probability", "probability_quality"))
+  expect_identical(got[c("region", "ea")], tibble::as_tibble(frame[1:2]))
+  frame$unit <- paste(frame$region, frame$ea)
+  expect_identical(
+    got$probability,
+    exante_probabilities(design, frame, key = unit)$probability
+  )
+
+  expect_error(exante_probabilities(design, frame, key = ea),
+               "repeats 6 values", class = "samplyr_error_exante_key")
+  expect_error(exante_probabilities(design, frame, key = c(region, region)),
+               class = "samplyr_error_exante_key")
+  expect_error(exante_probabilities(design, frame, key = c(region, zone)),
+               "zone", class = "samplyr_error_exante_key")
+  expect_error(exante_probabilities(design, frame, key = c(region, ea + 1)),
+               class = "samplyr_error_exante_key")
+})
+
 test_that("stratified designs resolve through their allocation", {
   proportional <- expect_matches_execution(
     sampling_design() |>
@@ -219,10 +245,12 @@ test_that("the key must be a column, unique, and complete", {
     exante_probabilities(design, register, key = "uid"),
     class = "samplyr_error_exante_key"
   )
-  expect_error(
+  missing <- expect_error(
     exante_probabilities(design, register),
     class = "samplyr_error_exante_key"
   )
+  expect_match(conditionMessage(missing), "one row per unit", fixed = TRUE)
+  expect_no_match(conditionMessage(missing), "two frames", fixed = TRUE)
 
   repeated <- register
   repeated$uid[[2]] <- repeated$uid[[1]]
@@ -430,7 +458,8 @@ test_that("the marker checks its own arguments", {
   bad(frames = register, by = c(person_id = "person_id"))
   bad(frames = list(register), by = c(person_id = "person_id"))
   bad(frames = list(a = register), by = "person_id")
-  bad(frames = list(a = register), by = c(a = "x", b = "y"))
+  bad(frames = list(a = register), by = c(a = "x", a = "y"))
+  bad(frames = list(a = register), by = c(a = "x", "y"))
 
   spec <- exante_overlaps(
     frames = list(a = register, b = register),
@@ -474,6 +503,39 @@ test_that("the registers must match the frames, and carry the key", {
     stack(exante_overlaps(
       list(a = register_a, b = register_b), by = c(missing_id = "person_id")
     )),
+    class = "samplyr_error_stack_frames_overlaps"
+  )
+})
+
+test_that("a compound key joins the registers on every column", {
+  population <- exante_stack_population()
+  # The registers number people within a block of ten.
+  population$block <- (population$person_id - 1L) %/% 10L
+  population$person <- (population$person_id - 1L) %% 10L
+  register_a <- population[population$in_a, , drop = FALSE]
+  register_b <- population[population$in_b, , drop = FALSE]
+  # The registers spell the column the stack calls person differently.
+  register_a$within <- register_a$person
+  register_b$within <- register_b$person
+  a <- sampling_design() |>
+    draw(n = 10, method = "pps_brewer", mos = size) |>
+    execute(register_a, seed = 1)
+  b <- sampling_design() |> draw(n = 20) |> execute(register_b, seed = 2)
+  compound <- stack_frames(
+    a = a, b = b, membership = c(a = "in_a", b = "in_b"),
+    key = c(block, person),
+    overlaps = exante_overlaps(
+      frames = list(a = register_a, b = register_b),
+      by = c(block = "block", person = "within")
+    )
+  )
+  expect_identical(
+    attr(compound, "overlaps")$resolved,
+    attr(exante_stack(), "overlaps")$resolved
+  )
+  expect_error(
+    exante_overlaps(frames = list(a = register_a, b = register_b),
+                    by = c(block = "block", person = NA)),
     class = "samplyr_error_stack_frames_overlaps"
   )
 })

@@ -14,6 +14,7 @@ execute(
   small_pool = NULL,
   reps = NULL,
   wave = NULL,
+  response_status = NULL,
   frame_digest = c("summary", "full", "none")
 )
 }
@@ -66,11 +67,12 @@ schedules.}
 
 \item{panel_stage}{Stage whose selected units are assigned to panels, as a
 single stage number, or \code{NULL} (the default) for the first executed
-stage. Accepted only alongside \code{panels}, and the stage must be one the
-execution completes. Later stages inherit their ancestor's panel, so
-assigning below stage 1 rotates units inside parents that stay in the
-survey. \link{panel_assignment} explains what that changes, including how it
-can bias estimates over time.}
+stage. Accepted only alongside \code{panels}. The stage must be one the
+execution completes, and not the stage that sets \code{reserve} in \code{\link[=draw]{draw()}}
+(\code{samplyr_error_panel_stage_reserve}). Later stages inherit their
+ancestor's panel, so assigning below stage 1 rotates units inside
+parents that stay in the survey. \link{panel_assignment} explains what that
+changes, including how it can bias estimates over time.}
 
 \item{small_pool}{What to do when a rotation schedule would leave a pool
 with no unit to activate at some wave. \code{"error"} (the default, reached by
@@ -109,6 +111,19 @@ of period \code{t} for \code{\link[=periods]{periods()}}, and returns the master
 with a rotation schedule or periods. See "Drawing the later stages wave
 by wave" below.}
 
+\item{response_status}{A column of the sample that holds the final
+disposition of each listed unit, in the terms of the AAPOR Standard
+Definitions: whether the unit was eligible and whether it responded.
+It settles the stage that sets \code{reserve} in \code{\link[=draw]{draw()}}.
+\code{execute(sample, response_status = col)} takes no other argument. The
+column holds AAPOR final disposition codes, read by their leading digit
+(1 or 1.1 an interview, 2 or 2.24 an eligible non-interview, 3 an
+unknown eligibility, 4 or "4.60" not eligible), or the words
+\code{"interview"}, \code{"noninterview"}, \code{"unknown"} and \code{"ineligible"}. \code{NA}
+marks a reserve unit the field did not release. Every unit of the take
+needs a code. See "Settling a reserve" below, and \link{reserve_lists}
+for the protocol and the codes.}
+
 \item{frame_digest}{Controls the frame digest, a compact execution
 manifest recorded with the sample and read by \code{\link[=frame_summary]{frame_summary()}}. The
 digest never affects selection, weights, or estimation. \code{"summary"}
@@ -140,8 +155,9 @@ receipt as potentially confidential.}
 A \code{tbl_sample}: a data frame subclass carrying the selected rows,
 the design that produced them, and generated columns recording the
 selection. Those are \code{.sample_id}, \code{.weight}, the per-stage \code{.weight_k},
-\code{.fpc_k}, \code{.draw_k} and \code{.certainty_k}, \code{.zone_1} and \code{.pair_1} for a
-zoned certainty plan, \code{.replicate} or \code{.panel} when \code{reps} or
+\code{.fpc_k}, \code{.draw_k} and \code{.certainty_k}, \code{.reserve_k} at a stage that
+sets \code{reserve} in \code{\link[=draw]{draw()}}, \code{.zone_1} and \code{.pair_1} for a zoned
+certainty plan, \code{.replicate} or \code{.panel} when \code{reps} or
 \code{panels} is used, and \code{.wave} for a window of several waves.
 \link{sample_columns} documents what each one holds.
 }
@@ -193,6 +209,40 @@ Fieldwork then produces the next stage's frame, and passing the partial
 sample back as \code{.data} continues the same design. \link{frame_input_grammar}
 states how a continuation reads its frame, when it asks for \code{stages}, and
 how it differs from starting a new phase on a sample.
+}
+
+\subsection{Settling a reserve}{
+
+A stage that sets \code{reserve} in \code{\link[=draw]{draw()}} lists its take and its reserve,
+with \code{.reserve_k} giving the release order. The field works the take, the
+office releases one reserve unit, in \code{.reserve_k} order, for each unit
+that fails, and work in a pool stops at its target number of
+respondents or when the list runs out. An earlier stop must not depend on
+how the pool was going, such as giving up after a run of refusals.
+
+\code{execute(sample, response_status = col)} reads the codes, walks each pool in
+release order and returns the respondents. Their weight at the stage
+estimates the pool's eligible units from the units worked, leaving out
+the unit that stopped the list, and divides it among the respondents.
+Units released after the stop are dropped, so a pool worked past its
+target keeps the weight of the stop rule. A pool stopped early is
+settled with the units it worked. How unknowns are coded is the choice
+of their eligibility: 3 estimates it from the resolved units of the
+pool, 2 counts them as eligible and 4 as ineligible.
+
+A pool whose eligible units include no respondent returns no rows, but
+its eligible units are still estimated from the units worked. When every
+unit worked is of unknown eligibility, the estimate takes the resolved
+rate of the pools that share its strata, or counts every unit as
+eligible when none of them resolved one. The export keeps that weight
+in a placeholder row for a nonresponse adjustment (see the "A settled
+reserve" section of \code{\link[=as_svydesign]{as_svydesign()}}).
+
+A sample is settled once. A stage below the reserve is drawn from the
+settled sample, \code{execute(settled, listing)}, and a call that would draw
+it from the list is refused (\code{samplyr_error_reserve_unsettled}).
+\code{\link[=summary]{summary()}} shows the settlement per pool, and \code{\link[=write_design]{write_design()}} records
+it for \code{\link[=replay_design]{replay_design()}}.
 }
 
 \subsection{Drawing the later stages wave by wave}{
@@ -247,7 +297,9 @@ with the waves that drew its units. When a panel has several tenures,
 the master never closes: its draws accumulate, and
 \code{execute(master, wave = t)} reads each panel's current tenure. A new
 tenure takes the full listing: samplyr leaves out the units earlier
-tenures drew and weights the rest to the whole listing.
+tenures drew and weights the rest to the whole listing. Such a master
+takes no \code{reserve} at any stage (\code{samplyr_error_tenure_stages}), since
+it is never complete and a wave exports no reserve.
 \link{panel_assignment} describes tenures.
 }
 }
