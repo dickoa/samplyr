@@ -478,11 +478,13 @@ test_that("a design without a reserve draws the same units as before", {
             draw(n = 4) |> execute(bfa_eas, seed = 3))),
     "fb5af7c5d09b5cd90ae39bbe7979cec7"
   )
+  # Re-recorded when sondage 0.11.0 began returning brewer samples in
+  # ascending unit order. The selected units are unchanged.
   expect_identical(
     ids(q(sampling_design() |> stratify_by(region) |>
             draw(n = 4, method = "pps_brewer", mos = households) |>
             execute(bfa_eas, seed = 4))),
-    "f2f0327ebaa6d7480aad64786176362c"
+    "c07e714214959367cad729e983874da3"
   )
   expect_identical(
     ids(q(sampling_design() |> stratify_by(region) |>

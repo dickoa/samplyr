@@ -18,6 +18,19 @@ records, and samplyr does not support them. These include substitutes
 matched to the failed unit, substitutes chosen by the interviewer, and
 substitutes drawn at random only when a unit fails, since nothing then
 records the pool or the order.
+
+Reserve batches are another protocol, which a settlement does not fit.
+The sample holds random batches that are activated together in every
+pool when response falls short, and every released unit is worked, as
+the European Social Survey asked from its tenth round. The weight then
+comes from the units released, so \code{response_status} would drop the
+respondents released after a pool reached its take. Draw the main
+sample and the batches as one take, and assign it at that stage to
+panels the size of one batch, so that the main sample spans several
+panels. A schedule whose wave \code{b + 1} activates the main sample and the
+first \code{b} batches then gives, through \code{execute(master, wave = b + 1)},
+each unit the weight of the units released. \link{panel_assignment}
+describes schedules.
 \subsection{Workflow}{
 
 \code{draw(n = 8, reserve = 4)} asks each pool for a take of 8 and a list of
