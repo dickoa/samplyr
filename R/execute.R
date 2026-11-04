@@ -369,13 +369,15 @@ NULL
 #' its eligible units are still estimated from the units worked. When every
 #' unit worked is of unknown eligibility, the estimate takes the resolved
 #' rate of the pools that share its strata, or counts every unit as
-#' eligible when none of them resolved one. The export keeps that weight
+#' eligible when none of them resolved one. Both are assumptions about the
+#' pool, and [summary()] counts the pools that rest on them. The export keeps that weight
 #' in a placeholder row for a nonresponse adjustment (see the "A settled
 #' reserve" section of [as_svydesign()]).
 #'
 #' A sample is settled once. A stage below the reserve is drawn from the
 #' settled sample, `execute(settled, listing)`, and a call that would draw
-#' it from the list is refused (`samplyr_error_reserve_unsettled`).
+#' it from the list is refused (`samplyr_error_reserve_unsettled`). So is a
+#' new phase drawn from the list.
 #' [summary()] shows the settlement per pool, and [write_design()] records
 #' it for [replay_design()].
 #'
@@ -2801,6 +2803,9 @@ prepare_multiphase_frame <- function(frame) {
     return(list(frame = frame, prev_phase = NULL))
   }
   check_weight_contract_execute(frame, "execute")
+  check_reserve_settled(
+    frame, "execute", action = "draw a new phase from", call = caller_env()
+  )
 
   prev_phase_sample <- frame
   prev_phase <- list(
@@ -2818,10 +2823,13 @@ prepare_multiphase_frame <- function(frame) {
   list(frame = frame, prev_phase = prev_phase)
 }
 
+#' The generated columns of a sample, in column order
+#'
+#' Stripped from a sample reused as a frame, and guarded by
+#' `dplyr_col_modify.tbl_sample()`.
 #' @noRd
 samplyr_internal_cols <- function(x) {
-  # Strip sample metadata before a tbl_sample is reused as a frame.
-  grep(samplyr_internal_col_pattern, names(x), value = TRUE)
+  names(x)[is_samplyr_column(names(x))]
 }
 
 

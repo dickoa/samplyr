@@ -413,6 +413,18 @@ summary_reserve_settlement <- function(settlement, stage_idx) {
     ),
     bullet = "bullet"
   )
+  # A pool that resolved no unit has an assumed eligible count.
+  rule <- pools$eligible_rule
+  if (!is_null(rule) && any(rule != "resolved")) {
+    cli::cat_bullet(
+      paste0(
+        "eligible_rule strata ", fmt_n(sum(rule == "strata")),
+        ", all ", fmt_n(sum(rule == "all")), " of ", fmt_n(nrow(pools)),
+        " pools, an assumed eligible count"
+      ),
+      bullet = "bullet"
+    )
+  }
   rates <- reserve_realized_rates(pools)
   fmt_rate <- function(x) formatC(x, format = "f", digits = 3)
   cli::cat_bullet(
@@ -1095,8 +1107,16 @@ summary_weight_share_note <- function(object, share) {
 #' @param object A `frame_stack` produced by [stack_frames()].
 #' @param ... Must be empty.
 #'
-#' @return Invisibly returns `object`. Called for its side effect of
-#'   printing a summary.
+#' @return A `summary_frame_stack` object, which prints the summary below.
+#'   Its fields hold the figures the print shows: `n_frames`, `n_rows`, `key`
+#'   (the key columns), `frames` (a tibble with one row per component, its
+#'   `frame` name, `rows`, `membership` column and `seed`, `NA` when the
+#'   component has none), `domains` (a tibble with the `rows` of each
+#'   `domain` that holds some, in the printed order) and `coverage`. It is
+#'   `NULL` unless a component shares weights, and otherwise holds the
+#'   coverage `status` (`"known"`, `"incompatible"` or `"unknown"`) and the
+#'   `orphan_clusters` that no frame reaches when it is known. `stack` is the
+#'   summarized stack itself.
 #'
 #' @examples
 #' population <- data.frame(
@@ -1123,45 +1143,80 @@ summary_weight_share_note <- function(object, share) {
 summary.frame_stack <- function(object, ...) {
   rlang::check_dots_empty()
   membership <- attr(object, "membership")
-  n_rows <- sum(vapply(object, nrow, integer(1)))
+  nms <- names(object)
+  frames <- tibble::tibble(
+    frame = nms,
+    rows = vapply(object, nrow, integer(1), USE.NAMES = FALSE),
+    membership = unname(as.character(membership[nms])),
+    seed = vapply(object, function(component) {
+      seed <- attr(component, "seed")
+      if (is_null(seed)) NA_real_ else as.numeric(seed)
+    }, numeric(1), USE.NAMES = FALSE)
+  )
+  counts <- frame_domain_counts(object)
+  coverage <- stack_share_coverage(object)
+  structure(
+    list(
+      stack = object,
+      n_frames = length(object),
+      n_rows = sum(frames$rows),
+      key = attr(object, "key"),
+      frames = frames,
+      domains = tibble::tibble(
+        domain = names(counts),
+        rows = as.integer(counts)
+      ),
+      coverage = if (!identical(coverage$status, "not_applicable")) {
+        list(status = coverage$status, orphan_clusters = coverage$clusters)
+      }
+    ),
+    class = "summary_frame_stack"
+  )
+}
 
+#' @rdname summary.frame_stack
+#' @param x A `summary_frame_stack` object.
+#' @export
+print.summary_frame_stack <- function(x, ...) {
   cli::cat_rule("Frame Stack Summary")
   cat("\n")
   cli::cat_bullet(
     cli::format_inline(
-      "{length(object)} frames | {n_rows} rows | key {.field {attr(object, 'key')}}"
+      "{x$n_frames} frames | {x$n_rows} rows | key {.field {x$key}}"
     ),
     bullet = "info"
   )
 
   cat("\n")
   cli::cat_line(cli::style_bold("Frames"))
-  for (nm in names(object)) {
-    seed <- attr(object[[nm]], "seed")
+  frames <- x$frames
+  for (i in seq_len(nrow(frames))) {
+    seed <- frames$seed[[i]]
     cli::cat_bullet(
       cli::format_inline(paste0(
-        nm, ": {nrow(object[[nm]])} rows | {.field {membership[[nm]]}}",
-        if (is_null(seed)) " | no seed" else " | seed {seed}"
+        frames$frame[[i]], ": {frames$rows[[i]]} rows | ",
+        "{.field {frames$membership[[i]]}}",
+        if (is.na(seed)) " | no seed" else " | seed {seed}"
       )),
       bullet = "bullet"
     )
   }
 
-  counts <- frame_domain_counts(object)
   cat("\n")
   cli::cat_line(cli::style_bold("Domains"))
-  for (label in names(counts)) {
+  domains <- x$domains
+  for (i in seq_len(nrow(domains))) {
     cli::cat_bullet(
-      cli::format_inline("{label}: {counts[[label]]} rows"),
+      cli::format_inline("{domains$domain[[i]]}: {domains$rows[[i]]} rows"),
       bullet = "bullet"
     )
   }
 
-  coverage <- stack_share_coverage(object)
-  if (!identical(coverage$status, "not_applicable")) {
+  coverage <- x$coverage
+  if (!is_null(coverage)) {
     cat("\n")
     cli::cat_line(cli::style_bold("Coverage"))
-    n_orphan <- length(coverage$clusters)
+    n_orphan <- length(coverage$orphan_clusters)
     cli::cat_bullet(
       # Keep each formatted line unwrapped.
       cli::format_inline(switch(
@@ -1184,13 +1239,9 @@ summary.frame_stack <- function(object, ...) {
     bullet = "info"
   )
   cat("\n")
-  invisible(object)
+  invisible(x)
 }
 
-#' Single-line templates for the coverage a collection can state
-#'
-#' Kept out of the switch so each stays on one line: `format_inline()` keeps
-#' the whitespace it is given, and a wrapped string prints its own indent.
 #' @noRd
 coverage_known_line <- "{n_orphan} target cluster{?s} cannot be reached from any frame."
 

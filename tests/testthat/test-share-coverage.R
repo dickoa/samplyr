@@ -355,6 +355,11 @@ test_that("summary states the union finding it has", {
     "2 target clusters cannot be reached from any frame",
     capture.output(summary(orphaned))
   )))
+  expect_identical(
+    summary(orphaned)$coverage,
+    list(status = "known", orphan_clusters = c("h11", "h12"))
+  )
+  expect_identical(summary(orphaned)$frames$seed, c(11, 12))
 
   targets <- coverage_targets()
   ordinary <- coverage_stack(

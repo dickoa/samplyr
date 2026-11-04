@@ -1243,22 +1243,34 @@ check_forwarded_args <- function(
   )
 }
 
+#' Is each name a column that a sample carries from execution?
+#'
+#' Exact names, not prefixes: `.weight_adj` is the user's. These columns
+#' are protected in a sample and stripped when it is reused as a frame.
+#' @noRd
+is_samplyr_column <- function(nms) {
+  exact <- c(
+    ".weight", ".sample_id", ".stage", ".panel", ".replicate", ".wave",
+    ".visit"
+  )
+  nms %in% exact |
+    grepl("^\\.(weight|fpc|draw|certainty|reserve|zone|pair)_[0-9]+$", nms)
+}
+
 #' The column names execution writes, which an input may not hold
 #'
-#' Exact names, not prefixes: `.weight_adj` is the user's.
+#' The columns a sample carries, and the ones execution uses on the way
+#' before naming them by stage or dropping them. The latter never reach a
+#' sample, and `._prev_phase_weight` must survive the stripping of a
+#' reused frame.
 #' @return The members of `nms` that are reserved.
 #' @noRd
 samplyr_reserved_names <- function(nms) {
-  exact <- c(
-    ".weight", ".fpc", ".pik", ".sample_id", ".stage", ".panel",
-    ".replicate", ".draw", ".certainty", ".reserve", ".zone", ".pair",
-    ".wave", ".visit",
+  working <- c(
+    ".fpc", ".pik", ".draw", ".certainty", ".reserve", ".zone", ".pair",
     "._prev_phase_weight"
   )
-  generated <- grepl(
-    "^\\.(weight|fpc|draw|certainty|reserve|zone|pair)_[0-9]+$", nms
-  )
-  unique(c(intersect(nms, exact), nms[generated]))
+  unique(nms[is_samplyr_column(nms) | nms %in% working])
 }
 
 #' Validate names before execute() adds sampling columns
@@ -1433,13 +1445,6 @@ check_single_replicate <- function(x, fn_name, call = caller_env()) {
   invisible(NULL)
 }
 
-#' Internal tbl_sample column pattern
-#'
-#' Stripped from reused frames, guarded by `dplyr_col_modify.tbl_sample()`.
-#' @noRd
-samplyr_internal_col_pattern <-
-  "^\\.(weight|fpc|sample_id|stage|draw|certainty|zone|pair|replicate|panel|wave|visit)"
-
 #' Detect a tbl_sample whose class was stripped
 #'
 #' Accepting one as a frame would rerun stage 1 on inherited weights. The
@@ -1467,7 +1472,7 @@ looks_like_stripped_tbl_sample <- function(x) {
 #' Columns whose values the stored design depends on
 #' @noRd
 protected_sample_cols <- function(data, design, stages_executed) {
-  internal <- grep(samplyr_internal_col_pattern, names(data), value = TRUE)
+  internal <- samplyr_internal_cols(data)
   design_vars <- character(0)
   for (i in stages_executed) {
     stage_spec <- design$stages[[i]]

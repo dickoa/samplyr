@@ -8,6 +8,9 @@
 set of generated columns recording how each row was selected. \code{k} is the
 stage index, so a two-stage design carries \code{.weight_1} and \code{.weight_2}.
 The literal names \code{.weight_k} and \code{.fpc_k} are not themselves reserved.
+The names below are matched exactly, so a column of the frame or one
+added later, such as \code{.weight_adj}, is an ordinary column that can be
+edited, dropped, and carried into a later phase.
 }
 \details{
 The generated columns are:

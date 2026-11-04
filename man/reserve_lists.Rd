@@ -40,7 +40,9 @@ in release order. The weight at that stage is the chance of the whole
 list. The field works the take, releases reserve units in order, and
 records a code for every unit it released. \code{execute(sample, response_status = result)} reads those codes, settles each pool, and
 returns the respondents with their weights. Only a settled sample can be
-exported.
+exported, take a new phase, or go to \code{\link[=share_weights]{share_weights()}} or
+\code{\link[=stack_frames]{stack_frames()}}. Lists drawn with \code{execute(reps = )} are settled one
+replicate at a time, from \code{dplyr::filter(sample, .replicate == r)}.
 
 A parent drawn with replacement, such as an enumeration area selected
 twice by \code{"srswr"} or \code{"pps_multinomial"}, draws a list for each of its
@@ -123,6 +125,13 @@ pool that its take covers lists every unit and is settled from its known
 count. Under \code{method = "srswor"} the weighted totals are unbiased. Under
 \code{"systematic"} the eligible count stays unbiased and a total carries a
 small bias that depends on the frame order.
+
+These properties hold for the pools with a respondent. A pool without
+one keeps its weight in a placeholder row (see the Export section).
+When every unit it worked is of unknown eligibility, its eligible count
+takes the resolved rate of the pools that share its strata, or the pool
+size when none of them resolved a unit. Both are assumptions about the
+pool, not consequences of the release order.
 
 \code{\link[=summary]{summary()}} reports the counts per pool, and how many pools ran out,
 stopped early, released too many or ended with no respondent. It also

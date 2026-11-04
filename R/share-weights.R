@@ -197,6 +197,7 @@ share_weights <- function(
   }
   check_single_replicate(x, "share_weights")
   check_sample_unmodified(x, "share_weights")
+  check_reserve_settled(x, "share_weights", action = "share the weights of")
   check_share_source_not_wave(x)
   check_weight_contract(
     x, "share_weights",

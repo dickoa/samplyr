@@ -566,3 +566,106 @@ test_that("a written record carries the file fields only", {
                          "value_hashes"))
   expect_named(integrity_for_file(record), c("n_rows", "cols", "hash"))
 })
+
+## Generated columns are exact names
+
+test_that("the generated names are matched exactly, not by prefix", {
+  generated <- c(
+    ".weight", ".sample_id", ".stage", ".panel", ".replicate", ".wave",
+    ".visit", ".weight_1", ".weight_10", ".fpc_2", ".draw_1",
+    ".certainty_3", ".zone_1", ".pair_1", ".reserve_2"
+  )
+  lookalike <- c(
+    ".weight_adj", ".weight_", ".weights", ".fpc_inf_1", ".fpc_note",
+    ".stage_name", ".panelist", ".replicate_id", ".wave2", ".reserve_flag",
+    "weight", "weight_1"
+  )
+  expect_identical(
+    is_samplyr_column(c(generated, lookalike)),
+    rep(c(TRUE, FALSE), c(length(generated), length(lookalike)))
+  )
+})
+
+test_that("every column execution adds is generated and protected", {
+  frame <- data.frame(id = 1:40, g = rep(1:2, 20), size = 1:40)
+  schedule <- data.frame(
+    panel = rep(1:2, times = 2), wave = rep(1:2, each = 2),
+    active = c(TRUE, FALSE, TRUE, TRUE)
+  )
+  master <- sampling_design() |>
+    draw(n = 8) |>
+    execute(frame, seed = 5, panels = schedule)
+  bridge_frame <- certainty_element_frame(certainty_pair_register())
+  samples <- list(
+    list(sampling_design() |> draw(n = 6, method = "srswr") |>
+           execute(frame, seed = 1), frame),
+    list(sampling_design() |> draw(n = 6, reserve = 2) |>
+           execute(frame, seed = 2), frame),
+    list(sampling_design() |> stratify_by(g) |>
+           draw(n = 4, method = "pps_brewer", mos = size) |>
+           execute(frame, seed = 3, reps = 2), frame),
+    list(master, frame),
+    list(execute(master, wave = 2), frame),
+    list(execute(master, wave = 1:2), frame),
+    list(certainty_zone_design(certainty_pair_fixture()) |>
+           execute(bridge_frame, seed = 1), bridge_frame)
+  )
+  added <- unique(unlist(lapply(samples, function(x) {
+    setdiff(names(x[[1]]), names(x[[2]]))
+  })))
+  # Each family the package writes is exercised at least once.
+  expect_setequal(
+    added,
+    c(".weight", ".sample_id", ".stage", ".weight_1", ".fpc_1", ".draw_1",
+      ".reserve_1", ".replicate", ".certainty_1", ".panel", ".wave",
+      ".visit", ".weight_2", ".fpc_2", ".zone_1", ".pair_1")
+  )
+  for (x in samples) {
+    sample <- x[[1]]
+    new_cols <- setdiff(names(sample), names(x[[2]]))
+    expect_setequal(samplyr_internal_cols(sample), new_cols)
+    expect_true(all(new_cols %in% attr(sample, "metadata")$integrity$cols))
+  }
+})
+
+test_that("a frame column named like a generated one stays the user's", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    id = 1:50, .weight_adj = 1, .stage_name = "a", .reserve_flag = FALSE
+  )
+  sample <- sampling_design() |> draw(n = 10) |> execute(frame, seed = 1)
+  expect_identical(
+    attr(sample, "metadata")$integrity$cols,
+    c(".weight", ".sample_id", ".stage", ".weight_1", ".fpc_1")
+  )
+
+  assigned <- sample
+  assigned$.weight_adj <- assigned$.weight * 1.2
+  edited <- list(
+    dplyr::mutate(sample, .weight_adj = .weight * 1.2),
+    assigned,
+    dplyr::select(sample, -.stage_name),
+    dplyr::rename(sample, flag = .reserve_flag)
+  )
+  for (x in edited) {
+    expect_length(sample_modifications(x), 0)
+    expect_s3_class(as_svydesign(x), "survey.design")
+  }
+})
+
+test_that("a column added to a sample carries into its next phase", {
+  phase1 <- sampling_design() |>
+    draw(n = 20) |>
+    execute(data.frame(id = 1:100), seed = 1)
+  phase1 <- dplyr::mutate(phase1, .weight_nr = .weight * 1.25)
+  phase1 <- dplyr::mutate(phase1, .weight_nr = .weight_nr * 2)
+  expect_length(sample_modifications(phase1), 0)
+
+  phase2 <- sampling_design() |> draw(n = 5) |> execute(phase1, seed = 2)
+  expect_identical(
+    phase2$.weight_nr,
+    phase1$.weight_nr[match(phase2$id, phase1$id)]
+  )
+  expect_equal(unique(phase2$.weight_nr), 12.5)
+})

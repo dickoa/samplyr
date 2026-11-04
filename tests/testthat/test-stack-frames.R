@@ -760,14 +760,42 @@ test_that("summary reports the domains in canonical order", {
   )
 })
 
-test_that("print and summary return their input invisibly", {
+test_that("print returns its input invisibly", {
   frames <- frame_fixture()
   expect_identical(capture.output(returned <- print(frames)), {
     capture.output(print(frames))
   })
   expect_identical(returned, frames)
-  invisible(capture.output(summarized <- summary(frames)))
-  expect_identical(summarized, frames)
+})
+
+test_that("summary returns the figures it prints", {
+  frames <- frame_fixture()
+  summarized <- summary(frames)
+  expect_s3_class(summarized, "summary_frame_stack")
+  expect_identical(summarized$stack, frames)
+  expect_identical(summarized$n_frames, 2L)
+  expect_identical(summarized$n_rows, 8L)
+  expect_identical(summarized$key, "id")
+  expect_identical(
+    summarized$frames,
+    tibble::tibble(
+      frame = c("a", "b"),
+      rows = c(4L, 4L),
+      membership = c("in_a", "in_b"),
+      seed = c(NA_real_, NA_real_)
+    )
+  )
+  expect_identical(
+    summarized$domains,
+    tibble::tibble(domain = c("a", "a+b", "b"), rows = c(2L, 4L, 2L))
+  )
+  expect_null(summarized$coverage)
+
+  expect_identical(
+    capture.output(returned <- print(summarized)),
+    capture.output(print(summary(frames)))
+  )
+  expect_identical(returned, summarized)
 })
 
 ## Compositions with the longitudinal feature

@@ -604,6 +604,9 @@ check_frame_components <- function(samples, call = caller_env()) {
   for (nm in nms) {
     check_single_replicate(samples[[nm]], "stack_frames", call = call)
     check_sample_unmodified(samples[[nm]], "stack_frames", call = call)
+    check_reserve_settled(
+      samples[[nm]], "stack_frames", action = "stack", call = call
+    )
   }
   invisible(NULL)
 }

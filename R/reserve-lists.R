@@ -37,7 +37,9 @@
 #' records a code for every unit it released. `execute(sample,
 #' response_status = result)` reads those codes, settles each pool, and
 #' returns the respondents with their weights. Only a settled sample can be
-#' exported.
+#' exported, take a new phase, or go to [share_weights()] or
+#' [stack_frames()]. Lists drawn with `execute(reps = )` are settled one
+#' replicate at a time, from `dplyr::filter(sample, .replicate == r)`.
 #'
 #' A parent drawn with replacement, such as an enumeration area selected
 #' twice by `"srswr"` or `"pps_multinomial"`, draws a list for each of its
@@ -117,6 +119,13 @@
 #' count. Under `method = "srswor"` the weighted totals are unbiased. Under
 #' `"systematic"` the eligible count stays unbiased and a total carries a
 #' small bias that depends on the frame order.
+#'
+#' These properties hold for the pools with a respondent. A pool without
+#' one keeps its weight in a placeholder row (see the Export section).
+#' When every unit it worked is of unknown eligibility, its eligible count
+#' takes the resolved rate of the pools that share its strata, or the pool
+#' size when none of them resolved a unit. Both are assumptions about the
+#' pool, not consequences of the release order.
 #'
 #' [summary()] reports the counts per pool, and how many pools ran out,
 #' stopped early, released too many or ended with no respondent. It also

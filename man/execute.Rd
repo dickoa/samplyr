@@ -234,13 +234,15 @@ A pool whose eligible units include no respondent returns no rows, but
 its eligible units are still estimated from the units worked. When every
 unit worked is of unknown eligibility, the estimate takes the resolved
 rate of the pools that share its strata, or counts every unit as
-eligible when none of them resolved one. The export keeps that weight
+eligible when none of them resolved one. Both are assumptions about the
+pool, and \code{\link[=summary]{summary()}} counts the pools that rest on them. The export keeps that weight
 in a placeholder row for a nonresponse adjustment (see the "A settled
 reserve" section of \code{\link[=as_svydesign]{as_svydesign()}}).
 
 A sample is settled once. A stage below the reserve is drawn from the
 settled sample, \code{execute(settled, listing)}, and a call that would draw
-it from the list is refused (\code{samplyr_error_reserve_unsettled}).
+it from the list is refused (\code{samplyr_error_reserve_unsettled}). So is a
+new phase drawn from the list.
 \code{\link[=summary]{summary()}} shows the settlement per pool, and \code{\link[=write_design]{write_design()}} records
 it for \code{\link[=replay_design]{replay_design()}}.
 }

@@ -526,11 +526,11 @@ is_valid_share_operator <- function(op) {
 #' Columns whose values a transformed sample's integrity record covers
 #'
 #' Internal design columns, target keys (the operator is positional) and the
-#' generated link columns. The latter are listed explicitly because widening
-#' `samplyr_internal_col_pattern` would affect every sample.
+#' generated link columns. The latter are listed explicitly because only a
+#' transformed sample holds them.
 #' @noRd
 weight_share_protected_cols <- function(data, key_cols, generated_cols) {
-  internal <- grep(samplyr_internal_col_pattern, names(data), value = TRUE)
+  internal <- samplyr_internal_cols(data)
   unique(intersect(
     c(internal, key_cols, generated_cols),
     names(data)

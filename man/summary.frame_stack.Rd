@@ -2,18 +2,31 @@
 % Please edit documentation in R/summary.R
 \name{summary.frame_stack}
 \alias{summary.frame_stack}
+\alias{print.summary_frame_stack}
 \title{Summarize a frame stack}
 \usage{
 \method{summary}{frame_stack}(object, ...)
+
+\method{print}{summary_frame_stack}(x, ...)
 }
 \arguments{
 \item{object}{A \code{frame_stack} produced by \code{\link[=stack_frames]{stack_frames()}}.}
 
 \item{...}{Must be empty.}
+
+\item{x}{A \code{summary_frame_stack} object.}
 }
 \value{
-Invisibly returns \code{object}. Called for its side effect of
-printing a summary.
+A \code{summary_frame_stack} object, which prints the summary below.
+Its fields hold the figures the print shows: \code{n_frames}, \code{n_rows}, \code{key}
+(the key columns), \code{frames} (a tibble with one row per component, its
+\code{frame} name, \code{rows}, \code{membership} column and \code{seed}, \code{NA} when the
+component has none), \code{domains} (a tibble with the \code{rows} of each
+\code{domain} that holds some, in the printed order) and \code{coverage}. It is
+\code{NULL} unless a component shares weights, and otherwise holds the
+coverage \code{status} (\code{"known"}, \code{"incompatible"} or \code{"unknown"}) and the
+\code{orphan_clusters} that no frame reaches when it is known. \code{stack} is the
+summarized stack itself.
 }
 \description{
 Reports the components, their membership columns and seeds, and how the

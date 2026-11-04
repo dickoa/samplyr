@@ -399,7 +399,8 @@ A pool whose eligible units include no respondent still has an estimated
 eligible count, from the units the field worked. With every worked unit
 of unknown eligibility, it takes the resolved rate of the pools that
 share its strata, or counts every unit as eligible when none of them
-resolved one. A pool estimated to hold no eligible unit, such as one
+resolved one. Both are assumptions about the pool, and \code{\link[=summary]{summary()}}
+counts the pools that rest on them. A pool estimated to hold no eligible unit, such as one
 whose resolved units all proved ineligible, is exported as ineligible.
 The export adds one placeholder row per other such pool, at the
 weight of the stages above times that count, coded as an eligible

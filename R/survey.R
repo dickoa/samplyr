@@ -372,7 +372,8 @@
 #' eligible count, from the units the field worked. With every worked unit
 #' of unknown eligibility, it takes the resolved rate of the pools that
 #' share its strata, or counts every unit as eligible when none of them
-#' resolved one. A pool estimated to hold no eligible unit, such as one
+#' resolved one. Both are assumptions about the pool, and [summary()]
+#' counts the pools that rest on them. A pool estimated to hold no eligible unit, such as one
 #' whose resolved units all proved ineligible, is exported as ineligible.
 #' The export adds one placeholder row per other such pool, at the
 #' weight of the stages above times that count, coded as an eligible
@@ -559,21 +560,28 @@ holds_settled_reserve <- function(x) {
   is_tbl_sample(prev) && holds_settled_reserve(prev)
 }
 
-#' Refuse to export a list that still holds its reserve
+#' Refuse to use a list that still holds its reserve
 #'
 #' `.weight` at a reserve stage is the chance of the whole list, take and
 #' reserve together. The weight of an analysis comes from the units the
 #' field worked and their outcomes, which an executed list does not record.
+#' An export also refuses a wave of a reserve master, settled or not.
+#' @param action What `fn_name` would do with the sample, completing
+#'   "cannot ... a sample".
 #' @noRd
-check_reserve_settled <- function(x, fn_name, call = caller_env()) {
-  check_reserve_wave(x, fn_name, call = call)
+check_reserve_settled <- function(x, fn_name, action = "export",
+                                  call = caller_env()) {
+  if (identical(action, "export")) {
+    check_reserve_wave(x, fn_name, call = call)
+  }
   stages <- unsettled_reserve_stages(x)
   if (length(stages) == 0L) {
     return(invisible(NULL))
   }
   abort_samplyr(
     c(
-      "{.fn {fn_name}} cannot export a sample whose reserve is not settled.",
+      "{.fn {fn_name}} cannot {action} a sample whose reserve is not
+       settled.",
       "x" = "{cli::qty(length(stages))}Stage{?s} {stages}
              {cli::qty(length(stages))}list{?s/} a take and a reserve, and
              {.field .weight} there is the chance of the whole list.",

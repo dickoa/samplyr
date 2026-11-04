@@ -1015,6 +1015,13 @@ test_that("a pool of unknowns takes the resolved rate of its strata", {
   # North resolved units: 3 of 4 eligible in pool 1, and 2 of 2 in pool 2
   # once the unit that stopped it is left out.
   expect_equal(pools$eligible[3], 10 * (3 + 2) / (4 + 2))
+  expect_output(
+    print(summary(settled)),
+    "eligible_rule strata 1, all 0 of 5 pools, an assumed eligible count",
+    fixed = TRUE
+  )
+  clean <- capture.output(print(summary(settled_sample())))
+  expect_false(any(grepl("eligible_rule", clean, fixed = TRUE)))
 })
 
 test_that("a pool of unknowns counts every unit when its strata resolved none", {
@@ -1556,4 +1563,153 @@ test_that("a placeholder of one draw is a unit apart from the other draws", {
   expect_identical(svy$variables$.draw_1[held], 2L)
   expect_identical(length(unique(svy$cluster[[1]])), 2L)
   expect_no_error(survey::svytotal(~y, svy, na.rm = TRUE))
+})
+
+## Release ranks belong to the design
+
+# Ten units, a take of 3 and a reserve of 2. The take holds two interviews
+# and an eligible non-interview, rank 1 is ineligible and rank 2 an
+# interview, so the pool stops at rank 2. Swapping ranks 1 and 2 would stop
+# it at rank 1 instead, with weight 10 / 3.
+ranked_list <- function() {
+  listed <- sampling_design() |>
+    draw(n = 3, reserve = 2) |>
+    execute(data.frame(id = 1:10), seed = 1)
+  code <- rep(NA_real_, nrow(listed))
+  code[listed$.reserve_1 == 0L] <- c(1, 1, 2.1)
+  code[listed$.reserve_1 == 1L] <- 4.7
+  code[listed$.reserve_1 == 2L] <- 1
+  listed$code <- code
+  listed
+}
+
+swap_ranks <- function(rank) {
+  ifelse(rank %in% 1:2, 3L - rank, rank)
+}
+
+test_that("a clean list settles at the weight of its stop", {
+  settled <- execute(ranked_list(), response_status = code)
+  expect_identical(nrow(settled), 3L)
+  expect_equal(settled$.weight, rep(2.5, 3))
+})
+
+test_that("an edited release rank is refused at settlement", {
+  listed <- ranked_list()
+  swapped <- dplyr::mutate(listed, .reserve_1 = swap_ranks(.reserve_1))
+  expect_error(
+    execute(swapped, response_status = code),
+    class = "samplyr_error_modified_sample"
+  )
+  assigned <- listed
+  assigned$.reserve_1 <- swap_ranks(assigned$.reserve_1)
+  expect_error(
+    execute(assigned, response_status = code),
+    class = "samplyr_error_modified_sample"
+  )
+})
+
+test_that("a dropped or renamed release rank is refused at settlement", {
+  listed <- ranked_list()
+  dropped <- listed
+  dropped$.reserve_1 <- NULL
+  changed <- list(
+    dplyr::select(listed, -.reserve_1),
+    dropped,
+    dplyr::rename(listed, rank = .reserve_1)
+  )
+  for (x in changed) {
+    expect_error(
+      execute(x, response_status = code),
+      class = "samplyr_error_modified_sample"
+    )
+  }
+})
+
+test_that("codes and row order stay free to change before settlement", {
+  listed <- ranked_list()
+  recoded <- dplyr::mutate(listed, code = ifelse(code == 4.7, 4.1, code))
+  reordered <- recoded[rev(seq_len(nrow(recoded))), ]
+  expected <- execute(listed, response_status = code)
+  for (x in list(recoded, reordered)) {
+    settled <- execute(x, response_status = code)
+    expect_identical(sort(settled$id), sort(expected$id))
+    expect_equal(settled$.weight, rep(2.5, 3))
+  }
+})
+
+test_that("a release rank edited after settlement blocks the export", {
+  skip_if_not_installed("survey")
+  settled <- execute(ranked_list(), response_status = code)
+  expect_no_error(as_svydesign(settled))
+  settled$.reserve_1 <- 0L
+  expect_error(as_svydesign(settled), class = "samplyr_error_modified_sample")
+})
+
+## A list is used only once settled
+
+test_that("a new phase, shared weights and frame stacks wait for settlement", {
+  listed <- ranked_list()
+  expect_error(
+    sampling_design() |> draw(n = 2) |> execute(listed, seed = 2),
+    "cannot draw a new phase from a sample whose reserve",
+    class = "samplyr_error_reserve_unsettled"
+  )
+  people <- data.frame(person_id = 1:20, home = rep(1:10, each = 2))
+  links <- data.frame(id = rep(1:10, each = 2), person_id = 1:20)
+  share <- function(x) {
+    share_weights(
+      x,
+      targets = people,
+      links = links,
+      by = c(id = "id"),
+      to = c(person_id = "person_id"),
+      within = home,
+      multiplicity = complete_links()
+    )
+  }
+  expect_error(share(listed), class = "samplyr_error_reserve_unsettled")
+
+  pop <- data.frame(
+    id = 1:30,
+    in_a = rep(c(TRUE, FALSE, TRUE), 10),
+    in_b = rep(c(FALSE, TRUE, TRUE), 10)
+  )
+  stack <- function(a) {
+    b <- sampling_design() |> draw(n = 6) |> execute(pop[pop$in_b, ], seed = 2)
+    stack_frames(a = a, b = b, membership = c(a = "in_a", b = "in_b"), key = id)
+  }
+  frame_a <- pop[pop$in_a, ]
+  list_a <- sampling_design() |>
+    draw(n = 6, reserve = 2) |>
+    execute(frame_a, seed = 1)
+  expect_error(stack(list_a), class = "samplyr_error_reserve_unsettled")
+
+  # Once settled, each route takes the sample.
+  settled <- execute(listed, response_status = code)
+  phase <- sampling_design() |> draw(n = 2) |> execute(settled, seed = 2)
+  expect_identical(nrow(phase), 2L)
+  expect_true(all(phase$id %in% settled$id))
+  expect_s3_class(share(settled), "tbl_sample")
+  list_a$code <- ifelse(list_a$.reserve_1 == 0L, 1, NA)
+  expect_s3_class(stack(execute(list_a, response_status = code)), "frame_stack")
+})
+
+test_that("a replicated list settles one replicate at a time", {
+  listed <- sampling_design() |>
+    draw(n = 3, reserve = 2) |>
+    execute(data.frame(id = 1:10), seed = 1, reps = 2)
+  listed$code <- ifelse(listed$.reserve_1 == 0L, 1, NA)
+  expect_error(
+    execute(listed, response_status = code),
+    class = "samplyr_error_replicated_sample_unsupported"
+  )
+  for (r in 1:2) {
+    one <- dplyr::filter(listed, .replicate == r)
+    settled <- execute(one, response_status = code)
+    expect_identical(
+      sort(settled$id),
+      sort(one$id[one$.reserve_1 == 0L])
+    )
+    expect_equal(settled$.weight, rep(10 / 3, 3))
+  }
 })

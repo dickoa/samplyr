@@ -4,6 +4,9 @@
 #' set of generated columns recording how each row was selected. `k` is the
 #' stage index, so a two-stage design carries `.weight_1` and `.weight_2`.
 #' The literal names `.weight_k` and `.fpc_k` are not themselves reserved.
+#' The names below are matched exactly, so a column of the frame or one
+#' added later, such as `.weight_adj`, is an ordinary column that can be
+#' edited, dropped, and carried into a later phase.
 #'
 #' The generated columns are:
 #'   - `.sample_id`: Identifier of each output row, numbered from 1 at
@@ -719,11 +722,7 @@ restore_tbl_sample <- function(data, template) {
   if (nrow(data) != nrow(template)) {
     out <- mark_sample_modified(out, "rows")
   }
-  internal_cols <- grep(
-    samplyr_internal_col_pattern,
-    names(template),
-    value = TRUE
-  )
+  internal_cols <- samplyr_internal_cols(template)
   if (!all(internal_cols %in% names(data))) {
     out <- mark_sample_modified(out, "columns")
   }
@@ -847,7 +846,7 @@ takes_one_replicate <- function(out, data) {
 #' @export
 #' @keywords internal
 `names<-.tbl_sample` <- function(x, value) {
-  internal_cols <- grep(samplyr_internal_col_pattern, names(x), value = TRUE)
+  internal_cols <- samplyr_internal_cols(x)
   out <- NextMethod()
   if (is_tbl_sample(out) && !all(internal_cols %in% names(out))) {
     out <- mark_sample_modified(out, "columns")
@@ -859,8 +858,8 @@ takes_one_replicate <- function(out, data) {
 #'
 #' mutate() and friends funnel through dplyr_col_modify(). Overwriting
 #' or dropping an internal design column (`.weight`, `.weight_k`,
-#' `.fpc_k`, `.draw_k`, `.certainty_k`, `.zone_k`, `.pair_k`, `.replicate`,
-#' `.sample_id`, `.panel`) breaks the link between the data and the
+#' `.fpc_k`, `.draw_k`, `.certainty_k`, `.zone_k`, `.pair_k`, `.reserve_k`,
+#' `.replicate`, `.sample_id`, `.panel`) breaks the link between the data and the
 #' stored design, so the result is marked as modified. Adding or changing
 #' ordinary data columns is unaffected.
 #'
@@ -881,7 +880,7 @@ dplyr_col_modify.tbl_sample <- function(data, cols) {
   }
   if (is_tbl_sample(out)) {
     touched <- intersect(names(cols), names(data))
-    if (any(grepl(samplyr_internal_col_pattern, touched))) {
+    if (any(is_samplyr_column(touched))) {
       out <- mark_sample_modified(out, "columns")
     }
   }
