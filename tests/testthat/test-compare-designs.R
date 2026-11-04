@@ -496,3 +496,106 @@ test_that("approximate probabilities are compared as targets", {
   allocation <- compare_designs(brewer, brewer, flat, key = id)
   expect_identical(allocation$probability_quality, NA_character_)
 })
+
+## Aspects the probabilities cannot see
+
+test_that("a control sort is listed although the probabilities agree", {
+  sorted <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 3, method = "pps_systematic", mos = households,
+         control = c(province, commune))
+  unsorted <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 3, method = "pps_systematic", mos = households)
+  result <- compare_designs(
+    sorted, unsorted, bfa_eas,
+    key = ea_id, level = "probabilities"
+  )
+  expect_identical(result$verdict, "agree")
+  spec <- result$specification
+  expect_identical(spec$aspect, c("method", "mos", "control"))
+  expect_identical(spec$x[[3]], "c(province, commune)")
+  expect_identical(spec$y[[3]], NA_character_)
+  expect_identical(spec$status[[3]], "differ")
+  text <- paste(capture.output(print(result)), collapse = "\n")
+  expect_match(text, "Specification, outside the verdict:", fixed = TRUE)
+  expect_match(
+    text,
+    "Stage 1 control sort: c(province, commune) in x, none in y.",
+    fixed = TRUE
+  )
+  expect_no_match(text, "does not spread", fixed = TRUE)
+})
+
+test_that("the order and the kind of a sort are compared as written", {
+  sort_by <- function(control) {
+    sampling_design() |>
+      draw(n = 3, method = "pps_systematic", mos = households,
+           control = {{ control }})
+  }
+  nested <- sort_by(c(province, commune))
+  spec <- compare_specifications(nested, sort_by(c(commune, province)), bfa_eas)
+  expect_identical(spec$y[[3]], "c(commune, province)")
+  expect_identical(spec$status[[3]], "differ")
+  spec <- compare_specifications(nested, sort_by(serp(province, commune)), bfa_eas)
+  expect_identical(spec$y[[3]], "serp(province, commune)")
+  expect_identical(spec$status[[3]], "differ")
+  spec <- compare_specifications(nested, nested, bfa_eas)
+  expect_identical(spec$status[[3]], "same")
+})
+
+test_that("a sort that cannot spread the sample is named in print", {
+  brewer <- sampling_design() |>
+    draw(n = 3, method = "pps_brewer", mos = households,
+         control = c(province, commune))
+  plain <- sampling_design() |>
+    draw(n = 3, method = "pps_brewer", mos = households)
+  result <- compare_designs(brewer, plain, bfa_eas, key = ea_id)
+  expect_identical(
+    result$specification$status,
+    c("same", "same", "differ")
+  )
+  text <- paste(capture.output(print(result)), collapse = "\n")
+  expect_match(
+    text,
+    "c(province, commune) in x, none in y. The sort does not spread a pps_brewer sample.",
+    fixed = TRUE
+  )
+})
+
+test_that("balancing, spatial spread and permanent random numbers are listed", {
+  cube <- function(aux) {
+    sampling_design() |>
+      draw(n = 20, method = "cube", mos = households, aux = {{ aux }})
+  }
+  spec <- compare_specifications(
+    cube(c(population, bound(region))), cube(population), bfa_eas
+  )
+  expect_identical(spec$aspect, c("method", "mos", "aux"))
+  expect_identical(spec$x[[3]], "c(population, bound(region))")
+  expect_identical(spec$y[[3]], "population")
+  expect_identical(spec$status[[3]], "differ")
+
+  spatial <- sampling_design() |>
+    draw(n = 20, method = "lpm2", spread = c(longitude, latitude))
+  spec <- compare_specifications(spatial, spatial, bfa_eas)
+  expect_identical(spec$aspect, c("method", "mos", "spread"))
+  expect_identical(spec$x[[3]], "c(longitude, latitude)")
+  expect_identical(spec$status[[3]], "same")
+
+  coordinated <- sampling_design() |> draw(n = 20, method = "bernoulli", prn = u)
+  independent <- sampling_design() |> draw(n = 20, method = "bernoulli")
+  spec <- compare_specifications(coordinated, independent, bfa_eas)
+  expect_identical(spec$aspect, c("method", "mos", "prn"))
+  expect_identical(spec$x[[3]], "u")
+  expect_identical(spec$y[[3]], NA_character_)
+})
+
+test_that("a stage with none of these aspects lists method and size only", {
+  plain <- sampling_design() |>
+    draw(n = 3, method = "pps_brewer", mos = households)
+  expect_identical(
+    compare_specifications(plain, plain, bfa_eas)$aspect,
+    c("method", "mos")
+  )
+})

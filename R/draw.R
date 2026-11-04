@@ -40,16 +40,21 @@
 #' - `systematic` selects at a fixed interval.
 #' - `bernoulli` makes an independent trial for each unit.
 #' - `pps_systematic` is order-sensitive, with exact first-order
-#'   probabilities.
-#' - `pps_brewer` has exact first-order and approximate joint probabilities.
+#'   probabilities. Sorted with `control`, it spreads the sample over the
+#'   sorted variables.
+#' - `pps_brewer` is Brewer's general method for any `n`, with exact
+#'   first-order and approximate joint probabilities. `PPS_BREWER` in SAS
+#'   and SPSS selects two units per stratum.
 #' - `pps_cps` has the highest entropy and exact joint probabilities.
-#' - `pps_sampford` has exact Sampford joint probabilities.
+#' - `pps_sampford` has exact Sampford joint probabilities. It is the
+#'   `PPS_SAMPFORD` method of SAS and SPSS.
 #' - `pps_poisson` is the PPS analog of Bernoulli sampling.
 #' - `pps_sps` (sequential Poisson) and `pps_pareto` meet their probability
 #'   targets only approximately.
 #' - `pps_multinomial` allows any number of hits, with the Hansen-Hurwitz
 #'   estimator.
-#' - `pps_chromy` is the method of SAS `PPS_SEQ`.
+#' - `pps_chromy` is sequential and order-sensitive, the method of SAS
+#'   `PPS_SEQ`.
 #' - `cube` is the cube method of Deville and \enc{Tillé}{Tille} (2004).
 #' - `lpm2` and `scps` spread the sample in space.
 #'
@@ -57,6 +62,50 @@
 #' either \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
 #' times, where \eqn{E} is its expected number of hits, so a unit is never hit
 #' more often than its size warrants.
+#'
+#' ## Choosing a PPS method
+#'
+#' When a protocol names the method, use that method.
+#'
+#' Otherwise a general fixed-size method is the usual choice. `pps_brewer`,
+#' `pps_cps` and `pps_sampford` select any number of units, ignore the frame
+#' order and give every pair of units a positive joint probability, so the
+#' variance can be estimated from the design. The joint probabilities are
+#' exact for CPS and Sampford and approximate for Brewer.
+#'
+#' `pps_systematic` and `pps_chromy` depend on the frame order. Sorted with
+#' `control`, they spread the sample over the sorted variables, which is why
+#' many household survey protocols use them. Systematic PPS gives some pairs
+#' of units joint probability zero, so no design-unbiased variance estimator
+#' exists for it, and a frame whose order resonates with the sampling
+#' interval can make its standard errors far too small. [as_svydesign()]
+#' uses Brewer's approximation for a `pps_systematic` stage and warns, and
+#' a `pps_chromy` stage is treated as drawn with replacement
+#' ([variance_estimation]).
+#'
+#' `pps_poisson`, `pps_sps` and `pps_pareto` take permanent random numbers,
+#' for samples coordinated across waves or surveys.
+#'
+#' ## Spreading the sample
+#'
+#' A protocol that sorts the frame by geography wants the sample spread over
+#' the areas it sorts by. samplyr reaches that spread in four ways, and each
+#' pays for it differently.
+#'
+#' - `control` with `pps_systematic` or `pps_chromy` gives implicit
+#'   stratification, with the variance limits given above.
+#' - Finer strata in [stratify_by()], down to two units per stratum, with a
+#'   general method. Every joint probability stays positive, at the cost of
+#'   more strata and smaller takes in each.
+#' - `method = "cube"` with `aux = c(bound(province))` fixes the count in
+#'   each province to an integer adjacent to its expected count.
+#' - `method = "lpm2"` or `"scps"` with `spread` spreads the sample in space.
+#'
+#' The last two keep exact first-order probabilities, but their joint
+#' probabilities are refused and their variance comes from `subbootstrap` or
+#' `mrbbootstrap` replicates only ([variance_estimation]). No method
+#' dominates the others, and the choice depends on the variance the analysis
+#' needs.
 #'
 #' ## Selection and inference
 #'
@@ -535,7 +584,8 @@ NULL
 #' stratification from it. The sort can change which units a given seed
 #' draws, but the sample does not spread over the sorted variables. A
 #' coordinated `pps_sps` draw with `prn`, for example, keeps nothing of a
-#' sort by district.
+#' sort by district. "Spreading the sample" in [selection_methods] compares
+#' the sort with the other ways to spread a sample.
 #'
 #' Nested sorting (the default, `control = c(var1, var2, var3)`) sorts
 #' ascending by each variable in turn. Serpentine sorting
@@ -564,6 +614,15 @@ NULL
 #'   cluster_by(ea_id) |>
 #'   draw(n = 50, method = "pps_brewer", mos = households) |>
 #'   execute(bfa_eas, seed = 42)
+#'
+#' # Systematic PPS on a frame sorted by province and commune, as many
+#' # household survey protocols ask, which spreads the EAs over both
+#' sampling_design() |>
+#'   stratify_by(region, urban_rural) |>
+#'   cluster_by(ea_id) |>
+#'   draw(n = 2, method = "pps_systematic", mos = households,
+#'        control = c(province, commune)) |>
+#'   execute(bfa_eas, seed = 7)
 #'
 #' # Bernoulli sampling with frac (random sample size, expected ~5%)
 #' sampling_design() |>
@@ -609,9 +668,10 @@ NULL
 #'   draw(frac = 0.005, min_n = 3, max_n = 8, round = "nearest") |>
 #'   execute(bfa_eas, seed = 4)
 #'
-#' # Control sorting with serpentine ordering (implicit stratification)
+#' # Chromy's sequential PPS (SAS PPS_SEQ) with serpentine ordering, the
+#' # order SAS gives CONTROL variables by default
 #' sampling_design() |>
-#'   draw(n = 100, method = "systematic",
+#'   draw(n = 100, method = "pps_chromy", mos = households,
 #'        control = serp(region, province)) |>
 #'   execute(bfa_eas, seed = 2)
 #'

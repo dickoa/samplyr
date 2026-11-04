@@ -174,6 +174,41 @@ PPS uses Brewer's. Neither sees frame order, so the direction of the error
 depends on it. `as_svydesign()` warns unless the caller explicitly accepts or
 refuses the approximation through `systematic_variance`.
 
+Many survey programs publish standard errors computed as if the primary units
+were drawn with replacement within their strata, the ultimate-cluster
+variance. It is the one to reproduce when a new round is compared with a
+published one, and `?as_svydesign` explains how to build it from the sample's
+columns. The example below sets it beside the default export for a systematic
+PPS sample sorted by region and province.
+
+```{r ultimate-cluster}
+sorted_sample <- sampling_design() |>
+  stratify_by(urban_rural) |>
+  cluster_by(ea_id) |>
+  draw(n = 40, method = "pps_systematic", mos = households,
+       control = c(region, province)) |>
+  execute(bfa_eas, seed = 31)
+
+# Default export, with Brewer's approximation accepted explicitly
+svy_brewer <- as_svydesign(sorted_sample, systematic_variance = "approximate")
+
+# Ultimate-cluster variance
+svy_uc <- svydesign(
+  ids = ~ea_id,
+  strata = ~urban_rural,
+  weights = ~.weight,
+  nest = TRUE,
+  data = as.data.frame(sorted_sample)
+)
+
+svytotal(~population, svy_brewer)
+svytotal(~population, svy_uc)
+```
+
+With sampling fractions this small the two nearly agree. They part when a
+stratum takes a large share of its clusters, as in the simulation reported in
+`?variance_estimation`, and neither sees the sort.
+
 ### Strata with one sampled unit
 
 A stratum that ends up with one sampled unit outside certainty, because its

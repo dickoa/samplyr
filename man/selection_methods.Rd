@@ -44,16 +44,21 @@ optionally, whereas \code{lpm2} and \code{scps} require \code{spread}.
 \item \code{systematic} selects at a fixed interval.
 \item \code{bernoulli} makes an independent trial for each unit.
 \item \code{pps_systematic} is order-sensitive, with exact first-order
-probabilities.
-\item \code{pps_brewer} has exact first-order and approximate joint probabilities.
+probabilities. Sorted with \code{control}, it spreads the sample over the
+sorted variables.
+\item \code{pps_brewer} is Brewer's general method for any \code{n}, with exact
+first-order and approximate joint probabilities. \code{PPS_BREWER} in SAS
+and SPSS selects two units per stratum.
 \item \code{pps_cps} has the highest entropy and exact joint probabilities.
-\item \code{pps_sampford} has exact Sampford joint probabilities.
+\item \code{pps_sampford} has exact Sampford joint probabilities. It is the
+\code{PPS_SAMPFORD} method of SAS and SPSS.
 \item \code{pps_poisson} is the PPS analog of Bernoulli sampling.
 \item \code{pps_sps} (sequential Poisson) and \code{pps_pareto} meet their probability
 targets only approximately.
 \item \code{pps_multinomial} allows any number of hits, with the Hansen-Hurwitz
 estimator.
-\item \code{pps_chromy} is the method of SAS \code{PPS_SEQ}.
+\item \code{pps_chromy} is sequential and order-sensitive, the method of SAS
+\code{PPS_SEQ}.
 \item \code{cube} is the cube method of Deville and \enc{Tillé}{Tille} (2004).
 \item \code{lpm2} and \code{scps} spread the sample in space.
 }
@@ -62,6 +67,53 @@ estimator.
 either \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
 times, where \eqn{E} is its expected number of hits, so a unit is never hit
 more often than its size warrants.
+}
+
+\subsection{Choosing a PPS method}{
+
+When a protocol names the method, use that method.
+
+Otherwise a general fixed-size method is the usual choice. \code{pps_brewer},
+\code{pps_cps} and \code{pps_sampford} select any number of units, ignore the frame
+order and give every pair of units a positive joint probability, so the
+variance can be estimated from the design. The joint probabilities are
+exact for CPS and Sampford and approximate for Brewer.
+
+\code{pps_systematic} and \code{pps_chromy} depend on the frame order. Sorted with
+\code{control}, they spread the sample over the sorted variables, which is why
+many household survey protocols use them. Systematic PPS gives some pairs
+of units joint probability zero, so no design-unbiased variance estimator
+exists for it, and a frame whose order resonates with the sampling
+interval can make its standard errors far too small. \code{\link[=as_svydesign]{as_svydesign()}}
+uses Brewer's approximation for a \code{pps_systematic} stage and warns, and
+a \code{pps_chromy} stage is treated as drawn with replacement
+(\link{variance_estimation}).
+
+\code{pps_poisson}, \code{pps_sps} and \code{pps_pareto} take permanent random numbers,
+for samples coordinated across waves or surveys.
+}
+
+\subsection{Spreading the sample}{
+
+A protocol that sorts the frame by geography wants the sample spread over
+the areas it sorts by. samplyr reaches that spread in four ways, and each
+pays for it differently.
+\itemize{
+\item \code{control} with \code{pps_systematic} or \code{pps_chromy} gives implicit
+stratification, with the variance limits given above.
+\item Finer strata in \code{\link[=stratify_by]{stratify_by()}}, down to two units per stratum, with a
+general method. Every joint probability stays positive, at the cost of
+more strata and smaller takes in each.
+\item \code{method = "cube"} with \code{aux = c(bound(province))} fixes the count in
+each province to an integer adjacent to its expected count.
+\item \code{method = "lpm2"} or \code{"scps"} with \code{spread} spreads the sample in space.
+}
+
+The last two keep exact first-order probabilities, but their joint
+probabilities are refused and their variance comes from \code{subbootstrap} or
+\code{mrbbootstrap} replicates only (\link{variance_estimation}). No method
+dominates the others, and the choice depends on the variance the analysis
+needs.
 }
 
 \subsection{Selection and inference}{

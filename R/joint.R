@@ -252,12 +252,13 @@
 #' svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
 #' survey::svytotal(~population, svy)
 #'
-#' # A sample drawn from one register per stage passes them as a list
+#' # A CPS sample, also with an exact joint matrix, drawn from one register
+#' # per stage passes the registers as a list
 #' regions <- dplyr::distinct(bfa_eas, region, .keep_all = TRUE)
 #' registers <- sampling_design() |>
 #'   add_stage() |>
 #'     cluster_by(region) |>
-#'     draw(n = 3, method = "pps_brewer", mos = households) |>
+#'     draw(n = 3, method = "pps_cps", mos = households) |>
 #'   add_stage() |>
 #'     draw(n = 12) |>
 #'   execute(regions, bfa_eas, seed = 2025)

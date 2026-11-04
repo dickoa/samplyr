@@ -356,16 +356,20 @@ sample
 
 ### Operational Sampling
 
-Execute stages separately when fieldwork happens between stages:
+Execute stages separately when fieldwork happens between stages. The
+example follows a common household survey protocol, with EAs selected by
+systematic PPS on a frame sorted by province and district, and a fixed
+take of households selected systematically from the new listing.
 
 ``` r
 design <- sampling_design() |>
   add_stage(label = "EA") |>
     stratify_by(urban_rural) |>
     cluster_by(ea_id) |>
-    draw(n = 10, method = "pps_brewer", mos = households) |>
+    draw(n = 10, method = "pps_systematic", mos = households,
+         control = c(province, district)) |>
   add_stage(label = "HH") |>
-    draw(n = 5)
+    draw(n = 5, method = "systematic")
 
 # Execute stage 1 only
 selected_eas <- execute(design, zwe_eas, stages = 1, seed = 1)
@@ -373,29 +377,29 @@ selected_eas
 #> # A tbl_sample: 20 × 18
 #> # Stages:       1/2
 #> # Sampling:     1 stage | 20 units
-#> # Weights:      6492.06 [591.31, 14492.74]
-#>    ea_id province      district ward_pcode urban_rural population
-#>  * <int> <fct>         <fct>    <chr>      <fct>            <int>
-#>  1 47209 Bulawayo      Bulawayo ZW102127   Urban              462
-#>  2 35161 Harare        Harare   ZW192109   Urban              140
-#>  3 86782 Harare        Harare   ZW192130   Urban              974
-#>  4 88462 Harare        Harare   ZW192103   Urban              993
-#>  5 93947 Mashonaland … Bindura  ZW120105   Rural               95
-#>  6 35770 Mashonaland … Guruve   ZW120307   Urban              121
-#>  7 35831 Mashonaland … Guruve   ZW120322   Rural              322
-#>  8 83626 Mashonaland … Goromon… ZW130225   Urban              277
-#>  9 37885 Mashonaland … Mudzi    ZW130514   Urban              294
-#> 10 83520 Mashonaland … Murehwa  ZW130627   Rural               55
-#> 11 20895 Mashonaland … Mutoko   ZW130726   Rural               96
-#> 12 36189 Mashonaland … Makonde  ZW140513   Rural               94
-#> 13 42748 Masvingo      Mwenezi  ZW180610   Rural               73
-#> 14 76867 Matabeleland… Binga    ZW150107   Rural               74
-#> 15  5602 Matabeleland… Tsholot… ZW150603   Rural               62
-#> 16 61444 Matabeleland… Tsholot… ZW150605   Rural               75
-#> 17 28253 Matabeleland… Gwanda … ZW162103   Urban              106
-#> 18 51722 Matabeleland… Umzingw… ZW160701   Urban              357
-#> 19 54466 Midlands      Gweru U… ZW172114   Urban              510
-#> 20   866 Midlands      Zvishav… ZW170818   Rural               91
+#> # Weights:      4121.95 [168.15, 13526.55]
+#>     ea_id province     district ward_pcode urban_rural population
+#>  *  <int> <fct>        <fct>    <chr>      <fct>            <int>
+#>  1  20129 Bulawayo     Bulawayo ZW102114   Urban              449
+#>  2  85826 Harare       Chitung… ZW192204   Urban             4120
+#>  3  85720 Harare       Harare   ZW192144   Urban             1012
+#>  4  87853 Harare       Harare   ZW192145   Urban              656
+#>  5  33471 Harare       Harare … ZW192401   Urban              140
+#>  6  57994 Manicaland   Chimani… ZW110220   Rural              173
+#>  7  71844 Manicaland   Mutare … ZW112109   Urban              375
+#>  8  31050 Manicaland   Mutasa   ZW110619   Rural               95
+#>  9  95223 Mashonaland… Mazowe   ZW120412   Rural              191
+#> 10  83444 Mashonaland… Goromon… ZW130216   Urban              321
+#> 11  84047 Mashonaland… Maronde… ZW130403   Rural              138
+#> 12  81288 Mashonaland… Chegutu  ZW140125   Rural              111
+#> 13  35868 Mashonaland… Chinhoyi ZW142113   Urban             1785
+#> 14  33035 Mashonaland… Zvimba   ZW140635   Rural              286
+#> 15  27459 Masvingo     Chiredz… ZW182208   Urban              358
+#> 16  56591 Masvingo     Gutu     ZW180408   Rural              106
+#> 17  31399 Matabelelan… Hwange   ZW150309   Rural               67
+#> 18 102583 Matabelelan… Insiza   ZW160513   Rural              103
+#> 19  69632 Midlands     Gokwe S… ZW172903   Urban              717
+#> 20  10452 Midlands     Kwekwe   ZW170531   Rural              120
 #> # ℹ 12 more variables: households <int>, buildings <int>,
 #> #   women_15_49 <int>, men_15_49 <int>, children_under5 <int>,
 #> #   area_km2 <dbl>, .weight <dbl>, .sample_id <int>,
@@ -415,24 +419,24 @@ final_sample
 #> # A tbl_sample: 100 × 21
 #> # Sampling:     2 stages | 100 units
 #> # Weights:      38147.25 [35714.84, 40579.66]
-#>    ea_id province district ward_pcode urban_rural population
-#>  * <int> <fct>    <fct>    <chr>      <fct>            <int>
-#>  1 47209 Bulawayo Bulawayo ZW102127   Urban              462
-#>  2 47209 Bulawayo Bulawayo ZW102127   Urban              462
-#>  3 47209 Bulawayo Bulawayo ZW102127   Urban              462
-#>  4 47209 Bulawayo Bulawayo ZW102127   Urban              462
-#>  5 47209 Bulawayo Bulawayo ZW102127   Urban              462
-#>  6 35161 Harare   Harare   ZW192109   Urban              140
-#>  7 35161 Harare   Harare   ZW192109   Urban              140
-#>  8 35161 Harare   Harare   ZW192109   Urban              140
-#>  9 35161 Harare   Harare   ZW192109   Urban              140
-#> 10 35161 Harare   Harare   ZW192109   Urban              140
+#>    ea_id province district    ward_pcode urban_rural population
+#>  * <int> <fct>    <fct>       <chr>      <fct>            <int>
+#>  1 20129 Bulawayo Bulawayo    ZW102114   Urban              449
+#>  2 20129 Bulawayo Bulawayo    ZW102114   Urban              449
+#>  3 20129 Bulawayo Bulawayo    ZW102114   Urban              449
+#>  4 20129 Bulawayo Bulawayo    ZW102114   Urban              449
+#>  5 20129 Bulawayo Bulawayo    ZW102114   Urban              449
+#>  6 85826 Harare   Chitungwiza ZW192204   Urban             4120
+#>  7 85826 Harare   Chitungwiza ZW192204   Urban             4120
+#>  8 85826 Harare   Chitungwiza ZW192204   Urban             4120
+#>  9 85826 Harare   Chitungwiza ZW192204   Urban             4120
+#> 10 85826 Harare   Chitungwiza ZW192204   Urban             4120
 #> # ℹ 90 more rows
 #> # ℹ 15 more variables: households <int>, buildings <int>,
 #> #   women_15_49 <int>, men_15_49 <int>, children_under5 <int>,
 #> #   area_km2 <dbl>, hh_id <int>, .weight <dbl>,
 #> #   .sample_id <int>, .stage <int>, .weight_2 <dbl>,
-#> #   .fpc_2 <dbl>, .weight_1 <dbl>, .fpc_1 <int>,
+#> #   .fpc_2 <int>, .weight_1 <dbl>, .fpc_1 <int>,
 #> #   .certainty_1 <lgl>
 ```
 
@@ -587,6 +591,7 @@ sizes_df <- data.frame(
   region = c("A", "B", "C"),
   n = c(2, 3, 4)
 )
+## sizes <- c(A = 2, B = 3, C = 4) can also be used with one stratum variable
 
 sample <- sampling_design() |>
   stratify_by(region) |>
@@ -629,6 +634,34 @@ sample
 #> #   remoteness <fct>, fieldwork_cost <int>, .weight <dbl>,
 #> #   .sample_id <int>, .stage <int>, .weight_1 <dbl>,
 #> #   .fpc_1 <dbl>
+```
+
+Surveys that publish an estimate for every region often take a
+compromise between proportional and equal allocation (Bankier 1988).
+Power allocation with a common `cv` and the stratum size as `importance`
+gives each region a take proportional to the square root of its size.
+
+``` r
+ea_counts <- count(bfa_eas, region, name = "importance")
+
+compromise <- sampling_design() |>
+  stratify_by(region, alloc = "power",
+              cv = data.frame(region = ea_counts$region, cv = 1),
+              importance = ea_counts, power = 0.5) |>
+  draw(n = 300) |>
+  execute(bfa_eas, seed = 5)
+table(compromise$region)
+#> 
+#> Boucle du Mouhoun          Cascades            Centre 
+#>                28                20                25 
+#>        Centre-Est       Centre-Nord      Centre-Ouest 
+#>                22                23                24 
+#>        Centre-Sud               Est     Hauts-Bassins 
+#>                16                30                28 
+#>              Nord   Plateau-Central             Sahel 
+#>                22                16                26 
+#>         Sud-Ouest 
+#>                20
 ```
 
 ## Beyond the Basics
@@ -853,10 +886,15 @@ Plus auxiliary data: `bfa_eas_variance`, `bfa_eas_cost`
 
 ## Comparison with SAS and SPSS
 
+Sampford's method is the PPS method without replacement that the three
+tools share, so the translations below use it. samplyr's `pps_brewer` is
+Brewer's general method for any sample size, whereas `PPS_BREWER` in SAS
+and SPSS selects two units per stratum.
+
 ### SAS PROC SURVEYSELECT
 
 ``` sas
-proc surveyselect data=frame method=pps n=50 seed=12345;
+proc surveyselect data=frame method=pps_sampford n=50 seed=12345;
   strata region;
   cluster school;
   size enrollment;
@@ -867,7 +905,7 @@ run;
 sampling_design() |>
   stratify_by(region) |>
   cluster_by(school) |>
-  draw(n = 50, method = "pps_brewer", mos = enrollment) |>
+  draw(n = 50, method = "pps_sampford", mos = enrollment) |>
   execute(frame, seed = 1)
 ```
 
@@ -907,7 +945,7 @@ sampling_design() |>
 CSPLAN SAMPLE
   /PLAN FILE='myplan.csplan'
   /DESIGN STRATA=region CLUSTER=school
-  /METHOD TYPE=PPS_WOR
+  /METHOD TYPE=PPS_SAMPFORD
   /SIZE VALUE=50
   /MOS VARIABLE=enrollment.
 ```
@@ -916,6 +954,6 @@ CSPLAN SAMPLE
 sampling_design() |>
   stratify_by(region) |>
   cluster_by(school) |>
-  draw(n = 50, method = "pps_brewer", mos = enrollment) |>
+  draw(n = 50, method = "pps_sampford", mos = enrollment) |>
   execute(frame, seed = 4)
 ```

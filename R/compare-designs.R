@@ -19,6 +19,13 @@
 #' default method differs from the design that meets it by construction, so
 #' the list describes the two specifications without judging them.
 #'
+#' The list also shows a control sort, balancing variables, spatial
+#' coordinates and permanent random numbers when either design sets them.
+#' They leave the first-order probabilities unchanged, so neither level can
+#' see them, although a sort changes which samples are possible and how the
+#' sample spreads. The printed line for a sort says when the method of the
+#' stage does not spread the sample over the sorted variables.
+#'
 #' @param x,y Two `sampling_design` objects, each with a complete [draw()] on
 #'   every stage. A design restored with [read_design()] is one. An executed
 #'   sample is refused.
@@ -60,8 +67,10 @@
 #'     and `agree`.
 #'   - `specification`: two rows per stage the designs both have, with
 #'     `stage`, `aspect` (`"method"` or `"mos"`), `x`, `y` and `status`,
-#'     and a third row with aspect `"reserve"` when either stage sets
-#'     `reserve` in [draw()].
+#'     and one more row for each of `reserve`, `control`, `aux`, `spread`
+#'     and `prn` that either stage sets in [draw()]. `x` and `y` hold the
+#'     setting as written, such as `"serp(region, province)"` or
+#'     `"c(income, bound(region))"`, and `NA` where it is unset.
 #'     The status is `"same"`, `"differ"`, or for two measures of size in
 #'     different columns, `"proportional"` when one is a constant multiple
 #'     of the other on every row of `frame`. It does not enter the verdict.
@@ -268,17 +277,21 @@ compare_specifications <- function(x, y, frame) {
           mos_status
         )
       )
-      # A reserve changes the list, so it shows whenever either stage has one.
-      if (!is_null(dx$reserve) || !is_null(dy$reserve)) {
-        reserve_x <- if (is_null(dx$reserve)) NA_character_ else as.character(dx$reserve)
-        reserve_y <- if (is_null(dy$reserve)) NA_character_ else as.character(dy$reserve)
+      # These leave the first-order probabilities unchanged, so neither
+      # level can see them. Each shows whenever either stage sets it.
+      for (aspect in c("reserve", "control", "aux", "spread", "prn")) {
+        value_x <- format_spec_aspect(dx, aspect)
+        value_y <- format_spec_aspect(dy, aspect)
+        if (is.na(value_x) && is.na(value_y)) {
+          next
+        }
         out <- tibble::add_row(
           out,
           stage = k,
-          aspect = "reserve",
-          x = reserve_x,
-          y = reserve_y,
-          status = if (identical(reserve_x, reserve_y)) "same" else "differ"
+          aspect = aspect,
+          x = value_x,
+          y = value_y,
+          status = if (identical(value_x, value_y)) "same" else "differ"
         )
       }
       out
@@ -291,6 +304,35 @@ compare_specifications <- function(x, y, frame) {
     ))
   }
   do.call(rbind, rows)
+}
+
+#' One aspect of a draw specification as written, `NA` when it is unset
+#' @noRd
+format_spec_aspect <- function(spec, aspect) {
+  as_written <- function(terms) {
+    if (length(terms) == 0L) {
+      NA_character_
+    } else if (length(terms) == 1L) {
+      terms
+    } else {
+      paste0("c(", paste(terms, collapse = ", "), ")")
+    }
+  }
+  switch(
+    aspect,
+    reserve = if (is_null(spec$reserve)) {
+      NA_character_
+    } else {
+      as.character(spec$reserve)
+    },
+    control = format_control_quos(spec$control) %||% NA_character_,
+    aux = as_written(c(
+      spec$aux,
+      if (!is_null(spec$bounds)) paste0("bound(", spec$bounds, ")")
+    )),
+    spread = as_written(spec$spread),
+    prn = as_written(spec$prn)
+  )
 }
 
 #' Is one numeric column a constant multiple of another on every row?

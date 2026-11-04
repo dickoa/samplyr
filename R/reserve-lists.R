@@ -8,6 +8,10 @@
 #' Because the list and its order are part of the design, the weights of
 #' the respondents follow from the record of what the field did.
 #'
+#' Many national survey programs, the DHS and MICS among them, allow no
+#' substitution and adjust for nonresponse in the weights. A reserve list
+#' serves a protocol that substitutes, and is not a reason to adopt one.
+#'
 #' Other forms of substitution change the design in a way no weight
 #' records, and samplyr does not support them. These include substitutes
 #' matched to the failed unit, substitutes chosen by the interviewer, and

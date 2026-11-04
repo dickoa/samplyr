@@ -209,7 +209,10 @@ sample
 
 ### Operational Sampling
 
-Execute stages separately when fieldwork happens between stages:
+Execute stages separately when fieldwork happens between stages. The
+example follows a common household survey protocol, with EAs selected by
+systematic PPS on a frame sorted by province and district, and a fixed
+take of households selected systematically from the new listing.
 
 ```{r}
 #| label: operational
@@ -217,9 +220,10 @@ design <- sampling_design() |>
   add_stage(label = "EA") |>
     stratify_by(urban_rural) |>
     cluster_by(ea_id) |>
-    draw(n = 10, method = "pps_brewer", mos = households) |>
+    draw(n = 10, method = "pps_systematic", mos = households,
+         control = c(province, district)) |>
   add_stage(label = "HH") |>
-    draw(n = 5)
+    draw(n = 5, method = "systematic")
 
 # Execute stage 1 only
 selected_eas <- execute(design, zwe_eas, stages = 1, seed = 1)
@@ -348,6 +352,7 @@ sizes_df <- data.frame(
   region = c("A", "B", "C"),
   n = c(2, 3, 4)
 )
+## sizes <- c(A = 2, B = 3, C = 4) can also be used with one stratum variable
 
 sample <- sampling_design() |>
   stratify_by(region) |>
@@ -367,6 +372,24 @@ sample <- sampling_design() |>
   execute(bfa_eas, seed = 4321)
 
 sample
+```
+
+Surveys that publish an estimate for every region often take a compromise
+between proportional and equal allocation (Bankier 1988). Power
+allocation with a common `cv` and the stratum size as `importance` gives
+each region a take proportional to the square root of its size.
+
+```{r}
+#| label: compromise
+ea_counts <- count(bfa_eas, region, name = "importance")
+
+compromise <- sampling_design() |>
+  stratify_by(region, alloc = "power",
+              cv = data.frame(region = ea_counts$region, cv = 1),
+              importance = ea_counts, power = 0.5) |>
+  draw(n = 300) |>
+  execute(bfa_eas, seed = 5)
+table(compromise$region)
 ```
 
 ## Beyond the Basics
@@ -544,10 +567,15 @@ Plus auxiliary data: `bfa_eas_variance`, `bfa_eas_cost`
 
 ## Comparison with SAS and SPSS
 
+Sampford's method is the PPS method without replacement that the three
+tools share, so the translations below use it. samplyr's `pps_brewer` is
+Brewer's general method for any sample size, whereas `PPS_BREWER` in SAS
+and SPSS selects two units per stratum.
+
 ### SAS PROC SURVEYSELECT
 
 ```sas
-proc surveyselect data=frame method=pps n=50 seed=12345;
+proc surveyselect data=frame method=pps_sampford n=50 seed=12345;
   strata region;
   cluster school;
   size enrollment;
@@ -560,7 +588,7 @@ run;
 sampling_design() |>
   stratify_by(region) |>
   cluster_by(school) |>
-  draw(n = 50, method = "pps_brewer", mos = enrollment) |>
+  draw(n = 50, method = "pps_sampford", mos = enrollment) |>
   execute(frame, seed = 1)
 ```
 
@@ -604,7 +632,7 @@ sampling_design() |>
 CSPLAN SAMPLE
   /PLAN FILE='myplan.csplan'
   /DESIGN STRATA=region CLUSTER=school
-  /METHOD TYPE=PPS_WOR
+  /METHOD TYPE=PPS_SAMPFORD
   /SIZE VALUE=50
   /MOS VARIABLE=enrollment.
 ```
@@ -615,6 +643,6 @@ CSPLAN SAMPLE
 sampling_design() |>
   stratify_by(region) |>
   cluster_by(school) |>
-  draw(n = 50, method = "pps_brewer", mos = enrollment) |>
+  draw(n = 50, method = "pps_sampford", mos = enrollment) |>
   execute(frame, seed = 4)
 ```

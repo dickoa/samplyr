@@ -89,14 +89,17 @@
 #'     draw(n = 5) |>
 #'   execute(zwe_frame, seed = 1234)
 #'
-#' # Two-stage stratified cluster sample, with a synthetic household listing
+#' # Two-stage stratified cluster sample, with a synthetic household listing.
+#' # EAs by systematic PPS on a frame sorted by province and commune, then
+#' # households by systematic selection from the listing.
 #' household_design <- sampling_design(title = "Household Survey") |>
 #'   add_stage(label = "Enumeration Areas") |>
 #'     stratify_by(region, urban_rural) |>
 #'     cluster_by(ea_id) |>
-#'     draw(n = 3, method = "pps_brewer", mos = households) |>
+#'     draw(n = 3, method = "pps_systematic", mos = households,
+#'          control = c(province, commune)) |>
 #'   add_stage(label = "Households") |>
-#'     draw(n = 20)
+#'     draw(n = 20, method = "systematic")
 #' ea_sample <- execute(household_design, bfa_eas, stages = 1, seed = 2026)
 #' # One row per selected EA, even one drawn more than once
 #' eas <- unique(as.data.frame(ea_sample)[c("ea_id", "households")])

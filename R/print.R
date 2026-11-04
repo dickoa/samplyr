@@ -823,6 +823,32 @@ print.samplyr_design_comparison <- function(x, ...) {
   invisible(x)
 }
 
+#' A note naming the methods of a stage that a sort does not spread
+#'
+#' Only systematic and sequential selection spread the sample over the sorted
+#' variables (the "Control sorting" section of `draw()`).
+#' @noRd
+unspread_sort_note <- function(spec, i) {
+  stage <- spec$stage[[i]]
+  method_row <- spec[spec$stage == stage & spec$aspect == "method", ]
+  methods <- c(
+    if (!is.na(spec$x[[i]])) method_row$x,
+    if (!is.na(spec$y[[i]])) method_row$y
+  )
+  methods <- unique(setdiff(
+    methods,
+    c("systematic", "pps_systematic", "pps_chromy")
+  ))
+  if (length(methods) == 0L) {
+    return("")
+  }
+  paste0(
+    " The sort does not spread a ",
+    paste(methods, collapse = " or "),
+    " sample."
+  )
+}
+
 #' The side-by-side methods, measures of size and reserves, outside the
 #' verdict
 #' @noRd
@@ -834,17 +860,24 @@ print_specification <- function(spec) {
     return(invisible(NULL))
   }
   cli::cat_line()
-  cli::cat_line(if (any(spec$aspect == "reserve")) {
+  extra <- setdiff(spec$aspect, c("method", "mos"))
+  cli::cat_line(if (length(extra) == 0L) {
+    "Methods and measures of size, outside the verdict:"
+  } else if (identical(extra, "reserve")) {
     "Methods, measures of size and reserves, outside the verdict:"
   } else {
-    "Methods and measures of size, outside the verdict:"
+    "Specification, outside the verdict:"
   })
   for (i in seq_len(nrow(spec))) {
     what <- switch(
       spec$aspect[[i]],
       method = "method",
       mos = "measure of size",
-      reserve = "reserve"
+      reserve = "reserve",
+      control = "control sort",
+      aux = "balancing",
+      spread = "spatial spread",
+      prn = "permanent random numbers"
     )
     value <- function(v) if (is.na(v)) "none" else v
     text <- switch(
@@ -856,8 +889,13 @@ print_specification <- function(spec) {
       ),
       paste0(value(spec$x[[i]]), " in x, ", value(spec$y[[i]]), " in y")
     )
+    if (spec$aspect[[i]] == "control") {
+      text <- paste0(text, ".", unspread_sort_note(spec, i))
+    } else {
+      text <- paste0(text, ".")
+    }
     cli::cat_bullet(
-      paste0("Stage ", spec$stage[[i]], " ", what, ": ", text, "."),
+      paste0("Stage ", spec$stage[[i]], " ", what, ": ", text),
       bullet = if (spec$status[[i]] == "differ") "info" else "tick"
     )
   }

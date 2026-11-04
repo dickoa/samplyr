@@ -400,7 +400,8 @@ sorted variables. Other methods accept \code{control} but get no implicit
 stratification from it. The sort can change which units a given seed
 draws, but the sample does not spread over the sorted variables. A
 coordinated \code{pps_sps} draw with \code{prn}, for example, keeps nothing of a
-sort by district.
+sort by district. "Spreading the sample" in \link{selection_methods} compares
+the sort with the other ways to spread a sample.
 
 Nested sorting (the default, \code{control = c(var1, var2, var3)}) sorts
 ascending by each variable in turn. Serpentine sorting
@@ -430,6 +431,15 @@ sampling_design() |>
   cluster_by(ea_id) |>
   draw(n = 50, method = "pps_brewer", mos = households) |>
   execute(bfa_eas, seed = 42)
+
+# Systematic PPS on a frame sorted by province and commune, as many
+# household survey protocols ask, which spreads the EAs over both
+sampling_design() |>
+  stratify_by(region, urban_rural) |>
+  cluster_by(ea_id) |>
+  draw(n = 2, method = "pps_systematic", mos = households,
+       control = c(province, commune)) |>
+  execute(bfa_eas, seed = 7)
 
 # Bernoulli sampling with frac (random sample size, expected ~5\%)
 sampling_design() |>
@@ -475,9 +485,10 @@ sampling_design() |>
   draw(frac = 0.005, min_n = 3, max_n = 8, round = "nearest") |>
   execute(bfa_eas, seed = 4)
 
-# Control sorting with serpentine ordering (implicit stratification)
+# Chromy's sequential PPS (SAS PPS_SEQ) with serpentine ordering, the
+# order SAS gives CONTROL variables by default
 sampling_design() |>
-  draw(n = 100, method = "systematic",
+  draw(n = 100, method = "pps_chromy", mos = households,
        control = serp(region, province)) |>
   execute(bfa_eas, seed = 2)
 

@@ -66,8 +66,10 @@ key columns, \code{probability_x}, \code{probability_y}, \code{abs_diff}, \code{
 and \code{agree}.
 \item \code{specification}: two rows per stage the designs both have, with
 \code{stage}, \code{aspect} (\code{"method"} or \code{"mos"}), \code{x}, \code{y} and \code{status},
-and a third row with aspect \code{"reserve"} when either stage sets
-\code{reserve} in \code{\link[=draw]{draw()}}.
+and one more row for each of \code{reserve}, \code{control}, \code{aux}, \code{spread}
+and \code{prn} that either stage sets in \code{\link[=draw]{draw()}}. \code{x} and \code{y} hold the
+setting as written, such as \code{"serp(region, province)"} or
+\code{"c(income, bound(region))"}, and \code{NA} where it is unset.
 The status is \code{"same"}, \code{"differ"}, or for two measures of size in
 different columns, \code{"proportional"} when one is a constant multiple
 of the other on every row of \code{frame}. It does not enter the verdict.
@@ -96,6 +98,13 @@ listed side by side, outside the verdict. Two designs can agree on their
 probabilities with different methods, and a requirement written with the
 default method differs from the design that meets it by construction, so
 the list describes the two specifications without judging them.
+
+The list also shows a control sort, balancing variables, spatial
+coordinates and permanent random numbers when either design sets them.
+They leave the first-order probabilities unchanged, so neither level can
+see them, although a sort changes which samples are possible and how the
+sample spreads. The printed line for a sort says when the method of the
+stage does not spread the sample over the sorted variables.
 \subsection{Allocation}{
 
 Pools are matched by the frame rows they hold, never by the names of the
