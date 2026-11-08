@@ -58,8 +58,8 @@
 #' - `cube` is the cube method of Deville and \enc{Tillé}{Tille} (2004).
 #' - `lpm2` and `scps` spread the sample in space.
 #'
-#' "Min. repl." is probability minimum replacement: `pps_chromy` draws a unit
-#' either \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
+#' `Minimum` in the Replacement column is probability minimum replacement.
+#' `pps_chromy` draws a unit either \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
 #' times, where \eqn{E} is its expected number of hits, so a unit is never hit
 #' more often than its size warrants.
 #'
@@ -84,7 +84,7 @@
 #' ([variance_estimation]).
 #'
 #' `pps_poisson`, `pps_sps` and `pps_pareto` take permanent random numbers,
-#' for samples coordinated across waves or surveys.
+#' for samples coordinated across occasions or surveys.
 #'
 #' ## Spreading the sample
 #'
@@ -276,7 +276,9 @@ NULL
 #'   - A certainty-aware `svyplan::n_alloc()` plan (solved with a `psu`
 #'     register carrying `psu_id`), at a clustered stage 1 stratified by the
 #'     plan's one stratum column, and again at stage 2 for the per-PSU
-#'     takes. Stage 1 takes every certainty
+#'     takes. The takes may also come lower, below stages that keep one
+#'     unit of each PSU, such as `draw(n = 1)` of a segment per EA, and are
+#'     then taken inside that unit. Stage 1 takes every certainty
 #'     PSU and draws exactly the plan's remainder per stratum. A plan solved
 #'     with `n_psu_per_zone = 2` draws two PSUs from each of its zones
 #'     instead, records the zone in `.zone_1`, and exports one variance
@@ -284,8 +286,9 @@ NULL
 #'     records the plan's variance group in `.pair_1`, and exports the
 #'     groups as variance strata ([variance_estimation]). Its method
 #'     must be `pps_systematic`, `pps_brewer`, `pps_cps`, or `pps_sampford`,
-#'     with `mos` equal to the register's `N`. Stage 2 selects by `srswor` or
-#'     `systematic`, and stratifying there requires an `alloc` method.
+#'     with `mos` equal to the register's `N`. The take stage selects by
+#'     `srswor` or `systematic`, and stratifying there requires an `alloc`
+#'     method.
 #'     Arguments the plan owns (`frac`, `certainty_size`, `certainty_prop`,
 #'     `min_n`, `max_n`, and at stage 1 `alloc`) are refused alongside it.
 #'     [svyplan::merge_psus()] merges PSUs smaller than the take.
@@ -366,11 +369,11 @@ NULL
 #'   requires and the paper behind each.
 #'
 #'   `"cube"` balances the sample on `aux` so that Horvitz-Thompson
-#'   estimates of auxiliary totals match population totals, with equal or
-#'   unequal (`mos`) inclusion probabilities, and uses the stratified cube
-#'   algorithm (Chauvet 2009) when stratified. At most two stages may use a
-#'   balanced-family method. `"balanced"` is a compatibility alias for
-#'   `"cube"`.
+#'   estimates of auxiliary totals match or nearly match population totals,
+#'   with equal or unequal (`mos`) inclusion probabilities, and uses the
+#'   stratified cube algorithm (Chauvet 2009) when stratified. At most two
+#'   stages may use a balanced-family method. `"balanced"` is a compatibility
+#'   alias for `"cube"`.
 #'
 #'   A method registered with [sondage::register_method()] is named
 #'   `"pps_<name>"` for `type = "wor"` or `type = "wr"`, and
@@ -401,7 +404,7 @@ NULL
 #'   numeric column with values in the open interval (0, 1) and no missing
 #'   values. Supported by `"bernoulli"`, `"pps_poisson"`, `"pps_sps"`,
 #'   `"pps_pareto"`, and `"scps"`. The sample is then deterministic for a
-#'   given set of PRN values, which coordinates samples across survey waves.
+#'   given set of PRN values, which coordinates samples across survey occasions.
 #'   With `"scps"` it is also fixed by the order the pool's units are
 #'   visited in, the frame's row order or the `control` order, so
 #'   coordinated draws need the same order. Keeping two samples apart
@@ -755,10 +758,12 @@ draw <- function(
       "round", "control", "certainty_size", "certainty_prop",
       "certainty_overflow", "on_empty", "on_capped"
     ),
-    # An allocation is declared with the strata it splits the take over.
+    # An allocation is declared with the strata it splits the take over,
+    # and panels with the sample they partition.
     elsewhere = c(
       alloc = "stratify_by", variance = "stratify_by", cost = "stratify_by",
-      cv = "stratify_by", importance = "stratify_by", power = "stratify_by"
+      cv = "stratify_by", importance = "stratify_by", power = "stratify_by",
+      panels = "execute", panel_stage = "execute"
     )
   )
   if (is.data.frame(.data)) {
@@ -854,7 +859,7 @@ draw <- function(
       )
       certainty_plan <- bridge$spec
       n <- bridge$n_total
-    } else if (current == 2L) {
+    } else if (current >= 2L && takes_one_per_parent(.data, 2L, current - 1L)) {
       certainty_plan <- certainty_take_spec(
         plan = n,
         design = .data,

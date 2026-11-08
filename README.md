@@ -18,7 +18,7 @@ set of composable verbs for stratified, clustered, multi-stage, and
 multi-phase sampling designs with PPS methods, sample coordination, and
 panel rotation.
 
-## Ecosystem Positioning
+## Ecosystem positioning
 
 `samplyr` sits in the middle of a three-layer workflow:
 
@@ -156,7 +156,7 @@ pak::pkg_install("gitlab::dickoa/svyplan")
 pak::pkg_install("gitlab::dickoa/samplyr")
 ```
 
-## The Grammar
+## The grammar
 
 `samplyr` uses 5 verbs and 1 modifier:
 
@@ -169,7 +169,7 @@ pak::pkg_install("gitlab::dickoa/samplyr")
 | `execute()`         | Run the design on a frame             |
 | `add_stage()`       | Delimit stages in multi-stage designs |
 
-### Frame-Independent Design
+### Frame-independent design
 
 `stratify_by()` and `cluster_by()` take bare column names. The design is
 stored as a specification and resolved only when a frame is available
@@ -207,7 +207,7 @@ sample
 #> #   .fpc_1 <dbl>
 ```
 
-## Quick Start
+## Quick start
 
 ``` r
 library(samplyr)
@@ -300,7 +300,7 @@ cluster_smpl
 #> #   .fpc_1 <int>, .certainty_1 <lgl>
 ```
 
-## Multi-Stage Sampling
+## Multi-stage sampling
 
 Use `add_stage()` to define multi-stage designs. This example selects
 districts with PPS, then samples EAs within each:
@@ -354,7 +354,7 @@ sample
 #> #   .certainty_1 <lgl>
 ```
 
-### Operational Sampling
+### Operational sampling
 
 Execute stages separately when fieldwork happens between stages. The
 example follows a common household survey protocol, with EAs selected by
@@ -454,7 +454,7 @@ which would silently rerun stage 1. Passing the intact `selected_eas`
 back as a frame of `design` also warns: that call is supported as a new
 sampling phase, but it is not stage continuation.
 
-## Selection Methods
+## Selection methods
 
 Sixteen methods ship in three families:
 
@@ -471,7 +471,7 @@ sample size, which accept permanent random numbers, and the paper behind
 each. Custom methods registered with `sondage::register_method()` are
 used the same way.
 
-## Allocation Methods
+## Allocation methods
 
 When stratifying, `n` in `draw()` has one of two meanings. Without an
 allocation method it is the size taken in each stratum. With one, it is
@@ -545,7 +545,7 @@ sampling_design() |>
 #> • Draw: n = 4 (total, per district), method = srswor
 ```
 
-### Sample Size Bounds
+### Sample size bounds
 
 Use `min_n` and `max_n` in `draw()` to constrain stratum sample sizes
 when using allocation methods:
@@ -581,7 +581,7 @@ sampling_design() |>
 #> #   .fpc_1 <dbl>
 ```
 
-### Custom Allocation
+### Custom allocation
 
 For custom stratum-specific sizes or rates, pass a data frame to `n` or
 `frac` in `draw()`:
@@ -664,7 +664,7 @@ table(compromise$region)
 #>                20
 ```
 
-## Beyond the Basics
+## Beyond the basics
 
 The verbs above compose across many common design families. These
 capabilities extend the same grammar. The linked references describe
@@ -674,9 +674,9 @@ their inputs and limits:
 |----|----|----|
 | Balanced sampling | `draw(method = "cube", aux = ...)`, with `bound()` for hard count constraints | `?draw`, `?bound` |
 | Spatially balanced | `draw(method = "lpm2" or "scps", spread = c(lon, lat))` | `?selection_methods` |
-| Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across waves | `?draw`, [Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/coordination.html) |
+| Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across rounds | `?draw`, [Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/prn-coordination.html) |
 | Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `?draw`, `sondage::register_method()` |
-| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `?panel_assignment`, `?rotation_program`, [Plan and run a rotating panel](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/rotating-panels.html) |
+| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `?panel_assignment`, `?rotation_program`, [Rotating panels and master samples](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/panels-master-samples.html) |
 | Replicated draws | `execute(reps = 5)` | `?execute` |
 | Two-phase | pipe a `tbl_sample` into a new design's `execute()` | `vignette("survey-analysis")` |
 | Indirect sampling | `share_weights()`, to estimate for a population linked to the one that was sampled | `vignette("design-semantics")` |
@@ -703,7 +703,7 @@ execute(design, bfa_eas, seed = 42, reps = 5)
 execute(two_stage_design, frame, seed = 1, panels = 4, panel_stage = 2)
 ```
 
-## Survey Export
+## Survey export
 
 Convert to `survey` or `srvyr` for estimation. Here the Neyman sample
 above estimates the mean number of households per EA:
@@ -767,7 +767,7 @@ warning rather than a silent adjustment. The `capped` column of
 `?execution_conditions` lists every such condition and the payload it
 carries.
 
-## Checking a Design Before Drawing
+## Checking a design before drawing
 
 A design can be checked against its frame before any unit is drawn, and
 none of the checks below uses random numbers. A measure of size belongs
@@ -865,14 +865,14 @@ for five, and the comparison names the villages.
 
 ## Validation
 
-For statistical validation on synthetic populations with known truths,
-see [Validation on synthetic
-populations](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/validation.html)
-in the book. It combines deterministic invariants (weights, certainty,
-stage compounding) with Monte Carlo checks of bias, standard-error
-calibration, and coverage.
+To check a design on a synthetic population with known truths, see
+[Virtual
+surveys](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/virtual-surveys.html)
+in the book. It fields the design many times and measures the bias of
+its estimates, whether its standard errors are right, and the coverage
+of its intervals.
 
-## Included Datasets
+## Included datasets
 
 Derived and synthetic sampling frames for learning and testing:
 
@@ -909,7 +909,7 @@ sampling_design() |>
   execute(frame, seed = 1)
 ```
 
-### SAS Allocation with Bounds
+### SAS allocation with bounds
 
 ``` sas
 proc surveyselect data=frame method=srs n=500 seed=42;
@@ -924,7 +924,7 @@ sampling_design() |>
   execute(frame, seed = 2)
 ```
 
-### SAS Rounding Control
+### SAS rounding control
 
 ``` sas
 proc surveyselect data=frame method=sys samprate=0.02 seed=2 round=nearest;

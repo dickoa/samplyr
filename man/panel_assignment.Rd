@@ -6,24 +6,24 @@
 \description{
 How \code{\link[=execute]{execute()}} partitions a sample into panels with \code{panels}, where
 \code{panel_stage} puts the assignment, what a rotation schedule declares, and
-how \code{execute(master, wave = t)} weights the wave it materializes.
+how \code{execute(master, period = p)} weights the occasion it materializes.
 }
 \details{
-\subsection{Periods and rotation groups}{
+\subsection{Subrounds and rotation groups}{
 
 \code{panels} takes three forms.\tabular{llll}{
-   \verb{panels =} \tab Declares \tab Waves \tab A certainty unit is in \cr
-   \code{12} \tab rotation groups \tab declared later \tab every wave \cr
-   a schedule \tab rotation groups \tab as scheduled \tab every wave \cr
-   \code{periods(12)} \tab periods \tab one per period \tab one period \cr
+   \verb{panels =} \tab Declares \tab Occasions \tab A certainty unit is in \cr
+   \code{12} \tab rotation groups \tab declared later \tab every occasion \cr
+   a schedule \tab rotation groups \tab as scheduled \tab every occasion \cr
+   \code{subrounds(12)} \tab subrounds \tab one per subround \tab one subround \cr
 }
 
 
 Rotation groups are for a sample interviewed again, where a unit selected
-with certainty stays in every wave. \code{\link[=periods]{periods()}} is for a sample spread
-over fieldwork periods and visited once, such as the months of a yearly
-survey, where a certainty unit belongs to one period like any other. A
-count that keeps certainty units apart says so with
+with certainty stays in every occasion. \code{\link[=subrounds]{subrounds()}} is for a sample spread
+over the subrounds of one period and visited once, such as the months of
+a yearly survey, where a certainty unit belongs to one subround like any
+other. A count that keeps certainty units apart says so with
 \code{samplyr_message_panel_certainty}.
 }
 
@@ -78,192 +78,259 @@ parents is balanced for net change but not for gross change.
 \subsection{Certainty units}{
 
 Under a count or a schedule, certainty units are labeled from their own
-pools and consume no rotating quota. Under \code{\link[=periods]{periods()}} they are assigned
-with the other units of their stratum, so each belongs to one period and
-the periods stay even. A certainty unit is in the sample at every occasion, since a
-schedule that rotated it out would drop the very units the certainty
-stratum exists to enumerate. Certainty counts only at the assignment
+pools and consume no rotating quota. Under \code{\link[=subrounds]{subrounds()}} they are
+assigned with the other units of their stratum, so each belongs to one
+subround and the subrounds stay even. Under a count or a schedule, a
+certainty unit is in the sample at every occasion, since a schedule that
+rotated it out would drop the very units the certainty stratum exists to
+enumerate. Certainty counts only at the assignment
 stage, in both directions: a certainty primary unit does not make the
 units below it permanent when \code{panel_stage} names a lower stage, and a
 certainty selection below the assignment stage does not keep its
-assignment unit in every wave. A unit selected with probability one inside
-a rotating parent is absent from the waves that parent sits out.
+assignment unit in every occasion. A unit selected with probability one inside
+a rotating parent is absent from the occasions that parent sits out.
 }
 
-\subsection{Rotation schedules and waves}{
+\subsection{Rotation schedules and occasions}{
 
 Passing a schedule to \code{panels} instead of a count declares which panels are
-active at which occasion, and lets \code{execute(master, wave = t)} materialize
+active at which occasion, and lets \code{execute(master, period = p)} materialize
 one of them. A schedule is a data frame with an integer \code{panel} column, an
-integer \code{wave} column and an optional logical \code{active} column, and a
-combination left out is inactive:
+integer \code{period} column, an optional integer \code{subround} column and an
+optional logical \code{active} column, and a combination left out is inactive.
+Each \verb{(period, subround)} pair is one occasion, \code{subround} is 1 where the
+column is absent, and occasions follow the order of their pairs:
 
 \if{html}{\out{<div class="sourceCode r">}}\preformatted{schedule <- data.frame(
   panel  = rep(1:4, times = 3),
-  wave   = rep(1:3, each = 4),
+  period = rep(1:3, each = 4),
   active = c(TRUE, TRUE, FALSE, FALSE,
              FALSE, TRUE, TRUE, FALSE,
              FALSE, FALSE, TRUE, TRUE)
 )
 master <- execute(design, frame, seed = 1, panels = schedule)
-wave_2 <- execute(master, wave = 2)
+period_2 <- execute(master, period = 2)
 }\if{html}{\out{</div>}}
 
+Periods number from 1 without gaps, and so do the subrounds of each
+period, whose number may differ from one period to the next. A panel
+appears once per occasion. Other columns are accepted and ignored, so an
+svyplan schedule table can be passed as it stands, and its \code{wave}, the
+place of an interview in the rotation pattern, is not read as time. A
+table with a \code{wave} column and no \code{period} is refused for that reason.
+
 The schedule is read at the master draw, because the block size follows
-from it. A schedule whose leanest wave activates \code{r} of the \code{k} panels
+from it. A schedule whose leanest occasion activates \code{r} of the \code{k} panels
 blocks at \code{k * ceiling(2 / r)} rather than at the worst case \verb{2k}, which
 keeps more of the assignment order while still leaving two units per block
 in the take.
 
-Materializing wave \code{t} is a probability subsample rather than a filter: a
+Materializing occasion \code{t} is a probability subsample rather than a filter: a
 two-phase sample whose second phase is the activation, with the blocks as
 phase-2 strata and their frozen quotas as phase-2 population counts. It
 multiplies \code{.weight} by the inverse of the activation probability. That
 probability is the block's frozen quota for the active panels over the
 block size, so it is exact rather than nominal, and it is generally not
-\code{k / r}. Permanent certainty units are activated at every wave with
+\code{k / r}. Permanent certainty units are activated at every occasion with
 probability one and their weights are untouched.
 
-A materialized wave is a sample in its own right, with its own integrity
+A materialized occasion is a sample in its own right, with its own integrity
 record, so \code{\link[=frame_summary]{frame_summary()}} and the weight diagnostics work on it. It
 retains the master as its first phase. \code{\link[=as_svydesign]{as_svydesign()}} exports it by
 ultimate clusters, or through \code{\link[survey:twophase]{survey::twophase()}} with the activation as
 the second phase when \code{method} is given. Its
 receipt records the master's execution, so \code{\link[=replay_design]{replay_design()}} rebuilds the
-master and materializes the wave again.
+master and materializes the occasion again.
 
 The schedule states which groups are live when. It does not replenish the
 sample: every panel comes from the frame vintage the master was drawn from,
-and steady-state replenishment is a fresh \code{execute()} against a later
+and the panels of later periods are a fresh \code{execute()} against a later
 frame. For an \code{svyplan_schedule}, \code{execute()} takes the startup activity
 and checks its panel parameters before assignment. A gradual launch has
-one whole startup cohort and needs no partition.
+one whole startup selection and needs no partition.
 }
 
-\subsection{Windows of several waves}{
+\subsection{Windows of several occasions}{
 
-\code{execute(master, wave = 1:3)} pools several waves into one sample, such
-as a quarter written as three monthly waves, a moving window, or a year
-of quarters. Each row carries the wave it was observed at in \code{.wave}, and
-totals estimate the average over the window of each wave's total. The
-schedule decides between two forms.
+\code{execute(master, period = 1)} on a schedule with subrounds, and
+\code{execute(master, period = 1:4)} on any schedule, pool several occasions
+into one sample, such as a quarter written as three monthly subrounds, a
+moving window, or a year of quarters. Each row carries the occasion it
+was observed at in \code{.period} and \code{.subround}, and totals estimate the
+average over the window of each occasion's total.
 
-When no panel is active at more than one wave of the window, as for the
-months of a quarter where each unit keeps its own month, the window is
-one activation over the union of its panels. Each unit has one row, at
-its wave, and its weight uses the block's quota for the union over the
-block size, so a stratum's weights add up to its size. When every block
-fills the window's waves evenly, this equals the average of the waves.
-When a partial block fills them unevenly, the two differ in a given
-sample, and in a simulation both were unbiased for the average and
-about as variable.
+Each occasion enters as its own sample. A row's weight is the unit's
+weight at that occasion, as \code{execute(master, period = p, subround = s)}
+gives it, divided by the number of occasions in the window. Each
+occasion then counts equally however many panels it holds, and the
+window's total is the average of its occasions' totals. A unit has a row
+at every occasion of the window at which it is active, so a unit kept for
+two quarters of a year has two, and a permanent unit has one at each
+occasion. Pooling the rows with one weight per unit would count each
+occasion by its number of rows instead, which gives the average only
+when every occasion holds the same number of panels.
 
-When some panel is active at more than one wave, as in a year of quarters
-under a rotation that keeps units for several quarters, each unit keeps
-a row for every wave it is active, weighted by that wave's weight over
-the number of waves. A unit seen at two waves then counts at both.
-Permanent units are active at every wave and always take this form.
+The master leaves every pool a unit in each reporting period, not at each
+occasion, so a small pool can miss an occasion of a period. Its occasions
+in that period are then read together. Its units take their chance of
+being in any of the period's active panels, times the period's share of
+the window's occasions, which collapses the pool's occasions into one
+weighting cell. The cell estimates the period's average when the pool
+misses each occasion of the period with the same chance. That needs a
+period whose occasions hold the same number of panels, none of them
+twice. Labels cover rotation groups before subrounds, so it also needs
+each rotation group to hold its panels alike at every subround of the
+period, counting a panel at its first subround and at its subround in the
+period. A schedule whose panels keep one subround and whose groups hold
+as many panels at each subround meets this.
+Otherwise the window is refused (\code{samplyr_error_panel_small_pool}).
 
 A window is exported by ultimate clusters, with a unit's rows in one
 cluster (\code{\link[=as_svydesign]{as_svydesign()}}). It needs a master whose stages are all
 drawn. It has no receipt of its own, so \code{\link[=write_design]{write_design()}} refuses it and
-the master's receipt gives it again, and \code{\link[=stack_waves]{stack_waves()}} takes single
-waves only.
+the master's receipt gives it again, and \code{\link[=stack_periods]{stack_periods()}} takes whole
+periods in which each unit has one row, and single occasions.
+
+The activation is a second phase whose strata are the quota blocks, and
+within a block the quotas fix how many units share each set of occasions.
+The export therefore crosses the strata with the block and the occasions
+of the window a unit is active at. A cell holding one unit is joined with
+the cell of the same occasions in the next block of its pool, as in the
+collapsed-strata estimator. A unit still alone in its cell falls back to
+the units of its stratum active at as many occasions. Where a primary
+unit spans several blocks, as a retained one does, its cell is its set of
+occasions.
+
+Merged blocks and fall-back cells mix units whose activation multipliers
+differ, and an ordinary variance reads the difference as sampling spread.
+The export therefore calibrates on each stratum's total of the units'
+multipliers. The weights do not move, and the variance becomes the
+ratio-adjusted collapsed-strata estimator (Hansen, Hurwitz and Madow,
+1953; Wolter, 2007, section 2.5). An empty primary unit, a zero row,
+enters with a zero total and the multiplier of its cell. Units still
+alone in their cell after the fall-back share one stratum. A single such
+unit joins the cell of its stratum whose units are active at the nearest
+number of occasions, so the window itself makes no stratum of one unit. A stratum the design leaves with one unit is treated by
+\code{survey.lonely.psu}, as for any sample, and the export names it when it
+warns (\code{samplyr_warning_lonely_psu}). \code{\link[=as_svrepdesign]{as_svrepdesign()}} calibrates its
+replicates the same way.
+
+In simulations over 300 masters, the standard error was 0.98 to 1.04 of
+the spread of the window's estimate on clustered masters with at least as
+many units per stratum as panels, with even or uneven blocks, steady or
+seasonal outcomes, and EAs drawn by simple random sampling or by size.
+On element masters with one or two units per panel and stratum it was
+1.05 to 1.29, and with fewer units than panels 1.02 to 1.23, so intervals
+there are conservative. The standard error also keeps the
+with-replacement approximation of the master, which overstated it by
+about 12\% under systematic PPS on a sorted frame in simulations.
 }
 
 \subsection{Reporting periods}{
 
-A schedule written in fieldwork waves, such as months or weeks, can name
-the reporting period of each wave in an optional integer \code{period} column,
-such as \code{period = ceiling(wave / 3)} for monthly fieldwork and quarterly
-estimates. An \code{svyplan_schedule} built with \code{subperiods} carries it.
-Every row of a wave names the same period, and periods number from 1 in
-wave order. A period equal to its wave changes nothing.
+A schedule whose fieldwork splits a reporting period, such as months
+inside a quarter, names the split in \code{subround}, \code{subround = 1:3} for the
+months of each quarter. An \code{svyplan_schedule} built with \code{subrounds}
+carries it. A schedule whose every period has one subround assigns as one
+without subrounds.
 
 Panels with the same visits in every period form a rotation group, and
-the wave within the period tells them apart, their sub-period. The
-assignment then checks pools per period rather than per wave. A pool needs
+their subround tells them apart. The
+assignment then checks pools per period rather than per occasion. A pool needs
 more units than the groups the leanest period leaves inactive. Fifteen
 monthly panels kept in every quarter form one group, so a stratum needs one
-unit rather than the eleven a check per wave asks. Labels cover the groups
-first and the sub-periods second, so the first units of a pool go to
+unit rather than the eleven a check per occasion asks. Labels cover the groups
+first and the subrounds second, so the first units of a pool go to
 distinct groups and spread over the months.
 
-A period is materialized as a window of its waves, \code{execute(master, wave = 1:3)}. A single wave may then hold none of the units of a small pool,
-and is refused (\code{samplyr_error_panel_small_pool}), since that wave gives
-such a stratum no estimate. The record is version 6, which earlier builds
-refuse rather than read with the labels of a schedule without periods.
+A period is materialized whole, \code{execute(master, period = p)}, as a window
+of its occasions. A single occasion,
+\code{execute(master, period = p, subround = s)}, may then hold none of the
+units of a small pool, and is refused (\code{samplyr_error_panel_small_pool}), since that occasion gives
+such a stratum no estimate. A window of whole periods, such as a year of
+monthly occasions, needs a unit of each pool in each period only. A window
+that starts or ends inside a period, such as months 2 to 4 of a quarterly
+design, needs one in the occasions it covers in each period. The guarantee
+is per period, so a small stratum can make such a window refused while
+every period materializes.
 }
 
-\subsection{Tenures}{
+\subsection{Cohorts in retained primary units}{
 
 In most rotating household surveys the rotation group is a set of primary
 units, and a unit's households are drawn when its group enters, from a
-listing updated then, and kept for a run of visits, a tenure. When the
-tenure ends the primary unit either leaves or gets new households from a
-new listing. A schedule states this with an optional \code{visit} column, the
-interview number within the tenure, \code{NA} where a panel is inactive. A
-tenure opens where \code{visit} is 1. Without the column each panel has one
-tenure, opened at its first active wave. A materialized wave carries
-\code{.visit}, the number agencies publish to measure rotation group bias.
+listing updated then, and kept for a run of visits. These households are
+a cohort. When its visits end, the primary unit either leaves or takes a
+new cohort of households from a new listing. A schedule states this with
+an optional \code{visit} column, the interview number of the row's cohort, \code{NA}
+where a panel is inactive. A new cohort opens where \code{visit} is 1. Without
+the column each panel takes one cohort, at its first active occasion. A
+\code{cohort} column, which an svyplan schedule carries, is optional and only
+restates the visits. Within a panel it must change exactly where \code{visit}
+is 1, and one that does not is refused (\code{samplyr_error_schedule_visit}).
+A materialized occasion carries
+\code{.visit}, the interview number within the unit's cohort, which is what
+conditioning and attrition follow. Agencies measure rotation group bias
+by the month in sample, svyplan's \code{wave}, instead. The two agree once
+every cohort opened at its first interview, and differ for the start-up
+panels of an immediate start, which enter later in their life.
 
-The stages below the panels are then drawn where tenures open, with
-\code{execute(master, listing, wave = t)} (see \code{\link[=execute]{execute()}}), from the full
-listing of the primary units. A new tenure in a primary unit leaves out
-the units its earlier tenures drew, as rotating surveys do, and draws from
+The stages below the panels are then drawn where cohorts open, with
+\code{execute(master, listing, period = p, subround = s)} (see \code{\link[=execute]{execute()}}), from the full
+listing of the primary units. A new cohort in a primary unit leaves out
+the units its earlier cohorts drew, as rotating surveys do, and draws from
 the rest. Each of the \code{M} units of the listing then has the chance \code{n / M} of a single draw, so the stage's weight and population count are
-those of the whole listing, and every tenure estimates the whole
+those of the whole listing, and every cohort estimates the whole
 population. That holds exactly for simple random sampling on a listing
 that only loses the units drawn before, and for the first-order chances
-of systematic sampling. Units built since the earlier tenures are
+of systematic sampling. Units built since the earlier cohorts are
 weighted the same way, which approximates their larger chance. A rate
 \code{frac} and an allocation across strata are sized on the whole listing
-too, so each tenure takes the same share of a pool as \code{n} does, rather
+too, so each cohort takes the same share of a pool as \code{n} does, rather
 than a share of the units left. A take above the units left takes all of
 them, and the draw says so (\code{samplyr_warning_census}).
 
-A schedule with several tenures per panel therefore needs the stage
+A schedule with several cohorts per panel therefore needs the stage
 below the panels to name its units with \code{\link[=cluster_by]{cluster_by()}} and draw them by
 \code{"srswor"} or \code{"systematic"}, and refuses drawing that stage up front,
-since every tenure would then hold the same units
-(\code{samplyr_error_tenure_stages}). A listing already cut of the units
-drawn before is refused (\code{samplyr_error_tenure_listing}), since its
+since every cohort would then hold the same units
+(\code{samplyr_error_cohort_stages}). A listing already cut of the units
+drawn before is refused (\code{samplyr_error_cohort_listing}), since its
 weights could not count them back. A listing that holds only units
-earlier tenures drew in some pool, a primary unit or a stratum within
-one, is refused too (\code{samplyr_error_tenure_exhausted}), since the draw
+earlier cohorts drew in some pool, a primary unit or a stratum within
+one, is refused too (\code{samplyr_error_cohort_exhausted}), since the draw
 would leave that pool out of every total. Permanent units are active
-at every wave outside the rotation, keep the units drawn under them at
-the first wave drawn, and have no visit.
+at every occasion outside the rotation, keep the units drawn under them at
+the first occasion drawn, and have no visit.
 
 A listing that lacks only some of the units drawn before is drawn, and
 the missing units are read as gone from the population. The draw warns
-(\code{samplyr_warning_tenure_listing}) for the units of each primary unit's
-latest tenure, the last one executed, so each departure is reported
-once. A unit of an older tenure that goes missing later does not warn.
+(\code{samplyr_warning_cohort_listing}) for the units of each primary unit's
+latest cohort, the last one executed, so each departure is reported
+once. A unit of an older cohort that goes missing later does not warn.
 It may have left the population or been cut from the listing, and
 samplyr cannot tell which. A workflow that must stop on the warning can
 turn it into an error with a calling handler, which keeps the warning
 as the error's parent.
 
 \if{html}{\out{<div class="sourceCode r">}}\preformatted{withCallingHandlers(
-  execute(master, listing, wave = 5, seed = 5),
-  samplyr_warning_tenure_listing = function(w) \{
+  execute(master, listing, period = 5, seed = 5),
+  samplyr_warning_cohort_listing = function(w) \{
     rlang::abort(conditionMessage(w), parent = w)
   \}
 )
 }\if{html}{\out{</div>}}
 
-A wave reads each active panel's current tenure, and is exported by
+An occasion reads each active panel's current cohort, and is exported by
 ultimate clusters from its own rows (\code{\link[=as_svydesign]{as_svydesign()}}) as soon as those
-tenures are drawn. The master is never complete when a panel has several
-tenures, as rotating surveys never complete. Its record is version 5,
-which earlier builds refuse rather than read as one tenure per panel.
-Its frame digest records every tenure drawn so far, keyed by the wave
+cohorts are drawn. Its periods stack with \code{\link[=stack_periods]{stack_periods()}} for change
+between them. The master is never complete when a panel takes
+several cohorts, as rotating surveys never complete. Its frame digest
+records every cohort drawn so far, keyed by the occasion
 each opened at, so \code{\link[=frame_summary]{frame_summary()}} reports the stages below the panels
-by tenure and \code{\link[=replay_design]{replay_design()}} checks every tenure's draw. That digest
-is schema version 3, which earlier builds refuse for the same reason.
+by cohort and \code{\link[=replay_design]{replay_design()}} checks every cohort's draw.
 
-The digest of a later tenure records the draw as it was made. A pool's
+The digest of a later cohort records the draw as it was made. A pool's
 \code{N} counts the units left after the exclusion, and its chances are
 those of a draw from them. Its \code{n_excluded} counts the units left out,
 so \code{N + n_excluded} is the listing that the weights and \code{.fpc_k}
@@ -273,23 +340,23 @@ inverts. \code{\link[=summary]{summary()}} shows both, as in \verb{N_h 8 of 10 l
 
 \subsection{Pools too small for a schedule}{
 
-Periods activate one period per wave, so a stratum with fewer units than
-periods would leave a period without any of its units. It is refused,
-and \code{small_pool = "permanent"} is refused with \code{\link[=periods]{periods()}}, since a unit
-active in every period is not visited once.
+Subrounds activate one subround per occasion, so a stratum with fewer
+units than subrounds would leave a subround without any of its units. It
+is refused, and \code{small_pool = "permanent"} is refused with \code{\link[=subrounds]{subrounds()}},
+since a unit active in every subround is not visited once.
 
-A pool of \code{m} units leaves \code{panels - m} panels empty, so a wave activating
+A pool of \code{m} units leaves \code{panels - m} panels empty, so an occasion activating
 \code{r} of them selects nothing from that pool when \code{m <= panels - r}. Those
-units would have inclusion probability zero in that wave rather than a
-small weight, which biases the wave's estimator. \code{small_pool = "error"},
+units would have inclusion probability zero in that occasion rather than a
+small weight, which biases the occasion's estimator. \code{small_pool = "error"},
 the default, refuses such an assignment before any panel is drawn and names
-the pools. \code{"permanent"} activates them at every wave with probability one
+the pools. \code{"permanent"} activates them at every occasion with probability one
 and warns with \code{samplyr_warning_panel_small_pool}, which is exact but
-changes the operational design: wave sizes, overlap and repeated
+changes the operational design: occasion sizes, overlap and repeated
 interviewing all increase. With reporting periods the rule counts groups
 per period instead, as described above. It matters only with a schedule,
 since a panel
-count declares no wave to protect, and it governs positivity only. A pool
+count declares no occasion to protect, and it governs positivity only. A pool
 with a single active unit is still assigned, and is marked as carrying no
 within-block variance estimate. An \code{svyplan_schedule} refuses
 \code{"permanent"}, and selection-certainty units
@@ -298,10 +365,10 @@ rotating life.
 
 Under \code{horizon_policy = "continuing"}, an \code{svyplan_schedule} lists the
 interviews owed after its horizon, and the master's schedule includes
-them. The check counts those waves too, since every wave of the master
+them. The check counts those occasions too, since every occasion of the master
 must stand on its own, so the last of them, with few groups active, set
 how many units a pool needs. \code{"truncate_lives"} ends the lives at the
-horizon and drops those waves from the check.
+horizon and drops those occasions from the check.
 }
 
 \subsection{Weights of a subset of panels}{
@@ -314,11 +381,18 @@ the block size, not \code{1 / panels}, so multiplying one panel's weights by
 \code{panels} is not generally valid for population inference. The block sizes
 and realized quotas are recorded with the sample and written to the design
 file by \code{\link[=write_design]{write_design()}}, because they are what such a subset has to be
-computed against. \code{\link[=joint_expectation]{joint_expectation()}} with \code{waves} reads how two
+computed against. \code{\link[=joint_expectation]{joint_expectation()}} with \code{period} reads how two
 occasions overlap from the same record.
 }
 }
+\references{
+Hansen, M. H., Hurwitz, W. N., and Madow, W. G. (1953). \emph{Sample Survey
+Methods and Theory}, vol. 1, section 9.15. Wiley.
+
+Wolter, K. M. (2007). \emph{Introduction to Variance Estimation}, 2nd ed.,
+section 2.5. Springer.
+}
 \seealso{
-\code{\link[=execute]{execute()}}, \code{\link[=rotation_program]{rotation_program()}} for cohort programs,
-\code{\link[=stack_waves]{stack_waves()}} for stacking materialized waves.
+\code{\link[=execute]{execute()}}, \code{\link[=rotation_program]{rotation_program()}} for programs of several
+selections, \code{\link[=stack_periods]{stack_periods()}} for stacking materialized periods.
 }

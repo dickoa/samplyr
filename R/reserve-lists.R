@@ -26,8 +26,8 @@
 #' respondents released after a pool reached its take. Draw the main
 #' sample and the batches as one take, and assign it at that stage to
 #' panels the size of one batch, so that the main sample spans several
-#' panels. A schedule whose wave `b + 1` activates the main sample and the
-#' first `b` batches then gives, through `execute(master, wave = b + 1)`,
+#' panels. A schedule whose occasion `b + 1` activates the main sample and the
+#' first `b` batches then gives, through `execute(master, period = b + 1)`,
 #' each unit the weight of the units released. [panel_assignment]
 #' describes schedules.
 #'
@@ -121,8 +121,9 @@
 #' which stays unbiased when the stop did not depend on the outcomes. A
 #' pool that its take covers lists every unit and is settled from its known
 #' count. Under `method = "srswor"` the weighted totals are unbiased. Under
-#' `"systematic"` the eligible count stays unbiased and a total carries a
-#' small bias that depends on the frame order.
+#' `"systematic"` the eligible count stays unbiased, but a total need not be.
+#' Its bias depends on the frame order and can be material under an
+#' unfavorable one.
 #'
 #' These properties hold for the pools with a respondent. A pool without
 #' one keeps its weight in a placeholder row (see the Export section).
@@ -157,10 +158,10 @@
 #' auxiliary variables that are 0 on those rows. The "A settled reserve"
 #' section of [as_svydesign()] gives the details.
 #'
-#' A sample in panels exports as a whole once settled, and its waves are
+#' A sample in panels exports as a whole once settled, and its occasions are
 #' refused (`samplyr_error_reserve_full_export`). A schedule that opens
-#' several tenures per panel takes no reserve at any stage
-#' (`samplyr_error_tenure_stages`), since its master is never complete.
+#' several cohorts per panel takes no reserve at any stage
+#' (`samplyr_error_cohort_stages`), since its master is never complete.
 #'
 #' ## Planning a reserve
 #'

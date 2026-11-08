@@ -653,18 +653,46 @@ test_that("take-stage contexts the bridge does not serve are refused", {
   )
 })
 
-test_that("below an intermediate stage the refusal names the take table", {
-  plan <- certainty_plan_fixture()
-  segments <- sampling_design() |>
+segment_frame <- function() {
+  frame <- certainty_element_frame()
+  frame$segment <- ceiling(frame$person / 100)
+  frame$segment_size <- ave(
+    frame$person, frame$psu_id, frame$segment, FUN = length
+  )
+  frame
+}
+
+segment_design <- function(plan, per_psu = 1) {
+  sampling_design() |>
     add_stage() |>
     stratify_by(stratum) |>
     cluster_by(psu_id) |>
     draw(n = plan, method = "pps_systematic", mos = N) |>
     add_stage() |>
     cluster_by(segment) |>
-    draw(n = 1, method = "pps_systematic", mos = segment_size) |>
+    draw(n = per_psu, method = "pps_systematic", mos = segment_size) |>
     add_stage()
+}
 
+test_that("one segment per PSU takes the plan's take inside it", {
+  plan <- certainty_plan_fixture()
+  s <- segment_design(plan) |>
+    draw(n = plan) |>
+    execute(segment_frame(), seed = 1)
+  per_psu <- table(s$psu_id)
+  takes <- stats::setNames(plan$psu$n_take, plan$psu$psu_id)
+  expect_identical(as.integer(per_psu), as.integer(takes[names(per_psu)]))
+  # One segment of each PSU, and its take drawn with equal chances in it.
+  expect_true(all(tapply(s$segment, s$psu_id, function(x) {
+    length(unique(x))
+  }) == 1L))
+  expect_equal(s$.weight_3,
+               unname(s$segment_size / takes[as.character(s$psu_id)]))
+})
+
+test_that("below a stage that keeps more than one unit the refusal names the take table", {
+  plan <- certainty_plan_fixture()
+  segments <- segment_design(plan, per_psu = 2)
   err <- expect_error(
     segments |> draw(n = plan),
     class = "samplyr_error_svyplan_certainty_plan"
@@ -674,21 +702,18 @@ test_that("below an intermediate stage the refusal names the take table", {
   expect_match(msg, "stratify_by(psu_id)", fixed = TRUE)
   expect_no_match(msg, "stage 1 with", fixed = TRUE)
 
-  # The route it names fields every PSU's own take.
-  frame <- certainty_element_frame()
-  frame$segment <- ceiling(frame$person / 100)
-  frame$segment_size <- ave(
-    frame$person, frame$psu_id, frame$segment, FUN = length
-  )
-  takes <- data.frame(psu_id = plan$psu$psu_id, n = plan$psu$n_take)
+  expect_match(msg, "n_take / k", fixed = TRUE)
+
+  # The route it names fields each PSU's take, split over its two segments.
+  takes <- data.frame(psu_id = plan$psu$psu_id, n = ceiling(plan$psu$n_take / 2))
   s <- segments |>
     stratify_by(psu_id) |>
     draw(n = takes) |>
-    execute(frame, seed = 1)
+    execute(segment_frame(), seed = 1)
   per_psu <- table(s$psu_id)
   expect_identical(
     as.integer(per_psu),
-    as.integer(stats::setNames(takes$n, takes$psu_id)[names(per_psu)])
+    2L * as.integer(stats::setNames(takes$n, takes$psu_id)[names(per_psu)])
   )
 
   # At stage 1 without clusters the advice is the stage 1 bridge only.

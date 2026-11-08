@@ -5,7 +5,7 @@ test_that("four-occasion overlap has the expected first-lag share", {
   expect_equal(overlap$shared, 3:1)
 })
 
-test_that("a rotating panel plan keeps launch and intake counts distinct", {
+test_that("a rotating panel plan keeps entrant and in-sample counts distinct", {
   plan <- svyplan::n_panel(
     svyplan::n_prop(p = 0.5, moe = 0.25),
     retention = c(0.90, 0.95, 0.95),
@@ -26,7 +26,7 @@ test_that("a rotating panel plan keeps launch and intake counts distinct", {
   )
 })
 
-test_that("panel planning counts hand off to a multi-cohort program", {
+test_that("panel planning counts hand off to a program of several selections", {
   plan <- svyplan::n_panel(
     svyplan::n_prop(p = 0.5, moe = 0.25),
     retention = c(0.90, 0.95, 0.95),
@@ -63,30 +63,30 @@ test_that("panel planning counts hand off to a multi-cohort program", {
     execute(data.frame(id = sprintf("B%03d", 1:100)), seed = 33)
 
   program <- rotation_program(
-    cohorts = list(
+    selections = list(
       startup = startup,
-      intake_2 = intake_2,
-      intake_3 = intake_3
+      period_2 = intake_2,
+      period_3 = intake_3
     ),
     schedule = schedule,
     through = 3
   )
-  wave_2 <- execute(program, wave = 2)
-  wave_3 <- execute(program, wave = 3)
+  occasion_2 <- execute(program, period = 2)
+  occasion_3 <- execute(program, period = 3)
 
   expect_s3_class(program, "rotation_program")
-  expect_s3_class(wave_2, "rotation_wave")
-  expect_s3_class(wave_3, "rotation_wave")
-  expect_identical(names(program$cohorts), c(
-    "startup", "intake_2", "intake_3"
+  expect_s3_class(occasion_2, "rotation_occasion")
+  expect_s3_class(occasion_3, "rotation_occasion")
+  expect_identical(names(program$selections), c(
+    "startup", "period_2", "period_3"
   ))
-  expect_identical(program$entry_wave,
-                   c(startup = 1L, intake_2 = 2L, intake_3 = 3L))
+  expect_identical(program$entry_period,
+                   c(startup = 1L, period_2 = 2L, period_3 = 3L))
   expect_equal(nrow(intake_2), intake_n)
   expect_equal(nrow(intake_3), intake_n)
-  expect_identical(names(wave_2), c("startup", "intake_2"))
-  expect_identical(names(wave_3), c("startup", "intake_2", "intake_3"))
-  for (cohort in wave_3) {
+  expect_identical(names(occasion_2), c("startup", "period_2"))
+  expect_identical(names(occasion_3), c("startup", "period_2", "period_3"))
+  for (cohort in occasion_3) {
     expect_s3_class(cohort, "tbl_sample")
     expect_true(sample_realization_status(cohort)$ok)
   }
@@ -112,16 +112,16 @@ test_that("the planning route has one source for entries and one prefix", {
   intake_2 <- sampling_design() |>
     draw(n = intake_n) |>
     execute(data.frame(id = 201:300), seed = 42)
-  cohorts <- list(startup = startup, intake_2 = intake_2)
+  selections <- list(startup = startup, period_2 = intake_2)
 
   expect_error(
-    rotation_program(cohorts, schedule = schedule),
+    rotation_program(selections, schedule = schedule),
     class = "samplyr_error_program_through"
   )
   expect_error(
     rotation_program(
-      cohorts,
-      entry_wave = c(startup = 1, intake_2 = 2),
+      selections,
+      entry_period = c(startup = 1, period_2 = 2),
       schedule = schedule,
       through = 2
     ),
@@ -129,20 +129,20 @@ test_that("the planning route has one source for entries and one prefix", {
   )
   expect_error(
     rotation_program(
-      cohorts,
-      entry_wave = c(startup = 1, intake_2 = 2),
-      schedule = data.frame(panel = 1, wave = 1),
+      selections,
+      entry_period = c(startup = 1, period_2 = 2),
+      schedule = data.frame(panel = 1, period = 1),
       through = 2
     ),
     class = "samplyr_error_program_plan_argument"
   )
   expect_error(
     rotation_program(
-      cohorts = list(startup = startup),
+      selections = list(startup = startup),
       schedule = schedule,
       through = 2
     ),
-    class = "samplyr_error_program_plan_cohorts"
+    class = "samplyr_error_program_plan_selections"
   )
 
   short_intake <- sampling_design() |>
@@ -150,7 +150,7 @@ test_that("the planning route has one source for entries and one prefix", {
     execute(data.frame(id = 301:400), seed = 43)
   expect_error(
     rotation_program(
-      list(startup = startup, intake_2 = short_intake),
+      list(startup = startup, period_2 = short_intake),
       schedule = schedule,
       through = 2
     ),
@@ -159,7 +159,7 @@ test_that("the planning route has one source for entries and one prefix", {
 
   wrong_schedule <- data.frame(
     panel = rep(1:2, 2),
-    wave = rep(1:2, each = 2),
+    period = rep(1:2, each = 2),
     active = c(TRUE, TRUE, TRUE, FALSE)
   )
   wrong_startup <- sampling_design() |>
@@ -176,10 +176,10 @@ test_that("the planning route has one source for entries and one prefix", {
     class = "samplyr_error_program_plan_panels"
   )
 
-  future <- list(startup = startup, intake_2 = intake_2, intake_3 = intake_2)
+  future <- list(startup = startup, period_2 = intake_2, period_3 = intake_2)
   expect_error(
     rotation_program(future, schedule = schedule, through = 2),
-    class = "samplyr_error_program_plan_cohorts"
+    class = "samplyr_error_program_plan_selections"
   )
 })
 
@@ -225,11 +225,23 @@ test_that("the planning route refuses permanent activation", {
     class = "samplyr_error_plan_certainty"
   )
 
-  unsupported <- unclass(schedule)
-  unsupported$schema_version <- 1L
-  class(unsupported) <- c("svyplan_schedule", "list")
+  without <- function(x, at) {
+    x <- unclass(x)
+    x[[at]] <- NULL
+    structure(x, class = class(schedule))
+  }
+  expect_error(
+    execute(
+      design, data.frame(id = 1:200),
+      panels = without(schedule, c("schedule", "selection"))
+    ),
+    "has no .*selection",
+    class = "samplyr_error_svyplan_schedule"
+  )
+  unsupported <- without(schedule, c("panel_parameters", "block_width"))
   expect_error(
     execute(design, data.frame(id = 1:200), panels = unsupported),
+    "panel_parameters.*has no .*block_width",
     class = "samplyr_error_svyplan_schedule"
   )
 
@@ -269,7 +281,7 @@ test_that("a gradual plan uses the same interface with one startup panel", {
 
   expect_null(attr(startup, "metadata")$panel_assignment)
   expect_identical(program$panels, c(startup = 1L))
-  expect_identical(names(execute(program, wave = 1)), "startup")
+  expect_identical(names(execute(program, period = 1)), "startup")
 })
 
 test_that("a continuing plan freezes startup activity beyond a short horizon", {
@@ -292,7 +304,7 @@ test_that("a continuing plan freezes startup activity beyond a short horizon", {
 
   expect_identical(record$r_min, 1L)
   expect_identical(record$block_size, 8L)
-  expect_identical(max(record$schedule$wave), 4L)
+  expect_identical(max(record$schedule$occasion), 4L)
 })
 
 test_that("whole-vintage refreshment does not gain a combined-weight route", {
@@ -316,15 +328,15 @@ test_that("whole-vintage refreshment does not gain a combined-weight route", {
     draw(n = intake_n) |>
     execute(data.frame(id = 1:200), seed = 72)
   program <- rotation_program(
-    list(startup = startup, intake_2 = intake_2),
+    list(startup = startup, period_2 = intake_2),
     schedule = schedule,
     through = 2
   )
 
   expect_false(schedule$requires_disjoint_entrants)
   expect_error(
-    as_svydesign(execute(program, wave = 2)),
-    class = "samplyr_error_rotation_wave_not_combinable"
+    as_svydesign(execute(program, period = 2)),
+    class = "samplyr_error_rotation_occasion_not_combinable"
   )
 })
 
@@ -341,32 +353,109 @@ test_that("a plan with a gap in its rotation runs with its planned overlap", {
     plan, 8, "continuing",
     refreshment = "entrant_register", rounding = "ceiling"
   )
-  intake_n <- schedule$components$panel_issue[[1L]]
+  intake_n <- schedule$selections$panel_issue[[1L]]
   # a gapped startup holds a panel for every stage of the life, so it draws
   # more than the cohorts in sample
-  startup_n <- schedule$components$operational_issue[[1L]]
+  startup_n <- schedule$selections$operational_issue[[1L]]
   expect_equal(startup_n, schedule$life_length * intake_n)
 
-  cohorts <- list(
+  selections <- list(
     startup = sampling_design() |>
       draw(n = startup_n) |>
       execute(data.frame(id = sprintf("S%03d", 1:400)), seed = 31,
               panels = schedule)
   )
   for (t in 2:8) {
-    cohorts[[paste0("intake_", t)]] <- sampling_design() |>
+    selections[[paste0("period_", t)]] <- sampling_design() |>
       draw(n = intake_n) |>
       execute(data.frame(id = sprintf("I%d_%03d", t, 1:100)), seed = 30 + t)
   }
-  program <- rotation_program(cohorts, schedule = schedule, through = 8)
+  program <- rotation_program(selections, schedule = schedule, through = 8)
   ids <- lapply(1:8, function(t) {
-    unlist(lapply(execute(program, wave = t), function(z) z$id))
+    unlist(lapply(execute(program, period = t), function(z) z$id))
   })
 
-  planned <- tapply(schedule$schedule$active, schedule$schedule$wave, sum)
+  # the schedule's wave is the place in the rotation pattern; with no
+  # subrounds the draw occasion is the period
+  planned <- tapply(schedule$schedule$active, schedule$schedule$period, sum)
   expect_equal(lengths(ids), as.vector(planned) * intake_n)
   realized <- vapply(1:5, function(lag) {
     length(intersect(ids[[1L]], ids[[1L + lag]])) / length(ids[[1L]])
   }, numeric(1))
   expect_equal(realized, as.double(svyplan::design_overlap("2-2-2")))
+})
+
+test_that("a plan with subrounds registers occasions by subround", {
+  plan <- svyplan::n_panel(
+    svyplan::n_prop(p = 0.5, moe = 0.1),
+    retention = c(0.9, 0.9, 0.9),
+    resp_rate = 0.8,
+    design = "rotating",
+    start = "immediate",
+    rotation = "2-2-2"
+  )
+  schedule <- svyplan::design_schedule(
+    plan, 4, "continuing",
+    refreshment = "entrant_register", rounding = "ceiling",
+    take = 6, subrounds = 3
+  )
+  issue <- schedule$selections$operational_issue
+  expect_identical(schedule$selections$panels, c(18L, 3L, 3L, 3L))
+
+  startup <- sampling_design() |>
+    draw(n = issue[[1L]]) |>
+    execute(data.frame(id = 1:200), seed = 81, panels = schedule)
+  entrants <- data.frame(id = 201:300)
+  period_2 <- sampling_design() |>
+    draw(n = issue[[2L]]) |>
+    execute(entrants, seed = 82, panels = 3)
+
+  # Period 2 opens at its first subround, after period 1.
+  expect_error(
+    rotation_program(
+      list(startup = startup, period_2 = period_2),
+      schedule = schedule, through = 1
+    ),
+    class = "samplyr_error_program_plan_selections"
+  )
+  program <- rotation_program(
+    list(startup = startup, period_2 = period_2),
+    schedule = schedule, through = c(period = 2, subround = 1)
+  )
+  expect_identical(program$entry_period, c(startup = 1L, period_2 = 2L))
+  expect_identical(
+    program$occasions,
+    data.frame(period = c(1L, 1L, 1L, 2L), subround = c(1:3, 1L))
+  )
+
+  # One panel of the selection per subround, in the plan's order.
+  tab <- schedule$schedule
+  live <- tab[tab$selection == "period_2" & tab$active & tab$period == 2, ]
+  expect_identical(live$subround[order(live$panel)], 1:3)
+  occasion_4 <- execute(program, period = 2, subround = 1)
+  expect_identical(
+    attr(occasion_4$period_2, "metadata")$occasion$active_panels,
+    1L
+  )
+  expect_identical(
+    sort(occasion_4$period_2$id),
+    sort(period_2$id[period_2$.panel == 1L])
+  )
+
+  whole <- sampling_design() |>
+    draw(n = issue[[2L]]) |>
+    execute(entrants, seed = 82)
+  expect_error(
+    rotation_program(
+      list(startup = startup, period_2 = whole),
+      schedule = schedule, through = c(period = 2, subround = 1)
+    ),
+    class = "samplyr_error_program_plan_panels"
+  )
+  expect_error(
+    rotation_program(list(startup = startup), schedule = schedule,
+                     through = 5),
+    "from 1 to 4",
+    class = "samplyr_error_program_through"
+  )
 })

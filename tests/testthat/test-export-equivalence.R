@@ -446,9 +446,9 @@ test_that("RWYB takes a final-stage singleton as certainty on request", {
   )
 })
 
-## A wave that activates every panel is the master's own design
+## An occasion that activates every panel is the master's own design
 
-test_that("a wave activating every panel exports as its master", {
+test_that("an occasion activating every panel exports as its master", {
   skip_if_not_installed("survey")
   frame <- data.frame(
     id = 1:400,
@@ -457,18 +457,18 @@ test_that("a wave activating every panel exports as its master", {
   )
   schedule <- data.frame(
     panel = rep(1:2, times = 2),
-    wave = rep(1:2, each = 2),
+    period = rep(1:2, each = 2),
     active = c(TRUE, TRUE, TRUE, FALSE)
   )
   master <- sampling_design() |>
     stratify_by(region) |>
     draw(n = 60) |>
     execute(frame, seed = 42, panels = schedule)
-  wave <- execute(master, wave = 1)
+  occasion <- execute(master, period = 1)
 
-  expect_identical(nrow(wave), nrow(master))
+  expect_identical(nrow(occasion), nrow(master))
   expect_export_invariants(
-    as_svydesign(wave), wave, "value",
+    as_svydesign(occasion), occasion, "value",
     reference = as_svydesign(master), stages = 1
   )
 })
@@ -670,7 +670,7 @@ test_that("RWYB keeps an empty parent without a frame digest", {
   }
 })
 
-test_that("an empty primary unit in phase 2 or in a wave's master is a zero row", {
+test_that("an empty primary unit in phase 2 or in an occasion's master is a zero row", {
   skip_if_not_installed("survey")
   roster <- data.frame(psu = rep(2:4, each = 5), id = 1:15, y = 1:15)
   by_psu <- sampling_design() |>
@@ -693,9 +693,9 @@ test_that("an empty primary unit in phase 2 or in a wave's master is a zero row"
     4^2 * (1 - 3 / 4) * stats::var(c(0, 15, 40)) / 3
   )
 
-  # Panel p is active at wave p.
+  # Panel p is active at period p.
   schedule <- data.frame(
-    panel = rep(1:2, 2), wave = rep(1:2, each = 2),
+    panel = rep(1:2, 2), period = rep(1:2, each = 2),
     active = c(TRUE, FALSE, FALSE, TRUE)
   )
   master <- execute(
@@ -704,14 +704,38 @@ test_that("an empty primary unit in phase 2 or in a wave's master is a zero row"
   expect_false(1L %in% master$psu)
   gone <- attr(master, "metadata")$empty_parents[[1]]$rows
   expect_identical(gone$psu, 1L)
-  # The empty PSU holds a panel, and the waves of that panel activate it.
-  wave <- execute(master, wave = gone$.panel)
-  expect_identical(zero_rows(as_svydesign(wave))$psu, 1L)
-  window <- execute(master, wave = 1:2)
+  # The empty PSU holds a panel, and the occasions of that panel activate it.
+  occasion <- execute(master, period = gone$.panel)
+  expect_identical(zero_rows(as_svydesign(occasion))$psu, 1L)
+  window <- execute(master, period = 1:2)
   expect_identical(zero_rows(as_svydesign(window))$psu, 1L)
+
+  # Panel 1 holds PSU 4, total 65, and the empty PSU. Panel 2 holds PSU 3,
+  # total 80, read at twice the weight, alone in its cell, so it joins
+  # theirs. The empty PSU takes the multiplier of PSU 4, which shares its
+  # block and occasions. Every row has the same auxiliary, so the residuals
+  # are the ratio's u - m * sum(u) / sum(m).
+  u <- c(65, 80, 0)
+  m <- c(3, 6, 3) / 4
+  e <- u - m * sum(u) / sum(m)
+  withr::local_options(survey.replicates.mse = FALSE)
+  for (policy in c("adjust", "average")) {
+    withr::local_options(survey.lonely.psu = policy)
+    total <- survey::svytotal(~y, as_svydesign(window), na.rm = TRUE)
+    expect_equal(unname(coef(total)), 145, info = policy)
+    expect_equal(as.vector(survey::SE(total))^2, 3 / 2 * sum(e^2), info = policy)
+  }
+  # Each replicate drops one PSU and refits the ratio on the other two.
+  rep <- as_svrepdesign(window, type = "JKn")
+  total <- survey::svytotal(~y, rep, na.rm = TRUE)
+  expect_equal(unname(coef(total)), 145)
+  dropped <- vapply(1:3, function(j) sum(m) * sum(u[-j]) / sum(m[-j]), 0)
+  expect_equal(as.vector(survey::SE(total))^2,
+               2 / 3 * sum((dropped - mean(dropped))^2))
+  expect_identical(sum(weights(rep, type = "analysis")[is.na(rep$variables$y), ]), 0)
   zero_filled <- function(svy) update(svy, y = ifelse(is.na(y), 0, y))
   for (method in list(NULL, "full")) {
-    svy <- suppressWarnings(as_svydesign(wave, method = method))
+    svy <- suppressWarnings(as_svydesign(occasion, method = method))
     expect_equal(
       as.vector(survey::SE(suppressWarnings(
         survey::svytotal(~y, svy, na.rm = TRUE)
@@ -722,48 +746,126 @@ test_that("an empty primary unit in phase 2 or in a wave's master is a zero row"
   }
 })
 
-test_that("an empty primary unit of a tenure is a zero row where a wave reads it", {
+test_that("an empty primary unit of a cohort is a zero row where an occasion reads it", {
   skip_if_not_installed("survey")
   design <- sampling_design() |>
     add_stage() |> cluster_by(psu) |> draw(n = 6) |>
     add_stage() |> cluster_by(hh) |> draw(n = 2, on_empty = "silent")
-  rotating <- expand.grid(panel = 1:2, wave = 1:4)
-  rotating$active <- rotating$panel == (rotating$wave - 1) %% 2 + 1
+  rotating <- expand.grid(panel = 1:2, period = 1:4)
+  rotating$active <- rotating$panel == (rotating$period - 1) %% 2 + 1
   rotating$visit <- ifelse(rotating$active, 1L, NA_integer_)
   master <- execute(design, data.frame(psu = 1:6), stages = 1,
                     panels = rotating, seed = 1)
-  # A unit of panel 1 has no household at its first tenure.
+  # A unit of panel 1 has no household at its first cohort.
   empty <- master$psu[master$.panel == 1L][1]
   everyone <- expand.grid(hh = 1:8, psu = 1:6)
+  everyone$y <- everyone$hh + 10 * everyone$psu
   without <- everyone[everyone$psu != empty, ]
-  master <- execute(master, without, wave = 1, seed = 2)
-  master <- execute(master, without, wave = 2, seed = 3)
+  master <- execute(master, without, period = 1, seed = 2)
+  master <- execute(master, without, period = 2, seed = 3)
 
-  # The unit is a zero row where its first tenure is read.
+  # The unit is a zero row where its first cohort is read.
   kept <- function(x) empty %in% zero_rows(as_svydesign(x))$psu
-  expect_true(kept(execute(master, wave = 1)))
-  expect_true(kept(execute(master, wave = 1:2)))
-  expect_false(kept(execute(master, wave = 2)))
+  expect_true(kept(execute(master, period = 1)))
+  expect_true(kept(execute(master, period = 1:2)))
+  expect_false(kept(execute(master, period = 2)))
 
-  # Listed again at its next tenure, the unit is no longer lost.
-  master <- execute(master, everyone, wave = 3, seed = 4)
-  expect_s3_class(as_svydesign(execute(master, wave = 3)), "survey.design")
-  expect_s3_class(as_svydesign(execute(master, wave = 1:3)), "survey.design")
+  # Every unit has multiplier 1, so the ratio leaves each period's residuals
+  # as they are, and the empty unit enters period 1 with a zero total.
+  window <- execute(master, period = 1:2)
+  rows <- as.data.frame(window)
+  u <- tapply(rows$.weight * rows$y, rows$psu, sum)
+  period <- tapply(rows$.period, rows$psu, unique)
+  by_period <- split(as.vector(u), period[names(u)])
+  by_period[["1"]] <- c(by_period[["1"]], 0)
+  variance <- sum(vapply(by_period, function(v) {
+    length(v) / (length(v) - 1) * sum((v - mean(v))^2)
+  }, 0))
+  withr::local_options(survey.replicates.mse = FALSE)
+  for (policy in c("adjust", "average")) {
+    withr::local_options(survey.lonely.psu = policy)
+    total <- survey::svytotal(~y, as_svydesign(window), na.rm = TRUE)
+    expect_equal(unname(coef(total)), sum(u), info = policy)
+    expect_equal(as.vector(survey::SE(total))^2, variance, info = policy)
+  }
+  # With one multiplier, the jackknife of a total is the linearized variance.
+  total <- survey::svytotal(~y, as_svrepdesign(window, type = "JKn"),
+                            na.rm = TRUE)
+  expect_equal(unname(coef(total)), sum(u))
+  expect_equal(as.vector(survey::SE(total))^2, variance)
 
-  # A wave that activates every unit exports as the master's own design,
+  # Listed again at its next cohort, the unit is no longer lost.
+  master <- execute(master, everyone, period = 3, seed = 4)
+  expect_s3_class(as_svydesign(execute(master, period = 3)), "survey.design")
+  expect_s3_class(as_svydesign(execute(master, period = 1:3)), "survey.design")
+
+  # An occasion that activates every unit exports as the master's own design,
   # with the unit as a zero row.
   both <- data.frame(
-    wave = rep(1:2, each = 2), panel = rep(1:2, 2), active = TRUE, visit = 1L
+    period = rep(1:2, each = 2), panel = rep(1:2, 2), active = TRUE, visit = 1L
   )
   master <- execute(design, data.frame(psu = 1:6), stages = 1,
                     panels = both, seed = 1)
-  master <- execute(master, everyone[everyone$psu != 1L, ], wave = 1, seed = 2)
-  wave <- execute(master, wave = 1)
-  expect_identical(zero_rows(as_svydesign(wave))$psu, 1L)
+  master <- execute(master, everyone[everyone$psu != 1L, ], period = 1, seed = 2)
+  occasion <- execute(master, period = 1)
+  expect_identical(zero_rows(as_svydesign(occasion))$psu, 1L)
   expect_identical(
-    zero_rows(suppressWarnings(as_svrepdesign(wave)))$psu,
+    zero_rows(suppressWarnings(as_svrepdesign(occasion)))$psu,
     1L
   )
+})
+
+test_that("an empty unit alone in its design stratum keeps a finite variance", {
+  skip_if_not_installed("survey")
+  areas <- data.frame(psu = 1:6, h = rep(c("a", "b"), c(4, 2)))
+  roster <- data.frame(psu = rep(c(1:4, 6), each = 3), id = 1:15, y = 1:15)
+  design <- sampling_design() |>
+    stratify_by(h) |>
+    cluster_by(psu) |> draw(n = c(a = 4, b = 1)) |>
+    add_stage() |> cluster_by(id) |> draw(frac = 1, on_empty = "silent")
+  schedule <- data.frame(
+    panel = rep(1:2, 2), period = rep(1:2, each = 2),
+    active = c(TRUE, FALSE, FALSE, TRUE)
+  )
+  expect_warning(
+    master <- execute(design, list(areas, roster), seed = 1,
+                      panels = schedule, small_pool = "permanent"),
+    class = "samplyr_warning_panel_small_pool"
+  )
+  # Stratum b draws PSU 5, which is empty, so it has no other unit to take
+  # a multiplier from and stays a zero row of the calibration.
+  expect_identical(attr(master, "metadata")$empty_parents[[1]]$rows$psu, 5L)
+  window <- execute(master, period = 1:2)
+
+  # Stratum a's panels hold PSUs 3 and 4 (totals 24 and 33) and PSUs 1 and
+  # 2 (6 and 15), each pair a stratum of the window with variance 81.
+  for (case in list(c("adjust", 162), c("average", 243))) {
+    withr::local_options(survey.lonely.psu = case[[1]])
+    total <- survey::svytotal(~y, as_svydesign(window), na.rm = TRUE)
+    expect_equal(unname(coef(total)), 78, info = case[[1]])
+    expect_equal(as.vector(survey::SE(total))^2, as.numeric(case[[2]]),
+                 info = case[[1]])
+  }
+})
+
+test_that("combined replicate weights never meet an empty unit's stand-in", {
+  skip_if_not_installed("survey")
+  # Combined weights come from splicing census units out, which have no
+  # stage below, and a stand-in marks a unit a stage below found empty, so
+  # no export builds this. The calibration refuses it rather than leave the
+  # unit a weight in some replicate.
+  data <- data.frame(psu = 1:4, w = c(2, 2, 2, 0), x = c(1, 1, 1, 0.5))
+  rep <- survey::svrepdesign(
+    variables = data, repweights = matrix(c(0, 3, 3, 0, 3, 0, 3, 0), 4),
+    weights = data$w, type = "JK1", scale = 1 / 2, combined.weights = TRUE
+  )
+  ratio <- list(
+    columns = cbind(.ratio_1 = data$x), formula = ~ 0 + .ratio_1,
+    population = c(.ratio_1 = 6.5), variance = data$x,
+    stand_in = c(0, 0, 0, 1)
+  )
+  expect_error(samplyr:::apply_window_ratio(rep, ratio),
+               class = "samplyr_error_internal")
 })
 
 test_that("a replicate exports its own empty units", {
@@ -824,7 +926,7 @@ test_that("each dual-frame component equals its standalone export", {
   }
 })
 
-## Two-phase and wave export keep every stage's strata
+## Two-phase and occasion export keep every stage's strata
 #
 # Stratum means 100 apart make a pooled phase move the total, not only the
 # variance. Each reference is a hand-written survey::twophase() call.
@@ -1023,12 +1125,12 @@ test_that("double sampling for stratification on two variables exports", {
   )
 })
 
-test_that("a wave of a master with later-stage strata keeps them", {
+test_that("an occasion of a master with later-stage strata keeps them", {
   skip_if_not_installed("survey")
   pop <- twophase_strata_population(n_psu = 48)
   schedule <- data.frame(
     panel = rep(1:4, times = 4),
-    wave = rep(1:4, each = 4),
+    period = rep(1:4, each = 4),
     active = c(
       TRUE, TRUE, FALSE, FALSE,
       FALSE, TRUE, TRUE, FALSE,
@@ -1045,7 +1147,7 @@ test_that("a wave of a master with later-stage strata keeps them", {
     cluster_by(id) |>
     draw(n = 5) |>
     execute(pop, seed = 3, panels = schedule)
-  wave <- execute(master, wave = 1)
+  occasion <- execute(master, period = 1)
 
   # Master stages at phase 1, activation blocks as phase-2 strata.
   record <- attr(master, "metadata")$panel_assignment
@@ -1063,7 +1165,7 @@ test_that("a wave of a master with later-stage strata keeps them", {
   }
   df$.unit <- match(keys, unique(keys))
   df$all <- "all"
-  df$.active <- df$.sample_id %in% wave$.sample_id
+  df$.active <- df$.sample_id %in% occasion$.sample_id
   by_hand <- survey::twophase(
     id = list(~ psu + id, ~.unit),
     strata = list(~ all + h, ~.block),
@@ -1074,7 +1176,7 @@ test_that("a wave of a master with later-stage strata keeps them", {
   )
 
   expect_export_invariants(
-    as_svydesign(wave, method = "full"), wave, "y",
+    as_svydesign(occasion, method = "full"), occasion, "y",
     reference = by_hand, stages = c(2, 1)
   )
 })
@@ -1322,12 +1424,12 @@ test_that("two-phase generated names never overwrite a user column", {
   )
 })
 
-test_that("wave generated names never overwrite a user column", {
+test_that("occasion generated names never overwrite a user column", {
   skip_if_not_installed("survey")
   pop <- twophase_strata_population(n_psu = 48)
   schedule <- data.frame(
     panel = rep(1:4, times = 4),
-    wave = rep(1:4, each = 4),
+    period = rep(1:4, each = 4),
     active = c(
       TRUE, TRUE, FALSE, FALSE,
       FALSE, TRUE, TRUE, FALSE,
@@ -1344,10 +1446,10 @@ test_that("wave generated names never overwrite a user column", {
     cluster_by(id) |>
     draw(n = 5) |>
     execute(pop, seed = 3, panels = schedule)
-  wave <- execute(master, wave = 1)
+  occasion <- execute(master, period = 1)
 
   expect_collision_free(
-    wave,
+    occasion,
     c(
       ".p1_id_1", ".p1_id_2", ".p1_strata_all_1", ".activation_unit",
       ".activation_block",
@@ -1355,13 +1457,13 @@ test_that("wave generated names never overwrite a user column", {
       ".activation_weight", ".prob_1"
     ),
     function(s) as_svydesign(s, method = "full"),
-    sample_cols = union(names(master), names(wave))
+    sample_cols = union(names(master), names(occasion))
   )
   expect_collision_free(
-    wave,
+    occasion,
     ".id_1",
     as_svydesign,
-    sample_cols = union(names(master), names(wave))
+    sample_cols = union(names(master), names(occasion))
   )
 })
 
@@ -1813,57 +1915,57 @@ test_that("a two-phase object survey lays out otherwise is refused", {
   }
 })
 
-test_that("a wave export takes no pps", {
+test_that("an occasion export takes no pps", {
   skip_if_not_installed("survey")
   frame <- data.frame(id = 1:400, value = (1:400) / 4)
   schedule <- data.frame(
     panel = rep(1:2, times = 2),
-    wave = rep(1:2, each = 2),
+    period = rep(1:2, each = 2),
     active = c(TRUE, FALSE, FALSE, TRUE)
   )
   master <- sampling_design() |>
     draw(n = 60) |>
     execute(frame, seed = 42, panels = schedule)
-  wave <- execute(master, wave = 1)
-  expect_no_error(as_svydesign(wave))
+  occasion <- execute(master, period = 1)
+  expect_no_error(as_svydesign(occasion))
   expect_error(
-    as_svydesign(wave, pps = "brewer"),
+    as_svydesign(occasion, pps = "brewer"),
     class = "samplyr_error_survey_argument"
   )
   expect_error(
-    as_svydesign(wave, pps = "brewer", method = "full"),
+    as_svydesign(occasion, pps = "brewer", method = "full"),
     class = "samplyr_error_twophase_phase2_pps"
   )
 })
 
 ## Phase-1 strata of unequal size
 #
-# A wave keeps a fixed share of each phase-1 stratum, so its weights add up
+# An occasion keeps a fixed share of each phase-1 stratum, so its weights add up
 # to the stratum size in every sample and adding a constant to the outcome
 # cannot change the variance of its total. With unequal takes, survey 4.5's
 # own phase-1 term changed by a factor of 190 under that shift and was
 # negative in 283 of 300 samples.
 
-unequal_take_wave <- function(takes, seed = 3) {
+unequal_take_occasion <- function(takes, seed = 3) {
   pop <- data.frame(
     id = 1:4000,
     region = rep(c("a", "b", "c", "d"), each = 1000)
   )
   pop$y <- 100 + stats::rnorm(nrow(pop), 0, 20)
   pop$y_shifted <- pop$y + 1000
-  rotation <- expand.grid(panel = 1:4, wave = 1:8)
-  rotation$active <- ((rotation$wave - rotation$panel) %% 4) < 2
+  rotation <- expand.grid(panel = 1:4, period = 1:8)
+  rotation$active <- ((rotation$period - rotation$panel) %% 4) < 2
   master <- sampling_design() |>
     stratify_by(region) |>
     draw(n = takes) |>
     execute(pop, seed = seed, panels = rotation)
-  execute(master, wave = 5)
+  execute(master, period = 5)
 }
 
 test_that("a two-phase total's variance ignores the outcome's level", {
   skip_if_not_installed("survey")
   svy <- as_svydesign(
-    unequal_take_wave(c(a = 5, b = 6, c = 7, d = 9)),
+    unequal_take_occasion(c(a = 5, b = 6, c = 7, d = 9)),
     method = "full"
   )
   v <- stats::vcov(survey::svytotal(~y, svy))[1, 1]
@@ -1874,10 +1976,10 @@ test_that("a two-phase total's variance ignores the outcome's level", {
 
 test_that("the phase-1 term is survey's own where its stratum counts align", {
   skip_if_not_installed("survey")
-  wave <- unequal_take_wave(8)
-  rebuilt <- as_svydesign(wave, method = "full")
+  occasion <- unequal_take_occasion(8)
+  rebuilt <- as_svydesign(occasion, method = "full")
   local_mocked_bindings(twophase_phase1_aligned = function(result) result)
-  as_built <- as_svydesign(wave, method = "full")
+  as_built <- as_svydesign(occasion, method = "full")
   expect_equal(
     as.matrix(rebuilt$dcheck$full),
     as.matrix(as_built$dcheck$full),

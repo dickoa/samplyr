@@ -2301,11 +2301,15 @@
               "items": {
                 "type": "object",
                 "properties": {
-                  "wave": {
+                  "panel": {
                     "type": "integer",
                     "minimum": 1
                   },
-                  "panel": {
+                  "period": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "subround": {
                     "type": "integer",
                     "minimum": 1
                   },
@@ -2330,15 +2334,12 @@
                         "maxProperties": 0
                       }
                     ]
-                  },
-                  "period": {
-                    "type": "integer",
-                    "minimum": 1
                   }
                 },
                 "required": [
-                  "wave",
                   "panel",
+                  "period",
+                  "subround",
                   "active"
                 ],
                 "additionalProperties": false
@@ -2366,7 +2367,7 @@
       ],
       "additionalProperties": false
     },
-    "wave_pool": {
+    "occasion_pool": {
       "type": "object",
       "properties": {
         "stratum": {
@@ -2412,10 +2413,10 @@
       "required": [],
       "additionalProperties": false
     },
-    "wave": {
+    "occasion": {
       "type": "object",
       "properties": {
-        "wave": {
+        "occasion": {
           "type": "integer",
           "minimum": 1
         },
@@ -2434,13 +2435,13 @@
         "pools": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/wave_pool"
+            "$ref": "#/definitions/occasion_pool"
           },
           "minItems": 0
         }
       },
       "required": [
-        "wave",
+        "occasion",
         "active_panels"
       ],
       "additionalProperties": false
@@ -2453,8 +2454,8 @@
             "start",
             "continuation",
             "phase",
-            "wave",
-            "wave_draw"
+            "occasion",
+            "occasion_draw"
           ]
         },
         "seed": {
@@ -2501,8 +2502,8 @@
         "frames": {
           "$ref": "#/definitions/frame_schedule"
         },
-        "wave": {
-          "$ref": "#/definitions/wave"
+        "occasion": {
+          "$ref": "#/definitions/occasion"
         },
         "settlement": {
           "$ref": "#/definitions/settlement"
@@ -2669,8 +2670,8 @@
         "frames": {
           "$ref": "#/definitions/frame_schedule"
         },
-        "wave": {
-          "$ref": "#/definitions/wave"
+        "occasion": {
+          "$ref": "#/definitions/occasion"
         },
         "settlement": {
           "$ref": "#/definitions/settlement"
@@ -2686,8 +2687,8 @@
             "start",
             "continuation",
             "phase",
-            "wave",
-            "wave_draw"
+            "occasion",
+            "occasion_draw"
           ]
         },
         "earlier_calls": {

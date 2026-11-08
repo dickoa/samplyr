@@ -362,7 +362,7 @@ setequal(first$ea_id, second$ea_id)
 
 The seeds differ, but the samples do not. `?draw` gives the methods that
 accept `prn` and what fixes an `scps` selection. The book chapter
-[Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/coordination.html)
+[Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/prn-coordination.html)
 covers negative coordination, register updates and response burden.
 
 ## Inspecting the result
@@ -398,16 +398,16 @@ Use the other articles when their task arises:
 
 | Task | Where |
 |:--|:--|
-| Choose sizes and allocations before selection | `vignette("svyplan", package = "svyplan")`, then [Plan a sample with svyplan](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/plan-to-draw.html) |
-| Coordinate new draws with permanent random numbers | `?draw`, argument `prn`, and [Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/coordination.html) |
-| Schedule panels and refreshment cohorts | `?panel_assignment`, `?rotation_program`, and [Plan and run a rotating panel](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/rotating-panels.html) |
-| Spread fieldwork over months or quarters | `?periods` |
+| Choose sizes and allocations before selection | `vignette("svyplan", package = "svyplan")`, then [Precision targets and sample size](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/sample-size.html) |
+| Coordinate new draws with permanent random numbers | `?draw`, argument `prn`, and [Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/prn-coordination.html) |
+| Schedule panels and refreshment selections | `?panel_assignment`, `?rotation_program`, and [Rotating panels and master samples](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/panels-master-samples.html) |
+| Spread fieldwork over months or quarters | `?subrounds` |
 | Save or replay a design | `vignette("serialization")` |
 
 For a method lookup, use `?selection_methods`, and for how each method's
 variance is estimated, `?variance_estimation`. Consult
 `vignette("design-semantics")` for the underlying contracts and
-[Validation on synthetic populations](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/validation.html)
+[Virtual surveys](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/virtual-surveys.html)
 for simulation diagnostics. The book
 [Survey Sampling Design with R](https://www.ahmadoudicko.com/sampling-design-r-book/) collects these
 chapters with the `svyplan` planning guides.

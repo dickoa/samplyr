@@ -75,7 +75,7 @@ random numbers.
 To assess a second phase, give the phase-1 sample as \code{frame}: the report
 then covers the two-phase export. A \code{tbl_sample} passed as \code{x} stands for
 its design, and when it is itself a later phase, its earlier phase is used.
-Materialized waves and shared-weight samples are refused, as \code{x} or as
+Materialized occasions and shared-weight samples are refused, as \code{x} or as
 \code{frame}, and so is a design with a reserve, or its sample. Their exports
 follow rules of their own, so the report of the design they come from
 does not describe them.
@@ -122,7 +122,7 @@ Other survey export:
 \code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
 \code{\link[=as_svrepdesign]{as_svrepdesign()}},
 \code{\link[=as_svydesign]{as_svydesign()}},
-\code{\link[=stack_waves]{stack_waves()}},
+\code{\link[=stack_periods]{stack_periods()}},
 \code{\link{variance_estimation}}
 }
 \concept{survey export}

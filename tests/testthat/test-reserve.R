@@ -886,19 +886,19 @@ code_words <- function(code) {
 
 ## A reserve in panels
 
-# 12 EAs of 10 households, and two panels active in turn over 4 waves.
+# 12 EAs of 10 households, and two panels active in turn over 4 periods.
 panel_eas <- function() data.frame(ea = 1:12)
 panel_listing <- function() expand.grid(hh = 1:10, ea = 1:12)
-alternating <- function(tenures) {
-  schedule <- expand.grid(panel = 1:2, wave = 1:4)
-  schedule$active <- schedule$panel == (schedule$wave - 1) %% 2 + 1
-  if (tenures) {
+alternating <- function(cohorts) {
+  schedule <- expand.grid(panel = 1:2, period = 1:4)
+  schedule$active <- schedule$panel == (schedule$period - 1) %% 2 + 1
+  if (cohorts) {
     schedule$visit <- ifelse(schedule$active, 1L, NA_integer_)
   }
   schedule
 }
 
-test_that("a schedule with several tenures per panel takes no reserve", {
+test_that("a schedule with several cohorts per panel takes no reserve", {
   below <- sampling_design() |>
     add_stage() |> cluster_by(ea) |> draw(n = 8) |>
     add_stage() |> cluster_by(hh) |> draw(n = 2, reserve = 2)
@@ -906,7 +906,7 @@ test_that("a schedule with several tenures per panel takes no reserve", {
     execute(below, panel_eas(), stages = 1, panels = alternating(TRUE),
             seed = 1),
     "Stage 2 draws a `reserve`",
-    class = "samplyr_error_tenure_stages"
+    class = "samplyr_error_cohort_stages"
   )
   # Settled above the panels, the master is still never complete.
   regions <- data.frame(region = 1:6)
@@ -921,18 +921,18 @@ test_that("a schedule with several tenures per panel takes no reserve", {
   expect_error(
     execute(settled, eas, stages = 2, panels = alternating(TRUE),
             panel_stage = 2, seed = 2),
-    class = "samplyr_error_tenure_stages"
+    class = "samplyr_error_cohort_stages"
   )
-  # One tenure per panel completes, so the master settles.
+  # One cohort per panel completes, so the master settles.
   master <- execute(below, panel_eas(), stages = 1,
                     panels = alternating(FALSE), seed = 1)
   for (t in 1:2) {
-    master <- execute(master, panel_listing(), wave = t, seed = t + 1)
+    master <- execute(master, panel_listing(), period = t, seed = t + 1)
   }
   expect_identical(get_stages_executed(master), 1:2)
 })
 
-test_that("a wave of a master with a reserve is refused, settled or not", {
+test_that("an occasion of a master with a reserve is refused, settled or not", {
   skip_if_not_installed("survey")
   skip_if_not_installed("srvyr")
   design <- sampling_design() |>
@@ -945,17 +945,17 @@ test_that("a wave of a master with a reserve is refused, settled or not", {
   expect_s3_class(as_svydesign(settled), "survey.design")
 
   for (source in list(master, settled)) {
-    wave <- execute(source, wave = 1)
+    occasion <- execute(source, period = 1)
     expect_error(
-      as_svydesign(wave),
+      as_svydesign(occasion),
       "Stage 2 lists a take and a reserve",
       class = "samplyr_error_reserve_full_export"
     )
-    expect_error(as_svrepdesign(wave),
+    expect_error(as_svrepdesign(occasion),
                  class = "samplyr_error_reserve_full_export")
-    expect_error(srvyr::as_survey_design(wave),
+    expect_error(srvyr::as_survey_design(occasion),
                  class = "samplyr_error_reserve_full_export")
-    expect_error(srvyr::as_survey_rep(wave),
+    expect_error(srvyr::as_survey_rep(occasion),
                  class = "samplyr_error_reserve_full_export")
   }
 })

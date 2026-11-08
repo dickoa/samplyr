@@ -1,0 +1,1090 @@
+## Rotation schedules and occasion materialization
+
+occasion_frame <- function(n = 400) {
+  data.frame(
+    id = seq_len(n),
+    region = rep(c("North", "South"), each = n / 2),
+    score = rep((seq_len(n / 2) * 7L) %% 97L, times = 2),
+    value = seq_len(n) / n
+  )
+}
+
+# 4 panels over 4 periods, two active at a time: the "2-2" rotation, so
+# r_min = 2 and the block size collapses from 2K to K.
+rotation_2_2 <- function() {
+  data.frame(
+    panel = rep(1:4, times = 4),
+    period = rep(1:4, each = 4),
+    active = c(
+      TRUE, TRUE, FALSE, FALSE,
+      FALSE, TRUE, TRUE, FALSE,
+      FALSE, FALSE, TRUE, TRUE,
+      TRUE, FALSE, FALSE, TRUE
+    )
+  )
+}
+
+# One panel at a time, so r_min = 1 and the block size stays at 2K.
+rotation_1_of_4 <- function() {
+  data.frame(
+    panel = rep(1:4, times = 4),
+    period = rep(1:4, each = 4),
+    active = as.logical(diag(4))
+  )
+}
+
+master_2_2 <- function(seed = 42) {
+  sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 60) |>
+    execute(occasion_frame(), seed = seed, panels = rotation_2_2())
+}
+
+## Schedule validation
+
+test_that("a schedule declares the panel count and the block size", {
+  spec <- normalize_panel_input(rotation_2_2())
+
+  expect_identical(spec$k, 4L)
+  expect_identical(spec$r_min, 2L)
+  expect_identical(spec$block_size, 4L)
+  expect_identical(nrow(spec$schedule), 16L)
+  expect_identical(
+    names(spec$schedule),
+    c("occasion", "panel", "active", "period", "subround", "visit")
+  )
+  # Without a visit column each panel has one cohort.
+  expect_identical(
+    spec$schedule$visit[spec$schedule$panel == 2L],
+    c(1L, 2L, NA, NA)
+  )
+
+  # A single active panel per occasion is the worst case and keeps 2K.
+  lean <- normalize_panel_input(rotation_1_of_4())
+  expect_identical(lean$r_min, 1L)
+  expect_identical(lean$block_size, 8L)
+})
+
+test_that("a schedule naming only its active rows is completed", {
+  full <- rotation_2_2()
+  sparse <- full[full$active, c("panel", "period")]
+
+  expect_identical(
+    normalize_panel_input(sparse)$schedule,
+    normalize_panel_input(full)$schedule
+  )
+})
+
+test_that("rotation schedules are refused by defect kind", {
+  expect_error(
+    normalize_panel_input(data.frame(panel = 1:4)),
+    class = "samplyr_error_schedule_columns"
+  )
+  expect_error(
+    normalize_panel_input(data.frame(panel = c(1, 1), period = c(1, 1))),
+    class = "samplyr_error_schedule_duplicates"
+  )
+  expect_error(
+    normalize_panel_input(data.frame(panel = c(1, 3), period = c(1, 1))),
+    class = "samplyr_error_schedule_gap"
+  )
+  expect_error(
+    normalize_panel_input(data.frame(panel = c(1, 2), period = c(1, 3))),
+    class = "samplyr_error_schedule_gap"
+  )
+  expect_error(
+    normalize_panel_input(data.frame(panel = c(1, 2), period = c(1, 1))) |>
+      suppressWarnings(),
+    NA
+  )
+  expect_error(
+    normalize_panel_input(data.frame(panel = 1:2, period = c(1, 1.5))),
+    class = "samplyr_error_schedule_values"
+  )
+  expect_error(
+    normalize_panel_input(
+      data.frame(panel = 1:2, period = c(1, 1), active = c("y", "n"))
+    ),
+    class = "samplyr_error_schedule_active"
+  )
+  expect_error(
+    normalize_panel_input(data.frame(panel = c(1, 1), period = c(1, 2))),
+    class = "samplyr_error_schedule_size"
+  )
+  expect_error(
+    normalize_panel_input(
+      data.frame(
+        panel = rep(1:2, 2),
+        period = rep(1:2, each = 2),
+        active = c(TRUE, TRUE, FALSE, FALSE)
+      )
+    ),
+    class = "samplyr_error_schedule_idle_occasion"
+  )
+})
+
+test_that("a schedule assigns panels exactly as a count would, but blocked
+           to its own r_min", {
+  master <- master_2_2()
+  record <- attr(master, "metadata")$panel_assignment
+
+  expect_identical(record$block_size, 4L)
+  expect_identical(record$r_min, 2L)
+  expect_identical(
+    record$schedule,
+    normalize_panel_input(rotation_2_2())$schedule
+  )
+
+  # Sizes are still exact and the marginal contract is unchanged.
+  expect_identical(as.integer(table(master$.panel)), rep(30L, 4))
+  for (pool in record$pools) {
+    expect_true(all(pool$blocks == 4L))
+    expect_identical(as.integer(rowSums(pool$quotas)), pool$blocks)
+  }
+})
+
+## Materialization
+
+test_that("an occasion activates exactly the scheduled panels", {
+  master <- master_2_2()
+
+  for (t in 1:4) {
+    active <- rotation_2_2()
+    active <- active$panel[active$period == t & active$active]
+
+    materialized <- execute(master, period = t)
+    expect_setequal(unique(materialized$.panel), active)
+    expect_identical(
+      sort(materialized$.sample_id),
+      sort(master$.sample_id[master$.panel %in% active])
+    )
+  }
+})
+
+test_that("the activation factor is the block take, and totals are preserved", {
+  master <- master_2_2()
+  materialized <- execute(master, period = 1)
+
+  # Two of four panels in blocks of four: probability 2/4, factor 2.
+  factor <- materialized$.weight /
+    master$.weight[match(materialized$.sample_id, master$.sample_id)]
+  expect_identical(unique(factor), 2)
+
+  # The frame total is estimated without bias at either stage of the story.
+  expect_equal(sum(materialized$.weight), sum(master$.weight))
+  expect_equal(sum(master$.weight), 400)
+})
+
+test_that("a single-panel occasion carries the wider factor", {
+  master <- sampling_design() |>
+    draw(n = 80) |>
+    execute(occasion_frame(), seed = 5, panels = rotation_1_of_4())
+
+  materialized <- execute(master, period = 3)
+  factor <- materialized$.weight /
+    master$.weight[match(materialized$.sample_id, master$.sample_id)]
+
+  # Blocks of 2K = 8 with a quota of two per panel: 2/8, so the factor is 4.
+  expect_identical(unique(factor), 4)
+  expect_identical(nrow(materialized), 20L)
+})
+
+test_that("the recorded probability matches the realized take of each block", {
+  master <- master_2_2()
+  materialized <- execute(master, period = 2)
+
+  assignment <- attr(master, "metadata")$panel_assignment
+  occasion <- attr(materialized, "metadata")$occasion
+  active <- occasion$active_panels
+
+  expect_identical(occasion$occasion, 2L)
+  expect_identical(active, c(2L, 3L))
+
+  keys <- make_group_key(as.data.frame(master), assignment$key_vars)
+  for (p in seq_along(assignment$pools)) {
+    pool <- assignment$pools[[p]]
+    recorded <- occasion$pools[[p]]
+
+    expect_identical(recorded$class, pool$class)
+    expect_identical(recorded$blocks, pool$blocks)
+    expect_identical(
+      recorded$take,
+      as.integer(rowSums(pool$quotas[, active, drop = FALSE]))
+    )
+    expect_equal(recorded$probability, recorded$take / recorded$blocks)
+
+    # The take is what the occasion actually selected from that block.
+    block_of_unit <- rep(seq_along(pool$blocks), pool$blocks)
+    at <- match(keys, pool$keys)
+    rows <- which(!is.na(at))
+    selected <- master$.panel[rows] %in% active
+    expect_identical(
+      as.integer(tabulate(block_of_unit[at[rows]][selected],
+                          length(pool$blocks))),
+      recorded$take
+    )
+  }
+})
+
+test_that("permanent certainty units are activated at every occasion", {
+  frame <- data.frame(
+    id = 1:60,
+    mos = c(rep(10, 54), 900, 950, 1000, 1050, 1100, 1150)
+  )
+
+  master <- sampling_design() |>
+    draw(n = 30, method = "pps_systematic", mos = mos, certainty_size = 800) |>
+    execute(frame, seed = 3, panels = rotation_2_2())
+
+  certain <- master$.sample_id[master$.certainty_1]
+  expect_length(certain, 6L)
+
+  for (t in 1:4) {
+    materialized <- execute(master, period = t)
+    expect_true(all(certain %in% materialized$.sample_id))
+
+    # Probability one, so their weights are untouched.
+    kept <- match(certain, materialized$.sample_id)
+    expect_identical(
+      materialized$.weight[kept],
+      master$.weight[match(certain, master$.sample_id)]
+    )
+  }
+
+  occasion <- attr(execute(master, period = 1), "metadata")$occasion
+  classes <- vapply(occasion$pools, function(p) p$class, character(1))
+  expect_identical(classes, c("rotating", "certainty"))
+  expect_true(all(occasion$pools[[2]]$probability == 1))
+})
+
+test_that("a materialized occasion is authoritative, not a filtered sample", {
+  master <- master_2_2()
+  materialized <- execute(master, period = 1)
+
+  expect_true(sample_realization_status(materialized)$ok)
+  expect_identical(get_design(materialized), get_design(master))
+  expect_identical(
+    get_stages_executed(materialized),
+    get_stages_executed(master)
+  )
+
+  # A hand-filtered subset is a modified sample and stays one.
+  filtered <- master[master$.panel %in% 1:2, ]
+  expect_false(sample_realization_status(filtered)$ok)
+})
+
+test_that("pool rows are the rows a lookup pool by pool finds", {
+  per_pool <- function(keys, pools) {
+    lapply(pools, function(pool) {
+      at <- match(keys, pool$keys)
+      rows <- which(!is.na(at))
+      list(rows = rows, at = at[rows])
+    })
+  }
+  keys <- c("a", "c", "x", "b", "c", NA, "e")
+  pools <- list(
+    list(keys = c("b", "a")),
+    list(keys = character(0)),
+    list(keys = c("d", "c", "e"))
+  )
+  expect_identical(record_pool_rows(keys, pools), per_pool(keys, pools))
+  # A key two pools list is read by each.
+  shared <- list(list(keys = c("a", "b")), list(keys = c("b", "c")))
+  expect_identical(record_pool_rows(keys, shared), per_pool(keys, shared))
+})
+
+## Guards
+
+test_that("the occasion route refuses every other execution input", {
+  master <- master_2_2()
+
+  expect_error(
+    execute(master, occasion_frame(), period = 1),
+    class = "samplyr_error_occasion_extra_arguments"
+  )
+  expect_error(
+    execute(master, period = 1, seed = 3),
+    class = "samplyr_error_occasion_extra_arguments"
+  )
+  expect_error(
+    execute(master, period = 1, panels = 2),
+    class = "samplyr_error_occasion_extra_arguments"
+  )
+  expect_error(
+    execute(master, period = 1, reps = 2),
+    class = "samplyr_error_occasion_extra_arguments"
+  )
+  expect_error(
+    execute(master, period = 1, stages = 1),
+    class = "samplyr_error_occasion_extra_arguments"
+  )
+  expect_error(
+    execute(master, period = 1, panel_stage = 1),
+    class = "samplyr_error_occasion_extra_arguments"
+  )
+  expect_error(
+    execute(master, period = 1, small_pool = "permanent"),
+    class = "samplyr_error_occasion_extra_arguments"
+  )
+
+  # `frame_digest` has a real default, so its presence is read from `missing()`.
+  expect_error(
+    execute(master, period = 1, frame_digest = "full"),
+    class = "samplyr_error_occasion_extra_arguments"
+  )
+  expect_error(
+    execute(master, period = 1, frame_digest = "full"),
+    regexp = "reads no\\s+frame"
+  )
+  # Passing the default value is still passing it.
+  expect_error(
+    execute(master, period = 1, frame_digest = "summary"),
+    class = "samplyr_error_occasion_extra_arguments"
+  )
+  # Not passing it is not passing it.
+  expect_s3_class(execute(master, period = 1), "tbl_sample")
+
+  # Every name at once, and the message says all of them.
+  expect_error(
+    execute(master, period = 1, seed = 3, frame_digest = "full"),
+    regexp = "seed and frame_digest"
+  )
+})
+
+test_that("only a scheduled, complete, unmaterialized master carries an occasion", {
+  expect_error(
+    execute(sampling_design() |> draw(n = 10), period = 1),
+    class = "samplyr_error_occasion_not_a_sample"
+  )
+
+  counted <- sampling_design() |>
+    draw(n = 40) |>
+    execute(occasion_frame(), seed = 1, panels = 4)
+  expect_error(
+    execute(counted, period = 1),
+    class = "samplyr_error_occasion_no_schedule"
+  )
+
+  unpanelled <- sampling_design() |>
+    draw(n = 40) |>
+    execute(occasion_frame(), seed = 1)
+  expect_error(
+    execute(unpanelled, period = 1),
+    class = "samplyr_error_occasion_no_schedule"
+  )
+
+  master <- master_2_2()
+  expect_error(
+    execute(execute(master, period = 1), period = 2),
+    class = "samplyr_error_occasion_already_materialized"
+  )
+
+  design <- sampling_design() |>
+    add_stage("Clusters") |>
+      cluster_by(region) |>
+      draw(n = 2) |>
+    add_stage("Units") |>
+      draw(n = 5)
+  # Two regions cannot rotate over four panels, so small_pool is declared.
+  expect_warning(
+    partial <- execute(
+      design, occasion_frame(), stages = 1, seed = 1, panels = rotation_2_2(),
+      small_pool = "permanent"
+    ),
+    class = "samplyr_warning_panel_small_pool"
+  )
+  expect_error(
+    execute(partial, period = 1),
+    class = "samplyr_error_occasion_incomplete_master"
+  )
+})
+
+test_that("period must name declared periods once each", {
+  master <- master_2_2()
+
+  # Several periods are a window, so an undeclared one is refused.
+  for (bad in list(5, c(1, 5))) {
+    expect_error(
+      execute(master, period = bad),
+      class = "samplyr_error_occasion_undeclared"
+    )
+  }
+  # A value that names no period, or one named twice, is no request.
+  for (bad in list(0, "1", c(1, 1), 1.5, NA_integer_)) {
+    expect_error(
+      execute(master, period = bad),
+      class = "samplyr_error_occasion_pairs"
+    )
+  }
+})
+
+test_that("a modified master cannot be materialized", {
+  master <- master_2_2()
+  master$.weight <- master$.weight * 2
+
+  expect_error(
+    execute(master, period = 1),
+    class = "samplyr_error_modified_sample"
+  )
+})
+
+## Receipt, replay and export
+
+test_that("the schedule survives the design file and replay reproduces it", {
+  frame <- occasion_frame()
+  master <- master_2_2()
+
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(master, path, frame = frame)
+  restored <- read_design(path)
+  receipt <- attr(restored, "execution")
+
+  expect_equal(receipt$panels, 4L)
+  expect_equal(receipt$panel_assignment$r_min, 2L)
+  expect_equal(
+    decode_panel_argument(receipt, receipt$panel_assignment),
+    normalize_panel_input(rotation_2_2())$schedule[
+      c("panel", "period", "subround", "active", "visit")
+    ]
+  )
+
+  # The block size follows from the schedule, not from the panel count alone.
+  replayed <- replay_design(restored, frame)
+  expect_identical(replayed$.panel, master$.panel)
+  expect_identical(replayed$id, master$id)
+})
+
+test_that("a materialized occasion is recorded and replays from its master", {
+  frame <- occasion_frame()
+  materialized <- execute(master_2_2(), period = 3)
+
+  path <- withr::local_tempfile(fileext = ".json")
+  expect_no_warning(write_design(materialized, path, frame = frame))
+  receipt <- attr(read_design(path), "execution")
+
+  expect_true(isTRUE(receipt$chained))
+  expect_identical(receipt$transition, "occasion")
+  expect_equal(receipt$occasion$occasion, 3L)
+  expect_equal(as.integer(unlist(receipt$occasion$active_panels)), c(3L, 4L))
+  expect_length(receipt$occasion$pools, 2L)
+
+  replayed <- replay_design(read_design(path), frame)
+  expect_identical(
+    lapply(as.data.frame(replayed), identity),
+    lapply(as.data.frame(materialized), identity)
+  )
+  expect_identical(
+    attr(replayed, "metadata")$occasion$active_panels,
+    attr(materialized, "metadata")$occasion$active_panels
+  )
+})
+
+## Survey export of a materialized occasion
+
+test_that("an occasion retains the master as its first phase", {
+  master <- master_2_2()
+  materialized <- execute(master, period = 1)
+  prev <- attr(materialized, "metadata")$prev_phase
+
+  expect_identical(prev$transition, "panel_activation")
+  expect_identical(as.data.frame(prev$sample), as.data.frame(master))
+  expect_identical(prev$stages, get_stages_executed(master))
+
+  # The master's metadata is reachable through the phase link only.
+  expect_null(attr(materialized, "metadata")$materialized_from)
+  expect_equal(
+    attr(prev$sample, "metadata")$n_selected,
+    nrow(master)
+  )
+})
+
+test_that("an occasion of a complete master carries the master's digest", {
+  master <- master_2_2()
+  occasion <- execute(master, period = 2)
+  expect_identical(get_frame_digest(occasion), get_frame_digest(master))
+  expect_s3_class(frame_summary(occasion), "tbl_df")
+  window <- execute(master, period = 1:2)
+  expect_identical(get_frame_digest(window), get_frame_digest(master))
+})
+
+test_that("an occasion exports by ultimate clusters on its own rows", {
+  skip_if_not_installed("survey")
+  frame <- occasion_frame()
+  frame$mos <- rep(c(rep(1, 190), rep(60, 10)), 2)
+
+  # Design, then the clusters and strata a hand-written export would name.
+  shapes <- list(
+    unstratified = list(sampling_design() |> draw(n = 60), ~1, NULL),
+    stratified = list(
+      sampling_design() |> stratify_by(region) |> draw(n = 60),
+      ~1, ~region
+    ),
+    clustered = list(
+      sampling_design() |> cluster_by(score) |> draw(n = 12),
+      ~score, NULL
+    ),
+    # Its large units are certainties, the same in every sample, so they
+    # add no variance.
+    pps = list(
+      sampling_design() |>
+        stratify_by(region) |>
+        draw(n = 40, method = "pps_sps", mos = mos),
+      ~1, ~region
+    ),
+    two_stage = list(
+      sampling_design() |>
+        add_stage() |>
+        stratify_by(region) |>
+        cluster_by(score) |>
+        draw(n = 12) |>
+        add_stage() |>
+        draw(n = 2),
+      ~score, ~region
+    )
+  )
+
+  for (nm in names(shapes)) {
+    master <- suppressMessages(
+      execute(shapes[[nm]][[1]], frame, seed = 11, panels = rotation_2_2())
+    )
+    occasion <- execute(master, period = 2)
+    svy <- as_svydesign(occasion)
+    expect_s3_class(svy, "survey.design2")
+    expect_false(inherits(svy, "twophase2"), info = nm)
+
+    hand_written <- function(data) {
+      survey::svydesign(
+        ids = shapes[[nm]][[2]],
+        strata = shapes[[nm]][[3]],
+        weights = ~.weight,
+        nest = TRUE,
+        data = data
+      )
+    }
+    data <- as.data.frame(occasion)
+    reference <- hand_written(data)
+    sure <- data$.certainty_1 %in% TRUE
+    spread <- if (any(sure)) hand_written(data[!sure, ]) else reference
+    expect_identical(survey::degf(svy), survey::degf(spread), info = nm)
+    expect_equal(
+      unname(stats::weights(svy)),
+      unname(as.data.frame(occasion)$.weight),
+      info = nm
+    )
+    ours <- survey::svytotal(~value, svy)
+    theirs <- survey::svytotal(~value, reference)
+    expect_equal(unname(coef(ours)), unname(coef(theirs)), info = nm)
+    expect_equal(
+      unname(survey::SE(ours)),
+      unname(survey::SE(survey::svytotal(~value, spread))),
+      info = nm
+    )
+  }
+})
+
+test_that("an occasion's replicate weights resample its primary units", {
+  skip_if_not_installed("survey")
+  occasion <- execute(master_2_2(), period = 2)
+  reference <- survey::svydesign(
+    ids = ~1,
+    strata = ~region,
+    weights = ~.weight,
+    nest = TRUE,
+    data = as.data.frame(occasion)
+  )
+  for (type in c("JKn", "bootstrap")) {
+    ours <- withr::with_seed(7, as_svrepdesign(occasion, type = type))
+    theirs <- withr::with_seed(
+      7,
+      survey::as.svrepdesign(reference, type = type)
+    )
+    expect_s3_class(ours, "svyrep.design")
+    expect_equal(
+      unname(survey::SE(survey::svytotal(~value, ours))),
+      unname(survey::SE(survey::svytotal(~value, theirs))),
+      info = type
+    )
+  }
+  expect_s3_class(as_svrepdesign(occasion), "svyrep.design")
+  expect_error(
+    as_svrepdesign(occasion, type = "rwyb"),
+    class = "samplyr_error_occasion_replicate_type"
+  )
+
+  # An activation of every panel is the master's own design.
+  schedule <- data.frame(
+    panel = rep(1:2, times = 2),
+    period = rep(1:2, each = 2),
+    active = c(TRUE, TRUE, FALSE, TRUE)
+  )
+  master <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 60) |>
+    execute(occasion_frame(), seed = 42, panels = schedule)
+  every <- execute(master, period = 1)
+  expect_equal(
+    unname(survey::SE(survey::svytotal(
+      ~value, as_svrepdesign(every, type = "JKn")
+    ))),
+    unname(survey::SE(survey::svytotal(
+      ~value, as_svrepdesign(master, type = "JKn")
+    )))
+  )
+})
+
+test_that("an occasion of one primary unit is refused by name", {
+  skip_if_not_installed("survey")
+  schedule <- data.frame(
+    panel = rep(1:2, times = 2),
+    period = rep(1:2, each = 2),
+    active = c(TRUE, FALSE, FALSE, TRUE)
+  )
+  master <- sampling_design() |>
+    cluster_by(score) |>
+    draw(n = 2) |>
+    execute(occasion_frame(), seed = 1, panels = schedule)
+  occasion <- execute(master, period = 1)
+
+  expect_error(as_svydesign(occasion), class = "samplyr_error_occasion_one_unit")
+  expect_error(as_svrepdesign(occasion), class = "samplyr_error_occasion_one_unit")
+})
+
+test_that("nest reaches the ultimate-cluster export and not the two-phase one", {
+  skip_if_not_installed("survey")
+  occasion <- execute(master_2_2(), period = 2)
+  expect_no_warning(as_svydesign(occasion, nest = TRUE))
+  expect_warning(
+    as_svydesign(occasion, nest = TRUE, method = "full"),
+    class = "samplyr_warning_nest_ignored"
+  )
+})
+
+test_that("an occasion exports through twophase() with its exact weights", {
+  skip_if_not_installed("survey")
+  master <- master_2_2()
+  materialized <- execute(master, period = 1)
+
+  svy <- as_svydesign(materialized, method = "full")
+  expect_s3_class(svy, "twophase2")
+
+  # survey derives the weights from the two phases independently.
+  expect_equal(
+    unname(stats::weights(svy)),
+    unname(as.data.frame(materialized)$.weight)
+  )
+  expect_equal(nrow(svy$phase1$full$variables), nrow(master))
+  expect_equal(sum(svy$subset), nrow(materialized))
+
+  # The total is design-weighted either way, and phase 2 supplies the variance.
+  total <- survey::svytotal(~value, svy)
+  expect_equal(
+    unname(coef(total)),
+    sum(as.data.frame(materialized)$.weight * as.data.frame(materialized)$value)
+  )
+  expect_gt(unname(survey::SE(total)), 0)
+})
+
+test_that("the activation phase carries the frozen blocks, not a filter", {
+  skip_if_not_installed("survey")
+  master <- master_2_2()
+  materialized <- execute(master, period = 1)
+  svy <- as_svydesign(materialized, method = "full")
+
+  record <- attr(master, "metadata")$panel_assignment
+  blocks <- unlist(lapply(record$pools, function(p) p$blocks))
+
+  # One phase-2 stratum per frozen block, sized in assignment units.
+  strata2 <- svy$phase2$strata[, 1]
+  expect_equal(length(unique(strata2)), length(blocks))
+  expect_setequal(unique(svy$phase2$fpc$popsize[, 1]), unique(blocks))
+
+  # A hand-written filter of the same rows is a modified sample and is refused.
+  filtered <- dplyr::filter(master, .panel %in% c(1L, 2L))
+  expect_error(
+    as_svydesign(filtered),
+    class = "samplyr_error_modified_sample"
+  )
+})
+
+test_that("occasion export supports the method choice and never falls back", {
+  skip_if_not_installed("survey")
+  materialized <- execute(master_2_2(), period = 1)
+
+  full <- as_svydesign(materialized, method = "full")
+  simple <- as_svydesign(materialized, method = "simple")
+  approx <- as_svydesign(materialized, method = "approx")
+
+  expect_s3_class(full, "twophase2")
+  expect_s3_class(simple, "twophase")
+  expect_s3_class(approx, "twophase")
+
+  # Same weights on every method, which differ only in the variance.
+  expect_equal(unname(stats::weights(simple)), unname(stats::weights(full)))
+  expect_equal(unname(stats::weights(approx)), unname(stats::weights(full)))
+})
+
+test_that("occasion export covers the master shapes twophase() can represent", {
+  skip_if_not_installed("survey")
+  frame <- occasion_frame()
+
+  shapes <- list(
+    unstratified = sampling_design() |> draw(n = 60),
+    stratified = sampling_design() |> stratify_by(region) |> draw(n = 60),
+    clustered = sampling_design() |> cluster_by(score) |> draw(n = 12),
+    with_replacement = sampling_design() |> draw(n = 60, method = "srswr"),
+    two_stage = sampling_design() |>
+      add_stage() |>
+      cluster_by(score) |>
+      draw(n = 12) |>
+      add_stage() |>
+      draw(n = 2)
+  )
+
+  for (nm in names(shapes)) {
+    master <- execute(shapes[[nm]], frame, seed = 11, panels = rotation_2_2())
+    materialized <- execute(master, period = 2)
+    svy <- as_svydesign(materialized, method = "full")
+    expect_s3_class(svy, "twophase2")
+    expect_equal(
+      unname(stats::weights(svy)),
+      unname(as.data.frame(materialized)$.weight),
+      info = nm
+    )
+    # Weights alone miss a dropped stage, so the phase-1 stage count is checked.
+    expect_equal(
+      ncol(svy$phase1$full$cluster),
+      length(get_stages_executed(master)),
+      info = nm
+    )
+  }
+})
+
+test_that("an occasion of a multistage master matches a hand-written twophase()", {
+  skip_if_not_installed("survey")
+  frame <- occasion_frame()
+
+  master <- sampling_design() |>
+    add_stage() |>
+    cluster_by(score) |>
+    draw(n = 20) |>
+    add_stage() |>
+    draw(n = 3) |>
+    execute(frame, seed = 11, panels = rotation_2_2())
+  materialized <- execute(master, period = 1)
+
+  total <- survey::svytotal(~value, as_svydesign(materialized, method = "full"))
+
+  # Both master stages at phase 1, blocks as phase-2 strata, SE compared too.
+  record <- attr(master, "metadata")$panel_assignment
+  df <- as.data.frame(master)
+  keys <- make_group_key(df, record$key_vars)
+  df$.block <- NA_character_
+  df$.block_n <- NA_real_
+  for (p in seq_along(record$pools)) {
+    pool <- record$pools[[p]]
+    at <- match(keys, pool$keys)
+    rows <- which(!is.na(at))
+    b <- rep(seq_along(pool$blocks), pool$blocks)[at[rows]]
+    df$.block[rows] <- paste(p, b, sep = ".")
+    df$.block_n[rows] <- pool$blocks[b]
+  }
+  df$.unit <- match(keys, unique(keys))
+  df$.elem <- seq_len(nrow(df))
+  df$.active <- df$.sample_id %in% materialized$.sample_id
+
+  reference <- survey::twophase(
+    id = list(~ score + .elem, ~.unit),
+    strata = list(NULL, ~.block),
+    fpc = list(~ .fpc_1 + .fpc_2, ~.block_n),
+    subset = ~.active,
+    data = df,
+    method = "full"
+  )
+  reference_total <- survey::svytotal(~value, reference)
+
+  expect_equal(unname(coef(total)), unname(coef(reference_total)))
+  expect_equal(unname(survey::SE(total)), unname(survey::SE(reference_total)))
+})
+
+test_that("the two-phase occasion export refuses unequal master probabilities", {
+  skip_if_not_installed("survey")
+  frame <- occasion_frame()
+  frame$mos <- rep(c(rep(1, 190), rep(60, 10)), 2)
+
+  pps <- sampling_design() |>
+    draw(n = 40, method = "pps_sps", mos = mos) |>
+    execute(frame, seed = 5, panels = rotation_2_2())
+  materialized <- execute(pps, period = 1)
+
+  expect_error(
+    as_svydesign(materialized, method = "full"),
+    class = "samplyr_error_occasion_phase1_pps"
+  )
+  # The master's own export is exact and is what the message points at.
+  expect_s3_class(as_svydesign(pps), "survey.design")
+  # The default export does not depend on the master's method.
+  expect_s3_class(as_svydesign(materialized), "survey.design2")
+
+  # A method with no linearization treatment refuses on that ground instead.
+  spatial <- sampling_design() |>
+    draw(n = 40, method = "lpm2", spread = c(score, value)) |>
+    execute(frame, seed = 5, panels = rotation_2_2())
+  expect_error(
+    as_svydesign(execute(spatial, period = 1), method = "full"),
+    class = "samplyr_error_custom_random_wor_export"
+  )
+  expect_s3_class(
+    as_svydesign(execute(spatial, period = 1)),
+    "survey.design2"
+  )
+})
+
+test_that("an occasion inherits the restrictions of any second phase", {
+  skip_if_not_installed("survey")
+  materialized <- execute(master_2_2(), period = 1)
+
+  # Activation joints are computed from the master, not a materialized occasion.
+  expect_error(
+    joint_expectation(materialized),
+    class = "samplyr_error_occasion_joint_unsupported"
+  )
+  # Variance components assume nested stages, and a phase is not a stage.
+  expect_error(
+    varcomp(materialized),
+    class = "samplyr_error_varcomp_two_phase"
+  )
+
+  # An occasion of a master that is itself a second phase would be a third.
+  frame <- occasion_frame()
+  phase1 <- sampling_design() |>
+    cluster_by(region) |>
+    draw(n = 2) |>
+    execute(frame, seed = 3)
+  phase2 <- sampling_design() |>
+    draw(n = 60) |>
+    execute(phase1, seed = 4, panels = rotation_2_2())
+  expect_error(
+    as_svydesign(execute(phase2, period = 1)),
+    class = "samplyr_error_survey_multiphase_unsupported"
+  )
+})
+
+test_that("an occasion without its master refuses rather than exporting", {
+  skip_if_not_installed("survey")
+  materialized <- execute(master_2_2(), period = 2)
+
+  metadata <- attr(materialized, "metadata")
+  metadata$prev_phase <- NULL
+  attr(materialized, "metadata") <- metadata
+
+  expect_error(
+    as_svydesign(materialized),
+    class = "samplyr_error_occasion_no_master"
+  )
+  # Without the link it would be replicated as a single-phase sample.
+  for (type in c("JK1", "bootstrap", "subbootstrap")) {
+    expect_error(
+      as_svrepdesign(materialized, type = type),
+      class = "samplyr_error_occasion_no_master"
+    )
+  }
+  skip_if_not_installed("svrep")
+  expect_error(
+    as_svrepdesign(materialized, type = "rwyb"),
+    class = "samplyr_error_occasion_no_master"
+  )
+})
+
+test_that("an occasion names its master's systematic stage once", {
+  skip_if_not_installed("survey")
+  master <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 60, method = "systematic") |>
+    execute(occasion_frame(), seed = 42, panels = rotation_2_2())
+  warning <- tryCatch(
+    as_svydesign(execute(master, period = 2), method = "full"),
+    samplyr_warning_systematic_variance = identity
+  )
+  expect_s3_class(warning, "samplyr_warning_systematic_variance")
+  expect_match(conditionMessage(warning), "stage 1, phase\\s+1\\.")
+  expect_no_match(conditionMessage(warning), "phase\\s+2")
+
+  # The ultimate-cluster export has one phase and names its approximation.
+  warning <- tryCatch(
+    as_svydesign(execute(master, period = 2)),
+    samplyr_warning_systematic_variance = identity
+  )
+  expect_s3_class(warning, "samplyr_warning_systematic_variance")
+  expect_match(conditionMessage(warning), "with-replacement approximation")
+  expect_no_match(conditionMessage(warning), "phase")
+})
+
+test_that("weights shared from an occasion without its master are refused", {
+  skip_if_not_installed("survey")
+  materialized <- execute(master_2_2(), period = 2)
+  metadata <- attr(materialized, "metadata")
+  metadata$prev_phase <- NULL
+  attr(materialized, "metadata") <- metadata
+  shared <- shared_weight_sample(source = materialized)
+
+  expect_error(as_svydesign(shared), class = "samplyr_error_occasion_no_master")
+  expect_error(as_svrepdesign(shared, type = "bootstrap"),
+               class = "samplyr_error_occasion_no_master")
+})
+
+test_that("an occasion whose rows are not the master's is caught", {
+  skip_if_not_installed("survey")
+  master <- master_2_2()
+  materialized <- execute(master, period = 1)
+
+  # Only the realized take tells a same-shaped master from another execution.
+  metadata <- attr(materialized, "metadata")
+  metadata$prev_phase$sample <- master_2_2(seed = 99)
+  attr(materialized, "metadata") <- metadata
+
+  expect_error(
+    as_svydesign(materialized, method = "full"),
+    class = "samplyr_error_occasion_master_mismatch"
+  )
+})
+
+test_that("srvyr export of an occasion takes the route as_svydesign() takes", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("srvyr")
+  materialized <- execute(master_2_2(), period = 1)
+
+  tbl <- srvyr::as_survey(materialized)
+  expect_s3_class(tbl, "tbl_svy")
+  expect_s3_class(tbl, "survey.design2")
+  expect_equal(
+    unname(stats::weights(tbl)),
+    unname(as.data.frame(materialized)$.weight)
+  )
+
+  twophase <- srvyr::as_survey_design(materialized, method = "full")
+  expect_s3_class(twophase, "tbl_svy")
+  expect_s3_class(twophase, "twophase2")
+  expect_equal(
+    unname(stats::weights(twophase)),
+    unname(as.data.frame(materialized)$.weight)
+  )
+})
+
+test_that("analysis columns added to an occasion reach the exported design", {
+  skip_if_not_installed("survey")
+  materialized <- execute(master_2_2(), period = 1)
+  materialized$response <- seq_len(nrow(materialized)) / nrow(materialized)
+
+  svy <- as_svydesign(materialized, method = "full")
+  expect_true("response" %in% names(svy$phase1$full$variables))
+  expect_equal(
+    unname(coef(survey::svytotal(~response, svy))),
+    sum(as.data.frame(materialized)$.weight * materialized$response)
+  )
+})
+
+test_that("a selection drawn whole exports as the single-phase design it is", {
+  skip_if_not_installed("survey")
+  frame <- occasion_frame()
+
+  selections <- list(
+    a = sampling_design() |>
+      stratify_by(region) |>
+      draw(n = 40) |>
+      execute(frame, seed = 21, panels = rotation_2_2()),
+    b = sampling_design() |>
+      stratify_by(region) |>
+      draw(n = 20) |>
+      execute(frame, seed = 22)
+  )
+  program <- rotation_program(
+    selections,
+    entry_period = c(a = 1L, b = 2L),
+    schedule = data.frame(
+      selection = c("a", "a", "a", "a", "b"),
+      panel = c(1L, 2L, 1L, 2L, 1L),
+      period = c(1L, 1L, 2L, 2L, 2L),
+      active = TRUE
+    )
+  )
+  live <- execute(program, period = 2)
+
+  # The partitioned selection is two-phase, the whole one stays single-phase.
+  expect_s3_class(as_svydesign(live$a, method = "full"), "twophase2")
+  expect_s3_class(as_svydesign(live$b), "survey.design")
+  expect_equal(
+    unname(stats::weights(as_svydesign(live$b))),
+    unname(as.data.frame(live$b)$.weight)
+  )
+})
+
+## What the documented limits of the occasion export actually are
+
+test_that("an occasion of a master with no schedule is refused, so `panel` is never NA", {
+  # `stack_periods()` documents `panel` as always present.
+  bare <- sampling_design() |> draw(n = 10) |> execute(occasion_frame(), seed = 3)
+  expect_error(execute(bare, period = 1), class = "samplyr_error_occasion_no_schedule")
+
+  # Only a whole selection would carry NA, and it is refused for spanning
+  # selections.
+  st <- data.frame(
+    panel = rep(1:2, times = 3), period = rep(1:3, each = 2),
+    active = c(TRUE, TRUE, TRUE, FALSE, FALSE, TRUE)
+  )
+  startup <- sampling_design() |> draw(n = 40) |>
+    execute(data.frame(id = 1:200), seed = 1, panels = st)
+  entrant <- sampling_design() |> draw(n = 12) |>
+    execute(data.frame(id = 201:260), seed = 2)
+  program <- rotation_program(
+    selections = list(startup = startup, period_2 = entrant),
+    entry_period = c(startup = 1, period_2 = 2),
+    schedule = rbind(
+      transform(st, selection = "startup"),
+      data.frame(selection = "period_2", panel = 1L, period = 1:3,
+                 active = c(FALSE, TRUE, TRUE))
+    )
+  )
+  whole <- execute(program, period = 2)[["period_2"]]
+  expect_false(".panel" %in% names(whole))
+  expect_error(
+    stack_periods(whole, execute(program, period = 2)[["startup"]]),
+    class = "samplyr_error_stack_periods_input"
+  )
+
+  # And a real stack never produces one.
+  master <- master_2_2()
+  stacked <- stack_periods(execute(master, period = 1), execute(master, period = 2))
+  expect_false(anyNA(stacked$panel))
+})
+
+test_that("an occasion total's variance is positive and ignores the outcome's level", {
+  skip_if_not_installed("survey")
+  # Unequal stratum takes: survey 4.5's own phase-1 term made this variance
+  # negative and dependent on the outcome's level.
+  set.seed(20260820)
+  population <- data.frame(
+    uid = sprintf("a%04d", 1:1000),
+    stratum = rep(c("N", "C", "S"), times = c(450, 300, 250)),
+    y = round(stats::rnorm(
+      1000, mean = rep(c(80, 120, 160), times = c(450, 300, 250)), sd = 25
+    ), 3)
+  )
+  population$y_shifted <- population$y + 1000
+  master <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = c(N = 70, C = 90, S = 110)) |>
+    execute(population, seed = 5150, panels = rotation_2_2())
+  occasion <- execute(master, period = 4)
+
+  svy <- as_svydesign(occasion, method = "full")
+  total_var <- vcov(survey::svytotal(~y, svy))[1, 1]
+  expect_gt(total_var, 0)
+  expect_equal(
+    vcov(survey::svytotal(~y_shifted, svy))[1, 1], total_var,
+    tolerance = 1e-8
+  )
+
+  approx <- survey::svytotal(~y, as_svydesign(occasion, method = "approx"))
+  expect_true(is.finite(survey::SE(approx)[[1]]))
+  expect_equal(coef(approx)[[1]], coef(survey::svytotal(~y, svy))[[1]])
+})

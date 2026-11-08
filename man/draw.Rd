@@ -60,7 +60,9 @@ refused (\code{samplyr_error_svyplan_multivariable_strata}).
 \item A certainty-aware \code{svyplan::n_alloc()} plan (solved with a \code{psu}
 register carrying \code{psu_id}), at a clustered stage 1 stratified by the
 plan's one stratum column, and again at stage 2 for the per-PSU
-takes. Stage 1 takes every certainty
+takes. The takes may also come lower, below stages that keep one
+unit of each PSU, such as \code{draw(n = 1)} of a segment per EA, and are
+then taken inside that unit. Stage 1 takes every certainty
 PSU and draws exactly the plan's remainder per stratum. A plan solved
 with \code{n_psu_per_zone = 2} draws two PSUs from each of its zones
 instead, records the zone in \code{.zone_1}, and exports one variance
@@ -68,8 +70,9 @@ stratum per zone. With \code{n_psu_per_zone = 1} it draws one PSU per zone,
 records the plan's variance group in \code{.pair_1}, and exports the
 groups as variance strata (\link{variance_estimation}). Its method
 must be \code{pps_systematic}, \code{pps_brewer}, \code{pps_cps}, or \code{pps_sampford},
-with \code{mos} equal to the register's \code{N}. Stage 2 selects by \code{srswor} or
-\code{systematic}, and stratifying there requires an \code{alloc} method.
+with \code{mos} equal to the register's \code{N}. The take stage selects by
+\code{srswor} or \code{systematic}, and stratifying there requires an \code{alloc}
+method.
 Arguments the plan owns (\code{frac}, \code{certainty_size}, \code{certainty_prop},
 \code{min_n}, \code{max_n}, and at stage 1 \code{alloc}) are refused alongside it.
 \code{\link[svyplan:merge_psus]{svyplan::merge_psus()}} merges PSUs smaller than the take.
@@ -157,11 +160,11 @@ field protocol, the settlement and how to size the reserve.}
 requires and the paper behind each.
 
 \code{"cube"} balances the sample on \code{aux} so that Horvitz-Thompson
-estimates of auxiliary totals match population totals, with equal or
-unequal (\code{mos}) inclusion probabilities, and uses the stratified cube
-algorithm (Chauvet 2009) when stratified. At most two stages may use a
-balanced-family method. \code{"balanced"} is a compatibility alias for
-\code{"cube"}.
+estimates of auxiliary totals match or nearly match population totals,
+with equal or unequal (\code{mos}) inclusion probabilities, and uses the
+stratified cube algorithm (Chauvet 2009) when stratified. At most two
+stages may use a balanced-family method. \code{"balanced"} is a compatibility
+alias for \code{"cube"}.
 
 A method registered with \code{\link[sondage:register_method]{sondage::register_method()}} is named
 \code{"pps_<name>"} for \code{type = "wor"} or \code{type = "wr"}, and
@@ -193,7 +196,7 @@ refused with class \code{samplyr_error_draw_string_column}.}
 numeric column with values in the open interval (0, 1) and no missing
 values. Supported by \code{"bernoulli"}, \code{"pps_poisson"}, \code{"pps_sps"},
 \code{"pps_pareto"}, and \code{"scps"}. The sample is then deterministic for a
-given set of PRN values, which coordinates samples across survey waves.
+given set of PRN values, which coordinates samples across survey occasions.
 With \code{"scps"} it is also fixed by the order the pool's units are
 visited in, the frame's row order or the \code{control} order, so
 coordinated draws need the same order. Keeping two samples apart

@@ -71,8 +71,8 @@ carries \code{pool_keys}, \code{n_certain}, the number of such units, and
 
 \code{samplyr_message_panel_certainty} comes from a panel count, \code{panels = k},
 that keeps certainty units in a pool of their own. Such units are active
-at every wave once a schedule rotates the panels, and the panel sizes of
-their stratum can differ by two. The message points to \code{\link[=periods]{periods()}} for a
+at every occasion once a schedule rotates the panels, and the panel sizes of
+their stratum can differ by two. The message points to \code{\link[=subrounds]{subrounds()}} for a
 partition visited once, such as fieldwork months. A schedule states
 rotation and is not reported. Its payload carries \code{pool_keys},
 \code{n_certainty} and \code{n_pools}.

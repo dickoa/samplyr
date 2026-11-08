@@ -152,18 +152,78 @@ is_svyplan_schedule <- function(x) {
   inherits(x, "svyplan_schedule")
 }
 
-#' Check the supported planning schema
+#' Check that a planning schedule holds what samplyr reads
+#'
+#' The schedule carries no format version. The class and the fields read
+#' are checked instead, and the meaning of each field is pinned by
+#' `test-svyplan-contract.R`.
 #' @noRd
 check_svyplan_schedule <- function(x, arg = "schedule",
                                    call = caller_env()) {
-  if (!is_svyplan_schedule(x) || !identical(x$schema_version, 2L)) {
+  if (!is_svyplan_schedule(x)) {
     abort_samplyr(
-      "{.arg {arg}} must be an {.cls svyplan_schedule} with schema version 2.",
+      "{.arg {arg}} must be an {.cls svyplan_schedule}.",
       class = "samplyr_error_svyplan_schedule",
       call = call
     )
   }
+  reads <- list(
+    schedule = c("period", "subround", "selection", "cohort", "panel",
+                 "active", "visit"),
+    tail_commitments = c("period", "subround", "selection", "cohort",
+                         "panel", "visit"),
+    selections = c("selection", "entry_period", "panels", "panel_issue",
+                   "operational_issue")
+  )
+  for (table in names(reads)) {
+    columns <- if (is.data.frame(x[[table]])) names(x[[table]])
+    missing <- setdiff(reads[[table]], columns)
+    if (length(missing) > 0L) {
+      abort_svyplan_schedule_field(arg, "${table}", missing, call = call)
+    }
+  }
+  missing <- setdiff(
+    c("subrounds", "horizon", "retain_psus", "panel_parameters"),
+    names(x)
+  )
+  if (length(missing) == 0L) {
+    missing <- setdiff(c("k", "r_min", "block_width"),
+                       names(x$panel_parameters))
+    if (length(missing) > 0L) {
+      abort_svyplan_schedule_field(arg, "$panel_parameters", missing,
+                                   call = call)
+    }
+  } else {
+    abort_svyplan_schedule_field(arg, "the schedule", missing, call = call)
+  }
   invisible(x)
+}
+
+#' @noRd
+abort_svyplan_schedule_field <- function(arg, where, missing,
+                                         call = caller_env()) {
+  abort_samplyr(
+    c(
+      "{.arg {arg}} lacks fields samplyr reads from an
+       {.cls svyplan_schedule}.",
+      "x" = "{.field {where}} has no {.field {missing}}.",
+      "i" = "Rebuild the schedule with {.fn svyplan::design_schedule} from
+             svyplan 0.21.0 or later."
+    ),
+    class = "samplyr_error_svyplan_schedule",
+    call = call
+  )
+}
+
+#' Fieldwork occasions of an svyplan schedule
+#'
+#' An svyplan schedule indexes time by reporting `period` and `subround`,
+#' and its own `wave` column is the place of an interview in the rotation
+#' pattern. samplyr draws once per subround, so its occasion is that subround's
+#' place in the fieldwork sequence.
+#' @noRd
+svyplan_draw_occasions <- function(plan, tab) {
+  as.integer((tab$period - 1L) * plan$subrounds + tab$subround)
 }
 
 #' Coerce svyplan objects for draw()
@@ -221,13 +281,14 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE,
       deeper <- if (stage_index > 2L) {
         c(
           "x" = "At stage {stage_index}, the plan's per-PSU takes have no
-                 stage to attach to. They apply only at stage 2, directly
-                 below the PSUs, and a stage in between, such as a segment
-                 selection, separates them.",
-          "i" = "To field the takes here, stratify this stage by the PSU id
-                 and pass them as a table:
+                 stage to attach to. They apply directly below the PSUs, or
+                 below stages that keep one unit of each PSU, such as one
+                 segment per EA, and a stage in between here takes more.",
+          "i" = "To field them here, split each PSU's take over the k units
+                 the stage above keeps in it, stratify this stage by the PSU
+                 id and pass the split takes as a table:
                  {.code stratify_by(psu_id) |> draw(n = data.frame(psu_id =
-                 plan$psu$psu_id, n = plan$psu$n_take))}."
+                 plan$psu$psu_id, n = plan$psu$n_take / k))}."
         )
       }
       abort_samplyr(
@@ -767,10 +828,11 @@ normalize_certainty_register <- function(plan, refuse) {
   out
 }
 
-#' Build the take spec a certainty plan hands to a stage-2 draw()
+#' Build the take spec a certainty plan hands to its take stage's draw()
 #'
-#' Stage 2 applies the plan's per-PSU takes inside the PSUs a bridged
-#' stage 1 selected, so it requires that stage and the same plan. Within-PSU
+#' The take stage applies the plan's per-PSU takes inside the PSUs a bridged
+#' stage 1 selected, at stage 2 or below stages that keep one unit of each
+#' PSU, so it requires that stage and the same plan. Within-PSU
 #' stratification is allowed only with an `alloc` method: samplyr's scalar
 #' size at a stratified stage means n per stratum, so a bare stratification
 #' would silently draw the take in every cell, while `alloc` is the
@@ -802,7 +864,7 @@ certainty_take_spec <- function(
   stage1 <- design$stages[[1]]$draw_spec$certainty_plan
   if (is_null(stage1) || !identical(stage1$role, "select")) {
     refuse(
-      "A certainty plan at stage 2 needs the same plan at a bridged stage 1.",
+      "A certainty plan's take stage needs the same plan at a bridged stage 1.",
       "i" = "Pass {.code n = plan} at a clustered, stratified stage 1 first; the per-PSU takes assume that selection."
     )
   }
@@ -816,7 +878,8 @@ certainty_take_spec <- function(
   if (clustered) {
     refuse(
       "A certainty plan's take stage selects elements, not clusters.",
-      "i" = "Remove {.fn cluster_by} at stage 2; the plan is two-stage."
+      "i" = "Remove {.fn cluster_by} at this stage. The plan's takes are
+             elements of each PSU."
     )
   }
   if (!method %in% c("srswor", "systematic")) {
@@ -856,6 +919,25 @@ certainty_take_spec <- function(
   spec <- stage1
   spec$role <- "take"
   spec
+}
+
+#' Do the stages between the PSUs and a stage keep one unit of each PSU?
+#'
+#' A certainty plan's per-PSU take then is the take inside the one unit each
+#' selected PSU keeps, such as a segment of a large EA. A stratified stage
+#' takes one unit per stratum, so more than one per parent.
+#' @param from,to The stages in between, none when `to < from`.
+#' @noRd
+takes_one_per_parent <- function(design, from, to) {
+  if (to < from) {
+    return(TRUE)
+  }
+  all(vapply(design$stages[from:to], function(stage) {
+    n <- stage$draw_spec$n
+    !is_null(stage$clusters) && is_null(stage$strata) &&
+      is_null(stage$draw_spec$frac) && is.numeric(n) && length(n) == 1L &&
+      isTRUE(n == 1)
+  }, logical(1)))
 }
 
 #' Refuse a plan whose executable selection rule caps a noncertainty PSU
@@ -968,8 +1050,8 @@ certainty_remainder_chance <- function(sizes, n_draw, zone = NULL, m = NULL) {
 #' Resolve the per-parent take identically for execution and previews
 #' @noRd
 resolve_parent_draw_spec <- function(draw_spec, data, call = caller_env()) {
-  if (!is_null(draw_spec$tenure_takes)) {
-    return(tenure_parent_draw_spec(draw_spec, data))
+  if (!is_null(draw_spec$cohort_takes)) {
+    return(cohort_parent_draw_spec(draw_spec, data))
   }
   plan <- draw_spec$certainty_plan
   if (!identical(plan$role, "take")) return(draw_spec)
@@ -986,14 +1068,14 @@ resolve_parent_draw_spec <- function(draw_spec, data, call = caller_env()) {
   draw_spec
 }
 
-#' A tenure's take in one parent, sized on the whole listing
+#' A cohort's take in one parent, sized on the whole listing
 #'
 #' The take replaces `frac`, and a stratified take, a table by stratum,
 #' replaces the allocation, since `allocate_strata()` reads a table first.
 #' @noRd
-tenure_parent_draw_spec <- function(draw_spec, data) {
-  takes <- draw_spec$tenure_takes
-  draw_spec$tenure_takes <- NULL
+cohort_parent_draw_spec <- function(draw_spec, data) {
+  takes <- draw_spec$cohort_takes
+  draw_spec$cohort_takes <- NULL
   rows <- takes$table[
     vctrs::vec_in(takes$table[takes$psu_vars], data[takes$psu_vars]), ,
     drop = FALSE

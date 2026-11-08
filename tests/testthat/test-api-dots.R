@@ -530,6 +530,16 @@ test_that("draw() points an allocation argument to stratify_by()", {
       class = "samplyr_error_unknown_argument"
     )
   }
+  # Panels partition the executed sample.
+  for (arg in c("panels", "panel_stage")) {
+    dots <- stats::setNames(list(2), arg)
+    expect_error(
+      rlang::inject(sampling_design() |> draw(n = 100, !!!dots)),
+      paste0("`", arg, "` is an argument of `execute()`"),
+      fixed = TRUE,
+      class = "samplyr_error_unknown_argument"
+    )
+  }
   # A near miss of draw()'s own argument keeps its suggestion.
   expect_error(
     sampling_design() |> draw(n = 2, mehtod = "srswr"),

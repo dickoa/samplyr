@@ -128,3 +128,35 @@ condition_header <- function(cnd) {
   call <- conditionCall(cnd)
   if (is.call(call)) deparse(call[[1]]) else ""
 }
+
+# The chance a master row's block gives the set of `panels`, from the record.
+block_chance <- function(master, panels) {
+  record <- attr(master, "metadata")$panel_assignment
+  df <- as.data.frame(master)
+  keys <- do.call(paste, c(df[record$key_vars], sep = "\r"))
+  chance <- rep(NA_real_, nrow(df))
+  for (pool in record$pools) {
+    pool_keys <- vapply(pool$keys, identity, character(1))
+    at <- match(keys, pool_keys)
+    rows <- which(!is.na(at))
+    block <- rep(seq_along(pool$blocks), pool$blocks)[at[rows]]
+    take <- rowSums(pool$quotas[, panels, drop = FALSE])
+    chance[rows] <- take[block] / pool$blocks[block]
+  }
+  chance
+}
+
+# The quota block of each row of a sample drawn from `master`, from the record.
+row_block <- function(master, rows) {
+  record <- attr(master, "metadata")$panel_assignment
+  df <- as.data.frame(rows)
+  keys <- do.call(paste, c(df[record$key_vars], sep = "\r"))
+  block <- rep(NA_integer_, nrow(df))
+  for (pool in record$pools) {
+    pool_keys <- vapply(pool$keys, identity, character(1))
+    at <- match(keys, pool_keys)
+    found <- which(!is.na(at))
+    block[found] <- rep(seq_along(pool$blocks), pool$blocks)[at[found]]
+  }
+  block
+}

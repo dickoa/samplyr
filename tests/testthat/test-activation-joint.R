@@ -43,7 +43,7 @@ joint_frame <- function(n = 400) {
 joint_rotation <- function() {
   data.frame(
     panel = rep(1:4, times = 4),
-    wave = rep(1:4, each = 4),
+    period = rep(1:4, each = 4),
     active = c(
       TRUE, TRUE, FALSE, FALSE,
       FALSE, TRUE, TRUE, FALSE,
@@ -68,12 +68,13 @@ test_that("every block's joint expectations match enumerated arrangements", {
   schedule <- record$schedule
 
   for (pair in list(c(1L, 2L), c(1L, 3L), c(2L, 2L), c(4L, 1L))) {
-    result <- joint_expectation(master, waves = pair)
-    first <- schedule$panel[schedule$wave == pair[1] & schedule$active]
-    second <- schedule$panel[schedule$wave == pair[2] & schedule$active]
+    result <- joint_expectation(master, period = pair)
+    first <- schedule$panel[schedule$occasion == pair[1] & schedule$active]
+    second <- schedule$panel[schedule$occasion == pair[2] & schedule$active]
 
-    expect_identical(unique(result$wave_1), pair[1])
-    expect_identical(unique(result$wave_2), pair[2])
+    expect_identical(unique(result$period_1), pair[1])
+    expect_identical(unique(result$period_2), pair[2])
+    expect_identical(unique(c(result$subround_1, result$subround_2)), 1L)
 
     for (i in seq_len(nrow(result))) {
       pool <- record$pools[[result$pool[i]]]
@@ -89,9 +90,9 @@ test_that("every block's joint expectations match enumerated arrangements", {
   }
 })
 
-test_that("the within-wave case is the same expression at t equals s", {
+test_that("the within-occasion case is the same expression at t equals s", {
   master <- joint_master()
-  result <- joint_expectation(master, waves = c(3L, 3L))
+  result <- joint_expectation(master, period = c(3L, 3L))
 
   # Both takes coincide, so the pairwise expectation is a(a-1)/{m(m-1)}.
   expect_identical(result$take_1, result$take_2)
@@ -111,7 +112,7 @@ test_that("unequal realized quotas are read, not assumed flat", {
   uneven <- apply(quotas, 1, function(row) length(unique(row)) > 1L)
   expect_true(any(uneven))
 
-  result <- joint_expectation(master, waves = c(1L, 2L))
+  result <- joint_expectation(master, period = c(1L, 2L))
   expect_true(any(result$units != min(result$units)))
 
   for (i in which(result$units > 4L)) {
@@ -119,8 +120,8 @@ test_that("unequal realized quotas are read, not assumed flat", {
     schedule <- record$schedule
     reference <- enumerate_block(
       block_labels(pool, result$block[i]),
-      schedule$panel[schedule$wave == 1L & schedule$active],
-      schedule$panel[schedule$wave == 2L & schedule$active]
+      schedule$panel[schedule$occasion == 1L & schedule$active],
+      schedule$panel[schedule$occasion == 2L & schedule$active]
     )
     expect_equal(result$joint_distinct[i], reference$distinct)
   }
@@ -131,7 +132,7 @@ test_that("unequal realized quotas are read, not assumed flat", {
 test_that("published overlap figures are reproduced", {
   # With equal quotas, the take-weighted overlap is the published proportion.
   overlap <- function(master, t, s) {
-    result <- joint_expectation(master, waves = c(t, s))
+    result <- joint_expectation(master, period = c(t, s))
     sum(result$take_both) / sum(result$take_1)
   }
 
@@ -139,14 +140,14 @@ test_that("published overlap figures are reproduced", {
 
   # A cyclic in-for-D-out-of-C rotation, with one spell per cycle.
   cyclic <- function(cycle, live) {
-    grid <- expand.grid(panel = seq_len(cycle), wave = seq_len(2 * cycle))
-    grid$active <- ((grid$wave - grid$panel) %% cycle) < live
+    grid <- expand.grid(panel = seq_len(cycle), period = seq_len(2 * cycle))
+    grid$active <- ((grid$period - grid$panel) %% cycle) < live
     grid
   }
 
   # CPS 4-8-4 panels have a finite life, as cycling would keep 7 of 8 groups.
-  cps <- expand.grid(panel = 1:40, wave = 1:55)
-  offset <- cps$wave - cps$panel
+  cps <- expand.grid(panel = 1:40, period = 1:55)
+  offset <- cps$period - cps$panel
   cps$active <- offset %in% c(0:3, 12:15)
   cps_master <- sampling_design() |>
     draw(n = 160) |>
@@ -188,7 +189,7 @@ test_that("a block of one unit has no distinct pair", {
     class = "samplyr_warning_panel_small_pool"
   )
 
-  result <- joint_expectation(master, waves = c(1L, 2L))
+  result <- joint_expectation(master, period = c(1L, 2L))
   singles <- result[result$units == 1L, ]
 
   expect_gt(nrow(singles), 0L)
@@ -199,12 +200,12 @@ test_that("a block of one unit has no distinct pair", {
   expect_true(all(singles$prob_1 %in% c(0, 1)))
 })
 
-test_that("a permanent pool is certain at every wave and every pair", {
+test_that("a permanent pool is certain at every occasion and every pair", {
   master <- sampling_design() |>
     draw(n = 30, method = "pps_systematic", mos = mos, certainty_size = 800) |>
     execute(joint_frame(60), seed = 3, panels = joint_rotation())
 
-  result <- joint_expectation(master, waves = c(1L, 3L))
+  result <- joint_expectation(master, period = c(1L, 3L))
   permanent <- result[result$class == "certainty", ]
   expect_gt(nrow(permanent), 0L)
 
@@ -226,12 +227,13 @@ test_that("a permanent pool is certain at every wave and every pair", {
 test_that("no column pre-judges what is estimable", {
   # The table states moments and structure only, never estimability.
   master <- joint_master()
-  result <- joint_expectation(master, waves = c(1L, 2L))
+  result <- joint_expectation(master, period = c(1L, 2L))
 
   expect_identical(
     names(result),
     c(
-      "pool", "stratum", "class", "activation", "block", "wave_1", "wave_2",
+      "pool", "stratum", "class", "activation", "block", "period_1",
+      "subround_1", "period_2", "subround_2",
       "units",
       "take_1", "take_2", "take_both", "prob_1", "prob_2", "joint_same",
       "joint_distinct", "has_pair"
@@ -247,12 +249,12 @@ test_that("an assignment record from another algorithm is refused", {
   attr(master, "metadata") <- metadata
 
   expect_error(
-    joint_expectation(master, waves = c(1L, 2L)),
+    joint_expectation(master, period = c(1L, 2L)),
     class = "samplyr_error_panel_record_unsupported"
   )
   # The weights path reads the same quotas and is guarded with it.
   expect_error(
-    execute(master, wave = 1),
+    execute(master, period = 1),
     class = "samplyr_error_panel_record_unsupported"
   )
 
@@ -262,7 +264,7 @@ test_that("an assignment record from another algorithm is refused", {
   attr(newer, "metadata") <- metadata
 
   expect_error(
-    joint_expectation(newer, waves = c(1L, 2L)),
+    joint_expectation(newer, period = c(1L, 2L)),
     class = "samplyr_error_panel_record_unsupported"
   )
 })
@@ -277,34 +279,34 @@ test_that("only a version this build reads is accepted", {
     master
   }
 
-  for (bad in list(0L, -5L, 99L, c(1L, 1L), NULL, "1", NA_integer_, 1.5)) {
+  for (bad in list(0L, -5L, 6L, 99L, c(7L, 7L), NULL, "7", NA_integer_, 6.5)) {
     expect_error(
-      joint_expectation(with_version(bad), waves = c(1L, 2L)),
+      joint_expectation(with_version(bad), period = c(1L, 2L)),
       class = "samplyr_error_panel_record_unsupported"
     )
   }
 
   # The supported version is accepted whether or not it is typed as integer.
   expect_s3_class(
-    joint_expectation(with_version(1L), waves = c(1L, 2L)),
+    joint_expectation(with_version(7L), period = c(1L, 2L)),
     "tbl_df"
   )
   expect_s3_class(
-    joint_expectation(with_version(1), waves = c(1L, 2L)),
+    joint_expectation(with_version(7), period = c(1L, 2L)),
     "tbl_df"
   )
 
   # Only a record from the future is reported as newer.
   expect_match(
     conditionMessage(tryCatch(
-      joint_expectation(with_version(99L), waves = c(1L, 2L)),
+      joint_expectation(with_version(99L), period = c(1L, 2L)),
       error = function(e) e
     )),
     "newer than this version"
   )
   expect_match(
     conditionMessage(tryCatch(
-      joint_expectation(with_version(0L), waves = c(1L, 2L)),
+      joint_expectation(with_version(0L), period = c(1L, 2L)),
       error = function(e) e
     )),
     "does not state a version"
@@ -318,37 +320,37 @@ test_that("activation mode refuses what it does not use", {
   frame <- joint_frame()
 
   expect_error(
-    joint_expectation(master, frame, waves = c(1L, 2L)),
+    joint_expectation(master, frame, period = c(1L, 2L)),
     class = "samplyr_error_joint_activation_arguments"
   )
   expect_error(
-    joint_expectation(master, waves = c(1L, 2L), stages = 1),
+    joint_expectation(master, period = c(1L, 2L), stages = 1),
     class = "samplyr_error_joint_activation_arguments"
   )
   expect_error(
-    joint_expectation(master, waves = c(1L, 2L), nsim = 500),
+    joint_expectation(master, period = c(1L, 2L), nsim = 500),
     class = "samplyr_error_joint_activation_arguments"
   )
 })
 
-test_that("activation mode needs a pair of declared waves", {
+test_that("activation mode needs a pair of declared occasions", {
   master <- joint_master()
 
   expect_error(
-    joint_expectation(master, waves = 1L),
-    class = "samplyr_error_waves_not_a_pair"
+    joint_expectation(master, period = 1L),
+    class = "samplyr_error_occasions_not_a_pair"
   )
   expect_error(
-    joint_expectation(master, waves = c(1L, 2L, 3L)),
-    class = "samplyr_error_waves_not_a_pair"
+    joint_expectation(master, period = c(1L, 2L, 3L)),
+    class = "samplyr_error_occasions_not_a_pair"
   )
   expect_error(
-    joint_expectation(master, waves = c(1, 2.5)),
-    class = "samplyr_error_waves_not_a_pair"
+    joint_expectation(master, period = c(1, 2.5)),
+    class = "samplyr_error_occasions_not_a_pair"
   )
   expect_error(
-    joint_expectation(master, waves = c(1L, 9L)),
-    class = "samplyr_error_wave_undeclared"
+    joint_expectation(master, period = c(1L, 9L)),
+    class = "samplyr_error_occasion_undeclared"
   )
 })
 
@@ -359,30 +361,30 @@ test_that("activation mode needs a scheduled master", {
     draw(n = 60) |>
     execute(frame, seed = 1, panels = 4)
   expect_error(
-    joint_expectation(unscheduled, waves = c(1L, 2L)),
-    class = "samplyr_error_wave_no_schedule"
+    joint_expectation(unscheduled, period = c(1L, 2L)),
+    class = "samplyr_error_occasion_no_schedule"
   )
 
   unpartitioned <- sampling_design() |>
     draw(n = 60) |>
     execute(frame, seed = 1)
   expect_error(
-    joint_expectation(unpartitioned, waves = c(1L, 2L)),
-    class = "samplyr_error_wave_no_schedule"
+    joint_expectation(unpartitioned, period = c(1L, 2L)),
+    class = "samplyr_error_occasion_no_schedule"
   )
 })
 
-test_that("a materialized wave is refused and points at its master", {
+test_that("a materialized occasion is refused and points at its master", {
   master <- joint_master()
-  materialized <- execute(master, wave = 1)
+  materialized <- execute(master, period = 1)
 
   expect_error(
-    joint_expectation(materialized, waves = c(1L, 2L)),
-    class = "samplyr_error_wave_joint_unsupported"
+    joint_expectation(materialized, period = c(1L, 2L)),
+    class = "samplyr_error_occasion_joint_unsupported"
   )
   expect_error(
     joint_expectation(materialized),
-    class = "samplyr_error_wave_joint_unsupported"
+    class = "samplyr_error_occasion_joint_unsupported"
   )
 })
 

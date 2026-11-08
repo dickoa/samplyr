@@ -2,7 +2,7 @@
 
 #' The execute() calls behind a chained sample
 #'
-#' A continuation, a new phase and a materialized wave each start from the
+#' A continuation, a new phase and a materialized occasion each start from the
 #' result of an earlier call. The final call is described by the receipt
 #' itself. This returns the earlier calls, oldest first, each as replay needs
 #' it, and how the final call used the one before it.
@@ -11,7 +11,7 @@
 #' phase was drawn from it. Replaying that phase cannot rebuild the rows the
 #' next one saw, so the modified sample becomes the first call's frame. The
 #' chain cannot be replayed at all, and the result is `NULL`, when a
-#' continuation or a wave started from a modified sample, or when a
+#' continuation or an occasion started from a modified sample, or when a
 #' continuation predates the record of its parent's seed.
 #'
 #' @return `NULL`, or a list with `transition` (the final call's) and `calls`.
@@ -32,17 +32,17 @@ execution_chain <- function(sample) {
 #'
 #' Each entry holds a `view`, which carries the transition from the call
 #' before it, or a ready `call`. A master whose later stages were drawn one
-#' wave at a time stands for its own calls followed by one call per wave, in
+#' occasion at a time stands for its own calls followed by one call per occasion, in
 #' the order they were drawn, and the view is the last of those. `NULL` when
 #' the chain cannot be replayed.
 #' @noRd
 chain_entries <- function(view) {
   entries <- list()
   repeat {
-    draws <- view$meta$per_wave_draws
+    draws <- view$meta$per_occasion_draws
     if (length(draws) > 0L) {
-      view$transition <- "wave_draw"
-      master <- wave_draw_master_view(view)
+      view$transition <- "occasion_draw"
+      master <- occasion_draw_master_view(view)
       if (isTRUE(master$modified)) {
         return(NULL)
       }
@@ -52,7 +52,7 @@ chain_entries <- function(view) {
       }
       n_master <- master$meta$n_selected
       earlier <- lapply(draws[-length(draws)], function(d) {
-        list(call = wave_draw_call(d, n_selected = n_master,
+        list(call = occasion_draw_call(d, n_selected = n_master,
                                    design = view$design))
       })
       return(c(head, earlier, list(list(view = view)), entries))
@@ -77,16 +77,16 @@ chain_entries <- function(view) {
   entries
 }
 
-#' The master a wave-by-wave draw started from, as a view
+#' The master an occasion-by-occasion draw started from, as a view
 #'
-#' Before the last wave the sample is the master itself, holding the draws.
+#' Before the last occasion the sample is the master itself, holding the draws.
 #' After it, the master is the record the completed sample continues.
 #' @noRd
-wave_draw_master_view <- function(view) {
+occasion_draw_master_view <- function(view) {
   remaining <- setdiff(seq_along(view$design$stages), view$stages_executed)
   if (length(remaining) > 0L) {
     meta <- view$meta
-    meta$per_wave_draws <- NULL
+    meta$per_occasion_draws <- NULL
     return(list(
       seed = view$seed,
       stages_executed = view$stages_executed,
@@ -105,35 +105,35 @@ wave_draw_master_view <- function(view) {
   )
 }
 
-#' One wave's call in the form replay reads
+#' One occasion's call in the form replay reads
 #' @noRd
-wave_draw_call <- function(draw, n_selected, design) {
+occasion_draw_call <- function(draw, n_selected, design) {
   list(
-    transition = "wave_draw",
+    transition = "occasion_draw",
     seed = draw$seed,
     stages = as.integer(draw$stages),
     n_selected = n_selected,
     frames = frame_record_or_default(draw$frame_schedule, draw$stages),
-    wave = encode_wave_draw(draw),
+    occasion = encode_occasion_draw(draw),
     rng = draw$execution_environment$rng,
     design = design
   )
 }
 
 #' @noRd
-encode_wave_draw <- function(draw) {
+encode_occasion_draw <- function(draw) {
   list(
-    wave = as.integer(draw$wave),
+    occasion = as.integer(draw$occasion),
     active_panels = I(as.integer(draw$active_panels))
   )
 }
 
-#' What the last wave's call contributes to the receipt of its master
+#' What the last occasion's call contributes to the receipt of its master
 #'
-#' `NULL` for a sample with no wave drawn this way.
+#' `NULL` for a sample with no occasion drawn this way.
 #' @noRd
-wave_draw_final_call <- function(sample) {
-  draws <- wave_draws(sample)
+occasion_draw_final_call <- function(sample) {
+  draws <- occasion_draws(sample)
   if (length(draws) == 0L) {
     return(NULL)
   }
@@ -175,7 +175,7 @@ chain_predecessor <- function(view) {
     return(list(transition = "start"))
   }
   transition <- if (identical(prev$transition, "panel_activation")) {
-    "wave"
+    "occasion"
   } else {
     "phase"
   }
@@ -192,10 +192,10 @@ chain_predecessor <- function(view) {
 #' @noRd
 chain_call_of_view <- function(view) {
   meta <- view$meta
-  # The last wave's draw is the call such a view stands for.
-  if (identical(view$transition, "wave_draw")) {
-    draws <- meta$per_wave_draws
-    return(wave_draw_call(draws[[length(draws)]],
+  # The last occasion's draw is the call such a view stands for.
+  if (identical(view$transition, "occasion_draw")) {
+    draws <- meta$per_occasion_draws
+    return(occasion_draw_call(draws[[length(draws)]],
                           n_selected = meta$n_selected, design = view$design))
   }
   list(
@@ -213,7 +213,7 @@ chain_call_of_view <- function(view) {
     frames = frame_record_or_default(
       meta$frame_schedule, view$stages_executed
     ),
-    wave = if (!is_null(meta$wave)) encode_wave(meta$wave),
+    occasion = if (!is_null(meta$occasion)) encode_occasion(meta$occasion),
     settlement = if (settled_here(meta$reserve_settlement)) {
       encode_reserve_settlement(meta$reserve_settlement)
     },
@@ -246,7 +246,7 @@ encode_execution_chain <- function(chain) {
     if (!is_null(cl$panels)) out$panels <- as.integer(cl$panels)
     out$panel_assignment <- cl$panel_assignment
     out$frames <- encode_frame_schedule(cl$frames)
-    out$wave <- cl$wave
+    out$occasion <- cl$occasion
     out$settlement <- cl$settlement
     if (!is_null(cl$rng)) {
       out$rng <- lapply(
@@ -278,7 +278,7 @@ decode_execution_chain <- function(entries, final_design, call = caller_env()) {
       panels = if (length(entry$panels) > 0) entry$panels,
       panel_assignment = entry$panel_assignment,
       frames = decode_frame_schedule(entry$frames),
-      wave = entry$wave,
+      occasion = entry$occasion,
       settlement = entry$settlement,
       rng = entry$rng,
       design = if (!is_null(entry$design)) {
@@ -302,12 +302,12 @@ fill_chain_designs <- function(calls, final_design) {
 #' How many frames each call of a chain took from outside
 #'
 #' The first call reads its frames from the caller, and so does every
-#' continuation and every wave's draw of later stages. A new phase reads the
-#' phase before it, and a wave its master.
+#' continuation and every occasion's draw of later stages. A new phase reads the
+#' phase before it, and an occasion its master.
 #' @noRd
 chain_frame_counts <- function(calls) {
   takes <- vapply(seq_along(calls), function(k) {
-    k == 1L || calls[[k]]$transition %in% c("continuation", "wave_draw")
+    k == 1L || calls[[k]]$transition %in% c("continuation", "occasion_draw")
   }, logical(1))
   vapply(calls[takes], function(cl) {
     as.integer(cl$frames$n_supplied %||% 1L)
@@ -383,8 +383,8 @@ flatten_chain_frames <- function(frame, counts, labels = NULL,
 #'
 #' Each call is re-run with its own seed, stages and RNG kind, on what it
 #' originally read: the caller's frames for the first call, for each
-#' continuation and for each wave's draw of later stages, the replayed
-#' earlier phase for a new phase, the replayed master for a wave. Arguments a call inherited rather than declared are not
+#' continuation and for each occasion's draw of later stages, the replayed
+#' earlier phase for a new phase, the replayed master for an occasion. Arguments a call inherited rather than declared are not
 #' passed again, because execute() refuses them: panels on a sample that
 #' already carries an assignment, and replicates on a replicated input.
 #' @noRd
@@ -398,17 +398,20 @@ replay_execution_chain <- function(calls, frames, frame_digest = "summary",
   for (k in seq_len(n)) {
     cl <- calls[[k]]
     own_frames <- NULL
-    if (k == 1L || cl$transition %in% c("continuation", "wave_draw")) {
+    if (k == 1L || cl$transition %in% c("continuation", "occasion_draw")) {
       slot <- slot + 1L
       own_frames <- frames[offsets[slot] + seq_len(counts[[slot]])]
     }
-    if (identical(cl$transition, "wave")) {
-      result <- execute(result, wave = as.integer(cl$wave$wave))
-    } else if (identical(cl$transition, "wave_draw")) {
+    if (identical(cl$transition, "occasion")) {
+      at <- recorded_occasions(result, cl$occasion$occasion)
+      result <- execute(result, period = at$period, subround = at$subround)
+    } else if (identical(cl$transition, "occasion_draw")) {
+      at <- recorded_occasions(result, cl$occasion$occasion)
       result <- with_replay_rng(cl$rng, execute(
         result,
         own_frames,
-        wave = as.integer(cl$wave$wave),
+        period = at$period,
+        subround = at$subround,
         stages = cl$stages,
         seed = cl$seed
       ), call = call)
@@ -477,13 +480,13 @@ replay_execution_chain <- function(calls, frames, frame_digest = "summary",
   result
 }
 
-#' Every call of a chain but a wave draws, so each needs its seed
+#' Every call of a chain but an occasion draws, so each needs its seed
 #' @noRd
 check_chain_seeds <- function(calls, call = caller_env()) {
   n <- length(calls)
   for (k in seq_len(n)) {
     cl <- calls[[k]]
-    if (!identical(cl$transition, "wave") && length(cl$seed) == 0L) {
+    if (!identical(cl$transition, "occasion") && length(cl$seed) == 0L) {
       abort_samplyr(
         c(
           "Call {k} of the {n} {.fn execute} calls behind this sample ran
@@ -512,4 +515,16 @@ encoded_chain_calls <- function(execution) {
       frames = list(n_supplied = as.integer(entry$frames$count %||% 1L))
     )
   })
+}
+
+#' The period and subround of occasions a receipt numbers
+#' @param sample The replayed master, whose record holds the schedule.
+#' @noRd
+recorded_occasions <- function(sample, occasions) {
+  record <- prepare_panel_record(
+    attr(sample, "metadata")$panel_assignment, "A replay"
+  )
+  pairs <- grid_pairs(record$schedule)
+  occasions <- as.integer(occasions)
+  list(period = pairs$period[occasions], subround = pairs$subround[occasions])
 }

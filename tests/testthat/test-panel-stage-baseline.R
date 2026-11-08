@@ -1,7 +1,7 @@
 ## Semantic baselines for stage-aware panel assignment
 
 # Values, not counts: selected rows, base weights, `.panel` labels, the
-# assignment record, wave rows, activation factors, joint probabilities and
+# assignment record, occasion rows, activation factors, joint probabilities and
 # random draws consumed. A change to any of them must be deliberate.
 
 ## Fixtures
@@ -19,7 +19,7 @@ baseline_element <- function() {
 
 # Stratified clusters over elements, with a 2-of-4 rotation. Four clusters
 # per stratum against four panels is exactly one block, so every panel holds
-# one cluster and every wave takes two.
+# one cluster and every occasion takes two.
 baseline_cluster_frame <- function() {
   data.frame(
     stratum = rep(c("A", "B"), each = 30),
@@ -32,7 +32,7 @@ baseline_cluster_frame <- function() {
 baseline_rotation_schedule <- function() {
   data.frame(
     panel = rep(1:4, times = 3),
-    wave = rep(1:3, each = 4),
+    period = rep(1:3, each = 4),
     active = c(
       TRUE, TRUE, FALSE, FALSE,
       FALSE, TRUE, TRUE, FALSE,
@@ -113,7 +113,7 @@ baseline_certainty <- function() {
   )
   schedule <- data.frame(
     panel = rep(1:2, times = 2),
-    wave = rep(1:2, each = 2),
+    period = rep(1:2, each = 2),
     active = c(TRUE, FALSE, FALSE, TRUE)
   )
   sampling_design() |>
@@ -131,7 +131,7 @@ baseline_promoted <- function() {
   )
   schedule <- data.frame(
     panel = rep(1:4, times = 2),
-    wave = rep(1:2, each = 4),
+    period = rep(1:2, each = 4),
     active = c(TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, TRUE, TRUE)
   )
   suppressWarnings(
@@ -161,7 +161,7 @@ test_that("the element assignment record is exact", {
   record <- baseline_record(baseline_element())
 
   expect_identical(record$algorithm, "blocked_random_quota")
-  expect_identical(record$version, 3L)
+  expect_identical(record$version, 7L)
   expect_identical(record$panels, 4L)
   expect_identical(record$assignment_stage, 1L)
   expect_identical(record$block_size, 8L)
@@ -211,7 +211,7 @@ test_that("clustered assignment selects and labels a fixed sample", {
 test_that("the clustered assignment record is exact", {
   record <- baseline_record(baseline_clustered())
 
-  expect_identical(record$version, 3L)
+  expect_identical(record$version, 7L)
   expect_identical(record$panels, 4L)
   expect_identical(record$assignment_stage, 1L)
   expect_identical(record$block_size, 4L)
@@ -251,19 +251,19 @@ test_that("the clustered assignment record is exact", {
   }
 })
 
-test_that("a materialized wave keeps fixed rows, factors and probabilities", {
-  wave <- execute(baseline_clustered(), wave = 2)
+test_that("a materialized occasion keeps fixed rows, factors and probabilities", {
+  occasion <- execute(baseline_clustered(), period = 2)
 
   expect_identical(
-    wave$cluster,
+    occasion$cluster,
     rep(c("c01", "c06", "c07", "c11"), each = 2)
   )
-  expect_identical(wave$unit, c(3L, 4L, 5L, 4L, 3L, 4L, 5L, 4L))
-  expect_identical(wave$.panel, rep(c(3L, 2L, 3L, 2L), each = 2))
+  expect_identical(occasion$unit, c(3L, 4L, 5L, 4L, 3L, 4L, 5L, 4L))
+  expect_identical(occasion$.panel, rep(c(3L, 2L, 3L, 2L), each = 2))
   # 3.75 master weight over an activation probability of 1/2.
-  expect_identical(wave$.weight, rep(7.5, 8))
+  expect_identical(occasion$.weight, rep(7.5, 8))
 
-  record <- attr(wave, "metadata")$wave
+  record <- attr(occasion, "metadata")$occasion
   expect_identical(record$active_panels, c(2L, 3L))
   expect_identical(
     lapply(record$pools, function(p) p$take),
@@ -275,8 +275,8 @@ test_that("a materialized wave keeps fixed rows, factors and probabilities", {
   )
 })
 
-test_that("cross-wave joint probabilities are exact", {
-  joint <- as.data.frame(joint_expectation(baseline_clustered(), waves = c(1, 2)))
+test_that("cross-occasion joint probabilities are exact", {
+  joint <- as.data.frame(joint_expectation(baseline_clustered(), period = c(1, 2)))
 
   expect_identical(joint$block, c(1L, 1L))
   expect_identical(joint$units, c(4L, 4L))
@@ -290,10 +290,10 @@ test_that("cross-wave joint probabilities are exact", {
   expect_identical(joint$has_pair, c(TRUE, TRUE))
 })
 
-test_that("the exported wave keeps its structure, estimate and error", {
+test_that("the exported occasion keeps its structure, estimate and error", {
   skip_if_not_installed("survey")
-  wave <- execute(baseline_clustered(), wave = 2)
-  design <- as_svydesign(wave, method = "full")
+  occasion <- execute(baseline_clustered(), period = 2)
+  design <- as_svydesign(occasion, method = "full")
 
   expect_s3_class(design, "twophase2")
   # Degrees of freedom, not the SE, distinguish a two-phase export.
@@ -303,15 +303,15 @@ test_that("the exported wave keeps its structure, estimate and error", {
   expect_equal(as.numeric(coef(total)), 1815, tolerance = 1e-9)
   expect_equal(as.numeric(survey::SE(total)), 409.383683114, tolerance = 1e-9)
 
-  # The default is the ultimate-cluster design on the wave's own rows.
-  default <- as_svydesign(wave)
+  # The default is the ultimate-cluster design on the occasion's own rows.
+  default <- as_svydesign(occasion)
   expect_false(inherits(default, "twophase2"))
   reference <- survey::svydesign(
     ids = ~cluster,
     strata = ~stratum,
     weights = ~.weight,
     nest = TRUE,
-    data = as.data.frame(wave)
+    data = as.data.frame(occasion)
   )
   expect_identical(survey::degf(default), survey::degf(reference))
   expect_equal(
@@ -477,12 +477,12 @@ test_that("a certainty unit is a permanent pool of its own", {
   expect_identical(certain$blocks, 1L)
 })
 
-test_that("a certainty unit is in every wave at factor one", {
-  wave <- execute(baseline_certainty(), wave = 1)
+test_that("a certainty unit is in every occasion at factor one", {
+  occasion <- execute(baseline_certainty(), period = 1)
 
-  expect_identical(wave$cluster, c("k01", "k08", "k10"))
+  expect_identical(occasion$cluster, c("k01", "k08", "k10"))
   # The certainty cluster keeps its weight, the rotating ones divide by 1/2.
-  expect_equal(wave$.weight, c(1, 5, 4.230769), tolerance = 1e-6)
+  expect_equal(occasion$.weight, c(1, 5, 4.230769), tolerance = 1e-6)
 })
 
 ## Small-pool promotion
@@ -525,7 +525,7 @@ test_that("the serialized assignment record carries fixed fields", {
       "certainty", "small_pool_policy", "schedule")
   )
   expect_identical(encoded$algorithm, "blocked_random_quota")
-  expect_identical(encoded$version, 3L)
+  expect_identical(encoded$version, 7L)
   expect_identical(encoded$panels, 4L)
   expect_identical(encoded$assignment_stage, 1L)
   expect_identical(encoded$block_size, 4L)
@@ -603,10 +603,10 @@ test_that("assignment consumes a fixed number of random draws", {
 
 ## Rotation programs and separate registers
 
-test_that("a program wave keeps fixed cohorts, rows and weights", {
+test_that("a program occasion keeps fixed selections, rows and weights", {
   startup_schedule <- data.frame(
     panel = rep(1:2, times = 3),
-    wave = rep(1:3, each = 2),
+    period = rep(1:3, each = 2),
     active = c(TRUE, TRUE, TRUE, FALSE, FALSE, TRUE)
   )
   startup <- sampling_design() |>
@@ -616,37 +616,37 @@ test_that("a program wave keeps fixed cohorts, rows and weights", {
       seed = 1,
       panels = startup_schedule
     )
-  intake <- sampling_design() |>
+  entrant <- sampling_design() |>
     draw(n = 12) |>
     execute(data.frame(id = 201:260, value = seq_len(60) / 60), seed = 2)
 
   program <- rotation_program(
-    cohorts = list(startup = startup, intake_2 = intake),
-    entry_wave = c(startup = 1, intake_2 = 2),
+    selections = list(startup = startup, period_2 = entrant),
+    entry_period = c(startup = 1, period_2 = 2),
     schedule = rbind(
-      transform(startup_schedule, cohort = "startup"),
+      transform(startup_schedule, selection = "startup"),
       data.frame(
-        cohort = "intake_2", panel = 1L, wave = 1:3,
+        selection = "period_2", panel = 1L, period = 1:3,
         active = c(FALSE, TRUE, TRUE)
       )
     )
   )
-  wave <- execute(program, wave = 2)
+  occasion <- execute(program, period = 2)
 
-  expect_identical(names(wave), c("startup", "intake_2"))
+  expect_identical(names(occasion), c("startup", "period_2"))
   expect_identical(
-    wave$startup$id,
+    occasion$startup$id,
     c(167L, 129L, 187L, 51L, 106L, 182L, 73L, 79L, 110L, 165L,
       34L, 89L, 172L, 163L, 188L, 42L, 148L, 20L, 121L, 87L)
   )
-  # Wave 2 activates one of two panels, so the master weight of 5 doubles.
-  expect_identical(unique(wave$startup$.weight), 10)
+  # Period 2 activates one of two panels, so the master weight of 5 doubles.
+  expect_identical(unique(occasion$startup$.weight), 10)
   expect_identical(
-    wave$intake_2$id,
+    occasion$period_2$id,
     c(221L, 215L, 206L, 258L, 232L, 208L, 217L, 229L, 254L, 212L, 241L, 211L)
   )
-  # A cohort drawn whole is not a subsample of itself.
-  expect_identical(unique(wave$intake_2$.weight), 5)
+  # A selection drawn whole is not a subsample of itself.
+  expect_identical(unique(occasion$period_2$.weight), 5)
 })
 
 test_that("assignment over separate registers keeps its pools and labels", {

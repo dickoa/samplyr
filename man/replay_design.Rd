@@ -74,7 +74,7 @@ checked against the receipt's \code{n_selected}.
 A \code{chained} sample, produced by several \code{\link[=execute]{execute()}} calls, is replayed
 call by call, each under its own seed, stages and RNG kind. The first
 call and each continuation read the frames given here, a new phase reads
-the phase replayed before it, and a wave reads its replayed master.
+the phase replayed before it, and an occasion reads its replayed master.
 Inherited panels and replicates are carried rather than declared again.
 The fingerprints cover every call's frames, and the row count is checked
 after each call. An earlier call run without a seed is

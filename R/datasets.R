@@ -316,7 +316,7 @@ NULL
 #'   \item Stratification by sector and size class
 #'   \item PPS sampling using employment or revenue
 #'   \item Disproportionate sampling (oversampling large enterprises)
-#'   \item PRN-based sample coordination across survey waves
+#'   \item PRN-based sample coordination across survey occasions
 #'   \item Panel partitioning with \code{execute(..., panels = k)}
 #'   \item Bernoulli and Poisson sampling
 #' }

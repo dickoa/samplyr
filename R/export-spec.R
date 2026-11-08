@@ -59,7 +59,8 @@ export_stage_spec <- function(df, design, stages, phase = NULL) {
       strata = spec_stage_strata(df, stage_spec, stage_idx, kind),
       certainty = df[[paste0(".certainty_", stage_idx)]],
       prob = spec_stage_prob(df, stage_idx),
-      census = spec_stage_census(df, stage_idx),
+      # Expected hits of 1 are no census.
+      census = !identical(kind, "wr") && spec_stage_census(df, stage_idx),
       pop_count = df[[paste0(".fpc_", stage_idx)]]
     )
   })

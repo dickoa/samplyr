@@ -17,7 +17,7 @@ frame_summary(
 \item{x}{A \code{tbl_sample} produced by \code{\link[=execute]{execute()}} that carries a
 frame digest, or a \code{sampling_design} restored by \code{\link[=read_design]{read_design()}}
 from a file written from an executed sample. That file's execution
-receipt carries the digest, so it supports next-wave planning
+receipt carries the digest, so it supports next-round planning
 without the frame or the sample. With \code{frame}, any complete
 \code{sampling_design} will do.}
 
@@ -157,7 +157,7 @@ allocation when every replicate shares it, and \code{NA} for \code{n_realized}
 and \code{take_rate} otherwise. Pool detail has one row per pool and
 replicate even when the replicates agree, with population and design
 columns repeated, so select one replicate before using it as a
-next-wave planning frame. Unit detail spans the stacked replicates:
+next-round planning frame. Unit detail spans the stacked replicates:
 \code{is_selected} marks units selected in at least one and \code{n_hits}
 counts occurrences across all, so a without-replacement unit can show
 \code{n_hits > 1}. The per-replicate trace is the \code{replicate} column of
@@ -166,15 +166,15 @@ records only the stage prefix every replicate shares, because
 later-stage pools hang off each replicate's own selected parents, and
 \code{frame_summary()} says so.
 
-A materialized wave carries the digest of the realization it was
+A materialized occasion carries the digest of the realization it was
 activated from: its master's, or, while the master's later stages are
-drawn one wave at a time, the master's stages and the pools of the
-tenures or periods it reads. A master whose panels hold several tenures
-records every tenure drawn so far, its pools keyed by the wave the
-tenure opened at. Stage detail then has a \code{tenure} column and one row
-per tenure of a stage drawn by tenure, and pool detail a \code{tenure}
+drawn one occasion at a time, the master's stages and the pools of the
+cohorts or periods it reads. A master whose panels hold several cohorts
+records every cohort drawn so far, its pools keyed by the occasion the
+cohort opened at. Stage detail then has a \code{cohort} column and one row
+per cohort of a stage drawn by cohort, and pool detail a \code{cohort}
 column. Both also have \code{n_excluded}, the units of the listing that the
-tenure left out because earlier tenures drew them (see
+cohort left out because earlier cohorts drew them (see
 \link{panel_assignment}). These columns are absent otherwise.
 
 A digest whose sample was modified after execution (rows, weights,
@@ -185,7 +185,7 @@ or design columns changed) is reported as invalidated and refused.
 With \code{frame}, every selection pool is enumerated and every chance
 resolved, but nothing is selected. An allocation can be inspected
 before it is committed to, and a design restored from a file can be
-checked against next wave's frame. \code{n_realized} and \code{take_rate} are
+checked against next occasion's frame. \code{n_realized} and \code{take_rate} are
 \code{NA}, as are \code{is_selected} and \code{n_hits} at \code{detail = "unit"}. Every
 other column, and the shape of the table, matches a recorded digest,
 so the two are directly comparable.

@@ -31,11 +31,11 @@ frame_digest_version <- 2L
 
 #' The schema versions this build reads
 #'
-#' Version 3 adds a pool column `tenure`, for the stages of a master whose
-#' primary units hold several tenures, and with it `n_excluded`, the units
+#' Version 3 adds a pool column `cohort`, for the stages of a master whose
+#' primary units hold several cohorts, and with it `n_excluded`, the units
 #' each pool's exclusion left out. A digest without them stays at 2, so
 #' earlier builds still read it, and one with them is refused by them rather
-#' than read as tenures drawn at once.
+#' than read as cohorts drawn at once.
 #'
 #' Version 4 adds a pool column `n_reserve`, the reserve units each pool of a
 #' reserve stage lists after its take. A build that predates it refuses the
@@ -51,7 +51,7 @@ digest_schema_version <- function(stages) {
   }
   if (has_pool_col("n_reserve")) {
     4L
-  } else if (has_pool_col("tenure")) {
+  } else if (has_pool_col("cohort")) {
     3L
   } else {
     frame_digest_version
@@ -133,7 +133,7 @@ digest_reserved_pool_cols <- c(
   "parent_occurrence",
   "stage",
   "take_rate",
-  "tenure",
+  "cohort",
   "n_excluded",
   "n_reserve",
   "unit_level",
@@ -371,7 +371,7 @@ validate_frame_digest <- function(x, tol = 1e-6, quantile_tol = 0.05) {
     abort_digest(
       "A frame digest is version 4 exactly when its pools carry
        {.field n_reserve}, and otherwise version 3 exactly when they carry
-       {.field tenure}.",
+       {.field cohort}.",
       "version"
     )
   }
@@ -724,20 +724,20 @@ validate_digest_pools <- function(stage, pos, prev, tol) {
   if ("n_reserve" %in% names(pools)) {
     check_nonneg("n_reserve", integerish = TRUE)
   }
-  if ("tenure" %in% names(pools)) {
-    tenure <- pools$tenure
-    if (!is_id_vector(tenure) || any(tenure < 1)) {
+  if ("cohort" %in% names(pools)) {
+    cohort <- pools$cohort
+    if (!is_id_vector(cohort) || any(cohort < 1)) {
       abort_digest(
-        "Stage {id}: {.field tenure} must be positive integers.",
+        "Stage {id}: {.field cohort} must be positive integers.",
         "field"
       )
     }
   }
   if ("n_excluded" %in% names(pools)) {
-    if (!"tenure" %in% names(pools)) {
+    if (!"cohort" %in% names(pools)) {
       abort_digest(
         "Stage {id}: {.field n_excluded} is recorded only with
-         {.field tenure}.",
+         {.field cohort}.",
         "field"
       )
     }
@@ -1327,7 +1327,7 @@ get_frame_digest <- function(x) {
 #' @param x A `tbl_sample` produced by [execute()] that carries a
 #'   frame digest, or a `sampling_design` restored by [read_design()]
 #'   from a file written from an executed sample. That file's execution
-#'   receipt carries the digest, so it supports next-wave planning
+#'   receipt carries the digest, so it supports next-round planning
 #'   without the frame or the sample. With `frame`, any complete
 #'   `sampling_design` will do.
 #' @param frame Optional frame on which to preview what the design
@@ -1453,7 +1453,7 @@ get_frame_digest <- function(x) {
 #' and `take_rate` otherwise. Pool detail has one row per pool and
 #' replicate even when the replicates agree, with population and design
 #' columns repeated, so select one replicate before using it as a
-#' next-wave planning frame. Unit detail spans the stacked replicates:
+#' next-round planning frame. Unit detail spans the stacked replicates:
 #' `is_selected` marks units selected in at least one and `n_hits`
 #' counts occurrences across all, so a without-replacement unit can show
 #' `n_hits > 1`. The per-replicate trace is the `replicate` column of
@@ -1462,15 +1462,15 @@ get_frame_digest <- function(x) {
 #' later-stage pools hang off each replicate's own selected parents, and
 #' `frame_summary()` says so.
 #'
-#' A materialized wave carries the digest of the realization it was
+#' A materialized occasion carries the digest of the realization it was
 #' activated from: its master's, or, while the master's later stages are
-#' drawn one wave at a time, the master's stages and the pools of the
-#' tenures or periods it reads. A master whose panels hold several tenures
-#' records every tenure drawn so far, its pools keyed by the wave the
-#' tenure opened at. Stage detail then has a `tenure` column and one row
-#' per tenure of a stage drawn by tenure, and pool detail a `tenure`
+#' drawn one occasion at a time, the master's stages and the pools of the
+#' cohorts or periods it reads. A master whose panels hold several cohorts
+#' records every cohort drawn so far, its pools keyed by the occasion the
+#' cohort opened at. Stage detail then has a `cohort` column and one row
+#' per cohort of a stage drawn by cohort, and pool detail a `cohort`
 #' column. Both also have `n_excluded`, the units of the listing that the
-#' tenure left out because earlier tenures drew them (see
+#' cohort left out because earlier cohorts drew them (see
 #' [panel_assignment]). These columns are absent otherwise.
 #'
 #' A digest whose sample was modified after execution (rows, weights,
@@ -1480,7 +1480,7 @@ get_frame_digest <- function(x) {
 #' With `frame`, every selection pool is enumerated and every chance
 #' resolved, but nothing is selected. An allocation can be inspected
 #' before it is committed to, and a design restored from a file can be
-#' checked against next wave's frame. `n_realized` and `take_rate` are
+#' checked against next occasion's frame. `n_realized` and `take_rate` are
 #' `NA`, as are `is_selected` and `n_hits` at `detail = "unit"`. Every
 #' other column, and the shape of the table, matches a recorded digest,
 #' so the two are directly comparable.
@@ -1639,8 +1639,8 @@ frame_summary <- function(
 
   if (is_tbl_sample(x)) {
     digest <- get_frame_digest(x)
-    wave <- attr(x, "metadata")[["wave"]]
-    if (is_null(digest) && !is_null(wave)) {
+    occasion <- attr(x, "metadata")[["occasion"]]
+    if (is_null(digest) && !is_null(occasion)) {
       abort_samplyr(
         c(
           "No frame digest is recorded on this sample.",
@@ -1665,7 +1665,7 @@ frame_summary <- function(
       )
     }
   } else if (is_sampling_design(x)) {
-    # Restored designs may carry the receipt digest for next-wave planning.
+    # Restored designs may carry the receipt digest for next-round planning.
     digest <- attr(x, "execution")$frame_digest
     if (is_null(digest)) {
       abort_samplyr(
@@ -1939,9 +1939,9 @@ frame_summary_stage <- function(stages, scope, random_size = NULL,
       pool_weights[[stage_pos]]
     }
     certainty <- pool_certainty_counts(s, certain, sample)
-    # A stage drawn by tenure reports each tenure on its own row.
-    groups <- if ("tenure" %in% names(pools)) {
-      split(seq_len(nrow(pools)), pools$tenure)
+    # A stage drawn by cohort reports each cohort on its own row.
+    groups <- if ("cohort" %in% names(pools)) {
+      split(seq_len(nrow(pools)), pools$cohort)
     } else {
       list(seq_len(nrow(pools)))
     }
@@ -1967,7 +1967,7 @@ frame_summary_stage <- function(stages, scope, random_size = NULL,
       capped_i <- pick(capped, i)
       data.frame(
         stage = s$stage_id,
-        tenure = if ("tenure" %in% names(p)) p$tenure[1L] else NA_integer_,
+        cohort = if ("cohort" %in% names(p)) p$cohort[1L] else NA_integer_,
         unit_level = s$unit_level,
         scope = s$scope,
         chance_kind = s$chance_kind,
@@ -2000,8 +2000,8 @@ frame_summary_stage <- function(stages, scope, random_size = NULL,
   })
   out <- do.call(rbind, rows)
   rownames(out) <- NULL
-  if (all(is.na(out$tenure))) {
-    out$tenure <- NULL
+  if (all(is.na(out$cohort))) {
+    out$cohort <- NULL
     out$n_excluded <- NULL
   }
   if (all(is.na(out$n_reserve))) {
@@ -2122,8 +2122,8 @@ frame_summary_pool <- function(
       pool_id = as.integer(pools$pool_id[pool_rows]),
       replicate = as.integer(row_reps),
       parent_unit = as.integer(pools$parent_unit[pool_rows]),
-      tenure = if ("tenure" %in% names(pools)) {
-        as.integer(pools$tenure[pool_rows])
+      cohort = if ("cohort" %in% names(pools)) {
+        as.integer(pools$cohort[pool_rows])
       } else {
         NA_integer_
       },
@@ -2162,8 +2162,8 @@ frame_summary_pool <- function(
     out
   })
   out <- bind_rows(rows)
-  if (all(is.na(out$tenure))) {
-    out$tenure <- NULL
+  if (all(is.na(out$cohort))) {
+    out$cohort <- NULL
     out$n_excluded <- NULL
   }
   if (all(is.na(out$n_reserve))) {

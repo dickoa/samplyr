@@ -56,10 +56,10 @@ shared_weight_sample <- function(source = shared_weight_source()) {
   attach_weight_share_record(result, record)
 }
 
-# A real master and one of its waves, for the tests that need an object the
-# longitudinal gates accept. Two panels over two waves, one active at a time,
-# which is the smallest schedule that materializes.
-wave_share_master <- function(seed = 1) {
+# A real master and one of its occasions, for the tests that need an object
+# the longitudinal gates accept. Two panels over two occasions, one active at
+# a time, which is the smallest schedule that materializes.
+occasion_share_master <- function(seed = 1) {
   sampling_design() |>
     draw(n = 12) |>
     execute(
@@ -67,7 +67,7 @@ wave_share_master <- function(seed = 1) {
       seed = seed,
       panels = data.frame(
         panel = rep(1:2, times = 2),
-        wave = rep(1:2, each = 2),
+        period = rep(1:2, each = 2),
         active = c(TRUE, FALSE, FALSE, TRUE)
       )
     )

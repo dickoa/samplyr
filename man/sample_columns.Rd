@@ -17,7 +17,7 @@ The generated columns are:
 \itemize{
 \item \code{.sample_id}: Identifier of each output row, numbered from 1 at
 execution. Under WR or PMR, separate occurrences of one population
-unit have different values. A settled reserve and a materialized wave
+unit have different values. A settled reserve and a materialized occasion
 keep the numbers of the sample they read, so the rows they drop leave
 gaps and each kept row still names the same unit.
 \item \code{.weight}: Sampling weight. This is inverse inclusion probability for
@@ -77,10 +77,11 @@ second stage. A new phase counts its own stages, so it starts at 1.
 \item \code{.replicate}: Replicate identifier (only when \code{reps} is specified)
 \item \code{.panel}: Panel assignment (only when \code{panels} is specified), described
 in \link{panel_assignment}
-\item \code{.wave}: The wave a row was observed at, in a window of several waves
-materialized with \code{execute(master, wave = )}
-\item \code{.visit}: The interview number of the row's unit within its tenure, in
-a materialized wave, from the schedule's \code{visit}. Permanent units have
+\item \code{.period}, \code{.subround}: The occasion a row was observed at, in a
+window of several occasions materialized with
+\code{execute(master, period = , subround = )}
+\item \code{.visit}: The interview number of the row's unit within its cohort, in
+a materialized occasion, from the schedule's \code{visit}. Permanent units have
 \code{NA}.
 \item Stage and stratum identifiers as appropriate
 }

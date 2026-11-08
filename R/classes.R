@@ -11,7 +11,7 @@
 #' The generated columns are:
 #'   - `.sample_id`: Identifier of each output row, numbered from 1 at
 #'     execution. Under WR or PMR, separate occurrences of one population
-#'     unit have different values. A settled reserve and a materialized wave
+#'     unit have different values. A settled reserve and a materialized occasion
 #'     keep the numbers of the sample they read, so the rows they drop leave
 #'     gaps and each kept row still names the same unit.
 #'   - `.weight`: Sampling weight. This is inverse inclusion probability for
@@ -69,10 +69,11 @@
 #'   - `.replicate`: Replicate identifier (only when `reps` is specified)
 #'   - `.panel`: Panel assignment (only when `panels` is specified), described
 #'     in [panel_assignment]
-#'   - `.wave`: The wave a row was observed at, in a window of several waves
-#'     materialized with `execute(master, wave = )`
-#'   - `.visit`: The interview number of the row's unit within its tenure, in
-#'     a materialized wave, from the schedule's `visit`. Permanent units have
+#'   - `.period`, `.subround`: The occasion a row was observed at, in a
+#'     window of several occasions materialized with
+#'     `execute(master, period = , subround = )`
+#'   - `.visit`: The interview number of the row's unit within its cohort, in
+#'     a materialized occasion, from the schedule's `visit`. Permanent units have
 #'     `NA`.
 #'   - Stage and stratum identifiers as appropriate
 #'

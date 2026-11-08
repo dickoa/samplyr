@@ -91,25 +91,25 @@ theory as long as each target cluster totals more than zero. Counting is
 the case where every link counts for one.
 }
 
-\section{Panels and waves}{
+\section{Panels and occasions}{
 
-A materialized wave is refused. Its weights carry an activation factor
+A materialized occasion is refused. Its weights carry an activation factor
 whose randomization ran over the source units, and a target cluster can be
-reached from source units sitting in different panels, so there is no wave
+reached from source units sitting in different panels, so there is no occasion
 the target unit belongs to and no factor to carry. Share weights from the
 master instead.
 
 A master carrying a panel assignment is accepted, and its assignment
 record does not carry into the result for the same reason: a panel is a
 property of a selected source unit. The result is an ordinary shared
-sample, and \verb{execute(<it>, wave = )} is refused.
+sample, and \verb{execute(<it>, period = )} is refused.
 
-A longitudinal panel that follows the people of its first-wave units is
-a different use, and it is supported. The first-wave sample is the
-source, and the people of each later wave's reached households are the
-targets. When their keys and households carry the wave, one call weights
-every wave, and a change estimated from its export keeps the covariance
-between waves. The second example shows it.
+A longitudinal panel that follows the people of the units selected at its
+first occasion is a different use, and it is supported. That sample is the
+source, and the people of each later occasion's reached households are the
+targets. When their keys and households carry the occasion, one call weights
+every occasion, and a change estimated from its export keeps the covariance
+between occasions. The second example shows it.
 }
 
 \section{Coverage}{
@@ -148,26 +148,26 @@ share_weights(
   multiplicity = complete_links()
 )
 
-# A panel follows the people of the selected dwellings. By wave 2, person
+# A panel follows the people of the selected dwellings. By occasion 2, person
 # 4 has moved in with person 5 of an unselected dwelling, and a baby is
-# born in household 1. Only people present at wave 1 have links.
-wave1 <- data.frame(person_id = 1:40, household = rep(1:20, each = 2))
-wave2 <- rbind(wave1, data.frame(person_id = 41, household = 1))
-wave2$household[wave2$person_id \%in\% c(4, 5)] <- 21
-followed <- wave1[wave1$household \%in\% sample$dwelling_id, ]
+# born in household 1. Only people present at occasion 1 have links.
+occasion_1 <- data.frame(person_id = 1:40, household = rep(1:20, each = 2))
+occasion_2 <- rbind(occasion_1, data.frame(person_id = 41, household = 1))
+occasion_2$household[occasion_2$person_id \%in\% c(4, 5)] <- 21
+followed <- occasion_1[occasion_1$household \%in\% sample$dwelling_id, ]
 
-# Keys carry the wave, so one call weights both waves, and a change
+# Keys carry the occasion, so one call weights both occasions, and a change
 # estimated from its as_svrepdesign() export keeps their covariance.
-waves <- list(wave1, wave2)
+occasions <- list(occasion_1, occasion_2)
 targets <- do.call(rbind, lapply(1:2, function(t) {
-  roster <- waves[[t]]
+  roster <- occasions[[t]]
   roster <- roster[roster$household \%in\%
     roster$household[roster$person_id \%in\% followed$person_id], ]
   data.frame(
     key = paste(t, roster$person_id),
-    wave = t,
+    occasion = t,
     household = paste(t, roster$household),
-    in_wave1 = as.integer(roster$person_id <= 40)
+    at_first = as.integer(roster$person_id <= 40)
   )
 }))
 links <- data.frame(
@@ -182,10 +182,11 @@ panel <- share_weights(
   by = c(dwelling_id = "dwelling_id"),
   to = c(key = "key"),
   within = household,
-  multiplicity = in_wave1
+  multiplicity = at_first
 )
 
-# The new household has one link of weight 2.5 and two wave-1 members.
+# The new household has one link of weight 2.5 and two members present at
+# occasion 1.
 as.data.frame(panel)[panel$household == "2 21", c("key", ".weight")]
 
 }

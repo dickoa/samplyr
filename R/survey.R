@@ -35,12 +35,20 @@
 #' @param method For two-phase samples, the variance method passed to
 #'   [survey::twophase()]. One of `"full"`, `"approx"`, or `"simple"`.
 #'   This argument is only accepted for two-phase samples. A materialized
-#'   wave is exported by ultimate clusters unless `method` is given, which
+#'   occasion is exported by ultimate clusters unless `method` is given, which
 #'   asks for its two-phase export instead.
+#' @param stages `NULL`, the default, exports every executed stage. A prefix
+#'   of the executed stages, such as `1` or `1:2`, keeps those stages and
+#'   reads the last as drawn with replacement within its parents, without a
+#'   finite population correction, so it carries the variance of every stage
+#'   below. `stages = 1` is the ultimate-cluster variance. A materialized
+#'   occasion and a settled reserve take `stages = 1` only, which is how they
+#'   are exported anyway, and a two-phase sample or one with shared weights
+#'   takes none (`samplyr_error_survey_argument`).
 #'
 #' @return A `survey.design2` object for single-phase and multi-stage samples
-#'   and for materialized waves, or a `twophase`/`twophase2` object for
-#'   two-phase samples and for waves exported with `method`.
+#'   and for materialized occasions, or a `twophase`/`twophase2` object for
+#'   two-phase samples and for occasions exported with `method`.
 #'
 #' @details
 #' Every executed stage contributes one `ids` term, one `fpc` term and, when
@@ -119,16 +127,16 @@
 #' as its frame, as in `phase2 <- execute(design2, phase1)`, records a
 #' previous-phase link, and `as_svydesign()` calls [survey::twophase()].
 #'
-#' A materialized wave exported with `method` is the other two-phase case.
+#' A materialized occasion exported with `method` is the other two-phase case.
 #' Its second phase is the panel activation: within a frozen block the
 #' master took a simple random sample without replacement of the realized
 #' quota, so the blocks are the phase-2 strata and their sizes the phase-2
 #' population counts. The master is retained as the first phase and supplies
-#' the rows the wave did not keep. Columns added to the wave for analysis
-#' are carried into the exported design. Wave or phase-2 analysis columns
+#' the rows the occasion did not keep. Columns added to the occasion for analysis
+#' are carried into the exported design. Occasion or phase-2 analysis columns
 #' replace same-named first-phase columns and are missing on unsampled
-#' rows. Columns absent from the wave remain available from the master, so
-#' dropping a wave column does not erase the master's measurements. Design
+#' rows. Columns absent from the occasion remain available from the master, so
+#' dropping an occasion column does not erase the master's measurements. Design
 #' identifiers, strata and internal sampling columns keep their recorded
 #' meanings. Keep earlier measurements under separate names if both are
 #' needed.
@@ -136,7 +144,7 @@
 #' When phase 2 keeps unequal shares of the phase-1 strata, survey 4.5
 #' gives each phase-1 stratum another stratum's sample size in the phase-1
 #' part of this variance. The variance of a *total* then depends on the
-#' outcome's level. In simulations of a wave it averaged a quarter of the
+#' outcome's level. In simulations of an occasion it averaged a quarter of the
 #' true variance or less and was often negative. The export rebuilds that
 #' part by survey's own formula with the sizes in place, which changes
 #' nothing where survey's result was already right. A phase 2 stratified
@@ -170,9 +178,9 @@
 #' clustered, or drawn with unequal probabilities keeps the two-phase route.
 #'
 #' [survey::twophase()] takes no `pps` for the first phase, so any other
-#' two-phase sample, or wave exported with `method`, whose phase 1 was drawn
+#' two-phase sample, or occasion exported with `method`, whose phase 1 was drawn
 #' with unequal probabilities without replacement is refused
-#' (`samplyr_error_twophase_phase1_pps`, `samplyr_error_wave_phase1_pps`).
+#' (`samplyr_error_twophase_phase1_pps`, `samplyr_error_occasion_phase1_pps`).
 #' So are `cube`, first-stage `pps_poisson` and the spatial methods, which
 #' are unsupported at either phase. Equal-probability first phases export,
 #' stratified, clustered, multistage and with-replacement alike. No
@@ -189,11 +197,11 @@
 #'                   data = as.data.frame(phase2))
 #' ```
 #'
-#' ## Waves
+#' ## Occasions
 #'
-#' A materialized wave, `execute(master, wave = t)`, is exported as one
+#' A materialized occasion, `execute(master, period = p)`, is exported as one
 #' phase by ultimate clusters. The master's stage-1 units are the clusters,
-#' its stage-1 stratification variables the strata, and the wave's weights
+#' its stage-1 stratification variables the strata, and the occasion's weights
 #' the weights, with no finite population correction. Every later stage and
 #' the activation are carried in the unit totals, so the master may have
 #' been drawn by any method, with probabilities proportional to size
@@ -203,9 +211,9 @@
 #' certainty, with a later stage drawn inside it, represents itself. It is a
 #' stratum of its own, whose clusters are its units of the next stage, since
 #' only they vary between samples. In a simulation of one certainty EA among
-#' twelve, that brought the estimated variance of a wave from 1.7 to 1.1
-#' times the true one, and of a two-wave window, where the EA otherwise
-#' stood alone among the units active at both waves and survey stopped on
+#' twelve, that brought the estimated variance of an occasion from 1.7 to 1.1
+#' times the true one, and of a two-occasion window, where the EA otherwise
+#' stood alone among the units active at both occasions and survey stopped on
 #' it, from 5.7 under `survey.lonely.psu = "adjust"` to 1.6. A unit taken
 #' with certainty and nothing drawn inside it, a stage-1 cluster with no
 #' later stage or an element, is the same in every sample. It is a stratum
@@ -217,24 +225,27 @@
 #' two-phase export gave 0.88, and 1.06 with EAs drawn by size, which has
 #' no two-phase export.
 #'
-#' A window of several waves, `execute(master, wave = 1:3)`, is exported
+#' A window of several occasions, `execute(master, period = 1:3)`, is exported
 #' the same way. A unit's rows over the window are one cluster, and the
-#' strata are crossed with the number of the window's waves a unit is
-#' active, which the schedule fixes and which sets the unit's share of the
-#' window's weight. In a simulation of windows over masters of 16 to 18 EAs
-#' per stratum, the standard error was 0.95 to 1.12 of the true one, and 95%
-#' intervals covered 92% to 97%, with EAs drawn by simple random sampling or
-#' by size. `method` is refused for a window.
+#' strata are crossed with the quota block and the occasions of the window
+#' a unit is active at, which its panel fixes. The design is calibrated on
+#' each stratum's total of the units' activation multipliers, which leaves
+#' the weights unchanged and gives merged strata ratio residuals. In
+#' simulations of windows over clustered masters of 16 to 18 EAs per
+#' stratum, the standard error was 0.98 to 1.04 of the true one, and 95%
+#' intervals covered 93% to 97%, with EAs drawn by simple random sampling or
+#' by size. [panel_assignment] gives the rule and the smaller strata.
+#' `method` is refused for a window.
 #'
-#' A wave of a master whose later stages are still drawn one period or
-#' tenure at a time is exported the same way, from its own rows. The
+#' An occasion of a master whose later stages are still drawn one period or
+#' cohort at a time is exported the same way, from its own rows. The
 #' two-phase export reads the whole master and refuses it
-#' (`samplyr_error_wave_provisional`).
+#' (`samplyr_error_occasion_provisional`).
 #'
 #' [as_svrepdesign()] replicates the same design, and [as_survey_design()]
 #' follows `as_svydesign()`. `pps` is refused (`samplyr_error_survey_argument`),
-#' and so is a wave holding a single primary unit
-#' (`samplyr_error_wave_one_unit`). A wave that activates every unit is the
+#' and so is an occasion holding a single primary unit
+#' (`samplyr_error_occasion_one_unit`). An occasion that activates every unit is the
 #' master's own design and is exported as such.
 #'
 #' ## Modified samples and domain analysis
@@ -294,29 +305,39 @@
 #' population correction. The variance of every later stage is then carried
 #' by the primary-unit totals, which is why it is called the ultimate-cluster
 #' variance. It is the variance to reproduce when a new design is compared
-#' with what an earlier round published. `as_svydesign()` builds it for a
-#' materialized wave and for a settled reserve only. For other samples it
-#' derives `ids`, `strata` and
-#' `fpc` from the design, and survey builds the ultimate-cluster design from
-#' the sample's own columns:
+#' with what an earlier round published, and `as_svydesign(sample, stages =
+#' 1)` builds it. A materialized occasion and a settled reserve are always
+#' exported this way.
 #'
-#' ```r
-#' survey::svydesign(
-#'   ids = ~ea_id,
-#'   strata = ~interaction(region, urban_rural, drop = TRUE),
-#'   weights = ~.weight,
-#'   nest = TRUE,
-#'   data = as.data.frame(sample)
-#' )
-#' ```
+#' The export keeps the first stage's strata and units, the zero rows of
+#' empty primary units included. A primary unit taken with probability 1, by
+#' a certainty rule or because its stratum was taken whole, is no draw. When
+#' the next stage drew two units or more inside it, it is a stratum of its
+#' own whose next-stage units are the clusters. When nothing below it is
+#' random, with no stage below or every unit below taken, it is a census
+#' stratum of its own and adds no variance. When the next stage drew a single
+#' unit inside it, as one household in a certainty EA, a stratum of its own
+#' could not estimate the variance below. It then stays a draw of its
+#' stratum, and the spread between that stratum's units stands in for the
+#' variance below it (`samplyr_message_stage_certainty_drawn`). A stage drawn
+#' with replacement has no such units, even where a unit expects one hit or
+#' more. Built by hand from `as.data.frame(sample)`, the same design
+#' loses the empty units and reads certainty units as drawn. On a Brewer
+#' design with one certainty EA, over 300 samples, the hand-built design gave
+#' 0.94 of the true standard error and `stages = 1` 0.99.
 #'
-#' `ids` names the first stage's cluster variable and `strata` its
-#' stratification variables. The approximation is conservative. It leaves
-#' out the finite population correction, so it overstates the variance most
-#' where a stratum selects a large share of its primary units, and it treats
-#' certainty units as sampled. A stratum with a single primary unit stops
-#' survey, as it does for the export, unless `options(survey.lonely.psu = )`
-#' says how to treat it.
+#' `stages = 1:k` keeps stages 1 to k - 1 with their corrections and reads
+#' stage k the same way. It suits a stage whose variance cannot be
+#' estimated, such as one respondent per household: `stages = 1:2` on a
+#' design of EAs, households and one person carries the person stage in the
+#' household totals, and keeps the first stage's correction, which matters
+#' where that stage takes a large share. Exported in full, such a stage
+#' leaves each household a stratum of one unit, which the export names
+#' (`samplyr_warning_lonely_psu`). The approximation is conservative.
+#' It leaves out stage k's correction, so it overstates the variance most
+#' where stage k takes a large share of its units. A stratum with a single
+#' unit stops survey, as for the full export, unless
+#' `options(survey.lonely.psu = )` says how to treat it.
 #'
 #' ## A settled reserve
 #'
@@ -331,8 +352,8 @@
 #' units that responded is treated as fixed. A two-phase sample, shared
 #' weights, and the `"mrbbootstrap"` and `"rwyb"` replicates of
 #' [as_svrepdesign()] would build the stages one by one, and refuse a
-#' settled reserve (`samplyr_error_reserve_full_export`). A wave holds no
-#' settlement of its own, so a wave of a master that draws a reserve is
+#' settled reserve (`samplyr_error_reserve_full_export`). An occasion holds no
+#' settlement of its own, so an occasion of a master that draws a reserve is
 #' refused with the same class, settled or not, and the settled master
 #' exports as a whole.
 #'
@@ -359,7 +380,7 @@
 #' as a zero total.
 #'
 #' A primary unit taken with certainty, with a later stage drawn inside it,
-#' represents itself as it does in a wave. It is a stratum of its own whose
+#' represents itself as it does in an occasion. It is a stratum of its own whose
 #' clusters are its units of the next stage. With the reserve at that
 #' stage, its pools are exported as first-stage pools are, times the weight
 #' of the stage above, so its ineligible units add rows and a placeholder
@@ -565,14 +586,14 @@ holds_settled_reserve <- function(x) {
 #' `.weight` at a reserve stage is the chance of the whole list, take and
 #' reserve together. The weight of an analysis comes from the units the
 #' field worked and their outcomes, which an executed list does not record.
-#' An export also refuses a wave of a reserve master, settled or not.
+#' An export also refuses an occasion of a reserve master, settled or not.
 #' @param action What `fn_name` would do with the sample, completing
 #'   "cannot ... a sample".
 #' @noRd
 check_reserve_settled <- function(x, fn_name, action = "export",
                                   call = caller_env()) {
   if (identical(action, "export")) {
-    check_reserve_wave(x, fn_name, call = call)
+    check_reserve_occasion(x, fn_name, call = call)
   }
   stages <- unsettled_reserve_stages(x)
   if (length(stages) == 0L) {
@@ -593,13 +614,13 @@ check_reserve_settled <- function(x, fn_name, action = "export",
   )
 }
 
-#' Refuse a wave of a master that draws a reserve, settled or not
+#' Refuse an occasion of a master that draws a reserve, settled or not
 #'
-#' A wave holds no settlement of its own, and a settled reserve exports only
+#' An occasion holds no settlement of its own, and a settled reserve exports only
 #' from the sample that settled it.
 #' @noRd
-check_reserve_wave <- function(x, fn_name, call = caller_env()) {
-  if (is_null(attr(x, "metadata")[["wave"]])) {
+check_reserve_occasion <- function(x, fn_name, call = caller_env()) {
+  if (is_null(attr(x, "metadata")[["occasion"]])) {
     return(invisible(NULL))
   }
   design <- get_design(x)
@@ -611,7 +632,7 @@ check_reserve_wave <- function(x, fn_name, call = caller_env()) {
   }
   abort_samplyr(
     c(
-      "{.fn {fn_name}} cannot export a wave of a master that draws a
+      "{.fn {fn_name}} cannot export an occasion of a master that draws a
        reserve.",
       "x" = "{cli::qty(length(stages))}Stage{?s} {stages}
              {cli::qty(length(stages))}list{?s/} a take and a reserve.",
@@ -628,7 +649,7 @@ check_reserve_wave <- function(x, fn_name, call = caller_env()) {
 #' Refuse an export route that would write the settled stage's correction
 #'
 #' A settled reserve exports by ultimate clusters from the single phase
-#' that settled it. Two phases, a wave, shared weights and a subsample
+#' that settled it. Two phases, an occasion, shared weights and a subsample
 #' composed with its parent each build the stages one by one.
 #' @noRd
 check_reserve_export_route <- function(x, fn_name, call = caller_env()) {
@@ -637,8 +658,8 @@ check_reserve_export_route <- function(x, fn_name, call = caller_env()) {
     "Its reserve was settled in an earlier phase."
   } else if (is_tbl_sample(meta$prev_phase$sample)) {
     "It is the second phase of a two-phase sample."
-  } else if (!is_null(meta[["wave"]])) {
-    "It is a wave of a master."
+  } else if (!is_null(meta[["occasion"]])) {
+    "It is an occasion of a master."
   } else if (identical(sample_weight_contract(x), "shared")) {
     "Its weights are shared from another sample."
   }
@@ -867,7 +888,7 @@ reserve_category_value <- function(x, n, code, word) {
 #' the settled one included, is carried in the unit totals. A first-stage
 #' reserve adds its ineligible units as rows, so the eligible count it
 #' estimates enters the variance. A unit taken with certainty is a stratum
-#' of its own, as in a wave, and a reserve at the stage below it is
+#' of its own, as in an occasion, and a reserve at the stage below it is
 #' exported as a first-stage reserve of that stratum.
 #' @noRd
 build_reserve_svydesign <- function(x, nest, dots, fn_name,
@@ -986,7 +1007,7 @@ shared_twophase_source_advice <- function() {
            units it came from, and those rows carry one selection's strata
            and units, which a two-phase sample does not have.",
     "i" = "Share weights from the first-phase sample instead, or from the
-           master if the second phase is a wave activation."
+           master if the second phase is an occasion activation."
   )
 }
 
@@ -1049,7 +1070,7 @@ survey_validate_phase_support <- function(
     )
   }
 
-  check_wave_carries_master(sample, phase_info, fn_name, call = call)
+  check_occasion_carries_master(sample, phase_info, fn_name, call = call)
   phase_info
 }
 
@@ -1223,9 +1244,9 @@ record_systematic_variance <- function(result, stages, choice, approximation) {
   result
 }
 
-## Export of a materialized wave
+## Export of a materialized occasion
 
-# A wave is a two-phase sample. Its activation identifiers, strata, and counts
+# An occasion is a two-phase sample. Its activation identifiers, strata, and counts
 # come from the frozen assignment. Each block activates its quota by SRSWOR.
 
 #' @noRd
@@ -1233,35 +1254,36 @@ survey_is_activation <- function(phase_info) {
   identical(phase_info$prev_phase$transition, "panel_activation")
 }
 
-#' A wave must carry the master it was activated from
+#' An occasion must carry the master it was activated from
 #'
 #' [survey::twophase()] builds the first-phase design from every phase-1 row
 #' and marks the active ones with `subset`, so the master's rows are needed
-#' and nothing can reconstruct the units the wave did not keep. Every export
+#' and nothing can reconstruct the units the occasion did not keep. Every export
 #' route checks it through `survey_validate_phase_support()`: without the
-#' link, a replicate route would read the wave as a single-phase sample and
+#' link, a replicate route would read the occasion as a single-phase sample and
 #' leave the activation out of the variance.
 #' @noRd
-check_wave_carries_master <- function(
+check_occasion_carries_master <- function(
   x,
   phase_info,
   fn_name,
   call = caller_env()
 ) {
   metadata <- attr(x, "metadata")
-  if (is_null(metadata$wave) || survey_is_activation(phase_info)) {
+  if (is_null(metadata$occasion) || survey_is_activation(phase_info)) {
     return(invisible(NULL))
   }
   abort_samplyr(
     c(
-      "{.fn {fn_name}} needs the master this wave was activated from.",
-      "x" = "This sample realizes {wave_phrase(metadata$wave$wave)} but
+      "{.fn {fn_name}} needs the master this occasion was activated from.",
+      "x" = "This sample realizes {sample_occasion_phrase(metadata)} but
              carries no link to it.",
       "i" = "The master is the first phase of the export, so materialize the
-             wave again from it:
-             {.code execute(master, wave = {wave_code(metadata$wave$wave)})}."
+             occasion again from it:
+             {.code execute(master, {occasion_code(
+               metadata$panel_assignment$schedule, metadata$occasion$occasion)})}."
     ),
-    class = "samplyr_error_wave_no_master",
+    class = "samplyr_error_occasion_no_master",
     call = call
   )
 }
@@ -1293,7 +1315,7 @@ check_activation_phase1_supported <- function(
     )
     abort_samplyr(
       c(
-        "Cannot export a wave of a master drawn with
+        "Cannot export an occasion of a master drawn with
          method{?s} {.val {methods}}.",
         "i" = "No linearization variance estimator is available for this
                method and its declared constraints, at either phase.",
@@ -1317,7 +1339,7 @@ check_activation_phase1_supported <- function(
   )
   abort_samplyr(
     c(
-      "Cannot export a wave of a master drawn with
+      "Cannot export an occasion of a master drawn with
        method{?s} {.val {unique(methods)}}.",
       "x" = "{.fn survey::twophase} takes no {.arg pps} specification at
              phase 1, so the master's unequal inclusion probabilities have no
@@ -1328,7 +1350,7 @@ check_activation_phase1_supported <- function(
       "i" = "Export the master itself for its own exact variance:
              {.code as_svydesign(master)}."
     ),
-    class = "samplyr_error_wave_phase1_pps",
+    class = "samplyr_error_occasion_phase1_pps",
     call = call
   )
 }
@@ -1339,21 +1361,21 @@ check_activation_phase1_supported <- function(
 #' those are row positions, so a substituted master of the same shape would
 #' pass every structural check while supplying different non-active rows.
 #' @noRd
-check_wave_master_identity <- function(metadata, master, call = caller_env()) {
-  recorded <- metadata$wave$master_digest
+check_occasion_master_identity <- function(metadata, master, call = caller_env()) {
+  recorded <- metadata$occasion$master_digest
   if (
-    is_null(recorded) || identical(recorded, wave_source_digest(master))
+    is_null(recorded) || identical(recorded, occasion_source_digest(master))
   ) {
     return(invisible(NULL))
   }
   abort_samplyr(
     c(
-      "This wave was activated from a different realization.",
-      "x" = "The sample held as its first phase is not the one wave
-             {metadata$wave$wave} was computed against.",
-      "i" = "Materialize the wave again from the master it belongs to."
+      "This occasion was activated from a different realization.",
+      "x" = "The sample held as its first phase is not the one occasion
+             {metadata$occasion$occasion} was computed against.",
+      "i" = "Materialize the occasion again from the master it belongs to."
     ),
-    class = "samplyr_error_wave_master_mismatch",
+    class = "samplyr_error_occasion_master_mismatch",
     call = call
   )
 }
@@ -1362,7 +1384,7 @@ check_wave_master_identity <- function(metadata, master, call = caller_env()) {
 #'
 #' The block a unit sits in, the block's size in assignment units, and the
 #' conditional probability the recorded quotas give it. `active` comes from
-#' the wave's own rows rather than from recomputing the panel test, so the
+#' the occasion's own rows rather than from recomputing the panel test, so the
 #' exported subset is the sample the user holds.
 #' @noRd
 activation_phase2_columns <- function(df1, x, metadata, call = caller_env()) {
@@ -1372,7 +1394,7 @@ activation_phase2_columns <- function(df1, x, metadata, call = caller_env()) {
     "A survey export",
     call = call
   )
-  wave_pools <- metadata$wave$pools
+  occasion_pools <- metadata$occasion$pools
 
   cols <- list(
     unit = free_column_name(df1, ".activation_unit"),
@@ -1396,7 +1418,7 @@ activation_phase2_columns <- function(df1, x, metadata, call = caller_env()) {
     b <- rep(seq_along(pool$blocks), pool$blocks)[located[[p]]$at]
     block[rows] <- paste(p, b, sep = ".")
     block_n[rows] <- pool$blocks[b]
-    prob[rows] <- wave_pools[[p]]$probability[b]
+    prob[rows] <- occasion_pools[[p]]$probability[b]
   }
 
   if (anyNA(block)) {
@@ -1405,9 +1427,9 @@ activation_phase2_columns <- function(df1, x, metadata, call = caller_env()) {
         "The assignment record does not cover every row of the master.",
         "x" = "{sum(is.na(block))} row{?s} belong{?s/} to no assignment
                pool.",
-        "i" = "Materialize the wave again from the master."
+        "i" = "Materialize the occasion again from the master."
       ),
-      class = "samplyr_error_wave_master_mismatch",
+      class = "samplyr_error_occasion_master_mismatch",
       call = call
     )
   }
@@ -1425,7 +1447,7 @@ activation_phase2_columns <- function(df1, x, metadata, call = caller_env()) {
   }
   df1[[cols$active]] <- ifelse(
     zero,
-    df1$.panel %in% metadata$wave$active_panels | permanent,
+    df1$.panel %in% metadata$occasion$active_panels | permanent,
     df1$.sample_id %in% x$.sample_id
   )
   df1[[cols$prob]] <- ifelse(df1[[cols$active]], prob, NA_real_)
@@ -1440,7 +1462,7 @@ activation_phase2_columns <- function(df1, x, metadata, call = caller_env()) {
 #' The realized take must be the take the record froze
 #'
 #' Counting the active assignment units of each block reproduces `a_bt`, so a
-#' wave whose rows do not belong to the master it names is caught here rather
+#' occasion whose rows do not belong to the master it names is caught here rather
 #' than silently exported against the wrong first phase.
 #' @noRd
 check_activation_take <- function(df1, cols, call = caller_env()) {
@@ -1469,10 +1491,10 @@ check_activation_take <- function(df1, cols, call = caller_env()) {
         "The active rows do not match the activation the master recorded.",
         "x" = "{sum(bad)} block{?s} {?has/have} a realized take that is not
                the frozen quota.",
-        "i" = "This wave and the master it carries describe different
+        "i" = "This occasion and the master it carries describe different
                executions. Materialize it again from the master."
       ),
-      class = "samplyr_error_wave_master_mismatch",
+      class = "samplyr_error_occasion_master_mismatch",
       call = call
     )
   }
@@ -1549,11 +1571,11 @@ check_twophase_stage_probs <- function(
 #'
 #' Read from the realized per-block activation probabilities rather than from
 #' the pool classes, so it covers every route to an identity: all pools
-#' permanent, and a wave that activates every panel. A record with no pools
+#' permanent, and an occasion that activates every panel. A record with no pools
 #' states nothing and is not treated as an identity.
 #' @noRd
 activation_is_identity <- function(metadata) {
-  pools <- metadata$wave$pools
+  pools <- metadata$occasion$pools
   if (is_null(pools) || length(pools) == 0L) {
     return(FALSE)
   }
@@ -1561,7 +1583,7 @@ activation_is_identity <- function(metadata) {
   length(probability) > 0L && all(is_certainty_probability(probability))
 }
 
-#' Export a materialized wave through survey::twophase()
+#' Export a materialized occasion through survey::twophase()
 #' @noRd
 build_activation_twophase <- function(
   x,
@@ -1586,7 +1608,7 @@ build_activation_twophase <- function(
     ))
   }
 
-  check_wave_master_identity(metadata, master, call = call)
+  check_occasion_master_identity(metadata, master, call = call)
   # A unit the master lost is a zero row of phase 1.
   df1 <- export_rows(master, design1, stages1, call = call)
 
@@ -1713,12 +1735,13 @@ self_representing_rows <- function(df, design, stages, entry) {
 #'
 #' Their units of the next stage become the clusters. A row that names no
 #' such unit, as a row added for a reserve pool, is a unit apart.
-#' @return list(df, entry, vars), with the stratum column added to `vars`.
+#' @return list(df, entry, vars, sure), with the stratum column added to
+#'   `vars` and `sure` flagging the self-representing rows.
 #' @noRd
 self_represent <- function(df, entry, vars, design, stages) {
   sure <- self_representing_rows(df, design, stages, entry)
   if (!any(sure)) {
-    return(list(df = df, entry = entry, vars = vars))
+    return(list(df = df, entry = entry, vars = vars, sure = sure))
   }
   later <- reserve_primary_vars(design, stages[2], df)
   below <- if (length(later) > 0L) df[later] else df[".sample_id"]
@@ -1729,19 +1752,351 @@ self_represent <- function(df, entry, vars, design, stages) {
   sure_col <- free_name(names(df), ".self_representing")
   df[[sure_col]] <- ifelse(sure, entry$unit$id, 0L)
   entry$unit$id[sure] <- max(entry$unit$id) + vctrs::vec_group_id(below)
-  list(df = df, entry = entry, vars = c(vars, sure_col))
+  list(df = df, entry = entry, vars = c(vars, sure_col), sure = sure)
 }
 
-#' Export a materialized wave as one phase, by ultimate clusters
+#' The occasions of a window each primary unit is active at
 #'
-#' The wave's stage-1 units are the clusters and the master's stage-1
+#' A unit's occasions are fixed by its panel, and a stratum's quotas fix how
+#' many of its units share each set, so the sets are second-phase strata. A
+#' pool whose occasions a period reads together counts that period as one
+#' occasion, since its weights do not fix each occasion's total.
+#' @param unit The primary unit of each row.
+#' @return A character vector, one per row.
+#' @noRd
+window_occasion_patterns <- function(df, unit, metadata) {
+  label <- paste(df$.period, df$.subround)
+  record <- metadata$panel_assignment
+  if (length(metadata$occasion$collapsed) > 0L) {
+    pairs <- grid_pairs(record$schedule)
+    located <- record_pool_rows(
+      make_group_key(df, record$key_vars),
+      record$pools
+    )
+    for (part in metadata$occasion$collapsed) {
+      at <- paste(pairs$period[part$occasions], pairs$subround[part$occasions])
+      pooled <- unlist(lapply(located[part$pools], function(l) l$rows))
+      rows <- intersect(which(label %in% at), pooled)
+      label[rows] <- paste("period", pairs$period[part$occasions[[1L]]])
+    }
+  }
+  pattern <- tapply(label, unit, function(l) {
+    paste(sort(unique(l)), collapse = ", ")
+  })
+  unname(pattern[as.character(unit)])
+}
+
+#' The variance strata of a window's primary units
+#'
+#' The activation is a second phase whose strata are the quota blocks, and
+#' within a block the quotas fix how many units share each set of occasions.
+#' A primary unit's cell is its pool, block and set of occasions. A cell with
+#' one unit is merged with the cell of the same occasions in the next block
+#' of its pool, the adjacent strata of the collapsed-strata estimator. A cell
+#' still holding one unit falls back to the number of its occasions, which
+#' keeps its weight multiplier. Where a primary unit spans several blocks, as
+#' a retained primary unit does, the cell is its set of occasions only.
+#' @param unit The primary unit of each row.
+#' @return A character vector, one per row, crossed with the design's strata
+#'   by the caller, with attribute `fallback` flagging the rows of units that
+#'   fell back.
+#' @noRd
+window_variance_cells <- function(df, unit, metadata) {
+  pattern <- window_occasion_patterns(df, unit, metadata)
+  occasion <- paste(df$.period, df$.subround)
+  visits <- stats::ave(occasion, unit, FUN = function(o) length(unique(o)))
+  record <- metadata$panel_assignment
+  located <- record_pool_rows(make_group_key(df, record$key_vars), record$pools)
+  pool <- block <- rep(NA_integer_, nrow(df))
+  for (p in seq_along(record$pools)) {
+    rows <- located[[p]]$rows
+    of_unit <- rep(seq_along(record$pools[[p]]$blocks), record$pools[[p]]$blocks)
+    pool[rows] <- p
+    block[rows] <- of_unit[located[[p]]$at]
+  }
+  spans <- tapply(paste(pool, block), unit, function(b) length(unique(b)))
+  cell <- if (any(spans > 1L)) {
+    pattern
+  } else {
+    unit_rows <- !duplicated(unit)
+    group <- block
+    for (key in unique(paste(pool, pattern)[unit_rows])) {
+      at <- which(unit_rows & paste(pool, pattern) == key)
+      sizes <- table(block[at])
+      merged <- adjacent_groups(as.vector(sizes))
+      group[at] <- merged[match(block[at], as.integer(names(sizes)))]
+    }
+    group <- group[which(unit_rows)][match(unit, unit[unit_rows])]
+    paste(pool, group, pattern, sep = "|")
+  }
+  size <- stats::ave(seq_along(unit), cell, FUN = function(i) {
+    length(unique(unit[i]))
+  })
+  lone <- size == 1L
+  cell[lone] <- paste("visits", visits[lone])
+  attr(cell, "fallback") <- lone
+  cell
+}
+
+#' Join consecutive blocks until each group holds two units
+#'
+#' A short last group joins the one before it.
+#' @param sizes The units of each block, in block order.
+#' @return The group of each block.
+#' @noRd
+adjacent_groups <- function(sizes) {
+  group <- integer(length(sizes))
+  g <- 1L
+  count <- 0L
+  for (i in seq_along(sizes)) {
+    group[[i]] <- g
+    count <- count + sizes[[i]]
+    if (count >= 2L && i < length(sizes)) {
+      g <- g + 1L
+      count <- 0L
+    }
+  }
+  if (count < 2L && g > 1L) {
+    group[group == g] <- g - 1L
+  }
+  group
+}
+
+#' Pool the primary units a window's split leaves alone in their stratum
+#'
+#' A unit alone in its stratum, in a design stratum that holds others, is
+#' there because of the window's split. Such units share one stratum, across
+#' the design's strata, which with their shared ratio column is the
+#' ratio-adjusted collapsed-strata estimator for them. A single such unit
+#' joins the stratum of its design stratum whose units are active at the
+#' nearest number of occasions, the one with more units on a tie. Units with
+#' certainty or a census stratum are not pooled, nor joined.
+#' @param drawn Whether each row's unit was drawn at random.
+#' @return The new stratum label of each row, or `NULL` when nothing is
+#'   pooled.
+#' @noRd
+pool_window_lone <- function(df, vars, design_vars, unit, drawn) {
+  stratum <- group_ids(df, vars)
+  design_stratum <- if (length(design_vars) > 0L) {
+    group_ids(df, design_vars)
+  } else {
+    rep(1L, nrow(df))
+  }
+  count_units <- function(by) {
+    n <- tapply(unit, by, function(u) length(unique(u)))
+    as.vector(n[as.character(by)])
+  }
+  lone <- drawn & count_units(stratum) == 1L & count_units(design_stratum) >= 2L
+  label <- paste("stratum", stratum)
+  if (length(unique(unit[lone])) >= 2L) {
+    return(ifelse(lone, "lone", label))
+  }
+  if (!any(lone)) {
+    return(NULL)
+  }
+  occasion <- paste(df$.period, df$.subround)
+  visits <- stats::ave(seq_along(unit), unit, FUN = function(i) {
+    length(unique(occasion[i]))
+  })
+  other <- drawn & !lone & design_stratum == design_stratum[lone][[1L]]
+  if (!any(other)) {
+    return(NULL)
+  }
+  near <- tapply(abs(visits[other] - visits[lone][[1L]]), stratum[other], min)
+  size <- tapply(unit[other], stratum[other], function(u) length(unique(u)))
+  # tapply orders by stratum id, which breaks the remaining ties.
+  join <- names(near)[order(near, -size)][[1L]]
+  label[lone] <- paste("stratum", join)
+  label
+}
+
+#' The calibration that gives a window's merged strata ratio residuals
+#'
+#' A primary unit's window total has expectation m_i beta in its stratum,
+#' where m_i is its activation multiplier, the sum of its occasion factors
+#' over the number of occasions. Calibrating on each stratum's total of an
+#' auxiliary that sums to m_i over the unit's rows, with variance
+#' proportional to it, leaves the weights unchanged and makes the variance
+#' use u_i - m_i ubar / mbar, the ratio-adjusted collapsed-strata estimator
+#' (Hansen, Hurwitz and Madow 1953, Wolter 2007, section 2.5). For a row the
+#' auxiliary is one over its master weight times the unit's rows at that
+#' occasion. A stratum of one unit takes no column of its own, which would
+#' fit it exactly. Such strata share one, so `survey.lonely.psu` reads them
+#' as residuals like the others.
+#' @param weights `.sample_id` and `.weight` of the rows before activation:
+#'   the master's, or on a master drawn occasion by occasion, the window's
+#'   sources.
+#' @param cells The window cell of each row (`empty_unit_stand_in()`).
+#' @return `NULL` when no stratum needs it, otherwise the columns, formula,
+#'   population totals and variances for [survey::calibrate()], and
+#'   `stand_in`, the weights of empty units' rows during the calibration.
+#' @noRd
+window_ratio_spec <- function(svy, weights, cells = NULL) {
+  df <- svy$variables
+  master_weight <- weights$.weight[match(df$.sample_id, weights$.sample_id)]
+  unit <- as.character(svy$cluster[, 1])
+  stratum <- as.character(svy$strata[, 1])
+  occasion <- paste(df$.period, df$.subround)
+  rows_at <- stats::ave(rep(1, nrow(df)), unit, occasion, FUN = sum)
+  known <- !is.na(master_weight) & master_weight > 0
+  aux <- ifelse(known, 1 / (master_weight * rows_at), 0)
+  units_in <- tapply(unit, stratum, function(u) length(unique(u)))
+  alone <- as.vector(units_in[stratum]) < 2L
+  group <- ifelse(alone, "\ralone", stratum)
+  if (length(unique(unit[alone])) < 2L) {
+    group[alone] <- NA_character_
+  }
+  stand_in <- empty_unit_stand_in(
+    aux, stats::weights(svy), unit, known, group, cells %||% group
+  )
+  aux <- stand_in$aux
+  groups <- unique(stats::na.omit(group))
+  columns <- vapply(groups, function(g) {
+    ifelse(!is.na(group) & group == g, aux, 0)
+  }, numeric(nrow(df)))
+  columns <- columns[, colSums(abs(columns)) > 0, drop = FALSE]
+  # Every unit in its own stratum or no stratum to adjust: nothing to do.
+  if (ncol(columns) == 0L) {
+    return(NULL)
+  }
+  prefix <- ".ratio"
+  repeat {
+    names <- paste0(prefix, "_", seq_len(ncol(columns)))
+    if (!any(names %in% names(df))) break
+    prefix <- paste0(prefix, "_")
+  }
+  colnames(columns) <- names
+  list(
+    columns = columns,
+    formula = stats::as.formula(paste("~ 0 +", paste(names, collapse = " + "))),
+    population = colSums(columns * (stats::weights(svy) + stand_in$weight)),
+    variance = ifelse(aux > 0, aux, 1),
+    stand_in = if (any(stand_in$weight > 0)) stand_in$weight
+  )
+}
+
+#' Weights that let the ratio fit count an empty primary unit
+#'
+#' The zero row of an empty primary unit has no weight, so the calibration
+#' would fit its stratum without it and give it no residual. Its window
+#' total is zero whatever its activation, and its multiplier is that of its
+#' cell, whose units share its block and occasions. During the calibration
+#' only, its rows take a weight that gives them that multiplier at the
+#' cell's mean auxiliary, so the unit enters the ratio residuals with a zero
+#' total.
+#' @param cell The window cell of each row, `NA` where the unit had no cell
+#'   of its own. Without another unit there, the row's ratio group is used.
+#' @return `aux`, the auxiliary of every row, and `weight`, the weight of the
+#'   empty units' rows during the calibration, 0 elsewhere.
+#' @noRd
+empty_unit_stand_in <- function(aux, weight, unit, known, group, cell) {
+  stand_in <- numeric(length(aux))
+  empty <- !as.logical(stats::ave(known, unit, FUN = any))
+  if (!any(empty)) {
+    return(list(aux = aux, weight = stand_in))
+  }
+  multiplier <- stats::ave(weight * aux, unit, FUN = sum)
+  first <- !duplicated(unit) & !empty
+  mean_by <- function(x, by, keep) {
+    keep <- keep & !is.na(by)
+    means <- tapply(x[keep], by[keep], mean)
+    as.vector(means[by])
+  }
+  m <- mean_by(multiplier, cell, first)
+  a <- mean_by(aux, cell, known)
+  fall <- is.na(m)
+  m[fall] <- mean_by(multiplier, group, first)[fall]
+  a[fall] <- mean_by(aux, group, known)[fall]
+  rows_of <- stats::ave(rep(1, length(aux)), unit, FUN = sum)
+  fill <- empty & !is.na(m) & !is.na(group)
+  aux[fill] <- a[fill]
+  stand_in[fill] <- m[fill] / (a[fill] * rows_of[fill])
+  list(aux = aux, weight = stand_in)
+}
+
+#' Calibrate a window's design, or its replicates, on the ratio columns
+#'
+#' The weights do not move, and the columns are dropped once the calibration
+#' holds what the variance needs. Empty units' rows weigh their stand-in
+#' during the calibration and nothing after it, which in a replicate design
+#' of factors zeroes them in every replicate.
+#' @noRd
+apply_window_ratio <- function(design, ratio) {
+  if (is_null(ratio)) {
+    return(design)
+  }
+  call <- design$call
+  rows <- which(ratio$stand_in %||% 0 > 0)
+  # A replicate design took these weights before its replicates were made.
+  if (!inherits(design, "svyrep.design")) {
+    design <- with_stand_in(design, ratio)
+  }
+  # Stand-ins mark empty primary units, which a stage below found empty.
+  # Replicates hold combined weights only where census units, with no stage
+  # below, were spliced out, so the two never meet, and the replicates
+  # here hold factors that a zero weight cancels.
+  if (length(rows) > 0L && isTRUE(design$combined.weights)) {
+    cli_abort(
+      "A window's replicate weights are combined around an empty primary
+       unit, which the calibration does not handle.",
+      call = NULL,
+      class = "samplyr_error_internal"
+    )
+  }
+  missing <- setdiff(colnames(ratio$columns), names(design$variables))
+  design$variables <- cbind(design$variables, ratio$columns[, missing, drop = FALSE])
+  args <- list(
+    design,
+    ratio$formula,
+    population = ratio$population,
+    variance = ratio$variance
+  )
+  # survey's default compress = NA fails on uncompressed replicate weights,
+  # as a design spliced around certainty units has.
+  if (inherits(design, "svyrep.design")) {
+    args$compress <- inherits(design$repweights, "repweights_compressed")
+  }
+  calibrated <- do.call(survey::calibrate, args)
+  if (inherits(calibrated, "svyrep.design")) {
+    calibrated$pweights[rows] <- 0
+  } else {
+    calibrated$prob[rows] <- Inf
+    # The linearized variance divides each row by g times the square root
+    # of its weight, 0 / 0 on a zero row left without a stand-in. That row
+    # is a zero row of the stored QR factor, so any nonzero divisor gives
+    # the same residuals, and 1 gives zero for it.
+    last <- length(calibrated$postStrata)
+    w <- calibrated$postStrata[[last]]$w
+    calibrated$postStrata[[last]]$w[w == 0] <- 1
+  }
+  calibrated$variables[colnames(ratio$columns)] <- NULL
+  calibrated$call <- call
+  calibrated
+}
+
+#' Give empty units' rows their stand-in weights in a linearized design
+#' @noRd
+with_stand_in <- function(design, ratio) {
+  rows <- which(ratio$stand_in %||% 0 > 0)
+  design$prob[rows] <- 1 / ratio$stand_in[rows]
+  design
+}
+
+#' Export a materialized occasion as one phase, by ultimate clusters
+#'
+#' The occasion's stage-1 units are the clusters and the master's stage-1
 #' stratification variables the strata, with the activation weights and no
 #' finite population correction. Later stages and the activation are carried
 #' in the unit totals, so the master's stage-1 method does not enter. A
-#' window of waves also stratifies by the number of its waves a unit is
-#' active: that count sets the unit's multiplier and is fixed by the
-#' schedule, so leaving it in the spread between units overstated the
-#' variance by half under probabilities proportional to size. Zones,
+#' window of occasions also stratifies by quota block and by the occasions a
+#' unit is active at, the second-phase strata (`window_variance_cells()`),
+#' pools the units left alone (`pool_window_lone()`), and is calibrated for
+#' ratio residuals (`window_ratio_spec()`).
+#' Leaving the number of occasions in the spread between units overstated
+#' the variance by half under probabilities proportional to size, leaving
+#' which occasions they are overstated it whenever the outcome changes
+#' between occasions, and leaving the block overstated it by up to four
+#' times when a stratum's units fill its blocks unevenly. Zones,
 #' variance pairs and take-all strata are left out, since activation leaves
 #' most of them with one unit or none. Without a correction no other stratum
 #' is excused as a census.
@@ -1750,16 +2105,16 @@ self_represent <- function(df, entry, vars, design, stages) {
 #' its own whose clusters are its units of the next stage. Folded into its
 #' stratum, its total was read as a draw among the others, and a window gave
 #' it a stratum of one. In a simulation of one certainty EA among twelve,
-#' the estimated variance of a two-wave window fell from 5.7 times the true
+#' the estimated variance of a two-occasion window fell from 5.7 times the true
 #' variance (under `survey.lonely.psu = "adjust"`) to 1.6, and of a single
-#' wave from 1.7 to 1.1.
+#' occasion from 1.7 to 1.1.
 #'
 #' A unit taken with certainty and nothing drawn inside it, a cluster with
 #' no later stage or an element, is the same in every sample. It is a
 #' census stratum of its own, with a correction of one unit out of one, and
 #' the other strata take none. Left in its stratum, its total was read as a
 #' draw among the others, which nearly doubled the standard error of a test
-#' wave, and a window gave it a stratum of one, on which survey stopped.
+#' occasion, and a window gave it a stratum of one, on which survey stopped.
 #' @noRd
 build_activation_ultimate_cluster <- function(
   x,
@@ -1779,12 +2134,12 @@ build_activation_ultimate_cluster <- function(
   )
   design <- prev_phase$design %||% get_design(prev_phase$sample)
   stages <- prev_phase$stages %||% get_stages_executed(prev_phase$sample)
-  # A unit the master lost has a zero total in the waves that activate it.
-  df <- wave_export_rows(x, prev_phase$sample, design, stages, call = call)
+  # A unit the master lost has a zero total in the occasions that activate it.
+  df <- occasion_export_rows(x, prev_phase$sample, design, stages, call = call)
   spec <- export_stage_spec(df, design, stages[1])
   entry <- spec$stage[[1]]
-  # A window repeats a unit over its waves, and the unit is the cluster.
-  if (identical(entry$unit$kind, "element") && is_wave_window(x)) {
+  # A window repeats a unit over its occasions, and the unit is the cluster.
+  if (identical(entry$unit$kind, "element") && is_occasion_window(x)) {
     entry$unit <- list(
       kind = "cluster",
       source = ".sample_id",
@@ -1806,14 +2161,27 @@ build_activation_ultimate_cluster <- function(
     df[[census_col]] <- ifelse(census, entry$unit$id, 0L)
     vars <- c(vars, census_col)
   }
-  # A unit's share of a window's waves is fixed by the schedule, not drawn.
-  if (is_wave_window(x)) {
-    visits_col <- free_name(names(df), ".window_visits")
-    visits <- tapply(df$.wave, entry$unit$id, function(w) {
-      length(unique(w))
-    })
-    df[[visits_col]] <- as.integer(visits[as.character(entry$unit$id)])
-    vars <- c(vars, visits_col)
+  design_vars <- vars
+  # The quota blocks are second-phase strata, and their quotas fix how many
+  # units share each set of occasions.
+  if (is_occasion_window(x)) {
+    cell_col <- free_name(names(df), ".window_cell")
+    df[[cell_col]] <- window_variance_cells(
+      df, entry$unit$id, attr(x, "metadata")
+    )
+    own_cell <- df[[cell_col]]
+    own_cell[attr(own_cell, "fallback")] <- NA
+    attr(df[[cell_col]], "fallback") <- NULL
+    vars <- c(vars, cell_col)
+    # Units the split leaves alone share one stratum, the collapsed strata
+    # whose ratio residuals the calibration below gives.
+    pooled <- pool_window_lone(
+      df, vars, design_vars, entry$unit$id, drawn = !census & !sure$sure
+    )
+    if (!is_null(pooled)) {
+      df[[cell_col]] <- pooled
+      vars <- cell_col
+    }
   }
   entry$strata <- list(
     user = vars,
@@ -1831,16 +2199,16 @@ build_activation_ultimate_cluster <- function(
     nrow(df)
   }
   if (n_units < 2L) {
-    waves <- wave_phrase(attr(x, "metadata")[["wave"]]$wave)
+    occasions <- sample_occasion_phrase(attr(x, "metadata"))
     abort_samplyr(
       c(
-        "The sample of {waves} holds a single primary unit.",
+        "The sample of {occasions} holds a single primary unit.",
         "x" = "A variance compares primary units, and {.pkg survey} refuses
                a design with only one.",
         "i" = "The weights in {.field .weight} are exact. For a variance,
-               a wave needs at least two primary units."
+               an occasion needs at least two primary units."
       ),
-      class = "samplyr_error_wave_one_unit",
+      class = "samplyr_error_occasion_one_unit",
       call = call
     )
   }
@@ -1854,7 +2222,18 @@ build_activation_ultimate_cluster <- function(
     # A census stratum of one unit is no lonely stratum.
     checked <- spec
     checked$stage[[1]]$prob <- as.numeric(census)
-    warn_lonely_strata(checked, design, id_info$stage_indices, call = call)
+    # The strata the window's split by occasions leaves with one unit.
+    split <- 0L
+    if (is_occasion_window(x)) {
+      unsplit <- checked
+      unsplit$stage[[1]]$strata$id <- if (length(design_vars) > 0L) {
+        group_ids(df, design_vars)
+      }
+      split <- sum(spec_singletons(checked, id_info$stage_indices)) -
+        sum(spec_singletons(unsplit, id_info$stage_indices))
+    }
+    warn_lonely_strata(checked, design, id_info$stage_indices,
+                       window_split = split, call = call)
   }
 
   args <- c(
@@ -1875,16 +2254,24 @@ build_activation_ultimate_cluster <- function(
   }
   result <- do.call(survey::svydesign, args)
   result$call <- survey_export_call("svydesign", args)
+  ratio <- if (is_occasion_window(x)) {
+    window_ratio_spec(
+      result,
+      attr(x, "metadata")$occasion$source_weights %||%
+        as.data.frame(prev_phase$sample)[c(".sample_id", ".weight")],
+      cells = own_cell
+    )
+  }
   if (with_spec) {
     spec$stage[[1]]$certainty <- census
-    return(list(design = result, spec = spec))
+    return(list(design = result, spec = spec, ratio = ratio))
   }
-  result
+  apply_window_ratio(result, ratio)
 }
 
-#' Replicate weights for a wave, from its ultimate-cluster design
+#' Replicate weights for an occasion, from its ultimate-cluster design
 #'
-#' Every type resamples the wave's primary units within the master's
+#' Every type resamples the occasion's primary units within the master's
 #' stage-1 strata. The systematic stages named are the master's, as for any
 #' generic replicate weights. A census stratum keeps its weight in every
 #' replicate, as it does in the master's.
@@ -1920,13 +2307,22 @@ build_activation_ultimate_svrep <- function(
     call = call
   )
   svy <- built$design
+  # A window's replicates are calibrated like its linearized design, and
+  # empty units weigh their stand-in in the replicates the calibration reads.
+  if (!is_null(built$ratio)) {
+    svy$variables <- cbind(svy$variables, built$ratio$columns)
+    svy <- with_stand_in(svy, built$ratio)
+  }
   result <- tryCatch(
-    if (any(built$spec$stage[[1]]$certainty) &&
-          needs_first_stage_rebuild(built$spec, type)) {
-      svrep_from_first_stage(svy, built$spec, type, ...)
-    } else {
-      survey::as.svrepdesign(design = svy, type = type, ...)
-    },
+    apply_window_ratio(
+      if (any(built$spec$stage[[1]]$certainty) &&
+            needs_first_stage_rebuild(built$spec, type)) {
+        svrep_from_first_stage(svy, built$spec, type, ...)
+      } else {
+        survey::as.svrepdesign(design = svy, type = type, ...)
+      },
+      built$ratio
+    ),
     error = function(e) {
       abort_samplyr(
         c(
@@ -1943,20 +2339,20 @@ build_activation_ultimate_svrep <- function(
   )
 }
 
-#' Which export a materialized wave takes
+#' Which export a materialized occasion takes
 #'
 #' An activation that keeps every unit is the master's own design. Any
-#' other wave is exported by ultimate clusters, unless `method` asks for
+#' other occasion is exported by ultimate clusters, unless `method` asks for
 #' [survey::twophase()].
-#' @return `NULL` for a sample that is not a wave, otherwise `"identity"`,
+#' @return `NULL` for a sample that is not an occasion, otherwise `"identity"`,
 #'   `"ultimate_cluster"` or `"twophase"`.
 #' @noRd
-wave_export_route <- function(x, phase_info, method = NULL) {
+occasion_export_route <- function(x, phase_info, method = NULL) {
   if (!survey_is_activation(phase_info)) {
     return(NULL)
   }
   metadata <- attr(x, "metadata")
-  if (is_wave_window(x)) {
+  if (is_occasion_window(x)) {
     return("ultimate_cluster")
   }
   if (is_null(metadata$panel_assignment) || activation_is_identity(metadata)) {
@@ -2318,6 +2714,10 @@ complete_phase2_strata <- function(df, strata) {
 #' `unsupported` families used by FPC, PPS, and replicate decisions.
 #' @noRd
 survey_stage_kind <- function(draw_spec) {
+  # The export's last kept stage, read as drawn with replacement.
+  if (isTRUE(draw_spec$export_wr)) {
+    return("wr")
+  }
   # Controlled and spatially balanced methods lack a supported linearization.
   if (
     !is_null(draw_spec$bounds) ||
@@ -2551,16 +2951,50 @@ first_stage_uncorrected <- function(df, fpc) {
 #' naming a stratum by internal codes. Warning at export names the stage and
 #' the design's own strata instead. A stratum taken whole is a census, which
 #' survey accepts, and so is not reported.
+#' @param window_split How many of the lonely strata a window's export made
+#'   by splitting the design's strata by quota block and the occasions a unit is
+#'   active. They cannot be collapsed before export.
 #' @noRd
 warn_lonely_strata <- function(spec, design, id_stage_indices,
-                               call = caller_env()) {
+                               window_split = 0L, call = caller_env()) {
   if (!identical(getOption("survey.lonely.psu", "fail"), "fail")) {
     return(invisible(NULL))
   }
   lonely <- spec_singletons(spec, id_stage_indices)
+  first_stage <- c(id_stage_indices, spec$stages[1])[1L]
   for (stage_idx in as.integer(names(lonely)[lonely > 0L])) {
     n_lonely <- lonely[[as.character(stage_idx)]]
     token <- stage_token(design, stage_idx)
+    hint <- if (window_split > 0L && stage_idx == first_stage) {
+      c(
+        "i" = "{window_split} of them come from the window's export, which
+               splits each stratum by quota block and by the occasions a unit
+               is active at, and not from the design.",
+        "i" = "Set {.code options(survey.lonely.psu = \"average\")} to give
+               such a stratum the mean variance of the others, or
+               {.code \"adjust\"} for a conservative variance that can be
+               far larger. See {.topic panel_assignment}."
+      )
+    } else if (stage_idx != first_stage) {
+      above <- stage_idx - 1L
+      kept <- if (above == 1L) "1" else paste0("1:", above)
+      c(
+        "i" = "At a later stage a stratum is the units drawn in one unit of
+               the stage above, so a stage that takes one unit per parent,
+               such as a person per household, leaves each parent a stratum
+               of one.",
+        "i" = "Export with {.code stages = {kept}} to carry {token} in the
+               totals of the stage above, or set
+               {.code options(survey.lonely.psu = \"adjust\")} for the
+               conservative treatment."
+      )
+    } else {
+      c(
+        "i" = "Set {.code options(survey.lonely.psu = \"adjust\")} for the
+               conservative treatment, or collapse the strata before
+               export."
+      )
+    }
     cli_warn(
       c(
         "In {token}, {n_lonely} strat{?um/a} hold{?s/} a single
@@ -2568,9 +3002,7 @@ warn_lonely_strata <- function(spec, design, id_stage_indices,
         "i" = "{.pkg survey} cannot estimate a variance from one unit and,
                under its default {.code survey.lonely.psu = \"fail\"},
                stops when a standard error is requested.",
-        "i" = "Set {.code options(survey.lonely.psu = \"adjust\")} for the
-               conservative treatment, or collapse the strata before
-               export."
+        hint
       ),
       class = "samplyr_warning_lonely_psu",
       stage = stage_idx,
@@ -2579,6 +3011,24 @@ warn_lonely_strata <- function(spec, design, id_stage_indices,
     )
   }
   invisible(NULL)
+}
+
+#' Report units taken with probability 1 that the stage export reads as drawn
+#' @noRd
+inform_stage_certainty_drawn <- function(token, n_units, call = caller_env()) {
+  cli_inform(
+    c(
+      "In {token}, {n_units} unit{?s} taken with probability 1
+       {qty(n_units)}{?has/have} a single unit drawn below, and {?is/are}
+       read as drawn.",
+      "i" = "A stratum of one unit cannot estimate the variance below it, so
+             the spread between the units of {qty(n_units)}{?its/their}
+             pool stands in for it."
+    ),
+    class = "samplyr_message_stage_certainty_drawn",
+    n_units = n_units,
+    call = call
+  )
 }
 
 #' Selected primary units left with no row in the export's rows
@@ -2724,13 +3174,13 @@ export_empty_records <- function(x, design, stages, vanished) {
   Filter(Negate(is_null), records)
 }
 
-#' A wave's rows for export, with the zero rows its activation keeps
+#' An occasion's rows for export, with the zero rows its activation keeps
 #'
-#' A primary unit the master found empty is a zero row of every wave that
-#' activates it, once for each wave of a window at which its panel is
+#' A primary unit the master found empty is a zero row of every occasion that
+#' activates it, once for each occasion of a window at which its panel is
 #' active, as a unit with rows would be.
 #' @noRd
-wave_export_rows <- function(x, master, design, stages,
+occasion_export_rows <- function(x, master, design, stages,
                              call = caller_env()) {
   df <- as.data.frame(x)
   # Refuses a unit of the master whose record keeps no row.
@@ -2744,22 +3194,27 @@ wave_export_rows <- function(x, master, design, stages,
     "A survey export",
     call = call
   )
-  waves <- attr(x, "metadata")[["wave"]]$wave
+  occasions <- attr(x, "metadata")[["occasion"]]$occasion
   kept <- lapply(records, function(r) {
     zero <- empty_unit_rows(df, r, stages)
-    parts <- lapply(waves, function(w) {
+    parts <- lapply(occasions, function(w) {
       active <- record$schedule$panel[
-        record$schedule$wave == w & record$schedule$active
+        record$schedule$occasion == w & record$schedule$active
       ]
-      on <- activate_cohort(zero, record, active, allow_empty = TRUE,
+      on <- activate_panels(zero, record, active, allow_empty = TRUE,
                             call = call)
       rows <- vctrs::vec_slice(zero, on$keep)
-      if (".wave" %in% names(rows)) {
-        rows$.wave <- vctrs::vec_cast(rep(w, nrow(rows)), df$.wave)
+      if (".period" %in% names(rows)) {
+        pairs <- grid_pairs(record$schedule)
+        rows$.period <- vctrs::vec_cast(rep(pairs$period[w], nrow(rows)),
+                                        df$.period)
+        rows$.subround <- vctrs::vec_cast(
+          rep(pairs$subround[w], nrow(rows)), df$.subround
+        )
       }
       if (".visit" %in% names(rows)) {
         rows$.visit <- vctrs::vec_cast(
-          wave_row_visits(record, rows$.panel, w, on$permanent[on$keep]),
+          occasion_row_visits(record, rows$.panel, w, on$permanent[on$keep]),
           df$.visit
         )
       }
@@ -3534,7 +3989,8 @@ svrepdesign_derived_args <- "design"
 as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
                                    systematic_variance = c("warn",
                                                            "approximate",
-                                                           "error")) {
+                                                           "error"),
+                                   stages = NULL) {
   systematic_variance <- with_error_class(
     rlang::arg_match(systematic_variance),
     "samplyr_error_survey_argument"
@@ -3544,14 +4000,16 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
   check_reserve_settled(x, "as_svydesign")
   rlang::check_installed(
     "survey",
+    version = "4.5",
     reason = "to convert a tbl_sample to a survey design object."
   )
 
   if (holds_settled_reserve(x)) {
     check_reserve_export_route(x, "as_svydesign")
+    check_stages_ultimate_only(stages, "a settled reserve")
     check_forwarded_args(
       enquos(...),
-      owned = c("nest", "method", "systematic_variance"),
+      owned = c("nest", "method", "systematic_variance", "stages"),
       accepted = svydesign_accepted_args,
       derived = svydesign_derived_args,
       forwarded_to = "survey::svydesign"
@@ -3591,9 +4049,10 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
 
   # Export shared weights through source-target contributions.
   if (identical(sample_weight_contract(x), "shared")) {
+    check_no_export_stages(stages, "a sample with shared weights")
     check_forwarded_args(
       enquos(...),
-      owned = c("nest", "method", "systematic_variance"),
+      owned = c("nest", "method", "systematic_variance", "stages"),
       accepted = svydesign_accepted_args,
       derived = svydesign_derived_args,
       forwarded_to = "survey::svydesign"
@@ -3631,40 +4090,58 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
   prev_phase <- phase_info$prev_phase
   is_twophase <- phase_info$is_twophase
   is_activation <- survey_is_activation(phase_info)
-  wave_route <- wave_export_route(x, phase_info, method)
-  if (is_wave_window(x) && !is_null(method)) {
+  occasion_route <- occasion_export_route(x, phase_info, method)
+  if (is_occasion_window(x) && !is_null(method)) {
     abort_samplyr(
       c(
-        "{.arg method} gives the two-phase export of a single wave.",
+        "{.arg method} gives the two-phase export of a single occasion.",
         "x" = "This sample pools
-               {wave_phrase(attr(x, \"metadata\")[[\"wave\"]]$wave)}, and a
-               window of waves is exported by ultimate clusters only."
+               {sample_occasion_phrase(attr(x, \"metadata\"))}, and a
+               window of occasions is exported by ultimate clusters only."
       ),
       class = "samplyr_error_survey_argument"
     )
   }
-  if (identical(wave_route, "twophase") &&
-      isTRUE(attr(x, "metadata")[["wave"]]$provisional)) {
+  if (identical(occasion_route, "twophase") &&
+      isTRUE(attr(x, "metadata")[["occasion"]]$provisional)) {
     abort_samplyr(
       c(
         "{.arg method} asks for the two-phase export, which reads the whole
          master as the first phase.",
-        "x" = "This master's later stages are drawn one wave at a time, and
+        "x" = "This master's later stages are drawn one occasion at a time, and
                some are not drawn yet.",
-        "i" = "Without {.arg method}, the wave is exported by ultimate
+        "i" = "Without {.arg method}, the occasion is exported by ultimate
                clusters from its own rows."
       ),
-      class = "samplyr_error_wave_provisional"
+      class = "samplyr_error_occasion_provisional"
     )
   }
-  # A wave exported as one phase goes to survey::svydesign().
+  # An occasion exported as one phase goes to survey::svydesign().
   to_twophase <- is_twophase &&
-    !identical(wave_route, "ultimate_cluster")
+    !identical(occasion_route, "ultimate_cluster")
+
+  if (identical(occasion_route, "ultimate_cluster")) {
+    check_stages_ultimate_only(stages, "an occasion")
+  } else if (is_twophase) {
+    check_no_export_stages(stages, "a two-phase sample")
+  } else {
+    stages <- check_export_stages(stages, x)
+    if (!is_null(stages) && !is_null(list(...)[["pps"]])) {
+      abort_samplyr(
+        c(
+          "{.arg pps} is not available with {.arg stages}.",
+          "i" = "The last kept stage is read as drawn with replacement, so
+                 its inclusion probabilities do not enter the variance."
+        ),
+        class = "samplyr_error_survey_argument"
+      )
+    }
+  }
 
   # `subset` belongs only to the two-phase branch.
   check_forwarded_args(
     enquos(...),
-    owned = c("nest", "method", "systematic_variance"),
+    owned = c("nest", "method", "systematic_variance", "stages"),
     accepted = if (to_twophase) {
       twophase_accepted_args
     } else {
@@ -3678,12 +4155,12 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
     forwarded_to = if (to_twophase) "survey::twophase" else "survey::svydesign"
   )
 
-  if (identical(wave_route, "ultimate_cluster") &&
+  if (identical(occasion_route, "ultimate_cluster") &&
       !is_null(list(...)[["pps"]])) {
     abort_samplyr(
       c(
-        "{.arg pps} is not available for a wave's ultimate-cluster export.",
-        "i" = "The export treats the wave's primary units as drawn with
+        "{.arg pps} is not available for an occasion's ultimate-cluster export.",
+        "i" = "The export treats the occasion's primary units as drawn with
                replacement, so no inclusion probability enters its
                variance.",
         "i" = "Give {.arg method} for the two-phase export of a master drawn
@@ -3740,7 +4217,7 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
           identical(s$stage, stages_executed[1]))
     }, systematic_stages)
   }
-  if (identical(wave_route, "ultimate_cluster")) {
+  if (identical(occasion_route, "ultimate_cluster")) {
     # Only the master's first stage enters the ultimate-cluster variance.
     systematic_stages <- systematic_approximated_stages(
       prev_phase$design %||% get_design(prev_phase$sample),
@@ -3756,11 +4233,15 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
         as.data.frame(previous),
         phase = 1L
       ),
-      # A wave's stages are its master's, and activation is not systematic.
+      # An occasion's stages are its master's, and activation is not systematic.
       if (!is_activation) systematic_stages
     )
   }
-  approximation <- if (identical(wave_route, "ultimate_cluster")) {
+  if (!is_null(stages) && !is_twophase) {
+    systematic_stages <- systematic_approximated_stages(design, stages, df)
+  }
+  approximation <- if (identical(occasion_route, "ultimate_cluster") ||
+                         identical(stages, 1L)) {
     "ultimate_cluster"
   } else {
     "srswor"
@@ -3777,7 +4258,7 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
     )
   }
 
-  if (identical(wave_route, "ultimate_cluster")) {
+  if (identical(occasion_route, "ultimate_cluster")) {
     return(record_systematic(build_activation_ultimate_cluster(
       x,
       prev_phase = prev_phase,
@@ -3809,7 +4290,8 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
       x,
       dots = list(...),
       nest = nest,
-      relax_pps_for_bootstrap = FALSE
+      relax_pps_for_bootstrap = FALSE,
+      stages = stages
     ))
   }
 }
@@ -4305,12 +4787,18 @@ build_singlephase_svydesign <- function(
   nest,
   relax_pps_for_bootstrap = FALSE,
   check_lonely = TRUE,
-  omit_uncorrected_fpc = FALSE
+  omit_uncorrected_fpc = FALSE,
+  stages = NULL
 ) {
   rlang::local_error_call(caller_env())
   design <- get_design(x)
   stages_executed <- get_stages_executed(x)
   df <- export_rows(x, design, stages_executed)
+  if (!is_null(stages)) {
+    return(build_stages_svydesign(x, df, design, stages_executed, stages,
+                                  dots = dots, nest = nest,
+                                  check_lonely = check_lonely))
+  }
 
   # Only a single-stage specification reaches the resolver.
   user_pps <- survey_user_pps(dots[["pps"]], design, stages_executed, df)
@@ -4380,6 +4868,239 @@ build_singlephase_svydesign <- function(
   result <- do.call(survey::svydesign, args)
   result$call <- survey_export_call("svydesign", args)
   result
+}
+
+#' Export the first stages of a sample, the last read as drawn with
+#' replacement
+#'
+#' Stages 1 to k - 1 keep their corrections. Stage k is drawn with
+#' replacement within its parents and carries every stage below it, the
+#' ultimate-cluster variance when k is 1. Its units taken with probability 1
+#' are read by `stage_export_units()`.
+#' @param stages The kept stages, from `check_export_stages()`.
+#' @noRd
+build_stages_svydesign <- function(x, df, design, executed, stages, dots,
+                                   nest, check_lonely = TRUE) {
+  k <- length(stages)
+  last <- stages[[k]]
+  units <- stage_export_units(df, design, executed, stages,
+                              notify = check_lonely)
+  df <- units$df
+  spec <- units$spec
+  kept <- units$kept
+  census <- units$census
+
+  id_info <- spec_survey_ids(spec, df)
+  df <- id_info$df
+  strata <- spec_survey_strata(spec, df, id_stage_indices = id_info$stage_indices)
+  df <- strata$df
+  fpc <- survey_fpc_info(df, kept, stages, id_info$stage_indices)
+  df <- fpc$df
+  if (any(census)) {
+    # The stage's term is free-named for it, so it can be edited.
+    term <- fpc$fpc_vars[match(last, fpc$stage_indices)]
+    df[[term]][census] <- 1
+  }
+  if (check_lonely) {
+    # Only census units are taken whole in the export. A unit moved down a
+    # stage or kept as a draw still varies.
+    checked <- spec
+    checked$stage[[k]]$prob <- as.numeric(census)
+    warn_lonely_strata(checked, kept, id_info$stage_indices)
+    warn_export_empty_parents(x, kept, id_info$stage_indices)
+  }
+  resolved <- survey_resolve_pps(
+    df = df, design = kept, stages_executed = stages, fpc = fpc
+  )
+  args <- c(
+    list(
+      ids = survey_ids_formula(id_info$id_vars),
+      strata = strata$formula,
+      weights = stats::as.formula("~.weight"),
+      fpc = resolved$fpc$formula,
+      data = resolved$df,
+      nest = nest,
+      pps = resolved$pps
+    ),
+    dots[setdiff(names(dots), "pps")]
+  )
+  # A design read as drawn with replacement needs no correction term.
+  if (!any(census) && k == 1L) {
+    args$fpc <- NULL
+  }
+  result <- do.call(survey::svydesign, args)
+  result$call <- survey_export_call("svydesign", args)
+  result
+}
+
+#' The units of the last kept stage, as the stage export reads them
+#'
+#' A stage-k unit taken with probability 1 is no draw of stage k. With no
+#' stage below, or when every stage below took all of its units, it is a
+#' census stratum of its own (`census`). When the next stage drew two units
+#' or more inside it, it is a stratum of its own whose next-stage units are
+#' the clusters. When the next stage drew one unit inside it, that stratum
+#' could not estimate the variance left below it, so the unit stays a draw
+#' of its parent's pool (`drawn`). The spread between the units of that pool
+#' then stands in for the variance below it, an approximation `notify`
+#' reports. Weights and certainty flags are left as recorded.
+#' @return A list with the data, the spec, the design with stage k read as
+#'   drawn with replacement, and the rows of the census units, the drawn
+#'   units, and the units made strata of their own (`apart`).
+#' @noRd
+stage_export_units <- function(df, design, executed, stages, notify = TRUE) {
+  k <- length(stages)
+  last <- stages[[k]]
+  kept <- with_replacement_stage(design, last)
+  spec <- export_stage_spec(df, kept, stages)
+  entry <- spec$stage[[k]]
+  n <- nrow(df)
+  sure <- export_stage_sure(entry, design$stages[[last]]$draw_spec, n)
+  below <- k < length(executed)
+  # Without clusters, an element stage above another has no unit to read.
+  if (below && identical(entry$unit$kind, "element")) {
+    abort_survey_midstage_element(last)
+  }
+  census <- sure
+  drawn <- apart <- rep(FALSE, n)
+  if (!any(sure)) {
+    return(list(df = df, spec = spec, kept = kept, census = census,
+                drawn = drawn, apart = apart))
+  }
+  unit <- stage_path_ids(spec)
+  if (below) {
+    whole <- rep(TRUE, n)
+    for (stage in executed[-seq_len(k)]) {
+      lower <- list(prob = spec_stage_prob(df, stage),
+                    certainty = df[[paste0(".certainty_", stage)]])
+      whole <- whole &
+        export_stage_sure(lower, design$stages[[stage]]$draw_spec, n)
+    }
+    census <- sure & as.vector(tapply(whole, unit, all)[as.character(unit)])
+    next_stage <- executed[[k + 1L]]
+    under <- spec_stage_unit(df, design$stages[[next_stage]], next_stage)$id
+    n_under <- tapply(under, unit, function(u) length(unique(u[!is.na(u)])))
+    drawn <- sure & !census &
+      as.vector(n_under[as.character(unit)]) < 2L
+    split <- sure & !census & !drawn
+    if (any(split)) {
+      units <- data.frame(unit = unit, under = under)[split, ]
+      entry$unit$id[split] <- max(entry$unit$id) +
+        as.integer(vctrs::vec_group_id(units))
+      entry$unit$kind <- "cluster"
+    }
+  }
+  apart <- sure & !drawn
+  if (any(apart)) {
+    stratum_col <- free_name(names(df), ".taken_whole")
+    df[[stratum_col]] <- ifelse(apart, unit, 0L)
+    user <- c(entry$strata$user, stratum_col)
+    entry$strata <- list(user = user, certainty = NULL,
+                         id = group_ids(df, user))
+  }
+  spec$stage[[k]] <- entry
+  if (notify && any(drawn)) {
+    inform_stage_certainty_drawn(spec$stage[[k]]$name,
+                                 length(unique(unit[drawn])))
+  }
+  list(df = df, spec = spec, kept = kept, census = census, drawn = drawn,
+       apart = apart)
+}
+
+#' Ids of the last kept stage's units, unique across their parents
+#'
+#' Cluster ids may repeat across strata and parents, so a unit is named by
+#' its strata and units at every kept stage.
+#' @noRd
+stage_path_ids <- function(spec) {
+  path <- unlist(lapply(spec$stage, function(e) {
+    list(e$strata$id %||% rep(1L, spec$n_rows), e$unit$id)
+  }), recursive = FALSE)
+  names(path) <- paste0("v", seq_along(path))
+  as.integer(vctrs::vec_group_id(vctrs::new_data_frame(path)))
+}
+
+#' The units of an export's last kept stage that are no random draw
+#'
+#' A recorded certainty unit, or a unit drawn without replacement with
+#' probability 1. A stage drawn with replacement records expected hits, which
+#' can reach 1 in a random draw, so only its recorded certainty units count.
+#' @param draw_spec The stage as drawn, before `with_replacement_stage()`.
+#' @noRd
+export_stage_sure <- function(entry, draw_spec, n) {
+  certain <- (entry$certainty %||% rep(FALSE, n)) %in% TRUE
+  if (identical(survey_stage_kind(draw_spec), "wr")) {
+    return(certain)
+  }
+  certain | is_certainty_probability(entry$prob %||% rep(0, n))
+}
+
+#' Read a stage of the export as drawn with replacement
+#' @noRd
+with_replacement_stage <- function(design, stage) {
+  design$stages[[stage]]$draw_spec$export_wr <- TRUE
+  design
+}
+
+#' The stages an export keeps, a prefix of those the sample executed
+#' @return `NULL` for the full export, otherwise the stage numbers.
+#' @noRd
+check_export_stages <- function(stages, x, call = caller_env()) {
+  if (is_null(stages)) {
+    return(NULL)
+  }
+  executed <- get_stages_executed(x)
+  ok <- is.numeric(stages) && length(stages) > 0L && !anyNA(stages) &&
+    is_integerish_numeric(stages) && length(stages) <= length(executed) &&
+    identical(as.integer(stages), as.integer(executed[seq_along(stages)]))
+  if (!ok) {
+    abort_samplyr(
+      c(
+        "{.arg stages} must name the first stages of the sample, such as
+         {.code 1} or {.code 1:2}.",
+        "i" = "This sample executed {cli::qty(length(executed))}stage{?s}
+               {executed}."
+      ),
+      class = "samplyr_error_survey_argument",
+      call = call
+    )
+  }
+  as.integer(stages)
+}
+
+#' Refuse `stages` beyond 1 where the export is by ultimate clusters already
+#' @noRd
+check_stages_ultimate_only <- function(stages, what, call = caller_env()) {
+  if (is_null(stages) ||
+        (is.numeric(stages) && length(stages) == 1L && isTRUE(stages == 1))) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "{.arg stages} can only be {.code 1} for {what}.",
+      "i" = "It is exported by ultimate clusters, its stage-1 units drawn
+             with replacement, which is what {.code stages = 1} asks."
+    ),
+    class = "samplyr_error_survey_argument",
+    call = call
+  )
+}
+
+#' Refuse `stages` on an export that has no such form
+#' @noRd
+check_no_export_stages <- function(stages, what, call = caller_env()) {
+  if (is_null(stages)) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "{.arg stages} is not available for {what}.",
+      "i" = "It truncates the stages of a single-phase design, and this
+             export has no such form."
+    ),
+    class = "samplyr_error_survey_argument",
+    call = call
+  )
 }
 
 #' The call survey keeps, as a caller would have typed it
@@ -4544,6 +5265,7 @@ as_svydesign.frame_stack <- function(
   )
   rlang::check_installed(
     "survey",
+    version = "4.5",
     reason = "to convert a frame stack to a survey design object."
   )
   check_multiframe_dots(enquos(...))
@@ -4860,6 +5582,12 @@ multiframe_overlaps <- function(x) {
 #'   certainty, so it adds no variance of its own, whereas the default
 #'   `"fail"` refuses such a stratum. For `type = "random_groups"`, only
 #'   `mse` (default `FALSE`) is accepted.
+#' @param stages `NULL`, the default, or `1`, which replicates the
+#'   ultimate-cluster design of `as_svydesign(x, stages = 1)`: the stage-1
+#'   units are resampled within their strata, the correction is left out by
+#'   choice, and no first-stage warning is raised. It is taken by the types
+#'   that resample stage-1 units only, and refused with `"mrbbootstrap"`,
+#'   `"rwyb"` and `"random_groups"` (`samplyr_error_survey_argument`).
 #' @param systematic_variance What to do about the generic replicate weights
 #'   built for `systematic` and `pps_systematic` stages. `"warn"` (default)
 #'   builds them and warns once per call, naming every affected stage.
@@ -4875,9 +5603,10 @@ multiframe_overlaps <- function(x) {
 #' @details
 #' Replicate conversion supports single-phase designs, including multistage
 #' samples, shared weights and independent frame stacks, and materialized
-#' waves, which are replicated by ultimate clusters as [as_svydesign()]
-#' exports them. `"rwyb"` is refused for a wave
-#' (`samplyr_error_wave_replicate_type`). Two-phase replicate
+#' occasions, which are replicated by ultimate clusters as [as_svydesign()]
+#' exports them, a window's replicates calibrated on the same totals as its
+#' linearized design. `"rwyb"` is refused for an occasion
+#' (`samplyr_error_occasion_replicate_type`). Two-phase replicate
 #' export is unsupported, except for a second phase drawn within each
 #' final-stage pool of phase 1, which is phase 1's multistage design with a
 #' smaller final take and is replicated as that design ([as_svydesign()]
@@ -4919,6 +5648,18 @@ multiframe_overlaps <- function(x) {
 #' full weight in every replicate. With certainty PSUs these types gave 1.1
 #' to 1.2 times the true variance in a Monte Carlo, and linearization and
 #' `"rwyb"` about 1.0.
+#'
+#' A stage-1 unit taken with probability 1 above a later stage is converted
+#' as a certainty PSU, whether a certainty rule took it or its stratum was
+#' taken whole (`n` equal to the stratum's size, `frac = 1`). Its correction
+#' of one would otherwise remove its later stages' variance. The other
+#' first-stage units are then read as drawn with replacement
+#' (`samplyr_warning_replicate_wr_first_stage`), and `"JK1"` is refused,
+#' since the first stage becomes stratified, with `"JKn"` taking its place
+#' under `"auto"`. On a design whose urban domain was one pseudo-unit
+#' taken whole, `"JKn"` went from 0.77 to 1.15 of the true standard error.
+#' A single stage keeps its correction, which gives such a unit no variance
+#' and is exact.
 #'
 #' ## Rao-Wu-Yue-Beaumont bootstrap
 #'
@@ -5032,7 +5773,8 @@ as_svrepdesign.tbl_sample <- function(
     "Fay",
     "random_groups"
   ),
-  systematic_variance = c("warn", "approximate", "error")
+  systematic_variance = c("warn", "approximate", "error"),
+  stages = NULL
 ) {
   systematic_variance <- with_error_class(
     rlang::arg_match(systematic_variance),
@@ -5050,12 +5792,13 @@ as_svrepdesign.tbl_sample <- function(
   check_reserve_settled(x, "as_svrepdesign")
   rlang::check_installed(
     "survey",
+    version = "4.5",
     reason = "to convert a tbl_sample to a replicate-weight survey design."
   )
 
   check_forwarded_args(
     enquos(...),
-    owned = c("type", "systematic_variance"),
+    owned = c("type", "systematic_variance", "stages"),
     accepted = switch(
       type,
       rwyb = c("replicates", "mse", "compress", "lonely.psu"),
@@ -5067,11 +5810,13 @@ as_svrepdesign.tbl_sample <- function(
   )
 
   if (identical(type, "random_groups")) {
+    check_no_export_stages(stages, "random-group replicates")
     return(build_random_groups_svrepdesign(x, ...))
   }
 
   if (holds_settled_reserve(x)) {
     check_reserve_export_route(x, "as_svrepdesign")
+    check_stages_ultimate_only(stages, "a settled reserve")
     if (type %in% c("mrbbootstrap", "rwyb")) {
       abort_samplyr(
         c(
@@ -5122,6 +5867,7 @@ as_svrepdesign.tbl_sample <- function(
 
   # Replicate the source design before applying shared weights.
   if (identical(sample_weight_contract(x), "shared")) {
+    check_no_export_stages(stages, "a sample with shared weights")
     return(svrep_from_shared_weights(
       x,
       type = type,
@@ -5131,25 +5877,26 @@ as_svrepdesign.tbl_sample <- function(
   }
 
   x <- composed_subsample(x) %||% x
-  wave_route <- wave_export_route(x, survey_phase_info(x))
+  occasion_route <- occasion_export_route(x, survey_phase_info(x))
   phase_info <- survey_validate_phase_support(
     x,
-    allow_twophase = !is_null(wave_route),
+    allow_twophase = !is_null(occasion_route),
     fn_name = "as_svrepdesign"
   )
-  if (!is_null(wave_route) && type == "rwyb") {
+  if (!is_null(occasion_route) && type == "rwyb") {
     abort_samplyr(
       c(
         "{.fn as_svrepdesign} cannot build {.val rwyb} replicates for a
-         wave.",
-        "i" = "{.val rwyb} replicates the master's selection, and a wave
+         occasion.",
+        "i" = "{.val rwyb} replicates the master's selection, and an occasion
                adds its activation on top of it.",
-        "i" = "The other types replicate the wave's primary units."
+        "i" = "The other types replicate the occasion's primary units."
       ),
-      class = "samplyr_error_wave_replicate_type"
+      class = "samplyr_error_occasion_replicate_type"
     )
   }
-  if (identical(wave_route, "ultimate_cluster")) {
+  if (identical(occasion_route, "ultimate_cluster")) {
+    check_stages_ultimate_only(stages, "an occasion")
     return(build_activation_ultimate_svrep(
       x,
       prev_phase = phase_info$prev_phase,
@@ -5160,6 +5907,10 @@ as_svrepdesign.tbl_sample <- function(
   }
 
   design <- get_design(x)
+  stages <- check_export_stages(stages, x)
+  if (!is_null(stages)) {
+    return(build_stage1_svrepdesign(x, stages, type, systematic_variance, ...))
+  }
   if (type == "rwyb") {
     return(build_rwyb_svrepdesign(x, systematic_variance, ...))
   }
@@ -5175,12 +5926,16 @@ as_svrepdesign.tbl_sample <- function(
       "i" = "Use {.code as_svrepdesign(x, type = \"rwyb\")} for independent Poisson sampling."
     ), class = "samplyr_error_poisson_replicates")
   }
+  spec <- flag_probability_one(spec)
   first <- spec$stage[[1]]
   pps_safe_types <- c("subbootstrap", "mrbbootstrap")
-  # BRR, Fay and the rescaled bootstrap carry no first-stage correction,
-  # so they read an equal-probability first stage as drawn with replacement.
+  # BRR, Fay and the rescaled bootstrap carry no first-stage correction, and
+  # the conversion around certainty units drops it, so they read an
+  # equal-probability first stage as drawn with replacement.
   fpc_dropped <- identical(first$kind, "equal_wor") &&
-    type %in% c("BRR", "Fay", "subbootstrap")
+    !(length(first$certainty) > 0L && all(first$certainty %in% TRUE)) &&
+    (type %in% c("BRR", "Fay", "subbootstrap") ||
+       needs_first_stage_rebuild(spec, type))
   if (
     (stage_replicated_as_wr(design$stages[[first$stage]]$draw_spec,
                             first$kind) &&
@@ -5238,6 +5993,20 @@ as_svrepdesign.tbl_sample <- function(
     )
   }
 
+  if (identical(type, "JK1") && needs_first_stage_rebuild(spec, type)) {
+    abort_samplyr(
+      c(
+        "{.code type = \"JK1\"} resamples an unstratified first stage, and
+         this sample's replicate design stratifies it.",
+        "i" = "A first stage drawn with probabilities proportional to size
+               without replacement, and units taken with probability 1 above
+               a later stage, are strata of their own there.",
+        "i" = "Use {.code type = \"JKn\"}, which {.code type = \"auto\"}
+               picks for this sample."
+      ),
+      class = "samplyr_error_svrep_conversion_failed"
+    )
+  }
   call <- current_env()
   result <- tryCatch(
     withCallingHandlers(
@@ -5311,6 +6080,109 @@ first_stage_fpc_scales_later_stages <- function(svydesign_obj, spec, type) {
     !all(vapply(spec$stage[-1], `[[`, logical(1), "census"))
 }
 
+
+#' Replicates of the ultimate-cluster design
+#'
+#' The first-stage types resample the stage-1 units of
+#' `as_svydesign(x, stages = 1)`, so the correction is left out by choice and
+#' no warning says so. A unit taken with probability 1 and nothing below it
+#' is left out of the resampling and keeps its weight, since survey's
+#' jackknife and bootstrap misread the infinite correction the other units
+#' would take.
+#' @noRd
+build_stage1_svrepdesign <- function(x, stages, type, systematic_variance,
+                                     ..., call = caller_env()) {
+  if (length(stages) > 1L || type %in% c("rwyb", "mrbbootstrap")) {
+    abort_samplyr(
+      c(
+        "{.fn as_svrepdesign} takes {.code stages = 1} with the types that
+         resample stage-1 units only.",
+        "i" = "{.val mrbbootstrap} and {.val rwyb} read every stage, and a
+               replicate form for keeping later stages is not written.",
+        "i" = "{.fn as_svydesign} takes {.code stages = 1:k}."
+      ),
+      class = "samplyr_error_survey_argument",
+      call = call
+    )
+  }
+  design <- get_design(x)
+  executed <- get_stages_executed(x)
+  systematic_stages <- systematic_approximated_stages(
+    design, stages, as.data.frame(x)
+  )
+  check_systematic_variance(
+    systematic_stages,
+    systematic_variance,
+    approximation = "generic_replicates",
+    fn_name = "as_svrepdesign"
+  )
+  svy <- build_singlephase_svydesign(
+    x, dots = list(), nest = TRUE, check_lonely = FALSE, stages = stages
+  )
+  units <- stage_export_units(
+    export_rows(x, design, executed, notify = FALSE), design, executed, stages
+  )
+  spec <- units$spec
+  if (identical(type, "JK1") && any(units$apart)) {
+    abort_samplyr(
+      c(
+        "{.code type = \"JK1\"} resamples an unstratified first stage, and
+         this sample's replicate design stratifies it.",
+        "i" = "Units taken with probability 1 are strata of their own there.",
+        "i" = "Use {.code type = \"JKn\"}, which {.code type = \"auto\"}
+               picks for this sample."
+      ),
+      class = "samplyr_error_svrep_conversion_failed",
+      call = call
+    )
+  }
+  result <- tryCatch(
+    if (any(units$census)) {
+      spec$stage[[1]]$certainty <- units$census
+      svrep_from_first_stage(svy, spec, type, ...)
+    } else {
+      survey::as.svrepdesign(design = svy, type = type, ...)
+    },
+    error = function(e) {
+      abort_samplyr(
+        c(
+          "{.fn as_svrepdesign} failed to convert this design to replicate
+           weights.",
+          "x" = "{conditionMessage(e)}"
+        ),
+        class = "samplyr_error_svrep_conversion_failed",
+        call = call
+      )
+    }
+  )
+  record_systematic_variance(
+    result, systematic_stages, systematic_variance, "generic_replicates"
+  )
+}
+
+#' Read the stage-1 units taken with probability 1 as certainty units
+#'
+#' A stratum taken whole, or a unit whose probability reaches 1 with no
+#' certainty rule, is no random draw. With a stage below, a correction of one
+#' would remove that stage's variance from the replicates, so the replicate
+#' conversion takes its next-stage units as the sampling units, as for a
+#' certainty unit. A single stage keeps its correction, which gives such a
+#' unit no variance and is exact. A first stage drawn with replacement has
+#' no such units.
+#' @noRd
+flag_probability_one <- function(spec) {
+  first <- spec$stage[[1]]
+  if (length(spec$stages) < 2L || identical(first$kind, "wr") ||
+        is_null(first$prob)) {
+    return(spec)
+  }
+  sure <- is_certainty_probability(first$prob)
+  if (any(sure)) {
+    flagged <- first$certainty %||% rep(FALSE, length(sure))
+    spec$stage[[1]]$certainty <- flagged %in% TRUE | sure
+  }
+  spec
+}
 
 #' Does the first stage need its own conversion?
 #'
@@ -5641,6 +6513,7 @@ as_svrepdesign.frame_stack <- function(
   )
   rlang::check_installed(
     "survey",
+    version = "4.5",
     reason = "to convert a frame stack to a replicate-weight survey design."
   )
   check_multiframe_rep_dots(enquos(...))

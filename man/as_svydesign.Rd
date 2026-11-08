@@ -12,7 +12,8 @@ as_svydesign(x, ...)
   ...,
   nest = TRUE,
   method = NULL,
-  systematic_variance = c("warn", "approximate", "error")
+  systematic_variance = c("warn", "approximate", "error"),
+  stages = NULL
 )
 }
 \arguments{
@@ -38,7 +39,7 @@ to \code{\link[survey:svydesign]{survey::svydesign()}}. It has no effect on a sa
 \item{method}{For two-phase samples, the variance method passed to
 \code{\link[survey:twophase]{survey::twophase()}}. One of \code{"full"}, \code{"approx"}, or \code{"simple"}.
 This argument is only accepted for two-phase samples. A materialized
-wave is exported by ultimate clusters unless \code{method} is given, which
+occasion is exported by ultimate clusters unless \code{method} is given, which
 asks for its two-phase export instead.}
 
 \item{systematic_variance}{What to do about the variance approximation
@@ -53,11 +54,20 @@ object. The choice, the affected stages and each stage's approximation
 are recorded in the \code{"samplyr_systematic_variance"} attribute of the
 result. \code{\link[=as_svrepdesign]{as_svrepdesign()}} takes the same argument for its own
 approximation of these stages.}
+
+\item{stages}{\code{NULL}, the default, exports every executed stage. A prefix
+of the executed stages, such as \code{1} or \code{1:2}, keeps those stages and
+reads the last as drawn with replacement within its parents, without a
+finite population correction, so it carries the variance of every stage
+below. \code{stages = 1} is the ultimate-cluster variance. A materialized
+occasion and a settled reserve take \code{stages = 1} only, which is how they
+are exported anyway, and a two-phase sample or one with shared weights
+takes none (\code{samplyr_error_survey_argument}).}
 }
 \value{
 A \code{survey.design2} object for single-phase and multi-stage samples
-and for materialized waves, or a \code{twophase}/\code{twophase2} object for
-two-phase samples and for waves exported with \code{method}.
+and for materialized occasions, or a \code{twophase}/\code{twophase2} object for
+two-phase samples and for occasions exported with \code{method}.
 }
 \description{
 Creates a \code{\link[survey:svydesign]{survey::svydesign()}} object from a \code{tbl_sample}, using
@@ -144,16 +154,16 @@ A \emph{new} phase-2 \code{sampling_design} executed with the phase-1 \code{tbl_
 as its frame, as in \code{phase2 <- execute(design2, phase1)}, records a
 previous-phase link, and \code{as_svydesign()} calls \code{\link[survey:twophase]{survey::twophase()}}.
 
-A materialized wave exported with \code{method} is the other two-phase case.
+A materialized occasion exported with \code{method} is the other two-phase case.
 Its second phase is the panel activation: within a frozen block the
 master took a simple random sample without replacement of the realized
 quota, so the blocks are the phase-2 strata and their sizes the phase-2
 population counts. The master is retained as the first phase and supplies
-the rows the wave did not keep. Columns added to the wave for analysis
-are carried into the exported design. Wave or phase-2 analysis columns
+the rows the occasion did not keep. Columns added to the occasion for analysis
+are carried into the exported design. Occasion or phase-2 analysis columns
 replace same-named first-phase columns and are missing on unsampled
-rows. Columns absent from the wave remain available from the master, so
-dropping a wave column does not erase the master's measurements. Design
+rows. Columns absent from the occasion remain available from the master, so
+dropping an occasion column does not erase the master's measurements. Design
 identifiers, strata and internal sampling columns keep their recorded
 meanings. Keep earlier measurements under separate names if both are
 needed.
@@ -161,7 +171,7 @@ needed.
 When phase 2 keeps unequal shares of the phase-1 strata, survey 4.5
 gives each phase-1 stratum another stratum's sample size in the phase-1
 part of this variance. The variance of a \emph{total} then depends on the
-outcome's level. In simulations of a wave it averaged a quarter of the
+outcome's level. In simulations of an occasion it averaged a quarter of the
 true variance or less and was often negative. The export rebuilds that
 part by survey's own formula with the sizes in place, which changes
 nothing where survey's result was already right. A phase 2 stratified
@@ -195,9 +205,9 @@ unit of every pool. A phase 2 stratified more coarsely or more finely than the p
 clustered, or drawn with unequal probabilities keeps the two-phase route.
 
 \code{\link[survey:twophase]{survey::twophase()}} takes no \code{pps} for the first phase, so any other
-two-phase sample, or wave exported with \code{method}, whose phase 1 was drawn
+two-phase sample, or occasion exported with \code{method}, whose phase 1 was drawn
 with unequal probabilities without replacement is refused
-(\code{samplyr_error_twophase_phase1_pps}, \code{samplyr_error_wave_phase1_pps}).
+(\code{samplyr_error_twophase_phase1_pps}, \code{samplyr_error_occasion_phase1_pps}).
 So are \code{cube}, first-stage \code{pps_poisson} and the spatial methods, which
 are unsupported at either phase. Equal-probability first phases export,
 stratified, clustered, multistage and with-replacement alike. No
@@ -214,11 +224,11 @@ was drawn across the phase-1 units:
 }\if{html}{\out{</div>}}
 }
 
-\subsection{Waves}{
+\subsection{Occasions}{
 
-A materialized wave, \code{execute(master, wave = t)}, is exported as one
+A materialized occasion, \code{execute(master, period = p)}, is exported as one
 phase by ultimate clusters. The master's stage-1 units are the clusters,
-its stage-1 stratification variables the strata, and the wave's weights
+its stage-1 stratification variables the strata, and the occasion's weights
 the weights, with no finite population correction. Every later stage and
 the activation are carried in the unit totals, so the master may have
 been drawn by any method, with probabilities proportional to size
@@ -228,9 +238,9 @@ leaves most zones with one unit or none. A stage-1 unit taken with
 certainty, with a later stage drawn inside it, represents itself. It is a
 stratum of its own, whose clusters are its units of the next stage, since
 only they vary between samples. In a simulation of one certainty EA among
-twelve, that brought the estimated variance of a wave from 1.7 to 1.1
-times the true one, and of a two-wave window, where the EA otherwise
-stood alone among the units active at both waves and survey stopped on
+twelve, that brought the estimated variance of an occasion from 1.7 to 1.1
+times the true one, and of a two-occasion window, where the EA otherwise
+stood alone among the units active at both occasions and survey stopped on
 it, from 5.7 under \code{survey.lonely.psu = "adjust"} to 1.6. A unit taken
 with certainty and nothing drawn inside it, a stage-1 cluster with no
 later stage or an element, is the same in every sample. It is a stratum
@@ -242,24 +252,27 @@ In a simulation with 8 EAs active per stratum, its standard error was
 two-phase export gave 0.88, and 1.06 with EAs drawn by size, which has
 no two-phase export.
 
-A window of several waves, \code{execute(master, wave = 1:3)}, is exported
+A window of several occasions, \code{execute(master, period = 1:3)}, is exported
 the same way. A unit's rows over the window are one cluster, and the
-strata are crossed with the number of the window's waves a unit is
-active, which the schedule fixes and which sets the unit's share of the
-window's weight. In a simulation of windows over masters of 16 to 18 EAs
-per stratum, the standard error was 0.95 to 1.12 of the true one, and 95\%
-intervals covered 92\% to 97\%, with EAs drawn by simple random sampling or
-by size. \code{method} is refused for a window.
+strata are crossed with the quota block and the occasions of the window
+a unit is active at, which its panel fixes. The design is calibrated on
+each stratum's total of the units' activation multipliers, which leaves
+the weights unchanged and gives merged strata ratio residuals. In
+simulations of windows over clustered masters of 16 to 18 EAs per
+stratum, the standard error was 0.98 to 1.04 of the true one, and 95\%
+intervals covered 93\% to 97\%, with EAs drawn by simple random sampling or
+by size. \link{panel_assignment} gives the rule and the smaller strata.
+\code{method} is refused for a window.
 
-A wave of a master whose later stages are still drawn one period or
-tenure at a time is exported the same way, from its own rows. The
+An occasion of a master whose later stages are still drawn one period or
+cohort at a time is exported the same way, from its own rows. The
 two-phase export reads the whole master and refuses it
-(\code{samplyr_error_wave_provisional}).
+(\code{samplyr_error_occasion_provisional}).
 
 \code{\link[=as_svrepdesign]{as_svrepdesign()}} replicates the same design, and \code{\link[srvyr:as_survey_design]{as_survey_design()}}
 follows \code{as_svydesign()}. \code{pps} is refused (\code{samplyr_error_survey_argument}),
-and so is a wave holding a single primary unit
-(\code{samplyr_error_wave_one_unit}). A wave that activates every unit is the
+and so is an occasion holding a single primary unit
+(\code{samplyr_error_occasion_one_unit}). An occasion that activates every unit is the
 master's own design and is exported as such.
 }
 
@@ -322,28 +335,38 @@ units were drawn with replacement within their strata, without a finite
 population correction. The variance of every later stage is then carried
 by the primary-unit totals, which is why it is called the ultimate-cluster
 variance. It is the variance to reproduce when a new design is compared
-with what an earlier round published. \code{as_svydesign()} builds it for a
-materialized wave and for a settled reserve only. For other samples it
-derives \code{ids}, \code{strata} and
-\code{fpc} from the design, and survey builds the ultimate-cluster design from
-the sample's own columns:
+with what an earlier round published, and \code{as_svydesign(sample, stages = 1)} builds it. A materialized occasion and a settled reserve are always
+exported this way.
 
-\if{html}{\out{<div class="sourceCode r">}}\preformatted{survey::svydesign(
-  ids = ~ea_id,
-  strata = ~interaction(region, urban_rural, drop = TRUE),
-  weights = ~.weight,
-  nest = TRUE,
-  data = as.data.frame(sample)
-)
-}\if{html}{\out{</div>}}
+The export keeps the first stage's strata and units, the zero rows of
+empty primary units included. A primary unit taken with probability 1, by
+a certainty rule or because its stratum was taken whole, is no draw. When
+the next stage drew two units or more inside it, it is a stratum of its
+own whose next-stage units are the clusters. When nothing below it is
+random, with no stage below or every unit below taken, it is a census
+stratum of its own and adds no variance. When the next stage drew a single
+unit inside it, as one household in a certainty EA, a stratum of its own
+could not estimate the variance below. It then stays a draw of its
+stratum, and the spread between that stratum's units stands in for the
+variance below it (\code{samplyr_message_stage_certainty_drawn}). A stage drawn
+with replacement has no such units, even where a unit expects one hit or
+more. Built by hand from \code{as.data.frame(sample)}, the same design
+loses the empty units and reads certainty units as drawn. On a Brewer
+design with one certainty EA, over 300 samples, the hand-built design gave
+0.94 of the true standard error and \code{stages = 1} 0.99.
 
-\code{ids} names the first stage's cluster variable and \code{strata} its
-stratification variables. The approximation is conservative. It leaves
-out the finite population correction, so it overstates the variance most
-where a stratum selects a large share of its primary units, and it treats
-certainty units as sampled. A stratum with a single primary unit stops
-survey, as it does for the export, unless \code{options(survey.lonely.psu = )}
-says how to treat it.
+\code{stages = 1:k} keeps stages 1 to k - 1 with their corrections and reads
+stage k the same way. It suits a stage whose variance cannot be
+estimated, such as one respondent per household: \code{stages = 1:2} on a
+design of EAs, households and one person carries the person stage in the
+household totals, and keeps the first stage's correction, which matters
+where that stage takes a large share. Exported in full, such a stage
+leaves each household a stratum of one unit, which the export names
+(\code{samplyr_warning_lonely_psu}). The approximation is conservative.
+It leaves out stage k's correction, so it overstates the variance most
+where stage k takes a large share of its units. A stratum with a single
+unit stops survey, as for the full export, unless
+\code{options(survey.lonely.psu = )} says how to treat it.
 }
 
 \subsection{A settled reserve}{
@@ -359,8 +382,8 @@ carried in the primary-unit totals. The share of each pool's eligible
 units that responded is treated as fixed. A two-phase sample, shared
 weights, and the \code{"mrbbootstrap"} and \code{"rwyb"} replicates of
 \code{\link[=as_svrepdesign]{as_svrepdesign()}} would build the stages one by one, and refuse a
-settled reserve (\code{samplyr_error_reserve_full_export}). A wave holds no
-settlement of its own, so a wave of a master that draws a reserve is
+settled reserve (\code{samplyr_error_reserve_full_export}). An occasion holds no
+settlement of its own, so an occasion of a master that draws a reserve is
 refused with the same class, settled or not, and the settled master
 exports as a whole.
 
@@ -386,7 +409,7 @@ later reserve stage whose units all proved ineligible keeps one such row,
 as a zero total.
 
 A primary unit taken with certainty, with a later stage drawn inside it,
-represents itself as it does in a wave. It is a stratum of its own whose
+represents itself as it does in an occasion. It is a stratum of its own whose
 clusters are its units of the next stage. With the reserve at that
 stage, its pools are exported as first-stage pools are, times the weight
 of the stage above, so its ineligible units add rows and a placeholder
@@ -555,7 +578,7 @@ Other survey export:
 \code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},
 \code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
 \code{\link[=as_svrepdesign]{as_svrepdesign()}},
-\code{\link[=stack_waves]{stack_waves()}},
+\code{\link[=stack_periods]{stack_periods()}},
 \code{\link{variance_estimation}},
 \code{\link[=variance_estimators]{variance_estimators()}}
 }

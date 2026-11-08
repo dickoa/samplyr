@@ -455,7 +455,11 @@ allocate_strata <- function(
     } else {
       pmin(rep(max_n, H), structural_max)
     }
-    lower <- if (is_null(min_n)) rep(0, H) else pmin(rep(min_n, H), upper)
+    lower <- rep(min_n %||% 0, H)
+    # The total must not cap a multi-hit minimum it has to satisfy.
+    if (!wr) {
+      lower <- pmin(lower, upper)
+    }
 
     if (sum(lower) > n_total) {
       abort_samplyr(

@@ -2,7 +2,7 @@
 % Please edit documentation in R/serialize.R
 \name{as.list.sampling_design}
 \alias{as.list.sampling_design}
-\title{Convert a sampling design to a list}
+\title{Summarize a sampling design as a list}
 \usage{
 \method{as.list}{sampling_design}(x, ...)
 }
@@ -19,8 +19,10 @@ A list representation of the design containing:
 }
 }
 \description{
-Converts a sampling design object to a plain list representation,
-useful for inspection, serialization, or export.
+Summarizes a sampling design as a plain list for inspection. The list is
+not a complete record of the design. It leaves out settings such as \code{cv},
+\code{importance}, \code{power}, \code{prn} and \code{certainty_overflow}, and the values of a
+table of sizes. \code{\link[=write_design]{write_design()}} and \code{\link[=design_json]{design_json()}} keep every setting.
 }
 \examples{
 design <- sampling_design(title = "Household Survey") |>

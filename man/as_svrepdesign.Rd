@@ -12,7 +12,8 @@ as_svrepdesign(x, ...)
   ...,
   type = c("auto", "JK1", "JKn", "BRR", "bootstrap", "subbootstrap", "mrbbootstrap",
     "rwyb", "Fay", "random_groups"),
-  systematic_variance = c("warn", "approximate", "error")
+  systematic_variance = c("warn", "approximate", "error"),
+  stages = NULL
 )
 }
 \arguments{
@@ -59,6 +60,13 @@ acknowledgment, since no type reproduces systematic selection. Census
 stages are exempt, as in \code{\link[=as_svydesign]{as_svydesign()}}. The choice and the affected
 stages are recorded in the \code{"samplyr_systematic_variance"} attribute of
 the result.}
+
+\item{stages}{\code{NULL}, the default, or \code{1}, which replicates the
+ultimate-cluster design of \code{as_svydesign(x, stages = 1)}: the stage-1
+units are resampled within their strata, the correction is left out by
+choice, and no first-stage warning is raised. It is taken by the types
+that resample stage-1 units only, and refused with \code{"mrbbootstrap"},
+\code{"rwyb"} and \code{"random_groups"} (\code{samplyr_error_survey_argument}).}
 }
 \value{
 A \code{svyrep.design} object from the survey package.
@@ -72,9 +80,10 @@ directly from recorded stage mechanisms. Other methods first build a
 \details{
 Replicate conversion supports single-phase designs, including multistage
 samples, shared weights and independent frame stacks, and materialized
-waves, which are replicated by ultimate clusters as \code{\link[=as_svydesign]{as_svydesign()}}
-exports them. \code{"rwyb"} is refused for a wave
-(\code{samplyr_error_wave_replicate_type}). Two-phase replicate
+occasions, which are replicated by ultimate clusters as \code{\link[=as_svydesign]{as_svydesign()}}
+exports them, a window's replicates calibrated on the same totals as its
+linearized design. \code{"rwyb"} is refused for an occasion
+(\code{samplyr_error_occasion_replicate_type}). Two-phase replicate
 export is unsupported, except for a second phase drawn within each
 final-stage pool of phase 1, which is phase 1's multistage design with a
 smaller final take and is replicated as that design (\code{\link[=as_svydesign]{as_svydesign()}}
@@ -115,6 +124,18 @@ units are resampled, and a certainty unit with no stage below keeps its
 full weight in every replicate. With certainty PSUs these types gave 1.1
 to 1.2 times the true variance in a Monte Carlo, and linearization and
 \code{"rwyb"} about 1.0.
+
+A stage-1 unit taken with probability 1 above a later stage is converted
+as a certainty PSU, whether a certainty rule took it or its stratum was
+taken whole (\code{n} equal to the stratum's size, \code{frac = 1}). Its correction
+of one would otherwise remove its later stages' variance. The other
+first-stage units are then read as drawn with replacement
+(\code{samplyr_warning_replicate_wr_first_stage}), and \code{"JK1"} is refused,
+since the first stage becomes stratified, with \code{"JKn"} taking its place
+under \code{"auto"}. On a design whose urban domain was one pseudo-unit
+taken whole, \code{"JKn"} went from 0.77 to 1.15 of the true standard error.
+A single stage keeps its correction, which gives such a unit no variance
+and is exact.
 }
 
 \subsection{Rao-Wu-Yue-Beaumont bootstrap}{
@@ -216,7 +237,7 @@ Other survey export:
 \code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},
 \code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
 \code{\link[=as_svydesign]{as_svydesign()}},
-\code{\link[=stack_waves]{stack_waves()}},
+\code{\link[=stack_periods]{stack_periods()}},
 \code{\link{variance_estimation}},
 \code{\link[=variance_estimators]{variance_estimators()}}
 }

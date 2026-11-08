@@ -63,8 +63,8 @@ estimator.
 \item \code{lpm2} and \code{scps} spread the sample in space.
 }
 
-"Min. repl." is probability minimum replacement: \code{pps_chromy} draws a unit
-either \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
+\code{Minimum} in the Replacement column is probability minimum replacement.
+\code{pps_chromy} draws a unit either \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
 times, where \eqn{E} is its expected number of hits, so a unit is never hit
 more often than its size warrants.
 }
@@ -90,7 +90,7 @@ a \code{pps_chromy} stage is treated as drawn with replacement
 (\link{variance_estimation}).
 
 \code{pps_poisson}, \code{pps_sps} and \code{pps_pareto} take permanent random numbers,
-for samples coordinated across waves or surveys.
+for samples coordinated across occasions or surveys.
 }
 
 \subsection{Spreading the sample}{

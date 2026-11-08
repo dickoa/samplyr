@@ -50,5 +50,6 @@
 #' @importFrom vctrs vec_group_loc vec_as_location vec_restore
 #' @importFrom withr with_seed
 #' @importFrom pillar tbl_sum
+#' @importFrom pillar tbl_format_footer
 ## usethis namespace: end
 NULL

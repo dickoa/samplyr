@@ -2,103 +2,132 @@
 % Please edit documentation in R/rotation-program.R
 \name{rotation_program}
 \alias{rotation_program}
-\title{Link the cohorts of a replenishing rotating panel}
+\title{Link the selections of a replenishing rotating panel}
 \usage{
-rotation_program(cohorts, entry_wave = NULL, schedule = NULL, through = NULL)
+rotation_program(
+  selections,
+  entry_period = NULL,
+  schedule = NULL,
+  through = NULL
+)
 }
 \arguments{
-\item{cohorts}{A named list of executed \code{tbl_sample} objects, one per
-cohort. Each must be complete, unmodified and a single replicate.}
+\item{selections}{A named list of executed \code{tbl_sample} objects, one per
+selection. Each must be complete, unmodified and a single replicate.}
 
-\item{entry_wave}{Integer vector of entry occasions, named to match
-\code{cohorts}. Required with a data-frame \code{schedule} and omitted with an
+\item{entry_period}{Integer vector of entry periods, named to match
+\code{selections}. Required with a data-frame \code{schedule} and omitted with an
 \code{svyplan_schedule}.}
 
 \item{schedule}{A data frame declaring which components are active at which
-wave, or an \code{svyplan_schedule} from \code{\link[svyplan:design_schedule]{svyplan::design_schedule()}}.}
+occasion, or an \code{svyplan_schedule} from \code{\link[svyplan:design_schedule]{svyplan::design_schedule()}}.}
 
-\item{through}{Last occasion to register from an \code{svyplan_schedule}.
-Required for that route and unused with a data-frame schedule.}
+\item{through}{Last period to register from an \code{svyplan_schedule}, or a
+period and a subround, \code{c(period = p, subround = s)}. Required for that
+route and unused with a data-frame schedule.}
 }
 \value{
-A \code{rotation_program}.
+A \code{rotation_program}, an object whose fields are internal.
+\code{\link[=execute]{execute()}} with \code{period} returns an occasion of it, a list of samples
+with one element per active selection.
 }
 \description{
 A rotating panel that replenishes is drawn as a series of executions: a
 start-up master against the first frame vintage, then one refreshment
-cohort against each later vintage. \code{rotation_program()} records which
+selection against each later vintage. \code{rotation_program()} records which
 samples make up the program, when each entered, and which components are
-live at each occasion, so that \code{\link[=execute]{execute()}} can materialize a wave across
-all of them.
+live at each occasion, so that \code{\link[=execute]{execute()}} can materialize an occasion
+across all of them.
 }
 \details{
-\subsection{Cohorts}{
+\subsection{Selections}{
 
-\code{cohorts} is a named list of executed samples. A cohort may be
-\emph{partitioned}, drawn with \code{panels} so that it carries \code{.panel} and a frozen
-assignment, or \emph{whole}, drawn without \code{panels}. A whole cohort has one
-implicit panel numbered 1 covering all its rows. Activating it is not a
-subsample, so its weights are unchanged.
+\code{selections} is a named list of executed samples, one per selection of
+units from a frame. A selection may be \emph{partitioned}, drawn with \code{panels}
+so that it carries \code{.panel} and a frozen assignment, or \emph{whole}, drawn
+without \code{panels}. A whole selection has one implicit panel numbered 1
+covering all its rows. Activating it is not a subsample, so its weights
+are unchanged.
 }
 
-\subsection{Entry waves}{
+\subsection{Entry periods}{
 
-With a data-frame schedule, \code{entry_wave} names the occasion at which each
-cohort's vintage enters the program. It is declared rather than inferred
-from first activity because a cohort may be drawn early and held in reserve.
-An \code{svyplan_schedule} already records every entry occasion, so it supplies
-this field and redundant \code{entry_wave} input is refused.
+With a data-frame schedule, \code{entry_period} names the period at which each
+selection's vintage enters the program. It is declared rather than
+inferred from first activity because a selection may be drawn early and
+held in reserve. An \code{svyplan_schedule} already records every entry
+period, so it supplies this field and redundant \code{entry_period} input is
+refused.
 }
 
 \subsection{Schedule}{
 
-\code{schedule} is a data frame with \code{cohort} (a name from \code{cohorts}), integer
-\code{panel}, integer \code{wave}, and an optional logical \code{active}. A combination
-left out is inactive. For a one-cohort program the \code{cohort} column may be
-omitted. Waves are numbered from 1 without gaps. Activity need not be
-contiguous: a 4-8-4 rotation deliberately leaves and re-enters.
+\code{schedule} is a data frame with \code{selection} (a name from \code{selections}),
+integer \code{panel}, integer \code{period}, an optional integer \code{subround} and an
+optional logical \code{active}, read as a \code{panels} schedule is (see
+\link{panel_assignment}). A combination left out is inactive. For a program
+of one selection the \code{selection} column may be omitted. Activity need not
+be contiguous: a 4-8-4 rotation deliberately leaves and re-enters.
 
 The schedule is completed to the full grid only after the registry is
-known, because a cohort's available panels come from its own receipt rather
-than from the schedule.
+known, because a selection's available panels come from its own receipt
+rather than from the schedule.
+}
+
+\subsection{Planning schedules}{
 
 An \code{svyplan_schedule} registers the program as of \code{through}. Exactly the
-startup and intake cohorts entering by that occasion must be supplied.
-Later cohorts remain planned but unfielded. The executed receipts determine
-realized panel and issue counts, which are checked against the plan.
+selections of \code{plan$selections} entering by then must be
+supplied, under the names the plan gives them (\code{startup}, \code{period_2},
+...). Later selections remain planned but unfielded. The executed
+receipts determine realized panel and issue counts, which are checked
+against the plan.
+
+The program's occasions are the plan's periods and subrounds, so a plan
+with \code{horizon = 8} and \code{subrounds = 3} has 24. \code{through = 2} registers
+through the last subround of period 2, and
+\code{through = c(period = 2, subround = 1)} through its first.
+\code{execute(program, period = 2, subround = 1)} materializes one occasion.
+Each selection is drawn with the number of panels the plan gives it in
+\code{plan$selections$panels}. With
+\code{subrounds = 3}, a selection after the start-up has one panel per
+subround and is drawn with \code{panels = 3}. Drawn whole, it is refused
+(\code{samplyr_error_program_plan_panels}).
 }
 
-\subsection{What a wave returns}{
+\subsection{What an occasion returns}{
 
-\code{execute(program, wave = t)} returns a collection of samples with separate
-receipts, one per live cohort, each carrying its own exact activation
-factor. It is not row-bound and its weights are not combined.
+\code{execute(program, period = p, subround = s)} returns a collection of
+samples with separate receipts, one per live selection, each carrying its
+own exact activation factor, of class \code{rotation_occasion}. It is not
+row-bound and its weights are not combined. A program materializes one
+occasion at a time.
 }
 
-\subsection{Overlap between cohorts is unknown, not assumed absent}{
+\subsection{Overlap between selections is unknown, not assumed absent}{
 
-A program records when its cohorts are live. It does not record how they
-relate. Whether a unit could have been drawn into more than one cohort
-depends on facts no receipt carries: whether it was in the population at
-each vintage, what chance it would have had in a draw it was not selected
-into, and whether the draws were independent of one another. Two executions
-with identical inclusion probabilities can be independent or identical
-depending on how they were seeded and coordinated, and nothing stored can
-tell them apart.
+A program records when its selections are live. It does not record how
+they relate. Whether a unit could have been drawn into more than one
+selection depends on facts no receipt carries: whether it was in the
+population at each vintage, what chance it would have had in a draw it
+was not selected into, and whether the draws were independent of one
+another. Two executions with identical inclusion probabilities can be
+independent or identical depending on how they were seeded and
+coordinated, and nothing stored can tell them apart.
 
-So the weights of a wave are valid \strong{within} a cohort, and combining them
-across cohorts is left to the analyst, who may know things the program
-does not.
+So the weights of an occasion are valid \strong{within} a selection, and combining
+them across selections is left to the analyst, who may know things the
+program does not.
 
-The common case where that knowledge is easy is a refreshment cohort drawn
-from an \strong{entrant register}, a frame holding only units that entered the
-population since the previous vintage. No unit can appear on both frames,
-so the cohorts are disjoint by construction, each unit belongs to exactly
-one, and the component weights are already the right ones for the combined
-live set. A refresher drawn from the \emph{whole} population at a later vintage
-is the other case: a unit present at both times had two chances of
-selection, and combining then needs a union probability, which is a
-multi-frame problem rather than a scheduling one.
+The common case where that knowledge is easy is a refreshment selection
+drawn from an \strong{entrant register}, a frame holding only units that
+entered the population since the previous vintage. No unit can appear on
+both frames, so the selections are disjoint by construction, each unit
+belongs to exactly one, and the component weights are already the right
+ones for the combined live set. A refresher drawn from the \emph{whole}
+population at a later vintage is the other case: a unit present at both
+times had two chances of selection, and combining then needs a union
+probability, which is a multi-frame problem rather than a scheduling one.
 }
 }
 \examples{
@@ -106,37 +135,37 @@ frame_1 <- data.frame(id = 1:200, value = rnorm(200))
 # Two groups, each live for two of the three occasions.
 startup_schedule <- data.frame(
   panel = rep(1:2, times = 3),
-  wave = rep(1:3, each = 2),
+  period = rep(1:3, each = 2),
   active = c(TRUE, TRUE, TRUE, FALSE, FALSE, TRUE)
 )
 startup <- sampling_design() |>
   draw(n = 40) |>
   execute(frame_1, seed = 1, panels = startup_schedule)
 
-# A refreshment cohort drawn from the entrants of a later vintage.
+# A refreshment selection drawn from the entrants of a later vintage.
 entrants <- data.frame(id = 201:260, value = rnorm(60))
-intake_2 <- sampling_design() |>
+period_2 <- sampling_design() |>
   draw(n = 12) |>
   execute(entrants, seed = 2)
 
 program <- rotation_program(
-  cohorts = list(startup = startup, intake_2 = intake_2),
-  entry_wave = c(startup = 1, intake_2 = 2),
+  selections = list(startup = startup, period_2 = period_2),
+  entry_period = c(startup = 1, period_2 = 2),
   schedule = rbind(
-    transform(startup_schedule, cohort = "startup"),
+    transform(startup_schedule, selection = "startup"),
     data.frame(
-      cohort = "intake_2", panel = 1, wave = 1:3,
+      selection = "period_2", panel = 1, period = 1:3,
       active = c(FALSE, TRUE, TRUE)
     )
   )
 )
 program
 
-execute(program, wave = 2)
+execute(program, period = 2)
 
 }
 \seealso{
-\code{\link[=execute]{execute()}} for drawing a master and materializing a wave,
+\code{\link[=execute]{execute()}} for drawing a master and materializing an occasion,
 \link{panel_assignment} for partitioning one execution into rotation groups.
 
 Other execution:

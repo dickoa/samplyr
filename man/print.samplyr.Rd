@@ -4,8 +4,9 @@
 \alias{print.samplyr}
 \alias{print.sampling_design}
 \alias{tbl_sum.tbl_sample}
+\alias{tbl_format_footer.tbl_sample}
 \alias{print.rotation_program}
-\alias{print.rotation_wave}
+\alias{print.rotation_occasion}
 \alias{print.frame_stack}
 \alias{print.shared_sample_design}
 \alias{print.frame_stack_design}
@@ -17,9 +18,11 @@
 
 \method{tbl_sum}{tbl_sample}(x, ...)
 
+\method{tbl_format_footer}{tbl_sample}(x, setup, ...)
+
 \method{print}{rotation_program}(x, ...)
 
-\method{print}{rotation_wave}(x, ...)
+\method{print}{rotation_occasion}(x, ...)
 
 \method{print}{frame_stack}(x, ...)
 
@@ -35,6 +38,8 @@
 \item{x}{Object to print}
 
 \item{...}{Must be empty.}
+
+\item{setup}{The setup object pillar passes to its footer method.}
 }
 \value{
 Invisibly returns the input object
@@ -50,7 +55,7 @@ Other helpers:
 \code{\link[=get_stages_executed]{get_stages_executed()}},
 \code{\link[=is_sampling_design]{is_sampling_design()}},
 \code{\link[=is_tbl_sample]{is_tbl_sample()}},
-\code{\link[=periods]{periods()}},
-\code{\link[=serp]{serp()}}
+\code{\link[=serp]{serp()}},
+\code{\link[=subrounds]{subrounds()}}
 }
 \concept{helpers}

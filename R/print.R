@@ -451,11 +451,32 @@ tbl_sum.tbl_sample <- function(x, ...) {
   result
 }
 
-#' The header line naming a sample's panels, periods or wave
+#' @rdname print.samplyr
+#' @param setup The setup object pillar passes to its footer method.
+#' @export
+tbl_format_footer.tbl_sample <- function(x, setup, ...) {
+  footer <- NextMethod()
+  if (is_null(occasion_draws_progress(x))) {
+    return(footer)
+  }
+  # The rows are the master's. The drawn occasions are read from it.
+  record <- attr(x, "metadata")$panel_assignment
+  call <- if (identical(record$certainty, "assigned")) {
+    "execute(master, period = 1, subround = s)"
+  } else {
+    "execute(master, period = p)"
+  }
+  c(footer, pillar::style_subtle(paste0(
+    "# ", cli::symbol$info, " These rows are the master's. Read a drawn ",
+    "occasion with `", call, "`."
+  )))
+}
+
+#' The header line naming a sample's panels, subrounds or occasions
 #'
-#' A periods sample names its periods and the column that holds them. A
+#' A subrounds sample names its subrounds and the column that holds them. A
 #' rotation sample names its groups and whether a schedule declares their
-#' waves. A materialized wave or period names which one it is.
+#' occasions. A materialized occasion or period names which one it is.
 #' @noRd
 panel_header_line <- function(x) {
   metadata <- attr(x, "metadata")
@@ -465,39 +486,62 @@ panel_header_line <- function(x) {
   }
   k <- as.integer(record$panels)
   periods <- identical(record$certainty, "assigned")
-  wave <- metadata[["wave"]]
-  if (!is_null(wave)) {
-    several <- length(wave$wave) > 1L
+  occasion <- metadata[["occasion"]]
+  if (!is_null(occasion)) {
+    several <- length(occasion$occasion) > 1L
     if (periods) {
-      label <- if (several) "Periods" else "Period"
+      label <- if (several) "Subrounds" else "Subround"
       return(stats::setNames(paste0(
-        wave_span(wave$wave), " of ", k,
-        if (isTRUE(wave$provisional)) ", provisional until every period is drawn"
+        occasion_span(occasion$subround), " of ", k,
+        if (isTRUE(occasion$provisional)) {
+          ", provisional until every subround is drawn"
+        }
       ), label))
     }
-    n_waves <- max(as.integer(unlist(record$schedule$wave)))
-    label <- if (several) "Waves" else "Wave"
-    return(stats::setNames(
-      paste0(wave_span(wave$wave), " of ", n_waves), label
-    ))
+    label <- if (several) "Occasions" else "Occasion"
+    return(stats::setNames(occasion_label(occasion, record$schedule), label))
   }
   if (periods) {
     return(c(
-      "Periods" = paste0(k, " (in .panel)"),
-      "Drawn" = wave_draws_progress(x)
+      "Subrounds" = paste0(k, " (in .panel)"),
+      "Drawn" = occasion_draws_progress(x)
     ))
   }
   schedule <- record$schedule
   if (is_null(schedule) || length(schedule) == 0L) {
     return(c("Panels" = paste0(k, " rotation groups, no schedule")))
   }
-  n_waves <- max(as.integer(unlist(schedule$wave)))
+  pairs <- grid_pairs(schedule)
+  n_periods <- length(unique(pairs$period))
   c(
     "Panels" = paste0(
-      k, " rotation groups over ", n_waves, plural_suffix(n_waves, " wave"),
-      if (schedule_has_tenures(schedule)) ", with tenures"
+      k, " rotation groups over ", n_periods,
+      plural_suffix(n_periods, " period"),
+      if (schedule_has_subrounds(schedule)) {
+        paste0(", ", nrow(pairs), " subrounds")
+      },
+      if (schedule_has_cohorts(schedule)) ", with cohorts"
     ),
-    "Drawn" = wave_draws_progress(x)
+    "Drawn" = occasion_draws_progress(x)
+  )
+}
+
+#' The occasions of a materialized sample as its header prints them
+#'
+#' Whole periods print as periods, other occasions as their pairs, so a
+#' window read along a diagonal shows it.
+#' @noRd
+occasion_label <- function(occasion, schedule) {
+  period <- occasion$period
+  pairs <- grid_pairs(schedule)
+  if (identical(which(pairs$period %in% period), sort(occasion$occasion))) {
+    unique_period <- unique(period)
+    return(paste(if (length(unique_period) == 1L) "period" else "periods",
+                 occasion_span(unique_period)))
+  }
+  paste0(
+    "period.subround ",
+    paste(paste0(period, ".", occasion$subround), collapse = ", ")
   )
 }
 
@@ -507,29 +551,33 @@ print.rotation_program <- function(x, ...) {
   rlang::check_dots_empty()
   cli::cat_rule("Rotation Program")
 
-  n_cohorts <- length(x$cohorts)
-  n_waves <- length(x$waves)
+  n_selections <- length(x$selections)
+  n_periods <- length(unique(x$occasions$period))
   cat("\n")
   cli::cat_bullet(
     paste0(
-      n_cohorts, plural_suffix(n_cohorts, " cohort"),
-      " over ", n_waves, plural_suffix(n_waves, " wave")
+      n_selections, plural_suffix(n_selections, " selection"),
+      " over ", n_periods, plural_suffix(n_periods, " period"),
+      if (any(x$occasions$subround > 1L)) {
+        paste0(", ", nrow(x$occasions), " subrounds")
+      }
     ),
     bullet = "info"
   )
 
   schedule <- x$schedule
-  for (nm in names(x$cohorts)) {
-    rows <- schedule[schedule$cohort == nm, , drop = FALSE]
-    live <- sort(unique(rows$wave[rows$active]))
+  for (nm in names(x$selections)) {
+    rows <- schedule[schedule$selection == nm & schedule$active, ,
+                     drop = FALSE]
+    live <- sort(unique(rows$period))
     n_panels <- x$panels[[nm]]
     cli::cat_bullet(
       paste0(
-        nm, ": ", nrow(x$cohorts[[nm]]), " rows, ",
+        nm, ": ", nrow(x$selections[[nm]]), " rows, ",
         n_panels, plural_suffix(n_panels, " panel"),
-        ", enters at wave ", x$entry_wave[[nm]],
-        ", live at ", plural_suffix(length(live), "wave"), " ",
-        paste(live, collapse = ", ")
+        ", enters at period ", x$entry_period[[nm]],
+        ", live in ", plural_suffix(length(live), "period"), " ",
+        occasion_span(live)
       ),
       bullet = "bullet"
     )
@@ -540,19 +588,24 @@ print.rotation_program <- function(x, ...) {
 
 #' @rdname print.samplyr
 #' @export
-print.rotation_wave <- function(x, ...) {
+print.rotation_occasion <- function(x, ...) {
   rlang::check_dots_empty()
-  cli::cat_rule(paste("Rotation Wave", attr(x, "wave")))
+  sub <- attr(x, "subround")
+  cli::cat_rule(paste0(
+    "Rotation Occasion: period ", attr(x, "period"),
+    if (!is_null(sub) && sub > 1L) paste0(", subround ", sub)
+  ))
   cat("\n")
 
   if (length(x) == 0) {
-    cli::cat_bullet("No cohort is live at this wave.", bullet = "info")
+    cli::cat_bullet("No selection is live at this occasion.",
+                    bullet = "info")
     cat("\n")
     return(invisible(x))
   }
 
   for (nm in names(x)) {
-    panels <- attr(x[[nm]], "metadata")$wave$active_panels
+    panels <- attr(x[[nm]], "metadata")$occasion$active_panels
     cli::cat_bullet(
       paste0(
         nm, ": ", nrow(x[[nm]]), " rows, ",
@@ -564,7 +617,7 @@ print.rotation_wave <- function(x, ...) {
   }
   # Row-bound components are not yet a combined sample.
   cli::cat_bullet(
-    "Weights are valid within a cohort and are not combined.",
+    "Weights are valid within a selection and are not combined.",
     bullet = "info"
   )
   cat("\n")

@@ -588,18 +588,18 @@ test_that("a certainty PSU keeping one unit below it is refused by the stratifie
 
 ## Samples whose export follows rules of its own
 
-test_that("waves and windows are refused, not reported as their master", {
+test_that("occasions and windows are refused, not reported as their master", {
   frame <- data.frame(id = 1:600, h = rep(c("a", "b", "c"), each = 200))
-  schedule <- expand.grid(panel = 1:6, wave = 1:3)
-  schedule$active <- (schedule$wave - 1) %% 3 == (schedule$panel - 1) %% 3
+  schedule <- expand.grid(panel = 1:6, period = 1:3)
+  schedule$active <- (schedule$period - 1) %% 3 == (schedule$panel - 1) %% 3
   master <- sampling_design() |>
     stratify_by(h) |>
     draw(n = 15) |>
     execute(frame, seed = 1, panels = schedule)
 
   expect_no_error(variance_estimators(master))
-  for (wave in list(1, 1:2)) {
-    w <- execute(master, wave = wave)
+  for (occasion in list(1, 1:2)) {
+    w <- execute(master, period = occasion)
     expect_error(variance_estimators(w),
                  class = "samplyr_error_variance_estimators_input")
     expect_error(

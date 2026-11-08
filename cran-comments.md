@@ -23,7 +23,7 @@
 
 ## Test environments
 
-* Local: Arch Linux, R 4.6.1
+* Local: Arch Linux, R 4.6.2 Patched (2026-10-30 r90804)
 * GitHub Actions: macOS-latest (R-release)
 * GitHub Actions: windows-latest (R-release)
 * GitHub Actions: ubuntu-latest (R-release, R-devel, R-oldrel-1)
@@ -31,7 +31,8 @@
 ## Dependencies
 
 `samplyr` imports `sondage` (selection algorithms) and `svyplan` (sample
-size and precision planning). This package requires `sondage (>= 0.11.0)` and `svyplan (>= 0.16.0)`.
+size and precision planning). This package requires `sondage (>= 0.11.0)`
+and `svyplan (>= 0.21.0)`.
 
 ## Downstream dependencies
 

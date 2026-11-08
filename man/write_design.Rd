@@ -104,7 +104,7 @@ methods, \code{\link[=replay_design]{replay_design()}} reproduces the sample. Th
 themselves are not stored. Use a data format (CSV, parquet) for those.
 
 A sample built by several \code{\link[=execute]{execute()}} calls (a stage continuation, a new
-phase drawn from an earlier sample, or a materialized panel wave) is
+phase drawn from an earlier sample, or a materialized panel occasion) is
 flagged as \code{chained}. Its receipt records every earlier call in
 \code{earlier_calls}: seed, stages, frame mapping, panel and replicate
 arguments, RNG kind, how it used the call before it, and, for a call

@@ -211,6 +211,23 @@ test_that("a permuted frame gives the same agreement", {
   expect_identical(result$verdict, "agree")
 })
 
+test_that("probabilities compare across different numbers of stages", {
+  hierarchy <- data.frame(id = 1:80, ea = rep(1:8, each = 10))
+  one <- sampling_design() |> draw(n = 8)
+  two <- sampling_design() |>
+    add_stage() |> cluster_by(ea) |> draw(n = 4) |>
+    add_stage() |> draw(n = 2)
+  result <- compare_designs(one, two, hierarchy, key = id,
+                            level = "probabilities")
+  expect_identical(result$verdict, "agree")
+  expect_equal(result$units$probability_x, rep(0.1, 80))
+  expect_equal(result$units$probability_y, rep(0.1, 80))
+
+  allocation <- compare_designs(one, two, hierarchy, key = id)
+  expect_identical(allocation$verdict, "unresolved")
+  expect_identical(allocation$checks$check, "stages")
+})
+
 test_that("checks that cannot run are unresolved, not agreement", {
   frame <- compare_frame()
   two <- sampling_design() |>

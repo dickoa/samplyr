@@ -109,7 +109,7 @@ test_that("a household's panel reaches every person in it", {
 test_that("a retained parent keeps every one of its selected units", {
   schedule <- data.frame(
     panel = rep(1:4, times = 3),
-    wave = rep(1:3, each = 4),
+    period = rep(1:3, each = 4),
     active = c(
       TRUE, TRUE, FALSE, FALSE,
       FALSE, TRUE, TRUE, FALSE,
@@ -118,15 +118,15 @@ test_that("a retained parent keeps every one of its selected units", {
   )
   master <- execute(pp_design(), pp_frame(), seed = 41,
                     panels = schedule, panel_stage = 2)
-  wave <- execute(master, wave = 2)
+  occasion <- execute(master, period = 2)
 
   # The PSUs stay and each contributes its two households with active panels.
-  expect_identical(sort(unique(wave$psu)), sort(unique(master$psu)))
-  expect_identical(sort(unique(wave$.panel)), c(2L, 3L))
-  expect_identical(pp_panels_by(wave, "psu"), rep(list(2:3), 3))
-  # A wave subsets the master, and households keep their people.
-  expect_identical(nrow(wave), 12L)
-  expect_propagates(wave, c("psu", "hh"), "psu")
+  expect_identical(sort(unique(occasion$psu)), sort(unique(master$psu)))
+  expect_identical(sort(unique(occasion$.panel)), c(2L, 3L))
+  expect_identical(pp_panels_by(occasion, "psu"), rep(list(2:3), 3))
+  # An occasion subsets the master, and households keep their people.
+  expect_identical(nrow(occasion), 12L)
+  expect_propagates(occasion, c("psu", "hh"), "psu")
 })
 
 ## A with-replacement ancestor
@@ -480,7 +480,7 @@ test_that("certainty below the assignment stage leaves the unit rotating", {
   rownames(frame) <- NULL
   schedule <- data.frame(
     panel = rep(1:2, times = 2),
-    wave = rep(1:2, each = 2),
+    period = rep(1:2, each = 2),
     active = c(TRUE, FALSE, FALSE, TRUE)
   )
   design <- sampling_design() |>
@@ -504,24 +504,26 @@ test_that("certainty below the assignment stage leaves the unit rotating", {
   )
   expect_propagates(master, c("psu", "hh"), "psu")
 
-  # A certainty person appears only in the waves where its household is active.
-  wave1 <- execute(master, wave = 1)
-  wave2 <- execute(master, wave = 2)
-  expect_identical(sum(wave1$.certainty_3), 6L)
-  expect_identical(sum(wave2$.certainty_3), 6L)
+  # A certainty person appears only in the occasions where its household is
+  # active.
+  occasion1 <- execute(master, period = 1)
+  occasion2 <- execute(master, period = 2)
+  expect_identical(sum(occasion1$.certainty_3), 6L)
+  expect_identical(sum(occasion2$.certainty_3), 6L)
 
   person_of <- function(x) {
     df <- as.data.frame(x)
     pp_group(df[df$.certainty_3, , drop = FALSE], c("psu", "hh", "person"))
   }
-  expect_identical(length(intersect(person_of(wave1), person_of(wave2))), 0L)
+  expect_identical(length(intersect(person_of(occasion1), person_of(occasion2))), 0L)
   expect_identical(
-    sort(c(person_of(wave1), person_of(wave2))),
+    sort(c(person_of(occasion1), person_of(occasion2))),
     sort(person_of(master))
   )
 
-  # Wave weight is master weight over activation chance, certainties included.
-  certain <- as.data.frame(wave1)[wave1$.certainty_3, , drop = FALSE]
+  # An occasion's weight is the master weight over the activation chance,
+  # certainties included.
+  certain <- as.data.frame(occasion1)[occasion1$.certainty_3, , drop = FALSE]
   master_certain <- as.data.frame(master)[master$.certainty_3, , drop = FALSE]
   expect_identical(unique(certain$.weight),
                    unique(master_certain$.weight) * 2)

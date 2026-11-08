@@ -52,7 +52,7 @@
 #' To assess a second phase, give the phase-1 sample as `frame`: the report
 #' then covers the two-phase export. A `tbl_sample` passed as `x` stands for
 #' its design, and when it is itself a later phase, its earlier phase is used.
-#' Materialized waves and shared-weight samples are refused, as `x` or as
+#' Materialized occasions and shared-weight samples are refused, as `x` or as
 #' `frame`, and so is a design with a reserve, or its sample. Their exports
 #' follow rules of their own, so the report of the design they come from
 #' does not describe them.
@@ -168,18 +168,18 @@ variance_estimators <- function(x, frame = NULL) {
 
 #' Refuse a sample whose export the report does not describe
 #'
-#' A wave exports by ultimate clusters and refuses `"rwyb"`, and a
+#' An occasion exports by ultimate clusters and refuses `"rwyb"`, and a
 #' shared-weight sample exports by replicating its source design. The
 #' report reads the design's rules, which neither follows.
 #' @noRd
 refuse_unassessed_sample <- function(s, call = caller_env()) {
-  if (!is_null(attr(s, "metadata")[["wave"]])) {
+  if (!is_null(attr(s, "metadata")[["occasion"]])) {
     abort_samplyr(
       c(
-        "{.fn variance_estimators} does not assess a materialized wave.",
-        "i" = "A wave's export follows rules of its own: ultimate clusters
+        "{.fn variance_estimators} does not assess a materialized occasion.",
+        "i" = "An occasion's export follows rules of its own: ultimate clusters
                by default, and no {.val rwyb} replicates.",
-        "i" = "Call {.fn as_svydesign} or {.fn as_svrepdesign} on the wave
+        "i" = "Call {.fn as_svydesign} or {.fn as_svrepdesign} on the occasion
                to see whether an estimator is supported."
       ),
       class = "samplyr_error_variance_estimators_input",
@@ -318,11 +318,17 @@ frame_variance_facts <- function(design, frame, traits, call = caller_env()) {
     }
     fixed <- !trait$random_size
     take <- pools$n_target - n_cert
+    # As in as_svrepdesign(), a stage-1 pool taken whole above a later stage
+    # is a set of certainty units.
+    whole_certain <- pos == 1L && length(traits) > 1L && fixed &&
+      !identical(trait$kind, "wr") & pools$n_target >= pools$N
     list(
       stage = trait$stage,
       n_pools = nrow(pools),
       n_units = sum(pools$N),
       n_certainty = sum(n_cert),
+      whole_certain = whole_certain,
+      whole_pools = pools$pool_id[whole_certain],
       fixed = fixed,
       singleton = if (fixed) take == 1 else rep(FALSE, nrow(pools)),
       takes = take,
@@ -337,6 +343,11 @@ frame_variance_facts <- function(design, frame, traits, call = caller_env()) {
     parents <- digest$stages[[pos - 1L]]$units
     certain <- if (!is_null(parents) && "is_certainty" %in% names(parents)) {
       parents$unit_id[parents$is_certainty]
+    }
+    if (!is_null(parents) && length(facts[[pos - 1L]]$whole_pools) > 0L) {
+      certain <- union(certain, parents$unit_id[
+        parents$pool_id %in% facts[[pos - 1L]]$whole_pools
+      ])
     }
     under <- digest$stages[[pos]]$pools$parent_unit %in% certain
     facts[[pos]]$certain_parent_takes <- facts[[pos]]$takes[under]
@@ -838,8 +849,16 @@ generic_replicate_findings <- function(type, traits, facts, common) {
   }
   pps_safe <- type %in% c("subbootstrap", "mrbbootstrap")
   first <- traits[[1]]
-  fpc_dropped <- identical(first$kind, "equal_wor") &&
-    type %in% c("BRR", "Fay", "subbootstrap")
+  # Strata taken whole above a later stage are converted as certainty units,
+  # which drops the other strata's correction and stratifies the first stage.
+  whole <- stage_fact(facts, first$stage)$whole_certain %||% FALSE
+  spliced <- any(whole) &&
+    type %in% c("JK1", "JKn", "bootstrap", "subbootstrap", "BRR", "Fay")
+  if (spliced) {
+    facts <- whole_pools_not_single(facts, first$stage)
+  }
+  fpc_dropped <- identical(first$kind, "equal_wor") && !all(whole) &&
+    (type %in% c("BRR", "Fay", "subbootstrap") || spliced)
   if ((stage_replicated_as_wr(first$draw, first$kind) && !pps_safe) ||
       fpc_dropped) {
     out <- c(out, list(finding(
@@ -850,7 +869,7 @@ generic_replicate_findings <- function(type, traits, facts, common) {
       stage = first$stage
     )))
   }
-  if (type %in% c("JK1", "JKn", "bootstrap") &&
+  if (type %in% c("JK1", "JKn", "bootstrap") && !spliced &&
       identical(first$kind, "equal_wor") &&
       later_stage_may_sample(traits, facts)) {
     out <- c(out, list(finding(
@@ -875,12 +894,13 @@ generic_replicate_findings <- function(type, traits, facts, common) {
               stage = unsupported[[1]]$stage)
     }))
   }
-  stratified <- replicate_first_stage_stratified(traits)
+  stratified <- replicate_first_stage_stratified(traits) || spliced
   if (identical(type, "JK1") && stratified) {
     out <- c(out, list(finding(
       "refused", "samplyr_error_svrep_conversion_failed",
       "survey's JK1 takes an unstratified first stage, and this one is
-       stratified (a PPS first stage is exported with its own strata)",
+       stratified (a PPS first stage, or units taken with probability 1
+       above a later stage, are exported with strata of their own)",
       stage = traits[[1]]$stage
     )))
   }
@@ -892,7 +912,8 @@ generic_replicate_findings <- function(type, traits, facts, common) {
       stage = traits[[1]]$stage
     )))
   }
-  if (identical(type, "JKn") && isTRUE(stage_fact(facts, 1L)$census)) {
+  if (identical(type, "JKn") && !spliced &&
+      isTRUE(stage_fact(facts, 1L)$census)) {
     out <- c(out, list(finding(
       "refused", "samplyr_error_svrep_conversion_failed",
       "survey's JKn stops when every first-stage stratum is taken whole, since
@@ -925,7 +946,7 @@ certainty_singleton_findings <- function(traits, facts) {
     return(list())
   }
   first <- stage_fact(facts, traits[[1]]$stage)
-  if (is_null(first) || first$n_certainty == 0) {
+  if (is_null(first) || (first$n_certainty == 0 && !any(first$whole_certain))) {
     return(list())
   }
   note <- "A PSU taken with certainty is a stratum of its stage-2 units in
@@ -953,6 +974,20 @@ certainty_singleton_findings <- function(traits, facts) {
                         note)))
   }
   list()
+}
+
+#' A stage-1 pool taken whole above a later stage leaves no single unit
+#'
+#' Its units are certainty units in the replicate conversion, so a pool of
+#' one is no stratum with a single unit outside certainty.
+#' @noRd
+whole_pools_not_single <- function(facts, stage) {
+  for (pos in seq_along(facts)) {
+    if (identical(facts[[pos]]$stage, stage)) {
+      facts[[pos]]$singleton[facts[[pos]]$whole_certain] <- FALSE
+    }
+  }
+  facts
 }
 
 #' Does a stage below the first add variance?
@@ -992,13 +1027,26 @@ brr_findings <- function(traits, facts) {
                           note, stage = traits[[1]]$stage)))
     }
   }
-  if (is_null(fact) || !fact$fixed ||
-      (fact$n_certainty > 0 && length(traits) > 1L)) {
+  if (is_null(fact) || !fact$fixed) {
     return(list(finding("risk", "samplyr_error_svrep_conversion_failed",
                         note)))
   }
-  paired <- fact$takes == 0 | (fact$takes >= 2 & fact$takes %% 2 == 0)
-  if (!all(paired)) {
+  pairs_up <- function(takes) all(takes == 0 | (takes >= 2 & takes %% 2 == 0))
+  # A certainty PSU is a stratum of its stage-2 units.
+  if ((fact$n_certainty > 0 || any(fact$whole_certain)) &&
+        length(traits) > 1L) {
+    second <- stage_fact(facts, traits[[2]]$stage)
+    if (is_null(second) || !second$fixed) {
+      return(list(finding("risk", "samplyr_error_svrep_conversion_failed",
+                          note)))
+    }
+    if (!pairs_up(second$certain_parent_takes)) {
+      return(list(finding("refused", "samplyr_error_svrep_conversion_failed",
+                          note, stage = traits[[2]]$stage,
+                          decided_by = "frame")))
+    }
+  }
+  if (!pairs_up(fact$takes[!fact$whole_certain])) {
     return(list(finding("refused", "samplyr_error_svrep_conversion_failed",
                         note, stage = traits[[1]]$stage,
                         decided_by = "frame")))

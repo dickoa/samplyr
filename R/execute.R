@@ -67,8 +67,8 @@
 #'
 #' `samplyr_message_panel_certainty` comes from a panel count, `panels = k`,
 #' that keeps certainty units in a pool of their own. Such units are active
-#' at every wave once a schedule rotates the panels, and the panel sizes of
-#' their stratum can differ by two. The message points to [periods()] for a
+#' at every occasion once a schedule rotates the panels, and the panel sizes of
+#' their stratum can differ by two. The message points to [subrounds()] for a
 #' partition visited once, such as fieldwork months. A schedule states
 #' rotation and is not reported. Its payload carries `pool_keys`,
 #' `n_certainty` and `n_pools`.
@@ -206,16 +206,17 @@ NULL
 #'   sample because its receipt cannot reproduce it.
 #' @param panels Rotation groups (panels) to partition the sample into, as an
 #'   integer count, a rotation schedule (a data frame with integer `panel`
-#'   and `wave` columns, an optional logical `active` column, an optional
-#'   integer `visit` column that opens tenures and an optional integer
-#'   `period` column that names each wave's reporting period), or an
-#'   `svyplan_schedule` from [svyplan::design_schedule()]. [periods()]
-#'   partitions it into fieldwork periods instead, each unit visited once.
+#'   and `period` columns, an optional integer `subround` column that splits
+#'   a period into occasions, an optional logical `active` column and an
+#'   optional integer `visit` column that opens cohorts), or an
+#'   `svyplan_schedule` from [svyplan::design_schedule()]. [subrounds()]
+#'   partitions it into the subrounds of one period instead, each unit
+#'   visited once.
 #'   The output gains a `.panel` column, and only a sample drawn with a
-#'   schedule or periods can be materialized by `wave`. Default `NULL` means no panels. Cannot be
-#'   combined with `reps`, or redeclared on a sample that already carries an
-#'   assignment. [panel_assignment] describes the assignment and the
-#'   schedules.
+#'   schedule or periods can be materialized by `period`. Default `NULL`
+#'   means no panels. Cannot be combined with `reps`, or redeclared on a
+#'   sample that already carries an assignment. [panel_assignment] describes
+#'   the assignment and the schedules.
 #' @param panel_stage Stage whose selected units are assigned to panels, as a
 #'   single stage number, or `NULL` (the default) for the first executed
 #'   stage. Accepted only alongside `panels`. The stage must be one the
@@ -225,26 +226,36 @@ NULL
 #'   parents that stay in the survey. [panel_assignment] explains what that
 #'   changes, including how it can bias estimates over time.
 #' @param small_pool What to do when a rotation schedule would leave a pool
-#'   with no unit to activate at some wave. `"error"` (the default, reached by
+#'   with no unit to activate at some occasion. `"error"` (the default, reached by
 #'   `NULL`) refuses the assignment, and `"permanent"` activates those units
-#'   at every wave and warns with `samplyr_warning_panel_small_pool`.
+#'   at every occasion and warns with `samplyr_warning_panel_small_pool`.
 #'   Meaningful only with a schedule. See [panel_assignment].
-#' @param wave Integer wave of a master that carries a panel assignment, or
-#'   `NULL` (default). It has two uses, told apart by whether a frame is
-#'   given. Without a frame, `execute(master, wave = t)` materializes wave
-#'   `t`. It activates the panels the stored schedule declares active at `t`
-#'   and compounds the exact activation factor into `.weight`. A wave selects
-#'   units the master already assigned, under the policy the master froze, so
-#'   it takes none of `seed`, `stages`, `panels`, `panel_stage`, `small_pool`,
-#'   `reps` or `frame_digest`. Each is refused by name rather than ignored.
-#'   Several distinct waves, as `wave = 1:3`, pool those waves into one
-#'   sample with a `.wave` column ([panel_assignment] gives the weights).
-#'   With a frame, `execute(master, listing, wave = t)` draws the master's
-#'   remaining stages under the units whose tenure opens at `t`, the units
-#'   of period `t` for [periods()], and returns the master. It accepts
-#'   `seed` and `stages`, refuses the other arguments, and takes a master
-#'   with a rotation schedule or periods. See "Drawing the later stages wave
-#'   by wave" below.
+#' @param period,subround Occasions of a master that carries a panel
+#'   assignment, or `NULL` (default). An occasion is one `(period, subround)`
+#'   pair of the stored schedule. `period` alone names whole periods, and
+#'   with `subround` the two are read as pairs, position by position, under
+#'   the recycling rule of `tibble()`: equal lengths or length 1. So
+#'   `period = 3, subround = 1:2` is the first two subrounds of period 3, and
+#'   `period = c(1, 1, 2), subround = c(2, 3, 1)` a rolling window across
+#'   two periods. A cross is built with `expand.grid()`. `subround` without
+#'   `period` is refused, and so are a pair named twice and a pair the
+#'   schedule does not hold.
+#'
+#'   They have two uses, told apart by whether a frame is given. Without a
+#'   frame, `execute(master, period = p, subround = s)` materializes those
+#'   occasions. It activates the panels the stored schedule declares active
+#'   and compounds the exact activation factor into `.weight`. An occasion
+#'   selects units the master already assigned, under the policy the master
+#'   froze, so it takes none of `seed`, `stages`, `panels`, `panel_stage`,
+#'   `small_pool`, `reps` or `frame_digest`. Each is refused by name rather
+#'   than ignored. Several occasions pool into one sample whose rows carry
+#'   `.period` and `.subround` ([panel_assignment] gives the weights). With
+#'   a frame, `execute(master, listing, period = p, subround = s)` draws the
+#'   master's remaining stages under the units whose cohort opens at that
+#'   occasion, the units of that subround for [subrounds()], and returns the
+#'   master. It takes one occasion, accepts `seed` and `stages`, refuses the
+#'   other arguments, and takes a master with a rotation schedule or
+#'   periods. See "Drawing the later stages occasion by occasion" below.
 #' @param response_status A column of the sample that holds the final
 #'   disposition of each listed unit, in the terms of the AAPOR Standard
 #'   Definitions: whether the unit was eligible and whether it responded.
@@ -261,8 +272,8 @@ NULL
 #'   or `NULL` (default) for a single sample. The replicates are stacked in
 #'   one `tbl_sample` with a `.replicate` column (integer 1 through `reps`).
 #'   Their seeds are drawn from `seed`, since consecutive seeds do not give
-#'   independent draws in R, and recorded in the `replicate_seeds` element
-#'   of the sample's metadata, so replicate `r` alone is
+#'   independent draws in R, and kept in
+#'   `attr(sample, "metadata")$replicate_seeds`, so replicate `r` alone is
 #'   `execute(design, frame, seed = replicate_seeds[r])`. Cannot be combined
 #'   with `panels` or with stages that use permanent random numbers. A
 #'   replicated sample continued, or used as a phase-2 frame, carries its
@@ -303,10 +314,33 @@ NULL
 #'   `.fpc_k`, `.draw_k` and `.certainty_k`, `.reserve_k` at a stage that
 #'   sets `reserve` in [draw()], `.zone_1` and `.pair_1` for a zoned
 #'   certainty plan, `.replicate` or `.panel` when `reps` or
-#'   `panels` is used, and `.wave` for a window of several waves.
+#'   `panels` is used, and `.period` and `.subround` for a window of several
+#'   occasions.
 #'   [sample_columns] documents what each one holds.
 #'
 #' @details
+#' ## Forms of a call
+#'
+#' The first argument, whether a frame follows it and one defining option
+#' decide what a call does.
+#'
+#' | Call | Operation | Random numbers |
+#' |---|---|---|
+#' | `execute(design, frame)` | Draw a new sample | Yes |
+#' | `execute(design, frame, stages = 1)` | Draw the first stages only | Yes |
+#' | `execute(partial, listing)` | Continue the remaining stages | Yes |
+#' | `execute(design2, sample1)` | Start a new phase from an earlier sample | Yes |
+#' | `execute(design, frame, reps = 10)` | Draw independent replicates | Yes |
+#' | `execute(design, frame, panels = schedule)` | Draw a master and assign panels | Yes |
+#' | `execute(master, listing, period = 2)` | Draw the later stages of one occasion | Yes |
+#' | `execute(master, period = 2)` | Materialize stored occasions | No |
+#' | `execute(program, period = 2)` | Collect an occasion of a [rotation_program()] | No |
+#' | `execute(listed, response_status = col)` | Settle a reserve | No |
+#'
+#' A `tbl_sample` in first position continues its own design, whereas one
+#' passed as the frame starts a new phase. The arguments and the sections
+#' below describe each form.
+#'
 #' ## Multi-stage with a single frame
 #' For hierarchical data where all stages are in one frame, pass that one
 #' frame. It must contain all clustering variables and represent the stage
@@ -381,61 +415,63 @@ NULL
 #' [summary()] shows the settlement per pool, and [write_design()] records
 #' it for [replay_design()].
 #'
-#' ## Drawing the later stages wave by wave
-#' A master split into [periods()] at its first stage can have its later
-#' stages drawn period by period, as listing proceeds in the field.
-#' `execute(master, listing, wave = t)` draws every remaining stage under the
-#' units of period `t` and returns the master, so the calls are chained, as
-#' in `master <- execute(master, listing_3, wave = 3, seed = 103)`.
+#' ## Drawing the later stages occasion by occasion
+#' A master split into [subrounds()] at its first stage can have its later
+#' stages drawn subround by subround, as listing proceeds in the field.
+#' `execute(master, listing, period = 1, subround = s)` draws every remaining
+#' stage under the units of subround `s` and returns the master, so the
+#' calls are chained, as in
+#' `master <- execute(master, listing_3, period = 1, subround = 3, seed = 103)`.
 #'
-#' - The listing needs rows for every unit of period `t`. Rows under units
-#'   of other periods are ignored, so one growing listing file can be passed
-#'   every time. A unit of period `t` with no row is refused
+#' - The listing needs rows for every unit of subround `s`. Rows under units
+#'   of other subrounds are ignored, so one growing listing file can be passed
+#'   every time. A unit of subround `s` with no row is refused
 #'   (`samplyr_error_frame_missing_parent`) unless its stage sets
 #'   `on_empty`.
 #' - The listing keys its rows to the master's units by their cluster ids,
 #'   such as `ea_id`, and carries what the later stages select on. Strata
 #'   and weights come from the master.
-#' - Each period is drawn once (`samplyr_error_wave_already_drawn`), in any
+#' - Each subround is drawn once (`samplyr_error_occasion_already_drawn`), in any
 #'   order, with its own `seed`. `stages` may be given, and must name every
 #'   remaining stage.
-#' - Until every period is drawn, the master keeps its first-stage rows and
+#' - Until every subround is drawn, the master keeps its first-stage rows and
 #'   every other verb reads it as the first-stage sample. `print()` and
-#'   [summary()][summary.tbl_sample] say which periods are drawn, and an
+#'   [summary()][summary.tbl_sample] say which subrounds are drawn, and an
 #'   ordinary continuation is refused
-#'   (`samplyr_error_wave_draws_in_progress`). `execute(master, wave = t)`
-#'   gives a drawn period's sample with exact weights. That sample is
+#'   (`samplyr_error_occasion_draws_in_progress`). `execute(master, period = 1, subround = s)`
+#'   gives a drawn subround's sample with exact weights. That sample is
 #'   provisional. [as_svydesign()] and [as_svrepdesign()] export it by
-#'   ultimate clusters from its own rows, and the two-phase export, which
-#'   reads the whole master, [stack_waves()] and [write_design()] refuse it
-#'   (`samplyr_error_wave_provisional`,
-#'   `samplyr_error_serialize_wave_provisional`).
-#' - The call that draws the last period returns the completed sample, as
+#'   ultimate clusters from its own rows, [stack_periods()] stacks it with
+#'   other occasions read before the draws are complete, and the two-phase
+#'   export, which reads the whole master, and [write_design()] refuse it
+#'   (`samplyr_error_occasion_provisional`,
+#'   `samplyr_error_serialize_occasion_provisional`).
+#' - The call that draws the last subround returns the completed sample, as
 #'   one continuation would, with every stage executed, rows in the master's
 #'   order of their units and `.sample_id` numbered once. It is the design of
 #'   `execute(master, listing)`, drawn with other random numbers.
-#' - The completed sample's frame digest holds every period's pools and
+#' - The completed sample's frame digest holds every subround's pools and
 #'   selections, so [frame_summary()] reports each stage as for one call. A
-#'   listing passed for every period keeps its frame record. Separate
-#'   listings share one record of the rows the periods drew from, with no
+#'   listing passed for every subround keeps its frame record. Separate
+#'   listings share one record of the rows the subrounds drew from, with no
 #'   fingerprint, since no single frame holds them.
-#' - [write_design()] records the master's call and each period's call in
+#' - [write_design()] records the master's call and each subround's call in
 #'   the order they were made, and [replay_design()] replays them with one
-#'   frame per call, the master's frame and then each period's listing. A
-#'   master with some periods drawn is written and replayed the same way.
-#' - A master with a rotation schedule is drawn the same way, tenure by
-#'   tenure. The call at wave `t` draws the units of the panels whose tenure
+#'   frame per call, the master's frame and then each subround's listing. A
+#'   master with some subrounds drawn is written and replayed the same way.
+#' - A master with a rotation schedule is drawn the same way, cohort by
+#'   cohort. The call at occasion `t` draws the units of the panels whose cohort
 #'   opens there, where the schedule's `visit` is 1, and the first call also
-#'   draws the permanent units, which keep one tenure throughout. A wave
-#'   that opens no tenure is refused (`samplyr_error_wave_already_drawn`)
-#'   with the waves that drew its units. When a panel has several tenures,
+#'   draws the permanent units, which keep one cohort throughout. An occasion
+#'   that opens no cohort is refused (`samplyr_error_occasion_already_drawn`)
+#'   with the occasions that drew its units. When a panel has several cohorts,
 #'   the master never closes: its draws accumulate, and
-#'   `execute(master, wave = t)` reads each panel's current tenure. A new
-#'   tenure takes the full listing: samplyr leaves out the units earlier
-#'   tenures drew and weights the rest to the whole listing. Such a master
-#'   takes no `reserve` at any stage (`samplyr_error_tenure_stages`), since
-#'   it is never complete and a wave exports no reserve.
-#'   [panel_assignment] describes tenures.
+#'   `execute(master, period = p)` reads each panel's current cohort. A new
+#'   cohort takes the full listing: samplyr leaves out the units earlier
+#'   cohorts drew and weights the rest to the whole listing. Such a master
+#'   takes no `reserve` at any stage (`samplyr_error_cohort_stages`), since
+#'   it is never complete and an occasion exports no reserve.
+#'   [panel_assignment] describes cohorts.
 #'
 #' ## Multi-phase sampling
 #' `execute(new_design, previous_sample)` starts a new phase, with the
@@ -466,11 +502,11 @@ NULL
 #' since they are part of the data. `droplevels()` on the sample removes
 #' them, and ids stored as character in the frame avoid them.
 #'
-#' A materialized wave keeps its master as its first phase, which its
-#' survey export reads. `saveRDS()` of a wave therefore writes the master
-#' too, again in every file and for every wave saved. Saving the master
-#' alone is enough, since `execute(master, wave = t)` gives back the same
-#' wave and draws no random numbers.
+#' A materialized occasion keeps its master as its first phase, which its
+#' survey export reads. `saveRDS()` of an occasion therefore writes the master
+#' too, again in every file and for every occasion saved. Saving the master
+#' alone is enough, since `execute(master, period = p)` gives back the same
+#' occasion and draws no random numbers.
 #'
 #' ## When a design cannot be realized as written
 #'
@@ -530,18 +566,18 @@ NULL
 #' sample <- selected_eas |> execute(listing, seed = 43)
 #' nrow(sample)  # 12 households in each selected EA
 #'
-#' ## Later stages drawn one period at a time
+#' ## Later stages drawn one subround at a time
 #' monthly <- sampling_design() |>
 #'   add_stage() |> stratify_by(region) |> cluster_by(ea_id) |>
 #'     draw(n = 12, method = "pps_systematic", mos = households) |>
 #'   add_stage() |> draw(n = 5) |>
-#'   execute(bfa_eas, stages = 1, seed = 1, panels = periods(12))
+#'   execute(bfa_eas, stages = 1, seed = 1, panels = subrounds(12))
 #' # The EAs of month 3 go to the listing team
 #' month_3 <- dplyr::filter(as.data.frame(monthly), .panel == 3)
 #' listing_3 <- dplyr::reframe(month_3, hh_id = seq_len(20), .by = ea_id)
-#' monthly <- execute(monthly, listing_3, wave = 3, seed = 103)
+#' monthly <- execute(monthly, listing_3, period = 1, subround = 3, seed = 103)
 #' monthly  # the master, with month 3's households drawn
-#' nrow(execute(monthly, wave = 3))  # month 3's sample
+#' nrow(execute(monthly, period = 1, subround = 3))  # month 3's sample
 #'
 #' ## One frame per stage
 #' # Frames map to stages by position: districts first, then EAs
@@ -601,7 +637,8 @@ execute <- function(
   panel_stage = NULL,
   small_pool = NULL,
   reps = NULL,
-  wave = NULL,
+  period = NULL,
+  subround = NULL,
   response_status = NULL,
   frame_digest = c("summary", "full", "none")
 ) {
@@ -617,6 +654,7 @@ execute <- function(
   # Read call names without evaluating stray arguments.
   check_execute_dot_names(enquos(...))
   dots <- list(...)
+  occasion <- occasion_request(period, subround)
 
   if (is.data.frame(.data) && !is_tbl_sample(.data)) {
     abort_frame_misplaced(
@@ -637,28 +675,28 @@ execute <- function(
       panel_stage = panel_stage,
       small_pool = small_pool,
       reps = reps,
-      wave = wave,
+      occasion = occasion,
       frame_digest_given = frame_digest_given
     ))
   }
 
   execution_environment <- capture_execution_environment()
 
-  # A program can only materialize a wave.
+  # A program can only materialize an occasion.
   if (is_rotation_program(.data)) {
-    if (is_null(wave)) {
+    if (is_null(occasion)) {
       abort_samplyr(
         c(
-          "A rotation program is executed one wave at a time.",
-          "i" = "{.code execute(program, wave = t)} materializes the
-                 occasion {.arg t}."
+          "A rotation program is executed one occasion at a time.",
+          "i" = "{.code execute(program, period = p, subround = s)}
+                 materializes one occasion."
         ),
-        class = "samplyr_error_program_wave_required"
+        class = "samplyr_error_program_occasion_required"
       )
     }
-    return(materialize_program_wave(
+    return(materialize_program_occasion(
       .data,
-      wave,
+      occasion,
       frames = dots,
       stages = stages,
       seed = seed,
@@ -671,12 +709,12 @@ execute <- function(
     ))
   }
 
-  # A listing with a wave draws that wave's later stages.
-  if (!is_null(wave) && length(dots) > 0L && is_tbl_sample(.data) &&
+  # A listing with an occasion draws that occasion's later stages.
+  if (!is_null(occasion) && length(dots) > 0L && is_tbl_sample(.data) &&
       length(remaining_stages(.data)) > 0L) {
-    return(draw_wave(
+    return(draw_occasion(
       .data,
-      wave,
+      occasion,
       frames = dots,
       stages = stages,
       seed = seed,
@@ -688,11 +726,11 @@ execute <- function(
     ))
   }
 
-  # Materialize waves before frame normalization.
-  if (!is_null(wave)) {
-    return(materialize_wave(
+  # Materialize occasions before frame normalization.
+  if (!is_null(occasion)) {
+    return(materialize_occasion(
       .data,
-      wave,
+      occasion,
       frames = dots,
       stages = stages,
       seed = seed,
@@ -779,7 +817,7 @@ execute <- function(
     validate_design_complete(design)
   } else if (is_tbl_sample(.data)) {
     check_weight_contract_execute(.data, "execute")
-    check_no_wave_draws(.data)
+    check_no_occasion_draws(.data)
     design <- get_design(.data)
     executed <- get_stages_executed(.data)
   } else {
@@ -1047,13 +1085,27 @@ execute <- function(
 #' @noRd
 check_execute_dot_names <- function(dots, call = rlang::caller_env()) {
   reserved <- c(
-    "stages", "seed", "panels", "panel_stage", "small_pool", "reps", "wave",
-    "response_status", "frame_digest"
+    "stages", "seed", "panels", "panel_stage", "small_pool", "reps", "period",
+    "subround", "response_status", "frame_digest"
   )
   nms <- names(dots) %||% rep("", length(dots))
 
   for (i in seq_along(dots)) {
     name <- nms[[i]]
+    if (identical(name, "wave")) {
+      abort_samplyr(
+        c(
+          "{.fn execute} names an occasion by {.arg period} and an optional
+           {.arg subround}.",
+          "x" = "It received {.arg wave}.",
+          "i" = "Write {.code execute(master, period = p)} for a whole
+                 period, or {.code execute(master, period = p, subround = s)}
+                 for one occasion."
+        ),
+        class = "samplyr_error_unknown_argument",
+        call = call
+      )
+    }
     if (!nzchar(name) || is.null(suggest_reserved_arg(name, reserved))) {
       next
     }
@@ -1130,8 +1182,8 @@ check_execute_dots <- function(
   call = rlang::caller_env()
 ) {
   reserved <- c(
-    "stages", "seed", "panels", "panel_stage", "small_pool", "reps", "wave",
-    "response_status", "frame_digest"
+    "stages", "seed", "panels", "panel_stage", "small_pool", "reps", "period",
+    "subround", "response_status", "frame_digest"
   )
   nms <- names(frames) %||% rep("", length(frames))
 
@@ -1316,7 +1368,7 @@ execute_design <- function(
 
   panel_assignment <- NULL
   if (!is_null(panels) && nrow(current_sample) > 0) {
-    check_tenure_stages(
+    check_cohort_stages(
       panels, design, panels$stage %||% stages[1], stages,
       call = call
     )
@@ -1594,7 +1646,7 @@ execute_continuation <- function(
         } else {
           "It carries a {.field .panel} column but no assignment record."
         },
-        "i" = "The record holds the pools, blocks and quotas a wave is
+        "i" = "The record holds the pools, blocks and quotas an occasion is
                computed from, and {.field .panel} says which panel each unit
                is in. One without the other can be neither activated nor
                replayed.",
@@ -1695,7 +1747,7 @@ execute_continuation <- function(
   panel_assignment <- parent_meta$panel_assignment
   if (!is_null(panels) && nrow(current_sample) > 0) {
     assignment_stage <- panels$stage %||% c(executed, stages)[1]
-    check_tenure_stages(
+    check_cohort_stages(
       panels, design, assignment_stage, c(executed, stages),
       call = call
     )

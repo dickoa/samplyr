@@ -13,7 +13,8 @@ execute(
   panel_stage = NULL,
   small_pool = NULL,
   reps = NULL,
-  wave = NULL,
+  period = NULL,
+  subround = NULL,
   response_status = NULL,
   frame_digest = c("summary", "full", "none")
 )
@@ -54,16 +55,17 @@ sample because its receipt cannot reproduce it.}
 
 \item{panels}{Rotation groups (panels) to partition the sample into, as an
 integer count, a rotation schedule (a data frame with integer \code{panel}
-and \code{wave} columns, an optional logical \code{active} column, an optional
-integer \code{visit} column that opens tenures and an optional integer
-\code{period} column that names each wave's reporting period), or an
-\code{svyplan_schedule} from \code{\link[svyplan:design_schedule]{svyplan::design_schedule()}}. \code{\link[=periods]{periods()}}
-partitions it into fieldwork periods instead, each unit visited once.
+and \code{period} columns, an optional integer \code{subround} column that splits
+a period into occasions, an optional logical \code{active} column and an
+optional integer \code{visit} column that opens cohorts), or an
+\code{svyplan_schedule} from \code{\link[svyplan:design_schedule]{svyplan::design_schedule()}}. \code{\link[=subrounds]{subrounds()}}
+partitions it into the subrounds of one period instead, each unit
+visited once.
 The output gains a \code{.panel} column, and only a sample drawn with a
-schedule or periods can be materialized by \code{wave}. Default \code{NULL} means no panels. Cannot be
-combined with \code{reps}, or redeclared on a sample that already carries an
-assignment. \link{panel_assignment} describes the assignment and the
-schedules.}
+schedule or periods can be materialized by \code{period}. Default \code{NULL}
+means no panels. Cannot be combined with \code{reps}, or redeclared on a
+sample that already carries an assignment. \link{panel_assignment} describes
+the assignment and the schedules.}
 
 \item{panel_stage}{Stage whose selected units are assigned to panels, as a
 single stage number, or \code{NULL} (the default) for the first executed
@@ -75,17 +77,17 @@ parents that stay in the survey. \link{panel_assignment} explains what that
 changes, including how it can bias estimates over time.}
 
 \item{small_pool}{What to do when a rotation schedule would leave a pool
-with no unit to activate at some wave. \code{"error"} (the default, reached by
+with no unit to activate at some occasion. \code{"error"} (the default, reached by
 \code{NULL}) refuses the assignment, and \code{"permanent"} activates those units
-at every wave and warns with \code{samplyr_warning_panel_small_pool}.
+at every occasion and warns with \code{samplyr_warning_panel_small_pool}.
 Meaningful only with a schedule. See \link{panel_assignment}.}
 
 \item{reps}{Integer number of independent replicate samples to draw (>= 2),
 or \code{NULL} (default) for a single sample. The replicates are stacked in
 one \code{tbl_sample} with a \code{.replicate} column (integer 1 through \code{reps}).
 Their seeds are drawn from \code{seed}, since consecutive seeds do not give
-independent draws in R, and recorded in the \code{replicate_seeds} element
-of the sample's metadata, so replicate \code{r} alone is
+independent draws in R, and kept in
+\code{attr(sample, "metadata")$replicate_seeds}, so replicate \code{r} alone is
 \code{execute(design, frame, seed = replicate_seeds[r])}. Cannot be combined
 with \code{panels} or with stages that use permanent random numbers. A
 replicated sample continued, or used as a phase-2 frame, carries its
@@ -94,22 +96,32 @@ random numbers either.
 \code{as_svrepdesign(type = "random_groups")} estimates variance from the
 spread of the replicates, for any selection method.}
 
-\item{wave}{Integer wave of a master that carries a panel assignment, or
-\code{NULL} (default). It has two uses, told apart by whether a frame is
-given. Without a frame, \code{execute(master, wave = t)} materializes wave
-\code{t}. It activates the panels the stored schedule declares active at \code{t}
-and compounds the exact activation factor into \code{.weight}. A wave selects
-units the master already assigned, under the policy the master froze, so
-it takes none of \code{seed}, \code{stages}, \code{panels}, \code{panel_stage}, \code{small_pool},
-\code{reps} or \code{frame_digest}. Each is refused by name rather than ignored.
-Several distinct waves, as \code{wave = 1:3}, pool those waves into one
-sample with a \code{.wave} column (\link{panel_assignment} gives the weights).
-With a frame, \code{execute(master, listing, wave = t)} draws the master's
-remaining stages under the units whose tenure opens at \code{t}, the units
-of period \code{t} for \code{\link[=periods]{periods()}}, and returns the master. It accepts
-\code{seed} and \code{stages}, refuses the other arguments, and takes a master
-with a rotation schedule or periods. See "Drawing the later stages wave
-by wave" below.}
+\item{period, subround}{Occasions of a master that carries a panel
+assignment, or \code{NULL} (default). An occasion is one \verb{(period, subround)}
+pair of the stored schedule. \code{period} alone names whole periods, and
+with \code{subround} the two are read as pairs, position by position, under
+the recycling rule of \code{tibble()}: equal lengths or length 1. So
+\verb{period = 3, subround = 1:2} is the first two subrounds of period 3, and
+\verb{period = c(1, 1, 2), subround = c(2, 3, 1)} a rolling window across
+two periods. A cross is built with \code{expand.grid()}. \code{subround} without
+\code{period} is refused, and so are a pair named twice and a pair the
+schedule does not hold.
+
+They have two uses, told apart by whether a frame is given. Without a
+frame, \code{execute(master, period = p, subround = s)} materializes those
+occasions. It activates the panels the stored schedule declares active
+and compounds the exact activation factor into \code{.weight}. An occasion
+selects units the master already assigned, under the policy the master
+froze, so it takes none of \code{seed}, \code{stages}, \code{panels}, \code{panel_stage},
+\code{small_pool}, \code{reps} or \code{frame_digest}. Each is refused by name rather
+than ignored. Several occasions pool into one sample whose rows carry
+\code{.period} and \code{.subround} (\link{panel_assignment} gives the weights). With
+a frame, \code{execute(master, listing, period = p, subround = s)} draws the
+master's remaining stages under the units whose cohort opens at that
+occasion, the units of that subround for \code{\link[=subrounds]{subrounds()}}, and returns the
+master. It takes one occasion, accepts \code{seed} and \code{stages}, refuses the
+other arguments, and takes a master with a rotation schedule or
+periods. See "Drawing the later stages occasion by occasion" below.}
 
 \item{response_status}{A column of the sample that holds the final
 disposition of each listed unit, in the terms of the AAPOR Standard
@@ -158,7 +170,8 @@ selection. Those are \code{.sample_id}, \code{.weight}, the per-stage \code{.wei
 \code{.fpc_k}, \code{.draw_k} and \code{.certainty_k}, \code{.reserve_k} at a stage that
 sets \code{reserve} in \code{\link[=draw]{draw()}}, \code{.zone_1} and \code{.pair_1} for a zoned
 certainty plan, \code{.replicate} or \code{.panel} when \code{reps} or
-\code{panels} is used, and \code{.wave} for a window of several waves.
+\code{panels} is used, and \code{.period} and \code{.subround} for a window of several
+occasions.
 \link{sample_columns} documents what each one holds.
 }
 \description{
@@ -166,6 +179,29 @@ certainty plan, \code{.replicate} or \code{.panel} when \code{reps} or
 producing a sampled dataset with appropriate weights and metadata.
 }
 \details{
+\subsection{Forms of a call}{
+
+The first argument, whether a frame follows it and one defining option
+decide what a call does.\tabular{lll}{
+   Call \tab Operation \tab Random numbers \cr
+   \code{execute(design, frame)} \tab Draw a new sample \tab Yes \cr
+   \code{execute(design, frame, stages = 1)} \tab Draw the first stages only \tab Yes \cr
+   \code{execute(partial, listing)} \tab Continue the remaining stages \tab Yes \cr
+   \code{execute(design2, sample1)} \tab Start a new phase from an earlier sample \tab Yes \cr
+   \code{execute(design, frame, reps = 10)} \tab Draw independent replicates \tab Yes \cr
+   \code{execute(design, frame, panels = schedule)} \tab Draw a master and assign panels \tab Yes \cr
+   \code{execute(master, listing, period = 2)} \tab Draw the later stages of one occasion \tab Yes \cr
+   \code{execute(master, period = 2)} \tab Materialize stored occasions \tab No \cr
+   \code{execute(program, period = 2)} \tab Collect an occasion of a \code{\link[=rotation_program]{rotation_program()}} \tab No \cr
+   \code{execute(listed, response_status = col)} \tab Settle a reserve \tab No \cr
+}
+
+
+A \code{tbl_sample} in first position continues its own design, whereas one
+passed as the frame starts a new phase. The arguments and the sections
+below describe each form.
+}
+
 \subsection{Multi-stage with a single frame}{
 
 For hierarchical data where all stages are in one frame, pass that one
@@ -247,62 +283,64 @@ new phase drawn from the list.
 it for \code{\link[=replay_design]{replay_design()}}.
 }
 
-\subsection{Drawing the later stages wave by wave}{
+\subsection{Drawing the later stages occasion by occasion}{
 
-A master split into \code{\link[=periods]{periods()}} at its first stage can have its later
-stages drawn period by period, as listing proceeds in the field.
-\code{execute(master, listing, wave = t)} draws every remaining stage under the
-units of period \code{t} and returns the master, so the calls are chained, as
-in \code{master <- execute(master, listing_3, wave = 3, seed = 103)}.
+A master split into \code{\link[=subrounds]{subrounds()}} at its first stage can have its later
+stages drawn subround by subround, as listing proceeds in the field.
+\code{execute(master, listing, period = 1, subround = s)} draws every remaining
+stage under the units of subround \code{s} and returns the master, so the
+calls are chained, as in
+\code{master <- execute(master, listing_3, period = 1, subround = 3, seed = 103)}.
 \itemize{
-\item The listing needs rows for every unit of period \code{t}. Rows under units
-of other periods are ignored, so one growing listing file can be passed
-every time. A unit of period \code{t} with no row is refused
+\item The listing needs rows for every unit of subround \code{s}. Rows under units
+of other subrounds are ignored, so one growing listing file can be passed
+every time. A unit of subround \code{s} with no row is refused
 (\code{samplyr_error_frame_missing_parent}) unless its stage sets
 \code{on_empty}.
 \item The listing keys its rows to the master's units by their cluster ids,
 such as \code{ea_id}, and carries what the later stages select on. Strata
 and weights come from the master.
-\item Each period is drawn once (\code{samplyr_error_wave_already_drawn}), in any
+\item Each subround is drawn once (\code{samplyr_error_occasion_already_drawn}), in any
 order, with its own \code{seed}. \code{stages} may be given, and must name every
 remaining stage.
-\item Until every period is drawn, the master keeps its first-stage rows and
+\item Until every subround is drawn, the master keeps its first-stage rows and
 every other verb reads it as the first-stage sample. \code{print()} and
-\link[=summary.tbl_sample]{summary()} say which periods are drawn, and an
+\link[=summary.tbl_sample]{summary()} say which subrounds are drawn, and an
 ordinary continuation is refused
-(\code{samplyr_error_wave_draws_in_progress}). \code{execute(master, wave = t)}
-gives a drawn period's sample with exact weights. That sample is
+(\code{samplyr_error_occasion_draws_in_progress}). \code{execute(master, period = 1, subround = s)}
+gives a drawn subround's sample with exact weights. That sample is
 provisional. \code{\link[=as_svydesign]{as_svydesign()}} and \code{\link[=as_svrepdesign]{as_svrepdesign()}} export it by
-ultimate clusters from its own rows, and the two-phase export, which
-reads the whole master, \code{\link[=stack_waves]{stack_waves()}} and \code{\link[=write_design]{write_design()}} refuse it
-(\code{samplyr_error_wave_provisional},
-\code{samplyr_error_serialize_wave_provisional}).
-\item The call that draws the last period returns the completed sample, as
+ultimate clusters from its own rows, \code{\link[=stack_periods]{stack_periods()}} stacks it with
+other occasions read before the draws are complete, and the two-phase
+export, which reads the whole master, and \code{\link[=write_design]{write_design()}} refuse it
+(\code{samplyr_error_occasion_provisional},
+\code{samplyr_error_serialize_occasion_provisional}).
+\item The call that draws the last subround returns the completed sample, as
 one continuation would, with every stage executed, rows in the master's
 order of their units and \code{.sample_id} numbered once. It is the design of
 \code{execute(master, listing)}, drawn with other random numbers.
-\item The completed sample's frame digest holds every period's pools and
+\item The completed sample's frame digest holds every subround's pools and
 selections, so \code{\link[=frame_summary]{frame_summary()}} reports each stage as for one call. A
-listing passed for every period keeps its frame record. Separate
-listings share one record of the rows the periods drew from, with no
+listing passed for every subround keeps its frame record. Separate
+listings share one record of the rows the subrounds drew from, with no
 fingerprint, since no single frame holds them.
-\item \code{\link[=write_design]{write_design()}} records the master's call and each period's call in
+\item \code{\link[=write_design]{write_design()}} records the master's call and each subround's call in
 the order they were made, and \code{\link[=replay_design]{replay_design()}} replays them with one
-frame per call, the master's frame and then each period's listing. A
-master with some periods drawn is written and replayed the same way.
-\item A master with a rotation schedule is drawn the same way, tenure by
-tenure. The call at wave \code{t} draws the units of the panels whose tenure
+frame per call, the master's frame and then each subround's listing. A
+master with some subrounds drawn is written and replayed the same way.
+\item A master with a rotation schedule is drawn the same way, cohort by
+cohort. The call at occasion \code{t} draws the units of the panels whose cohort
 opens there, where the schedule's \code{visit} is 1, and the first call also
-draws the permanent units, which keep one tenure throughout. A wave
-that opens no tenure is refused (\code{samplyr_error_wave_already_drawn})
-with the waves that drew its units. When a panel has several tenures,
+draws the permanent units, which keep one cohort throughout. An occasion
+that opens no cohort is refused (\code{samplyr_error_occasion_already_drawn})
+with the occasions that drew its units. When a panel has several cohorts,
 the master never closes: its draws accumulate, and
-\code{execute(master, wave = t)} reads each panel's current tenure. A new
-tenure takes the full listing: samplyr leaves out the units earlier
-tenures drew and weights the rest to the whole listing. Such a master
-takes no \code{reserve} at any stage (\code{samplyr_error_tenure_stages}), since
-it is never complete and a wave exports no reserve.
-\link{panel_assignment} describes tenures.
+\code{execute(master, period = p)} reads each panel's current cohort. A new
+cohort takes the full listing: samplyr leaves out the units earlier
+cohorts drew and weights the rest to the whole listing. Such a master
+takes no \code{reserve} at any stage (\code{samplyr_error_cohort_stages}), since
+it is never complete and an occasion exports no reserve.
+\link{panel_assignment} describes cohorts.
 }
 }
 
@@ -338,11 +376,11 @@ thousand rows as in the frame. samplyr leaves the levels as they are,
 since they are part of the data. \code{droplevels()} on the sample removes
 them, and ids stored as character in the frame avoid them.
 
-A materialized wave keeps its master as its first phase, which its
-survey export reads. \code{saveRDS()} of a wave therefore writes the master
-too, again in every file and for every wave saved. Saving the master
-alone is enough, since \code{execute(master, wave = t)} gives back the same
-wave and draws no random numbers.
+A materialized occasion keeps its master as its first phase, which its
+survey export reads. \code{saveRDS()} of an occasion therefore writes the master
+too, again in every file and for every occasion saved. Saving the master
+alone is enough, since \code{execute(master, period = p)} gives back the same
+occasion and draws no random numbers.
 }
 
 \subsection{When a design cannot be realized as written}{
@@ -404,18 +442,18 @@ listing <- selected_eas |>
 sample <- selected_eas |> execute(listing, seed = 43)
 nrow(sample)  # 12 households in each selected EA
 
-## Later stages drawn one period at a time
+## Later stages drawn one subround at a time
 monthly <- sampling_design() |>
   add_stage() |> stratify_by(region) |> cluster_by(ea_id) |>
     draw(n = 12, method = "pps_systematic", mos = households) |>
   add_stage() |> draw(n = 5) |>
-  execute(bfa_eas, stages = 1, seed = 1, panels = periods(12))
+  execute(bfa_eas, stages = 1, seed = 1, panels = subrounds(12))
 # The EAs of month 3 go to the listing team
 month_3 <- dplyr::filter(as.data.frame(monthly), .panel == 3)
 listing_3 <- dplyr::reframe(month_3, hh_id = seq_len(20), .by = ea_id)
-monthly <- execute(monthly, listing_3, wave = 3, seed = 103)
+monthly <- execute(monthly, listing_3, period = 1, subround = 3, seed = 103)
 monthly  # the master, with month 3's households drawn
-nrow(execute(monthly, wave = 3))  # month 3's sample
+nrow(execute(monthly, period = 1, subround = 3))  # month 3's sample
 
 ## One frame per stage
 # Frames map to stages by position: districts first, then EAs

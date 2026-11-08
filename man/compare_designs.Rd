@@ -140,10 +140,14 @@ the selection algorithm, which can differ between designs that agree.
 \subsection{What is not compared}{
 
 A check that cannot run is reported as \code{"unresolved"} with the reason,
-never as agreement: designs with different numbers of stages, a stage below
-a with-replacement stage, methods whose probabilities are unknown, mixed
-probability tiers, and a stage that sets \code{on_capped = "error"} on a frame
-with short pools.
+never as agreement: an allocation check between designs with different
+numbers of stages, a stage below a with-replacement stage, methods whose
+probabilities are unknown, mixed probability tiers, and a stage that sets
+\code{on_capped = "error"} on a frame with short pools. The probability check
+compares each row's final inclusion probability, so it runs whatever the
+number of stages. A simple random sample of 8 from 80 agrees with 4 of 8
+equal EAs and 2 of their 10 units each, since every row has probability
+0.1 under both.
 }
 }
 \examples{

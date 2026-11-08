@@ -21,6 +21,7 @@ tbl_sample_verdicts <- c(
   "vec_restore" = "preserve",
   "summary" = "support",
   "tbl_sum" = "support",
+  "tbl_format_footer" = "support",
   "design_effect" = "support",
   "effective_n" = "support",
   "as_svydesign" = "support",
@@ -91,7 +92,7 @@ test_that("further selection refuses a shared-weight sample, by either route", {
   )
 })
 
-test_that("panel and wave operations refuse a shared-weight sample", {
+test_that("panel and occasion operations refuse a shared-weight sample", {
   shared <- shared_weight_sample()
 
   expect_error(
@@ -99,20 +100,20 @@ test_that("panel and wave operations refuse a shared-weight sample", {
     class = "samplyr_error_panel_weight_contract"
   )
   expect_error(
-    execute(shared, wave = 1),
+    execute(shared, period = 1),
     class = "samplyr_error_panel_weight_contract"
   )
 
   # The message must not point to the operation that refuses the other way.
   expect_error(
-    execute(shared, wave = 1),
+    execute(shared, period = 1),
     regexp = "do not compose in either direction"
   )
 })
 
-test_that("share_weights() refuses a materialized wave", {
-  master <- wave_share_master()
-  wave <- execute(master, wave = 1)
+test_that("share_weights() refuses a materialized occasion", {
+  master <- occasion_share_master()
+  occasion <- execute(master, period = 1)
 
   targets <- data.frame(
     person_id = paste0("p", seq_len(nrow(master))),
@@ -133,36 +134,36 @@ test_that("share_weights() refuses a materialized wave", {
     )
   }
 
-  expect_error(share(wave), class = "samplyr_error_share_weights_wave")
-  expect_error(share(wave), regexp = "realizes wave 1")
+  expect_error(share(occasion), class = "samplyr_error_share_weights_occasion")
+  expect_error(share(occasion), regexp = "realizes period 1,")
 
   # The master is accepted, and its panel assignment is not carried over.
   from_master <- share(master)
   expect_s3_class(from_master, "tbl_sample")
   expect_identical(nrow(from_master), nrow(master))
   expect_null(attr(from_master, "metadata")$panel_assignment)
-  expect_null(attr(from_master, "metadata")$wave)
+  expect_null(attr(from_master, "metadata")$occasion)
   expect_false(".panel" %in% names(from_master))
 
-  # The result is an ordinary shared sample, which the wave route refuses.
+  # The result is an ordinary shared sample, which the occasion route refuses.
   expect_error(
-    execute(from_master, wave = 1),
+    execute(from_master, period = 1),
     class = "samplyr_error_panel_weight_contract"
   )
 })
 
-test_that("stack_waves reports non-wave arguments instead of failing to format", {
+test_that("stack_periods() reports non-occasion arguments instead of failing to format", {
   ordinary <- shared_weight_source()
 
   # Two positions give the plural message, not a cli formatting error.
   expect_error(
-    stack_waves(ordinary, ordinary),
-    class = "samplyr_error_stack_waves_input"
+    stack_periods(ordinary, ordinary),
+    class = "samplyr_error_stack_periods_input"
   )
-  expect_error(stack_waves(ordinary, ordinary), regexp = "Arguments 1 and 2")
-  # The second argument is a real wave, so the first is reported alone.
+  expect_error(stack_periods(ordinary, ordinary), regexp = "Arguments 1 and 2")
+  # The second argument is a real occasion, so the first is reported alone.
   expect_error(
-    stack_waves(ordinary, execute(wave_share_master(), wave = 1)),
+    stack_periods(ordinary, execute(occasion_share_master(), period = 1)),
     regexp = "Argument 1 is not one"
   )
 })

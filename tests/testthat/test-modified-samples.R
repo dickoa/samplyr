@@ -542,19 +542,19 @@ test_that("a continuation of a modified sample stays modified", {
   expect_no_error(as_svydesign(intact))
 })
 
-test_that("a period filtered out of a master cannot be continued into an export", {
+test_that("a subround filtered out of a master cannot be continued into an export", {
   skip_if_not_installed("survey")
   design <- sampling_design() |>
     add_stage() |> stratify_by(region) |> cluster_by(ea_id) |> draw(n = 24) |>
     add_stage() |> draw(n = 12)
   selected <- execute(design, bfa_eas, stages = 1, seed = 1,
-                      panels = periods(12))
+                      panels = subrounds(12))
   month <- dplyr::filter(selected, .panel == 3)
   listing <- as.data.frame(month)[c("ea_id", "region")]
   listing <- listing[rep(seq_len(nrow(listing)), each = 15), ]
   expect_warning(continued <- execute(month, listing, seed = 2),
                  class = "samplyr_warning_modified_sample")
-  expect_error(execute(continued, wave = 3),
+  expect_error(execute(continued, period = 1, subround = 3),
                class = "samplyr_error_modified_sample")
   expect_error(as_svydesign(continued),
                class = "samplyr_error_modified_sample")
@@ -571,13 +571,13 @@ test_that("a written record carries the file fields only", {
 
 test_that("the generated names are matched exactly, not by prefix", {
   generated <- c(
-    ".weight", ".sample_id", ".stage", ".panel", ".replicate", ".wave",
-    ".visit", ".weight_1", ".weight_10", ".fpc_2", ".draw_1",
+    ".weight", ".sample_id", ".stage", ".panel", ".replicate", ".period",
+    ".subround", ".visit", ".weight_1", ".weight_10", ".fpc_2", ".draw_1",
     ".certainty_3", ".zone_1", ".pair_1", ".reserve_2"
   )
   lookalike <- c(
     ".weight_adj", ".weight_", ".weights", ".fpc_inf_1", ".fpc_note",
-    ".stage_name", ".panelist", ".replicate_id", ".wave2", ".reserve_flag",
+    ".stage_name", ".panelist", ".replicate_id", ".period2", ".reserve_flag",
     "weight", "weight_1"
   )
   expect_identical(
@@ -589,7 +589,7 @@ test_that("the generated names are matched exactly, not by prefix", {
 test_that("every column execution adds is generated and protected", {
   frame <- data.frame(id = 1:40, g = rep(1:2, 20), size = 1:40)
   schedule <- data.frame(
-    panel = rep(1:2, times = 2), wave = rep(1:2, each = 2),
+    panel = rep(1:2, times = 2), period = rep(1:2, each = 2),
     active = c(TRUE, FALSE, TRUE, TRUE)
   )
   master <- sampling_design() |>
@@ -605,8 +605,8 @@ test_that("every column execution adds is generated and protected", {
            draw(n = 4, method = "pps_brewer", mos = size) |>
            execute(frame, seed = 3, reps = 2), frame),
     list(master, frame),
-    list(execute(master, wave = 2), frame),
-    list(execute(master, wave = 1:2), frame),
+    list(execute(master, period = 2), frame),
+    list(execute(master, period = 1:2), frame),
     list(certainty_zone_design(certainty_pair_fixture()) |>
            execute(bridge_frame, seed = 1), bridge_frame)
   )
@@ -617,8 +617,8 @@ test_that("every column execution adds is generated and protected", {
   expect_setequal(
     added,
     c(".weight", ".sample_id", ".stage", ".weight_1", ".fpc_1", ".draw_1",
-      ".reserve_1", ".replicate", ".certainty_1", ".panel", ".wave",
-      ".visit", ".weight_2", ".fpc_2", ".zone_1", ".pair_1")
+      ".reserve_1", ".replicate", ".certainty_1", ".panel", ".period",
+      ".subround", ".visit", ".weight_2", ".fpc_2", ".zone_1", ".pair_1")
   )
   for (x in samples) {
     sample <- x[[1]]

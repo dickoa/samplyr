@@ -473,7 +473,7 @@ check_stage_targets <- function(design, stage_idx, frame) {
     }
     strata <- spec$strata$vars
     groups <- if (length(strata)) split_row_indices(units, strata)$indices else list(seq_len(nrow(units)))
-    # A tenure sizes its take on the whole listing, as the draw does.
+    # A cohort sizes its take on the whole listing, as the draw does.
     parent_draw <- resolve_parent_draw_spec(draw, units)
     sizes <- if (length(strata)) {
       info <- calculate_stratum_sizes(
@@ -502,7 +502,7 @@ check_stage_targets <- function(design, stage_idx, frame) {
         thin_reserve <- pool_record(thin_reserve, units, groups, thin, strata)
       }
     }
-    if (fixed_take || !is_null(draw$tenure_takes)) {
+    if (fixed_take || !is_null(draw$cohort_takes)) {
       over <- which(sizes > lengths(groups))
       # An allocated total above the population exhausts every stratum.
       if (

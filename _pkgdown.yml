@@ -48,15 +48,16 @@ reference:
 
   - title: "Panels, rotation and periods"
     desc: >
-      Longitudinal designs: split an executed master into panels, materialize
-      the wave each panel is scheduled for, and assemble the waves. Periods
-      spread a sample over fieldwork months instead.
+      Split an executed master into panels, materialize each occasion, named
+      by its period and subround, for the panels scheduled there, and stack
+      the occasions. Subrounds spread one period's sample over its fieldwork
+      months instead.
     contents:
       - panel_assignment
-      - periods
+      - subrounds
       - rotation_program
-      - stack_waves
-      - as.data.frame.rotation_wave
+      - stack_periods
+      - as.data.frame.rotation_occasion
 
   - title: "Indirect sampling and overlapping frames"
     desc: >

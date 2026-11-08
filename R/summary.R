@@ -16,9 +16,9 @@
 #'   one unit each stage took whole. Such a unit is certain too, as
 #'   `.certainty_k` records, but it is counted only in `single_unit_pools`,
 #'   so a stage of unsegmented EAs does not read as large units taken for
-#'   their size. `periods` is `NULL` unless the sample is split into
-#'   [periods()]. It then holds `k` and a `pools` table with each pool's
-#'   fewest and most units per period (`min`, `max`). Weight figures are
+#'   their size. `subrounds` is `NULL` unless the sample is split into
+#'   [subrounds()]. It then holds `k` and a `pools` table with each pool's
+#'   fewest and most units per subround (`min`, `max`). Weight figures are
 #'   `NULL` for an
 #'   empty sample and for stacked replicates, which the print also leaves
 #'   out. `sample` is the summarized sample itself.
@@ -29,28 +29,28 @@
 #' path has no with-replacement stage), the stages executed, and the seed.
 #' Under `frame_digest = "none"` the header shows the sample size alone,
 #' since nothing records the size of the frame. When the later stages were
-#' drawn one wave at a time, the header shows the seeds of the draws the
+#' drawn one occasion at a time, the header shows the seeds of the draws the
 #' rows come from, such as `seeds = 101 to 112` for the completed master.
-#' A wave shows the seed of the draw that took its units. The header shows
+#' An occasion shows the seed of the draw that took its units. The header shows
 #' no seed when one of those draws ran without one.
 #'
-#' A sample split into [periods()] gets one more line, which says whether
-#' each stratum has the same number of units in every period and names the
-#' strata that do not, for example "Periods: 12, even in 10 of 13 strata."
-#' followed by "Uneven: Cascades (2 to 3 per period), Centre-Nord (3 to
-#' 4)." When every stratum is even, the line gives the range of units per
-#' period instead. This is the table fieldwork is planned from, and an
-#' uneven stratum shows an allocation that is not a multiple of the number
-#' of periods. While the later stages are drawn one period at a time, a line
-#' such as "Drawn: stage 2 in 3 of 12 periods (1, 2, 5)." says how far they
-#' are.
+#' A sample split into [subrounds()] gets one more line, which says whether
+#' each stratum has the same number of units in every subround and names
+#' the strata that do not, for example "Subrounds: 12, even in 10 of 13
+#' strata." followed by "Uneven: Cascades (2 to 3 per subround),
+#' Centre-Nord (3 to 4)." When every stratum is even, the line gives the
+#' range of units per subround instead. This is the table fieldwork is
+#' planned from, and an uneven stratum shows an allocation that is not a
+#' multiple of the number of subrounds. While the later stages are drawn
+#' one subround at a time, a line such as "Drawn: stage 2 in 3 of 12
+#' subrounds (1, 2, 5)." says how far they are.
 #'
-#' A materialized wave, period or window describes itself. A line such as
+#' A materialized occasion, period or window describes itself. A line such as
 #' "Period: 2 of 4. It holds 26 of the master's 104 units." names it and
 #' counts the units its panels were assigned to, each once however many of
-#' the waves activate it. Its stage sections count the wave's own units,
+#' the occasions activate it. Its stage sections count the occasion's own units,
 #' with or without a frame digest, since the digest records the master's
-#' draw. A stage drawn for the wave alone is read from the wave's part of
+#' draw. A stage drawn for the occasion alone is read from the occasion's part of
 #' the digest. The master's own summary describes its draw.
 #'
 #' Each stage section has two lines:
@@ -137,7 +137,7 @@ summary.tbl_sample <- function(object, ...) {
         }, integer(1)),
         paste0("stage_", stages)
       ),
-      periods = summary_periods(object)
+      subrounds = summary_subrounds(object)
     ),
     class = "summary_tbl_sample"
   )
@@ -153,7 +153,7 @@ print.summary_tbl_sample <- function(x, ...) {
 
 #' The seeds a summary shows
 #'
-#' Rows drawn one wave at a time show the seeds of the draws they come from,
+#' Rows drawn one occasion at a time show the seeds of the draws they come from,
 #' and none when one of those draws had none. Other samples show their
 #' seed.
 #' @noRd
@@ -243,9 +243,9 @@ render_sample_summary <- function(object) {
     bullet = "info"
   )
 
-  summary_periods_lines(summary_periods(object))
-  summary_wave_line(object)
-  progress <- wave_draws_progress(object)
+  summary_subrounds_lines(summary_subrounds(object))
+  summary_occasion_line(object)
+  progress <- occasion_draws_progress(object)
   if (!is_null(progress)) {
     cli::cat_bullet(paste0("Drawn: ", progress, "."), bullet = "info")
   }
@@ -263,12 +263,12 @@ render_sample_summary <- function(object) {
       digest <- NULL
     }
   }
-  # A wave's stages are counted on its rows where its digest describes the
+  # An occasion's stages are counted on its rows where its digest describes the
   # master, which is every stage the master drew for all its panels.
-  wave <- attr(stage_sample, "metadata")[["wave"]]
-  is_wave <- !is_null(wave)
-  if (is_wave && !is_null(digest)) {
-    master_stages <- wave$master_stages %||% stages_executed
+  occasion <- attr(stage_sample, "metadata")[["occasion"]]
+  is_occasion <- !is_null(occasion)
+  if (is_occasion && !is_null(digest)) {
+    master_stages <- occasion$master_stages %||% stages_executed
     digest$stages <- Filter(
       function(s) !s$stage_id %in% master_stages,
       digest$stages
@@ -281,8 +281,8 @@ render_sample_summary <- function(object) {
   } else {
     stage_sample
   }
-  # A window repeats a unit once per wave it is active.
-  if (is_wave && ".sample_id" %in% names(object_for_alloc)) {
+  # A window repeats a unit once per occasion it is active.
+  if (is_occasion && ".sample_id" %in% names(object_for_alloc)) {
     object_for_alloc <- object_for_alloc[
       !duplicated(object_for_alloc$.sample_id), ,
       drop = FALSE
@@ -477,17 +477,17 @@ reserve_realized_rates <- function(pools) {
   )
 }
 
-#' Units per period in each pool of a periods sample
+#' Units per subround in each pool of a subrounds sample
 #'
-#' `NULL` unless the sample is split into `periods()`, and for a period
-#' materialized by `wave`, which holds one period only. A pool is a stratum
+#' `NULL` unless the sample is split into `subrounds()`, and for a
+#' materialized occasion, which holds one subround only. A pool is a stratum
 #' of the assignment stage, within its parent below the first stage.
 #' @noRd
-summary_periods <- function(object) {
+summary_subrounds <- function(object) {
   metadata <- attr(object, "metadata")
   record <- metadata$panel_assignment
   if (is_null(record) || !identical(record$certainty, "assigned") ||
-      !is_null(metadata$wave) || !".panel" %in% names(object)) {
+      !is_null(metadata$occasion) || !".panel" %in% names(object)) {
     return(NULL)
   }
   k <- as.integer(record$panels)
@@ -526,15 +526,15 @@ summary_periods <- function(object) {
   )
 }
 
-#' The wave a materialized sample holds, and its share of the master
+#' The occasion a materialized sample holds, and its share of the master
 #'
 #' The units are those the panels were assigned to, counted once however
-#' many of the waves activate them.
+#' many of the occasions activate them.
 #' @noRd
-summary_wave_line <- function(object) {
+summary_occasion_line <- function(object) {
   metadata <- attr(object, "metadata")
   head <- panel_header_line(object)
-  if (is_null(metadata[["wave"]]) || is_null(head)) {
+  if (is_null(metadata[["occasion"]]) || is_null(head)) {
     return(invisible(NULL))
   }
   line <- paste0(names(head)[1], ": ", head[[1]], ".")
@@ -553,16 +553,16 @@ summary_wave_line <- function(object) {
   invisible(NULL)
 }
 
-#' The summary lines of a periods sample
+#' The summary lines of a subrounds sample
 #'
 #' Evenness first, since strata can hold different numbers of units per
-#' period. The uneven pools are named, the first few of them.
+#' subround. The uneven pools are named, the first few of them.
 #' @noRd
-summary_periods_lines <- function(periods, shown = 5L) {
-  if (is_null(periods)) {
+summary_subrounds_lines <- function(split, shown = 5L) {
+  if (is_null(split)) {
     return(invisible(NULL))
   }
-  pools <- periods$pools
+  pools <- split$pools
   per_period <- function(lo, hi) {
     if (lo == hi) paste(lo) else paste(lo, "to", hi)
   }
@@ -571,8 +571,8 @@ summary_periods_lines <- function(periods, shown = 5L) {
   if (nrow(pools) == 1L) {
     cli::cat_bullet(
       paste0(
-        "Periods: ", periods$k, ", ", per_period(pools$min, pools$max), " ",
-        units_word(pools$min, pools$max), " per period."
+        "Subrounds: ", split$k, ", ", per_period(pools$min, pools$max),
+        " ", units_word(pools$min, pools$max), " per subround."
       ),
       bullet = "info"
     )
@@ -583,9 +583,9 @@ summary_periods_lines <- function(periods, shown = 5L) {
     hi <- max(pools$max)
     cli::cat_bullet(
       paste0(
-        "Periods: ", periods$k, ", even in all ", nrow(pools), " ",
-        periods$unit, " (", per_period(lo, hi), " ", units_word(lo, hi),
-        " per period)."
+        "Subrounds: ", split$k, ", even in all ", nrow(pools), " ",
+        split$unit, " (", per_period(lo, hi), " ", units_word(lo, hi),
+        " per subround)."
       ),
       bullet = "info"
     )
@@ -594,7 +594,7 @@ summary_periods_lines <- function(periods, shown = 5L) {
   uneven <- pools[!even, , drop = FALSE]
   ranges <- paste0(
     uneven$pool, " (", uneven$min, " to ", uneven$max,
-    c(" per period", rep("", nrow(uneven) - 1L)), ")"
+    c(" per subround", rep("", nrow(uneven) - 1L)), ")"
   )
   if (length(ranges) > shown) {
     ranges <- c(ranges[seq_len(shown)],
@@ -602,8 +602,8 @@ summary_periods_lines <- function(periods, shown = 5L) {
   }
   cli::cat_bullet(
     paste0(
-      "Periods: ", periods$k, ", even in ", sum(even), " of ", nrow(pools),
-      " ", periods$unit, "."
+      "Subrounds: ", split$k, ", even in ", sum(even), " of ", nrow(pools),
+      " ", split$unit, "."
     ),
     bullet = "info"
   )
@@ -790,7 +790,7 @@ summary_stage_realization <- function(st, is_replicated, random_size = NULL,
     } else {
       paste0(fmt_n(nrow(pools)), " ", noun)
     }
-    # A later tenure draws from the units its exclusion left, and its
+    # A later cohort draws from the units its exclusion left, and its
     # weights count the whole listing.
     excluded <- pools$n_excluded
     listed <- if (!is_null(excluded) && !anyNA(excluded) &&

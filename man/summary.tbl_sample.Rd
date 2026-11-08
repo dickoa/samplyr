@@ -26,9 +26,9 @@ certainty at each executed stage, and \code{single_unit_pools}, the pools of
 one unit each stage took whole. Such a unit is certain too, as
 \code{.certainty_k} records, but it is counted only in \code{single_unit_pools},
 so a stage of unsegmented EAs does not read as large units taken for
-their size. \code{periods} is \code{NULL} unless the sample is split into
-\code{\link[=periods]{periods()}}. It then holds \code{k} and a \code{pools} table with each pool's
-fewest and most units per period (\code{min}, \code{max}). Weight figures are
+their size. \code{subrounds} is \code{NULL} unless the sample is split into
+\code{\link[=subrounds]{subrounds()}}. It then holds \code{k} and a \code{pools} table with each pool's
+fewest and most units per subround (\code{min}, \code{max}). Weight figures are
 \code{NULL} for an
 empty sample and for stacked replicates, which the print also leaves
 out. \code{sample} is the summarized sample itself.
@@ -44,28 +44,28 @@ when the frame digest records a complete denominator and the executed
 path has no with-replacement stage), the stages executed, and the seed.
 Under \code{frame_digest = "none"} the header shows the sample size alone,
 since nothing records the size of the frame. When the later stages were
-drawn one wave at a time, the header shows the seeds of the draws the
+drawn one occasion at a time, the header shows the seeds of the draws the
 rows come from, such as \verb{seeds = 101 to 112} for the completed master.
-A wave shows the seed of the draw that took its units. The header shows
+An occasion shows the seed of the draw that took its units. The header shows
 no seed when one of those draws ran without one.
 
-A sample split into \code{\link[=periods]{periods()}} gets one more line, which says whether
-each stratum has the same number of units in every period and names the
-strata that do not, for example "Periods: 12, even in 10 of 13 strata."
-followed by "Uneven: Cascades (2 to 3 per period), Centre-Nord (3 to
-4)." When every stratum is even, the line gives the range of units per
-period instead. This is the table fieldwork is planned from, and an
-uneven stratum shows an allocation that is not a multiple of the number
-of periods. While the later stages are drawn one period at a time, a line
-such as "Drawn: stage 2 in 3 of 12 periods (1, 2, 5)." says how far they
-are.
+A sample split into \code{\link[=subrounds]{subrounds()}} gets one more line, which says whether
+each stratum has the same number of units in every subround and names
+the strata that do not, for example "Subrounds: 12, even in 10 of 13
+strata." followed by "Uneven: Cascades (2 to 3 per subround),
+Centre-Nord (3 to 4)." When every stratum is even, the line gives the
+range of units per subround instead. This is the table fieldwork is
+planned from, and an uneven stratum shows an allocation that is not a
+multiple of the number of subrounds. While the later stages are drawn
+one subround at a time, a line such as "Drawn: stage 2 in 3 of 12
+subrounds (1, 2, 5)." says how far they are.
 
-A materialized wave, period or window describes itself. A line such as
+A materialized occasion, period or window describes itself. A line such as
 "Period: 2 of 4. It holds 26 of the master's 104 units." names it and
 counts the units its panels were assigned to, each once however many of
-the waves activate it. Its stage sections count the wave's own units,
+the occasions activate it. Its stage sections count the occasion's own units,
 with or without a frame digest, since the digest records the master's
-draw. A stage drawn for the wave alone is read from the wave's part of
+draw. A stage drawn for the occasion alone is read from the occasion's part of
 the digest. The master's own summary describes its draw.
 
 Each stage section has two lines:

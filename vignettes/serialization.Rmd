@@ -192,7 +192,7 @@ created, accepting the loss of digest-backed diagnostics.
 ## Replay boundaries
 
 A stage continuation, a new phase drawn from an earlier sample, and a
-materialized panel wave each start from the result of an earlier `execute()`
+materialized panel occasion each start from the result of an earlier `execute()`
 call. The receipt of such a sample is marked `chained` and records every
 earlier call, so `replay_design()` re-runs them in order. It needs the frames
 of each call that read one, which are the first call and every continuation,
@@ -221,7 +221,7 @@ replays from the modified sample passed back as its frame. A continuation of
 a modified sample cannot be replayed, and writing it warns.
 
 A `rotation_program()` is a registry rather than a sampling design, so
-archive each cohort execution and the schedule used to rebuild the
+archive each selection it registers and the schedule used to rebuild the
 registry.
 
 A sample carrying shared weights from `share_weights()` has a format of its
@@ -367,10 +367,10 @@ Keep these artifacts together:
 3. the exact frame vintage or an access-controlled reference to it
 4. stable identifiers and PRNs when coordination is used
 5. custom method definitions and package versions
-6. schedules linking separately executed longitudinal cohorts
+6. schedules linking separately executed selections of a rotating panel
 
 Use `vignette("design-semantics")` for the detailed design contract and
-`?rotation_program` for cohort-specific persistence rules.
+`?rotation_program` for the persistence rules of each selection.
 
 ```{r, include = FALSE}
 unlink(path)

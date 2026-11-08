@@ -352,7 +352,7 @@ test_that("the receipt records the frozen blocks and quotas", {
 
   record <- attr(result, "metadata")$panel_assignment
   expect_identical(record$algorithm, "blocked_random_quota")
-  expect_identical(record$version, 3L)
+  expect_identical(record$version, 7L)
   expect_identical(record$panels, 4L)
   expect_identical(record$assignment_stage, 1L)
   expect_identical(record$block_size, 8L)
@@ -558,7 +558,7 @@ test_that("a continuation keeps the assignment its master recorded", {
     master_map$.panel[match(continued_map$school_id, master_map$school_id)]
   )
 
-  # A later wave reads the frozen pools from the receipt, not another frame.
+  # A later occasion reads the frozen pools from the receipt, not another frame.
   expect_identical(
     attr(continued, "metadata")$panel_assignment,
     attr(master, "metadata")$panel_assignment
@@ -856,7 +856,7 @@ test_that("the context and the record it produced agree at stage 1", {
 #
 # Whether assignment built from a lower-stage context pools, orders and marks
 # the right units. No public argument selects a lower stage yet, so these
-# drive the internals directly. Wave propagation is not covered here.
+# drive the internals directly. Occasion propagation is not covered here.
 
 # Two PSUs, four households in each, two people in each household. Households
 # are stratified inside the PSU, so a stage-2 pool is a proper subset of a
@@ -1048,7 +1048,7 @@ test_that("a defect in either schedule kind carries the same class", {
   # Both paths share one implementation, so this pins the class pairing.
   frame <- data.frame(id = 1:200)
   master_schedule <- data.frame(
-    panel = rep(1:2, times = 3), wave = rep(1:3, each = 2),
+    panel = rep(1:2, times = 3), period = rep(1:3, each = 2),
     active = c(TRUE, TRUE, TRUE, FALSE, FALSE, TRUE)
   )
   cohort <- sampling_design() |>
@@ -1061,7 +1061,7 @@ test_that("a defect in either schedule kind carries the same class", {
   }
   as_program <- function(schedule) {
     rotation_program(
-      list(startup = cohort), entry_wave = c(startup = 1), schedule = schedule
+      list(startup = cohort), entry_period = c(startup = 1), schedule = schedule
     )
   }
 
@@ -1074,31 +1074,31 @@ test_that("a defect in either schedule kind carries the same class", {
     list(
       class = "samplyr_error_schedule_active",
       panels = data.frame(
-        panel = rep(1:2, 2), wave = rep(1:2, each = 2),
+        panel = rep(1:2, 2), period = rep(1:2, each = 2),
         active = c("y", "n", "y", "n")
       ),
       program = data.frame(
-        panel = c(1, 2), wave = c(1, 1), active = c("y", "n")
+        panel = c(1, 2), period = c(1, 1), active = c("y", "n")
       )
     ),
     list(
       class = "samplyr_error_schedule_values",
-      panels = data.frame(panel = c(1.5, 2), wave = c(1, 1)),
-      program = data.frame(panel = c(1.5, 2), wave = c(1, 1))
+      panels = data.frame(panel = c(1.5, 2), period = c(1, 1)),
+      program = data.frame(panel = c(1.5, 2), period = c(1, 1))
     ),
     list(
       class = "samplyr_error_schedule_duplicates",
-      panels = data.frame(panel = c(1, 1, 2, 2), wave = c(1, 1, 2, 2)),
-      program = data.frame(panel = c(1, 1), wave = c(1, 1))
+      panels = data.frame(panel = c(1, 1, 2, 2), period = c(1, 1, 2, 2)),
+      program = data.frame(panel = c(1, 1), period = c(1, 1))
     ),
     list(
-      class = "samplyr_error_schedule_idle_wave",
+      class = "samplyr_error_schedule_idle_occasion",
       panels = data.frame(
-        panel = rep(1:2, 2), wave = rep(1:2, each = 2),
+        panel = rep(1:2, 2), period = rep(1:2, each = 2),
         active = c(TRUE, TRUE, FALSE, FALSE)
       ),
       program = data.frame(
-        panel = c(1, 2, 1, 2), wave = c(1, 1, 2, 2),
+        panel = c(1, 2, 1, 2), period = c(1, 1, 2, 2),
         active = c(TRUE, TRUE, FALSE, FALSE)
       )
     )

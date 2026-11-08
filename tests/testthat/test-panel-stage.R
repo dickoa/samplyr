@@ -26,7 +26,7 @@ ps_design <- function(hh_take = 4) {
 ps_schedule <- function() {
   data.frame(
     panel = rep(1:4, times = 3),
-    wave = rep(1:3, each = 4),
+    period = rep(1:3, each = 4),
     active = c(
       TRUE, TRUE, FALSE, FALSE,
       FALSE, TRUE, TRUE, FALSE,
@@ -62,21 +62,21 @@ test_that("panel_stage = 2 rotates households inside retained parents", {
   expect_true(all(by_hh == 1L))
 })
 
-test_that("a wave of a lower-stage master keeps every parent", {
+test_that("an occasion of a lower-stage master keeps every parent", {
   master <- ps_master()
-  wave <- execute(master, wave = 2)
+  occasion <- execute(master, period = 2)
 
-  expect_identical(sort(unique(wave$psu)), sort(unique(master$psu)))
-  expect_identical(nrow(wave), nrow(master) %/% 2L)
+  expect_identical(sort(unique(occasion$psu)), sort(unique(master$psu)))
+  expect_identical(nrow(occasion), nrow(master) %/% 2L)
   # Two of four panels active, so the master weight of 6 doubles.
-  expect_identical(unique(wave$.weight), 12)
-  expect_identical(sort(unique(wave$.panel)), c(2L, 3L))
+  expect_identical(unique(occasion$.weight), 12)
+  expect_identical(sort(unique(occasion$.panel)), c(2L, 3L))
 })
 
 test_that("the lower-stage record states its stage, unit and pools", {
   record <- ps_record(ps_master())
 
-  expect_identical(record$version, 3L)
+  expect_identical(record$version, 7L)
   expect_identical(record$assignment_stage, 2L)
   expect_identical(record$unit, "cluster")
   expect_identical(record$key_vars, c("psu", "hh"))
@@ -183,15 +183,16 @@ test_that("a misspelled panel_stage is named, not read as a frame", {
   )
 })
 
-test_that("a wave takes no panel_stage", {
+test_that("an occasion takes no panel_stage", {
   expect_error(
-    execute(ps_master(), wave = 2, panel_stage = 2),
-    class = "samplyr_error_wave_extra_arguments"
+    execute(ps_master(), period = 2, panel_stage = 2),
+    class = "samplyr_error_occasion_extra_arguments"
   )
 })
 
 test_that("a within-parent pool too small to rotate is refused", {
-  # Two households per PSU and four panels leave some waves with no household.
+  # Two households per PSU and four panels leave some occasions with no
+  # household.
   expect_error(
     execute(ps_design(hh_take = 2), ps_frame(), seed = 77,
             panels = ps_schedule(), panel_stage = 2),
@@ -250,7 +251,7 @@ test_that("the assignment stage survives a receipt round trip", {
     path, simplifyVector = FALSE
   )$execution$panel_assignment
 
-  expect_identical(encoded$version, 3L)
+  expect_identical(encoded$version, 7L)
   expect_identical(encoded$assignment_stage, 2L)
   expect_identical(encoded$unit, "cluster")
   expect_identical(unlist(encoded$key_vars), c("psu", "hh"))
@@ -304,58 +305,18 @@ test_that("a first-stage receipt replays without the argument", {
   )
 })
 
-## Reading the earlier record versions
+## Reading the record versions
 
-test_that("versions 1 and 2 normalize to a first-stage assignment", {
-  v1 <- list(
-    algorithm = "blocked_random_quota", version = 1L, panels = 2L,
-    unit = "psu", key_vars = "psu",
-    pools = list(list(class = "rotating", size = 2L))
-  )
-  v2 <- list(
-    algorithm = "blocked_random_quota", version = 2L, panels = 2L,
-    unit = "element", key_vars = ".sample_id",
-    small_pool_policy = "permanent",
-    pools = list(list(
-      class = "rotating", activation = "permanent",
-      permanent_reason = "small_pool", size = 1L
-    ))
-  )
-
-  n1 <- samplyr:::normalize_panel_record(v1)
-  expect_identical(n1$assignment_stage, 1L)
-  expect_identical(n1$small_pool_policy, "error")
-  expect_identical(n1$pools[[1]]$activation, "rotating")
-
-  n2 <- samplyr:::normalize_panel_record(v2)
-  expect_identical(n2$assignment_stage, 1L)
-  expect_identical(n2$small_pool_policy, "permanent")
-  expect_identical(n2$pools[[1]]$permanent_reason, "small_pool")
-})
-
-test_that("an older record keeps the unit vocabulary it was written with", {
-  # Nothing in the record says whether the stage was multi-hit.
-  v2 <- list(
-    algorithm = "blocked_random_quota", version = 2L, panels = 2L,
-    unit = "element", key_vars = ".sample_id", pools = list()
-  )
-  expect_identical(samplyr:::normalize_panel_record(v2)$unit, "element")
-
-  v1 <- list(
-    algorithm = "blocked_random_quota", version = 1L, panels = 2L,
-    unit = "psu", key_vars = "psu", pools = list()
-  )
-  expect_identical(samplyr:::normalize_panel_record(v1)$unit, "psu")
-})
-
-test_that("all six versions are supported and a seventh is not", {
-  expect_identical(samplyr:::supported_panel_record_versions, 1:6)
-  expect_error(
-    samplyr:::check_panel_record_supported(
-      list(algorithm = "blocked_random_quota", version = 7L), "A wave"
-    ),
-    class = "samplyr_error_panel_record_unsupported"
-  )
+test_that("version 7 is supported and no other is", {
+  expect_identical(samplyr:::supported_panel_record_versions, 7L)
+  for (version in c(1L, 6L, 8L)) {
+    expect_error(
+      samplyr:::check_panel_record_supported(
+        list(algorithm = "blocked_random_quota", version = version), "A wave"
+      ),
+      class = "samplyr_error_panel_record_unsupported"
+    )
+  }
 })
 
 ## One assignment per master

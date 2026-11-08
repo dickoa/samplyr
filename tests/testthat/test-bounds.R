@@ -1083,3 +1083,66 @@ test_that("a single named value is a stratum size, not a total", {
                one, seed = 1)
   expect_identical(nrow(s), 6L)
 })
+
+test_that("a multi-hit minimum above the total is refused by every consumer", {
+  frames <- list(
+    one = data.frame(id = 1:10, st = "a", mos = 1:10),
+    two = data.frame(id = 1:20, st = rep(c("a", "b"), each = 10), mos = 1:20)
+  )
+  needs <- c(one = "n >= 3", two = "n >= 6")
+  methods <- c("srswr", "pps_multinomial", "pps_chromy")
+
+  for (method in methods) {
+    for (shape in names(frames)) {
+      frame <- frames[[shape]]
+      mos <- if (method == "srswr") NULL else quote(mos)
+      design <- do.call(draw, c(
+        list(
+          sampling_design() |> stratify_by(st, alloc = "equal"),
+          n = 2, min_n = 3, method = method
+        ),
+        if (!is_null(mos)) list(mos = mos)
+      ))
+      path <- withr::local_tempfile(fileext = ".json")
+      write_design(design, path)
+
+      refused <- list(
+        execute = function() execute(design, frame, seed = 1),
+        preview = function() frame_summary(design, frame, detail = "pool"),
+        validate = function() validate_frame(design, frame),
+        restored = function() execute(read_design(path), frame, seed = 1)
+      )
+      for (consumer in names(refused)) {
+        err <- expect_error(
+          refused[[consumer]](),
+          class = "samplyr_error_alloc_min_infeasible"
+        )
+        expect_match(
+          conditionMessage(err), needs[[shape]], fixed = TRUE,
+          info = paste(method, shape, consumer)
+        )
+      }
+    }
+  }
+})
+
+test_that("multi-hit minimums inside the total are kept", {
+  frame <- data.frame(id = 1:10, st = "a", mos = 1:10)
+  for (take in 3:5) {
+    design <- sampling_design() |>
+      stratify_by(st, alloc = "equal") |>
+      draw(n = take, min_n = 3, method = "srswr")
+    expect_identical(nrow(execute(design, frame, seed = 1)), take)
+  }
+})
+
+test_that("a without-replacement minimum above the stratum stays a census", {
+  frame <- data.frame(id = 1:6, st = rep(c("a", "b"), c(2, 4)))
+  design <- sampling_design() |>
+    stratify_by(st, alloc = "equal") |>
+    draw(n = 5, min_n = 3)
+  s <- execute(design, frame, seed = 1)
+  expect_setequal(s$id[s$st == "a"], 1:2)
+  expect_identical(unique(s$.weight[s$st == "a"]), 1)
+  expect_identical(sum(s$st == "b"), 3L)
+})

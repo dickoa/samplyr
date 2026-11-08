@@ -800,7 +800,7 @@ test_that("summary returns the figures it prints", {
 
 ## Compositions with the longitudinal feature
 
-test_that("a materialized wave may be a component, and is refused at export", {
+test_that("a materialized occasion may be a component, and is refused at export", {
   skip_if_not_installed("survey")
 
   population <- data.frame(
@@ -811,7 +811,7 @@ test_that("a materialized wave may be a component, and is refused at export", {
     stringsAsFactors = FALSE
   )
   schedule <- data.frame(
-    panel = rep(1:4, times = 4), wave = rep(1:4, each = 4),
+    panel = rep(1:4, times = 4), period = rep(1:4, each = 4),
     active = c(TRUE, TRUE, FALSE, FALSE, FALSE, TRUE, TRUE, FALSE,
                FALSE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, TRUE)
   )
@@ -819,23 +819,24 @@ test_that("a materialized wave may be a component, and is refused at export", {
     stratify_by(region) |>
     draw(n = 30) |>
     execute(population, seed = 42, panels = schedule)
-  wave <- execute(master, wave = 1)
+  occasion <- execute(master, period = 1)
   other <- sampling_design() |> draw(n = 30) |> execute(population, seed = 9)
 
-  # A wave has membership and a key, which is all `stack_frames()` reads.
+  # An occasion has membership and a key, which is all `stack_frames()` reads.
   stack <- stack_frames(
-    w = wave, o = other,
+    w = occasion, o = other,
     membership = c(w = "in_w", o = "in_o"), key = ea_id
   )
   expect_s3_class(stack, "frame_stack")
-  expect_identical(nrow(stack[["w"]]), nrow(wave))
+  expect_identical(nrow(stack[["w"]]), nrow(occasion))
   expect_true(survey_phase_info(stack[["w"]])$is_twophase)
 
   # The inspection views take it, because they describe rather than estimate.
   expect_s3_class(as.data.frame(stack), "data.frame")
   expect_output(print(summary(stack)), "2 frames")
 
-  # A wave's second phase is an activation, not a selection, so both refuse.
+  # An occasion's second phase is an activation, not a selection, so both
+  # refuse.
   expect_error(
     as_svydesign(stack),
     class = "samplyr_error_survey_multiframe_unsupported"

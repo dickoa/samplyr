@@ -833,12 +833,12 @@ check_weight_contract_panel <- function(x, fn_name, call = caller_env()) {
     x, fn_name,
     class = "samplyr_error_panel_weight_contract",
     advice = c(
-      "i" = "Panels and waves are properties of the units that were selected,
+      "i" = "Panels and occasions are properties of the units that were selected,
              and the rows here are target units reached through links.",
-      # Do not advise an operation that also refuses waves.
-      "i" = "Weight sharing and wave activation do not compose in either
+      # Do not advise an operation that also refuses occasions.
+      "i" = "Weight sharing and occasion activation do not compose in either
              direction. Share weights from the master and analyze the result
-             as one sample, or rotate panels and analyze each wave without
+             as one sample, or rotate panels and analyze each occasion without
              sharing."
     ),
     call = call

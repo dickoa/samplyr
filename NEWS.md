@@ -44,7 +44,7 @@ needed for weighting, replay, and export to the survey and srvyr packages.
 * Certainty selection for large units through absolute or proportional
   thresholds. Units a fixed-size PPS draw takes with certainty by their
   size are reported, and `frame_summary()` counts them before drawing.
-* Permanent random numbers coordinate samples across surveys and waves.
+* Permanent random numbers coordinate samples across surveys and rounds.
 * Custom methods registered with `sondage::register_method()` work
   throughout the package.
 
@@ -57,16 +57,19 @@ needed for weighting, replay, and export to the survey and srvyr packages.
 
 ## Panels and replication
 
-* Panel assignment, rotation schedules, wave materialization with exact
-  activation weights, windows of several waves pooled into one sample, and
-  replenishing panels across frame vintages.
-  `periods()` spreads a sample over fieldwork periods visited once, such as
-  the months of a yearly survey, and the later stages can be drawn one
-  period or tenure at a time as listing proceeds, a schedule's `visit`
-  column opening new tenures in primary units that stay in the survey.
-  A schedule's `period` column groups monthly or weekly waves into
-  reporting periods, so small strata need a unit in each period rather than
-  in each wave.
+* Panel assignment and rotation schedules that index time by reporting
+  period and subround, as svyplan does. `execute(master, period = ,
+  subround = )` materializes an occasion with exact activation weights, or
+  a window of several, such as a quarter of monthly subrounds or a rolling
+  quarter, pooled into one sample. `rotation_program()` links the
+  selections of a panel replenished across frame vintages, and
+  `stack_periods()` stacks periods or occasions for change estimation,
+  those of a master drawn one cohort at a time included.
+  `subrounds()` spreads a sample over the subrounds of one period visited
+  once, such as the months of a yearly survey. The later stages can be
+  drawn one occasion at a time as listing proceeds, a schedule's `visit`
+  column opening new cohorts in primary units that stay in the survey.
+  Small strata need a unit in each period rather than in each subround.
 * `execute(reps = R)` draws independent replicate samples.
 
 ## Analysis and export
@@ -78,7 +81,11 @@ needed for weighting, replay, and export to the survey and srvyr packages.
   Rao-Wu-Yue-Beaumont, random groups) cover multistage, PPS, certainty,
   balanced and two-phase designs. `variance_estimators()` reports before
   sampling which estimators a design supports.
-* A materialized wave exports by ultimate clusters, the variance rotating
+* `stages = 1` exports any single-phase sample by ultimate clusters, the
+  variance many survey programs publish, with certainty units and strata
+  taken whole moved down a stage, and `stages = 1:k` carries the stages
+  below k in the stage-k totals.
+* A materialized occasion exports by ultimate clusters, the variance rotating
   surveys publish, whatever method drew its master, and its replicate
   weights follow the same design. `method` gives its two-phase export.
 * `joint_expectation()` gives joint inclusion probabilities.

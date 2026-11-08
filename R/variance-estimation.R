@@ -227,9 +227,9 @@
 #' ```
 #'
 #' Every route of [as_svydesign()] and [as_svrepdesign()] carries the zero
-#' rows, RWYB, shared weights, two phases and waves included. A two-phase
+#' rows, RWYB, shared weights, two phases and occasions included. A two-phase
 #' export holds a phase-1 zero row as a unit phase 2 did not reach, and a
-#' wave holds the zero rows of the panels it activates. Without them
+#' occasion holds the zero rows of the panels it activates. Without them
 #' `survey::twophase()` also got the total wrong, since it reads phase 1's
 #' probabilities from the number of units it holds. In a simulation of two strata of five schools, two of them
 #' with no class, the estimated variance under simple random sampling went
@@ -307,17 +307,18 @@
 #'
 #' ## Two-phase samples
 #'
-#' A materialized wave is exported by ultimate clusters, whatever method drew
+#' A materialized occasion is exported by ultimate clusters, whatever method drew
 #' its master, and replicated the same way. In a simulation with 8 EAs active
 #' per stratum, its standard error was 0.89 of the true one with EAs drawn by
 #' simple random sampling (0.88 for the two-phase export) and 1.06 with EAs
-#' drawn by size. A window of several waves is exported the same way, its
-#' strata crossed with the number of waves a unit is active, at 0.95 to
-#' 1.12 of the true standard error in a simulation. [as_svydesign()] gives
-#' the details.
+#' drawn by size. A window of several occasions is exported the same way, its
+#' strata crossed with the quota block and the occasions a unit is active at
+#' and calibrated for ratio residuals, at 0.98 to 1.04 of the true standard
+#' error in simulations on clustered masters. [as_svydesign()] gives the
+#' details.
 #'
 #' [survey::twophase()] takes no `pps` specification, so a two-phase sample,
-#' or a wave exported with `method`, whose first phase was drawn with unequal
+#' or an occasion exported with `method`, whose first phase was drawn with unequal
 #' probabilities without replacement, or by `cube`, `pps_poisson` or a
 #' spatial method, is refused, although its weights are exact. For a
 #' variance, an ultimate-cluster design treating phase-1 units as drawn with

@@ -1,7 +1,9 @@
-#' Convert a sampling design to a list
+#' Summarize a sampling design as a list
 #'
-#' Converts a sampling design object to a plain list representation,
-#' useful for inspection, serialization, or export.
+#' Summarizes a sampling design as a plain list for inspection. The list is
+#' not a complete record of the design. It leaves out settings such as `cv`,
+#' `importance`, `power`, `prn` and `certainty_overflow`, and the values of a
+#' table of sizes. [write_design()] and [design_json()] keep every setting.
 #'
 #' @param x A `sampling_design` object
 #' @param ... Must be empty.
@@ -196,7 +198,7 @@ shared_sample_format_version <- 1L
 #' themselves are not stored. Use a data format (CSV, parquet) for those.
 #'
 #' A sample built by several [execute()] calls (a stage continuation, a new
-#' phase drawn from an earlier sample, or a materialized panel wave) is
+#' phase drawn from an earlier sample, or a materialized panel occasion) is
 #' flagged as `chained`. Its receipt records every earlier call in
 #' `earlier_calls`: seed, stages, frame mapping, panel and replicate
 #' arguments, RNG kind, how it used the call before it, and, for a call
@@ -487,7 +489,7 @@ read_design <- function(file) {
 #' A `chained` sample, produced by several [execute()] calls, is replayed
 #' call by call, each under its own seed, stages and RNG kind. The first
 #' call and each continuation read the frames given here, a new phase reads
-#' the phase replayed before it, and a wave reads its replayed master.
+#' the phase replayed before it, and an occasion reads its replayed master.
 #' Inherited panels and replicates are carried rather than declared again.
 #' The fingerprints cover every call's frames, and the row count is checked
 #' after each call. An earlier call run without a seed is
@@ -644,7 +646,7 @@ replay_design <- function(
   if (is_tbl_sample(x)) {
     design <- get_design(x)
     receipt <- encode_execution(x)
-    final <- wave_draw_final_call(x)
+    final <- occasion_draw_final_call(x)
     frame_record <- if (is_null(final)) {
       get_frame_schedule(x)
     } else {
@@ -718,7 +720,7 @@ replay_design <- function(
         frames = frame_record_or_default(
           frame_record, unlist(receipt$stages_executed)
         ),
-        wave = receipt$wave,
+        occasion = receipt$occasion,
         settlement = receipt$settlement,
         rng = execution_environment$rng,
         design = design
@@ -1749,7 +1751,7 @@ design_payload <- function(
     # Refuse transformed samples before receipt encoding.
     check_weight_contract_serialize(x, fn_name, call = call)
     execution <- encode_execution(x, call = call)
-    execution_environment <- wave_draw_final_call(x)$execution_environment %||%
+    execution_environment <- occasion_draw_final_call(x)$execution_environment %||%
       attr(x, "metadata")$execution_environment
     if (is_null(execution$seed)) {
       cli_warn(c(
@@ -1760,7 +1762,7 @@ design_payload <- function(
     }
     if (isTRUE(execution$chained) && !is_null(execution[["earlier_calls"]])) {
       unseeded <- vapply(execution[["earlier_calls"]], function(entry) {
-        !identical(entry$transition, "wave") && is_null(entry$seed)
+        !identical(entry$transition, "occasion") && is_null(entry$seed)
       }, logical(1))
       if (any(unseeded)) {
         cli_warn(c(
@@ -2487,33 +2489,33 @@ frame_content_hash <- function(frame, columns = NULL) {
 #' @noRd
 encode_execution <- function(sample, call = caller_env()) {
   meta <- attr(sample, "metadata") %||% list()
-  if (isTRUE(meta[["wave"]]$provisional)) {
+  if (isTRUE(meta[["occasion"]]$provisional)) {
     abort_samplyr(
       c(
-        if (schedule_has_tenures(meta$panel_assignment$schedule)) {
-          "A wave of a master whose panels open several tenures has no
+        if (schedule_has_cohorts(meta$panel_assignment$schedule)) {
+          "An occasion of a master whose panels open several cohorts has no
            receipt, since such a master is never complete."
         } else {
-          "A wave of a master whose later stages are not all drawn has no
+          "An occasion of a master whose later stages are not all drawn has no
            receipt."
         },
-        "i" = "Write the master instead. Its receipt records every wave
-               drawn so far, and {.code execute(master, wave = t)} gives the
-               wave again."
+        "i" = "Write the master instead. Its receipt records every occasion
+               drawn so far, and {.code execute(master, period = p, subround =
+               s)} gives the occasion again."
       ),
-      class = "samplyr_error_serialize_wave_provisional",
+      class = "samplyr_error_serialize_occasion_provisional",
       call = call
     )
   }
-  if (is_wave_window(sample)) {
+  if (is_occasion_window(sample)) {
     abort_samplyr(
       c(
-        "A window of several waves has no receipt.",
-        "i" = "Write the master instead. {.code execute(master, wave =
-               {wave_code(meta[[\"wave\"]]$wave)})} gives the window
-               again."
+        "A window of several occasions has no receipt.",
+        "i" = "Write the master instead. {.code execute(master,
+               {occasion_code(meta$panel_assignment$schedule,
+               meta[[\"occasion\"]]$occasion)})} gives the window again."
       ),
-      class = "samplyr_error_serialize_wave_window",
+      class = "samplyr_error_serialize_occasion_window",
       call = call
     )
   }
@@ -2546,14 +2548,14 @@ encode_execution <- function(sample, call = caller_env()) {
       meta$frame_schedule, get_stages_executed(sample)
     )
   )
-  if (!is_null(meta[["wave"]])) {
-    receipt$wave <- encode_wave(meta[["wave"]])
+  if (!is_null(meta[["occasion"]])) {
+    receipt$occasion <- encode_occasion(meta[["occasion"]])
   }
   if (settled_here(meta$reserve_settlement)) {
     receipt$settlement <- encode_reserve_settlement(meta$reserve_settlement)
   }
-  # The last wave's draw is the final call.
-  final <- wave_draw_final_call(sample)
+  # The last occasion's draw is the final call.
+  final <- occasion_draw_final_call(sample)
   if (!is_null(final)) {
     receipt$seed <- final$seed
     receipt$executed_at <- format(
@@ -2562,7 +2564,7 @@ encode_execution <- function(sample, call = caller_env()) {
     receipt$frames <- encode_frame_schedule(
       frame_record_or_default(final$frame_schedule, final$stages)
     )
-    receipt$wave <- encode_wave_draw(final)
+    receipt$occasion <- encode_occasion_draw(final)
   }
   # A chain records every earlier call it can replay.
   if (!is_null(meta$continued_from) || !is_null(meta$prev_phase) ||
@@ -2638,20 +2640,13 @@ encode_panel_assignment <- function(record, call = caller_env()) {
     small_pool_policy = record$small_pool_policy %||% "error",
     # Store the schedule needed to reproduce panel blocks.
     schedule = if (!is_null(record$schedule)) {
-      out <- data.frame(
-        wave = as.integer(record$schedule$wave),
+      data.frame(
         panel = as.integer(record$schedule$panel),
-        active = as.logical(record$schedule$active)
+        period = as.integer(record$schedule$period),
+        subround = as.integer(record$schedule$subround),
+        active = as.logical(record$schedule$active),
+        visit = as.integer(record$schedule$visit)
       )
-      # Only a record with tenures or periods states its visits.
-      if (record_states_version(record, 5L) ||
-            record_states_version(record, 6L)) {
-        out$visit <- as.integer(record$schedule$visit)
-      }
-      if (record_states_version(record, 6L)) {
-        out$period <- as.integer(record$schedule$period)
-      }
-      out
     }
     # Store the assignment law, not reproducible realized pools.
   )
@@ -2700,7 +2695,7 @@ decode_small_pool_argument <- function(record, panels) {
 
 #' Rebuild the `panels` argument a receipt recorded
 #'
-#' Reads back the same shape the original call was given: `periods()` when
+#' Reads back the same shape the original call was given: `subrounds()` when
 #' the record assigned certainty units, a schedule when the master declared
 #' one, otherwise the panel count. A receipt written before
 #' schedules existed carries only the count, which is what it was executed
@@ -2711,60 +2706,49 @@ decode_panel_argument <- function(receipt, record) {
     return(NULL)
   }
   # Periods store their diagonal schedule, but replaying it as a schedule
-  # would keep certainty units apart and active at every wave.
+  # would keep certainty units apart and active at every occasion.
   if (identical(record$certainty, "assigned")) {
-    return(periods(as.integer(receipt$panels)))
+    return(subrounds(as.integer(receipt$panels)))
   }
   schedule <- record$schedule
   if (is_null(schedule) || length(schedule) == 0) {
     return(as.integer(receipt$panels))
   }
   if (!is.data.frame(schedule)) {
-    # A row of an inactive wave writes its visit as null.
+    # A row of an inactive occasion writes its visit as null.
     field <- function(name, missing) {
       vapply(schedule, function(row) {
         value <- if (name %in% names(row)) row[[name]]
         if (length(value) == 0L) missing else value
       }, missing)
     }
-    visits <- field("visit", NA_integer_)
-    periods <- field("period", NA_integer_)
     schedule <- data.frame(
-      wave = field("wave", NA_integer_),
       panel = field("panel", NA_integer_),
-      active = field("active", NA)
+      period = field("period", NA_integer_),
+      subround = field("subround", NA_integer_),
+      active = field("active", NA),
+      visit = field("visit", NA_integer_)
     )
-    if (!all(is.na(visits))) {
-      schedule$visit <- visits
-    }
-    if (!all(is.na(periods))) {
-      schedule$period <- periods
-    }
   }
-  out <- data.frame(
-    wave = as.integer(schedule$wave),
+  data.frame(
     panel = as.integer(schedule$panel),
-    active = as.logical(schedule$active)
+    period = as.integer(schedule$period),
+    subround = as.integer(schedule$subround),
+    active = as.logical(schedule$active),
+    visit = as.integer(schedule$visit)
   )
-  if (!is_null(schedule$visit)) {
-    out$visit <- as.integer(schedule$visit)
-  }
-  if (!is_null(schedule$period)) {
-    out$period <- as.integer(schedule$period)
-  }
-  out
 }
 
-#' The wave a materialized sample realizes
+#' The occasion a materialized sample realizes
 #'
 #' The activation probabilities are recorded per block rather than per unit:
 #' a unit's probability is its block's, and the block a unit belongs to is
 #' already recoverable from the assignment record.
 #' @noRd
-encode_wave <- function(record) {
-  # Wave pools preserve activation facts that replay cannot rebuild.
+encode_occasion <- function(record) {
+  # Occasion pools preserve activation facts that replay cannot rebuild.
   list(
-    wave = as.integer(record$wave),
+    occasion = as.integer(record$occasion),
     active_panels = I(as.integer(record$active_panels)),
     schedule_digest = record$schedule_digest,
     pools = lapply(record$pools, function(pool) {
@@ -2861,7 +2845,7 @@ decode_frame_digest <- function(x) {
     strata <- chrs(s$strata)
     pool_spec <- c(
       pool_id = "int", parent_unit = "int", parent_occurrence = "int",
-      tenure = "int", n_excluded = "int", N = "int",
+      cohort = "int", n_excluded = "int", N = "int",
       n_target = "dbl", n_reserve = "int", n_expected = "dbl",
       n_realized = "int", scope = "chr", chance_status = "chr",
       chance = "dbl",

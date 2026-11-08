@@ -26,8 +26,8 @@ normalize_panel_input <- function(panels, panel_stage = NULL,
       call = call
     ))
   }
-  if (inherits(panels, "samplyr_periods")) {
-    return(normalize_periods(panels, stage, small_pool, call = call))
+  if (inherits(panels, "samplyr_subrounds")) {
+    return(normalize_subrounds(panels, stage, small_pool, call = call))
   }
   if (is.data.frame(panels)) {
     spec <- normalize_panel_schedule(panels, call = call)
@@ -42,7 +42,7 @@ normalize_panel_input <- function(panels, panel_stage = NULL,
         "{.arg panels} takes one count, the number of equal random panels,
          not {length(panels)} sizes.",
         "i" = "To hold part of the sample back, split it into panels and
-               activate the held panels in a later wave through a rotation
+               activate the held panels in a later occasion through a rotation
                schedule, as {.help execute} describes."
       ),
       class = "samplyr_error_panel_count",
@@ -59,7 +59,7 @@ normalize_panel_input <- function(panels, panel_stage = NULL,
     abort_samplyr(
       c(
         "{.arg panels} must be a single integer >= 2, a rotation schedule, or
-         {.fn periods}.",
+         {.fn subrounds}.",
         "i" = "One panel is no partition, so there is nothing to rotate."
       ),
       class = "samplyr_error_panel_count",
@@ -79,32 +79,34 @@ normalize_panel_input <- function(panels, panel_stage = NULL,
   )
 }
 
-#' Periods as a schedule: period `p` is active at wave `p` only
+#' Periods as a schedule: period `p` is active at occasion `p` only
 #'
-#' The schedule gives every period a wave of its own, and `certainty =
+#' The schedule gives every period an occasion of its own, and `certainty =
 #' "assigned"` keeps certainty units in their stratum's pool, so each unit
 #' belongs to one period.
 #' @noRd
-normalize_periods <- function(periods, stage, small_pool, call = caller_env()) {
+normalize_subrounds <- function(split, stage, small_pool, call = caller_env()) {
   policy <- normalize_small_pool(small_pool, call = call)
   if (identical(policy, "permanent")) {
     abort_samplyr(
       c(
-        "{.arg small_pool} cannot be {.val permanent} with {.fn periods}.",
-        "i" = "A unit active in every period is visited in each of them, and
-               periods are visited once.",
-        "i" = "Give each stratum at least as many units as periods, or use
-               fewer periods."
+        "{.arg small_pool} cannot be {.val permanent} with {.fn subrounds}.",
+        "i" = "A unit active in every subround is visited in each of them,
+               and subrounds are visited once.",
+        "i" = "Give each stratum at least as many units as subrounds, or use
+               fewer subrounds."
       ),
-      class = "samplyr_error_periods_small_pool",
+      class = "samplyr_error_subrounds_small_pool",
       call = call
     )
   }
-  k <- periods$k
+  k <- split$k
   spec <- normalize_panel_schedule(
-    data.frame(panel = seq_len(k), wave = seq_len(k)),
+    data.frame(panel = seq_len(k), period = 1L, subround = seq_len(k)),
     call = call
   )
+  # Every subround needs a unit of each pool, so no rotation groups.
+  spec$reporting <- NULL
   spec$small_pool <- policy
   spec$stage <- stage
   spec$certainty <- "assigned"
@@ -142,25 +144,18 @@ normalize_plan_panels <- function(plan, stage, small_pool,
     return(NULL)
   }
 
-  startup <- plan$schedule[plan$schedule$cohort == "startup", ]
+  startup <- plan$schedule[plan$schedule$selection == "startup", ]
   tail <- plan$tail_commitments[
-    plan$tail_commitments$cohort == "startup",
+    plan$tail_commitments$selection == "startup",
     ,
     drop = FALSE
   ]
-  # A schema 2 schedule numbers its visits, a restart opening a tenure, and
-  # names each wave's reporting period.
-  cols <- intersect(
-    c("panel", "wave", "active", "visit", "period"),
-    names(startup)
-  )
-  if (nrow(tail) > 0L) {
-    tail$active <- TRUE
-    cols <- intersect(cols, names(tail))
-    startup <- rbind(startup[cols], tail[cols])
-  }
-  last_active <- max(startup$wave[startup$active])
-  startup <- startup[startup$wave <= last_active, cols]
+  # The plan's wave is the place in the rotation pattern, not a time.
+  tail$active <- rep(TRUE, nrow(tail))
+  cols <- c("panel", "period", "subround", "active", "visit")
+  startup <- rbind(startup[cols], tail[cols])
+  order <- svyplan_draw_occasions(plan, startup)
+  startup <- startup[order <= max(order[startup$active]), cols]
   spec <- normalize_panel_schedule(startup, min_panels = 1L, call = call)
   same <- identical(spec$k, expected$k) &&
     identical(spec$r_min, expected$r_min) &&
@@ -280,7 +275,7 @@ check_panel_stage_reserve <- function(stage, design, call = caller_env()) {
 
 #' The small-pool policy, and where it does and does not apply
 #'
-#' A wave activating `r` of `k` panels takes nothing from a pool of `m`
+#' An occasion activating `r` of `k` panels takes nothing from a pool of `m`
 #' units exactly when `m <= k - r`. The policy governs only that case, and
 #' only with a schedule, since a scalar `panels` has no `r_min`.
 #' @noRd
@@ -298,7 +293,7 @@ normalize_small_pool <- function(small_pool, call = caller_env()) {
         "{.arg small_pool} must be {.val error} or {.val permanent}.",
         "i" = "{.val error} refuses an assignment whose schedule would leave
                a pool with no active unit. {.val permanent} activates such a
-               pool at every wave instead."
+               pool at every occasion instead."
       ),
       class = "samplyr_error_small_pool_value",
       call = call
@@ -317,11 +312,11 @@ check_small_pool_applicable <- function(small_pool, has_schedule, has_panels,
     c(
       "{.arg small_pool} is a policy for a rotation schedule.",
       "x" = if (has_panels) {
-        "{.arg panels} is a panel count, which declares no wave activation."
+        "{.arg panels} is a panel count, which declares no occasion activation."
       } else {
         "No {.arg panels} was supplied."
       },
-      "i" = "Supply a schedule with {.field panel}, {.field wave} and
+      "i" = "Supply a schedule with {.field panel}, {.field period} and
              optionally {.field active} columns, or drop
              {.arg small_pool}."
     ),
@@ -332,7 +327,9 @@ check_small_pool_applicable <- function(small_pool, has_schedule, has_panels,
 
 #' Validate and normalize a rotation schedule
 #'
-#' The stored form is always the complete panel-by-wave grid.
+#' The stored form is always the complete panel-by-occasion grid, with each
+#' occasion's `period` and `subround`. The grid numbers occasions in
+#' `occasion`.
 #' @noRd
 normalize_panel_schedule <- function(schedule, min_panels = 2L,
                                      call = caller_env()) {
@@ -346,25 +343,40 @@ normalize_panel_schedule <- function(schedule, min_panels = 2L,
   )
 
   panel <- schedule$panel
-  wave <- schedule$wave
   active <- schedule_active_column(schedule, subject, call = call)
-
   check_schedule_integers(panel, "panel", call = call)
-  check_schedule_integers(wave, "wave", call = call)
   panel <- as.integer(panel)
-  wave <- as.integer(wave)
+  occasions <- schedule_occasions(schedule, subject, call = call)
+  occasion <- occasions$occasion
+  pairs <- occasions$pairs
 
+  key <- paste(panel, occasion, sep = "|")
+  if (anyDuplicated(key) > 0L && "wave" %in% names(schedule)) {
+    abort_samplyr(
+      c(
+        "{subject$upper} may declare each panel once per period and
+         subround.",
+        "x" = "It repeats a {.field panel}, {.field period} and
+               {.field subround}, and has a {.field wave} column, so it may
+               hold several waves per period.",
+        "i" = "Name each occasion of a period by its {.field subround}."
+      ),
+      class = "samplyr_error_schedule_duplicates",
+      call = call
+    )
+  }
   check_schedule_duplicates(
-    paste(panel, wave, sep = "|"), subject,
-    declares = "each panel once per wave",
-    combination = cli::format_inline("{.field panel}-{.field wave}"),
+    key, subject,
+    declares = "each panel once per period and subround",
+    combination = cli::format_inline(
+      "{.field panel}-{.field period}-{.field subround}"
+    ),
     call = call
   )
 
   k <- max(panel)
-  n_waves <- max(wave)
+  n_occasions <- nrow(pairs)
   check_schedule_contiguous(panel, k, "panel", call = call)
-  check_schedule_contiguous(wave, n_waves, "wave", call = call)
   if (k < min_panels) {
     abort_samplyr(
       "{subject$upper} must declare at least {min_panels} panels.",
@@ -375,27 +387,30 @@ normalize_panel_schedule <- function(schedule, min_panels = 2L,
 
   grid <- expand.grid(
     panel = seq_len(k),
-    wave = seq_len(n_waves),
+    occasion = seq_len(n_occasions),
     KEEP.OUT.ATTRS = FALSE
   )
-  grid <- grid[order(grid$wave, grid$panel), c("wave", "panel")]
+  grid <- grid[order(grid$occasion, grid$panel), c("occasion", "panel")]
   rownames(grid) <- NULL
   grid$active <- schedule_grid_active(
-    paste(grid$panel, grid$wave, sep = "|"),
-    paste(panel, wave, sep = "|"),
+    paste(grid$panel, grid$occasion, sep = "|"),
+    key,
     active
   )
 
-  per_wave <- check_schedule_idle_waves(
-    grid$active, grid$wave,
-    headline = "Every declared wave must activate at least one panel.",
-    detail = "No panel is active at wave {idle}.",
+  per_occasion <- check_schedule_idle_occasions(
+    grid$active, grid$occasion,
+    headline = "Every declared occasion must activate at least one panel.",
+    detail = "No panel is active at {idle}.",
+    describe = function(idle) pair_phrase(pairs, idle),
     call = call
   )
-  grid$visit <- schedule_grid_visit(grid, schedule, call = call)
-  grid$period <- schedule_grid_period(grid, schedule, call = call)
+  grid$period <- pairs$period[grid$occasion]
+  grid$subround <- pairs$subround[grid$occasion]
+  grid$visit <- schedule_grid_visit(grid, schedule, key, call = call)
+  check_schedule_cohort(grid, schedule, key, call = call)
 
-  r_min <- min(per_wave)
+  r_min <- min(per_occasion)
   list(
     k = k,
     r_min = r_min,
@@ -405,77 +420,76 @@ normalize_panel_schedule <- function(schedule, min_panels = 2L,
   )
 }
 
-#' The reporting period of every grid cell
-#'
-#' `NULL` without the column or where each wave is its own period, so such a
-#' schedule assigns as one without periods. Every row of a wave names the
-#' same period, and periods number from 1 in wave order without gaps.
+#' The occasions of a normalized grid, one row each in order
 #' @noRd
-schedule_grid_period <- function(grid, schedule, call = caller_env()) {
-  if (!"period" %in% names(schedule)) {
-    return(NULL)
-  }
-  check_schedule_integers(schedule$period, "period", call = call)
-  by_wave <- lapply(split(as.integer(schedule$period), schedule$wave), unique)
-  split_wave <- which(lengths(by_wave) > 1L)
-  if (length(split_wave) > 0L) {
-    w <- split_wave[1L]
-    abort_samplyr(
-      c(
-        "Every row of a wave must name the same {.field period}.",
-        "x" = "Wave {w} names periods {by_wave[[w]]}."
-      ),
-      class = "samplyr_error_schedule_period",
-      call = call
-    )
-  }
-  period <- unlist(by_wave, use.names = FALSE)
-  if (is.unsorted(period)) {
-    w <- which(diff(period) < 0L)[1L] + 1L
-    abort_samplyr(
-      c(
-        "Reporting periods must follow wave order.",
-        "x" = "Wave {w} is in period {period[w]}, after a wave of period
-               {period[w - 1L]}."
-      ),
-      class = "samplyr_error_schedule_period",
-      call = call
-    )
-  }
-  check_schedule_contiguous(period, max(period), "period", call = call)
-  if (identical(period, seq_along(period))) {
-    return(NULL)
-  }
-  period[grid$wave]
+grid_pairs <- function(grid) {
+  first <- !duplicated(grid$occasion)
+  pairs <- grid[first, c("occasion", "period", "subround")]
+  pairs[order(pairs$occasion), c("period", "subround")]
 }
 
-#' Rotation groups of a schedule with reporting periods
+#' Name occasions by their period and subround
+#'
+#' A period whose every subround is named prints as the period, so a
+#' schedule without subrounds names its periods only. The others print their
+#' subrounds, as in "period 2 subrounds 1 and 2".
+#' @param pairs One row per occasion, with `period` and `subround`.
+#' @param occasion Occasion numbers.
+#' @noRd
+pair_phrase <- function(pairs, occasion) {
+  occasion <- sort(unique(occasion))
+  period <- pairs$period[occasion]
+  subround <- pairs$subround[occasion]
+  periods <- unique(period)
+  whole <- vapply(periods, function(p) {
+    sum(period == p) == sum(pairs$period == p)
+  }, logical(1))
+  if (all(whole)) {
+    return(paste(if (length(periods) == 1L) "period" else "periods",
+                 occasion_span(periods)))
+  }
+  pieces <- vapply(seq_along(periods), function(i) {
+    if (whole[i]) {
+      return(paste("period", periods[i]))
+    }
+    s <- subround[period == periods[i]]
+    paste("period", periods[i], if (length(s) == 1L) "subround" else
+      "subrounds", occasion_span(s))
+  }, character(1))
+  n <- length(pieces)
+  if (n == 1L) {
+    return(pieces)
+  }
+  # A comma keeps "subrounds 2 and 3, and period 2" readable.
+  last <- if (any(grepl(" and ", pieces, fixed = TRUE))) ", and " else " and "
+  paste0(paste(pieces[-n], collapse = ", "), last, pieces[n])
+}
+
+#' Rotation groups of a schedule with subrounds
 #'
 #' Panels with the same visits in every period form a group, since the
-#' schedule tells them apart only by the wave within the period, their
-#' sub-period. A pool reaches every period once it holds more units than
-#' the groups the leanest period leaves inactive.
-#' @return `NULL` without periods, else `group` and `subperiod` per panel,
-#'   `groups`, the number of groups, and `threshold`, the largest pool size
-#'   that can miss a period.
+#' schedule tells them apart only by their subround. A pool reaches every
+#' period once it holds more units than the groups the leanest period leaves
+#' inactive.
+#' @return `NULL` when every period is one occasion, else `group` and
+#'   `subround` per panel, `groups`, the number of groups, and `threshold`,
+#'   the largest pool size that can miss a period.
 #' @noRd
 schedule_period_groups <- function(grid) {
-  if (is_null(grid$period)) {
+  if (!schedule_has_subrounds(grid)) {
     return(NULL)
   }
   k <- max(grid$panel)
-  start <- vapply(split(grid$wave, grid$period), min, integer(1))
-  grid$subperiod <- grid$wave - start[grid$period] + 1L
   active <- grid[grid$active, , drop = FALSE]
-  active <- active[order(active$panel, active$wave), , drop = FALSE]
+  active <- active[order(active$panel, active$occasion), , drop = FALSE]
   by_panel <- split(active, factor(active$panel, levels = seq_len(k)))
 
   signature <- vapply(by_panel, function(rows) {
     paste(rows$period, rows$visit, sep = ":", collapse = " ")
   }, character(1), USE.NAMES = FALSE)
   group <- match(signature, unique(signature))
-  subperiod <- vapply(by_panel, function(rows) {
-    if (nrow(rows) == 0L) 1L else rows$subperiod[1L]
+  subround <- vapply(by_panel, function(rows) {
+    if (nrow(rows) == 0L) 1L else rows$subround[1L]
   }, integer(1), USE.NAMES = FALSE)
 
   live <- vapply(
@@ -485,19 +499,33 @@ schedule_period_groups <- function(grid) {
   )
   list(
     group = group,
-    subperiod = subperiod,
+    subround = subround,
     groups = max(group),
     threshold = max(group) - min(live)
   )
 }
 
+#' Does a schedule split some period into several occasions?
+#'
+#' A schedule is a data frame in memory and a list of rows as read from
+#' JSON.
+#' @noRd
+schedule_has_subrounds <- function(schedule) {
+  subround <- if (is.data.frame(schedule)) {
+    schedule$subround
+  } else if (is.list(schedule)) {
+    unlist(lapply(schedule, function(row) if (is.list(row)) row$subround))
+  }
+  length(subround) > 0L && any(subround > 1L, na.rm = TRUE)
+}
+
 #' The visit number of every grid cell, given or counted
 #'
-#' A tenure opens where `visit` is 1, and its units are kept until the next
-#' opening. Without the column each panel has one tenure, opened at its
-#' first active wave, and visits count its active waves.
+#' A cohort opens where `visit` is 1, and its units are kept until the next
+#' opening. Without the column each panel has one cohort, opened at its
+#' first active occasion, and visits count its active occasions.
 #' @noRd
-schedule_grid_visit <- function(grid, schedule, call = caller_env()) {
+schedule_grid_visit <- function(grid, schedule, key, call = caller_env()) {
   if (!"visit" %in% names(schedule)) {
     return(counted_visits(grid))
   }
@@ -509,17 +537,14 @@ schedule_grid_visit <- function(grid, schedule, call = caller_env()) {
     abort_samplyr(
       c(
         "{.field visit} must hold whole numbers of 1 or more, or {.val NA}.",
-        "i" = "It numbers a panel's interviews within a tenure, and a tenure
+        "i" = "It numbers a panel's interviews within a cohort, and a cohort
                opens where it is 1."
       ),
       class = "samplyr_error_schedule_visit",
       call = call
     )
   }
-  at <- match(
-    paste(grid$panel, grid$wave, sep = "|"),
-    paste(schedule$panel, schedule$wave, sep = "|")
-  )
+  at <- match(paste(grid$panel, grid$occasion, sep = "|"), key)
   visit <- as.integer(given[at])
 
   bad <- which(grid$active != !is.na(visit))
@@ -528,7 +553,8 @@ schedule_grid_visit <- function(grid, schedule, call = caller_env()) {
     abort_samplyr(
       c(
         "{.field visit} must be given exactly where a panel is active.",
-        "x" = "Panel {grid$panel[b]} at wave {grid$wave[b]} is
+        "x" = "Panel {grid$panel[b]} at
+               {pair_phrase(grid_pairs(grid), grid$occasion[b])} is
                {if (grid$active[b]) \"active with no visit\" else
                \"inactive with a visit\"}."
       ),
@@ -539,7 +565,7 @@ schedule_grid_visit <- function(grid, schedule, call = caller_env()) {
 
   for (p in unique(grid$panel)) {
     rows <- which(grid$panel == p & grid$active)
-    rows <- rows[order(grid$wave[rows])]
+    rows <- rows[order(grid$occasion[rows])]
     v <- visit[rows]
     step <- v[-1L] == v[-length(v)] + 1L | v[-1L] == 1L
     if (v[1L] != 1L || !all(step)) {
@@ -547,9 +573,10 @@ schedule_grid_visit <- function(grid, schedule, call = caller_env()) {
       abort_samplyr(
         c(
           "{.field visit} must start at 1 and rise by one at each active
-           wave of a tenure.",
-          "x" = "Panel {p} has visit {visit[b]} at wave {grid$wave[b]}.",
-          "i" = "A visit of 1 after the first opens a new tenure, where the
+           occasion of a cohort.",
+          "x" = "Panel {p} has visit {visit[b]} at
+                 {pair_phrase(grid_pairs(grid), grid$occasion[b])}.",
+          "i" = "A visit of 1 after the first opens a new cohort, where the
                  panel's later stages are drawn again."
         ),
         class = "samplyr_error_schedule_visit",
@@ -560,77 +587,127 @@ schedule_grid_visit <- function(grid, schedule, call = caller_env()) {
   visit
 }
 
-#' A schedule with tenures redraws the stages below its panels
+#' Refuse a cohort column that disagrees with the visits
 #'
-#' Each tenure draws them at the wave it opens, from that wave's listing, so
+#' The cohort is read from `visit`, so a `cohort` column only restates it.
+#' Within a panel it must change exactly where a visit of 1 opens a new
+#' cohort. Inactive rows carry no cohort and are not read.
+#' @noRd
+check_schedule_cohort <- function(grid, schedule, key, call = caller_env()) {
+  if (!"cohort" %in% names(schedule)) {
+    return(invisible(NULL))
+  }
+  at <- match(paste(grid$panel, grid$occasion, sep = "|"), key)
+  cohort <- schedule$cohort[at]
+  pairs <- grid_pairs(grid)
+  for (p in unique(grid$panel)) {
+    rows <- which(grid$panel == p & grid$active)
+    rows <- rows[order(grid$occasion[rows])]
+    given <- cohort[rows]
+    visit <- grid$visit[rows]
+    missing <- is.na(given)
+    changed <- c(TRUE, given[-1L] != given[-length(given)])
+    bad <- which(missing | changed != (visit == 1L))
+    if (length(bad) == 0L) {
+      next
+    }
+    b <- bad[1L]
+    where <- pair_phrase(pairs, grid$occasion[rows[b]])
+    detail <- if (missing[b]) {
+      "Panel {p} has no {.field cohort} at {where}, where it is active."
+    } else if (changed[b]) {
+      "Panel {p} changes from cohort {given[b - 1L]} to {given[b]} at
+       {where}, at visit {visit[b]}."
+    } else {
+      "Panel {p} keeps cohort {given[b]} at {where}, where its visit
+       restarts at 1."
+    }
+    abort_samplyr(
+      c(
+        "{.field cohort} must change exactly where {.field visit} is 1.",
+        "x" = detail,
+        "i" = "A cohort opens where {.field visit} is 1 and lasts until the
+               next opening. Without {.field visit}, each panel has one
+               cohort."
+      ),
+      class = "samplyr_error_schedule_visit",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' A schedule with cohorts redraws the stages below its panels
+#'
+#' Each cohort draws them at the occasion it opens, from that occasion's listing, so
 #' a design with nothing below the panels has nothing to redraw, and drawing
-#' those stages in the assigning call would give every tenure the same units.
+#' those stages in the assigning call would give every cohort the same units.
 #' @param executed The stages drawn once this call ends.
 #' @noRd
-check_tenure_stages <- function(spec, design, assignment_stage, executed,
+check_cohort_stages <- function(spec, design, assignment_stage, executed,
                                 call = caller_env()) {
-  if (is_null(spec) || !schedule_has_tenures(spec$schedule)) {
+  if (is_null(spec) || !schedule_has_cohorts(spec$schedule)) {
     return(invisible(NULL))
   }
   n_stages <- length(design$stages)
   if (assignment_stage >= n_stages) {
     abort_samplyr(
       c(
-        "A schedule that opens several tenures per panel needs a stage below
+        "A schedule that opens several cohorts per panel needs a stage below
          the panels.",
         "x" = "The panels are assigned at stage {assignment_stage}, the last
                stage of the design.",
-        "i" = "A tenure draws new units under its panel's units, at the wave
+        "i" = "A cohort draws new units under its panel's units, at the occasion
                it opens. Without {.field visit}, each panel keeps its units
                for its whole life."
       ),
-      class = "samplyr_error_tenure_stages",
+      class = "samplyr_error_cohort_stages",
       call = call
     )
   }
-  # Its master never completes, and a wave exports no reserve.
+  # Its master never completes, and an occasion exports no reserve.
   listed <- which(vapply(design$stages, function(stage) {
     !is_null(stage$draw_spec$reserve)
   }, logical(1)))
   if (length(listed) > 0L) {
     abort_samplyr(
       c(
-        "A schedule that opens several tenures per panel cannot take a
+        "A schedule that opens several cohorts per panel cannot take a
          reserve.",
         "x" = "{cli::qty(length(listed))}Stage{?s} {listed}
                {cli::qty(length(listed))}draw{?s/} a {.arg reserve}.",
-        "i" = "Each tenure draws again, so the master is never complete and
-               cannot be settled and exported as a whole, and a wave cannot
+        "i" = "Each cohort draws again, so the master is never complete and
+               cannot be settled and exported as a whole, and an occasion cannot
                export a reserve.",
         "i" = "Without {.field visit}, each panel keeps its units for its
                whole life, and the completed master settles and exports."
       ),
-      class = "samplyr_error_tenure_stages",
+      class = "samplyr_error_cohort_stages",
       call = call
     )
   }
-  # A new tenure leaves out the units drawn before, and its weights reach
+  # A new cohort leaves out the units drawn before, and its weights reach
   # the whole listing only for an equal-probability draw of named units.
-  tenure_stage <- design$stages[[assignment_stage + 1L]]
-  method <- tenure_stage$draw_spec$method
-  if (is_null(tenure_stage$clusters) ||
+  cohort_stage <- design$stages[[assignment_stage + 1L]]
+  method <- cohort_stage$draw_spec$method
+  if (is_null(cohort_stage$clusters) ||
         !method %in% c("srswor", "systematic")) {
     abort_samplyr(
       c(
-        "A schedule that opens several tenures per panel needs the stage
+        "A schedule that opens several cohorts per panel needs the stage
          below the panels to draw named units with equal probabilities.",
-        "x" = if (is_null(tenure_stage$clusters)) {
+        "x" = if (is_null(cohort_stage$clusters)) {
           "Stage {assignment_stage + 1L} names no units with
            {.fn cluster_by}."
         } else {
           "Stage {assignment_stage + 1L} draws by {.val {method}}."
         },
-        "i" = "A new tenure leaves out the units earlier tenures drew, and
+        "i" = "A new cohort leaves out the units earlier cohorts drew, and
                its weights count those units back only when every unit of the
                listing had the same chance: {.val srswor} or
                {.val systematic}, with {.fn cluster_by} naming the units."
       ),
-      class = "samplyr_error_tenure_stages",
+      class = "samplyr_error_cohort_stages",
       call = call
     )
   }
@@ -638,36 +715,36 @@ check_tenure_stages <- function(spec, design, assignment_stage, executed,
   if (length(below) > 0L) {
     abort_samplyr(
       c(
-        "A schedule that opens several tenures per panel draws the stages
-         below the panels one tenure at a time.",
+        "A schedule that opens several cohorts per panel draws the stages
+         below the panels one cohort at a time.",
         "x" = "This call also draws {cli::qty(length(below))}stage{?s}
                {below}.",
         "i" = "Execute through stage {assignment_stage} now, then draw each
-               tenure where it opens:
-               {.code execute(master, listing, wave = t)}."
+               cohort where it opens:
+               {.code execute(master, listing, period = p, subround = s)}."
       ),
-      class = "samplyr_error_tenure_stages",
+      class = "samplyr_error_cohort_stages",
       call = call
     )
   }
   invisible(NULL)
 }
 
-#' Visits of a schedule with one tenure per panel
+#' Visits of a schedule with one cohort per panel
 #' @noRd
 counted_visits <- function(grid) {
   visit <- rep(NA_integer_, nrow(grid))
   for (p in unique(grid$panel)) {
     rows <- which(grid$panel == p & grid$active)
-    rows <- rows[order(grid$wave[rows])]
+    rows <- rows[order(grid$occasion[rows])]
     visit[rows] <- seq_along(rows)
   }
   visit
 }
 
-#' Does a schedule open more than one tenure in some panel?
+#' Does a schedule open more than one cohort in some panel?
 #' @noRd
-schedule_has_tenures <- function(schedule) {
+schedule_has_cohorts <- function(schedule) {
   if (is_null(schedule$visit)) {
     return(FALSE)
   }
@@ -711,11 +788,27 @@ check_schedule_columns <- function(schedule, subject, extra = NULL,
       call = call
     )
   }
-  missing <- setdiff(c("panel", "wave"), names(schedule))
+  if (!"period" %in% names(schedule) && "wave" %in% names(schedule)) {
+    abort_samplyr(
+      c(
+        "A schedule indexes time by {.field period} and an optional
+         {.field subround}.",
+        "x" = "{subject$upper} has a {.field wave} column and no
+               {.field period}.",
+        "i" = "{.field wave} in an svyplan schedule is the place of an
+               interview in the rotation pattern, not a time. Select
+               {.field period} and {.field subround} instead."
+      ),
+      class = "samplyr_error_schedule_columns",
+      call = call
+    )
+  }
+  missing <- setdiff(c("panel", "period"), names(schedule))
   if (length(missing) > 0) {
     abort_samplyr(
       c(
-        "{subject$upper} needs a {.field panel} and a {.field wave} column.",
+        "{subject$upper} needs a {.field panel} and a {.field period}
+         column.",
         "x" = "Missing: {.field {missing}}.",
         extra
       ),
@@ -724,6 +817,54 @@ check_schedule_columns <- function(schedule, subject, extra = NULL,
     )
   }
   invisible(NULL)
+}
+
+#' The occasions a schedule's rows name
+#'
+#' An occasion is one `(period, subround)` pair, and occasions are numbered
+#' in the order of their pairs. `subround` is 1 where the column is absent.
+#' Periods number from 1 without gaps, and so do the subrounds of each
+#' period, which may differ in number.
+#' @return A list with `occasion`, the occasion of each row, and `pairs`, a
+#'   data frame of `period` and `subround` with one row per occasion in
+#'   order.
+#' @noRd
+schedule_occasions <- function(schedule, subject, call = caller_env()) {
+  period <- schedule$period
+  check_schedule_integers(period, "period", subject$arg, call = call)
+  period <- as.integer(period)
+  subround <- if ("subround" %in% names(schedule)) {
+    check_schedule_integers(schedule$subround, "subround", subject$arg,
+                            call = call)
+    as.integer(schedule$subround)
+  } else {
+    rep(1L, length(period))
+  }
+  check_schedule_contiguous(period, max(period), "period", subject$arg,
+                            call = call)
+  for (p in sort(unique(period))) {
+    top <- max(subround[period == p])
+    gaps <- setdiff(seq_len(top), subround[period == p])
+    if (length(gaps) > 0L) {
+      abort_samplyr(
+        c(
+          "{subject$upper} must number the {.field subround} values of each
+           period from 1 without gaps.",
+          "x" = "Period {p} declares subrounds up to {top}, but misses
+                 {gaps}."
+        ),
+        class = "samplyr_error_schedule_gap",
+        call = call
+      )
+    }
+  }
+  key <- unique(data.frame(period = period, subround = subround))
+  key <- key[order(key$period, key$subround), , drop = FALSE]
+  rownames(key) <- NULL
+  list(
+    occasion = match(paste(period, subround), paste(key$period, key$subround)),
+    pairs = key
+  )
 }
 
 #' The optional `active` column, defaulted and checked
@@ -749,7 +890,7 @@ schedule_active_column <- function(schedule, subject, call = caller_env()) {
 
 #' A combination declared twice is a mistake, not a re-statement
 #'
-#' `combination` names the key, panel-wave or cohort-panel-wave.
+#' `combination` names the key, panel-occasion or selection-panel-occasion.
 #' @noRd
 check_schedule_duplicates <- function(key, subject, declares, combination,
                                       call = caller_env()) {
@@ -773,22 +914,23 @@ schedule_grid_active <- function(grid_key, input_key, active) {
   !is.na(at) & active[at]
 }
 
-#' No declared wave may be empty
+#' No declared occasion may be empty
 #'
-#' @return The count active at each wave, which is `r_min` for a master.
+#' @return The count active at each occasion, which is `r_min` for a master.
 #' @noRd
-check_schedule_idle_waves <- function(active, wave, headline, detail,
-                                      extra = NULL, call = caller_env()) {
-  per_wave <- vapply(split(active, wave), sum, integer(1))
-  if (any(per_wave == 0L)) {
-    idle <- as.integer(names(per_wave)[per_wave == 0L])
+check_schedule_idle_occasions <- function(active, occasion, headline, detail,
+                                      extra = NULL, describe = identity,
+                                      call = caller_env()) {
+  per_occasion <- vapply(split(active, occasion), sum, integer(1))
+  if (any(per_occasion == 0L)) {
+    idle <- describe(as.integer(names(per_occasion)[per_occasion == 0L]))
     abort_samplyr(
       c(headline, "x" = detail, extra),
-      class = "samplyr_error_schedule_idle_wave",
+      class = "samplyr_error_schedule_idle_occasion",
       call = call
     )
   }
-  per_wave
+  per_occasion
 }
 
 #' Shared by the draw-time and program schedule paths, which differ only in
@@ -831,7 +973,7 @@ check_schedule_contiguous <- function(x, top, name, arg = "panels",
 
 #' Block size for a pool
 #'
-#' Large enough that the `r_min` panels of the leanest wave take two units
+#' Large enough that the `r_min` panels of the leanest occasion take two units
 #' per block, the smallest take with a within-block variance estimate.
 #' @noRd
 panel_block_size <- function(k, r_min) {
@@ -925,7 +1067,7 @@ vanished_assignment_units <- function(records, sample, context) {
 
 #' Carry each unit's panel into the recorded rows of its empty parents
 #'
-#' An export turns those rows into zero rows, which a wave activates with
+#' An export turns those rows into zero rows, which an occasion activates with
 #' the panel of their unit.
 #' @noRd
 panel_empty_parents <- function(records, assigned, key_vars) {
@@ -972,9 +1114,9 @@ abort_panel_missing_identity <- function(stage_num, columns, occurrence,
 
 #' Say what a panel count does with certainty units
 #'
-#' A count declares no waves, so it reads as rotation groups or as a
+#' A count declares no occasions, so it reads as rotation groups or as a
 #' one-visit split alike. Only certainty units tell the two apart, and
-#' periods() is what the second needs. A schedule states rotation, so it is
+#' subrounds() is what the second needs. A schedule states rotation, so it is
 #' not reported.
 #' @noRd
 inform_panel_certainty <- function(pools, k, stage) {
@@ -992,7 +1134,7 @@ inform_panel_certainty <- function(pools, k, stage) {
       "Stage {stage}: {n_certainty} certainty unit{?s} in {n_pools}
        pool{?s} {qty(n_certainty)}{?is/are} kept apart from the rotating
        panels.",
-      "i" = "{qty(n_certainty)}{?It/They} will be active at every wave of a
+      "i" = "{qty(n_certainty)}{?It/They} will be active at every occasion of a
              rotation schedule.",
       "i" = "Panel sizes in {qty(n_pools)}{?that pool/those pools} can differ
              by two.",
@@ -1000,7 +1142,7 @@ inform_panel_certainty <- function(pools, k, stage) {
         c("i" = cli::format_inline("Pools: {.val {labels}}."))
       },
       "i" = "For a one-visit partition such as fieldwork months, use
-             {.code panels = periods({k})}."
+             {.code panels = subrounds({k})}."
     ),
     class = "samplyr_message_panel_certainty",
     stage = stage,
@@ -1033,7 +1175,7 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
 
   units <- result[unit_rows, , drop = FALSE]
   pools <- panel_pools(units, context,
-                       split_certainty = !is_periods_spec(spec))
+                       split_certainty = !is_subrounds_spec(spec))
 
   # Resolve every pool before consuming RNG state.
   pools <- resolve_small_pools(pools, spec, call = call)
@@ -1064,18 +1206,8 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
 
   record <- list(
     algorithm = "blocked_random_quota",
-    # Version 4 adds certainty = "assigned", version 5 a panel with several
-    # tenures and version 6 reporting periods, whose labels cover groups
-    # first. Other records keep the version earlier builds read.
-    version = if (!is_null(spec$reporting)) {
-      6L
-    } else if (schedule_has_tenures(spec$schedule)) {
-      5L
-    } else if (is_periods_spec(spec)) {
-      4L
-    } else {
-      3L
-    },
+    # Version 7 indexes the schedule by period and subround.
+    version = 7L,
     panels = k,
     assignment_stage = context$stage_num,
     block_size = block,
@@ -1085,7 +1217,7 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
     pool_vars = context$pool_vars,
     control_ordered = length(context$control) > 0L,
     # Permanence is defined at the assignment stage.
-    certainty = if (is_periods_spec(spec)) "assigned" else "permanent",
+    certainty = if (is_subrounds_spec(spec)) "assigned" else "permanent",
     small_pool_policy = spec$small_pool %||% "error",
     schedule = spec$schedule,
     pools = pool_records
@@ -1104,7 +1236,7 @@ panel_record_algorithm <- "blocked_random_quota"
 #'
 #' A set, not a ceiling. A version below any that existed is unreadable too.
 #' @noRd
-supported_panel_record_versions <- c(1L, 2L, 3L, 4L, 5L, 6L)
+supported_panel_record_versions <- 7L
 
 #' Read an assignment record under the law it names
 #'
@@ -1114,7 +1246,6 @@ supported_panel_record_versions <- c(1L, 2L, 3L, 4L, 5L, 6L)
 #' @noRd
 prepare_panel_record <- function(record, what, call = caller_env()) {
   check_panel_record_supported(record, what, call = call)
-  record <- normalize_panel_record(record)
   check_panel_record_fields(record, what, call = call)
   if (!is_null(record)) {
     # Coerce assignment stages only after validation.
@@ -1169,6 +1300,22 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
     return(invisible(NULL))
   }
 
+  if (stated && version >= 1 && version < min(supported_panel_record_versions)) {
+    abort_samplyr(
+      c(
+        "{what} is computed from the panel assignment, and this sample's
+         assignment record is older than this version of samplyr reads.",
+        "x" = "The record is version {version}, which indexes its schedule
+               by occasion. This build reads version
+               {supported_panel_record_versions}, indexed by period and
+               subround.",
+        "i" = "Execute the design again to write a current record."
+      ),
+      class = "samplyr_error_panel_record_unsupported",
+      call = call
+    )
+  }
+
   if (stated && version > max(supported_panel_record_versions)) {
     abort_samplyr(
       c(
@@ -1202,26 +1349,19 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
   )
 }
 
-#' What a record numbered 3 has to carry to be one
+#' What a record has to carry to be one
 #'
-#' A version-3 record missing its stage, unit or identity columns is refused,
-#' not filled in, because version 3 is where they are written down. Versions
-#' 1 and 2 mean stage 1 (see `normalize_panel_record()`). Of these fields only
-#' `assignment_stage` can come from a design file. Pools are not checked.
+#' A record missing its stage, unit or identity columns is refused, not
+#' filled in. Of these fields only `assignment_stage` can come from a design
+#' file. Pools are not checked.
 #' @noRd
 check_panel_record_fields <- function(record, what, call = caller_env()) {
-  if (is_null(record) || !(record_states_version(record, 3L) ||
-                             record_states_version(record, 4L) ||
-                             record_states_version(record, 5L) ||
-                             record_states_version(record, 6L))) {
+  if (is_null(record)) {
     return(invisible(NULL))
   }
 
-  if ((record_states_version(record, 4L) ||
-         record_states_version(record, 5L) ||
-         record_states_version(record, 6L)) &&
-      !(length(record$certainty) == 1L &&
-        record$certainty %in% c("permanent", "assigned"))) {
+  if (!(length(record$certainty) == 1L &&
+          record$certainty %in% c("permanent", "assigned"))) {
     abort_panel_record_malformed(
       "must state {.field certainty} as {.val permanent} or {.val assigned}",
       record$certainty,
@@ -1273,11 +1413,11 @@ check_panel_record_fields <- function(record, what, call = caller_env()) {
     )
   }
 
-  # The labels of a version-6 assignment follow its periods.
-  if (record_states_version(record, 6L) &&
-      !schedule_states_periods(record$schedule)) {
+  if (!is_null(record$schedule) &&
+      !schedule_states_occasions(record$schedule)) {
     abort_panel_record_malformed(
-      "must carry a schedule naming the {.field period} of every row",
+      "must carry a schedule naming the {.field period} and
+       {.field subround} of every row",
       record$schedule$period,
       what = what,
       call = call
@@ -1287,42 +1427,32 @@ check_panel_record_fields <- function(record, what, call = caller_env()) {
   invisible(NULL)
 }
 
-#' Does a recorded schedule name a period on every row?
+#' Does a recorded schedule name a period and subround on every row?
 #'
 #' A schedule is a data frame in memory and a list of rows as read from
 #' JSON.
 #' @noRd
-schedule_states_periods <- function(schedule) {
-  period <- if (is.data.frame(schedule)) {
-    schedule$period
-  } else if (is.list(schedule) && length(schedule) > 0L) {
-    lapply(schedule, function(row) if (is.list(row)) row$period)
-  }
-  if (is.list(period)) {
-    if (!all(lengths(period) == 1L)) {
-      return(FALSE)
+schedule_states_occasions <- function(schedule) {
+  complete <- function(name) {
+    values <- if (is.data.frame(schedule)) {
+      schedule[[name]]
+    } else if (is.list(schedule) && length(schedule) > 0L) {
+      lapply(schedule, function(row) if (is.list(row)) row[[name]])
     }
-    period <- unlist(period, use.names = FALSE)
+    if (is.list(values)) {
+      if (!all(lengths(values) == 1L)) {
+        return(FALSE)
+      }
+      values <- unlist(values, use.names = FALSE)
+    }
+    length(values) > 0L && is.numeric(values) && !anyNA(values)
   }
-  length(period) > 0L && is.numeric(period) && !anyNA(period)
+  complete("period") && complete("subround")
 }
 
-#' The unit vocabulary version 3 is authoritative for
-#'
-#' The older `psu` is not among them, since it named a stage, not a unit kind.
+#' The units an assignment record names
 #' @noRd
 panel_units <- c("cluster", "occurrence", "element")
-
-#' Does the record state exactly this version?
-#'
-#' Compared by value, so a double from a JSON reader matches an integer.
-#' @noRd
-record_states_version <- function(record, version) {
-  stated <- record$version
-  length(stated) == 1L &&
-    is_integerish_numeric(stated) &&
-    as.integer(stated) == version
-}
 
 #' A list of column names, as a record may state one
 #'
@@ -1363,10 +1493,10 @@ abort_panel_record_malformed <- function(
     c(
       "{what} is computed from the panel assignment, and this sample's
        assignment record does not carry the version it states.",
-      "x" = paste0("A version-3 panel assignment ", requirement, ". This
+      "x" = paste0("A version-7 panel assignment ", requirement, ". This
              record states {shown}."),
       "i" = "The version fixes which fields the record carries and what they
-             mean, so a record numbered 3 is read as version 3 rather than
+             mean, so a record numbered 7 is read as version 7 rather than
              repaired into it."
     ),
     class = "samplyr_error_panel_record_malformed",
@@ -1452,7 +1582,7 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
     )
   }
 
-  # No schedule means no wave can be short.
+  # No schedule means no occasion can be short.
   if (is_null(spec$schedule)) {
     return(pools)
   }
@@ -1476,16 +1606,16 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
     " (", sizes, ")"
   )
 
-  if (identical(policy, "error") && is_periods_spec(spec)) {
+  if (identical(policy, "error") && is_subrounds_spec(spec)) {
     abort_samplyr(
       c(
-        "Every period needs units from every pool.",
+        "Every subround needs units from every pool.",
         "x" = "{qty(n_short)}{n_short} pool{?s} hold{?s/} fewer units than
-               the {spec$k} periods, so some period would hold none of
+               the {spec$k} subrounds, so some subround would hold none of
                {qty(n_short)}{?its/their} units: {.val {labels}}.",
         "i" = "Give each stratum at least {spec$k} units, ideally a multiple
-               of {spec$k} so every period gets the same number, or use
-               fewer periods."
+               of {spec$k} so every subround gets the same number, or use
+               fewer subrounds."
       ),
       class = "samplyr_error_panel_small_pool",
       call = call
@@ -1504,7 +1634,7 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
         "i" = "Use fewer rotation groups, activate more groups per period,
                take more units per pool, or set
                {.code small_pool = \"permanent\"} to activate
-               {qty(n_short)}{?this pool/these pools} at every wave."
+               {qty(n_short)}{?this pool/these pools} at every occasion."
       ),
       class = "samplyr_error_panel_small_pool",
       call = call
@@ -1516,12 +1646,12 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
         "A rotation schedule must leave every pool a unit to activate.",
         "x" = "{qty(n_short)}{n_short} pool{?s} hold{?s/} at most
                {threshold} unit{?s} against {spec$k} panels and
-               {.field r_min} = {spec$r_min}, so some wave would select none
+               {.field r_min} = {spec$r_min}, so some occasion would select none
                of {qty(n_short)}{?it/them}: {.val {labels}}.",
-        "i" = "Use fewer panels, activate more panels per wave, take more
+        "i" = "Use fewer panels, activate more panels per occasion, take more
                units per pool, or set {.code small_pool = \"permanent\"} to
                activate {qty(n_short)}{?this pool/these pools} at every
-               wave."
+               occasion."
       ),
       class = "samplyr_error_panel_small_pool",
       call = call
@@ -1535,9 +1665,9 @@ resolve_small_pools <- function(pools, spec, call = caller_env()) {
   cli_warn(
     c(
       "!" = "{qty(n_short)}{n_short} pool{?s} {?is/are} too small to rotate
-             and {?is/are} now active at every wave: {.val {labels}}.",
+             and {?is/are} now active at every occasion: {.val {labels}}.",
       "i" = "{qty(n_short)}{?Its/Their} units are permanent rather than
-             rotating, so wave sizes, overlap and repeated interviewing all
+             rotating, so occasion sizes, overlap and repeated interviewing all
              increase."
     ),
     class = "samplyr_warning_panel_small_pool",
@@ -1561,50 +1691,13 @@ format_pool_stratum <- function(pool, empty = "(unstratified)") {
   )
 }
 
-#' The units a wave takes from each block of a pool
+#' The units an occasion takes from each block of a pool
 #'
 #' Fails with "incorrect number of dimensions" when `quotas` came back from
 #' JSON as a list rather than a matrix.
 #' @noRd
 pool_take <- function(pool, panels) {
   as.integer(rowSums(pool$quotas[, panels, drop = FALSE]))
-}
-
-#' Fill in what an earlier record version left implicit
-#'
-#' Versions 1 and 2 assign from stage 1 and keep their older unit vocabulary.
-#' A missing small-pool policy reads as `error`.
-#' @noRd
-normalize_panel_record <- function(record) {
-  if (is_null(record)) {
-    return(NULL)
-  }
-  if (is_null(record$small_pool_policy)) {
-    record$small_pool_policy <- "error"
-  }
-  if (is_null(record$certainty)) {
-    record$certainty <- "permanent"
-  }
-  if (record_states_version(record, 1L) || record_states_version(record, 2L)) {
-    record$assignment_stage <- 1L
-  }
-  # A record before version 5 has one tenure per panel.
-  if (is.data.frame(record$schedule) && is_null(record$schedule$visit)) {
-    record$schedule$visit <- counted_visits(record$schedule)
-  }
-  record$pools <- lapply(record$pools, function(pool) {
-    if (is_null(pool$activation)) {
-      certain <- identical(pool$class, "certainty")
-      pool$activation <- if (certain) "permanent" else "rotating"
-      pool$permanent_reason <- if (certain) {
-        "selection_certainty"
-      } else {
-        NA_character_
-      }
-    }
-    pool
-  })
-  record
 }
 
 #' Split assignment units into frozen pools
@@ -1685,7 +1778,7 @@ panel_pool_order <- function(units, idx, control_quos) {
 #' @param block Block size, from `panel_block_size()`.
 #' @param reporting Rotation groups from `schedule_period_groups()`, or
 #'   `NULL`. With groups, a partial block covers the groups before their
-#'   sub-periods.
+#'   subrounds.
 #' @return `panel`, the labels in pool order, and `blocks`, their sizes.
 #' @noRd
 assign_blocked_panels <- function(m, k, block = panel_block_size(k, 1L),
@@ -1698,7 +1791,7 @@ assign_blocked_panels <- function(m, k, block = panel_block_size(k, 1L),
   labels <- sample.int(k)
   if (!is_null(reporting)) {
     labels <- spread_panel_order(
-      labels, reporting$group, reporting$subperiod
+      labels, reporting$group, reporting$subround
     )
   }
   labels <- labels[rep_len(seq_len(k), m)]
@@ -1718,26 +1811,26 @@ assign_blocked_panels <- function(m, k, block = panel_block_size(k, 1L),
 #' Reorder a random permutation of panels to cover groups first
 #'
 #' Each next label comes from the group used least so far, then from the
-#' sub-period used least, and the permutation breaks the remaining ties. The
-#' first `g` labels then hold `g` distinct groups, spread over sub-periods.
+#' subround used least, and the permutation breaks the remaining ties. The
+#' first `g` labels then hold `g` distinct groups, spread over subrounds.
 #' @param perm A random permutation of the panels.
 #' @noRd
-spread_panel_order <- function(perm, group, subperiod) {
+spread_panel_order <- function(perm, group, subround) {
   k <- length(perm)
   rank <- match(seq_len(k), perm)
   group_used <- integer(max(group))
-  sub_used <- integer(max(subperiod))
+  sub_used <- integer(max(subround))
   left <- rep(TRUE, k)
   out <- integer(k)
   for (i in seq_len(k)) {
     cand <- which(left)
     pick <- cand[order(
-      group_used[group[cand]], sub_used[subperiod[cand]], rank[cand]
+      group_used[group[cand]], sub_used[subround[cand]], rank[cand]
     )[1L]]
     out[i] <- pick
     left[pick] <- FALSE
     group_used[group[pick]] <- group_used[group[pick]] + 1L
-    sub_used[subperiod[pick]] <- sub_used[subperiod[pick]] + 1L
+    sub_used[subround[pick]] <- sub_used[subround[pick]] + 1L
   }
   out
 }

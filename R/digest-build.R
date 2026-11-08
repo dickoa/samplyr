@@ -1992,22 +1992,22 @@ merge_continuation_digest <- function(
   digest
 }
 
-#' Merge the digests of the waves drawn one at a time
+#' Merge the digests of the occasions drawn one at a time
 #'
-#' Each wave extended the master's digest with its own later stages, and
+#' Each occasion extended the master's digest with its own later stages, and
 #' `parts` holds what each added: its new frame records and stage records.
-#' The merge keeps one record per later stage, with every wave's pools,
+#' The merge keeps one record per later stage, with every occasion's pools,
 #' units and selected trace in the order of their parent units, so it does
-#' not depend on the order the waves were drawn in. A listing passed for
-#' every wave keeps its frame record. Distinct listings give one record of
-#' the rows the waves drew from, without a fingerprint, since no single
+#' not depend on the order the occasions were drawn in. A listing passed for
+#' every occasion keeps its frame record. Distinct listings give one record of
+#' the rows the occasions drew from, without a fingerprint, since no single
 #' frame holds them.
 #' @noRd
-merge_wave_draw_digests <- function(prior, parts) {
+merge_occasion_draw_digests <- function(prior, parts) {
   n_new <- unique(vapply(parts, function(p) length(p$stages), integer(1)))
   if (length(n_new) != 1L || n_new == 0L) {
     cli_abort(
-      "The waves did not record the same stages.",
+      "The occasions did not record the same stages.",
       call = NULL,
       class = "samplyr_error_internal"
     )
@@ -2024,8 +2024,8 @@ merge_wave_draw_digests <- function(prior, parts) {
   unit_maps <- NULL
   stages <- vector("list", n_new)
   for (i in seq_len(n_new)) {
-    per_wave <- lapply(parts, function(p) p$stages[[i]])
-    refs <- vapply(per_wave, function(s) s$frame_ref, integer(1))
+    per_occasion <- lapply(parts, function(p) p$stages[[i]])
+    refs <- vapply(per_occasion, function(s) s$frame_ref, integer(1))
     key <- paste(refs, collapse = " ")
     if (is_null(record_ids[[key]])) {
       recs <- Map(find_record, parts, refs)
@@ -2056,7 +2056,7 @@ merge_wave_draw_digests <- function(prior, parts) {
         record_ids[[key]] <- next_id
       }
     }
-    merged <- merge_wave_stage(per_wave, unit_maps)
+    merged <- merge_occasion_stage(per_occasion, unit_maps)
     merged$stage$frame_ref <- as.integer(record_ids[[key]])
     stages[[i]] <- merged$stage
     unit_maps <- merged$unit_maps
@@ -2080,86 +2080,86 @@ digest_stage_frame_rows <- function(stage) {
   sum(stage$pools$N)
 }
 
-#' One stage record from the same stage of several waves
+#' One stage record from the same stage of several occasions
 #'
-#' `unit_maps` renumbers the parent units of the previous stage, wave by
-#' wave, and the result carries this stage's for the next one.
+#' `unit_maps` renumbers the parent units of the previous stage, occasion by
+#' occasion, and the result carries this stage's for the next one.
 #' @noRd
-merge_wave_stage <- function(per_wave, unit_maps) {
-  base <- per_wave[[1]]
+merge_occasion_stage <- function(per_occasion, unit_maps) {
+  base <- per_occasion[[1]]
   fields <- c("stage_id", "unit_level", "scope", "chance_kind",
               "probabilities", "order_kind", "storage", "strata")
-  for (s in per_wave[-1]) {
+  for (s in per_occasion[-1]) {
     if (!identical(s[fields], base[fields])) {
       cli_abort(
-        "Stage {base$stage_id} was recorded differently in different waves.",
+        "Stage {base$stage_id} was recorded differently in different occasions.",
         call = NULL,
         class = "samplyr_error_internal"
       )
     }
   }
-  if (any(vapply(per_wave, function(s) !is_null(s$diagnostics$spatial),
+  if (any(vapply(per_occasion, function(s) !is_null(s$diagnostics$spatial),
                  logical(1)))) {
     cli_abort(
-      "The spatial diagnostics of separate waves do not combine.",
+      "The spatial diagnostics of separate occasions do not combine.",
       call = NULL,
       class = "samplyr_error_internal"
     )
   }
 
-  pools <- vctrs::vec_rbind(!!!lapply(seq_along(per_wave), function(w) {
-    p <- per_wave[[w]]$pools
+  pools <- vctrs::vec_rbind(!!!lapply(seq_along(per_occasion), function(w) {
+    p <- per_occasion[[w]]$pools
     if (!is_null(unit_maps)) {
       p$parent_unit <- unit_maps[[w]][p$parent_unit]
     }
-    p$.wave <- w
+    p$.occasion <- w
     p
   }))
   ord <- order(
     pools$parent_unit,
     pools$parent_occurrence %||% integer(nrow(pools)),
-    pools$.wave,
+    pools$.occasion,
     pools$pool_id
   )
   pools <- pools[ord, , drop = FALSE]
-  pool_maps <- lapply(seq_along(per_wave), function(w) {
-    map <- integer(max(per_wave[[w]]$pools$pool_id))
-    here <- pools$.wave == w
+  pool_maps <- lapply(seq_along(per_occasion), function(w) {
+    map <- integer(max(per_occasion[[w]]$pools$pool_id))
+    here <- pools$.occasion == w
     map[pools$pool_id[here]] <- which(here)
     map
   })
   pools$pool_id <- seq_len(nrow(pools))
-  pools$.wave <- NULL
+  pools$.occasion <- NULL
   rownames(pools) <- NULL
 
-  tables <- function(field) lapply(per_wave, `[[`, field)
+  tables <- function(field) lapply(per_occasion, `[[`, field)
 
   new_units <- NULL
   units <- NULL
   if (identical(base$storage, "units")) {
-    units <- stack_wave_tables(
-      lapply(seq_along(per_wave), function(w) {
-        u <- per_wave[[w]]$units
-        u$.wave <- rep(w, nrow(u))
+    units <- stack_occasion_tables(
+      lapply(seq_along(per_occasion), function(w) {
+        u <- per_occasion[[w]]$units
+        u$.occasion <- rep(w, nrow(u))
         u$.old <- u$unit_id
         u
       }),
       pool_maps
     )
     units$unit_id <- seq_len(nrow(units))
-    new_units <- lapply(seq_along(per_wave), function(w) {
-      here <- units$.wave == w
+    new_units <- lapply(seq_along(per_occasion), function(w) {
+      here <- units$.occasion == w
       map <- integer(max(c(0L, units$.old[here])))
       map[units$.old[here]] <- units$unit_id[here]
       map
     })
-    units$.wave <- units$.old <- NULL
+    units$.occasion <- units$.old <- NULL
   }
 
   diagnostics <- NULL
   for (name in c("balance", "bounds")) {
-    tab <- stack_wave_tables(
-      lapply(per_wave, function(s) s$diagnostics[[name]]),
+    tab <- stack_occasion_tables(
+      lapply(per_occasion, function(s) s$diagnostics[[name]]),
       pool_maps
     )
     if (!is_null(tab)) {
@@ -2170,25 +2170,25 @@ merge_wave_stage <- function(per_wave, unit_maps) {
   stage <- base
   stage$pools <- pools
   stage$units <- units
-  stage$chance_distribution <- stack_wave_tables(
+  stage$chance_distribution <- stack_occasion_tables(
     tables("chance_distribution"), pool_maps
   )
-  stage$selected <- stack_wave_tables(tables("selected"), pool_maps, new_units)
+  stage$selected <- stack_occasion_tables(tables("selected"), pool_maps, new_units)
   stage$diagnostics <- diagnostics
   list(stage = stage, unit_maps = new_units)
 }
 
-#' The digest of the rows a wave reads from a master drawn wave by wave
+#' The digest of the rows an occasion reads from a master drawn occasion by occasion
 #'
-#' A complete master is the wave's whole first phase, so its digest is the
-#' wave's. Otherwise each draw's later-stage records are cut to the pools
+#' A complete master is the occasion's whole first phase, so its digest is the
+#' occasion's. Otherwise each draw's later-stage records are cut to the pools
 #' holding the rows, matched by their digest keys, and merged onto the
 #' master's. `NULL` when a record is missing or the keys do not match.
 #' @noRd
-wave_rows_digest <- function(master, rows) {
-  draws <- attr(master, "metadata")$per_wave_draws %||% list()
+occasion_rows_digest <- function(master, rows) {
+  draws <- attr(master, "metadata")$per_occasion_draws %||% list()
   if (length(draws) == 0L || length(remaining_stages(master)) == 0L) {
-    return(wave_master_digest(master))
+    return(occasion_master_digest(master))
   }
   prior <- master_executed_digest(master)
   if (is_null(prior)) {
@@ -2206,22 +2206,22 @@ wave_rows_digest <- function(master, rows) {
       return(NULL)
     }
     if (nrow(part$stages[[1L]]$pools) > 0L) {
-      parts <- c(parts, list(tenure_digest_part(part, d, record)))
+      parts <- c(parts, list(cohort_digest_part(part, d, record)))
     }
   }
   if (length(parts) == 0L) {
     return(NULL)
   }
-  tryCatch(merge_wave_draw_digests(prior, parts), error = function(e) NULL)
+  tryCatch(merge_occasion_draw_digests(prior, parts), error = function(e) NULL)
 }
 
-#' The digest of a master whose panels hold several tenures
+#' The digest of a master whose panels hold several cohorts
 #'
-#' Every tenure drawn so far, its pools keyed by the wave it opened at, on
+#' Every cohort drawn so far, its pools keyed by the occasion it opened at, on
 #' the master's own stages. The master never closes, so this is the record
 #' a design file keeps and a replay checks.
 #' @noRd
-tenure_master_digest <- function(master, draws) {
+cohort_master_digest <- function(master, draws) {
   prior <- master_executed_digest(master)
   if (is_null(prior) || length(draws) == 0L ||
         any(vapply(draws, function(d) is_null(d$frame_digest), logical(1)))) {
@@ -2229,13 +2229,13 @@ tenure_master_digest <- function(master, draws) {
   }
   record <- attr(master, "metadata")$panel_assignment
   parts <- lapply(draws, function(d) {
-    tenure_digest_part(d$frame_digest, d, record)
+    cohort_digest_part(d$frame_digest, d, record)
   })
   tryCatch(
-    merge_wave_draw_digests(prior, parts),
+    merge_occasion_draw_digests(prior, parts),
     error = function(e) {
       cli_warn(c(
-        "The frame digest could not be extended for this tenure.",
+        "The frame digest could not be extended for this cohort.",
         "i" = conditionMessage(e)
       ), class = "samplyr_warning_digest_unavailable")
       NULL
@@ -2243,14 +2243,14 @@ tenure_master_digest <- function(master, draws) {
   )
 }
 
-#' Key a draw's pools by the tenure it opened, under a schedule with tenures
+#' Key a draw's pools by the cohort it opened, under a schedule with cohorts
 #' @noRd
-tenure_digest_part <- function(part, draw, record) {
-  if (!schedule_has_tenures(record$schedule)) {
+cohort_digest_part <- function(part, draw, record) {
+  if (!schedule_has_cohorts(record$schedule)) {
     return(part)
   }
   part$stages <- lapply(part$stages, function(stage) {
-    stage$pools$tenure <- rep(as.integer(draw$wave), nrow(stage$pools))
+    stage$pools$cohort <- rep(as.integer(draw$occasion), nrow(stage$pools))
     stage
   })
   part
@@ -2258,11 +2258,11 @@ tenure_digest_part <- function(part, draw, record) {
 
 #' A master's digest cut to the stages the master itself executed
 #'
-#' A master with tenures carries the later stages of its draws in its
+#' A master with cohorts carries the later stages of its draws in its
 #' digest, and each new draw extends only the master's own stages.
 #' @noRd
 master_executed_digest <- function(master) {
-  digest <- wave_master_digest(master)
+  digest <- occasion_master_digest(master)
   if (is_null(digest)) {
     return(NULL)
   }
@@ -2353,9 +2353,9 @@ subset_digest_stage <- function(stage, keep, parent_map = NULL) {
   list(stage = stage, unit_map = unit_map)
 }
 
-#' Stack per-wave tables keyed by pool, renumbering pools and units
+#' Stack per-occasion tables keyed by pool, renumbering pools and units
 #' @noRd
-stack_wave_tables <- function(tabs, pool_maps, unit_maps = NULL) {
+stack_occasion_tables <- function(tabs, pool_maps, unit_maps = NULL) {
   parts <- lapply(seq_along(tabs), function(w) {
     x <- tabs[[w]]
     if (is_null(x) || nrow(x) == 0L) {

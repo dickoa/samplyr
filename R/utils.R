@@ -1250,8 +1250,8 @@ check_forwarded_args <- function(
 #' @noRd
 is_samplyr_column <- function(nms) {
   exact <- c(
-    ".weight", ".sample_id", ".stage", ".panel", ".replicate", ".wave",
-    ".visit"
+    ".weight", ".sample_id", ".stage", ".panel", ".replicate", ".period",
+    ".subround", ".visit"
   )
   nms %in% exact |
     grepl("^\\.(weight|fpc|draw|certainty|reserve|zone|pair)_[0-9]+$", nms)
@@ -1784,41 +1784,42 @@ sample_realization_status <- function(x) {
   status_of(mods)
 }
 
-#' Refuse a materialized wave where the joint probabilities are not yet built
+#' Refuse a materialized occasion where the joint probabilities are not yet built
 #'
 #' First-order probabilities are exact and [as_svydesign()] exports the
-#' wave. The second-order joint is not built.
+#' occasion. The second-order joint is not built.
 #' @noRd
-check_no_materialized_wave <- function(x, fn_name, call = caller_env()) {
-  wave <- attr(x, "metadata")$wave
-  if (is_null(wave)) {
+check_no_materialized_occasion <- function(x, fn_name, call = caller_env()) {
+  occasion <- attr(x, "metadata")$occasion
+  if (is_null(occasion)) {
     return(invisible(NULL))
   }
+  realized <- sample_occasion_phrase(attr(x, "metadata"))
   abort_samplyr(
     c(
-      "{.fn {fn_name}} does not take a materialized wave.",
-      "x" = "This sample realizes {wave_phrase(wave$wave)}, which is an
+      "{.fn {fn_name}} does not take a materialized occasion.",
+      "x" = "This sample realizes {realized}, which is an
              activation of a master rather than a selection of its own.",
-      "i" = "For how two waves overlap, ask the master, which can also be
-             asked about waves it has not materialized:
-             {.code joint_expectation(master, waves = c(t, s))}.",
+      "i" = "For how two occasions overlap, ask the master, which can also
+             be asked about occasions it has not materialized:
+             {.code joint_expectation(master, period = , subround = )}.",
       "i" = "For the master's own joint probabilities:
              {.code joint_expectation(master, frame)}."
     ),
-    class = "samplyr_error_wave_joint_unsupported",
+    class = "samplyr_error_occasion_joint_unsupported",
     call = call
   )
 }
 
 #' Check that a tbl_sample still matches its executed realization
 #'
-#' @param provisional_ok Whether a wave of a master still being drawn is
-#'   accepted, for a route that reads only the wave's own rows.
+#' @param provisional_ok Whether an occasion of a master still being drawn is
+#'   accepted, for a route that reads only the occasion's own rows.
 #' @noRd
 check_sample_unmodified <- function(x, fn_name, provisional_ok = FALSE,
                                     call = caller_env()) {
   if (!provisional_ok) {
-    check_wave_not_provisional(x, fn_name, call = call)
+    check_occasion_not_provisional(x, fn_name, call = call)
   }
   status <- sample_realization_status(x)
   if (status$ok) {

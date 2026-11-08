@@ -50,12 +50,16 @@
 #' @param stages An integer vector of stage numbers to compute, or
 #'   `NULL` (default) to compute all PPS stages.
 #'   Non-PPS stages produce `NULL` entries in the returned list.
-#' @param waves Two wave numbers of a scheduled master, which selects
+#' @param period,subround Two occasions of a scheduled master, which selects
 #'   activation mode: the result describes how those two occasions of the
-#'   rotation overlap rather than how the master was selected. Give the same
-#'   wave twice for the joint expectation within one wave. `NULL` (default)
-#'   keeps the stage behavior. Mutually exclusive with `stages`, `frame`,
-#'   `nsim` and `seed`, none of which activation mode uses.
+#'   rotation overlap rather than how the master was selected. They are read
+#'   as pairs, as in [execute()], and must name exactly two occasions, such
+#'   as `period = c(2, 3)` on a schedule without subrounds, or
+#'   `period = c(1, 2), subround = c(2, 1)` for month 2 of quarter 1 and
+#'   month 1 of quarter 2. Give the same occasion twice for the joint
+#'   expectation within one occasion. `NULL` (default) keeps the stage
+#'   behavior. Mutually exclusive with `stages`, `frame`, `nsim` and
+#'   `seed`, none of which activation mode uses.
 #' @param nsim Positive integer number of simulations used for Chromy's
 #'   pairwise expected hits (default 10000), also forwarded to registered
 #'   WR `joint_fn`s that explicitly declare an `nsim` formal. Analytic
@@ -69,7 +73,7 @@
 #'   percent, so two seeds give slightly different answers, neither more
 #'   correct than the other.
 #'
-#' @return With `waves`, a tibble with one row per block of the frozen
+#' @return With `period`, a tibble with one row per block of the frozen
 #'   assignment, described in the "Activation mode" section. Otherwise a
 #'   named list of length equal to the number of executed stages. Each
 #'   element is either:
@@ -193,13 +197,14 @@
 #'
 #' A scheduled master assigned every unit to a panel at its draw and froze
 #' the block-by-panel quotas, so how two occasions of the rotation overlap
-#' is already determined. `joint_expectation(master, waves = c(t, s))`
+#' is already determined. `joint_expectation(master, period = , subround =
+#' )` for occasions `t` and `s`
 #' reads it from the record, with neither the frame nor a simulation.
 #'
 #' Conditional on the frozen quotas, the panels inside a block of `m`
 #' assignment units are an arrangement of that block's labels. Writing
 #' \eqn{a_t}{a_t} and \eqn{a_s}{a_s} for the units the panels active at each
-#' wave take from the block, and \eqn{a_\cap}{a_and} for those active at both:
+#' occasion take from the block, and \eqn{a_\cap}{a_and} for those active at both:
 #'
 #' \deqn{P(i \in W_t) = a_t / m}{P(i in W_t) = a_t / m}
 #' \deqn{P(i \in W_t, i \in W_s) = a_\cap / m}{P(i in W_t and W_s) = a_and / m}
@@ -207,7 +212,7 @@
 #'
 #' for units \eqn{i \neq j}{i != j} of one block, and the product of the
 #' marginals for units of different blocks, whose arrangements are drawn
-#' independently. The within-wave case is the third expression at `t == s`.
+#' independently. The within-occasion case is the third expression at `t == s`.
 #'
 #' The result has one row per block and stays small at any sample size,
 #' yet every entry of the full matrix is recoverable from it, since within
@@ -216,7 +221,9 @@
 #' blocks the joint is \eqn{p_i p_j}{p_i p_j}, generally not zero, while
 #' the covariance is zero.
 #'
-#' `pool`, `stratum`, `class` and `block` identify the block. `units` is
+#' `pool`, `stratum`, `class` and `block` identify the block, and
+#' `period_1`, `subround_1`, `period_2` and `subround_2` the two occasions.
+#' `units` is
 #' \eqn{m}{m}. `take_1`, `take_2` and `take_both` are the three takes.
 #' `prob_1` and `prob_2` are the marginals. `joint_same` and `joint_distinct`
 #' are the two joint expectations. `has_pair` is `FALSE` for a block of one
@@ -226,18 +233,18 @@
 #' Quotas are frequently unequal, because a pool that is not a multiple of
 #' the block size gives one block an extra unit, so they are read from the
 #' record rather than derived from the panel count. A certainty block is
-#' permanent and takes every unit at every wave, which makes
+#' permanent and takes every unit at every occasion, which makes
 #' `joint_distinct` exactly one.
 #'
 #' These are joint expectations of the activation indicators, conditional
 #' on the phase-1 units and the frozen quotas, not the unconditional joint
 #' inclusion probabilities of the two-phase design, which also carry the
 #' master's own pairwise term. How the two combine for a variance of change
-#' is not settled here. [as_svydesign()] exports a wave for ordinary
+#' is not settled here. [as_svydesign()] exports an occasion for ordinary
 #' totals.
 #'
-#' Activation mode takes a master, not a materialized wave, so neither of
-#' the two waves needs to have been materialized.
+#' Activation mode takes a master, not a materialized occasion, so neither of
+#' the two occasions needs to have been materialized.
 #'
 #' @examplesIf requireNamespace("survey", quietly = TRUE)
 #' # A single-stage stratified Sampford sample, whose joint matrix is exact
@@ -267,10 +274,10 @@
 #'
 #' @examples
 #' # Activation mode: how far two occasions of a rotation overlap. Four
-#' # panels rotate two at a time, so each is live for two consecutive waves.
+#' # panels rotate two at a time, so each is live for two consecutive occasions.
 #' rotation <- data.frame(
 #'   panel = rep(1:4, times = 4),
-#'   wave = rep(1:4, each = 4),
+#'   period = rep(1:4, each = 4),
 #'   active = c(
 #'     TRUE, TRUE, FALSE, FALSE,
 #'     FALSE, TRUE, TRUE, FALSE,
@@ -283,11 +290,11 @@
 #'   draw(n = 40) |>
 #'   execute(bfa_eas, seed = 2025, panels = rotation)
 #'
-#' # Waves 1 and 2 share one panel of the two each activates.
-#' joint_expectation(master, waves = c(1, 2))
+#' # Occasions 1 and 2 share one panel of the two each activates.
+#' joint_expectation(master, period = c(1, 2))
 #'
-#' # The same wave twice gives the joint expectation within one wave.
-#' joint_expectation(master, waves = c(2, 2))
+#' # The same occasion twice gives the joint expectation within one occasion.
+#' joint_expectation(master, period = c(2, 2))
 #'
 #' @references
 #' High-entropy approximation:
@@ -319,8 +326,11 @@
 #' @family diagnostics
 #' @export
 joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
-                              waves = NULL, nsim = 10000L, seed = 1L) {
-  check_keyword_args(enquos(...), c("stages", "waves", "nsim", "seed"))
+                              period = NULL, subround = NULL,
+                              nsim = 10000L, seed = 1L) {
+  check_keyword_args(
+    enquos(...), c("stages", "period", "subround", "nsim", "seed")
+  )
   if (!inherits(x, "tbl_sample")) {
     cli_abort(
       "{.arg x} must be a {.cls tbl_sample} object.",
@@ -330,17 +340,19 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
   check_single_replicate(x, "joint_expectation")
   check_sample_unmodified(x, "joint_expectation")
   check_weight_contract_joint(x, "joint_expectation")
-  check_no_materialized_wave(x, "joint_expectation")
+  check_no_materialized_occasion(x, "joint_expectation")
 
   # Activation mode uses only the frozen assignment record.
-  if (!is_null(waves)) {
+  if (!is_null(period) || !is_null(subround)) {
     check_activation_mode_arguments(
       frame = frame,
       stages = stages,
       nsim_supplied = !missing(nsim),
       seed_supplied = !missing(seed)
     )
-    return(activation_joint_expectation(x, waves))
+    return(activation_joint_expectation(
+      x, list(period = period, subround = subround)
+    ))
   }
 
   if (

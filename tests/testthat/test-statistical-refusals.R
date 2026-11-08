@@ -28,16 +28,16 @@ test_that("certainty cannot exhaust the draw while leaving a noncertainty popula
   expect_equal(census$.weight, rep(1, 5))
 })
 
-test_that("wave and phase exports use current observations including missing values", {
+test_that("occasion and phase exports use current observations including missing values", {
   skip_if_not_installed("survey")
   frame <- data.frame(id = 1:40, y = 1, label = "old")
-  schedule <- data.frame(panel = c(1L, 2L, 1L, 2L), wave = c(1L, 1L, 2L, 2L),
+  schedule <- data.frame(panel = c(1L, 2L, 1L, 2L), period = c(1L, 1L, 2L, 2L),
     active = c(TRUE, FALSE, FALSE, TRUE))
   master <- sampling_design() |> draw(n = 20) |> execute(frame, seed = 12, panels = schedule)
-  wave <- execute(master, wave = 2)
+  occasion <- execute(master, period = 2)
   phase1 <- sampling_design() |> cluster_by(id) |> draw(n = 20) |> execute(frame, seed = 12)
   phase2 <- sampling_design() |> draw(n = 10) |> execute(phase1, seed = 13)
-  for (case in list(list(wave, "full"), list(phase2, NULL))) {
+  for (case in list(list(occasion, "full"), list(phase2, NULL))) {
     s <- case[[1]]
     s$y <- 100 + s$id
     s$y[2] <- NA_real_
@@ -56,11 +56,11 @@ test_that("wave and phase exports use current observations including missing val
     expect_equal(unname(coef(suppressWarnings(survey::svytotal(~y, fit, na.rm = TRUE)))),
       sum(s$.weight * s$y, na.rm = TRUE))
   }
-  # The ultimate-cluster export of a wave is built on the wave's own rows.
-  wave$y <- 100 + wave$id
-  wave$y[2] <- NA_real_
-  out <- as_svydesign(wave)$variables
-  expect_equal(out$y[match(wave$id, out$id)], wave$y)
+  # The ultimate-cluster export of an occasion is built on its own rows.
+  occasion$y <- 100 + occasion$id
+  occasion$y[2] <- NA_real_
+  out <- as_svydesign(occasion)$variables
+  expect_equal(out$y[match(occasion$id, out$id)], occasion$y)
 
   expect_equal(master$y, rep(1, 20))
   expect_equal(phase1$y, rep(1, 20))

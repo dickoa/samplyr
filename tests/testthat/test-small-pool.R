@@ -1,8 +1,9 @@
 ## Small-pool positivity: refusal by default, promotion on request
 
-# A pool of `m` units selects nothing in a wave activating `r` of `k` panels
-# exactly when `m <= k - r`, which biases the estimator. The default refuses,
-# and `small_pool = "permanent"` activates the pool at every wave.
+# A pool of `m` units selects nothing in an occasion activating `r` of `k`
+# panels exactly when `m <= k - r`, which biases the estimator. The default
+# refuses, and `small_pool = "permanent"` activates the pool at every
+# occasion.
 
 small_pool_frame <- function() {
   data.frame(
@@ -16,11 +17,11 @@ small_pool_frame <- function() {
   )
 }
 
-# 4 panels, 2 active per wave, so k - r_min = 2 and a pool of 1 or 2 fails.
+# 4 panels, 2 active per occasion, so k - r_min = 2 and a pool of 1 or 2 fails.
 small_pool_schedule <- function() {
   data.frame(
     panel = rep(1:4, times = 2),
-    wave = rep(1:2, each = 4),
+    period = rep(1:2, each = 4),
     active = c(TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, TRUE, TRUE)
   )
 }
@@ -123,7 +124,7 @@ test_that("small_pool = 'permanent' promotes the pool and says so", {
   )
   record <- attr(master, "metadata")$panel_assignment
   expect_identical(record$small_pool_policy, "permanent")
-  expect_identical(record$version, 3L)
+  expect_identical(record$version, 7L)
 
   # These pools are permanent without being selection-certain.
   expect_identical(
@@ -140,7 +141,7 @@ test_that("small_pool = 'permanent' promotes the pool and says so", {
   )
 })
 
-test_that("a promoted pool appears in every wave with its weight intact", {
+test_that("a promoted pool appears in every occasion with its weight intact", {
   suppressWarnings(
     master <- execute(
       small_pool_design(), small_pool_frame(),
@@ -150,10 +151,10 @@ test_that("a promoted pool appears in every wave with its weight intact", {
   total <- sum(master$.weight * master$y)
 
   for (t in 1:2) {
-    wave <- execute(master, wave = t)
-    # Activation probability is one, so the wave reproduces the master.
-    expect_setequal(unique(wave$reg), c("A", "B", "C"))
-    expect_equal(sum(wave$.weight * wave$y), total)
+    occasion <- execute(master, period = t)
+    # Activation probability is one, so the occasion reproduces the master.
+    expect_setequal(unique(occasion$reg), c("A", "B", "C"))
+    expect_equal(sum(occasion$.weight * occasion$y), total)
   }
 })
 
@@ -164,7 +165,7 @@ test_that("promotion does not make a pool selection-certain", {
       seed = 5, panels = small_pool_schedule(), small_pool = "permanent"
     )
   )
-  joint <- joint_expectation(master, waves = c(1L, 2L))
+  joint <- joint_expectation(master, period = c(1L, 2L))
   expect_true(all(joint$class == "rotating"))
   expect_true(all(joint$activation == "permanent"))
   expect_true(all(joint$prob_1 == 1))
@@ -202,7 +203,7 @@ test_that("small_pool rejects a value it does not define", {
   }
 })
 
-test_that("a wave cannot revisit the policy its master froze", {
+test_that("an occasion cannot revisit the policy its master froze", {
   suppressWarnings(
     master <- execute(
       small_pool_design(), small_pool_frame(),
@@ -210,8 +211,8 @@ test_that("a wave cannot revisit the policy its master froze", {
     )
   )
   expect_error(
-    execute(master, wave = 1, small_pool = "error"),
-    class = "samplyr_error_wave_extra_arguments"
+    execute(master, period = 1, small_pool = "error"),
+    class = "samplyr_error_occasion_extra_arguments"
   )
 })
 
@@ -253,70 +254,9 @@ test_that("replay reproduces a promoted master rather than refusing it", {
   )
 })
 
-## A version-1 record without activation fields
-
-test_that("a version-1 record with a stranded pool refuses at materialization", {
-  suppressWarnings(
-    master <- execute(
-      small_pool_design(), small_pool_frame(),
-      seed = 5, panels = small_pool_schedule(), small_pool = "permanent"
-    )
-  )
-
-  # Version 1 has no activation field or policy, and the pools stay rotating.
-  metadata <- attr(master, "metadata")
-  metadata$panel_assignment$version <- 1L
-  metadata$panel_assignment$small_pool_policy <- NULL
-  metadata$panel_assignment$pools <- lapply(
-    metadata$panel_assignment$pools,
-    function(pool) {
-      pool$activation <- NULL
-      pool$permanent_reason <- NULL
-      pool
-    }
-  )
-  attr(master, "metadata") <- metadata
-
-  expect_error(
-    execute(master, wave = 1),
-    class = "samplyr_error_panel_small_pool"
-  )
-})
-
-test_that("a version-1 record with adequate pools still materializes", {
-  design <- sampling_design() |>
-    add_stage("psu") |>
-    stratify_by(reg) |>
-    cluster_by(psu) |>
-    draw(n = 4) |>
-    add_stage("hh") |>
-    draw(n = 5)
-  frame <- small_pool_frame()
-  frame <- frame[frame$reg != "C", , drop = FALSE]
-
-  master <- execute(design, frame, seed = 5, panels = small_pool_schedule())
-
-  metadata <- attr(master, "metadata")
-  metadata$panel_assignment$version <- 1L
-  metadata$panel_assignment$small_pool_policy <- NULL
-  metadata$panel_assignment$pools <- lapply(
-    metadata$panel_assignment$pools,
-    function(pool) {
-      pool$activation <- NULL
-      pool$permanent_reason <- NULL
-      pool
-    }
-  )
-  attr(master, "metadata") <- metadata
-
-  wave <- execute(master, wave = 1)
-  expect_gt(nrow(wave), 0L)
-  expect_setequal(unique(wave$reg), c("A", "B"))
-})
-
 ## Export of an activation that retains everything
 
-test_that("an all-permanent wave exports as the single-phase design it is", {
+test_that("an all-permanent occasion exports as the single-phase design it is", {
   skip_if_not_installed("survey")
   suppressWarnings(
     master <- execute(
@@ -324,11 +264,11 @@ test_that("an all-permanent wave exports as the single-phase design it is", {
       seed = 5, panels = small_pool_schedule(), small_pool = "permanent"
     )
   )
-  wave <- execute(master, wave = 1)
+  occasion <- execute(master, period = 1)
 
   # Every activation probability is one, so the design is the master's.
   expect_warning(
-    design <- as_svydesign(wave),
+    design <- as_svydesign(occasion),
     class = "samplyr_warning_lonely_psu"
   )
   expect_s3_class(design, "survey.design2")
@@ -341,14 +281,14 @@ test_that("an all-permanent wave exports as the single-phase design it is", {
   )
 })
 
-test_that("a wave activating every panel also reduces to single phase", {
+test_that("an occasion activating every panel also reduces to single phase", {
   skip_if_not_installed("survey")
-  # No pool is permanent, but the wave takes every panel.
+  # No pool is permanent, but the occasion takes every panel.
   frame <- small_pool_frame()
   frame <- frame[frame$reg != "C", , drop = FALSE]
   schedule <- data.frame(
     panel = rep(1:4, times = 2),
-    wave = rep(1:2, each = 4),
+    period = rep(1:2, each = 4),
     active = c(TRUE, TRUE, TRUE, TRUE, FALSE, FALSE, TRUE, TRUE)
   )
   design <- sampling_design() |>
@@ -365,16 +305,16 @@ test_that("a wave activating every panel also reduces to single phase", {
     record$pools, function(pool) pool$activation == "rotating", logical(1)
   )))
 
-  full <- as_svydesign(execute(master, wave = 1))
+  full <- as_svydesign(execute(master, period = 1))
   expect_s3_class(full, "survey.design2")
   expect_false(inherits(full, "twophase2"))
 
-  # Wave 2 subsamples, so it has a second phase, exported on request.
-  partial <- as_svydesign(execute(master, wave = 2), method = "full")
+  # Period 2 subsamples, so it has a second phase, exported on request.
+  partial <- as_svydesign(execute(master, period = 2), method = "full")
   expect_s3_class(partial, "twophase2")
 })
 
-test_that("a mixed wave keeps its second phase", {
+test_that("a mixed occasion keeps its second phase", {
   skip_if_not_installed("survey")
   frame <- rbind(small_pool_frame(), data.frame(
     reg = rep("D", 400),
@@ -401,7 +341,7 @@ test_that("a mixed wave keeps its second phase", {
   )
   expect_setequal(activations, c("permanent", "rotating"))
   expect_s3_class(
-    as_svydesign(execute(master, wave = 1), method = "full"),
+    as_svydesign(execute(master, period = 1), method = "full"),
     "twophase2"
   )
 })
@@ -421,36 +361,4 @@ test_that("the promotion warning is anchored on execute()", {
     }
   )
   expect_identical(deparse(conditionCall(warning)[[1]]), "execute")
-})
-
-test_that("the version-1 backstop is anchored on execute()", {
-  suppressWarnings(
-    master <- execute(
-      small_pool_design(), small_pool_frame(),
-      seed = 5, panels = small_pool_schedule(), small_pool = "permanent"
-    )
-  )
-  metadata <- attr(master, "metadata")
-  metadata$panel_assignment$version <- 1L
-  metadata$panel_assignment$small_pool_policy <- NULL
-  metadata$panel_assignment$pools <- lapply(
-    metadata$panel_assignment$pools,
-    function(pool) {
-      pool$activation <- NULL
-      pool$permanent_reason <- NULL
-      pool
-    }
-  )
-  attr(master, "metadata") <- metadata
-
-  err <- tryCatch(
-    execute(master, wave = 1),
-    samplyr_error_panel_small_pool = function(cnd) cnd
-  )
-  expect_identical(deparse(conditionCall(err)[[1]]), "execute")
-  # The stored body keeps the source line breaks, so normalize whitespace.
-  expect_match(
-    gsub("\\s+", " ", cli::ansi_strip(paste(err$body, collapse = " "))),
-    "in this wave"
-  )
 })

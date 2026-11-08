@@ -47,7 +47,7 @@ selected parent pool. For random-size methods, the target is an expectation.
 | `execute(design, frame)` | Specification and population register(s) | A realized sample with selection metadata and weights |
 | `execute(partial_sample, listing)` | An unfinished design's sample and its next register | Continuation with completed-stage probabilities retained |
 | `execute(new_design, previous_sample)` | A new design and an earlier realized sample | New phase with conditional selection factors compounded with prior weights |
-| `execute(master, wave = t)` | A master sample with a panel schedule | Activation by conditional selection under the frozen panel quotas |
+| `execute(master, period = p)` | A master sample with a panel schedule | Activation by conditional selection under the frozen panel quotas |
 | `as_svydesign(sample)` or `as_svrepdesign(sample)` | A supported sample and collected observations | An analysis representation, subject to the inference restrictions |
 
 The composition laws are that previews agree with execution's resolved
@@ -58,6 +58,26 @@ an export must preserve the required stage information or refuse the design.
 Agreement of numerical targets does not turn approximate probabilities into
 exact ones. Phase-wise conditional factors also need not be unconditional
 marginal inclusion probabilities.
+
+## Terms
+
+These words keep one meaning across the documentation.
+
+| Term | Meaning |
+|---|---|
+| Stage | One level of selection in a design, closed by its `draw()` |
+| Parent | A unit selected at the previous stage, within which a later stage draws |
+| Pool | The units one draw selects from, such as a stratum within a parent |
+| Phase | A new design that takes an earlier sample as its frame, with weights compounded across phases |
+| Master | A sample drawn with `panels`, from which occasions are later taken |
+| Panel | A group of selected units assigned together and active together, recorded in `.panel` |
+| Period | A reporting period of a rotation schedule |
+| Subround | A fieldwork split inside a period, each a representative sample of the period |
+| Occasion | One `(period, subround)` pair of the schedule, and the sample taken for it |
+| Cohort | The units a retained parent draws from one listing and keeps for a run of visits |
+| Visit | The interview number of a row within its cohort, recorded in `.visit` |
+| Selection | One draw from a frame at one period, a component of a rotation program |
+| Rotation program | A registry of separate selections with the schedule that activates them, built by `rotation_program()` |
 
 ## Assumptions at a glance
 
@@ -72,7 +92,7 @@ The following table summarizes what `samplyr` assumes and what the user must ver
 | Independent sampling across strata         | `stratify_by() |> draw()` | Each stratum sampled with a separate call to `sondage`, except stratified `cube`                      | Correct by construction when strata are disjoint. Stratified `cube` balances across strata in one call |
 | Cluster variables constant within clusters | `cluster_by()`             | Validated at execution: MOS and strata variables may not vary within a cluster                       | Cluster ID, read within its strata and earlier-stage units, identifies the group                      |
 | Conditional selection laws | `add_stage()` | Stage \(k\) sampling depends only on the units selected at stage \(k - 1\) and its declared inputs | Later frame construction and selection depend on prior randomization only through selected ancestors and recorded design variables |
-| FPC records method-specific stage information | `execute()` | Stores a population or cluster count for WOR and `Inf` for WR or PMR. PPS WOR is converted to \(\pi_i\) at survey export | Frame size at execution is treated as the population, one of several definitions when a population changes between waves |
+| FPC records method-specific stage information | `execute()` | Stores a population or cluster count for WOR and `Inf` for WR or PMR. PPS WOR is converted to \(\pi_i\) at survey export | Frame size at execution is treated as the population, one of several definitions when a population changes between occasions |
 | Weights are inverse selection chances, unadjusted | All methods | Uses inclusion probabilities for WOR and expected hit counts for WR or PMR | Downstream adjustment is the analyst's responsibility |
 | PRN values are iid \(\text{U}(0, 1)\)      | `draw(prn = ...)`          | Validated: strictly in \((0, 1)\), no NAs, numeric                                                   | Independence and uniformity of the PRN column                                                         |
 
@@ -96,9 +116,9 @@ Throughout this vignette:
 - \(\pi_i^{(k \mid S^{(k-1)})}\): conditional inclusion probability of unit
   \(i\) at stage \(k\), given the set \(S^{(k-1)}\) selected at stage \(k - 1\).
 
-`execute()` produces **design weights only**. Calibration, trimming, and nonresponse adjustment are out of scope and belong in the estimation layer (`survey`, `srvyr`, or similar).
+For an ordinary selection, `execute()` produces **design weights only**. Calibration, trimming, and nonresponse adjustment are out of scope and belong in the estimation layer (`survey`, `srvyr`, or similar).
 
-One declared transformation departs from that, and says so in the object it returns: `share_weights()` produces **estimation weights** for a population other than the one that was sampled. Its semantics, and the contract that keeps the two kinds of weight apart, are the subject of a section below.
+Two declared transformations depart from that. Settling a reserve list, `execute(sample, response_status = col)`, estimates each pool's eligible units from the units the field worked and shares that estimate among the respondents, so its weights carry the substitution protocol and the nonresponse it absorbed (`?reserve_lists`). `share_weights()` produces **estimation weights** for a population other than the one that was sampled, and says so in the object it returns. Its semantics, and the contract that keeps the two kinds of weight apart, are the subject of a section below.
 
 ## What each verb means
 
@@ -260,7 +280,7 @@ continued <- withr::with_seed(7, {
 
 Note where the seed goes. One seed wraps the whole chain, and the individual calls take none. Seeding each call separately is a different and equally valid RNG boundary, but it is not this equivalence and will select different units. The equivalence is a tested invariant rather than an incidental property. The continued sample is therefore the one the single call would have drawn.
 
-**Two-phase sampling.** A new phase starts with a new design: `execute(design2, phase1_sample)`. Here the phase-1 `tbl_sample` is the frame argument, not the execution object. samplyr records a previous-phase link and compounds the phase-1 and phase-2 weights multiplicatively. The conditional phase-2 weight is computed at survey export time. Thus `execute(psu_sample, listing_frame)` means “continue this design's stages,” whereas `execute(new_design, prior_sample)` means “sample a new phase.”
+**Two-phase sampling.** A new phase starts with a new design: `execute(design2, phase1_sample)`. Here the phase-1 `tbl_sample` is the frame argument, not the execution object. samplyr records a previous-phase link and compounds the phase-1 and phase-2 weights multiplicatively. The conditional phase-2 weight is computed at survey export time. Thus `execute(psu_sample, listing_frame)` continues this design's stages, whereas `execute(new_design, prior_sample)` samples a new phase.
 
 ## Weight compounding across stages
 
@@ -284,7 +304,10 @@ inclusion probabilities. With a WR or PMR stage, each output row is a realized
 occurrence and that stage contributes an inverse expected-hit factor.
 `samplyr` joins each stage's weight to its parent by the shared cluster
 variables and multiplies. The per-stage weights remain in `.weight_1`,
-`.weight_2`, and so on. The `.weight` column always equals their product.
+`.weight_2`, and so on. In a single-phase selection the `.weight` column equals
+their product. A later phase, an activated occasion and `share_weights()` apply
+factors that no stage column records, so `.weight` then differs from that
+product.
 
 ```{r weight-compound}
 two_stage <- sampling_design() |>
@@ -442,8 +465,8 @@ There are two distinct operations here and they have different statistical
 status. **Partitioning** (`panels = k` with no schedule) splits one execution
 into \(k\) rotation groups by randomized fixed quota inside ordered blocks.
 It changes no inclusion probability and no `.weight`, so the combined sample
-is analyzed with the stored weights. **Wave activation** (a scheduled `panels`
-plus `execute(wave = t)`) selects a subset of those groups, and that *is* a
+is analyzed with the stored weights. **Occasion activation** (a scheduled `panels`
+plus `execute(period = p)`) selects a subset of those groups, and that *is* a
 second sampling phase. Its activation probability is the block's frozen quota
 for the active panels over the block size, and the weight is multiplied by the
 inverse: the block size over that quota. For a block of eight units with four
@@ -451,19 +474,21 @@ activated, the factor is 2. It is exact and generally not the nominal
 \(k / r\) for \(r\) active panels of \(k\), and it is why the block sizes
 and quotas are recorded with the sample.
 
-**Periods** (`panels = periods(k)`) are a partition visited once, such as
-the months of a yearly survey. They differ from rotation groups in one
-respect. A rotation group keeps a unit selected with certainty in every
-wave, while a period assigns it like any other unit, so it is visited in
-one period. Each period is a wave of its own, and `execute(wave = t)` gives
-its sample with the exact activation weights described above. When the
-periods are assigned at the first stage, the later stages can be drawn one
-period at a time as listing proceeds, with `execute(master, listing, wave =
-t)`. The call that draws the last period returns the same design as one
-continuation of every unit, and `?execute` states the rules.
+**Subrounds** (`panels = subrounds(k)`) are a partition of one period
+visited once, such as the months of a yearly survey. They differ from
+rotation groups in one respect. A rotation group keeps a unit selected with
+certainty in every occasion, while a subround assigns it like any other
+unit, so it is visited in one subround. `execute(period = 1, subround = s)`
+gives a subround's sample with the exact activation weights described
+above, and `execute(period = 1)` the whole period. When the subrounds are
+assigned at the first stage, the later stages can be drawn one subround at
+a time as listing proceeds, with
+`execute(master, listing, period = 1, subround = s)`. The call that draws
+the last subround returns the same design as one continuation of every
+unit, and `?execute` states the rules.
 
 None of these replenishes the sample. A program that draws refreshment
-cohorts against later frame vintages is a registry of separate executions, not
+selections against later frame vintages is a registry of separate executions, not
 a partition of one. See `rotation_program()`. `?panel_assignment` gives the assignment rules,
 the choice of assignment stage and what it costs, certainty units, schedules
 and small pools.
@@ -472,7 +497,7 @@ and small pools.
 
 `samplyr` passes permanent random numbers through to `sondage` without transformation. PRN-compatible methods (`bernoulli`, `pps_poisson`, `pps_sps`, `pps_pareto`, `scps`) produce a deterministic selection given the PRN values, and for `scps` the visiting order. When PRN is supplied, the `seed` argument to `execute()` does not affect selection.
 
-Positive and negative coordination across survey waves is a user-level
+Positive and negative coordination across survey rounds is a user-level
 workflow, not a package feature. `samplyr` passes PRNs to the selection
 method, and the user manages their persistence and update. Drawing the next
 sample with the same PRNs gives positive coordination. For negative

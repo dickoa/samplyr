@@ -53,12 +53,12 @@ check_reserve_order <- function(design, stages, sample = NULL,
 
 #' Settle the reserve of an executed sample from its response status
 #'
-#' The route of `execute(sample, response_status = col)`. Like a wave, it
+#' The route of `execute(sample, response_status = col)`. Like an occasion, it
 #' takes no other execution input, since the list and its order are
 #' already drawn.
 #' @noRd
 settle_reserve <- function(sample, response_status, frames, stages, seed,
-                           panels, panel_stage, small_pool, reps, wave,
+                           panels, panel_stage, small_pool, reps, occasion,
                            frame_digest_given = FALSE, call = caller_env()) {
   supplied <- c(
     if (length(frames) > 0) "a frame",
@@ -68,7 +68,7 @@ settle_reserve <- function(sample, response_status, frames, stages, seed,
     if (!is_null(panel_stage)) "panel_stage",
     if (!is_null(small_pool)) "small_pool",
     if (!is_null(reps)) "reps",
-    if (!is_null(wave)) "wave",
+    if (!is_null(occasion)) "period",
     if (isTRUE(frame_digest_given)) "frame_digest"
   )
   if (length(supplied) > 0L) {
@@ -112,7 +112,7 @@ settle_reserve <- function(sample, response_status, frames, stages, seed,
   meta <- attr(sample, "metadata")
   k <- reserve_stage_of(design)
   executed <- get_stages_executed(sample)
-  if (is.na(k) || !k %in% executed || !is_null(meta[["wave"]])) {
+  if (is.na(k) || !k %in% executed || !is_null(meta[["occasion"]])) {
     abort_samplyr(
       c(
         "This sample holds no reserve to settle.",

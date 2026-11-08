@@ -33,24 +33,24 @@
 #' theory as long as each target cluster totals more than zero. Counting is
 #' the case where every link counts for one.
 #'
-#' @section Panels and waves:
-#' A materialized wave is refused. Its weights carry an activation factor
+#' @section Panels and occasions:
+#' A materialized occasion is refused. Its weights carry an activation factor
 #' whose randomization ran over the source units, and a target cluster can be
-#' reached from source units sitting in different panels, so there is no wave
+#' reached from source units sitting in different panels, so there is no occasion
 #' the target unit belongs to and no factor to carry. Share weights from the
 #' master instead.
 #'
 #' A master carrying a panel assignment is accepted, and its assignment
 #' record does not carry into the result for the same reason: a panel is a
 #' property of a selected source unit. The result is an ordinary shared
-#' sample, and `execute(<it>, wave = )` is refused.
+#' sample, and `execute(<it>, period = )` is refused.
 #'
-#' A longitudinal panel that follows the people of its first-wave units is
-#' a different use, and it is supported. The first-wave sample is the
-#' source, and the people of each later wave's reached households are the
-#' targets. When their keys and households carry the wave, one call weights
-#' every wave, and a change estimated from its export keeps the covariance
-#' between waves. The second example shows it.
+#' A longitudinal panel that follows the people of the units selected at its
+#' first occasion is a different use, and it is supported. That sample is the
+#' source, and the people of each later occasion's reached households are the
+#' targets. When their keys and households carry the occasion, one call weights
+#' every occasion, and a change estimated from its export keeps the covariance
+#' between occasions. The second example shows it.
 #'
 #' @section Coverage:
 #' A target cluster with no link to the source population can never be
@@ -121,26 +121,26 @@
 #'   multiplicity = complete_links()
 #' )
 #'
-#' # A panel follows the people of the selected dwellings. By wave 2, person
+#' # A panel follows the people of the selected dwellings. By occasion 2, person
 #' # 4 has moved in with person 5 of an unselected dwelling, and a baby is
-#' # born in household 1. Only people present at wave 1 have links.
-#' wave1 <- data.frame(person_id = 1:40, household = rep(1:20, each = 2))
-#' wave2 <- rbind(wave1, data.frame(person_id = 41, household = 1))
-#' wave2$household[wave2$person_id %in% c(4, 5)] <- 21
-#' followed <- wave1[wave1$household %in% sample$dwelling_id, ]
+#' # born in household 1. Only people present at occasion 1 have links.
+#' occasion_1 <- data.frame(person_id = 1:40, household = rep(1:20, each = 2))
+#' occasion_2 <- rbind(occasion_1, data.frame(person_id = 41, household = 1))
+#' occasion_2$household[occasion_2$person_id %in% c(4, 5)] <- 21
+#' followed <- occasion_1[occasion_1$household %in% sample$dwelling_id, ]
 #'
-#' # Keys carry the wave, so one call weights both waves, and a change
+#' # Keys carry the occasion, so one call weights both occasions, and a change
 #' # estimated from its as_svrepdesign() export keeps their covariance.
-#' waves <- list(wave1, wave2)
+#' occasions <- list(occasion_1, occasion_2)
 #' targets <- do.call(rbind, lapply(1:2, function(t) {
-#'   roster <- waves[[t]]
+#'   roster <- occasions[[t]]
 #'   roster <- roster[roster$household %in%
 #'     roster$household[roster$person_id %in% followed$person_id], ]
 #'   data.frame(
 #'     key = paste(t, roster$person_id),
-#'     wave = t,
+#'     occasion = t,
 #'     household = paste(t, roster$household),
-#'     in_wave1 = as.integer(roster$person_id <= 40)
+#'     at_first = as.integer(roster$person_id <= 40)
 #'   )
 #' }))
 #' links <- data.frame(
@@ -155,10 +155,11 @@
 #'   by = c(dwelling_id = "dwelling_id"),
 #'   to = c(key = "key"),
 #'   within = household,
-#'   multiplicity = in_wave1
+#'   multiplicity = at_first
 #' )
 #'
-#' # The new household has one link of weight 2.5 and two wave-1 members.
+#' # The new household has one link of weight 2.5 and two members present at
+#' # occasion 1.
 #' as.data.frame(panel)[panel$household == "2 21", c("key", ".weight")]
 #'
 #' @family weight sharing
@@ -198,7 +199,7 @@ share_weights <- function(
   check_single_replicate(x, "share_weights")
   check_sample_unmodified(x, "share_weights")
   check_reserve_settled(x, "share_weights", action = "share the weights of")
-  check_share_source_not_wave(x)
+  check_share_source_not_occasion(x)
   check_weight_contract(
     x, "share_weights",
     class = "samplyr_error_share_weights_weight_contract",
@@ -581,9 +582,9 @@ check_share_required <- function(absent, call = caller_env()) {
   )
 }
 
-#' Refuse a materialized wave as the source of a transformation
+#' Refuse a materialized occasion as the source of a transformation
 #'
-#' A wave's `.weight` carries the activation factor `m_b / a_bt`, whose
+#' An occasion's `.weight` carries the activation factor `m_b / a_bt`, whose
 #' randomization ran over the source units of a block. Sharing from it would
 #' hand that factor to target units, and a target cluster can be reached from
 #' source units in different panels, so no single factor describes one. There
@@ -593,15 +594,16 @@ check_share_required <- function(absent, call = caller_env()) {
 #' same fact stated once: a panel belongs to a selected source unit and the
 #' rows of the result are target units.
 #' @noRd
-check_share_source_not_wave <- function(x, call = caller_env()) {
-  wave <- attr(x, "metadata")$wave
-  if (is_null(wave)) {
+check_share_source_not_occasion <- function(x, call = caller_env()) {
+  occasion <- attr(x, "metadata")$occasion
+  if (is_null(occasion)) {
     return(invisible(NULL))
   }
+  realized <- sample_occasion_phrase(attr(x, "metadata"))
   abort_samplyr(
     c(
-      "{.fn share_weights} does not take a materialized wave.",
-      "x" = "This sample realizes {wave_phrase(wave$wave)}, which is an
+      "{.fn share_weights} does not take a materialized occasion.",
+      "x" = "This sample realizes {realized}, which is an
              activation of a master rather than a selection of its own.",
       "i" = "A shared weight is one number per target unit, and a target
              cluster can be reached from source units in different panels, so
@@ -609,7 +611,7 @@ check_share_source_not_wave <- function(x, call = caller_env()) {
       "i" = "Share weights from the master:
              {.code share_weights(master, targets = ..., links = ...)}."
     ),
-    class = "samplyr_error_share_weights_wave",
+    class = "samplyr_error_share_weights_occasion",
     call = call
   )
 }

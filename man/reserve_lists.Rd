@@ -31,8 +31,8 @@ comes from the units released, so \code{response_status} would drop the
 respondents released after a pool reached its take. Draw the main
 sample and the batches as one take, and assign it at that stage to
 panels the size of one batch, so that the main sample spans several
-panels. A schedule whose wave \code{b + 1} activates the main sample and the
-first \code{b} batches then gives, through \code{execute(master, wave = b + 1)},
+panels. A schedule whose occasion \code{b + 1} activates the main sample and the
+first \code{b} batches then gives, through \code{execute(master, period = b + 1)},
 each unit the weight of the units released. \link{panel_assignment}
 describes schedules.
 \subsection{Workflow}{
@@ -127,8 +127,9 @@ stopped early with reserve left is settled with the units it worked,
 which stays unbiased when the stop did not depend on the outcomes. A
 pool that its take covers lists every unit and is settled from its known
 count. Under \code{method = "srswor"} the weighted totals are unbiased. Under
-\code{"systematic"} the eligible count stays unbiased and a total carries a
-small bias that depends on the frame order.
+\code{"systematic"} the eligible count stays unbiased, but a total need not be.
+Its bias depends on the frame order and can be material under an
+unfavorable one.
 
 These properties hold for the pools with a respondent. A pool without
 one keeps its weight in a placeholder row (see the Export section).
@@ -164,10 +165,10 @@ variables, so estimates need \code{na.rm = TRUE}, and a calibration needs
 auxiliary variables that are 0 on those rows. The "A settled reserve"
 section of \code{\link[=as_svydesign]{as_svydesign()}} gives the details.
 
-A sample in panels exports as a whole once settled, and its waves are
+A sample in panels exports as a whole once settled, and its occasions are
 refused (\code{samplyr_error_reserve_full_export}). A schedule that opens
-several tenures per panel takes no reserve at any stage
-(\code{samplyr_error_tenure_stages}), since its master is never complete.
+several cohorts per panel takes no reserve at any stage
+(\code{samplyr_error_cohort_stages}), since its master is never complete.
 }
 
 \subsection{Planning a reserve}{

@@ -295,7 +295,7 @@ test_that("a unit its later stages found empty keeps a panel", {
   design <- sampling_design() |>
     add_stage() |> cluster_by(ea) |> draw(n = 4) |>
     add_stage() |> cluster_by(hh) |> draw(n = 2, on_empty = "silent")
-  schedule <- data.frame(panel = c(1, 2, 1, 2), wave = c(1, 1, 2, 2),
+  schedule <- data.frame(panel = c(1, 2, 1, 2), period = c(1, 1, 2, 2),
                          active = c(TRUE, FALSE, FALSE, TRUE))
   keys <- function(sample) {
     sort(unlist(lapply(
