@@ -315,7 +315,8 @@ new_draw_spec <- function(
   method_fixed = NULL,
   method_variance = NULL,
   method_probabilities = NULL,
-  method_implementation = NULL
+  method_implementation = NULL,
+  method_supports_strata = NULL
 ) {
   method <- canonical_method_name(method, method_type)
   # Recover probability tiers from built-ins or registered methods.
@@ -346,7 +347,8 @@ new_draw_spec <- function(
       method_fixed = method_fixed,
       method_variance = method_variance,
       method_probabilities = method_probabilities,
-      method_implementation = method_implementation
+      method_implementation = method_implementation,
+      method_supports_strata = method_supports_strata
     ),
     class = "draw_spec"
   )

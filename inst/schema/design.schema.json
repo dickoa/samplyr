@@ -2809,6 +2809,24 @@
               "maxProperties": 0
             }
           ]
+        },
+        "supports_strata": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
         }
       },
       "required": [

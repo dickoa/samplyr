@@ -379,7 +379,11 @@ NULL
 #'   `"pps_<name>"` for `type = "wor"` or `type = "wr"`, and
 #'   `"balanced_<name>"` for `type = "balanced"`, where `mos` is optional.
 #'   `supports_aux = TRUE` permits ordinary balancing variables in `aux`, and
-#'   `supports_spread = TRUE` requires coordinates in `spread`.
+#'   `supports_spread = TRUE` requires coordinates in `spread`. A method
+#'   declaring both takes `aux` and `spread` together, for a sample that is
+#'   balanced and well spread. Under [stratify_by()], a method declaring
+#'   `supports_strata = TRUE` draws all strata in one call, as `"cube"` does,
+#'   and any other registered method draws each stratum on its own.
 #'
 #'   Its weights are `1 / pik`, the inclusion expectation (target inclusion
 #'   probabilities, or expected hits for `type = "wr"`) samplyr hands to the
@@ -1009,7 +1013,8 @@ draw <- function(
     method_fixed = custom_spec$fixed_size,
     method_variance = custom_spec$variance_family,
     method_probabilities = custom_spec$probabilities,
-    method_implementation = method_implementation_hash(custom_spec)
+    method_implementation = method_implementation_hash(custom_spec),
+    method_supports_strata = custom_spec$supports_strata
   )
 
   .data$stages[[current]]$draw_spec <- draw_spec
@@ -1867,7 +1872,9 @@ validate_draw_args <- function(
       class = "samplyr_error_draw_method_argument"
     )
   }
-  if (supports_spread && (!is_null(aux) || !is_null(bounds))) {
+  if (
+    method %in% spatial_balanced_methods && (!is_null(aux) || !is_null(bounds))
+  ) {
     cli_abort(
       "Method {.val {method}} cannot combine {.arg spread} with cube auxiliary or count-bound constraints.",
       call = call,

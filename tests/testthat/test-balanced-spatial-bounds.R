@@ -109,6 +109,49 @@ test_that("stratified bound() preserves allocated stratum sizes", {
   expect_equal(as.integer(table(result$urban)), c(12L, 12L))
 })
 
+test_that("stratified cube visits each stratum in its control order", {
+  captured <- NULL
+  original <- sondage::balanced_wor
+  local_mocked_bindings(
+    balanced_wor = function(pik, aux = NULL, strata = NULL, ...) {
+      captured <<- list(aux = aux, strata = strata)
+      original(pik, aux = aux, strata = strata, ...)
+    },
+    .package = "sondage"
+  )
+
+  sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 6, method = "cube", aux = income, control = desc(income)) |>
+    execute(balanced_feature_frame, seed = 42)
+
+  expected <- unlist(lapply(
+    split(balanced_feature_frame$income, balanced_feature_frame$region),
+    sort,
+    decreasing = TRUE
+  ), use.names = FALSE)
+  expect_equal(as.numeric(captured$aux), expected)
+  expect_equal(captured$strata, rep(1:4, each = 30))
+})
+
+test_that("a stratified cube trace maps control order back to frame rows", {
+  result <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 6, method = "cube", mos = mos, aux = income, control = id) |>
+    execute(balanced_feature_frame[120:1, ], seed = 42)
+
+  stage <- get_frame_digest(result)$stages[[1]]
+  expect_identical(stage$order_kind, "control")
+
+  # Each pool numbers its units in the executed order, here ascending id.
+  first_id <- c(a = 0L, b = 30L, c = 60L, d = 90L)
+  regions <- as.character(stage$pools$region[stage$selected$pool_id])
+  expect_identical(
+    result$id[stage$selected$sample_row],
+    unname(first_id[regions]) + stage$selected$unit_id
+  )
+})
+
 test_that("bound() syntax and method compatibility are validated", {
   expect_error(bound(region), "inside.*draw")
   expect_error(

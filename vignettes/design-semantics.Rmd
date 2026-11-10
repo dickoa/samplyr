@@ -147,7 +147,7 @@ U = U_1 \cup U_2 \cup \cdots \cup U_H, \qquad U_h \cap U_{h'} = \emptyset
 \; \text{for } h \neq h'.
 $$
 
-Sampling within each stratum is independent. This holds by construction because `samplyr` invokes `sondage` algorithms separately for each stratum. Stratified `cube` is the exception: its global flight phase balances across strata, so its strata are not selected independently.
+Sampling within each stratum is independent. This holds by construction because `samplyr` invokes `sondage` algorithms separately for each stratum. Stratified `cube` is the exception: its global flight phase balances across strata, so its strata are not selected independently. A method registered with `supports_strata = TRUE` is drawn the same way, in one call over all strata.
 
 When an allocation method is specified, the total sample size \(n\) is distributed across strata:
 

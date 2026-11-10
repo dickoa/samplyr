@@ -579,6 +579,246 @@ test_that("custom spatial balanced methods receive spread coordinates", {
   expect_equal(sort(result$id), sort(expected_ids))
 })
 
+test_that("a method declaring aux and spread receives both", {
+  on.exit(sondage::unregister_method("test_both"), add = TRUE)
+  received <- NULL
+  sondage::register_method(
+    "test_both", "balanced",
+    sample_fn = function(pik, aux = NULL, spread = NULL, ...) {
+      received <<- list(aux = aux, spread = spread)
+      order(spread[, 1])[seq_len(round(sum(pik)))]
+    },
+    supports_aux = TRUE,
+    supports_spread = TRUE,
+    variance_family = "unsupported",
+    probabilities = "exact"
+  )
+
+  design <- sampling_design() |>
+    draw(
+      n = 10,
+      method = "balanced_test_both",
+      aux = size,
+      spread = c(prn_col, id)
+    )
+  result <- execute(design, custom_frame, seed = 42)
+
+  expect_equal(as.numeric(received$aux), custom_frame$size)
+  expect_equal(
+    unname(received$spread),
+    unname(as.matrix(custom_frame[, c("prn_col", "id")]))
+  )
+
+  restored <- read_design(design_json(design))
+  expect_identical(restored$stages[[1]]$draw_spec$aux, "size")
+  expect_identical(
+    restored$stages[[1]]$draw_spec$spread,
+    c("prn_col", "id")
+  )
+})
+
+test_that("a method declaring spread still requires coordinates", {
+  on.exit(sondage::unregister_method("test_both"), add = TRUE)
+  sondage::register_method(
+    "test_both", "balanced",
+    sample_fn = toy_spatial_balanced_fn,
+    supports_spread = TRUE,
+    variance_family = "unsupported",
+    probabilities = "exact"
+  )
+
+  expect_error(
+    sampling_design() |> draw(n = 10, method = "balanced_test_both", aux = size),
+    "requires.*spread",
+    class = "samplyr_error_draw_method_argument"
+  )
+  expect_error(
+    sampling_design() |> draw(n = 10, method = "balanced_test_both"),
+    "requires.*spread",
+    class = "samplyr_error_draw_method_argument"
+  )
+})
+
+test_that("a spread-only registration still refuses aux", {
+  on.exit(sondage::unregister_method("test_spread"), add = TRUE)
+  sondage::register_method(
+    "test_spread", "balanced",
+    sample_fn = toy_spatial_balanced_fn,
+    supports_aux = FALSE,
+    supports_spread = TRUE,
+    variance_family = "unsupported",
+    probabilities = "exact"
+  )
+
+  expect_error(
+    sampling_design() |>
+      draw(n = 10, method = "balanced_test_spread", aux = size, spread = id),
+    "does not support ordinary auxiliary",
+    class = "samplyr_error_draw_method_argument"
+  )
+})
+
+strata_frame <- data.frame(
+  id = seq_len(40),
+  region = rep(c("a", "b"), each = 20),
+  x = sin(seq_len(40)),
+  lon = cos(seq_len(40)),
+  u = seq(0.01, 0.8, length.out = 40)
+)
+
+# Takes the first `round(sum(pik))` units of each stratum.
+toy_strata_fn <- function(pik, aux = NULL, strata = NULL, ...) {
+  unlist(lapply(split(seq_along(pik), strata), function(i) {
+    i[seq_len(round(sum(pik[i])))]
+  }), use.names = FALSE)
+}
+
+register_toy_strata <- function(sample_fn = toy_strata_fn, ...) {
+  sondage::register_method(
+    "test_strata", "balanced",
+    sample_fn = sample_fn,
+    supports_strata = TRUE,
+    variance_family = "unsupported",
+    probabilities = "exact",
+    ...
+  )
+}
+
+test_that("a method declaring supports_strata draws all strata in one call", {
+  on.exit(sondage::unregister_method("test_strata"), add = TRUE)
+  calls <- list()
+  register_toy_strata(function(pik, aux = NULL, strata = NULL, ...) {
+    calls[[length(calls) + 1L]] <<- list(N = length(pik), strata = strata)
+    toy_strata_fn(pik, aux, strata)
+  })
+
+  result <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 3, method = "balanced_test_strata", aux = x) |>
+    execute(strata_frame, seed = 1)
+
+  expect_length(calls, 1L)
+  expect_identical(calls[[1]]$N, 40L)
+  expect_identical(calls[[1]]$strata, rep(1:2, each = 20))
+  expect_identical(sort(result$id), c(1:3, 21:23))
+  expect_equal(result$.weight, rep(20 / 3, 6))
+})
+
+test_that("a method without supports_strata draws each stratum alone", {
+  on.exit(sondage::unregister_method("test_plain"), add = TRUE)
+  sizes <- integer(0)
+  sondage::register_method(
+    "test_plain", "balanced",
+    sample_fn = function(pik, aux = NULL, ...) {
+      sizes <<- c(sizes, length(pik))
+      seq_len(round(sum(pik)))
+    },
+    variance_family = "unsupported",
+    probabilities = "exact"
+  )
+
+  sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 3, method = "balanced_test_plain") |>
+    execute(strata_frame, seed = 1)
+
+  expect_identical(sizes, c(20L, 20L))
+})
+
+test_that("the joint route forwards spread and prn in the executed order", {
+  on.exit(sondage::unregister_method("test_strata"), add = TRUE)
+  got <- NULL
+  register_toy_strata(
+    function(pik, aux = NULL, strata = NULL, spread = NULL, prn = NULL, ...) {
+      got <<- list(spread = spread, prn = prn)
+      toy_strata_fn(pik, aux, strata)
+    },
+    supports_spread = TRUE,
+    supports_prn = TRUE
+  )
+
+  sampling_design() |>
+    stratify_by(region) |>
+    draw(
+      n = 3, method = "balanced_test_strata", spread = lon, prn = u,
+      control = desc(id)
+    ) |>
+    execute(strata_frame, seed = 1)
+
+  executed <- c(20:1, 40:21)
+  expect_equal(as.numeric(got$spread), strata_frame$lon[executed])
+  expect_equal(got$prn, strata_frame$u[executed])
+})
+
+test_that("the joint route honors on_empty for a random-size method", {
+  on.exit(sondage::unregister_method("test_strata"), add = TRUE)
+  register_toy_strata(
+    function(pik, aux = NULL, strata = NULL, ...) integer(0),
+    fixed_size = FALSE
+  )
+  design <- function(on_empty) {
+    sampling_design() |>
+      stratify_by(region) |>
+      draw(frac = 0.2, method = "balanced_test_strata", on_empty = on_empty)
+  }
+
+  expect_error(
+    execute(design("error"), strata_frame, seed = 1),
+    class = "samplyr_error_empty_selection"
+  )
+  expect_identical(
+    nrow(execute(design("silent"), strata_frame, seed = 1)),
+    0L
+  )
+})
+
+test_that("the joint route refuses a fixed-size draw off a stratum's take", {
+  on.exit(sondage::unregister_method("test_strata"), add = TRUE)
+  register_toy_strata(function(pik, aux = NULL, strata = NULL, ...) {
+    seq_len(round(sum(pik)))
+  })
+
+  expect_error(
+    sampling_design() |>
+      stratify_by(region) |>
+      draw(n = 3, method = "balanced_test_strata") |>
+      execute(strata_frame, seed = 1),
+    "wrong number of units",
+    class = "samplyr_error_method_failed"
+  )
+})
+
+test_that("a design file keeps a method on the joint route", {
+  on.exit(sondage::unregister_method("test_strata"), add = TRUE)
+  n_calls <- 0L
+  counted <- function(pik, aux = NULL, strata = NULL, ...) {
+    n_calls <<- n_calls + 1L
+    toy_strata_fn(pik, aux, strata)
+  }
+  register_toy_strata(counted)
+  design <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 3, method = "balanced_test_strata")
+
+  restored <- read_design(design_json(design))
+  expect_true(restored$stages[[1]]$draw_spec$method_supports_strata)
+  execute(restored, strata_frame, seed = 1)
+  expect_identical(n_calls, 1L)
+
+  sondage::unregister_method("test_strata")
+  sondage::register_method(
+    "test_strata", "balanced",
+    sample_fn = counted,
+    supports_strata = FALSE,
+    variance_family = "unsupported",
+    probabilities = "exact"
+  )
+  expect_error(
+    execute(restored, strata_frame, seed = 1),
+    class = "samplyr_error_replay_method_mismatch"
+  )
+})
+
 test_that("custom balanced methods export like the built-in cube", {
   skip_if_not_installed("survey")
   on.exit(sondage::unregister_method("test_cube"), add = TRUE)

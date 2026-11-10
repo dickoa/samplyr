@@ -745,7 +745,10 @@ sample_stratified_impl <- function(
   groups <- plan$groups
   stratum_info <- plan$stratum_info
 
-  if (identical(draw_spec$method, "cube")) {
+  if (
+    identical(draw_spec$method, "cube") ||
+      isTRUE(draw_spec$method_supports_strata)
+  ) {
     return(draw_balanced_stratified(
       frame,
       groups,
@@ -1082,7 +1085,10 @@ stratum_parts <- function(frame, groups, strata_vars, draw_spec) {
   })
 }
 
-#' Balanced sampling with stratified cube (single call to sondage::balanced_wor)
+#' One balanced draw over all strata (single call to sondage::balanced_wor)
+#'
+#' Serves the stratified cube and registered methods that declare
+#' `supports_strata = TRUE`.
 #' @noRd
 draw_balanced_stratified <- function(
   frame,
@@ -1121,7 +1127,14 @@ draw_balanced_stratified <- function(
     NULL
   }
 
-  row_order <- order(strata_int)
+  perms <- lapply(groups$indices, function(idxs) {
+    selection_order(frame[idxs, , drop = FALSE], draw_spec)
+  })
+  row_order <- if (is_null(draw_spec$control)) {
+    order(strata_int)
+  } else {
+    unlist(Map(`[`, groups$indices, perms), use.names = FALSE)
+  }
   pik_sorted <- pik[row_order]
   strata_sorted <- strata_int[row_order]
   aux_sorted <- if (!is_null(aux_mat)) {
@@ -1139,13 +1152,34 @@ draw_balanced_stratified <- function(
     )
     res <- draw_cube_with_bounds(pik_sorted, aux_sorted, bounds)
   } else {
+    spread_sorted <- if (!is_null(draw_spec$spread)) {
+      as.matrix(frame[row_order, draw_spec$spread, drop = FALSE])
+    } else {
+      NULL
+    }
+    prn_sorted <- if (!is_null(draw_spec$prn)) {
+      frame[[draw_spec$prn]][row_order]
+    } else {
+      NULL
+    }
     res <- sondage::balanced_wor(
       pik_sorted,
       aux = aux_sorted,
-      strata = strata_sorted
+      strata = strata_sorted,
+      spread = spread_sorted,
+      method = sondage_method_name(draw_spec$method),
+      prn = prn_sorted
     )
   }
   selected_sorted <- res$sample
+  if (length(selected_sorted) == 0) {
+    handle_empty_selection(draw_spec$method, draw_spec$on_empty %||% "error")
+  }
+  if (isTRUE(draw_spec$method_supports_strata) && isTRUE(res$fixed_size)) {
+    check_stratum_takes(
+      selected_sorted, strata_sorted, pik_sorted, draw_spec$method
+    )
+  }
 
   original_idx <- row_order[selected_sorted]
   result <- frame[original_idx, , drop = FALSE]
@@ -1165,6 +1199,8 @@ draw_balanced_stratified <- function(
   trace_groups <- lapply(seq_along(groups$indices), function(i) {
     idxs <- groups$indices[[i]]
     stratum_key <- groups$keys[[i]]
+    perm <- perms[[i]]
+    executed <- if (is_null(perm)) idxs else idxs[perm]
     trace_group(
       key = stratum_key,
       keys = frame[idxs[1], strata_vars, drop = FALSE],
@@ -1172,10 +1208,11 @@ draw_balanced_stratified <- function(
       node = trace_pool(
         N = length(idxs),
         n_target = stratum_info$.n_h[[i]],
-        chance = pik[idxs],
+        chance = pik[executed],
         chance_kind = "inclusion_probability",
-        order_kind = "input",
-        selected = which(sel_flag[idxs]),
+        order_kind = if (is_null(perm)) "input" else "control",
+        selected = which(sel_flag[executed]),
+        perm = perm,
         trace_mode = trace_mode,
         compact = FALSE
       )
@@ -1184,6 +1221,30 @@ draw_balanced_stratified <- function(
   list(
     sample = result,
     trace = trace_split(by = strata_vars, groups = trace_groups)
+  )
+}
+
+#' Refuse a fixed-size draw that misses a stratum's take
+#'
+#' sondage checks only the total of a registered method's selections.
+#' @noRd
+check_stratum_takes <- function(selected, strata, pik, method,
+                                call = caller_env()) {
+  expected <- round(as.numeric(rowsum(pik, strata)))
+  realized <- tabulate(strata[selected], nbins = length(expected))
+  if (identical(as.numeric(realized), expected)) {
+    return(invisible(NULL))
+  }
+  n_off <- sum(realized != expected)
+  abort_samplyr(
+    c(
+      "Registered method {.val {method}} returned the wrong number of units
+       in {n_off} strat{?um/a}.",
+      "i" = "A fixed-size method declaring {.code supports_strata = TRUE}
+             must select each stratum's take."
+    ),
+    class = "samplyr_error_method_failed",
+    call = call
   )
 }
 

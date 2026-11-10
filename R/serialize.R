@@ -1062,7 +1062,8 @@ check_custom_methods_match_record <- function(design, strict = TRUE,
       fixed_size = spec$method_fixed,
       variance_family = spec$method_variance,
       probabilities = spec$method_probabilities,
-      implementation = spec$method_implementation
+      implementation = spec$method_implementation,
+      supports_strata = spec$method_supports_strata
     )
     fields <- names(recorded)[!vapply(recorded, is_null, logical(1))]
     agrees <- vapply(
@@ -2377,7 +2378,8 @@ encode_samplyr_stage_metadata <- function(stage) {
     fixed_size = spec$method_fixed,
     variance_family = spec$method_variance,
     probabilities = spec$method_probabilities,
-    implementation = spec$method_implementation
+    implementation = spec$method_implementation,
+    supports_strata = spec$method_supports_strata
   ))
 }
 
@@ -3350,7 +3352,8 @@ decode_stage <- function(
       method_fixed = method$fixed_size,
       method_variance = method$variance_family,
       method_probabilities = method$probabilities,
-      method_implementation = method$implementation
+      method_implementation = method$implementation,
+      method_supports_strata = method$supports_strata
     )
   }
 
@@ -3458,7 +3461,8 @@ decode_method <- function(
       fixed_size = decode_flag(tool_method$fixed_size),
       variance_family = decode_chr(tool_method$variance_family),
       probabilities = decode_chr(quality %||% native_quality),
-      implementation = decode_chr(tool_method$implementation)
+      implementation = decode_chr(tool_method$implementation),
+      supports_strata = decode_flag(tool_method$supports_strata)
     ))
   }
 
@@ -3479,7 +3483,8 @@ decode_method <- function(
     fixed_size = NULL,
     variance_family = NULL,
     probabilities = decode_chr(method$probability_quality),
-    implementation = NULL
+    implementation = NULL,
+    supports_strata = NULL
   )
 }
 
