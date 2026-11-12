@@ -59,10 +59,13 @@ approximation of these stages.}
 of the executed stages, such as \code{1} or \code{1:2}, keeps those stages and
 reads the last as drawn with replacement within its parents, without a
 finite population correction, so it carries the variance of every stage
-below. \code{stages = 1} is the ultimate-cluster variance. A materialized
-occasion and a settled reserve take \code{stages = 1} only, which is how they
-are exported anyway, and a two-phase sample or one with shared weights
-takes none (\code{samplyr_error_survey_argument}).}
+below. \code{stages = 1} is the ultimate-cluster variance. A kept stage of
+random size (\code{bernoulli}, \code{pps_poisson}), or one below a certainty
+unit, is refused, because this reading drops the variance of its
+sample size. \code{as_svrepdesign(x, type = "rwyb")} estimates it. A
+materialized occasion and a settled reserve take \code{stages = 1} only,
+which is how they are exported anyway, and a two-phase sample or one
+with shared weights takes none (\code{samplyr_error_survey_argument}).}
 }
 \value{
 A \code{survey.design2} object for single-phase and multi-stage samples
@@ -241,8 +244,11 @@ only they vary between samples. In a simulation of one certainty EA among
 twelve, that brought the estimated variance of an occasion from 1.7 to 1.1
 times the true one, and of a two-occasion window, where the EA otherwise
 stood alone among the units active at both occasions and survey stopped on
-it, from 5.7 under \code{survey.lonely.psu = "adjust"} to 1.6. A unit taken
-with certainty and nothing drawn inside it, a stage-1 cluster with no
+it, from 5.7 under \code{survey.lonely.psu = "adjust"} to 1.6. A unit of a
+stratum taken as a census counts as taken with certainty, unless the
+panels are assigned at stage 1, so that each occasion holds only some of
+its units. A unit taken with certainty and nothing drawn inside it, a
+stage-1 cluster with no
 later stage or an element, is the same in every sample. It is a stratum
 of its own taken as a census, the one stratum with a finite population
 correction, so it adds no variance, as in the master's export. A large
@@ -318,7 +324,11 @@ design with one. \code{"overton"}, \code{\link[survey:HR]{survey::HR()}} and the
 survey, so a multi-stage sample is exported at stage 1 with a warning. A
 matrix object is indexed by row, so it also needs one row per stage-1
 unit, and a sample with several is refused
-(\code{samplyr_error_pps_rows_per_psu}). Any other value is refused
+(\code{samplyr_error_pps_rows_per_psu}). On a fixed-size stage drawn with
+unequal probabilities without replacement, a \code{\link[survey:ppsmat]{survey::ppsmat()}} export
+defaults to \code{variance = "YG"} unless \code{variance} is supplied in \code{...},
+because the Horvitz-Thompson quadratic form can be negative even with an
+exact joint matrix. Any other \code{pps} value is refused
 (\code{samplyr_error_pps_argument}). A two-phase export takes no \code{pps},
 because \code{\link[survey:twophase]{survey::twophase()}} does not apply it to the phase-2 variance
 (\code{samplyr_error_twophase_phase2_pps}). A phase 2 of one stage drawn with
@@ -363,7 +373,7 @@ household totals, and keeps the first stage's correction, which matters
 where that stage takes a large share. Exported in full, such a stage
 leaves each household a stratum of one unit, which the export names
 (\code{samplyr_warning_lonely_psu}). The approximation is conservative.
-It leaves out stage k's correction, so it overstates the variance most
+It leaves out the correction at stage k, so it overstates the variance most
 where stage k takes a large share of its units. A stratum with a single
 unit stops survey, as for the full export, unless
 \code{options(survey.lonely.psu = )} says how to treat it.
@@ -408,10 +418,12 @@ removing them before the export understates it. A primary unit of a
 later reserve stage whose units all proved ineligible keeps one such row,
 as a zero total.
 
-A primary unit taken with certainty, with a later stage drawn inside it,
-represents itself as it does in an occasion. It is a stratum of its own whose
-clusters are its units of the next stage. With the reserve at that
-stage, its pools are exported as first-stage pools are, times the weight
+A primary unit taken whole, by a certainty rule or as a unit of a census
+stratum, with a later stage drawn inside it, represents itself as it does in
+an occasion. Expected hits of 1 at a stage drawn with replacement do not make
+a unit certain. It is a stratum of its own whose clusters are its units of
+the next stage. With the reserve at that stage, its pools are exported as
+first-stage pools are, times the weight
 of the stage above, so its ineligible units add rows and a placeholder
 is a unit of its own. In a simulation of one certainty EA among twelve,
 this brought the estimated variance from 1.36 to 1.26 times the true
@@ -492,19 +504,12 @@ same terms, and a mean's denominator is the estimated target population
 size either way.
 
 A selected source unit linked to no target, such as a dwelling with
-nobody in the target population, has no contribution. Where no other
-unit of its primary unit contributes, it must still count in the
-variance between primary units, so the export keeps it as a zero row, as
-it keeps a unit found empty: weight 0, its source values, and \code{NA} in
-the target variables, so estimates need \code{na.rm = TRUE}. Inside a primary
-unit that has other contributions, the primary unit's total is right
-without it, and it has no row. The export then warns
-(\code{samplyr_warning_export_empty_parent}) that survey computes the
-variance within that primary unit without it, which matters at large
-first-stage sampling fractions: with 4 of 6 blocks drawn per stratum, a
-test gave a standard error 20 percent short. \code{\link[=as_svrepdesign]{as_svrepdesign()}}
-replicates the complete source design, so its variance holds every
-unit.
+nobody in the target population, has no contribution. The export keeps
+it as a zero row, just as it keeps a unit found empty, with weight 0,
+its source values, and \code{NA} in the target variables. That keeps every
+sampled unit in the between-unit and within-unit variance as a zero
+total. Estimates need \code{na.rm = TRUE}, and the export warns
+(\code{samplyr_warning_export_empty_parent}) when zero rows are added.
 
 An unequal-probability or random-size source design is also refused
 here, because its variance comes from a structure indexed by the
@@ -553,13 +558,14 @@ half <- sampling_design() |>
 svy_half <- as_svydesign(half)
 
 # A joint-probability matrix instead, for a single-stage Sampford sample,
-# whose matrix is exact. A matrix needs one row per stage-1 unit.
+# whose matrix is exact. A matrix needs one row per stage-1 unit, and YG is
+# the Sen-Yates-Grundy form for fixed-size sampling without replacement.
 sampford <- sampling_design() |>
   stratify_by(region) |>
   draw(n = 5, method = "pps_sampford", mos = households) |>
   execute(bfa_eas, seed = 2025)
 jip <- joint_expectation(sampford, bfa_eas)
-svy_joint <- as_svydesign(sampford, pps = survey::ppsmat(jip[[1]]))
+svy_joint <- as_svydesign(sampford, pps = survey::ppsmat(jip[[1]]), variance = "YG")
 survey::svytotal(~population, svy_joint)
 \dontshow{\}) # examplesIf}
 }

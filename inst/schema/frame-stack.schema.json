@@ -2492,6 +2492,10 @@
           "type": "integer",
           "minimum": 1
         },
+        "replicate": {
+          "type": "integer",
+          "minimum": 1
+        },
         "panels": {
           "type": "integer",
           "minimum": 1
@@ -2588,7 +2592,17 @@
         "transition",
         "stages"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "if": {
+        "required": [
+          "replicate"
+        ]
+      },
+      "then": {
+        "required": [
+          "reps"
+        ]
+      }
     },
     "settlement": {
       "type": "object",
@@ -2653,6 +2667,10 @@
           "type": "integer",
           "minimum": 1
         },
+        "replicate": {
+          "type": "integer",
+          "minimum": 1
+        },
         "replicate_seeds": {
           "type": "array",
           "items": {
@@ -2704,7 +2722,17 @@
         "frame_digest": {}
       },
       "required": [],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "if": {
+        "required": [
+          "replicate"
+        ]
+      },
+      "then": {
+        "required": [
+          "reps"
+        ]
+      }
     },
     "tool_method": {
       "type": "object",

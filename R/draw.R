@@ -379,7 +379,9 @@ NULL
 #'   `"pps_<name>"` for `type = "wor"` or `type = "wr"`, and
 #'   `"balanced_<name>"` for `type = "balanced"`, where `mos` is optional.
 #'   `supports_aux = TRUE` permits ordinary balancing variables in `aux`, and
-#'   `supports_spread = TRUE` requires coordinates in `spread`. A method
+#'   `supports_spread = TRUE` requires coordinates in `spread`. To draw such
+#'   a function without coordinates, register it again under another name,
+#'   without `supports_spread = TRUE`. A method
 #'   declaring both takes `aux` and `spread` together, for a sample that is
 #'   balanced and well spread. Under [stratify_by()], a method declaring
 #'   `supports_strata = TRUE` draws all strata in one call, as `"cube"` does,
@@ -1866,8 +1868,13 @@ validate_draw_args <- function(
     )
   }
   if (supports_spread && is_null(spread)) {
+    hint <- if (!is_null(custom_spec)) {
+      c(
+        "i" = "To draw without coordinates, register the function again under another name, without {.code supports_spread = TRUE}."
+      )
+    }
     cli_abort(
-      "Method {.val {method}} requires {.arg spread} coordinates.",
+      c("Method {.val {method}} requires {.arg spread} coordinates.", hint),
       call = call,
       class = "samplyr_error_draw_method_argument"
     )

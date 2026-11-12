@@ -862,3 +862,70 @@ test_that("cached key locations follow the columns, not the frame object", {
   expect_identical(unique_key_loc(changed, c("m", "h")), c(1L, 2L, 3L, 5L))
   expect_identical(unique_key_loc(frame, c("m", "h")), c(1L, 3L, 5L))
 })
+
+## Cluster invariance checks counted with vctrs
+
+test_that("ex-ante and preflight cluster invariance checks agree with execute", {
+  # Mixed NA and NaN in one cluster is two values to vctrs and to execute().
+  nan_frame <- data.frame(
+    cl = c(1L, 1L, 2L, 2L),
+    mos = c(10, 10, 20, 20),
+    ctrl = c(NA_real_, NaN, 1, 1)
+  )
+  d_ctrl <- sampling_design() |>
+    cluster_by(cl) |>
+    draw(n = 1, method = "pps_brewer", mos = mos, control = ctrl)
+  expect_error(
+    execute(d_ctrl, nan_frame, seed = 1),
+    class = "samplyr_error_frame_cluster_invariant"
+  )
+  expect_error(
+    frame_summary(d_ctrl, nan_frame),
+    "ctrl",
+    class = "samplyr_error_exante_unsupported"
+  )
+  expect_error(
+    validate_frame(d_ctrl, nan_frame),
+    "ctrl",
+    class = "samplyr_error_frame_cluster_invariant"
+  )
+
+  # Near-equal doubles in a key or invariant column still raise key_precision.
+  near_frame <- data.frame(
+    cl = c(0.1 + 0.2, 0.3, 1, 2),
+    mos = c(10, 10, 20, 20)
+  )
+  d_near <- sampling_design() |>
+    cluster_by(cl) |>
+    draw(n = 1, method = "pps_brewer", mos = mos)
+  expect_error(
+    frame_summary(d_near, near_frame),
+    class = "samplyr_error_key_precision"
+  )
+
+  # Factor invariants with unused levels pass when constant within cluster
+  # and fail when varying.
+  fac_ok <- data.frame(
+    cl = c(1L, 1L, 2L, 2L),
+    fac = factor(c("a", "a", "b", "b"), levels = c("z", "b", "a")),
+    mos = c(10, 10, 20, 20)
+  )
+  d_fac <- sampling_design() |>
+    cluster_by(cl) |>
+    draw(n = 1, method = "pps_brewer", mos = mos, control = fac)
+  expect_no_error(validate_frame(d_fac, fac_ok))
+  expect_s3_class(frame_summary(d_fac, fac_ok), "tbl_df")
+
+  fac_bad <- fac_ok
+  fac_bad$fac[2] <- "b"
+  expect_error(
+    frame_summary(d_fac, fac_bad),
+    "fac",
+    class = "samplyr_error_exante_unsupported"
+  )
+  expect_error(
+    validate_frame(d_fac, fac_bad),
+    "fac",
+    class = "samplyr_error_frame_cluster_invariant"
+  )
+})

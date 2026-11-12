@@ -4,7 +4,7 @@
 #' @family helpers
 #' @param x Object to print
 #' @param ... Must be empty.
-#' @return Invisibly returns the input object
+#' @return For `print()` methods, `x` invisibly.
 NULL
 
 #' @rdname print.samplyr
@@ -372,6 +372,7 @@ digest_universe_units <- function(digest) {
 }
 
 #' @rdname print.samplyr
+#' @return For `tbl_sum()`, a named character vector of header lines.
 #' @export
 tbl_sum.tbl_sample <- function(x, ...) {
   design <- get_design(x)
@@ -415,6 +416,15 @@ tbl_sum.tbl_sample <- function(x, ...) {
   }
 
   mods <- sample_modifications(x)
+  # One complete replicate kept with filter(.replicate == r) is no edit.
+  # The log keeps its row change, which the replicate counters read. Once
+  # the replicate records `extracted_from`, its log is cleared and its
+  # integrity record rebuilt, so a later edit shows as on any sample.
+  if (identical(mods, "rows") &&
+        is_null(attr(x, "metadata")$extracted_from) &&
+        !is_null(extracted_replicate_id(x))) {
+    mods <- character(0)
+  }
   if (length(mods) > 0) {
     result <- c(result, "Modified" = paste(mods, collapse = ", "))
   }
@@ -453,6 +463,7 @@ tbl_sum.tbl_sample <- function(x, ...) {
 
 #' @rdname print.samplyr
 #' @param setup The setup object pillar passes to its footer method.
+#' @return For `tbl_format_footer()`, a character vector of footer lines.
 #' @export
 tbl_format_footer.tbl_sample <- function(x, setup, ...) {
   footer <- NextMethod()

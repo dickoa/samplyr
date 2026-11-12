@@ -327,15 +327,24 @@ test_that("integrity verification catches untracked modification routes", {
   # base assignment to a protected column
   tampered <- s
   tampered$.weight <- tampered$.weight * 2
-  expect_length(sample_modifications(tampered), 0)
+  expect_identical(sample_modifications(tampered), "values")
+  expect_identical(tbl_sum(tampered)[["Modified"]], "values")
   expect_error(as_svydesign(tampered), class = "samplyr_error_modified_sample")
 
   # design-referenced user columns are protected by the record
   restratified <- dplyr::mutate(fix_strat_prop, stratum = factor("A"))
+  expect_identical(sample_modifications(restratified), "values")
+  expect_identical(tbl_sum(restratified)[["Modified"]], "values")
   expect_error(
     as_svydesign(restratified),
     class = "samplyr_error_modified_sample"
   )
+
+  # NA row index invalidates rows and reports in display
+  na_rows <- s[c(NA_integer_, 2:nrow(s)), ]
+  expect_identical(sample_modifications(na_rows), "rows")
+  expect_identical(tbl_sum(na_rows)[["Modified"]], "rows")
+  expect_error(as_svydesign(na_rows), class = "samplyr_error_modified_sample")
 
   # stripping and restoring cannot launder modifications
   plain <- as.data.frame(s)

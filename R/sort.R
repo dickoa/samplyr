@@ -110,14 +110,6 @@ serp <- function(...) {
     )
   }
 
-  n <- length(var_vals[[1]])
-  if (n == 0) {
-    return(numeric(0))
-  }
-  if (n == 1) {
-    return(1)
-  }
-
   lengths <- vapply(var_vals, length, integer(1))
   if (length(unique(lengths)) > 1) {
     abort_samplyr(
@@ -126,46 +118,57 @@ serp <- function(...) {
     )
   }
 
-  # Radix ranks, so the order is the same in every locale. NAs rank last.
-  ranks <- lapply(var_vals, function(v) {
-    v <- utf8_sort_key(v)
-    lvls <- sort(unique(v[!is.na(v)]), method = "radix")
-    r <- match(v, lvls)
-    r[is.na(r)] <- length(lvls) + 1L
-    r
-  })
+  n <- lengths[[1L]]
+  if (n == 0) {
+    return(numeric(0))
+  }
+  if (n == 1) {
+    return(1)
+  }
 
+  # Radix ranks, so the order is the same in every locale. NAs stay NA until
+  # cell directions are resolved so they sort last in reversed cells too.
+  n_lvls <- integer(nvars)
+  ranks <- vector("list", nvars)
+  for (k in seq_len(nvars)) {
+    v <- utf8_sort_key(var_vals[[k]])
+    lvls <- sort(unique(v[!is.na(v)]), method = "radix")
+    n_lvls[[k]] <- length(lvls)
+    ranks[[k]] <- match(v, lvls)
+  }
+
+  r1 <- ranks[[1L]]
+  r1[is.na(r1)] <- n_lvls[[1L]] + 1L
   if (nvars == 1) {
-    return(ranks[[1]])
+    return(r1)
   }
 
   sort_keys <- vector("list", nvars)
-  sort_keys[[1]] <- ranks[[1]]
+  sort_keys[[1L]] <- r1
 
   # Cell position on the snake, not a rank sum, whose parity breaks.
-  cell <- ranks[[1]]
+  cell <- r1
 
   for (i in 2:nvars) {
     r <- ranks[[i]]
-    max_r <- max(r)
+    k_lvls <- n_lvls[[i]]
+    na_mask <- is.na(r)
 
-    adjusted_r <- ifelse(cell %% 2L == 1L, r, max_r + 1L - r)
+    adjusted_r <- ifelse(cell %% 2L == 1L, r, k_lvls + 1L - r)
+    adjusted_r[na_mask] <- k_lvls + 1L
     sort_keys[[i]] <- adjusted_r
 
     if (i < nvars) {
       # A dense rank: ragged hierarchies have no fixed radix.
       cell <- vctrs::vec_rank(
-        data.frame(cell = cell, adjusted = adjusted_r),
+        vctrs::new_data_frame(list(cell = cell, adjusted = adjusted_r), n = n),
         ties = "dense"
       )
     }
   }
 
-  ord <- do.call(order, sort_keys)
-
-  rank_vec <- integer(n)
-  rank_vec[ord] <- seq_len(n)
-  rank_vec
+  names(sort_keys) <- paste0("V", seq_len(nvars))
+  vctrs::vec_rank(vctrs::new_data_frame(sort_keys, n = n), ties = "dense")
 }
 
 #' The row order a `control` specification sorts a data frame into

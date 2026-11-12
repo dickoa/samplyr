@@ -200,6 +200,7 @@ share_weights <- function(
   check_sample_unmodified(x, "share_weights")
   check_reserve_settled(x, "share_weights", action = "share the weights of")
   check_share_source_not_occasion(x)
+  x <- normalize_extracted_replicate(x)
   check_weight_contract(
     x, "share_weights",
     class = "samplyr_error_share_weights_weight_contract",
@@ -385,6 +386,25 @@ extend_links <- function(x) {
 ## Argument parsing
 
 #' @noRd
+share_column_name <- function(expr, env) {
+  if (is.symbol(expr)) {
+    return(as.character(expr))
+  }
+  if (is_call(expr, "[[") && identical(expr[[2L]], quote(.data))) {
+    name <- rlang::eval_bare(expr[[3L]], env)
+    if (is.character(name) && length(name) == 1L && !is.na(name)) {
+      return(name)
+    }
+    return(NULL)
+  }
+  if (is_call(expr, "$") && identical(expr[[2L]], quote(.data)) &&
+      is.symbol(expr[[3L]])) {
+    return(as.character(expr[[3L]]))
+  }
+  NULL
+}
+
+#' @noRd
 parse_within <- function(quo, targets, call = caller_env()) {
   if (rlang::quo_is_missing(quo)) {
     abort_samplyr(
@@ -403,18 +423,17 @@ parse_within <- function(quo, targets, call = caller_env()) {
   }
 
   expr <- quo_get_expr(quo)
+  env <- quo_get_env(quo)
   if (is_null(expr)) {
     return(list(mode = "singleton", col = NULL))
   }
-  if (is.symbol(expr)) {
-    return(list(mode = "cluster", col = as_label(expr)))
-  }
   if (is_call(expr, "extend_links", ns = marker_namespaces)) {
     args <- as.list(expr)[-1]
-    if (length(args) != 1L || !is.symbol(args[[1]])) {
+    ext_col <- if (length(args) == 1L) share_column_name(args[[1]], env)
+    if (is_null(ext_col)) {
       abort_samplyr(
         c(
-          "{.fn extend_links} takes exactly one bare column name.",
+          "{.fn extend_links} takes exactly one column name.",
           "i" = "The extension runs over a cluster, so it needs the column
                  that says which cluster a target unit is in."
         ),
@@ -422,7 +441,11 @@ parse_within <- function(quo, targets, call = caller_env()) {
         call = call
       )
     }
-    return(list(mode = "extended", col = as_label(args[[1]])))
+    return(list(mode = "extended", col = ext_col))
+  }
+  col <- share_column_name(expr, env)
+  if (!is_null(col)) {
+    return(list(mode = "cluster", col = col))
   }
 
   abort_samplyr(
@@ -439,9 +462,10 @@ parse_within <- function(quo, targets, call = caller_env()) {
 #' @noRd
 parse_multiplicity <- function(quo, call = caller_env()) {
   expr <- quo_get_expr(quo)
+  env <- quo_get_env(quo)
 
   if (is_call(expr, "weighted_links", ns = marker_namespaces)) {
-    return(parse_weighted_links(expr, call = call))
+    return(parse_weighted_links(expr, env, call = call))
   }
 
   if (is_null(expr)) {
@@ -461,12 +485,6 @@ parse_multiplicity <- function(quo, call = caller_env()) {
       call = call
     )
   }
-  if (is.symbol(expr)) {
-    return(list(
-      mode = "supplied", scale = "binary",
-      col = as_label(expr), total_col = NULL
-    ))
-  }
   if (is_call(expr, "complete_links", ns = marker_namespaces)) {
     if (length(as.list(expr)) != 1L) {
       abort_samplyr(
@@ -478,6 +496,13 @@ parse_multiplicity <- function(quo, call = caller_env()) {
     return(list(
       mode = "complete_links", scale = "binary",
       col = NULL, total_col = NULL
+    ))
+  }
+  col <- share_column_name(expr, env)
+  if (!is_null(col)) {
+    return(list(
+      mode = "supplied", scale = "binary",
+      col = col, total_col = NULL
     ))
   }
 
@@ -500,7 +525,7 @@ parse_multiplicity <- function(quo, call = caller_env()) {
 #' makes for counts, and it is made the same way, because the bias it guards
 #' against is the same one.
 #' @noRd
-parse_weighted_links <- function(expr, call = caller_env()) {
+parse_weighted_links <- function(expr, env, call = caller_env()) {
   # Match marker formals to accept documented argument names.
   matched <- tryCatch(
     as.list(match.call(weighted_links, expr))[-1],
@@ -508,8 +533,9 @@ parse_weighted_links <- function(expr, call = caller_env()) {
   )
   value_expr <- matched$x
   total_expr <- matched$total
+  value_col <- if (!is_null(value_expr)) share_column_name(value_expr, env)
 
-  if (is_null(value_expr) || !is.symbol(value_expr) || is_null(total_expr)) {
+  if (is_null(value_col) || is_null(total_expr)) {
     abort_samplyr(
       c(
         "{.fn weighted_links} takes a column of {.arg links} and a
@@ -527,13 +553,14 @@ parse_weighted_links <- function(expr, call = caller_env()) {
     # Preserve the legacy stored mode for file compatibility.
     return(list(
       mode = "complete_weighted_links", scale = "quantitative",
-      col = as_label(value_expr), total_col = NULL
+      col = value_col, total_col = NULL
     ))
   }
-  if (is.symbol(total_expr)) {
+  total_col <- share_column_name(total_expr, env)
+  if (!is_null(total_col)) {
     return(list(
       mode = "weighted_links", scale = "quantitative",
-      col = as_label(value_expr), total_col = as_label(total_expr)
+      col = value_col, total_col = total_col
     ))
   }
 
@@ -753,7 +780,9 @@ validate_share_inputs <- function(x, targets, links, by, to, within, mult,
   }
 
   if (identical(mult$mode, "supplied")) {
-    check_supplied_multiplicity(targets, mult$col, within, call = call)
+    check_supplied_multiplicity(
+      x, targets, links, by, to, mult$col, within, call = call
+    )
   }
   if (identical(mult$scale, "quantitative")) {
     check_weighted_links(targets, links, within, mult, call = call)
@@ -828,8 +857,8 @@ check_weighted_links <- function(targets, links, within, mult,
 }
 
 #' @noRd
-check_supplied_multiplicity <- function(targets, col, within,
-                                        call = caller_env()) {
+check_supplied_multiplicity <- function(x, targets, links, by, to, col,
+                                        within, call = caller_env()) {
   if (!col %in% names(targets)) {
     abort_samplyr(
       "{.arg multiplicity} names {.field {col}}, which {.arg targets} does not
@@ -875,6 +904,50 @@ check_supplied_multiplicity <- function(targets, col, within,
       )
     }
   }
+
+  src_key_sample <- make_group_key(as.data.frame(x), names(by))
+  src_key_links <- make_group_key(as.data.frame(links), unname(by))
+  tgt_key_targets <- make_group_key(as.data.frame(targets), names(to))
+  tgt_key_links <- make_group_key(as.data.frame(links), unname(to))
+  link_tgt <- match(tgt_key_links, tgt_key_targets)
+  usable <- (src_key_links %in% src_key_sample) & !is.na(link_tgt)
+
+  if (any(usable)) {
+    if (identical(within$mode, "extended")) {
+      cl_key <- make_group_key(as.data.frame(targets), within$col)
+      cl_index <- vctrs::vec_group_loc(cl_key)
+      cl_of_tgt <- match(cl_key, cl_index$key)
+      pairs <- vctrs::vec_unique(data.frame(
+        cl = cl_of_tgt[link_tgt[usable]],
+        src = src_key_links[usable],
+        stringsAsFactors = FALSE
+      ))
+      sampled <- tabulate(pairs$cl, nbins = nrow(cl_index))[cl_of_tgt]
+    } else {
+      pairs <- vctrs::vec_unique(data.frame(
+        tgt = link_tgt[usable],
+        src = src_key_links[usable],
+        stringsAsFactors = FALSE
+      ))
+      sampled <- tabulate(pairs$tgt, nbins = nrow(targets))
+    }
+    too_low <- sampled > value
+    if (any(too_low)) {
+      n_bad <- sum(too_low)
+      abort_samplyr(
+        c(
+          "{.field {col}} is smaller than the number of distinct sampled links.",
+          "x" = "{n_bad} target row{?s} {?has/have} more distinct sampled links
+                 in {.arg links} than {.field {col}} declares.",
+          "i" = "{.field {col}} counts links in the whole source population, so
+                 it must be at least the count observed in the sample."
+        ),
+        class = "samplyr_error_share_weights_multiplicity",
+        call = call
+      )
+    }
+  }
+
   invisible(NULL)
 }
 

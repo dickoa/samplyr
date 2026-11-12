@@ -489,3 +489,64 @@ test_that("summary() of an occasion describes the occasion, with or without a di
     ))
   }
 })
+
+test_that("a primary unit taken by an SRS census represents itself", {
+  skip_if_not_installed("survey")
+  withr::local_options(survey.lonely.psu = "fail")
+  # Every EA is taken and the outcome is constant within each, so an
+  # occasion and a window have no variance, under SRS as under PPS.
+  frame <- expand.grid(hh = 1:8, ea = 1:3)
+  frame$mos <- 10
+  frame$y <- frame$ea * 10
+  schedule <- data.frame(
+    period = c(1, 1, 2, 2), panel = c(1, 2, 1, 2),
+    active = c(TRUE, FALSE, FALSE, TRUE)
+  )
+  for (method in c("srswor", "pps_brewer")) {
+    first <- sampling_design() |> add_stage() |> cluster_by(ea)
+    first <- if (identical(method, "srswor")) {
+      draw(first, n = 3)
+    } else {
+      draw(first, n = 3, method = method, mos = mos)
+    }
+    master <- suppressMessages(
+      first |>
+        add_stage() |> cluster_by(hh) |> draw(n = 4) |>
+        execute(frame, seed = 1, panels = schedule, panel_stage = 2)
+    )
+    for (occasions in list(1, 1:2)) {
+      window <- suppressMessages(execute(master, period = occasions))
+      est <- survey::svytotal(~y, as_svydesign(window))
+      expect_equal(as.numeric(stats::coef(est)), 480, label = method)
+      expect_equal(as.numeric(survey::SE(est)), 0, label = method)
+    }
+  }
+})
+
+test_that("a census rotated by panels at stage 1 is no census of an occasion", {
+  skip_if_not_installed("survey")
+  withr::local_options(survey.lonely.psu = "fail")
+  # Every EA is taken, but each occasion holds the EAs of its panel only, so
+  # the EAs vary between occasions and stay the clusters.
+  frame <- expand.grid(hh = 1:4, ea = 1:8)
+  frame$y <- frame$ea * 10
+  schedule <- data.frame(
+    period = c(1, 1, 2, 2), panel = c(1, 2, 1, 2),
+    active = c(TRUE, FALSE, FALSE, TRUE)
+  )
+  master <- suppressMessages(
+    sampling_design() |>
+      add_stage() |> cluster_by(ea) |> draw(n = 8) |>
+      add_stage() |> cluster_by(hh) |> draw(n = 2) |>
+      execute(frame, seed = 1, panels = schedule, panel_stage = 1)
+  )
+  occasion <- suppressMessages(execute(master, period = 1))
+  expect_identical(length(unique(occasion$ea)), 4L)
+  reference <- survey::svydesign(
+    ids = ~ea, weights = ~.weight, data = as.data.frame(occasion)
+  )
+  expect_equal(
+    survey::SE(survey::svytotal(~y, as_svydesign(occasion))),
+    survey::SE(survey::svytotal(~y, reference))
+  )
+})

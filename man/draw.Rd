@@ -170,7 +170,9 @@ A method registered with \code{\link[sondage:register_method]{sondage::register_
 \code{"pps_<name>"} for \code{type = "wor"} or \code{type = "wr"}, and
 \code{"balanced_<name>"} for \code{type = "balanced"}, where \code{mos} is optional.
 \code{supports_aux = TRUE} permits ordinary balancing variables in \code{aux}, and
-\code{supports_spread = TRUE} requires coordinates in \code{spread}. A method
+\code{supports_spread = TRUE} requires coordinates in \code{spread}. To draw such
+a function without coordinates, register it again under another name,
+without \code{supports_spread = TRUE}. A method
 declaring both takes \code{aux} and \code{spread} together, for a sample that is
 balanced and well spread. Under \code{\link[=stratify_by]{stratify_by()}}, a method declaring
 \code{supports_strata = TRUE} draws all strata in one call, as \code{"cube"} does,

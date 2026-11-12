@@ -110,6 +110,11 @@ flagged as \code{chained}. Its receipt records every earlier call in
 arguments, RNG kind, how it used the call before it, and, for a call
 followed by a new phase, its own design.
 
+One replicate kept from a stack with \code{filter(.replicate == r)} is
+recorded as \code{replicate}, with the stack's \code{reps}, on the call whose result
+was filtered. \code{\link[=replay_design]{replay_design()}} replays the stack and keeps that
+replicate, then replays any settlement or later call.
+
 A sample whose rows or design columns were modified after execution is
 flagged \code{modified}, and its receipt describes the original execution. A
 new phase drawn from a modified sample is recorded from that phase on,

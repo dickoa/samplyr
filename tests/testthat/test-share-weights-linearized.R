@@ -203,42 +203,45 @@ test_that("a source primary unit linked to no target is a zero row", {
   expect_equal(unname(survey::SE(got)), unname(survey::SE(want)))
 })
 
-test_that("a source unit linked to no target inside a primary unit has no row", {
+test_that("a source unit linked to no target inside a primary unit keeps a zero row", {
   skip_if_not_installed("survey")
   dwellings <- linearized_dwellings()
-  source_sample <- sampling_design() |>
-    stratify_by(region) |> cluster_by(blk) |> draw(n = 4) |>
-    add_stage() |> cluster_by(dw_id) |> draw(n = 3) |>
-    execute(dwellings, seed = 2)
-  # The fourth dwelling of every block holds nobody.
   links <- linearized_links()
+  # The fourth dwelling of every block holds nobody.
   links <- links[links$dw_id %% 5L != 4L, , drop = FALSE]
-  shared <- share_weights(
-    source_sample,
-    targets = linearized_targets(),
-    links = links,
-    by = c(dw_id = "dw_id"),
-    to = c(person_id = "person_id"),
-    within = hh,
-    multiplicity = complete_links()
-  )
-  unlinked <- !source_sample$dw_id %in% links$dw_id
-  expect_true(any(unlinked))
-  expect_true(all(source_sample$blk[unlinked] %in%
-                    source_sample$blk[!unlinked]))
 
-  cnd <- expect_warning(
-    svy <- as_svydesign(shared),
-    "first-stage sampling fractions",
-    class = "samplyr_warning_export_empty_parent"
-  )
-  expect_identical(cnd$n_empty, sum(unlinked))
-  expect_identical(sum(weights(svy) == 0), 0L)
-  # Every block's total is right, so the total is the oracle's.
-  expect_equal(
-    unname(coef(survey::svytotal(~y, svy))),
-    unname(coef(linearized_oracle(shared, source_sample)))
-  )
+  for (n_ssu in c(2L, 3L)) {
+    source_sample <- sampling_design() |>
+      stratify_by(region) |> cluster_by(blk) |> draw(n = 4) |>
+      add_stage() |> cluster_by(dw_id) |> draw(n = n_ssu) |>
+      execute(dwellings, seed = 2)
+    shared <- share_weights(
+      source_sample,
+      targets = linearized_targets(),
+      links = links,
+      by = c(dw_id = "dw_id"),
+      to = c(person_id = "person_id"),
+      within = hh,
+      multiplicity = complete_links()
+    )
+    unlinked <- !source_sample$dw_id %in% links$dw_id
+    expect_true(any(unlinked))
+    expect_true(all(source_sample$blk[unlinked] %in%
+                      source_sample$blk[!unlinked]))
+
+    cnd <- expect_warning(
+      svy <- as_svydesign(shared),
+      "na.rm = TRUE",
+      fixed = TRUE,
+      class = "samplyr_warning_export_empty_parent"
+    )
+    expect_identical(cnd$n_empty, sum(unlinked))
+    expect_identical(sum(weights(svy) == 0), sum(unlinked))
+    got <- survey::svytotal(~y, svy, na.rm = TRUE)
+    want <- linearized_oracle(shared, source_sample)
+    expect_equal(unname(coef(got)), unname(coef(want)))
+    expect_equal(unname(survey::SE(got)), unname(survey::SE(want)))
+  }
 })
 
 test_that("the contribution weight is the coefficient times the source's", {

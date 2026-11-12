@@ -287,6 +287,26 @@ test_that("validate_frame detects auxiliary variable NA values", {
   )
 })
 
+test_that("validate_frame and execute refuse infinite auxiliary values", {
+  design <- sampling_design() |>
+    draw(n = 2, method = "cube", aux = size)
+
+  for (bad in c(Inf, -Inf)) {
+    inf_frame <- good_frame
+    inf_frame$size[1] <- bad
+    expect_error(
+      validate_frame(design, inf_frame),
+      "auxiliary variable .* contains infinite values",
+      class = "samplyr_error_frame_invalid"
+    )
+    expect_error(
+      execute(design, inf_frame, seed = 1),
+      "Auxiliary variable .* contains infinite values",
+      class = "samplyr_error_frame_invalid"
+    )
+  }
+})
+
 test_that("validate_frame detects a missing control variable", {
   design <- sampling_design() |>
     draw(n = 2, method = "systematic", control = zzz)

@@ -229,6 +229,37 @@ test_that("a supplied multiplicity must be a finite whole count", {
   }
   # Zero and large whole counts are counts.
   expect_no_error(share(c(1e6, 1, 0, 2, 0)))
+
+  # Distinct sampled links cannot exceed a target's population multiplicity.
+  expect_error(
+    share(c(1, 1, 0, 2, 0)),
+    class = "samplyr_error_share_weights_multiplicity"
+  )
+
+  # Census fixture where a target declares L = 1 with two sampled links.
+  census <- sampling_design() |> draw(frac = 1) |> execute(gwsm_source_frame())
+  targets_low <- gwsm_targets()
+  targets_low$L <- c(1, 1, 0, 2, 0)
+  expect_error(
+    share_weights(
+      census, targets = targets_low, links = gwsm_links(),
+      by = c(unit = "unit"), to = c(tid = "tid"),
+      within = hh, multiplicity = L
+    ),
+    class = "samplyr_error_share_weights_multiplicity"
+  )
+
+  # Under extend_links(), extended cluster H1 is reached by both `a` and `b`.
+  targets_ext <- gwsm_targets()
+  targets_ext$L <- c(1, 1, 1, 2, 0)
+  expect_error(
+    share_weights(
+      census, targets = targets_ext, links = gwsm_links(),
+      by = c(unit = "unit"), to = c(tid = "tid"),
+      within = extend_links(hh), multiplicity = L
+    ),
+    class = "samplyr_error_share_weights_multiplicity"
+  )
 })
 
 test_that("multiplicity has no default and says why", {
@@ -598,6 +629,63 @@ test_that("a marker may be namespace qualified", {
     share(quote(otherpkg::complete_links())),
     class = "samplyr_error_share_weights_multiplicity"
   )
+})
+
+test_that("share_weights accepts .data[[col]] in within and multiplicity", {
+  frame <- data.frame(unit = c("a", "b", "c", "d"), stringsAsFactors = FALSE)
+  sample <- sampling_design() |> draw(n = 2) |> execute(frame, seed = 1)
+  targets <- data.frame(
+    tid = c("t1", "t2"), hh = c("H1", "H1"), mult = c(2, 2), tot = c(2, 2),
+    stringsAsFactors = FALSE
+  )
+  links <- data.frame(
+    unit = c("a", "b", "c", "d"),
+    tid = c("t1", "t1", "t2", "t2"),
+    imp = c(1, 1, 1, 1),
+    stringsAsFactors = FALSE
+  )
+
+  w_col <- "hh"
+  m_col <- "mult"
+  b_col <- "imp"
+  t_col <- "tot"
+
+  bare_within <- share_weights(
+    sample, targets = targets, links = links,
+    by = c(unit = "unit"), to = c(tid = "tid"),
+    within = hh, multiplicity = mult
+  )
+  pronoun_within <- share_weights(
+    sample, targets = targets, links = links,
+    by = c(unit = "unit"), to = c(tid = "tid"),
+    within = .data[[w_col]], multiplicity = .data[[m_col]]
+  )
+  expect_identical(pronoun_within$.weight, bare_within$.weight)
+
+  bare_ext <- share_weights(
+    sample, targets = targets, links = links,
+    by = c(unit = "unit"), to = c(tid = "tid"),
+    within = extend_links(hh), multiplicity = complete_links()
+  )
+  pronoun_ext <- share_weights(
+    sample, targets = targets, links = links,
+    by = c(unit = "unit"), to = c(tid = "tid"),
+    within = extend_links(.data[[w_col]]), multiplicity = complete_links()
+  )
+  expect_identical(pronoun_ext$.weight, bare_ext$.weight)
+
+  bare_wlinks <- share_weights(
+    sample, targets = targets, links = links,
+    by = c(unit = "unit"), to = c(tid = "tid"),
+    within = hh, multiplicity = weighted_links(imp, total = tot)
+  )
+  pronoun_wlinks <- share_weights(
+    sample, targets = targets, links = links,
+    by = c(unit = "unit"), to = c(tid = "tid"),
+    within = .data[[w_col]],
+    multiplicity = weighted_links(.data[[b_col]], total = .data[[t_col]])
+  )
+  expect_identical(pronoun_wlinks$.weight, bare_wlinks$.weight)
 })
 
 test_that("every declarative marker refuses the same way", {

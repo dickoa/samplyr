@@ -89,6 +89,13 @@ only as `"error"`, and an absent field reads as `"warn"`. A reader that
 predates it refuses a document that sets it, as an unknown executable field,
 rather than run the stage under the take-all rule.
 
+An execution, or an earlier call of a chain, that kept one replicate of its
+stack records that replicate as `replicate`, with the stack's `reps`. Replay
+executes the stack and keeps the replicate, as `filter(.replicate == r)`
+does, before any settlement or later call. A `replicate` without `reps` is
+refused. A reader that predates the field refuses it as an unknown
+executable field, rather than replay the whole stack.
+
 ## Method vocabulary
 
 `sampling-methods-v2.json` is the maintained source of built-in descriptors.

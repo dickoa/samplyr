@@ -1302,17 +1302,53 @@ get_frame_digest <- function(x) {
   if (!is_tbl_sample(x)) {
     return(NULL)
   }
-  digest <- attr(x, "metadata")$frame_digest
+  meta <- attr(x, "metadata")
+  digest <- meta$frame_digest
   if (is_null(digest)) {
     return(NULL)
   }
   check_frame_digest_version(digest$version)
+  # One replicate filtered from a stack reads only its own traces.
+  if (is_null(meta$extracted_from)) {
+    r <- extracted_replicate_id(x)
+    if (!is_null(r)) {
+      digest <- scope_digest_to_replicate(digest, r)
+    }
+  }
   if (
     !identical(digest$status, "invalidated") &&
       !sample_realization_status(x)$ok
   ) {
     digest$status <- "invalidated"
   }
+  digest
+}
+
+#' Cut a replicated digest to one replicate
+#'
+#' Keeps the selected traces of replicate `r`, with their `replicate` column,
+#' which `joint_expectation()` reads to place the rows, and recounts each
+#' pool's `n_realized` from them. A stage without replicate traces, as the
+#' stages a replicated multistage digest leaves out, is kept as recorded.
+#' @noRd
+scope_digest_to_replicate <- function(digest, r) {
+  if (is_null(digest) || length(digest$stages) == 0L) {
+    return(digest)
+  }
+  digest$stages <- lapply(digest$stages, function(st) {
+    sel <- st$selected
+    if (is_null(sel) || !"replicate" %in% names(sel)) {
+      return(st)
+    }
+    sel <- sel[sel$replicate == r, , drop = FALSE]
+    st$selected <- sel
+    if (!is_null(st$pools) && "n_realized" %in% names(st$pools)) {
+      st$pools$n_realized <- tabulate(
+        match(sel$pool_id, st$pools$pool_id), nrow(st$pools)
+      )
+    }
+    st
+  })
   digest
 }
 
@@ -1638,6 +1674,8 @@ frame_summary <- function(
   }
 
   if (is_tbl_sample(x)) {
+    # One replicate filtered from a stack is reported as a sample of its own.
+    x <- normalize_extracted_replicate(x)
     digest <- get_frame_digest(x)
     occasion <- attr(x, "metadata")[["occasion"]]
     if (is_null(digest) && !is_null(occasion)) {
@@ -1723,7 +1761,11 @@ frame_summary_report <- function(x, digest, stages, scope, detail,
   } else {
     attr(x, "execution")
   }
+  # A receipt of one replicate records the stack's reps beside it.
   n_reps <- execution$reps %||% 1L
+  if (!is_null(execution[["replicate"]])) {
+    n_reps <- 1L
+  }
   replicate_ids <- seq_len(as.integer(n_reps))
 
   # Replicated digests share only the common stage prefix.
@@ -1841,7 +1883,8 @@ pool_certainty_counts <- function(s, certain = NULL, sample = NULL) {
                            drop = FALSE]
       in_rep <- sample$.replicate == selected$replicate[1]
     }
-    rows <- which(in_rep)[match(selected$sample_row, sample$.sample_id[in_rep])]
+    ids <- sample$.sample_id[in_rep] - replicate_sample_id_offset(sample)
+    rows <- which(in_rep)[match(selected$sample_row, ids)]
     flag <- sample[[column]][rows]
     hit <- !is.na(flag) & flag
     units <- unique(selected[hit, c("pool_id", "unit_id"), drop = FALSE])

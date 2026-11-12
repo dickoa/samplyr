@@ -817,8 +817,26 @@ export_codes <- function(pool_3) {
   codes
 }
 
+# The settlement frame with one EA more in each region, so that stage 1 is
+# a sample and its EAs are sampled parents. Seed 15 draws EAs 1 to 5 again,
+# at stage-1 weights of 4 / 3 in the north and 3 / 2 in the south. A parent
+# taken whole is tested on its own fixtures.
+export_frame <- function() {
+  frame <- settle_frame()
+  extra <- data.frame(
+    region = rep(c("north", "south"), c(10, 3)),
+    ea_id = rep(6:7, c(10, 3)),
+    hh_id = max(frame$hh_id) + seq_len(13)
+  )
+  rbind(frame, extra)
+}
+
+export_listed <- function(frame = export_frame(), design = settle_design()) {
+  execute(design, frame, seed = 15) |> suppressWarnings()
+}
+
 settled_sample <- function(pool_3 = list(main = c(1, 4, 1), reserve = 1)) {
-  listed <- listed_sample()
+  listed <- export_listed()
   listed$code <- set_codes(listed, export_codes(pool_3))
   execute(listed, response_status = code)
 }
@@ -849,6 +867,8 @@ element_settled <- function(as = identity) {
 test_that("a settled reserve below stage 1 exports by ultimate clusters", {
   skip_if_not_installed("survey")
   settled <- settled_sample()
+  expect_identical(sort(unique(settled$ea_id)), 1:5)
+  expect_identical(sort(unique(settled$.weight_1)), c(4 / 3, 1.5))
   svy <- as_svydesign(settled)
   expect_identical(nrow(svy$variables), nrow(settled))
   expect_equal(unname(weights(svy)), settled$.weight)
@@ -973,8 +993,9 @@ test_that("a pool with no respondent is exported as a placeholder row", {
   held <- which(is.na(data$.sample_id) & data$code == 2)
   expect_identical(data$ea_id[held], 3L)
   expect_identical(data$region[held], "north")
-  # The stage-1 weight of 1 times 2 eligible among 4 resolved units of 10.
-  expect_equal(data$.weight[held], 10 * 2 / 4)
+  # The stage-1 weight of 4 / 3 times 2 eligible among 4 resolved units of
+  # 10.
+  expect_equal(data$.weight[held], 4 / 3 * 10 * 2 / 4)
   expect_true(is.na(data$hh_id[held]))
   expect_identical(nrow(data), nrow(settled) + 1L)
   # The row is a primary unit of its own, in its stratum.
@@ -990,7 +1011,7 @@ test_that("a pool with no respondent is exported as a placeholder row", {
 test_that("the placeholder carries the non-interview code in the column's type", {
   skip_if_not_installed("survey")
   placeholder_code <- function(as) {
-    listed <- listed_sample()
+    listed <- export_listed()
     listed$code <- as(set_codes(listed, export_codes(no_respondent_codes)))
     settled <- execute(listed, response_status = code)
     data <- suppressWarnings(as_svydesign(settled))$variables
@@ -1178,8 +1199,8 @@ test_that("a primary unit found wholly ineligible stays as a zero row", {
   zero <- svy$variables[is.na(svy$variables$.sample_id), ]
   expect_identical(zero$ea_id, 3L)
   expect_identical(zero$code, 4)
-  # Its 10 households, at the stage-1 weight of 1.
-  expect_equal(zero$.weight, 10)
+  # Its 10 households, at the stage-1 weight of 4 / 3.
+  expect_equal(zero$.weight, 4 / 3 * 10)
   expect_identical(nrow(svy$variables), nrow(settled) + 1L)
 })
 
@@ -1194,7 +1215,7 @@ test_that("a pool estimated to hold no eligible unit is exported as ineligible",
   zero <- svy$variables[is.na(svy$variables$.sample_id), ]
   expect_identical(zero$ea_id, 3L)
   expect_identical(zero$code, 4)
-  expect_equal(zero$.weight, 10)
+  expect_equal(zero$.weight, 4 / 3 * 10)
 
   # At stage 1, the ineligible units carry the pool, and a stage drawn after
   # the settlement exports.
@@ -1386,7 +1407,7 @@ test_that("frame columns named like pool statistics keep their values", {
   skip_if_not_installed("survey")
   # A two-stage export with the stratum and EA renamed after statistics.
   renamed <- function(codes) {
-    frame <- settle_frame()
+    frame <- export_frame()
     names(frame)[1:2] <- c("eligible", "n_respondents")
     design <- sampling_design() |>
       add_stage() |>
@@ -1395,7 +1416,7 @@ test_that("frame columns named like pool statistics keep their values", {
       draw(n = c(north = 3, south = 2)) |>
       add_stage() |>
       draw(n = 3, reserve = 3)
-    listed <- execute(design, frame, seed = 4) |> suppressWarnings()
+    listed <- export_listed(frame, design)
     view <- data.frame(ea_id = listed$n_respondents,
                        .reserve_2 = listed$.reserve_2)
     listed$code <- set_codes(view, export_codes(codes))
@@ -1712,4 +1733,160 @@ test_that("a replicated list settles one replicate at a time", {
     )
     expect_equal(settled$.weight, rep(10 / 3, 3))
   }
+})
+
+## Parents taken whole by a census
+
+# Every main unit responds, so the settled list adds no rows.
+settle_take <- function(sample, k = 2L) {
+  sample$code <- ifelse(sample[[paste0(".reserve_", k)]] == 0L, 1, NA)
+  execute(sample, response_status = code)
+}
+
+census_parents <- function(method = "srswor", n_ea = 3L, y = NULL) {
+  frame <- expand.grid(hh = 1:10, ea = seq_len(n_ea))
+  frame$mos <- 10
+  frame$y <- y %||% ((frame$hh * 7 + frame$ea * 3) %% 11)
+  first <- sampling_design() |> add_stage() |> cluster_by(ea)
+  first <- if (identical(method, "srswor")) {
+    draw(first, n = n_ea)
+  } else {
+    draw(first, n = n_ea, method = method, mos = mos)
+  }
+  listed <- suppressMessages(
+    execute(first |> add_stage() |> draw(n = 3, reserve = 2), frame, seed = 4)
+  )
+  settle_take(listed)
+}
+
+svy_total <- function(svy) {
+  est <- survey::svytotal(~y, svy, na.rm = TRUE)
+  c(total = unname(stats::coef(est)), se = unname(survey::SE(est)))
+}
+
+test_that("a parent taken by an SRS census represents itself in a settled reserve", {
+  skip_if_not_installed("survey")
+  withr::local_options(survey.lonely.psu = "fail")
+  # Each EA is the same in every sample, so a constant outcome has no variance.
+  for (method in c("srswor", "pps_brewer")) {
+    for (n_ea in c(1L, 3L)) {
+      settled <- census_parents(method, n_ea, y = rep(seq_len(n_ea), each = 10))
+      expect_equal(
+        svy_total(as_svydesign(settled)),
+        c(total = 10 * sum(seq_len(n_ea)), se = 0)
+      )
+    }
+    settled <- census_parents(method, 3L, y = rep(1:3, each = 10))
+    expect_equal(
+      svy_total(as_svrepdesign(settled, type = "JKn")),
+      c(total = 60, se = 0)
+    )
+  }
+
+  # Its households are the clusters of a stratum of its own.
+  for (method in c("srswor", "pps_brewer")) {
+    settled <- census_parents(method, 3L)
+    reference <- survey::svydesign(
+      ids = ~hh, strata = ~ea, weights = ~.weight, nest = TRUE,
+      data = as.data.frame(settled)
+    )
+    expect_equal(svy_total(as_svydesign(settled)), svy_total(reference))
+    expect_equal(
+      svy_total(as_svrepdesign(settled, type = "JKn")),
+      svy_total(reference)
+    )
+  }
+})
+
+test_that("only the census stratum of a settled reserve represents itself", {
+  skip_if_not_installed("survey")
+  withr::local_options(survey.lonely.psu = "fail")
+  frame <- expand.grid(hh = 1:10, ea = 1:6)
+  frame$region <- ifelse(frame$ea <= 2L, "A", "B")
+  frame$y <- (frame$hh * 7 + frame$ea * 3) %% 11
+  listed <- sampling_design() |>
+    add_stage() |> stratify_by(region) |> cluster_by(ea) |>
+    draw(n = c(A = 2, B = 2)) |>
+    add_stage() |> draw(n = 3, reserve = 2) |>
+    execute(frame, seed = 5)
+  settled <- settle_take(listed)
+
+  df <- as.data.frame(settled)
+  census <- df$region == "A"
+  df$stratum <- ifelse(census, paste0("A", df$ea), "B")
+  df$cluster <- ifelse(census, paste0("hh", df$ea, ".", df$hh), paste0("ea", df$ea))
+  reference <- survey::svydesign(
+    ids = ~cluster, strata = ~stratum, weights = ~.weight, data = df
+  )
+  expect_equal(svy_total(as_svydesign(settled)), svy_total(reference))
+})
+
+test_that("added rows under a census parent join its stratum", {
+  skip_if_not_installed("survey")
+  withr::local_options(survey.lonely.psu = "fail")
+  for (method in c("srswor", "pps_brewer")) {
+    frame <- expand.grid(hh = 1:10, ea = 1:3)
+    frame$mos <- 10
+    frame$y <- frame$hh
+    first <- sampling_design() |> add_stage() |> cluster_by(ea)
+    first <- if (identical(method, "srswor")) {
+      draw(first, n = 3)
+    } else {
+      draw(first, n = 3, method = method, mos = mos)
+    }
+    listed <- suppressMessages(
+      execute(first |> add_stage() |> draw(n = 3, reserve = 2), frame, seed = 4)
+    )
+    # In EA 1 one main unit is ineligible, and in EA 2 nobody responds.
+    rank <- listed$.reserve_2
+    listed$code <- ifelse(rank == 0L, 1, NA)
+    in_1 <- which(listed$ea == 1L & rank == 0L)
+    listed$code[in_1[1]] <- 4
+    in_2 <- listed$ea == 2L
+    listed$code[in_2] <- 2
+    settled <- suppressWarnings(execute(listed, response_status = code))
+    svy <- suppressWarnings(as_svydesign(settled))
+    # One stratum per EA, and every row of an EA, added or not, in it.
+    by_ea <- unique(data.frame(ea = svy$variables$ea, stratum = svy$strata[, 1]))
+    expect_identical(nrow(by_ea), 3L, label = method)
+    expect_false(anyDuplicated(by_ea$stratum) > 0L)
+  }
+})
+
+test_that("expected hits and settled weights of 1 are no census", {
+  skip_if_not_installed("survey")
+  withr::local_options(survey.lonely.psu = "fail")
+  # A with-replacement stage 1 whose every EA expects one hit.
+  frame <- expand.grid(hh = 1:10, ea = 1:3)
+  frame$y <- (frame$hh * 7 + frame$ea * 3) %% 11
+  listed <- suppressMessages(
+    sampling_design() |>
+      add_stage() |> cluster_by(ea) |> draw(n = 3, method = "srswr") |>
+      add_stage() |> draw(n = 3, reserve = 2) |>
+      execute(frame, seed = 6)
+  )
+  settled <- settle_take(listed)
+  expect_identical(unique(settled$.weight_1), 1)
+  expect_equal(
+    svy_total(as_svydesign(settled)),
+    c(total = 156.666666666667, se = 29.0593262903)
+  )
+
+  # A stage-1 reserve whose list covers the frame and whose settled weight
+  # is 1. One EA of the take is ineligible, and every other EA responds.
+  frame <- expand.grid(hh = 1:6, ea = 1:4)
+  frame$y <- (frame$hh * 7 + frame$ea * 3) %% 11
+  first <- sampling_design() |>
+    add_stage() |> cluster_by(ea) |> draw(n = 2, reserve = Inf) |>
+    add_stage() |> draw(n = 2) |>
+    execute(frame, stages = 1, seed = 7)
+  take <- first$ea[first$.reserve_1 == 0L]
+  first$code <- ifelse(first$ea == min(take), 4, 1)
+  settled <- execute(first, response_status = code)
+  expect_identical(unique(settled$.weight_1), 1)
+  second <- execute(settled, frame, seed = 8)
+  expect_equal(
+    svy_total(as_svydesign(second)),
+    c(total = 45, se = 25.980762113533)
+  )
 })

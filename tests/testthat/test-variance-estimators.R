@@ -74,26 +74,28 @@ ve_designs <- function() {
 # samplyr warning classes.
 ve_outcome <- function(key, sample, frame, twophase = FALSE,
                        joint_source = sample) {
-  pps <- if (twophase) {
-    "brewer"
-  } else if (identical(key, "joint")) {
-    joint <- suppressWarnings(joint_expectation(joint_source, frame))
-    survey::ppsmat(joint[[1]])
-  }
   warnings <- character(0)
   error <- NA_character_
   withCallingHandlers(
     tryCatch(
-      switch(
-        key,
-        linearization = as_svydesign(sample),
-        joint = as_svydesign(sample, pps = pps),
-        rwyb = as_svrepdesign(sample, type = "rwyb", replicates = 20),
-        bootstrap = ,
-        subbootstrap = ,
-        mrbbootstrap = as_svrepdesign(sample, type = key, replicates = 20),
-        as_svrepdesign(sample, type = key)
-      ),
+      {
+        pps <- if (twophase) {
+          "brewer"
+        } else if (identical(key, "joint")) {
+          joint <- suppressWarnings(joint_expectation(joint_source, frame))
+          survey::ppsmat(joint[[1]])
+        }
+        switch(
+          key,
+          linearization = as_svydesign(sample),
+          joint = as_svydesign(sample, pps = pps),
+          rwyb = as_svrepdesign(sample, type = "rwyb", replicates = 20),
+          bootstrap = ,
+          subbootstrap = ,
+          mrbbootstrap = as_svrepdesign(sample, type = key, replicates = 20),
+          as_svrepdesign(sample, type = key)
+        )
+      },
       error = function(e) {
         error <<- grep("^samplyr_error_", class(e), value = TRUE)[1] %|%
           class(e)[1]
@@ -647,4 +649,45 @@ test_that("a design with a reserve is refused, listed or settled", {
     class = "samplyr_error_variance_estimators_input"
   )
   expect_no_error(variance_estimators(sampling_design() |> draw(n = 4)))
+})
+
+test_that("within-pool subsampling carries phase-2 pool facts into the composed report", {
+  p1 <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 6) |>
+    execute(bfa_eas, seed = 1)
+  d2 <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 1)
+  p2 <- suppressMessages(execute(d2, p1, seed = 2))
+
+  single_ref <- variance_estimators(d2, bfa_eas)
+  two_pre <- variance_estimators(d2, p1)
+  two_post <- variance_estimators(p2)
+
+  expect_identical(two_pre$status, single_ref$status)
+  expect_identical(two_pre$decided_by, single_ref$decided_by)
+  expect_identical(two_pre$class, single_ref$class)
+  expect_identical(two_post, two_pre)
+})
+
+test_that("joint_estimator_row refuses a stage that draws one PSU per zone", {
+  skip_if_not_installed("svyplan")
+  skip_if_not_installed("survey")
+  skip_if_not_installed("svrep")
+
+  plan <- certainty_pair_fixture()
+  register <- certainty_pair_register()
+  design <- sampling_design() |>
+    stratify_by(stratum) |>
+    cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_brewer", mos = N)
+
+  rep_alone <- variance_estimators(design)
+  rep_frame <- variance_estimators(design, register)
+  expect_identical(rep_alone$status[2], "refused")
+  expect_identical(rep_alone$class[2], "samplyr_error_joint_method_unsupported")
+  expect_identical(rep_frame$status[2], "refused")
+  expect_identical(rep_frame$class[2], "samplyr_error_joint_method_unsupported")
+  expect_identical(ve_check("one_per_zone", design, register), character(0))
 })

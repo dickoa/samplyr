@@ -26,7 +26,7 @@
 #'     values. The meaning depends on the method and context:
 #'     - **Equal-probability WOR** (srswor, systematic): \eqn{N_h} (stratum
 #'       population size), or \eqn{N} if unstratified. The sampling fraction
-#'       \eqn{f = n / N} is derived from this at variance_estimation time.
+#'       \eqn{f = n / N} is derived from this at variance-estimation time.
 #'     - **PPS WOR** (pps_brewer, pps_cps, etc.): \eqn{N_h} (stratum
 #'       population size), converted to \eqn{\pi_i = 1/w_i}{pi_i = 1/w_i}
 #'       at survey export, because `survey::svydesign()` expects inclusion
@@ -929,7 +929,7 @@ dplyr_col_modify.tbl_sample <- function(data, cols) {
     )
     if (
       !is_null(loc) &&
-        (length(loc) != nrow(x) || anyDuplicated(loc) > 0L)
+        (length(loc) != nrow(x) || anyNA(loc) || anyDuplicated(loc) > 0L)
     ) {
       out <- mark_sample_modified(out, "rows")
     }

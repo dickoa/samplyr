@@ -2949,6 +2949,156 @@ test_that("stages = 1 reads a unit taken whole by what lies below it", {
   )
 })
 
+test_that("stages = 1 checks stage support and crosses strata below certainty PSUs", {
+  skip_if_not_installed("survey")
+  withr::local_options(survey.lonely.psu = "fail")
+
+  # Random-size Stage 2 inside a certainty PSU is refused as in full export.
+  bern_frame <- rbind(
+    data.frame(psu = 1L, ssu = 1:40, mos = 1000, y = 10),
+    data.frame(psu = 2L, ssu = 1:15, mos = 50, y = 2),
+    data.frame(psu = 3L, ssu = 1:15, mos = 50, y = 3),
+    data.frame(psu = 4L, ssu = 1:15, mos = 50, y = 4),
+    data.frame(psu = 5L, ssu = 1:15, mos = 50, y = 5)
+  )
+  bern_sample <- execute(
+    sampling_design() |>
+      cluster_by(psu) |>
+      draw(n = 3, method = "pps_brewer", mos = mos, certainty_size = 500) |>
+      add_stage() |>
+      draw(frac = 0.5, method = "bernoulli"),
+    bern_frame, seed = 1
+  )
+  expect_error(
+    as_svydesign(bern_sample, stages = 1),
+    class = "samplyr_error_multistage_poisson_later"
+  )
+  expect_error(
+    as_svrepdesign(bern_sample, stages = 1, type = "JKn"),
+    class = "samplyr_error_poisson_replicates"
+  )
+
+  # Unsupported spatial Stage 2 promoted into .taken_whole is refused by
+  # linearization and JKn, and relaxed by subbootstrap.
+  bern_frame$lon <- seq_len(nrow(bern_frame))
+  lpm_sample <- execute(
+    sampling_design() |>
+      cluster_by(psu) |>
+      draw(n = 3, method = "pps_brewer", mos = mos, certainty_size = 500) |>
+      add_stage() |>
+      draw(n = 4, method = "lpm2", spread = lon),
+    bern_frame, seed = 2
+  )
+  expect_error(
+    as_svydesign(lpm_sample, stages = 1),
+    class = "samplyr_error_custom_random_wor_export"
+  )
+  expect_error(
+    as_svrepdesign(lpm_sample, stages = 1, type = "JKn"),
+    class = "samplyr_error_custom_random_wor_export"
+  )
+  expect_s3_class(
+    as_svrepdesign(lpm_sample, stages = 1, type = "subbootstrap", replicates = 20),
+    "svyrep.design"
+  )
+
+  # Systematic Stage 2 promoted into .taken_whole triggers systematic checks.
+  sys_sample <- execute(
+    sampling_design() |>
+      cluster_by(psu) |>
+      draw(n = 3, method = "pps_brewer", mos = mos, certainty_size = 500) |>
+      add_stage() |>
+      draw(n = 4, method = "systematic"),
+    bern_frame, seed = 3
+  )
+  expect_warning(
+    as_svydesign(sys_sample, stages = 1),
+    class = "samplyr_warning_systematic_variance"
+  )
+  expect_error(
+    as_svydesign(sys_sample, stages = 1, systematic_variance = "error"),
+    class = "samplyr_error_systematic_variance"
+  )
+
+  # Stratified Stage 2 inside a certainty PSU crosses PSU with Stage-2 strata.
+  strat_frame <- rbind(
+    data.frame(psu = 1L, s2 = rep(c("U", "R"), each = 100), ssu = 1:200,
+               mos = 5000, y = rep(c(100, 1), each = 100) + (1:200) %% 5),
+    do.call(rbind, lapply(2:21, function(p) {
+      data.frame(psu = p, s2 = "U", ssu = 1:20, mos = 40,
+                 y = 10 + p %% 4 + (1:20) %% 3)
+    }))
+  )
+  strat_sample <- execute(
+    sampling_design() |>
+      cluster_by(psu) |>
+      draw(n = 3, method = "pps_brewer", mos = mos, certainty_size = 1000) |>
+      add_stage() |>
+      stratify_by(s2) |>
+      draw(n = 5),
+    strat_frame, seed = 42
+  )
+  svy_st1 <- as_svydesign(strat_sample, stages = 1)
+  rep_st1 <- as_svrepdesign(strat_sample, stages = 1, type = "JKn")
+  df_hand <- as.data.frame(strat_sample)
+  df_hand$unit <- ifelse(df_hand$psu == 1L, paste("ssu", df_hand$ssu),
+                         paste("psu", df_hand$psu))
+  df_hand$st <- ifelse(df_hand$psu == 1L, paste("cert", df_hand$s2), "prob")
+  hand <- survey::svydesign(ids = ~unit, strata = ~st, weights = ~.weight,
+                            data = df_hand)
+  se_st1 <- as.vector(survey::SE(survey::svytotal(~y, svy_st1)))
+  se_rep1 <- as.vector(survey::SE(survey::svytotal(~y, rep_st1)))
+  se_hand <- as.vector(survey::SE(survey::svytotal(~y, hand)))
+  se_full <- as.vector(survey::SE(survey::svytotal(~y, as_svydesign(strat_sample))))
+  expect_equal(se_st1, 414.7288270666, tolerance = 1e-8)
+  expect_equal(se_st1, se_hand, tolerance = 1e-10)
+  expect_equal(se_rep1, se_hand, tolerance = 1e-10)
+  expect_lt(abs(se_st1 - se_full) / se_full, 0.06)
+
+  # A singleton Stage-2 stratum inside a certainty PSU triggers lonely warning.
+  lonely_s2 <- execute(
+    sampling_design() |>
+      cluster_by(psu) |>
+      draw(n = 3, method = "pps_brewer", mos = mos, certainty_size = 1000) |>
+      add_stage() |>
+      stratify_by(s2) |>
+      draw(n = c(U = 5, R = 1)),
+    strat_frame, seed = 42
+  )
+  expect_warning(
+    as_svydesign(lonely_s2, stages = 1),
+    class = "samplyr_warning_lonely_psu"
+  )
+
+  # Kish stages = 1:2 when a certainty 1-adult HH sits next to a certainty
+  # multi-adult HH in the same EA.
+  kish_mix_frame <- do.call(rbind, lapply(1:5, function(e) {
+    if (e == 1L) {
+      rbind(
+        data.frame(ea = 1L, hh = 1L, person = 1L),
+        data.frame(ea = 1L, hh = 2L, person = 1:3)
+      )
+    } else {
+      expand.grid(person = 1:3, hh = 1:4, ea = e)[c("ea", "hh", "person")]
+    }
+  }))
+  kish_mix_frame$y <- (seq_len(nrow(kish_mix_frame)) * 7) %% 11 + kish_mix_frame$ea
+  kish_mix <- execute(
+    sampling_design() |>
+      add_stage() |> cluster_by(ea) |> draw(n = 4) |>
+      add_stage() |> cluster_by(hh) |> draw(n = 2) |>
+      add_stage() |> draw(n = 1),
+    kish_mix_frame, seed = 1
+  )
+  msg <- expect_message(
+    svy_kish <- as_svydesign(kish_mix, stages = 1:2),
+    class = "samplyr_message_stage_certainty_drawn"
+  )
+  expect_identical(msg$n_units, 1L)
+  se_kish <- as.vector(survey::SE(survey::svytotal(~y, svy_kish)))
+  expect_true(is.finite(se_kish) && se_kish > 0)
+})
+
 test_that("stages is refused where the export has no such form", {
   skip_if_not_installed("survey")
   sample <- execute(
@@ -3221,5 +3371,211 @@ test_that("every replicate design can be calibrated", {
   calibrates(
     suppressWarnings(as_svrepdesign(shared, type = "JKn")),
     "shared weights"
+  )
+})
+
+test_that("two-phase PPS export handles one-unit phase-2 strata via survey.lonely.psu", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    id = 1:24,
+    str = rep(c("A", "B"), c(8, 16)),
+    mos = c(10, 12, 14, 16, 18, 20, 22, 24, seq(10, 40, length.out = 16)),
+    y = c(12, 15, 19, 21, 26, 29, 31, 35, seq(15, 60, length.out = 16))
+  )
+  p1 <- sampling_design() |>
+    stratify_by(str) |>
+    cluster_by(id) |>
+    draw(n = c(A = 4, B = 8)) |>
+    execute(frame, seed = 101)
+  p2 <- suppressMessages(
+    sampling_design() |>
+      stratify_by(str) |>
+      cluster_by(id) |>
+      draw(n = c(A = 1, B = 2), method = "pps_sampford", mos = mos) |>
+      execute(p1, seed = 202)
+  )
+
+  withr::with_options(list(survey.lonely.psu = "fail"), {
+    expect_error(as_svydesign(p2), class = "samplyr_error_lonely_psu")
+  })
+  withr::with_options(list(survey.lonely.psu = "average"), {
+    expect_error(as_svydesign(p2), class = "samplyr_error_lonely_psu")
+  })
+
+  d_cert <- withr::with_options(
+    list(survey.lonely.psu = "certainty"),
+    as_svydesign(p2)
+  )
+  d_rem <- withr::with_options(
+    list(survey.lonely.psu = "remove"),
+    as_svydesign(p2)
+  )
+  d_adj <- withr::with_options(
+    list(survey.lonely.psu = "adjust"),
+    as_svydesign(p2)
+  )
+
+  tot_cert <- survey::svytotal(~y, d_cert)
+  tot_rem <- survey::svytotal(~y, d_rem)
+  tot_adj <- survey::svytotal(~y, d_adj)
+  expect_equal(as.numeric(vcov(tot_cert)), as.numeric(vcov(tot_rem)))
+  expect_equal(
+    as.numeric(attr(vcov(tot_adj), "phases")$phase1),
+    as.numeric(attr(vcov(tot_cert), "phases")$phase1)
+  )
+
+  sub_cert_a <- survey::svytotal(~y, suppressWarnings(subset(d_cert, str == "A")))
+  sub_adj_a <- survey::svytotal(~y, suppressWarnings(subset(d_adj, str == "A")))
+  expect_equal(as.numeric(attr(vcov(sub_cert_a), "phases")$phase2), 0)
+  expect_gt(as.numeric(attr(vcov(sub_adj_a), "phases")$phase2), 0)
+  expect_gt(as.numeric(survey::SE(sub_adj_a)), as.numeric(survey::SE(sub_cert_a)))
+
+  # A true 1-unit census stratum at phase 2 (pi_{2|1} == 1) is exempt.
+  frame_cen <- data.frame(
+    id = 1:14,
+    str = c("A", rep("B", 13)),
+    mos = seq(15, 28, length.out = 14),
+    y = seq(30, 56, length.out = 14)
+  )
+  p1_cen <- sampling_design() |>
+    stratify_by(str) |>
+    cluster_by(id) |>
+    draw(n = c(A = 1, B = 8)) |>
+    execute(frame_cen, seed = 11)
+  p2_cen <- sampling_design() |>
+    stratify_by(str) |>
+    cluster_by(id) |>
+    draw(n = c(A = 1, B = 4), method = "pps_sampford", mos = mos) |>
+    execute(p1_cen, seed = 22)
+  withr::with_options(list(survey.lonely.psu = "fail"), {
+    d_cen <- expect_no_error(as_svydesign(p2_cen))
+    expect_gt(as.numeric(survey::SE(survey::svytotal(~y, d_cen))), 0)
+  })
+})
+
+test_that("with-replacement 1-unit stratum warns as lonely even when expected hits equal 1", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    id = 1:11,
+    str = c("solo", rep("s2", 5), rep("s3", 5)),
+    mos = c(10, 1:5, 2:6),
+    y = (1:11) * 3
+  )
+  s_wr <- suppressMessages(
+    sampling_design() |>
+      stratify_by(str) |>
+      draw(n = c(solo = 1, s2 = 3, s3 = 3), method = "srswr") |>
+      execute(frame, seed = 7)
+  )
+  s_mult <- suppressMessages(
+    sampling_design() |>
+      stratify_by(str) |>
+      draw(n = c(solo = 1, s2 = 3, s3 = 3), method = "pps_multinomial", mos = mos) |>
+      execute(frame, seed = 8)
+  )
+
+  withr::with_options(list(survey.lonely.psu = "fail"), {
+    expect_warning(
+      d_wr <- as_svydesign(s_wr),
+      class = "samplyr_warning_lonely_psu"
+    )
+    expect_error(survey::svytotal(~y, d_wr))
+    expect_warning(
+      d_mult <- as_svydesign(s_mult),
+      class = "samplyr_warning_lonely_psu"
+    )
+    expect_error(survey::svytotal(~y, d_mult))
+  })
+})
+
+test_that("ppsmat on fixed-size PPS WOR defaults to YG and respects explicit variance", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    id = seq_len(20),
+    mos = seq(10, 200, by = 10)
+  )
+  s <- sampling_design() |>
+    draw(n = 5, method = "pps_sampford", mos = mos) |>
+    execute(frame, seed = 2025)
+  jip <- joint_expectation(s, frame)[[1L]]
+  s$y_prop <- 50 / s$.weight
+
+  svy_def <- as_svydesign(s, pps = survey::ppsmat(jip))
+  expect_identical(svy_def$variance, "YG")
+  expect_equal(as.numeric(survey::SE(survey::svytotal(~y_prop, svy_def))), 0, tolerance = 1e-5)
+
+  svy_ht <- as_svydesign(s, pps = survey::ppsmat(jip), variance = "HT")
+  expect_identical(svy_ht$variance, "HT")
+
+  # Random-size Poisson PPS keeps HT because sample size is not fixed.
+  s_pois <- sampling_design() |>
+    draw(n = 6, method = "pps_poisson", mos = mos) |>
+    execute(frame, seed = 2025)
+  jip_pois <- joint_expectation(s_pois, frame)[[1L]]
+  svy_pois <- as_svydesign(s_pois, pps = survey::ppsmat(jip_pois))
+  expect_identical(svy_pois$variance, "HT")
+
+  # variance_estimators() prints variance = "YG" on fixed-size WOR joint row.
+  ve <- variance_estimators(sampling_design() |> draw(n = 5, method = "pps_sampford", mos = mos))
+  expect_match(ve$call[ve$estimator == "Linearization, joint probabilities"], 'variance = "YG"', fixed = TRUE)
+})
+
+test_that("single-stage pps export skips systematic check on dropped later stages", {
+  skip_if_not_installed("survey")
+
+  frame <- data.frame(
+    psu = rep(paste0("p", 1:10), each = 4),
+    ssu = seq_len(40),
+    mos = rep(seq(10, 100, by = 10), each = 4),
+    y = seq_len(40) * 3
+  )
+  s <- suppressMessages(
+    sampling_design() |>
+      add_stage() |>
+        cluster_by(psu) |>
+        draw(n = 4, method = "pps_sampford", mos = mos) |>
+      add_stage() |>
+        draw(n = 1, method = "systematic") |>
+      execute(frame, seed = 12)
+  )
+  jip <- joint_expectation(s, frame, stages = 1)[[1L]]
+
+  classes <- character()
+  svy <- withCallingHandlers(
+    as_svydesign(s, pps = survey::ppsmat(jip), systematic_variance = "error"),
+    warning = function(w) {
+      classes <<- c(classes, class(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  expect_s3_class(svy, "survey.design")
+  expect_true("samplyr_warning_pps_single_stage" %in% classes)
+  expect_false("samplyr_warning_systematic_variance" %in% classes)
+
+  # Keeping all stages with pps = "brewer" still checks the systematic stage 2.
+  brewer_classes <- character()
+  withCallingHandlers(
+    as_svydesign(s, pps = "brewer"),
+    warning = function(w) {
+      brewer_classes <<- c(brewer_classes, class(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  expect_true("samplyr_warning_systematic_variance" %in% brewer_classes)
+  expect_error(
+    as_svydesign(s, pps = "brewer", systematic_variance = "error"),
+    class = "samplyr_error_systematic_variance"
+  )
+
+  # A systematic stage 1 still warns under pps = "overton".
+  s_sys1 <- sampling_design() |>
+    draw(n = 4, method = "pps_systematic", mos = mos) |>
+    execute(unique(frame[c("psu", "mos")]), seed = 12)
+  expect_warning(
+    as_svydesign(s_sys1, pps = "overton"),
+    class = "samplyr_warning_systematic_variance"
   )
 })

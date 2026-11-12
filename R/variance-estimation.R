@@ -101,8 +101,12 @@
 #' (Brewer 2002, ch. 9) but cost \eqn{O(N^3)}{O(N^3)}.
 #'
 #' `survey` applies a matrix to one stage and reads it by row, so the sample
-#' needs one row per stage-1 unit. A multistage sample is exported at stage 1
-#' with a warning, and one with several rows per stage-1 unit is refused
+#' needs one row per stage-1 unit. On a fixed-size stage drawn with unequal
+#' probabilities without replacement, [as_svydesign()] defaults to
+#' `variance = "YG"` unless `variance` is supplied, because the
+#' Horvitz-Thompson quadratic form can be negative even with an exact
+#' matrix. A multistage sample is exported at stage 1 with a warning, and one
+#' with several rows per stage-1 unit is refused
 #' (`samplyr_error_pps_rows_per_psu`). Systematic PPS matrices often hold
 #' zero pair probabilities, which rule out a design-unbiased variance
 #' estimator. A sampled matrix cannot show that every population pair is
@@ -304,6 +308,8 @@
 #' refused by linearization, leaving `type = "subbootstrap"`. A random-size
 #' method with no declaration is refused, since its selections are not known
 #' to be independent.
+#' Its matrix for the joint-probability route is the one its `joint_fn`
+#' returns, and a method registered without `joint_fn` has none.
 #'
 #' ## Two-phase samples
 #'

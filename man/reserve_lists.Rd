@@ -257,7 +257,7 @@ if (requireNamespace("survey", quietly = TRUE)) {
 }
 \references{
 AAPOR (2016). \emph{Standard Definitions: Final Dispositions of Case Codes and
-Outcome Rates for Surveys}. 9th edition. American Association for Public
+Outcome Rates for Surveys}. Ninth edition. American Association for Public
 Opinion Research.
 
 Lynn, P. (2004). The use of substitution in surveys. \emph{The Survey

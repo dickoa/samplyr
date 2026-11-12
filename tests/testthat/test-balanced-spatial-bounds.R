@@ -296,3 +296,28 @@ test_that("Sampford is a built-in fixed-size PPS method", {
   expect_true(isSymmetric(jip))
   expect_identical(samplyr:::survey_stage_kind(spec), "pps_wor")
 })
+
+test_that("stratified cube with bound() balances aux within every stratum", {
+  frame <- data.frame(
+    region = rep(c("north", "south"), each = 100),
+    urban = rep(c("u", "r"), 100),
+    x = c(seq(10, 88, length.out = 100), seq(200, 590, length.out = 100))
+  )
+  design <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 20, method = "cube", aux = c(x, bound(urban)))
+  pop_tot <- tapply(frame$x, frame$region, sum)
+
+  # Relative error of the HT total of x in each stratum, over ten draws.
+  rel_err <- vapply(1:10, function(seed) {
+    s <- execute(design, frame, seed = seed)
+    expect_identical(as.integer(table(s$region)), c(20L, 20L))
+    expect_identical(as.integer(table(s$urban)), c(20L, 20L))
+    ht <- tapply(s$x * s$.weight, s$region, sum)
+    abs(ht / pop_tot - 1)
+  }, numeric(2))
+
+  # Balancing each stratum gives a mean error near 0.012, and balancing
+  # only the total over strata gives one near 0.042.
+  expect_lt(mean(rel_err), 0.025)
+})

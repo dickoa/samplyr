@@ -523,7 +523,10 @@ Reversing twice gives back the original PRNs, so a series of surveys under
 sequential Poisson sampling shifts each unit by its selection threshold,
 \(u_{\text{new}} = (u - \min(1, \xi^* \pi)) \bmod 1\), where \(\xi^*\) is the
 largest rank selected in the unit's pool. The unit at the cut-off lands on
-0, which a PRN cannot be, so lower the threshold by a small amount, such as
-\(10^{-9}\).
+0, which a PRN cannot be, so raise \(\xi^* \pi\) by a small amount, such as
+\(10^{-9}\), before capping at 1. Because \(\xi^*\) depends on the realized
+PRNs, this shift preserves uniform PRNs only approximately, when the
+first-survey sample size is moderate and inclusion probabilities stay well
+below 1 [@ohlsson1998].
 
 ## References

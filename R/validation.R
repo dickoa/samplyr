@@ -899,11 +899,19 @@ check_register_cluster_invariants <- function(design, entry,
     return(invisible(NULL))
   }
 
-  n_units <- nrow(unique(frame[, unit_vars, drop = FALSE]))
+  n_units <- vctrs::vec_unique_count(frame[, unit_vars, drop = FALSE])
+  if (
+    vctrs::vec_unique_count(
+      frame[, unique(c(unit_vars, invariant)), drop = FALSE]
+    ) == n_units
+  ) {
+    return(invisible(NULL))
+  }
   varying <- invariant[vapply(
     invariant,
     function(v) {
-      nrow(unique(frame[, c(unit_vars, v), drop = FALSE])) != n_units
+      vctrs::vec_unique_count(frame[, c(unit_vars, v), drop = FALSE]) !=
+        n_units
     },
     logical(1)
   )]
@@ -1089,15 +1097,27 @@ stage_frame_issues <- function(stage_spec, frame, stage_idx) {
               actual_class = class(aux_vals)[[1]]
             ))
           )
-        } else if (any(is.na(aux_vals))) {
-          issues <- c(
-            issues,
-            list(list(
-              stage = label,
-              type = "aux_na",
-              vars = av
-            ))
-          )
+        } else {
+          if (any(is.na(aux_vals))) {
+            issues <- c(
+              issues,
+              list(list(
+                stage = label,
+                type = "aux_na",
+                vars = av
+              ))
+            )
+          }
+          if (any(is.infinite(aux_vals))) {
+            issues <- c(
+              issues,
+              list(list(
+                stage = label,
+                type = "aux_infinite",
+                vars = av
+              ))
+            )
+          }
         }
       }
     }
@@ -1340,6 +1360,9 @@ report_validation_issues <- function(issues) {
       ),
       "aux_na" = cli::format_inline(
         "{stage}: auxiliary variable {.var {vars}} contains NA values"
+      ),
+      "aux_infinite" = cli::format_inline(
+        "{stage}: auxiliary variable {.var {vars}} contains infinite values"
       ),
       "bounds" = cli::format_inline(
         "{stage}: missing count-bound variable: {.var {vars}}"

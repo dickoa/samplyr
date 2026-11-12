@@ -678,9 +678,9 @@ their inputs and limits:
 | Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `?draw`, `sondage::register_method()` |
 | Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `?panel_assignment`, `?rotation_program`, [Rotating panels and master samples](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/panels-master-samples.html) |
 | Replicated draws | `execute(reps = 5)` | `?execute` |
-| Two-phase | pipe a `tbl_sample` into a new design's `execute()` | `vignette("survey-analysis")` |
+| Two-phase | pipe a `tbl_sample` into a new design's `execute()` | `?execute` |
 | Indirect sampling | `share_weights()`, to estimate for a population linked to the one that was sampled | `vignette("design-semantics")` |
-| Overlapping frames | `stack_frames()`, for two registers of one population | `vignette("survey-analysis")` |
+| Overlapping frames | `stack_frames()`, for two registers of one population | `?stack_frames` |
 
 The [variance_estimation
 reference](https://dickoa.gitlab.io/samplyr/reference/variance_estimation.html)
@@ -757,7 +757,7 @@ record of the selection pools and chances the design resolved.
 `frame_digest = "full"` when downstream work needs exact per-unit
 chances for unequal-probability element stages. The companion package
 samplens, in development, draws the digest as a visual sampling card.
-See `vignette("introduction")` for examples.
+See `?execute` for details.
 
 `execute()` also reports when the frame could not deliver what the
 design asked for. A pool holding fewer units than the stage requested is

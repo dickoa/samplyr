@@ -1749,13 +1749,22 @@ check_exante_cluster_invariants <- function(
   if (length(invariant_vars) == 0) {
     return(invisible(NULL))
   }
-  all_rows <- seq_len(nrow(frame))
-  key_vars <- c(ancestor_vars, cluster_vars)
-  n_clusters <- length(unique(digest_path_keys(frame, all_rows, key_vars)))
+  key_vars <- unique(c(ancestor_vars, cluster_vars))
+  for (v in unique(c(key_vars, invariant_vars))) {
+    check_key_precision(frame[[v]], v)
+  }
+  n_clusters <- vctrs::vec_unique_count(frame[, key_vars, drop = FALSE])
+  if (
+    vctrs::vec_unique_count(
+      frame[, unique(c(key_vars, invariant_vars)), drop = FALSE]
+    ) == n_clusters
+  ) {
+    return(invisible(NULL))
+  }
   varying <- invariant_vars[vapply(
     invariant_vars,
     function(v) {
-      length(unique(digest_path_keys(frame, all_rows, c(key_vars, v)))) !=
+      vctrs::vec_unique_count(frame[, c(key_vars, v), drop = FALSE]) !=
         n_clusters
     },
     logical(1)

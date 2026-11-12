@@ -496,3 +496,52 @@ test_that("automatic certainty drives the joint-matrix decomposition", {
     expect_equal(as.vector(J[i, !cert]), pik[!cert])
   }
 })
+
+test_that("digest path tracks current row order after arrange()", {
+  # Stratified element PPS reordered across strata
+  s_elem <- sampling_design() |>
+    stratify_by(stratum) |>
+    draw(n = 4, method = "pps_sampford", mos = mos) |>
+    execute(test_frame, seed = 101, frame_digest = "full")
+  s_elem_rev <- dplyr::arrange(s_elem, dplyr::desc(mos), id)
+
+  jip_elem <- expect_jip_paths_equal(s_elem_rev, test_frame)
+  expect_equal(diag(jip_elem[[1]]), 1 / s_elem_rev$.weight, tolerance = 1e-10)
+
+  # Stratified clustered PPS reordered across strata and clusters
+  s_clus <- sampling_design() |>
+    stratify_by(stratum) |>
+    cluster_by(cluster) |>
+    draw(n = 2, method = "pps_brewer", mos = mos) |>
+    execute(test_frame, seed = 102, frame_digest = "full")
+  s_clus_rev <- dplyr::arrange(s_clus, dplyr::desc(mos), id)
+
+  jip_clus <- expect_jip_paths_equal(s_clus_rev, test_frame)
+  first_clus <- s_clus_rev[!duplicated(s_clus_rev$cluster), ]
+  expect_equal(diag(jip_clus[[1]]), 1 / first_clus$.weight, tolerance = 1e-10)
+
+  # Two-stage PPS (clustered stage 1 + element stage 2) reordered across PSUs
+  s_two <- sampling_design() |>
+    add_stage("Clusters") |>
+    stratify_by(stratum) |>
+    cluster_by(cluster) |>
+    draw(n = 2, method = "pps_brewer", mos = mos) |>
+    add_stage("Units") |>
+    draw(n = 3, method = "pps_brewer", mos = mos) |>
+    execute(test_frame, seed = 103, frame_digest = "full")
+  s_two_rev <- dplyr::arrange(s_two, dplyr::desc(mos), id)
+
+  jip_two <- expect_jip_paths_equal(s_two_rev, test_frame)
+  expect_equal(diag(jip_two[[2]]), 1 / s_two_rev$.weight_2, tolerance = 1e-10)
+
+  # Extracted single replicate after arrange()
+  rep_s <- sampling_design() |>
+    draw(n = 6, method = "pps_sampford", mos = mos) |>
+    execute(test_frame, reps = 2, seed = 104, frame_digest = "full")
+  r2_rev <- rep_s |>
+    dplyr::filter(.replicate == 2) |>
+    dplyr::arrange(dplyr::desc(mos), id)
+
+  jip_r2 <- expect_jip_paths_equal(r2_rev, test_frame)
+  expect_equal(diag(jip_r2[[1]]), 1 / r2_rev$.weight, tolerance = 1e-10)
+})

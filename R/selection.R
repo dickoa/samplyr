@@ -1150,7 +1150,10 @@ draw_balanced_stratified <- function(
       draw_spec$bounds,
       strata = strata_sorted
     )
-    res <- draw_cube_with_bounds(pik_sorted, aux_sorted, bounds)
+    aux_bounded <- interact_strata_cube_aux(
+      pik_sorted, aux_sorted, strata_sorted
+    )
+    res <- draw_cube_with_bounds(pik_sorted, aux_bounded, bounds)
   } else {
     spread_sorted <- if (!is_null(draw_spec$spread)) {
       as.matrix(frame[row_order, draw_spec$spread, drop = FALSE])
@@ -1294,6 +1297,35 @@ compile_count_bounds <- function(data, pik, bound_vars, strata = NULL) {
 
   colnames(B) <- labels
   list(B = B, lower = lower, upper = upper)
+}
+
+#' Interact pik and cube auxiliaries with stratum indicators for global flight
+#' @noRd
+interact_strata_cube_aux <- function(pik, aux, strata) {
+  levels_seen <- unique(strata)
+  H <- length(levels_seen)
+  if (H <= 1L) {
+    return(aux)
+  }
+  N <- length(pik)
+  indicators <- vapply(
+    levels_seen,
+    function(lvl) as.numeric(strata == lvl),
+    numeric(N)
+  )
+  if (is_null(dim(indicators))) {
+    indicators <- matrix(indicators, ncol = H)
+  }
+  # Global pik is prepended by sondage, so H - 1 stratum pik columns span H.
+  pik_cols <- indicators[, -H, drop = FALSE] * pik
+  if (is_null(aux) || ncol(aux) == 0L) {
+    return(pik_cols)
+  }
+  p <- ncol(aux)
+  aux_blocks <- lapply(seq_len(p), function(j) {
+    indicators * aux[, j]
+  })
+  do.call(cbind, c(list(pik_cols), aux_blocks))
 }
 
 #' Draw a cube sample while treating bound() constraints as hard requirements

@@ -441,11 +441,17 @@ test_that("survey pairs a stage-1 matrix with the right rows", {
   pik <- 1 / rows$.weight
   expect_equal(unname(diag(jip)), pik)
 
-  # Horvitz-Thompson with each row paired with its own matrix row.
+  # Each row paired with its own matrix row under YG (default) and HT.
   y_pik <- rows$y / pik
-  v <- as.numeric(t(y_pik) %*% ((jip - outer(pik, pik)) / jip) %*% y_pik)
-  svy <- as_svydesign(s, pps = survey::ppsmat(jip))
-  expect_equal(as.numeric(stats::vcov(survey::svytotal(~y, svy))), v)
+  dcheck <- (jip - outer(pik, pik)) / jip
+  diag(dcheck) <- 1 - pik
+  v_ht <- as.numeric(t(y_pik) %*% dcheck %*% y_pik)
+  v_yg <- v_ht - sum(dcheck %*% (y_pik * y_pik))
+  svy_yg <- as_svydesign(s, pps = survey::ppsmat(jip))
+  svy_ht <- as_svydesign(s, pps = survey::ppsmat(jip), variance = "HT")
+  expect_identical(svy_yg$variance, "YG")
+  expect_equal(as.numeric(stats::vcov(survey::svytotal(~y, svy_yg))), v_yg)
+  expect_equal(as.numeric(stats::vcov(survey::svytotal(~y, svy_ht))), v_ht)
 })
 
 test_that("key columns named like internal counters are matched as keys", {

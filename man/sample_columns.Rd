@@ -33,7 +33,7 @@ values. The meaning depends on the method and context:
 \itemize{
 \item \strong{Equal-probability WOR} (srswor, systematic): \eqn{N_h} (stratum
 population size), or \eqn{N} if unstratified. The sampling fraction
-\eqn{f = n / N} is derived from this at variance_estimation time.
+\eqn{f = n / N} is derived from this at variance-estimation time.
 \item \strong{PPS WOR} (pps_brewer, pps_cps, etc.): \eqn{N_h} (stratum
 population size), converted to \eqn{\pi_i = 1/w_i}{pi_i = 1/w_i}
 at survey export, because \code{survey::svydesign()} expects inclusion

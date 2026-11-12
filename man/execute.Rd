@@ -92,7 +92,11 @@ independent draws in R, and kept in
 with \code{panels} or with stages that use permanent random numbers. A
 replicated sample continued, or used as a phase-2 frame, carries its
 replicates into the stages run now, and these cannot use permanent
-random numbers either.
+random numbers either. One replicate kept with
+\code{filter(.replicate == r)} exports as a sample of its own. Once settled,
+shared with \code{\link[=share_weights]{share_weights()}}, continued or used as a phase-2 frame, it
+no longer counts the other replicates, and its receipt records which
+replicate it was.
 \code{as_svrepdesign(type = "random_groups")} estimates variance from the
 spread of the replicates, for any selection method.}
 

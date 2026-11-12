@@ -148,7 +148,7 @@ variance_estimators <- function(x, frame = NULL) {
     traits1 <- stage_variance_traits(design1, seq_along(design1$stages))
     singlephase_estimator_rows(
       design1, traits1,
-      frame_variance_facts(design1, NULL, traits1, call = current_env())
+      composed_variance_facts(phase1, design1, facts2)
     )
   } else {
     twophase_estimator_rows(design, traits, phase1)
@@ -317,20 +317,35 @@ frame_variance_facts <- function(design, frame, traits, call = caller_env()) {
       n_cert[is.na(n_cert)] <- 0
     }
     fixed <- !trait$random_size
-    take <- pools$n_target - n_cert
-    # As in as_svrepdesign(), a stage-1 pool taken whole above a later stage
-    # is a set of certainty units.
-    whole_certain <- pos == 1L && length(traits) > 1L && fixed &&
-      !identical(trait$kind, "wr") & pools$n_target >= pools$N
+    if (draws_one_per_zone(trait$draw)) {
+      # Exports collapse one-per-zone draws into the plan's variance groups.
+      reg <- trait$draw$certainty_plan$register
+      zoned <- !is.na(reg$pair)
+      cells <- unique(
+        data.frame(zone = paste(reg$stratum, reg$zone), pair = reg$pair)[zoned, ]
+      )
+      take <- as.numeric(tabulate(cells$pair))
+      whole_certain <- rep(FALSE, length(take))
+      whole_pools <- integer(0)
+      n_pools <- length(take)
+    } else {
+      take <- pools$n_target - n_cert
+      # As in as_svrepdesign(), a stage-1 pool taken whole above a later stage
+      # is a set of certainty units.
+      whole_certain <- pos == 1L && length(traits) > 1L && fixed &&
+        !identical(trait$kind, "wr") & pools$n_target >= pools$N
+      whole_pools <- pools$pool_id[whole_certain]
+      n_pools <- nrow(pools)
+    }
     list(
       stage = trait$stage,
-      n_pools = nrow(pools),
+      n_pools = n_pools,
       n_units = sum(pools$N),
       n_certainty = sum(n_cert),
       whole_certain = whole_certain,
-      whole_pools = pools$pool_id[whole_certain],
+      whole_pools = whole_pools,
       fixed = fixed,
-      singleton = if (fixed) take == 1 else rep(FALSE, nrow(pools)),
+      singleton = if (fixed) take == 1 else rep(FALSE, n_pools),
       takes = take,
       census = fixed && nrow(pools) > 0 && all(pools$n_target >= pools$N),
       parents = unique(pools$parent_unit),
@@ -364,7 +379,7 @@ estimator_catalogue <- function() {
          call = "as_svydesign(x)"),
     list(key = "joint", estimator = "Linearization, joint probabilities",
          call = paste0("as_svydesign(x, pps = survey::ppsmat(",
-                       "joint_expectation(x)[[1]]))")),
+                       "joint_expectation(x)[[1]]), variance = \"YG\")")),
     list(key = "JK1", estimator = "Jackknife (JK1)",
          call = "as_svrepdesign(x, type = \"JK1\")"),
     list(key = "JKn", estimator = "Stratified jackknife (JKn)",
@@ -508,6 +523,29 @@ stage_fact <- function(facts, stage) {
     return(NULL)
   }
   Find(function(f) identical(f$stage, stage), facts)
+}
+
+#' Carry phase-2 pool facts onto the composed design's final stage
+#' @noRd
+composed_variance_facts <- function(phase1, design1, facts2) {
+  fact2 <- stage_fact(facts2, 1L)
+  if (is_null(fact2)) {
+    return(NULL)
+  }
+  last <- length(design1$stages)
+  df1 <- as.data.frame(phase1)
+  fact2$stage <- last
+  fact2$census <- isTRUE(fact2$census) && spec_stage_census(df1, last)
+  fact2$whole_certain <- rep(FALSE, fact2$n_pools)
+  fact2$whole_pools <- integer(0)
+  if (last > 1L) {
+    fact2$empty_parents <- if (last == 2L) {
+      length(export_empty_records(phase1, design1, seq_len(last), vanished = TRUE))
+    } else {
+      0L
+    }
+  }
+  list(fact2)
 }
 
 #' Primary units, and deeper parents, the frame leaves with nothing below
@@ -755,12 +793,34 @@ joint_estimator_row <- function(entry, traits, facts, common) {
       " matrix to supply"
     )))
   }
+  if (identical(first$kind, "rs_poisson")) {
+    entry$call <- paste0(
+      "as_svydesign(x, pps = survey::ppsmat(joint_expectation(x)[[1]]))"
+    )
+  }
   out <- list()
   if (!is_null(first$draw$bounds) || !is_null(first$draw$spread)) {
     out <- c(out, list(finding(
       "refused", "samplyr_error_joint_method_unsupported",
       paste0("No joint inclusion probabilities for ", first$method,
              " with its declared constraints"),
+      stage = 1L
+    )))
+  }
+  registered <- !is_null(first$draw$method_type)
+  if (registered && is_null(custom_method_spec(first$method)$joint_fn)) {
+    out <- c(out, list(finding(
+      "refused", "samplyr_error_joint_method_unsupported",
+      paste0(first$method, " was registered without joint_fn, so it has no",
+             " joint inclusion probabilities"),
+      stage = 1L
+    )))
+  }
+  if (draws_one_per_zone(first$draw)) {
+    out <- c(out, list(finding(
+      "refused", "samplyr_error_joint_method_unsupported",
+      "Joint inclusion probabilities are not computed for a stage that draws
+       one PSU per zone",
       stage = 1L
     )))
   }
@@ -772,8 +832,9 @@ joint_estimator_row <- function(entry, traits, facts, common) {
       stage = 1L
     )))
   }
-  quality <- if (first$method %in% c("pps_cps", "pps_sampford",
-                                      "pps_poisson")) {
+  # A registered matrix is the joint_fn's own, not one samplyr approximates.
+  quality <- if (registered || first$method %in% c("pps_cps", "pps_sampford",
+                                                   "pps_poisson")) {
     NULL
   } else if (identical(first$method, "pps_systematic")) {
     finding("approximate", "samplyr_warning_systematic_ppsmat",
@@ -787,7 +848,6 @@ joint_estimator_row <- function(entry, traits, facts, common) {
   }
   # A matrix replaces stage 1, and the stages below it are not exported.
   out <- c(out, if (!is_null(quality)) list(quality),
-           Filter(function(f) !identical(f$stage, 1L), common$systematic),
            common$risks, lonely_findings(traits[1], facts))
   estimator_row(entry, out)
 }

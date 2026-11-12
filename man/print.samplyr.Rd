@@ -42,7 +42,11 @@
 \item{setup}{The setup object pillar passes to its footer method.}
 }
 \value{
-Invisibly returns the input object
+For \code{print()} methods, \code{x} invisibly.
+
+For \code{tbl_sum()}, a named character vector of header lines.
+
+For \code{tbl_format_footer()}, a character vector of footer lines.
 }
 \description{
 Print methods for samplyr objects

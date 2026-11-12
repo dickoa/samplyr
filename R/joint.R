@@ -147,6 +147,7 @@
 #' | `cube`           | **Approximate** when unconstrained            |
 #' | `lpm2`           | Unavailable, spatial spreading not represented |
 #' | `scps`           | Unavailable, spatial spreading not represented |
+#' | registered       | From the method's `joint_fn`                  |
 #'
 #' Poisson draws are independent, so
 #' \eqn{\pi_{kl} = \pi_k \pi_l}{pi_kl = pi_k * pi_l}. Unconstrained cube
@@ -170,6 +171,11 @@
 #' constraints and spatial spreading alter pairwise selection beyond the
 #' approximation. [variance_estimation] gives their replicate variance.
 #'
+#' A method registered with `sondage::register_method()` has the joint
+#' probabilities its `joint_fn` returns, and their accuracy is that of the
+#' function. A method registered without `joint_fn` is refused, and so is a
+#' registered method drawn with `spread`.
+#'
 #' A stage that draws a certainty plan's zones treats each zone as a draw
 #' of its own, so PSUs of different zones have the product of their
 #' chances. It needs `frame`, since the digest does not record the zone
@@ -186,6 +192,7 @@
 #' |-------------------|-----------------------------------------------|
 #' | `pps_multinomial` | **Exact**, analytic                           |
 #' | `pps_chromy`      | **Approximate**, Monte Carlo, 10 000 draws    |
+#' | registered        | From the method's `joint_fn`                  |
 #'
 #' For `pps_multinomial`,
 #' \eqn{E(n_k \cdot n_l) = n(n-1) p_k p_l + n p_k \mathbf{1}_{k=l}}{E(n_k * n_l) = n(n-1) p_k p_l + n p_k 1(k=l)}.
@@ -255,8 +262,9 @@
 #'
 #' jip <- joint_expectation(sample, bfa_eas)
 #'
-#' # survey reads the matrix by row, one row per sampled unit
-#' svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
+#' # survey reads the matrix by row, one row per sampled unit, and YG selects
+#' # the Sen-Yates-Grundy form for fixed-size sampling without replacement
+#' svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]), variance = "YG")
 #' survey::svytotal(~population, svy)
 #'
 #' # A CPS sample, also with an exact joint matrix, drawn from one register
@@ -449,6 +457,8 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
         )
       }
 
+      check_registered_joint(draw_spec)
+
       if (draws_one_per_zone(draw_spec)) {
         cli_abort(
           c(
@@ -495,6 +505,46 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
   })
 
   result
+}
+
+#' Refuse a registered method that cannot supply its joint probabilities
+#'
+#' sondage computes them only through the method's `joint_fn`, and stops with
+#' an untyped error for a method registered without one or not registered in
+#' this session.
+#' @noRd
+check_registered_joint <- function(draw_spec, call = caller_env()) {
+  if (is_null(draw_spec$method_type)) {
+    return(invisible(NULL))
+  }
+  method <- draw_spec$method
+  spec <- custom_method_spec(method)
+  if (is_null(spec)) {
+    abort_samplyr(
+      c(
+        "Method {.val {method}} is not registered in this session.",
+        "i" = "Register it with {.fn sondage::register_method} to compute its joint probabilities."
+      ),
+      class = "samplyr_error_unknown_method",
+      call = call
+    )
+  }
+  if (is_null(spec$joint_fn)) {
+    quantity <- if (identical(spec$type, "wr")) {
+      "Joint expected hits are"
+    } else {
+      "Joint inclusion probabilities are"
+    }
+    abort_samplyr(
+      c(
+        "{quantity} unavailable for method {.val {method}}.",
+        "i" = "It was registered without {.arg joint_fn}. Register it again with one to supply them."
+      ),
+      class = "samplyr_error_joint_method_unsupported",
+      call = call
+    )
+  }
+  invisible(NULL)
 }
 
 #' Methods whose joint probabilities depend on the order of the pool
@@ -734,14 +784,29 @@ compute_stage_jip_digest <- function(
   if (is_null(sel) || nrow(sel) == 0) {
     return(NULL)
   }
+  if ("replicate" %in% names(sel) && ".replicate" %in% names(x)) {
+    sel <- sel[sel$replicate %in% unique(x$.replicate), , drop = FALSE]
+    if (nrow(sel) == 0) {
+      return(NULL)
+    }
+  }
   pools <- st$pools
 
-  # Rank occurrences by sample row, ancestry key, or trace order.
+  # Rank occurrences by current sample row, ancestry key, or trace order.
   sel$.rank <- seq_len(nrow(sel))
   if (
     identical(st$unit_level, "element") && "sample_row" %in% names(sel)
   ) {
-    sel$.rank <- sel$sample_row
+    sample_ids <- x[[".sample_id"]]
+    if (!is_null(sample_ids) && length(sample_ids) > 0L && !anyNA(sample_ids)) {
+      if ("replicate" %in% names(sel) && ".replicate" %in% names(x)) {
+        sample_ids <- sample_ids - replicate_sample_id_offset(x)
+      }
+      rank <- match(sel$sample_row, sample_ids)
+      sel$.rank <- if (!anyNA(rank)) rank else sel$sample_row
+    } else {
+      sel$.rank <- sel$sample_row
+    }
   } else if ("key" %in% names(sel)) {
     sample_df <- as.data.frame(x)
     ancestor_vars <- collect_ancestor_cluster_vars(design, stage_idx)

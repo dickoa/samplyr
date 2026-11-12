@@ -332,6 +332,7 @@ reserve_pool_index <- function(data, design, k) {
 #' @noRd
 settle_reserve_codes <- function(sample, design, k, parsed, column = NULL,
                                  call = caller_env()) {
+  sample <- normalize_extracted_replicate(sample)
   data <- as.data.frame(sample)
   category <- parsed$category
   index <- reserve_pool_index(data, design, k)
@@ -437,12 +438,16 @@ settle_reserve_codes <- function(sample, design, k, parsed, column = NULL,
   # The stages above the reserve, which a unit with no respondent row keeps.
   first_row <- match(seq_along(results), index$pool)
   pools$upper_weight <- data$.weight[first_row] / weight_k[first_row]
-  # Whether the pool's primary unit was taken with certainty.
-  sure <- if (k > 1L) data$.certainty_1[first_row]
-  pools$certainty <- if (is_null(sure)) rep(FALSE, nrow(pools)) else sure %in% TRUE
+  # Whether the pool's primary unit was taken whole, by a certainty rule or
+  # a census, read at a row that keeps its stage-1 weight.
+  executed <- get_stages_executed(sample)
+  pools$certainty <- if (k > executed[1]) {
+    stage1_sure_rows(data[first_row, , drop = FALSE], design, executed)
+  } else {
+    rep(FALSE, nrow(pools))
+  }
 
   meta <- attr(sample, "metadata")
-  executed <- get_stages_executed(sample)
   meta$modified <- NULL
   meta$n_selected <- nrow(out)
   meta$integrity <- sample_integrity_record(out, design, executed)

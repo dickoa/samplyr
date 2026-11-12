@@ -2076,3 +2076,47 @@ test_that("a replay compares unequal chances in the recorded capture mode", {
     )
   }
 })
+
+test_that("replaying phase 2 from the base frame refuses a reordered phase 1", {
+  p1 <- sampling_design() |>
+    draw(n = 20) |>
+    execute(bfa_eas, seed = 1)
+  p2_ok <- sampling_design() |>
+    draw(n = 5) |>
+    execute(p1, seed = 2)
+
+  expect_identical(replay_design(p2_ok, bfa_eas)$ea_id, p2_ok$ea_id)
+  path_ok <- withr::local_tempfile(fileext = ".json")
+  write_design(p2_ok, path_ok, frame = bfa_eas)
+  expect_identical(replay_design(read_design(path_ok), bfa_eas)$ea_id, p2_ok$ea_id)
+
+  p1_reord <- dplyr::arrange(p1, dplyr::desc(ea_id))
+  p2_reord <- sampling_design() |>
+    draw(n = 5) |>
+    execute(p1_reord, seed = 2)
+
+  expect_error(
+    replay_design(p2_reord, bfa_eas),
+    class = "samplyr_error_replay_phase_frame"
+  )
+  expect_error(
+    replay_design(p2_reord, p1),
+    class = "samplyr_error_replay_frame_mismatch"
+  )
+  expect_identical(replay_design(p2_reord, p1_reord)$ea_id, p2_reord$ea_id)
+
+  path_reord <- withr::local_tempfile(fileext = ".json")
+  write_design(p2_reord, path_reord, frame = p1_reord)
+  expect_error(
+    replay_design(read_design(path_reord), bfa_eas),
+    class = "samplyr_error_replay_frame_mismatch"
+  )
+  expect_error(
+    replay_design(read_design(path_reord), bfa_eas, fingerprint = "ignore"),
+    class = "samplyr_error_replay_phase_frame"
+  )
+  expect_identical(
+    replay_design(read_design(path_reord), p1_reord)$ea_id,
+    p2_reord$ea_id
+  )
+})

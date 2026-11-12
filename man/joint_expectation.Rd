@@ -171,6 +171,7 @@ Every matrix here comes from \code{sondage::joint_inclusion_prob()}.\tabular{ll}
    \code{cube} \tab \strong{Approximate} when unconstrained \cr
    \code{lpm2} \tab Unavailable, spatial spreading not represented \cr
    \code{scps} \tab Unavailable, spatial spreading not represented \cr
+   registered \tab From the method's \code{joint_fn} \cr
 }
 
 
@@ -196,6 +197,11 @@ Bounded cube, LPM2, and SCPS designs are refused, because count
 constraints and spatial spreading alter pairwise selection beyond the
 approximation. \link{variance_estimation} gives their replicate variance.
 
+A method registered with \code{sondage::register_method()} has the joint
+probabilities its \code{joint_fn} returns, and their accuracy is that of the
+function. A method registered without \code{joint_fn} is refused, and so is a
+registered method drawn with \code{spread}.
+
 A stage that draws a certainty plan's zones treats each zone as a draw
 of its own, so PSUs of different zones have the product of their
 chances. It needs \code{frame}, since the digest does not record the zone
@@ -211,6 +217,7 @@ Both matrices come from \code{sondage::joint_expected_hits()}.\tabular{ll}{
    Method \tab Quality \cr
    \code{pps_multinomial} \tab \strong{Exact}, analytic \cr
    \code{pps_chromy} \tab \strong{Approximate}, Monte Carlo, 10 000 draws \cr
+   registered \tab From the method's \code{joint_fn} \cr
 }
 
 
@@ -284,8 +291,9 @@ sample <- sampling_design() |>
 
 jip <- joint_expectation(sample, bfa_eas)
 
-# survey reads the matrix by row, one row per sampled unit
-svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]))
+# survey reads the matrix by row, one row per sampled unit, and YG selects
+# the Sen-Yates-Grundy form for fixed-size sampling without replacement
+svy <- as_svydesign(sample, pps = survey::ppsmat(jip[[1]]), variance = "YG")
 survey::svytotal(~population, svy)
 
 # A CPS sample, also with an exact joint matrix, drawn from one register

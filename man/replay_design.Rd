@@ -76,6 +76,9 @@ call by call, each under its own seed, stages and RNG kind. The first
 call and each continuation read the frames given here, a new phase reads
 the phase replayed before it, and an occasion reads its replayed master.
 Inherited panels and replicates are carried rather than declared again.
+A call recorded with \code{replicate} keeps that replicate of its replayed
+stack before its settlement or the next call, and a replicate the call
+did not draw is \code{samplyr_error_replay_replicate}.
 The fingerprints cover every call's frames, and the row count is checked
 after each call. An earlier call run without a seed is
 \code{samplyr_error_receipt_no_seed}. When a new phase was drawn from a sample

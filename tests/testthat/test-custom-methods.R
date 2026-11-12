@@ -270,15 +270,106 @@ test_that("joint_expectation() works with custom WOR method + joint_fn", {
   expect_true(isSymmetric(stage1))
 })
 
-test_that("joint_expectation() errors gracefully without joint_fn", {
-  on.exit(sondage::unregister_method("test_wor"), add = TRUE)
-  sondage::register_method("test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact")
+joint_route_row <- function(s, frame) {
+  rows <- variance_estimators(s, frame)
+  as.list(rows[rows$estimator == "Linearization, joint probabilities", ])
+}
 
-  result <- sampling_design() |>
+test_that("a registered method without joint_fn is refused, typed", {
+  on.exit(sondage::unregister_method("test_wor"), add = TRUE)
+  on.exit(sondage::unregister_method("test_wr"), add = TRUE)
+  on.exit(sondage::unregister_method("test_cube"), add = TRUE)
+  sondage::register_method(
+    "test_wor", "wor", sample_fn = toy_wor_fn, probabilities = "exact"
+  )
+  sondage::register_method(
+    "test_wr", "wr", sample_fn = toy_wr_fn, probabilities = "exact"
+  )
+  sondage::register_method(
+    "test_cube", "balanced",
+    sample_fn = function(pik, aux = NULL, ...) {
+      sondage::balanced_wor(pik, aux = aux)$sample
+    },
+    probabilities = "exact"
+  )
+
+  wor <- sampling_design() |>
+    draw(n = 10, method = "pps_test_wor", mos = size) |>
+    execute(custom_frame, seed = 1, frame_digest = "full")
+  cube <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 5, method = "balanced_test_cube", mos = size) |>
+    execute(custom_frame, seed = 1, frame_digest = "full")
+  for (s in list(wor, cube)) {
+    for (frame in list(custom_frame, NULL)) {
+      expect_error(
+        joint_expectation(s, frame),
+        "Joint inclusion probabilities are unavailable.*registered without",
+        class = "samplyr_error_joint_method_unsupported"
+      )
+    }
+    row <- joint_route_row(s, custom_frame)
+    expect_identical(row$status, "refused")
+    expect_identical(row$class, "samplyr_error_joint_method_unsupported")
+    expect_match(row$note, "registered without joint_fn")
+  }
+
+  wr <- sampling_design() |>
+    draw(n = 10, method = "pps_test_wr", mos = size) |>
+    execute(custom_frame, seed = 1, frame_digest = "full")
+  for (frame in list(custom_frame, NULL)) {
+    expect_error(
+      joint_expectation(wr, frame),
+      "Joint expected hits are unavailable.*registered without",
+      class = "samplyr_error_joint_method_unsupported"
+    )
+  }
+})
+
+test_that("a registered joint_fn supplies the matrix and is not called approximate", {
+  on.exit(sondage::unregister_method("test_wor"), add = TRUE)
+  calls <- new.env()
+  calls$n <- 0L
+  sondage::register_method(
+    "test_wor", "wor", sample_fn = toy_wor_fn,
+    joint_fn = function(pik, sample_idx = NULL, ...) {
+      calls$n <- calls$n + 1L
+      toy_joint_fn(pik, sample_idx)
+    },
+    probabilities = "exact"
+  )
+  s <- sampling_design() |>
+    draw(n = 10, method = "pps_test_wor", mos = size) |>
+    execute(custom_frame, seed = 1, frame_digest = "full")
+
+  from_frame <- joint_expectation(s, custom_frame)$stage_1
+  from_digest <- joint_expectation(s)$stage_1
+  expect_identical(calls$n, 2L)
+  pik <- 1 / s$.weight
+  expect_equal(unname(from_frame), toy_joint_fn(pik))
+  expect_equal(from_digest, from_frame)
+
+  row <- joint_route_row(s, custom_frame)
+  expect_identical(row$status, "supported")
+  expect_identical(row$note, NA_character_)
+})
+
+test_that("joint_expectation() refuses a method no longer registered", {
+  on.exit(sondage::unregister_method("test_wor"), add = TRUE)
+  sondage::register_method(
+    "test_wor", "wor", sample_fn = toy_wor_fn, joint_fn = toy_joint_fn,
+    probabilities = "exact"
+  )
+  s <- sampling_design() |>
     draw(n = 10, method = "pps_test_wor", mos = size) |>
     execute(custom_frame, seed = 1)
+  sondage::unregister_method("test_wor")
 
-  expect_error(joint_expectation(result, custom_frame), "not implemented")
+  expect_error(
+    joint_expectation(s, custom_frame),
+    "not registered in this session",
+    class = "samplyr_error_unknown_method"
+  )
 })
 
 test_that("joint_expectation() forwards nsim to registered WR joint_fn", {
@@ -637,6 +728,60 @@ test_that("a method declaring spread still requires coordinates", {
     "requires.*spread",
     class = "samplyr_error_draw_method_argument"
   )
+  expect_error(
+    sampling_design() |> draw(n = 10, method = "balanced_test_both"),
+    "register the function again under another name",
+    class = "samplyr_error_draw_method_argument"
+  )
+
+  builtin <- tryCatch(
+    sampling_design() |> draw(n = 10, method = "lpm2"),
+    samplyr_error_draw_method_argument = function(e) e
+  )
+  expect_s3_class(builtin, "samplyr_error_draw_method_argument")
+  expect_match(conditionMessage(builtin), "requires.*spread")
+  expect_no_match(conditionMessage(builtin), "register the function again")
+})
+
+test_that("a second registration without spread draws with aux alone", {
+  on.exit(sondage::unregister_method("test_opt_spread"), add = TRUE)
+  on.exit(sondage::unregister_method("test_opt_aux"), add = TRUE)
+  received <- new.env()
+  optional_spread_fn <- function(pik, aux = NULL, spread = NULL, ...) {
+    received$aux <- aux
+    received$spread <- spread
+    sondage::balanced_wor(pik, aux = aux)$sample
+  }
+  sondage::register_method(
+    "test_opt_spread", "balanced",
+    sample_fn = optional_spread_fn,
+    supports_spread = TRUE,
+    probabilities = "exact"
+  )
+  sondage::register_method(
+    "test_opt_aux", "balanced",
+    sample_fn = optional_spread_fn,
+    probabilities = "exact"
+  )
+
+  expect_error(
+    sampling_design() |>
+      draw(n = 10, method = "balanced_test_opt_spread", aux = size),
+    "requires.*spread",
+    class = "samplyr_error_draw_method_argument"
+  )
+
+  s_aux <- sampling_design() |>
+    draw(n = 10, method = "balanced_test_opt_aux", aux = size) |>
+    execute(custom_frame, seed = 42)
+  expect_equal(as.numeric(received$aux), custom_frame$size)
+  expect_null(received$spread)
+
+  s_cube <- sampling_design() |>
+    draw(n = 10, method = "cube", aux = size) |>
+    execute(custom_frame, seed = 42)
+  expect_identical(sort(s_aux$id), sort(s_cube$id))
+  expect_equal(s_aux$.weight, s_cube$.weight)
 })
 
 test_that("a spread-only registration still refuses aux", {
@@ -656,6 +801,27 @@ test_that("a spread-only registration still refuses aux", {
     "does not support ordinary auxiliary",
     class = "samplyr_error_draw_method_argument"
   )
+})
+
+test_that("a registered spatial method keeps the spread refusal", {
+  on.exit(sondage::unregister_method("test_sp"), add = TRUE)
+  sondage::register_method(
+    "test_sp", "balanced", sample_fn = toy_spatial_balanced_fn,
+    supports_spread = TRUE, joint_fn = toy_joint_fn,
+    variance_family = "pps_brewer", probabilities = "exact"
+  )
+  s <- sampling_design() |>
+    draw(n = 10, method = "balanced_test_sp", mos = size, spread = prn_col) |>
+    execute(custom_frame, seed = 1)
+
+  expect_error(
+    joint_expectation(s, custom_frame),
+    "spatial spreading",
+    class = "samplyr_error_joint_method_unsupported"
+  )
+  row <- joint_route_row(s, custom_frame)
+  expect_identical(row$status, "refused")
+  expect_match(row$note, "declared constraints")
 })
 
 strata_frame <- data.frame(

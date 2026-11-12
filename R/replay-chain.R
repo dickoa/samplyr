@@ -162,12 +162,18 @@ chain_predecessor <- function(view) {
     if (!"stages_executed" %in% names(parent)) {
       return(list(transition = "continuation", view = NULL))
     }
+    multi_hit <- any(vapply(
+      parent$stages_executed,
+      function(k) is_multi_hit_method(view$design$stages[[k]]$draw_spec),
+      logical(1)
+    ))
     return(list(transition = "continuation", view = list(
       seed = parent$seed,
       stages_executed = parent$stages_executed,
       meta = parent,
       design = view$design,
-      modified = isTRUE(parent$realization_modified)
+      modified = isTRUE(parent$realization_modified) ||
+        (multi_hit && isTRUE(parent$reordered))
     )))
   }
   prev <- view$meta$prev_phase
@@ -184,7 +190,8 @@ chain_predecessor <- function(view) {
   }
   list(transition = transition, view = chain_view_of_sample(
     prev$sample,
-    modified = !sample_realization_status(prev$sample)$ok
+    modified = !sample_realization_status(prev$sample)$ok ||
+      (identical(transition, "phase") && !sample_order_intact(prev$sample))
   ))
 }
 
@@ -205,7 +212,8 @@ chain_call_of_view <- function(view) {
       meta$frame_schedule, view$stages_executed
     )$stages,
     n_selected = meta$n_selected,
-    reps = meta$reps,
+    reps = meta$extracted_from$reps %||% meta$reps,
+    replicate = meta$extracted_from$replicate,
     panels = meta$panels,
     panel_assignment = if (!is_null(meta$panel_assignment)) {
       encode_panel_assignment(meta$panel_assignment)
@@ -243,6 +251,9 @@ encode_execution_chain <- function(chain) {
     if (!is_null(cl$seed)) out$seed <- as.integer(cl$seed)
     if (!is_null(cl$n_selected)) out$n_selected <- as.integer(cl$n_selected)
     if (!is_null(cl$reps)) out$reps <- as.integer(cl$reps)
+    if (!is_null(cl[["replicate"]])) {
+      out$replicate <- as.integer(cl[["replicate"]])
+    }
     if (!is_null(cl$panels)) out$panels <- as.integer(cl$panels)
     out$panel_assignment <- cl$panel_assignment
     out$frames <- encode_frame_schedule(cl$frames)
@@ -275,6 +286,9 @@ decode_execution_chain <- function(entries, final_design, call = caller_env()) {
       stages = as.integer(unlist(entry$stages)),
       n_selected = entry$n_selected,
       reps = if (length(entry$reps) > 0) as.integer(entry$reps),
+      replicate = if (length(entry[["replicate"]]) > 0) {
+        as.integer(entry[["replicate"]])
+      },
       panels = if (length(entry$panels) > 0) entry$panels,
       panel_assignment = entry$panel_assignment,
       frames = decode_frame_schedule(entry$frames),
@@ -389,6 +403,7 @@ flatten_chain_frames <- function(frame, counts, labels = NULL,
 #' already carries an assignment, and replicates on a replicated input.
 #' @noRd
 replay_execution_chain <- function(calls, frames, frame_digest = "summary",
+                                   fingerprint = "error",
                                    call = caller_env()) {
   counts <- chain_frame_counts(calls)
   offsets <- cumsum(c(0L, counts))
@@ -426,13 +441,41 @@ replay_execution_chain <- function(calls, frames, frame_digest = "summary",
         abort_samplyr(
           c(
             "The first recorded call drew a new phase from an earlier
-             sample, which was modified before that phase was drawn.",
-            "i" = "Supply that modified sample, as the {.cls tbl_sample} the
+             sample, which was modified or reordered before that phase was
+             drawn.",
+            "i" = "Supply that earlier sample, as the {.cls tbl_sample} the
                    phase was drawn from, as its frame."
           ),
           class = "samplyr_error_replay_phase_frame",
           call = call
         )
+      }
+      if (
+        k == 1L &&
+          identical(cl$transition, "phase") &&
+          !is_null(cl$input_hash) &&
+          !identical(fingerprint, "ignore") &&
+          !identical(frame_content_hash(input), cl$input_hash)
+      ) {
+        msg <- c(
+          "The supplied {.arg frame} differs from the earlier-phase sample
+           recorded with the design.",
+          "*" = "Row values or row order differ from the sample this phase
+                 was drawn from.",
+          "i" = "The replay yields a valid sample from this frame, but
+                 not the recorded one."
+        )
+        if (identical(fingerprint, "error")) {
+          abort_samplyr(
+            msg,
+            class = "samplyr_error_replay_frame_mismatch",
+            call = call
+          )
+        } else if (identical(fingerprint, "warn")) {
+          cli_warn(msg, class = "samplyr_warning_replay_frame_mismatch")
+        } else {
+          cli::cli_inform(msg, class = "samplyr_message_replay_frame_mismatch")
+        }
       }
       record <- prepare_panel_record(cl$panel_assignment, "A replay")
       panels <- decode_panel_argument(cl, record)
@@ -467,6 +510,8 @@ replay_execution_chain <- function(calls, frames, frame_digest = "summary",
         phase = run(cl$design, input)
       ), call = call)
     }
+    result <- replay_extract_replicate(result, cl[["replicate"]], cl$reps,
+                                       call = call)
     result <- replay_reserve_settlement(result, cl$settlement, call = call)
     n_recorded <- cl$n_selected
     if (!is_null(n_recorded) && nrow(result) != as.integer(n_recorded)) {

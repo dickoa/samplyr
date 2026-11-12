@@ -1501,6 +1501,13 @@ protected_values_hash <- function(data, cols) {
   rlang::hash(vals)
 }
 
+#' Whether a sample's rows remain in their execution order
+#' @noRd
+sample_order_intact <- function(x) {
+  ids <- x[[".sample_id"]]
+  !is_null(ids) && !anyNA(ids) && !is.unsorted(ids, strictly = TRUE)
+}
+
 #' Integrity record for an executed sample
 #'
 #' Authoritative over the per-operation marks, which many table operations
@@ -1686,17 +1693,36 @@ mark_sample_modified <- function(x, what) {
   x
 }
 
-#' Modifications recorded on a tbl_sample
+#' Logged modifications written directly to metadata$modified
+#' @noRd
+sample_logged_modifications <- function(x) {
+  attr(x, "metadata")$modified %||% character(0)
+}
+
+#' Modifications recorded or detected by integrity verification on a tbl_sample
 #' @return Character vector, subset of c("rows", "columns", "values").
 #' @noRd
 sample_modifications <- function(x) {
-  attr(x, "metadata")$modified %||% character(0)
+  mods <- sample_logged_modifications(x)
+  if (length(mods) > 0L) {
+    return(mods)
+  }
+  integrity <- attr(x, "metadata")$integrity
+  if (is_null(integrity)) {
+    return(mods)
+  }
+  status <- verify_sample_integrity(x, integrity)
+  if (identical(status, "ok") || is_complete_replicate(x)) {
+    return(character(0))
+  }
+  status
 }
 
 #' Test whether a row-modified sample is exactly one complete replicate
 #'
 #' Exempts `filter(.replicate == 1)` from the modified-rows check when the rows
-#' match their `.sample_id` block and stored per-replicate hash.
+#' match their `.sample_id` block and stored per-replicate hash. It needs a
+#' row, since only a row names the replicate.
 #' @noRd
 is_complete_replicate <- function(x) {
   meta <- attr(x, "metadata")
@@ -1717,9 +1743,6 @@ is_complete_replicate <- function(x) {
     return(FALSE)
   }
   ids <- x$.sample_id
-  if (length(ids) == 0L) {
-    return(counts[pos] == 0L)
-  }
   end <- sum(counts[seq_len(pos)])
   start <- end - counts[pos] + 1L
   structural_ok <- !anyNA(ids) &&
@@ -1742,6 +1765,110 @@ is_complete_replicate <- function(x) {
   TRUE
 }
 
+#' The replicate a sample was extracted as, or NULL
+#'
+#' A sample that records `extracted_from` was made one sample already. An
+#' unmade extraction is one complete replicate of a stack whose rows were
+#' changed, by `filter(.replicate == r)` or base indexing, since an
+#' unfiltered stack with empty replicates also holds one replicate's rows
+#' and stays a stack.
+#' @noRd
+extracted_replicate_id <- function(x) {
+  meta <- attr(x, "metadata")
+  if (!is_null(meta$extracted_from)) {
+    return(as.integer(meta$extracted_from$replicate))
+  }
+  if (length(meta$replicate_rows) < 2L || !is_complete_replicate(x)) {
+    return(NULL)
+  }
+  changed <- "rows" %in% sample_logged_modifications(x) ||
+    (!is_null(meta$integrity) &&
+       identical(verify_sample_integrity(x, meta$integrity), "rows"))
+  if (!changed) {
+    return(NULL)
+  }
+  as.integer(unique(x$.replicate))
+}
+
+#' How far a replicate's `.sample_id` runs past its digest's row numbers
+#'
+#' A digest numbers the selected rows of each replicate from 1, while
+#' `.sample_id` keeps the stack's numbering. The offset is recorded when the
+#' replicate becomes a sample of its own, since a settlement can drop its
+#' first rows afterwards, and read from the rows of an unmade extraction. It
+#' is 0 for any other sample.
+#' @noRd
+replicate_sample_id_offset <- function(x) {
+  offset <- attr(x, "metadata")$extracted_from$sample_id_offset
+  if (!is_null(offset)) {
+    return(as.integer(offset))
+  }
+  ids <- x[[".sample_id"]]
+  if (length(ids) > 0L && !is_null(extracted_replicate_id(x))) {
+    return(as.integer(min(ids)) - 1L)
+  }
+  0L
+}
+
+#' Make one complete replicate of a stack a sample of its own
+#'
+#' Used where a transformation rebuilds a sample's metadata: a settlement, a
+#' weight share, a continuation and a new phase. The stack's counts, seeds
+#' and modification mark leave the current state, its empty parents and
+#' frame digest are cut to the replicate, and the integrity record is
+#' rebuilt from the rows, so a later edit is caught as on any sample. Only
+#' `extracted_from` keeps the stack, for a receipt to replay. `.replicate`
+#' and `.sample_id` keep their stack values.
+#'
+#' A replay names the replicate it kept as `r`, since an empty replicate,
+#' which a replay on another frame can draw, has no row to name it. `r` is
+#' taken as given only for such an empty replicate. A replicate with rows is
+#' verified from them.
+#' @noRd
+normalize_extracted_replicate <- function(x, r = NULL) {
+  meta <- attr(x, "metadata")
+  if (!is_null(meta$extracted_from)) {
+    return(x)
+  }
+  counts <- meta$replicate_rows
+  empty <- !is_null(r) && nrow(x) == 0L && length(counts) >= 2L &&
+    identical(unname(counts[as.character(r)]), 0L)
+  if (!empty) {
+    r <- extracted_replicate_id(x)
+  }
+  if (is_null(r)) {
+    return(x)
+  }
+  r <- as.integer(r)
+  meta$extracted_from <- list(
+    replicate = r,
+    reps = as.integer(meta$reps %||% length(counts)),
+    # Digest traces number rows within the replicate, from 1.
+    sample_id_offset = if (empty) {
+      as.integer(sum(counts[seq_len(r - 1L)]))
+    } else {
+      as.integer(min(x$.sample_id)) - 1L
+    }
+  )
+  meta$reps <- NULL
+  meta$replicate_rows <- NULL
+  meta$replicate_seeds <- NULL
+  meta$replicates_complete <- NULL
+  meta$modified <- NULL
+  own <- function(ep) {
+    rep_of <- ep$replicate %||% NA
+    is.na(rep_of) || identical(as.integer(rep_of), r)
+  }
+  meta$empty_parents <- Filter(own, meta$empty_parents %||% list())
+  meta$frame_digest <- scope_digest_to_replicate(meta$frame_digest, r)
+  meta$n_selected <- nrow(x)
+  meta$integrity <- sample_integrity_record(
+    x, get_design(x), get_stages_executed(x)
+  )
+  attr(x, "metadata") <- meta
+  x
+}
+
 #' Integrity-aware realization status of a tbl_sample
 #'
 #' The integrity record decides when present, overriding the marks either way.
@@ -1753,7 +1880,7 @@ is_complete_replicate <- function(x) {
 #'   integrity failure.
 #' @noRd
 sample_realization_status <- function(x) {
-  mods <- sample_modifications(x)
+  mods <- sample_logged_modifications(x)
   meta <- attr(x, "metadata")
   integrity <- meta$integrity
   parent <- meta$continued_from

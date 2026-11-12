@@ -204,6 +204,11 @@ shared_sample_format_version <- 1L
 #' arguments, RNG kind, how it used the call before it, and, for a call
 #' followed by a new phase, its own design.
 #'
+#' One replicate kept from a stack with `filter(.replicate == r)` is
+#' recorded as `replicate`, with the stack's `reps`, on the call whose result
+#' was filtered. [replay_design()] replays the stack and keeps that
+#' replicate, then replays any settlement or later call.
+#'
 #' A sample whose rows or design columns were modified after execution is
 #' flagged `modified`, and its receipt describes the original execution. A
 #' new phase drawn from a modified sample is recorded from that phase on,
@@ -491,6 +496,9 @@ read_design <- function(file) {
 #' call and each continuation read the frames given here, a new phase reads
 #' the phase replayed before it, and an occasion reads its replayed master.
 #' Inherited panels and replicates are carried rather than declared again.
+#' A call recorded with `replicate` keeps that replicate of its replayed
+#' stack before its settlement or the next call, and a replicate the call
+#' did not draw is `samplyr_error_replay_replicate`.
 #' The fingerprints cover every call's frames, and the row count is checked
 #' after each call. An earlier call run without a seed is
 #' `samplyr_error_receipt_no_seed`. When a new phase was drawn from a sample
@@ -644,6 +652,7 @@ replay_design <- function(
   }
   check_replay_link_args(links, targets, "an ordinary sample or design")
   if (is_tbl_sample(x)) {
+    x <- normalize_extracted_replicate(x)
     design <- get_design(x)
     receipt <- encode_execution(x)
     final <- occasion_draw_final_call(x)
@@ -701,12 +710,21 @@ replay_design <- function(
 
   calls <- NULL
   if (isTRUE(receipt$chained) && !is_null(receipt[["earlier_calls"]])) {
+    earlier <- if (is_tbl_sample(x)) {
+      execution_chain(x)$calls
+    } else {
+      decode_execution_chain(receipt[["earlier_calls"]], design)
+    }
+    input_hash <- if (
+      is_tbl_sample(x) &&
+        length(earlier) == 0L &&
+        identical(decode_chr(receipt$transition), "phase") &&
+        is_tbl_sample(attr(x, "metadata")$prev_phase$sample)
+    ) {
+      frame_content_hash(attr(x, "metadata")$prev_phase$sample)
+    }
     calls <- c(
-      if (is_tbl_sample(x)) {
-        execution_chain(x)$calls
-      } else {
-        decode_execution_chain(receipt[["earlier_calls"]], design)
-      },
+      earlier,
       list(list(
         transition = decode_chr(receipt$transition),
         seed = seed,
@@ -715,6 +733,7 @@ replay_design <- function(
         )$stages,
         n_selected = receipt$n_selected,
         reps = receipt$reps,
+        replicate = receipt[["replicate"]],
         panels = receipt$panels,
         panel_assignment = receipt$panel_assignment,
         frames = frame_record_or_default(
@@ -723,7 +742,8 @@ replay_design <- function(
         occasion = receipt$occasion,
         settlement = receipt$settlement,
         rng = execution_environment$rng,
-        design = design
+        design = design,
+        input_hash = input_hash
       ))
     )
     check_chain_seeds(calls)
@@ -799,7 +819,8 @@ replay_design <- function(
 
   if (!is_null(calls)) {
     result <- replay_execution_chain(calls, chain_frames,
-                                     frame_digest = digest_mode)
+                                     frame_digest = digest_mode,
+                                     fingerprint = fingerprint)
     if (check_digest) {
       check_replay_digest(recorded_digest, get_frame_digest(result))
     }
@@ -834,6 +855,7 @@ replay_design <- function(
       frame_digest = digest_mode
     )
   )
+  result <- replay_extract_replicate(result, receipt[["replicate"]], reps)
   result <- replay_reserve_settlement(result, receipt$settlement)
 
   n_recorded <- receipt$n_selected
@@ -2490,6 +2512,8 @@ frame_content_hash <- function(frame, columns = NULL) {
 #'   encoder.
 #' @noRd
 encode_execution <- function(sample, call = caller_env()) {
+  # One replicate of a stack is replayed from the stack, then kept.
+  sample <- normalize_extracted_replicate(sample)
   meta <- attr(sample, "metadata") %||% list()
   if (isTRUE(meta[["occasion"]]$provisional)) {
     abort_samplyr(
@@ -2533,6 +2557,10 @@ encode_execution <- function(sample, call = caller_env()) {
     )
   }
   receipt$reps <- meta$reps
+  if (!is_null(meta$extracted_from)) {
+    receipt$reps <- as.integer(meta$extracted_from$reps)
+    receipt$replicate <- as.integer(meta$extracted_from$replicate)
+  }
   if (!is_null(meta$replicate_seeds)) {
     receipt$replicate_seeds <- I(as.integer(meta$replicate_seeds))
   }
@@ -2590,6 +2618,42 @@ encode_execution <- function(sample, call = caller_env()) {
     receipt$frame_digest <- digest
   }
   receipt
+}
+
+#' Keep the replicate a receipt selects from the replayed stack
+#'
+#' Filters as `filter(.replicate == r)` does, so the result is a verified
+#' extraction with its stack ids, then makes it a sample of its own, as the
+#' recorded sample was. A receipt names only a replicate that held rows, but
+#' on another frame, under `fingerprint = "warn"` or weaker, the replayed
+#' replicate can be empty. It then becomes an empty sample, as the same draw
+#' run on its own gives.
+#' @noRd
+replay_extract_replicate <- function(sample, replicate, reps,
+                                     call = caller_env()) {
+  if (is_null(replicate)) {
+    return(sample)
+  }
+  r <- suppressWarnings(as.integer(replicate))
+  n <- if (length(reps) == 1L) suppressWarnings(as.integer(reps)) else NA
+  if (length(r) != 1L || is.na(r) || is.na(n) || r < 1L || r > n ||
+        !".replicate" %in% names(sample)) {
+    abort_samplyr(
+      c(
+        "The receipt selects replicate {.val {replicate}}, which the replayed
+         execution does not hold.",
+        "i" = if (is.na(n)) {
+          "It records no replicates for that call."
+        } else {
+          "That call drew {n} replicate{?s}."
+        }
+      ),
+      class = "samplyr_error_replay_replicate",
+      call = call
+    )
+  }
+  out <- dplyr::filter(sample, .data$.replicate == r)
+  normalize_extracted_replicate(out, r = r)
 }
 
 #' Was the settlement made by this call, rather than carried from a parent?

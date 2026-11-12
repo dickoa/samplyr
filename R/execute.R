@@ -278,7 +278,11 @@ NULL
 #'   with `panels` or with stages that use permanent random numbers. A
 #'   replicated sample continued, or used as a phase-2 frame, carries its
 #'   replicates into the stages run now, and these cannot use permanent
-#'   random numbers either.
+#'   random numbers either. One replicate kept with
+#'   `filter(.replicate == r)` exports as a sample of its own. Once settled,
+#'   shared with [share_weights()], continued or used as a phase-2 frame, it
+#'   no longer counts the other replicates, and its receipt records which
+#'   replicate it was.
 #'   `as_svrepdesign(type = "random_groups")` estimates variance from the
 #'   spread of the replicates, for any selection method.
 #' @param frame_digest Controls the frame digest, a compact execution
@@ -1463,6 +1467,11 @@ execute_replicated <- function(
   call = caller_env()
 ) {
   rlang::local_error_call(call)
+  # Replicates continued from one replicate of a stack continue a sample of
+  # its own, which its parent record must name for a receipt to replay.
+  if (identical(executor, "continuation")) {
+    .data <- normalize_extracted_replicate(.data)
+  }
   local_replicate_memo()
   results <- vector("list", reps)
   rep_digests <- vector("list", reps)
@@ -1606,6 +1615,9 @@ execute_continuation <- function(
   call = caller_env()
 ) {
   rlang::local_error_call(call)
+  if (!replicate_part) {
+    sample <- normalize_extracted_replicate(sample)
+  }
   design <- get_design(sample)
   executed <- get_stages_executed(sample)
   stages <- schedule$stages
@@ -1831,6 +1843,9 @@ continuation_parent_record <- function(sample) {
   status <- sample_realization_status(sample)
   record$realization_modified <- !status$ok
   record$realization_changes <- union(status$mods, status$inherited)
+  if (!sample_order_intact(sample)) {
+    record$reordered <- TRUE
+  }
   record
 }
 
@@ -2858,6 +2873,7 @@ prepare_multiphase_frame <- function(frame) {
   check_reserve_settled(
     frame, "execute", action = "draw a new phase from", call = caller_env()
   )
+  frame <- normalize_extracted_replicate(frame)
 
   prev_phase_sample <- frame
   prev_phase <- list(
@@ -3136,6 +3152,13 @@ validate_frame_vars <- function(frame, stage_spec, call = rlang::caller_env()) {
       if (anyNA(aux_vals)) {
         cli_abort(
           "Auxiliary variable {.var {av}} contains NA values",
+          call = call,
+          class = "samplyr_error_frame_invalid"
+        )
+      }
+      if (any(is.infinite(aux_vals))) {
+        cli_abort(
+          "Auxiliary variable {.var {av}} contains infinite values",
           call = call,
           class = "samplyr_error_frame_invalid"
         )

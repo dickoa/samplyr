@@ -12,6 +12,7 @@
 ^\.lintr$
 ^\.github$
 ^revdep$
+^pkgdown$
 ^docs$
 ^public$
 ^CODE\_OF\_CONDUCT\.md$

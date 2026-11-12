@@ -63,8 +63,8 @@ test_that("serp handles NA values", {
 
   result <- df[order(serp(df$region, df$district)), ]
 
-  # NA sorts last in ascending region 1 and first in descending region 2.
-  expected_ids <- c(1, 3, 2, 5, 6, 4)
+  # NA sorts last in both ascending region 1 and descending region 2.
+  expected_ids <- c(1, 3, 2, 6, 4, 5)
 
   expect_equal(result$id, expected_ids)
 })
@@ -99,6 +99,33 @@ test_that("serp errors with mismatched lengths", {
     "same length",
     class = "samplyr_error_serp_incompatible_lengths"
   )
+  expect_error(
+    serp(1, 1:5),
+    class = "samplyr_error_serp_incompatible_lengths"
+  )
+  expect_error(
+    serp(integer(0), 1:5),
+    class = "samplyr_error_serp_incompatible_lengths"
+  )
+})
+
+test_that("serp returns dense ranks so trailing keys order ties", {
+  df <- data.frame(
+    a = c(1, 1, 2, 2),
+    b = c(1, 1, 1, NA),
+    mos = c(10, 999, 50, 60)
+  )
+  expect_identical(order(serp(df$a, df$b), -df$mos), c(2L, 1L, 3L, 4L))
+
+  frame8 <- data.frame(
+    a = rep(1:2, each = 4),
+    b = rep(c(1, 1, 2, 2), 2),
+    mos = c(1, 9, 2, 8, 3, 7, 4, 6)
+  )
+  s8 <- sampling_design() |>
+    draw(frac = 1, method = "systematic", control = c(serp(a, b), dplyr::desc(mos))) |>
+    execute(frame8, seed = 1)
+  expect_identical(s8$mos[1:2], c(9, 1))
 })
 
 
