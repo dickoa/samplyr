@@ -1,0 +1,5 @@
+/* The home page shows the README's animated hex, so the static logo that
+   pkgdown adds to every page header is hidden there. */
+.template-home .page-header > img.logo {
+  display: none;
+}
