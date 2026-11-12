@@ -3505,10 +3505,16 @@ test_that("ppsmat on fixed-size PPS WOR defaults to YG and respects explicit var
 
   svy_def <- as_svydesign(s, pps = survey::ppsmat(jip))
   expect_identical(svy_def$variance, "YG")
-  expect_equal(as.numeric(survey::SE(survey::svytotal(~y_prop, svy_def))), 0, tolerance = 1e-5)
+  # With y proportional to pi the YG form is 0 up to rounding, which can
+  # fall on either side of 0, so the variance is checked and not its root.
+  var_total <- function(svy) {
+    as.numeric(stats::vcov(survey::svytotal(~y_prop, svy)))
+  }
+  expect_lt(abs(var_total(svy_def)), 1e-10 * 250^2)
 
   svy_ht <- as_svydesign(s, pps = survey::ppsmat(jip), variance = "HT")
   expect_identical(svy_ht$variance, "HT")
+  expect_gt(var_total(svy_ht), 100)
 
   # Random-size Poisson PPS keeps HT because sample size is not fixed.
   s_pois <- sampling_design() |>
