@@ -474,7 +474,8 @@ check_phase_key_invariance <- function(schedule, design, phase_link_vars,
 
   for (entry in schedule$entries) {
     spec <- design$stages[[entry$stage]]
-    frame <- entry$frame
+    # A previous phase's sample, as the new phase reads it.
+    frame <- with_phase_carried_columns(entry$frame)
     if (is_null(spec$clusters) || !is.data.frame(frame)) {
       next
     }
@@ -496,6 +497,13 @@ check_phase_key_invariance <- function(schedule, design, phase_link_vars,
       if (n_combos == n_units) {
         next
       }
+      if (stage_reads_phase1(frame, prev_phase)) {
+        # The rows carry their own keys and positions, so a unit holding
+        # several phase-1 units links. It must lie within one primary unit.
+        check_phase2_unit_within_psu(frame, unit_vars, prev_phase, design,
+                                     entry$stage, call = call)
+        break
+      }
       abort_samplyr(
         c(
           "{.field {var}} is not constant within
@@ -515,6 +523,68 @@ check_phase_key_invariance <- function(schedule, design, phase_link_vars,
   invisible(NULL)
 }
 
+#' Does a stage read the previous phase's sample itself?
+#'
+#' Its rows are then the previous phase's rows, which carry their own
+#' identifiers and the row positions that link the phases. A register of the
+#' stage's own does not. The frame is the sample as supplied, or as
+#' prepared for the new phase with its row positions.
+#' @noRd
+stage_reads_phase1 <- function(frame, prev_phase) {
+  sample <- prev_phase$sample
+  if (!is_tbl_sample(sample) || !is.data.frame(frame)) {
+    return(FALSE)
+  }
+  if (phase_row_column(sample) %in% names(frame)) {
+    return(TRUE)
+  }
+  # Rows and values, not the execution record, which a replay rebuilds.
+  is_tbl_sample(frame) && nrow(frame) == nrow(sample) &&
+    identical(lapply(as.data.frame(frame), identity),
+              lapply(as.data.frame(sample), identity))
+}
+
+#' Refuse a phase-2 unit that spans primary units of the previous phase
+#'
+#' Phase 2 subsamples the previous phase's primary units, so a phase-2 unit
+#' holds rows of one of them. Under a stage that can repeat a unit, each hit
+#' is a primary unit of its own.
+#' @noRd
+check_phase2_unit_within_psu <- function(frame, unit_vars, prev_phase,
+                                         design, stage_idx,
+                                         call = caller_env()) {
+  design1 <- prev_phase$design
+  first1 <- (prev_phase$stages %||% seq_along(design1$stages))[1]
+  own_hit <- paste0(".draw_", first1)
+  carried_hit <- phase_draw_columns(prev_phase$sample)[own_hit]
+  units1 <- intersect(design1$stages[[first1]]$clusters$vars, names(frame))
+  # The prepared frame carries the hit number, the supplied sample its own.
+  hit <- intersect(stats::na.omit(c(carried_hit, own_hit)), names(frame))[1]
+  psu_vars <- c(units1, stats::na.omit(hit))
+  if (length(psu_vars) == 0L) {
+    return(invisible(NULL))
+  }
+  n_units <- nrow(unique(frame[, unit_vars, drop = FALSE]))
+  n_combos <- nrow(unique(frame[, unique(c(unit_vars, psu_vars)),
+                                drop = FALSE]))
+  if (n_combos == n_units) {
+    return(invisible(NULL))
+  }
+  advice <- c(units1, if (!is.na(hit)) unname(carried_hit))
+  abort_samplyr(
+    c(
+      "A unit of {stage_token(design, stage_idx)} spans more than one
+       primary unit of the previous phase.",
+      "x" = "{.field {unit_vars}} holds rows of several of the previous
+             phase's {.field {psu_vars}} units, while a phase subsamples the
+             primary units the previous phase selected.",
+      "i" = "Stratify by {.field {advice}} to draw within each of them."
+    ),
+    class = "samplyr_error_phase_cluster_spans_psu",
+    call = call
+  )
+}
+
 #' Link a stage's frame to the units its parent stage selected
 #'
 #' Replaces the earlier `subset_frame_to_sample()`, which intersected the
@@ -530,6 +600,11 @@ link_stage_frame <- function(frame, previous_sample, design, stage_idx,
                              check_coverage = TRUE,
                              call = caller_env()) {
   parent_vars <- collect_ancestor_cluster_vars(design, stage_idx)
+  # Rows of the previous phase's sample carry their own phase keys, with the
+  # row positions that link the phases, so nothing is carried by parent.
+  if (any(grepl("^\\.phase[0-9]+_row$", names(frame)))) {
+    phase_link_vars <- character(0)
+  }
 
   if (length(parent_vars) == 0) {
     abort_samplyr(
@@ -662,6 +737,101 @@ add_empty_parents <- function(records, stage, keys, rows = NULL,
     keys = as.data.frame(keys),
     rows = rows
   )))
+}
+
+#' The pools of a random-size stage in which the draw selected nothing
+#'
+#' A fixed-size stage takes at least one unit in every pool, since execution
+#' refuses a take of zero, but a random-size draw can take none from a pool
+#' that has units. That pool then leaves no row, and when it is the only
+#' pool of its parent, the parent leaves none either. A pool is a stratum of
+#' the stage within one parent (its ancestry and hit), read off the stage's
+#' linked frame, and `N` counts its units: rows, or clusters at a clustered
+#' stage. Whatever the frame digest, this is kept.
+#' @return `NULL` when the stage is of fixed size or no pool is empty, else
+#'   a list of `keys` (one row per empty pool), `N` and `parent_vars`.
+#' @noRd
+stage_empty_pools <- function(frame, result, draw_spec, split_vars,
+                              strata_vars, cluster_vars) {
+  if (!is_random_size_method(draw_spec) || nrow(frame) == 0L) {
+    return(NULL)
+  }
+  key_vars <- unique(c(split_vars, strata_vars))
+  pools <- if (length(key_vars) == 0L) {
+    vctrs::new_data_frame(list(), n = 1L)
+  } else {
+    vctrs::vec_unique(frame[key_vars])
+  }
+  empty <- if (nrow(result) == 0L) {
+    rep(TRUE, nrow(pools))
+  } else if (length(key_vars) == 0L) {
+    FALSE
+  } else {
+    !vctrs::vec_in(pools, result[key_vars])
+  }
+  if (!any(empty)) {
+    return(NULL)
+  }
+  units <- if (length(cluster_vars) > 0L) {
+    vctrs::vec_unique(frame[unique(c(key_vars, cluster_vars))])
+  } else {
+    frame
+  }
+  pool_of <- if (length(key_vars) == 0L) {
+    rep(1L, nrow(units))
+  } else {
+    vctrs::vec_match(units[key_vars], pools)
+  }
+  N <- tabulate(pool_of, nbins = nrow(pools))
+  list(
+    keys = as.data.frame(vctrs::vec_slice(pools, empty)),
+    N = N[empty],
+    parent_vars = split_vars
+  )
+}
+
+#' Record the pools a random-size stage left empty
+#'
+#' Kept with the sample's metadata in the shape of `add_empty_parents()`,
+#' with `N` per pool and, below stage 1, the rows of each pool's parent in
+#' the sample of the stage above, one per hit.
+#' @param found From `stage_empty_pools()`.
+#' @param previous_sample The sample of the stage above, `NULL` at stage 1.
+#' @noRd
+add_empty_pools <- function(records, stage, found, previous_sample) {
+  if (is_null(found)) {
+    return(records)
+  }
+  parent <- intersect(found$parent_vars, names(previous_sample))
+  rows <- if (!is_null(previous_sample) && length(parent) > 0L) {
+    as.data.frame(vctrs::vec_slice(
+      previous_sample,
+      vctrs::vec_in(previous_sample[parent], found$keys[parent])
+    ))
+  }
+  c(records, list(list(
+    stage = as.integer(stage),
+    replicate = NA_integer_,
+    n = nrow(found$keys),
+    keys = found$keys,
+    N = found$N,
+    rows = rows
+  )))
+}
+
+#' Add a replicate's new empty pools to the carried record
+#'
+#' A record that is unknown on either side, `NULL`, stays unknown.
+#' @param inherited The records the replicate's run started from.
+#' @noRd
+carry_empty_pools <- function(records, result_records, inherited,
+                              replicate) {
+  if (is_null(records) || is_null(result_records)) {
+    return(NULL)
+  }
+  added <- result_records[setdiff(seq_along(result_records),
+                                  seq_along(inherited))]
+  c(records, tag_empty_parents(added, replicate))
 }
 
 #' @noRd

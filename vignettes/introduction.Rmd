@@ -161,18 +161,19 @@ screened <- execute(screening, bfa_eas, seed = 25)
 nrow(screened)
 ```
 
-Declare it whenever a second phase may later subsample this sample. The
-survey export links the two phases on every identifier that either design
-declares with `cluster_by()` and both samples carry, taken together. The
-phases need not declare the same identifier, but together the identifiers
-must pick out unique phase-1 rows. An ID column neither design names does not link them, so the
-survey export of the second phase would be refused.
+A second phase drawn from this sample needs no identifier. Each of its rows
+records the phase-1 row it was drawn from, and the survey export links the
+two phases on it. An identifier is needed only when a later stage of the
+second phase draws from a register of its own, whose rows carry no such
+position. The export then links the phases on every identifier that either
+design declares with `cluster_by()` and both samples carry, taken together,
+and those must pick out unique phase-1 rows.
 
-One shape needs no identifier. Phase 1's last stage draws elements by simple
-random or systematic sampling, and phase 2 draws the same way with one
-stratum per pool of that stage. Such a second phase exports as phase 1's
-design with a smaller final take. The examples in `?execute` select a second
-phase, and `?as_svydesign` gives its export.
+When phase 1's last stage draws elements by simple random or systematic
+sampling, and phase 2 draws the same way with one stratum per pool of that
+stage, the second phase exports as phase 1's design with a smaller final
+take. The examples in `?execute` select a second phase, and `?as_svydesign`
+gives its export.
 
 ## A three-stage household sample
 
@@ -362,7 +363,7 @@ setequal(first$ea_id, second$ea_id)
 
 The seeds differ, but the samples do not. `?draw` gives the methods that
 accept `prn` and what fixes an `scps` selection. The book chapter
-[Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/prn-coordination.html)
+[Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/21-prn-coordination.html)
 covers negative coordination, register updates and response burden.
 
 ## Inspecting the result
@@ -398,16 +399,16 @@ Use the other articles when their task arises:
 
 | Task | Where |
 |:--|:--|
-| Choose sizes and allocations before selection | `vignette("svyplan", package = "svyplan")`, then [Precision targets and sample size](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/sample-size.html) |
-| Coordinate new draws with permanent random numbers | `?draw`, argument `prn`, and [Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/prn-coordination.html) |
-| Schedule panels and refreshment selections | `?panel_assignment`, `?rotation_program`, and [Rotating panels and master samples](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/panels-master-samples.html) |
+| Choose sizes and allocations before selection | `vignette("svyplan", package = "svyplan")`, then [Precision targets and sample size](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/08-sample-size.html) |
+| Coordinate new draws with permanent random numbers | `?draw`, argument `prn`, and [Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/21-prn-coordination.html) |
+| Schedule panels and refreshment selections | `?panel_assignment`, `?rotation_program`, and [Rotating panels and master samples](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/20-panels-master-samples.html) |
 | Spread fieldwork over months or quarters | `?subrounds` |
 | Save or replay a design | `vignette("serialization")` |
 
 For a method lookup, use `?selection_methods`, and for how each method's
 variance is estimated, `?variance_estimation`. Consult
 `vignette("design-semantics")` for the underlying contracts and
-[Virtual surveys](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/virtual-surveys.html)
+[Virtual surveys](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/06-virtual-surveys.html)
 for simulation diagnostics. The book
 [Survey Sampling Design with R](https://www.ahmadoudicko.com/sampling-design-r-book/) collects these
 chapters with the `svyplan` planning guides.

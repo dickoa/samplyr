@@ -75,6 +75,11 @@ fix_pps_chromy <- sampling_design() |>
   draw(n = 8, method = "pps_chromy", mos = mos) |>
   execute(test_frame, seed = 42)
 
+# Systematic PPS with minimum replacement, n = 8
+fix_pps_systematic_mr <- sampling_design() |>
+  draw(n = 8, method = "pps_systematic_mr", mos = mos) |>
+  execute(test_frame, seed = 42)
+
 # Synthetic three-stage frame: 3 regions x 4 districts, villages per
 # district cycling 4-7 with alternating phc strata, compounds per
 # village cycling 2-12. Purely arithmetic (no RNG, no stored data):

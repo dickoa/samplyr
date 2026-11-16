@@ -380,3 +380,183 @@ test_that("replicated stacks without empty replicates flow to later phases", {
   phase2 <- sampling_design() |> draw(n = 1) |> execute(phase1, seed = 3)
   expect_identical(length(unique(phase2$.replicate)), 4L)
 })
+
+## The pools a random-size draw left empty
+
+# The pools of a stage that the sample reached, from the frame and the
+# sample alone: those of the frame no selected row belongs to.
+missed_pools <- function(frame, sample, vars) {
+  pools <- unique(frame[vars])
+  taken <- unique(as.data.frame(sample)[vars])
+  key <- function(d) do.call(paste, c(unname(as.list(d)), sep = "\r"))
+  missed <- pools[!key(pools) %in% key(taken), , drop = FALSE]
+  missed <- missed[do.call(order, unname(as.list(missed))), , drop = FALSE]
+  rownames(missed) <- NULL
+  missed
+}
+record_keys <- function(r, vars) {
+  keys <- r$keys[vars]
+  keys <- keys[do.call(order, unname(as.list(keys))), , drop = FALSE]
+  rownames(keys) <- NULL
+  keys
+}
+
+test_that("a random-size draw that selected nothing in a pool is recorded", {
+  frame <- data.frame(st = c("a", rep("b", 4)), id = 1:5,
+                      mos = c(100, 1, 1, 1, 1))
+  fr <- data.frame(st = c("a", "b"), frac = c(1, 0.1))
+  bernoulli <- sampling_design() |> stratify_by(st) |>
+    draw(frac = fr, method = "bernoulli", on_empty = "silent")
+  seed <- Find(function(s) {
+    all(execute(bernoulli, frame, seed = s)$st == "a")
+  }, 1:50)
+  expect_false(is.null(seed))
+  records <- lapply(c("summary", "full", "none"), function(digest) {
+    attr(execute(bernoulli, frame, seed = seed, frame_digest = digest),
+         "metadata")$empty_pools
+  })
+  # The record does not depend on the digest.
+  expect_identical(records[[2]], records[[1]])
+  expect_identical(records[[3]], records[[1]])
+  r <- records[[1]]
+  expect_length(r, 1L)
+  expect_identical(r[[1]]$stage, 1L)
+  expect_identical(r[[1]]$keys, data.frame(st = "b"))
+  expect_identical(r[[1]]$N, 4L)
+  expect_null(r[[1]]$rows)
+
+  # A fixed-size stage takes a unit in every pool, so it records none.
+  srs <- execute(sampling_design() |> stratify_by(st) |> draw(n = 1),
+                 frame, seed = 1)
+  expect_identical(attr(srs, "metadata")$empty_pools, list())
+  # Poisson proportional to size and a custom random-size method.
+  on.exit(sondage::unregister_method("rs_custom"), add = TRUE)
+  sondage::register_method(
+    "rs_custom", "wor",
+    sample_fn = function(pik, n = NULL, prn = NULL, ...) {
+      which(stats::runif(length(pik)) < pik)
+    },
+    fixed_size = FALSE, probabilities = "exact"
+  )
+  sizes <- data.frame(st = c("a", "b"), n = c(1, 0.1))
+  for (method in c("pps_poisson", "pps_rs_custom")) {
+    design <- sampling_design() |> stratify_by(st) |>
+      draw(n = sizes, method = method, mos = mos, on_empty = "silent")
+    s <- execute(design, frame, seed = 1)
+    expect_identical(
+      lapply(attr(s, "metadata")$empty_pools, `[[`, "keys"),
+      if (any(s$st == "b")) list() else list(data.frame(st = "b")),
+      info = method
+    )
+  }
+})
+
+test_that("an empty pool below stage 1 keeps its parent's rows", {
+  psu <- data.frame(psu = 1:4)
+  hh <- data.frame(psu = rep(1:4, each = 4), st = rep(c("a", "b"), 8),
+                   id = 1:16, y = 1)
+  design <- sampling_design() |> cluster_by(psu) |> draw(n = 3) |>
+    add_stage() |> stratify_by(st) |>
+    draw(frac = 0.3, method = "bernoulli", on_empty = "silent")
+  reached <- FALSE
+  for (seed in 1:20) {
+    s <- execute(design, psu, hh, seed = seed)
+    r <- attr(s, "metadata")$empty_pools
+    if (nrow(s) == 0L) next
+    # The selected clusters, those emptied whole included, from stage 1.
+    first <- execute(design, psu, seed = seed, stages = 1)
+    want <- missed_pools(hh[hh$psu %in% first$psu, ], s, c("psu", "st"))
+    if (nrow(want) == 0L) {
+      expect_identical(r, list(), info = paste(seed))
+      next
+    }
+    reached <- TRUE
+    expect_length(r, 1L)
+    expect_identical(r[[1]]$stage, 2L)
+    expect_identical(record_keys(r[[1]], c("psu", "st")), want,
+                     info = paste(seed))
+    expect_identical(r[[1]]$N, rep(2L, nrow(want)), info = paste(seed))
+    expect_setequal(r[[1]]$rows$psu, unique(want$psu))
+  }
+  expect_true(reached)
+
+  # Below a stage drawn with replacement, a pool is one hit of its parent.
+  wr <- sampling_design() |> cluster_by(psu) |> draw(n = 4, method = "srswr") |>
+    add_stage() |> draw(frac = 0.2, method = "bernoulli", on_empty = "silent")
+  reached <- FALSE
+  for (seed in 1:30) {
+    first <- execute(wr, psu, seed = seed, stages = 1)
+    s <- execute(first, hh, seed = seed + 100)
+    r <- attr(s, "metadata")$empty_pools
+    hits <- unique(as.data.frame(first)[c("psu", ".draw_1")])
+    taken <- unique(as.data.frame(s)[c("psu", ".draw_1")])
+    want <- missed_pools(hits, taken, c("psu", ".draw_1"))
+    if (nrow(want) == 0L || nrow(s) == 0L) next
+    reached <- TRUE
+    expect_identical(record_keys(r[[1]], c("psu", ".draw_1")), want,
+                     info = paste(seed))
+    expect_identical(nrow(r[[1]]$rows), nrow(want), info = paste(seed))
+  }
+  expect_true(reached)
+})
+
+test_that("the empty-pool record follows the sample wherever it goes", {
+  frame <- data.frame(st = rep(c("a", "b"), each = 4), id = 1:8)
+  design <- sampling_design() |> stratify_by(st) |>
+    draw(frac = 0.15, method = "bernoulli", on_empty = "silent")
+  # Replicates: each record names its replicate, and an extracted
+  # replicate keeps its own.
+  s <- execute(design, frame, seed = 3, reps = 4)
+  r <- attr(s, "metadata")$empty_pools
+  for (k in 1:4) {
+    mine <- Filter(function(e) identical(e$replicate, k), r)
+    rows <- as.data.frame(s)[s$.replicate == k, ]
+    want <- missed_pools(frame, rows, "st")
+    got <- if (length(mine)) {
+      record_keys(mine[[1]], "st")
+    } else {
+      want[0, , drop = FALSE]
+    }
+    expect_identical(got, want, info = paste(k))
+  }
+  expect_true(length(r) > 0L)
+  # A replicate that drew nothing has no row to name it, so it is passed.
+  for (k in 1:4) {
+    one <- samplyr:::normalize_extracted_replicate(
+      dplyr::filter(s, .data$.replicate == k), r = k
+    )
+    mine <- Filter(function(e) identical(e$replicate, k), r)
+    expect_identical(attr(one, "metadata")$empty_pools, mine,
+                     info = paste(k))
+  }
+
+  # Continuation keeps stage 1's record and adds stage 2's.
+  psu <- data.frame(psu = 1:3, st = c("a", "a", "b"))
+  hh <- data.frame(psu = rep(1:3, each = 3), id = 1:9)
+  two <- sampling_design() |> stratify_by(st) |> cluster_by(psu) |>
+    draw(frac = 0.4, method = "bernoulli", on_empty = "silent") |>
+    add_stage() |> draw(frac = 0.3, method = "bernoulli", on_empty = "silent")
+  seed <- Find(function(k) {
+    first <- execute(two, psu, seed = k, stages = 1)
+    nrow(first) > 0L && length(attr(first, "metadata")$empty_pools) > 0L
+  }, 1:60)
+  expect_false(is.null(seed))
+  first <- execute(two, psu, seed = seed, stages = 1)
+  later <- execute(first, hh, seed = 1)
+  stages <- vapply(attr(later, "metadata")$empty_pools, `[[`, 1L, "stage")
+  expect_identical(attr(later, "metadata")$empty_pools[stages == 1L],
+                   attr(first, "metadata")$empty_pools)
+  # A sample without the record leaves it unknown.
+  unknown <- first
+  attr(unknown, "metadata")$empty_pools <- NULL
+  expect_null(attr(execute(unknown, hh, seed = 1), "metadata")$empty_pools)
+
+  # Saved and read back, and replayed, the record is the same.
+  path <- tempfile(fileext = ".rds")
+  on.exit(unlink(path), add = TRUE)
+  saveRDS(later, path)
+  expect_identical(attr(readRDS(path), "metadata")$empty_pools,
+                   attr(later, "metadata")$empty_pools)
+  replayed <- replay_design(s, frame)
+  expect_identical(attr(replayed, "metadata")$empty_pools, r)
+})

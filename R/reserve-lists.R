@@ -126,7 +126,8 @@
 #' unfavorable one.
 #'
 #' These properties hold for the pools with a respondent. A pool without
-#' one keeps its weight in a placeholder row (see the Export section).
+#' one keeps its weight in rows for its eligible units that did not
+#' respond (see the Export section).
 #' When every unit it worked is of unknown eligibility, its eligible count
 #' takes the resolved rate of the pools that share its strata, or the pool
 #' size when none of them resolved a unit. Both are assumptions about the
@@ -145,23 +146,128 @@
 #'
 #' ## Export
 #'
-#' A settled sample is exported by ultimate clusters, since the settled
-#' stage's finite population correction is unknown. With the reserve at the
-#' first stage, or at the second inside a primary unit taken with
-#' certainty, the export adds a row for each unit found ineligible, so the
-#' variance treats the eligible count as estimated. A pool with eligible
-#' units and no respondent is kept as one placeholder row that carries its
-#' weight until a nonresponse adjustment, such as
-#' [svrep::redistribute_weights()], or a calibration moves it to
-#' respondents. The rows the export adds hold `NA` in the analysis
-#' variables, so estimates need `na.rm = TRUE`, and a calibration needs
-#' auxiliary variables that are 0 on those rows. The "A settled reserve"
-#' section of [as_svydesign()] gives the details.
+#' A sample whose reserve is not settled is refused by every export
+#' (`samplyr_error_reserve_unsettled`), since its weights describe the whole
+#' list. Once settled, [as_svydesign()] and [as_svrepdesign()] export it by
+#' ultimate clusters. The settled stage's respondents are a
+#' random subset of a respondent count the field never observed, so that
+#' stage's finite population correction is unknown, and every stage is
+#' carried in the primary-unit totals. The share of each pool's eligible
+#' units that responded is treated as fixed. A two-phase sample, shared
+#' weights, and the `"mrbbootstrap"` and `"rwyb"` replicates of
+#' [as_svrepdesign()] would build the stages one by one, and refuse a
+#' settled reserve (`samplyr_error_reserve_full_export`). An occasion holds no
+#' settlement of its own, so an occasion of a master that draws a reserve is
+#' refused with the same class, settled or not, and the settled master
+#' exports as a whole.
 #'
-#' A sample in panels exports as a whole once settled, and its occasions are
-#' refused (`samplyr_error_reserve_full_export`). A schedule that opens
-#' several cohorts per panel takes no reserve at any stage
-#' (`samplyr_error_cohort_stages`), since its master is never complete.
+#' Each pool's eligible units are estimated from the units the field
+#' worked. The export adds one row for each unit found ineligible among
+#' those the estimate counts, at the weight of the stages above times the
+#' pool's size over the number of units counted. The pool's weights then
+#' add up to its size at every stage, and the variance treats the eligible
+#' count as estimated. These rows hold `NA` in every column except the
+#' strata, the weight and, while the sample still holds it, the response
+#' status column, which carries the ineligible code in the column's own type
+#' (`4`, `"ineligible"`, or a factor level of that name, added if absent).
+#' Estimate for the eligible population as a domain:
+#'
+#' ```r
+#' svy <- as_svydesign(settled)
+#' survey::svytotal(~income, svy, na.rm = TRUE)
+#' survey::svymean(~income, subset(svy, result != "ineligible"))
+#' ```
+#'
+#' `na.rm = TRUE` and `subset()` keep those rows in the variance, and
+#' removing them before the export understates it. Below the first stage
+#' the rows sit in the primary unit of their pool, so they leave its
+#' totals of the analysis variables unchanged, and a primary unit whose
+#' units all proved ineligible is kept as a zero total.
+#'
+#' A primary unit taken whole, by a certainty rule or as a unit of a census
+#' stratum, with a later stage drawn inside it, represents itself as it does
+#' in an occasion. Expected hits of 1 at a stage drawn with replacement do
+#' not make a unit certain. It is a stratum of its own whose clusters are
+#' its units of the next stage. With the reserve at that stage, its pools
+#' are exported as first-stage pools are, times the weight of the stage
+#' above, so its ineligible units and the eligible nonrespondents of a pool
+#' with no respondent are units of their own. The first stage's finite
+#' population correction is left out, which overstates the variance where
+#' the first-stage sampling fraction is large.
+#'
+#' A pool whose eligible units include no respondent still has an estimated
+#' eligible count, from the units the field worked. With every worked unit
+#' of unknown eligibility, it takes the resolved rate of the pools that
+#' share its strata, or counts every unit as eligible when none of them
+#' resolved one. Both are assumptions about the pool, and [summary()]
+#' counts the pools that rest on them. A pool estimated to hold no eligible
+#' unit, such as one whose resolved units all proved ineligible, is exported
+#' as ineligible. For every other such pool, the export adds one row per
+#' eligible unit that did not respond, at the same weight as its ineligible
+#' units, so together they carry the estimated count, coded as an eligible
+#' non-interview (`2`, `"noninterview"`, or a factor level of that name).
+#' When every worked unit is of unknown eligibility, those units share the
+#' count. The rows' other columns hold `NA`, and below the first stage they
+#' sit in the primary unit of their pool. The export warns
+#' (`samplyr_warning_reserve_no_respondent`) and names the pools. Until a
+#' nonresponse adjustment moves that weight to respondents, estimates leave
+#' it out. With replicate weights, [svrep::redistribute_weights()] makes the
+#' adjustment in every replicate:
+#'
+#' ```r
+#' rep <- as_svrepdesign(settled)
+#' rep <- svrep::redistribute_weights(
+#'   rep,
+#'   reduce_if = result == "noninterview",
+#'   increase_if = result == "interview",
+#'   by = "region"
+#' )
+#' survey::svytotal(~income, rep, na.rm = TRUE)
+#' ```
+#'
+#' The adjustment moves the weight of those rows but leaves the rows, with
+#' `NA` in every analysis variable. An estimate therefore needs
+#' `na.rm = TRUE`, as for the ineligible rows. Without it a linearized
+#' total is `NA`, and a replicate design fails with "All replicates
+#' contained NAs".
+#'
+#' With linearization, [survey::calibrate()] to known totals plays that
+#' role. After a stage below the reserve is drawn, the units of such a
+#' pool have no weight at that stage, so its export is refused
+#' (`samplyr_error_reserve_no_respondent`). Export before drawing it, or
+#' combine the stratum with a neighbor in the design.
+#'
+#' The rows the export adds hold `NA` in the variables a calibration would
+#' use, so `survey::calibrate()`, `survey::postStratify()` and
+#' `survey::rake()` stop on them. Calibrate the respondents instead, through
+#' indicators that are 0 on those rows, and without an intercept, which
+#' would count them:
+#'
+#' ```r
+#' svy <- update(
+#'   svy,
+#'   female = as.numeric(sex %in% "female"),
+#'   male = as.numeric(sex %in% "male")
+#' )
+#' svy <- survey::calibrate(
+#'   svy, ~ 0 + female + male, c(female = 5200, male = 4800)
+#' )
+#' ```
+#'
+#' A row whose indicators are all 0 keeps its weight, under a linear
+#' calibration as under `calfun = "raking"`. The ineligible rows still
+#' estimate the ineligible count, and the respondents alone carry the known
+#' totals. The same call works on a replicate design, before or after
+#' [svrep::redistribute_weights()].
+#'
+#' In a frame stack, each added row composites with the membership of the
+#' unit it stands for, which the settlement records, so the membership
+#' columns must be on the list before it is settled
+#' ([as_svrepdesign.frame_stack()]).
+#'
+#' A schedule that opens several cohorts per panel takes no reserve at any
+#' stage (`samplyr_error_cohort_stages`), since its master is never
+#' complete.
 #'
 #' ## Planning a reserve
 #'

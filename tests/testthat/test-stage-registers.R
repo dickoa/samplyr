@@ -925,8 +925,8 @@ test_that("phase-1 identifiers survive a normalized later register", {
   expect_true(all(phase2$psu %in% phase1$psu))
 })
 
-test_that("an ambiguous phase key is refused before any stage draws", {
-  # A clustered stage keeps one row, so the carry would lose the second value.
+test_that("a phase-2 unit spanning phase-1 PSUs is refused before any stage draws", {
+  # Stage 1 reads the phase-1 sample, where a household now spans two PSUs.
   frame <- data.frame(
     psu = rep(1:10, each = 20), hh = rep(1:100, each = 2),
     id = seq_len(200), y = 1
@@ -946,7 +946,7 @@ test_that("an ambiguous phase key is refused before any stage draws", {
     suppressWarnings(
       execute(design2, phase1, frame[, c("hh", "id", "y")], seed = 2)
     ),
-    class = "samplyr_error_phase_key_ambiguous"
+    class = "samplyr_error_phase_cluster_spans_psu"
   )
 })
 
@@ -997,7 +997,7 @@ test_that("continuing a phase keeps its link and does not reapply its weight", {
   expect_false("._prev_phase_weight" %in% names(continued))
 })
 
-test_that("the two-phase bridge rejects ambiguous, missing and orphan keys", {
+test_that("phase-2 rows drawn from phase 1 link by position, whatever the keys", {
   skip_if_not_installed("survey")
   frame <- data.frame(
     psu = rep(1:10, each = 20), hh = rep(1:100, each = 2),
@@ -1007,24 +1007,67 @@ test_that("the two-phase bridge rejects ambiguous, missing and orphan keys", {
     cluster_by(psu) |> draw(n = 5) |>
     execute(frame, seed = 1)
 
-  # Ambiguous: the bridge (psu, hh) reaches two phase-1 element rows.
+  # (psu, hh) matches two phase-1 element rows, and no identifier is
+  # declared at all. Both link by the phase-1 row position.
   ambiguous <- sampling_design() |>
     add_stage() |> cluster_by(hh) |> draw(n = 4) |>
     add_stage() |> draw(n = 1) |>
     execute(phase1, seed = 2)
-  expect_error(
-    as_svydesign(ambiguous),
-    class = "samplyr_error_twophase_bridge"
-  )
-
-  # No declared identifier on either side: nothing to bridge with.
   unbridged <- sampling_design() |>
     draw(n = 20) |>
     execute(phase1, seed = 2)
+  for (phase2 in list(ambiguous, unbridged)) {
+    expect_identical(phase1$id[phase2$.phase1_row], phase2$id)
+    expect_s3_class(
+      suppressWarnings(as_svydesign(phase2, method = "approx")), "twophase"
+    )
+  }
+})
+
+test_that("each phase numbers the rows of the phase it was drawn from", {
+  frame <- data.frame(id = 1:60, x = 1)
+  phase1 <- execute(sampling_design() |> draw(n = 30), frame, seed = 1)
+  phase2 <- execute(sampling_design() |> draw(n = 12), phase1, seed = 2)
+  phase3 <- execute(sampling_design() |> draw(n = 5), phase2, seed = 3)
+  expect_identical(phase1$id[phase2$.phase1_row], phase2$id)
+  # The third phase replaces the second's key with its own.
+  expect_false(".phase1_row" %in% names(phase3))
+  expect_identical(phase2$id[phase3$.phase2_row], phase3$id)
+  # A frame may not bring the name in itself.
+  frame$.phase1_row <- frame$id
   expect_error(
-    as_svydesign(unbridged),
-    class = "samplyr_error_twophase_bridge"
+    execute(sampling_design() |> draw(n = 3), frame, seed = 1),
+    class = "samplyr_error_frame_reserved_names"
   )
+})
+
+test_that("register rows link by declared keys, and an ambiguous key refuses", {
+  skip_if_not_installed("survey")
+  households <- data.frame(village = rep(1:10, each = 5), hh = 1:50, x = 1)
+  persons <- data.frame(
+    village = rep(1:10, each = 10), person = 1:100, y = 1:100
+  )
+  # Phase 1 keeps households but declares only villages.
+  phase1 <- sampling_design() |>
+    cluster_by(village) |> draw(n = 4) |>
+    execute(households, seed = 2)
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(village) |> draw(n = 2) |>
+    add_stage() |> draw(n = 3)
+  expect_warning(
+    validate_frame(design, list(phase1, persons)),
+    class = "samplyr_warning_phase_linkage"
+  )
+  phase2 <- suppressWarnings(
+    execute(design, list(phase1, persons), seed = 1)
+  )
+  # Persons come from their own register, so they carry no phase-1 row.
+  expect_false(".phase1_row" %in% names(phase2))
+  expect_match(
+    variance_estimators(phase2)$sample_risk[1],
+    "samplyr_error_twophase_bridge", fixed = TRUE
+  )
+  expect_error(as_svydesign(phase2), class = "samplyr_error_twophase_bridge")
 })
 
 test_that("a mistyped or missing bridge key is reported as a bridge failure", {
@@ -1075,7 +1118,12 @@ test_that("two-phase export agrees with a hand-built survey reference", {
     add_stage() |> cluster_by(id) |> draw(n = 2) |>
     execute(phase1, seed = 2)
 
-  exported <- quiet_across(as_svydesign(phase2, method = "simple"))
+  # Phase 2 subsamples inside the PSUs, so survey's simple variance
+  # overstates, and the export says so while matching survey.
+  expect_warning(
+    exported <- quiet_across(as_svydesign(phase2, method = "simple")),
+    class = "samplyr_warning_twophase_approx"
+  )
   expect_s3_class(exported, "twophase")
   # The default method must also survive a multistage phase 2.
   exported_full <- quiet_across(as_svydesign(phase2))
@@ -1272,7 +1320,7 @@ test_that("an ambiguous replicate is caught before any replicate draws", {
   before <- .Random.seed
   expect_error(
     suppressWarnings(execute(design2, phase1)),
-    class = "samplyr_error_phase_key_ambiguous"
+    class = "samplyr_error_phase_cluster_spans_psu"
   )
   expect_identical(.Random.seed, before)
 })
@@ -1730,7 +1778,7 @@ test_that("a lower register that contradicts a carried variable is refused", {
   )
 })
 
-test_that("an ambiguous phase key is refused by validation too", {
+test_that("a phase-2 unit spanning phase-1 PSUs is refused by validation too", {
   frame <- data.frame(
     psu = rep(1:10, each = 20), hh = rep(1:100, each = 2),
     id = seq_len(200), y = 1
@@ -1747,15 +1795,113 @@ test_that("an ambiguous phase key is refused by validation too", {
 
   expect_error(
     suppressWarnings(validate_frame(design2, list(phase1, lower))),
-    class = "samplyr_error_phase_key_ambiguous"
+    class = "samplyr_error_phase_cluster_spans_psu"
   )
   # And through the single-frame spelling, where the phase is the frame.
   expect_error(
     suppressWarnings(validate_frame(design2, phase1)),
-    class = "samplyr_error_phase_key_ambiguous"
+    class = "samplyr_error_phase_cluster_spans_psu"
   )
   expect_error(
     suppressWarnings(execute(design2, phase1, lower, seed = 2)),
+    class = "samplyr_error_phase_cluster_spans_psu"
+  )
+})
+
+## A phase 2 clustered above the units phase 1 declared
+
+follow_up_frame <- function() {
+  data.frame(
+    district = rep(1:5, each = 40),
+    village = rep(sprintf("v%02d", 1:20), each = 10),
+    hh = rep(1:10, 20),
+    y = (1:200) %% 7
+  )
+}
+
+# Phase 1 declares villages and households.
+follow_up_phase1 <- function(seed = 1, ...) {
+  sampling_design() |>
+    add_stage() |> cluster_by(village) |> draw(n = 8) |>
+    add_stage() |> cluster_by(hh) |> draw(n = 4) |>
+    execute(follow_up_frame(), seed = seed, ...)
+}
+
+test_that("a phase 2 of whole phase-1 villages, or villages then households, links by row", {
+  skip_if_not_installed("survey")
+  phase1 <- follow_up_phase1()
+  designs <- list(
+    whole = sampling_design() |> cluster_by(village) |> draw(n = 4),
+    nested = sampling_design() |>
+      add_stage() |> cluster_by(village) |> draw(n = 4) |>
+      add_stage() |> cluster_by(hh) |> draw(n = 2)
+  )
+  checked <- character(0)
+  for (label in names(designs)) {
+    expect_true(suppressWarnings(validate_frame(designs[[label]], phase1)))
+    phase2 <- execute(designs[[label]], phase1, seed = 2)
+    expect_identical(phase1$village[phase2$.phase1_row], phase2$village)
+    expect_identical(phase1$hh[phase2$.phase1_row], phase2$hh)
+    expect_s3_class(as_svydesign(phase2), "twophase2")
+    checked <- c(checked, label)
+  }
+  # A continuation reads the phase-1 sample again and keeps the positions.
+  part <- execute(designs$nested, phase1, seed = 2, stages = 1)
+  rest <- execute(part, phase1, seed = 3)
+  expect_identical(phase1$hh[rest$.phase1_row], rest$hh)
+  expect_identical(phase1$village[rest$.phase1_row], rest$village)
+  # Replicated phase 1, each replicate its own phase-1 sample.
+  replicated <- follow_up_phase1(reps = 2)
+  phase2 <- execute(designs$whole, replicated, seed = 2)
+  expect_setequal(unique(phase2$.replicate), 1:2)
+  expect_setequal(checked, c("whole", "nested"))
+})
+
+test_that("a phase-2 unit spanning phase-1 villages is refused, naming them", {
+  phase1 <- follow_up_phase1()
+  districts <- sampling_design() |> cluster_by(district) |> draw(n = 2)
+  expect_error(validate_frame(districts, phase1),
+               class = "samplyr_error_phase_cluster_spans_psu")
+  expect_error(execute(districts, phase1, seed = 2),
+               class = "samplyr_error_phase_cluster_spans_psu")
+})
+
+test_that("each hit of a multi-hit phase 1 is a primary unit of its own", {
+  frame <- follow_up_frame()
+  frame$mos <- rep(c(30, rep(1, 19)), each = 10)
+  design1 <- sampling_design() |>
+    add_stage() |> cluster_by(village) |>
+    draw(n = 6, method = "pps_multinomial", mos = mos) |>
+    add_stage() |> cluster_by(hh) |> draw(n = 3)
+  phase1 <- execute(design1, frame, seed = 1)
+  hits <- unique(phase1[c("village", ".draw_1")])
+  expect_true(anyDuplicated(hits$village) > 0)
+  # A village hit twice spans two primary units.
+  whole <- sampling_design() |> cluster_by(village) |> draw(n = 2)
+  err <- expect_error(execute(whole, phase1, seed = 2),
+                      class = "samplyr_error_phase_cluster_spans_psu")
+  expect_match(conditionMessage(err), ".phase1_draw_1", fixed = TRUE)
+  # Households drawn within each hit are nested in it.
+  within <- sampling_design() |>
+    stratify_by(village, .phase1_draw_1) |> cluster_by(hh) |> draw(n = 2)
+  phase2 <- execute(within, phase1, seed = 2)
+  expect_identical(phase1$.draw_1[phase2$.phase1_row], phase2$.phase1_draw_1)
+})
+
+test_that("a register stage still needs the phase keys constant within its units", {
+  phase1 <- follow_up_phase1()
+  # A dwelling of the register holds two households of phase 1.
+  register <- data.frame(
+    village = rep(sprintf("v%02d", 1:20), each = 10),
+    hh = rep(1:10, 20),
+    dwelling = rep(1:5, each = 2, times = 20),
+    person = seq_len(200)
+  )
+  design2 <- sampling_design() |>
+    add_stage() |> cluster_by(village) |> draw(n = 3) |>
+    add_stage() |> cluster_by(dwelling) |> draw(n = 1)
+  expect_error(
+    suppressWarnings(execute(design2, phase1, register, seed = 2)),
     class = "samplyr_error_phase_key_ambiguous"
   )
 })
@@ -1867,26 +2013,25 @@ test_that("the two-phase preflight runs for the list form too", {
     cluster_by(psu) |> draw(n = 4) |>
     execute(frame, seed = 2)
   design <- sampling_design() |> cluster_by(psu) |> draw(n = 2)
-  expect_warning(
-    validate_frame(design, non_unique),
-    class = "samplyr_warning_phase_linkage"
-  )
-  expect_warning(
-    validate_frame(design, list(non_unique)),
-    class = "samplyr_warning_phase_linkage"
-  )
+  # Drawn from phase 1 alone, the rows link by position in both spellings.
+  expect_no_warning(validate_frame(design, non_unique))
+  expect_no_warning(validate_frame(design, list(non_unique)))
 
   elements <- data.frame(id = 1:100, x = 1)
   no_bridge <- sampling_design() |> draw(n = 40) |> execute(elements, seed = 1)
-  # A simple random subsample would be phase 1's design, linked without ids.
-  unlinkable <- sampling_design() |>
+  unlinked <- sampling_design() |>
     draw(n = 10, method = "pps_brewer", mos = x)
+  expect_no_warning(validate_frame(unlinked, no_bridge))
+  expect_no_warning(validate_frame(unlinked, list(no_bridge)))
+
+  # A later stage drawn from a register of its own links by declared keys,
+  # which the list form checks too.
+  persons <- data.frame(psu = rep(1:10, each = 6), person = 1:60)
+  two_stage <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 2) |>
+    add_stage() |> draw(n = 2)
   expect_warning(
-    validate_frame(unlinkable, no_bridge),
-    class = "samplyr_warning_phase_linkage"
-  )
-  expect_warning(
-    validate_frame(unlinkable, list(no_bridge)),
+    validate_frame(two_stage, list(non_unique, persons)),
     class = "samplyr_warning_phase_linkage"
   )
 

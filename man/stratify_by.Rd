@@ -154,7 +154,8 @@ errors of class \code{samplyr_error_alloc_min_infeasible} or
 \code{samplyr_error_alloc_max_infeasible}.
 
 With-replacement (\code{srswr}, \code{pps_multinomial}) and minimum-replacement
-(\code{pps_chromy}) methods can select a unit more than once, so the number of
+(\code{pps_chromy}, \code{pps_systematic_mr}) methods can select a unit more than
+once, so the number of
 distinct units does not bound the draws, and only \code{min_n} and \code{max_n} bind.
 
 Per-stratum sizes given directly, through a scalar or named \code{n}, a \code{frac},

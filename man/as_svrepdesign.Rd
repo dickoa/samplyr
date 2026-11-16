@@ -33,31 +33,49 @@ certainty, so it adds no variance of its own, whereas the default
 \code{"fail"} refuses such a stratum. For \code{type = "random_groups"}, only
 \code{mse} (default \code{FALSE}) is accepted.}
 
-\item{type}{Replicate method passed to \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.
-One of \code{"auto"}, \code{"JK1"}, \code{"JKn"}, \code{"BRR"}, \code{"bootstrap"},
-\code{"subbootstrap"}, \code{"mrbbootstrap"}, \code{"Fay"}, \code{"rwyb"}, or
-\code{"random_groups"}. \code{"rwyb"} uses svrep rather than
-\code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}, and \code{"random_groups"} builds the weights
-from the replicates of \code{execute(reps = R)} (see Details).
+\item{type}{The replicate method. The generic types, \code{"JK1"} to
+\code{"subbootstrap"} below, resample first-stage units within first-stage
+strata and read nothing below them. The last three read more of the
+design.
+\itemize{
+\item \code{"auto"} (default): survey's choice, \code{"JKn"} for a stratified first
+stage and \code{"JK1"} otherwise.
+\item \code{"JK1"} and \code{"JKn"}: the delete-one jackknife of an unstratified
+first stage, and its stratified form (Wolter 2007, ch. 4). They keep
+the finite population correction of an equal-probability first stage.
+\item \code{"BRR"} and \code{"Fay"}: balanced half-samples, with Fay's damping set by
+\code{fay.rho} (Wolter 2007, ch. 3). They need an even number of
+first-stage units, at least two, in every first-stage stratum, and
+carry no finite population correction.
+\item \code{"bootstrap"}: the Canty-Davison bootstrap of first-stage units, which
+keeps an equal-probability first stage's correction (Canty and
+Davison 1999).
+\item \code{"subbootstrap"}: the Rao-Wu rescaled bootstrap, with no finite
+population correction (Rao, Wu and Yue 1992). It accepts a PPS first
+stage.
+\item \code{"mrbbootstrap"}: Preston's multistage rescaled bootstrap, which reads
+the sampling fraction of every stage (Preston 2009).
+\item \code{"rwyb"}: the Rao-Wu-Yue-Beaumont bootstrap of every stage (Beaumont
+and \enc{Émond}{Emond} 2022). It needs the svrep package and is never chosen by
+\code{"auto"}.
+\item \code{"random_groups"}: the spread between the independent replicates of
+\code{execute(reps = R)}, for any selection method (Wolter 2007, ch. 2).
+}
 
-The jackknife, BRR and Fay types are deterministic: one sample gives one
-set of replicate weights. The bootstrap types draw from the session's
-random stream, so two calls on one sample give two different standard
-errors unless a seed is set beforehand.
-
-The spread is not small at survey's default of 50 replicates. On a
-90-of-600 stratified sample, twelve \code{"bootstrap"} calls on one sample
-ranged over 37\% of their mean, falling to 12\% at \code{replicates = 200} and
-4\% at \code{replicates = 4000}. Raise \code{replicates} through \code{...} when the
-second decimal of a bootstrap standard error is going to be read.}
+The jackknife and balanced types give one set of replicate weights per
+sample. The bootstrap types draw from the session's random stream, so
+set a seed before the call, and raise \code{replicates} through \code{...} until
+the standard errors that will be read are stable. svrep's
+\code{estimate_boot_sim_cv()} estimates that simulation error.}
 
 \item{systematic_variance}{What to do about the generic replicate weights
-built for \code{systematic} and \code{pps_systematic} stages. \code{"warn"} (default)
+built for \code{systematic}, \code{pps_systematic} and \code{pps_systematic_mr} stages. \code{"warn"} (default)
 builds them and warns once per call, naming every affected stage.
 \code{"approximate"} builds them silently, for a caller who has acknowledged
 the approximation, and \code{"error"} refuses. Naming a \code{type} is not an
 acknowledgment, since no type reproduces systematic selection. Census
-stages are exempt, as in \code{\link[=as_svydesign]{as_svydesign()}}. The choice and the affected
+stages and stages that drew one unit in each pool are exempt, as in
+\code{\link[=as_svydesign]{as_svydesign()}}. The choice and the affected
 stages are recorded in the \code{"samplyr_systematic_variance"} attribute of
 the result.}
 
@@ -69,73 +87,97 @@ that resample stage-1 units only, and refused with \code{"mrbbootstrap"},
 \code{"rwyb"} and \code{"random_groups"} (\code{samplyr_error_survey_argument}).}
 }
 \value{
-A \code{svyrep.design} object from the survey package.
+A \code{svyrep.design} object from the survey package. \code{"rwyb"} and
+\code{"random_groups"} record their method in its \code{"samplyr_replication"}
+attribute, and the treatment of systematic stages is recorded in
+\code{"samplyr_systematic_variance"}.
 }
 \description{
-Creates a \code{svyrep.design} object from a \code{tbl_sample}. The \code{"rwyb"} method
-generates Rao-Wu-Yue-Beaumont factors with the optional svrep package
-directly from recorded stage mechanisms. Other methods first build a
-\code{\link[survey:svydesign]{survey::svydesign()}} object, then call \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.
+Creates a \code{svyrep.design} object from a \code{tbl_sample}. \code{"rwyb"} builds
+Rao-Wu-Yue-Beaumont factors with the svrep package from the recorded
+stage mechanisms, and \code{"random_groups"} reads the replicates of
+\code{execute(reps = R)}. The other types build a \code{\link[survey:svydesign]{survey::svydesign()}}
+object and convert it with \code{\link[survey:as.svrepdesign]{survey::as.svrepdesign()}}.
 }
 \details{
-Replicate conversion supports single-phase designs, including multistage
-samples, shared weights and independent frame stacks, and materialized
-occasions, which are replicated by ultimate clusters as \code{\link[=as_svydesign]{as_svydesign()}}
-exports them, a window's replicates calibrated on the same totals as its
-linearized design. \code{"rwyb"} is refused for an occasion
-(\code{samplyr_error_occasion_replicate_type}). Two-phase replicate
-export is unsupported, except for a second phase drawn within each
-final-stage pool of phase 1, which is phase 1's multistage design with a
-smaller final take and is replicated as that design (\code{\link[=as_svydesign]{as_svydesign()}}
-describes the shape). \code{"auto"} keeps survey's method choice, whether or
-not svrep is installed. A settled reserve is replicated from its
-ultimate-cluster design, with the rows \code{\link[=as_svydesign]{as_svydesign()}} adds at a
-first-stage reserve.
+\subsection{What is replicated}{
+
+A single-phase sample is replicated from the design \code{\link[=as_svydesign]{as_svydesign()}}
+exports, multistage samples, shared weights, independent frame stacks
+and settled reserves included. A materialized occasion is replicated by
+ultimate clusters, and a window's replicates are calibrated on the same
+totals as its linearized design. \code{"rwyb"} is refused for an occasion
+(\code{samplyr_error_occasion_replicate_type}). Of the two-phase samples,
+only two shapes are replicated: a second phase drawn within each
+final-stage pool of phase 1, which is phase 1's design with a smaller
+final take, and a second phase of a phase 1 that could select nothing
+else. The others are refused (\code{samplyr_error_svrep_twophase_unsupported}).
+}
+
 \subsection{The first stage under the generic types}{
 
-\code{"JK1"}, \code{"JKn"}, \code{"BRR"}, \code{"Fay"}, \code{"bootstrap"} and \code{"subbootstrap"}
-resample first-stage units within first-stage strata and read nothing
-below, whereas \code{"mrbbootstrap"} and \code{"rwyb"} read every stage. A PPS
-first stage drawn without replacement is read as drawn with replacement,
-which errs toward too large a variance at large sampling fractions
-(\code{samplyr_warning_replicate_wr_first_stage}, see \link{variance_estimation}).
-\code{"BRR"}, \code{"Fay"} and \code{"subbootstrap"} read an equal-probability first
-stage drawn without replacement that way too, since they carry no
-finite population correction, and raise the same warning. With 60 of 80
-units drawn, the rescaled bootstrap gave four times the linearization
-variance, the factor \code{1 / (1 - 60/80)}. Chromy's method is read as with
-replacement too. Unequal probabilities
-at later stages, and a first stage drawn with replacement, reach the
-variance through the weights and draw no warning.
+The generic types read the spread of first-stage totals within
+first-stage strata, which carries the variance of the later stages as
+well. That reading needs no correction for a first stage drawn with
+replacement, and unequal probabilities at later stages reach it through
+the weights. It is approximate in three cases, each with a warning:
+\itemize{
+\item A PPS first stage drawn without replacement is read as drawn with
+replacement, and so is an equal-probability first stage under \code{"BRR"},
+\code{"Fay"} and \code{"subbootstrap"}, which carry no correction. The variance
+leaves out the first-stage correction and tends to overstate, most at
+large first-stage sampling fractions
+(\code{samplyr_warning_replicate_wr_first_stage}).
+\item \code{"JK1"}, \code{"JKn"} and \code{"bootstrap"} keep an equal-probability first
+stage's correction and apply it to the later stages' variance too,
+which understates the variance as the first-stage fraction grows
+(\code{samplyr_warning_replicate_first_stage_fpc}).
+\item The minimum-replacement methods \code{pps_chromy} and \code{pps_systematic_mr}
+are read as drawn with replacement, as every export reads them, which
+ignores the dependence between hits. \code{"mrbbootstrap"} reads them that
+way too, with the same warning, and \code{"rwyb"} refuses them.
+}
 
-\code{"JK1"}, \code{"JKn"} and \code{"bootstrap"}, and so \code{"auto"}, keep the
-finite population correction of an equal-probability first stage drawn
-without replacement. With stages below, that correction also scales the
-variance the later stages add, so the variance errs toward too small as
-the first-stage sampling fraction grows
-(\code{samplyr_warning_replicate_first_stage_fpc}). When 6 of 8 PSUs were
-drawn and all variance came from stage 2, \code{"JK1"} gave 0.26 of the true
-variance and \code{"mrbbootstrap"} 0.98. With 4 PSUs of 40 drawn, both gave
-0.97. In a simulation with
-\code{"JKn"}, a PPS second stage gave 0.98 of the true variance, as its SRS
-counterpart did, while a Brewer first stage with a sampling fraction of
-0.4 gave 1.43. A certainty PSU is a stratum of its own whose stage-two
-units are resampled, and a certainty unit with no stage below keeps its
-full weight in every replicate. With certainty PSUs these types gave 1.1
-to 1.2 times the true variance in a Monte Carlo, and linearization and
-\code{"rwyb"} about 1.0.
+A first-stage unit taken with probability 1 above a later stage, by a
+certainty rule or because its stratum is taken whole, is a stratum of
+its own whose stage-2 units are resampled (see Statistical details). The
+first stage is then stratified, so \code{"JK1"} is refused and \code{"auto"} takes
+\code{"JKn"}. \code{"mrbbootstrap"} and \code{"rwyb"} read every stage's probabilities
+and need none of these readings, and \code{\link[=as_svydesign]{as_svydesign()}} gives the
+linearization variance.
+}
 
-A stage-1 unit taken with probability 1 above a later stage is converted
-as a certainty PSU, whether a certainty rule took it or its stratum was
-taken whole (\code{n} equal to the stratum's size, \code{frac = 1}). Its correction
-of one would otherwise remove its later stages' variance. The other
-first-stage units are then read as drawn with replacement
-(\code{samplyr_warning_replicate_wr_first_stage}), and \code{"JK1"} is refused,
-since the first stage becomes stratified, with \code{"JKn"} taking its place
-under \code{"auto"}. On a design whose urban domain was one pseudo-unit
-taken whole, \code{"JKn"} went from 0.77 to 1.15 of the true standard error.
-A single stage keeps its correction, which gives such a unit no variance
-and is exact.
+\subsection{Censuses}{
+
+A stratum of a single stage taken whole keeps its full weight in every
+replicate, so it adds no variance under any type. An unstratified census
+gets two replicate columns at the full-sample weights under \code{"JK1"} and
+\code{"auto"}, so its variance is zero and it can be shared, stacked and
+calibrated. When every row has the same weight the replicate matrix
+stays uncompressed, and \code{\link[survey:calibrate]{survey::calibrate()}} then needs
+\code{compress = FALSE} (survey 4.5). A stratified census is refused under
+\code{"JKn"} and \code{"auto"} (\code{samplyr_error_svrep_conversion_failed}), and
+\code{"bootstrap"}, \code{"rwyb"} and \code{\link[=as_svydesign]{as_svydesign()}} give it a variance of zero.
+}
+
+\subsection{Statistical details}{
+
+Inside a PSU taken with certainty, the generic types resample the
+stage-2 units of each stratum \code{h} of that PSU as drawn with replacement,
+which leaves out stage 2's correction \code{1 - f_h}. When stage 2 drew the
+stratum with equal probabilities without replacement and no later stage
+samples inside its units, the export replaces each replicate weight of
+the stratum's rows by
+\deqn{w_k^{(r)*} = w_k + \sqrt{1 - f_h}\,\left(w_k^{(r)} - w_k\right),}{w*_k(r) = w_k + sqrt(1 - f_h) (w_k(r) - w_k),}
+where \eqn{w_k}{w_k} is the full-sample weight and \eqn{w_k^{(r)}}{w_k(r)}
+the weight in replicate \code{r}. This multiplies the stratum's contribution
+to the variance of a linear estimator by \code{1 - f_h}. For a total, the
+jackknife and balanced types then give the without-replacement variance
+of the stratum exactly, and the bootstrap types in expectation. One
+factor serves every unit of the stratum, since the replicates contrast
+those units with each other. A stratum with a unit sampled below it, or
+a PPS stage 2, keeps the with-replacement reading, which tends to
+overstate its contribution (\code{samplyr_warning_replicate_certainty_stage_wr}).
 }
 
 \subsection{Rao-Wu-Yue-Beaumont bootstrap}{
@@ -147,8 +189,8 @@ Fixed-size PPS WOR (\code{pps_brewer}, \code{pps_cps}, \code{pps_sampford},
 \code{pps_systematic}) uses approximate joint probabilities, with a warning.
 Equal-probability systematic stages use the SRS approximation governed by
 \code{systematic_variance}. Custom methods must declare a supported variance
-family. Balanced, spatial, Pareto, SPS and Chromy methods have no
-built-in RWYB mapping.
+family. Balanced, spatial, Pareto, SPS and minimum-replacement methods
+have no built-in RWYB mapping.
 
 The adapter keeps stage-specific sampling units, strata and
 probabilities. With-replacement stages resample draw occurrences, not
@@ -158,19 +200,16 @@ factor one. Noncertainty singleton strata raise
 needed, except under Poisson sampling, whose variance is estimable from
 one unit, and at the final stage under \code{lonely.psu = "certainty"}.
 
-Export refuses a selected parent with no descendant in the final sample,
-because silently dropping it changes the earlier-stage resampling
-distribution. When a later stage is Poisson, this check needs a complete
-frame digest (\code{"summary"} or \code{"full"}). Empty samples cannot be
-exported. These are export limits, and empty Poisson realizations remain
-valid sampling outcomes.
-
-Replicate variances carry simulation error, so set a seed and increase
-\code{replicates} for stable estimates. svrep's \code{estimate_boot_sim_cv()}
-assesses that error for chosen estimates. With \code{mse = TRUE} the factors use
-scale \code{1 / replicates}, and with \code{mse = FALSE} they use
-\code{1 / (replicates - 1)}. The backend and stage methods are recorded in the
-\code{"samplyr_replication"} attribute.
+A selected unit with no descendant in the final sample is kept as a zero
+row, because dropping it would change the earlier-stage resampling
+distribution. This holds for a unit whose next register was empty and
+for one in which a later Poisson stage selected nothing, which execution
+records whatever \code{frame_digest} is, so estimates need \code{na.rm = TRUE}. A
+sample that lacks that record is refused
+(\code{samplyr_error_rwyb_missing_parents}). Empty samples cannot be
+exported. With \code{mse = TRUE} the factors use scale \code{1 / replicates}, and
+with \code{mse = FALSE} they use \code{1 / (replicates - 1)}. The backend and stage
+methods are recorded in the \code{"samplyr_replication"} attribute.
 }
 
 \subsection{Random groups}{
@@ -181,17 +220,18 @@ is the mean of the R replicate estimates, carried by the full-sample
 weight \code{.weight / R}, and its variance is their spread divided by R, with
 R - 1 degrees of freedom. A replicate that selected nothing counts as a
 zero estimate. Nothing is assumed about the selection method, so the
-route is right for systematic, balanced, spatial or custom stages, which
-no other type redraws. On a frame whose period matches a systematic
-interval it gave 0.997 of the true variance, where one sample's
-linearization gave 0.0001. The cost is R samples.
+route suits systematic, balanced, spatial or custom stages, which no
+other type redraws. The cost is R samples.
 
 The replicates must vary at every stage and phase. A sample that
 continues one realized stage with \code{reps}, or replicates a later phase
 over one realized first phase, is refused
 (\code{samplyr_error_random_groups_shared}), because the shared selection's
 variance would be left out. Replicate that stage or phase too, and
-continue each replicate. The sample must hold every replicate of its
+continue each replicate. A first phase that could select nothing else,
+such as the one unit of a one-unit population, has no variance to leave
+out, and a later phase replicated over it is accepted. The sample must
+hold every replicate of its
 execution (\code{samplyr_error_random_groups_input}).
 }
 
@@ -201,8 +241,8 @@ The generic types are refused for Poisson sampling, which needs
 \code{"rwyb"}. Bounded cube, LPM2 and SCPS have only the generic PPS bootstrap
 of \code{"subbootstrap"} and \code{"mrbbootstrap"}, which does not recreate their
 constraints or spatial algorithm. Only \code{"random_groups"} redraws a
-systematic start. \link{variance_estimation} has each case and the measured
-error.
+systematic start. \link{variance_estimation} compares the estimators by
+selection method.
 }
 }
 \examples{
@@ -214,20 +254,34 @@ sample <- sampling_design() |>
 
 rep_svy <- as_svrepdesign(sample, type = "auto")
 survey::svymean(~households, rep_svy)
+
+# The deterministic jackknife against linearization, and a seeded
+# bootstrap with enough replicates for a stable second decimal.
+survey::SE(survey::svytotal(~households, rep_svy))
+survey::SE(survey::svytotal(~households, as_svydesign(sample)))
+set.seed(1)
+boot <- as_svrepdesign(sample, type = "bootstrap", replicates = 500)
+survey::SE(survey::svytotal(~households, boot))
 \dontshow{\}) # examplesIf}
 }
 \references{
+Beaumont, J.-F. and \enc{Émond}{Emond}, N. (2022). A bootstrap variance
+estimation method for multistage sampling and two-phase sampling when
+Poisson sampling is used at the second phase. \emph{Stats}, 5(2), 339-357.
+\doi{10.3390/stats5020019}
+
+Canty, A. J. and Davison, A. C. (1999). Resampling-based variance
+estimation for labour force surveys. \emph{The Statistician}, 48, 379-391.
+
+Preston, J. (2009). Rescaled bootstrap for stratified multistage
+sampling. \emph{Survey Methodology}, 35(2), 227-234.
+
 Rao, J.N.K., Wu, C.F.J. and Yue, K. (1992). Some recent work on
 resampling methods for complex surveys. \emph{Survey Methodology}, 18(2),
 209-217.
 
 Wolter, K. M. (2007). \emph{Introduction to Variance Estimation}, 2nd ed.
 Springer.
-
-Beaumont, J.-F. and \enc{Émond}{Emond}, N. (2022). A bootstrap variance
-estimation method for multistage sampling and two-phase sampling when
-Poisson sampling is used at the second phase. \emph{Stats}, 5(2), 339-357.
-\doi{10.3390/stats5020019}
 }
 \seealso{
 \code{\link[=as_svydesign]{as_svydesign()}} for linearization export,

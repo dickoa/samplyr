@@ -1,7 +1,7 @@
 #' @noRd
 equal_prob_methods <- c("srswor", "srswr", "systematic", "bernoulli")
 wr_methods <- c("srswr", "pps_multinomial")
-pmr_methods <- c("pps_chromy")
+pmr_methods <- c("pps_chromy", "pps_systematic_mr")
 multi_hit_methods <- c(wr_methods, pmr_methods)
 pps_wor_methods <- c(
   "pps_brewer",
@@ -12,8 +12,11 @@ pps_wor_methods <- c(
   "pps_sps",
   "pps_pareto"
 )
-pps_wr_methods <- c("pps_multinomial", "pps_chromy")
+pps_wr_methods <- c("pps_multinomial", "pps_chromy", "pps_systematic_mr")
 pps_methods <- c(pps_wor_methods, pps_wr_methods)
+# One random start walks the frame order, so pairs can have zero joint
+# chance and the frame order can bias the variance approximation.
+systematic_methods <- c("systematic", "pps_systematic", "pps_systematic_mr")
 prn_methods <- c("bernoulli", "pps_poisson", "pps_sps", "pps_pareto", "scps")
 spatial_balanced_methods <- c("lpm2", "scps")
 balanced_methods <- c("cube", spatial_balanced_methods)
@@ -1254,7 +1257,69 @@ is_samplyr_column <- function(nms) {
     ".subround", ".visit"
   )
   nms %in% exact |
-    grepl("^\\.(weight|fpc|draw|certainty|reserve|zone|pair)_[0-9]+$", nms)
+    grepl("^\\.(weight|fpc|draw|certainty|reserve|zone|pair)_[0-9]+$", nms) |
+    grepl("^\\.phase[0-9]+_(row|draw_[0-9]+)$", nms)
+}
+
+#' The phase a sample is, counting the phases it was drawn from
+#' @noRd
+sample_phase_index <- function(x) {
+  k <- 1L
+  prev <- attr(x, "metadata")$prev_phase
+  while (is.list(prev) && is_tbl_sample(prev$sample)) {
+    k <- k + 1L
+    prev <- attr(prev$sample, "metadata")$prev_phase
+  }
+  k
+}
+
+#' The column of a later phase that numbers the rows of this sample
+#'
+#' A sample reused as a frame gives each of its rows its position, in a
+#' column named after its phase, so that a later phase's rows link back to
+#' it without any identifier the design declares.
+#' @noRd
+phase_row_column <- function(x) {
+  paste0(".phase", sample_phase_index(x), "_row")
+}
+
+#' The hit numbers of a sample, under the names a later phase reads them by
+#'
+#' `.draw_k` numbers the hits of a stage that can take a unit more than
+#' once. A later phase drawn from the sample carries it as `.phase<j>_draw_k`,
+#' so its design can stratify within each hit.
+#' @return Named character vector, the carried names by the sample's own.
+#' @noRd
+phase_draw_columns <- function(x) {
+  own <- grep("^\\.draw_[0-9]+$", names(x), value = TRUE)
+  stats::setNames(
+    sub("^\\.draw_", paste0(".phase", sample_phase_index(x), "_draw_"), own),
+    own
+  )
+}
+
+#' A frame as a new phase drawn from it reads it
+#'
+#' A sample gains the columns [execute()] gives a new phase drawn from it,
+#' its row positions and hit numbers. Any other frame is returned as is.
+#' @noRd
+with_phase_carried_columns <- function(frame) {
+  if (!is_tbl_sample(frame)) {
+    return(frame)
+  }
+  df <- as.data.frame(frame)
+  df[[phase_row_column(frame)]] <- seq_len(nrow(df))
+  with_phase_draw_columns(df, frame)
+}
+
+#' A sample's rows with its hit numbers under their carried names
+#' @noRd
+with_phase_draw_columns <- function(df, x) {
+  carried <- phase_draw_columns(x)
+  for (own in names(carried)) {
+    df[[carried[[own]]]] <- df[[own]]
+  }
+  df
 }
 
 #' The column names execution writes, which an input may not hold
@@ -1539,7 +1604,7 @@ sample_value_hashes <- function(data, cols) {
   if (is_null(ids) || anyNA(ids) || anyDuplicated(ids) > 0L) {
     return(NULL)
   }
-  cols <- cols[!startsWith(cols, ".")]
+  cols <- cols[!is_samplyr_column(cols)]
   ord <- order(ids)
   vapply(
     stats::setNames(cols, cols),
@@ -1860,13 +1925,45 @@ normalize_extracted_replicate <- function(x, r = NULL) {
     is.na(rep_of) || identical(as.integer(rep_of), r)
   }
   meta$empty_parents <- Filter(own, meta$empty_parents %||% list())
+  if (!is_null(meta$empty_pools)) {
+    meta$empty_pools <- Filter(own, meta$empty_pools)
+  }
   meta$frame_digest <- scope_digest_to_replicate(meta$frame_digest, r)
+  meta$prev_phase <- get_prev_phase(x, r)
   meta$n_selected <- nrow(x)
   meta$integrity <- sample_integrity_record(
     x, get_design(x), get_stages_executed(x)
   )
   attr(x, "metadata") <- meta
   x
+}
+
+#' The previous phase of a sample, cut to the replicate it is
+#'
+#' A later phase drawn from a replicated phase 1 keeps the whole stack,
+#' and each of its replicates was drawn from its own replicate's rows, in
+#' stack order, which its `.phase1_row` numbers. One replicate filtered from
+#' it reads that replicate of phase 1, made a sample of its own, as the
+#' frame digest and the execution records are read.
+#'
+#' Only a stack is cut, as execute() decides with the same predicate when it
+#' carries the replicates on. A phase 1 that was already a sample of its own,
+#' such as one replicate taken from an earlier stack before new replicates
+#' were drawn from it, stays whole: the `.replicate` its rows keep numbers
+#' the earlier execution, not this one.
+#' @noRd
+get_prev_phase <- function(x, r = extracted_replicate_id(x)) {
+  meta <- attr(x, "metadata")
+  prev <- meta$prev_phase
+  if (!is_null(meta$extracted_from) || is_null(r) ||
+      !is_tbl_sample(prev$sample) ||
+      !has_multiple_replicates(prev$sample) ||
+      all(prev$sample$.replicate %in% r)) {
+    return(prev)
+  }
+  rows <- which(prev$sample$.replicate %in% r)
+  prev$sample <- normalize_extracted_replicate(prev$sample[rows, ], r = r)
+  prev
 }
 
 #' Integrity-aware realization status of a tbl_sample
@@ -2029,6 +2126,43 @@ check_sample_unmodified <- function(x, fn_name, provisional_ok = FALSE,
       "{.fn {fn_name}} requires a sample that still matches its executed design.",
       bullets,
       advice
+    ),
+    class = "samplyr_error_modified_sample",
+    call = call
+  )
+}
+
+#' Refuse a later phase whose previous phase no longer matches its execution
+#'
+#' The two-phase export, and every route that composes the phases, reads the
+#' previous phase's rows as the whole first phase. Rows removed after its
+#' execution give that phase other probabilities and another variance, so
+#' no such route represents it. Random groups read only replicate totals and
+#' do not come here.
+#' @noRd
+check_prev_phase_unmodified <- function(x, fn_name, call = caller_env()) {
+  prev <- get_prev_phase(x)$sample
+  if (!is_tbl_sample(prev)) {
+    return(invisible(NULL))
+  }
+  status <- sample_realization_status(prev)
+  if (status$ok) {
+    return(invisible(NULL))
+  }
+  mods <- union(status$mods, status$inherited)
+  abort_samplyr(
+    c(
+      "{.fn {fn_name}} cannot export a phase drawn from a modified sample.",
+      "x" = "The previous phase was modified after {.fn execute}
+             ({.field {mods}} changed).",
+      "i" = "The export reads that phase's rows as the whole first phase, so
+             removed rows would give it other probabilities and another
+             variance.",
+      "i" = "To subsample some units of phase 1, such as the eligible ones,
+             draw phase 2 from phase 1 as executed with the screening
+             variable as a phase-2 stratum, then subset the exported design.",
+      "i" = "Replicates of the whole design, each phase 1 modified the same
+             way, still export with {.code type = \"random_groups\"}."
     ),
     class = "samplyr_error_modified_sample",
     call = call

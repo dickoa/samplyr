@@ -1440,8 +1440,10 @@ scope_digest_to_replicate <- function(digest, r) {
 #'   which pools a fixed-size PPS stage will take units from with
 #'   certainty (see the certainty section of [draw()]). After the draw it
 #'   comes from the stored chances or from the sample's `.certainty_k`
-#'   column, and it is `NA` when neither is available, as for a
-#'   with-replacement stage, whose chances are expected hits.
+#'   column, and it is `NA` when neither is available. A stage drawn with
+#'   replacement or minimum replacement has expected hits for chances, so
+#'   it counts the units its certainty rule took, and is `NA` without a
+#'   rule.
 #'
 #'   `tied` marks a pool whose allocated take was decided by a tie in the
 #'   rounding: its remainder equals that of a stratum on the other side of
@@ -1847,23 +1849,31 @@ frame_summary_report <- function(x, digest, stages, scope, detail,
 #' A preview counts them as it resolves the chances. A recorded digest knows
 #' them from its stored units or a constant chance. Otherwise the sample it
 #' was recorded with does, since a unit with chance one is always selected.
-#' Expected hits are not chances, so a with-replacement stage has none.
+#' Expected hits are not chances, so a with-replacement stage has none
+#' unless a declared rule names them in its units.
 #' @noRd
 pool_certainty_counts <- function(s, certain = NULL, sample = NULL) {
   pools <- s$pools
   if (!is_null(certain)) {
     return(as.integer(certain[[s$stage_id]]))
   }
-  if (!identical(s$chance_kind, "inclusion_probability")) {
+  # A stage drawn with replacement names its certainty units only under a
+  # declared rule. Otherwise its counts are unknown. Without the units, the
+  # sample's flags name them, and its chances are expected hits.
+  named <- !is_null(s$units) && "is_certainty" %in% names(s$units) &&
+    !all(is.na(s$units$is_certainty))
+  hits <- !identical(s$chance_kind, "inclusion_probability") && !named
+  if (hits && !stage_declares_certainty(sample, s$stage_id)) {
     return(rep(NA_integer_, nrow(pools)))
   }
-  if (!is_null(s$units) && "is_certainty" %in% names(s$units)) {
+  if (!hits && !is_null(s$units) && "is_certainty" %in% names(s$units)) {
     hit <- !is.na(s$units$is_certainty) & s$units$is_certainty
     return(tabulate(
       match(s$units$pool_id[hit], pools$pool_id), nrow(pools)
     ))
   }
-  if (identical(s$storage, "constant") && "chance" %in% names(pools)) {
+  if (!hits && identical(s$storage, "constant") &&
+      "chance" %in% names(pools)) {
     return(ifelse(
       is_certainty_probability(as.double(pools$chance)),
       as.integer(pools$N), 0L
@@ -1891,6 +1901,17 @@ pool_certainty_counts <- function(s, certain = NULL, sample = NULL) {
     return(tabulate(match(units$pool_id, pools$pool_id), nrow(pools)))
   }
   rep(NA_integer_, nrow(pools))
+}
+
+#' Does a sample's stage declare a rule that takes units with certainty?
+#' @noRd
+stage_declares_certainty <- function(sample, stage_id) {
+  if (!is_tbl_sample(sample)) {
+    return(FALSE)
+  }
+  draw <- get_design(sample)$stages[[as.integer(stage_id)]]$draw_spec
+  !is_null(draw) &&
+    (has_certainty_rule(draw) || !is_null(draw$certainty_plan))
 }
 
 #' Sum that refuses to invent a total from incomplete parts

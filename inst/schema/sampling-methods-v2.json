@@ -229,6 +229,23 @@
       }
     },
     {
+      "id": "systematic_minimum_replacement",
+      "family": "probability_proportional_to_size",
+      "algorithm": "systematic",
+      "replacement": "minimum_replacement",
+      "sample_size": "fixed",
+      "probabilities": "unequal",
+      "implementations": {
+        "samplyr": "pps_systematic_mr"
+      },
+      "probability_quantity": "expected_hits",
+      "probability_quality": "exact",
+      "ddi": {
+        "code": "Probability",
+        "uri": "http://rdf-vocabulary.ddialliance.org/cv/SamplingProcedure/1.1.4/0d2765b"
+      }
+    },
+    {
       "id": "cube_balanced",
       "family": "balanced",
       "algorithm": "cube",

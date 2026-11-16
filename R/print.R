@@ -842,6 +842,7 @@ format_cluster_vars <- function(spec) {
   out
 }
 
+#' @rdname print.samplyr
 #' @export
 print.samplyr_design_comparison <- function(x, ...) {
   cli::cat_rule("Design comparison")
@@ -901,7 +902,7 @@ unspread_sort_note <- function(spec, i) {
   )
   methods <- unique(setdiff(
     methods,
-    c("systematic", "pps_systematic", "pps_chromy")
+    c(systematic_methods, "pps_chromy")
   ))
   if (length(methods) == 0L) {
     return("")

@@ -101,6 +101,60 @@ test_that("random groups refuse replicates that share an earlier selection", {
   )
 })
 
+test_that("random groups of a later phase follow what phase 1 shares", {
+  skip_if_not_installed("survey")
+  rg_status <- function(v) v$status[v$estimator == "Random groups"]
+  # Phase 2 within the pools of one realized phase 1 composes with it, and
+  # the preflight called random groups supported where the export refuses.
+  frame <- data.frame(psu = rep(1:6, each = 5), mos = rep(10 * (1:6), each = 5),
+                      y = (1:30 %% 7) * 2 + 1)
+  design1 <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |>
+    draw(n = 3, method = "pps_cps", mos = mos) |>
+    add_stage() |> draw(n = 4)
+  within <- sampling_design() |> stratify_by(psu) |> draw(n = 2)
+  phase1 <- execute(design1, frame, seed = 1)
+  phase2 <- execute(within, phase1, reps = 4, seed = 2)
+  expect_error(as_svrepdesign(phase2, type = "random_groups"),
+               class = "samplyr_error_random_groups_shared")
+  for (v in list(variance_estimators(within, phase1),
+                 variance_estimators(phase2))) {
+    expect_identical(rg_status(v), "refused")
+    expect_identical(v$class[v$estimator == "Random groups"],
+                     "samplyr_error_random_groups_shared")
+  }
+  stack1 <- execute(design1, frame, seed = 1, reps = 4)
+  expect_identical(rg_status(variance_estimators(within, stack1)), "supported")
+  expect_s3_class(
+    as_svrepdesign(execute(within, stack1, seed = 2), type = "random_groups"),
+    "svyrep.design"
+  )
+
+  # A phase 1 that could select nothing else shares no variance, so the
+  # replicates of phase 2 are the whole design's.
+  population <- data.frame(psu = 1L, hh = 1:6, y = c(3, 9, 4, 12, 6, 2))
+  fixed <- sampling_design() |>
+    cluster_by(psu) |> draw(n = 1) |>
+    add_stage() |> draw(frac = 1) |>
+    execute(population, seed = 1)
+  expect_true(samplyr:::phase1_is_fixed_one_unit(fixed))
+  sub <- sampling_design() |> draw(n = 3)
+  phase2 <- execute(sub, fixed, reps = 4, seed = 2)
+  expect_true(attr(phase2, "metadata")$replicates_complete)
+  totals <- replicate_totals(phase2)
+  total <- survey::svytotal(~y, as_svrepdesign(phase2, type = "random_groups"))
+  expect_equal(unname(coef(total)), mean(totals))
+  expect_equal(unname(vcov(total))[1, 1], stats::var(totals) / 4)
+  expect_identical(rg_status(variance_estimators(sub, fixed)), "supported")
+  expect_identical(rg_status(variance_estimators(phase2)), "supported")
+  # Its continuation carries the answer.
+  two <- sampling_design() |>
+    add_stage() |> cluster_by(hh) |> draw(n = 3) |>
+    add_stage() |> draw(frac = 1)
+  first <- execute(two, fixed, stages = 1, reps = 4, seed = 2)
+  expect_true(attr(execute(first, fixed, seed = 3), "metadata")$replicates_complete)
+})
+
 test_that("random groups need every replicate and only their own arguments", {
   skip_if_not_installed("survey")
   frame <- data.frame(id = 1:100, y = 1)

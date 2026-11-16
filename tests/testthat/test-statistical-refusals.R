@@ -81,6 +81,47 @@ test_that("two-phase export cannot silently use fixed-size Poisson variance", {
   expect_error(as_svydesign(phase2), class = "samplyr_error_twophase_poisson")
 })
 
+test_that("a phase 2 drawn with replacement is refused whatever it hit", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:20, y = 1)
+  phase1 <- sampling_design() |> draw(n = 8) |> execute(frame, seed = 2)
+  wr <- sampling_design() |> draw(n = 4, method = "srswr")
+  repeated <- execute(wr, phase1, seed = 1)
+  distinct <- execute(wr, phase1, seed = 3)
+  expect_true(anyDuplicated(repeated$.phase1_row) > 0L)
+  expect_false(anyDuplicated(distinct$.phase1_row) > 0L)
+  for (s in list(repeated, distinct)) {
+    for (method in c("full", "approx", "simple")) {
+      expect_error(as_svydesign(s, method = method),
+        class = "samplyr_error_twophase_phase2_wr")
+    }
+    rows <- variance_estimators(s, phase1)
+    expect_identical(rows$status[1], "refused")
+    expect_identical(rows$class[1], "samplyr_error_twophase_phase2_wr")
+  }
+  # More draws than phase-1 rows, and a declared phase-1 identifier.
+  phase1 <- sampling_design() |> cluster_by(id) |> draw(n = 4) |>
+    execute(frame, seed = 2)
+  more <- sampling_design() |> draw(n = 20, method = "srswr") |>
+    execute(phase1, seed = 3)
+  expect_error(as_svydesign(more), class = "samplyr_error_twophase_phase2_wr")
+  # Whole phase-1 clusters drawn with replacement.
+  villages <- expand.grid(hh = 1:3, v = 1:10)
+  villages$y <- 1
+  phase1 <- sampling_design() |> cluster_by(v) |> draw(n = 5) |>
+    execute(villages, seed = 1)
+  phase2 <- sampling_design() |> cluster_by(v) |>
+    draw(n = 3, method = "srswr") |> execute(phase1, seed = 4)
+  expect_error(as_svydesign(phase2), class = "samplyr_error_twophase_phase2_wr")
+
+  # Oracle: a constant outcome has a fixed total, 4 rows of weight 5.
+  phase1 <- sampling_design() |> draw(n = 8) |> execute(frame, seed = 2)
+  wor <- sampling_design() |> draw(n = 4) |> execute(phase1, seed = 1)
+  total <- survey::svytotal(~y, as_svydesign(wor))
+  expect_equal(unname(coef(total)), 20)
+  expect_equal(unname(survey::SE(total)), 0, ignore_attr = TRUE)
+})
+
 test_that("a Poisson phase is refused before the phases are linked", {
   skip_if_not_installed("survey")
   # Neither phase declares a shared identifier, so the link would fail too.

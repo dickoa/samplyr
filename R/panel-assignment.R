@@ -206,15 +206,12 @@
 #' warns (`samplyr_warning_lonely_psu`). [as_svrepdesign()] calibrates its
 #' replicates the same way.
 #'
-#' In simulations over 300 masters, the standard error was 0.98 to 1.04 of
-#' the spread of the window's estimate on clustered masters with at least as
-#' many units per stratum as panels, with even or uneven blocks, steady or
-#' seasonal outcomes, and EAs drawn by simple random sampling or by size.
-#' On element masters with one or two units per panel and stratum it was
-#' 1.05 to 1.29, and with fewer units than panels 1.02 to 1.23, so intervals
-#' there are conservative. The standard error also keeps the
-#' with-replacement approximation of the master, which overstated it by
-#' about 12% under systematic PPS on a sorted frame in simulations.
+#' A collapsed stratum overstates the variance by the spread between the
+#' totals of the cells it joins, so the window's variance is close where
+#' each stratum holds at least as many units as panels and few cells are
+#' merged, and overstates where strata hold fewer units than panels. It
+#' also keeps the master's ultimate-cluster reading, which overstates where
+#' the first stage takes a large share of its units.
 #'
 #' ## Reporting periods
 #'

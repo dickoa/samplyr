@@ -25,3 +25,7 @@ once per selection that drew it, and whether the selections overlap at all is
 something the program does not know. Being a plain data frame is what
 stops it reaching \code{\link[=as_svydesign]{as_svydesign()}} as though it were one sample.
 }
+\seealso{
+\code{\link[=rotation_program]{rotation_program()}}, and \code{\link[=execute]{execute()}} with \code{period}, which
+returns the occasion.
+}

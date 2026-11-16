@@ -485,7 +485,7 @@ test_that("a phase-2 design that declares no unit still links through phase 1", 
   )
 })
 
-test_that("a design warns when neither phase declares a unit", {
+test_that("phases that declare no unit link by row position", {
   frame <- data.frame(id = 1:100, x = rnorm(100), size = 1:100)
   phase1 <- sampling_design() |>
     draw(n = 40) |>
@@ -497,22 +497,15 @@ test_that("a design warns when neither phase declares a unit", {
 
   phase2_design <- sampling_design() |>
     draw(n = 10, method = "pps_brewer", mos = size)
+  expect_no_warning(validate_frame(phase2_design, phase1))
 
-  expect_warning(
-    validate_frame(phase2_design, phase1),
-    class = "samplyr_warning_phase_linkage"
-  )
-  expect_true(suppressWarnings(validate_frame(phase2_design, phase1)))
-
-  # The export the warning predicts does fail.
+  phase2 <- execute(phase2_design, phase1, seed = 2)
+  expect_identical(phase1$id[phase2$.phase1_row], phase2$id)
   skip_if_not_installed("survey")
-  expect_error(
-    as_svydesign(execute(phase2_design, phase1, seed = 2)),
-    class = "samplyr_error_twophase_bridge"
-  )
+  expect_s3_class(as_svydesign(phase2), "twophase2")
 })
 
-test_that("phase-2 design with non-unique phase-1 keys warns", {
+test_that("a phase 2 of whole phase-1 clusters links by row position", {
   # psu repeats across the retained rows, so it cannot be the join key.
   frame <- data.frame(
     psu = rep(1:10, each = 5),
@@ -527,11 +520,12 @@ test_that("phase-2 design with non-unique phase-1 keys warns", {
   phase2_design <- sampling_design() |>
     cluster_by(psu) |>
     draw(n = 2)
+  expect_no_warning(validate_frame(phase2_design, phase1))
 
-  expect_warning(
-    validate_frame(phase2_design, phase1),
-    class = "samplyr_warning_phase_linkage"
-  )
+  phase2 <- execute(phase2_design, phase1, seed = 1)
+  expect_identical(phase1$id[phase2$.phase1_row], phase2$id)
+  skip_if_not_installed("survey")
+  expect_s3_class(as_svydesign(phase2), "twophase2")
 })
 
 ## execute() judges later stages before it draws

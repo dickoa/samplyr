@@ -12,7 +12,10 @@ needed for weighting, replay, and export to the survey and srvyr packages.
 * Multistage designs run against one hierarchical frame or one register per
   stage. Stages can be executed one at a time, and `execute()` on a
   partial sample runs the remaining stages. A sample passed as the frame
-  of a new design starts a second phase.
+  of a new design starts a second phase, whose rows keep the position of
+  the first-phase rows they came from, so the export links the phases
+  without a declared identifier, and the hit of a unit drawn more than
+  once, so a subsample within each hit exports as one phase.
 * Cluster ids may be numbered within the level above them, so town 1 of
   every county is its own unit. `cluster_by(nest = FALSE)` instead declares
   ids unique across strata and checks it.
@@ -37,13 +40,16 @@ needed for weighting, replay, and export to the survey and srvyr packages.
 
 ## Selection methods
 
-* Sixteen built-in methods: simple random, systematic and Bernoulli
-  sampling, seven PPS methods without replacement, two with or minimum
-  replacement, and balanced sampling (cube, local pivotal, spatially
+* Seventeen built-in methods: simple random, systematic and Bernoulli
+  sampling, seven PPS methods without replacement, three with or minimum
+  replacement (multinomial, Chromy's sequential method and systematic PPS
+  with minimum replacement), and balanced sampling (cube, local pivotal, spatially
   correlated Poisson).
 * Certainty selection for large units through absolute or proportional
-  thresholds. Units a fixed-size PPS draw takes with certainty by their
-  size are reported, and `frame_summary()` counts them before drawing.
+  thresholds, also for the methods that can take a unit more than once,
+  which then take it once. Units a fixed-size PPS draw takes with
+  certainty by their size are reported, and `frame_summary()` counts them
+  before drawing.
 * Permanent random numbers coordinate samples across surveys and rounds.
 * Custom methods registered with `sondage::register_method()` work
   throughout the package.

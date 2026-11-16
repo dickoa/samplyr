@@ -99,6 +99,11 @@ test_that("PRN rejects incompatible methods", {
       draw(n = 10, method = "pps_chromy", mos = size, prn = u),
     "prn.*only supported"
   )
+  expect_error(
+    sampling_design() |>
+      draw(n = 10, method = "pps_systematic_mr", mos = size, prn = u),
+    "prn.*only supported"
+  )
 })
 
 test_that("PRN validates column existence at execution", {

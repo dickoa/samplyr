@@ -526,7 +526,7 @@ test_that("custom random-size WOR cannot use fixed-size bootstrap as an escape h
     class = "samplyr_error_poisson_replicates")
   if (requireNamespace("svrep", quietly = TRUE)) {
     expect_error(as_svrepdesign(result, type = "rwyb"),
-      class = "samplyr_error_rwyb_method")
+      "random sample size alone", class = "samplyr_error_rwyb_method")
   }
 })
 
@@ -1490,7 +1490,7 @@ test_that("a custom random-size expectation survives capping and certainty", {
   }
 })
 
-test_that("built-in methods keep their frac behaviour", {
+test_that("built-in methods keep their frac behavior", {
   frame <- data.frame(id = 1:10, size = 1)
   chances <- function(design) {
     unlist(frame_summary(design, frame, detail = "pool")[c("n_target", "chance")])

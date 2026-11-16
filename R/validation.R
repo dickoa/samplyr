@@ -126,15 +126,17 @@
 #'
 #' When `frame` is itself a `tbl_sample` (that is, the design is being
 #' prepared as phase 2 of a two-phase sample), `validate_frame()` also
-#' pre-flights the two-phase export requirements. The phases declare
-#' their sampling units independently, so the link is the compound of
-#' every identifier either phase declares with [cluster_by()] that both
-#' samples carry, which is the bridge [as_svydesign()] builds. It warns
-#' when neither phase declares an identifier the phase-1 sample carries,
-#' and when the identifiers together do not uniquely identify phase-1
-#' rows. Problems are reported as warnings rather than errors, because
-#' selection and weighting work without linkage. Only [as_svydesign()]
-#' needs it.
+#' pre-flights the two-phase export requirements. It warns when the
+#' phase-1 sample was modified after execution, since both exports then
+#' refuse the second phase. Rows drawn from the phase-1 sample link to it
+#' by position, so they need no identifier. When a later stage of phase 2
+#' draws from a register of its own, the link is the compound of every
+#' identifier either phase declares with [cluster_by()] that both samples
+#' carry, which is the bridge [as_svydesign()] builds, and it warns when
+#' neither phase declares an identifier the phase-1 sample carries and when
+#' the identifiers together do not uniquely identify phase-1 rows. Problems
+#' are reported as warnings rather than errors, because selection and
+#' weighting work without linkage. Only the export needs it.
 #'
 #' A previous-phase sample also carries identifiers that later stages
 #' must keep. One that varies inside a sampling unit cannot be carried,
@@ -361,7 +363,22 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
   phase_link_vars <- phase_link_vars_of(prev_phase)
   check_phase_key_invariance(schedule, design, phase_link_vars, prev_phase)
   # Inspect phase identifiers before preparation strips generated columns.
-  check_phase_linkage(design, frames[[1]])
+  # Rows drawn from the phase-1 sample alone link by their position.
+  from_phase1 <- vapply(schedule$entries, function(e) {
+    identical(as.integer(e$frame_index), 1L)
+  }, logical(1))
+  if (!all(from_phase1)) {
+    check_phase_linkage(design, frames[[1]])
+  }
+  if (is_null(partial_sample) && is_tbl_sample(frames[[1]]) &&
+      !sample_realization_status(frames[[1]])$ok) {
+    cli_warn(c(
+      "The phase-1 sample was modified after execution.",
+      "i" = "A second phase drawn from it is selected, but
+             {.fn as_svydesign} and {.fn as_svrepdesign} refuse it, except
+             random groups of replicates."
+    ), class = "samplyr_warning_modified_sample")
+  }
 
   # Check supplied-register ancestry before linkage filters rows.
   for (entry in schedule$entries) {
@@ -1250,6 +1267,10 @@ stage_frame_issues <- function(stage_spec, frame, stage_idx) {
 #' what resolve_phase_bridge() builds at export. Requiring the two
 #' declarations to intersect would reject the ordinary case where they
 #' name different levels of the same hierarchy.
+#'
+#' Only a phase whose later stages draw from registers of their own needs
+#' this. A phase drawn from the phase-1 sample alone keeps each phase-1
+#' row's position, which links the phases without any identifier.
 #'
 #' Warnings, not errors: validation still passes because the phase-2
 #' sample itself is valid without linkage. A subsample within phase 1's

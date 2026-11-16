@@ -501,3 +501,161 @@ test_that("a replicate replayed empty on another frame is an empty sample", {
   expect_false("Modified" %in% names(tbl_sum(replayed)))
   expect_identical(frame_summary(replayed), frame_summary(alone))
 })
+
+test_that("one replicate of a replicated second phase reads its own phase 1", {
+  skip_if_not_installed("survey")
+  # Each replicate of phase 2 was drawn from its own replicate of phase 1.
+  # Extracted, it exported against the whole stack of phase 1: a key
+  # refusal when replicates shared units, a total divided by the
+  # replicate count when they did not.
+  frame <- data.frame(
+    id = 1:100, stratum = rep(c("A", "B"), each = 50),
+    x = (1:100 %% 9) + 1, y = 400 + (1:100 %% 13) * 10
+  )
+  big <- data.frame(id = 1:1000, x = (1:1000 %% 9) + 1,
+                    y = 400 + (1:1000 %% 13) * 10)
+  fit <- function(s) {
+    e <- survey::svytotal(~y, suppressWarnings(as_svydesign(s)))
+    c(unname(coef(e)), unname(survey::SE(e)))
+  }
+  pps <- sampling_design() |> draw(n = 6, method = "pps_brewer", mos = x)
+  # A simple random phase 2 of an unstratified phase 1 composes with it.
+  cases <- list(
+    apart = list(frame = big, d1 = sampling_design() |> draw(n = 10),
+                 d2 = pps),
+    composed = list(frame = big, d1 = sampling_design() |> draw(n = 15),
+                    d2 = sampling_design() |> draw(n = 6)),
+    shared = list(frame = frame, d2 = pps,
+                  d1 = sampling_design() |> stratify_by(stratum) |>
+                    draw(n = 15))
+  )
+  seeds <- samplyr:::replicate_seed_values(2, 3)
+  for (case in names(cases)) {
+    d2 <- cases[[case]]$d2
+    p1 <- execute(cases[[case]]$d1, cases[[case]]$frame, reps = 3, seed = 1)
+    p2 <- execute(d2, p1, seed = 2)
+    for (r in c(1L, 3L)) {
+      alone <- dplyr::filter(p2, .replicate == r)
+      # The same draw from that replicate of phase 1, as a phase of its own.
+      direct <- execute(d2, dplyr::filter(p1, .replicate == r),
+                        seed = seeds[r])
+      expect_identical(alone$id, direct$id)
+      info <- paste(case, r)
+      expect_equal(fit(alone), fit(direct), info = info)
+      expect_equal(fit(alone)[1], sum(alone$y * alone$.weight), info = info)
+      phase1 <- samplyr:::get_prev_phase(alone)$sample
+      expect_identical(unique(phase1$.replicate), r)
+      expect_true(samplyr:::sample_realization_status(phase1)$ok)
+      expect_identical(variance_estimators(alone)$status,
+                       variance_estimators(direct)$status, info = info)
+    }
+  }
+  # Composed with phase 1, a replicate keeps the records of its own empty
+  # primary units only.
+  psus <- data.frame(psu = 1:12)
+  hh <- data.frame(psu = rep(1:9, each = 4), hh = 1:36,
+                   y = (1:36 %% 7) * 10 + 5)
+  clustered <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 6) |>
+    add_stage() |> draw(n = 3, on_empty = "silent")
+  within <- sampling_design() |> stratify_by(psu) |> draw(n = 2)
+  stack1 <- execute(clustered, psus, hh, reps = 3, seed = 4)
+  stack2 <- execute(within, stack1, seed = 2)
+  fit_na <- function(s) {
+    svy <- as_svydesign(s)
+    e <- survey::svytotal(~y, svy, na.rm = TRUE)
+    c(nrow(svy$variables), unname(coef(e)), unname(survey::SE(e)))
+  }
+  for (r in 1:3) {
+    direct <- execute(within, dplyr::filter(stack1, .replicate == r),
+                      seed = seeds[r])
+    expect_equal(fit_na(dplyr::filter(stack2, .replicate == r)),
+                 fit_na(direct), info = paste("composed", r))
+  }
+
+  # Its receipt and a saved copy read the same phase 1.
+  alone <- dplyr::filter(p2, .replicate == 2L)
+  path <- withr::local_tempfile(fileext = ".json")
+  suppressWarnings(write_design(alone, path, frame = frame))
+  replayed <- replay_design(read_design(path), frame)
+  expect_identical(replayed$id, alone$id)
+  expect_equal(fit(replayed), fit(alone))
+  rds <- withr::local_tempfile(fileext = ".rds")
+  saveRDS(alone, rds)
+  expect_equal(fit(readRDS(rds)), fit(alone))
+  # A replicate of phase 1 changed after execution is still refused.
+  cut <- dplyr::filter(p1, .replicate == 2L)[-1, ]
+  expect_error(
+    as_svydesign(suppressWarnings(execute(d2, cut, seed = 2))),
+    class = "samplyr_error_modified_sample"
+  )
+})
+
+test_that("new replicates drawn from one replicate keep the whole of it", {
+  skip_if_not_installed("survey")
+  # Replicate 2 of phase 1, taken as a sample of its own, keeps
+  # `.replicate == 2` in its rows. Phase 2 drawn from it with `reps = 3`
+  # numbers its own replicates 1 to 3, and those labels do not name
+  # replicates of phase 1. Cutting phase 1 by them left replicates 1 and 3
+  # with no phase-1 row, refused as drawn from a modified phase 1.
+  frame <- data.frame(id = 1:100, x = (1:100 %% 9) + 1,
+                      y = 400 + (1:100 %% 13) * 10)
+  srs <- sampling_design() |> draw(n = 6)
+  pps <- sampling_design() |> draw(n = 6, method = "pps_brewer", mos = x)
+  seeds <- samplyr:::replicate_seed_values(2, 3)
+  checked <- character(0)
+  for (digest in c("none", "summary", "full")) {
+    p1 <- execute(sampling_design() |> draw(n = 20), frame,
+                  seed = 1, reps = 3, frame_digest = digest)
+    parent <- dplyr::filter(p1, .replicate == 2L)
+    for (d2 in list(srs, pps)) {
+      method <- d2$stages[[1]]$draw_spec$method
+      p2 <- execute(d2, parent, seed = 2, reps = 3, frame_digest = digest)
+      for (r in 1:3) {
+        info <- paste(digest, method, r)
+        one <- dplyr::filter(p2, .replicate == r)
+        prev <- samplyr:::get_prev_phase(one)$sample
+        expect_identical(prev$id, parent$id, info = info)
+        expect_true(samplyr:::sample_realization_status(prev)$ok,
+                    info = info)
+        svy <- as_svydesign(one)
+        total <- unname(coef(survey::svytotal(~y, svy)))
+        if (method == "srswor") {
+          # Closed form: 20 of 100, then 6 of those 20, so every weight is
+          # 100 / 6.
+          expect_equal(total, sum(one$y) * 100 / 6, info = info)
+          expect_s3_class(
+            withr::with_seed(1, as_svrepdesign(one, type = "rwyb",
+                                               replicates = 20)),
+            "svyrep.design"
+          )
+          expect_identical(replay_design(one, frame)$id, one$id,
+                           info = info)
+        }
+        # The same draw from the same parent, as a phase of its own.
+        direct <- execute(d2, parent, seed = seeds[r], frame_digest = digest)
+        expect_identical(one$id, direct$id, info = info)
+        expect_equal(vcov(survey::svytotal(~y, svy)),
+                     vcov(survey::svytotal(~y, as_svydesign(direct))),
+                     info = info)
+        checked <- c(checked, info)
+      }
+    }
+  }
+  expect_setequal(checked, as.vector(outer(
+    paste(rep(c("none", "summary", "full"), each = 2),
+          c("srswor", "pps_brewer")),
+    1:3, paste
+  )))
+  # A replicate whose rows were edited before phase 2 is still refused.
+  p1 <- execute(sampling_design() |> draw(n = 20), frame, seed = 1, reps = 3)
+  two <- dplyr::filter(p1, .replicate == 2L)
+  edited <- two[two$id != min(two$id), ]
+  expect_identical(nrow(edited), nrow(two) - 1L)
+  p2 <- suppressWarnings(execute(srs, edited, seed = 2, reps = 3))
+  for (r in 1:3) {
+    expect_error(as_svydesign(dplyr::filter(p2, .replicate == r)),
+                 class = "samplyr_error_modified_sample",
+                 info = as.character(r))
+  }
+})

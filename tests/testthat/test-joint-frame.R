@@ -69,10 +69,10 @@ test_that("the frame path equals the digest path under every control", {
   )
   structures <- c("plain", "stratified", "cluster", "stage_two", "certainty")
   # Order-dependent methods, where the order is the design.
-  for (method in c("pps_systematic", "pps_chromy")) {
+  for (method in c("pps_systematic", "pps_chromy", "pps_systematic_mr")) {
     for (ctl in names(controls)) {
       for (structure in structures) {
-        if (structure == "certainty" && method == "pps_chromy") next
+        if (structure == "certainty" && method != "pps_systematic") next
         ctl_use <- controls[[ctl]]
         if (structure == "cluster" && ctl != "none") {
           ctl_use <- quote(ckey)
@@ -224,6 +224,39 @@ test_that("edits to the sample after execution leave the matrix unchanged", {
     unname(joint_expectation(turned, frame)[[1]]),
     unname(reference[back, back])
   )
+})
+
+test_that("a user column whose name starts with a dot can be the key", {
+  frame <- data.frame(.id = 1:12, .size = 1:12)
+  s <- sampling_design() |>
+    draw(n = 4, method = "pps_multinomial", mos = .size) |>
+    execute(frame, seed = 1, frame_digest = "full")
+  # Oracle: multinomial expected hits, n (n - 1) p_i p_j and
+  # n p_i (1 - p_i) + (n p_i)^2 on the diagonal.
+  p <- s$.size / sum(frame$.size)
+  target <- 4 * 3 * outer(p, p)
+  diag(target) <- 4 * p * (1 - p) + (4 * p)^2
+  expect_equal(unname(joint_expectation(s, frame)[[1]]), target)
+  for (method in c("pps_brewer", "pps_systematic_mr")) {
+    s <- sampling_design() |> draw(n = 4, method = method, mos = .size) |>
+      execute(frame, seed = 1, frame_digest = "full")
+    expect_equal(joint_expectation(s, frame), joint_expectation(s),
+      info = method)
+  }
+
+  # Without the dotted id, the other column has repeated values.
+  frame <- data.frame(.id = 1:12, size = rep(1:3, 4))
+  s <- sampling_design() |>
+    draw(n = 4, method = "pps_sampford", mos = size) |>
+    execute(frame, seed = 2, frame_digest = "full")
+  reference <- joint_expectation(s)[[1]]
+  expect_equal(joint_expectation(s, frame)[[1]], reference)
+  # An edited dotted column is a change, and units match on the others.
+  edited <- s
+  edited$.id <- edited$.id + 100L
+  expect_identical(samplyr:::sample_changed_columns(edited), ".id")
+  expect_error(joint_expectation(edited, frame),
+    class = "samplyr_error_joint_frame_key")
 })
 
 test_that("dropping unused levels of a factor id keeps the matrix", {
@@ -487,4 +520,66 @@ test_that("key columns named like internal counters are matched as keys", {
     expect_equal(unname(diag(from_frame)), 1 / units$.weight_2, label = name)
     expect_equal(from_frame, joint_expectation(s)[[2]], label = name)
   }
+})
+
+test_that("only a stage given a matrix makes the row order matter", {
+  # Phase 2 draws one unit systematically inside each PSU phase 1 drew by
+  # CPS. joint_expectation() computes stage 1 only, yet a reordered frame
+  # was refused for the systematic stage 2 it never reads.
+  frame <- data.frame(psu = rep(1:6, each = 5),
+                      mos = rep(10 * (1:6), each = 5), y = (1:30) %% 7)
+  composed <- function(method1, frame, within = "systematic") {
+    first <- sampling_design() |> add_stage() |> cluster_by(psu) |>
+      draw(n = 3, method = method1, mos = mos) |>
+      add_stage() |> draw(n = 4)
+    phase1 <- execute(first, frame, seed = 1)
+    suppressMessages(execute(
+      sampling_design() |> stratify_by(psu) |> draw(n = 1, method = within),
+      phase1, seed = 2
+    ))
+  }
+  reversed <- frame[rev(seq_len(nrow(frame))), ]
+  s <- composed("pps_cps", frame)
+  reference <- joint_expectation(s)
+  got <- joint_expectation(s, frame = reversed)
+  expect_equal(got$stage_1, reference$stage_1)
+  expect_null(got$stage_2)
+  expect_equal(joint_expectation(s, frame = reversed, stages = 1)$stage_1,
+               reference$stage_1)
+
+  # The other checks are unchanged: a changed chance and a missing row.
+  changed <- reversed
+  changed$mos[changed$psu == 2] <- 25
+  err <- expect_error(joint_expectation(s, frame = changed),
+                      class = "samplyr_error_joint_frame_mismatch")
+  expect_match(conditionMessage(err), "differ")
+  expect_error(joint_expectation(s, frame = reversed[-1, ]),
+               class = "samplyr_error_joint_frame_mismatch")
+
+  # A stage given a matrix by an order-dependent method still refuses a
+  # reordered frame: systematic PPS, and a registered method.
+  s <- composed("pps_systematic", frame)
+  err <- expect_error(
+    suppressWarnings(joint_expectation(s, frame = reversed)),
+    class = "samplyr_error_joint_frame_mismatch"
+  )
+  expect_match(conditionMessage(err), "order-dependent")
+  on.exit(sondage::unregister_method("frame_order_wor"), add = TRUE)
+  sondage::register_method(
+    "frame_order_wor", "wor",
+    sample_fn = function(pik, n = NULL, prn = NULL, ...) {
+      order(pik, decreasing = TRUE)[seq_len(n)]
+    },
+    joint_fn = function(pik, sample_idx = NULL, ...) {
+      if (!is.null(sample_idx)) pik <- pik[sample_idx]
+      joint <- outer(pik, pik)
+      diag(joint) <- pik
+      joint
+    },
+    probabilities = "exact"
+  )
+  s <- composed("pps_frame_order_wor", frame)
+  err <- expect_error(joint_expectation(s, frame = reversed),
+                      class = "samplyr_error_joint_frame_mismatch")
+  expect_match(conditionMessage(err), "order-dependent")
 })

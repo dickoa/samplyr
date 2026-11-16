@@ -107,7 +107,6 @@ reference:
       - joint_expectation
       - design_effect
       - varcomp.tbl_sample
-      - effective_n
 
   - title: "Serialization"
     desc: "Save, share, and restore designs as JSON files."

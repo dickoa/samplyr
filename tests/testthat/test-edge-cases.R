@@ -1458,16 +1458,12 @@ test_that("validate_frame() requires integer stage values", {
   )
 })
 
-test_that("certainty selection is rejected for WR/PMR methods", {
+test_that("certainty selection is rejected for methods without a size", {
   expect_error(
     sampling_design() |>
-      draw(n = 4, method = "pps_multinomial", mos = size, certainty_size = 400),
-    "without.replacement"
-  )
-  expect_error(
-    sampling_design() |>
-      draw(n = 4, method = "pps_chromy", mos = size, certainty_size = 400),
-    "without.replacement"
+      draw(n = 4, method = "cube", mos = size, certainty_size = 400),
+    "only available for PPS methods",
+    class = "samplyr_error_draw_method_argument"
   )
 })
 

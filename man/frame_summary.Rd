@@ -100,8 +100,10 @@ pool taken whole counts all of its units. Before the draw it shows
 which pools a fixed-size PPS stage will take units from with
 certainty (see the certainty section of \code{\link[=draw]{draw()}}). After the draw it
 comes from the stored chances or from the sample's \code{.certainty_k}
-column, and it is \code{NA} when neither is available, as for a
-with-replacement stage, whose chances are expected hits.
+column, and it is \code{NA} when neither is available. A stage drawn with
+replacement or minimum replacement has expected hits for chances, so
+it counts the units its certainty rule took, and is \code{NA} without a
+rule.
 
 \code{tied} marks a pool whose allocated take was decided by a tie in the
 rounding: its remainder equals that of a stratum on the other side of

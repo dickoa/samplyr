@@ -254,8 +254,12 @@ test_that("certainty PSUs' stage-two units are resampled as PSUs", {
   cert <- df$.certainty_1
   df$u <- ifelse(cert, paste("c", df$psu, df$eid), paste("p", df$psu))
   df$h <- ifelse(cert, paste("c", df$psu), paste("s", df$str))
+  # Stage 2 keeps its correction inside a certainty PSU. A count of 1e300
+  # leaves a factor of 1 in double precision elsewhere.
+  df$count <- ifelse(cert, df$.fpc_2, 1e300)
   hand <- survey::svydesign(
-    ids = ~u, strata = ~h, weights = ~.weight, data = df, nest = TRUE
+    ids = ~u, strata = ~h, weights = ~.weight, fpc = ~count, data = df,
+    nest = TRUE
   )
   ours <- quiet_rep(as_svrepdesign(s, type = "JKn"))
   expect_equal(
@@ -317,8 +321,10 @@ test_that("certainty PSUs' units are resampled within their stage-two strata", {
 
   df$u <- ifelse(cert, paste("c", df$psu, df$eid), paste("p", df$psu))
   df$h <- ifelse(cert, paste("c", df$psu, df$g), paste("s", df$str))
+  df$count <- ifelse(cert, df$.fpc_2, 1e300)
   hand <- survey::svydesign(
-    ids = ~u, strata = ~h, weights = ~.weight, data = df, nest = TRUE
+    ids = ~u, strata = ~h, weights = ~.weight, fpc = ~count, data = df,
+    nest = TRUE
   )
   expect_equal(
     as.numeric(survey::SE(survey::svytotal(
@@ -571,6 +577,53 @@ test_that("a primary unit emptied further down keeps zero rows", {
   expect_identical(zero_rows(rwyb)$dw, 1L)
 })
 
+test_that("a zero row is no draw at a stage drawn with replacement", {
+  skip_if_not_installed("survey")
+  # PSU 6 has no households. srswr writes no .certainty_2, so its zero row
+  # read as a random hit: a lonely unit at stage 2, and RWYB refused it.
+  psus <- data.frame(psu = 1:6, mos = 10)
+  hh <- data.frame(psu = rep(1:5, each = 4), hh = 1:20, m2 = 1,
+                   y = as.numeric((1:20 * 7) %% 11))
+  first <- sampling_design() |> add_stage() |> cluster_by(psu) |> draw(n = 4)
+  wr <- list(
+    srswr = first |> add_stage() |>
+      draw(n = 2, method = "srswr", on_empty = "silent"),
+    pps_multinomial = first |> add_stage() |>
+      draw(n = 2, method = "pps_multinomial", mos = m2, on_empty = "silent")
+  )
+  for (method in names(wr)) {
+    s <- execute(wr[[method]], psus, hh, seed = 1)
+    expect_identical(
+      attr(s, "metadata")$empty_parents[[1]]$rows$psu, 6L, info = method
+    )
+    expect_no_warning(svy <- as_svydesign(s))
+    zero <- zero_rows(svy)
+    expect_identical(zero$psu, 6L, info = method)
+    expect_identical(zero$.certainty_2, TRUE, info = method)
+    # Four of six PSUs, two hits with replacement of four households: the
+    # ultimate-cluster term over the PSU totals, PSU 6's being zero, plus
+    # each PSU's own Hansen-Hurwitz term.
+    hits <- split(s$y, s$psu)
+    totals <- c(vapply(hits, function(y) 4 * mean(y), 1), 0)
+    within <- vapply(hits, function(y) 4^2 * stats::var(y) / 2, 1)
+    variance <- 6^2 * (1 - 4 / 6) * stats::var(totals) / 4 +
+      6 / 4 * sum(within)
+    est <- survey::svytotal(~y, svy, na.rm = TRUE)
+    expect_equal(unname(coef(est)), sum(s$y * s$.weight), info = method)
+    expect_equal(as.vector(survey::SE(est))^2, variance, info = method)
+    count <- survey::svytotal(~I(!is.na(y)), svy)
+    expect_equal(unname(coef(count))[2], sum(s$.weight), info = method)
+    skip_if_not_installed("svrep")
+    rwyb <- as_svrepdesign(s, type = "rwyb", replicates = 20)
+    expect_identical(nrow(zero_rows(rwyb)), 1L, info = method)
+    v <- variance_estimators(s)
+    expect_identical(
+      v$status[v$estimator == "Rao-Wu-Yue-Beaumont bootstrap"], "supported",
+      info = method
+    )
+  }
+})
+
 test_that("an empty primary unit is a zero row within its stratum", {
   skip_if_not_installed("survey")
   areas <- data.frame(psu = 1:8, st = rep(1:2, each = 4))
@@ -636,7 +689,7 @@ test_that("an empty primary unit in phase 1 is a zero row of phase 1", {
   # survey::twophase() reads phase 1's probabilities from its counts, so
   # without the zero row the total took PSU 1 out of the take of 3.
   for (method in list(NULL, "approx", "simple")) {
-    svy <- quiet_across(as_svydesign(phase2, method = method))
+    svy <- quiet_approx(quiet_across(as_svydesign(phase2, method = method)))
     expect_equal(
       unname(coef(survey::svytotal(~y, svy, na.rm = TRUE))),
       sum(phase2$.weight * phase2$y),
@@ -985,13 +1038,22 @@ test_that("a with-replacement phase 1 passes its own probabilities", {
   draws <- unique(as.data.frame(phase1)[c("psu", ".draw_1")])
   expect_false(anyDuplicated(draws$psu) > 0)
   phase2 <- sampling_design() |>
+    cluster_by(psu) |>
+    draw(n = 2) |>
+    execute(phase1, seed = 9)
+
+  svy <- as_svydesign(phase2)
+  expect_s3_class(svy, "twophase2")
+  expect_export_invariants(svy, phase2, "y", stages = c(1, 1))
+
+  # Inside the clusters drawn with replacement the full covariance falls
+  # short, so it is refused.
+  across <- sampling_design() |>
     cluster_by(id) |>
     draw(n = 40) |>
     execute(phase1, seed = 9)
-
-  svy <- quiet_across(as_svydesign(phase2))
-  expect_s3_class(svy, "twophase2")
-  expect_export_invariants(svy, phase2, "y", stages = c(1, 1))
+  expect_error(as_svydesign(across),
+    class = "samplyr_error_twophase_wr_subsample")
 })
 
 test_that("a phase 2 drawn across the phase-1 units warns at export", {
@@ -1034,6 +1096,57 @@ test_that("a phase 2 drawn across the phase-1 units warns at export", {
     export(by_element, across),
     class = "samplyr_warning_twophase_across_units"
   )
+})
+
+test_that("approx and simple warn when phase 2 subsamples inside phase-1 units", {
+  skip_if_not_installed("survey")
+  # survey weights each phase-1 unit by its first row's phase-2 chance, which
+  # inside a unit is a row's chance while the unit is in phase 2 for certain.
+  pop <- expand.grid(person = 1:20, psu = 1:60)
+  pop$id <- seq_len(nrow(pop))
+  pop$y <- stats::rnorm(nrow(pop))
+  by_psu <- sampling_design() |> cluster_by(psu) |> draw(n = 12)
+  by_element <- sampling_design() |> cluster_by(id) |> draw(n = 240)
+  phase2 <- list(
+    within = sampling_design() |>
+      stratify_by(psu) |> cluster_by(id) |> draw(n = 3),
+    across = sampling_design() |> cluster_by(id) |> draw(n = 40),
+    every_row = sampling_design() |>
+      stratify_by(psu) |> cluster_by(id) |> draw(n = 20),
+    whole = sampling_design() |> cluster_by(psu) |> draw(n = 6)
+  )
+  cases <- list(
+    list(by_psu, "within", TRUE), list(by_psu, "across", TRUE),
+    list(by_psu, "every_row", FALSE), list(by_psu, "whole", FALSE),
+    list(by_element, "across", FALSE)
+  )
+  checked <- character(0)
+  for (case in cases) {
+    phase1 <- execute(case[[1]], pop, seed = 1)
+    sample <- execute(phase2[[case[[2]]]], phase1, seed = 2)
+    label <- paste(if (identical(case[[1]], by_psu)) "clusters" else
+      "elements", case[[2]])
+    for (method in c("full", "approx", "simple")) {
+      raised <- character(0)
+      withCallingHandlers(
+        as_svydesign(sample, method = method),
+        warning = function(w) {
+          raised <<- c(raised, class(w)[1])
+          invokeRestart("muffleWarning")
+        }
+      )
+      expect_identical(
+        "samplyr_warning_twophase_approx" %in% raised,
+        case[[3]] && method != "full",
+        info = paste(label, method)
+      )
+    }
+    checked <- c(checked, label)
+  }
+  expect_setequal(checked, c(
+    "clusters within", "clusters across", "clusters every_row",
+    "clusters whole", "elements across"
+  ))
 })
 
 phase2_strata_reference <- function(phase1, phase2, strata) {

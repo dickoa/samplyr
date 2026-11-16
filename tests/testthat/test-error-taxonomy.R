@@ -774,9 +774,14 @@ test_that("a two-phase export with no per-stage probabilities is refused", {
     class = "samplyr_error_twophase_stage_probs"
   )
 
-  # The refusal names the two exports that do work, so they have to.
-  expect_no_error(quiet_across(as_svydesign(s2, method = "simple")))
-  expect_no_error(quiet_across(as_svydesign(s2, method = "approx")))
+  # The refusal names the two exports that do work, so they have to. Phase 2
+  # subsamples inside the regions, so both warn that they overstate.
+  for (method in c("simple", "approx")) {
+    expect_warning(
+      quiet_across(as_svydesign(s2, method = method)),
+      class = "samplyr_warning_twophase_approx"
+    )
+  }
 })
 
 test_that("a per-domain per-stage svyplan plan is refused outside a cluster stage", {
@@ -1221,7 +1226,7 @@ test_that("draw() arguments are classed by what is wrong with them", {
                class = "samplyr_error_draw_method_argument")
   expect_error(
     base |>
-      draw(n = 2, method = "pps_multinomial", mos = x, certainty_size = 5),
+      draw(n = 2, method = "cube", mos = x, certainty_size = 5),
     class = "samplyr_error_draw_method_argument"
   )
   expect_warning(base |> draw(n = 2, mos = x),

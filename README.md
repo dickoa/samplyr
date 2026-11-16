@@ -456,13 +456,13 @@ sampling phase, but it is not stage continuation.
 
 ## Selection methods
 
-Sixteen methods ship in three families:
+Seventeen methods ship in three families:
 
 - **Equal probability**: `srswor` (the default), `srswr`, `systematic`,
   `bernoulli`
 - **PPS**, all requiring a measure of size: `pps_brewer`,
   `pps_systematic`, `pps_cps`, `pps_sampford`, `pps_poisson`, `pps_sps`,
-  `pps_pareto`, `pps_multinomial`, `pps_chromy`
+  `pps_pareto`, `pps_multinomial`, `pps_chromy`, `pps_systematic_mr`
 - **Balanced**: `cube`, plus the spatial `lpm2` and `scps`
 
 `?selection_methods` is the reference: which take `n` or `frac`, which
@@ -674,9 +674,9 @@ their inputs and limits:
 |----|----|----|
 | Balanced sampling | `draw(method = "cube", aux = ...)`, with `bound()` for hard count constraints | `?draw`, `?bound` |
 | Spatially balanced | `draw(method = "lpm2" or "scps", spread = c(lon, lat))` | `?selection_methods` |
-| Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across rounds | `?draw`, [Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/prn-coordination.html) |
+| Sample coordination | `draw(prn = ...)` with permanent random numbers, for overlap across rounds | `?draw`, [Coordinate samples with permanent random numbers](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/21-prn-coordination.html) |
 | Custom methods | `sondage::register_method()`, then `pps_<name>` or `balanced_<name>` | `?draw`, `sondage::register_method()` |
-| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `?panel_assignment`, `?rotation_program`, [Rotating panels and master samples](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/panels-master-samples.html) |
+| Panel rotation | `execute(panels = 4)`, or `panel_stage =` to rotate units inside retained parents | `?panel_assignment`, `?rotation_program`, [Rotating panels and master samples](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/20-panels-master-samples.html) |
 | Replicated draws | `execute(reps = 5)` | `?execute` |
 | Two-phase | pipe a `tbl_sample` into a new design's `execute()` | `?execute` |
 | Indirect sampling | `share_weights()`, to estimate for a population linked to the one that was sampled | `vignette("design-semantics")` |
@@ -867,7 +867,7 @@ for five, and the comparison names the villages.
 
 To check a design on a synthetic population with known truths, see
 [Virtual
-surveys](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/virtual-surveys.html)
+surveys](https://www.ahmadoudicko.com/sampling-design-r-book/chapters/06-virtual-surveys.html)
 in the book. It fields the design many times and measures the bias of
 its estimates, whether its standard errors are right, and the coverage
 of its intervals.

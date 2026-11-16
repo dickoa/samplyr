@@ -160,7 +160,7 @@ yields none. Replicates share one population structure with their own
 traces. A replicated multi-stage execution keeps only the stage prefix
 shared by all replicates, with status \code{"partial"}, as \code{\link[=frame_summary]{frame_summary()}}
 describes. Replicated multi-phase and replicated-continuation executions
-do not record a digest yet.
+record no digest.
 
 A digest is not anonymized. Its selection trace keeps the identifiers
 of realized units (frame-derived cluster keys or row indices), even
@@ -174,8 +174,9 @@ selection. Those are \code{.sample_id}, \code{.weight}, the per-stage \code{.wei
 \code{.fpc_k}, \code{.draw_k} and \code{.certainty_k}, \code{.reserve_k} at a stage that
 sets \code{reserve} in \code{\link[=draw]{draw()}}, \code{.zone_1} and \code{.pair_1} for a zoned
 certainty plan, \code{.replicate} or \code{.panel} when \code{reps} or
-\code{panels} is used, and \code{.period} and \code{.subround} for a window of several
-occasions.
+\code{panels} is used, \code{.phase1_row} and \code{.phase1_draw_k} in a phase drawn
+from an earlier phase's sample, \code{.visit} in an occasion, and \code{.period}
+and \code{.subround} for a window of several occasions.
 \link{sample_columns} documents what each one holds.
 }
 \description{
@@ -254,37 +255,23 @@ how it differs from starting a new phase on a sample.
 \subsection{Settling a reserve}{
 
 A stage that sets \code{reserve} in \code{\link[=draw]{draw()}} lists its take and its reserve,
-with \code{.reserve_k} giving the release order. The field works the take, the
-office releases one reserve unit, in \code{.reserve_k} order, for each unit
-that fails, and work in a pool stops at its target number of
-respondents or when the list runs out. An earlier stop must not depend on
-how the pool was going, such as giving up after a run of refusals.
-
-\code{execute(sample, response_status = col)} reads the codes, walks each pool in
-release order and returns the respondents. Their weight at the stage
-estimates the pool's eligible units from the units worked, leaving out
-the unit that stopped the list, and divides it among the respondents.
-Units released after the stop are dropped, so a pool worked past its
-target keeps the weight of the stop rule. A pool stopped early is
-settled with the units it worked. How unknowns are coded is the choice
-of their eligibility: 3 estimates it from the resolved units of the
-pool, 2 counts them as eligible and 4 as ineligible.
-
-A pool whose eligible units include no respondent returns no rows, but
-its eligible units are still estimated from the units worked. When every
-unit worked is of unknown eligibility, the estimate takes the resolved
-rate of the pools that share its strata, or counts every unit as
-eligible when none of them resolved one. Both are assumptions about the
-pool, and \code{\link[=summary]{summary()}} counts the pools that rest on them. The export keeps that weight
-in a placeholder row for a nonresponse adjustment (see the "A settled
-reserve" section of \code{\link[=as_svydesign]{as_svydesign()}}).
+with \code{.reserve_k} giving the release order.
+\code{execute(sample, response_status = col)} reads the codes the field
+recorded, settles each pool in release order and returns the respondents
+with their weights. A pool whose eligible units include no respondent
+returns no rows, and its weight is carried to the export.
+\link{reserve_lists} gives the field protocol, the codes, the weights, and how
+unknown eligibility is resolved.
 
 A sample is settled once. A stage below the reserve is drawn from the
 settled sample, \code{execute(settled, listing)}, and a call that would draw
 it from the list is refused (\code{samplyr_error_reserve_unsettled}). So is a
 new phase drawn from the list.
 \code{\link[=summary]{summary()}} shows the settlement per pool, and \code{\link[=write_design]{write_design()}} records
-it for \code{\link[=replay_design]{replay_design()}}.
+it for \code{\link[=replay_design]{replay_design()}}. The replay rebuilds the response status column
+from the recorded categories, in the column's type, so a code keeps its
+leading digit only (2.1 is replayed as 2) and the export codes its added
+rows as before.
 }
 
 \subsection{Drawing the later stages occasion by occasion}{

@@ -511,11 +511,10 @@ digest_stage_skeleton <- function(
       pool_id = rep.int(seq_along(records), counts),
       unit_order = sequence(counts),
       chance = chance_all,
-      is_certainty = if (identical(chance_kind, "inclusion_probability")) {
-        is_certainty_probability(chance_all)
-      } else {
-        rep(NA, sum(counts))
-      }
+      is_certainty = unit_certainty_flags(
+        chance_kind, chance_all, stage_spec$draw_spec,
+        lapply(records, function(r) r$leaf$cert_rule), counts
+      )
     )
     if (is_cluster) {
       units$n_descendants <- as.integer(unlist(
@@ -896,11 +895,10 @@ expand_stage_universe <- function(
     pool_id = next_pool + child_pool - 1L,
     unit_order = sequence(N_vec),
     chance = chance,
-    is_certainty = if (identical(stage$chance_kind, "inclusion_probability")) {
-      is_certainty_probability(chance)
-    } else {
-      rep(NA, length(chance))
-    },
+    is_certainty = unit_certainty_flags(
+      stage$chance_kind, chance, draw_spec,
+      lapply(resolved, `[[`, "certain"), N_vec
+    ),
     n_descendants = lengths(children$rows)
   )
   new_reg <- setNames(ids, child_keys)
@@ -922,6 +920,34 @@ expand_stage_universe <- function(
 #' @noRd
 abort_unresolvable <- function(reason) {
   rlang::abort(reason, class = "samplyr_exante_unresolvable", call = NULL)
+}
+
+#' Does a stage declare a rule that takes some units with certainty?
+#' @noRd
+has_certainty_rule <- function(draw_spec) {
+  !is_null(draw_spec$certainty_size) || !is_null(draw_spec$certainty_prop)
+}
+
+#' Which units of a digest stage were taken with certainty
+#'
+#' An inclusion probability of one is certainty. An expected hit count of
+#' one is not, so a stage drawn with replacement names its certainty units:
+#' `certain` holds, pool by pool, the positions a declared rule took. Without
+#' a rule such a stage has none to name, and the flags stay missing.
+#' @noRd
+unit_certainty_flags <- function(chance_kind, chance, draw_spec, certain,
+                                 counts) {
+  if (identical(chance_kind, "inclusion_probability")) {
+    return(is_certainty_probability(chance))
+  }
+  if (!has_certainty_rule(draw_spec)) {
+    return(rep(NA, length(chance)))
+  }
+  unlist(Map(function(idx, n) {
+    flags <- logical(n)
+    flags[idx] <- TRUE
+    flags
+  }, certain, counts), use.names = FALSE)
 }
 
 #' First-order chances of one pool, from the design alone
@@ -1021,7 +1047,12 @@ resolve_pool_chance <- function(
   chance <- numeric(N)
   chance[cert$certainty_idx] <- 1
   if (cert$n_remaining > 0 && length(cert$remaining_idx) > 0) {
-    n_prob <- min(cert$n_remaining, length(cert$remaining_idx))
+    # Draws with replacement may outnumber the remaining units.
+    n_prob <- if (wr) {
+      cert$n_remaining
+    } else {
+      min(cert$n_remaining, length(cert$remaining_idx))
+    }
     if (is_null(zone)) {
       chance[cert$remaining_idx] <- base_chance(
         mos_vals[cert$remaining_idx],
@@ -1036,7 +1067,9 @@ resolve_pool_chance <- function(
       }
     }
   }
-  list(chance = chance, n_target = n_target)
+  # With replacement a chance of one is an expected hit, so the certainty
+  # units are named rather than read from the chance.
+  list(chance = chance, n_target = n_target, certain = cert$certainty_idx)
 }
 
 #' Equal-count quantile bins of per-pool chance vectors
@@ -1250,6 +1283,13 @@ resolve_exante_digest <- function(design, frame, depth = NULL,
     call = call
   )
   design <- resolve_cluster_nesting(design, schedule$entries)
+  # A sample reused as a frame gives the new phase its row positions and hit
+  # numbers. The fingerprint below reads the frames as supplied.
+  for (i in seq_along(schedule$entries)) {
+    schedule$entries[[i]]$frame <- with_phase_carried_columns(
+      schedule$entries[[i]]$frame
+    )
+  }
   stage_frames <- effective_register_frames(schedule, design, call = call)
   effective_frames_by_stage <- vector("list", length(prefix))
   frame_index_by_stage <- integer(length(prefix))
@@ -1445,6 +1485,7 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
       n_target = resolved$n_target,
       n_reserve = resolved$n_reserve,
       chance = resolved$chance,
+      certain = resolved$certain,
       n_desc = n_desc,
       keys = keys,
       rows = rows,
@@ -1656,11 +1697,10 @@ build_exante_stage <- function(
       pool_id = rep.int(pools$pool_id, counts),
       unit_order = sequence(counts),
       chance = chance_all,
-      is_certainty = if (identical(chance_kind, "inclusion_probability")) {
-        is_certainty_probability(chance_all)
-      } else {
-        rep(NA, sum(counts))
-      },
+      is_certainty = unit_certainty_flags(
+        chance_kind, chance_all, draw_spec,
+        lapply(pools_acc, `[[`, "certain"), counts
+      ),
       n_descendants = as.integer(unlist(
         lapply(pools_acc, function(p) p$n_desc),
         use.names = FALSE
@@ -1701,7 +1741,9 @@ build_exante_stage <- function(
     ),
     pool_moved = vapply(pools_acc, function(p) as.double(p$moved), numeric(1)),
     pool_tied = vapply(pools_acc, function(p) as.logical(p$tied), logical(1)),
-    pool_certain = if (wr) {
+    pool_certain = if (wr && has_certainty_rule(draw_spec)) {
+      vapply(pools_acc, function(p) length(p$certain), integer(1))
+    } else if (wr) {
       rep(NA_integer_, length(pools_acc))
     } else {
       vapply(

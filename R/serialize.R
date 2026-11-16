@@ -1654,7 +1654,7 @@ frame_stack_payload <- function(
 #' per frame holding a chance per selected unit. That is microdata, which this
 #' format never writes.
 #'
-#' **The test is `cols`, not the class.** A resolved record is a bare list
+#' The branch tests `cols`, not the class. A resolved record is a bare list
 #' carrying no class at all, so `is_exante_overlap_spec()` is FALSE for it and
 #' a class test falls through to the declared branch and writes `cols: null`,
 #' losing the matrices without a word. `print.frame_stack()` already
@@ -2664,14 +2664,25 @@ settled_here <- function(record) {
 
 #' The outcome category of every listed unit, in `.sample_id` order
 #'
-#' Replay draws the same list from the seed and settles it again, so only
-#' the categories are written, 0 for a unit the field did not release.
+#' Replay draws the same list from the seed and settles it again, so the
+#' categories are written, 0 for a unit the field did not release, with the
+#' name and type of the response status column the replay rebuilds.
 #' @noRd
 encode_reserve_settlement <- function(record) {
-  list(
+  out <- list(
     stage = as.integer(record$stage),
     codes = I(as.integer(record$codes))
   )
+  type <- record$column_type
+  if (!is_null(record$column) && !is_null(type)) {
+    out$column <- record$column
+    out$column_type <- c(
+      list(kind = type$kind),
+      if (!is_null(type$levels)) list(levels = I(as.character(type$levels))),
+      if (!is_null(type$words)) list(words = isTRUE(type$words))
+    )
+  }
+  out
 }
 
 #' The frozen panel assignment

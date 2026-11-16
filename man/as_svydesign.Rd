@@ -44,16 +44,22 @@ asks for its two-phase export instead.}
 
 \item{systematic_variance}{What to do about the variance approximation
 used for systematic stages: simple random sampling for \code{systematic},
-Brewer's for \code{pps_systematic}. \code{"warn"} (default) applies it and warns
+Brewer's for \code{pps_systematic}, and with replacement for
+\code{pps_systematic_mr}. \code{"warn"} (default) applies it and warns
 once per call, naming every affected stage and its approximation.
 \code{"approximate"} applies it silently, for a caller who has acknowledged
 it, and \code{"error"} refuses. Census stages are exempt, since a stage that
 took everything within reach contributes no variance, and so is a
 \code{pps_systematic} first stage exported with a caller-supplied \code{pps}
-object. The choice, the affected stages and each stage's approximation
-are recorded in the \code{"samplyr_systematic_variance"} attribute of the
-result. \code{\link[=as_svrepdesign]{as_svrepdesign()}} takes the same argument for its own
-approximation of these stages.}
+object. A stage that drew one unit in each pool is exempt too, since a
+single random start takes each unit with its chance whatever the frame
+order. A \code{pps_systematic_mr} stage is never exempt as a census, since a
+take of \eqn{N}{N} or more counts draws, and the with-replacement export
+gives it a variance even when every unit's hits are fixed. The choice, the
+affected stages and each stage's approximation are recorded in the
+\code{"samplyr_systematic_variance"} attribute of the result.
+\code{\link[=as_svrepdesign]{as_svrepdesign()}} takes the same argument for its own approximation of
+these stages.}
 
 \item{stages}{\code{NULL}, the default, exports every executed stage. A prefix
 of the executed stages, such as \code{1} or \code{1:2}, keeps those stages and
@@ -85,17 +91,15 @@ multi-stage structure in its linearization (Sarndal et al. 1992, ch.
 \itemize{
 \item \strong{Cluster ids} (\code{ids}): the \code{cluster_by()} variable of a clustered
 stage. A stage clustered by several variables, which execution treats
-as one cluster id, gets one synthesized interaction column, because
-\code{\link[survey:svydesign]{survey::svydesign()}} reads each formula term as a separate stage. A
-final unclustered stage gets a synthesized row-identity column so that
-its sampling variance is represented. A WR or PMR stage uses its
-\code{.draw_k} column, and survey treats each occurrence as independent for
-Hansen-Hurwitz variance estimation. This is exact for WR and the
-documented approximation for PMR.
+as one cluster id, gets one synthesized interaction column. A final
+unclustered stage gets a synthesized row-identity column so that its
+sampling variance is represented. A WR or PMR stage uses its \code{.draw_k}
+column, so each draw is an independent unit of the Hansen-Hurwitz
+variance. This is exact for WR and an approximation for PMR, whose
+draws are dependent.
 \item \strong{Strata} (\code{strata}): aligned with \code{ids}. A stage stratified by
 several variables exports their cross-classification as one
-synthesized column, since survey silently ignores extra variables
-within a stage's term. Trailing unstratified stages are omitted, and
+synthesized column. Trailing unstratified stages are omitted, and
 unstratified stages before a stratified stage get a constant
 placeholder column.
 \item \strong{Weights} (\code{weights}): the \code{.weight} column, the product of the
@@ -103,23 +107,13 @@ per-stage weights described in \link{sample_columns}. They are design
 weights. A sample whose \code{.weight} was edited is refused, and weights
 adjusted for nonresponse or calibrated are computed on the exported
 design, with \code{\link[survey:calibrate]{survey::calibrate()}} or \code{\link[survey:postStratify]{survey::postStratify()}}.
-\item \strong{FPC} (\code{fpc}): aligned with \code{ids}. \code{\link[survey:svydesign]{survey::svydesign()}} requires
-every FPC term on the same scale, so one of two encodings is used:
-\itemize{
-\item \strong{Count scale} (designs without unequal-probability WOR
-stages): \code{.fpc_k}, the stratum population count \eqn{N_h}, for
-equal-probability WOR stages, and a synthetic \code{Inf} column (no
-correction, Hansen-Hurwitz variance) for WR/PMR stages.
-\item \strong{Fraction scale} (multi-stage designs with a PPS WOR,
-balanced, or custom WOR stage): every WOR stage passes its
-per-unit stage sampling fraction
-\eqn{1 / w_k = \pi_k}{1/w_k = pi_k}, and WR/PMR stages pass 0 (no
-correction). A multi-stage design with a random-size Poisson stage is
-refused by linearization export.
-}
-
-A single-stage PPS WOR design passes \eqn{\pi_i}{pi_i} directly,
-which survey interprets as inclusion probabilities.
+\item \strong{FPC} (\code{fpc}): aligned with \code{ids}, on one scale for every stage.
+Without an unequal-probability stage drawn without replacement, an
+equal-probability WOR stage passes its stratum population count
+\eqn{N_h}, and a WR or PMR stage passes no correction. With one, every
+WOR stage passes its stage inclusion probability
+\eqn{1 / w_k = \pi_k}{1/w_k = pi_k}, and WR and PMR stages pass 0. A
+multi-stage design with a random-size Poisson stage is refused.
 }
 
 For a two-stage stratified-cluster design with a final element stage,
@@ -138,17 +132,25 @@ the exported call is equivalent to:
 
 Exactness depends on the variance treatment available for each method
 (\link{variance_estimation}). A design whose first stage is a census of PSUs
-correctly attributes all variance to the later stages. Executing stages
+attributes all variance to the later stages. Executing stages
 separately, as \code{stage1 <- execute(design, psu_frame, stages = 1)} then
 \code{sample <- execute(stage1, listing_frame)}, still gives one multi-stage
-design, exported with \code{\link[survey:svydesign]{survey::svydesign()}}.
+design.
 
 An unclustered element-sampling stage \emph{followed by further stages} is
 not nested cluster sampling, because the later selections are
 conditional on the realized element sample, which is phase sampling.
 \code{\link[=execute]{execute()}} refuses it (\code{samplyr_error_stage_parent_id}). Express it as a
-two-phase sample instead: execute the element stage under its first-phase design, then a
-new second-phase design with that sample as its frame.
+two-phase sample instead: execute the element stage under its first-phase
+design, then a new second-phase design with that sample as its frame.
+
+A variance compares primary units, so a design whose first stage holds a
+single unit not taken with certainty, outside any stratum, has no
+variance estimate and is refused (\code{samplyr_error_export_one_unit}). That
+covers one unit drawn from several and a single draw with replacement,
+whose weight of one is an expected hit rather than a certainty. A census
+of that unit, or a recorded certainty, is exported, with no first-stage
+variance.
 }
 
 \subsection{Two-phase samples}{
@@ -156,40 +158,62 @@ new second-phase design with that sample as its frame.
 A \emph{new} phase-2 \code{sampling_design} executed with the phase-1 \code{tbl_sample}
 as its frame, as in \code{phase2 <- execute(design2, phase1)}, records a
 previous-phase link, and \code{as_svydesign()} calls \code{\link[survey:twophase]{survey::twophase()}}.
+Each phase-2 row carries \code{.phase1_row}, the position of the phase-1 row it
+was drawn from, and the export joins the phases on it. Neither phase needs
+to declare an identifier, and a unit phase 1 drew more than once, such as
+a PSU hit twice by \code{pps_multinomial}, links to the hit phase 2 reached.
+Rows that a later phase-2 stage drew from a register of its own carry no
+position, so the phases are then joined on the identifiers either phase
+declares with \code{\link[=cluster_by]{cluster_by()}}, which must identify the phase-1 rows phase 2
+reaches (\code{samplyr_error_twophase_bridge}) and be constant within each
+phase-2 unit (\code{samplyr_error_phase_key_ambiguous}).
 
-A materialized occasion exported with \code{method} is the other two-phase case.
-Its second phase is the panel activation: within a frozen block the
-master took a simple random sample without replacement of the realized
-quota, so the blocks are the phase-2 strata and their sizes the phase-2
-population counts. The master is retained as the first phase and supplies
-the rows the occasion did not keep. Columns added to the occasion for analysis
-are carried into the exported design. Occasion or phase-2 analysis columns
-replace same-named first-phase columns and are missing on unsampled
-rows. Columns absent from the occasion remain available from the master, so
-dropping an occasion column does not erase the master's measurements. Design
-identifiers, strata and internal sampling columns keep their recorded
-meanings. Keep earlier measurements under separate names if both are
-needed.
+Phase 2 may take whole phase-1 EAs, or EAs and then some of their
+households. Each phase-2 unit must lie within one phase-1 primary unit,
+each hit counting as one (\code{samplyr_error_phase_cluster_spans_psu}). For
+\code{method = "full"}, declare the households phase 2 draws, as in
+\code{cluster_by(hh_id)}. \code{\link[survey:twophase]{survey::twophase()}} reads phase 2 as a subset of
+the phase-1 rows, which cannot hold a unit drawn twice, so a phase 2 drawn
+with replacement is refused (\code{samplyr_error_twophase_phase2_wr}). So is a
+phase 1, or a phase 2, whose rows hold a single primary unit outside a
+stratum (\code{samplyr_error_export_one_unit}).
 
-When phase 2 keeps unequal shares of the phase-1 strata, survey 4.5
-gives each phase-1 stratum another stratum's sample size in the phase-1
-part of this variance. The variance of a \emph{total} then depends on the
-outcome's level. In simulations of an occasion it averaged a quarter of the
-true variance or less and was often negative. The export rebuilds that
-part by survey's own formula with the sizes in place, which changes
-nothing where survey's result was already right. A phase 2 stratified
-across the phase-1 strata can still give a negative variance in some
-samples, from the instability of the Horvitz-Thompson form, and
-\code{method = "approx"} gives a finite standard error there.
+The three values of \code{method} read the phase-1 part of the variance
+differently. \code{"full"} reads the probabilities stage by stage, from phase
+1's finite population corrections. \code{"approx"} and \code{"simple"} estimate it
+from the phase-2 rows, weighting each phase-1 primary unit by its chance
+of entering phase 2. That is exact when phase 2 takes whole phase-1
+units or phase 1 selects elements. When phase 2 subsamples inside the
+units phase 1 selected, the row's chance stands in for the unit's, which
+is one, and the phase-1 part is overstated
+(\code{samplyr_warning_twophase_approx}). \code{"full"} cannot state the
+probabilities of a phase 1 drawn with replacement above a later stage,
+unless that stage took only certainty units, and is refused there
+(\code{samplyr_error_twophase_stage_probs}). It is refused as well when phase
+2 subsamples inside clusters that phase 1's last stage drew with
+replacement, where it understates the variance
+(\code{samplyr_error_twophase_wr_subsample}). A phase 2 drawn within each hit
+is exported as one phase instead (see below). In the second case, draw
+the units inside those clusters as a stage of phase 1 first, with
+\code{add_stage() |> draw(frac = 1)}.
+
+The export computes the phase-1 part of the variance with each phase-1
+stratum's own sample size, also when phase 2 keeps unequal shares of the
+phase-1 strata. A phase 2 stratified across the phase-1 strata can give a
+negative variance in some samples, since the Horvitz-Thompson form is not
+guaranteed positive, and \code{method = "approx"} gives a finite standard
+error there.
 
 A clustered first phase needs its second phase drawn inside each of its
 units, with \verb{stratify_by(<unit>)}, or by taking whole phase-1 units
-before sampling inside them. In a simulation both gave 0.93 to 1.03 of
-the true variance and never a negative one. When phase 2 draws smaller
-units across the phase-1 clusters, the estimator is right over repeated
-samples but not in one (\link{variance_estimation} has the measured error),
-and the export warns (\code{samplyr_warning_twophase_across_units}). The
-weights are exact either way.
+before sampling inside them. When phase 2 draws smaller units across the
+phase-1 clusters, the estimator is unbiased over repeated samples but
+unstable in one, and can be negative
+(\code{samplyr_warning_twophase_across_units}). The weights are exact either
+way.
+}
+
+\subsection{A subsample within pools is one phase}{
 
 One shape is not exported as two phases. Phase 1's final stage draws
 elements by \code{srswor} or \code{systematic}, and phase 2 draws the same way,
@@ -202,25 +226,32 @@ with phase 1's strata, clusters and finite population corrections and
 phase 2's weights, whatever phase 1's earlier stages drew. Half of each
 EA's households kept for a second questionnaire is this shape. \code{method}
 does not apply to it, and no row identifier is needed to link the
-phases. When phase 2 is \code{systematic}, the final take is a systematic
-one, and \code{systematic_variance} applies to it, unless phase 2 took every
-unit of every pool. A phase 2 stratified more coarsely or more finely than the pools,
-clustered, or drawn with unequal probabilities keeps the two-phase route.
+phases. Below a stage that can take a unit more than once, each hit is a
+pool of its own. Phase 2 names it by the hit number it carries, as in
+\code{stratify_by(ea_id, .phase1_draw_1)}, and is then exported this way.
+\code{stratify_by(ea_id)} alone pools the hits of an EA drawn twice, and keeps
+the two-phase route. When phase 2 is \code{systematic}, the final take is a
+systematic one, and \code{systematic_variance} applies to it, unless phase 2
+took every unit of every pool or one unit of each. A phase 2 stratified
+more coarsely or more finely than the pools, clustered, or drawn with
+unequal probabilities keeps the two-phase route.
+}
+
+\subsection{Two-phase samples that are refused}{
 
 \code{\link[survey:twophase]{survey::twophase()}} takes no \code{pps} for the first phase, so any other
-two-phase sample, or occasion exported with \code{method}, whose phase 1 was drawn
-with unequal probabilities without replacement is refused
+two-phase sample, or occasion exported with \code{method}, whose phase 1 was
+drawn with unequal probabilities without replacement is refused
 (\code{samplyr_error_twophase_phase1_pps}, \code{samplyr_error_occasion_phase1_pps}).
 So are \code{cube}, first-stage \code{pps_poisson} and the spatial methods, which
 are unsupported at either phase. Equal-probability first phases export,
 stratified, clustered, multistage and with-replacement alike. No
 two-phase sample has a replicate export, except the subsample within
-pools above, which is exported as one phase. The weights of a refused
-sample are exact, so totals and means are right. For a variance, an
-ultimate-cluster approximation treats phase 1's units as drawn with
-replacement and carries everything below in them. It is conservative, by
-the margins \link{variance_estimation} reports, and much more so when phase 2
-was drawn across the phase-1 units:
+pools above. The weights of a refused sample are exact, so totals and
+means are right. For a variance, the ultimate-cluster approximation
+treats phase 1's units as drawn with replacement and carries everything
+below in them. It leaves out phase 1's correction and overstates the
+variance, and more so when phase 2 was drawn across the phase-1 units:
 
 \if{html}{\out{<div class="sourceCode r">}}\preformatted{survey::svydesign(ids = ~ea_id, strata = ~region, weights = ~.weight,
                   data = as.data.frame(phase2))
@@ -237,38 +268,28 @@ the activation are carried in the unit totals, so the master may have
 been drawn by any method, with probabilities proportional to size
 included. It is the variance rotating household surveys publish for each
 quarter or month. Zones and variance pairs are not used, since activation
-leaves most zones with one unit or none. A stage-1 unit taken with
-certainty, with a later stage drawn inside it, represents itself. It is a
-stratum of its own, whose clusters are its units of the next stage, since
-only they vary between samples. In a simulation of one certainty EA among
-twelve, that brought the estimated variance of an occasion from 1.7 to 1.1
-times the true one, and of a two-occasion window, where the EA otherwise
-stood alone among the units active at both occasions and survey stopped on
-it, from 5.7 under \code{survey.lonely.psu = "adjust"} to 1.6. A unit of a
-stratum taken as a census counts as taken with certainty, unless the
+leaves most zones with one unit or none.
+
+A stage-1 unit taken with certainty, with a later stage drawn inside it,
+represents itself. It is a stratum of its own, whose clusters are its
+units of the next stage, since only they vary between samples. A unit of
+a stratum taken as a census counts as taken with certainty, unless the
 panels are assigned at stage 1, so that each occasion holds only some of
 its units. A unit taken with certainty and nothing drawn inside it, a
-stage-1 cluster with no
-later stage or an element, is the same in every sample. It is a stratum
-of its own taken as a census, the one stratum with a finite population
-correction, so it adds no variance, as in the master's export. A large
-sampling fraction in a stratum still errs toward too large a variance.
-In a simulation with 8 EAs active per stratum, its standard error was
-0.89 of the true one with EAs drawn by simple random sampling, where the
-two-phase export gave 0.88, and 1.06 with EAs drawn by size, which has
-no two-phase export.
+stage-1 cluster with no later stage or an element, is the same in every
+sample. It is a stratum of its own taken as a census, the one stratum
+with a finite population correction, so it adds no variance. Leaving out
+the correction elsewhere overstates the variance where a stratum's
+sampling fraction is large.
 
 A window of several occasions, \code{execute(master, period = 1:3)}, is exported
 the same way. A unit's rows over the window are one cluster, and the
 strata are crossed with the quota block and the occasions of the window
 a unit is active at, which its panel fixes. The design is calibrated on
 each stratum's total of the units' activation multipliers, which leaves
-the weights unchanged and gives merged strata ratio residuals. In
-simulations of windows over clustered masters of 16 to 18 EAs per
-stratum, the standard error was 0.98 to 1.04 of the true one, and 95\%
-intervals covered 93\% to 97\%, with EAs drawn by simple random sampling or
-by size. \link{panel_assignment} gives the rule and the smaller strata.
-\code{method} is refused for a window.
+the weights unchanged and gives merged strata ratio residuals.
+\link{panel_assignment} gives the rule and the smaller strata. \code{method} is
+refused for a window.
 
 An occasion of a master whose later stages are still drawn one period or
 cohort at a time is exported the same way, from its own rows. The
@@ -278,8 +299,8 @@ two-phase export reads the whole master and refuses it
 \code{\link[=as_svrepdesign]{as_svrepdesign()}} replicates the same design, and \code{\link[srvyr:as_survey_design]{as_survey_design()}}
 follows \code{as_svydesign()}. \code{pps} is refused (\code{samplyr_error_survey_argument}),
 and so is an occasion holding a single primary unit
-(\code{samplyr_error_occasion_one_unit}). An occasion that activates every unit is the
-master's own design and is exported as such.
+(\code{samplyr_error_occasion_one_unit}). An occasion that activates every unit
+is the master's own design and is exported as such.
 }
 
 \subsection{Modified samples and domain analysis}{
@@ -299,6 +320,14 @@ sample. One complete replicate extracted from a replicated execution
 and remains supported. A later stage drawn from a modified sample is
 refused too, since its weights carry the change, and so is every stage
 drawn after it.
+
+A second phase drawn from a modified sample is refused by both exports
+as well (\code{samplyr_error_modified_sample}). They read the phase-1 rows as
+the whole first phase, and removed rows would give it other
+probabilities and another variance. Random groups of replicates read
+only the replicate totals and remain. To subsample the eligible units of
+phase 1, draw phase 2 from phase 1 as executed with the eligibility
+column as a phase-2 stratum, then subset the exported design.
 
 Dropping out-of-domain rows before conversion is not domain estimation.
 The point estimate can agree, but its variance estimate is generally
@@ -321,9 +350,14 @@ designs are refused are in \link{variance_estimation}.
 every stage. \code{FALSE} states that no stage is PPS, so it is refused on a
 design with one. \code{"overton"}, \code{\link[survey:HR]{survey::HR()}} and the matrix objects
 (\code{\link[survey:ppsmat]{survey::ppsmat()}}, \code{\link[survey:poisson_sampling]{survey::poisson_sampling()}}) are single-stage in
-survey, so a multi-stage sample is exported at stage 1 with a warning. A
-matrix object is indexed by row, so it also needs one row per stage-1
-unit, and a sample with several is refused
+survey, so a multi-stage sample is exported at stage 1 with a warning.
+They need stage 1 drawn with unequal probabilities without replacement,
+or by Poisson sampling with a size measure. \code{"overton"} and
+\code{\link[survey:HR]{survey::HR()}} assume a fixed sample size, so they are refused on a
+Poisson stage 1, whose exact variance is the default export.
+\code{\link[survey:poisson_sampling]{survey::poisson_sampling()}} assumes independent selections, so it is
+refused on a fixed-size stage 1. A matrix object is indexed by row, so it
+also needs one row per stage-1 unit, and a sample with several is refused
 (\code{samplyr_error_pps_rows_per_psu}). On a fixed-size stage drawn with
 unequal probabilities without replacement, a \code{\link[survey:ppsmat]{survey::ppsmat()}} export
 defaults to \code{variance = "YG"} unless \code{variance} is supplied in \code{...},
@@ -344,9 +378,11 @@ Many survey programs publish sampling errors computed as if the primary
 units were drawn with replacement within their strata, without a finite
 population correction. The variance of every later stage is then carried
 by the primary-unit totals, which is why it is called the ultimate-cluster
-variance. It is the variance to reproduce when a new design is compared
-with what an earlier round published, and \code{as_svydesign(sample, stages = 1)} builds it. A materialized occasion and a settled reserve are always
-exported this way.
+variance (Hansen, Hurwitz and Madow 1953; Wolter 2007, sec. 2.4). It is
+the variance to reproduce when a new design is compared with what an
+earlier round published, and \code{as_svydesign(sample, stages = 1)} builds
+it. A materialized occasion and a settled reserve are always exported
+this way.
 
 The export keeps the first stage's strata and units, the zero rows of
 empty primary units included. A primary unit taken with probability 1, by
@@ -360,10 +396,8 @@ could not estimate the variance below. It then stays a draw of its
 stratum, and the spread between that stratum's units stands in for the
 variance below it (\code{samplyr_message_stage_certainty_drawn}). A stage drawn
 with replacement has no such units, even where a unit expects one hit or
-more. Built by hand from \code{as.data.frame(sample)}, the same design
-loses the empty units and reads certainty units as drawn. On a Brewer
-design with one certainty EA, over 300 samples, the hand-built design gave
-0.94 of the true standard error and \code{stages = 1} 0.99.
+more. A design built by hand from \code{as.data.frame(sample)} loses the empty
+units and reads certainty units as drawn.
 
 \code{stages = 1:k} keeps stages 1 to k - 1 with their corrections and reads
 stage k the same way. It suits a stage whose variance cannot be
@@ -372,124 +406,24 @@ design of EAs, households and one person carries the person stage in the
 household totals, and keeps the first stage's correction, which matters
 where that stage takes a large share. Exported in full, such a stage
 leaves each household a stratum of one unit, which the export names
-(\code{samplyr_warning_lonely_psu}). The approximation is conservative.
-It leaves out the correction at stage k, so it overstates the variance most
-where stage k takes a large share of its units. A stratum with a single
-unit stops survey, as for the full export, unless
-\code{options(survey.lonely.psu = )} says how to treat it.
+(\code{samplyr_warning_lonely_psu}). The reading leaves out the correction at
+stage k, so it overstates the variance most where stage k takes a large
+share of its units. A stratum with a single unit stops survey, as for the
+full export, unless \code{options(survey.lonely.psu = )} says how to treat it.
+So does one below a unit drawn with replacement when survey computes the
+later stages, under \code{options(survey.use_rcpp = FALSE)} or a calibration by
+stage.
 }
 
 \subsection{A settled reserve}{
 
-\link{reserve_lists} describes reserve lists and their settlement. A sample
-whose reserve is not settled is refused
+A sample whose reserve is not settled is refused
 (\code{samplyr_error_reserve_unsettled}), since its weights describe the whole
-list. Once settled with \code{execute(sample, response_status = col)}, it is
-exported by ultimate clusters. The settled stage's respondents are a
-random subset of a respondent count the field never observed, so that
-stage's finite population correction is unknown, and every stage is
-carried in the primary-unit totals. The share of each pool's eligible
-units that responded is treated as fixed. A two-phase sample, shared
-weights, and the \code{"mrbbootstrap"} and \code{"rwyb"} replicates of
-\code{\link[=as_svrepdesign]{as_svrepdesign()}} would build the stages one by one, and refuse a
-settled reserve (\code{samplyr_error_reserve_full_export}). An occasion holds no
-settlement of its own, so an occasion of a master that draws a reserve is
-refused with the same class, settled or not, and the settled master
-exports as a whole.
-
-With the reserve at the first stage, each pool's eligible units are
-estimated from the units the field worked. The export adds one row for
-each unit found ineligible among those the estimate counts, at the
-pool's size over the number of units counted. The pool's weights then
-add up to its size, and the variance treats the eligible count as
-estimated. These rows hold \code{NA} in every column except the strata, the
-weight and, while the sample still holds it, the response status
-column, which carries the ineligible code in the column's own type (\code{4},
-\code{"ineligible"}, or a factor level of that name, added if absent).
-Estimate for the eligible population as a domain:
-
-\if{html}{\out{<div class="sourceCode r">}}\preformatted{svy <- as_svydesign(settled)
-survey::svytotal(~income, svy, na.rm = TRUE)
-survey::svymean(~income, subset(svy, result != "ineligible"))
-}\if{html}{\out{</div>}}
-
-\code{na.rm = TRUE} and \code{subset()} keep those rows in the variance, and
-removing them before the export understates it. A primary unit of a
-later reserve stage whose units all proved ineligible keeps one such row,
-as a zero total.
-
-A primary unit taken whole, by a certainty rule or as a unit of a census
-stratum, with a later stage drawn inside it, represents itself as it does in
-an occasion. Expected hits of 1 at a stage drawn with replacement do not make
-a unit certain. It is a stratum of its own whose clusters are its units of
-the next stage. With the reserve at that stage, its pools are exported as
-first-stage pools are, times the weight
-of the stage above, so its ineligible units add rows and a placeholder
-is a unit of its own. In a simulation of one certainty EA among twelve,
-this brought the estimated variance from 1.36 to 1.26 times the true
-one. The rest comes from the first stage's finite population
-correction, which the export leaves out.
-
-A pool whose eligible units include no respondent still has an estimated
-eligible count, from the units the field worked. With every worked unit
-of unknown eligibility, it takes the resolved rate of the pools that
-share its strata, or counts every unit as eligible when none of them
-resolved one. Both are assumptions about the pool, and \code{\link[=summary]{summary()}}
-counts the pools that rest on them. A pool estimated to hold no eligible unit, such as one
-whose resolved units all proved ineligible, is exported as ineligible.
-The export adds one placeholder row per other such pool, at the
-weight of the stages above times that count, coded as an eligible
-non-interview (\code{2}, \code{"noninterview"}, or a factor level of that name).
-Its other columns hold \code{NA}, and below the first stage it sits in the
-primary unit of its pool. The export warns
-(\code{samplyr_warning_reserve_no_respondent}) and names the pools. Until a
-nonresponse adjustment moves that weight to respondents, estimates leave
-it out. With replicate weights, \code{\link[svrep:redistribute_weights]{svrep::redistribute_weights()}} makes the
-adjustment in every replicate:
-
-\if{html}{\out{<div class="sourceCode r">}}\preformatted{rep <- as_svrepdesign(settled)
-rep <- svrep::redistribute_weights(
-  rep,
-  reduce_if = result == "noninterview",
-  increase_if = result == "interview",
-  by = "region"
-)
-survey::svytotal(~income, rep, na.rm = TRUE)
-}\if{html}{\out{</div>}}
-
-The adjustment moves the placeholder's weight but leaves its row, with
-\code{NA} in every analysis variable. An estimate therefore needs
-\code{na.rm = TRUE}, as for the ineligible rows. Without it a linearized
-total is \code{NA}, and a replicate design fails with "All replicates
-contained NAs".
-
-With linearization, \code{\link[survey:calibrate]{survey::calibrate()}} to known totals plays that
-role. After a stage below the reserve is drawn, the units of such a
-pool have no weight at that stage, so its export is refused
-(\code{samplyr_error_reserve_no_respondent}). Export before drawing it, or
-combine the stratum with a neighbor in the design.
-
-The rows the export adds hold \code{NA} in the variables a calibration would
-use, so \code{survey::calibrate()}, \code{survey::postStratify()} and
-\code{survey::rake()} stop on them. Calibrate the respondents instead, through
-indicators that are 0 on those rows, and without an intercept, which
-would count them:
-
-\if{html}{\out{<div class="sourceCode r">}}\preformatted{svy <- update(
-  svy,
-  female = as.numeric(sex \%in\% "female"),
-  male = as.numeric(sex \%in\% "male")
-)
-svy <- survey::calibrate(
-  svy, ~ 0 + female + male, c(female = 5200, male = 4800)
-)
-}\if{html}{\out{</div>}}
-
-A row whose indicators are all 0 keeps its weight, under a linear
-calibration as under \code{calfun = "raking"}. The ineligible rows still
-estimate the ineligible count, and the respondents alone carry the known
-totals. The same call works on a replicate design, before or after
-\code{\link[svrep:redistribute_weights]{svrep::redistribute_weights()}}.
+list. A settled sample is exported by ultimate clusters, with rows added
+for the units found ineligible and for the eligible nonrespondents of a
+pool with no respondent. \link{reserve_lists} gives those rows, the estimates
+and calibrations they need, and the exports that refuse a settled
+reserve.
 }
 
 \subsection{A shared estimation weight}{
@@ -498,10 +432,10 @@ A sample from \code{\link[=share_weights]{share_weights()}} carries weights for 
 than the one that was selected, so it is exported as its \strong{source-target
 contributions}: one row per link, weighted by the recorded coefficient
 times the source unit's design weight. This gives the generalized weight
-share total exactly for any link structure. The result has more rows than
-the transformation returned, but no estimate changes: a total sums the
-same terms, and a mean's denominator is the estimated target population
-size either way.
+share total exactly for any link structure (Lavallee 2007). The result has
+more rows than the transformation returned, but no estimate changes: a
+total sums the same terms, and a mean's denominator is the estimated
+target population size either way.
 
 A selected source unit linked to no target, such as a dwelling with
 nobody in the target population, has no contribution. The export keeps
@@ -511,9 +445,9 @@ sampled unit in the between-unit and within-unit variance as a zero
 total. Estimates need \code{na.rm = TRUE}, and the export warns
 (\code{samplyr_warning_export_empty_parent}) when zero rows are added.
 
-An unequal-probability or random-size source design is also refused
-here, because its variance comes from a structure indexed by the
-source sample's rows, which the contribution rows no longer are. Use
+An unequal-probability or random-size source design is refused here,
+because its variance comes from a structure indexed by the source
+sample's rows, which the contribution rows no longer are. Use
 \code{as_svrepdesign()}, which replicates the source design and applies the
 sharing inside every replicate.
 
@@ -570,8 +504,16 @@ survey::svytotal(~population, svy_joint)
 \dontshow{\}) # examplesIf}
 }
 \references{
+Hansen, M. H., Hurwitz, W. N. and Madow, W. G. (1953). \emph{Sample Survey
+Methods and Theory}. Wiley.
+
+Lavallee, P. (2007). \emph{Indirect Sampling}. Springer.
+
 Sarndal, C.-E., Swensson, B. and Wretman, J. (1992). \emph{Model
 Assisted Survey Sampling}. Springer.
+
+Wolter, K. M. (2007). \emph{Introduction to Variance Estimation}, 2nd ed.
+Springer.
 }
 \seealso{
 \code{\link[=execute]{execute()}} for producing tbl_sample objects,

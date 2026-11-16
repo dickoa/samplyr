@@ -809,6 +809,80 @@ test_that("a settlement replays from its receipt", {
   )
 })
 
+
+test_that("a settlement records the attempted units its sample drops", {
+  listed <- listed_sample()
+  # EA 2's reserve released after its stop is ineligible here, so the walk
+  # decides whether it is kept.
+  codes <- settle_codes(3)
+  codes[["2"]]$reserve <- c(1, 4)
+  listed$code <- set_codes(listed, codes)
+  settled <- execute(listed, response_status = code)
+  units <- attr(settled, "metadata")$reserve_settlement$units
+  # By hand: each pool's take, then its reserve in rank order while it has
+  # fewer than three respondents. The kept units coded 2 to 4 are the ones
+  # the sample drops.
+  digit <- floor(listed$code)
+  expected <- integer(0)
+  for (ea in unique(listed$ea_id)) {
+    rows <- which(listed$ea_id == ea)
+    kept <- rows[listed$.reserve_2[rows] == 0L]
+    reserve <- rows[listed$.reserve_2[rows] > 0L & !is.na(listed$code[rows])]
+    reserve <- reserve[order(listed$.reserve_2[reserve])]
+    for (r in reserve) {
+      if (sum(digit[kept] == 1) >= 3) break
+      kept <- c(kept, r)
+    }
+    expected <- c(expected, kept[digit[kept] %in% 2:4])
+  }
+  expect_setequal(units$rows$hh_id, listed$hh_id[expected])
+  expect_identical(units$code[order(units$rows$hh_id)],
+                   as.integer(digit[expected][order(listed$hh_id[expected])]))
+  # EA 2 released a reserve after its stop, which is not kept.
+  late <- listed$ea_id == 2 & listed$.reserve_2 == 2L
+  expect_identical(digit[late], 4)
+  expect_false(any(units$rows$hh_id %in% listed$hh_id[late]))
+  expect_length(intersect(units$rows$hh_id, settled$hh_id), 0L)
+  pools <- attr(settled, "metadata")$reserve_settlement$pools
+  count <- function(code) tabulate(units$pool[units$code == code], nrow(pools))
+  expect_identical(count(4L), pools$n_ineligible)
+  expect_identical(count(3L), pools$n_unknown)
+  expect_identical(count(2L), pools$n_eligible - pools$n_respondents)
+  expect_true(samplyr:::sample_realization_status(settled)$ok)
+
+  expect_null(attributes(units$rows)$metadata)
+  # A replay from the receipt rebuilds the same units, with the columns of
+  # the frame and the draw, and the response status rebuilt from their
+  # categories.
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(settled, path, frame = settle_frame())
+  replayed <- replay_design(read_design(path), settle_frame())
+  again <- attr(replayed, "metadata")$reserve_settlement$units
+  expect_identical(again[c("pool", "unit", "code")],
+                   units[c("pool", "unit", "code")])
+  expect_setequal(names(again$rows), names(units$rows))
+  others <- setdiff(names(units$rows), "code")
+  expect_identical(again$rows[others], units$rows[others])
+  expect_identical(again$rows$code, floor(units$rows$code))
+
+  # A stage-1 settlement keeps them through the continuation.
+  design <- sampling_design() |> add_stage() |> cluster_by(ea_id) |>
+    draw(n = 2, reserve = 2) |> add_stage() |> draw(n = 2)
+  first <- suppressWarnings(execute(design, settle_frame(), seed = 1,
+                                    stages = 1))
+  first$code <- ifelse(first$.reserve_1 == 0L,
+                       ifelse(first$ea_id == min(first$ea_id), 4, 1), NA)
+  rank_one <- first$.reserve_1 == 1L
+  first$code[rank_one] <- 1
+  first <- suppressWarnings(execute(first, response_status = code))
+  held <- attr(first, "metadata")$reserve_settlement$units
+  expect_gt(nrow(held$rows), 0L)
+  continued <- suppressWarnings(execute(first, settle_frame(), seed = 2))
+  record <- attr(continued, "metadata")$reserve_settlement
+  expect_true(record$carried)
+  expect_identical(record$units, held)
+})
+
 ## Exporting a settled reserve
 
 export_codes <- function(pool_3) {
@@ -870,14 +944,36 @@ test_that("a settled reserve below stage 1 exports by ultimate clusters", {
   expect_identical(sort(unique(settled$ea_id)), 1:5)
   expect_identical(sort(unique(settled$.weight_1)), c(4 / 3, 1.5))
   svy <- as_svydesign(settled)
-  expect_identical(nrow(svy$variables), nrow(settled))
-  expect_equal(unname(weights(svy)), settled$.weight)
+  data <- svy$variables
+  respondent <- !is.na(data$.sample_id)
+  expect_equal(unname(weights(svy))[respondent], settled$.weight)
+  # One row per ineligible household, at the stage-1 weight times N over the
+  # units the estimate counts: EA 1 resolved 4, EA 3 and EA 4 resolved 3
+  # and 4 once the unit that stopped the list and an unknown are left out.
+  expect_identical(data$ea_id[!respondent], c(1L, 3L, 4L))
+  expect_identical(data$code[!respondent], c(4, 4, 4))
+  expect_equal(data$.weight[!respondent],
+               c(4 / 3 * 10 / 4, 4 / 3 * 10 / 3, 3 / 2 * 10 / 4))
+  # Every pool's weights then sum to its size times the stage-1 weight.
+  expect_equal(as.vector(tapply(data$.weight, data$ea_id, sum)),
+               c(4 / 3 * c(10, 10, 10), 3 / 2 * c(10, 3)))
+  # The added rows sit in their EAs and hold NA, so an analysis total and
+  # its variance are the ultimate-cluster ones of the respondents: with
+  # replacement, over each region's EA totals.
+  z <- tapply(settled$.weight * settled$hh_id, settled$ea_id, sum)
+  region <- tapply(settled$region, settled$ea_id, unique)
+  by_hand <- sum(tapply(z, region, function(t) {
+    length(t) / (length(t) - 1) * sum((t - mean(t))^2)
+  }))
+  total <- survey::svytotal(~hh_id, svy, na.rm = TRUE)
+  expect_equal(unname(coef(total)), sum(z))
+  expect_equal(as.numeric(survey::SE(total)), sqrt(by_hand))
   # Stage-1 clusters only, drawn with replacement.
   expect_identical(deparse(svy$call$ids), "~.id_1")
   expect_null(svy$fpc$popsize)
   rep <- as_svrepdesign(settled, type = "JKn")
   expect_s3_class(rep, "svyrep.design")
-  expect_equal(unname(weights(rep, type = "sampling")), settled$.weight)
+  expect_equal(unname(weights(rep, type = "sampling")), unname(weights(svy)))
 })
 
 test_that("the full and two-phase routes refuse a settled reserve", {
@@ -980,7 +1076,7 @@ test_that("an occasion of a master with a reserve is refused, settled or not", {
   }
 })
 
-test_that("a pool with no respondent is exported as a placeholder row", {
+test_that("a pool with no respondent is exported as its eligible nonrespondents", {
   skip_if_not_installed("survey")
   settled <- settled_sample(no_respondent_codes)
   expect_false(3L %in% settled$ea_id)
@@ -991,15 +1087,21 @@ test_that("a pool with no respondent is exported as a placeholder row", {
   )
   data <- svy$variables
   held <- which(is.na(data$.sample_id) & data$code == 2)
-  expect_identical(data$ea_id[held], 3L)
-  expect_identical(data$region[held], "north")
-  # The stage-1 weight of 4 / 3 times 2 eligible among 4 resolved units of
-  # 10.
-  expect_equal(data$.weight[held], 4 / 3 * 10 * 2 / 4)
-  expect_true(is.na(data$hh_id[held]))
-  expect_identical(nrow(data), nrow(settled) + 1L)
-  # The row is a primary unit of its own, in its stratum.
-  expect_identical(sum(svy$cluster[[1]] == svy$cluster[[1]][held]), 1L)
+  # One row for each of its 2 eligible non-interviews, at the stage-1
+  # weight of 4 / 3 times 10 over its 4 resolved units, which together
+  # carry its estimated eligible count.
+  expect_identical(data$ea_id[held], c(3L, 3L))
+  expect_identical(data$region[held], c("north", "north"))
+  expect_equal(data$.weight[held], rep(4 / 3 * 10 / 4, 2))
+  expect_true(all(is.na(data$hh_id[held])))
+  # Its 2 ineligible households add rows at the same weight, and EAs 1 and
+  # 4 add one ineligible row each.
+  pool_3 <- data$ea_id == 3L
+  expect_identical(sort(data$code[pool_3]), c(2, 2, 4, 4))
+  expect_equal(sum(data$.weight[pool_3]), 4 / 3 * 10)
+  expect_identical(nrow(data), nrow(settled) + 6L)
+  # The rows form EA 3's primary unit, in its stratum.
+  expect_identical(sum(svy$cluster[[1]] == svy$cluster[[1]][held[1]]), 4L)
 
   expect_warning(
     rep <- as_svrepdesign(settled, type = "JKn"),
@@ -1008,7 +1110,7 @@ test_that("a pool with no respondent is exported as a placeholder row", {
   expect_identical(nrow(rep$variables), nrow(data))
 })
 
-test_that("the placeholder carries the non-interview code in the column's type", {
+test_that("the added rows carry their codes in the column's type", {
   skip_if_not_installed("survey")
   placeholder_code <- function(as) {
     listed <- export_listed()
@@ -1017,10 +1119,12 @@ test_that("the placeholder carries the non-interview code in the column's type",
     data <- suppressWarnings(as_svydesign(settled))$variables
     data$code[is.na(data$.sample_id) & data$ea_id == 3L]
   }
-  expect_identical(placeholder_code(identity), 2)
-  expect_identical(placeholder_code(code_words), "noninterview")
+  expect_identical(placeholder_code(identity), c(4, 4, 2, 2))
+  expect_identical(placeholder_code(code_words),
+                   rep(c("ineligible", "noninterview"), each = 2))
   held <- placeholder_code(function(code) factor(code_words(code)))
-  expect_identical(as.character(held), "noninterview")
+  expect_identical(as.character(held),
+                   rep(c("ineligible", "noninterview"), each = 2))
   # A factor without the level gains it.
   without <- factor("interview", levels = c("interview", "ineligible"))
   added <- reserve_category_value(without, 2L, 2, "noninterview")
@@ -1060,6 +1164,35 @@ test_that("a pool of unknowns counts every unit when its strata resolved none", 
   expect_equal(out$eligible, c(10, 8, 4.5))
 })
 
+test_that("a pool of unknowns shares its estimate among its units", {
+  skip_if_not_installed("survey")
+  pool_3 <- function(svy) {
+    data <- svy$variables
+    data[is.na(data$.sample_id) & data$ea_id == 3L, ]
+  }
+  # EA 3 worked six households of unknown eligibility, and the north
+  # resolved 5 eligible of 6, so it holds 10 * 5 / 6 eligible units, shared
+  # among the six as eligible non-interviews.
+  settled <- settled_sample(list(main = c(3, 3, 3), reserve = c(3, 3, 3)))
+  rows <- pool_3(suppressWarnings(as_svydesign(settled)))
+  expect_identical(rows$code, rep(2, 6))
+  expect_equal(rows$.weight, rep(4 / 3 * 10 * 5 / 6 / 6, 6))
+  # With the other north EAs wholly ineligible, the resolved rate is 0 and
+  # the six stand for EA 3's 10 households as ineligible units.
+  codes <- export_codes(list(main = c(3, 3, 3), reserve = c(3, 3, 3)))
+  codes[["1"]] <- list(main = c(4, 4, 4), reserve = c(4, 4, 4))
+  codes[["2"]] <- list(main = c(4, 4, 4), reserve = c(4, 4, 4))
+  listed <- export_listed()
+  listed$code <- set_codes(listed, codes)
+  settled <- execute(listed, response_status = code)
+  pools <- attr(settled, "metadata")$reserve_settlement$pools
+  expect_identical(pools$eligible_rule[3], "strata")
+  expect_equal(pools$eligible[3], 0)
+  rows <- pool_3(suppressWarnings(as_svydesign(settled)))
+  expect_identical(rows$code, rep(4, 6))
+  expect_equal(rows$.weight, rep(4 / 3 * 10 / 6, 6))
+})
+
 test_that("a pool with no respondent is refused once a later stage is drawn", {
   skip_if_not_installed("survey")
   design <- sampling_design() |>
@@ -1075,20 +1208,16 @@ test_that("a pool with no respondent is refused once a later stage is drawn", {
   listed$access[listed$region == "north"] <- 2
   settled <- execute(listed, response_status = access)
 
-  # Before the next stage, the stratum is exported as a placeholder, its
-  # only primary unit.
+  # Before the next stage, the stratum is exported as its three EAs, each
+  # worked and found eligible, so it is no stratum of one unit.
   expect_warning(
-    expect_warning(
-      svy <- as_svydesign(settled),
-      class = "samplyr_warning_lonely_psu"
-    ),
+    svy <- as_svydesign(settled),
     "region = north",
     class = "samplyr_warning_reserve_no_respondent"
   )
   held <- is.na(svy$variables$.sample_id)
-  expect_identical(svy$variables$region[held], "north")
-  # All three north EAs were worked and found eligible.
-  expect_equal(svy$variables$.weight[held], 3)
+  expect_identical(svy$variables$region[held], rep("north", 3))
+  expect_equal(svy$variables$.weight[held], rep(1, 3))
 
   full <- execute(settled, frame, seed = 2)
   expect_error(
@@ -1098,7 +1227,7 @@ test_that("a pool with no respondent is refused once a later stage is drawn", {
   )
 })
 
-test_that("svrep moves a placeholder's weight to the respondents of its stratum", {
+test_that("svrep moves a pool's nonrespondent weight to the respondents of its stratum", {
   skip_if_not_installed("survey")
   skip_if_not_installed("svrep")
   settled <- settled_sample(no_respondent_codes)
@@ -1113,17 +1242,18 @@ test_that("svrep moves a placeholder's weight to the respondents of its stratum"
   after <- weights(adjusted, type = "sampling")
   data <- rep$variables
   held <- is.na(data$.sample_id) & data$code == 2
-  expect_equal(unname(after[held]), 0)
+  expect_identical(sum(held), 2L)
+  expect_equal(unname(after[held]), c(0, 0))
   north <- data$region == "north"
   expect_equal(sum(after[north]), sum(before[north]))
   respondent <- north & data$code == 1
   expect_equal(
     sum(after[respondent]),
-    sum(before[respondent]) + unname(before[held])
+    sum(before[respondent]) + sum(before[held])
   )
 
-  # The placeholder keeps its row, with NA in the analysis variables.
-  expect_true(is.na(data$hh_id[held]))
+  # The rows stay, with NA in the analysis variables.
+  expect_true(all(is.na(data$hh_id[held])))
   expect_error(survey::svytotal(~hh_id, adjusted),
                "All replicates contained NAs")
   expect_false(anyNA(coef(survey::svytotal(~hh_id, adjusted, na.rm = TRUE))))
@@ -1191,17 +1321,19 @@ test_that("respondents calibrate through indicators that are 0 on the added rows
   expect_false(anyNA(coef(survey::svytotal(~hh_id, cal, na.rm = TRUE))))
 })
 
-test_that("a primary unit found wholly ineligible stays as a zero row", {
+test_that("a primary unit found wholly ineligible stays as a zero total", {
   skip_if_not_installed("survey")
   settled <- settled_sample(list(main = c(4, 4, 4), reserve = c(4, 4, 4)))
   expect_false(3L %in% settled$ea_id)
   svy <- as_svydesign(settled)
-  zero <- svy$variables[is.na(svy$variables$.sample_id), ]
-  expect_identical(zero$ea_id, 3L)
-  expect_identical(zero$code, 4)
-  # Its 10 households, at the stage-1 weight of 4 / 3.
-  expect_equal(zero$.weight, 4 / 3 * 10)
-  expect_identical(nrow(svy$variables), nrow(settled) + 1L)
+  data <- svy$variables
+  zero <- data[is.na(data$.sample_id) & data$ea_id == 3L, ]
+  # One row per household worked, which together stand for its 10
+  # households at the stage-1 weight of 4 / 3.
+  expect_identical(zero$code, rep(4, 6))
+  expect_equal(zero$.weight, rep(4 / 3 * 10 / 6, 6))
+  expect_identical(length(unique(svy$cluster[[1]][data$ea_id == 3L])), 1L)
+  expect_identical(nrow(data), nrow(settled) + 8L)
 })
 
 test_that("a pool estimated to hold no eligible unit is exported as ineligible", {
@@ -1212,10 +1344,11 @@ test_that("a pool estimated to hold no eligible unit is exported as ineligible",
   expect_equal(pools$eligible[3], 0)
   expect_identical(pools$no_respondent, rep(FALSE, 5))
   expect_no_warning(svy <- as_svydesign(settled))
-  zero <- svy$variables[is.na(svy$variables$.sample_id), ]
-  expect_identical(zero$ea_id, 3L)
-  expect_identical(zero$code, 4)
-  expect_equal(zero$.weight, 4 / 3 * 10)
+  data <- svy$variables
+  zero <- data[is.na(data$.sample_id) & data$ea_id == 3L, ]
+  # Its 3 resolved households, all ineligible, carry its 10 households.
+  expect_identical(zero$code, rep(4, 3))
+  expect_equal(zero$.weight, rep(4 / 3 * 10 / 3, 3))
 
   # At stage 1, the ineligible units carry the pool, and a stage drawn after
   # the settlement exports.
@@ -1329,13 +1462,14 @@ test_that("a primary unit taken with certainty settles as a stratum of its own",
     execute(listed, response_status = code)
   }
   # The households are its clusters, the ones found ineligible included, as
-  # at a first-stage reserve. Every other EA is a cluster of the stratum.
+  # at a first-stage reserve. Every other EA is a cluster of the stratum,
+  # its ineligible households included.
   reference <- function(svy) {
     df <- svy$variables
     added <- is.na(df$.sample_id)
     sure <- df$psu == 1L
     df$unit <- ifelse(sure, paste0("hh", df$hh), paste0("ea", df$psu))
-    df$unit[added] <- paste0("row", which(added))
+    df$unit[added & sure] <- paste0("row", which(added & sure))
     df$stratum <- interaction(df$h, sure)
     survey::svydesign(
       ids = ~unit, strata = ~stratum, weights = ~.weight, data = df
@@ -1359,11 +1493,11 @@ test_that("a primary unit taken with certainty settles as a stratum of its own",
   expect_equal(data$.weight[sure & is.na(data$.sample_id)], c(2, 2))
   expect_equal(sum(data$.weight[sure]), 8)
   expect_true(all(data$.certainty_1[sure]))
-  # The other EAs keep their own rows only.
-  expect_identical(nrow(data), nrow(settled) + 2L)
+  # Each other EA adds its one ineligible household inside its cluster.
+  expect_identical(nrow(data), nrow(settled) + 2L + 3L)
   expect_same_variance(svy)
 
-  # A pool with no respondent is a placeholder, a cluster of its own.
+  # A pool with no respondent keeps its eligible households as clusters.
   settled <- settle(list(main = c(2, 4, 2), reserve = c(2, 4, 2)))
   expect_warning(
     svy <- as_svydesign(settled),
@@ -1371,7 +1505,7 @@ test_that("a primary unit taken with certainty settles as a stratum of its own",
   )
   data <- svy$variables
   sure <- data$psu == 1L
-  expect_identical(sort(data$code[sure]), c(2, 4, 4))
+  expect_identical(sort(data$code[sure]), c(2, 2, 2, 2, 4, 4))
   expect_equal(sum(data$.weight[sure]), 8)
   expect_same_variance(svy)
 })
@@ -1528,7 +1662,7 @@ test_that("a household listed under two draws of its EA takes two codes", {
     table(settled$.draw_1, settled$hh) > 0] == 2L))
 })
 
-test_that("a draw of a parent found wholly ineligible stays as a zero row", {
+test_that("a draw of a parent found wholly ineligible stays as a zero total", {
   skip_if_not_installed("survey")
   frame <- data.frame(ea = rep(1:2, each = 10), hh = 1:20, y = 1)
   listed <- sampling_design() |>
@@ -1545,14 +1679,15 @@ test_that("a draw of a parent found wholly ineligible stays as a zero row", {
   expect_false(3L %in% settled$.draw_1)
   expect_true(1L %in% settled$ea)
   svy <- as_svydesign(settled)
-  zero <- svy$variables[is.na(svy$variables$.sample_id), ]
-  expect_identical(zero$.draw_1, 3L)
-  expect_identical(zero$ea, 1L)
-  expect_equal(zero$.weight, 0.5 * 10)
+  data <- svy$variables
+  zero <- data[is.na(data$.sample_id) & data$.draw_1 == 3L, ]
+  # Its 4 households worked, all ineligible, stand for its 10.
+  expect_identical(zero$ea, rep(1L, 4))
+  expect_equal(zero$.weight, rep(0.5 * 10 / 4, 4))
   expect_identical(length(unique(svy$cluster[[1]])), 4L)
 })
 
-test_that("a placeholder of one draw is a unit apart from the other draws", {
+test_that("a draw with no respondent is a unit apart from the other draws", {
   skip_if_not_installed("survey")
   withr::local_options(survey.lonely.psu = "fail")
   # One EA, so both draws take it.
@@ -1570,7 +1705,7 @@ test_that("a placeholder of one draw is a unit apart from the other draws", {
   second <- listed$.draw_1 == 2L
   listed$code[second] <- 2
   settled <- execute(listed, response_status = code)
-  # The placeholder warns, and the stratum is not lonely: it holds two draws.
+  # The pool warns, and the stratum is not lonely: it holds two draws.
   warned <- character(0)
   svy <- withCallingHandlers(
     as_svydesign(settled),
@@ -1581,7 +1716,8 @@ test_that("a placeholder of one draw is a unit apart from the other draws", {
   )
   expect_identical(warned, "samplyr_warning_reserve_no_respondent")
   held <- is.na(svy$variables$.sample_id)
-  expect_identical(svy$variables$.draw_1[held], 2L)
+  expect_identical(svy$variables$.draw_1[held], rep(2L, 4))
+  expect_equal(sum(svy$variables$.weight[held]), 0.5 * 10)
   expect_identical(length(unique(svy$cluster[[1]])), 2L)
   expect_no_error(survey::svytotal(~y, svy, na.rm = TRUE))
 })
@@ -1889,4 +2025,124 @@ test_that("expected hits and settled weights of 1 are no census", {
     svy_total(as_svydesign(second)),
     c(total = 45, se = 25.980762113533)
   )
+})
+
+test_that("a replay rebuilds the response status its export codes", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("svrep")
+  # The receipt held the categories alone. The response status column is
+  # not in the frame, so a replay settled without it and its export left
+  # the added rows uncoded: an ineligible unit could not be told from an
+  # eligible nonrespondent, and the adjustment below could not be run.
+  as_kind <- list(
+    double = identity,
+    integer = function(code) as.integer(floor(code)),
+    words = code_words,
+    digits = function(code) ifelse(is.na(code), NA, as.character(code)),
+    factor_words = function(code) factor(code_words(code)),
+    factor_digits = function(code) factor(ifelse(is.na(code), NA,
+                                                 as.character(code)))
+  )
+  category <- function(x) samplyr:::reserve_outcome_category(x)$category
+  adjusted <- function(svy) {
+    rep <- survey::as.svrepdesign(svy, type = "JKn")
+    rep <- update(rep, status = category(code))
+    weights(svrep::redistribute_weights(
+      rep, reduce_if = status == 2, increase_if = status == 1, by = "region"
+    ), type = "sampling")
+  }
+  checked <- character(0)
+  for (kind in names(as_kind)) {
+    listed <- export_listed()
+    listed$code <- as_kind[[kind]](set_codes(listed,
+                                             export_codes(no_respondent_codes)))
+    settled <- execute(listed, response_status = code)
+    path <- withr::local_tempfile(fileext = ".json")
+    write_design(settled, path, frame = export_frame())
+    receipt <- jsonlite::fromJSON(path)$execution$settlement
+    expect_identical(receipt$column, "code", info = kind)
+    replayed <- replay_design(read_design(path), export_frame())
+    original <- suppressWarnings(as_svydesign(settled))
+    again <- suppressWarnings(as_svydesign(replayed))
+    a <- original$variables
+    b <- again$variables
+    expect_identical(nrow(b), nrow(a), info = kind)
+    expect_equal(b$.weight, a$.weight, info = kind)
+    expect_identical(class(b$code), class(a$code), info = kind)
+    added <- is.na(a$.sample_id)
+    expect_true(any(category(a$code[added]) == 2L), info = kind)
+    expect_true(any(category(a$code[added]) == 4L), info = kind)
+    expect_identical(b$code[added], a$code[added], info = kind)
+    expect_identical(category(b$code), category(a$code), info = kind)
+    # A respondent's code is rebuilt as its category, in the column's form.
+    respondent <- if (kind %in% c("words", "factor_words")) "interview" else "1"
+    expect_identical(unique(as.character(b$code[!added])), respondent,
+                     info = kind)
+    expect_equal(adjusted(again), adjusted(original), info = kind)
+    checked <- c(checked, kind)
+  }
+  expect_setequal(checked, names(as_kind))
+})
+
+test_that("a user column named after the added rows' unit column is kept", {
+  skip_if_not_installed("survey")
+  # The export numbered each added row's recorded unit in `.reserve_unit`
+  # and then removed that column. A user column of that name was lost, or
+  # failed to bind when it was not an integer.
+  settle <- function(extra, drop) {
+    frame <- data.frame(id = 1:12, y = 1:12)
+    for (nm in names(extra)) frame[[nm]] <- extra[[nm]]
+    s <- execute(sampling_design() |> draw(n = 4, reserve = 2), frame,
+                 seed = 1)
+    s$code <- ifelse(s$.reserve_1 == 0, "interview", NA_character_)
+    if (drop) {
+      s$code[which(s$.reserve_1 == 0)[1]] <- "ineligible"
+      s$code[s$.reserve_1 == 1] <- "interview"
+    }
+    suppressWarnings(execute(s, response_status = code))
+  }
+  export <- function(x) suppressWarnings(as_svydesign(x))
+  checked <- character(0)
+  for (drop in c(FALSE, TRUE)) {
+    base <- export(settle(list(), drop))
+    expect_identical(any(is.na(base$variables$.sample_id)), drop)
+    extras <- list(
+      numeric = list(.reserve_unit = 101:112),
+      character = list(.reserve_unit = letters[1:12]),
+      two = list(.reserve_unit = letters[1:12], .reserve_unit1 = 201:212)
+    )
+    for (kind in names(extras)) {
+      x <- settle(extras[[kind]], drop)
+      svy <- export(x)
+      v <- svy$variables
+      sampled <- !is.na(v$.sample_id)
+      for (nm in names(extras[[kind]])) {
+        expect_identical(v[[nm]][sampled],
+                         extras[[kind]][[nm]][v$id[sampled]])
+        expect_true(all(is.na(v[[nm]][!sampled])))
+      }
+      expect_identical(stats::weights(svy), stats::weights(base))
+      expect_identical(attr(svy, "samplyr_reserve_units"),
+                       attr(base, "samplyr_reserve_units"))
+      checked <- c(checked, paste(kind, drop))
+    }
+  }
+  expect_setequal(checked, c("numeric FALSE", "character FALSE",
+                             "two FALSE", "numeric TRUE", "character TRUE",
+                             "two TRUE"))
+
+  # The response status may itself be called `.reserve_unit`.
+  frame <- data.frame(id = 1:12, y = 1:12)
+  s <- execute(sampling_design() |> draw(n = 4, reserve = 2), frame,
+               seed = 1)
+  s$.reserve_unit <- ifelse(s$.reserve_1 == 0, "interview", NA_character_)
+  s$.reserve_unit[which(s$.reserve_1 == 0)[1]] <- "ineligible"
+  s$.reserve_unit[s$.reserve_1 == 1] <- "interview"
+  svy <- export(suppressWarnings(execute(s, response_status = .reserve_unit)))
+  base <- export(settle(list(), TRUE))
+  added <- is.na(svy$variables$.sample_id)
+  expect_identical(svy$variables$.reserve_unit[added], "ineligible")
+  expect_identical(stats::weights(svy), stats::weights(base))
+  expect_identical(attr(svy, "samplyr_reserve_units"),
+                   attr(base, "samplyr_reserve_units"))
 })

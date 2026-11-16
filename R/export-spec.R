@@ -47,7 +47,7 @@ export_stage_spec <- function(df, design, stages, phase = NULL) {
       method = draw_spec$method,
       kind = kind,
       unequal = stage_is_unequal(draw_spec, kind),
-      systematic = if (draw_spec$method %in% c("systematic", "pps_systematic")) {
+      systematic = if (draw_spec$method %in% systematic_methods) {
         draw_spec$method
       } else {
         NA_character_
@@ -84,8 +84,8 @@ stage_is_unequal <- function(draw_spec, kind = survey_stage_kind(draw_spec)) {
 #' A first stage the generic replicate types read as drawn with replacement
 #'
 #' They resample first-stage units, so a PPS first stage drawn without
-#' replacement loses its finite population correction, and Chromy's method
-#' is read as with replacement. Unequal probabilities at later stages, and a
+#' replacement loses its finite population correction, and the
+#' minimum-replacement methods are read as with replacement. Unequal probabilities at later stages, and a
 #' first stage drawn with replacement, reach the variance through the
 #' weights: in a simulation a PPS second stage gave the same replicate
 #' variance as its SRS counterpart. A stage drawing one PSU per zone has the
@@ -94,7 +94,7 @@ stage_is_unequal <- function(draw_spec, kind = survey_stage_kind(draw_spec)) {
 stage_replicated_as_wr <- function(draw_spec,
                                    kind = survey_stage_kind(draw_spec)) {
   (identical(kind, "pps_wor") && !draws_one_per_zone(draw_spec)) ||
-    identical(draw_spec$method, "pps_chromy")
+    draw_spec$method %in% pmr_methods
 }
 
 #' @noRd
@@ -118,7 +118,7 @@ spec_stage_unit <- function(df, stage_spec, stage_idx) {
 }
 
 #' Certainty units are a take-all stratum of the stage when its variance
-#' family is PPS without replacement and it has any
+#' family is PPS without or with replacement and it has any
 #' @noRd
 spec_stage_strata <- function(df, stage_spec, stage_idx, kind) {
   user <- stage_spec$strata$vars %||% character(0)
@@ -130,9 +130,10 @@ spec_stage_strata <- function(df, stage_spec, stage_idx, kind) {
     user <- c(user, zone_col)
   }
   cert_col <- paste0(".certainty_", stage_idx)
-  # Certainty units are a take-all stratum at every stage.
+  # Certainty units are a take-all stratum at every stage, also inside a
+  # stage drawn with replacement, which takes them once.
   certainty <- if (
-    identical(kind, "pps_wor") &&
+    kind %in% c("pps_wor", "wr") &&
       cert_col %in% names(df) &&
       any(df[[cert_col]])
   ) {

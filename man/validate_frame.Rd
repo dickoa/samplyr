@@ -148,15 +148,17 @@ needs.
 
 When \code{frame} is itself a \code{tbl_sample} (that is, the design is being
 prepared as phase 2 of a two-phase sample), \code{validate_frame()} also
-pre-flights the two-phase export requirements. The phases declare
-their sampling units independently, so the link is the compound of
-every identifier either phase declares with \code{\link[=cluster_by]{cluster_by()}} that both
-samples carry, which is the bridge \code{\link[=as_svydesign]{as_svydesign()}} builds. It warns
-when neither phase declares an identifier the phase-1 sample carries,
-and when the identifiers together do not uniquely identify phase-1
-rows. Problems are reported as warnings rather than errors, because
-selection and weighting work without linkage. Only \code{\link[=as_svydesign]{as_svydesign()}}
-needs it.
+pre-flights the two-phase export requirements. It warns when the
+phase-1 sample was modified after execution, since both exports then
+refuse the second phase. Rows drawn from the phase-1 sample link to it
+by position, so they need no identifier. When a later stage of phase 2
+draws from a register of its own, the link is the compound of every
+identifier either phase declares with \code{\link[=cluster_by]{cluster_by()}} that both samples
+carry, which is the bridge \code{\link[=as_svydesign]{as_svydesign()}} builds, and it warns when
+neither phase declares an identifier the phase-1 sample carries and when
+the identifiers together do not uniquely identify phase-1 rows. Problems
+are reported as warnings rather than errors, because selection and
+weighting work without linkage. Only the export needs it.
 
 A previous-phase sample also carries identifiers that later stages
 must keep. One that varies inside a sampling unit cannot be carried,

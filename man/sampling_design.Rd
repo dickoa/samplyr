@@ -54,7 +54,7 @@ A single-stage design needs no \code{add_stage()}.
 
 \code{draw()} reads the stage's strata and clusters when it is called. They
 decide which forms of \code{n}, \code{frac} and the certainty thresholds are valid,
-whether \code{min_n} and \code{max_n} apply, and how a svyplan plan is taken. Once a stage has its \code{draw()}, a \code{stratify_by()}, a \code{cluster_by()}
+whether \code{min_n} and \code{max_n} apply, and how an svyplan plan is taken. Once a stage has its \code{draw()}, a \code{stratify_by()}, a \code{cluster_by()}
 or a second \code{draw()} on it is refused with class
 \code{samplyr_error_stage_closed}. The same holds for a design from
 \code{\link[=read_design]{read_design()}} or \code{\link[=get_design]{get_design()}}, whose last stage is closed. Extend it

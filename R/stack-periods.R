@@ -103,13 +103,10 @@
 #' A design built on the stack, clustered by the primary units, must at
 #' least cross the design's strata with `panel`. Without it, a change
 #' between periods that read different panels mixes their totals in one
-#' stratum. In simulations over 300 masters, the window's standard error was
-#' 0.95 to 0.99 of the spread of a change between quarters of a 2-2-2
-#' rotation and 0.94 to 1.04 on a master of cohorts with 6 EAs per stratum
-#' and panel. On the stack, crossing
-#' the strata with `panel` gave 1.10 to 1.30 on the rotation, since it leaves
-#' out the quota blocks, and leaving `panel` out gave 3.9 where the periods
-#' read different panels.
+#' stratum, which overstates its variance. Crossing with `panel` still
+#' leaves out the quota blocks and the calibration the window's export
+#' applies, so it overstates too. The window, `execute(master, period = )`
+#' with [as_svydesign()], is the design for a change.
 #'
 #' ## What it does not do
 #'

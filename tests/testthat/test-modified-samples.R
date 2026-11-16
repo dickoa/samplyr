@@ -82,7 +82,7 @@ test_that("renaming internal columns invalidates", {
   expect_length(sample_modifications(benign), 0)
 })
 
-test_that("two-phase export warns when phase 1 was modified", {
+test_that("two-phase export refuses a modified phase 1", {
   skip_if_not_installed("survey")
 
   pop <- data.frame(
@@ -102,10 +102,17 @@ test_that("two-phase export warns when phase 1 was modified", {
       execute(p1_screened, seed = 3)
   )
 
-  expect_warning(
-    as_svydesign(p2),
-    "phase-1 sample was modified"
-  )
+  expect_error(as_svydesign(p2), class = "samplyr_error_modified_sample")
+  expect_error(as_svrepdesign(p2, type = "JK1"),
+               class = "samplyr_error_modified_sample")
+  # The preflight refuses it the same way, before and after drawing.
+  for (v in list(variance_estimators(p2),
+                 variance_estimators(get_design(p2), p1_screened))) {
+    expect_identical(unique(v$class[v$estimator != "Random groups"]),
+                     "samplyr_error_modified_sample")
+  }
+  expect_warning(validate_frame(get_design(p2), p1_screened),
+                 class = "samplyr_warning_modified_sample")
 
   # A clean phase-1 sample exports without the warning
   p2_clean <- sampling_design() |>
@@ -113,6 +120,88 @@ test_that("two-phase export warns when phase 1 was modified", {
     draw(n = 20) |>
     execute(p1, seed = 3)
   expect_no_warning(as_svydesign(p2_clean))
+})
+
+test_that("a screened phase 1 has no export, its stratified phase 2 has", {
+  skip_if_not_installed("survey")
+  # Twenty of forty units, half of them eligible. Phase 2 drawn from the
+  # screened rows composed into one phase and gave SE 0 for a random
+  # eligible count, and through survey::twophase() read the screened rows
+  # as a sample of the whole frame, doubling the total.
+  frame <- data.frame(
+    id = 1:40, eligible = rep(c(TRUE, FALSE), each = 20),
+    x = (1:40 %% 7) + 1
+  )
+  frame$y <- ifelse(frame$eligible, 100 + frame$x, NA)
+  phase1 <- execute(sampling_design() |> draw(n = 20), frame, seed = 1)
+  srs <- sampling_design() |> draw(n = 6)
+  pps <- sampling_design() |> draw(n = 6, method = "pps_brewer", mos = x)
+  edits <- list(
+    filter = dplyr::filter(phase1, eligible),
+    subset = phase1[phase1$eligible, ],
+    weight = dplyr::mutate(phase1, .weight = .weight * 2)
+  )
+  for (edit in names(edits)) {
+    for (d2 in list(srs, pps)) {
+      info <- paste(edit, d2$stages[[1]]$draw_spec$method)
+      phase2 <- suppressWarnings(execute(d2, edits[[edit]], seed = 2))
+      expect_error(as_svydesign(phase2),
+                   class = "samplyr_error_modified_sample", info = info)
+      expect_error(as_svrepdesign(phase2, type = "JKn"),
+                   class = "samplyr_error_modified_sample", info = info)
+      for (v in list(variance_estimators(phase2),
+                     variance_estimators(d2, edits[[edit]]))) {
+        expect_identical(v$status[v$estimator != "Random groups"],
+                         rep("refused", 10L), info = info)
+        expect_identical(unique(v$class[v$estimator != "Random groups"]),
+                         "samplyr_error_modified_sample", info = info)
+      }
+    }
+  }
+
+  # Edits that leave the realization intact keep the export.
+  direct <- as_svydesign(execute(srs, phase1, seed = 2))
+  kept <- list(
+    column = dplyr::mutate(phase1, z = 1),
+    value = dplyr::mutate(phase1, x = x + 1),
+    order = dplyr::arrange(phase1, dplyr::desc(id)),
+    dropped = dplyr::select(phase1, -x)
+  )
+  for (edit in names(kept)) {
+    phase2 <- execute(srs, kept[[edit]], seed = 2)
+    expect_no_error(svy <- as_svydesign(phase2))
+    if (edit != "order") {
+      expect_equal(survey::SE(survey::svytotal(~y, svy, na.rm = TRUE)),
+                   survey::SE(survey::svytotal(~y, direct, na.rm = TRUE)),
+                   info = edit)
+    }
+  }
+
+  # Screening as a phase-2 stratum is an ordinary two-phase design: every
+  # ineligible unit is kept, half of the eligible ones drawn.
+  rates <- data.frame(eligible = c(TRUE, FALSE), frac = c(0.5, 1))
+  screen <- sampling_design() |> stratify_by(eligible) |> draw(frac = rates)
+  phase2 <- execute(screen, phase1, seed = 2)
+  v <- variance_estimators(phase2)
+  expect_identical(v$status[v$estimator == "Taylor linearization"],
+                   "supported")
+  est <- survey::svytotal(~y, subset(as_svydesign(phase2), eligible),
+                          na.rm = TRUE)
+  expect_equal(unname(coef(est)),
+               sum((phase2$y * phase2$.weight)[phase2$eligible]))
+  expect_gt(as.vector(survey::SE(est)), 0)
+
+  # Random groups read each replicate's total alone, which a screening
+  # applied in every replicate leaves estimable.
+  reps <- execute(sampling_design() |> draw(n = 20), frame, seed = 1,
+                  reps = 4)
+  phase2 <- suppressWarnings(execute(srs, dplyr::filter(reps, eligible),
+                                     seed = 2))
+  v <- variance_estimators(phase2)
+  expect_identical(v$status[v$estimator == "Random groups"], "supported")
+  rg <- survey::svytotal(~y, as_svrepdesign(phase2, type = "random_groups"))
+  totals <- tapply(phase2$y * phase2$.weight, phase2$.replicate, sum)
+  expect_equal(unname(coef(rg)), mean(totals))
 })
 
 test_that("reordering rows does not invalidate and preserves estimates", {

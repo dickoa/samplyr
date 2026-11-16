@@ -48,7 +48,8 @@ Rao-Wu-Yue-Beaumont bootstrap (\code{"rwyb"}) and random groups
 approximation of its own, \code{"approximate"} when it knowingly approximates
 part of it (Brewer's approximation for a PPS stage, a systematic stage,
 a first stage treated as drawn with replacement, a first-stage correction
-that also scales the later stages' variance), \code{"refused"} when the
+that also scales the later stages' variance, stage 2 treated as drawn
+with replacement inside a PSU taken with certainty), \code{"refused"} when the
 export stops, and \code{"not applicable"} for the joint-probability route when
 stage 1 has no unequal probabilities to supply. \code{decided_by} says what
 settles it: \code{"design"} for the methods and the stage and phase structure,
@@ -60,15 +61,19 @@ export meets first, and for an approximation, every one that applies.
 
 \code{sample_risk} lists what only the realized sample decides and what it
 would do to the estimator: a stratum left with one sampled unit at a
-random-size or later stage, or a selected unit with nothing below it,
-which is exported as a zero row. What the frame shows about the risk is
-part of the text, such as how many candidate units have nothing below
-them.
+random-size or later stage, a selected unit with nothing below it,
+which is exported as a zero row, or, where a later stage of phase 2
+drew from a register of its own, a phase-2 row whose phase-1 identifier
+repeats, such as a unit hit twice, which refuses the join. What the frame
+shows about the risk is part of the text, such as how many candidate
+units have nothing below them.
 
 Without \code{frame}, the frame checks are not run. A stratum that may take one
 unit, the pairing BRR needs, several rows per cluster and candidate units
 with nothing below them are then listed in \code{sample_risk}, and a stage that
-takes every unit is not recognized. With a frame the design is resolved
+takes every unit is recognized only when its draw says so with
+\code{frac = 1}, since a size \code{n} needs the frame to show it. With a frame the
+design is resolved
 against it as \code{\link[=frame_summary]{frame_summary()}} does, without drawing and without using
 random numbers.
 
@@ -82,8 +87,8 @@ does not describe them.
 
 The report reads the same rules the exports apply, and a test compares it
 with the conditions the exports actually raise on executed samples. It
-does not certify an estimator's accuracy beyond that:
-\code{?variance_estimation} gives the measured error of each approximation.
+does not certify an estimator's accuracy beyond that, and
+\code{?variance_estimation} describes each approximation.
 }
 \examples{
 design <- sampling_design() |>

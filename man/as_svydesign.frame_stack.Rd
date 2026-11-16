@@ -52,7 +52,7 @@ contributes \code{theta} of its weight through the first frame and \code{1 - the
 through the second, so the two contributions sum to one whichever frame
 selected it. A unit belonging to one frame alone keeps its full weight.
 
-\strong{\code{theta} belongs to the first frame of the stack.} Reversing the
+\code{theta} belongs to the first frame of the stack. Reversing the
 components and asking for the same estimator means asking for
 \code{1 - theta}. Only \code{theta = 0.5} is invariant to the order they were
 stacked in.
@@ -74,7 +74,17 @@ two.
 
 A two-phase component is refused as well: \code{as_svydesign()} exports one
 with \code{survey::twophase()}, and \code{multiframe()} accepts only the objects
-\code{survey::svydesign()} builds.
+\code{survey::svydesign()} builds. So is a component drawn in several stages
+(\code{samplyr_error_survey_multiframe_stages}), since \code{multiframe()} reads
+one selection probability per stage and the export carries one for the
+whole design. \code{\link[=as_svrepdesign]{as_svrepdesign()}} replicates such a stack.
+
+So is a frame exported as drawn with replacement, such as a draw by
+\code{srswr}, a PPS draw with replacement or minimum replacement, or a settled
+reserve list (\code{samplyr_error_survey_multiframe_unsupported}).
+\code{multiframe()} computes each frame's variance as for a draw without
+replacement, which understates it there. \code{\link[=as_svrepdesign]{as_svrepdesign()}} keeps each
+frame's own variance.
 }
 
 \subsection{The expected estimator}{
@@ -94,8 +104,17 @@ Values at or above one are unambiguous under the same rule, so there is
 nothing left to infer.
 
 It is refused for a component whose weights were shared from another
-population: the combination is harmonic, and a realized weight-share
-weight is a random variable rather than an inverse inclusion probability.
+population, or adjusted when a reserve list was settled: the combination
+is harmonic, and such a realized weight is a random variable rather than
+an inverse inclusion probability.
+}
+
+\subsection{Means of a variable with missing values}{
+
+In survey 4.5, \code{svymean(..., na.rm = TRUE)} on the returned design keeps
+the rows whose value is missing in its denominator, so the mean is wrong.
+\code{svytotal(..., na.rm = TRUE)} is not affected, nor is the design
+\code{\link[=as_svrepdesign]{as_svrepdesign()}} returns.
 }
 }
 \examples{

@@ -180,7 +180,8 @@ test_that("no random numbers are drawn", {
 
 test_that("a with-replacement stage has no probability to resolve", {
   register <- exante_register()
-  for (method in c("srswr", "pps_multinomial", "pps_chromy")) {
+  for (method in c("srswr", "pps_multinomial", "pps_chromy",
+                   "pps_systematic_mr")) {
     # srswr ignores `mos` with a warning.
     design <- suppressWarnings(
       sampling_design() |> draw(n = 10, method = method, mos = size)

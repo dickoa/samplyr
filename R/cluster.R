@@ -43,12 +43,11 @@
 #' identified by its own id together with the strata of its stage and the
 #' units that earlier stages selected.
 #'
-#' - **Within earlier stages.** A stage's units are always identified within
-#'   the units of earlier stages, so `classroom_id = 1` can appear in every
-#'   school.
-#' - **Within the stage's strata.** With `nest = TRUE`, a stage's ids are
-#'   read within its own strata, so `stratify_by(county) |>
-#'   cluster_by(town)` selects towns as county and town pairs. When the
+#' - A stage's units are always identified within the units of earlier
+#'   stages, so `classroom_id = 1` can appear in every school.
+#' - With `nest = TRUE`, a stage's ids are read within its own strata, so
+#'   `stratify_by(county) |> cluster_by(town)` selects towns as county and
+#'   town pairs. When the
 #'   ids already differ across strata the key stays as declared, and frames
 #'   for later stages can link by it alone. When they repeat, the strata join
 #'   the key, and a separate register for a later stage must then carry them
@@ -210,7 +209,8 @@ cluster_by <- function(.data, ..., nest = TRUE) {
 resolve_cluster_nesting <- function(design, entries, previous_sample = NULL) {
   parent <- previous_sample
   for (entry in entries) {
-    frame <- entry$frame
+    # A previous phase's sample, as the new phase reads it.
+    frame <- with_phase_carried_columns(entry$frame)
     if (!is_null(parent)) {
       frame <- tryCatch(
         link_stage_frame(

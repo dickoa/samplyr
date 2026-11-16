@@ -24,16 +24,17 @@
 #'     weights.
 #'   - `.fpc_1`, `.fpc_2`, ...: Per-stage finite population correction
 #'     values. The meaning depends on the method and context:
-#'     - **Equal-probability WOR** (srswor, systematic): \eqn{N_h} (stratum
+#'     - **Equal-probability WOR** (`srswor`, `systematic`): \eqn{N_h} (stratum
 #'       population size), or \eqn{N} if unstratified. The sampling fraction
 #'       \eqn{f = n / N} is derived from this at variance-estimation time.
-#'     - **PPS WOR** (pps_brewer, pps_cps, etc.): \eqn{N_h} (stratum
+#'     - **PPS WOR** (`pps_brewer`, `pps_cps`, etc.): \eqn{N_h} (stratum
 #'       population size), converted to \eqn{\pi_i = 1/w_i}{pi_i = 1/w_i}
 #'       at survey export, because `survey::svydesign()` expects inclusion
 #'       probabilities for unequal-probability stages.
 #'     - **Clustered stages**: the number of clusters in the
 #'       stratum/group, not the number of ultimate units.
-#'     - **WR / PMR** (srswr, pps_multinomial, pps_chromy): \eqn{\infty}{Inf}.
+#'     - **WR / PMR** (`srswr`, `pps_multinomial`, `pps_chromy`,
+#'       `pps_systematic_mr`): \eqn{\infty}{Inf}.
 #'       These exports use no finite population correction and the
 #'       Hansen-Hurwitz variance treatment. It is approximate for PMR.
 #'
@@ -48,8 +49,10 @@
 #'     contributes no variance at that stage. TRUE whether the probability
 #'     came from a `certainty_size`/`certainty_prop` rule or was capped at one
 #'     by the probability calculation. Present for unequal-probability and
-#'     balanced stages. Always FALSE for WR/PMR stages, where the recorded
-#'     chance is an expected hit rather than a probability.
+#'     balanced stages. In a WR or PMR stage it is TRUE only for a unit a
+#'     `certainty_size` or `certainty_prop` rule took once, since the
+#'     recorded chance there is an expected hit, and a hit expected once is
+#'     no certainty.
 #'   - `.reserve_1`, `.reserve_2`, ...: At the stage that sets `reserve` in
 #'     [draw()], the unit's place in its pool's list: 0 for the take, and 1,
 #'     2, ... for the reserve units in the order they are released. The
@@ -63,6 +66,16 @@
 #'     one PSU per zone. svyplan fixes the groups before selection, two or
 #'     three zones each, numbered across strata, and certainty PSUs have
 #'     `NA`. The survey export uses the groups as the variance strata.
+#'   - `.phase1_row`: In a sample drawn from an earlier phase's sample, the
+#'     position of the earlier-phase row each row came from, which
+#'     [as_svydesign()] joins the phases on. A third phase numbers the rows
+#'     of the second in `.phase2_row`. A sample whose later stage drew from
+#'     a register of its own does not carry it.
+#'   - `.phase1_draw_1`, `.phase1_draw_2`, ...: In a sample drawn from an
+#'     earlier phase's sample, the hit number (`.draw_k`) of the earlier
+#'     phase's row, for each of its stages that can take a unit more than
+#'     once. A design stratifies by it to draw within each hit, as
+#'     [as_svydesign()] describes.
 #'   - `.stage`: The last stage executed, the same on every row. It is 1
 #'     after `execute(..., stages = 1)` and 2 once a continuation runs the
 #'     second stage. A new phase counts its own stages, so it starts at 1.

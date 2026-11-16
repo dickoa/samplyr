@@ -33,7 +33,8 @@ drawn with. Rows added or removed, a changed design value or a
 missing design column are refused with
 \code{samplyr_error_joint_frame_mismatch}, and so is any difference at all
 for a stage whose method depends on row order (\code{systematic},
-\code{pps_systematic}, \code{pps_chromy}, registered methods), whose matrix is
+\code{pps_systematic}, \code{pps_systematic_mr}, \code{pps_chromy}, registered
+methods), whose matrix is
 that of the order. Under \code{frame_digest = "none"} there is nothing to
 compare against, and a warning says so.}
 
@@ -58,8 +59,9 @@ behavior. Mutually exclusive with \code{stages}, \code{frame}, \code{nsim} and
 
 \item{nsim}{Positive integer number of simulations used for Chromy's
 pairwise expected hits (default 10000), also forwarded to registered
-WR \code{joint_fn}s that explicitly declare an \code{nsim} formal. Analytic
-methods ignore it. Raising it narrows the simulation error, at a cost
+WR \code{joint_fn}s that explicitly declare an \code{nsim} formal. Among the
+built-in methods only \code{pps_chromy} simulates, and the analytic ones,
+\code{pps_systematic_mr} included, ignore it. Raising it narrows the simulation error, at a cost
 linear in \code{nsim}.}
 
 \item{seed}{Single integer seeding the simulated methods (default 1),
@@ -79,17 +81,19 @@ element is either:
 \item For PPS WOR stages: a square matrix of joint inclusion
 probabilities \eqn{\pi_{kl}}{pi_kl}, usable with
 \code{\link[survey:ppsmat]{survey::ppsmat()}}.
-\item For PPS WR/PMR stages (\code{pps_multinomial}, \code{pps_chromy}): a
-square matrix of joint expected hits
+\item For PPS WR/PMR stages (\code{pps_multinomial}, \code{pps_chromy},
+\code{pps_systematic_mr}): a square matrix of joint expected hits
 \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
 \item \code{NULL} for non-PPS stages (SRS, systematic) or stages not
 requested via the \code{stages} argument.
 }
 
 Rows and columns are the stage's sampled units in the order they first
-appear in the sample. For a sample with one row per stage-1 unit, the
-stage-1 matrix therefore follows the sample rows, which is how
-\code{\link[survey:ppsmat]{survey::ppsmat()}} reads it. At a WR stage, repeated hits of the same
+appear in the rows \code{\link[=as_svydesign]{as_svydesign()}} exports. These are the sample's
+rows, followed by a zero row for each selected primary unit whose
+later stages selected nothing. For a sample with one row per stage-1
+unit, the stage-1 matrix therefore follows the exported rows, which is
+how \code{\link[survey:ppsmat]{survey::ppsmat()}} reads it. At a WR stage, repeated hits of the same
 population unit appear once, so dimensions match the number of
 distinct sampled units (or clusters). At a later stage below a WR
 parent, each parent draw occurrence defines a separate conditional
@@ -149,7 +153,20 @@ the joint probabilities of the non-certainty units are computed from
 the reduced \eqn{\pi}{pi} vector, and the full matrix is reassembled
 with \eqn{\pi_{ij} = 1}{pi_ij = 1} for certainty pairs and
 \eqn{\pi_{ij} = \pi_j}{pi_ij = pi_j} for certainty x non-certainty
-pairs.
+pairs. A certainty rule at a WR or PMR stage takes each certainty unit
+once, so its hit count is 1 whatever the draw:
+\eqn{E(n_i n_j) = 1}{E(n_i * n_j) = 1} for two certainty units, the
+diagonal included, and \eqn{E(n_i n_j) = E(n_j)}{E(n_i * n_j) = E(n_j)}
+when only \eqn{i}{i} is one. The other units are drawn with the
+remaining hits over their own sizes.
+
+A second phase drawn within each final-stage pool of phase 1, by equal
+probabilities, is exported by \code{\link[=as_svydesign]{as_svydesign()}} as phase 1's design with a
+smaller final take. Its matrices are that design's: each stage above the
+last is phase 1's, computed from phase 1's digest or from \code{frame}, which
+is then phase 1's frame, in the order of the rows it exports, and
+\code{stages} numbers the stages of that design. The last stage draws by equal
+probabilities and has no matrix.
 \subsection{Exact vs. approximate computation}{
 
 The accuracy of the returned matrix depends on the sampling method, as
@@ -213,9 +230,10 @@ matrix.
 
 \subsection{WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})}{
 
-Both matrices come from \code{sondage::joint_expected_hits()}.\tabular{ll}{
+The matrices come from \code{sondage::joint_expected_hits()}.\tabular{ll}{
    Method \tab Quality \cr
    \code{pps_multinomial} \tab \strong{Exact}, analytic \cr
+   \code{pps_systematic_mr} \tab \strong{Exact}, analytic, zero pairs possible \cr
    \code{pps_chromy} \tab \strong{Approximate}, Monte Carlo, 10 000 draws \cr
    registered \tab From the method's \code{joint_fn} \cr
 }
@@ -226,6 +244,15 @@ For \code{pps_multinomial},
 The sequential dependence of \code{pps_chromy} admits no closed form for
 \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}, so sondage estimates it by Monte
 Carlo simulation under \code{nsim} and \code{seed}.
+
+\code{pps_systematic_mr} uses one random start, so its matrix follows from the
+overlap of the units' intervals on the cumulated sizes, in the order of
+the pool. Two units whose intervals are never covered by one random start
+have \eqn{E(n_k \cdot n_l) = 0}{E(n_k * n_l) = 0}. Such a pair is never
+in one sample, so the matrix of the sampled units does not show the zero.
+It still rules out a design-unbiased variance estimator from one sample,
+which is why the export treats the stage as drawn with replacement
+(\link{variance_estimation}).
 }
 
 \subsection{Activation mode}{

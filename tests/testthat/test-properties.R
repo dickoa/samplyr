@@ -64,7 +64,7 @@ test_that("WR methods return exactly n rows (one per draw)", {
     execute(frame, seed = 21)
   expect_equal(nrow(result_srswr), n)
 
-  for (method in c("pps_multinomial", "pps_chromy")) {
+  for (method in c("pps_multinomial", "pps_chromy", "pps_systematic_mr")) {
     result <- sampling_design() |>
       draw(n = n, method = method, mos = pop) |>
       execute(frame, seed = 22)

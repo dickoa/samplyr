@@ -600,7 +600,8 @@ test_that("a request above the population becomes a census", {
 test_that("with-replacement allocation is not bounded by distinct units", {
   frame <- alloc_frame(c(10, 90))
 
-  for (method in c("srswr", "pps_multinomial", "pps_chromy")) {
+  for (method in c("srswr", "pps_multinomial", "pps_chromy",
+                   "pps_systematic_mr")) {
     mk <- function(...) {
       design <- if (method == "srswr") {
         sampling_design() |>
@@ -876,7 +877,7 @@ test_that("the capping message names the strata and the units moved", {
 ## Bounds on a sampling fraction
 
 # Five counties of 13, 13, 15, 6 and 6 towns, town ids restarting in each
-# county, and neighbourhoods numbered within each town.
+# county, and neighborhoods numbered within each town.
 spss_poll_frame <- function() {
   towns <- data.frame(
     county = rep(c("Central", "Eastern", "Northern", "Southern", "Western"),
@@ -1090,7 +1091,7 @@ test_that("a multi-hit minimum above the total is refused by every consumer", {
     two = data.frame(id = 1:20, st = rep(c("a", "b"), each = 10), mos = 1:20)
   )
   needs <- c(one = "n >= 3", two = "n >= 6")
-  methods <- c("srswr", "pps_multinomial", "pps_chromy")
+  methods <- c("srswr", "pps_multinomial", "pps_chromy", "pps_systematic_mr")
 
   for (method in methods) {
     for (shape in names(frames)) {

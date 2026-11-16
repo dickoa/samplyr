@@ -12,6 +12,7 @@
 \alias{print.frame_stack_design}
 \alias{print.samplyr_overlap_spec}
 \alias{print.samplyr_exante_overlap_spec}
+\alias{print.samplyr_design_comparison}
 \title{Print methods for samplyr objects}
 \usage{
 \method{print}{sampling_design}(x, ...)
@@ -33,6 +34,8 @@
 \method{print}{samplyr_overlap_spec}(x, ...)
 
 \method{print}{samplyr_exante_overlap_spec}(x, ...)
+
+\method{print}{samplyr_design_comparison}(x, ...)
 }
 \arguments{
 \item{x}{Object to print}

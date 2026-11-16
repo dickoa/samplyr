@@ -169,17 +169,19 @@ selection algorithm. The approximation's accuracy depends on the population
 and design. Exact joint inclusion probabilities can be supplied for methods
 that provide them.
 
-Systematic sampling uses an SRS-style variance approximation, and systematic
-PPS uses Brewer's. Neither sees frame order, so the direction of the error
-depends on it. `as_svydesign()` warns unless the caller explicitly accepts or
+Systematic sampling uses an SRS-style variance approximation, systematic PPS
+uses Brewer's, and systematic PPS with minimum replacement is treated as drawn
+with replacement. None of them sees the frame order, so the direction of the
+error depends on it. `as_svydesign()` warns unless the caller explicitly accepts or
 refuses the approximation through `systematic_variance`.
 
 Many survey programs publish standard errors computed as if the primary units
 were drawn with replacement within their strata, the ultimate-cluster
 variance. It is the one to reproduce when a new round is compared with a
-published one, and `?as_svydesign` explains how to build it from the sample's
-columns. The example below sets it beside the default export for a systematic
-PPS sample sorted by region and province.
+published one, and `as_svydesign(stages = 1)` builds it, keeping empty
+primary units and units taken with certainty as `?as_svydesign` describes.
+The example below sets it beside the default export for a systematic PPS
+sample sorted by region and province.
 
 ```{r ultimate-cluster}
 sorted_sample <- sampling_design() |>
@@ -193,21 +195,17 @@ sorted_sample <- sampling_design() |>
 svy_brewer <- as_svydesign(sorted_sample, systematic_variance = "approximate")
 
 # Ultimate-cluster variance
-svy_uc <- svydesign(
-  ids = ~ea_id,
-  strata = ~urban_rural,
-  weights = ~.weight,
-  nest = TRUE,
-  data = as.data.frame(sorted_sample)
-)
+svy_uc <- as_svydesign(sorted_sample, stages = 1,
+                       systematic_variance = "approximate")
 
 svytotal(~population, svy_brewer)
 svytotal(~population, svy_uc)
 ```
 
 With sampling fractions this small the two nearly agree. They part when a
-stratum takes a large share of its clusters, as in the simulation reported in
-`?variance_estimation`, and neither sees the sort.
+stratum takes a large share of its clusters, where the ultimate-cluster
+variance leaves out the first-stage correction and overstates, and neither
+sees the sort.
 
 ### Strata with one sampled unit
 
@@ -338,10 +336,16 @@ approximation and is reported as such. Increase the replicate count to reduce
 simulation error. svrep's `estimate_boot_sim_cv()` helps assess it for chosen
 estimates. No new sampling verbs are needed.
 
-Two-phase replicate export is not yet supported. A materialized occasion is
-replicated by ultimate clusters, as `as_svydesign()` exports it. Multi-stage RWYB export
-requires every selected parent to remain represented in the final sample.
-Later Poisson stages require a complete frame digest to check this. A
+A general two-phase sample has no replicate export. Two shapes do, because
+they are one design: a second phase drawn by simple random or systematic
+sampling within phase 1's final-stage pools, which exports as phase 1's
+design with a smaller final take, and a second phase of a phase 1 that could
+select nothing else. Random groups replicate a two-phase design executed
+whole with `reps`. A materialized occasion is replicated by ultimate
+clusters, as `as_svydesign()` exports it. Multi-stage
+RWYB export keeps every selected unit. A unit in which a later Poisson stage
+selected nothing is a row of weight 0, from the record execution keeps of
+such pools, whatever `frame_digest` is, so estimates need `na.rm = TRUE`. A
 noncertainty singleton is refused when its variance is not estimable, while
 a singleton Poisson sample can contribute a valid variance estimate.
 

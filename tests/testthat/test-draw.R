@@ -412,7 +412,7 @@ test_that("draw records the probabilities tier for built-in methods", {
     "srswor", "srswr", "systematic", "bernoulli",
     "pps_brewer", "pps_systematic", "pps_cps", "pps_sampford",
     "pps_poisson", "pps_sps", "pps_pareto", "pps_multinomial",
-    "pps_chromy", "cube", "lpm2", "scps", "balanced"
+    "pps_chromy", "pps_systematic_mr", "cube", "lpm2", "scps", "balanced"
   )
   expected <- setNames(rep("exact", length(methods)), methods)
   expected[c("pps_sps", "pps_pareto")] <- "approximate"

@@ -359,8 +359,13 @@ check_scheduled_frame_vars <- function(design, entries, call = caller_env()) {
     }
     stage_idx <- entry$stage
     stage_spec <- design$stages[[stage_idx]]
-    # Preflight the phase frame after generated columns are stripped.
+    # Preflight the phase frame after generated columns are stripped, with
+    # the row positions and hit numbers the new phase carries.
     available <- setdiff(names(frame), samplyr_internal_cols(frame))
+    if (is_tbl_sample(frame)) {
+      available <- c(available, phase_row_column(frame),
+                     phase_draw_columns(frame))
+    }
 
     ancestry <- collect_ancestor_cluster_vars(design, stage_idx)
     missing_ancestry <- setdiff(ancestry, available)

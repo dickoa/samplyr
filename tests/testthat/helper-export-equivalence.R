@@ -30,7 +30,7 @@ expect_export_invariants <- function(svy, sample, y, reference = NULL,
   expect_equal(unname(coef(total)), sum(df$.weight * df[[y]]))
 
   if (!is.null(reference)) {
-    # A survey design is also a list, so the reference is recognised by names.
+    # A survey design is also a list, so the reference is recognized by names.
     ref <- if (setequal(names(reference), c("total", "variance"))) {
       reference
     } else {
@@ -78,6 +78,17 @@ mc_variance_ratio <- function(design, frame, y, reps, export, seed0 = 1000L) {
 
 # A phase 2 drawn across the phase-1 units warns at export. The warning is
 # asserted in test-export-equivalence.R, so tests about something else mute it.
+# For a test about something else, a known overstatement of `method =
+# "approx"` and `"simple"` when phase 2 subsamples inside phase-1 units.
+quiet_approx <- function(expr) {
+  withCallingHandlers(
+    expr,
+    samplyr_warning_twophase_approx = function(w) {
+      invokeRestart("muffleWarning")
+    }
+  )
+}
+
 quiet_across <- function(expr) {
   withCallingHandlers(
     expr,

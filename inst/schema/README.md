@@ -120,7 +120,7 @@ For approximate methods, the quantity field identifies what the targets
 approximate. It does not turn those targets into exact inclusion probabilities.
 Quality describes the first-order quantity under the method contract, not
 variance accuracy or confidence-interval coverage. SPS and Pareto are
-approximate. WR and Chromy descriptors use expected hits. Custom methods carry
+approximate. WR and minimum-replacement descriptors use expected hits. Custom methods carry
 their author's declaration, which is not an independent statistical proof.
 
 Built-in fields must agree with the registry. The quantity and quality fields

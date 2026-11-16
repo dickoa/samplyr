@@ -31,7 +31,7 @@
 ## Dependencies
 
 `samplyr` imports `sondage` (selection algorithms) and `svyplan` (sample
-size and precision planning). This package requires `sondage (>= 0.11.0)`
+size and precision planning). This package requires `sondage (>= 0.15.0)`
 and `svyplan (>= 0.21.0)`.
 
 ## Downstream dependencies

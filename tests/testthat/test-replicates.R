@@ -822,3 +822,558 @@ test_that("replicates keep a matrix column as the frame holds it", {
   s <- execute(sampling_design() |> draw(n = 4), plain, seed = 6, reps = 2)
   expect_identical(s$xy, plain$xy[s$id, , drop = FALSE])
 })
+
+test_that("a census exports with zero variance or a classed refusal", {
+  skip_if_not_installed("survey")
+  # A census total has variance zero. Under the jackknife survey gives an
+  # unstratified census no replicate column, which neither sharing nor
+  # calibration could read, and it now takes two columns at the full
+  # weights. survey 4.5's calibrate() needs compress = FALSE on the
+  # uncompressed matrix of equal weights, so it is called that way.
+  frame <- data.frame(
+    id = 1:16, st = rep(c("A", "B"), each = 8), psu = rep(1:8, each = 2),
+    g = rep(c("a", "b"), 8), y = c(3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7,
+                                   9, 3)
+  )
+  designs <- list(
+    plain = sampling_design() |> draw(frac = 1),
+    stratified = sampling_design() |> stratify_by(st) |> draw(frac = 1),
+    clustered = sampling_design() |> cluster_by(psu) |> draw(frac = 1),
+    two_stage = sampling_design() |>
+      add_stage() |> cluster_by(psu) |> draw(frac = 1) |>
+      add_stage() |> draw(frac = 1)
+  )
+  types <- c("auto", "JK1", "JKn", "BRR", "Fay", "bootstrap",
+             "subbootstrap", "mrbbootstrap", "rwyb")
+  checked <- character(0)
+  for (dn in names(designs)) {
+    s <- execute(designs[[dn]], frame, seed = 1)
+    for (type in types) {
+      warned <- character(0)
+      r <- tryCatch(withCallingHandlers(
+        if (type %in% c("bootstrap", "subbootstrap", "mrbbootstrap",
+                        "rwyb")) {
+          as_svrepdesign(s, type = type, replicates = 10)
+        } else {
+          as_svrepdesign(s, type = type)
+        },
+        warning = function(w) {
+          warned <<- c(warned, grep("^samplyr_", class(w), value = TRUE))
+          invokeRestart("muffleWarning")
+        },
+        message = function(m) invokeRestart("muffleMessage")
+      ), error = identity)
+      outcome <- if (inherits(r, "error")) {
+        class(r)[1]
+      } else {
+        variance <- as.numeric(stats::vcov(survey::svytotal(~y, r)))
+        calibrated <- survey::calibrate(
+          r, ~g, population = c(`(Intercept)` = 16, gb = 8),
+          compress = FALSE
+        )
+        calibrated_variance <- as.numeric(
+          stats::vcov(survey::svytotal(~y, calibrated))
+        )
+        expect_lt(calibrated_variance, 1e-20)
+        if (variance < 1e-20) "zero" else "positive"
+      }
+      if (type %in% c("auto", "JK1") && dn %in% c("plain", "clustered")) {
+        expect_identical(ncol(r$repweights), 2L)
+      }
+      checked <- c(checked, paste(dn, type, outcome,
+                                  paste(unique(warned), collapse = " ")))
+    }
+  }
+  refused <- "samplyr_error_svrep_conversion_failed"
+  # BRR and Fay resampled a stratified census, which their missing
+  # correction made positive, and the rescaled bootstrap warned of that
+  # correction although survey left the census out.
+  expect_setequal(trimws(checked), c(
+    "plain auto zero", "plain JK1 zero", paste("plain JKn", refused),
+    paste("plain BRR", refused), paste("plain Fay", refused),
+    "plain bootstrap zero", "plain subbootstrap zero",
+    "plain mrbbootstrap zero", "plain rwyb zero",
+    paste("stratified auto", refused), paste("stratified JK1", refused),
+    paste("stratified JKn", refused), "stratified BRR zero",
+    "stratified Fay zero", "stratified bootstrap zero",
+    "stratified subbootstrap zero",
+    "stratified mrbbootstrap zero", "stratified rwyb zero",
+    "clustered auto zero", "clustered JK1 zero",
+    paste("clustered JKn", refused), paste("clustered BRR", refused),
+    paste("clustered Fay", refused), "clustered bootstrap zero",
+    "clustered subbootstrap zero",
+    "clustered mrbbootstrap zero", "clustered rwyb zero",
+    "two_stage auto zero", paste("two_stage JK1", refused),
+    "two_stage JKn zero", "two_stage BRR zero", "two_stage Fay zero",
+    "two_stage bootstrap zero", "two_stage subbootstrap zero",
+    "two_stage mrbbootstrap zero", "two_stage rwyb zero"
+  ))
+})
+
+test_that("a stratum taken whole adds no replicate variance", {
+  skip_if_not_installed("survey")
+  # Closed form: a stratified SRS without replacement has variance
+  # sum_h N_h^2 (1 - n_h / N_h) s_h^2 / n_h, to which a stratum taken whole
+  # adds nothing. survey left that stratum out of its replicate estimates,
+  # so under mse = TRUE they were centered on a total that held it, and the
+  # jackknife gave 165 times this. BRR, Fay and the rescaled bootstrap,
+  # which carry no correction, resampled it.
+  frame <- data.frame(id = 1:48, st = rep(c("A", "B", "C"), each = 16))
+  frame$y <- (frame$id * 37) %% 23 + 5
+  frame$y_whole <- ifelse(frame$st == "A", frame$y, 0)
+  take <- c(A = 16, B = 4, C = 6)
+  s <- execute(sampling_design() |> stratify_by(st) |> draw(n = take),
+               frame, seed = 1)
+  expect_identical(sum(s$st == "A"), 16L)
+  closed <- sum(vapply(c("B", "C"), function(h) {
+    y <- s$y[s$st == h]
+    16^2 * (1 - take[[h]] / 16) * stats::var(y) / take[[h]]
+  }, numeric(1)))
+  variance <- function(design, formula) {
+    as.numeric(stats::vcov(survey::svytotal(formula, design)))
+  }
+  checked <- character(0)
+  for (type in c("JKn", "BRR", "Fay", "bootstrap", "subbootstrap",
+                 "mrbbootstrap", "rwyb")) {
+    for (mse in c(FALSE, TRUE)) {
+      design <- suppressWarnings(withr::with_seed(1, if (type %in% c(
+        "bootstrap", "subbootstrap", "mrbbootstrap", "rwyb"
+      )) {
+        as_svrepdesign(s, type = type, replicates = 50, mse = mse)
+      } else {
+        as_svrepdesign(s, type = type, mse = mse)
+      }))
+      expect_null(design$selfrep)
+      expect_lt(variance(design, ~y_whole), 1e-20)
+      if (identical(type, "JKn")) {
+        expect_equal(variance(design, ~y), closed, tolerance = 1e-10)
+      }
+      checked <- c(checked, paste(type, mse))
+    }
+  }
+  expect_length(unique(checked), 14L)
+
+  # A census of every stratum converts under BRR, Fay and the rescaled
+  # bootstrap with no warning of a correction they would drop.
+  census <- execute(sampling_design() |> stratify_by(st) |> draw(frac = 1),
+                    frame, seed = 1)
+  for (type in c("BRR", "Fay", "subbootstrap")) {
+    expect_no_warning(design <- as_svrepdesign(census, type = type))
+    expect_lt(variance(design, ~y), 1e-20)
+  }
+})
+
+test_that("mrbbootstrap keeps the stage below a census first stage", {
+  skip_if_not_installed("survey")
+  # Closed form: 12 PSUs of 4 units all taken, 2 units drawn in each, so
+  # the variance is sum_i 4^2 (1 - 2 / 4) s_i^2 / 2. survey marked every
+  # row self-representing from the first stage alone and gave 0.
+  frame <- data.frame(id = 1:48, psu = rep(1:12, each = 4))
+  frame$y <- (frame$id * 37) %% 23 + 5
+  s <- execute(sampling_design() |>
+                 add_stage() |> cluster_by(psu) |> draw(frac = 1) |>
+                 add_stage() |> draw(n = 2),
+               frame, seed = 1)
+  closed <- sum(tapply(s$y, s$psu, function(y) 16 * (1 / 2) * stats::var(y) / 2))
+  expect_gt(closed, 0)
+  linearized <- suppressWarnings(as_svydesign(s))
+  expect_equal(as.numeric(stats::vcov(survey::svytotal(~y, linearized))),
+               closed, tolerance = 1e-10)
+  # 2,000 replicates put the simulation error near 3 %, inside the band.
+  for (mse in c(FALSE, TRUE)) {
+    design <- withr::with_seed(3, as_svrepdesign(
+      s, type = "mrbbootstrap", replicates = 2000, mse = mse
+    ))
+    v <- as.numeric(stats::vcov(survey::svytotal(~y, design)))
+    expect_lt(abs(v / closed - 1), 0.15)
+  }
+})
+
+test_that("the replicates keep stage 2's correction inside a certainty PSU", {
+  skip_if_not_installed("survey")
+  # Closed form over the certainty PSUs: sum_i N_i^2 (1 - n_i / N_i) s_i^2 / n_i.
+  # The replicates resampled their stage-2 units as drawn with replacement
+  # and gave 1 / (1 - n_i / N_i) times that, 2 at n = 2 of 4.
+  closed <- function(s, frame, units) {
+    sum(vapply(units, function(p) {
+      big_n <- sum(frame$psu == p)
+      y <- s$y[s$psu == p]
+      big_n^2 * (1 - length(y) / big_n) * stats::var(y) / length(y)
+    }, numeric(1)))
+  }
+  total_var <- function(design) {
+    as.numeric(stats::vcov(survey::svytotal(~y, design)))
+  }
+  frame <- data.frame(psu = rep(1:12, rep(c(4, 6, 10), 4)))
+  frame$id <- seq_len(nrow(frame))
+  frame$y <- (frame$id * 37) %% 23 + 5
+  s <- execute(sampling_design() |>
+                 add_stage() |> cluster_by(psu) |> draw(frac = 1) |>
+                 add_stage() |> draw(n = 2),
+               frame, seed = 1)
+  truth <- closed(s, frame, 1:12)
+  for (type in c("JKn", "BRR", "Fay")) {
+    for (mse in c(FALSE, TRUE)) {
+      expect_no_warning(design <- as_svrepdesign(
+        s, type = type, mse = mse, fay.rho = if (type == "Fay") 0.3 else 0
+      ))
+      expect_equal(total_var(design), truth, tolerance = 1e-10,
+                   info = paste(type, mse))
+    }
+  }
+  # 2,000 replicates put the simulation error near 3 %, inside the band.
+  for (type in c("bootstrap", "subbootstrap")) {
+    expect_no_warning(design <- withr::with_seed(3, as_svrepdesign(
+      s, type = type, replicates = 2000
+    )))
+    expect_lt(abs(total_var(design) / truth - 1), 0.15)
+  }
+
+  # Strata inside each PSU, halves of 3, 4 or 6 units, with 2 units drawn
+  # from u and 3 from r, so one r cell of each size-6 PSU is taken whole.
+  frame <- data.frame(psu = rep(1:12, rep(c(6, 8, 12), 4)))
+  frame$id <- seq_len(nrow(frame))
+  frame$y <- (frame$id * 37) %% 23 + 5
+  frame$sub <- ave(frame$id, frame$psu, FUN = function(i) {
+    ifelse(seq_along(i) <= length(i) / 2, "u", "r")
+  })
+  frame$cell <- paste(frame$psu, frame$sub)
+  s <- execute(sampling_design() |>
+                 add_stage() |> cluster_by(psu) |> draw(frac = 1) |>
+                 add_stage() |> stratify_by(sub) |>
+                 draw(n = data.frame(sub = c("u", "r"), n = c(2, 3))),
+               frame, seed = 1)
+  expect_identical(as.vector(table(s$psu)), rep(5L, 12))
+  cells <- unique(s$cell)
+  truth <- sum(vapply(cells, function(k) {
+    big_n <- sum(frame$cell == k)
+    y <- s$y[s$cell == k]
+    big_n^2 * (1 - length(y) / big_n) * stats::var(y) / length(y)
+  }, numeric(1)))
+  expect_no_warning(design <- as_svrepdesign(s, type = "JKn"))
+  expect_equal(total_var(design), truth, tolerance = 1e-10)
+
+  # Certainty PSUs of a PPS first stage, drawn without or with replacement.
+  # y is zero outside them, so only their stage 2 adds variance.
+  frame <- data.frame(psu = rep(1:20, rep(c(10, 12), c(16, 4))))
+  frame$id <- seq_len(nrow(frame))
+  frame$mos <- ifelse(frame$psu > 16, 400, 10 + frame$psu)
+  frame$y <- ifelse(frame$psu > 16, (frame$id * 37) %% 23 + 5, 0)
+  for (method in c("pps_brewer", "pps_multinomial")) {
+    s <- suppressWarnings(execute(sampling_design() |>
+      add_stage() |> cluster_by(psu) |>
+      draw(n = 8, mos = mos, method = method, certainty_size = 300) |>
+      add_stage() |> draw(n = 4), frame, seed = 1))
+    expect_setequal(unique(s$psu[s$.certainty_1]), 17:20)
+    design <- suppressWarnings(as_svrepdesign(s, type = "JKn"))
+    expect_equal(total_var(design), closed(s, frame, 17:20),
+                 tolerance = 1e-10, info = method)
+  }
+})
+
+test_that("the stage-2 correction takes one factor per resampling cell", {
+  # Cell 1's units carry two fractions, so no single factor exists; cell
+  # 2's units share one; cell 3 holds a unit sampled at stage 3.
+  sub <- list(split = rep(TRUE, 6), cell_id = c(1, 1, 2, 2, 3, 3),
+              unit_id = 1:6)
+  lower <- list(
+    list(kind = "equal_wor", prob = c(0.5, 0.25, 0.5, 0.5, 0.5, 0.5)),
+    list(kind = "equal_wor", prob = c(1, 1, 1, 1, 1, 0.5))
+  )
+  out <- samplyr:::certainty_lower_correction(sub, lower, 6)
+  expect_equal(out$factor, c(1, 1, sqrt(0.5), sqrt(0.5), 1, 1))
+  expect_identical(out$uncorrected, c(TRUE, TRUE, FALSE, FALSE, TRUE, TRUE))
+  expect_true(out$below)
+})
+
+test_that("stage 2 keeps the with-replacement reading where no factor is exact", {
+  skip_if_not_installed("survey")
+  # With-replacement oracle over the certainty PSUs, from the weighted
+  # totals z_j of the stage-2 units: sum_i n_i / (n_i - 1) sum_j
+  # (z_j - mean_i(z))^2.
+  wr_oracle <- function(s, unit) {
+    z <- tapply(s$y * s$.weight, s[[unit]], sum)
+    psu <- tapply(s$psu, s[[unit]], `[`, 1)
+    sum(tapply(z, psu, function(v) {
+      length(v) / (length(v) - 1) * sum((v - mean(v))^2)
+    }))
+  }
+  total_var <- function(design) {
+    as.numeric(stats::vcov(survey::svytotal(~y, design)))
+  }
+  frame <- expand.grid(el = 1:3, ssu = 1:4, psu = 1:6)
+  frame$id <- seq_len(nrow(frame))
+  frame$ssu_id <- paste(frame$psu, frame$ssu)
+  frame$m <- frame$ssu + 1
+  frame$y <- (frame$id * 37) %% 23 + 5
+  census <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(frac = 1) |>
+    add_stage() |> cluster_by(ssu_id)
+  designs <- list(
+    # Stage 3 samples inside the stage-2 units.
+    below = census |> draw(n = 2) |> add_stage() |> draw(n = 2),
+    # A PPS stage 2 has no single factor.
+    pps = census |> draw(n = 2, mos = m, method = "pps_brewer")
+  )
+  for (name in names(designs)) {
+    s <- execute(designs[[name]], frame, seed = 1)
+    expect_identical(
+      variance_estimators(designs[[name]], frame)$class[4],
+      "samplyr_warning_replicate_certainty_stage_wr"
+    )
+    for (type in c("JKn", "BRR", "Fay", "bootstrap", "subbootstrap")) {
+      expect_warning(
+        design <- if (type %in% c("bootstrap", "subbootstrap")) {
+          as_svrepdesign(s, type = type, replicates = 20)
+        } else {
+          as_svrepdesign(s, type = type)
+        },
+        class = "samplyr_warning_replicate_certainty_stage_wr"
+      )
+      if (type == "JKn") {
+        expect_equal(total_var(design), wr_oracle(s, "ssu_id"),
+                     tolerance = 1e-10, info = name)
+      }
+    }
+  }
+  # One stratum mixing areas taken whole below with areas sampled below.
+  # The children of an area are equal, so all variance is in the area
+  # totals. Correcting only the whole areas made every contrast cancel, and
+  # each type gave zero. The stratum keeps the with-replacement reading.
+  mixed <- do.call(rbind, lapply(1:6, function(p) {
+    do.call(rbind, lapply(1:4, function(a) {
+      n <- if (a <= 2) 2 else 4
+      data.frame(psu = p, area = paste(p, a), id = paste(p, a, seq_len(n)),
+                 y = if (a <= 2) 5 else 10 * sqrt(0.5) / 4)
+    }))
+  }))
+  s <- execute(sampling_design() |>
+                 add_stage() |> cluster_by(psu) |> draw(frac = 1) |>
+                 add_stage() |> cluster_by(area) |> draw(n = 2) |>
+                 add_stage() |> draw(n = 2),
+               mixed, seed = 1)
+  # The seed puts an area of each kind together in some PSU.
+  kind <- tapply(s$.weight_3, s$area, `[`, 1) > 1
+  psu_of <- tapply(s$psu, s$area, `[`, 1)
+  expect_true(any(tapply(kind, psu_of, function(k) any(k) && !all(k))))
+  for (type in c("JKn", "BRR", "Fay")) {
+    expect_warning(
+      design <- as_svrepdesign(s, type = type,
+                               fay.rho = if (type == "Fay") 0.3 else 0),
+      class = "samplyr_warning_replicate_certainty_stage_wr"
+    )
+    expect_equal(total_var(design), wr_oracle(s, "area"), tolerance = 1e-10,
+                 info = type)
+    expect_gt(total_var(design), 0)
+  }
+
+  # Strata are decided one by one: PSUs 1 to 3 take their areas' units
+  # whole below and keep the correction, PSUs 4 to 6 sample below and keep
+  # the with-replacement reading.
+  sides <- do.call(rbind, lapply(1:6, function(p) {
+    do.call(rbind, lapply(1:4, function(a) {
+      n <- if (p <= 3) 2 else 4
+      data.frame(psu = p, area = paste(p, a), id = paste(p, a, seq_len(n)))
+    }))
+  }))
+  sides$y <- (seq_len(nrow(sides)) * 37) %% 23 + 5
+  s <- execute(sampling_design() |>
+                 add_stage() |> cluster_by(psu) |> draw(frac = 1) |>
+                 add_stage() |> cluster_by(area) |> draw(n = 2) |>
+                 add_stage() |> draw(n = 2),
+               sides, seed = 1)
+  t <- tapply(s$y * s$.weight_3, s$area, sum)
+  psu <- tapply(s$psu, s$area, `[`, 1)
+  corrected <- sum(tapply(t[psu <= 3], psu[psu <= 3], function(v) {
+    4^2 * (1 - 2 / 4) * stats::var(v) / 2
+  }))
+  kept <- wr_oracle(s[s$psu > 3, ], "area")
+  expect_warning(design <- as_svrepdesign(s, type = "JKn"),
+                 class = "samplyr_warning_replicate_certainty_stage_wr")
+  expect_equal(total_var(design), corrected + kept, tolerance = 1e-10)
+
+  # A stage below that takes every unit leaves the stage-2 totals exact, so
+  # the correction applies: sum_i N_i^2 (1 - n_i / N_i) s_i^2(z) / n_i.
+  s <- execute(census |> draw(n = 2) |> add_stage() |> draw(frac = 1),
+               frame, seed = 1)
+  z <- tapply(s$y, s$ssu_id, sum)
+  psu <- tapply(s$psu, s$ssu_id, `[`, 1)
+  truth <- sum(tapply(z, psu, function(v) 4^2 * (1 - 2 / 4) * stats::var(v) / 2))
+  expect_no_warning(design <- as_svrepdesign(s, type = "JKn"))
+  expect_equal(total_var(design), truth, tolerance = 1e-10)
+})
+
+test_that("a census of one unit converts under JK1 with zero variance", {
+  skip_if_not_installed("survey")
+  # survey's jackknife divides by the number of units less one and stopped
+  # on a census of a single unit, which the report called supported.
+  cases <- list(
+    row_n = list(sampling_design() |> draw(n = 1), data.frame(id = 1, y = 3)),
+    row_frac = list(sampling_design() |> draw(frac = 1),
+                    data.frame(id = 1, y = 3)),
+    cluster = list(sampling_design() |> cluster_by(cl) |> draw(frac = 1),
+                   data.frame(cl = 1, id = 1:3, y = c(2, 5, 7)))
+  )
+  for (name in names(cases)) {
+    design <- cases[[name]][[1]]
+    frame <- cases[[name]][[2]]
+    s <- execute(design, frame, seed = 1)
+    report <- variance_estimators(design, frame)
+    expect_identical(report$status[report$estimator == "Jackknife (JK1)"],
+                     "supported", info = name)
+    for (type in c("JK1", "auto")) {
+      expect_no_warning(rep <- as_svrepdesign(s, type = type))
+      expect_identical(rep$type, "JK1", info = paste(name, type))
+      expect_identical(ncol(rep$repweights), 2L, info = paste(name, type))
+      total <- survey::svytotal(~y, rep)
+      expect_equal(unname(coef(total)), sum(frame$y), info = paste(name, type))
+      expect_identical(as.vector(survey::SE(total)), 0, info = paste(name, type))
+      # The weights are all one, so the matrix stays uncompressed.
+      cal <- survey::calibrate(rep, ~1,
+                               population = c(`(Intercept)` = nrow(frame)),
+                               compress = FALSE)
+      expect_identical(as.vector(survey::SE(survey::svytotal(~y, cal))), 0)
+    }
+  }
+  # The resolved mse is kept, from the call or from survey's option.
+  s <- execute(cases$row_n[[1]], cases$row_n[[2]], seed = 1)
+  expect_true(as_svrepdesign(s, type = "JK1", mse = TRUE)$mse)
+  withr::with_options(list(survey.replicates.mse = TRUE), {
+    expect_true(as_svrepdesign(s, type = "JK1")$mse)
+  })
+  expect_false(as_svrepdesign(s, type = "JK1", mse = FALSE)$mse)
+})
+
+test_that("one unit drawn from several is refused with a class by every export", {
+  skip_if_not_installed("survey")
+  # survey's own "only one primary sampling unit" error reached the user
+  # unclassed, and the report called JK1, the bootstrap and the multistage
+  # bootstrap supported. A census of one unit exports, with zero variance.
+  cases <- list(
+    srs = list(sampling_design() |> draw(n = 1),
+               data.frame(id = 1:2, y = c(2, 5))),
+    cluster = list(sampling_design() |> cluster_by(cl) |> draw(n = 1),
+                   data.frame(cl = rep(1:3, each = 2), id = 1:6, y = 1:6)),
+    wr = list(sampling_design() |> draw(n = 1, method = "srswr"),
+              data.frame(id = 1:3, y = 1:3)),
+    pps = list(sampling_design() |> draw(n = 1, method = "pps_brewer", mos = m),
+               data.frame(id = 1:4, m = 1:4, y = 1:4))
+  )
+  exports <- list(
+    linearization = function(s) as_svydesign(s),
+    JK1 = function(s) as_svrepdesign(s, type = "JK1"),
+    JKn = function(s) as_svrepdesign(s, type = "JKn"),
+    bootstrap = function(s) as_svrepdesign(s, type = "bootstrap",
+                                           replicates = 10),
+    mrbbootstrap = function(s) as_svrepdesign(s, type = "mrbbootstrap",
+                                              replicates = 10)
+  )
+  for (name in names(cases)) {
+    design <- cases[[name]][[1]]
+    frame <- cases[[name]][[2]]
+    s <- suppressWarnings(execute(design, frame, seed = 1))
+    report <- variance_estimators(design, frame)
+    for (type in names(exports)) {
+      expect_error(suppressWarnings(exports[[type]](s)),
+                   class = "samplyr_error_export_one_unit",
+                   info = paste(name, type))
+    }
+    # Every row but RWYB, which refuses the stratum of one itself, and
+    # random groups; the joint route applies to the PPS draw only.
+    refused <- report$class %in% "samplyr_error_export_one_unit"
+    expect_identical(sum(refused), if (name == "pps") 9L else 8L, info = name)
+    expect_true(all(report$decided_by[refused] == "frame"), info = name)
+  }
+  # Without the frame, the pool size is unknown: a risk.
+  report <- variance_estimators(sampling_design() |> draw(n = 1))
+  expect_match(report$sample_risk[report$estimator == "Taylor linearization"],
+               "samplyr_error_export_one_unit", fixed = TRUE)
+  # Independent samples of the whole design give its variance.
+  frame <- data.frame(id = 1:6, y = c(2, 5, 1, 8, 4, 6))
+  reps <- execute(sampling_design() |> draw(n = 1), frame, seed = 1, reps = 5)
+  se <- survey::SE(survey::svytotal(~y, as_svrepdesign(reps,
+                                                         type = "random_groups")))
+  expect_gt(as.vector(se), 0)
+})
+
+test_that("a census of every stage converts without survey's scale warning", {
+  skip_if_not_installed("survey")
+  # The census branch passed a scale to survey's BRR constructor, which
+  # ignores it and warned "type='BRR' does not use 'scale=' argument".
+  frame <- data.frame(id = 1:16, psu = rep(1:8, each = 2), y = 1:16)
+  s <- execute(sampling_design() |>
+                 add_stage() |> cluster_by(psu) |> draw(frac = 1) |>
+                 add_stage() |> draw(frac = 1),
+               frame, seed = 1)
+  types <- c("auto", "JKn", "BRR", "Fay", "bootstrap", "subbootstrap")
+  for (type in types) {
+    expect_no_warning(design <- as_svrepdesign(s, type = type))
+    expect_identical(design$type, if (type == "auto") "JKn" else type)
+    expect_identical(ncol(design$repweights), 2L)
+    expect_lt(as.numeric(stats::vcov(survey::svytotal(~y, design))), 1e-20)
+  }
+})
+
+test_that("a spliced BRR or Fay design converts without survey's scale warning", {
+  skip_if_not_installed("survey")
+  # A census first stage whose stratum u is taken whole inside each PSU
+  # keeps u's rows out of the resampling. The design put back together
+  # passed a scale to survey's BRR constructor, which warned "type='BRR'
+  # does not use 'scale=' argument".
+  frame <- data.frame(psu = rep(1:8, each = 6))
+  frame$id <- seq_len(nrow(frame))
+  frame$y <- (frame$id * 37) %% 23 + 5
+  frame$sub <- rep(c("u", "u", "r", "r", "r", "r"), 8)
+  s <- execute(sampling_design() |>
+                 add_stage() |> cluster_by(psu) |> draw(frac = 1) |>
+                 add_stage() |> stratify_by(sub) |>
+                 draw(n = data.frame(sub = c("u", "r"), n = c(2, 2))),
+               frame, seed = 1)
+  for (type in c("BRR", "Fay")) {
+    expect_no_warning(design <- as_svrepdesign(
+      s, type = type, fay.rho = if (type == "Fay") 0.3 else 0
+    ))
+    expect_identical(design$type, type)
+    expect_equal(design$scale, if (type == "BRR") 1 / 12 else
+      1 / (12 * 0.7^2))
+  }
+})
+
+test_that("a stratified census refusal names the types that take it", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:16, st = rep(c("A", "B"), each = 8), y = 1:16,
+                      m = rep(c(1, 3), 8))
+  s <- execute(sampling_design() |> stratify_by(st) |> draw(frac = 1),
+               frame, seed = 1)
+  for (type in c("auto", "JKn")) {
+    cnd <- expect_error(as_svrepdesign(s, type = type),
+                        class = "samplyr_error_svrep_conversion_failed")
+    expect_match(conditionMessage(cnd), "taken whole", fixed = TRUE)
+    expect_match(conditionMessage(cnd), "rwyb", fixed = TRUE)
+  }
+  # The remedies hold: each gives this census a variance of zero.
+  remedies <- list(
+    bootstrap = as_svrepdesign(s, type = "bootstrap", replicates = 20),
+    rwyb = as_svrepdesign(s, type = "rwyb", replicates = 20),
+    linearization = as_svydesign(s)
+  )
+  for (nm in names(remedies)) {
+    expect_lt(as.numeric(stats::vcov(survey::svytotal(~y, remedies[[nm]]))),
+              1e-20, label = nm)
+  }
+  # A PPS census is converted by samplyr, not survey, and is not refused.
+  pps <- execute(sampling_design() |> stratify_by(st) |>
+                   draw(n = c(A = 8, B = 8), method = "pps_brewer", mos = m),
+                 frame, seed = 1)
+  expect_lt(as.numeric(stats::vcov(survey::svytotal(
+    ~y, as_svrepdesign(pps, type = "JKn")
+  ))), 1e-20)
+  # Other conversion failures keep survey's own reason, with no remedy.
+  odd <- execute(sampling_design() |> stratify_by(st) |> draw(frac = 1),
+                 data.frame(id = 1:12, st = rep(c("A", "B"), c(5, 7)),
+                            y = 1:12),
+                 seed = 1)
+  cnd <- expect_error(as_svrepdesign(odd, type = "BRR"),
+                      class = "samplyr_error_svrep_conversion_failed")
+  expect_no_match(conditionMessage(cnd), "rwyb", fixed = TRUE)
+})

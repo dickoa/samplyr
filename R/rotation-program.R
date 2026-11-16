@@ -794,6 +794,8 @@ new_rotation_occasion <- function(selections, occasion, program) {
 #'   selection of each row, followed by the columns of the selections. A unit
 #'   drawn by several selections has one row for each, with that selection's
 #'   weights.
+#' @seealso [rotation_program()], and [execute()] with `period`, which
+#'   returns the occasion.
 #' @export
 as.data.frame.rotation_occasion <- function(x, ...) {
   rlang::check_dots_empty()

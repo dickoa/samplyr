@@ -58,11 +58,11 @@ every county, households 1, 2, 3 in every enumeration area. A unit is
 identified by its own id together with the strata of its stage and the
 units that earlier stages selected.
 \itemize{
-\item \strong{Within earlier stages.} A stage's units are always identified within
-the units of earlier stages, so \code{classroom_id = 1} can appear in every
-school.
-\item \strong{Within the stage's strata.} With \code{nest = TRUE}, a stage's ids are
-read within its own strata, so \code{stratify_by(county) |> cluster_by(town)} selects towns as county and town pairs. When the
+\item A stage's units are always identified within the units of earlier
+stages, so \code{classroom_id = 1} can appear in every school.
+\item With \code{nest = TRUE}, a stage's ids are read within its own strata, so
+\code{stratify_by(county) |> cluster_by(town)} selects towns as county and
+town pairs. When the
 ids already differ across strata the key stays as declared, and frames
 for later stages can link by it alone. When they repeat, the strata join
 the key, and a separate register for a later stage must then carry them

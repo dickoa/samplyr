@@ -1849,7 +1849,8 @@ draw_sample <- function(data, n, draw_spec, trace_mode = "full") {
         )$sample
       },
       pps_multinomial = ,
-      pps_chromy = {
+      pps_chromy = ,
+      pps_systematic_mr = {
         # Only registered WR methods may declare PRN support.
         pik <- mos_chances(data[[mos]], n, draw_spec)$pik
         idx <- sondage::unequal_prob_wr(
@@ -1991,11 +1992,16 @@ draw_sample_pps_certainty <- function(
     )
   }
 
+  multi_hit <- is_multi_hit_method(draw_spec)
   certainty_result <- NULL
   if (cert$n_certain > 0) {
     certainty_result <- data[cert$certainty_idx, , drop = FALSE]
     certainty_result$.pik <- rep(1, cert$n_certain)
     certainty_result$.certainty <- TRUE
+    if (multi_hit) {
+      # A certainty unit is taken once, with one hit of its own.
+      certainty_result$.draw <- seq_len(cert$n_certain)
+    }
   }
 
   # Use chance one for certainty and zero for the unselectable remainder.
@@ -2008,7 +2014,12 @@ draw_sample_pps_certainty <- function(
   if (cert$n_remaining > 0 && length(cert$remaining_idx) > 0) {
     remaining_data <- data[cert$remaining_idx, , drop = FALSE]
     remaining_mos <- mos_vals[cert$remaining_idx]
-    n_prob <- min(cert$n_remaining, length(cert$remaining_idx))
+    # Draws with replacement may outnumber the remaining units.
+    n_prob <- if (multi_hit) {
+      cert$n_remaining
+    } else {
+      min(cert$n_remaining, length(cert$remaining_idx))
+    }
 
     # With certainty units taken, an empty remainder is not an empty pool.
     remainder_spec <- draw_spec
@@ -2035,8 +2046,16 @@ draw_sample_pps_certainty <- function(
       )
     }
     prob_result <- prob_res$sample
-    # Recompute capping after removing explicit certainty units.
-    prob_result$.certainty <- is_certainty_probability(prob_result$.pik)
+    # Recompute capping after removing explicit certainty units. An expected
+    # hit count of one is not certainty.
+    prob_result$.certainty <- if (multi_hit) {
+      rep.int(FALSE, nrow(prob_result))
+    } else {
+      is_certainty_probability(prob_result$.pik)
+    }
+    if (multi_hit) {
+      prob_result$.draw <- prob_result$.draw + cert$n_certain
+    }
     if (!is_null(forced_idx) && any(prob_result$.certainty)) {
       # The execute gate refuses any plan whose remainder would cap.
       cli_abort(
@@ -2215,7 +2234,8 @@ draw_pps_method <- function(data, n, method, mos_vals, draw_spec) {
         )$sample
       },
       pps_multinomial = ,
-      pps_chromy = {
+      pps_chromy = ,
+      pps_systematic_mr = {
         # Built-in WR methods do not accept PRN.
         pik <- mos_chances(mos_vals, n, draw_spec)$pik
         idx <- sondage::unequal_prob_wr(

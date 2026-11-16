@@ -971,6 +971,72 @@ test_that("as_svydesign uses poisson_sampling for single-stage pps_poisson", {
   expect_true(".fpc_pi_1" %in% names(svy$variables))
 })
 
+test_that("a pps specification must fit stage 1's sample size", {
+  skip_if_not_installed("survey")
+  set.seed(3)
+  frame <- data.frame(id = 1:200, mos = runif(200, 1, 10))
+  frame$y <- 3 * frame$mos + rnorm(200)
+  draws <- list(
+    bernoulli = draw(sampling_design(), frac = 0.2, method = "bernoulli"),
+    pps_poisson = draw(sampling_design(), n = 40, mos = mos,
+                       method = "pps_poisson"),
+    pps_brewer = draw(sampling_design(), n = 40, mos = mos,
+                      method = "pps_brewer"),
+    srswor = draw(sampling_design(), n = 40)
+  )
+  # The rule written out. Overton and HR need a fixed-size PPS stage 1, and
+  # poisson_sampling() a Poisson PPS stage 1. A joint matrix, or the user's
+  # own covariance, needs a PPS stage 1 of either size regime.
+  accepted <- c(
+    "pps_poisson ppsmat", "pps_poisson poisson_sampling",
+    "pps_poisson ppscov",
+    "pps_brewer overton", "pps_brewer hr", "pps_brewer ppsmat",
+    "pps_brewer ppscov"
+  )
+  forms <- c("overton", "hr", "ppsmat", "poisson_sampling", "ppscov")
+  seen <- character(0)
+  for (method in names(draws)) {
+    s <- execute(draws[[method]], frame, seed = 1)
+    pik <- 1 / s$.weight
+    if (method == "pps_brewer") {
+      joint <- joint_expectation(s, frame)[[1]]
+    } else {
+      joint <- outer(pik, pik)
+      diag(joint) <- pik
+    }
+    specs <- list(
+      overton = "overton", hr = survey::HR(),
+      ppsmat = survey::ppsmat(joint),
+      poisson_sampling = survey::poisson_sampling(pik),
+      ppscov = survey::ppscov(1 - outer(pik, pik) / joint, weighted = TRUE)
+    )
+    for (spec in names(specs)) {
+      label <- paste(method, spec)
+      seen <- c(seen, label)
+      if (label %in% accepted) {
+        expect_no_error(as_svydesign(s, pps = specs[[spec]]))
+      } else {
+        expect_error(
+          as_svydesign(s, pps = specs[[spec]]),
+          class = "samplyr_error_pps_argument"
+        )
+      }
+    }
+    if (method == "pps_poisson") {
+      # Closed-form Horvitz-Thompson variance of a Poisson total.
+      exact <- sqrt(sum((1 - pik) / pik^2 * s$y^2))
+      for (spec in c("ppsmat", "poisson_sampling")) {
+        svy <- as_svydesign(s, pps = specs[[spec]])
+        expect_equal(
+          as.numeric(survey::SE(survey::svytotal(~y, svy))), exact,
+          tolerance = 1e-10
+        )
+      }
+    }
+  }
+  expect_setequal(seen, paste(rep(names(draws), each = 5), forms))
+})
+
 test_that("single-stage bernoulli SE matches HT-Poisson formula", {
   skip_if_not_installed("survey")
 
@@ -1480,6 +1546,33 @@ test_that("as_svydesign for pps_chromy uses .draw_1 with Inf FPC", {
   est <- survey::svymean(~y, svy)
   expect_true(is.numeric(coef(est)))
   expect_true(all(survey::SE(est) > 0))
+})
+
+test_that("the replicate warning for a PMR first stage names routes that exist", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:40, size = c(rep(5, 30), 40, 60, rep(8, 8)),
+                      y = 1:40)
+  design <- sampling_design() |>
+    draw(n = 6, method = "pps_chromy", mos = size)
+  result <- execute(design, frame, seed = 1)
+
+  w <- expect_warning(
+    as_svrepdesign(result, type = "bootstrap", replicates = 10),
+    class = "samplyr_warning_replicate_wr_first_stage"
+  )
+  # RWYB refuses minimum replacement, so the warning must not offer it.
+  expect_no_match(conditionMessage(w), "use every stage")
+  expect_match(conditionMessage(w), "random_groups", fixed = TRUE)
+  expect_error(as_svrepdesign(result, type = "rwyb"),
+               class = "samplyr_error_rwyb_method")
+
+  repeated <- execute(design, frame, seed = 1, reps = 5)
+  rg <- expect_no_warning(as_svrepdesign(repeated, type = "random_groups"))
+  expect_identical(ncol(rg$repweights), 5L)
+
+  ve <- variance_estimators(result)
+  note <- ve$note[ve$call == "as_svrepdesign(x, type = \"bootstrap\")"]
+  expect_match(note, "dependence between hits", fixed = TRUE)
 })
 
 test_that("two-stage WR cluster design with independent sub-samples", {
@@ -2792,7 +2885,9 @@ test_that("stages = 1 reads expected hits with replacement as draws", {
     srswr = draw(sampling_design(), n = 10, method = "srswr"),
     multinomial = draw(sampling_design(), n = 15, method = "pps_multinomial",
                        mos = x),
-    chromy = draw(sampling_design(), n = 10, method = "pps_chromy", mos = x)
+    chromy = draw(sampling_design(), n = 10, method = "pps_chromy", mos = x),
+    systematic_mr = draw(sampling_design(), n = 10,
+                         method = "pps_systematic_mr", mos = x)
   )
   for (case in names(cases)) {
     sample <- execute(cases[[case]], frame, seed = 4)
@@ -2805,10 +2900,12 @@ test_that("stages = 1 reads expected hits with replacement as draws", {
                               data = as.data.frame(sample))
     se <- as.vector(survey::SE(survey::svytotal(~y, hand)))
     expect_gt(se, 0)
-    svy <- as_svydesign(sample, stages = 1)
+    # A systematic stage warns about its approximation, acknowledged here.
+    svy <- as_svydesign(sample, stages = 1, systematic_variance = "approximate")
     expect_equal(as.vector(survey::SE(survey::svytotal(~y, svy))), se,
                  info = case)
-    rep <- as_svrepdesign(sample, type = "JK1", stages = 1)
+    rep <- as_svrepdesign(sample, type = "JK1", stages = 1,
+                          systematic_variance = "approximate")
     expect_equal(
       as.vector(survey::SE(survey::svytotal(~y, rep))),
       as.vector(survey::SE(survey::svytotal(
@@ -3157,16 +3254,18 @@ test_that("stages is refused where the export has no such form", {
 
 ## Stage-1 units taken with probability 1 in the replicate export
 
-# A jackknife of a total gives the with-replacement linearized variance of
-# the same strata and units, so each expectation is the design the
-# conversion should build, written for survey directly.
+# A jackknife of a total gives the linearized variance of the same strata
+# and units, so each expectation is the design the conversion should build,
+# written for survey directly. Inside a PSU taken with certainty, stage 2
+# keeps its correction, given as the stage-2 population count. Elsewhere a
+# count of 1e300 leaves a factor of 1 in double precision.
 replicate_se <- function(sample, type = "JKn") {
   rep <- suppressWarnings(as_svrepdesign(sample, type = type))
   as.vector(survey::SE(survey::svytotal(~y, rep)))
 }
-direct_se <- function(data, ids, strata) {
+direct_se <- function(data, ids, strata, fpc = NULL) {
   svy <- survey::svydesign(ids = ids, strata = strata, weights = ~.weight,
-                           data = data)
+                           fpc = fpc, data = data)
   as.vector(survey::SE(survey::svytotal(~y, svy)))
 }
 
@@ -3180,10 +3279,11 @@ test_that("a first stage taken whole leaves its later stage's variance", {
       add_stage() |> draw(n = 3),
     frame, seed = 1
   )
-  # Every PSU is a stratum of its households, drawn with replacement.
+  # Every PSU is a stratum of its households, 3 drawn of 6.
   data <- as.data.frame(sample)
-  expect_equal(replicate_se(sample), direct_se(data, ~id, ~psu))
-  expect_equal(replicate_se(sample, "auto"), direct_se(data, ~id, ~psu))
+  expect_equal(replicate_se(sample), direct_se(data, ~id, ~psu, ~.fpc_2))
+  expect_equal(replicate_se(sample, "auto"),
+               direct_se(data, ~id, ~psu, ~.fpc_2))
   expect_gt(replicate_se(sample), 0)
   err <- expect_error(as_svrepdesign(sample, type = "JK1"),
                       class = "samplyr_error_svrep_conversion_failed")
@@ -3204,12 +3304,13 @@ test_that("a stratum taken whole is read as certainty units", {
     add_stage() |> draw(n = 3)
   sample <- execute(design, frame, seed = 2)
   data <- as.data.frame(sample)
-  # The whole stratum's PSUs are strata of their households, and the drawn
-  # stratum's PSUs are drawn with replacement.
+  # The whole stratum's PSUs are strata of their households, 3 drawn of 6,
+  # and the drawn stratum's PSUs are drawn with replacement.
   sure <- data$h == "whole"
   data$unit <- ifelse(sure, paste("hh", data$id), paste("psu", data$psu))
   data$stratum <- ifelse(sure, paste("psu", data$psu), "drawn")
-  expected <- direct_se(data, ~unit, ~stratum)
+  data$count <- ifelse(sure, data$.fpc_2, 1e300)
+  expected <- direct_se(data, ~unit, ~stratum, ~count)
   for (type in c("JKn", "auto")) {
     expect_equal(replicate_se(sample, type), expected, info = type)
   }
@@ -3243,6 +3344,897 @@ test_that("a single stage taken whole keeps its exact correction", {
     as.vector(survey::SE(survey::svytotal(~y, rep))),
     as.vector(survey::SE(survey::svytotal(~y, as_svydesign(sample))))
   )
+})
+
+## A census at every stage
+
+# Oracle: a census estimates the population total exactly, with no
+# sampling variance, whatever the method that took it.
+expect_census <- function(design, total, info = NULL) {
+  est <- survey::svytotal(~y, design)
+  expect_equal(unname(coef(est)), total, info = info)
+  expect_equal(as.vector(survey::SE(est)), 0, info = info)
+}
+
+test_that("a census exports with zero variance whatever the method", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:4, mos = c(10, 20, 30, 40), y = c(2, 10, 3, 9))
+  for (method in c("pps_multinomial", "pps_chromy", "pps_systematic_mr")) {
+    sample <- sampling_design() |> cluster_by(id) |>
+      draw(n = 4, method = method, mos = mos, certainty_size = 1) |>
+      execute(frame, seed = 1)
+    expect_true(all(sample$.certainty_1))
+    expect_census(as_svydesign(sample, systematic_variance = "approximate"),
+      24, info = method)
+    for (type in c("bootstrap", "JKn", "subbootstrap", "mrbbootstrap")) {
+      # The with-replacement reading warns; a census has nothing to read.
+      rep <- suppressWarnings(withr::with_seed(1, as_svrepdesign(sample,
+        type = type, replicates = 20, systematic_variance = "approximate")))
+      expect_census(rep, 24, info = paste(method, type))
+    }
+  }
+  for (method in c("pps_brewer", "pps_cps", "pps_sampford", "pps_systematic",
+                   "cube")) {
+    sample <- sampling_design() |> cluster_by(id) |>
+      draw(n = 4, method = method, mos = mos) |>
+      execute(frame, seed = 1)
+    expect_census(as_svydesign(sample, systematic_variance = "approximate"),
+      24, info = method)
+  }
+  expect_census(as_svydesign(sample, stages = 1), 24)
+  brewer <- sampling_design() |> cluster_by(id) |>
+    draw(n = 4, method = "pps_brewer", mos = mos) |> execute(frame, seed = 1)
+  expect_census(
+    as_svydesign(brewer, pps = survey::ppsmat(joint_expectation(brewer)[[1]])),
+    24
+  )
+
+  # Population counts of one: each stratum holds one unit.
+  strata <- transform(frame, st = id)
+  sample <- sampling_design() |> stratify_by(st) |> draw(n = 1) |>
+    execute(strata, seed = 1)
+  expect_census(as_svydesign(sample), 24)
+
+  frame <- expand.grid(hh = 1:3, psu = 1:3)
+  frame$mos <- frame$psu
+  frame$y <- frame$hh * frame$psu
+  sample <- sampling_design() |> cluster_by(psu) |>
+    draw(n = 3, method = "pps_brewer", mos = mos) |> add_stage() |>
+    draw(n = 3) |> execute(frame, seed = 1)
+  expect_census(as_svydesign(sample), 36)
+  expect_census(as_svydesign(sample, stages = 1), 36)
+  expect_census(suppressWarnings(as_svrepdesign(sample, type = "JKn")), 36)
+  expect_census(suppressWarnings(withr::with_seed(1,
+    as_svrepdesign(sample, type = "rwyb", replicates = 20))), 36)
+})
+
+test_that("a PPS phase 2 taking all of phase 1 leaves phase 1's variance", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:20, y = 1:20, m = 1:20)
+  phase1 <- sampling_design() |> draw(n = 8) |> execute(frame, seed = 2)
+  # Oracle: the SRS variance of phase 1 alone.
+  target <- 20^2 * (1 - 8 / 20) * stats::var(phase1$y) / 8
+  for (method in c("srswor", "pps_brewer", "pps_sampford")) {
+    design <- if (method == "srswor") {
+      draw(sampling_design(), n = 8)
+    } else {
+      draw(sampling_design(), n = 8, method = method, mos = m)
+    }
+    phase2 <- execute(design, phase1, seed = 1)
+    est <- survey::svytotal(~y, as_svydesign(phase2))
+    expect_equal(unname(coef(est)), 20 / 8 * sum(phase1$y), info = method)
+    expect_equal(as.vector(survey::SE(est))^2, target, info = method)
+  }
+})
+
+test_that("a single primary unit taken with certainty exports", {
+  skip_if_not_installed("survey")
+  # One element: the population, taken with weight one.
+  for (method in c("srswor", "pps_brewer")) {
+    design <- if (method == "srswor") {
+      sampling_design() |> cluster_by(id) |> draw(n = 1)
+    } else {
+      sampling_design() |> cluster_by(id) |>
+        draw(n = 1, method = method, mos = mos)
+    }
+    one <- execute(design, data.frame(id = 1L, mos = 1, y = 7), seed = 1)
+    expect_census(as_svydesign(one), 7, info = method)
+    expect_census(as_svydesign(one, stages = 1), 7, info = method)
+    # survey's JKn refuses an SRS census of every stratum, as it always has.
+    types <- c("bootstrap", "rwyb", if (method != "srswor") "JKn")
+    for (type in types) {
+      rep <- suppressWarnings(withr::with_seed(1,
+        as_svrepdesign(one, type = type, replicates = 5)))
+      expect_census(rep, 7, info = paste(method, type))
+    }
+  }
+
+  # One parent with census descendants, then with a subsample of them.
+  frame <- data.frame(psu = 1L, hh = 1:3, mos = 10, y = c(1, 2, 6))
+  for (method in c("srswor", "pps_brewer", "pps_multinomial")) {
+    first <- sampling_design() |> cluster_by(psu)
+    first <- switch(method,
+      srswor = draw(first, n = 1),
+      pps_brewer = draw(first, n = 1, method = method, mos = mos),
+      pps_multinomial = draw(first, n = 1, method = method, mos = mos,
+                             certainty_size = 1)
+    )
+    all <- first |> add_stage() |> draw(n = 3) |> execute(frame, seed = 1)
+    expect_census(as_svydesign(all), 9, info = method)
+    part <- first |> add_stage() |> draw(n = 2) |> execute(frame, seed = 1)
+    # Oracle: the SRS variance of the two households within the parent.
+    est <- survey::svytotal(~y, as_svydesign(part))
+    expect_equal(unname(coef(est)), 3 / 2 * sum(part$y), info = method)
+    expect_equal(as.vector(survey::SE(est))^2,
+      3^2 * (1 - 2 / 3) * stats::var(part$y) / 2, info = method)
+  }
+
+  # Strata below the parent divide it, they do not make several parents.
+  frame <- data.frame(psu = 1L, hh = 1:6, st = rep(1:3, each = 2),
+                      mos = 10, y = c(3, 1, 4, 1, 5, 9))
+  for (method in c("srswor", "pps_brewer")) {
+    first <- sampling_design() |> cluster_by(psu)
+    first <- if (method == "srswor") {
+      draw(first, n = 1)
+    } else {
+      draw(first, n = 1, method = method, mos = mos)
+    }
+    all <- suppressWarnings(first |> add_stage() |> stratify_by(st) |>
+      draw(n = 2) |> execute(frame, seed = 1))
+    expect_census(as_svydesign(all), 23, info = method)
+    one_each <- frame[!duplicated(frame$st), ]
+    all <- suppressWarnings(first |> add_stage() |> stratify_by(st) |>
+      draw(n = 1) |> execute(one_each, seed = 1))
+    expect_census(as_svydesign(all), sum(one_each$y), info = method)
+  }
+  frame <- data.frame(psu = 1L, hh = 1:6, st = rep(1:2, each = 3),
+                      y = c(3, 1, 4, 1, 5, 9))
+  part <- sampling_design() |> cluster_by(psu) |> draw(n = 1) |>
+    add_stage() |> stratify_by(st) |> draw(n = 2) |> execute(frame, seed = 1)
+  # Oracle: the SRS variance of two of three households in each stratum.
+  target <- sum(vapply(split(part$y, part$st), function(y) {
+    3^2 * (1 - 2 / 3) * stats::var(y) / 2
+  }, 0))
+  expect_equal(as.vector(survey::SE(survey::svytotal(~y,
+    as_svydesign(part))))^2, target)
+
+  # One unit drawn from several has no variance to estimate.
+  frame <- data.frame(psu = rep(1:3, each = 2), y = 1:6)
+  lone <- sampling_design() |> cluster_by(psu) |> draw(n = 1) |>
+    execute(frame, seed = 1)
+  expect_error(suppressWarnings(as_svydesign(lone)),
+    class = "samplyr_error_export_one_unit")
+})
+
+test_that("phase 2 of a one-unit population phase 1 is a sample of it", {
+  skip_if_not_installed("survey")
+  # The proof reads the sample alone, so the frame digest changes nothing.
+  population <- data.frame(id = 1L, mos = 1, y = 7)
+  first <- list(
+    srswor = sampling_design() |> draw(n = 1),
+    certain_wr = sampling_design() |>
+      draw(n = 1, method = "pps_multinomial", mos = mos, certainty_size = 1)
+  )
+  for (digest in c("summary", "full", "none")) {
+    for (design1 in names(first)) {
+      phase1 <- execute(first[[design1]], population, seed = 1,
+                        frame_digest = digest)
+      for (method in c("pps_sampford", "pps_brewer", "srswor")) {
+        design2 <- if (method == "srswor") {
+          sampling_design() |> draw(n = 1)
+        } else {
+          sampling_design() |> draw(n = 1, method = method, mos = mos)
+        }
+        phase2 <- execute(design2, phase1, seed = 1)
+        expect_census(as_svydesign(phase2), 7,
+          info = paste(digest, design1, method))
+      }
+    }
+  }
+
+  # Phase 1 is one certain cluster holding the whole population.
+  frame <- data.frame(psu = 1L, hh = 1:6, m = 1:6, y = c(3, 1, 4, 1, 5, 9))
+  srs <- sampling_design() |> draw(n = 3)
+  for (digest in c("summary", "none")) {
+    phase1 <- sampling_design() |> cluster_by(psu) |> draw(n = 1) |>
+      execute(frame, seed = 1, frame_digest = digest)
+    phase2 <- execute(srs, phase1, seed = 1)
+    # Oracle: the SRS variance of 3 of the 6 population units.
+    est <- survey::svytotal(~y, as_svydesign(phase2))
+    expect_equal(unname(coef(est)), 2 * sum(phase2$y), info = digest)
+    expect_equal(as.vector(survey::SE(est))^2,
+      6^2 * (1 - 3 / 6) * stats::var(phase2$y) / 3, info = digest)
+  }
+  # A phase 1 changed after execution is not read as fixed.
+  changed <- suppressWarnings(execute(srs, phase1[-1, ], seed = 1))
+  expect_false(samplyr:::phase1_is_fixed_one_unit(phase1[-1, ]))
+  expect_error(as_svydesign(changed), class = "samplyr_error_modified_sample")
+  sampford <- sampling_design() |> draw(n = 3, method = "pps_sampford", mos = m)
+  phase2 <- execute(sampford, phase1, seed = 1)
+  direct <- execute(sampford, frame, seed = 1)
+  expect_identical(phase2$hh, direct$hh)
+  expect_equal(
+    survey::SE(survey::svytotal(~y, as_svydesign(phase2))),
+    survey::SE(survey::svytotal(~y, as_svydesign(direct)))
+  )
+  expect_identical(variance_estimators(phase2)$status,
+                   variance_estimators(sampford, frame)$status)
+  expect_identical(variance_estimators(sampford, phase1)$status,
+                   variance_estimators(sampford, frame)$status)
+  expect_error(as_svydesign(phase2, method = "full"),
+    class = "samplyr_error_survey_argument")
+
+  # One unit sampled from five is not the population.
+  phase1 <- sampling_design() |> draw(n = 1) |>
+    execute(data.frame(id = 1:5, mos = 1, y = 1:5), seed = 1)
+  phase2 <- execute(sampling_design() |> draw(n = 1, method = "pps_sampford",
+    mos = mos), phase1, seed = 1)
+  err <- expect_error(suppressWarnings(as_svydesign(phase2)),
+    class = "samplyr_error_export_one_unit")
+  expect_match(conditionMessage(err), "not taken with certainty", fixed = TRUE)
+
+  # Phase 1 takes the frame's only PSU whole and subsamples it. A phase 2
+  # stratified across it goes to survey's two-phase design, which refuses
+  # one phase-1 unit although it was taken with certainty, so the reason
+  # names the certainty rather than a draw from several.
+  frame <- data.frame(psu = 1, id = 1:12, g = rep(c("a", "b"), 6), y = 1:12)
+  first <- sampling_design() |> add_stage() |> cluster_by(psu) |>
+    draw(frac = 1) |> add_stage() |> draw(n = 8)
+  across <- sampling_design() |> stratify_by(g) |> draw(n = 2)
+  phase1 <- execute(first, frame, seed = 1)
+  phase2 <- execute(across, phase1, seed = 2)
+  err <- expect_error(as_svydesign(phase2),
+                      class = "samplyr_error_export_one_unit")
+  expect_match(conditionMessage(err), "taken with certainty", fixed = TRUE)
+  expect_no_match(conditionMessage(err), "not taken with certainty",
+                  fixed = TRUE)
+  row <- variance_estimators(phase2)[1, ]
+  expect_identical(row$status, "refused")
+  expect_match(row$note, "taken with certainty", fixed = TRUE)
+  # The two routes the message names give a design.
+  within <- execute(sampling_design() |> draw(n = 4), phase1, seed = 2)
+  expect_s3_class(as_svydesign(within), "survey.design2")
+  reps <- execute(across, execute(first, frame, seed = 1, reps = 4), seed = 2)
+  se <- survey::SE(survey::svytotal(
+    ~y, as_svrepdesign(reps, type = "random_groups")
+  ))
+  expect_gt(as.vector(se), 0)
+  # A phase 1 of several units keeps the two-phase export.
+  phase1 <- sampling_design() |> draw(n = 20) |>
+    execute(data.frame(id = 1:20, m = 1:20, y = 1:20), seed = 1)
+  phase2 <- execute(sampford, phase1, seed = 1)
+  expect_s3_class(as_svydesign(phase2), "twophase2")
+})
+
+test_that("final weights of one do not make phase 1 the population", {
+  skip_if_not_installed("survey")
+  # One of two clusters, then its only household drawn twice with
+  # replacement: the stage weights 2 and 0.5 cancel. Totals 20 and 40 are
+  # equally likely, so the true variance is 100, not 0.
+  frame <- data.frame(psu = 1:2, hh = 1:2, mos = 1, y = c(10, 20))
+  design1 <- sampling_design() |> cluster_by(psu) |> draw(n = 1) |>
+    add_stage() |> draw(n = 2, method = "srswr")
+  design2 <- sampling_design() |>
+    draw(n = 2, method = "pps_sampford", mos = mos)
+  for (seed in c(1, 4)) {
+    phase1 <- execute(design1, frame, seed = seed, frame_digest = "none")
+    expect_true(all(phase1$.weight == 1))
+    phase2 <- execute(design2, phase1, seed = 1)
+    expect_error(as_svydesign(phase2),
+      class = "samplyr_error_twophase_stage_probs")
+    expect_identical(variance_estimators(phase2)$class[1],
+                     "samplyr_error_twophase_stage_probs")
+  }
+
+  # A random-size phase 1 that drew only its certain unit left four out.
+  frame <- data.frame(id = 1:5, mos = c(100, 1, 1, 1, 1), y = c(50, 1:4))
+  for (digest in c("summary", "none")) {
+    phase1 <- suppressWarnings(sampling_design() |>
+      draw(n = 2, method = "pps_poisson", mos = mos) |>
+      execute(frame, seed = 1, frame_digest = digest))
+    expect_identical(phase1$id, 1L)
+    expect_identical(phase1$.weight, 1)
+    phase2 <- execute(sampling_design() |>
+      draw(n = 1, method = "pps_sampford", mos = mos), phase1, seed = 1)
+    expect_error(as_svydesign(phase2),
+      class = "samplyr_error_twophase_poisson")
+  }
+  # A Bernoulli stage of fraction one gives every unit chance one.
+  phase1 <- sampling_design() |> draw(frac = 1, method = "bernoulli") |>
+    execute(data.frame(id = 1L, mos = 1, y = 7), seed = 1,
+            frame_digest = "none")
+  phase2 <- execute(sampling_design() |>
+    draw(n = 1, method = "pps_sampford", mos = mos), phase1, seed = 1)
+  expect_census(as_svydesign(phase2), 7)
+})
+
+test_that("a phase 1 changed after execution proves no unit certain", {
+  skip_if_not_installed("survey")
+  # Clusters 1 and 2 are certain and the third draw is random. Removing
+  # the random cluster's rows leaves only certain ones, which proves
+  # nothing about the hits the phase drew.
+  frame <- data.frame(
+    psu = rep(1:4, each = 6), hh = rep(1:6, 4),
+    mos = rep(c(100, 100, 1, 1), each = 6), m = 1,
+    y = rep(c(1, 2, 4, 8, 16, 32), 4) * rep(1:4, each = 6)
+  )
+  within <- sampling_design() |> stratify_by(psu) |>
+    draw(n = 2, method = "pps_sampford", mos = m)
+  refused <- function(phase1, info) {
+    phase2 <- suppressWarnings(execute(within, phase1, seed = 1))
+    expect_error(as_svydesign(phase2), class = "samplyr_error_modified_sample",
+                 info = info)
+    expect_identical(variance_estimators(phase2)$class[1],
+                     "samplyr_error_modified_sample", info = info)
+    phase2
+  }
+  for (method in c("pps_multinomial", "pps_chromy")) {
+    two <- sampling_design() |> cluster_by(psu) |>
+      draw(n = 3, method = method, mos = mos, certainty_size = 50) |>
+      add_stage() |> draw(n = 4)
+    phase1 <- execute(two, frame, seed = 1)
+    expect_false(all(phase1$.certainty_1))
+    cut <- phase1[phase1$.certainty_1, ]
+    expect_false(samplyr:::sample_realization_status(cut)$ok)
+    # The rows left are all certain, and still prove no stage certain.
+    expect_length(samplyr:::phase_wr_stages_certain(cut, two, 1:2), 0L)
+    refused(cut, method)
+    refused(cut[cut$psu == cut$psu[1], ], paste(method, "one cluster"))
+    one <- sampling_design() |> cluster_by(psu) |>
+      draw(n = 3, method = method, mos = mos, certainty_size = 50)
+    phase1 <- execute(one, frame, seed = 1)
+    phase2 <- refused(phase1[phase1$.certainty_1, ], method)
+    # Unmodified, the same phase 2 is refused for its random hits.
+    expect_error(as_svydesign(execute(within, phase1, seed = 1)),
+                 class = "samplyr_error_twophase_wr_subsample")
+  }
+  # The weights still serve, but no export reads the rows as phase 1,
+  # with or without replacement.
+  across <- sampling_design() |> draw(n = 3)
+  phase1 <- execute(two, frame, seed = 1)
+  phase2 <- suppressWarnings(execute(across, phase1[phase1$.certainty_1, ],
+                                     seed = 1))
+  expect_error(as_svydesign(phase2, method = "approx"),
+               class = "samplyr_error_modified_sample")
+  srs <- sampling_design() |> cluster_by(psu) |> draw(n = 3) |>
+    add_stage() |> draw(n = 4)
+  phase1 <- execute(srs, frame, seed = 1)
+  phase2 <- suppressWarnings(execute(across,
+    phase1[phase1$psu != phase1$psu[1], ], seed = 1))
+  expect_error(as_svydesign(phase2), class = "samplyr_error_modified_sample")
+})
+
+test_that("a random-size stratum that drew nothing keeps phase 1 random", {
+  skip_if_not_installed("survey")
+  on.exit(sondage::unregister_method("rs_custom"), add = TRUE)
+  sondage::register_method(
+    "rs_custom", "wor",
+    sample_fn = function(pik, n = NULL, prn = NULL, ...) {
+      which(stats::runif(length(pik)) < pik)
+    },
+    fixed_size = FALSE, probabilities = "exact"
+  )
+  # Unit 1 is taken for sure. Stratum b is random, and where it selects
+  # nothing it leaves no row and no record, so phase 1 is still random.
+  frame <- data.frame(st = c("a", rep("b", 4)), id = 1:5,
+                      y = c(7, 10, 20, 30, 40), m = 1,
+                      mos = c(100, 1, 1, 1, 1))
+  cluster <- data.frame(psu = 1L)
+  households <- cbind(psu = 1L, frame)
+  half <- data.frame(st = c("a", "b"), frac = c(1, 0.5))
+  one_each <- data.frame(st = c("a", "b"), n = c(1, 1))
+  random <- list(
+    bernoulli = list(sampling_design() |> stratify_by(st) |>
+      draw(frac = half, method = "bernoulli", on_empty = "silent"),
+      list(frame)),
+    pps_poisson = list(sampling_design() |> stratify_by(st) |>
+      draw(n = one_each, method = "pps_poisson", mos = mos,
+           on_empty = "silent"), list(frame)),
+    # Fraction one is not chance one proportional to size.
+    pps_poisson_one = list(sampling_design() |>
+      draw(frac = 1, method = "pps_poisson", mos = mos, on_empty = "silent"),
+      list(frame)),
+    custom = list(sampling_design() |> stratify_by(st) |>
+      draw(n = one_each, method = "pps_rs_custom", mos = mos,
+           on_empty = "silent"), list(frame)),
+    later = list(sampling_design() |> cluster_by(psu) |> draw(frac = 1) |>
+      add_stage() |> stratify_by(st) |>
+      draw(frac = half, method = "bernoulli", on_empty = "silent"),
+      list(cluster, households)),
+    # One size for every stratum: b's count is not recorded once it drew
+    # nothing.
+    size_value = list(sampling_design() |> stratify_by(st) |>
+      draw(n = 1, method = "bernoulli", on_empty = "silent"), list(frame)),
+    # The size exhausts stratum a, and b, larger, drew nothing.
+    size = list(sampling_design() |> stratify_by(st) |>
+      draw(n = one_each, method = "bernoulli", on_empty = "silent"),
+      list(frame))
+  )
+  design2 <- sampling_design() |>
+    draw(n = 1, method = "pps_sampford", mos = m)
+  # pps_poisson of fraction one warns that its expected size falls short.
+  run <- function(args) suppressMessages(suppressWarnings(
+    do.call(execute, args)
+  ))
+  reached <- character(0)
+  for (name in names(random)) {
+    for (seed in 1:40) {
+      args <- c(list(random[[name]][[1]]), random[[name]][[2]], seed = seed)
+      phase1 <- run(args)
+      if (!identical(phase1$id, 1L)) next
+      reached <- c(reached, name)
+      for (digest in c("summary", "full", "none")) {
+        args$frame_digest <- digest
+        phase1 <- run(args)
+        phase2 <- execute(design2, phase1, seed = 1)
+        info <- paste(name, seed, digest)
+        expect_error(as_svydesign(phase2),
+          class = "samplyr_error_twophase_poisson", info = info)
+        expect_identical(variance_estimators(phase2)$class[1],
+                         "samplyr_error_twophase_poisson", info = info)
+      }
+      break
+    }
+  }
+  expect_setequal(reached, names(random))
+
+  # Rung 1: the stage is proved to take every unit of every pool, so phase
+  # 2 is a sample of that population. A fraction of one, as a value or a
+  # table, or a size that reaches each population count, where the table
+  # names every stratum of the frame or there are none.
+  ones <- list(
+    value = list(sampling_design() |> draw(frac = 1, method = "bernoulli"),
+                 list(frame[1, ])),
+    table = list(sampling_design() |> stratify_by(st) |>
+      draw(frac = data.frame(st = "a", frac = 1), method = "bernoulli"),
+      list(frame[1, ])),
+    size = list(sampling_design() |> stratify_by(st) |>
+      draw(n = data.frame(st = "a", n = 1), method = "bernoulli"),
+      list(frame[1, ])),
+    size_value = list(sampling_design() |> draw(n = 1, method = "bernoulli"),
+                      list(frame[1, ]))
+  )
+  for (name in names(ones)) {
+    for (digest in c("summary", "full", "none")) {
+      phase1 <- do.call(execute, c(list(ones[[name]][[1]]),
+                                   ones[[name]][[2]], seed = 1,
+                                   frame_digest = digest))
+      phase2 <- execute(design2, phase1, seed = 1)
+      expect_census(as_svydesign(phase2), 7, info = paste(name, digest))
+      expect_false(identical(variance_estimators(phase2)$status[1],
+                             "refused"), info = paste(name, digest))
+    }
+  }
+  # Inside one certain cluster, execution records each pool a random-size
+  # draw left empty. Where it names none, the pools are those with rows, so
+  # a stage that took every unit of each with chance one is proved, by any
+  # method. Without the record nothing shows that no pool drew nothing.
+  census_of <- function(phase1, info) {
+    phase2 <- execute(sampling_design() |>
+      draw(n = 2, method = "pps_sampford", mos = m), phase1, seed = 1)
+    est <- survey::svytotal(~y, as_svydesign(phase2))
+    expect_equal(unname(coef(est)), 2.5 * sum(phase2$y), info = info)
+    expect_equal(as.vector(vcov(est)),
+                 5^2 * (1 - 2 / 5) * var(phase2$y) / 2, info = info)
+    expect_false(identical(variance_estimators(phase2)$status[1],
+                           "refused"), info = info)
+  }
+  refused <- function(phase1, info) {
+    phase2 <- execute(design2, phase1, seed = 1)
+    expect_error(as_svydesign(phase2),
+      class = "samplyr_error_twophase_poisson", info = info)
+    expect_identical(variance_estimators(phase2)$class[1],
+                     "samplyr_error_twophase_poisson", info = info)
+  }
+  within <- function(n, method) {
+    sizes <- data.frame(st = c("a", "b"), n = n)
+    stage <- sampling_design() |> cluster_by(psu) |> draw(frac = 1) |>
+      add_stage() |> stratify_by(st)
+    if (method == "bernoulli") {
+      draw(stage, n = sizes, method = method, on_empty = "silent")
+    } else {
+      draw(stage, n = sizes, method = method, mos = mos, on_empty = "silent")
+    }
+  }
+  for (method in c("bernoulli", "pps_poisson", "pps_rs_custom")) {
+    for (digest in c("summary", "full", "none")) {
+      info <- paste(method, digest)
+      # Sizes that reach every count take every unit.
+      phase1 <- run(list(within(c(1, 4), method), cluster, households,
+                         seed = 1, frame_digest = digest))
+      expect_identical(nrow(phase1), 5L)
+      census_of(phase1, info)
+      unknown <- phase1
+      attr(unknown, "metadata")$empty_pools <- NULL
+      refused(unknown, paste(info, "without the record"))
+      # A size short of a count leaves the stage random, whatever it drew.
+      for (seed in 1:4) {
+        refused(run(list(within(c(1, 1), method), cluster, households,
+                         seed = seed, frame_digest = digest)),
+                paste(info, seed))
+      }
+    }
+  }
+  # Inside one certain cluster: two of five by equal probabilities.
+  design1 <- sampling_design() |> cluster_by(psu) |> draw(frac = 1) |>
+    add_stage() |> stratify_by(st) |>
+    draw(frac = data.frame(st = c("a", "b"), frac = 1), method = "bernoulli")
+  for (digest in c("summary", "full", "none")) {
+    phase1 <- execute(design1, cluster, households, seed = 1,
+                      frame_digest = digest)
+    expect_identical(nrow(phase1), 5L)
+    phase2 <- execute(sampling_design() |>
+      draw(n = 2, method = "pps_sampford", mos = m), phase1, seed = 1)
+    est <- survey::svytotal(~y, as_svydesign(phase2))
+    expect_equal(unname(coef(est)), 2.5 * sum(phase2$y), info = digest)
+    expect_equal(as.vector(vcov(est)),
+                 5^2 * (1 - 2 / 5) * var(phase2$y) / 2, info = digest)
+  }
+})
+
+test_that("a unit an empty stage emptied still counts against a fixed phase 1", {
+  skip_if_not_installed("survey")
+  # Cluster 1 is certain, the other draw takes cluster 2 or 3, and cluster
+  # 2 has no households. Seed 1 draws it, which leaves only cluster 1's
+  # rows, each of weight one: totals 7 and 147 are equally likely.
+  psus <- data.frame(psu = 1:3, mos = c(100, 1, 1))
+  households <- data.frame(
+    psu = rep(c(1L, 3L), each = 3), hh = rep(1:3, 2),
+    y = c(1, 2, 4, 10, 20, 40), m = 1
+  )
+  census2 <- sampling_design() |>
+    draw(frac = 1, method = "pps_sampford", mos = m)
+  brewer <- sampling_design() |> cluster_by(psu) |>
+    draw(n = 2, method = "pps_brewer", mos = mos, certainty_size = 50) |>
+    add_stage() |> draw(frac = 1, on_empty = "silent")
+  for (digest in c("summary", "full", "none")) {
+    for (seed in c(1, 4)) {
+      phase1 <- execute(brewer, psus, households, seed = seed,
+                        frame_digest = digest)
+      phase2 <- execute(census2, phase1, seed = 1)
+      info <- paste(digest, seed)
+      expect_error(as_svydesign(phase2),
+        class = "samplyr_error_twophase_phase1_pps", info = info)
+      expect_identical(variance_estimators(phase2)$class[1],
+                       "samplyr_error_twophase_phase1_pps", info = info)
+    }
+  }
+  phase1 <- execute(brewer, psus, households, seed = 1)
+  expect_identical(unique(phase1$psu), 1L)
+  expect_true(all(phase1$.weight == 1))
+  # Drawn with replacement: the same seeds leave one cluster's rows.
+  for (method in c("pps_multinomial", "pps_chromy", "pps_systematic_mr")) {
+    design1 <- sampling_design() |> cluster_by(psu) |>
+      draw(n = 2, method = method, mos = mos, certainty_size = 50) |>
+      add_stage() |> draw(frac = 1, on_empty = "silent")
+    for (seed in c(1, 4)) {
+      phase1 <- execute(design1, psus, households, seed = seed)
+      phase2 <- execute(census2, phase1, seed = 1)
+      # Their correction states no probability, so "full" is refused.
+      expect_error(
+        suppressWarnings(as_svydesign(phase2,
+          systematic_variance = "approximate")),
+        class = "samplyr_error_twophase_stage_probs",
+        info = paste(method, seed)
+      )
+      expect_identical(variance_estimators(phase2)$class[1],
+                       "samplyr_error_twophase_stage_probs",
+                       info = paste(method, seed))
+    }
+  }
+  # No empty unit: the same refusal, and "approx" uses the weights.
+  all_households <- data.frame(psu = rep(1:3, each = 3), hh = rep(1:3, 3),
+                               y = 1:9, m = 1)
+  design1 <- sampling_design() |> cluster_by(psu) |>
+    draw(n = 2, method = "pps_multinomial", mos = mos, certainty_size = 50) |>
+    add_stage() |> draw(frac = 1)
+  phase1 <- execute(design1, psus, all_households, seed = 1)
+  phase2 <- execute(sampling_design() |> draw(n = 4), phase1, seed = 1)
+  expect_error(as_svydesign(phase2),
+    class = "samplyr_error_twophase_stage_probs")
+  expect_s3_class(suppressWarnings(as_svydesign(phase2, method = "approx")),
+                  "twophase")
+  # A cluster drawn at random inside a certain primary unit, then emptied.
+  ssus <- data.frame(psu = 1L, ssu = 1:3)
+  inner <- data.frame(psu = 1L, ssu = rep(c(1L, 3L), each = 2), hh = 1:4,
+                      y = c(1, 2, 10, 20), m = 1)
+  nested <- sampling_design() |> cluster_by(psu) |> draw(n = 1) |>
+    add_stage() |> cluster_by(ssu) |> draw(n = 2) |>
+    add_stage() |> draw(frac = 1, on_empty = "silent")
+  phase1 <- execute(nested, data.frame(psu = 1L), ssus, inner, seed = 2)
+  expect_identical(unique(phase1$ssu), 3L)
+  phase2 <- execute(census2, phase1, seed = 1)
+  expect_false(inherits(
+    tryCatch(suppressWarnings(as_svydesign(phase2)), error = identity),
+    "survey.design2"
+  ))
+
+  # Units taken for sure that are empty keep phase 1 fixed.
+  both <- sampling_design() |> cluster_by(psu) |> draw(n = 2) |>
+    add_stage() |> draw(frac = 1, on_empty = "silent")
+  for (digest in c("summary", "none")) {
+    phase1 <- execute(both, data.frame(psu = 1:2),
+                      households[households$psu == 1L, ], seed = 1,
+                      frame_digest = digest)
+    expect_census(as_svydesign(execute(census2, phase1, seed = 1)), 7,
+      info = digest)
+  }
+  every <- sampling_design() |> cluster_by(psu) |> draw(n = 1) |>
+    add_stage() |> cluster_by(ssu) |> draw(n = 3) |>
+    add_stage() |> draw(frac = 1, on_empty = "silent")
+  phase1 <- execute(every, data.frame(psu = 1L), ssus, inner, seed = 1)
+  expect_census(as_svydesign(execute(census2, phase1, seed = 1)), 33)
+})
+
+test_that("a stage drawn with replacement that took only certain units states its probabilities", {
+  skip_if_not_installed("survey")
+  # Rung 1, closed form. Both clusters are certain, so the stage is a
+  # census, and phase 2 draws by equal probabilities (constant size): two of
+  # four of six households is two of six, in each cluster.
+  frame <- data.frame(
+    psu = rep(1:2, each = 6), hh = rep(1:6, 2), m = 1,
+    y = c(1, 2, 4, 8, 16, 32, 3, 6, 9, 12, 18, 36)
+  )
+  design2 <- sampling_design() |> stratify_by(psu) |>
+    draw(n = 2, method = "pps_sampford", mos = m)
+  stratified_srs <- function(y, stratum, N, n) {
+    sum(vapply(split(y, stratum), function(v) {
+      N^2 * (1 - n / N) * stats::var(v) / n
+    }, 0))
+  }
+  for (method in c("pps_multinomial", "pps_chromy", "pps_systematic_mr")) {
+    phase1 <- sampling_design() |> cluster_by(psu) |>
+      draw(n = 2, method = method, mos = m, certainty_size = 1) |>
+      add_stage() |> draw(n = 4) |> execute(frame, seed = 1)
+    expect_true(all(phase1$.certainty_1))
+    phase2 <- execute(design2, phase1, seed = 1)
+    design <- suppressWarnings(as_svydesign(phase2,
+      systematic_variance = "approximate"))
+    est <- survey::svytotal(~y, design)
+    expect_equal(unname(coef(est)), 3 * sum(phase2$y), info = method)
+    expect_equal(as.vector(vcov(est)),
+                 stratified_srs(phase2$y, phase2$psu, 6, 2), info = method)
+    expect_true(all(design$phase1$full$allprob[, 1] == 1), info = method)
+    linear <- variance_estimators(phase2)
+    linear <- linear[linear$estimator == "Taylor linearization", ]
+    expect_false(identical(linear$status, "refused"), info = method)
+  }
+  # Its systematic policy still applies.
+  expect_warning(as_svydesign(phase2),
+    class = "samplyr_warning_systematic_variance")
+  expect_error(as_svydesign(phase2, systematic_variance = "error"),
+    class = "samplyr_error_systematic_variance")
+  expect_match(linear$class, "samplyr_warning_systematic_variance")
+
+  # No certainty unit: the stage is random on the count scale.
+  phase1 <- sampling_design() |> cluster_by(psu) |>
+    draw(n = 2, method = "pps_multinomial", mos = m) |>
+    add_stage() |> draw(n = 4) |> execute(frame, seed = 1)
+  phase2 <- execute(design2, phase1, seed = 1)
+  expect_error(as_svydesign(phase2),
+    class = "samplyr_error_twophase_stage_probs")
+  expect_identical(variance_estimators(phase2)$class[1],
+                   "samplyr_error_twophase_stage_probs")
+
+  # Inside each certain region, area 1 is certain and the other draw takes
+  # area 2, which is empty, or area 3. Where both regions draw area 2, every
+  # row left is certain, but the stage was random.
+  regions <- data.frame(reg = 1:2)
+  areas <- data.frame(reg = rep(1:2, each = 3), ea = rep(1:3, 2),
+                      mos = c(100, 1, 1))
+  households <- data.frame(
+    reg = rep(1:2, each = 6), ea = rep(rep(c(1L, 3L), each = 3), 2),
+    hh = rep(1:3, 4), y = c(1, 2, 4, 10, 20, 40, 3, 5, 7, 30, 50, 70), m = 1
+  )
+  design2 <- sampling_design() |> stratify_by(reg) |>
+    draw(n = 2, method = "pps_sampford", mos = m)
+  reached <- character(0)
+  for (method in c("pps_multinomial", "pps_chromy", "pps_systematic_mr")) {
+    design1 <- sampling_design() |> cluster_by(reg) |> draw(frac = 1) |>
+      add_stage() |> cluster_by(ea) |>
+      draw(n = 2, method = method, mos = mos, certainty_size = 50) |>
+      add_stage() |> draw(frac = 1, on_empty = "silent")
+    for (seed in 1:10) {
+      phase1 <- execute(design1, regions, areas, households, seed = seed)
+      if (!all(phase1$.certainty_2)) next
+      reached <- c(reached, method)
+      phase2 <- execute(design2, phase1, seed = 1)
+      expect_error(
+        suppressWarnings(as_svydesign(phase2,
+          systematic_variance = "approximate")),
+        class = "samplyr_error_twophase_stage_probs",
+        info = paste(method, seed)
+      )
+      expect_identical(variance_estimators(phase2)$class[1],
+                       "samplyr_error_twophase_stage_probs",
+                       info = paste(method, seed))
+    }
+  }
+  expect_setequal(reached,
+                  c("pps_multinomial", "pps_chromy", "pps_systematic_mr"))
+  # Every area certain, area 2 empty: phase 1 took every household.
+  for (method in c("pps_multinomial", "pps_chromy", "pps_systematic_mr")) {
+    design1 <- sampling_design() |> cluster_by(reg) |> draw(frac = 1) |>
+      add_stage() |> cluster_by(ea) |>
+      draw(n = 3, method = method, mos = mos, certainty_size = 0.5) |>
+      add_stage() |> draw(frac = 1, on_empty = "silent")
+    phase1 <- execute(design1, regions, areas, households, seed = 1)
+    expect_identical(nrow(phase1), nrow(households))
+    phase2 <- execute(design2, phase1, seed = 1)
+    est <- survey::svytotal(~y, suppressWarnings(as_svydesign(phase2,
+      systematic_variance = "approximate")))
+    expect_equal(unname(coef(est)), 3 * sum(phase2$y), info = method)
+    expect_equal(as.vector(vcov(est)),
+                 stratified_srs(phase2$y, phase2$reg, 6, 2), info = method)
+  }
+})
+
+test_that("a zero row survey's two-phase design cannot place is refused by class", {
+  skip_if_not_installed("survey")
+  # Cluster 2 has no households, so phase 1 holds it as a zero row.
+  psus <- data.frame(psu = 1:3)
+  households <- data.frame(
+    psu = rep(c(1L, 3L), each = 3), hh = rep(1:3, 2),
+    y = c(1, 2, 4, 10, 20, 40), m = 1, st = rep(c("a", "b"), 3)
+  )
+  census1 <- sampling_design() |> cluster_by(psu) |> draw(frac = 1) |>
+    add_stage() |> draw(frac = 1, on_empty = "silent")
+  phase1 <- execute(census1, psus, households, seed = 1)
+  class <- "samplyr_error_twophase_empty_unit"
+  expect_refused <- function(design2, phase1, methods, info) {
+    # A stratum of one cluster's households can be smaller than the take.
+    phase2 <- suppressWarnings(execute(design2, phase1, seed = 1))
+    for (method in methods) {
+      expect_error(suppressWarnings(as_svydesign(phase2,
+        method = if (method != "full") method)),
+        class = class, info = paste(info, method))
+    }
+    expect_identical(variance_estimators(phase2)$class[1], class, info = info)
+    risk <- variance_estimators(design2, phase1)$sample_risk[1]
+    expect_match(risk, class, fixed = TRUE, info = info)
+  }
+  # A stratum on a household variable: the zero row has none.
+  expect_refused(sampling_design() |> stratify_by(st) |> draw(n = 2),
+                 phase1, c("full", "approx", "simple"), "household strata")
+  # Every unit phase 2 can draw, beside joint probabilities.
+  expect_refused(sampling_design() |>
+                   draw(frac = 1, method = "pps_sampford", mos = m),
+                 phase1, "full", "census")
+  expect_refused(sampling_design() |> stratify_by(psu) |>
+                   draw(frac = 1, method = "pps_sampford", mos = m),
+                 phase1, "full", "census within clusters")
+  # Two clusters drawn, one of them empty: phase 2 lies in the other.
+  srs1 <- sampling_design() |> cluster_by(psu) |> draw(n = 2) |>
+    add_stage() |> draw(frac = 1, on_empty = "silent")
+  reached <- 0L
+  for (seed in 1:4) {
+    drawn <- execute(srs1, psus, households, seed = seed)
+    if (length(attr(drawn, "metadata")$empty_parents) == 0L) next
+    reached <- reached + 1L
+    expect_refused(sampling_design() |> stratify_by(st) |> draw(n = 2),
+                   drawn, c("full", "approx", "simple"), paste("one", seed))
+    expect_refused(sampling_design() |>
+                     draw(n = 2, method = "pps_sampford", mos = m),
+                   drawn, "full", paste("one pps", seed))
+  }
+  expect_gt(reached, 0L)
+
+  # Rung 1, closed form: phase 1 took every household, and two of three in
+  # each cluster by equal probabilities is SRS. The zero row stays.
+  phase2 <- execute(sampling_design() |> stratify_by(psu) |>
+    draw(n = 2, method = "pps_sampford", mos = m), phase1, seed = 1)
+  est <- survey::svytotal(~y, as_svydesign(phase2), na.rm = TRUE)
+  expect_equal(unname(coef(est)), 1.5 * sum(phase2$y))
+  expect_equal(as.vector(vcov(est)), sum(vapply(
+    split(phase2$y, phase2$psu), function(y) 9 * (1 - 2 / 3) * var(y) / 2, 0
+  )))
+  expect_false(identical(variance_estimators(phase2)$status[1], "refused"))
+  expect_census(suppressWarnings(as_svydesign(execute(
+    sampling_design() |> draw(frac = 1), phase1, seed = 1
+  ))), 77)
+  # A census of one household per stratum restates its correction and
+  # drops the strata, so the zero row's stratum never reaches survey, as
+  # the preflight reads it too. Beside joint probabilities it stays refused.
+  one_each <- execute(sampling_design() |> stratify_by(psu, hh) |>
+    draw(frac = 1), phase1, seed = 1)
+  expect_census(suppressWarnings(as_svydesign(one_each)), 77)
+  expect_false(identical(variance_estimators(one_each)$status[1], "refused"))
+  expect_refused(sampling_design() |> stratify_by(psu, hh) |>
+                   draw(frac = 1, method = "pps_sampford", mos = m),
+                 phase1, "full", "census of one per stratum")
+})
+
+test_that("phase 2 inside clusters phase 1 drew with replacement is refused", {
+  skip_if_not_installed("survey")
+  # Both draws hit cluster 1, each hit is a unit of its own with weight one.
+  frame <- data.frame(psu = rep(1:2, each = 3), hh = rep(1:3, 2),
+                      y = c(1, 2, 10, 3, 4, 20))
+  phase1 <- sampling_design() |> cluster_by(psu) |>
+    draw(n = 2, method = "srswr") |> execute(frame, seed = 2)
+  expect_identical(unique(phase1$psu), 1L)
+  expect_identical(sort(unique(phase1$.draw_1)), 1:2)
+  for (design2 in list(
+    sampling_design() |> stratify_by(.phase1_draw_1) |> draw(n = 2),
+    sampling_design() |> draw(n = 3)
+  )) {
+    phase2 <- execute(design2, phase1, seed = 1)
+    for (method in list(NULL, "full")) {
+      expect_error(as_svydesign(phase2, method = method),
+        class = "samplyr_error_twophase_wr_subsample")
+    }
+    expect_identical(variance_estimators(phase2)$class[1],
+                     "samplyr_error_twophase_wr_subsample")
+    raised <- character(0)
+    withCallingHandlers(
+      as_svydesign(phase2, method = "approx"),
+      warning = function(w) {
+        raised <<- c(raised, class(w)[1])
+        invokeRestart("muffleWarning")
+      }
+    )
+    expect_true("samplyr_warning_twophase_approx" %in% raised)
+  }
+
+  # Clusters a certainty rule took once add no with-replacement variance.
+  frame$mos <- 1
+  certain <- sampling_design() |> cluster_by(psu) |>
+    draw(n = 2, method = "pps_multinomial", mos = mos, certainty_size = 1) |>
+    execute(frame, seed = 1)
+  expect_true(all(certain$.certainty_1))
+  phase2 <- sampling_design() |> stratify_by(psu) |> draw(n = 2) |>
+    execute(certain, seed = 1)
+  # Oracle: stratified SRS, two of each cluster's three households.
+  est <- survey::svytotal(~y, as_svydesign(phase2))
+  expect_equal(unname(coef(est)), 3 / 2 * sum(phase2$y))
+  expect_equal(as.vector(survey::SE(est))^2,
+    sum(vapply(split(phase2$y, phase2$psu), function(y) {
+      3^2 * (1 - 2 / 3) * stats::var(y) / 2
+    }, 0)))
+  expect_identical(variance_estimators(phase2)$status[1], "supported")
+
+  # One certain cluster and random hits among the others: refused where it
+  # subsamples a random hit. Clusters reuse their ids in each region.
+  mixed <- data.frame(
+    region = rep(1:2, each = 12), psu = rep(rep(1:4, each = 3), 2),
+    hh = rep(1:3, 8), mos = rep(c(100, 1, 1, 1), each = 3, times = 2),
+    y = seq_len(24)
+  )
+  phase1 <- sampling_design() |> stratify_by(region) |> cluster_by(psu) |>
+    draw(n = 3, method = "pps_multinomial", mos = mos,
+         certainty_size = 50) |>
+    execute(mixed, seed = 3)
+  expect_true(any(phase1$.certainty_1) && !all(phase1$.certainty_1))
+  phase2 <- sampling_design() |>
+    stratify_by(region, psu, .phase1_draw_1) |> draw(n = 2) |>
+    execute(phase1, seed = 1)
+  expect_error(as_svydesign(phase2),
+    class = "samplyr_error_twophase_wr_subsample")
+
+  # A stage drawn with replacement below another also lacks the stage
+  # probabilities. Both routes report the same refusal first.
+  nested <- expand.grid(e = 1:3, ssu = 1:2, psu = 1:4)
+  nested$y <- seq_len(nrow(nested))
+  phase1 <- sampling_design() |> cluster_by(psu) |> draw(n = 2) |>
+    add_stage() |> cluster_by(ssu) |> draw(n = 2, method = "srswr") |>
+    execute(nested, seed = 1)
+  phase2 <- sampling_design() |> stratify_by(ssu, .phase1_draw_2) |>
+    draw(n = 2) |> execute(phase1, seed = 1)
+  expect_error(as_svydesign(phase2),
+    class = "samplyr_error_twophase_wr_subsample")
+  expect_identical(variance_estimators(phase2)$class[1],
+                   "samplyr_error_twophase_wr_subsample")
+
+  # The advised design: households as a stage of phase 1, phase 2 within
+  # each hit. Oracle: the Hansen-Hurwitz variance of the two hits' totals.
+  phase1 <- sampling_design() |> cluster_by(psu) |>
+    draw(n = 2, method = "srswr") |> add_stage() |> draw(frac = 1) |>
+    execute(frame, seed = 2)
+  phase2 <- sampling_design() |> stratify_by(psu, .phase1_draw_1) |>
+    draw(n = 2) |> execute(phase1, seed = 1)
+  est <- survey::svytotal(~y, as_svydesign(phase2))
+  totals <- tapply(phase2$y * 3 / 2, phase2$.phase1_draw_1, sum)
+  expect_equal(unname(coef(est)), mean(2 * totals))
+  expect_equal(as.vector(survey::SE(est))^2, 2 * stats::var(totals))
 })
 
 ## Replicate types that drop an equal-probability first-stage correction
@@ -3538,15 +4530,20 @@ test_that("single-stage pps export skips systematic check on dropped later stage
     mos = rep(seq(10, 100, by = 10), each = 4),
     y = seq_len(40) * 3
   )
-  s <- suppressMessages(
-    sampling_design() |>
-      add_stage() |>
-        cluster_by(psu) |>
-        draw(n = 4, method = "pps_sampford", mos = mos) |>
-      add_stage() |>
-        draw(n = 1, method = "systematic") |>
-      execute(frame, seed = 12)
-  )
+  two_stage <- function(n2) {
+    suppressMessages(
+      sampling_design() |>
+        add_stage() |>
+          cluster_by(psu) |>
+          draw(n = 4, method = "pps_sampford", mos = mos) |>
+        add_stage() |>
+          draw(n = n2, method = "systematic") |>
+        execute(frame, seed = 12)
+    )
+  }
+  # A pps matrix needs one row per PSU, so stage 2 takes one unit per PSU,
+  # which is also a draw that does not depend on the frame order.
+  s <- two_stage(1)
   jip <- joint_expectation(s, frame, stages = 1)[[1L]]
 
   classes <- character()
@@ -3561,7 +4558,9 @@ test_that("single-stage pps export skips systematic check on dropped later stage
   expect_true("samplyr_warning_pps_single_stage" %in% classes)
   expect_false("samplyr_warning_systematic_variance" %in% classes)
 
-  # Keeping all stages with pps = "brewer" still checks the systematic stage 2.
+  # Keeping all stages with pps = "brewer" still checks a systematic stage 2
+  # that draws two units per PSU.
+  s <- two_stage(2)
   brewer_classes <- character()
   withCallingHandlers(
     as_svydesign(s, pps = "brewer"),
@@ -3584,4 +4583,143 @@ test_that("single-stage pps export skips systematic check on dropped later stage
     as_svydesign(s_sys1, pps = "overton"),
     class = "samplyr_warning_systematic_variance"
   )
+})
+
+test_that("the lonely-PSU warning fires when survey stops on the stratum", {
+  skip_if_not_installed("survey")
+  # Below a hit of a stage drawn with replacement, survey's compiled
+  # variance reads nothing, since the spread between hits carries the stages
+  # below. The warning counted those strata and said survey stops, and it
+  # did not. Its R variance computes every stage before scaling, so it stops.
+  probe <- function(s, rpath) {
+    withr::local_options(survey.use_rcpp = !rpath)
+    n_strata <- 0L
+    svy <- withCallingHandlers(as_svydesign(s), warning = function(w) {
+      if (inherits(w, "samplyr_warning_lonely_psu")) {
+        n_strata <<- n_strata + as.integer(w$n_strata)
+      }
+      invokeRestart("muffleWarning")
+    })
+    withr::local_options(survey.lonely.psu = "fail")
+    stops <- tryCatch({
+      survey::svytotal(~y, svy)
+      FALSE
+    }, error = function(e) TRUE)
+    list(n_strata = n_strata, stops = stops, svy = svy)
+  }
+  units <- function(sizes, m) {
+    out <- data.frame(psu = rep(seq_along(sizes), sizes))
+    out$m <- m[out$psu]
+    out$id <- seq_len(nrow(out))
+    out$y <- out$id %% 7 + 1
+    out
+  }
+  m <- c(100, 40, 30, 15, 10, 5)
+  wr <- function(certainty_size = NULL) {
+    sampling_design() |> add_stage() |> cluster_by(psu) |>
+      draw(n = 5, method = "pps_multinomial", mos = m,
+           certainty_size = certainty_size) |>
+      add_stage() |> draw(n = 1)
+  }
+  areas <- data.frame(psu = rep(1:6, each = 9), m = rep(m, each = 9))
+  areas$ea <- paste(areas$psu, rep(1:3, each = 3))
+  areas$id <- seq_len(nrow(areas))
+  areas$y <- areas$id %% 5 + 1
+  # Strata survey reads on its compiled path: none below an ordinary hit,
+  # one below the certain PSU of two units that takes one.
+  cases <- list(
+    hits = list(wr(), units(rep(3, 6), m), 0L),
+    certain_one_unit = list(wr(60), units(c(1, rep(3, 5)), m), 0L),
+    mixed = list(wr(60), units(c(2, rep(3, 5)), m), 1L),
+    three_stages = list(
+      sampling_design() |> add_stage() |> cluster_by(psu) |>
+        draw(n = 5, method = "pps_multinomial", mos = m) |>
+        add_stage() |> cluster_by(ea) |> draw(n = 2) |>
+        add_stage() |> draw(n = 1),
+      areas, 0L
+    ),
+    wr_stage_2 = list(
+      sampling_design() |> add_stage() |> cluster_by(psu) |> draw(n = 3) |>
+        add_stage() |> cluster_by(ea) |> draw(n = 2, method = "srswr") |>
+        add_stage() |> draw(n = 1),
+      areas, 0L
+    ),
+    without_replacement = list(
+      sampling_design() |> add_stage() |> cluster_by(psu) |> draw(n = 3) |>
+        add_stage() |> draw(n = 1),
+      units(rep(3, 6), m), 3L
+    )
+  )
+  checked <- character(0)
+  for (case in names(cases)) {
+    for (seed in 1:2) {
+      s <- suppressWarnings(execute(cases[[case]][[1]], cases[[case]][[2]],
+                                    seed = seed))
+      for (rpath in c(FALSE, TRUE)) {
+        info <- paste(case, seed, if (rpath) "R" else "compiled")
+        got <- probe(s, rpath)
+        expect_identical(got$n_strata > 0L, got$stops, info = info)
+        if (!rpath) {
+          expect_identical(got$n_strata, cases[[case]][[3]], info = info)
+        }
+        checked <- c(checked, info)
+      }
+    }
+  }
+  expect_length(unique(checked), 24L)
+  # Read as ultimate clusters, survey reads no stage below the first.
+  s <- suppressWarnings(execute(cases$without_replacement[[1]],
+                                cases$without_replacement[[2]], seed = 1))
+  local({
+    withr::local_options(survey.ultimate.cluster = TRUE)
+    got <- probe(s, rpath = FALSE)
+    expect_identical(got$n_strata, 0L)
+    expect_false(got$stops)
+  })
+  # Exempt and exact: the compiled SE is the Hansen-Hurwitz one, computed by
+  # hand from the hits, and a PSU is drawn twice.
+  s <- execute(wr(), units(rep(3, 6), m), seed = 1)
+  expect_true(any(tapply(s$.draw_1, s$psu, function(d) length(unique(d))) > 1))
+  z <- tapply(s$y * s$.weight, s$.draw_1, sum)
+  k <- length(z)
+  got <- probe(s, rpath = FALSE)
+  expect_identical(got$n_strata, 0L)
+  withr::local_options(survey.lonely.psu = "fail")
+  expect_equal(as.numeric(survey::SE(survey::svytotal(~y, got$svy))),
+               sqrt(k / (k - 1) * sum((z - mean(z))^2)))
+})
+
+test_that("the default replicate type exports a stage drawn with replacement", {
+  skip_if_not_installed("survey")
+  # A stage drawn with replacement carries an infinite correction, which
+  # survey's jackknife cannot read. JK1, JKn and the bootstrap left it out,
+  # but "auto", survey's own choice between them, kept it and failed.
+  frame <- data.frame(id = 1:30, m = rep(1:5, 6) + 2, y = (1:30) %% 7 + 1)
+  designs <- list(
+    srswr = sampling_design() |> draw(n = 8, method = "srswr"),
+    pps_multinomial = sampling_design() |>
+      draw(n = 8, method = "pps_multinomial", mos = m),
+    pps_chromy = sampling_design() |>
+      draw(n = 8, method = "pps_chromy", mos = m)
+  )
+  checked <- character(0)
+  for (method in names(designs)) {
+    s <- suppressWarnings(execute(designs[[method]], frame, seed = 1))
+    replicate <- suppressWarnings(as_svrepdesign(s))
+    expect_identical(replicate$type, "JK1", info = method)
+    se <- unname(survey::SE(survey::svytotal(~y, replicate)))
+    # Closed form: the with-replacement variance of the weighted hits.
+    z <- s$.weight * s$y
+    n <- length(z)
+    expect_equal(se, sqrt(n / (n - 1) * sum((z - mean(z))^2)), info = method)
+    expect_equal(
+      se,
+      unname(survey::SE(survey::svytotal(
+        ~y, suppressWarnings(as_svrepdesign(s, type = "JK1"))
+      ))),
+      info = method
+    )
+    checked <- c(checked, method)
+  }
+  expect_setequal(checked, names(designs))
 })

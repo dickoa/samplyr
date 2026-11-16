@@ -3,7 +3,8 @@
 #' Work with adjustment factors, keeping samplyr's original weights. WR
 #' stages resample distinct draw occurrences, with zero variance FPC. Their
 #' expected hit counts are not inclusion probabilities and must not be passed
-#' to svrep as such.
+#' to svrep as such. Units a certainty rule took once have factor one and
+#' bring their lower stages in.
 #'
 #' Generate independent conditional stage factors with svrep, then combine
 #' them using Beaumont and Emond (2022), section 7, as in svrep's multistage
@@ -50,20 +51,22 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
   design <- get_design(x)
   stages <- get_stages_executed(x)
   call <- current_env()
-  methods <- vapply(stages, function(i) rwyb_stage_method(design$stages[[i]]$draw_spec, call = call), character(1))
+  # One draw per zone has the with-replacement variance within each
+  # variance group.
+  methods <- vapply(stages, function(i) {
+    draw <- design$stages[[i]]$draw_spec
+    method <- rwyb_stage_method(draw, call = call)
+    if (draws_one_per_zone(draw)) "PPSWR" else method
+  }, character(1))
   systematic <- systematic_approximated_stages(design, stages, df)
   check_systematic_variance(systematic, systematic_variance,
     approximation = "generic_replicates", fn_name = "as_svrepdesign")
-  if (any(methods == "PPSWOR")) {
-    cli_warn(c(
-      "RWYB uses an approximation for unequal-probability sampling without replacement.",
-      "i" = "It does not reproduce the sampler's exact joint inclusion probabilities."
-    ), class = "samplyr_warning_rwyb_pps_approximation")
-  }
 
   # RWYB resamples every stage, so every unit with nothing below it is a
   # zero row.
   df <- export_rows(x, design, stages, every_level = TRUE, call = call)
+  # From its record's stage on, a zero row is a placeholder, no selection.
+  zero_from <- attr(df, "zero_from")
   spec <- export_stage_spec(df, design, stages)
   # Refuse a stage the nested grammar cannot carry before creating factors.
   midstage <- Filter(function(e) e$midstage_element, spec$stage)
@@ -74,11 +77,16 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
   prior_prob <- rep(1, nrow(df))
   parent <- rep(1L, nrow(df))
   digest <- get_frame_digest(x)
+  # A unit a later Poisson stage emptied is a zero row only if execution
+  # recorded the empty pools.
   if (length(stages) > 1L && any(methods[-1L] == "Poisson") &&
-      (is_null(digest) || !identical(digest$status, "complete"))) {
+      is_null(attr(x, "metadata")$empty_pools)) {
     abort_samplyr(c(
-      "RWYB needs a complete frame digest for a multistage design with later Poisson sampling.",
-      "i" = "Execute with {.code frame_digest = \"summary\"} or {.code \"full\"} so missing parent selections can be detected."
+      "This sample does not record the pools its later Poisson stages left
+       empty.",
+      "i" = "A selected unit whose pools all drew nothing has no row, and
+             without that record it cannot be told from a unit never
+             selected. Export the sample {.fn execute} returned."
     ), class = "samplyr_error_rwyb_missing_parents")
   }
   for (pos in seq_along(stages)) {
@@ -89,10 +97,12 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
     pool <- group_ids(data.frame(parent = parent, stratum = strata), c("parent", "stratum"))
     unit <- group_ids(data.frame(pool = pool, unit = entry$unit$id), c("pool", "unit"))
 
-    # A parent with no survivors still belongs to the first stage.
+    # The digest, when kept, only checks that every selected unit is here.
     stage_digest <- Filter(function(s) identical(s$stage_id, i), digest$stages)
+    selected <- is.na(zero_from) | zero_from > i
     if (pos < length(stages) && length(stage_digest) &&
-        length(unique(unit)) != sum(stage_digest[[1]]$pools$n_realized)) {
+        length(unique(unit[selected])) !=
+          sum(stage_digest[[1]]$pools$n_realized)) {
       abort_samplyr(c(
         "Some selected stage-{i} units have no rows in the final sample.",
         "i" = "RWYB export currently requires every selected parent to be represented. The missing parents cannot be discarded from variance estimation."
@@ -101,12 +111,14 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
     prob <- entry$prob
     method <- methods[pos]
     wr <- method %in% c("SRSWR", "PPSWR")
-    if (wr) prob[] <- 0
+    # Declared certainties keep probability one, the draws none. An expected
+    # hit count of one is an ordinary draw.
+    if (wr) {
+      certain <- df[[paste0(".certainty_", i)]]
+      prob[] <- if (is_null(certain)) 0 else as.numeric(certain %in% TRUE)
+    }
     if (draws_one_per_zone(design$stages[[i]]$draw_spec)) {
-      # One draw per zone has the with-replacement variance within each
-      # variance group. Certainty PSUs keep probability one.
-      wr <- TRUE
-      method <- "PPSWR"
+      # Certainty PSUs keep probability one.
       prob[!is_certainty_probability(prob)] <- 0
     }
     if (length(prob) != nrow(df) || any(!is.finite(prob)) ||
@@ -157,8 +169,18 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
     prior_prob <- prior_prob * prob
     parent <- unit
   }
-  # Rank on distinct rows: QR on the wide matrix is expensive.
-  distinct <- factors[!duplicated(factors), , drop = FALSE]
+  # Warn once every stage is known to export.
+  if (any(methods == "PPSWOR")) {
+    cli_warn(c(
+      "RWYB uses an approximation for unequal-probability sampling without replacement.",
+      "i" = "It does not reproduce the sampler's exact joint inclusion probabilities."
+    ), class = "samplyr_warning_rwyb_pps_approximation")
+  }
+  # Rank on distinct rows: QR on the wide matrix is expensive. A zero row
+  # has weight 0 and carries nothing into an estimate, so it adds no degree
+  # of freedom.
+  informative <- factors[df$.weight > 0, , drop = FALSE]
+  distinct <- informative[!duplicated(informative), , drop = FALSE]
   rank_matrix <- if (nrow(distinct) < ncol(distinct)) t(distinct) else distinct
   degrees <- qr(rank_matrix, tol = 1e-5)$rank - 1L
   result <- survey::svrepdesign(
@@ -191,9 +213,22 @@ rwyb_stage_method <- function(draw, call = caller_env()) {
     (!is_null(declared) && declared != "unsupported")
   )
   if (!supported) {
+    custom <- !is_null(draw$method_type)
     abort_samplyr(c(
-      "RWYB export does not support method {.val {draw$method}} and its constraints.",
-      "i" = "A random sample size alone does not establish independent Poisson sampling. Custom methods must declare a supported variance family."
+      if (is_null(draw$bounds)) {
+        "RWYB export does not support method {.val {draw$method}}."
+      } else {
+        "RWYB export does not support method {.val {draw$method}} with
+         bounds."
+      },
+      "i" = if (custom) {
+        "A random sample size alone does not establish independent Poisson
+         sampling. Custom methods must declare a supported variance family."
+      } else {
+        "It resamples srswor, srswr, systematic, bernoulli, pps_poisson,
+         pps_brewer, pps_cps, pps_sampford, pps_systematic and
+         pps_multinomial stages, without bounds."
+      }
     ), class = "samplyr_error_rwyb_method")
   }
   switch(kind, equal_wor = "SRSWOR", pps_wor = "PPSWOR", rs_poisson = "Poisson",

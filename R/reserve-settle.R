@@ -149,7 +149,63 @@ settle_reserve <- function(sample, response_status, frames, stages, seed,
 
   parsed <- reserve_outcome_category(sample[[column]])
   settle_reserve_codes(sample, design, k, parsed, column = column,
+                       column_type = reserve_status_type(sample[[column]]),
                        call = call)
+}
+
+#' The type of a response status column, as a replay rebuilds it
+#'
+#' A replay draws the list again from the frame, which holds no response
+#' status, so it rebuilds the column from the recorded categories in the
+#' type the settlement read: integer or double codes, the words or the
+#' digits of a character column, or the levels of a factor.
+#' @noRd
+reserve_status_type <- function(x) {
+  if (is.factor(x)) {
+    return(list(kind = "factor", levels = levels(x)))
+  }
+  if (is.integer(x)) {
+    return(list(kind = "integer"))
+  }
+  if (is.numeric(x)) {
+    return(list(kind = "double"))
+  }
+  seen <- tolower(trimws(x[!is.na(x)]))
+  list(kind = "character", words = any(seen %in% reserve_status_words()))
+}
+
+#' The four AAPOR final disposition categories, in code order
+#' @noRd
+reserve_status_words <- function() {
+  c("interview", "noninterview", "unknown", "ineligible")
+}
+
+#' A response status column rebuilt from categories, in its recorded type
+#'
+#' Each unit takes its category: a code keeps only its leading digit, and
+#' a factor the first of its levels read as that category, or the
+#' category's word, added as a level, when none is.
+#' @noRd
+reserve_status_column <- function(category, type) {
+  words <- reserve_status_words()
+  switch(
+    type$kind,
+    integer = as.integer(category),
+    double = as.double(category),
+    character = if (isTRUE(type$words)) {
+      words[category]
+    } else {
+      as.character(category)
+    },
+    factor = {
+      levels <- as.character(unlist(type$levels))
+      value <- levels[match(category,
+                            reserve_outcome_category(levels)$category)]
+      absent <- !is.na(category) & is.na(value)
+      value[absent] <- words[category[absent]]
+      factor(value, levels = union(levels, value[absent]))
+    }
+  )
 }
 
 #' Read outcome codes as AAPOR final disposition categories
@@ -331,7 +387,7 @@ reserve_pool_index <- function(data, design, k) {
 #' reads the categories back from the receipt.
 #' @noRd
 settle_reserve_codes <- function(sample, design, k, parsed, column = NULL,
-                                 call = caller_env()) {
+                                 column_type = NULL, call = caller_env()) {
   sample <- normalize_extracted_replicate(sample)
   data <- as.data.frame(sample)
   category <- parsed$category
@@ -395,6 +451,10 @@ settle_reserve_codes <- function(sample, design, k, parsed, column = NULL,
   kept_rank <- vapply(results, function(r) r$kept, integer(1))
   unit_kept <- unit_rank == 0L | unit_rank <= kept_rank[unit_pool]
   unit_respondent <- unit_kept & !is.na(unit_cat) & unit_cat == 1L
+  # The attempted units kept by the walk that the sample loses: ineligible,
+  # eligible nonrespondents and unknowns. The export's added rows stand for
+  # them, and a frame stack reads their membership.
+  held <- (unit_kept & !is.na(unit_cat) & unit_cat %in% 2:4)[index$unit]
   factor <- vapply(results, function(r) {
     r$eligible / r$n_respondents
   }, numeric(1))
@@ -456,7 +516,15 @@ settle_reserve_codes <- function(sample, design, k, parsed, column = NULL,
     codes = as.integer(codes),
     keys = keys,
     pools = pools,
-    column = column
+    column = column,
+    column_type = column_type,
+    units = list(
+      # The columns alone, without the sample's design and metadata.
+      rows = tibble::as_tibble(lapply(data, vctrs::vec_slice, held)),
+      pool = index$pool[held],
+      unit = index$unit[held],
+      code = category[held]
+    )
   )
   new_tbl_sample(
     out,
@@ -534,5 +602,21 @@ replay_reserve_settlement <- function(sample, record, call = caller_env()) {
   category[order(ids)] <- codes
   category[category == 0L] <- NA_integer_
   parsed <- list(category = category, bad = rep(FALSE, nrow(sample)))
-  settle_reserve_codes(sample, get_design(sample), k, parsed, call = call)
+  # The response status column is not in the frame, so it is rebuilt from
+  # the categories, and the export codes its added rows as it did.
+  column <- unlist(record$column)
+  type <- record$column_type
+  if (!is_null(column) && !is_null(type)) {
+    kept <- column %in% names(sample) && identical(
+      reserve_outcome_category(sample[[column]])$category, category
+    )
+    if (!kept) {
+      sample[[column]] <- reserve_status_column(category, type)
+    }
+  } else {
+    column <- NULL
+    type <- NULL
+  }
+  settle_reserve_codes(sample, get_design(sample), k, parsed,
+                       column = column, column_type = type, call = call)
 }

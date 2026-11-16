@@ -55,6 +55,10 @@ replicates, with no built-in RWYB mapping.}
 \item{\code{pps_chromy}}{Exact expected hit counts, and joint hits by Monte
 Carlo. The variance uses a with-replacement or generic replicate
 approximation to minimum replacement, with no built-in RWYB mapping.}
+\item{\code{pps_systematic_mr}}{Exact expected hit counts, and exact joint
+hits, in which zero pairs may occur. The variance uses a
+with-replacement approximation under \code{systematic_variance}, or generic
+replicates, with no built-in RWYB mapping.}
 \item{Unconstrained \code{cube}}{Exact inclusion probabilities under the
 method contract, and pair probabilities from the high-entropy
 approximation. The variance uses approximate linearization or generic
@@ -86,16 +90,6 @@ derives joint inclusion probabilities from the marginal ones (Berger
 algorithm, so a Sampford sample gets the same default. It is not an exact
 substitute for the joint probabilities, and its accuracy depends on the
 design and population. \code{\link[=as_svydesign]{as_svydesign()}} documents each value of \code{pps}.
-
-In a simulation of a two-stage design with 14 strata, systematic PPS
-clusters sorted by geography and 25 households per cluster, drawn 1,000
-times from a synthetic population, the default export's standard error of
-a proportion averaged 0.99 of the true standard error in a district whose
-stratum took 34 of its 93 clusters, 1.05 in another district and 1.03
-nationally. The ultimate-cluster variance, which treats the clusters as
-drawn with replacement and which \code{\link[=as_svydesign]{as_svydesign()}} shows how to compute,
-gave 1.10, 1.12 and 1.04. Each ratio carries a Monte Carlo error of about
-2\%.
 }
 
 \subsection{Linearization with joint probabilities}{
@@ -121,29 +115,20 @@ positive, so supplying one for systematic PPS warns.
 
 \subsection{Replicate weights}{
 
-The generic types (\code{"JK1"}, \code{"JKn"}, \code{"BRR"}, \code{"Fay"}, \code{"bootstrap"},
-\code{"subbootstrap"}) resample first-stage units within first-stage strata,
-treating a PPS first stage drawn without replacement as drawn with
-replacement. That overstates the variance when its sampling fractions are
-large (\code{samplyr_warning_replicate_wr_first_stage}). \code{"BRR"}, \code{"Fay"} and
-\code{"subbootstrap"} carry no finite population correction, so they read an
-equal-probability first stage drawn without replacement the same way,
-with the same warning. Under an
-equal-probability first stage, \code{"JK1"}, \code{"JKn"} and \code{"bootstrap"} apply
-its finite population correction to the variance of the later stages too,
-which understates it when the first-stage fraction is large
-(\code{samplyr_warning_replicate_first_stage_fpc}). \code{"mrbbootstrap"} and
-\code{"rwyb"} read every stage. RWYB supports SRS, draws with replacement,
-Poisson selection, and Brewer, CPS, Sampford and systematic PPS, the last
-four with approximate joint probabilities and a warning. It is used only for
-\code{type = "rwyb"}, never by \code{"auto"}, and needs the svrep package.
-Replicates do not recreate ordering, balancing, spatial spreading or hard
-constraints, and \code{\link[=as_svrepdesign]{as_svrepdesign()}} states the adapter's limits.
+The generic types resample first-stage units within first-stage strata
+and read the later stages through them. \code{"mrbbootstrap"} reads the
+sampling fraction of every stage, and RWYB the probabilities of every
+stage for SRS, draws with replacement, Poisson selection and PPS without
+replacement, the last with approximate joint probabilities.
+\code{\link[=as_svrepdesign]{as_svrepdesign()}} documents each type, the designs it suits, and the
+first-stage readings that make it approximate. Replicates do not recreate
+ordering, balancing, spatial spreading or hard constraints.
 
 \code{"random_groups"} is the exception. Its replicates are independent samples
 of the whole design from \code{execute(reps = R)}, so their spread is a
 variance for any selection method, ordering, balancing and systematic
-starts included, at a cost of R samples and R - 1 degrees of freedom.
+starts included, at a cost of R samples and R - 1 degrees of freedom
+(Wolter 2007, ch. 2).
 }
 
 \subsection{Systematic stages}{
@@ -151,27 +136,34 @@ starts included, at a cost of R samples and R - 1 degrees of freedom.
 \code{systematic} stages are linearized with the SRSWOR estimator and
 \code{pps_systematic} stages with Brewer's approximation. A systematic design
 with interval \eqn{k}{k} has only \eqn{k}{k} distinct samples per stratum,
-so its true variance for one frame need not be near either value. The
-table below comes from repeated draws of 90 per stratum from 1800, with
-an interval of 20. The ratio is the reported variance over the true
-variance, and the coverage is that of a 95\% interval.\tabular{lll}{
-   Frame order \tab Ratio \tab Coverage \cr
-   Random \tab 0.73 \tab 90.2\% \cr
-   Ordered by a trend \tab 1.76 \tab 100.0\% \cr
-   Period equal to the interval \tab 0.0006 \tab 9.8\% \cr
-}
-
-
-\code{pps_systematic} behaves the same way. Brewer's approximation gave 0.003
-of the true variance with 9\% coverage on a frame whose period matched the
-interval, and 1.46 on a frame sorted by size. A favorable order is thus
-conservative, and a frame resonating with the interval gives intervals
-that almost never cover. No replicate type redraws the random start
-against the ordered frame, so replicates are also too large when the
-order lowers the true variance and too small when it raises it.
+and one sample cannot estimate its variance without assumptions about
+the frame order (Wolter 2007, ch. 8). The approximations are close when
+the order is unrelated to the outcome. They overstate the variance when
+the order follows a trend in the outcome, which acts as implicit
+stratification, and they can understate it severely when the frame has
+a periodicity that matches the interval. No replicate type redraws the
+random start against the ordered frame, so replicates share these
+errors.
 Both export functions warn once about these stages, and
 \code{systematic_variance = "approximate"} records that the approximation was
-accepted. Census stages are exempt.
+accepted. Census stages are exempt, and so are stages that drew one unit
+in each pool, such as one unit per stratum. One random start then takes
+each unit with its chance, whatever the order.
+
+\code{pps_systematic_mr} stages are exported with replacement, with no FPC,
+and warn the same way. The direction of the error again depends on the
+frame order. Take four units of equal size in the order 1, 2, 3, 4 with
+\eqn{y = (0, 1, 0, 1)}{y = (0, 1, 0, 1)} and a take of 2. The draw selects
+units 1 and 3 or units 2 and 4, so the estimated total is 0 or 4 and the
+true variance is 4. The exported variance is 0 for both samples, since
+the two hits of a sample carry the same value. The error can also go
+the other way. Units of sizes 2, 1 and 1 with a take of 4 always get 2, 1
+and 1 hits, so the estimated total has no variance, yet for
+\eqn{y = (1, 3, 7)}{y = (1, 3, 7)} the exported variance is 37.7. A frame
+sorted by a variable related to the outcome also pushes the variance up.
+A \code{pps_systematic_mr} stage is never exempt as a census. A take of
+\eqn{N}{N} or more, or expected hits of one or more, count draws, not
+units taken with certainty.
 }
 
 \subsection{Certainty units}{
@@ -183,8 +175,9 @@ balanced designs included. As a census, the stratum contributes no
 variance and no degrees of freedom (Cochran 1977, sec. 5.8; Sarndal
 et al. 1992, sec. 3.7). Random-size designs keep the Poisson treatment.
 The generic replicate types make a certainty PSU its own stratum and
-resample its stage-two units, and RWYB gives a certainty unit the factor
-one.
+resample its stage-two units, with the stage-2 correction where it is
+exact (\code{\link[=as_svrepdesign]{as_svrepdesign()}} gives the rule), and RWYB gives a certainty unit
+the factor one.
 
 Splitting certainty units out can leave a stratum with one probability
 unit, whose variance is not estimable. \code{\link[=as_svydesign]{as_svydesign()}} then warns
@@ -226,8 +219,7 @@ A group of three zones rules out balanced half-samples.
 A unit accepted by \code{on_empty} with nothing selected under it keeps its
 zero in every total, but it has no row, and survey learns its units from
 rows. A primary unit left with no row at all would take its zero total
-out of the variance between primary units, which then comes out too
-small, often zero. The export adds zero rows for it instead, one per
+out of the variance between primary units, which then understates it. The export adds zero rows for it instead, one per
 empty unit it holds and per draw. A zero row carries its unit's values
 for the stages above, its frame variables included, and below it a
 single unit taken whole, so it adds no variance of its own. Its weight is
@@ -241,18 +233,14 @@ survey::svymean(~income, svy, na.rm = TRUE)
 
 Every route of \code{\link[=as_svydesign]{as_svydesign()}} and \code{\link[=as_svrepdesign]{as_svrepdesign()}} carries the zero
 rows, RWYB, shared weights, two phases and occasions included. A two-phase
-export holds a phase-1 zero row as a unit phase 2 did not reach, and a
-occasion holds the zero rows of the panels it activates. Without them
-\code{survey::twophase()} also got the total wrong, since it reads phase 1's
-probabilities from the number of units it holds. In a simulation of two strata of five schools, two of them
-with no class, the estimated variance under simple random sampling went
-from 0.47 of the true variance to 0.97. Under Brewer's method it went
-from 0.56 to 0.77, as it does with the empty schools entered as ordinary
-rows of total zero. Brewer's approximation errs when units with a measure
-of size have a total of zero. Under \code{on_empty = "warn"} the export warns
-(\code{samplyr_warning_export_empty_parent}) and counts the rows it added.
+export holds a phase-1 zero row as a unit phase 2 did not reach, and an
+occasion holds the zero rows of the panels it activates. Brewer's
+approximation still errs when units with a measure of size have a total
+of zero, as it does for any such unit. Under \code{on_empty = "warn"} the
+export warns (\code{samplyr_warning_export_empty_parent}) and counts the rows
+it added.
 
-A design that holds zero rows has two limits from survey.
+A design that holds zero rows has three limits from survey.
 \code{survey::degf()} leaves out rows of weight 0, so it counts one primary
 unit fewer per empty one, which widens a confidence interval. And
 \code{survey::calibrate()} cannot take a row of weight 0 in a linearized
@@ -262,16 +250,29 @@ replicate design from \code{\link[=as_svrepdesign]{as_svrepdesign()}}, work once
 variables have a value on the zero rows. Any value serves, since the
 weight is 0.
 
+The third limit is in \code{survey::twophase()}, which reads every phase-1
+row as a unit phase 2 might have drawn, though phase 2 could never draw
+a zero row. A two-phase export is refused where that stops survey
+(\code{samplyr_error_twophase_empty_unit}). That happens when phase 2 lies in
+one primary unit and every other one is empty, when phase 2 takes every
+unit it can draw beside joint probabilities, and when the zero row has a
+phase-2 stratum value that no phase-2 row shares. The sample is valid in
+each case. Totals and means from \code{.weight} are right.
+
 An empty unit below the first stage, inside a primary unit that still
 has rows, keeps no row, since a household with no eligible member is the
 common case and its sample has to calibrate. The total of its primary
-unit is right. Survey computes that unit's within-parent term without
-it, which matters only at large first-stage sampling fractions. Under
+unit is right, and the variance within that primary unit leaves the
+empty unit out, which matters only at large first-stage sampling
+fractions. Under
 \code{on_empty = "warn"}, \code{\link[=as_svydesign]{as_svydesign()}} says so
 (\code{samplyr_warning_export_empty_parent}). RWYB resamples every stage, so
-it gives such a unit a zero row too. RWYB refuses a unit in which a
-Poisson stage selected nothing (\code{samplyr_error_rwyb_missing_parents}),
-since no record names it.
+it gives such a unit a zero row too, and also a unit in which a later
+Poisson stage selected nothing, which execution records. Its estimated
+total is zero, and so is the usual estimate of the variance within it,
+which sums over the units drawn. A sample that lacks the record, such as
+one rebuilt from another, is refused
+(\code{samplyr_error_rwyb_missing_parents}).
 }
 
 \subsection{Random-size Poisson methods}{
@@ -286,28 +287,44 @@ Linearization and the generic replicate types refuse it, since they can
 lose the variance of the random size.
 }
 
-\subsection{Chromy's sequential method}{
+\subsection{Minimum replacement}{
 
-\code{pps_chromy} gives each unit \eqn{\lfloor E(n_i) \rfloor}{floor(E(n_i))} or
+\code{pps_chromy} and \code{pps_systematic_mr} give each unit
+\eqn{\lfloor E(n_i) \rfloor}{floor(E(n_i))} or
 \eqn{\lceil E(n_i) \rceil}{ceiling(E(n_i))} hits, which is neither
-with nor without replacement. Following Chromy (2009), it is exported like a
-with-replacement stage, with no FPC and no \code{pps} argument. That
-Hansen-Hurwitz treatment can be strongly conservative when the frame order
-acts as implicit stratification, but a generalized estimator from Monte
-Carlo expected hits was often negative, so it is not offered.
-\code{survey::ppsmat()} does not apply, because a PMR matrix's diagonal holds
-\eqn{E(n_i^2)}{E(n_i^2)} rather than \eqn{E(n_i)}{E(n_i)}. Chauvet (2019)
-gives exact results for the related without-replacement design.
+with nor without replacement. Following Chromy (2009), both are exported
+like a with-replacement stage, with no FPC and no \code{pps} argument, and
+every replicate type reads them that way. RWYB refuses them. For
+\code{pps_chromy}, that Hansen-Hurwitz treatment (Hansen and Hurwitz 1943) can
+be strongly conservative when the frame order acts as implicit
+stratification. In a simulated population, Chromy (2010) found it
+consistently above the true variance, and with-replacement forms with an
+approximate finite population correction moderately below it. A
+generalized estimator from Monte Carlo expected joint hits is not
+offered, since its quadratic form is not guaranteed to be positive. For
+\code{pps_systematic_mr} the joint expected hits are exact. A pair
+can have zero joint expected hits, and then no design-unbiased variance
+estimator exists from one sample. The export offers no estimator built
+on the joint expected hits even when every pair is positive, so the same
+treatment applies, with the frame-order caveat of the systematic stages
+above. The weighted estimator of a total stays design-unbiased under both
+methods. \code{survey::ppsmat()} does not apply, because a PMR matrix's
+diagonal holds \eqn{E(n_i^2)}{E(n_i^2)} rather than
+\eqn{E(n_i)}{E(n_i)}. Chauvet (2021) shows that, when no unit expects a
+hit or more, Chromy's method draws the same design as pivotal sampling,
+which gives exact results for that without-replacement design. Where
+independent samples are feasible, \code{execute(reps = R)} with
+\code{type = "random_groups"} repeats the selection itself, random start
+included.
 }
 
 \subsection{Balanced, spatial and custom methods}{
 
 Unconstrained \code{cube} is linearized with the high-entropy approximation,
-which ignores the balancing. The more closely an outcome follows the
-balancing variables, the more the reported variance overstates. In a
-simulation the standard error was about five times the true spread for an
-outcome correlated 0.98 with the balancing variable, and close to right
-for a weakly related one.
+which ignores the balancing. Balancing removes the variance an outcome
+shares with the balancing variables, so the reported variance overstates,
+the more so as the outcome follows them, and is close for an outcome
+unrelated to them.
 Bounded \code{cube}, \code{lpm2} and \code{scps} change pairwise selection beyond that
 approximation, so linearization and \code{\link[=joint_expectation]{joint_expectation()}} refuse them, and
 \code{type = "subbootstrap"} or \code{"mrbbootstrap"} gives a generic PPS bootstrap
@@ -324,63 +341,51 @@ Its matrix for the joint-probability route is the one its \code{joint_fn}
 returns, and a method registered without \code{joint_fn} has none.
 }
 
-\subsection{Two-phase samples}{
+\subsection{Two-phase samples and occasions}{
 
-A materialized occasion is exported by ultimate clusters, whatever method drew
-its master, and replicated the same way. In a simulation with 8 EAs active
-per stratum, its standard error was 0.89 of the true one with EAs drawn by
-simple random sampling (0.88 for the two-phase export) and 1.06 with EAs
-drawn by size. A window of several occasions is exported the same way, its
-strata crossed with the quota block and the occasions a unit is active at
-and calibrated for ratio residuals, at 0.98 to 1.04 of the true standard
-error in simulations on clustered masters. \code{\link[=as_svydesign]{as_svydesign()}} gives the
-details.
+A materialized occasion is exported by ultimate clusters, whatever method
+drew its master, and replicated the same way. \code{\link[=as_svydesign]{as_svydesign()}} gives the
+details, for windows of several occasions too.
 
 \code{\link[survey:twophase]{survey::twophase()}} takes no \code{pps} specification, so a two-phase sample,
-or an occasion exported with \code{method}, whose first phase was drawn with unequal
-probabilities without replacement, or by \code{cube}, \code{pps_poisson} or a
-spatial method, is refused, although its weights are exact. For a
+or an occasion exported with \code{method}, whose first phase was drawn with
+unequal probabilities without replacement, or by \code{cube}, \code{pps_poisson} or
+a spatial method, is refused, although its weights are exact. For a
 variance, an ultimate-cluster design treating phase-1 units as drawn with
-replacement is conservative, at 1.3, 1.8 and 2.1 times the true variance
-for phase-1 sampling fractions of 1/6, 1/3 and 1/2 with phase 2 drawn
-inside each phase-1 unit, and 2.4 to 3.6 times with phase 2 drawn across
-the phase-1 sample.
-On other populations the across case reached 4 to 15 times, higher when
-little of the outcome's variation lies between phase-1 units.
-\code{\link[=as_svydesign]{as_svydesign()}} gives the call. No two-phase sample has a replicate
-export, except the subsample within pools below.
+replacement leaves out phase 1's correction and overstates the variance,
+the more so as phase 1's sampling fraction grows, and more again when
+phase 2 was drawn across the phase-1 units, where little of the outcome's
+variation lies between them. \code{\link[=as_svydesign]{as_svydesign()}} gives the call. No
+two-phase sample has a replicate export, except the subsample within
+pools below.
 
 Phase 2 is drawn from the phase-1 sample, so its joint inclusion
 probabilities are computed there. A single-stage phase 2 drawn with
 \code{pps_sampford}, \code{pps_cps}, \code{pps_brewer}, \code{pps_sps} or \code{pps_pareto} exports
 with them under \code{method = "full"}, exact for Sampford and CPS and the
-high-entropy approximation for the other three. survey reads such a
-matrix in the Horvitz-Thompson form, which is unbiased but unstable when
-the outcome follows the size measure. In a simulation it was negative in
-3.6\% of samples, and 95\% intervals covered 86\%. The export uses the
-Sen-Yates-Grundy form for the phase-2 term instead and leaves the phase-1
-term as survey computes it. In the same simulation that form was never
-negative and covered 93\%. Systematic PPS stays refused, since its zero pair
-probabilities bias the variance estimator under any matrix. So are a
-multistage phase 2 with an unequal-probability stage and
-\code{method = "approx"} or \code{"simple"}, which drop the matrix
-(\code{samplyr_error_twophase_phase2_pps}).
+high-entropy approximation for the other three. The Horvitz-Thompson form
+of that variance is unbiased but can be negative, and is unstable when
+the outcome follows the size measure, so the export uses the
+Sen-Yates-Grundy form for the phase-2 term, which is non-negative when
+\eqn{\pi_i \pi_j \ge \pi_{ij}}{pi_i pi_j >= pi_ij} for every pair.
+Systematic PPS stays refused, since its pair probabilities can
+be zero, which biases the variance estimator under any matrix, and the
+sampled matrix cannot show whether they are. So are a multistage phase 2
+with an unequal-probability stage and \code{method = "approx"} or \code{"simple"},
+which drop the matrix (\code{samplyr_error_twophase_phase2_pps}).
 
 A clustered phase 1 with an equal-probability first stage does export,
 but its variance is stable only when phase 2 is drawn inside each phase-1
-unit. Drawn across them, survey's variance was negative in 26\% to 51\% of
-samples and 1.4 to 5 times the true variance otherwise, and the export
-warns (\code{samplyr_warning_twophase_across_units}).
+unit. Drawn across them, the two-phase variance is unbiased over repeated
+samples but unstable in one, and can be negative, and the export warns
+(\code{samplyr_warning_twophase_across_units}).
 
 A second phase drawn by equal probability within each final-stage pool of
 phase 1, whose final stage draws elements by equal probability, is
 exported as phase 1's multistage design with the smaller final take
-(\code{\link[=as_svydesign]{as_svydesign()}} states the shape). In a simulation with 8 EAs drawn by
-\code{pps_brewer} in each of 2 strata, 20 households in each and half of them
-kept, the estimated variance of a total was 0.99 of the true variance,
-against 1.22 for the ultimate-cluster call. With \code{srswor} EAs it was 0.98,
-as \code{\link[survey:twophase]{survey::twophase()}} gave on the same design (0.98), against 1.21 for
-the ultimate cluster.
+(\code{\link[=as_svydesign]{as_svydesign()}} states the shape). That is its exact design, so the
+linearized variance keeps phase 1's corrections, where the
+ultimate-cluster call would leave them out.
 }
 }
 \references{
@@ -394,13 +399,23 @@ Basu's Elephants}. Arnold, ch. 9.
 Brewer, K.R.W. and Donadio, M.E. (2003). The high entropy variance of the
 Horvitz-Thompson estimator. \emph{Survey Methodology}, 29(2), 189-196.
 
-Chauvet, G. (2019). Properties of Chromy's sampling procedure.
-\emph{arXiv:1912.10896}.
+Chauvet, G. (2021). A note on Chromy's sampling procedure. \emph{Journal of
+Survey Statistics and Methodology}, 9(5), 1050-1061.
+\doi{10.1093/jssam/smaa025}
 
 Chromy, J.R. (2009). Some generalizations of the Horvitz-Thompson
-estimator. \emph{JSM Proceedings, Survey Research Methods Section}.
+estimator. \emph{Proceedings of the Survey Research Methods Section, American
+Statistical Association}, 217-227.
+
+Chromy, J.R. (2010). Horvitz-Thompson variance weights: exact vs.
+approximate. \emph{Proceedings of the Survey Research Methods Section,
+American Statistical Association}, 4808-4816.
 
 Cochran, W.G. (1977). \emph{Sampling Techniques}. 3rd edition. Wiley.
+
+Hansen, M.H. and Hurwitz, W.N. (1943). On the theory of sampling from
+finite populations. \emph{Annals of Mathematical Statistics}, 14(4), 333-362.
+\doi{10.1214/aoms/1177731356}
 
 \enc{Hájek}{Hajek}, J. (1964). Asymptotic theory of rejective sampling with
 varying probabilities from a finite population. \emph{Annals of Mathematical

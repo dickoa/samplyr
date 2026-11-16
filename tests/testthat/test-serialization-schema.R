@@ -501,7 +501,8 @@ test_that("vocabulary 2 exposes first-order meaning without native metadata", {
     expect_identical(descriptor$probability_quality,
                      if (method %in% c("pps_sps", "pps_pareto")) "approximate" else "exact")
     expect_identical(descriptor$probability_quantity,
-                     if (method %in% c("srswr", "pps_multinomial", "pps_chromy"))
+                     if (method %in% c("srswr", "pps_multinomial", "pps_chromy",
+                                       "pps_systematic_mr"))
                        "expected_hits" else "inclusion_probability")
     p$tools <- NULL
     restored <- read_design(schema_json(p))

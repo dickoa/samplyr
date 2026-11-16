@@ -1323,13 +1323,11 @@ reconcile_certainty_register <- function(
 #' estimation needs from the sample's design columns, applying two
 #' conventions that are easy to get wrong by hand:
 #'
-#' - **Within-PSU weights.** The components are weighted by the
-#'   product of the per-stage weights below stage 1 (`.weight_2`, or
-#'   `.weight_2 * .weight_3`), never the compound `.weight`, whose
+#' - The components are weighted by the product of the per-stage weights
+#'   below stage 1 (`.weight_2`, or `.weight_2 * .weight_3`), never the compound `.weight`, whose
 #'   stage-1 factor would overstate every cluster size.
-#' - **Stage-1 selection shares.** For an unequal-probability first
-#'   stage, per-PSU shares are derived from the stage-1 weights and
-#'   normalized to sum to 1 over the sampled PSUs (per stratum when
+#' - For an unequal-probability first stage, per-PSU shares are derived
+#'   from the stage-1 weights and normalized to sum to 1 over the sampled PSUs (per stratum when
 #'   the first stage is stratified). For an equal-probability first
 #'   stage the SRS path applies. See the Details of
 #'   [svyplan::varcomp()].

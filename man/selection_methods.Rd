@@ -4,12 +4,12 @@
 \alias{selection_methods}
 \title{Selection methods}
 \description{
-The sixteen selection methods samplyr ships, what each one requires, and
+The seventeen selection methods samplyr ships, what each one requires, and
 how registered methods extend the set. \code{\link[=draw]{draw()}} chooses among them with
 its \code{method} argument.
 }
 \details{
-Sixteen methods are built in, in three families: equal probability, PPS
+Seventeen methods are built in, in three families: equal probability, PPS
 (probability proportional to size, all requiring \code{mos}), and balanced.\tabular{lllll}{
    Method \tab Replacement \tab Size \tab \code{mos} \tab Also takes \cr
    \code{srswor} \tab Without \tab Fixed \tab - \tab - \cr
@@ -25,6 +25,7 @@ Sixteen methods are built in, in three families: equal probability, PPS
    \code{pps_pareto} \tab Without \tab Fixed \tab Required \tab \code{prn} \cr
    \code{pps_multinomial} \tab With \tab Fixed \tab Required \tab - \cr
    \code{pps_chromy} \tab Minimum \tab Fixed \tab Required \tab - \cr
+   \code{pps_systematic_mr} \tab Minimum \tab Fixed \tab Required \tab - \cr
    \code{cube} \tab Without \tab Fixed \tab Optional \tab \code{aux} \cr
    \code{lpm2} \tab Without \tab Fixed \tab Optional \tab \code{spread} \cr
    \code{scps} \tab Without \tab Fixed \tab Optional \tab \code{spread}, \code{prn} \cr
@@ -59,14 +60,21 @@ targets only approximately.
 estimator.
 \item \code{pps_chromy} is sequential and order-sensitive, the method of SAS
 \code{PPS_SEQ}.
+\item \code{pps_systematic_mr} is systematic PPS without the cap at 1, the method
+of SAS \code{PPS_SYS}. \code{pps_systematic} caps each chance at 1 and takes a
+large unit once, whereas \code{pps_systematic_mr} hits it once per sampling
+interval its size spans.
 \item \code{cube} is the cube method of Deville and \enc{Tillé}{Tille} (2004).
 \item \code{lpm2} and \code{scps} spread the sample in space.
 }
 
 \code{Minimum} in the Replacement column is probability minimum replacement.
-\code{pps_chromy} draws a unit either \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
+\code{pps_chromy} and \code{pps_systematic_mr} draw a unit either
+\eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
 times, where \eqn{E} is its expected number of hits, so a unit is never hit
-more often than its size warrants.
+more often than its size warrants. When every \eqn{E} is below 1,
+\code{pps_systematic_mr} draws the units \code{pps_systematic} draws from the same
+seed.
 }
 
 \subsection{Choosing a PPS method}{
@@ -79,15 +87,16 @@ order and give every pair of units a positive joint probability, so the
 variance can be estimated from the design. The joint probabilities are
 exact for CPS and Sampford and approximate for Brewer.
 
-\code{pps_systematic} and \code{pps_chromy} depend on the frame order. Sorted with
-\code{control}, they spread the sample over the sorted variables, which is why
-many household survey protocols use them. Systematic PPS gives some pairs
-of units joint probability zero, so no design-unbiased variance estimator
-exists for it, and a frame whose order resonates with the sampling
-interval can make its standard errors far too small. \code{\link[=as_svydesign]{as_svydesign()}}
-uses Brewer's approximation for a \code{pps_systematic} stage and warns, and
-a \code{pps_chromy} stage is treated as drawn with replacement
-(\link{variance_estimation}).
+\code{pps_systematic}, \code{pps_systematic_mr} and \code{pps_chromy} depend on the
+frame order. Sorted with \code{control}, they spread the sample over the
+sorted variables, which is why many household survey protocols use them.
+Both systematic methods can give some pairs of units a joint probability
+of zero, which rules out a design-unbiased variance estimator, and a
+frame whose order resonates with the sampling interval can make their
+standard errors far too small. \code{\link[=as_svydesign]{as_svydesign()}} uses Brewer's
+approximation for a \code{pps_systematic} stage, treats a \code{pps_systematic_mr}
+stage as drawn with replacement, and warns for both. A \code{pps_chromy}
+stage is treated as drawn with replacement too (\link{variance_estimation}).
 
 \code{pps_poisson}, \code{pps_sps} and \code{pps_pareto} take permanent random numbers,
 for samples coordinated across occasions or surveys.
@@ -99,8 +108,8 @@ A protocol that sorts the frame by geography wants the sample spread over
 the areas it sorts by. samplyr reaches that spread in four ways, and each
 pays for it differently.
 \itemize{
-\item \code{control} with \code{pps_systematic} or \code{pps_chromy} gives implicit
-stratification, with the variance limits given above.
+\item \code{control} with \code{pps_systematic}, \code{pps_systematic_mr} or \code{pps_chromy}
+gives implicit stratification, with the variance limits given above.
 \item Finer strata in \code{\link[=stratify_by]{stratify_by()}}, down to two units per stratum, with a
 general method. Every joint probability stays positive, at the cost of
 more strata and smaller takes in each.
@@ -128,11 +137,10 @@ SPS, Pareto and custom approximate targets require
 design-unbiased. Unknown probabilities are refused. Probability and
 variance declarations by a custom-method author are contracts, not proofs.
 
-The two order-sampling methods part ways in small pools. Drawing 3 of 12
-units with sizes from 1 to 20, over 20,000 draws, \code{pps_sps} realized
-inclusion probabilities up to 0.047 away from its targets, and a
-Horvitz-Thompson count built on the targets came out 6.6\% low. \code{pps_pareto}
-stayed within 0.009 of its targets, with a bias under 1\%. For coordinated
+The two order-sampling methods part ways in small pools. Their realized
+inclusion probabilities depart from the targets as the take shrinks,
+and those of \code{pps_pareto} stay closer to them than those of \code{pps_sps},
+so an estimator built on the targets is less biased. For coordinated
 samples from small pools, prefer \code{pps_pareto}.
 }
 
@@ -209,9 +217,19 @@ Ohlsson, E. (1998). Sequential Poisson sampling.
 \enc{Rosén}{Rosen}, B. (1997). Asymptotic theory for order sampling.
 \emph{Journal of Statistical Planning and Inference}, 62(2), 135-158.
 
+\code{pps_multinomial}, \code{srswr}:
+Hansen, M.H. and Hurwitz, W.N. (1943). On the theory of sampling from
+finite populations. \emph{Annals of Mathematical Statistics}, 14(4), 333-362.
+\doi{10.1214/aoms/1177731356}
+
 \code{pps_chromy}:
 Chromy, J.R. (1979). Sequential sample selection methods.
 \emph{Proceedings of the Survey Research Methods Section, ASA}, 401-406.
+
+\code{pps_systematic}, \code{pps_systematic_mr}:
+Madow, W.G. (1949). On the theory of systematic sampling, II.
+\emph{Annals of Mathematical Statistics}, 20(3), 333-354.
+\doi{10.1214/aoms/1177729988}
 
 \code{balanced}:
 Deville, J.-C. and \enc{Tillé}{Tille}, Y. (2004). Efficient balanced

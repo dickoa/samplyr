@@ -22,16 +22,22 @@
 #'   [survey::twophase()], and giving it there raises a warning.
 #' @param systematic_variance What to do about the variance approximation
 #'   used for systematic stages: simple random sampling for `systematic`,
-#'   Brewer's for `pps_systematic`. `"warn"` (default) applies it and warns
+#'   Brewer's for `pps_systematic`, and with replacement for
+#'   `pps_systematic_mr`. `"warn"` (default) applies it and warns
 #'   once per call, naming every affected stage and its approximation.
 #'   `"approximate"` applies it silently, for a caller who has acknowledged
 #'   it, and `"error"` refuses. Census stages are exempt, since a stage that
 #'   took everything within reach contributes no variance, and so is a
 #'   `pps_systematic` first stage exported with a caller-supplied `pps`
-#'   object. The choice, the affected stages and each stage's approximation
-#'   are recorded in the `"samplyr_systematic_variance"` attribute of the
-#'   result. [as_svrepdesign()] takes the same argument for its own
-#'   approximation of these stages.
+#'   object. A stage that drew one unit in each pool is exempt too, since a
+#'   single random start takes each unit with its chance whatever the frame
+#'   order. A `pps_systematic_mr` stage is never exempt as a census, since a
+#'   take of \eqn{N}{N} or more counts draws, and the with-replacement export
+#'   gives it a variance even when every unit's hits are fixed. The choice, the
+#'   affected stages and each stage's approximation are recorded in the
+#'   `"samplyr_systematic_variance"` attribute of the result.
+#'   [as_svrepdesign()] takes the same argument for its own approximation of
+#'   these stages.
 #' @param method For two-phase samples, the variance method passed to
 #'   [survey::twophase()]. One of `"full"`, `"approx"`, or `"simple"`.
 #'   This argument is only accepted for two-phase samples. A materialized
@@ -61,17 +67,15 @@
 #'
 #' - **Cluster ids** (`ids`): the `cluster_by()` variable of a clustered
 #'   stage. A stage clustered by several variables, which execution treats
-#'   as one cluster id, gets one synthesized interaction column, because
-#'   [survey::svydesign()] reads each formula term as a separate stage. A
-#'   final unclustered stage gets a synthesized row-identity column so that
-#'   its sampling variance is represented. A WR or PMR stage uses its
-#'   `.draw_k` column, and survey treats each occurrence as independent for
-#'   Hansen-Hurwitz variance estimation. This is exact for WR and the
-#'   documented approximation for PMR.
+#'   as one cluster id, gets one synthesized interaction column. A final
+#'   unclustered stage gets a synthesized row-identity column so that its
+#'   sampling variance is represented. A WR or PMR stage uses its `.draw_k`
+#'   column, so each draw is an independent unit of the Hansen-Hurwitz
+#'   variance. This is exact for WR and an approximation for PMR, whose
+#'   draws are dependent.
 #' - **Strata** (`strata`): aligned with `ids`. A stage stratified by
 #'   several variables exports their cross-classification as one
-#'   synthesized column, since survey silently ignores extra variables
-#'   within a stage's term. Trailing unstratified stages are omitted, and
+#'   synthesized column. Trailing unstratified stages are omitted, and
 #'   unstratified stages before a stratified stage get a constant
 #'   placeholder column.
 #' - **Weights** (`weights`): the `.weight` column, the product of the
@@ -79,21 +83,13 @@
 #'   weights. A sample whose `.weight` was edited is refused, and weights
 #'   adjusted for nonresponse or calibrated are computed on the exported
 #'   design, with [survey::calibrate()] or [survey::postStratify()].
-#' - **FPC** (`fpc`): aligned with `ids`. [survey::svydesign()] requires
-#'   every FPC term on the same scale, so one of two encodings is used:
-#'   - **Count scale** (designs without unequal-probability WOR
-#'     stages): `.fpc_k`, the stratum population count \eqn{N_h}, for
-#'     equal-probability WOR stages, and a synthetic `Inf` column (no
-#'     correction, Hansen-Hurwitz variance) for WR/PMR stages.
-#'   - **Fraction scale** (multi-stage designs with a PPS WOR,
-#'     balanced, or custom WOR stage): every WOR stage passes its
-#'     per-unit stage sampling fraction
-#'     \eqn{1 / w_k = \pi_k}{1/w_k = pi_k}, and WR/PMR stages pass 0 (no
-#'     correction). A multi-stage design with a random-size Poisson stage is
-#'     refused by linearization export.
-#'
-#'   A single-stage PPS WOR design passes \eqn{\pi_i}{pi_i} directly,
-#'   which survey interprets as inclusion probabilities.
+#' - **FPC** (`fpc`): aligned with `ids`, on one scale for every stage.
+#'   Without an unequal-probability stage drawn without replacement, an
+#'   equal-probability WOR stage passes its stratum population count
+#'   \eqn{N_h}, and a WR or PMR stage passes no correction. With one, every
+#'   WOR stage passes its stage inclusion probability
+#'   \eqn{1 / w_k = \pi_k}{1/w_k = pi_k}, and WR and PMR stages pass 0. A
+#'   multi-stage design with a random-size Poisson stage is refused.
 #'
 #' For a two-stage stratified-cluster design with a final element stage,
 #' the exported call is equivalent to:
@@ -112,57 +108,86 @@
 #'
 #' Exactness depends on the variance treatment available for each method
 #' ([variance_estimation]). A design whose first stage is a census of PSUs
-#' correctly attributes all variance to the later stages. Executing stages
+#' attributes all variance to the later stages. Executing stages
 #' separately, as `stage1 <- execute(design, psu_frame, stages = 1)` then
 #' `sample <- execute(stage1, listing_frame)`, still gives one multi-stage
-#' design, exported with [survey::svydesign()].
+#' design.
 #'
 #' An unclustered element-sampling stage *followed by further stages* is
 #' not nested cluster sampling, because the later selections are
 #' conditional on the realized element sample, which is phase sampling.
 #' [execute()] refuses it (`samplyr_error_stage_parent_id`). Express it as a
-#' two-phase sample instead: execute the element stage under its first-phase design, then a
-#' new second-phase design with that sample as its frame.
+#' two-phase sample instead: execute the element stage under its first-phase
+#' design, then a new second-phase design with that sample as its frame.
+#'
+#' A variance compares primary units, so a design whose first stage holds a
+#' single unit not taken with certainty, outside any stratum, has no
+#' variance estimate and is refused (`samplyr_error_export_one_unit`). That
+#' covers one unit drawn from several and a single draw with replacement,
+#' whose weight of one is an expected hit rather than a certainty. A census
+#' of that unit, or a recorded certainty, is exported, with no first-stage
+#' variance.
 #'
 #' ## Two-phase samples
 #'
 #' A *new* phase-2 `sampling_design` executed with the phase-1 `tbl_sample`
 #' as its frame, as in `phase2 <- execute(design2, phase1)`, records a
 #' previous-phase link, and `as_svydesign()` calls [survey::twophase()].
+#' Each phase-2 row carries `.phase1_row`, the position of the phase-1 row it
+#' was drawn from, and the export joins the phases on it. Neither phase needs
+#' to declare an identifier, and a unit phase 1 drew more than once, such as
+#' a PSU hit twice by `pps_multinomial`, links to the hit phase 2 reached.
+#' Rows that a later phase-2 stage drew from a register of its own carry no
+#' position, so the phases are then joined on the identifiers either phase
+#' declares with [cluster_by()], which must identify the phase-1 rows phase 2
+#' reaches (`samplyr_error_twophase_bridge`) and be constant within each
+#' phase-2 unit (`samplyr_error_phase_key_ambiguous`).
 #'
-#' A materialized occasion exported with `method` is the other two-phase case.
-#' Its second phase is the panel activation: within a frozen block the
-#' master took a simple random sample without replacement of the realized
-#' quota, so the blocks are the phase-2 strata and their sizes the phase-2
-#' population counts. The master is retained as the first phase and supplies
-#' the rows the occasion did not keep. Columns added to the occasion for analysis
-#' are carried into the exported design. Occasion or phase-2 analysis columns
-#' replace same-named first-phase columns and are missing on unsampled
-#' rows. Columns absent from the occasion remain available from the master, so
-#' dropping an occasion column does not erase the master's measurements. Design
-#' identifiers, strata and internal sampling columns keep their recorded
-#' meanings. Keep earlier measurements under separate names if both are
-#' needed.
+#' Phase 2 may take whole phase-1 EAs, or EAs and then some of their
+#' households. Each phase-2 unit must lie within one phase-1 primary unit,
+#' each hit counting as one (`samplyr_error_phase_cluster_spans_psu`). For
+#' `method = "full"`, declare the households phase 2 draws, as in
+#' `cluster_by(hh_id)`. [survey::twophase()] reads phase 2 as a subset of
+#' the phase-1 rows, which cannot hold a unit drawn twice, so a phase 2 drawn
+#' with replacement is refused (`samplyr_error_twophase_phase2_wr`). So is a
+#' phase 1, or a phase 2, whose rows hold a single primary unit outside a
+#' stratum (`samplyr_error_export_one_unit`).
 #'
-#' When phase 2 keeps unequal shares of the phase-1 strata, survey 4.5
-#' gives each phase-1 stratum another stratum's sample size in the phase-1
-#' part of this variance. The variance of a *total* then depends on the
-#' outcome's level. In simulations of an occasion it averaged a quarter of the
-#' true variance or less and was often negative. The export rebuilds that
-#' part by survey's own formula with the sizes in place, which changes
-#' nothing where survey's result was already right. A phase 2 stratified
-#' across the phase-1 strata can still give a negative variance in some
-#' samples, from the instability of the Horvitz-Thompson form, and
-#' `method = "approx"` gives a finite standard error there.
+#' The three values of `method` read the phase-1 part of the variance
+#' differently. `"full"` reads the probabilities stage by stage, from phase
+#' 1's finite population corrections. `"approx"` and `"simple"` estimate it
+#' from the phase-2 rows, weighting each phase-1 primary unit by its chance
+#' of entering phase 2. That is exact when phase 2 takes whole phase-1
+#' units or phase 1 selects elements. When phase 2 subsamples inside the
+#' units phase 1 selected, the row's chance stands in for the unit's, which
+#' is one, and the phase-1 part is overstated
+#' (`samplyr_warning_twophase_approx`). `"full"` cannot state the
+#' probabilities of a phase 1 drawn with replacement above a later stage,
+#' unless that stage took only certainty units, and is refused there
+#' (`samplyr_error_twophase_stage_probs`). It is refused as well when phase
+#' 2 subsamples inside clusters that phase 1's last stage drew with
+#' replacement, where it understates the variance
+#' (`samplyr_error_twophase_wr_subsample`). A phase 2 drawn within each hit
+#' is exported as one phase instead (see below). In the second case, draw
+#' the units inside those clusters as a stage of phase 1 first, with
+#' `add_stage() |> draw(frac = 1)`.
+#'
+#' The export computes the phase-1 part of the variance with each phase-1
+#' stratum's own sample size, also when phase 2 keeps unequal shares of the
+#' phase-1 strata. A phase 2 stratified across the phase-1 strata can give a
+#' negative variance in some samples, since the Horvitz-Thompson form is not
+#' guaranteed positive, and `method = "approx"` gives a finite standard
+#' error there.
 #'
 #' A clustered first phase needs its second phase drawn inside each of its
 #' units, with `stratify_by(<unit>)`, or by taking whole phase-1 units
-#' before sampling inside them. In a simulation both gave 0.93 to 1.03 of
-#' the true variance and never a negative one. When phase 2 draws smaller
-#' units across the phase-1 clusters, the estimator is right over repeated
-#' samples but not in one ([variance_estimation] has the measured error),
-#' and the export warns (`samplyr_warning_twophase_across_units`). The
-#' weights are exact either way.
+#' before sampling inside them. When phase 2 draws smaller units across the
+#' phase-1 clusters, the estimator is unbiased over repeated samples but
+#' unstable in one, and can be negative
+#' (`samplyr_warning_twophase_across_units`). The weights are exact either
+#' way.
+#'
+#' ## A subsample within pools is one phase
 #'
 #' One shape is not exported as two phases. Phase 1's final stage draws
 #' elements by `srswor` or `systematic`, and phase 2 draws the same way,
@@ -175,25 +200,31 @@
 #' phase 2's weights, whatever phase 1's earlier stages drew. Half of each
 #' EA's households kept for a second questionnaire is this shape. `method`
 #' does not apply to it, and no row identifier is needed to link the
-#' phases. When phase 2 is `systematic`, the final take is a systematic
-#' one, and `systematic_variance` applies to it, unless phase 2 took every
-#' unit of every pool. A phase 2 stratified more coarsely or more finely than the pools,
-#' clustered, or drawn with unequal probabilities keeps the two-phase route.
+#' phases. Below a stage that can take a unit more than once, each hit is a
+#' pool of its own. Phase 2 names it by the hit number it carries, as in
+#' `stratify_by(ea_id, .phase1_draw_1)`, and is then exported this way.
+#' `stratify_by(ea_id)` alone pools the hits of an EA drawn twice, and keeps
+#' the two-phase route. When phase 2 is `systematic`, the final take is a
+#' systematic one, and `systematic_variance` applies to it, unless phase 2
+#' took every unit of every pool or one unit of each. A phase 2 stratified
+#' more coarsely or more finely than the pools, clustered, or drawn with
+#' unequal probabilities keeps the two-phase route.
+#'
+#' ## Two-phase samples that are refused
 #'
 #' [survey::twophase()] takes no `pps` for the first phase, so any other
-#' two-phase sample, or occasion exported with `method`, whose phase 1 was drawn
-#' with unequal probabilities without replacement is refused
+#' two-phase sample, or occasion exported with `method`, whose phase 1 was
+#' drawn with unequal probabilities without replacement is refused
 #' (`samplyr_error_twophase_phase1_pps`, `samplyr_error_occasion_phase1_pps`).
 #' So are `cube`, first-stage `pps_poisson` and the spatial methods, which
 #' are unsupported at either phase. Equal-probability first phases export,
 #' stratified, clustered, multistage and with-replacement alike. No
 #' two-phase sample has a replicate export, except the subsample within
-#' pools above, which is exported as one phase. The weights of a refused
-#' sample are exact, so totals and means are right. For a variance, an
-#' ultimate-cluster approximation treats phase 1's units as drawn with
-#' replacement and carries everything below in them. It is conservative, by
-#' the margins [variance_estimation] reports, and much more so when phase 2
-#' was drawn across the phase-1 units:
+#' pools above. The weights of a refused sample are exact, so totals and
+#' means are right. For a variance, the ultimate-cluster approximation
+#' treats phase 1's units as drawn with replacement and carries everything
+#' below in them. It leaves out phase 1's correction and overstates the
+#' variance, and more so when phase 2 was drawn across the phase-1 units:
 #'
 #' ```r
 #' survey::svydesign(ids = ~ea_id, strata = ~region, weights = ~.weight,
@@ -210,38 +241,28 @@
 #' been drawn by any method, with probabilities proportional to size
 #' included. It is the variance rotating household surveys publish for each
 #' quarter or month. Zones and variance pairs are not used, since activation
-#' leaves most zones with one unit or none. A stage-1 unit taken with
-#' certainty, with a later stage drawn inside it, represents itself. It is a
-#' stratum of its own, whose clusters are its units of the next stage, since
-#' only they vary between samples. In a simulation of one certainty EA among
-#' twelve, that brought the estimated variance of an occasion from 1.7 to 1.1
-#' times the true one, and of a two-occasion window, where the EA otherwise
-#' stood alone among the units active at both occasions and survey stopped on
-#' it, from 5.7 under `survey.lonely.psu = "adjust"` to 1.6. A unit of a
-#' stratum taken as a census counts as taken with certainty, unless the
+#' leaves most zones with one unit or none.
+#'
+#' A stage-1 unit taken with certainty, with a later stage drawn inside it,
+#' represents itself. It is a stratum of its own, whose clusters are its
+#' units of the next stage, since only they vary between samples. A unit of
+#' a stratum taken as a census counts as taken with certainty, unless the
 #' panels are assigned at stage 1, so that each occasion holds only some of
 #' its units. A unit taken with certainty and nothing drawn inside it, a
-#' stage-1 cluster with no
-#' later stage or an element, is the same in every sample. It is a stratum
-#' of its own taken as a census, the one stratum with a finite population
-#' correction, so it adds no variance, as in the master's export. A large
-#' sampling fraction in a stratum still errs toward too large a variance.
-#' In a simulation with 8 EAs active per stratum, its standard error was
-#' 0.89 of the true one with EAs drawn by simple random sampling, where the
-#' two-phase export gave 0.88, and 1.06 with EAs drawn by size, which has
-#' no two-phase export.
+#' stage-1 cluster with no later stage or an element, is the same in every
+#' sample. It is a stratum of its own taken as a census, the one stratum
+#' with a finite population correction, so it adds no variance. Leaving out
+#' the correction elsewhere overstates the variance where a stratum's
+#' sampling fraction is large.
 #'
 #' A window of several occasions, `execute(master, period = 1:3)`, is exported
 #' the same way. A unit's rows over the window are one cluster, and the
 #' strata are crossed with the quota block and the occasions of the window
 #' a unit is active at, which its panel fixes. The design is calibrated on
 #' each stratum's total of the units' activation multipliers, which leaves
-#' the weights unchanged and gives merged strata ratio residuals. In
-#' simulations of windows over clustered masters of 16 to 18 EAs per
-#' stratum, the standard error was 0.98 to 1.04 of the true one, and 95%
-#' intervals covered 93% to 97%, with EAs drawn by simple random sampling or
-#' by size. [panel_assignment] gives the rule and the smaller strata.
-#' `method` is refused for a window.
+#' the weights unchanged and gives merged strata ratio residuals.
+#' [panel_assignment] gives the rule and the smaller strata. `method` is
+#' refused for a window.
 #'
 #' An occasion of a master whose later stages are still drawn one period or
 #' cohort at a time is exported the same way, from its own rows. The
@@ -251,8 +272,8 @@
 #' [as_svrepdesign()] replicates the same design, and [as_survey_design()]
 #' follows `as_svydesign()`. `pps` is refused (`samplyr_error_survey_argument`),
 #' and so is an occasion holding a single primary unit
-#' (`samplyr_error_occasion_one_unit`). An occasion that activates every unit is the
-#' master's own design and is exported as such.
+#' (`samplyr_error_occasion_one_unit`). An occasion that activates every unit
+#' is the master's own design and is exported as such.
 #'
 #' ## Modified samples and domain analysis
 #'
@@ -271,6 +292,14 @@
 #' and remains supported. A later stage drawn from a modified sample is
 #' refused too, since its weights carry the change, and so is every stage
 #' drawn after it.
+#'
+#' A second phase drawn from a modified sample is refused by both exports
+#' as well (`samplyr_error_modified_sample`). They read the phase-1 rows as
+#' the whole first phase, and removed rows would give it other
+#' probabilities and another variance. Random groups of replicates read
+#' only the replicate totals and remain. To subsample the eligible units of
+#' phase 1, draw phase 2 from phase 1 as executed with the eligibility
+#' column as a phase-2 stratum, then subset the exported design.
 #'
 #' Dropping out-of-domain rows before conversion is not domain estimation.
 #' The point estimate can agree, but its variance estimate is generally
@@ -292,9 +321,14 @@
 #' every stage. `FALSE` states that no stage is PPS, so it is refused on a
 #' design with one. `"overton"`, [survey::HR()] and the matrix objects
 #' ([survey::ppsmat()], [survey::poisson_sampling()]) are single-stage in
-#' survey, so a multi-stage sample is exported at stage 1 with a warning. A
-#' matrix object is indexed by row, so it also needs one row per stage-1
-#' unit, and a sample with several is refused
+#' survey, so a multi-stage sample is exported at stage 1 with a warning.
+#' They need stage 1 drawn with unequal probabilities without replacement,
+#' or by Poisson sampling with a size measure. `"overton"` and
+#' [survey::HR()] assume a fixed sample size, so they are refused on a
+#' Poisson stage 1, whose exact variance is the default export.
+#' [survey::poisson_sampling()] assumes independent selections, so it is
+#' refused on a fixed-size stage 1. A matrix object is indexed by row, so it
+#' also needs one row per stage-1 unit, and a sample with several is refused
 #' (`samplyr_error_pps_rows_per_psu`). On a fixed-size stage drawn with
 #' unequal probabilities without replacement, a [survey::ppsmat()] export
 #' defaults to `variance = "YG"` unless `variance` is supplied in `...`,
@@ -314,10 +348,11 @@
 #' units were drawn with replacement within their strata, without a finite
 #' population correction. The variance of every later stage is then carried
 #' by the primary-unit totals, which is why it is called the ultimate-cluster
-#' variance. It is the variance to reproduce when a new design is compared
-#' with what an earlier round published, and `as_svydesign(sample, stages =
-#' 1)` builds it. A materialized occasion and a settled reserve are always
-#' exported this way.
+#' variance (Hansen, Hurwitz and Madow 1953; Wolter 2007, sec. 2.4). It is
+#' the variance to reproduce when a new design is compared with what an
+#' earlier round published, and `as_svydesign(sample, stages = 1)` builds
+#' it. A materialized occasion and a settled reserve are always exported
+#' this way.
 #'
 #' The export keeps the first stage's strata and units, the zero rows of
 #' empty primary units included. A primary unit taken with probability 1, by
@@ -331,10 +366,8 @@
 #' stratum, and the spread between that stratum's units stands in for the
 #' variance below it (`samplyr_message_stage_certainty_drawn`). A stage drawn
 #' with replacement has no such units, even where a unit expects one hit or
-#' more. Built by hand from `as.data.frame(sample)`, the same design
-#' loses the empty units and reads certainty units as drawn. On a Brewer
-#' design with one certainty EA, over 300 samples, the hand-built design gave
-#' 0.94 of the true standard error and `stages = 1` 0.99.
+#' more. A design built by hand from `as.data.frame(sample)` loses the empty
+#' units and reads certainty units as drawn.
 #'
 #' `stages = 1:k` keeps stages 1 to k - 1 with their corrections and reads
 #' stage k the same way. It suits a stage whose variance cannot be
@@ -343,126 +376,23 @@
 #' household totals, and keeps the first stage's correction, which matters
 #' where that stage takes a large share. Exported in full, such a stage
 #' leaves each household a stratum of one unit, which the export names
-#' (`samplyr_warning_lonely_psu`). The approximation is conservative.
-#' It leaves out the correction at stage k, so it overstates the variance most
-#' where stage k takes a large share of its units. A stratum with a single
-#' unit stops survey, as for the full export, unless
-#' `options(survey.lonely.psu = )` says how to treat it.
+#' (`samplyr_warning_lonely_psu`). The reading leaves out the correction at
+#' stage k, so it overstates the variance most where stage k takes a large
+#' share of its units. A stratum with a single unit stops survey, as for the
+#' full export, unless `options(survey.lonely.psu = )` says how to treat it.
+#' So does one below a unit drawn with replacement when survey computes the
+#' later stages, under `options(survey.use_rcpp = FALSE)` or a calibration by
+#' stage.
 #'
 #' ## A settled reserve
 #'
-#' [reserve_lists] describes reserve lists and their settlement. A sample
-#' whose reserve is not settled is refused
+#' A sample whose reserve is not settled is refused
 #' (`samplyr_error_reserve_unsettled`), since its weights describe the whole
-#' list. Once settled with `execute(sample, response_status = col)`, it is
-#' exported by ultimate clusters. The settled stage's respondents are a
-#' random subset of a respondent count the field never observed, so that
-#' stage's finite population correction is unknown, and every stage is
-#' carried in the primary-unit totals. The share of each pool's eligible
-#' units that responded is treated as fixed. A two-phase sample, shared
-#' weights, and the `"mrbbootstrap"` and `"rwyb"` replicates of
-#' [as_svrepdesign()] would build the stages one by one, and refuse a
-#' settled reserve (`samplyr_error_reserve_full_export`). An occasion holds no
-#' settlement of its own, so an occasion of a master that draws a reserve is
-#' refused with the same class, settled or not, and the settled master
-#' exports as a whole.
-#'
-#' With the reserve at the first stage, each pool's eligible units are
-#' estimated from the units the field worked. The export adds one row for
-#' each unit found ineligible among those the estimate counts, at the
-#' pool's size over the number of units counted. The pool's weights then
-#' add up to its size, and the variance treats the eligible count as
-#' estimated. These rows hold `NA` in every column except the strata, the
-#' weight and, while the sample still holds it, the response status
-#' column, which carries the ineligible code in the column's own type (`4`,
-#' `"ineligible"`, or a factor level of that name, added if absent).
-#' Estimate for the eligible population as a domain:
-#'
-#' ```r
-#' svy <- as_svydesign(settled)
-#' survey::svytotal(~income, svy, na.rm = TRUE)
-#' survey::svymean(~income, subset(svy, result != "ineligible"))
-#' ```
-#'
-#' `na.rm = TRUE` and `subset()` keep those rows in the variance, and
-#' removing them before the export understates it. A primary unit of a
-#' later reserve stage whose units all proved ineligible keeps one such row,
-#' as a zero total.
-#'
-#' A primary unit taken whole, by a certainty rule or as a unit of a census
-#' stratum, with a later stage drawn inside it, represents itself as it does in
-#' an occasion. Expected hits of 1 at a stage drawn with replacement do not make
-#' a unit certain. It is a stratum of its own whose clusters are its units of
-#' the next stage. With the reserve at that stage, its pools are exported as
-#' first-stage pools are, times the weight
-#' of the stage above, so its ineligible units add rows and a placeholder
-#' is a unit of its own. In a simulation of one certainty EA among twelve,
-#' this brought the estimated variance from 1.36 to 1.26 times the true
-#' one. The rest comes from the first stage's finite population
-#' correction, which the export leaves out.
-#'
-#' A pool whose eligible units include no respondent still has an estimated
-#' eligible count, from the units the field worked. With every worked unit
-#' of unknown eligibility, it takes the resolved rate of the pools that
-#' share its strata, or counts every unit as eligible when none of them
-#' resolved one. Both are assumptions about the pool, and [summary()]
-#' counts the pools that rest on them. A pool estimated to hold no eligible unit, such as one
-#' whose resolved units all proved ineligible, is exported as ineligible.
-#' The export adds one placeholder row per other such pool, at the
-#' weight of the stages above times that count, coded as an eligible
-#' non-interview (`2`, `"noninterview"`, or a factor level of that name).
-#' Its other columns hold `NA`, and below the first stage it sits in the
-#' primary unit of its pool. The export warns
-#' (`samplyr_warning_reserve_no_respondent`) and names the pools. Until a
-#' nonresponse adjustment moves that weight to respondents, estimates leave
-#' it out. With replicate weights, [svrep::redistribute_weights()] makes the
-#' adjustment in every replicate:
-#'
-#' ```r
-#' rep <- as_svrepdesign(settled)
-#' rep <- svrep::redistribute_weights(
-#'   rep,
-#'   reduce_if = result == "noninterview",
-#'   increase_if = result == "interview",
-#'   by = "region"
-#' )
-#' survey::svytotal(~income, rep, na.rm = TRUE)
-#' ```
-#'
-#' The adjustment moves the placeholder's weight but leaves its row, with
-#' `NA` in every analysis variable. An estimate therefore needs
-#' `na.rm = TRUE`, as for the ineligible rows. Without it a linearized
-#' total is `NA`, and a replicate design fails with "All replicates
-#' contained NAs".
-#'
-#' With linearization, [survey::calibrate()] to known totals plays that
-#' role. After a stage below the reserve is drawn, the units of such a
-#' pool have no weight at that stage, so its export is refused
-#' (`samplyr_error_reserve_no_respondent`). Export before drawing it, or
-#' combine the stratum with a neighbor in the design.
-#'
-#' The rows the export adds hold `NA` in the variables a calibration would
-#' use, so `survey::calibrate()`, `survey::postStratify()` and
-#' `survey::rake()` stop on them. Calibrate the respondents instead, through
-#' indicators that are 0 on those rows, and without an intercept, which
-#' would count them:
-#'
-#' ```r
-#' svy <- update(
-#'   svy,
-#'   female = as.numeric(sex %in% "female"),
-#'   male = as.numeric(sex %in% "male")
-#' )
-#' svy <- survey::calibrate(
-#'   svy, ~ 0 + female + male, c(female = 5200, male = 4800)
-#' )
-#' ```
-#'
-#' A row whose indicators are all 0 keeps its weight, under a linear
-#' calibration as under `calfun = "raking"`. The ineligible rows still
-#' estimate the ineligible count, and the respondents alone carry the known
-#' totals. The same call works on a replicate design, before or after
-#' [svrep::redistribute_weights()].
+#' list. A settled sample is exported by ultimate clusters, with rows added
+#' for the units found ineligible and for the eligible nonrespondents of a
+#' pool with no respondent. [reserve_lists] gives those rows, the estimates
+#' and calibrations they need, and the exports that refuse a settled
+#' reserve.
 #'
 #' ## A shared estimation weight
 #'
@@ -470,10 +400,10 @@
 #' than the one that was selected, so it is exported as its **source-target
 #' contributions**: one row per link, weighted by the recorded coefficient
 #' times the source unit's design weight. This gives the generalized weight
-#' share total exactly for any link structure. The result has more rows than
-#' the transformation returned, but no estimate changes: a total sums the
-#' same terms, and a mean's denominator is the estimated target population
-#' size either way.
+#' share total exactly for any link structure (Lavallee 2007). The result has
+#' more rows than the transformation returned, but no estimate changes: a
+#' total sums the same terms, and a mean's denominator is the estimated
+#' target population size either way.
 #'
 #' A selected source unit linked to no target, such as a dwelling with
 #' nobody in the target population, has no contribution. The export keeps
@@ -483,9 +413,9 @@
 #' total. Estimates need `na.rm = TRUE`, and the export warns
 #' (`samplyr_warning_export_empty_parent`) when zero rows are added.
 #'
-#' An unequal-probability or random-size source design is also refused
-#' here, because its variance comes from a structure indexed by the
-#' source sample's rows, which the contribution rows no longer are. Use
+#' An unequal-probability or random-size source design is refused here,
+#' because its variance comes from a structure indexed by the source
+#' sample's rows, which the contribution rows no longer are. Use
 #' `as_svrepdesign()`, which replicates the source design and applies the
 #' sharing inside every replicate.
 #'
@@ -493,8 +423,16 @@
 #' installed to use this function.
 #'
 #' @references
+#' Hansen, M. H., Hurwitz, W. N. and Madow, W. G. (1953). *Sample Survey
+#' Methods and Theory*. Wiley.
+#'
+#' Lavallee, P. (2007). *Indirect Sampling*. Springer.
+#'
 #' Sarndal, C.-E., Swensson, B. and Wretman, J. (1992). *Model
 #' Assisted Survey Sampling*. Springer.
+#'
+#' Wolter, K. M. (2007). *Introduction to Variance Estimation*, 2nd ed.
+#' Springer.
 #'
 #' @examplesIf requireNamespace("survey", quietly = TRUE)
 #' # Stratified sample -> survey design
@@ -712,8 +650,8 @@ reserve_pool_labels <- function(keys, which) {
 
 #' Pools with eligible units and no respondent, warned or refused
 #'
-#' Their weight goes to placeholder rows that a nonresponse adjustment can
-#' move to respondents. Below the reserve stage those rows would need the
+#' Their weight goes to rows for their eligible nonrespondents, which a
+#' nonresponse adjustment can move to respondents. Below the reserve stage those rows would need the
 #' weights of units the field never reached, so a sample that drew a stage
 #' after settling is refused instead.
 #' @noRd
@@ -733,7 +671,7 @@ check_reserve_respondents <- function(pools, record, stages, fn_name,
         "x" = "{cli::qty(n)}{?This pool holds/These pools hold} eligible
                units or units of unknown eligibility, and no interview.",
         shown,
-        "i" = "A placeholder row would carry a count of stage
+        "i" = "Its nonrespondents' rows would carry a count of stage
                {record$stage} units into a design weighted in units of
                stage {max(stages)}, which the field never reached there.",
         "i" = "Export the settled sample before drawing the next stage, or
@@ -747,9 +685,10 @@ check_reserve_respondents <- function(pools, record, stages, fn_name,
     c(
       "{n} pool{?s} ha{?s/ve} eligible units and no respondent.",
       shown,
-      "i" = "Each is exported as a placeholder row coded as an eligible
-             non-interview, carrying the pool's estimated eligible weight.
-             Its analysis variables hold {.code NA}, so estimates need
+      "i" = "Each is exported as one row per eligible unit that did not
+             respond, coded as an eligible non-interview, which together
+             carry the pool's estimated eligible weight. Their analysis
+             variables hold {.code NA}, so estimates need
              {.code na.rm = TRUE}.",
       "i" = "Estimates leave that weight out until a nonresponse adjustment
              or a calibration moves it to respondents, such as
@@ -772,92 +711,59 @@ reserve_primary_vars <- function(design, stage, data) {
   intersect(c(vars, paste0(".draw_", stage)), names(data))
 }
 
-#' Placeholder rows for the pools with eligible units and no respondent
+#' Rows that stand for the attempted units a settlement drops
 #'
-#' One row per pool, at the weight of the stages above times the pool's
-#' estimated eligible count, coded as an eligible non-interview.
+#' Each pool adds one row per dropped unit its estimate counts, from the
+#' units the settlement records, at the weight of the stages above times
+#' `N / (k - s - u)`, so its weights sum to `N` at every stage. A pool with
+#' respondents adds its ineligible units, since its respondents carry its
+#' eligible nonrespondents. A pool with no respondent adds its ineligible
+#' units and its eligible nonrespondents, which then carry its estimated
+#' eligible count, coded as non-interviews. A pool whose attempted units are
+#' all of unknown eligibility shares its estimate among them: as eligible
+#' nonrespondents when the estimate is positive, as ineligible units when it
+#' is zero. `unit_col` names the column that gives each row's recorded unit,
+#' a name free in `df`.
 #' @noRd
-reserve_placeholder_rows <- function(df, record) {
+reserve_unit_rows <- function(df, record, unit_col) {
   pools <- record$pools
-  rows <- which(pools$no_respondent)
-  if (length(rows) == 0L) {
-    return(df[0, , drop = FALSE])
-  }
-  out <- reserve_key_rows(df, record, rows)
-  out$.weight <- pools$upper_weight[rows] * pools$eligible[rows]
+  units <- record$units
+  # One row per unit, the first of a unit drawn as a cluster.
+  first <- !duplicated(units$unit)
+  pool <- units$pool[first]
+  code <- units$code[first]
+  resolved <- (pools$n_attempted - pools$stopped - pools$n_unknown)[pool]
+  none <- pools$n_respondents[pool] == 0L
+  unknown_only <- resolved == 0L
+  positive <- pools$eligible[pool] > 0
+  eligible <- none & ifelse(unknown_only, code == 3L & positive, code == 2L)
+  ineligible <- ifelse(unknown_only, none & code == 3L & !positive,
+                       code == 4L)
+  upper <- pools$upper_weight[pool]
+  weight <- ifelse(
+    unknown_only,
+    upper * ifelse(positive, pools$eligible[pool], pools$N[pool]) /
+      pools$n_attempted[pool],
+    upper * pools$N[pool] / resolved
+  )
   column <- record$column
-  if (!is_null(column) && column %in% names(df)) {
-    out[[column]] <- reserve_category_value(
-      df[[column]], length(rows), 2, "noninterview"
-    )
-  }
-  out
-}
-
-#' Rows that stand for the attempted units found ineligible
-#'
-#' At a first-stage reserve each pool adds one row per ineligible unit among
-#' those its estimate counts, at weight N / (k - s - u). The pool's weights
-#' then sum to N, and the variance sees the eligible count as estimated. A
-#' pool in a primary unit taken with certainty does the same at the second
-#' stage, times the weight above, since its units are the clusters of a
-#' stratum of their own. Otherwise, below the first stage, a unit of the
-#' clusters whose pools are all estimated to hold no eligible unit keeps
-#' one row, so it still counts as a zero total.
-#' @param sure Whether each pool is in a self-representing primary unit.
-#' @noRd
-reserve_zero_rows <- function(df, design, stages, record, sure) {
-  pools <- record$pools
-  k <- record$stage
-  resolved <- pools$n_attempted - pools$stopped - pools$n_unknown
-  if (identical(k, stages[1])) {
-    n <- pools$n_ineligible
-    weight <- pools$N / resolved
-  } else {
-    weight <- pools$upper_weight * pools$N
-    zero <- pools$n_respondents == 0L & pools$eligible == 0
-    top <- sure & identical(k, stages[2])
-    n <- integer(nrow(pools))
-    for (inside in unique(sure[!top])) {
-      at <- !top & sure == inside
-      # Below a certainty unit, its units of the next stage are the clusters.
-      unit_vars <- reserve_primary_vars(design, stages[1], record$keys)
-      if (inside) {
-        unit_vars <- c(
-          unit_vars,
-          reserve_primary_vars(design, stages[2], record$keys)
-        )
-      }
-      if (length(unit_vars) == 0L || !any(zero & at)) {
-        next
-      }
-      units <- record$keys[at, unit_vars, drop = FALSE]
-      empty <- zero[at]
-      empty[empty] <- !vctrs::vec_in(
-        units[empty, , drop = FALSE],
-        df[unit_vars]
+  unit_row <- which(first)
+  block <- function(keep, code_value, word) {
+    out <- reserve_key_rows(df, record, pool[keep])
+    out$.weight <- weight[keep]
+    # The recorded unit, read by a frame stack and dropped from the design.
+    out[[unit_col]] <- unit_row[keep]
+    if (!is_null(column) && column %in% names(df)) {
+      out[[column]] <- reserve_category_value(
+        df[[column]], sum(keep), code_value, word
       )
-      # One row per unit, carrying all of its pools.
-      unit <- vctrs::vec_group_id(units)
-      weight[at] <- tapply(weight[at] * empty, unit, sum)[as.character(unit)]
-      n[at] <- as.integer(empty & !duplicated(unit))
     }
-    n[top] <- pools$n_ineligible[top]
-    weight[top] <- (pools$upper_weight * pools$N / resolved)[top]
+    out
   }
-  rows <- rep(seq_len(nrow(pools)), n)
-  if (length(rows) == 0L) {
-    return(df[0, , drop = FALSE])
-  }
-  out <- reserve_key_rows(df, record, rows)
-  out$.weight <- weight[rows]
-  column <- record$column
-  if (!is_null(column) && column %in% names(df)) {
-    out[[column]] <- reserve_category_value(
-      df[[column]], length(rows), 4, "ineligible"
-    )
-  }
-  out
+  vctrs::vec_rbind(
+    block(ineligible, 4, "ineligible"),
+    block(eligible, 2, "noninterview")
+  )
 }
 
 #' Rows that carry the keys of the given pools, with their certainty
@@ -919,14 +825,9 @@ build_reserve_svydesign <- function(x, nest, dots, fn_name,
   }
   check_reserve_respondents(record$pools, record, stages, fn_name,
                             call = call)
-  # A pool in a primary unit taken with certainty is a pool of the clusters
-  # of a stratum of its own.
-  sure <- (record$pools$certainty %||% FALSE) & length(stages) > 1L &
-    identical(entry$unit$kind, "cluster")
-  added <- vctrs::vec_rbind(
-    reserve_zero_rows(df, design, stages, record, sure),
-    reserve_placeholder_rows(df, record)
-  )
+  # A free name, since a user column may be called `.reserve_unit`.
+  unit_col <- free_column_name(df, ".reserve_unit")
+  added <- reserve_unit_rows(df, record, unit_col)
   if (nrow(added) > 0L) {
     # At the first stage each added row is a unit of its own.
     fresh <- max(c(entry$unit$id, 0L)) + seq_len(nrow(added))
@@ -969,6 +870,8 @@ build_reserve_svydesign <- function(x, nest, dots, fn_name,
   if (check_lonely) {
     warn_lonely_strata(spec, design, id_info$stage_indices, call = call)
   }
+  reserve_units <- df[[unit_col]]
+  df[[unit_col]] <- NULL
 
   args <- c(
     list(
@@ -980,15 +883,15 @@ build_reserve_svydesign <- function(x, nest, dots, fn_name,
     ),
     dots
   )
-  result <- do.call(survey::svydesign, args)
-  result$call <- survey_export_call("svydesign", args)
+  result <- survey_svydesign(args)
+  # Which recorded unit each added row stands for, `NA` on the sample's.
+  attr(result, "samplyr_reserve_units") <- reserve_units
   result
 }
 
 #' @noRd
 survey_phase_info <- function(sample) {
-  metadata <- attr(sample, "metadata")
-  prev_phase <- metadata$prev_phase
+  prev_phase <- get_prev_phase(sample)
   has_prev_sample <- is.list(prev_phase) && is_tbl_sample(prev_phase$sample)
   prev_prev <- if (has_prev_sample) {
     attr(prev_phase$sample, "metadata")
@@ -1119,28 +1022,36 @@ phase1_pps_methods <- function(prev_phase, kinds = "pps_wor") {
 
 #' Systematic stages whose variance is being approximated
 #'
-#' Both systematic methods: one systematic sample does not identify its
+#' The three systematic methods: one systematic sample does not identify its
 #' design variance, whatever formula stands in for it. `pps_systematic` is
 #' exported with Brewer's approximation, which is as blind to frame order as
 #' the simple random sampling one: on a frame whose period matches the
 #' interval it gave 0.003 of the true variance, with intervals covering 9 %
-#' of the time. A census stage is excluded, since a stage that took
-#' everything within reach contributes no variance for the approximation to
-#' get wrong.
+#' of the time. `pps_systematic_mr` is exported with replacement, and on
+#' such a frame every hit of a sample can carry the same value per unit of
+#' size, which gives an estimated variance of zero. A census stage is
+#' excluded, since a stage that took everything within reach contributes no
+#' variance for the approximation to get wrong. So is a stage whose every
+#' pool drew one unit, since that draw does not depend on the frame order.
 #' @noRd
 systematic_approximated_stages <- function(design, stages_executed, df,
                                            phase = NULL) {
   affected <- vapply(stages_executed, function(stage_idx) {
     method <- design$stages[[stage_idx]]$draw_spec$method
-    if (!method %in% c("systematic", "pps_systematic")) {
+    if (!method %in% systematic_methods) {
       return(FALSE)
     }
     # A systematic draw of one PSU is a draw proportional to size.
     if (draws_one_per_zone(design$stages[[stage_idx]]$draw_spec)) {
       return(FALSE)
     }
-    # A census has no variance to approximate.
-    !spec_stage_census(df, stage_idx)
+    # A census has no variance to approximate. Minimum replacement can take
+    # a unit more than once, so a probability of 1 or more is no census.
+    if (!is_multi_hit_method(design$stages[[stage_idx]]$draw_spec) &&
+        spec_stage_census(df, stage_idx)) {
+      return(FALSE)
+    }
+    !systematic_takes_one_per_pool(design, stage_idx, df)
   }, logical(1))
 
   lapply(stages_executed[affected], function(stage_idx) {
@@ -1156,6 +1067,20 @@ systematic_approximated_stages <- function(design, stages_executed, df,
       }
     )
   })
+}
+
+#' Does every pool of a systematic stage hold one drawn unit?
+#'
+#' A single random start takes unit i with chance x_i / X whatever the
+#' order, which is a draw of one proportional to size, so the frame order
+#' plays no part. Pools taken whole, such as the stratum of certainty units,
+#' are left out.
+#' @noRd
+systematic_takes_one_per_pool <- function(design, stage_idx, df) {
+  spec <- export_stage_spec(df, design, seq_len(stage_idx))
+  pools <- spec_pool_units(spec, seq_len(stage_idx))[[as.character(stage_idx)]]
+  drawn <- pools$n_units[!pools$census]
+  length(drawn) > 0L && all(drawn == 1L)
 }
 
 #' Tell the caller once, unless they have said they know
@@ -1182,9 +1107,16 @@ check_systematic_variance <- function(
     if (is_null(s$phase)) s$name else paste0(s$name, ", phase ", s$phase)
   }, character(1))
 
+  mr_note <- if (any(vapply(stages, function(s) {
+    identical(s$method, "pps_systematic_mr")
+  }, logical(1)))) {
+    c("i" = "On such a frame the with-replacement variance of
+             {.val pps_systematic_mr} can be exactly zero.")
+  }
   estimator <- if (approximation %in% c("srswor", "ultimate_cluster")) {
     per_stage <- vapply(stages, function(s) {
-      what <- if (identical(approximation, "ultimate_cluster")) {
+      what <- if (identical(approximation, "ultimate_cluster") ||
+                    identical(s$method, "pps_systematic_mr")) {
         "a with-replacement approximation"
       } else if (identical(s$method, "pps_systematic")) {
         "Brewer's approximation"
@@ -1200,7 +1132,8 @@ check_systematic_variance <- function(
              interval has been measured at 0.0006 of the true variance for
              {.val systematic} and 0.003 for {.val pps_systematic}, with 95%
              intervals covering about 10% of the time. See
-             {.topic variance_estimation}."
+             {.topic variance_estimation}.",
+      mr_note
     )
   } else {
     c(
@@ -1246,6 +1179,9 @@ record_systematic_variance <- function(result, stages, choice, approximation) {
     if (identical(approximation, "srswor") &&
         identical(s$method, "pps_systematic")) {
       "brewer"
+    } else if (identical(approximation, "srswor") &&
+               identical(s$method, "pps_systematic_mr")) {
+      "with_replacement"
     } else {
       approximation
     }
@@ -1475,7 +1411,7 @@ activation_phase2_columns <- function(df1, x, metadata, call = caller_env()) {
 
 #' The realized take must be the take the record froze
 #'
-#' Counting the active assignment units of each block reproduces `a_bt`, so a
+#' Counting the active assignment units of each block reproduces `a_bt`, so an
 #' occasion whose rows do not belong to the master it names is caught here rather
 #' than silently exported against the wrong first phase.
 #' @noRd
@@ -1521,15 +1457,21 @@ check_activation_take <- function(df1, cols, call = caller_env()) {
 #' population correction when no probability is given, so the correction has
 #' to state every stage's probability. It does not when a stage contributed no
 #' term, which is what an unclustered stage does at a phase (it carries no
-#' identifier there), and it does not when a term is infinite: a
-#' with-replacement stage, or a later unsupported one, on the count scale,
-#' and an equal-probability stage with no recorded population count. In both
-#' cases the phase's own weight is the exact probability and is passed
-#' instead. On the fraction scale "no correction" is written as a zero, which
-#' survey reads as a probability, so it counts as stated.
+#' identifier there), and it does not when a term is infinite: a later
+#' unsupported stage on the count scale, and an equal-probability stage with
+#' no recorded population count. In both cases the phase's own weight is the
+#' exact probability and is passed instead. A with-replacement stage states
+#' it only when it took nothing but certainty units, which
+#' `survey_fpc_info()` writes as a sampling fraction of one. Otherwise its
+#' term is infinite on the count scale, and on the fraction scale a zero
+#' for each random hit, which survey reads as a probability of zero and
+#' cannot derive a weight from.
 #' @param scale The phase's FPC scale from `survey_fpc_info()`.
+#' @param certain_wr The with-replacement stages at which the phase took only
+#'   certainty units, from `phase_wr_stages_certain()`.
 #' @noRd
-spec_fpc_states_probabilities <- function(spec, id_stage_indices, scale) {
+spec_fpc_states_probabilities <- function(spec, id_stage_indices, scale,
+                                          certain_wr = integer(0)) {
   # A lone element stage contributes one probability term.
   covered <- if (length(id_stage_indices) == 0) {
     spec$stages[1]
@@ -1544,12 +1486,47 @@ spec_fpc_states_probabilities <- function(spec, id_stage_indices, scale) {
     entry <- spec$stage[[as.character(stage_idx)]]
     switch(
       entry$kind,
-      wr = !on_count,
+      wr = stage_idx %in% certain_wr,
       unsupported = stage_idx == spec$stages[1] || !on_count,
       equal_wor = !on_count || !is_null(entry$pop_count),
       TRUE
     )
   }, logical(1)))
+}
+
+#' The stages drawn with replacement at which a phase took only certainty units
+#'
+#' Such a stage took each of its units once and for sure, so it is a census.
+#' Only a recorded certainty counts: expected hits of one, a missing flag or
+#' a take of every unit leave room for a random draw. The rows alone do not
+#' show it, since a unit selected at random can lose every row to an empty
+#' stage below. So every unit the phase selected is read, from its
+#' execution record when it has no row, and a record that keeps no row
+#' proves nothing. A sample changed after execution proves nothing either,
+#' since its rows need not be every unit the phase selected.
+#' @param x The phase's sample.
+#' @noRd
+phase_wr_stages_certain <- function(x, design, stages) {
+  if (!sample_realization_status(x)$ok) {
+    return(integer(0))
+  }
+  all_certain <- function(df, k) {
+    flag <- df[[paste0(".certainty_", k)]]
+    nrow(df) > 0L && !is_null(flag) && all(flag %in% TRUE)
+  }
+  rows <- as.data.frame(x)
+  wr <- Filter(function(k) {
+    identical(survey_stage_kind(design$stages[[k]]$draw_spec), "wr") &&
+      all_certain(rows, k)
+  }, stages)
+  if (length(wr) == 0L) {
+    return(integer(0))
+  }
+  every <- sample_every_unit_rows(x, design, stages)
+  if (is_null(every)) {
+    return(integer(0))
+  }
+  as.integer(Filter(function(k) all_certain(every, k), wr))
 }
 
 #' The `method = "full"` covariance needs one probability per stage
@@ -1573,8 +1550,11 @@ check_twophase_stage_probs <- function(
       "x" = "It has {n_id_stages} identifier stages but no finite
              population correction to derive their per-stage
              probabilities from.",
-      "i" = "Use {.code method = \"simple\"} or {.code \"approx\"}, which
-             use the design weights directly."
+      "i" = "{.code method = \"simple\"} and {.code \"approx\"} use the
+             design weights directly. They suit a phase 2 that takes whole
+             phase-1 units or rows, and overstate the variance when phase 2
+             subsamples inside the units phase 1 selected
+             ({.code samplyr_warning_twophase_approx})."
     ),
     class = "samplyr_error_twophase_stage_probs",
     call = call
@@ -1714,9 +1694,7 @@ build_activation_twophase <- function(
     ),
     dots
   )
-  result <- twophase_phase1_aligned(do.call(survey::twophase, args))
-  result$call <- survey_export_call("twophase", args)
-  result
+  survey_twophase(args, call = call)
 }
 
 #' Rows of the stage-1 units taken whole
@@ -2288,8 +2266,7 @@ build_activation_ultimate_cluster <- function(
     args$data[[fpc_col]] <- ifelse(census, 1, Inf)
     args$fpc <- stats::as.formula(paste0("~", fpc_col))
   }
-  result <- do.call(survey::svydesign, args)
-  result$call <- survey_export_call("svydesign", args)
+  result <- survey_svydesign(args)
   ratio <- if (is_occasion_window(x)) {
     window_ratio_spec(
       result,
@@ -2353,7 +2330,9 @@ build_activation_ultimate_svrep <- function(
     apply_window_ratio(
       if (any(built$spec$stage[[1]]$certainty) &&
             needs_first_stage_rebuild(built$spec, type)) {
-        svrep_from_first_stage(svy, built$spec, type, ...)
+        warn_certainty_lower_wr(
+          svrep_from_first_stage(svy, built$spec, type, ...), type
+        )
       } else {
         survey::as.svrepdesign(design = svy, type = type, ...)
       },
@@ -2409,8 +2388,10 @@ occasion_export_route <- function(x, phase_info, method = NULL) {
 #' Phase 2's frame is the phase-1 sample, so samplyr computes that matrix
 #' itself for one PPS stage without replacement. The methods are those
 #' whose joint probabilities are positive for every pair: exact for Sampford
-#' and CPS, the high-entropy approximation for Brewer, SPS and Pareto. Systematic PPS is left out, since its pairs of zero joint
-#' probability leave the variance estimator biased whatever the matrix.
+#' and CPS, the high-entropy approximation for Brewer, SPS and Pareto.
+#' Systematic PPS is left out, since its pairs can have zero joint
+#' probability, which leaves the variance estimator biased whatever the
+#' matrix.
 #' Anything else unequal, and a `pps` argument, is refused.
 #' @param spec2 The phase-2 description, or NULL for an activation phase,
 #'   which is equal-probability by construction.
@@ -2433,6 +2414,23 @@ check_twophase_phase2_family <- function(spec2, user_pps, method = NULL,
   }
   if (is_null(spec2)) {
     return(FALSE)
+  }
+  # Unequal ones are refused below, for want of a joint matrix.
+  equal_wr <- vapply(spec2$stage, function(e) {
+    identical(e$kind, "wr") && !isTRUE(e$unequal)
+  }, logical(1))
+  if (any(equal_wr)) {
+    abort_samplyr(
+      c(
+        "Two-phase export does not support a phase 2 drawn with replacement.",
+        "x" = "{.fn survey::twophase} reads phase 2 as a subset of the
+               phase-1 rows, which cannot hold a unit drawn more than once.",
+        "i" = "Draw phase 2 without replacement, for instance with
+               {.val srswor}."
+      ),
+      class = "samplyr_error_twophase_phase2_wr",
+      call = call
+    )
   }
   unequal <- vapply(spec2$stage, function(e) e$unequal, logical(1))
   if (!any(unequal)) {
@@ -2514,22 +2512,143 @@ twophase_phase2_joint <- function(df, prev_phase, design, stages_executed,
 twophase_across_units <- function(df1, spec1, design2, stages2) {
   psu1 <- spec1$stage[[1]]$unit$id
   first2 <- export_stage_spec(df1, design2, stages2[1])$stage[[1]]
-  per_unit <- function(ids, by) {
-    tapply(ids, by, function(v) length(unique(v)))
-  }
-  finer <- any(per_unit(first2$unit$id, psu1) > 1L)
   stratum2 <- if (length(first2$strata$user)) {
     group_ids(df1, first2$strata$user)
   } else {
     rep(1L, nrow(df1))
   }
-  finer && any(per_unit(psu1, stratum2) > 1L)
+  twophase_finer_than_psu(df1, spec1, design2, stages2) &&
+    any(units_per_group(psu1, stratum2) > 1L)
+}
+
+#' @noRd
+units_per_group <- function(ids, by) {
+  tapply(ids, by, function(v) length(unique(v)))
+}
+
+#' Does phase 2 select units smaller than phase 1's primary units?
+#'
+#' Read on the phase-1 rows, which carry the phase-2 design's variables.
+#' An unclustered phase 1 has rows for primary units, so never.
+#' @noRd
+twophase_finer_than_psu <- function(df1, spec1, design2, stages2) {
+  psu1 <- spec1$stage[[1]]$unit$id
+  first2 <- export_stage_spec(df1, design2, stages2[1])$stage[[1]]
+  any(units_per_group(first2$unit$id, psu1) > 1L)
+}
+
+#' Does phase 2 subsample inside units phase 1's final stage drew with
+#' replacement?
+#'
+#' Each hit is a unit of its own, and only random hits count: a unit a
+#' certainty rule took once adds no with-replacement variance. `survey::twophase()` with
+#' `method = "full"` leaves out much of the variance between those hits.
+#' In simulations of clusters drawn by `srswr` and households subsampled
+#' within each hit, within each cluster or across clusters, it gave 0.49 to
+#' 0.82 of the true variance. Read on the phase-1 rows, which carry phase
+#' 2's variables and phase 1's hit numbers. Rows of a phase 1 changed after
+#' execution need not hold every hit it drew, so there no hit counts as
+#' certain.
+#' @param complete Whether phase 1 is as executed.
+#' @noRd
+twophase_subsamples_wr_units <- function(df1, spec1, design1, stages1,
+                                         design2, stages2, complete = TRUE) {
+  last <- stages1[length(stages1)]
+  if (!identical(survey_stage_kind(design1$stages[[last]]$draw_spec), "wr")) {
+    return(FALSE)
+  }
+  # Units a certainty rule took once add no with-replacement variance.
+  entry <- list(
+    prob = spec_stage_prob(df1, last),
+    certainty = df1[[paste0(".certainty_", last)]]
+  )
+  random <- !complete |
+    !export_stage_sure(entry, design1$stages[[last]]$draw_spec, nrow(df1))
+  if (!any(random)) {
+    return(FALSE)
+  }
+  first2 <- export_stage_spec(df1, design2, stages2[1])$stage[[1]]
+  any(units_per_group(first2$unit$id[random],
+                      stage_path_ids(spec1)[random]) > 1L)
+}
+
+#' Refuse `method = "full"` for a phase 2 inside with-replacement units
+#' @noRd
+abort_twophase_wr_subsample <- function(design1, stages1, complete = TRUE,
+                                        call = caller_env()) {
+  last <- stages1[length(stages1)]
+  units <- c(design1$stages[[last]]$clusters$vars,
+             paste0(".phase1_draw_", last))
+  abort_samplyr(
+    c(
+      "This two-phase design cannot be exported with
+       {.code method = \"full\"}.",
+      "x" = "Phase 2 subsamples inside the units phase 1's last stage drew
+             with replacement, and {.fn survey::twophase} leaves out much
+             of the variance between their hits. In simulations it gave
+             0.49 to 0.82 of the true variance.",
+      "x" = if (!complete) {
+        "Phase 1 was changed after execution, so its rows need not hold
+         every hit it drew, and none of them is taken as certain."
+      },
+      "i" = "Draw the units inside them as a stage of phase 1, with
+             {.code add_stage() |> draw(frac = 1)}, and phase 2 within each
+             hit, with {.code stratify_by({paste(units, collapse = ', ')})}.
+             The sample then exports as one phase. See {.help as_svydesign}."
+    ),
+    class = "samplyr_error_twophase_wr_subsample",
+    call = call
+  )
+}
+
+#' Do `method = "approx"` and `"simple"` overstate this sample's variance?
+#'
+#' survey estimates the phase-1 part of their variance from the phase-2
+#' rows, weighting each phase-1 primary unit by its chance of entering
+#' phase 2, which it reads off the unit's first row. When phase 2 subsamples
+#' inside the primary units, that is a row's chance, while the unit itself
+#' is in phase 2 for certain, so the part is inflated. In a simulation it was
+#' 2.9 times the true phase-1 variance with two `srswor` stages in phase 1
+#' and 43 times with a `pps_multinomial` first stage. A phase 2 that takes
+#' whole primary units, or every row, reads the right chance.
+#' @noRd
+twophase_approx_overstates <- function(df1, spec1, design2, stages2,
+                                       all_rows) {
+  !all_rows && twophase_finer_than_psu(df1, spec1, design2, stages2)
+}
+
+#' @noRd
+warn_twophase_approx <- function(method, design1, stages1,
+                                 call = caller_env()) {
+  units <- design1$stages[[stages1[1]]]$clusters$vars
+  cli_warn(
+    c(
+      "{.code method = \"{method}\"} overstates the phase-1 variance of this
+       sample.",
+      "x" = "Phase 2 subsamples inside the units phase 1 selected
+             ({.field {units}}), and {.fn survey::twophase} weights each of
+             those units by a row's chance of entering phase 2, while the
+             unit itself is in phase 2 for certain. In a simulation the
+             phase-1 part was 2.9 to 43 times its true value.",
+      "i" = "The weights in {.field .weight} are exact, so totals and means
+             are unaffected.",
+      "i" = "{.code method = \"full\"} reads the probabilities stage by
+             stage where phase 1's corrections state them. See
+             {.help as_svydesign}."
+    ),
+    class = "samplyr_warning_twophase_approx",
+    call = call
+  )
 }
 
 #' @noRd
 warn_twophase_across_units <- function(design1, stages1,
                                        call = caller_env()) {
   units <- design1$stages[[stages1[1]]]$clusters$vars
+  if (is_multi_hit_method(design1$stages[[stages1[1]]]$draw_spec)) {
+    # Each hit is a unit of its own, named by the hit number phase 2 carries.
+    units <- c(units, paste0(".phase1_draw_", stages1[1]))
+  }
   cli_warn(
     c(
       "Phase 2 was drawn across the units phase 1 selected, so its variance
@@ -2581,22 +2700,21 @@ within_pool_subsample_vars <- function(design2, stages2, phase1) {
   last <- length(design1$stages)
   if (
     !identical(as.integer(stages1), seq_len(last)) ||
-      !equal_wor_elements(design1$stages[[last]]) ||
-      any(vapply(
-        design1$stages,
-        function(spec) is_multi_hit_method(spec$draw_spec),
-        logical(1)
-      ))
+      !equal_wor_elements(design1$stages[[last]])
   ) {
     return(NULL)
   }
 
+  # Above a stage that can repeat a unit, each hit is a pool of its own,
+  # which phase 2 names by the hit number it carries.
+  hits <- phase_draw_columns(phase1)
   pool_vars <- unique(c(
     collect_ancestor_cluster_vars(design1, last),
+    unname(hits),
     design1$stages[[last]]$strata$vars
   ))
   strata2 <- design2$stages[[1]]$strata$vars %||% character(0)
-  df1 <- as.data.frame(phase1)
+  df1 <- with_phase_draw_columns(as.data.frame(phase1), phase1)
   if (!all(c(pool_vars, strata2) %in% names(df1))) {
     return(NULL)
   }
@@ -2638,19 +2756,222 @@ composed_subsample <- function(x) {
   if (!phase_info$is_twophase || survey_is_activation(phase_info)) {
     return(NULL)
   }
-  compose_within_pool_subsample(x)
+  compose_within_pool_subsample(x) %||% fixed_phase1_subsample(x)
+}
+
+#' Is phase 1 fixed, in a single primary unit?
+#'
+#' `survey::twophase()` builds phase 1 without `nest`, so it refuses one
+#' primary unit whatever its strata. When phase 1 could only have selected
+#' what it did, phase 2 is a sample of that unit's population itself. A
+#' final weight of one does not show it, since stage weights can cancel and
+#' a unit drawn with replacement can be hit more than once. So every stage
+#' must have taken each of its units for sure, by its own mechanism (only a
+#' recorded certainty counts at a stage drawn with replacement). A
+#' fixed-size stage whose units are all sure gave the others no chance, and
+#' a stage drawn with replacement whose hits are all recorded certainties
+#' had no draw left. A random-size stage can miss units by chance, and a
+#' pool in which it selected nothing leaves no row. It has to be proved to
+#' take every unit of every pool. Execution records every such empty pool,
+#' so where the record names none at the stage, its pools are those with
+#' rows, and each must hold as many units, all sure, as its population
+#' count. A sample without the record leaves its empty pools unknown, and
+#' only the design can prove the stage, see `bernoulli_takes_every_unit()`.
+#' A fixed-size stage without a
+#' variance formula of its own takes at least one unit in every pool it
+#' draws from, so its pools must hold as many units as their recorded
+#' population counts. The proof reads the sample and the design alone, so it
+#' is the same with or without a frame digest, and a sample changed after
+#' execution never qualifies. It reads every unit selected, including those
+#' an empty stage below left with no row, from their execution records.
+#' @noRd
+phase1_is_fixed_one_unit <- function(phase1) {
+  if (!is_tbl_sample(phase1) ||
+      !is_null(attr(phase1, "metadata")$prev_phase)) {
+    return(FALSE)
+  }
+  design1 <- get_design(phase1)
+  stages1 <- get_stages_executed(phase1)
+  if (nrow(phase1) == 0L ||
+      !identical(as.integer(stages1), seq_along(design1$stages)) ||
+      !sample_realization_status(phase1)$ok) {
+    return(FALSE)
+  }
+  df1 <- sample_every_unit_rows(phase1, design1, stages1)
+  if (is_null(df1)) {
+    return(FALSE)
+  }
+  spec1 <- export_stage_spec(df1, design1, stages1)
+  for (pos in seq_along(stages1)) {
+    k <- stages1[pos]
+    entry <- list(
+      prob = spec_stage_prob(df1, k),
+      certainty = df1[[paste0(".certainty_", k)]]
+    )
+    draw <- design1$stages[[k]]$draw_spec
+    if (!all(export_stage_sure(entry, draw, nrow(df1)))) {
+      return(FALSE)
+    }
+    if (is_random_size_method(draw)) {
+      recorded <- identical(stage_pool_evidence(phase1, k), "none_empty") &&
+        stage_takes_every_unit(df1, spec1, pos, k)
+      if (!recorded &&
+            !bernoulli_takes_every_unit(design1$stages[[k]], df1, pos, k)) {
+        return(FALSE)
+      }
+    } else if (
+      !survey_stage_kind(draw) %in% c("equal_wor", "pps_wor", "wr") &&
+        !stage_takes_every_unit(df1, spec1, pos, k)
+    ) {
+      return(FALSE)
+    }
+  }
+  # survey sees the sample's rows, so its primary units are counted there.
+  rows1 <- as.data.frame(phase1)
+  first <- design1$stages[[stages1[1]]]
+  if (is_null(first$clusters)) {
+    return(nrow(rows1) == 1L)
+  }
+  nrow(unique(rows1[c(first$strata$vars, first$clusters$vars)])) == 1L
+}
+
+#' A row for every unit a sample selected, or `NULL` when that is unknown
+#'
+#' A unit selected at random can lose every row to an empty stage below.
+#' Its record keeps it, as a zero row, and a record without a row proves
+#' nothing, so it gives `NULL`.
+#' @noRd
+sample_every_unit_rows <- function(x, design, stages) {
+  records <- sample_empty_parents(x)
+  if (any(vapply(records, function(r) is_null(r$rows), logical(1)))) {
+    return(NULL)
+  }
+  export_rows(x, design, stages, every_level = TRUE, notify = FALSE)
+}
+
+#' What execution recorded about the empty pools of a stage
+#'
+#' `"none_empty"` when the record holds no pool of the stage, `"some_empty"`
+#' when it holds one, and `"unknown"` when the sample has no record, as a
+#' sample built anew from another, such as an occasion, has none. A
+#' fixed-size stage takes a unit in every pool, so only a random-size
+#' stage's pools can be empty.
+#' @noRd
+stage_pool_evidence <- function(x, stage) {
+  records <- attr(x, "metadata")$empty_pools
+  if (is_null(records)) {
+    return("unknown")
+  }
+  stages <- vapply(records, function(r) as.integer(r$stage), integer(1))
+  if (any(stages == as.integer(stage))) "some_empty" else "none_empty"
+}
+
+#' Is a random-size stage proved to take every unit of every pool?
+#'
+#' Only a Bernoulli stage can be, and only where the design and what
+#' execution always records prove it for every pool, the pools without a row
+#' included. Each sufficient proof is listed here. A fraction of one gives
+#' every unit chance one, as one value or as a table of ones. A size `n`
+#' gives chance `min(1, n / N)`, so it proves the stage at stage 1 when
+#' every pool is known and shows `n >= N`. A table of sizes is checked at
+#' execution to name every stratum of the frame and no other, and a zero
+#' size is refused, so a stratum of the table without a row drew nothing by
+#' chance. Every stratum of the table must then have rows whose recorded
+#' population count `.fpc_k` its size reaches. One size without strata is
+#' one pool, which the rows show. A population count only speaks for a pool
+#' with rows, so it never proves the stage alone, and the frame digest,
+#' which is optional, never enters. One size across strata, or allocated
+#' between them, and a stage below the first, whose pools lie inside each
+#' parent, leave pools that nothing recorded at execution enumerates, so
+#' they decline.
+#' @param stage The stage as designed.
+#' @param df1 A row for every unit the sample selected.
+#' @noRd
+bernoulli_takes_every_unit <- function(stage, df1, pos, k) {
+  draw <- stage$draw_spec
+  if (!identical(draw$method, "bernoulli")) {
+    return(FALSE)
+  }
+  frac <- draw$frac
+  if (!is_null(frac)) {
+    if (is.data.frame(frac)) {
+      frac <- frac$frac
+    }
+    return(is.numeric(frac) && length(frac) > 0L && all(frac == 1))
+  }
+  size <- draw$n
+  count <- df1[[paste0(".fpc_", k)]]
+  strata <- stage$strata$vars %||% character(0)
+  if (pos != 1L || is_null(size) || is_null(count) || nrow(df1) == 0L) {
+    return(FALSE)
+  }
+  if (!is.data.frame(size)) {
+    return(length(strata) == 0L && length(size) == 1L &&
+             all(size >= count))
+  }
+  if (length(strata) == 0L || !all(c(strata, "n") %in% names(size)) ||
+        !all(strata %in% names(df1))) {
+    return(FALSE)
+  }
+  keys <- size[strata]
+  # Every stratum of the table holds rows, and its size reaches its count.
+  all(vctrs::vec_in(keys, df1[strata])) &&
+    isTRUE(all(size$n[vctrs::vec_match(df1[strata], keys)] >= count))
+}
+
+#' Does every pool of a stage hold as many units as its population count?
+#'
+#' A pool is a stratum of the stage within one unit of the stage above.
+#' `.fpc_<k>` records its population count, infinite for a stage drawn with
+#' replacement, which then never qualifies.
+#' @noRd
+stage_takes_every_unit <- function(df1, spec1, pos, k) {
+  count <- df1[[paste0(".fpc_", k)]]
+  if (is_null(count) || !all(is.finite(count))) {
+    return(FALSE)
+  }
+  n <- nrow(df1)
+  parent <- if (pos == 1L) {
+    rep(1L, n)
+  } else {
+    stage_path_ids(list(stage = spec1$stage[seq_len(pos - 1L)], n_rows = n))
+  }
+  entry <- spec1$stage[[pos]]
+  pool <- group_ids(
+    data.frame(parent = parent, stratum = entry$strata$id %||% rep(1L, n)),
+    c("parent", "stratum")
+  )
+  taken <- tapply(entry$unit$id, pool, function(u) length(unique(u)))
+  recorded <- tapply(count, pool, function(v) v[1])
+  all(taken == recorded)
+}
+
+#' Phase 2 as a one-phase sample, when phase 1 could select nothing else
+#'
+#' Exact for every phase-2 method, so its own design exports it. Any phase 1
+#' survey can represent keeps the two-phase export.
+#' @noRd
+fixed_phase1_subsample <- function(x) {
+  if (!phase1_is_fixed_one_unit(get_prev_phase(x)$sample)) {
+    return(NULL)
+  }
+  metadata <- attr(x, "metadata")
+  metadata$prev_phase <- NULL
+  new_tbl_sample(as.data.frame(x), get_design(x), get_stages_executed(x),
+                 seed = attr(x, "seed"), metadata = metadata)
 }
 
 #' A subsample within phase 1's final-stage pools, as phase 1's sample
 #'
 #' Every phase-1 quantity the export reads (each stage's weight, fpc,
-#' certainty, zone and pair, and the ids and strata) is constant within a
-#' final-stage pool, so phase 2's rows take them from their pool and no row
-#' identifier is needed. The final stage's weight absorbs phase 2's, so its
+#' certainty, zone, pair and hit number, and the ids and strata) is constant
+#' within a final-stage pool, so phase 2's rows take them from their pool
+#' and no row identifier is needed. Below a stage that can repeat a unit the
+#' pool is one hit, which phase 2 names by its carried hit number. The final stage's weight absorbs phase 2's, so its
 #' take, probability and weight agree. `NULL` when the shape does not apply.
 #' @noRd
 compose_within_pool_subsample <- function(x) {
-  phase1 <- attr(x, "metadata")$prev_phase$sample
+  phase1 <- get_prev_phase(x)$sample
   design2 <- get_design(x)
   stages2 <- get_stages_executed(x)
   pool_vars <- within_pool_subsample_vars(design2, stages2, phase1)
@@ -2659,13 +2980,14 @@ compose_within_pool_subsample <- function(x) {
   }
   design1 <- get_design(phase1)
   stages1 <- get_stages_executed(phase1)
-  df1 <- as.data.frame(phase1)
+  df1 <- with_phase_draw_columns(as.data.frame(phase1), phase1)
   df2 <- as.data.frame(x)
 
+  # A hit number is constant within its pool, which it names.
   stage_cols <- intersect(
     paste0(
-      c(".weight_", ".fpc_", ".certainty_", ".zone_", ".pair_"),
-      rep(stages1, each = 5L)
+      c(".weight_", ".fpc_", ".certainty_", ".zone_", ".pair_", ".draw_"),
+      rep(stages1, each = 6L)
     ),
     names(df1)
   )
@@ -2805,6 +3127,19 @@ survey_stage_kind <- function(draw_spec) {
   "equal_wor"
 }
 
+#' Does every phase-2 row carry the position of its phase-1 row?
+#'
+#' A phase drawn from the phase-1 sample alone keeps each phase-1 row's
+#' position, which links the phases exactly. Rows a later stage drew from
+#' a register of its own carry none, and link through the identifiers the
+#' phases declare.
+#' @noRd
+phase_rows_linked <- function(df2, row_col, n1) {
+  rows <- df2[[row_col]]
+  !is_null(rows) && length(rows) > 0L && !anyNA(rows) &&
+    all(rows >= 1L & rows <= n1)
+}
+
 #' Resolve the variables that match phase-2 rows into the phase-1 data
 #'
 #' Uses identifiers shared by both phases and requires a unique phase-1 match.
@@ -2920,20 +3255,21 @@ resolve_phase_bridge <- function(phase1_ids, phase2_ids, df1, df2,
   bridge_vars
 }
 
+#' The unit identifiers a phase declares, which can link it to the other
+#'
+#' Only declared columns qualify. They link the phases when a phase-2 stage
+#' drew from a register of its own, whose rows carry no phase-1 row
+#' position. A `.draw_k` column numbers the hits of a multi-hit stage, but
+#' execution drops it from the frame of the next phase, so it can never link
+#' the phases. A unit hit twice then repeats its identifier, and
+#' `resolve_phase_bridge()` refuses the ambiguous join if phase 2 reaches
+#' it.
 #' @noRd
 survey_key_vars <- function(design, stages_executed, df) {
-  vars <- character(0)
-  for (stage_idx in stages_executed) {
-    stage_spec <- design$stages[[stage_idx]]
-    draw_col <- paste0(".draw_", stage_idx)
-
-    if (is_multi_hit_method(stage_spec$draw_spec) && draw_col %in% names(df)) {
-      vars <- c(vars, draw_col)
-    } else if (!is_null(stage_spec$clusters)) {
-      vars <- c(vars, stage_spec$clusters$vars)
-    }
-  }
-  vars
+  vars <- unlist(lapply(stages_executed, function(stage_idx) {
+    design$stages[[stage_idx]]$clusters$vars
+  }))
+  unique(vars[!is_samplyr_column(vars)])
 }
 
 #' @noRd
@@ -2979,6 +3315,44 @@ first_stage_uncorrected <- function(df, fpc) {
     (identical(fpc$scale, "fraction") && all(first == 0))
 }
 
+#' The stages of each row that the variance of a survey design never reads
+#'
+#' survey's compiled variance, which it uses for a design without `pps`,
+#' adds the stages below a unit scaled by the unit's sampling fraction and
+#' skips them when that fraction is zero. A unit drawn with replacement has
+#' none, since the spread between its hits carries the stages below it.
+#' Under `options(survey.ultimate.cluster = TRUE)` survey reads stage 1
+#' alone. Its R variance, used for a `pps` design, after a calibration by
+#' stage or under `options(survey.use_rcpp = FALSE)`, computes every stage
+#' before scaling it, so a stratum of one unit stops it at any stage.
+#' @param n_rows The rows of the spec the design was built from.
+#' @return A logical matrix with one row per data row and one column per
+#'   identifier stage, `TRUE` where survey reads none of that stage, or `NULL`
+#'   when it reads every stage, has no correction term to read the fractions
+#'   from, or the design's rows do not match the spec.
+#' @noRd
+survey_unread_stages <- function(svy, n_rows) {
+  n_stages <- NCOL(svy$cluster)
+  if (n_stages < 2L || !identical(nrow(svy$variables), as.integer(n_rows))) {
+    return(NULL)
+  }
+  out <- matrix(FALSE, n_rows, n_stages)
+  if (isTRUE(getOption("survey.ultimate.cluster"))) {
+    out[, -1L] <- TRUE
+    return(out)
+  }
+  popsize <- svy$fpc$popsize
+  if (is_null(popsize) || !isFALSE(svy$fpc$pps) ||
+      !isTRUE(getOption("survey.use_rcpp"))) {
+    return(NULL)
+  }
+  zero <- svy$fpc$sampsize / popsize == 0
+  for (p in 2:n_stages) {
+    out[, p] <- rowSums(zero[, seq_len(p - 1L), drop = FALSE]) > 0
+  }
+  out
+}
+
 #' Warn about strata that hold a single sampled unit.
 #'
 #' `survey` computes each stratum's variance from the spread of its sampled
@@ -2990,13 +3364,17 @@ first_stage_uncorrected <- function(df, fpc) {
 #' @param window_split How many of the lonely strata a window's export made
 #'   by splitting the design's strata by quota block and the occasions a unit is
 #'   active. They cannot be collapsed before export.
+#' @param unread From `survey_unread_stages()`: the rows whose strata at each
+#'   stage survey's variance never reads, which no singleton there can stop.
+#'   `NULL` reads every stage.
 #' @noRd
 warn_lonely_strata <- function(spec, design, id_stage_indices,
-                               window_split = 0L, call = caller_env()) {
+                               window_split = 0L, unread = NULL,
+                               call = caller_env()) {
   if (!identical(getOption("survey.lonely.psu", "fail"), "fail")) {
     return(invisible(NULL))
   }
-  lonely <- spec_singletons(spec, id_stage_indices)
+  lonely <- spec_singletons(spec, id_stage_indices, unread)
   first_stage <- c(id_stage_indices, spec$stages[1])[1L]
   for (stage_idx in as.integer(names(lonely)[lonely > 0L])) {
     n_lonely <- lonely[[as.character(stage_idx)]]
@@ -3148,19 +3526,26 @@ check_export_primary_units <- function(x, design = get_design(x),
 #' survey learns its units from rows. A primary unit left with no row would
 #' take its zero total out of the variance, so each of its empty units gets
 #' a zero row instead, one per draw. `every_level` does the same for empty
-#' units inside a primary unit that keeps rows, for RWYB. The row
+#' units inside a primary unit that keeps rows, and for every unit whose
+#' pools a random-size draw below left all empty, for RWYB. The row
 #' carries the unit's values for the stages above, its frame variables
 #' included, and below it a single unit taken whole, so it adds no variance
 #' of its own. Its weight is 0, so it adds nothing to a total or a count,
 #' and its analysis variables are `NA`. In a simulation of two strata of
 #' five schools, two of them empty, the estimated variance went from 0.47
 #' of the true one to 0.97 under simple random sampling.
+#'
+#' A zero row is a selected unit only down to its record's stage. From that
+#' stage on it is a placeholder, no unit any stage selected, and the
+#' `zero_from` attribute gives that stage for each row, `NA` for a row of
+#' the sample, so a count of a stage's selections can leave them out.
 #' @noRd
 export_rows <- function(x, design = get_design(x),
                         stages = get_stages_executed(x),
                         every_level = FALSE, notify = TRUE,
                         call = caller_env()) {
   df <- as.data.frame(x)
+  zero_from <- rep(NA_integer_, nrow(df))
   records <- if (every_level) {
     Filter(
       function(r) !is_null(r$rows) && r$stage <= max(stages),
@@ -3172,12 +3557,99 @@ export_rows <- function(x, design = get_design(x),
   if (length(records) > 0L) {
     zero <- lapply(records, function(r) empty_unit_rows(df, r, stages))
     df <- vctrs::vec_rbind(df, !!!zero)
+    zero_from <- c(zero_from, unlist(lapply(records, function(r) {
+      rep(as.integer(r$stage), nrow(r$rows))
+    })))
     if (notify) {
       warn_export_empty_units(records, design, call = call)
     }
   }
+  if (every_level) {
+    # Execution already said that the draw selected nothing.
+    drawn <- add_draw_emptied_units(x, design, stages, df)
+    zero_from <- c(zero_from, drawn$zero_from)
+    df <- drawn$df
+  }
+  df <- mark_placeholder_wr_stages(df, zero_from, design, stages)
   check_export_primary_units(x, design, stages, df = df, call = call)
+  attr(df, "zero_from") <- zero_from
   df
+}
+
+#' Mark a zero row's stages drawn with replacement as no draw
+#'
+#' A zero row takes the stages from its record's on as one unit taken
+#' whole. A stage drawn with replacement reads that from `.certainty_k`
+#' alone, which a stage without a certainty rule, as `srswr`, never wrote.
+#' Its rows are then flagged `FALSE`, which they would read without the
+#' column, and its placeholders `TRUE`.
+#' @noRd
+mark_placeholder_wr_stages <- function(df, zero_from, design, stages) {
+  if (!any(!is.na(zero_from))) {
+    return(df)
+  }
+  for (k in stages) {
+    col <- paste0(".certainty_", k)
+    if (col %in% names(df) ||
+        !identical(survey_stage_kind(design$stages[[k]]$draw_spec), "wr")) {
+      next
+    }
+    df[[col]] <- !is.na(zero_from) & zero_from <= k
+  }
+  df
+}
+
+#' Add a zero row for each unit a random-size draw below left with no row
+#'
+#' A unit whose pools at the next stage all selected nothing has no row,
+#' and no row below it either. `empty_pools` keeps its rows in the sample of
+#' the stage above, one per hit. Its estimated total is zero, as is the
+#' usual estimate of the variance within it, which sums over sampled units,
+#' so its zero row takes the stages below as a single unit taken whole, as
+#' for a unit whose register was empty. A unit is lost only if no row
+#' descends from it, a zero row of a deeper record included, so the records
+#' are read from the deepest stage up and each against the rows added
+#' before it. A unit whose later pools drew a child that a deeper stage
+#' emptied in turn is kept by that child's row, with no placeholder of its
+#' own.
+#' @param df The rows the export holds so far, zero rows included.
+#' @return A list of `df` with the zero rows added and `zero_from`, their
+#'   records' stages.
+#' @noRd
+add_draw_emptied_units <- function(x, design, stages, df) {
+  records <- attr(x, "metadata")$empty_pools
+  if (".replicate" %in% names(x)) {
+    reps <- union(unique(x$.replicate), extracted_replicate_id(x))
+    records <- Filter(function(r) {
+      is.na(r$replicate) || r$replicate %in% reps
+    }, records)
+  }
+  records <- Filter(function(r) {
+    !is_null(r$rows) && r$stage >= 2L && r$stage <= max(stages)
+  }, records)
+  order <- order(-vapply(records, function(r) as.integer(r$stage), 1L))
+  zero_from <- integer(0)
+  for (r in records[order]) {
+    k <- r$stage
+    parent <- intersect(
+      c(collect_ancestor_strata_vars(design, k),
+        collect_ancestor_cluster_vars(design, k),
+        paste0(".draw_", seq_len(k - 1L))),
+      intersect(names(r$rows), names(df))
+    )
+    if (length(parent) == 0L) {
+      next
+    }
+    lost <- !vctrs::vec_in(r$rows[parent], df[parent])
+    if (!any(lost)) {
+      next
+    }
+    record <- list(stage = k, replicate = r$replicate,
+                   rows = vctrs::vec_slice(r$rows, lost), n = sum(lost))
+    df <- vctrs::vec_rbind(df, empty_unit_rows(df, record, stages))
+    zero_from <- c(zero_from, rep(as.integer(k), sum(lost)))
+  }
+  list(df = df, zero_from = zero_from)
 }
 
 #' The records of empty units, cut to those whose primary unit has no row
@@ -3572,20 +4044,37 @@ spec_strata_labels <- function(entry, df) {
 
 #' Strata holding one sampled unit, per represented stage
 #'
-#' Pools are strata within the units selected at the stages above, and a
-#' pool is lonely when it holds one sampling unit and was not taken whole.
-#' A census pool is exempt, since survey accepts it. With no identifier
-#' stage, the single element stage is scanned.
+#' A pool is lonely when it holds one sampling unit and was not taken whole.
+#' A census pool is exempt, since survey accepts it, and so is a pool whose
+#' rows survey's variance never reads (`unread`, as in
+#' `spec_pool_units()`).
 #' @return Named integer, the number of lonely pools per stage.
 #' @noRd
-spec_singletons <- function(spec, stages) {
+spec_singletons <- function(spec, stages, unread = NULL) {
+  vapply(spec_pool_units(spec, stages, unread), function(pools) {
+    sum(pools$n_units == 1L & !pools$census & !pools$unread)
+  }, integer(1))
+}
+
+#' Sampled units in each pool, per represented stage
+#'
+#' Pools are strata within the units selected at the stages above. With no
+#' identifier stage, the single element stage is scanned.
+#' @param unread `NULL`, or a logical matrix with one row per row of the
+#'   spec and one column per stage of `stages`, `TRUE` where survey's
+#'   variance never reads that stage of the row.
+#' @return A list named by stage, each a data frame with one row per pool
+#'   giving `n_units`, whether the pool was taken whole (`census`) and
+#'   whether survey reads none of its rows (`unread`).
+#' @noRd
+spec_pool_units <- function(spec, stages, unread = NULL) {
   # A single unclustered stage needs no id column: its units are the rows.
   if (length(stages) == 0) {
     stages <- spec$stages[1]
   }
   n <- spec$n_rows
   parent <- rep(1L, n)
-  lonely <- integer(0)
+  out <- list()
   for (stage_idx in stages) {
     entry <- spec$stage[[as.character(stage_idx)]]
     stratum <- entry$strata$id %||% rep(1L, n)
@@ -3601,19 +4090,33 @@ spec_singletons <- function(spec, stages) {
     )
     first <- !duplicated(unit)
     n_units <- tabulate(pool[first], nbins = max(c(0L, pool)))
-    row_census <- entry$census_rows %||% (
-      !identical(entry$kind, "wr") &
-        is_certainty_probability(entry$prob %||% rep(0, n))
-    )
+    row_census <- entry$census_rows %||% if (identical(entry$kind, "wr")) {
+      # Expected hits of one are no census, a declared certainty unit is.
+      !is.na(entry$certainty %||% rep(FALSE, n)) &
+        (entry$certainty %||% rep(FALSE, n))
+    } else {
+      is_certainty_probability(entry$prob %||% rep(0, n))
+    }
     census <- as.vector(tapply(
       row_census,
       factor(pool, levels = seq_along(n_units)),
       all
     ))
-    lonely[as.character(stage_idx)] <- sum(n_units == 1L & !census)
+    pos <- match(stage_idx, stages)
+    skipped <- if (is_null(unread)) {
+      rep(FALSE, length(n_units))
+    } else {
+      as.vector(tapply(unread[, pos], factor(pool, levels = seq_along(n_units)),
+                       all))
+    }
+    out[[as.character(stage_idx)]] <- data.frame(
+      n_units = n_units,
+      census = as.logical(census),
+      unread = as.logical(skipped)
+    )
     parent <- unit
   }
-  lonely
+  out
 }
 
 #' Per-stage FPC terms.
@@ -3662,8 +4165,13 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices,
 
   has_pps_wor <- any(stage_kind == "pps_wor")
   has_rs_poisson_stage1 <- any(stage_kind == "rs_poisson_first")
+  # Certainty units of a stage drawn with replacement are a census.
+  wr_certain <- lapply(fpc_stage_indices, function(stage_idx) {
+    flag <- df[[paste0(".certainty_", stage_idx)]]
+    if (!is_null(flag) && any(flag %in% TRUE)) flag %in% TRUE
+  })
 
-  needs_pi <- has_pps_wor ||
+  needs_pi <- has_pps_wor || any(!vapply(wr_certain, is_null, logical(1))) ||
     has_rs_poisson_stage1 ||
     any(stage_kind == "unsupported_first")
   scale <- if (needs_pi && length(fpc_stage_indices) > 1L) {
@@ -3687,6 +4195,13 @@ survey_fpc_info <- function(df, design, stages_executed, id_stage_indices,
     weight_col <- paste0(".weight_", stage_idx)
     fpc_col <- paste0(".fpc_", stage_idx)
 
+    if (identical(kind, "wr") && !is_null(wr_certain[[i]])) {
+      # Sampling fraction one for the take-all stratum, none for the draws.
+      fpc_vars <- c(fpc_vars, add_term(
+        paste0(".fpc_pi_", stage_idx), as.numeric(wr_certain[[i]])
+      ))
+      next
+    }
     if (kind %in% c("wr", "unsupported_later")) {
       fpc_vars <- c(fpc_vars, if (scale == "fraction") {
         add_term(paste0(".fpc_f0_", stage_idx), 0)
@@ -3821,6 +4336,42 @@ survey_user_pps <- function(pps, design, stages_executed, df,
     refuse("{.arg pps} takes {.code \"brewer\"}, {.code \"overton\"},
             {.code FALSE}, or an object from {.fn survey::ppsmat},
             {.fn survey::HR} or {.fn survey::poisson_sampling}.")
+  }
+  # These specifications describe stage 1 alone, from its inclusion
+  # probabilities, so a PPS stage further down does not justify them.
+  first_kind <- survey_stage_kind(design$stages[[stages_executed[1]]]$draw_spec)
+  if (identical(first_kind, "wr")) {
+    refuse("Stage 1 is drawn with replacement or minimum replacement, so its
+            rows carry expected hits, not the inclusion probabilities
+            {.arg pps} needs. Omit {.arg pps} for the with-replacement
+            export.")
+  }
+  first_mos <- design$stages[[stages_executed[1]]]$draw_spec$mos
+  pps_first <- identical(first_kind, "pps_wor") ||
+    (identical(first_kind, "rs_poisson") && !is_null(first_mos))
+  if (!pps_first) {
+    refuse("{.arg pps} describes an unequal-probability stage 1, and
+            stage 1 of this design is not one. Omit {.arg pps}.")
+  }
+  # Overton and HR assume a fixed sample size, which a Poisson stage lacks.
+  if (identical(first_kind, "rs_poisson") && !inherits(pps, "pps_spec")) {
+    refuse("Stage 1 is drawn by Poisson sampling, whose sample size is
+            random. {.code \"overton\"} and {.fn survey::HR} assume a
+            fixed size and would leave that part out of the variance.
+            Omit {.arg pps} for the exact Poisson variance, or pass
+            {.fn survey::ppsmat} or {.fn survey::poisson_sampling}.")
+  }
+  # poisson_sampling() is ppscov() on a diagonal matrix: independent
+  # selections, which a fixed-size stage does not have.
+  poisson_spec <- inherits(pps, "ppsdcheck") &&
+    inherits(pps$dcheck, "ddiMatrix")
+  if (identical(first_kind, "pps_wor") && poisson_spec) {
+    refuse("Stage 1 selects a fixed number of units, so its selections are
+            not independent. {.fn survey::poisson_sampling} treats them as
+            independent and would add the variance of a random sample
+            size. Omit {.arg pps} for Brewer's approximation, or pass
+            {.code \"overton\"}, {.fn survey::HR} or
+            {.fn survey::ppsmat}.")
   }
   if (inherits(pps, "pps_spec")) {
     first <- design$stages[[stages_executed[1]]]
@@ -4107,15 +4658,24 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
     ))
   }
 
+  check_prev_phase_unmodified(x, "as_svydesign")
   composed <- composed_subsample(x)
   if (!is_null(composed)) {
     if (!is_null(method)) {
       abort_samplyr(
         c(
           "{.arg method} is only valid when converting a two-phase sample.",
-          "i" = "This second phase draws within each final-stage pool of
-                 phase 1, so it exports as phase 1's multistage design with a
-                 smaller final take, not through {.fn survey::twophase}."
+          "i" = if (phase1_is_fixed_one_unit(
+            get_prev_phase(x)$sample
+          )) {
+            "Phase 1 could select nothing else, so this second phase
+             exports as a sample of its units, not through
+             {.fn survey::twophase}."
+          } else {
+            "This second phase draws within each final-stage pool of
+             phase 1, so it exports as phase 1's multistage design with a
+             smaller final take, not through {.fn survey::twophase}."
+          }
         ),
         class = "samplyr_error_survey_argument"
       )
@@ -4293,11 +4853,20 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
   } else {
     "srswor"
   }
-  check_systematic_variance(
-    systematic_stages,
-    systematic_variance,
-    approximation = approximation
-  )
+  # A two-phase build refuses whole method families, so the policy is
+  # checked after it, and a refused export carries no approximation advice.
+  check_systematic <- function() {
+    check_systematic_variance(
+      systematic_stages,
+      systematic_variance,
+      approximation = approximation
+    )
+  }
+  twophase_build <- is_twophase && !is_activation &&
+    !identical(occasion_route, "ultimate_cluster")
+  if (!twophase_build) {
+    check_systematic()
+  }
 
   record_systematic <- function(result) {
     record_systematic_variance(
@@ -4324,14 +4893,16 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
   }
 
   if (is_twophase) {
-    record_systematic(build_twophase_svydesign(
+    result <- build_twophase_svydesign(
       df = export_rows(x, design, stages_executed),
       design = design,
       stages_executed = stages_executed,
       prev_phase = prev_phase,
       method = method,
       dots = list(...)
-    ))
+    )
+    check_systematic()
+    record_systematic(result)
   } else {
     record_systematic(build_singlephase_svydesign(
       x,
@@ -4359,25 +4930,50 @@ build_twophase_svydesign <- function(
   dots,
   call = caller_env()
 ) {
-  phase1 <- prev_phase$sample
-  # Also reject a modified phase-1 parent.
-  phase1_status <- sample_realization_status(phase1)
-  phase1_mods <- union(phase1_status$mods, phase1_status$inherited)
-  if (!phase1_status$ok) {
-    cli_warn(c(
-      "The phase-1 sample was modified after its execution
-       ({.field {phase1_mods}} changed).",
-      "i" = "{.fn survey::twophase} treats the current phase-1 rows
-             as the complete phase-1 sample.",
-      "i" = "If rows were removed to screen eligibility, estimates
-             describe the screened population. For domain analysis,
-             subset the exported design instead."
-    ), class = "samplyr_warning_modified_sample")
+  prepared <- twophase_svydesign_args(
+    df, design, stages_executed, prev_phase, method, dots, call = call
+  )
+  result <- survey_twophase(prepared$args, call = call)
+  if (prepared$joint_route) {
+    lonely2 <- twophase_phase2_lonely(
+      prepared$spec2, prepared$design2, prepared$row2
+    )
+    result <- twophase_phase2_syg(
+      result,
+      prepared$n2,
+      lonely = lonely2,
+      call = call
+    )
   }
+  result
+}
+
+#' The arguments of survey::twophase() for a two-phase sample
+#'
+#' Everything `build_twophase_svydesign()` decides before calling survey,
+#' its refusals and warnings included, so `variance_estimators()` can read
+#' the same arguments without calling it.
+#' @return A list of `args`, and of what the joint-probability route needs
+#'   afterwards: `joint_route`, `spec2`, `design2`, `row2` and `n2`.
+#' @noRd
+twophase_svydesign_args <- function(
+  df,
+  design,
+  stages_executed,
+  prev_phase,
+  method,
+  dots,
+  call = caller_env()
+) {
+  phase1 <- prev_phase$sample
+  phase1_status <- sample_realization_status(phase1)
   design1 <- prev_phase$design %||% get_design(phase1)
   stages1 <- prev_phase$stages %||% get_stages_executed(phase1)
   # A phase-1 unit found empty is a zero row that phase 2 did not reach.
-  df1 <- export_rows(phase1, design1, stages1, call = call)
+  # Phase 2's design names phase 1's hits by their carried names.
+  df1 <- with_phase_draw_columns(
+    export_rows(phase1, design1, stages1, call = call), phase1
+  )
   df2 <- df
   design2 <- design
 
@@ -4432,13 +5028,23 @@ build_twophase_svydesign <- function(
     ), class = "samplyr_error_twophase_poisson", call = call)
   }
 
-  bridge_vars <- resolve_phase_bridge(
-    survey_key_vars(design1, stages1, df1),
-    survey_key_vars(design2, stages_executed, df2),
-    df1,
-    df2,
-    call = call
-  )
+  row_col <- phase_row_column(phase1)
+  bridge_vars <- if (phase_rows_linked(df2, row_col, nrow(phase1))) {
+    # Zero rows for empty units follow the phase-1 rows and link nothing.
+    df1[[row_col]] <- c(
+      seq_len(nrow(phase1)),
+      rep(NA_integer_, nrow(df1) - nrow(phase1))
+    )
+    row_col
+  } else {
+    resolve_phase_bridge(
+      survey_key_vars(design1, stages1, df1),
+      survey_key_vars(design2, stages_executed, df2),
+      df1,
+      df2,
+      call = call
+    )
+  }
 
   # Generated names avoid every column of both phases.
   id_info1 <- spec_survey_ids(
@@ -4617,22 +5223,37 @@ build_twophase_svydesign <- function(
   }
 
   use_weights <- !is_null(method) && method %in% c("approx", "simple")
+  if (!use_weights && twophase_subsamples_wr_units(
+    df1, spec1, design1, stages1, design2, stages_executed,
+    complete = phase1_status$ok
+  )) {
+    abort_twophase_wr_subsample(design1, stages1,
+                                complete = phase1_status$ok, call = call)
+  }
 
   # One probability term per ID stage unless the FPCs carry it.
   n_id_stages <- max(
     length(id_info1$id_vars), length(id_vars2)
   )
+  certain_wr1 <- phase_wr_stages_certain(phase1, design1, stages1)
   fpc_covers_stages <- spec_fpc_states_probabilities(
-    spec1, id_info1$stage_indices, fpc1$scale
+    spec1, id_info1$stage_indices, fpc1$scale, certain_wr1
   ) &&
     spec_fpc_states_probabilities(
       spec2, id_info2$stage_indices, fpc2$scale
     )
 
+  # A phase 2 taking every phase-1 row adds no variance, and survey cannot
+  # read its all-one probabilities next to a matrix.
+  if (joint_route && all(in_phase2) &&
+      all(is_certainty_probability(1 / df_combined[[cond_col]]))) {
+    joint_route <- FALSE
+  }
+
   if (joint_route) {
     # survey reads phase 2's probabilities off `probs` next to the matrix.
     phase1_covered <- spec_fpc_states_probabilities(
-      spec1, id_info1$stage_indices, fpc1$scale
+      spec1, id_info1$stage_indices, fpc1$scale, certain_wr1
     )
     check_twophase_stage_probs(
       length(id_info1$id_vars), FALSE, phase1_covered, call = call
@@ -4689,19 +5310,23 @@ build_twophase_svydesign <- function(
   if (twophase_across_units(df1, spec1, design2, stages_executed)) {
     warn_twophase_across_units(design1, stages1, call = call)
   }
-  result <- twophase_phase1_aligned(do.call(survey::twophase, args))
-  if (joint_route) {
-    lonely2 <- twophase_phase2_lonely(spec2, design2, row2)
-    result <- twophase_phase2_syg(
-      result,
-      sum(in_phase2),
-      lonely = lonely2,
-      call = call
-    )
+  if (use_weights && twophase_approx_overstates(
+    df1, spec1, design2, stages_executed,
+    all_rows = !anyNA(vctrs::vec_match(
+      df1[seq_len(nrow(phase1)), bridge_vars, drop = FALSE],
+      df2[, bridge_vars, drop = FALSE]
+    ))
+  )) {
+    warn_twophase_approx(method, design1, stages1, call = call)
   }
-  result$call <- survey_export_call("twophase", args)
-
-  result
+  list(
+    args = args,
+    joint_route = joint_route,
+    spec2 = spec2,
+    design2 = design2,
+    row2 = row2,
+    n2 = sum(in_phase2)
+  )
 }
 
 #' Non-certainty phase-2 rows left alone in their phase-2 stratum
@@ -4832,6 +5457,359 @@ twophase_phase2_syg <- function(result, n2, lonely = integer(0),
   result$dcheck$phase2 <- phase2_syg
   result$dcheck$full <- full_syg
   result
+}
+
+#' Restate a census correction that survey cannot read
+#'
+#' survey 4.5 stops on a correction whose entries are all one, which is what
+#' a census at every stage gives as sampling fractions, or as population
+#' counts when each stratum holds one unit. Such a design has no sampling
+#' variance. Its correction is restated as counts equal to the units
+#' sampled in each stratum and stage, which survey reads as a census. When
+#' every stratum holds one unit, as when each certainty unit is its own
+#' stratum, the strata are dropped and the units keep survey's nested
+#' labels, since strata change neither the estimates of a census nor their
+#' zero variance. A single primary unit keeps its stratum, which survey
+#' needs to accept it. When its counts are all one too, as for a census of
+#' one element, no correction can state it, and `certain` asks the caller
+#' to mark the unit as taken with certainty. Any other correction is left
+#' as it is, so the export stays right once survey reads all-one values.
+#' @param rows The rows survey builds this design on.
+#' @return `NULL` when `fpc` needs no change, else a list of `data`, `fpc`
+#'   (`NULL` when `certain`), `ids` (`NULL` when unchanged), `strata` and
+#'   `certain`.
+#' @noRd
+census_fpc_restated <- function(ids, strata, fpc, data, rows = NULL,
+                                call = caller_env()) {
+  if (!inherits(fpc, "formula")) {
+    return(NULL)
+  }
+  rows <- rows %||% seq_len(nrow(data))
+  if (length(rows) == 0L) {
+    return(NULL)
+  }
+  used <- data[rows, , drop = FALSE]
+  values <- as.matrix(stats::model.frame(fpc, data = used,
+                                         na.action = stats::na.pass))
+  if (!isTRUE(all(values == 1))) {
+    return(NULL)
+  }
+  # survey refuses one unstratified primary unit before reading its FPC.
+  one_psu <- count_survey_psus(ids, strata, used) < 2L
+  if (one_psu && is_null(strata)) {
+    return(NULL)
+  }
+  probe <- function(ids, strata) {
+    survey::svydesign(ids = ids, strata = strata,
+                      weights = rep(1, length(rows)), data = used,
+                      nest = TRUE)
+  }
+  design <- probe(ids, strata)
+  counts <- design$fpc$sampsize[, seq_len(ncol(values)), drop = FALSE]
+  new_ids <- NULL
+  if (all(counts == 1) && !is_null(strata) && !one_psu) {
+    units <- character(0)
+    for (k in seq_len(ncol(design$cluster))) {
+      unit <- free_name(c(names(data), units), paste0(".census_unit_", k))
+      data[[unit]] <- NA_integer_
+      data[[unit]][rows] <- as.integer(factor(design$cluster[[k]]))
+      units <- c(units, unit)
+    }
+    used <- data[rows, , drop = FALSE]
+    new_ids <- survey_formula_from_vars(units)
+    counts <- probe(new_ids, NULL)$fpc$sampsize[, seq_len(ncol(values)),
+                                                 drop = FALSE]
+  }
+  if (all(counts == 1)) {
+    return(list(data = data, fpc = NULL, ids = NULL, strata = strata,
+                certain = TRUE))
+  }
+  terms <- character(0)
+  for (k in seq_len(ncol(counts))) {
+    term <- free_name(names(data), paste0(".fpc_census_", k))
+    data[[term]] <- 1
+    data[[term]][rows] <- counts[, k]
+    terms <- c(terms, term)
+  }
+  list(data = data, fpc = survey_formula_from_vars(terms), ids = new_ids,
+       strata = if (!is_null(new_ids)) NULL else strata, certain = FALSE)
+}
+
+#' Number of primary units survey sees, nested in first-stage strata
+#'
+#' Only the first terms count: a later stage's strata divide a primary unit,
+#' they do not make several.
+#' @noRd
+count_survey_psus <- function(ids, strata, data) {
+  if (is_null(ids) || length(all.vars(ids)) == 0L) {
+    return(nrow(data))
+  }
+  # The variable, not the term label, which keeps a non-syntactic name's
+  # backticks.
+  first_strata <- if (is_null(strata)) {
+    character(0)
+  } else {
+    all.vars(attr(stats::terms(strata), "variables")[[2]])
+  }
+  nrow(unique(data[c(first_strata, all.vars(ids)[1])]))
+}
+
+#' Let survey accept a single primary unit taken with certainty
+#'
+#' survey refuses a design with one primary unit unless that unit is nested
+#' in a stratum. When the unit is the whole first stage, its correction is
+#' one, and survey then reads its stratum as taken with certainty: no
+#' first-stage variance, and the later stages' variance within it. One
+#' unit drawn from several stays refused by survey.
+#' @noRd
+single_certain_psu <- function(args) {
+  if (!inherits(args$fpc, "formula")) {
+    return(args)
+  }
+  data <- args$data
+  first <- stats::model.frame(args$fpc, data = data,
+                              na.action = stats::na.pass)[[1]]
+  if (count_survey_psus(args$ids, args$strata, data) != 1L ||
+      !isTRUE(all(first == 1))) {
+    return(args)
+  }
+  if (is_null(args$strata)) {
+    stratum <- free_name(names(data), ".census_stratum")
+    args$data[[stratum]] <- 1L
+    args$strata <- survey_formula_from_vars(stratum)
+  }
+  args$nest <- TRUE
+  args
+}
+
+#' Call survey::svydesign(), restating a census correction first
+#'
+#' A census has no variance under any formula, so `pps` is dropped with it.
+#' A unit no correction can state is marked as taken with certainty, its
+#' population size set to its sample size as survey reads a certainty
+#' stratum.
+#' @noRd
+survey_svydesign <- function(args, call = caller_env()) {
+  args <- single_certain_psu(args)
+  restated <- census_fpc_restated(args$ids, args$strata, args$fpc,
+                                  args$data, call = call)
+  if (!is_null(restated)) {
+    args$data <- restated$data
+    args["fpc"] <- list(restated$fpc)
+    args$ids <- restated$ids %||% args$ids
+    args["strata"] <- list(restated$strata)
+    args$pps <- FALSE
+    args$variance <- NULL
+  }
+  # survey refuses one primary unit outside a stratum, so the refusal
+  # carries a class and its alternative.
+  if (is_null(args$strata) &&
+      count_survey_psus(args$ids, NULL, args$data) == 1L) {
+    abort_one_primary_unit("The sample", call = call)
+  }
+  result <- do.call(survey::svydesign, args)
+  if (isTRUE(restated$certain)) {
+    result$fpc$popsize <- result$fpc$sampsize
+  }
+  result$call <- survey_export_call("svydesign", args)
+  result
+}
+
+#' Refuse a design with a single primary unit
+#'
+#' survey refuses a design with one primary unit outside a stratum, with an
+#' unclassed error. One phase passes it a census of that unit as a
+#' certainty stratum, so only a unit not taken with certainty is refused
+#' there, a single hit of a draw with replacement included.
+#' survey's two-phase design refuses a phase 1 of one unit even when that
+#' unit is taken with certainty (`certain`).
+#' @noRd
+abort_one_primary_unit <- function(what, certain = FALSE,
+                                   call = caller_env()) {
+  message <- if (certain) {
+    c(
+      "{what} holds a single primary unit, taken with certainty.",
+      "x" = "{.pkg survey}'s two-phase design needs at least two phase-1
+             primary units, and refuses one even when it is taken with
+             certainty.",
+      "i" = "The weights in {.field .weight} are exact. For a variance,
+             draw phase 2 within each final-stage pool of phase 1, which is
+             exported as one phase, or replicate the whole design with
+             {.code execute(reps = )} and use
+             {.code as_svrepdesign(type = \"random_groups\")}."
+    )
+  } else {
+    c(
+      "{what} holds a single primary unit, not taken with certainty.",
+      "x" = "A variance compares primary units, and {.pkg survey} refuses a
+             design with only one primary sampling unit.",
+      "i" = "The weights in {.field .weight} are exact. For a variance, draw
+             at least two first-stage units, or replicate the whole design
+             with {.code execute(reps = )} and use
+             {.code as_svrepdesign(type = \"random_groups\")}."
+    )
+  }
+  abort_samplyr(message, class = "samplyr_error_export_one_unit",
+                call = call)
+}
+
+#' Refuse a phase 2 that survey's two-phase design cannot build
+#'
+#' A phase 2 of a single primary unit (`within_one = FALSE`), or one whose
+#' rows all fall in a single phase-1 primary unit (`within_one = TRUE`),
+#' as can happen when phase 2 is drawn across the phase-1 units.
+#' @noRd
+abort_twophase_phase2_one_unit <- function(within_one, call = caller_env()) {
+  message <- if (within_one) {
+    c(
+      "Phase 2's rows all fall in a single phase-1 primary unit.",
+      "x" = "{.pkg survey}'s two-phase design reads phase 1's design on
+             phase 2's rows, and refuses it with only one primary sampling
+             unit.",
+      "i" = "The weights in {.field .weight} are exact. For a variance,
+             draw phase 2 within each phase-1 unit, with {.fn stratify_by}
+             on its identifier, which is exported as one phase, or
+             replicate the whole design with {.code execute(reps = )} and
+             use {.code as_svrepdesign(type = \"random_groups\")}."
+    )
+  } else {
+    c(
+      "Phase 2 holds a single primary unit.",
+      "x" = "{.pkg survey}'s two-phase design refuses a phase 2 with only one
+             primary sampling unit outside a stratum.",
+      "i" = "The weights in {.field .weight} are exact. For a variance,
+             draw at least two phase-2 units, or replicate the whole design
+             with {.code execute(reps = )} and use
+             {.code as_svrepdesign(type = \"random_groups\")}."
+    )
+  }
+  abort_samplyr(message, class = "samplyr_error_export_one_unit",
+                call = call)
+}
+
+#' Call survey::twophase(), restating each phase's census correction first
+#'
+#' What survey cannot build around a phase-1 zero row is refused first.
+#' @noRd
+survey_twophase <- function(args, call = caller_env()) {
+  restated <- survey_twophase_args(args, call = call)
+  args <- restated$args
+  check_twophase_zero_rows(args, restated$subset, call = call)
+  if (is_null(args$strata[[1]]) &&
+      count_survey_psus(args$id[[1]], NULL, args$data) == 1L) {
+    # A first-stage correction of one is a census of that unit.
+    first <- if (inherits(args$fpc[[1]], "formula")) {
+      stats::model.frame(args$fpc[[1]], data = args$data,
+                         na.action = stats::na.pass)[[1]]
+    }
+    abort_one_primary_unit("Phase 1", certain = isTRUE(all(first == 1)),
+                           call = call)
+  }
+  # survey builds the phase-2 design, and phase 1's design on phase 2's
+  # rows, and refuses either with one primary unit outside a stratum.
+  rows2 <- args$data[restated$subset, , drop = FALSE]
+  if (is_null(args$strata[[2]]) &&
+      count_survey_psus(args$id[[2]], NULL, rows2) == 1L) {
+    abort_twophase_phase2_one_unit(within_one = FALSE, call = call)
+  }
+  if (is_null(args$strata[[1]]) &&
+      count_survey_psus(args$id[[1]], NULL, rows2) == 1L) {
+    abort_twophase_phase2_one_unit(within_one = TRUE, call = call)
+  }
+  result <- twophase_phase1_aligned(do.call(survey::twophase, args))
+  result$call <- survey_export_call("twophase", args)
+  result
+}
+
+#' The arguments survey::twophase() receives, each phase's census restated
+#'
+#' Phase 2's correction is read on the phase-2 rows only, as survey reads it.
+#' @return A list of `args` and `subset`, which rows are in phase 2.
+#' @noRd
+survey_twophase_args <- function(args, call = caller_env()) {
+  subset <- stats::model.frame(args$subset, data = args$data)[[1]]
+  rows <- list(NULL, which(subset %in% TRUE))
+  for (k in 1:2) {
+    restated <- census_fpc_restated(args$id[[k]], args$strata[[k]],
+                                    args$fpc[[k]], args$data,
+                                    rows = rows[[k]], call = call)
+    # A phase of one unit no correction states is left to survey.
+    if (is_null(restated) || restated$certain) {
+      next
+    }
+    args$data <- restated$data
+    args$fpc[k] <- list(restated$fpc)
+    if (!is_null(restated$ids)) args$id[[k]] <- restated$ids
+    args$strata[k] <- list(restated$strata)
+  }
+  list(args = args, subset = subset %in% TRUE)
+}
+
+#' Refuse what survey::twophase() cannot build around a phase-1 zero row
+#'
+#' The zero row of an empty unit keeps its zero total in the phase-1
+#' variance, and phase 2 could never draw it. survey reads every phase-1 row
+#' as a unit phase 2 might have drawn, and stops in three places, which are
+#' checked here in its order and only where the zero rows cause them. It
+#' builds phase 1 again on the phase-2 rows, so a phase 2 inside one primary
+#' unit whose only other unit is empty has a single one. It reads a phase-2
+#' census beside the joint probabilities as an all-one correction it cannot
+#' parse. And it needs every phase-2 stratum value of a phase-1 row to have a
+#' phase-2 row, where the zero row has a value of its own or none. The
+#' selection is valid in each case, and the export does not represent it
+#' yet.
+#' @param subset Which rows of `args$data` are in phase 2.
+#' @noRd
+check_twophase_zero_rows <- function(args, subset, call = caller_env()) {
+  data <- args$data
+  zero <- data$.weight %in% 0 & !subset
+  if (!any(zero)) {
+    return(invisible(NULL))
+  }
+  # The first variable of a formula, as survey reads it.
+  first_var <- function(f) {
+    vars <- if (inherits(f, "formula")) attr(stats::terms(f), "variables")
+    if (length(vars) < 2L) NULL else eval(vars[[2]], data)
+  }
+  refuse <- function(why) {
+    abort_samplyr(
+      c(
+        "survey's two-phase design cannot represent the empty unit this
+         phase 1 recorded.",
+        "x" = why,
+        "i" = "The empty unit is a zero row of phase 1, which keeps its
+               zero total in the phase-1 variance. The sample is valid.",
+        "i" = "Totals and means from {.field .weight} are right. This
+               export does not represent this configuration yet."
+      ),
+      class = "samplyr_error_twophase_empty_unit",
+      call = call
+    )
+  }
+  psu <- first_var(args$id[[1]])
+  if (!is_null(psu) && length(unique(psu[subset])) == 1L &&
+        length(unique(psu[!zero])) == 1L) {
+    refuse("Phase 2 lies in one primary unit, and every other one phase 1
+            selected is empty. survey builds phase 1 again on the phase-2
+            rows and stops on a single primary unit.")
+  }
+  prob2 <- first_var(args$probs[[2]])
+  if (!is_null(args$pps[[2]]) && !is_null(prob2) &&
+        all(is_certainty_probability(prob2[subset]))) {
+    refuse("Phase 2 took every unit it could draw, but not the zero row,
+            and survey cannot read that census beside the phase-2 joint
+            probabilities.")
+  }
+  stratum <- first_var(args$strata[[2]])
+  if (!is_null(stratum)) {
+    lost <- setdiff(unique(stratum), unique(stratum[subset]))
+    if (length(lost) > 0L && all(zero[stratum %in% lost])) {
+      refuse("The zero row's phase-2 stratum holds no unit phase 2 could
+              draw, and survey stops on a phase-2 stratum with no phase-2
+              row.")
+    }
+  }
+  invisible(NULL)
 }
 
 #' Rebuild the phase-1 term of a two-phase variance
@@ -4976,7 +5954,6 @@ build_singlephase_svydesign <- function(
   df <- fpc$df
 
   if (check_lonely) {
-    warn_lonely_strata(spec, design, id_info$stage_indices)
     warn_export_empty_parents(x, design, id_info$stage_indices)
   }
 
@@ -5018,8 +5995,11 @@ build_singlephase_svydesign <- function(
     ),
     dots
   )
-  result <- do.call(survey::svydesign, args)
-  result$call <- survey_export_call("svydesign", args)
+  result <- survey_svydesign(args)
+  if (check_lonely) {
+    warn_lonely_strata(spec, design, id_info$stage_indices,
+                       unread = survey_unread_stages(result, spec$n_rows))
+  }
   result
 }
 
@@ -5060,11 +6040,6 @@ build_stages_svydesign <- function(x, df, design, executed, stages, dots,
     df[[term]][census] <- 1
   }
   if (check_lonely) {
-    # Only census units are taken whole in the export. A unit moved down a
-    # stage or kept as a draw still varies.
-    checked <- spec
-    checked$stage[[k]]$census_rows <- census
-    warn_lonely_strata(checked, kept, id_info$stage_indices)
     warn_export_empty_parents(x, kept, id_info$stage_indices)
   }
   resolved <- survey_resolve_pps(
@@ -5087,8 +6062,15 @@ build_stages_svydesign <- function(x, df, design, executed, stages, dots,
   if (!any(census) && k == 1L) {
     args$fpc <- NULL
   }
-  result <- do.call(survey::svydesign, args)
-  result$call <- survey_export_call("svydesign", args)
+  result <- survey_svydesign(args)
+  if (check_lonely) {
+    # Only census units are taken whole in the export. A unit moved down a
+    # stage or kept as a draw still varies.
+    checked <- spec
+    checked$stage[[k]]$census_rows <- census
+    warn_lonely_strata(checked, kept, id_info$stage_indices,
+                       unread = survey_unread_stages(result, spec$n_rows))
+  }
   result
 }
 
@@ -5524,7 +6506,7 @@ survey_export_call <- function(fn, args) {
 #' through the second, so the two contributions sum to one whichever frame
 #' selected it. A unit belonging to one frame alone keeps its full weight.
 #'
-#' **`theta` belongs to the first frame of the stack.** Reversing the
+#' `theta` belongs to the first frame of the stack. Reversing the
 #' components and asking for the same estimator means asking for
 #' `1 - theta`. Only `theta = 0.5` is invariant to the order they were
 #' stacked in.
@@ -5545,7 +6527,17 @@ survey_export_call <- function(fn, args) {
 #'
 #' A two-phase component is refused as well: `as_svydesign()` exports one
 #' with `survey::twophase()`, and `multiframe()` accepts only the objects
-#' `survey::svydesign()` builds.
+#' `survey::svydesign()` builds. So is a component drawn in several stages
+#' (`samplyr_error_survey_multiframe_stages`), since `multiframe()` reads
+#' one selection probability per stage and the export carries one for the
+#' whole design. [as_svrepdesign()] replicates such a stack.
+#'
+#' So is a frame exported as drawn with replacement, such as a draw by
+#' `srswr`, a PPS draw with replacement or minimum replacement, or a settled
+#' reserve list (`samplyr_error_survey_multiframe_unsupported`).
+#' `multiframe()` computes each frame's variance as for a draw without
+#' replacement, which understates it there. [as_svrepdesign()] keeps each
+#' frame's own variance.
 #'
 #' ## The expected estimator
 #'
@@ -5564,8 +6556,16 @@ survey_export_call <- function(fn, args) {
 #' nothing left to infer.
 #'
 #' It is refused for a component whose weights were shared from another
-#' population: the combination is harmonic, and a realized weight-share
-#' weight is a random variable rather than an inverse inclusion probability.
+#' population, or adjusted when a reserve list was settled: the combination
+#' is harmonic, and such a realized weight is a random variable rather than
+#' an inverse inclusion probability.
+#'
+#' ## Means of a variable with missing values
+#'
+#' In survey 4.5, `svymean(..., na.rm = TRUE)` on the returned design keeps
+#' the rows whose value is missing in its denominator, so the mean is wrong.
+#' `svytotal(..., na.rm = TRUE)` is not affected, nor is the design
+#' [as_svrepdesign()] returns.
 #'
 #' @param x A `frame_stack` from [stack_frames()].
 #' @param ... Forwarded to `survey::svydesign()` for every component. `pps`
@@ -5652,7 +6652,7 @@ as_svydesign.frame_stack <- function(
     resolve_multiframe_theta(theta)
   }
 
-  designs <- lapply(names(x), function(nm) {
+  designs <- stats::setNames(lapply(names(x), function(nm) {
     do.call(
       as_svydesign,
       c(
@@ -5661,21 +6661,94 @@ as_svydesign.frame_stack <- function(
         list(nest = nest, systematic_variance = systematic_variance)
       )
     )
-  })
+  }), names(x))
 
+  check_multiframe_component_stages(designs, names(x))
+  check_multiframe_component_replacement(designs, names(x))
   result <- survey::multiframe(
-    designs,
+    unname(designs),
     if (identical(estimator, "constant")) {
-      multiframe_overlaps(x)
+      unname(multiframe_overlaps(x, designs))
     } else {
       # Supply unambiguous overlap weights rather than probabilities.
-      multiframe_overlap_weights(x)
+      unname(multiframe_overlap_weights(x, designs))
     },
     estimator = estimator,
     theta = theta
   )
   attr(result, "samplyr_overlap_probability_quality") <- attr(x, "overlaps")$probability_quality
   result
+}
+
+#' Refuse a component exported as drawn with replacement
+#'
+#' survey's dual-frame variance builds each component's pairwise terms from
+#' its units' selection probabilities, as for a draw without replacement,
+#' whatever correction the component carries. A component exported with no
+#' finite correction, such as a draw by `srswr`, a PPS draw with replacement
+#' or minimum replacement, or a settled reserve read by ultimate clusters,
+#' then has its variance understated, by about 7% for eight draws of thirty.
+#' The replicate export keeps each frame's own variance.
+#' @noRd
+check_multiframe_component_replacement <- function(designs, frames,
+                                                   call = caller_env()) {
+  drawn_wr <- vapply(designs, function(d) {
+    if (inherits(d, "pps")) {
+      return(FALSE)
+    }
+    popsize <- d$fpc$popsize
+    is_null(popsize) || any(is.infinite(popsize[, 1]))
+  }, logical(1))
+  if (!any(drawn_wr)) {
+    return(invisible(NULL))
+  }
+  drawn_wr <- frames[drawn_wr]
+  abort_samplyr(
+    c(
+      "{.fn as_svydesign} cannot composite a frame exported as drawn with
+       replacement.",
+      "x" = "{cli::qty(length(drawn_wr))}Frame{?s} {.val {drawn_wr}}
+             {?has/have} no finite population correction.",
+      "i" = "{.fn survey::multiframe} computes each frame's variance from its
+             units' selection probabilities as for a draw without
+             replacement, which understates the variance of a draw with
+             replacement.",
+      "i" = "Use {.fn as_svrepdesign} on the stack, whose replicates keep each
+             frame's own variance."
+    ),
+    class = "samplyr_error_survey_multiframe_unsupported",
+    call = call
+  )
+}
+
+#' Refuse a component whose stages survey's dual-frame estimator cannot read
+#'
+#' `survey::multiframe()` checks each component with one selection
+#' probability per stage, and a multistage export carries one for the whole
+#' design.
+#' @noRd
+check_multiframe_component_stages <- function(designs, frames,
+                                              call = caller_env()) {
+  for (q in seq_along(designs)) {
+    d <- designs[[q]]
+    if (inherits(d, "pps") || NCOL(d$cluster) <= NCOL(d$allprob)) {
+      next
+    }
+    abort_samplyr(
+      c(
+        "{.fn as_svydesign} cannot composite frame {.val {frames[[q]]}},
+         drawn in {NCOL(d$cluster)} stages.",
+        "x" = "{.fn survey::multiframe} reads one selection probability per
+               stage, and the export of a multistage sample carries one for
+               the whole design.",
+        "i" = "{.fn as_svrepdesign} replicates each frame's stages and
+               composites the replicate weights."
+      ),
+      class = "samplyr_error_survey_multiframe_stages",
+      call = call
+    )
+  }
+  invisible(NULL)
 }
 
 #' Two arguments of the per-component export that a stack cannot carry
@@ -5826,8 +6899,8 @@ validate_multiframe_theta <- function(theta, call = caller_env()) {
 #'
 #' Every refusal here prevents a number rather than standing in for something
 #' unbuilt: the estimator has no meaning without overlaps, `theta` is silently
-#' discarded by survey under it, and a realized weight-share weight is not an
-#' inclusion probability.
+#' discarded by survey under it, and neither a realized weight-share weight
+#' nor a weight adjusted at a reserve settlement is an inclusion probability.
 #' @noRd
 check_multiframe_estimator <- function(x, estimator, theta, fn_name,
                                        call = caller_env()) {
@@ -5850,6 +6923,29 @@ check_multiframe_estimator <- function(x, estimator, theta, fn_name,
                whose expectation carries the unbiasedness of a total, and
                putting realized values through that combination has no
                unbiasedness result behind it.",
+        "i" = "Use {.code estimator = \"constant\"}, whose factors apply to
+               components that are each unbiased for their own domain."
+      ),
+      class = "samplyr_error_survey_weight_contract",
+      call = call
+    )
+  }
+
+  settled <- names(x)[vapply(x, function(component) {
+    !is_null(attr(component, "metadata")$reserve_settlement)
+  }, logical(1))]
+  if (length(settled) > 0) {
+    abort_samplyr(
+      c(
+        "{.code estimator = \"expected\"} cannot take a component settled from
+         a reserve list.",
+        "x" = "{cli::qty(length(settled))}Frame{?s} {.val {settled}}
+               carr{?ies/y} weights adjusted at settlement.",
+        "i" = "The estimator combines inverse inclusion probabilities
+               harmonically, and a settled weight is a realized random
+               quantity: in a two-frame simulation the estimate of the
+               overlap was biased even with each unit's true chance of
+               responding in the settled frame.",
         "i" = "Use {.code estimator = \"constant\"}, whose factors apply to
                components that are each unbiased for their own domain."
       ),
@@ -5890,62 +6986,117 @@ check_multiframe_estimator <- function(x, estimator, theta, fn_name,
   invisible(NULL)
 }
 
-#' The declared overlaps as weights, one matrix per component
+#' The row of its stack component behind each row a component exports
+#'
+#' A component's export can add rows, such as the ineligible units of a
+#' settled reserve, which have no `.sample_id` and map to `NA`. A shared
+#' component exports its target rows, one for each, without it.
+#' @param designs The exported components, named by frame, or `NULL` for
+#'   the components' own rows.
+#' @noRd
+frame_stack_rows_of <- function(x, designs = NULL) {
+  stats::setNames(lapply(names(x), function(nm) {
+    ids <- designs[[nm]]$variables$.sample_id
+    if (is_null(ids)) {
+      return(seq_len(nrow(x[[nm]])))
+    }
+    match(ids, x[[nm]]$.sample_id)
+  }), names(x))
+}
+
+#' The declared overlaps as weights, one matrix per exported component
 #'
 #' Zero still marks a frame the unit does not belong to, which is the absence
-#' survey's own formula reads and removes.
+#' survey's own formula reads and removes. No exported row is added here: the
+#' only components that add rows, settled reserves, are refused under this
+#' estimator.
 #' @noRd
-multiframe_overlap_weights <- function(x) {
+multiframe_overlap_weights <- function(x, designs = NULL) {
+  rows_of <- frame_stack_rows_of(x, designs)
   stats::setNames(lapply(names(x), function(nm) {
-    probabilities <- frame_component_overlaps(x, nm)
+    probabilities <- frame_component_overlaps(x, nm)[rows_of[[nm]], ,
+                                                     drop = FALSE]
     ifelse(probabilities > 0, 1 / probabilities, 0)
   }), names(x))
 }
 
-#' One membership matrix per component, in the order the frames are stacked
+#' One membership matrix per exported component, in the order the frames are
+#' stacked
 #'
 #' survey reads the column belonging to the *other* frame by position in the
 #' designs list, so these columns follow the stack's order and not the order
 #' the membership mapping happened to be written in. Getting that wrong
-#' produces a number rather than an error.
+#' produces a number rather than an error. A row the export added stands in
+#' its own frame alone, unless it stands for a unit a settled reserve
+#' dropped, which keeps that unit's membership.
 #' @noRd
-multiframe_overlaps <- function(x) {
+multiframe_overlaps <- function(x, designs = NULL) {
   membership <- attr(x, "membership")
-  lapply(x, function(component) {
+  rows_of <- frame_stack_rows_of(x, designs)
+  stats::setNames(lapply(names(x), function(nm) {
+    member <- frame_component_membership(x[[nm]], membership)[
+      rows_of[[nm]], , drop = FALSE
+    ]
+    added <- is.na(rows_of[[nm]])
+    member[added, ] <- FALSE
+    member[added, nm] <- TRUE
+    units <- if (!is_null(designs)) {
+      reserve_added_membership(x, nm, designs[[nm]])
+    }
+    if (!is_null(units)) {
+      held <- !is.na(units[, 1L])
+      member[held, ] <- units[held, ]
+    }
     matrix(
-      as.numeric(frame_component_membership(component, membership)),
-      nrow = nrow(component),
+      as.numeric(member),
+      nrow = nrow(member),
       ncol = length(membership),
       dimnames = list(NULL, names(membership))
     )
-  })
+  }), names(x))
 }
 
 #' Convert a tbl_sample to a replicate-weight survey design
 #'
-#' Creates a `svyrep.design` object from a `tbl_sample`. The `"rwyb"` method
-#' generates Rao-Wu-Yue-Beaumont factors with the optional svrep package
-#' directly from recorded stage mechanisms. Other methods first build a
-#' [survey::svydesign()] object, then call [survey::as.svrepdesign()].
+#' Creates a `svyrep.design` object from a `tbl_sample`. `"rwyb"` builds
+#' Rao-Wu-Yue-Beaumont factors with the svrep package from the recorded
+#' stage mechanisms, and `"random_groups"` reads the replicates of
+#' `execute(reps = R)`. The other types build a [survey::svydesign()]
+#' object and convert it with [survey::as.svrepdesign()].
 #'
 #' @inheritParams as_svydesign
-#' @param type Replicate method passed to [survey::as.svrepdesign()].
-#'   One of `"auto"`, `"JK1"`, `"JKn"`, `"BRR"`, `"bootstrap"`,
-#'   `"subbootstrap"`, `"mrbbootstrap"`, `"Fay"`, `"rwyb"`, or
-#'   `"random_groups"`. `"rwyb"` uses svrep rather than
-#'   [survey::as.svrepdesign()], and `"random_groups"` builds the weights
-#'   from the replicates of `execute(reps = R)` (see Details).
+#' @param type The replicate method. The generic types, `"JK1"` to
+#'   `"subbootstrap"` below, resample first-stage units within first-stage
+#'   strata and read nothing below them. The last three read more of the
+#'   design.
+#'   - `"auto"` (default): survey's choice, `"JKn"` for a stratified first
+#'     stage and `"JK1"` otherwise.
+#'   - `"JK1"` and `"JKn"`: the delete-one jackknife of an unstratified
+#'     first stage, and its stratified form (Wolter 2007, ch. 4). They keep
+#'     the finite population correction of an equal-probability first stage.
+#'   - `"BRR"` and `"Fay"`: balanced half-samples, with Fay's damping set by
+#'     `fay.rho` (Wolter 2007, ch. 3). They need an even number of
+#'     first-stage units, at least two, in every first-stage stratum, and
+#'     carry no finite population correction.
+#'   - `"bootstrap"`: the Canty-Davison bootstrap of first-stage units, which
+#'     keeps an equal-probability first stage's correction (Canty and
+#'     Davison 1999).
+#'   - `"subbootstrap"`: the Rao-Wu rescaled bootstrap, with no finite
+#'     population correction (Rao, Wu and Yue 1992). It accepts a PPS first
+#'     stage.
+#'   - `"mrbbootstrap"`: Preston's multistage rescaled bootstrap, which reads
+#'     the sampling fraction of every stage (Preston 2009).
+#'   - `"rwyb"`: the Rao-Wu-Yue-Beaumont bootstrap of every stage (Beaumont
+#'     and \enc{Émond}{Emond} 2022). It needs the svrep package and is never chosen by
+#'     `"auto"`.
+#'   - `"random_groups"`: the spread between the independent replicates of
+#'     `execute(reps = R)`, for any selection method (Wolter 2007, ch. 2).
 #'
-#'   The jackknife, BRR and Fay types are deterministic: one sample gives one
-#'   set of replicate weights. The bootstrap types draw from the session's
-#'   random stream, so two calls on one sample give two different standard
-#'   errors unless a seed is set beforehand.
-#'
-#'   The spread is not small at survey's default of 50 replicates. On a
-#'   90-of-600 stratified sample, twelve `"bootstrap"` calls on one sample
-#'   ranged over 37% of their mean, falling to 12% at `replicates = 200` and
-#'   4% at `replicates = 4000`. Raise `replicates` through `...` when the
-#'   second decimal of a bootstrap standard error is going to be read.
+#'   The jackknife and balanced types give one set of replicate weights per
+#'   sample. The bootstrap types draw from the session's random stream, so
+#'   set a seed before the call, and raise `replicates` through `...` until
+#'   the standard errors that will be read are stable. svrep's
+#'   `estimate_boot_sim_cv()` estimates that simulation error.
 #' @param ... Additional arguments passed to [survey::as.svrepdesign()] and
 #'   on to the replicate-weight generator it selects, such as `replicates`,
 #'   `fay.rho`, `fpctype`, or `mse`. Every argument must be named, and its
@@ -5966,77 +7117,96 @@ multiframe_overlaps <- function(x) {
 #'   that resample stage-1 units only, and refused with `"mrbbootstrap"`,
 #'   `"rwyb"` and `"random_groups"` (`samplyr_error_survey_argument`).
 #' @param systematic_variance What to do about the generic replicate weights
-#'   built for `systematic` and `pps_systematic` stages. `"warn"` (default)
+#'   built for `systematic`, `pps_systematic` and `pps_systematic_mr` stages. `"warn"` (default)
 #'   builds them and warns once per call, naming every affected stage.
 #'   `"approximate"` builds them silently, for a caller who has acknowledged
 #'   the approximation, and `"error"` refuses. Naming a `type` is not an
 #'   acknowledgment, since no type reproduces systematic selection. Census
-#'   stages are exempt, as in [as_svydesign()]. The choice and the affected
+#'   stages and stages that drew one unit in each pool are exempt, as in
+#'   [as_svydesign()]. The choice and the affected
 #'   stages are recorded in the `"samplyr_systematic_variance"` attribute of
 #'   the result.
 #'
-#' @return A `svyrep.design` object from the survey package.
+#' @return A `svyrep.design` object from the survey package. `"rwyb"` and
+#'   `"random_groups"` record their method in its `"samplyr_replication"`
+#'   attribute, and the treatment of systematic stages is recorded in
+#'   `"samplyr_systematic_variance"`.
 #'
 #' @details
-#' Replicate conversion supports single-phase designs, including multistage
-#' samples, shared weights and independent frame stacks, and materialized
-#' occasions, which are replicated by ultimate clusters as [as_svydesign()]
-#' exports them, a window's replicates calibrated on the same totals as its
-#' linearized design. `"rwyb"` is refused for an occasion
-#' (`samplyr_error_occasion_replicate_type`). Two-phase replicate
-#' export is unsupported, except for a second phase drawn within each
-#' final-stage pool of phase 1, which is phase 1's multistage design with a
-#' smaller final take and is replicated as that design ([as_svydesign()]
-#' describes the shape). `"auto"` keeps survey's method choice, whether or
-#' not svrep is installed. A settled reserve is replicated from its
-#' ultimate-cluster design, with the rows [as_svydesign()] adds at a
-#' first-stage reserve.
+#' ## What is replicated
+#'
+#' A single-phase sample is replicated from the design [as_svydesign()]
+#' exports, multistage samples, shared weights, independent frame stacks
+#' and settled reserves included. A materialized occasion is replicated by
+#' ultimate clusters, and a window's replicates are calibrated on the same
+#' totals as its linearized design. `"rwyb"` is refused for an occasion
+#' (`samplyr_error_occasion_replicate_type`). Of the two-phase samples,
+#' only two shapes are replicated: a second phase drawn within each
+#' final-stage pool of phase 1, which is phase 1's design with a smaller
+#' final take, and a second phase of a phase 1 that could select nothing
+#' else. The others are refused (`samplyr_error_svrep_twophase_unsupported`).
 #'
 #' ## The first stage under the generic types
 #'
-#' `"JK1"`, `"JKn"`, `"BRR"`, `"Fay"`, `"bootstrap"` and `"subbootstrap"`
-#' resample first-stage units within first-stage strata and read nothing
-#' below, whereas `"mrbbootstrap"` and `"rwyb"` read every stage. A PPS
-#' first stage drawn without replacement is read as drawn with replacement,
-#' which errs toward too large a variance at large sampling fractions
-#' (`samplyr_warning_replicate_wr_first_stage`, see [variance_estimation]).
-#' `"BRR"`, `"Fay"` and `"subbootstrap"` read an equal-probability first
-#' stage drawn without replacement that way too, since they carry no
-#' finite population correction, and raise the same warning. With 60 of 80
-#' units drawn, the rescaled bootstrap gave four times the linearization
-#' variance, the factor `1 / (1 - 60/80)`. Chromy's method is read as with
-#' replacement too. Unequal probabilities
-#' at later stages, and a first stage drawn with replacement, reach the
-#' variance through the weights and draw no warning.
+#' The generic types read the spread of first-stage totals within
+#' first-stage strata, which carries the variance of the later stages as
+#' well. That reading needs no correction for a first stage drawn with
+#' replacement, and unequal probabilities at later stages reach it through
+#' the weights. It is approximate in three cases, each with a warning:
 #'
-#' `"JK1"`, `"JKn"` and `"bootstrap"`, and so `"auto"`, keep the
-#' finite population correction of an equal-probability first stage drawn
-#' without replacement. With stages below, that correction also scales the
-#' variance the later stages add, so the variance errs toward too small as
-#' the first-stage sampling fraction grows
-#' (`samplyr_warning_replicate_first_stage_fpc`). When 6 of 8 PSUs were
-#' drawn and all variance came from stage 2, `"JK1"` gave 0.26 of the true
-#' variance and `"mrbbootstrap"` 0.98. With 4 PSUs of 40 drawn, both gave
-#' 0.97. In a simulation with
-#' `"JKn"`, a PPS second stage gave 0.98 of the true variance, as its SRS
-#' counterpart did, while a Brewer first stage with a sampling fraction of
-#' 0.4 gave 1.43. A certainty PSU is a stratum of its own whose stage-two
-#' units are resampled, and a certainty unit with no stage below keeps its
-#' full weight in every replicate. With certainty PSUs these types gave 1.1
-#' to 1.2 times the true variance in a Monte Carlo, and linearization and
-#' `"rwyb"` about 1.0.
+#' - A PPS first stage drawn without replacement is read as drawn with
+#'   replacement, and so is an equal-probability first stage under `"BRR"`,
+#'   `"Fay"` and `"subbootstrap"`, which carry no correction. The variance
+#'   leaves out the first-stage correction and tends to overstate, most at
+#'   large first-stage sampling fractions
+#'   (`samplyr_warning_replicate_wr_first_stage`).
+#' - `"JK1"`, `"JKn"` and `"bootstrap"` keep an equal-probability first
+#'   stage's correction and apply it to the later stages' variance too,
+#'   which understates the variance as the first-stage fraction grows
+#'   (`samplyr_warning_replicate_first_stage_fpc`).
+#' - The minimum-replacement methods `pps_chromy` and `pps_systematic_mr`
+#'   are read as drawn with replacement, as every export reads them, which
+#'   ignores the dependence between hits. `"mrbbootstrap"` reads them that
+#'   way too, with the same warning, and `"rwyb"` refuses them.
 #'
-#' A stage-1 unit taken with probability 1 above a later stage is converted
-#' as a certainty PSU, whether a certainty rule took it or its stratum was
-#' taken whole (`n` equal to the stratum's size, `frac = 1`). Its correction
-#' of one would otherwise remove its later stages' variance. The other
-#' first-stage units are then read as drawn with replacement
-#' (`samplyr_warning_replicate_wr_first_stage`), and `"JK1"` is refused,
-#' since the first stage becomes stratified, with `"JKn"` taking its place
-#' under `"auto"`. On a design whose urban domain was one pseudo-unit
-#' taken whole, `"JKn"` went from 0.77 to 1.15 of the true standard error.
-#' A single stage keeps its correction, which gives such a unit no variance
-#' and is exact.
+#' A first-stage unit taken with probability 1 above a later stage, by a
+#' certainty rule or because its stratum is taken whole, is a stratum of
+#' its own whose stage-2 units are resampled (see Statistical details). The
+#' first stage is then stratified, so `"JK1"` is refused and `"auto"` takes
+#' `"JKn"`. `"mrbbootstrap"` and `"rwyb"` read every stage's probabilities
+#' and need none of these readings, and [as_svydesign()] gives the
+#' linearization variance.
+#'
+#' ## Censuses
+#'
+#' A stratum of a single stage taken whole keeps its full weight in every
+#' replicate, so it adds no variance under any type. An unstratified census
+#' gets two replicate columns at the full-sample weights under `"JK1"` and
+#' `"auto"`, so its variance is zero and it can be shared, stacked and
+#' calibrated. When every row has the same weight the replicate matrix
+#' stays uncompressed, and [survey::calibrate()] then needs
+#' `compress = FALSE` (survey 4.5). A stratified census is refused under
+#' `"JKn"` and `"auto"` (`samplyr_error_svrep_conversion_failed`), and
+#' `"bootstrap"`, `"rwyb"` and [as_svydesign()] give it a variance of zero.
+#'
+#' ## Statistical details
+#'
+#' Inside a PSU taken with certainty, the generic types resample the
+#' stage-2 units of each stratum `h` of that PSU as drawn with replacement,
+#' which leaves out stage 2's correction `1 - f_h`. When stage 2 drew the
+#' stratum with equal probabilities without replacement and no later stage
+#' samples inside its units, the export replaces each replicate weight of
+#' the stratum's rows by
+#' \deqn{w_k^{(r)*} = w_k + \sqrt{1 - f_h}\,\left(w_k^{(r)} - w_k\right),}{w*_k(r) = w_k + sqrt(1 - f_h) (w_k(r) - w_k),}
+#' where \eqn{w_k}{w_k} is the full-sample weight and \eqn{w_k^{(r)}}{w_k(r)}
+#' the weight in replicate `r`. This multiplies the stratum's contribution
+#' to the variance of a linear estimator by `1 - f_h`. For a total, the
+#' jackknife and balanced types then give the without-replacement variance
+#' of the stratum exactly, and the bootstrap types in expectation. One
+#' factor serves every unit of the stratum, since the replicates contrast
+#' those units with each other. A stratum with a unit sampled below it, or
+#' a PPS stage 2, keeps the with-replacement reading, which tends to
+#' overstate its contribution (`samplyr_warning_replicate_certainty_stage_wr`).
 #'
 #' ## Rao-Wu-Yue-Beaumont bootstrap
 #'
@@ -6047,8 +7217,8 @@ multiframe_overlaps <- function(x) {
 #' `pps_systematic`) uses approximate joint probabilities, with a warning.
 #' Equal-probability systematic stages use the SRS approximation governed by
 #' `systematic_variance`. Custom methods must declare a supported variance
-#' family. Balanced, spatial, Pareto, SPS and Chromy methods have no
-#' built-in RWYB mapping.
+#' family. Balanced, spatial, Pareto, SPS and minimum-replacement methods
+#' have no built-in RWYB mapping.
 #'
 #' The adapter keeps stage-specific sampling units, strata and
 #' probabilities. With-replacement stages resample draw occurrences, not
@@ -6058,19 +7228,16 @@ multiframe_overlaps <- function(x) {
 #' needed, except under Poisson sampling, whose variance is estimable from
 #' one unit, and at the final stage under `lonely.psu = "certainty"`.
 #'
-#' Export refuses a selected parent with no descendant in the final sample,
-#' because silently dropping it changes the earlier-stage resampling
-#' distribution. When a later stage is Poisson, this check needs a complete
-#' frame digest (`"summary"` or `"full"`). Empty samples cannot be
-#' exported. These are export limits, and empty Poisson realizations remain
-#' valid sampling outcomes.
-#'
-#' Replicate variances carry simulation error, so set a seed and increase
-#' `replicates` for stable estimates. svrep's `estimate_boot_sim_cv()`
-#' assesses that error for chosen estimates. With `mse = TRUE` the factors use
-#' scale `1 / replicates`, and with `mse = FALSE` they use
-#' `1 / (replicates - 1)`. The backend and stage methods are recorded in the
-#' `"samplyr_replication"` attribute.
+#' A selected unit with no descendant in the final sample is kept as a zero
+#' row, because dropping it would change the earlier-stage resampling
+#' distribution. This holds for a unit whose next register was empty and
+#' for one in which a later Poisson stage selected nothing, which execution
+#' records whatever `frame_digest` is, so estimates need `na.rm = TRUE`. A
+#' sample that lacks that record is refused
+#' (`samplyr_error_rwyb_missing_parents`). Empty samples cannot be
+#' exported. With `mse = TRUE` the factors use scale `1 / replicates`, and
+#' with `mse = FALSE` they use `1 / (replicates - 1)`. The backend and stage
+#' methods are recorded in the `"samplyr_replication"` attribute.
 #'
 #' ## Random groups
 #'
@@ -6080,17 +7247,18 @@ multiframe_overlaps <- function(x) {
 #' weight `.weight / R`, and its variance is their spread divided by R, with
 #' R - 1 degrees of freedom. A replicate that selected nothing counts as a
 #' zero estimate. Nothing is assumed about the selection method, so the
-#' route is right for systematic, balanced, spatial or custom stages, which
-#' no other type redraws. On a frame whose period matches a systematic
-#' interval it gave 0.997 of the true variance, where one sample's
-#' linearization gave 0.0001. The cost is R samples.
+#' route suits systematic, balanced, spatial or custom stages, which no
+#' other type redraws. The cost is R samples.
 #'
 #' The replicates must vary at every stage and phase. A sample that
 #' continues one realized stage with `reps`, or replicates a later phase
 #' over one realized first phase, is refused
 #' (`samplyr_error_random_groups_shared`), because the shared selection's
 #' variance would be left out. Replicate that stage or phase too, and
-#' continue each replicate. The sample must hold every replicate of its
+#' continue each replicate. A first phase that could select nothing else,
+#' such as the one unit of a one-unit population, has no variance to leave
+#' out, and a later phase replicated over it is accepted. The sample must
+#' hold every replicate of its
 #' execution (`samplyr_error_random_groups_input`).
 #'
 #' ## Variance by selection method
@@ -6099,8 +7267,8 @@ multiframe_overlaps <- function(x) {
 #' `"rwyb"`. Bounded cube, LPM2 and SCPS have only the generic PPS bootstrap
 #' of `"subbootstrap"` and `"mrbbootstrap"`, which does not recreate their
 #' constraints or spatial algorithm. Only `"random_groups"` redraws a
-#' systematic start. [variance_estimation] has each case and the measured
-#' error.
+#' systematic start. [variance_estimation] compares the estimators by
+#' selection method.
 #'
 #' @examplesIf requireNamespace("survey", quietly = TRUE)
 #' sample <- sampling_design() |>
@@ -6111,18 +7279,32 @@ multiframe_overlaps <- function(x) {
 #' rep_svy <- as_svrepdesign(sample, type = "auto")
 #' survey::svymean(~households, rep_svy)
 #'
+#' # The deterministic jackknife against linearization, and a seeded
+#' # bootstrap with enough replicates for a stable second decimal.
+#' survey::SE(survey::svytotal(~households, rep_svy))
+#' survey::SE(survey::svytotal(~households, as_svydesign(sample)))
+#' set.seed(1)
+#' boot <- as_svrepdesign(sample, type = "bootstrap", replicates = 500)
+#' survey::SE(survey::svytotal(~households, boot))
+#'
 #' @references
+#' Beaumont, J.-F. and \enc{Émond}{Emond}, N. (2022). A bootstrap variance
+#' estimation method for multistage sampling and two-phase sampling when
+#' Poisson sampling is used at the second phase. *Stats*, 5(2), 339-357.
+#' \doi{10.3390/stats5020019}
+#'
+#' Canty, A. J. and Davison, A. C. (1999). Resampling-based variance
+#' estimation for labour force surveys. *The Statistician*, 48, 379-391.
+#'
+#' Preston, J. (2009). Rescaled bootstrap for stratified multistage
+#' sampling. *Survey Methodology*, 35(2), 227-234.
+#'
 #' Rao, J.N.K., Wu, C.F.J. and Yue, K. (1992). Some recent work on
 #' resampling methods for complex surveys. *Survey Methodology*, 18(2),
 #' 209-217.
 #'
 #' Wolter, K. M. (2007). *Introduction to Variance Estimation*, 2nd ed.
 #' Springer.
-#'
-#' Beaumont, J.-F. and \enc{Émond}{Emond}, N. (2022). A bootstrap variance
-#' estimation method for multistage sampling and two-phase sampling when
-#' Poisson sampling is used at the second phase. *Stats*, 5(2), 339-357.
-#' \doi{10.3390/stats5020019}
 #'
 #' @seealso [as_svydesign()] for linearization export,
 #'   [survey::as.svrepdesign()] for the underlying conversion
@@ -6237,6 +7419,7 @@ as_svrepdesign.tbl_sample <- function(
         )
       }
     )
+    attr(result, "samplyr_reserve_units") <- attr(svy, "samplyr_reserve_units")
     return(record_systematic_variance(
       result, systematic_stages, systematic_variance, "generic_replicates"
     ))
@@ -6253,6 +7436,7 @@ as_svrepdesign.tbl_sample <- function(
     ))
   }
 
+  check_prev_phase_unmodified(x, "as_svrepdesign")
   x <- composed_subsample(x) %||% x
   occasion_route <- occasion_export_route(x, survey_phase_info(x))
   phase_info <- survey_validate_phase_support(
@@ -6263,7 +7447,7 @@ as_svrepdesign.tbl_sample <- function(
   if (!is_null(occasion_route) && type == "rwyb") {
     abort_samplyr(
       c(
-        "{.fn as_svrepdesign} cannot build {.val rwyb} replicates for a
+        "{.fn as_svrepdesign} cannot build {.val rwyb} replicates for an
          occasion.",
         "i" = "{.val rwyb} replicates the master's selection, and an occasion
                adds its activation on top of it.",
@@ -6306,43 +7490,75 @@ as_svrepdesign.tbl_sample <- function(
   spec <- flag_probability_one(spec)
   first <- spec$stage[[1]]
   pps_safe_types <- c("subbootstrap", "mrbbootstrap")
+
+  # Replicates do not reproduce systematic selection. A refusing policy
+  # stops here. The approximation advice waits until the conversion has
+  # succeeded, so a refused export carries none.
+  systematic_stages <- systematic_approximated_stages(
+    design, get_stages_executed(x), as.data.frame(x)
+  )
+  check_systematic <- function() {
+    check_systematic_variance(
+      systematic_stages,
+      systematic_variance,
+      approximation = "generic_replicates",
+      fn_name = "as_svrepdesign"
+    )
+  }
+  if (identical(systematic_variance, "error")) {
+    check_systematic()
+  }
   # BRR, Fay and the rescaled bootstrap carry no first-stage correction, and
   # the conversion around certainty units drops it, so they read an
   # equal-probability first stage as drawn with replacement.
+  # A single stage taken whole keeps its full weight in every replicate.
+  whole_rows <- single_stage_whole_rows(spec)
+  taken_whole <- length(whole_rows) > 0L && all(whole_rows)
   fpc_dropped <- identical(first$kind, "equal_wor") &&
     !(length(first$certainty) > 0L && all(first$certainty %in% TRUE)) &&
+    !taken_whole &&
     (type %in% c("BRR", "Fay", "subbootstrap") ||
        needs_first_stage_rebuild(spec, type))
-  if (
-    (stage_replicated_as_wr(design$stages[[first$stage]]$draw_spec,
-                            first$kind) &&
-       !type %in% pps_safe_types) || fpc_dropped
-  ) {
-    cli_warn(
+  # The types that use every stage's probabilities keep a first stage's
+  # correction, but minimum replacement has none to keep.
+  # A first stage whose units are all certain holds none to resample.
+  all_certain <- (length(first$certainty) > 0L &&
+                    all(first$certainty %in% TRUE)) || taken_whole
+  read_as_wr <- (stage_replicated_as_wr(
+    design$stages[[first$stage]]$draw_spec, first$kind
+  ) && !all_certain &&
+    (!type %in% pps_safe_types || first$method %in% pmr_methods)) ||
+    fpc_dropped
+  warn_wr_first_stage <- if (read_as_wr) function() {
+    # Every export reads minimum replacement as with replacement, and RWYB
+    # refuses it, so only independent samples reflect its selection.
+    why <- if (first$method %in% pmr_methods) {
       c(
-        "{.fn as_svrepdesign} with {.val {type}} treats the first stage,
-         drawn with {.val {first$method}}, as drawn with replacement.",
+        "i" = "Every export reads minimum replacement this way,
+               {.fn as_svydesign} included, so the variance ignores the
+               dependence between hits. {.val rwyb} refuses it.",
+        "i" = "Independent samples from {.code execute(reps = )} with
+               {.code type = \"random_groups\"} repeat the selection itself."
+      )
+    } else {
+      c(
         "i" = "The variance leaves out the first stage's finite population
                correction, so it errs toward too large when first-stage
                sampling fractions are large.",
         "i" = "{.val mrbbootstrap} and {.val rwyb} use every stage's
                probabilities, and {.fn as_svydesign} gives the
                linearization variance."
+      )
+    }
+    cli_warn(
+      c(
+        "{.fn as_svrepdesign} with {.val {type}} treats the first stage,
+         drawn with {.val {first$method}}, as drawn with replacement.",
+        why
       ),
       class = "samplyr_warning_replicate_wr_first_stage"
     )
   }
-
-  # Replicates do not reproduce systematic selection.
-  systematic_stages <- systematic_approximated_stages(
-    design, get_stages_executed(x), as.data.frame(x)
-  )
-  check_systematic_variance(
-    systematic_stages,
-    systematic_variance,
-    approximation = "generic_replicates",
-    fn_name = "as_svrepdesign"
-  )
 
   svydesign_obj <- build_singlephase_svydesign(
     x,
@@ -6351,10 +7567,12 @@ as_svrepdesign.tbl_sample <- function(
     relax_pps_for_bootstrap = type %in% pps_safe_types,
     check_lonely = FALSE,
     # These types misread a first-stage no-correction term.
-    omit_uncorrected_fpc = type %in% c("JK1", "JKn", "bootstrap")
+    omit_uncorrected_fpc = type %in% c("auto", "JK1", "JKn", "bootstrap")
   )
-  if (first_stage_fpc_scales_later_stages(svydesign_obj, spec, type)) {
-    cli_warn(
+  warn_fpc_scales <- if (
+    first_stage_fpc_scales_later_stages(svydesign_obj, spec, type)
+  ) {
+    function() cli_warn(
       c(
         "{.fn as_svrepdesign} with {.val {type}} applies the first stage's
          finite population correction to the whole variance, including the
@@ -6384,17 +7602,45 @@ as_svrepdesign.tbl_sample <- function(
       class = "samplyr_error_svrep_conversion_failed"
     )
   }
+  # survey's own conversion stops there. A PPS first stage is converted by
+  # samplyr, which gives the census its zero variance.
+  if (type %in% c("auto", "JKn") && taken_whole &&
+      length(spec$stage[[1]]$strata$user) > 0L &&
+      !needs_first_stage_rebuild(spec, type)) {
+    abort_samplyr(
+      c(
+        "{.fn as_svrepdesign} cannot give {.code type = \"{type}\"}
+         replicate weights for a census.",
+        "x" = "Every first-stage stratum is taken whole, so the first stage
+               has no sampling variance, and survey's stratified jackknife
+               stops on it.",
+        "i" = "{.code type = \"bootstrap\"} or {.code type = \"rwyb\"}, or
+               {.fn as_svydesign}, give this census a variance of zero."
+      ),
+      class = "samplyr_error_svrep_conversion_failed"
+    )
+  }
+  # survey's jackknife divides by the number of first-stage units less one,
+  # so an unstratified census of one unit takes its zero variance here.
+  one_unit_census <- type %in% c("auto", "JK1") && taken_whole &&
+    length(spec$stage[[1]]$strata$user) == 0L &&
+    vctrs::vec_unique_count(spec$stage[[1]]$unit$id) == 1L
   call <- current_env()
   result <- tryCatch(
     withCallingHandlers(
-      if (needs_first_stage_rebuild(spec, type)) {
+      if (one_unit_census) {
+        zero_variance_svrep(svydesign_obj$variables,
+                            1 / svydesign_obj$prob, "JK1",
+                            replicate_mse(list(...)))
+      } else if (needs_first_stage_rebuild(spec, type)) {
         svrep_from_first_stage(svydesign_obj, spec, type, ...)
       } else {
         survey::as.svrepdesign(design = svydesign_obj, type = type, ...)
       },
-      # The classed warning above already says the correction is dropped.
+      # The classed warning above already says the correction is dropped,
+      # and a census takes its full weight back afterwards.
       warning = function(w) {
-        if (fpc_dropped && identical(
+        if ((fpc_dropped || taken_whole) && identical(
           conditionMessage(w),
           "Finite population correction dropped in conversion"
         )) {
@@ -6414,10 +7660,109 @@ as_svrepdesign.tbl_sample <- function(
     }
   )
 
+  if (!identical(systematic_variance, "error")) {
+    check_systematic()
+  }
+  if (!is_null(warn_wr_first_stage)) warn_wr_first_stage()
+  if (!is_null(warn_fpc_scales)) warn_fpc_scales()
+  result <- warn_certainty_lower_wr(result, type)
+
+  result <- hold_self_representing(result, whole_rows)
   record_systematic_variance(
-    compress_replicate_weights(result), systematic_stages,
-    systematic_variance, "generic_replicates"
+    compress_replicate_weights(pad_zero_width_replicates(result)),
+    systematic_stages, systematic_variance, "generic_replicates"
   )
+}
+
+#' The rows of a single stage taken with probability 1
+#'
+#' Such a row adds no variance, since nothing is drawn below it. Below a
+#' later stage, `flag_probability_one()` converts it as a certainty unit
+#' instead. A first stage drawn with replacement has no such rows.
+#' @noRd
+single_stage_whole_rows <- function(spec) {
+  first <- spec$stage[[1]]
+  if (length(spec$stages) > 1L || identical(first$kind, "wr") ||
+        is_null(first$prob)) {
+    return(logical(0))
+  }
+  is_certainty_probability(first$prob)
+}
+
+#' Keep the self-representing rows at their full weight in every replicate
+#'
+#' survey marks a row self-representing when its first-stage stratum is
+#' taken whole, and leaves it out of the replicate estimates. Under
+#' `mse = TRUE` they are then centered on a full-sample estimate that still
+#' holds the row, and with one stratum of three taken whole the jackknife
+#' variance was 165 times the linearization variance. The mark reads the
+#' first stage only, so a census first stage with a stage drawn below lost
+#' that stage's variance under `"mrbbootstrap"`, and survey's ratio fails
+#' on a design whose rows are all marked. The mark is removed. The rows of
+#' `sure` take their full weight in every replicate instead, which BRR, Fay
+#' and the rescaled bootstrap, carrying no first-stage correction, did not
+#' give them. Each type resamples its strata apart, so this removes the
+#' variance of those strata and nothing else.
+#' @noRd
+hold_self_representing <- function(design, sure) {
+  design$selfrep <- NULL
+  if (!any(sure)) {
+    return(design)
+  }
+  # A census, whose replicate scale survey can leave infinite for a
+  # stratum of one unit.
+  if (all(sure)) {
+    return(zero_variance_svrep(design$variables, design$pweights,
+                               design$type, design$mse))
+  }
+  analysis <- as.matrix(stats::weights(design, type = "analysis"))
+  analysis[sure, ] <- design$pweights[sure]
+  design$repweights <- analysis
+  design$combined.weights <- TRUE
+  design
+}
+
+#' Two replicate columns at the full-sample weights for a design with none
+#'
+#' survey's jackknife gives a census no replicate column, and
+#' `survey::svrepdesign()` cannot take a matrix without one, so the census
+#' could be neither shared nor calibrated. Columns at the full-sample
+#' weights deviate by zero, so the variance stays zero. Two of them, because
+#' survey's compressor drops the matrix shape of a single column.
+#' @noRd
+pad_zero_width_replicates <- function(design) {
+  if (ncol(design$repweights) > 0L) {
+    return(design)
+  }
+  zero_variance_svrep(design$variables, stats::weights(design, "sampling"),
+                      design$type, design$mse)
+}
+
+#' The `mse` survey's conversion would use
+#' @noRd
+replicate_mse <- function(dots) {
+  dots$mse %||% getOption("survey.replicates.mse", FALSE)
+}
+
+#' A replicate design of zero variance, labeled with its type
+#'
+#' Built as type `"other"`, which takes the scale and replicate scales given
+#' here, since survey ignores them for BRR and warns. Only the label then
+#' names the type.
+#' @noRd
+zero_variance_svrep <- function(variables, weights, type, mse) {
+  design <- survey::svrepdesign(
+    variables = variables,
+    repweights = cbind(weights, weights, deparse.level = 0),
+    weights = weights,
+    combined.weights = TRUE,
+    type = "other",
+    scale = 1,
+    rscales = c(1, 1),
+    mse = isTRUE(mse)
+  )
+  design$type <- type
+  design
 }
 
 #' Store replicate weights compressed, which survey's calibration needs
@@ -6532,7 +7877,8 @@ build_stage1_svrepdesign <- function(x, stages, type, systematic_variance,
   result <- tryCatch(
     if (any(units$census)) {
       spec$stage[[1]]$certainty <- units$census
-      svrep_from_first_stage(svy, spec, type, ...)
+      warn_certainty_lower_wr(svrep_from_first_stage(svy, spec, type, ...),
+                              type)
     } else {
       survey::as.svrepdesign(design = svy, type = type, ...)
     },
@@ -6607,6 +7953,12 @@ needs_first_stage_rebuild <- function(spec, type) {
 #' every replicate. The remaining first-stage units are treated as drawn with
 #' replacement: the probability-scale correction is dropped, which errs
 #' toward a larger variance.
+#'
+#' survey resamples the stage-two units of a certainty PSU as drawn with
+#' replacement. `certainty_lower_correction()` gives the factors that put
+#' stage two's correction back where it is exact, and the result carries
+#' the stage left without it as the attribute
+#' `samplyr_certainty_lower_wr`, for the caller to report.
 #' @noRd
 svrep_from_first_stage <- function(svydesign_obj, spec, type, ...) {
   df <- svydesign_obj$variables
@@ -6642,20 +7994,14 @@ svrep_from_first_stage <- function(svydesign_obj, spec, type, ...) {
   }
   drawn <- !sub$census
   if (!any(drawn)) {
-    out_type <- switch(type, auto = "JKn", subbootstrap = "bootstrap", type)
-    spliced <- survey::svrepdesign(
-      variables = df,
-      repweights = matrix(weight, nrow(df), 1L),
-      weights = weight,
-      type = out_type,
-      rho = if (identical(out_type, "Fay")) list(...)$rho %||% 0,
-      scale = 0,
-      rscales = 0,
-      combined.weights = TRUE,
-      mse = isTRUE(list(...)$mse)
-    )
-    spliced$type <- switch(type, auto = "JKn", type)
-    return(spliced)
+    return(zero_variance_svrep(df, weight, switch(type, auto = "JKn", type),
+                               replicate_mse(list(...))))
+  }
+  lower <- certainty_lower_correction(sub, lower_entries, n)
+  corrected <- any(lower$factor != 1)
+  uncorrected <- if (any(lower$uncorrected)) {
+    list(stage = lower_entries[[1]]$stage, method = lower_entries[[1]]$method,
+         below = lower$below)
   }
 
   taken <- names(df)
@@ -6675,11 +8021,16 @@ svrep_from_first_stage <- function(svydesign_obj, spec, type, ...) {
   )
   replicated <- survey::as.svrepdesign(first_stage, type = type, ...)
   replicated$variables[c(psu_col, stratum_col, weight_col)] <- NULL
-  if (all(drawn)) {
+  if (all(drawn) && !corrected) {
+    attr(replicated, "samplyr_certainty_lower_wr") <- uncorrected
     return(replicated)
   }
 
   analysis <- stats::weights(replicated, type = "analysis")
+  if (corrected) {
+    base <- weight[drawn]
+    analysis <- base + lower$factor[drawn] * (analysis - base)
+  }
   full <- matrix(weight, nrow(df), ncol(analysis))
   full[drawn, ] <- analysis
   spliced <- survey::svrepdesign(
@@ -6688,13 +8039,96 @@ svrep_from_first_stage <- function(svydesign_obj, spec, type, ...) {
     weights = weight,
     type = switch(replicated$type, subbootstrap = "bootstrap", replicated$type),
     rho = if (identical(replicated$type, "Fay")) replicated$rho,
-    scale = replicated$scale,
+    # survey sets the scale of BRR and Fay itself, and warns when given one.
+    scale = if (!replicated$type %in% c("BRR", "Fay")) replicated$scale,
     rscales = replicated$rscales,
     combined.weights = TRUE,
     mse = replicated$mse
   )
   spliced$type <- replicated$type
+  attr(spliced, "samplyr_certainty_lower_wr") <- uncorrected
   spliced
+}
+
+#' Stage two's correction inside the PSUs taken with certainty
+#'
+#' The replicates resample a certainty PSU's stage-two units as drawn with
+#' replacement, which leaves out the factor `1 - f` of their variance, with
+#' `f` the stage-two sampling fraction. Where stage two drew with equal
+#' probabilities without replacement and every stage below it took all of
+#' its units, scaling each replicate weight's deviation from the full-sample
+#' weight by `sqrt(1 - f)` restores it, exactly for a total. The decision is
+#' taken for each resampling cell (the PSU crossed with stage two's strata),
+#' since replicate contrasts are formed across the units of a cell: one
+#' factor for every unit of the cell, or none. A cell with a unit that a
+#' later stage samples inside, whose variance the factor would shrink, a
+#' PPS stage two, which has no single factor, and a cell whose fraction is
+#' not one value keep the with-replacement reading and are returned as
+#' `uncorrected`. A stage two drawn with replacement has no correction to
+#' restore.
+#' @return A list of the row `factor`s (1 where nothing changes), the
+#'   `uncorrected` rows, and `below`, TRUE when a later stage sampling inside
+#'   them is the reason.
+#' @noRd
+certainty_lower_correction <- function(sub, lower_entries, n) {
+  out <- list(factor = rep(1, n), uncorrected = rep(FALSE, n), below = FALSE)
+  split <- sub$split
+  if (!any(split) || identical(lower_entries[[1]]$kind, "wr")) {
+    return(out)
+  }
+  next_entry <- lower_entries[[1]]
+  whole_below <- rep(TRUE, n)
+  for (e in lower_entries[-1]) {
+    certain <- (e$certainty %||% rep(FALSE, n)) %in% TRUE
+    whole_below <- whole_below & (if (identical(e$kind, "wr")) certain else
+      certain | is_certainty_probability(e$prob %||% rep(0, n)))
+  }
+  cell <- as.character(sub$cell_id)
+  whole_below <- as.vector(tapply(whole_below, cell, all)[cell])
+  prob <- next_entry$prob %||% rep(NA_real_, n)
+  one_fraction <- as.vector(tapply(prob, cell, function(p) {
+    all(is.finite(p)) && max(p) - min(p) <= 1e-12 * max(1, abs(p))
+  })[cell])
+  exact <- split & whole_below & one_fraction &
+    identical(next_entry$kind, "equal_wor")
+  out$factor[exact] <- sqrt(pmax(0, 1 - prob[exact]))
+  out$uncorrected <- split & !exact
+  out$below <- any(out$uncorrected & !whole_below)
+  out
+}
+
+#' Warn that stage two kept no correction inside a certainty PSU
+#'
+#' Reads and removes the attribute `svrep_from_first_stage()` leaves.
+#' @noRd
+warn_certainty_lower_wr <- function(design, type) {
+  info <- attr(design, "samplyr_certainty_lower_wr")
+  attr(design, "samplyr_certainty_lower_wr") <- NULL
+  if (is_null(info)) {
+    return(design)
+  }
+  why <- if (info$below) {
+    "A later stage samples inside its units, and stage {info$stage}'s
+     correction would shrink that stage's variance too."
+  } else {
+    "Stage {info$stage}, drawn with {.val {info$method}}, has no single
+     correction to restore there."
+  }
+  cli_warn(
+    c(
+      "{.fn as_svrepdesign} with {.val {type}} treats stage {info$stage}
+       inside a PSU taken with certainty as drawn with replacement.",
+      "i" = why,
+      "i" = "The variance leaves out stage {info$stage}'s finite population
+             correction there, so it errs toward too large when those
+             sampling fractions are large.",
+      "i" = "{.val mrbbootstrap} and {.val rwyb} use every stage's
+             probabilities, and {.fn as_svydesign} gives the linearization
+             variance."
+    ),
+    class = "samplyr_warning_replicate_certainty_stage_wr"
+  )
+  design
 }
 
 #' Replicate weights for a sample whose weights were shared
@@ -6802,6 +8236,13 @@ svrep_from_shared_weights <- function(x, type, systematic_variance, dots,
 #' Unlike the linearized route this takes any number of frames, exports a
 #' component whose weights were shared from another population, and lets each
 #' frame use the replicate method that suits its own design.
+#'
+#' It also exports a component settled from a reserve list, whose export adds
+#' rows for the ineligible units and nonrespondents the settlement dropped
+#' ([reserve_lists]). Each such row carries the key and membership of the
+#' unit it stands for and composites with that unit's factor. Those values
+#' are recorded when the list is settled, so the membership columns must be
+#' on the list by then (`samplyr_error_stack_frames_membership_missing`).
 #'
 #' @details
 #' ## The compositing factor
@@ -6950,9 +8391,14 @@ as_svrepdesign.frame_stack <- function(
     )
   })
   names(components) <- names(x)
+  # The rows a settled reserve adds composite with their units' membership.
+  added <- lapply(stats::setNames(seq_along(x), names(x)), function(q) {
+    m <- reserve_added_membership(x, names(x)[[q]], components[[q]])
+    if (!is_null(m)) compositing_factors_of(m, q, theta)
+  })
 
   report_share_coverage(
-    combine_frame_replicates(x, components, factors),
+    combine_frame_replicates(x, components, factors, added),
     stack_share_coverage(x),
     where = " from any frame of this stack"
   )
@@ -7047,7 +8493,9 @@ multiframe_compositing_factors <- function(x, theta,
 
   if (is_null(theta)) {
     return(lapply(x, function(component) {
-      1 / rowSums(frame_component_membership(component, membership))
+      compositing_factors_of(
+        frame_component_membership(component, membership), 1L, NULL
+      )
     }))
   }
 
@@ -7069,12 +8517,68 @@ multiframe_compositing_factors <- function(x, theta,
     )
   }
 
-  shares <- c(theta, 1 - theta)
   out <- lapply(seq_along(x), function(q) {
-    m <- frame_component_membership(x[[q]], membership)
-    ifelse(rowSums(m) > 1, shares[[q]], 1)
+    compositing_factors_of(
+      frame_component_membership(x[[q]], membership), q, theta
+    )
   })
   names(out) <- names(x)
+  out
+}
+
+#' The constant estimator's factors for the rows of a membership matrix
+#'
+#' The multiplicity form when `theta` is `NULL`, otherwise frame `q`'s share
+#' of an overlapping unit.
+#' @noRd
+compositing_factors_of <- function(m, q, theta) {
+  if (is_null(theta)) {
+    return(1 / rowSums(m))
+  }
+  ifelse(rowSums(m) > 1, c(theta, 1 - theta)[[q]], 1)
+}
+
+#' The membership of the units a settled component's added rows stand for
+#'
+#' A settled reserve's export adds rows for the attempted units the sample
+#' drops, and its settlement records those units with their columns. `NULL`
+#' for a component whose export added no such row. Otherwise a logical
+#' matrix with one row per exported row, `NA` on the sample's rows. A
+#' recorded unit without a membership column, which was joined to the
+#' sample after it was settled, is refused: its compositing factor would
+#' be a guess.
+#' @noRd
+reserve_added_membership <- function(x, nm, component, call = caller_env()) {
+  index <- attr(component, "samplyr_reserve_units")
+  if (is_null(index) || all(is.na(index))) {
+    return(NULL)
+  }
+  membership <- attr(x, "membership")
+  units <- attr(x[[nm]], "metadata")$reserve_settlement$units$rows
+  held <- !is.na(index)
+  absent <- setdiff(unname(membership), names(units))
+  m <- if (length(absent) == 0L) {
+    frame_component_membership(units[index[held], , drop = FALSE], membership)
+  }
+  if (length(absent) > 0L || anyNA(m)) {
+    missing <- c(absent, if (!is_null(m)) colnames(m)[apply(m, 2L, anyNA)])
+    abort_samplyr(
+      c(
+        "Frame {.val {nm}}'s settled reserve drops units whose membership is
+         not recorded.",
+        "x" = "Its settlement kept no value of {.val {missing}} for the
+               ineligible units and nonrespondents it drops.",
+        "i" = "The export composites the row standing for each such unit
+               with that unit's membership. Add the membership columns to
+               the list before settling it."
+      ),
+      class = "samplyr_error_stack_frames_membership_missing",
+      call = call
+    )
+  }
+  out <- matrix(NA, length(index), length(membership),
+                dimnames = list(NULL, names(membership)))
+  out[held, ] <- m
   out
 }
 
@@ -7092,9 +8596,20 @@ multiframe_compositing_factors <- function(x, theta,
 #' opposite, so keeping only one of them is undetectable under one method and
 #' wrong under the other.
 #' @noRd
-combine_frame_replicates <- function(x, components, factors) {
+combine_frame_replicates <- function(x, components, factors,
+                                     added = NULL) {
   frames <- names(x)
-  sizes <- vapply(x, nrow, integer(1))
+  rows_of <- frame_stack_rows_of(x, components)
+  sizes <- vapply(rows_of, length, integer(1))
+  factors <- stats::setNames(lapply(frames, function(nm) {
+    f <- factors[[nm]][rows_of[[nm]]]
+    new <- is.na(rows_of[[nm]])
+    # A row for a settled reserve's dropped unit takes that unit's factor,
+    # and any other added row its own frame's.
+    own <- added[[nm]][new] %||% rep(NA_real_, sum(new))
+    f[new] <- ifelse(is.na(own), 1, own)
+    f
+  }), frames)
   analysis <- lapply(frames, function(nm) {
     stats::weights(components[[nm]], type = "analysis") * factors[[nm]]
   })
@@ -7108,9 +8623,9 @@ combine_frame_replicates <- function(x, components, factors) {
   col_start <- cumsum(c(0L, widths))
   repweights <- matrix(0, nrow = sum(sizes), ncol = sum(widths))
   for (q in seq_along(frames)) {
-    cols <- seq.int(col_start[[q]] + 1L, col_start[[q + 1L]])
+    cols <- col_start[[q]] + seq_len(widths[[q]])
     for (p in seq_along(frames)) {
-      rows <- seq.int(row_start[[p]] + 1L, row_start[[p + 1L]])
+      rows <- row_start[[p]] + seq_len(sizes[[p]])
       # Off the diagonal the base weights recycle down every column, which
       # fills the block without building it as a matrix first.
       repweights[rows, cols] <- if (identical(p, q)) {
@@ -7121,8 +8636,11 @@ combine_frame_replicates <- function(x, components, factors) {
     }
   }
 
-  variables <- as.data.frame(x)
+  variables <- frame_stack_export_variables(x, components, rows_of)
   variables[[".weight"]] <- weights_vec
+  rscales <- unlist(lapply(frames, function(nm) {
+    components[[nm]]$scale * components[[nm]]$rscales
+  }), use.names = FALSE)
 
   result <- survey::svrepdesign(
     data = variables,
@@ -7132,9 +8650,7 @@ combine_frame_replicates <- function(x, components, factors) {
     combined.weights = TRUE,
     type = "other",
     scale = 1,
-    rscales = unlist(lapply(frames, function(nm) {
-      components[[nm]]$scale * components[[nm]]$rscales
-    }), use.names = FALSE),
+    rscales = rscales,
     mse = TRUE
   )
   result <- compress_replicate_weights(result)
@@ -7153,6 +8669,74 @@ combine_frame_replicates <- function(x, components, factors) {
   )
   attr(result, "samplyr_overlap_probability_quality") <- attr(x, "overlaps")$probability_quality
   result
+}
+
+#' The stack's rows in the order its components exported them
+#'
+#' A zero row a component added belongs to its own frame alone, and keeps
+#' the columns its export gave it. A row standing for a unit a settled
+#' reserve dropped takes that unit's key, membership and declared overlaps
+#' instead.
+#' @noRd
+frame_stack_export_variables <- function(x, components, rows_of) {
+  whole <- as.data.frame(x)
+  identity <- vapply(names(x), function(nm) {
+    identical(rows_of[[nm]], seq_len(nrow(x[[nm]])))
+  }, logical(1))
+  if (all(identity)) {
+    return(whole)
+  }
+  membership <- attr(x, "membership")
+  start <- cumsum(c(0L, vapply(x, nrow, integer(1))))
+  blocks <- lapply(seq_along(x), function(q) {
+    nm <- names(x)[[q]]
+    idx <- rows_of[[nm]]
+    block <- whole[start[[q]] + idx, , drop = FALSE]
+    zero <- is.na(idx)
+    if (!any(zero)) {
+      return(block)
+    }
+    exported <- components[[nm]]$variables[zero, , drop = FALSE]
+    for (col in intersect(names(exported), names(block))) {
+      value <- tryCatch(vctrs::vec_cast(exported[[col]], block[[col]]),
+                        error = function(e) NULL)
+      if (!is_null(value)) {
+        block[[col]] <- vctrs::vec_assign(block[[col]], zero, value)
+      }
+    }
+    own <- matrix(FALSE, sum(zero), length(membership),
+                  dimnames = list(NULL, names(membership)))
+    own[, nm] <- TRUE
+    # A row for a settled reserve's dropped unit carries that unit's key,
+    # membership and declared overlaps, and no other column of it.
+    index <- attr(components[[nm]], "samplyr_reserve_units")[zero]
+    held <- !is.na(index %||% rep(NA, sum(zero)))
+    if (any(held)) {
+      units <- attr(x[[nm]], "metadata")$reserve_settlement$units$rows
+      cols <- intersect(
+        c(attr(x, "key"), unname(membership),
+          unlist(attr(x, "overlaps")$cols, use.names = FALSE)),
+        intersect(names(units), names(block))
+      )
+      at <- which(zero)[held]
+      for (col in cols) {
+        block[[col]][at] <- vctrs::vec_cast(units[[col]][index[held]],
+                                            block[[col]])
+      }
+      own[held, ] <- frame_component_membership(
+        units[index[held], , drop = FALSE], membership
+      )
+    }
+    for (f in names(membership)) {
+      block[[membership[[f]]]][zero] <- own[, f]
+    }
+    block$.frame[zero] <- nm
+    block$.domain[zero] <- frame_domain_labels(own)
+    block
+  })
+  out <- vctrs::vec_rbind(!!!blocks)
+  rownames(out) <- NULL
+  out
 }
 
 #' Convert a tbl_sample to a srvyr tbl_svy object

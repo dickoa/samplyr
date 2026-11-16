@@ -41,7 +41,8 @@
 #'   missing design column are refused with
 #'   `samplyr_error_joint_frame_mismatch`, and so is any difference at all
 #'   for a stage whose method depends on row order (`systematic`,
-#'   `pps_systematic`, `pps_chromy`, registered methods), whose matrix is
+#'   `pps_systematic`, `pps_systematic_mr`, `pps_chromy`, registered
+#'   methods), whose matrix is
 #'   that of the order. Under `frame_digest = "none"` there is nothing to
 #'   compare against, and a warning says so.
 #' @param ... These dots are for future extensions and must be empty.
@@ -62,8 +63,9 @@
 #'   `seed`, none of which activation mode uses.
 #' @param nsim Positive integer number of simulations used for Chromy's
 #'   pairwise expected hits (default 10000), also forwarded to registered
-#'   WR `joint_fn`s that explicitly declare an `nsim` formal. Analytic
-#'   methods ignore it. Raising it narrows the simulation error, at a cost
+#'   WR `joint_fn`s that explicitly declare an `nsim` formal. Among the
+#'   built-in methods only `pps_chromy` simulates, and the analytic ones,
+#'   `pps_systematic_mr` included, ignore it. Raising it narrows the simulation error, at a cost
 #'   linear in `nsim`.
 #' @param seed Single integer seeding the simulated methods (default 1),
 #'   which analytic methods ignore. The session's random stream is restored
@@ -80,16 +82,18 @@
 #'   - For PPS WOR stages: a square matrix of joint inclusion
 #'     probabilities \eqn{\pi_{kl}}{pi_kl}, usable with
 #'     [survey::ppsmat()].
-#'   - For PPS WR/PMR stages (`pps_multinomial`, `pps_chromy`): a
-#'     square matrix of joint expected hits
+#'   - For PPS WR/PMR stages (`pps_multinomial`, `pps_chromy`,
+#'     `pps_systematic_mr`): a square matrix of joint expected hits
 #'     \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}.
 #'   - `NULL` for non-PPS stages (SRS, systematic) or stages not
 #'     requested via the `stages` argument.
 #'
 #'   Rows and columns are the stage's sampled units in the order they first
-#'   appear in the sample. For a sample with one row per stage-1 unit, the
-#'   stage-1 matrix therefore follows the sample rows, which is how
-#'   [survey::ppsmat()] reads it. At a WR stage, repeated hits of the same
+#'   appear in the rows [as_svydesign()] exports. These are the sample's
+#'   rows, followed by a zero row for each selected primary unit whose
+#'   later stages selected nothing. For a sample with one row per stage-1
+#'   unit, the stage-1 matrix therefore follows the exported rows, which is
+#'   how [survey::ppsmat()] reads it. At a WR stage, repeated hits of the same
 #'   population unit appear once, so dimensions match the number of
 #'   distinct sampled units (or clusters). At a later stage below a WR
 #'   parent, each parent draw occurrence defines a separate conditional
@@ -123,7 +127,20 @@
 #' the reduced \eqn{\pi}{pi} vector, and the full matrix is reassembled
 #' with \eqn{\pi_{ij} = 1}{pi_ij = 1} for certainty pairs and
 #' \eqn{\pi_{ij} = \pi_j}{pi_ij = pi_j} for certainty x non-certainty
-#' pairs.
+#' pairs. A certainty rule at a WR or PMR stage takes each certainty unit
+#' once, so its hit count is 1 whatever the draw:
+#' \eqn{E(n_i n_j) = 1}{E(n_i * n_j) = 1} for two certainty units, the
+#' diagonal included, and \eqn{E(n_i n_j) = E(n_j)}{E(n_i * n_j) = E(n_j)}
+#' when only \eqn{i}{i} is one. The other units are drawn with the
+#' remaining hits over their own sizes.
+#'
+#' A second phase drawn within each final-stage pool of phase 1, by equal
+#' probabilities, is exported by [as_svydesign()] as phase 1's design with a
+#' smaller final take. Its matrices are that design's: each stage above the
+#' last is phase 1's, computed from phase 1's digest or from `frame`, which
+#' is then phase 1's frame, in the order of the rows it exports, and
+#' `stages` numbers the stages of that design. The last stage draws by equal
+#' probabilities and has no matrix.
 #'
 #' ## Exact vs. approximate computation
 #'
@@ -186,19 +203,29 @@
 #'
 #' ## WR/PMR methods (\eqn{E(n_k \cdot n_l)}{E(n_k * n_l)})
 #'
-#' Both matrices come from `sondage::joint_expected_hits()`.
+#' The matrices come from `sondage::joint_expected_hits()`.
 #'
-#' | Method            | Quality                                       |
-#' |-------------------|-----------------------------------------------|
-#' | `pps_multinomial` | **Exact**, analytic                           |
-#' | `pps_chromy`      | **Approximate**, Monte Carlo, 10 000 draws    |
-#' | registered        | From the method's `joint_fn`                  |
+#' | Method              | Quality                                       |
+#' |---------------------|-----------------------------------------------|
+#' | `pps_multinomial`   | **Exact**, analytic                           |
+#' | `pps_systematic_mr` | **Exact**, analytic, zero pairs possible      |
+#' | `pps_chromy`        | **Approximate**, Monte Carlo, 10 000 draws    |
+#' | registered          | From the method's `joint_fn`                  |
 #'
 #' For `pps_multinomial`,
 #' \eqn{E(n_k \cdot n_l) = n(n-1) p_k p_l + n p_k \mathbf{1}_{k=l}}{E(n_k * n_l) = n(n-1) p_k p_l + n p_k 1(k=l)}.
 #' The sequential dependence of `pps_chromy` admits no closed form for
 #' \eqn{E(n_k \cdot n_l)}{E(n_k * n_l)}, so sondage estimates it by Monte
 #' Carlo simulation under `nsim` and `seed`.
+#'
+#' `pps_systematic_mr` uses one random start, so its matrix follows from the
+#' overlap of the units' intervals on the cumulated sizes, in the order of
+#' the pool. Two units whose intervals are never covered by one random start
+#' have \eqn{E(n_k \cdot n_l) = 0}{E(n_k * n_l) = 0}. Such a pair is never
+#' in one sample, so the matrix of the sampled units does not show the zero.
+#' It still rules out a design-unbiased variance estimator from one sample,
+#' which is why the export treats the stage as drawn with replacement
+#' ([variance_estimation]).
 #'
 #' ## Activation mode
 #'
@@ -349,6 +376,15 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
   check_sample_unmodified(x, "joint_expectation")
   check_weight_contract_joint(x, "joint_expectation")
   check_no_materialized_occasion(x, "joint_expectation")
+  # A second phase drawn within phase 1's final pools is exported as phase
+  # 1's design with a smaller final take, so its matrices are that design's:
+  # read from phase 1's frame or digest, in the order of the rows it exports.
+  drawn_from <- x
+  composed <- composed_within_pool(x)
+  if (!is_null(composed)) {
+    drawn_from <- get_prev_phase(x)$sample
+    x <- composed
+  }
 
   # Activation mode uses only the frozen assignment record.
   if (!is_null(period) || !is_null(subround)) {
@@ -391,7 +427,7 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
 
   digest <- NULL
   if (is_null(frame)) {
-    digest <- get_frame_digest(x)
+    digest <- get_frame_digest(drawn_from)
     if (is_null(digest)) {
       abort_samplyr(
         c(
@@ -436,11 +472,15 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
   if (!is_null(frames)) {
     check_joint_frame(x, frames, design, stages_executed, stages_requested)
   }
+  # The rows the export gives survey, with the zero row of each primary unit
+  # left empty, so the matrices line up with them.
+  rows <- export_rows(x, design, stages_executed, notify = FALSE)
 
   result <- vector("list", max(stages_executed))
   names(result) <- paste0("stage_", seq_along(result))
 
-  # Chromy and WR methods simulate, so the whole loop is seeded.
+  # Chromy and registered WR methods can simulate, so the whole loop is
+  # seeded. Multinomial and systematic minimum replacement are analytic.
   result <- withr::with_seed(seed, {
     for (stage_idx in stages_requested) {
       stage_spec <- design$stages[[stage_idx]]
@@ -480,16 +520,16 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
         )
       }
 
-      if (
-        !(method %in% jip_methods) &&
-          is_null(stage_spec$draw_spec$method_type)
-      ) {
+      if (!stage_has_joint_matrix(stage_spec$draw_spec)) {
         next
       }
 
       # `[<-` with list() keeps a NULL result, which `[[<-` would delete.
-      result[stage_idx] <- list(if (is_null(frame)) {
-        compute_stage_jip_digest(digest, design, stage_idx, x, nsim)
+      stage_rows <- stage_unit_rows(rows, stage_idx)
+      result[stage_idx] <- list(drop_joint_first_moments(if (is_null(frame)) {
+        compute_stage_jip_digest(
+          digest, design, stage_idx, x, nsim, rows = stage_rows
+        )
       } else {
         compute_stage_jip(
           x,
@@ -497,9 +537,10 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
           design,
           stage_idx,
           stages_executed,
-          nsim
+          nsim,
+          rows = stage_rows
         )
-      })
+      }))
     }
     result
   })
@@ -547,13 +588,22 @@ check_registered_joint <- function(draw_spec, call = caller_env()) {
   invisible(NULL)
 }
 
+#' Does joint_expectation() compute a matrix for this stage?
+#'
+#' A method with joint probabilities of its own, or a registered one, whose
+#' `joint_fn` gives them. Other stages are returned as `NULL`.
+#' @noRd
+stage_has_joint_matrix <- function(draw_spec) {
+  draw_spec$method %in% jip_methods || !is_null(draw_spec$method_type)
+}
+
 #' Methods whose joint probabilities depend on the order of the pool
 #'
 #' Registered custom methods are counted among them, since samplyr cannot
 #' know how they use the order.
 #' @noRd
 joint_order_dependent <- function(draw_spec) {
-  draw_spec$method %in% c("systematic", "pps_systematic", "pps_chromy") ||
+  draw_spec$method %in% c(systematic_methods, "pps_chromy") ||
     !is_null(draw_spec$method_type)
 }
 
@@ -660,6 +710,10 @@ joint_frame_difference <- function(digest, design, frame, ref, stages) {
       "with, so a design value changed."
     ))
   }
+  # Only a stage given a matrix depends on the row order here.
+  stages <- Filter(function(i) {
+    stage_has_joint_matrix(design$stages[[i]]$draw_spec)
+  }, stages)
   ordered <- vapply(
     stages,
     function(i) joint_order_dependent(design$stages[[i]]$draw_spec),
@@ -749,7 +803,8 @@ compute_stage_jip_digest <- function(
   design,
   stage_idx,
   x,
-  nsim = 10000L
+  nsim = 10000L,
+  rows = as.data.frame(x)
 ) {
   rlang::local_error_call(caller_env())
   stage_ids <- vapply(digest$stages, function(s) s$stage_id, integer(1))
@@ -797,7 +852,7 @@ compute_stage_jip_digest <- function(
   if (
     identical(st$unit_level, "element") && "sample_row" %in% names(sel)
   ) {
-    sample_ids <- x[[".sample_id"]]
+    sample_ids <- rows[[".sample_id"]]
     if (!is_null(sample_ids) && length(sample_ids) > 0L && !anyNA(sample_ids)) {
       if ("replicate" %in% names(sel) && ".replicate" %in% names(x)) {
         sample_ids <- sample_ids - replicate_sample_id_offset(x)
@@ -808,13 +863,13 @@ compute_stage_jip_digest <- function(
       sel$.rank <- sel$sample_row
     }
   } else if ("key" %in% names(sel)) {
-    sample_df <- as.data.frame(x)
+    sample_df <- rows
     ancestor_vars <- collect_ancestor_cluster_vars(design, stage_idx)
     key_vars <- unique(c(
       ancestor_vars,
       design$stages[[stage_idx]]$clusters$vars
     ))
-    if (all(key_vars %in% names(x))) {
+    if (all(key_vars %in% names(sample_df))) {
       sample_keys <- digest_path_keys(
         sample_df, seq_len(nrow(sample_df)), key_vars
       )
@@ -937,10 +992,12 @@ compute_stage_jip_digest <- function(
                     drop = FALSE]
       u <- u[order(u$unit_order), , drop = FALSE]
       pik <- u$chance
+      certain <- u$is_certainty
       sampled_idx <- match(in_pool$unit_id, u$unit_id)
     } else {
       # Constant element storage uses pool position as unit ID.
       pik <- rep(p$chance, p$N)
+      certain <- NULL
       sampled_idx <- in_pool$unit_id
     }
     # Repeated hits of a unit share one row, at its first hit.
@@ -950,7 +1007,8 @@ compute_stage_jip_digest <- function(
       sampled_idx = sampled_idx,
       n = if (is.na(p$n_target)) NULL else as.integer(p$n_target),
       draw_spec = draw_spec,
-      nsim = nsim
+      nsim = nsim,
+      certain = certain
     ), in_pool$.rank[!duplicated(sampled_idx)])
   })
 
@@ -965,7 +1023,8 @@ compute_stage_jip <- function(
   design,
   stage_idx,
   stages_executed,
-  nsim = 10000L
+  nsim = 10000L,
+  rows = as.data.frame(x)
 ) {
   stage_spec <- design$stages[[stage_idx]]
   draw_spec <- stage_spec$draw_spec
@@ -980,11 +1039,11 @@ compute_stage_jip <- function(
   strata_spec <- stage_spec$strata
   cluster_spec <- stage_spec$clusters
   strata_vars <- if (!is_null(strata_spec)) strata_spec$vars else character()
-  sample_df <- as.data.frame(x)
+  sample_df <- rows
   # Match units on the values execution gave them, not on later edits. The
   # design's columns and samplyr's own are guarded by the integrity checks.
   changed <- sample_changed_columns(x) %||% character(0)
-  changed <- changed[!startsWith(changed, ".")]
+  changed <- changed[!is_samplyr_column(changed)]
   changed <- setdiff(changed, unlist(lapply(
     design$stages, function(s) unname(stage_required_vars(s))
   )))
@@ -1350,9 +1409,26 @@ compute_joint_matrix <- function(
     mos_vals <- NULL
   }
 
-  # WR and PMR need no certainty decomposition.
   is_wr <- method %in% pps_wr_methods ||
     identical(draw_spec$method_type, "wr")
+  if (is_wr && has_certainty_rule(draw_spec)) {
+    cert <- identify_certainty(
+      mos_vals = mos_vals, n = n,
+      certainty_size = draw_spec$certainty_size,
+      certainty_prop = draw_spec$certainty_prop
+    )
+    pik <- numeric(N)
+    pik[cert$certainty_idx] <- 1
+    n_rest <- max(cert$n_remaining, 0)
+    if (n_rest > 0 && length(cert$remaining_idx) > 0) {
+      pik[cert$remaining_idx] <- sondage::expected_hits(
+        mos_vals[cert$remaining_idx], n_rest
+      )
+    }
+    return(assemble_jeh_with_certainty(
+      pik, cert$certainty_idx, n_rest, method, sampled_idx, nsim
+    ))
+  }
   if (is_wr) {
     pik <- sondage::expected_hits(mos_vals, n)
     return(compute_jeh_by_method(pik, n, method, sampled_idx, nsim))
@@ -1392,7 +1468,8 @@ compute_jip_from_pik <- function(
   sampled_idx,
   n = NULL,
   draw_spec = NULL,
-  nsim = 10000L
+  nsim = 10000L,
+  certain = NULL
 ) {
   sampled_idx <- as.integer(sampled_idx)
 
@@ -1405,6 +1482,14 @@ compute_jip_from_pik <- function(
         call = NULL,
         class = "samplyr_error_internal"
       )
+    }
+    # Certainty units are named, since an expected hit of one is no
+    # certainty.
+    cert_idx <- which(!is.na(certain) & certain)
+    if (length(cert_idx) > 0L) {
+      return(assemble_jeh_with_certainty(
+        pik, cert_idx, n - length(cert_idx), method, sampled_idx, nsim
+      ))
     }
     return(compute_jeh_by_method(pik, n, method, sampled_idx, nsim))
   }
@@ -1457,10 +1542,12 @@ compute_jeh_by_method <- function(
   hits <- integer(length(pik))
   hits[sampled_distinct] <- 1L
 
+  # The draw normalizes by sum(pik), and systematic_mr splits n * prob into
+  # whole and fractional hits, so the matrix must see the draw's vector.
   design <- structure(
     list(
       sample = sampled_distinct,
-      prob = pik / n,
+      prob = pik / sum(pik),
       hits = hits,
       n = as.integer(n),
       N = length(pik),
@@ -1476,11 +1563,46 @@ compute_jeh_by_method <- function(
   )
   population_order <- sort(sampled_distinct)
   first_appearance_order <- match(sampled_distinct, population_order)
-  jeh_population_order[
+  jeh <- jeh_population_order[
     first_appearance_order,
     first_appearance_order,
     drop = FALSE
   ]
+  # The diagonal holds E(n_i^2), so the blocks of other pools need E(n_i).
+  attr(jeh, "expected") <- n * pik[sampled_distinct] / sum(pik)
+  jeh
+}
+
+#' Assemble joint expected hits separating certainty from drawn units
+#'
+#' A certainty unit is taken once, so its hit count is 1 whatever the draw:
+#'   E(n_i n_j) = 1        if both i and j are certainty
+#'   E(n_i n_j) = E(n_j)   if only i is certainty
+#' The other units are drawn with `n_rest` hits over their own sizes, which
+#' give the remaining block. `pik` holds 1 for certainty units and the
+#' remaining units' expected hits, in pool order.
+#' @noRd
+assemble_jeh_with_certainty <- function(pik, cert_idx, n_rest, method,
+                                        sampled_idx, nsim = 10000L) {
+  sampled <- unique(as.integer(sampled_idx))
+  if (length(sampled) == 0L) {
+    return(NULL)
+  }
+  rest_idx <- setdiff(seq_along(pik), cert_idx)
+  is_cert <- sampled %in% cert_idx
+  expected <- pik[sampled]
+  result <- outer(expected, expected)
+  result[is_cert, is_cert] <- 1
+  rest_pos <- which(!is_cert)
+  if (length(rest_pos) > 0L) {
+    block <- compute_jeh_by_method(
+      pik[rest_idx], n_rest, method,
+      match(sampled[rest_pos], rest_idx), nsim
+    )
+    result[rest_pos, rest_pos] <- block
+  }
+  attr(result, "expected") <- expected
+  result
 }
 
 #' Assemble joint matrix separating certainty from stochastic units
@@ -1585,15 +1707,9 @@ match_sampled_units <- function(
   if (!is_null(cluster_spec)) {
     match_vars <- unique(c(ancestor_cluster_vars, cluster_spec$vars))
   } else {
-    frame_vars <- setdiff(
-      names(group_frame),
-      grep("^\\.", names(group_frame), value = TRUE)
-    )
-    sample_vars <- setdiff(
-      names(sample_df),
-      grep("^\\.", names(sample_df), value = TRUE)
-    )
-    match_vars <- intersect(frame_vars, sample_vars)
+    # samplyr's own columns, not every dotted name: `.id` can be the key.
+    shared <- intersect(names(group_frame), names(sample_df))
+    match_vars <- setdiff(shared[!is_samplyr_column(shared)], rank_col)
   }
 
   if (length(match_vars) == 0) {
@@ -1717,12 +1833,14 @@ refuse_unmatched_units <- function(n_unmatched, match_vars) {
 
 #' Assemble joint probability matrix from per-group matrices
 #'
-#' Initializes the full matrix with `outer(pi, pi)` (the product of all
-#' marginal inclusion probabilities), then overwrites each diagonal block
-#' with the actual within-group joint probabilities. Cross-group entries
-#' remain at `pi_i * pi_j`, which is correct because sampling in
-#' independent strata implies `pi_kl = pi_k * pi_l` for units in
-#' different groups.
+#' Initializes the full matrix with the products of the first moments, then
+#' overwrites each diagonal block with the within-group joint matrix.
+#' Groups are drawn independently, so units in different groups have
+#' `E(n_k n_l) = E(n_k) E(n_l)`, which is `pi_k pi_l` without replacement.
+#' A without-replacement block's diagonal is its first moment. A WR or PMR
+#' block's diagonal is `E(n_k^2)`, so it carries its first moments in the
+#' `"expected"` attribute, and the assembled matrix keeps them for the next
+#' level of nesting.
 #' @noRd
 assemble_block_diagonal <- function(matrices) {
   matrices <- Filter(Negate(is.null), matrices)
@@ -1733,8 +1851,12 @@ assemble_block_diagonal <- function(matrices) {
     return(matrices[[1]])
   }
 
-  pi_vec <- unlist(lapply(matrices, diag))
-  result <- outer(pi_vec, pi_vec)
+  expected <- lapply(matrices, attr, "expected")
+  carried <- !vapply(expected, is.null, logical(1))
+  first_moments <- unlist(Map(
+    function(mat, e) e %||% diag(mat), matrices, expected
+  ))
+  result <- outer(first_moments, first_moments)
 
   offset <- 0L
   for (mat in matrices) {
@@ -1753,6 +1875,9 @@ assemble_block_diagonal <- function(matrices) {
       "Joint blocks disagree on whether their rows carry a sample rank.",
       class = "samplyr_error_internal"
     )
+  }
+  if (any(carried)) {
+    attr(result, "expected") <- first_moments
   }
   result
 }
@@ -1786,7 +1911,47 @@ order_by_joint_rank <- function(mat) {
     return(mat)
   }
   ord <- order(rank)
+  expected <- attr(mat, "expected")
   mat <- mat[ord, ord, drop = FALSE]
-  attr(mat, "rank") <- NULL
+  if (!is_null(expected)) {
+    attr(mat, "expected") <- expected[ord]
+  }
   mat
 }
+
+#' The export's rows that hold a unit selected at stage `k`
+#'
+#' A zero row stands for a selected unit at the stages above its record's
+#' stage only. From that stage on it is a placeholder.
+#' @noRd
+stage_unit_rows <- function(rows, k) {
+  zero_from <- attr(rows, "zero_from")
+  if (is_null(zero_from) || all(is.na(zero_from))) {
+    return(rows)
+  }
+  vctrs::vec_slice(rows, is.na(zero_from) | zero_from > k)
+}
+
+#' Drop the first moments a WR or PMR joint matrix carried through assembly
+#' @noRd
+drop_joint_first_moments <- function(mat) {
+  if (!is_null(mat)) {
+    attr(mat, "expected") <- NULL
+  }
+  mat
+}
+
+#' The composed design a within-pool second phase exports as, if any
+#'
+#' The export tries this composition before the fixed-phase-1 route, as
+#' `composed_subsample()` does, so the matrices describe the design it
+#' builds. A fixed phase 1 it does not compose keeps its own design.
+#' @noRd
+composed_within_pool <- function(x) {
+  phase_info <- survey_phase_info(x)
+  if (!phase_info$is_twophase || survey_is_activation(phase_info)) {
+    return(NULL)
+  }
+  compose_within_pool_subsample(x)
+}
+

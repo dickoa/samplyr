@@ -1521,6 +1521,55 @@ test_that("replicate routes treat a one-per-zone remainder as drawn with replace
     expect_gt(ratio, 0.9, label = type)
     expect_lt(ratio, 1.1, label = type)
   }
+  # RWYB resamples the zones as drawn with replacement, says so, and does
+  # not warn of an approximation it does not make.
+  expect_no_warning(r <- as_svrepdesign(s, type = "rwyb", replicates = 20))
+  record <- attr(r, "samplyr_replication")
+  expect_identical(record$methods, c("PPSWR", "SRSWOR"))
+  expect_false(record$pps_approximation)
+  expect_identical(
+    v$status[v$estimator == "Rao-Wu-Yue-Beaumont bootstrap"], "supported"
+  )
+})
+
+test_that("a plan of a single zone refuses replicates before the frame is read", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("svrep")
+  # One certain PSU and one zone of five: the zone's one draw is a variance
+  # group alone, which the plan fixes whatever the frame.
+  register <- data.frame(
+    psu_id = sprintf("A%02d", 1:6), stratum = "A",
+    N = c(400, 60, 70, 80, 90, 100), stringsAsFactors = FALSE
+  )
+  plan <- svyplan::n_alloc(
+    data.frame(stratum = "A", N = sum(register$N), n_per_psu = 8),
+    measures = data.frame(stratum = "A", name = "y", p = 0.5,
+                          icc_psu = 0.05),
+    targets = data.frame(name = "y", cv = 0.3),
+    psu = register, n_psu_per_zone = 1
+  )
+  expect_identical(unique(stats::na.omit(plan$psu$.pair)), 1L)
+  expect_length(unique(stats::na.omit(plan$psu$.zone)), 1L)
+  design <- certainty_zone_design(plan)
+  frame <- certainty_element_frame(register)
+  frame$y <- frame$person %% 5
+  replicates <- c("Stratified jackknife (JKn)",
+                  "Rao-Wu-Yue-Beaumont bootstrap")
+  ahead <- variance_estimators(design)
+  framed <- suppressMessages(variance_estimators(design, frame))
+  for (est in replicates) {
+    expect_identical(ahead$status[ahead$estimator == est], "refused",
+                     label = est)
+    expect_identical(ahead$class[ahead$estimator == est],
+                     framed$class[framed$estimator == est], label = est)
+  }
+  s <- suppressMessages(execute(design, frame, seed = 1))
+  expect_no_warning(expect_error(
+    as_svrepdesign(s, type = "rwyb", replicates = 20),
+    class = "samplyr_error_rwyb_singleton"
+  ))
+  expect_error(as_svrepdesign(s, type = "JKn"),
+               class = "samplyr_error_svrep_conversion_failed")
 })
 
 test_that("variance_estimators() refuses half-samples when a group is a triple", {

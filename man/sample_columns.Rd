@@ -31,16 +31,17 @@ weights.
 \item \code{.fpc_1}, \code{.fpc_2}, ...: Per-stage finite population correction
 values. The meaning depends on the method and context:
 \itemize{
-\item \strong{Equal-probability WOR} (srswor, systematic): \eqn{N_h} (stratum
+\item \strong{Equal-probability WOR} (\code{srswor}, \code{systematic}): \eqn{N_h} (stratum
 population size), or \eqn{N} if unstratified. The sampling fraction
 \eqn{f = n / N} is derived from this at variance-estimation time.
-\item \strong{PPS WOR} (pps_brewer, pps_cps, etc.): \eqn{N_h} (stratum
+\item \strong{PPS WOR} (\code{pps_brewer}, \code{pps_cps}, etc.): \eqn{N_h} (stratum
 population size), converted to \eqn{\pi_i = 1/w_i}{pi_i = 1/w_i}
 at survey export, because \code{survey::svydesign()} expects inclusion
 probabilities for unequal-probability stages.
 \item \strong{Clustered stages}: the number of clusters in the
 stratum/group, not the number of ultimate units.
-\item \strong{WR / PMR} (srswr, pps_multinomial, pps_chromy): \eqn{\infty}{Inf}.
+\item \strong{WR / PMR} (\code{srswr}, \code{pps_multinomial}, \code{pps_chromy},
+\code{pps_systematic_mr}): \eqn{\infty}{Inf}.
 These exports use no finite population correction and the
 Hansen-Hurwitz variance treatment. It is approximate for PMR.
 }
@@ -56,8 +57,10 @@ inclusion probability is one, so that it is self-representing and
 contributes no variance at that stage. TRUE whether the probability
 came from a \code{certainty_size}/\code{certainty_prop} rule or was capped at one
 by the probability calculation. Present for unequal-probability and
-balanced stages. Always FALSE for WR/PMR stages, where the recorded
-chance is an expected hit rather than a probability.
+balanced stages. In a WR or PMR stage it is TRUE only for a unit a
+\code{certainty_size} or \code{certainty_prop} rule took once, since the
+recorded chance there is an expected hit, and a hit expected once is
+no certainty.
 \item \code{.reserve_1}, \code{.reserve_2}, ...: At the stage that sets \code{reserve} in
 \code{\link[=draw]{draw()}}, the unit's place in its pool's list: 0 for the take, and 1,
 2, ... for the reserve units in the order they are released. The
@@ -71,6 +74,16 @@ export uses stratum by zone as the variance strata.
 one PSU per zone. svyplan fixes the groups before selection, two or
 three zones each, numbered across strata, and certainty PSUs have
 \code{NA}. The survey export uses the groups as the variance strata.
+\item \code{.phase1_row}: In a sample drawn from an earlier phase's sample, the
+position of the earlier-phase row each row came from, which
+\code{\link[=as_svydesign]{as_svydesign()}} joins the phases on. A third phase numbers the rows
+of the second in \code{.phase2_row}. A sample whose later stage drew from
+a register of its own does not carry it.
+\item \code{.phase1_draw_1}, \code{.phase1_draw_2}, ...: In a sample drawn from an
+earlier phase's sample, the hit number (\code{.draw_k}) of the earlier
+phase's row, for each of its stages that can take a unit more than
+once. A design stratifies by it to draw within each hit, as
+\code{\link[=as_svydesign]{as_svydesign()}} describes.
 \item \code{.stage}: The last stage executed, the same on every row. It is 1
 after \code{execute(..., stages = 1)} and 2 once a continuation runs the
 second stage. A new phase counts its own stages, so it starts at 1.

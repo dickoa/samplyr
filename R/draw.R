@@ -1,30 +1,31 @@
 #' Selection methods
 #'
-#' The sixteen selection methods samplyr ships, what each one requires, and
+#' The seventeen selection methods samplyr ships, what each one requires, and
 #' how registered methods extend the set. [draw()] chooses among them with
 #' its `method` argument.
 #'
-#' Sixteen methods are built in, in three families: equal probability, PPS
+#' Seventeen methods are built in, in three families: equal probability, PPS
 #' (probability proportional to size, all requiring `mos`), and balanced.
 #'
-#' | Method            | Replacement | Size   | `mos`    | Also takes    |
-#' |-------------------|-------------|--------|----------|---------------|
-#' | `srswor`          | Without     | Fixed  | -        | -             |
-#' | `srswr`           | With        | Fixed  | -        | -             |
-#' | `systematic`      | Without     | Fixed  | -        | -             |
-#' | `bernoulli`       | Without     | Random | -        | `prn`         |
-#' | `pps_systematic`  | Without     | Fixed  | Required | -             |
-#' | `pps_brewer`      | Without     | Fixed  | Required | -             |
-#' | `pps_cps`         | Without     | Fixed  | Required | -             |
-#' | `pps_sampford`    | Without     | Fixed  | Required | -             |
-#' | `pps_poisson`     | Without     | Random | Required | `prn`         |
-#' | `pps_sps`         | Without     | Fixed  | Required | `prn`         |
-#' | `pps_pareto`      | Without     | Fixed  | Required | `prn`         |
-#' | `pps_multinomial` | With        | Fixed  | Required | -             |
-#' | `pps_chromy`      | Minimum     | Fixed  | Required | -             |
-#' | `cube`            | Without     | Fixed  | Optional | `aux`         |
-#' | `lpm2`            | Without     | Fixed  | Optional | `spread`      |
-#' | `scps`            | Without     | Fixed  | Optional | `spread`, `prn` |
+#' | Method              | Replacement | Size   | `mos`    | Also takes      |
+#' |---------------------|-------------|--------|----------|-----------------|
+#' | `srswor`            | Without     | Fixed  | -        | -               |
+#' | `srswr`             | With        | Fixed  | -        | -               |
+#' | `systematic`        | Without     | Fixed  | -        | -               |
+#' | `bernoulli`         | Without     | Random | -        | `prn`           |
+#' | `pps_systematic`    | Without     | Fixed  | Required | -               |
+#' | `pps_brewer`        | Without     | Fixed  | Required | -               |
+#' | `pps_cps`           | Without     | Fixed  | Required | -               |
+#' | `pps_sampford`      | Without     | Fixed  | Required | -               |
+#' | `pps_poisson`       | Without     | Random | Required | `prn`           |
+#' | `pps_sps`           | Without     | Fixed  | Required | `prn`           |
+#' | `pps_pareto`        | Without     | Fixed  | Required | `prn`           |
+#' | `pps_multinomial`   | With        | Fixed  | Required | -               |
+#' | `pps_chromy`        | Minimum     | Fixed  | Required | -               |
+#' | `pps_systematic_mr` | Minimum     | Fixed  | Required | -               |
+#' | `cube`              | Without     | Fixed  | Optional | `aux`           |
+#' | `lpm2`              | Without     | Fixed  | Optional | `spread`        |
+#' | `scps`              | Without     | Fixed  | Optional | `spread`, `prn` |
 #'
 #' Every method takes either `n` or `frac`, except `pps_cps`, which requires
 #' `n`. For fixed-size methods, `frac` follows the `round` parameter (ceiling
@@ -55,13 +56,20 @@
 #'   estimator.
 #' - `pps_chromy` is sequential and order-sensitive, the method of SAS
 #'   `PPS_SEQ`.
+#' - `pps_systematic_mr` is systematic PPS without the cap at 1, the method
+#'   of SAS `PPS_SYS`. `pps_systematic` caps each chance at 1 and takes a
+#'   large unit once, whereas `pps_systematic_mr` hits it once per sampling
+#'   interval its size spans.
 #' - `cube` is the cube method of Deville and \enc{Tillé}{Tille} (2004).
 #' - `lpm2` and `scps` spread the sample in space.
 #'
 #' `Minimum` in the Replacement column is probability minimum replacement.
-#' `pps_chromy` draws a unit either \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
+#' `pps_chromy` and `pps_systematic_mr` draw a unit either
+#' \eqn{\lfloor E \rfloor}{floor(E)} or \eqn{\lceil E \rceil}{ceiling(E)}
 #' times, where \eqn{E} is its expected number of hits, so a unit is never hit
-#' more often than its size warrants.
+#' more often than its size warrants. When every \eqn{E} is below 1,
+#' `pps_systematic_mr` draws the units `pps_systematic` draws from the same
+#' seed.
 #'
 #' ## Choosing a PPS method
 #'
@@ -73,15 +81,16 @@
 #' variance can be estimated from the design. The joint probabilities are
 #' exact for CPS and Sampford and approximate for Brewer.
 #'
-#' `pps_systematic` and `pps_chromy` depend on the frame order. Sorted with
-#' `control`, they spread the sample over the sorted variables, which is why
-#' many household survey protocols use them. Systematic PPS gives some pairs
-#' of units joint probability zero, so no design-unbiased variance estimator
-#' exists for it, and a frame whose order resonates with the sampling
-#' interval can make its standard errors far too small. [as_svydesign()]
-#' uses Brewer's approximation for a `pps_systematic` stage and warns, and
-#' a `pps_chromy` stage is treated as drawn with replacement
-#' ([variance_estimation]).
+#' `pps_systematic`, `pps_systematic_mr` and `pps_chromy` depend on the
+#' frame order. Sorted with `control`, they spread the sample over the
+#' sorted variables, which is why many household survey protocols use them.
+#' Both systematic methods can give some pairs of units a joint probability
+#' of zero, which rules out a design-unbiased variance estimator, and a
+#' frame whose order resonates with the sampling interval can make their
+#' standard errors far too small. [as_svydesign()] uses Brewer's
+#' approximation for a `pps_systematic` stage, treats a `pps_systematic_mr`
+#' stage as drawn with replacement, and warns for both. A `pps_chromy`
+#' stage is treated as drawn with replacement too ([variance_estimation]).
 #'
 #' `pps_poisson`, `pps_sps` and `pps_pareto` take permanent random numbers,
 #' for samples coordinated across occasions or surveys.
@@ -92,8 +101,8 @@
 #' the areas it sorts by. samplyr reaches that spread in four ways, and each
 #' pays for it differently.
 #'
-#' - `control` with `pps_systematic` or `pps_chromy` gives implicit
-#'   stratification, with the variance limits given above.
+#' - `control` with `pps_systematic`, `pps_systematic_mr` or `pps_chromy`
+#'   gives implicit stratification, with the variance limits given above.
 #' - Finer strata in [stratify_by()], down to two units per stratum, with a
 #'   general method. Every joint probability stays positive, at the cost of
 #'   more strata and smaller takes in each.
@@ -119,11 +128,10 @@
 #' design-unbiased. Unknown probabilities are refused. Probability and
 #' variance declarations by a custom-method author are contracts, not proofs.
 #'
-#' The two order-sampling methods part ways in small pools. Drawing 3 of 12
-#' units with sizes from 1 to 20, over 20,000 draws, `pps_sps` realized
-#' inclusion probabilities up to 0.047 away from its targets, and a
-#' Horvitz-Thompson count built on the targets came out 6.6% low. `pps_pareto`
-#' stayed within 0.009 of its targets, with a bias under 1%. For coordinated
+#' The two order-sampling methods part ways in small pools. Their realized
+#' inclusion probabilities depart from the targets as the take shrinks,
+#' and those of `pps_pareto` stay closer to them than those of `pps_sps`,
+#' so an estimator built on the targets is less biased. For coordinated
 #' samples from small pools, prefer `pps_pareto`.
 #'
 #' ## Fixed vs random sample size
@@ -199,9 +207,19 @@
 #' \enc{Rosén}{Rosen}, B. (1997). Asymptotic theory for order sampling.
 #' *Journal of Statistical Planning and Inference*, 62(2), 135-158.
 #'
+#' `pps_multinomial`, `srswr`:
+#' Hansen, M.H. and Hurwitz, W.N. (1943). On the theory of sampling from
+#' finite populations. *Annals of Mathematical Statistics*, 14(4), 333-362.
+#' \doi{10.1214/aoms/1177731356}
+#'
 #' `pps_chromy`:
 #' Chromy, J.R. (1979). Sequential sample selection methods.
 #' *Proceedings of the Survey Research Methods Section, ASA*, 401-406.
+#'
+#' `pps_systematic`, `pps_systematic_mr`:
+#' Madow, W.G. (1949). On the theory of systematic sampling, II.
+#' *Annals of Mathematical Statistics*, 20(3), 333-354.
+#' \doi{10.1214/aoms/1177729988}
 #'
 #' `balanced`:
 #' Deville, J.-C. and \enc{Tillé}{Tille}, Y. (2004). Efficient balanced
@@ -365,7 +383,7 @@ NULL
 #'   the response status the field recorded. [reserve_lists] describes the
 #'   field protocol, the settlement and how to size the reserve.
 #' @param method Selection method, `"srswor"` by default.
-#'   [selection_methods] lists the sixteen built-ins with what each one
+#'   [selection_methods] lists the seventeen built-ins with what each one
 #'   requires and the paper behind each.
 #'
 #'   `"cube"` balances the sample on `aux` so that Horvitz-Thompson
@@ -460,15 +478,16 @@ NULL
 #'   values sort last, also under `desc()`. Ties keep the frame's order. See
 #'   the "Control sorting" section.
 #'
-#' @param certainty_size For PPS without-replacement methods, units with
-#'   MOS >= this value are selected with certainty (probability 1). A scalar
+#' @param certainty_size For PPS methods, units with MOS >= this value are
+#'   selected with certainty (probability 1), and once under a method that
+#'   can take a unit more than once. A scalar
 #'   for all strata, or a data frame with the stratification columns and a
 #'   `certainty_size` column. Certainty units are removed from the frame
 #'   before probability sampling, which draws the remaining sample size.
 #'   Mutually exclusive with `certainty_prop`. Equivalent to SAS
 #'   SURVEYSELECT `CERTSIZE=`.
 #'
-#' @param certainty_prop For PPS without-replacement methods, units whose
+#' @param certainty_prop For PPS methods, units whose
 #'   MOS share (MOS_i / sum(MOS)) >= this value are selected with certainty.
 #'   A scalar strictly between 0 and 1, or a data frame with the
 #'   stratification columns and a `certainty_prop` column. Shares are
@@ -556,9 +575,10 @@ NULL
 #' them with probability 1 before sampling the remainder, and marks them in
 #' the `.certainty_k` column described in [sample_columns]. It is available
 #' for the WOR PPS methods (`pps_systematic`, `pps_brewer`, `pps_cps`,
-#' `pps_sampford`, `pps_poisson`, `pps_sps`, `pps_pareto`). With-replacement
-#' (`pps_multinomial`) and PMR (`pps_chromy`) methods handle large units
-#' through their hit mechanism. A pool censused under
+#' `pps_sampford`, `pps_poisson`, `pps_sps`, `pps_pareto`), for the methods
+#' that can take a unit more than once (`pps_multinomial`, `pps_chromy`,
+#' `pps_systematic_mr`), and for methods registered with `type = "wor"` or
+#' `"wr"`. A pool censused under
 #' `certainty_overflow = "allow"` has stage weight 1, but in a multistage
 #' design the final `.weight` can still exceed 1 because it compounds all
 #' stage weights.
@@ -573,9 +593,25 @@ NULL
 #' which also lets the threshold sit below 1. A unit drawn with chance 0.98
 #' is in practice a certainty unit with an unstable weight.
 #'
-#' **Certainty with `pps_poisson`.** Both `n` and `frac` give a target
-#' expected total that includes certainty units, `frac` as the unrounded
-#' `frac * N` over the original pool. After `n_cert` certainty units are
+#' A method that can take a unit more than once needs no rule, since a large
+#' unit gets several hits, each with a subsample of its own at the next
+#' stage. Under `certainty_size` or `certainty_prop` such a unit is taken
+#' once instead, with weight 1, and the remaining `n - n_c` hits are drawn by
+#' the method over the remaining sizes, where a unit can still be hit more
+#' than once. A certainty PSU then has one subsample at the next stage. When
+#' the size measure counts the units below, a take of `m` per hit is
+#' self-weighting, and a certainty PSU keeps the same weight if its take is
+#' `m` times its size over the remainder's interval, the remaining size
+#' total divided by `n - n_c`. The export treats the certainty units as a
+#' take-all stratum and the remaining hits as drawn with replacement.
+#' `pps_systematic_mr` with `certainty_size` corresponds to SAS SURVEYSELECT
+#' `METHOD=PPS_SYS` with `CERTSIZE=`, and `pps_multinomial` to
+#' `METHOD=PPS_WR`. SAS has no `CERTSIZE=P=` for these methods, and no
+#' certainty option for its Chromy method.
+#'
+#' With `pps_poisson`, both `n` and `frac` give a target expected total
+#' that includes certainty units, `frac` as the unrounded `frac * N` over
+#' the original pool. After `n_cert` certainty units are
 #' selected, the remaining probabilities are
 #' `pmin(1, (target - n_cert) * mos / sum(mos))` over the remaining units'
 #' sizes. Thus `n = 5` and `frac = 0.5` on ten units give the same
@@ -588,8 +624,8 @@ NULL
 #'
 #' Control sorting orders the frame before selection, giving implicit
 #' stratification with the systematic and sequential methods (`systematic`,
-#' `pps_systematic`, `pps_chromy`), where the sample spreads evenly across the
-#' sorted variables. Other methods accept `control` but get no implicit
+#' `pps_systematic`, `pps_systematic_mr`, `pps_chromy`), where the sample
+#' spreads evenly across the sorted variables. Other methods accept `control` but get no implicit
 #' stratification from it. The sort can change which units a given seed
 #' draws, but the sample does not spread over the sorted variables. A
 #' coordinated `pps_sps` draw with `prn`, for example, keeps nothing of a
@@ -683,6 +719,22 @@ NULL
 #'   draw(n = 100, method = "pps_chromy", mos = households,
 #'        control = serp(region, province)) |>
 #'   execute(bfa_eas, seed = 2)
+#'
+#' # Systematic PPS with minimum replacement (SAS PPS_SYS). The largest EA
+#' # of Poura holds more than an eighth of its households, so it expects
+#' # 1.74 of 8 hits and is drawn once or twice, here twice. Each hit is a
+#' # row, numbered by `.draw_1`, with weight 1 / 1.74.
+#' poura <- subset(bfa_eas, commune == "Poura")
+#' poura_sample <- sampling_design() |>
+#'   draw(n = 8, method = "pps_systematic_mr", mos = households) |>
+#'   execute(poura, seed = 1)
+#' as.data.frame(poura_sample)[c("ea_id", "households", ".draw_1", ".weight")]
+#'
+#' # The export reads the hits as drawn with replacement, and warns that the
+#' # frame order can make that variance far too small or too large
+#' if (requireNamespace("survey", quietly = TRUE)) {
+#'   poura_svy <- as_svydesign(poura_sample)
+#' }
 #'
 #' # Control sorting with nested (standard) ordering
 #' sampling_design() |>
@@ -899,7 +951,7 @@ draw <- function(
   ) {
     abort_samplyr(
       c(
-        "{.fn draw} got one sample size ({n}) from a svyplan plan at a stage
+        "{.fn draw} got one sample size ({n}) from an svyplan plan at a stage
          stratified by {.val {strata_vars}} with no {.arg alloc}.",
         "x" = "Without {.arg alloc} a single {.arg n} is taken in every
                stratum, which multiplies the planned size by the number of
@@ -2157,16 +2209,15 @@ validate_certainty <- function(
     )
   }
 
-  is_pps_wor <- method %in%
-    pps_wor_methods ||
-    (!is_null(custom_spec) && custom_spec$type == "wor")
-  if (!is_pps_wor) {
+  # A unit that can be hit more than once is taken once instead.
+  is_pps <- method %in% c(pps_wor_methods, pps_wr_methods) ||
+    (!is_null(custom_spec) && custom_spec$type %in% c("wor", "wr"))
+  if (!is_pps) {
     cli_abort(
       c(
-        "Certainty selection is only available for PPS without-replacement methods.",
-        "i" = "Valid methods: {.val {pps_wor_methods}}",
-        "i" = "Custom WOR methods registered via {.fn sondage::register_method} are also supported.",
-        "i" = "WR ({.val pps_multinomial}) and PMR ({.val pps_chromy}) methods handle large units natively.",
+        "Certainty selection is only available for PPS methods.",
+        "i" = "Valid methods: {.val {c(pps_wor_methods, pps_wr_methods)}}",
+        "i" = "Methods registered via {.fn sondage::register_method} with {.code type = \"wor\"} or {.code \"wr\"} are also supported.",
         "x" = "Current method: {.val {method}}"
       ),
       call = call,

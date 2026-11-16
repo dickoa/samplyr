@@ -192,7 +192,7 @@ add_stage <- function(.data, label = NULL) {
 #'
 #' `draw()` reads the stage's strata and clusters when it is called: whether
 #' a scalar `n` is per stratum or a total, whether a named `n` matches the
-#' strata, and how a svyplan plan is taken. A verb added afterwards would
+#' strata, and how an svyplan plan is taken. A verb added afterwards would
 #' leave that reading stale. `draw(n = plan) |> stratify_by(region)` took a
 #' plan's total in every region this way. The same holds for a design from
 #' `read_design()` or `get_design()`, whose current stage is its last, drawn

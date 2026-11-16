@@ -156,7 +156,7 @@ the response status the field recorded. \link{reserve_lists} describes the
 field protocol, the settlement and how to size the reserve.}
 
 \item{method}{Selection method, \code{"srswor"} by default.
-\link{selection_methods} lists the sixteen built-ins with what each one
+\link{selection_methods} lists the seventeen built-ins with what each one
 requires and the paper behind each.
 
 \code{"cube"} balances the sample on \code{aux} so that Horvitz-Thompson
@@ -259,15 +259,16 @@ the order and the sample do not depend on the session locale. Missing
 values sort last, also under \code{desc()}. Ties keep the frame's order. See
 the "Control sorting" section.}
 
-\item{certainty_size}{For PPS without-replacement methods, units with
-MOS >= this value are selected with certainty (probability 1). A scalar
+\item{certainty_size}{For PPS methods, units with MOS >= this value are
+selected with certainty (probability 1), and once under a method that
+can take a unit more than once. A scalar
 for all strata, or a data frame with the stratification columns and a
 \code{certainty_size} column. Certainty units are removed from the frame
 before probability sampling, which draws the remaining sample size.
 Mutually exclusive with \code{certainty_prop}. Equivalent to SAS
 SURVEYSELECT \verb{CERTSIZE=}.}
 
-\item{certainty_prop}{For PPS without-replacement methods, units whose
+\item{certainty_prop}{For PPS methods, units whose
 MOS share (MOS_i / sum(MOS)) >= this value are selected with certainty.
 A scalar strictly between 0 and 1, or a data frame with the
 stratification columns and a \code{certainty_prop} column. Shares are
@@ -371,9 +372,10 @@ theoretical inclusion probabilities above 1. Certainty selection takes
 them with probability 1 before sampling the remainder, and marks them in
 the \code{.certainty_k} column described in \link{sample_columns}. It is available
 for the WOR PPS methods (\code{pps_systematic}, \code{pps_brewer}, \code{pps_cps},
-\code{pps_sampford}, \code{pps_poisson}, \code{pps_sps}, \code{pps_pareto}). With-replacement
-(\code{pps_multinomial}) and PMR (\code{pps_chromy}) methods handle large units
-through their hit mechanism. A pool censused under
+\code{pps_sampford}, \code{pps_poisson}, \code{pps_sps}, \code{pps_pareto}), for the methods
+that can take a unit more than once (\code{pps_multinomial}, \code{pps_chromy},
+\code{pps_systematic_mr}), and for methods registered with \code{type = "wor"} or
+\code{"wr"}. A pool censused under
 \code{certainty_overflow = "allow"} has stage weight 1, but in a multistage
 design the final \code{.weight} can still exceed 1 because it compounds all
 stage weights.
@@ -388,9 +390,25 @@ selected with certainty, marked in \code{.certainty_k}, and counted in \code{n}.
 which also lets the threshold sit below 1. A unit drawn with chance 0.98
 is in practice a certainty unit with an unstable weight.
 
-\strong{Certainty with \code{pps_poisson}.} Both \code{n} and \code{frac} give a target
-expected total that includes certainty units, \code{frac} as the unrounded
-\code{frac * N} over the original pool. After \code{n_cert} certainty units are
+A method that can take a unit more than once needs no rule, since a large
+unit gets several hits, each with a subsample of its own at the next
+stage. Under \code{certainty_size} or \code{certainty_prop} such a unit is taken
+once instead, with weight 1, and the remaining \code{n - n_c} hits are drawn by
+the method over the remaining sizes, where a unit can still be hit more
+than once. A certainty PSU then has one subsample at the next stage. When
+the size measure counts the units below, a take of \code{m} per hit is
+self-weighting, and a certainty PSU keeps the same weight if its take is
+\code{m} times its size over the remainder's interval, the remaining size
+total divided by \code{n - n_c}. The export treats the certainty units as a
+take-all stratum and the remaining hits as drawn with replacement.
+\code{pps_systematic_mr} with \code{certainty_size} corresponds to SAS SURVEYSELECT
+\code{METHOD=PPS_SYS} with \verb{CERTSIZE=}, and \code{pps_multinomial} to
+\code{METHOD=PPS_WR}. SAS has no \verb{CERTSIZE=P=} for these methods, and no
+certainty option for its Chromy method.
+
+With \code{pps_poisson}, both \code{n} and \code{frac} give a target expected total
+that includes certainty units, \code{frac} as the unrounded \code{frac * N} over
+the original pool. After \code{n_cert} certainty units are
 selected, the remaining probabilities are
 \code{pmin(1, (target - n_cert) * mos / sum(mos))} over the remaining units'
 sizes. Thus \code{n = 5} and \code{frac = 0.5} on ten units give the same
@@ -404,8 +422,8 @@ below the target. \code{\link[=frame_summary]{frame_summary()}} reports both \co
 
 Control sorting orders the frame before selection, giving implicit
 stratification with the systematic and sequential methods (\code{systematic},
-\code{pps_systematic}, \code{pps_chromy}), where the sample spreads evenly across the
-sorted variables. Other methods accept \code{control} but get no implicit
+\code{pps_systematic}, \code{pps_systematic_mr}, \code{pps_chromy}), where the sample
+spreads evenly across the sorted variables. Other methods accept \code{control} but get no implicit
 stratification from it. The sort can change which units a given seed
 draws, but the sample does not spread over the sorted variables. A
 coordinated \code{pps_sps} draw with \code{prn}, for example, keeps nothing of a
@@ -500,6 +518,22 @@ sampling_design() |>
   draw(n = 100, method = "pps_chromy", mos = households,
        control = serp(region, province)) |>
   execute(bfa_eas, seed = 2)
+
+# Systematic PPS with minimum replacement (SAS PPS_SYS). The largest EA
+# of Poura holds more than an eighth of its households, so it expects
+# 1.74 of 8 hits and is drawn once or twice, here twice. Each hit is a
+# row, numbered by `.draw_1`, with weight 1 / 1.74.
+poura <- subset(bfa_eas, commune == "Poura")
+poura_sample <- sampling_design() |>
+  draw(n = 8, method = "pps_systematic_mr", mos = households) |>
+  execute(poura, seed = 1)
+as.data.frame(poura_sample)[c("ea_id", "households", ".draw_1", ".weight")]
+
+# The export reads the hits as drawn with replacement, and warns that the
+# frame order can make that variance far too small or too large
+if (requireNamespace("survey", quietly = TRUE)) {
+  poura_svy <- as_svydesign(poura_sample)
+}
 
 # Control sorting with nested (standard) ordering
 sampling_design() |>

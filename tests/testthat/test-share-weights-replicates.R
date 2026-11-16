@@ -309,3 +309,35 @@ test_that("RWYB Poisson factors propagate through the recorded sharing operator"
     unname(apply_share_operator(record$operator, stats::weights(source_rep, type = "analysis"))))
   expect_equal(unname(stats::weights(result, type = "sampling")), shared$.weight)
 })
+
+test_that("a shared census exports with zero variance under every type", {
+  skip_if_not_installed("survey")
+  # survey's jackknife gave the source census no replicate column, and the
+  # shared export failed in survey's constructor with "missing value where
+  # TRUE/FALSE needed".
+  frame <- data.frame(id = 1:8, g = rep(c("a", "b"), 4), y = 1:8)
+  source <- execute(sampling_design() |> draw(frac = 1), frame, seed = 1)
+  shared <- share_weights(source, targets = frame,
+                          links = data.frame(id = frame$id),
+                          by = c(id = "id"), to = c(id = "id"),
+                          within = NULL, multiplicity = complete_links())
+  checked <- character(0)
+  for (type in c("auto", "JK1", "bootstrap", "rwyb")) {
+    design <- if (type %in% c("bootstrap", "rwyb")) {
+      as_svrepdesign(shared, type = type, replicates = 10)
+    } else {
+      as_svrepdesign(shared, type = type)
+    }
+    expect_equal(unname(coef(survey::svytotal(~y, design))), 36)
+    expect_lt(as.numeric(stats::vcov(survey::svytotal(~y, design))), 1e-20)
+    # Every weight is 1, so survey 4.5's calibrate() needs compress = FALSE.
+    calibrated <- survey::calibrate(
+      design, ~g, population = c(`(Intercept)` = 8, gb = 4),
+      compress = FALSE
+    )
+    expect_lt(as.numeric(stats::vcov(survey::svytotal(~y, calibrated))),
+              1e-20)
+    checked <- c(checked, type)
+  }
+  expect_setequal(checked, c("auto", "JK1", "bootstrap", "rwyb"))
+})

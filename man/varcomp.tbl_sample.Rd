@@ -40,13 +40,11 @@ conventions that are easy to get wrong by hand:
 }
 \details{
 \itemize{
-\item \strong{Within-PSU weights.} The components are weighted by the
-product of the per-stage weights below stage 1 (\code{.weight_2}, or
-\code{.weight_2 * .weight_3}), never the compound \code{.weight}, whose
+\item The components are weighted by the product of the per-stage weights
+below stage 1 (\code{.weight_2}, or \code{.weight_2 * .weight_3}), never the compound \code{.weight}, whose
 stage-1 factor would overstate every cluster size.
-\item \strong{Stage-1 selection shares.} For an unequal-probability first
-stage, per-PSU shares are derived from the stage-1 weights and
-normalized to sum to 1 over the sampled PSUs (per stratum when
+\item For an unequal-probability first stage, per-PSU shares are derived
+from the stage-1 weights and normalized to sum to 1 over the sampled PSUs (per stratum when
 the first stage is stratified). For an equal-probability first
 stage the SRS path applies. See the Details of
 \code{\link[svyplan:varcomp]{svyplan::varcomp()}}.

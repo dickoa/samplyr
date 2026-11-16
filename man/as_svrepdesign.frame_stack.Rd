@@ -47,6 +47,13 @@ gives.
 Unlike the linearized route this takes any number of frames, exports a
 component whose weights were shared from another population, and lets each
 frame use the replicate method that suits its own design.
+
+It also exports a component settled from a reserve list, whose export adds
+rows for the ineligible units and nonrespondents the settlement dropped
+(\link{reserve_lists}). Each such row carries the key and membership of the
+unit it stands for and composites with that unit's factor. Those values
+are recorded when the list is settled, so the membership columns must be
+on the list by then (\code{samplyr_error_stack_frames_membership_missing}).
 }
 \details{
 \subsection{The compositing factor}{

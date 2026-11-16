@@ -42,7 +42,7 @@
 #'
 #' `draw()` reads the stage's strata and clusters when it is called. They
 #' decide which forms of `n`, `frac` and the certainty thresholds are valid,
-#' whether `min_n` and `max_n` apply, and how a svyplan plan is taken. Once a stage has its `draw()`, a `stratify_by()`, a `cluster_by()`
+#' whether `min_n` and `max_n` apply, and how an svyplan plan is taken. Once a stage has its `draw()`, a `stratify_by()`, a `cluster_by()`
 #' or a second `draw()` on it is refused with class
 #' `samplyr_error_stage_closed`. The same holds for a design from
 #' [read_design()] or [get_design()], whose last stage is closed. Extend it

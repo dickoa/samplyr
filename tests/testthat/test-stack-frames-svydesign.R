@@ -396,3 +396,206 @@ test_that("two censuses of consistent registers estimate the total exactly", {
   total <- survey::svytotal(~y, as_svydesign(stack))
   expect_equal(unname(stats::coef(total)), sum(population$y))
 })
+
+test_that("a component's added rows line up with its overlap matrix", {
+  skip_if_not_installed("survey")
+  # A settled reserve exports its ineligible units as rows the sample does
+  # not hold. The overlap matrices were built from the sample's rows, so
+  # survey recycled them over the longer design: a total of 128.25 for
+  # 131.625. An added row stands for a unit the settlement dropped, with
+  # that unit's membership. The linearized stack refuses a settled
+  # component, which it exports with no finite correction, so the matrices
+  # are checked directly.
+  units_b <- c(1, 4, 7, 10:15)
+  units_a <- 1:12
+  frame_b <- data.frame(
+    unit_id = units_b, in_A = units_b %in% units_a, in_B = TRUE,
+    pA = ifelse(units_b %in% units_a, 2 / 6, 0), pB = 4 / 9, y = units_b
+  )
+  frame_a <- data.frame(
+    unit_id = units_a, st = rep(c("S1", "S2"), each = 6), in_A = TRUE,
+    in_B = units_a %in% units_b, pA = 2 / 6,
+    pB = ifelse(units_a %in% units_b, 4 / 9, 0), y = units_a
+  )
+  b <- execute(sampling_design() |> draw(n = 4), frame_b, seed = 2)
+  b$disp <- "interview"
+  a <- execute(sampling_design() |> stratify_by(st) |>
+                 draw(n = 2, reserve = 1), frame_a, seed = 1)
+  a$disp <- ifelse(a$st == "S1", "ineligible",
+                   ifelse(a$.reserve_1 == 0, "interview", NA_character_))
+  dropped <- as.data.frame(a)[a$disp %in% "ineligible", ]
+  a <- suppressWarnings(execute(a, response_status = disp))
+  stack <- stack_frames(
+    A = a, B = b, membership = c(A = "in_A", B = "in_B"),
+    overlaps = declared_overlaps(A = "pA", B = "pB", scale = "probabilities"),
+    key = unit_id
+  )
+  exported <- suppressWarnings(as_svydesign(a))$variables
+  added <- is.na(exported$.sample_id)
+  expect_identical(sum(added), 3L)
+  # By hand: each row's weight times its factor, theta = 1/2 on the overlap.
+  factor_a <- ifelse(!added & exported$in_B %in% TRUE, 1 / 2, 1)
+  factor_b <- ifelse(b$in_A, 1 / 2, 1)
+  y_total <- sum((exported$.weight * factor_a * exported$y)[!added]) +
+    sum(b$.weight * factor_b * b$y)
+  # Each dropped unit composites with its own membership.
+  weight <- unique(exported$.weight[added])
+  expect_length(weight, 1L)
+  expect_identical(nrow(dropped), 3L)
+  ineligible <- weight * sum(ifelse(dropped$in_B, 1 / 2, 1))
+  expect_true(any(dropped$in_B) && !all(dropped$in_B))
+  expect_equal(y_total, 131.625)
+  expect_error(as_svydesign(stack),
+               class = "samplyr_error_survey_multiframe_unsupported")
+  designs <- list(A = suppressWarnings(as_svydesign(a)),
+                  B = as_svydesign(b))
+  overlaps <- samplyr:::multiframe_overlaps(stack, designs)
+  expect_identical(vapply(overlaps, nrow, integer(1)),
+                   vapply(designs, nrow, integer(1)))
+  # An added row has the membership of the unit it stands for.
+  expect_setequal(overlaps$A[added, "B"], as.numeric(dropped$in_B))
+  expect_identical(unname(overlaps$A[added, "A"]), rep(1, 3))
+  composite <- survey::multiframe(unname(designs), unname(overlaps),
+                                  theta = 1 / 2)
+  expect_equal(unname(coef(survey::svytotal(~y, composite, na.rm = TRUE))),
+               y_total)
+  # The replicate export composites the added rows the same way.
+  replicate <- suppressWarnings(as_svrepdesign(stack, type = "auto"))
+  expect_equal(unname(coef(survey::svytotal(~y, replicate, na.rm = TRUE))),
+               y_total)
+  replicate <- update(replicate, counted = disp %in% "ineligible")
+  expect_equal(unname(coef(survey::svytotal(~counted, replicate)))[2],
+               ineligible)
+  # The stack's rows for them carry their keys and membership.
+  rows <- replicate$variables
+  rows <- rows[is.na(rows$.sample_id) & rows$.frame == "A", ]
+  expect_setequal(rows$unit_id, dropped$unit_id)
+  expect_identical(rows$in_B[order(rows$unit_id)],
+                   dropped$in_B[order(dropped$unit_id)])
+  expect_true(all(is.na(rows$y)))
+
+  # A two-stage settled component exports by ultimate clusters and adds a
+  # row for a primary unit whose pool has no respondent.
+  units <- data.frame(psu = rep(1:6, each = 6), id = 1:36, in_A = TRUE)
+  units$in_B <- units$id > 18
+  units$y <- units$id
+  two <- sampling_design() |> add_stage() |> cluster_by(psu) |> draw(n = 3) |>
+    add_stage() |> draw(n = 2, reserve = 2)
+  s <- execute(two, units, seed = 4)
+  s$disp <- ifelse(s$id %% 5 == 0, "ineligible",
+                   ifelse(s$psu == 3, "noninterview", "interview"))
+  s$disp[s$.reserve_2 > 0 & !(s$psu %in% s$psu[s$disp != "interview" &
+                                                 s$.reserve_2 == 0])] <- NA
+  s <- suppressWarnings(execute(s, response_status = disp))
+  other <- data.frame(id = 19:40, in_A = 19:40 <= 36, in_B = TRUE, y = 19:40)
+  o <- execute(sampling_design() |> draw(n = 5), other, seed = 2)
+  stack <- stack_frames(A = s, B = o, membership = c(A = "in_A", B = "in_B"),
+                        key = id)
+  exported <- suppressWarnings(as_svydesign(s))$variables
+  expect_gt(nrow(exported), nrow(s))
+  added <- is.na(exported$.sample_id)
+  factor_a <- ifelse(!added & exported$in_B %in% TRUE, 1 / 2, 1)
+  y_total <- sum((exported$.weight * factor_a * exported$y)[!added]) +
+    sum(o$.weight * ifelse(o$in_A, 1 / 2, 1) * o$y)
+  expect_error(suppressWarnings(as_svydesign(stack)),
+               class = "samplyr_error_survey_multiframe_unsupported")
+  replicate <- suppressWarnings(as_svrepdesign(stack, type = "auto"))
+  expect_equal(unname(coef(survey::svytotal(~y, replicate, na.rm = TRUE))),
+               y_total)
+})
+
+test_that("a frame drawn with replacement is not composited by linearization", {
+  skip_if_not_installed("survey")
+  # survey's dual-frame variance reads a component's units as drawn without
+  # replacement whatever its correction. For a draw with replacement it gave
+  # an SE about 7% below the components' own variances, while the methods
+  # with a finite correction match them to the last digit.
+  frame_a <- data.frame(id = 1:30, in_A = TRUE, in_B = 1:30 > 15,
+                        m = rep(1:5, 6) + 2, y = (1:30) %% 7 + 1)
+  frame_b <- data.frame(id = 16:45, in_A = 16:45 <= 30, in_B = TRUE,
+                        y = (16:45) %% 7 + 1)
+  b <- execute(sampling_design() |> draw(n = 8), frame_b, seed = 2)
+  own <- function(s, other) {
+    d <- suppressWarnings(as_svydesign(s))
+    d <- update(d, yf = y * ifelse(d$variables[[other]], 1 / 2, 1))
+    unname(vcov(survey::svytotal(~yf, d)))[1]
+  }
+  designs <- list(
+    srswr = sampling_design() |> draw(n = 8, method = "srswr"),
+    pps_multinomial = sampling_design() |>
+      draw(n = 8, method = "pps_multinomial", mos = m),
+    pps_chromy = sampling_design() |>
+      draw(n = 8, method = "pps_chromy", mos = m),
+    srswor = sampling_design() |> draw(n = 8),
+    census = sampling_design() |> draw(frac = 1)
+  )
+  checked <- character(0)
+  for (method in names(designs)) {
+    a <- suppressWarnings(execute(designs[[method]], frame_a, seed = 1))
+    stack <- stack_frames(A = a, B = b, key = id,
+                          membership = c(A = "in_A", B = "in_B"))
+    reference <- sqrt(own(a, "in_B") + own(b, "in_A"))
+    if (method %in% c("srswor", "census")) {
+      linearized <- survey::svytotal(~y, as_svydesign(stack))
+      expect_equal(as.numeric(survey::SE(linearized)), reference,
+                   info = method)
+    } else {
+      expect_error(as_svydesign(stack), regexp = "\"A\"",
+                   class = "samplyr_error_survey_multiframe_unsupported",
+                   info = method)
+      # The way out the message names keeps each frame's own variance.
+      replicate <- suppressWarnings(as_svrepdesign(stack))
+      expect_equal(as.numeric(survey::SE(survey::svytotal(~y, replicate))),
+                   reference, info = method)
+    }
+    checked <- c(checked, method)
+  }
+  expect_setequal(checked, names(designs))
+})
+
+test_that("the expected estimator refuses a component settled from a reserve", {
+  skip_if_not_installed("survey")
+  # The expected estimator weights a unit by one over the sum of its
+  # chances. A settled weight is a realized adjusted weight, so in a
+  # two-frame simulation the overlap estimate was biased, by 13 Monte Carlo
+  # standard errors with frame B's nominal chances and by 4.7 with the true
+  # ones, while the constant estimator was not.
+  units_b <- c(1, 4, 7, 10:15)
+  units_a <- 1:12
+  frame_b <- data.frame(
+    unit_id = units_b, in_A = units_b %in% units_a, in_B = TRUE,
+    pA = ifelse(units_b %in% units_a, 2 / 6, 0), pB = 4 / 9, y = units_b
+  )
+  frame_a <- data.frame(
+    unit_id = units_a, st = rep(c("S1", "S2"), each = 6), in_A = TRUE,
+    in_B = units_a %in% units_b, pA = 2 / 6,
+    pB = ifelse(units_a %in% units_b, 4 / 9, 0), y = units_a
+  )
+  b <- execute(sampling_design() |> draw(n = 4), frame_b, seed = 2)
+  a <- execute(sampling_design() |> stratify_by(st) |>
+                 draw(n = 2, reserve = 1), frame_a, seed = 1)
+  a$disp <- ifelse(a$st == "S1", "ineligible",
+                   ifelse(a$.reserve_1 == 0, "interview", NA_character_))
+  settled <- suppressWarnings(execute(a, response_status = disp))
+  overlaps <- declared_overlaps(A = "pA", B = "pB", scale = "probabilities")
+  stack <- stack_frames(A = settled, B = b, overlaps = overlaps,
+                        membership = c(A = "in_A", B = "in_B"),
+                        key = unit_id)
+  # This refusal comes before the linearized one for a settled component.
+  for (export in list(as_svydesign, as_svrepdesign)) {
+    expect_error(suppressWarnings(export(stack, estimator = "expected")),
+                 regexp = "settled from\\s+a reserve list",
+                 class = "samplyr_error_survey_weight_contract")
+  }
+  expect_s3_class(suppressWarnings(as_svrepdesign(stack, type = "auto")),
+                  "svyrep.design")
+  # Unsettled, the same component keeps the expected estimator.
+  unsettled <- execute(sampling_design() |> stratify_by(st) |> draw(n = 2),
+                       frame_a, seed = 1)
+  stack <- stack_frames(A = unsettled, B = b, overlaps = overlaps,
+                        membership = c(A = "in_A", B = "in_B"),
+                        key = unit_id)
+  expect_s3_class(as_svydesign(stack, estimator = "expected"), "dualframe")
+  expect_s3_class(as_svrepdesign(stack, estimator = "expected"),
+                  "svyrep.design")
+})

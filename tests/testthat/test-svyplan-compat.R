@@ -579,9 +579,12 @@ test_that("an n_twophase() plan drives a two-phase design by subsampling fractio
   expect_s3_class(des, "twophase2")
 })
 
-test_that("a two-phase design needs a shared identifier to export", {
+test_that("a two-phase design with no declared identifier exports", {
   skip_if_not_installed("survey")
-  pop <- data.frame(unit_id = 1:2000, stratum = rep(c("A", "B"), each = 1000))
+  pop <- data.frame(
+    unit_id = 1:2000, stratum = rep(c("A", "B"), each = 1000),
+    y = rep(c(3, 8), each = 1000) + (1:2000) %% 7
+  )
   phase1 <- sampling_design() |>
     draw(n = 400) |>
     execute(pop, seed = 3)
@@ -589,11 +592,22 @@ test_that("a two-phase design needs a shared identifier to export", {
     stratify_by(stratum) |>
     draw(frac = c(A = 0.5, B = 0.25)) |>
     execute(phase1, seed = 4)
-  # Neither phase declares a unit identifier to bridge the phases.
-  expect_error(
-    as_svydesign(phase2),
-    class = "samplyr_error_twophase_bridge"
-  )
+  # Neither phase declares a unit, so the phases link by row position.
+  got <- survey::svytotal(~y, as_svydesign(phase2))
+
+  # The same double sampling for stratification, built with survey.
+  df1 <- as.data.frame(phase1)
+  df1$in2 <- df1$unit_id %in% phase2$unit_id
+  df1$n_pop <- 2000
+  df1$n_stratum <- ave(df1$y, df1$stratum, FUN = length)
+  want <- survey::svytotal(~y, survey::twophase(
+    id = list(~1, ~1), strata = list(NULL, ~stratum), data = df1,
+    subset = ~in2, fpc = list(~n_pop, ~n_stratum)
+  ))
+  expect_equal(as.numeric(coef(got)), as.numeric(coef(want)),
+               tolerance = 1e-10)
+  expect_equal(as.numeric(survey::SE(got)), as.numeric(survey::SE(want)),
+               tolerance = 1e-10)
 })
 
 ## A plan's single size at a stratified stage

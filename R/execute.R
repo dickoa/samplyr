@@ -305,7 +305,7 @@ NULL
 #'   traces. A replicated multi-stage execution keeps only the stage prefix
 #'   shared by all replicates, with status `"partial"`, as [frame_summary()]
 #'   describes. Replicated multi-phase and replicated-continuation executions
-#'   do not record a digest yet.
+#'   record no digest.
 #'
 #'   A digest is not anonymized. Its selection trace keeps the identifiers
 #'   of realized units (frame-derived cluster keys or row indices), even
@@ -318,8 +318,9 @@ NULL
 #'   `.fpc_k`, `.draw_k` and `.certainty_k`, `.reserve_k` at a stage that
 #'   sets `reserve` in [draw()], `.zone_1` and `.pair_1` for a zoned
 #'   certainty plan, `.replicate` or `.panel` when `reps` or
-#'   `panels` is used, and `.period` and `.subround` for a window of several
-#'   occasions.
+#'   `panels` is used, `.phase1_row` and `.phase1_draw_k` in a phase drawn
+#'   from an earlier phase's sample, `.visit` in an occasion, and `.period`
+#'   and `.subround` for a window of several occasions.
 #'   [sample_columns] documents what each one holds.
 #'
 #' @details
@@ -387,37 +388,23 @@ NULL
 #' ## Settling a reserve
 #'
 #' A stage that sets `reserve` in [draw()] lists its take and its reserve,
-#' with `.reserve_k` giving the release order. The field works the take, the
-#' office releases one reserve unit, in `.reserve_k` order, for each unit
-#' that fails, and work in a pool stops at its target number of
-#' respondents or when the list runs out. An earlier stop must not depend on
-#' how the pool was going, such as giving up after a run of refusals.
-#'
-#' `execute(sample, response_status = col)` reads the codes, walks each pool in
-#' release order and returns the respondents. Their weight at the stage
-#' estimates the pool's eligible units from the units worked, leaving out
-#' the unit that stopped the list, and divides it among the respondents.
-#' Units released after the stop are dropped, so a pool worked past its
-#' target keeps the weight of the stop rule. A pool stopped early is
-#' settled with the units it worked. How unknowns are coded is the choice
-#' of their eligibility: 3 estimates it from the resolved units of the
-#' pool, 2 counts them as eligible and 4 as ineligible.
-#'
-#' A pool whose eligible units include no respondent returns no rows, but
-#' its eligible units are still estimated from the units worked. When every
-#' unit worked is of unknown eligibility, the estimate takes the resolved
-#' rate of the pools that share its strata, or counts every unit as
-#' eligible when none of them resolved one. Both are assumptions about the
-#' pool, and [summary()] counts the pools that rest on them. The export keeps that weight
-#' in a placeholder row for a nonresponse adjustment (see the "A settled
-#' reserve" section of [as_svydesign()]).
+#' with `.reserve_k` giving the release order.
+#' `execute(sample, response_status = col)` reads the codes the field
+#' recorded, settles each pool in release order and returns the respondents
+#' with their weights. A pool whose eligible units include no respondent
+#' returns no rows, and its weight is carried to the export.
+#' [reserve_lists] gives the field protocol, the codes, the weights, and how
+#' unknown eligibility is resolved.
 #'
 #' A sample is settled once. A stage below the reserve is drawn from the
 #' settled sample, `execute(settled, listing)`, and a call that would draw
 #' it from the list is refused (`samplyr_error_reserve_unsettled`). So is a
 #' new phase drawn from the list.
 #' [summary()] shows the settlement per pool, and [write_design()] records
-#' it for [replay_design()].
+#' it for [replay_design()]. The replay rebuilds the response status column
+#' from the recorded categories, in the column's type, so a code keeps its
+#' leading digit only (2.1 is replayed as 2) and the export codes its added
+#' rows as before.
 #'
 #' ## Drawing the later stages occasion by occasion
 #' A master split into [subrounds()] at its first stage can have its later
@@ -919,6 +906,12 @@ execute <- function(
           if (identical(role, "input")) {
             c("i" = "The continued sample keeps this status, so
                      {.fn as_svydesign} and {.fn as_svrepdesign} refuse it.")
+          } else {
+            c("i" = "{.fn as_svydesign} and {.fn as_svrepdesign} refuse the
+                     new phase, except random groups of replicates. To
+                     subsample some units, draw from the sample as executed
+                     with the screening variable as a stratum, then subset
+                     the exported design.")
           },
           stage_hint,
           "i" = "If rows were removed to define a subpopulation, prefer restricting the frame before executing."
@@ -1299,6 +1292,7 @@ execute_design <- function(
   previous_stage_idx <- NULL
   all_prior_cluster_vars <- character(0)
   empty_parents <- list()
+  empty_pools <- list()
   collect_trace <- !identical(frame_digest, "none")
   stage_traces <- if (collect_trace) vector("list", length(stages)) else NULL
   stage_used_frames <- if (collect_trace) {
@@ -1349,6 +1343,9 @@ execute_design <- function(
       parent_levels = ancestor_cluster_levels(design, stage_idx),
       inherited_strata = collect_ancestor_strata_vars(design, stage_idx),
       trace_mode = frame_digest
+    )
+    empty_pools <- add_empty_pools(
+      empty_pools, stage_idx, step$empty_pools, current_sample
     )
     current_sample <- step$sample
     if (collect_trace) {
@@ -1450,7 +1447,8 @@ execute_design <- function(
       },
       frame_digest = digest,
       frame_schedule = schedule_record(schedule),
-      empty_parents = empty_parents
+      empty_parents = empty_parents,
+      empty_pools = empty_pools
     )
   )
 }
@@ -1483,6 +1481,12 @@ execute_replicated <- function(
     list()
   }
   empty_parents <- inherited_empty
+  inherited_pools <- if (is_tbl_sample(.data)) {
+    attr(.data, "metadata")$empty_pools
+  } else {
+    list()
+  }
+  empty_pools <- inherited_pools
   rep_seeds <- replicate_seed_values(seed, reps)
   # Stages whose structure differs between replicates are merged away.
   prefix <- list(depth = Inf, seen = list())
@@ -1532,6 +1536,9 @@ execute_replicated <- function(
     added <- attr(result, "metadata")$empty_parents
     added <- added[setdiff(seq_along(added), seq_along(inherited_empty))]
     empty_parents <- c(empty_parents, tag_empty_parents(added, r))
+    empty_pools <- carry_empty_pools(
+      empty_pools, attr(result, "metadata")$empty_pools, inherited_pools, r
+    )
     df <- as.data.frame(result)
     df$.replicate <- rep.int(r, nrow(df))
     results[[r]] <- df
@@ -1594,9 +1601,11 @@ execute_replicated <- function(
       frame_digest = digest,
       frame_schedule = schedule_record(schedule),
       empty_parents = empty_parents,
-      # Each replicate ran every stage and phase itself.
+      empty_pools = empty_pools,
+      # Each replicate ran every stage and phase itself, or shares only a
+      # phase 1 that could select nothing else.
       replicates_complete = identical(executor, "design") &&
-        is_null(attr(result, "metadata")$prev_phase)
+        shares_no_random_phase(attr(result, "metadata")$prev_phase)
     )
   )
 }
@@ -1628,6 +1637,7 @@ execute_continuation <- function(
 
   current_sample <- as.data.frame(sample)
   empty_parents <- list()
+  empty_pools <- list()
   # A valid assignment needs both its record and `.panel`.
   has_record <- !is_null(parent_meta$panel_assignment)
   has_column <- ".panel" %in% names(current_sample)
@@ -1692,11 +1702,18 @@ execute_continuation <- function(
     stage_spec <- design$stages[[stage_idx]]
     prev_stage_for_frame <- design$stages[[previous_stage_idx]]
 
+    # The previous phase's sample, given again to continue a later phase,
+    # carries the row positions and hit numbers its first stages read.
+    if (stage_reads_phase1(frame, parent_meta$prev_phase)) {
+      frame <- with_phase_carried_columns(frame)
+    }
     # Avoid collisions with inherited sample metadata. A listing derived
-    # from the sample keeps the draws it was listed under.
+    # from the sample keeps the draws it was listed under, and a phase its
+    # carried columns.
     internal <- setdiff(
       samplyr_internal_cols(frame),
-      grep("^\\.draw_\\d+$", names(current_sample), value = TRUE)
+      c(grep("^\\.draw_\\d+$", names(current_sample), value = TRUE),
+        grep("^\\.phase[0-9]+_(row|draw_[0-9]+)$", names(frame), value = TRUE))
     )
     if (length(internal) > 0L) {
       frame <- frame[, setdiff(names(frame), internal), drop = FALSE]
@@ -1735,6 +1752,9 @@ execute_continuation <- function(
       parent_levels = ancestor_cluster_levels(design, stage_idx),
       inherited_strata = collect_ancestor_strata_vars(design, stage_idx),
       trace_mode = frame_digest
+    )
+    empty_pools <- add_empty_pools(
+      empty_pools, stage_idx, step$empty_pools, current_sample
     )
     current_sample <- step$sample
     if (collect_trace) {
@@ -1821,6 +1841,10 @@ execute_continuation <- function(
       },
       frame_schedule = schedule_record(schedule),
       empty_parents = c(parent_meta$empty_parents, empty_parents),
+      # A parent without the record leaves it unknown.
+      empty_pools = if (!is_null(parent_meta$empty_pools)) {
+        c(parent_meta$empty_pools, empty_pools)
+      },
       # The settlement carries over, but the call that settled replays it.
       reserve_settlement = if (!is_null(parent_meta$reserve_settlement)) {
         utils::modifyList(parent_meta$reserve_settlement, list(carried = TRUE))
@@ -2071,6 +2095,16 @@ replicate_seed_values <- function(seed, reps) {
   withr::with_seed(seed, sample.int(.Machine$integer.max, reps))
 }
 
+#' Do replicates that share an earlier phase still vary with every selection?
+#'
+#' Only a proof that the phase could select nothing else counts. Any other
+#' shared phase leaves its variance out of random groups.
+#' @noRd
+shares_no_random_phase <- function(prev_phase) {
+  is_null(prev_phase) || (is_tbl_sample(prev_phase$sample) &&
+    phase1_is_fixed_one_unit(prev_phase$sample))
+}
+
 #' Were the source's replicates independent at every stage and phase?
 #'
 #' A continuation or a later phase runs each source replicate on, so its
@@ -2104,6 +2138,8 @@ execute_replicated_continuation <- function(
   results <- vector("list", length(rep_ids))
   inherited_empty <- attr(sample, "metadata")$empty_parents
   empty_parents <- inherited_empty
+  inherited_pools <- attr(sample, "metadata")$empty_pools
+  empty_pools <- inherited_pools
   rep_seeds <- replicate_seed_values(seed, length(rep_ids))
   rep_rows <- replicate_row_locations(sample$.replicate, rep_ids)
 
@@ -2147,6 +2183,9 @@ execute_replicated_continuation <- function(
     added <- attr(result, "metadata")$empty_parents
     added <- added[setdiff(seq_along(added), seq_along(inherited_empty))]
     empty_parents <- c(empty_parents, tag_empty_parents(added, r))
+    empty_pools <- carry_empty_pools(
+      empty_pools, attr(result, "metadata")$empty_pools, inherited_pools, r
+    )
     df <- as.data.frame(result)
     df$.replicate <- rep.int(r, nrow(df))
     results[[i]] <- df
@@ -2191,6 +2230,7 @@ execute_replicated_continuation <- function(
       execution_environment = execution_environment,
       frame_schedule = schedule_record(schedule),
       empty_parents = empty_parents,
+      empty_pools = empty_pools,
       integrity = {
         integrity <- sample_integrity_record(
           combined,
@@ -2277,6 +2317,7 @@ execute_replicated_multiphase <- function(
 
   results <- vector("list", length(rep_ids))
   empty_parents <- list()
+  empty_pools <- list()
   rep_seeds <- replicate_seed_values(seed, length(rep_ids))
 
   for (i in seq_along(rep_ids)) {
@@ -2313,6 +2354,9 @@ execute_replicated_multiphase <- function(
       empty_parents,
       tag_empty_parents(attr(result, "metadata")$empty_parents, r)
     )
+    empty_pools <- carry_empty_pools(
+      empty_pools, attr(result, "metadata")$empty_pools, list(), r
+    )
     df <- as.data.frame(result)
     df$.replicate <- rep.int(r, nrow(df))
     results[[i]] <- df
@@ -2347,6 +2391,7 @@ execute_replicated_multiphase <- function(
       execution_environment = execution_environment,
       frame_schedule = schedule_record(schedule),
       empty_parents = empty_parents,
+      empty_pools = empty_pools,
       integrity = {
         integrity <- sample_integrity_record(combined, design, the_stages)
         integrity$replicate_hashes <- replicate_integrity_hashes(
@@ -2639,7 +2684,11 @@ execute_single_stage_impl <- function(
     sample = result,
     trace = stage_trace,
     frame = frame,
-    stage_totals = stage_totals
+    stage_totals = stage_totals,
+    empty_pools = stage_empty_pools(
+      frame, result, draw_spec, split_vars, strata_spec$vars,
+      cluster_spec$vars
+    )
   )
 }
 
@@ -2883,10 +2932,17 @@ prepare_multiphase_frame <- function(frame) {
   )
 
   frame$._prev_phase_weight <- frame$.weight
+  row_col <- phase_row_column(frame)
+  hits <- as.data.frame(frame)[names(phase_draw_columns(frame))]
+  names(hits) <- phase_draw_columns(frame)
 
   internal <- samplyr_internal_cols(frame)
   frame[internal] <- NULL
   frame <- as.data.frame(frame)
+  # Each phase-2 row keeps the position of the phase-1 row it came from,
+  # and the hit it belongs to under a stage that can repeat a unit.
+  frame[[row_col]] <- seq_len(nrow(frame))
+  frame[names(hits)] <- hits
 
   list(frame = frame, prev_phase = prev_phase)
 }

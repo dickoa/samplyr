@@ -117,7 +117,8 @@
 #' `samplyr_error_alloc_max_infeasible`.
 #'
 #' With-replacement (`srswr`, `pps_multinomial`) and minimum-replacement
-#' (`pps_chromy`) methods can select a unit more than once, so the number of
+#' (`pps_chromy`, `pps_systematic_mr`) methods can select a unit more than
+#' once, so the number of
 #' distinct units does not bound the draws, and only `min_n` and `max_n` bind.
 #'
 #' Per-stratum sizes given directly, through a scalar or named `n`, a `frac`,

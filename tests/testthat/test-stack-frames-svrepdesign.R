@@ -415,3 +415,255 @@ test_that("forwarded arguments reach the components and strays are refused", {
     class = "samplyr_error_derived_argument"
   )
 })
+
+test_that("a frame with an empty primary unit keeps its zero row", {
+  skip_if_not_installed("survey")
+  # PSU 4 of frame a has no households, and seed 1 selects it. Its export
+  # adds a zero row, which the blocks were sized without.
+  psus <- data.frame(psu = 1:4)
+  hh <- data.frame(
+    psu = rep(1:3, each = 3), id = 1:9, in_a = TRUE,
+    in_b = rep(c(TRUE, FALSE, FALSE), 3), pi_a = 0.5,
+    pi_b = rep(c(4 / 9, 0, 0), 3), y = as.numeric(1:9)
+  )
+  b_frame <- data.frame(
+    id = c(1, 4, 7, 10:15), in_a = c(rep(TRUE, 3), rep(FALSE, 6)),
+    in_b = TRUE, pi_a = c(0.5, 0.5, 0.5, rep(0, 6)), pi_b = 4 / 9,
+    y = as.numeric(11:19)
+  )
+  a <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 3) |>
+    add_stage() |> draw(n = 2, on_empty = "silent") |>
+    execute(psus, hh, seed = 1)
+  expect_identical(attr(a, "metadata")$empty_parents[[1]]$rows$psu, 4L)
+  b <- sampling_design() |> draw(n = 4) |> execute(b_frame, seed = 2)
+  stacks <- list(
+    constant = stack_frames(a = a, b = b, membership = c(a = "in_a",
+                            b = "in_b"), key = id),
+    expected = stack_frames(a = a, b = b, membership = c(a = "in_a",
+                            b = "in_b"), key = id,
+                            overlaps = declared_overlaps(a = "pi_a",
+                              b = "pi_b", scale = "probabilities"))
+  )
+  for (estimator in names(stacks)) {
+    frames <- stacks[[estimator]]
+    # JK1 warns that it applies the first stage's correction to both.
+    combined <- suppressWarnings(
+      as_svrepdesign(frames, type = "JK1", estimator = estimator)
+    )
+    # Each frame's own export, its rows composited by the oracle's factor:
+    # an equal share on the overlap, or one over the summed chances.
+    parts <- lapply(c("a", "b"), function(nm) {
+      own <- suppressWarnings(
+        as_svrepdesign(frames[[nm]], type = "JK1", mse = TRUE)
+      )
+      rows <- own$variables
+      real <- !is.na(rows$.sample_id)
+      factor <- rep(1, nrow(rows))
+      factor[real] <- if (estimator == "constant") {
+        ifelse(rows$in_a[real] & rows$in_b[real], 0.5, 1)
+      } else {
+        1 / (rows$pi_a[real] + rows$pi_b[real]) /
+          stats::weights(own, "sampling")[real]
+      }
+      design <- survey::svrepdesign(
+        data = rows,
+        repweights = stats::weights(own, "analysis") * factor,
+        weights = stats::weights(own, "sampling") * factor,
+        combined.weights = TRUE, type = "other", scale = own$scale,
+        rscales = own$rscales, mse = TRUE
+      )
+      survey::svytotal(~y, design, na.rm = TRUE)
+    })
+    est <- survey::svytotal(~y, combined, na.rm = TRUE)
+    expect_equal(unname(coef(est)), sum(vapply(parts, coef, 1)),
+                 info = estimator)
+    expect_equal(unname(survey::SE(est))^2,
+                 sum(vapply(parts, function(p) survey::SE(p)^2, 1)),
+                 info = estimator)
+    zero <- combined$variables[is.na(combined$variables$.sample_id), ]
+    expect_identical(nrow(zero), 1L)
+    expect_identical(zero$psu, 4L)
+    expect_identical(zero$.frame, "a")
+    expect_identical(zero$.weight, 0)
+    expect_identical(c(zero$in_a, zero$in_b), c(TRUE, FALSE))
+  }
+  # The linearized route reads one probability per stage, which a
+  # multistage export does not carry.
+  expect_error(as_svydesign(stacks$constant),
+               class = "samplyr_error_survey_multiframe_stages")
+})
+
+test_that("a settled reserve's dropped units composite with their membership", {
+  skip_if_not_installed("survey")
+  # Frame A lists units 1 to 8 with a reserve, frame B units 5 to 12, and
+  # units 1, 2, 5, 6 and 9 are ineligible. The rows A's export adds for its
+  # ineligible units held no membership and took factor 1 in A, which
+  # counted each one of the overlap that A found ineligible twice: over
+  # 2,000 samples 6.00 ineligible units for 5, against 5.00 with each unit's
+  # own membership.
+  ineligible <- c(1, 2, 5, 6, 9)
+  frame_a <- data.frame(id = 1:8, st = "s", in_A = TRUE, in_B = 1:8 >= 5,
+                        y = 1:8)
+  frame_a$eligible <- !frame_a$id %in% ineligible
+  frame_b <- data.frame(id = 5:12, in_A = 5:12 <= 8, in_B = TRUE, y = 5:12)
+  frame_b$eligible <- !frame_b$id %in% ineligible
+  listed <- execute(sampling_design() |> stratify_by(st) |>
+                      draw(n = 4, reserve = 2), frame_a, seed = 1)
+  # Released in rank order until four interviews.
+  listed$disp <- ifelse(listed$eligible, "interview", "ineligible")
+  got <- sum(listed$disp[listed$.reserve_1 == 0L] == "interview")
+  for (r in 1:2) {
+    at <- listed$.reserve_1 == r
+    if (got >= 4) listed$disp[at] <- NA else
+      got <- got + sum(listed$disp[at] == "interview")
+  }
+  dropped <- as.data.frame(listed)[listed$disp %in% "ineligible", ]
+  expect_true(any(dropped$in_B) && any(!dropped$in_B))
+  settled <- suppressWarnings(execute(listed, response_status = disp))
+  b <- execute(sampling_design() |> draw(n = 4), frame_b, seed = 1001)
+  b$disp <- ifelse(b$eligible, "interview", "ineligible")
+  stack <- stack_frames(A = settled, B = b, key = id,
+                        membership = c(A = "in_A", B = "in_B"))
+  replicate <- suppressWarnings(as_svrepdesign(stack, type = "auto"))
+  replicate <- update(replicate, counted = disp %in% "ineligible")
+  # By hand, with the multiplicity factor 1/2 on the overlap.
+  exported <- suppressWarnings(as_svydesign(settled))$variables
+  weight <- unique(exported$.weight[is.na(exported$.sample_id)])
+  expect_length(weight, 1L)
+  share <- function(both) ifelse(both, 1 / 2, 1)
+  by_hand <- weight * sum(share(dropped$in_B)) +
+    sum((b$.weight * share(b$in_A))[!b$eligible])
+  expect_equal(unname(coef(survey::svytotal(~counted, replicate)))[2],
+               by_hand)
+  y_total <- sum(settled$.weight * share(settled$in_B) * settled$y) +
+    sum((b$.weight * share(b$in_A) * b$y)[b$eligible])
+  replicate <- update(replicate, y_eligible = ifelse(eligible, y, 0))
+  expect_equal(
+    unname(coef(survey::svytotal(~y_eligible, replicate, na.rm = TRUE))),
+    y_total
+  )
+
+  # A component replayed from its receipt rebuilds the same units, and its
+  # added rows composite as before.
+  added_a <- function(design) {
+    design <- update(design, dropped = is.na(.sample_id) & .frame == "A")
+    unname(coef(survey::svytotal(~dropped, design)))[2]
+  }
+  expect_equal(added_a(replicate), weight * sum(share(dropped$in_B)))
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(settled, path, frame = frame_a)
+  replayed <- replay_design(read_design(path), frame_a)
+  again <- stack_frames(A = replayed, B = b, key = id,
+                        membership = c(A = "in_A", B = "in_B"))
+  again <- suppressWarnings(as_svrepdesign(again, type = "auto"))
+  expect_equal(added_a(again), added_a(replicate))
+
+  # A membership joined after the settlement has no value for them.
+  bare <- listed[setdiff(names(listed), "in_B")]
+  late <- suppressWarnings(execute(bare, response_status = disp))
+  late$in_B <- late$id >= 5
+  stack <- stack_frames(A = late, B = b, key = id,
+                        membership = c(A = "in_A", B = "in_B"))
+  expect_error(suppressWarnings(as_svrepdesign(stack, type = "auto")),
+               regexp = "in_B",
+               class = "samplyr_error_stack_frames_membership_missing")
+})
+
+test_that("a census component composites with no replicate column", {
+  skip_if_not_installed("survey")
+  # A census exports no replicate column under the jackknife. Its block in
+  # the stack's matrix then ran backwards and the export failed, with a
+  # census beside a sampled frame as with two censuses.
+  frame_a <- data.frame(id = 1:6, in_A = TRUE, in_B = 1:6 >= 4,
+                        y = c(3, 1, 4, 1, 5, 9))
+  frame_b <- data.frame(id = 4:12, in_A = 4:12 <= 6, in_B = TRUE,
+                        y = c(2, 6, 5, 3, 5, 8, 9, 7, 9))
+  census <- function(frame, seed) {
+    execute(sampling_design() |> draw(frac = 1), frame, seed = seed)
+  }
+  sampled <- function(frame, seed) {
+    execute(sampling_design() |> draw(n = 4), frame, seed = seed)
+  }
+  # One-to-one complete links leave each weight as it was. The source's
+  # replicate system had no column either, and survey's constructor failed
+  # on it with "missing value where TRUE/FALSE needed".
+  shared <- function(frame, seed) {
+    share_weights(census(frame, seed), targets = frame,
+                  links = data.frame(id = frame$id), by = c(id = "id"),
+                  to = c(id = "id"), within = NULL,
+                  multiplicity = complete_links())
+  }
+  # By hand: each frame's total of y, halved on the overlap, and for a
+  # simple random sample of n from N its variance N^2 (1 - n / N) s^2 / n.
+  # A census adds its total and no variance.
+  by_hand <- function(s, N, other) {
+    z <- s$y * ifelse(s[[other]], 1 / 2, 1)
+    n <- nrow(s)
+    c(total = N * mean(z),
+      variance = if (n == N) 0 else N^2 * (1 - n / N) * stats::var(z) / n)
+  }
+  cases <- list(
+    census_sampled = list(census(frame_a, 1), sampled(frame_b, 2)),
+    sampled_census = list(sampled(frame_a, 1), census(frame_b, 2)),
+    census_census = list(census(frame_a, 1), census(frame_b, 2)),
+    shared_sampled = list(shared(frame_a, 1), sampled(frame_b, 2)),
+    sampled_shared = list(sampled(frame_a, 1), shared(frame_b, 2)),
+    shared_census = list(shared(frame_a, 1), census(frame_b, 2))
+  )
+  checked <- character(0)
+  for (case in names(cases)) {
+    a <- cases[[case]][[1]]
+    b <- cases[[case]][[2]]
+    expected <- by_hand(a, 6, "in_B") + by_hand(b, 9, "in_A")
+    stack <- stack_frames(A = a, B = b, key = id,
+                          membership = c(A = "in_A", B = "in_B"))
+    for (type in c("auto", "JK1")) {
+      design <- as_svrepdesign(stack, type = type)
+      total <- survey::svytotal(~y, design)
+      expect_equal(unname(coef(total)), unname(expected[["total"]]),
+                   info = paste(case, type))
+      expect_equal(as.numeric(survey::SE(total)),
+                   sqrt(unname(expected[["variance"]])),
+                   info = paste(case, type))
+      checked <- c(checked, paste(case, type))
+    }
+  }
+  expect_setequal(checked, paste(rep(names(cases), each = 2),
+                                 c("auto", "JK1")))
+  # Two censuses are a census: variance zero, and a calibration runs.
+  design <- update(as_svrepdesign(stack), one = 1)
+  expect_identical(as.numeric(survey::SE(survey::svytotal(~y, design))), 0)
+  calibrated <- survey::calibrate(design, ~one - 1,
+                                  population = c(one = 30))
+  expect_equal(sum(weights(calibrated, type = "sampling")), 30)
+
+  # Disjoint frames give every row the weight 1. survey 4.5's calibrate()
+  # then reads compress = NA as NA || FALSE on the uncompressed matrix and
+  # fails, so it needs compress = FALSE.
+  frame_c <- data.frame(id = 13:18, in_A = FALSE, in_B = TRUE,
+                        y = c(1, 2, 3, 4, 5, 6))
+  frame_a$in_B <- FALSE
+  checked <- character(0)
+  for (a in list(census(frame_a, 1), shared(frame_a, 1))) {
+    stack <- stack_frames(A = a, B = census(frame_c, 2), key = id,
+                          membership = c(A = "in_A", B = "in_B"))
+    for (type in c("auto", "JK1")) {
+      design <- update(as_svrepdesign(stack, type = type), one = 1)
+      expect_identical(unique(weights(design, type = "sampling")), 1)
+      expect_lt(as.numeric(stats::vcov(survey::svytotal(~y, design))),
+                1e-20)
+      calibrated <- survey::calibrate(design, ~one - 1,
+                                      population = c(one = 24),
+                                      compress = FALSE)
+      expect_equal(sum(weights(calibrated, type = "sampling")), 24)
+      expect_lt(as.numeric(stats::vcov(survey::svytotal(~y, calibrated))),
+                1e-20)
+      checked <- c(checked, paste(inherits(a, "tbl_sample") &&
+                                    !is.null(attr(a, "metadata")$weight_share),
+                                  type))
+    }
+  }
+  expect_setequal(checked, c("FALSE auto", "FALSE JK1", "TRUE auto",
+                             "TRUE JK1"))
+})

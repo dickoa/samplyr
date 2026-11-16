@@ -1287,7 +1287,8 @@ summary_empty_parents <- function(records, stage_idx) {
 #' digest at all leave on the sample. Counting from the digest's unit table
 #' saw certainty only under `frame_digest = "full"`, so the default summary
 #' hid 194 certainty selections. A clustered stage counts its units, keyed
-#' by their ancestry. A stage with replacement has no certainty column.
+#' by their ancestry. A stage with replacement marks only the units a
+#' declared rule took once.
 #'
 #' A certain unit whose pool holds only itself (`.fpc_k` of 1) is counted
 #' apart, as `single_unit`, because a reader takes "certainty" to mean a

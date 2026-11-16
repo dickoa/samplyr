@@ -726,7 +726,7 @@ test_that("custom balanced and custom WOR methods resolve certainty", {
 test_that("expected hits of one or more are never certainty", {
   frame <- dominant_frame()
 
-  for (method in c("pps_multinomial", "pps_chromy")) {
+  for (method in c("pps_multinomial", "pps_chromy", "pps_systematic_mr")) {
     result <- sampling_design() |>
       draw(n = 10, method = method, mos = mos) |>
       execute(frame, seed = 5)

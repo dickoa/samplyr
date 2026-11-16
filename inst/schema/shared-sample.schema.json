@@ -620,6 +620,43 @@
           "if": {
             "properties": {
               "id": {
+                "const": "systematic_minimum_replacement"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "systematic_minimum_replacement"
+              },
+              "family": {
+                "const": "probability_proportional_to_size"
+              },
+              "algorithm": {
+                "const": "systematic"
+              },
+              "replacement": {
+                "const": "minimum_replacement"
+              },
+              "sample_size": {
+                "const": "fixed"
+              },
+              "probabilities": {
+                "const": "unequal"
+              },
+              "probability_quantity": {
+                "const": "expected_hits"
+              },
+              "probability_quality": {
+                "const": "exact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
                 "const": "cube_balanced"
               }
             }
@@ -2618,6 +2655,38 @@
             "minimum": 0
           },
           "minItems": 1
+        },
+        "column": {
+          "type": "string",
+          "minLength": 1
+        },
+        "column_type": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "integer",
+                "double",
+                "character",
+                "factor"
+              ]
+            },
+            "levels": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 0
+            },
+            "words": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
