@@ -63,9 +63,15 @@ test_that("n above N, frac above 1, zero sizes and residue in the total", {
   # Sizes whose expected hits sum to 3 only up to floating-point residue.
   frame <- data.frame(id = 1:7,
                       size = c(0.22, 0.66, 0.13, 0.27, 0.39, 0.02, 0.39))
-  expect_false(sum(sondage::expected_hits(frame$size, 3)) == 3)
+
+  # The residue depends on the platform's long double: x86 leaves one,
+  # Apple Silicon may not, so only the draw itself is checked everywhere.
+  residue <- sum(sondage::expected_hits(frame$size, 3)) != 3
   for (seed in 1:10) {
     expect_identical(nrow(execute(mr_design(n = 3), frame, seed = seed)), 3L)
+  }
+  if (!residue) {
+    skip("no floating-point residue on this platform")
   }
 })
 
