@@ -259,21 +259,21 @@ which is why the export treats the stage as drawn with replacement
 
 A scheduled master assigned every unit to a panel at its draw and froze
 the block-by-panel quotas, so how two occasions of the rotation overlap
-is already determined. \code{joint_expectation(master, period = , subround = )} for occasions \code{t} and \code{s}
-reads it from the record, with neither the frame nor a simulation.
+is already determined. \code{joint_expectation(master, period = , subround = )} reads it from the record for two occasions, \code{t} first and \code{u} second,
+with neither the frame nor a simulation.
 
 Conditional on the frozen quotas, the panels inside a block of \code{m}
 assignment units are an arrangement of that block's labels. Writing
-\eqn{a_t}{a_t} and \eqn{a_s}{a_s} for the units the panels active at each
-occasion take from the block, and \eqn{a_\cap}{a_and} for those active at both:
+\eqn{a_t}{a_t} and \eqn{a_u}{a_u} for the units the panels active at each
+occasion take from the block, and \eqn{a_{tu}}{a_tu} for those active at both:
 
 \deqn{P(i \in W_t) = a_t / m}{P(i in W_t) = a_t / m}
-\deqn{P(i \in W_t, i \in W_s) = a_\cap / m}{P(i in W_t and W_s) = a_and / m}
-\deqn{P(i \in W_t, j \in W_s) = \frac{a_t a_s - a_\cap}{m (m - 1)}}{P(i in W_t, j in W_s) = (a_t a_s - a_and) / (m (m - 1))}
+\deqn{P(i \in W_t, i \in W_u) = a_{tu} / m}{P(i in W_t and W_u) = a_tu / m}
+\deqn{P(i \in W_t, j \in W_u) = \frac{a_t a_u - a_{tu}}{m (m - 1)}}{P(i in W_t, j in W_u) = (a_t a_u - a_tu) / (m (m - 1))}
 
 for units \eqn{i \neq j}{i != j} of one block, and the product of the
 marginals for units of different blocks, whose arrangements are drawn
-independently. The within-occasion case is the third expression at \code{t == s}.
+independently. The within-occasion case is the third expression at \code{t == u}.
 
 The result has one row per block and stays small at any sample size,
 yet every entry of the full matrix is recoverable from it, since within
@@ -283,13 +283,15 @@ blocks the joint is \eqn{p_i p_j}{p_i p_j}, generally not zero, while
 the covariance is zero.
 
 \code{pool}, \code{stratum}, \code{class} and \code{block} identify the block, and
-\code{period_1}, \code{subround_1}, \code{period_2} and \code{subround_2} the two occasions.
-\code{units} is
-\eqn{m}{m}. \code{take_1}, \code{take_2} and \code{take_both} are the three takes.
-\code{prob_1} and \code{prob_2} are the marginals. \code{joint_same} and \code{joint_distinct}
-are the two joint expectations. \code{has_pair} is \code{FALSE} for a block of one
-unit, where no distinct pair exists and \code{joint_distinct} is \code{NA} rather
-than zero.
+\code{period_t}, \code{subround_t}, \code{period_u} and \code{subround_u} the two occasions,
+in the order given. \code{units} is \eqn{m}{m}. \code{take_t} and \code{take_u} are
+\eqn{a_t}{a_t} and \eqn{a_u}{a_u}, and \code{shared} is \eqn{a_{tu}}{a_tu}.
+\code{prob_t} and \code{prob_u} are the marginals. \code{joint_same} and \code{joint_distinct}
+are the two joint expectations, the conditional counterparts of what
+\enc{Tillé}{Tille} (2020, sec. 8.2.2) calls the longitudinal and the
+joint longitudinal inclusion probabilities. \code{has_pair} is \code{FALSE} for a
+block of one unit, where no distinct pair exists and \code{joint_distinct} is
+\code{NA} rather than zero.
 
 Quotas are frequently unequal, because a pool that is not a multiple of
 the block size gives one block an extra unit, so they are read from the
@@ -378,6 +380,10 @@ conditional Poisson sampling and Pareto \eqn{\pi}{pi}ps sampling designs.
 Exact Brewer joint probabilities:
 Brewer, K.R.W. (2002). \emph{Combined Survey Sampling Inference: Weighing
 Basu's Elephants}. Arnold, ch. 9.
+
+Occasions of a repeated survey:
+\enc{Tillé}{Tille}, Y. (2020). \emph{Sampling and Estimation from Finite
+Populations}. Wiley, sec. 8.2.
 
 The variance estimator these underlie:
 Berger, Y.G. (2004). A simple variance estimator for unequal probability

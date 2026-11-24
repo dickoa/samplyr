@@ -1,3 +1,25 @@
+#' Text of one key column's values, independent of getOption("scipen")
+#'
+#' A whole double up to 2^53 is written in plain digits, as the integer and
+#' 64-bit integer of the same value are, so 100000 is "100000" whatever its
+#' storage. Other doubles keep 15 significant digits. A value its class
+#' declares missing, such as a code of haven's labelled_spss, is missing,
+#' and NaN stays a value apart from NA, as vctrs keeps it. Keys built in two
+#' calls, or from two frames, then agree.
+#' @noRd
+key_value_text <- function(x) {
+  if (!is.numeric(x) || inherits(x, "integer64")) {
+    return(as.character(x))
+  }
+  v <- as.double(vctrs::vec_data(x))
+  v[v == 0] <- 0
+  whole <- is.finite(v) & v == trunc(v) & abs(v) <= 2^53
+  out <- sprintf("%.15g", v)
+  out[whole] <- sprintf("%.0f", v[whole])
+  out[is.na(x) & !is.nan(v)] <- NA_character_
+  out
+}
+
 #' @noRd
 make_group_key <- function(df, vars, call = caller_env()) {
   if (length(vars) == 0L) {
@@ -7,12 +29,12 @@ make_group_key <- function(df, vars, call = caller_env()) {
     check_key_precision(df[[v]], v, call = call)
   }
   if (length(vars) == 1L) {
-    return(as.character(df[[vars]]))
+    return(key_value_text(df[[vars]]))
   }
 
   encode_component <- function(x) {
     missing <- is.na(x)
-    value <- as.character(x)
+    value <- key_value_text(x)
     # Numbers and logicals print in ASCII. Anything else may not.
     if (!is.numeric(x) && !is.logical(x)) {
       value <- enc2utf8(value)
@@ -191,17 +213,17 @@ first_row_indices_by_group <- function(indices_list) {
 
 #' Two distinct values of a numeric grouping column that print alike
 #'
-#' Group keys are built with `as.character()`, which keeps 15 significant
-#' digits, so two values that differ only beyond them would merge two
-#' strata or clusters. Checked on the distinct values, which is cheap.
+#' Group keys are built with `key_value_text()`, which keeps 15 significant
+#' digits of a fractional or very large double, so two values that differ
+#' only beyond them would merge two strata or clusters. Checked on the distinct values, which is cheap.
 #' Returns the first two such values as text, or `NULL`.
 #' @noRd
 key_precision_clash <- function(x, loc = NULL) {
-  if (!is.double(x)) {
+  if (!is.numeric(x) || is.integer(x) || inherits(x, "integer64")) {
     return(NULL)
   }
   values <- if (is_null(loc)) vctrs::vec_unique(x) else vctrs::vec_slice(x, loc)
-  text <- as.character(values)
+  text <- key_value_text(values)
   if (!anyDuplicated(text)) {
     return(NULL)
   }

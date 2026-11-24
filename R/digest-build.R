@@ -214,7 +214,7 @@ digest_path_keys <- function(frame, rows, vars, call = caller_env()) {
   if (length(vars) == 1L) {
     values <- frame[[vars]][rows]
     check_key_precision(values, vars, call = call)
-    return(as.character(values))
+    return(key_value_text(values))
   }
   make_group_key(frame[rows, vars, drop = FALSE], vars, call = call)
 }

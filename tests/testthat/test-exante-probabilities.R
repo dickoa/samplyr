@@ -426,7 +426,7 @@ test_that("a member missing from another frame's register is refused", {
   register_a <- population[population$in_a, , drop = FALSE]
   register_b <- population[population$in_b, , drop = FALSE]
 
-  expect_error(
+  err <- expect_error(
     stack_frames(
       a = sampling_design() |>
         draw(n = 10, method = "pps_brewer", mos = size) |>
@@ -445,6 +445,9 @@ test_that("a member missing from another frame's register is refused", {
     ),
     regexp = "not in its register"
   )
+  msg <- gsub("\\s+", " ", cli::ansi_strip(conditionMessage(err)))
+  expect_match(msg, "units of \"a\" belong to \"b\" and are not in",
+               fixed = TRUE)
 })
 
 test_that("the marker checks its own arguments", {

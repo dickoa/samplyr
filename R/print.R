@@ -92,7 +92,7 @@ print_stage <- function(stage, num, design = NULL) {
 format_certainty_plan <- function(plan) {
   register <- plan$register
   if (identical(plan$role, "take")) {
-    takes <- range(register$n_take)
+    takes <- range(register$take_2)
     size <- if (takes[1] == takes[2]) {
       takes[1]
     } else {

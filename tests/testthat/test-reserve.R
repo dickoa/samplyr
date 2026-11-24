@@ -109,7 +109,7 @@ test_that("only one stage of a design can carry a reserve", {
 test_that("a plan inflated for losses the reserve covers warns", {
   plan_message <- function(design) {
     w <- expect_warning(design, class = "samplyr_warning_reserve_plan_rates")
-    conditionMessage(w)
+    gsub("\\s+", " ", cli::ansi_strip(conditionMessage(w)))
   }
   net <- svyplan::n_prop(p = 0.3, moe = 0.1)
   expect_no_warning(sampling_design() |> draw(n = net, reserve = 3))
@@ -118,31 +118,193 @@ test_that("a plan inflated for losses the reserve covers warns", {
   expect_no_warning(sampling_design() |> draw(n = gross))
   msg <- plan_message(sampling_design() |> draw(n = gross, reserve = 3))
   expect_match(msg, "resp_rate = 0.8", fixed = TRUE)
-  expect_match(msg, "response rate of persons", fixed = TRUE)
+  expect_match(msg, "with a rate below 1", fixed = TRUE)
+  expect_match(msg, "The reserve also covers nonresponse at this stage, so",
+               fixed = TRUE)
+  expect_no_match(msg, "ineligible", fixed = TRUE)
+  expect_match(
+    msg,
+    "Keep `resp_rate` if it covers nonresponse within responding units.$"
+  )
+  expect_no_match(msg, "eligibility_rate", fixed = TRUE)
 
   # svyplan stores eligibility_rate in params only when it is below 1.
   net$params$eligibility_rate <- 0.9
   msg <- plan_message(sampling_design() |> draw(n = net, reserve = 3))
   expect_match(msg, "eligibility_rate = 0.9", fixed = TRUE)
-  expect_no_match(msg, "resp_rate|persons")
+  expect_match(msg, "The reserve also replaces ineligible units, so",
+               fixed = TRUE)
+  expect_no_match(msg, "resp_rate|persons|nonresponse")
 
-  # A take of PSUs is inflated by the PSU rate only.
+  both <- svyplan::n_prop(p = 0.3, moe = 0.1, resp_rate = 0.8,
+                          eligibility_rate = 0.9)
+  msg <- plan_message(sampling_design() |> draw(n = both, reserve = 3))
+  expect_match(msg, "with rates below 1", fixed = TRUE)
+  expect_match(
+    msg,
+    "eligibility_rate = 0.9` and `resp_rate = 0.8`. The reserve also replaces ineligible units and covers nonresponse at this stage, so",
+    fixed = TRUE
+  )
+  expect_match(msg, "these rates at 1", fixed = TRUE)
+  expect_match(
+    msg,
+    "within responding units. The advice still holds for `eligibility_rate`.$"
+  )
+
+  # A take of PSUs is inflated by the PSU rate only. n_cluster() keeps one
+  # rate per stage.
   cluster <- svyplan::n_cluster(
     stage_cost = c(500, 50), icc = 0.05, cv = 0.05,
-    resp_rate = 0.8, resp_rate_psu = 0.9
+    resp_rate = c(0.9, 0.8)
   )
   msg <- plan_message(
     sampling_design() |> add_stage() |> cluster_by(ea_id) |>
       draw(n = cluster, reserve = 3)
   )
-  expect_match(msg, "resp_rate_psu = 0.9", fixed = TRUE)
+  expect_match(msg, "resp_rate_1 = 0.9", fixed = TRUE)
   expect_no_match(msg, "resp_rate = 0.8", fixed = TRUE)
+  # A rate above the last stage covers units, not persons within them.
+  expect_no_match(msg, "Keep", fixed = TRUE)
   msg <- plan_message(
     sampling_design() |> add_stage() |> cluster_by(ea_id) |> draw(n = 3) |>
       add_stage() |> draw(n = cluster, reserve = 3)
   )
   expect_match(msg, "resp_rate = 0.8", fixed = TRUE)
-  expect_no_match(msg, "resp_rate_psu", fixed = TRUE)
+  expect_match(msg, "covers nonresponse within responding units.$")
+  expect_no_match(msg, "resp_rate_1", fixed = TRUE)
+
+  # Custom stage names do not change the rate names, as for an allocation.
+  named <- svyplan::n_cluster(
+    stage_cost = c(ea = 500, hh = 50), icc = 0.05, cv = 0.05,
+    resp_rate = c(0.9, 0.8)
+  )
+  msg <- plan_message(
+    sampling_design() |> add_stage() |> cluster_by(ea_id) |>
+      draw(n = named, reserve = 3)
+  )
+  expect_match(msg, "resp_rate_1 = 0.9", fixed = TRUE)
+
+  # A rate of 1 at the stage at hand is no inflation, whatever the others.
+  early <- svyplan::n_cluster(
+    stage_cost = c(500, 50), icc = 0.05, cv = 0.05,
+    resp_rate = c(1, 0.8)
+  )
+  expect_no_warning(
+    sampling_design() |> add_stage() |> cluster_by(ea_id) |>
+      draw(n = early, reserve = 3)
+  )
+  ones <- svyplan::n_cluster(stage_cost = c(500, 50), icc = 0.05, cv = 0.05)
+  expect_no_warning(
+    sampling_design() |> add_stage() |> cluster_by(ea_id) |> draw(n = 3) |>
+      add_stage() |> draw(n = ones, reserve = 3)
+  )
+})
+
+test_that("an allocation's rates are read per stratum and per stage", {
+  plan_message <- function(design) {
+    w <- expect_warning(design, class = "samplyr_warning_reserve_plan_rates")
+    cli::ansi_strip(conditionMessage(w))
+  }
+  frame <- data.frame(
+    stratum = c("A", "B"), N = c(4000, 3000), sd = c(10, 15), mean = c(50, 60)
+  )
+
+  # n_alloc() keeps one rate per stratum. The lowest is named, so a first
+  # stratum at a high rate cannot hide it.
+  plan <- svyplan::n_alloc(frame, cv = 0.02, resp_rate = c(0.9, 0.6))
+  msg <- plan_message(
+    sampling_design() |> stratify_by(stratum) |> draw(n = plan, reserve = 3)
+  )
+  expect_match(msg, "resp_rate = 0.6` in stratum B", fixed = TRUE)
+  expect_no_match(msg, "0.9", fixed = TRUE)
+  plan <- svyplan::n_alloc(frame, cv = 0.02, resp_rate = c(1, 0.7))
+  msg <- plan_message(
+    sampling_design() |> stratify_by(stratum) |> draw(n = plan, reserve = 3)
+  )
+  expect_match(msg, "resp_rate = 0.7` in stratum B", fixed = TRUE)
+  plan <- svyplan::n_alloc(frame, cv = 0.02)
+  expect_no_warning(
+    sampling_design() |> stratify_by(stratum) |> draw(n = plan, reserve = 3)
+  )
+
+  # A two-stage allocation sets its PSU rate as a frame column.
+  clustered <- transform(
+    frame, icc_1 = 0.05, cost_1 = 400, cost_2 = 40,
+    resp_rate_1 = c(1, 0.85)
+  )
+  plan <- svyplan::n_alloc(clustered, cv = 0.02)
+  expect_identical(plan$stages, 2L)
+  msg <- plan_message(
+    sampling_design() |> stratify_by(stratum) |> cluster_by(ea) |>
+      draw(n = plan, reserve = 3)
+  )
+  expect_match(msg, "resp_rate_1 = 0.85` in stratum B", fixed = TRUE)
+  expect_no_warning(
+    sampling_design() |> stratify_by(stratum) |> cluster_by(ea) |>
+      draw(n = 3) |>
+      add_stage() |> stratify_by(stratum) |> draw(n = plan, reserve = 3)
+  )
+
+  # A joint allocation can override the rate per stratum and indicator.
+  joint_frame <- data.frame(
+    stratum = c("A", "B"), N = c(20000, 8000), N_1 = c(400, 160),
+    cost_1 = 400, cost_2 = 40, take_2 = c(12, 8)
+  )
+  measures <- data.frame(
+    stratum = c("A", "B", "A", "B"),
+    name = rep(c("coverage", "anc"), each = 2),
+    p = c(0.5, 0.4, 0.6, 0.7), icc_1 = 0.05,
+    resp_rate = c(1, 1, 1, 0.65)
+  )
+  plan <- svyplan::n_alloc_joint(
+    joint_frame, measures,
+    targets = data.frame(name = c("coverage", "anc"), cv = 0.10)
+  )
+  msg <- plan_message(
+    sampling_design() |> stratify_by(stratum) |> cluster_by(ea) |>
+      draw(n = 3) |>
+      add_stage() |> stratify_by(stratum) |> draw(n = plan, reserve = 3)
+  )
+  expect_match(
+    msg, "resp_rate = 0.65` in stratum B for indicator anc", fixed = TRUE
+  )
+  expect_no_warning(
+    sampling_design() |> stratify_by(stratum) |> cluster_by(ea) |>
+      draw(n = plan, reserve = 3)
+  )
+})
+
+test_that("a register plan's take stage reads the plan's final rate", {
+  plan <- svyplan::n_alloc_joint(
+    data.frame(stratum = c("A", "B"), N = c(2000, 1600), take_2 = 10),
+    data.frame(stratum = c("A", "B"), name = "y", p = c(0.5, 0.4),
+               icc_1 = 0.05),
+    targets = data.frame(name = "y", cv = 0.10),
+    psu = certainty_plan_register(), resp_rate = 0.8
+  )
+  stage1 <- sampling_design() |>
+    stratify_by(stratum) |> cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_brewer", mos = N)
+  w <- expect_warning(
+    stage1 |> add_stage() |> draw(n = plan, reserve = 2),
+    class = "samplyr_warning_reserve_plan_rates"
+  )
+  expect_match(conditionMessage(w), "resp_rate = 0.8", fixed = TRUE)
+  # Stage 1 of a register plan still takes no reserve.
+  expect_error(
+    sampling_design() |>
+      stratify_by(stratum) |> cluster_by(psu_id) |>
+      draw(n = plan, method = "pps_brewer", mos = N, reserve = 2),
+    class = "samplyr_error_reserve_method"
+  )
+  # The same register at a response rate of 1 needs no warning.
+  unit_rate <- certainty_plan_fixture()
+  expect_no_warning(
+    sampling_design() |>
+      stratify_by(stratum) |> cluster_by(psu_id) |>
+      draw(n = unit_rate, method = "pps_brewer", mos = N) |>
+      add_stage() |> draw(n = unit_rate, reserve = 2)
+  )
 })
 
 test_that("a design without a reserve writes no reserve field", {
@@ -976,6 +1138,28 @@ test_that("a settled reserve below stage 1 exports by ultimate clusters", {
   expect_equal(unname(weights(rep, type = "sampling")), unname(weights(svy)))
 })
 
+test_that("the weighting-loss verbs and varcomp() wait for the settlement", {
+  listed <- export_listed()
+  expect_error(design_effect(listed), class = "samplyr_error_reserve_unsettled")
+  expect_error(effective_n(listed), class = "samplyr_error_reserve_unsettled")
+  expect_error(varcomp(listed, ~hh_id),
+               class = "samplyr_error_reserve_unsettled")
+
+  # A stage 1 whose reserve stage is still to be drawn holds no list.
+  stage1 <- execute(settle_design(), export_frame(), stages = 1, seed = 15) |>
+    suppressWarnings()
+  expect_identical(unsettled_reserve_stages(stage1), integer(0))
+  w <- stage1$.weight
+  expect_equal(effective_n(stage1), sum(w)^2 / sum(w^2))
+
+  # Settled, Kish's effective size is read from the respondents' weights.
+  settled <- settled_sample()
+  w <- settled$.weight
+  expect_equal(effective_n(settled), sum(w)^2 / sum(w^2))
+  expect_equal(as.double(design_effect(settled)), length(w) * sum(w^2) / sum(w)^2)
+  expect_s3_class(varcomp(settled, ~hh_id), "svyplan_varcomp")
+})
+
 test_that("the full and two-phase routes refuse a settled reserve", {
   skip_if_not_installed("survey")
   settled <- settled_sample()
@@ -1508,6 +1692,145 @@ test_that("a primary unit taken with certainty settles as a stratum of its own",
   expect_identical(sort(data$code[sure]), c(2, 2, 2, 2, 4, 4))
   expect_equal(sum(data$.weight[sure]), 8)
   expect_same_variance(svy)
+})
+
+## A settled reserve under a zoned certainty plan. svyplan cuts each
+## stratum's remainder into zones, and with one PSU per zone pairs the zones
+## into variance groups. Those are the first stage's variance strata.
+
+# Every PSU works its take with one ineligible unit and releases one reserve
+# unit. The first PSU drawn at random refuses throughout, so it is left with
+# added rows only.
+zoned_settled <- function(m) {
+  plan <- certainty_zone_fixture(m = m)
+  frame <- certainty_element_frame(certainty_zone_register())
+  frame$y <- (frame$person * 3 + frame$N) %% 11
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_brewer", mos = N) |>
+    add_stage() |> draw(n = plan, reserve = 3)
+  listed <- suppressWarnings(execute(design, frame, seed = 4))
+  refused <- sort(unique(listed$psu_id[!listed$.certainty_1]))[1]
+  code <- rep(NA, nrow(listed))
+  for (p in unique(listed$psu_id)) {
+    rows <- which(listed$psu_id == p)
+    main <- rows[listed$.reserve_2[rows] == 0L]
+    reserve <- rows[listed$.reserve_2[rows] > 0L]
+    reserve <- reserve[order(listed$.reserve_2[reserve])]
+    if (p == refused) {
+      code[c(main, reserve)] <- 2
+    } else {
+      code[main] <- c(1, 4, rep(1, length(main) - 2L))
+      code[reserve[1]] <- 1
+    }
+  }
+  listed$code <- code
+  list(
+    plan = plan,
+    frame = frame,
+    refused = refused,
+    settled = execute(listed, response_status = code)
+  )
+}
+
+# The expected variance stratum of each PSU, read from the plan's register:
+# its zone within its stratum, or its variance group, and a certainty PSU
+# alone.
+zoned_strata <- function(plan, m) {
+  psu <- plan$psu
+  key <- if (m == 1) {
+    paste("group", psu$.variance_group)
+  } else {
+    paste(psu$stratum, "zone", psu$.zone)
+  }
+  key[psu$certainty] <- paste("sure", psu$psu_id[psu$certainty])
+  stats::setNames(key, psu$psu_id)
+}
+
+test_that("a settled reserve keeps the zones and variance groups of stage 1", {
+  skip_if_not_installed("survey")
+  withr::local_options(survey.lonely.psu = "fail")
+  reached <- character(0)
+  for (m in 1:2) {
+    case <- zoned_settled(m)
+    expect_warning(
+      svy <- as_svydesign(case$settled),
+      class = "samplyr_warning_reserve_no_respondent"
+    )
+    data <- svy$variables
+    added <- is.na(data$.sample_id)
+    expect_true(any(added & data$psu_id == case$refused))
+    expect_false(any(!added & data$psu_id == case$refused))
+    expect_true(any(added & data$.certainty_1))
+    expect_true(all(is.na(data$y[added])))
+
+    # The export's strata are the plan's, as a partition of the PSUs, with
+    # the added rows in the stratum of their own PSU.
+    expected <- zoned_strata(case$plan, m)[data$psu_id]
+    got <- as.character(svy$strata[[1]])
+    expect_identical(nrow(unique(data.frame(expected, got))),
+                     length(unique(expected)))
+    expect_identical(nrow(unique(data.frame(expected, got))),
+                     length(unique(got)))
+
+    # Oracle: the ultimate-cluster variance computed by hand. A PSU drawn
+    # at random is a cluster of its zone or group. A certainty PSU is a
+    # stratum whose clusters are its rows, each added row one of them.
+    sure <- data$.certainty_1
+    cluster <- ifelse(sure, paste("row", seq_len(nrow(data))), data$psu_id)
+    z <- tapply(data$.weight * ifelse(added, 0, data$y), cluster, sum)
+    stratum_of <- tapply(expected, cluster, unique)
+    by_hand <- sum(tapply(z, stratum_of[names(z)], function(t) {
+      length(t) / (length(t) - 1) * sum((t - mean(t))^2)
+    }))
+    total <- survey::svytotal(~y, svy, na.rm = TRUE)
+    expect_equal(unname(coef(total)), sum(z), tolerance = 1e-12)
+    expect_equal(as.numeric(survey::SE(total)), sqrt(by_hand),
+                 tolerance = 1e-10)
+
+    # survey on the same rows, with strata and clusters built from the
+    # register, agrees for the linearized and the jackknife designs.
+    data$ref_stratum <- expected
+    data$ref_cluster <- cluster
+    ref <- survey::svydesign(
+      ids = ~ref_cluster, strata = ~ref_stratum, weights = ~.weight,
+      data = data
+    )
+    expect_equal(
+      as.numeric(survey::SE(survey::svytotal(~y, ref, na.rm = TRUE))),
+      as.numeric(survey::SE(total)), tolerance = 1e-10
+    )
+    expect_warning(
+      rep <- as_svrepdesign(case$settled, type = "JKn"),
+      class = "samplyr_warning_reserve_no_respondent"
+    )
+    expect_equal(
+      as.numeric(survey::SE(survey::svytotal(~y, rep, na.rm = TRUE))),
+      as.numeric(survey::SE(survey::svytotal(
+        ~y, survey::as.svrepdesign(ref, type = "JKn"), na.rm = TRUE
+      ))),
+      tolerance = 1e-10
+    )
+
+    # The same export from a saved sample and from a replayed receipt.
+    path <- withr::local_tempfile(fileext = ".rds")
+    saveRDS(case$settled, path)
+    expect_warning(
+      again <- as_svydesign(readRDS(path)),
+      class = "samplyr_warning_reserve_no_respondent"
+    )
+    expect_identical(as.character(again$strata[[1]]), got)
+    json <- withr::local_tempfile(fileext = ".json")
+    write_design(case$settled, json, frame = case$frame)
+    replayed <- replay_design(read_design(json), case$frame)
+    expect_warning(
+      again <- as_svydesign(replayed),
+      class = "samplyr_warning_reserve_no_respondent"
+    )
+    expect_identical(as.character(again$strata[[1]]), got)
+    reached <- c(reached, paste0("m", m))
+  }
+  expect_setequal(reached, c("m1", "m2"))
 })
 
 test_that("a first-stage reserve exports after its later stage is drawn", {
@@ -2145,4 +2468,315 @@ test_that("a user column named after the added rows' unit column is kept", {
   expect_identical(stats::weights(svy), stats::weights(base))
   expect_identical(attr(svy, "samplyr_reserve_units"),
                    attr(base, "samplyr_reserve_units"))
+})
+
+test_that("the reserve note reads the rates each plan used", {
+  plan_message <- function(design) {
+    w <- expect_warning(design, class = "samplyr_warning_reserve_plan_rates")
+    cli::ansi_strip(conditionMessage(w))
+  }
+
+  # n_cluster() with indicator rows: each row carries its own stage rates.
+  indicators <- data.frame(
+    name = c("early_nonresponse", "final_nonresponse"),
+    p = c(0.35, 0.45), cv = 0.08, icc_1 = 0.05,
+    resp_rate_1 = c(0.75, 1), resp_rate = c(1, 0.60)
+  )
+  cluster <- svyplan::n_cluster(indicators, stage_cost = c(500, 50))
+  first <- sampling_design() |> cluster_by(psu)
+  msg <- plan_message(first |> draw(n = cluster, reserve = 2))
+  expect_match(msg, "resp_rate_1 = 0.75` for indicator early_nonresponse",
+               fixed = TRUE)
+  msg <- plan_message(
+    first |> draw(n = 5) |> add_stage() |> draw(n = cluster, reserve = 2)
+  )
+  expect_match(msg, "resp_rate = 0.6` for indicator final_nonresponse",
+               fixed = TRUE)
+  # A flat total is inflated by every stage's rate.
+  msg <- plan_message(sampling_design() |> draw(n = cluster, reserve = 2))
+  expect_match(msg, "resp_rate = 0.6`", fixed = TRUE)
+  expect_no_warning(first |> draw(n = cluster))
+
+  # A classic rate vector takes precedence over the frame column.
+  frame <- data.frame(stratum = c("A", "B"), N = c(4000, 3000),
+                      sd = c(10, 15), mean = c(50, 60), resp_rate = 0.5)
+  ones <- svyplan::n_alloc(frame, cv = 0.02, resp_rate = c(1, 1))
+  expect_identical(ones$rates$resp_rate, c(1, 1))
+  expect_no_warning(
+    sampling_design() |> stratify_by(stratum) |> draw(n = ones, reserve = 2)
+  )
+  lower <- svyplan::n_alloc(frame, cv = 0.02, resp_rate = c(1, 0.8))
+  msg <- plan_message(
+    sampling_design() |> stratify_by(stratum) |> draw(n = lower, reserve = 2)
+  )
+  expect_match(msg, "resp_rate = 0.8` in stratum B", fixed = TRUE)
+
+  # A joint measure value of 1 wins over a lower frame rate, a missing one
+  # falls back to the frame, and an indicator no target reads is ignored.
+  joint_frame <- data.frame(stratum = c("A", "B"), N = c(4000, 3000),
+                            resp_rate = c(0.7, 0.6))
+  measures <- data.frame(
+    stratum = rep(c("A", "B"), 2), name = rep(c("y", "z"), each = 2),
+    p = c(0.5, 0.4, 0.3, 0.2), resp_rate = c(1, 1, 0.5, 0.5)
+  )
+  targets <- data.frame(name = "y", cv = 0.1)
+  held <- svyplan::n_alloc_joint(joint_frame, measures, targets = targets)
+  expect_identical(held$rates$name, c("y", "y"))
+  expect_no_warning(
+    sampling_design() |> stratify_by(stratum) |> draw(n = held, reserve = 2)
+  )
+  measures$resp_rate[2] <- NA
+  fallback <- svyplan::n_alloc_joint(joint_frame, measures, targets = targets)
+  msg <- plan_message(
+    sampling_design() |> stratify_by(stratum) |>
+      draw(n = fallback, reserve = 2)
+  )
+  expect_match(msg, "resp_rate = 0.6` in stratum B for indicator y",
+               fixed = TRUE)
+
+  # Final eligibility, as well as response.
+  scoped <- svyplan::n_alloc_joint(
+    joint_frame[c("stratum", "N")], measures[1:2, c("stratum", "name", "p")],
+    targets = targets, eligibility_rate = 0.9
+  )
+  msg <- plan_message(
+    sampling_design() |> stratify_by(stratum) |> draw(n = scoped, reserve = 2)
+  )
+  expect_match(msg, "eligibility_rate = 0.9`", fixed = TRUE)
+
+  # A free take reports its PSU rate per stratum and indicator.
+  free <- svyplan::n_alloc_joint(
+    data.frame(stratum = c("A", "B"), N = c(20000, 8000), N_1 = c(400, 160),
+               cost_1 = 400, cost_2 = 40),
+    data.frame(stratum = c("A", "B"), name = "coverage", p = c(0.5, 0.4),
+               icc_1 = 0.05, resp_rate_1 = c(0.9, 1)),
+    targets = data.frame(name = "coverage", cv = 0.1),
+    take_2_min = 2, take_2_max = 20
+  )
+  with_reserve <- function(reserve) {
+    suppressWarnings(
+      sampling_design() |> stratify_by(stratum) |> cluster_by(ea) |>
+        draw(n = free, reserve = reserve)
+    )
+  }
+  msg <- plan_message(
+    sampling_design() |> stratify_by(stratum) |> cluster_by(ea) |>
+      draw(n = free, reserve = 2)
+  )
+  expect_match(msg, "resp_rate_1 = 0.9` in stratum A for indicator coverage",
+               fixed = TRUE)
+  # The note leaves the fielded counts as the plan gives them.
+  expect_identical(with_reserve(2)$stages[[1]]$draw_spec$n,
+                   with_reserve(NULL)$stages[[1]]$draw_spec$n)
+})
+
+test_that("a slack indicator with a low rate warns", {
+  plan_message <- function(design) {
+    w <- expect_warning(design, class = "samplyr_warning_reserve_plan_rates")
+    cli::ansi_strip(conditionMessage(w))
+  }
+  rates_warn <- function(design) {
+    w <- tryCatch(
+      {
+        design
+        NULL
+      },
+      samplyr_warning_reserve_plan_rates = function(w) w
+    )
+    !is.null(w)
+  }
+  fielded <- function(design) {
+    suppressWarnings(design)$stages[[1]]$draw_spec$n
+  }
+
+  # n_alloc_joint(): the target of z has slack, but its rate is read.
+  frame <- data.frame(stratum = c("A", "B"), N = c(4000, 3000))
+  measures <- data.frame(
+    stratum = rep(c("A", "B"), 2), name = rep(c("y", "z"), each = 2),
+    p = c(0.5, 0.4, 0.3, 0.2), resp_rate = c(1, 1, 0.3, 0.3)
+  )
+  targets <- data.frame(name = c("y", "z"), cv = c(0.05, 0.3))
+  strata <- sampling_design() |> stratify_by(stratum)
+  slack <- svyplan::n_alloc_joint(frame, measures, targets = targets)
+  expect_identical(slack$constraints$.binding, c(TRUE, FALSE))
+  msg <- plan_message(strata |> draw(n = slack, reserve = 2))
+  expect_match(msg, "resp_rate = 0.3` in stratum A for indicator z",
+               fixed = TRUE)
+  expect_false(rates_warn(strata |> draw(n = slack)))
+  expect_identical(fielded(strata |> draw(n = slack, reserve = 2)),
+                   fielded(strata |> draw(n = slack)))
+  ones <- svyplan::n_alloc_joint(frame, transform(measures, resp_rate = 1),
+                                 targets = targets)
+  expect_false(rates_warn(strata |> draw(n = ones, reserve = 2)))
+  # An indicator no target reads has no rate in the fit.
+  untargeted <- svyplan::n_alloc_joint(frame, measures, targets = targets[1, ])
+  expect_identical(unique(untargeted$rates$name), "y")
+  expect_false(rates_warn(strata |> draw(n = untargeted, reserve = 2)))
+
+  # A target of y binds in N and has slack in S, and the floor sets B.
+  # The South rate leaves the counts as they are and is still read.
+  zoned <- data.frame(stratum = c("A", "B"), region = c("N", "S"),
+                      N = c(4000, 3000))
+  by_region <- data.frame(stratum = c("A", "B"), name = "y", p = c(0.5, 0.4),
+                          resp_rate = c(1, 0.2))
+  domain_targets <- data.frame(name = "y", domain = "region",
+                               level = c("N", "S"), cv = c(0.05, 0.9))
+  split <- svyplan::n_alloc_joint(zoned, by_region, targets = domain_targets,
+                                  min_n_stratum = 30)
+  neutral <- svyplan::n_alloc_joint(
+    zoned, transform(by_region, resp_rate = 1), targets = domain_targets,
+    min_n_stratum = 30
+  )
+  expect_identical(split$constraints$.binding, c(TRUE, FALSE))
+  expect_identical(split$detail$n_int, neutral$detail$n_int)
+  msg <- plan_message(strata |> draw(n = split, reserve = 2))
+  expect_match(msg, "resp_rate = 0.2` in stratum B for indicator y",
+               fixed = TRUE)
+  expect_identical(fielded(strata |> draw(n = split, reserve = 2)),
+                   fielded(strata |> draw(n = neutral, reserve = 2)))
+  expect_false(rates_warn(strata |> draw(n = neutral, reserve = 2)))
+
+  # Under a budget the objective's rates are read.
+  spent <- svyplan::n_alloc_joint(
+    frame, transform(measures, resp_rate = c(0.7, 0.7, 1, 1)),
+    objective = data.frame(name = "y"), budget = 500
+  )
+  expect_identical(nrow(spent$constraints), 0L)
+  msg <- plan_message(strata |> draw(n = spent, reserve = 2))
+  expect_match(msg, "resp_rate = 0.7` in stratum A for indicator y",
+               fixed = TRUE)
+  expect_identical(fielded(strata |> draw(n = spent, reserve = 2)),
+                   fielded(strata |> draw(n = spent)))
+
+  # n_cluster(): a sets the size, and the rate of b is read.
+  indicators <- data.frame(name = c("a", "b"), p = c(0.3, 0.5),
+                           cv = c(0.08, 0.3), icc_1 = 0.05,
+                           resp_rate = c(1, 0.3))
+  stage_two <- sampling_design() |> cluster_by(psu) |> draw(n = 5) |>
+    add_stage()
+  cluster <- svyplan::n_cluster(indicators, stage_cost = c(500, 50))
+  expect_identical(cluster$detail$.binding, c(TRUE, FALSE))
+  msg <- plan_message(stage_two |> draw(n = cluster, reserve = 2))
+  expect_match(msg, "resp_rate = 0.3` for indicator b", fixed = TRUE)
+  msg <- plan_message(sampling_design() |> draw(n = cluster, reserve = 2))
+  expect_match(msg, "resp_rate = 0.3` for indicator b", fixed = TRUE)
+  expect_false(rates_warn(stage_two |> draw(n = cluster)))
+  expect_identical(
+    fielded(sampling_design() |> draw(n = cluster, reserve = 2)),
+    fielded(sampling_design() |> draw(n = cluster))
+  )
+  ones <- svyplan::n_cluster(transform(indicators, resp_rate = 1),
+                             stage_cost = c(500, 50))
+  expect_false(rates_warn(stage_two |> draw(n = ones, reserve = 2)))
+  # svyplan labels an unnamed indicator by its row.
+  unnamed <- svyplan::n_cluster(indicators[-1], stage_cost = c(500, 50))
+  msg <- plan_message(stage_two |> draw(n = unnamed, reserve = 2))
+  expect_match(msg, "resp_rate = 0.3` for indicator 2.", fixed = TRUE)
+
+  # n_multi(): a row below the largest requirement cannot change the take.
+  multi <- svyplan::n_multi(data.frame(p = c(0.1, 0.5), moe = 0.06,
+                                       resp_rate = c(0.5, 1)))
+  expect_identical(multi$detail$.binding, c(FALSE, TRUE))
+  expect_false(rates_warn(sampling_design() |> draw(n = multi, reserve = 2)))
+})
+
+test_that("the reserve note reads the indicators that set an n_multi() take", {
+  plan_message <- function(design) {
+    w <- expect_warning(design, class = "samplyr_warning_reserve_plan_rates")
+    cli::ansi_strip(conditionMessage(w))
+  }
+  rates_warn <- function(plan, design = sampling_design()) {
+    w <- tryCatch(
+      {
+        design |> draw(n = plan, reserve = 2)
+        NULL
+      },
+      samplyr_warning_reserve_plan_rates = function(w) w
+    )
+    !is.null(w)
+  }
+
+  # The plan keeps its rates per indicator and none in params.
+  indicators <- data.frame(name = c("a", "b"), p = c(0.3, 0.5), moe = 0.06)
+  net <- svyplan::n_multi(indicators)
+  expect_identical(as.integer(net), 267L)
+  expect_false(rates_warn(net))
+
+  gross <- svyplan::n_multi(indicators, resp_rate = 0.5)
+  expect_identical(as.integer(gross), 534L)
+  msg <- plan_message(sampling_design() |> draw(n = gross, reserve = 2))
+  expect_match(msg, "resp_rate = 0.5` for indicator b", fixed = TRUE)
+  expect_no_warning(sampling_design() |> draw(n = gross))
+
+  column <- svyplan::n_multi(transform(indicators, resp_rate = c(1, 0.5)))
+  msg <- plan_message(sampling_design() |> draw(n = column, reserve = 2))
+  expect_match(msg, "resp_rate = 0.5` for indicator b", fixed = TRUE)
+
+  scoped <- svyplan::n_multi(indicators, eligibility_rate = 0.5)
+  msg <- plan_message(sampling_design() |> draw(n = scoped, reserve = 2))
+  expect_match(msg, "eligibility_rate = 0.5` for indicator b", fixed = TRUE)
+  expect_no_match(msg, "resp_rate")
+
+  # Indicator a needs 192 at its rate and b sets the take of 267 alone.
+  loose <- data.frame(name = c("a", "b"), p = c(0.1, 0.5), moe = 0.06,
+                      resp_rate = c(0.5, 1))
+  expect_identical(as.integer(svyplan::n_multi(loose)), 267L)
+  expect_false(rates_warn(svyplan::n_multi(loose)))
+
+  # An unnamed indicator is named by its row.
+  unnamed <- loose[c("p", "moe")]
+  unnamed$resp_rate <- c(1, 0.5)
+  msg <- plan_message(
+    sampling_design() |> draw(n = svyplan::n_multi(unnamed), reserve = 2)
+  )
+  expect_match(msg, "resp_rate = 0.5` for indicator 2", fixed = TRUE)
+
+  # Tied to 13 digits, svyplan flags b as binding, but a's rate of 0.5
+  # sets the same take.
+  tied <- svyplan::n_multi(data.frame(
+    name = c("b", "a"), p = 0.5, moe = c(0.06 / sqrt(2), 0.06),
+    resp_rate = c(1, 0.5)
+  ))
+  expect_identical(tied$detail$.binding, c(TRUE, FALSE))
+  msg <- plan_message(sampling_design() |> draw(n = tied, reserve = 2))
+  expect_match(msg, "resp_rate = 0.5` for indicator a", fixed = TRUE)
+
+  # Per domain, the indicator that sets each domain's size.
+  domains <- data.frame(
+    name = rep(c("a", "b"), 2), p = c(0.1, 0.5, 0.1, 0.5), moe = 0.06,
+    region = rep(c("N", "S"), each = 2), resp_rate = c(0.5, 1, 0.2, 1)
+  )
+  by_region <- sampling_design() |> stratify_by(region)
+  split <- svyplan::n_multi(domains, domains = "region")
+  expect_identical(split$domains$.binding, c("b", "a"))
+  msg <- plan_message(by_region |> draw(n = split, reserve = 2))
+  expect_match(msg, "resp_rate = 0.2` for indicator a in region S",
+               fixed = TRUE)
+  expect_no_match(msg, "lowest value")
+  unnamed_domains <- domains[setdiff(names(domains), "name")]
+  msg <- plan_message(
+    by_region |>
+      draw(n = svyplan::n_multi(unnamed_domains, domains = "region"),
+           reserve = 2)
+  )
+  expect_match(msg, "resp_rate = 0.2` for indicator 3 in region S",
+               fixed = TRUE)
+  natural <- svyplan::n_multi(
+    transform(domains, share = rep(c(0.7, 0.3), each = 2)),
+    domains = "region", domain_sampling = "natural"
+  )
+  msg <- plan_message(by_region |> draw(n = natural, reserve = 2))
+  expect_match(msg, "resp_rate = 0.2` for indicator a in region S",
+               fixed = TRUE)
+
+  # In N indicator a does not bind, and S has no rate below 1.
+  domains$resp_rate <- c(0.5, 1, 1, 1)
+  expect_false(
+    rates_warn(svyplan::n_multi(domains, domains = "region"), by_region)
+  )
+  # A domain raised to min_n_domain is not sized by any rate.
+  domains$resp_rate <- c(0.5, 1, 0.2, 1)
+  floored <- svyplan::n_multi(domains, domains = "region", min_n_domain = 2000)
+  expect_identical(floored$domains$.binding, rep("(min_n_domain)", 2))
+  expect_false(rates_warn(floored, by_region))
 })

@@ -172,7 +172,7 @@ A \code{tbl_sample}: a data frame subclass carrying the selected rows,
 the design that produced them, and generated columns recording the
 selection. Those are \code{.sample_id}, \code{.weight}, the per-stage \code{.weight_k},
 \code{.fpc_k}, \code{.draw_k} and \code{.certainty_k}, \code{.reserve_k} at a stage that
-sets \code{reserve} in \code{\link[=draw]{draw()}}, \code{.zone_1} and \code{.pair_1} for a zoned
+sets \code{reserve} in \code{\link[=draw]{draw()}}, \code{.zone_1} and \code{.variance_group_1} for a zoned
 certainty plan, \code{.replicate} or \code{.panel} when \code{reps} or
 \code{panels} is used, \code{.phase1_row} and \code{.phase1_draw_k} in a phase drawn
 from an earlier phase's sample, \code{.visit} in an occasion, and \code{.period}

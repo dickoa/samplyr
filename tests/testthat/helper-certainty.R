@@ -1,7 +1,7 @@
 ## Certainty-aware svyplan fixtures for the plan bridge. Deterministic, no
-## RNG: the solver is iterative but seed-free, and the sizes are chosen so
-## exactly one PSU per stratum is certainty with a wide margin around the
-## threshold.
+## RNG: the solver is iterative but seed-free. In the default fixture
+## stratum A holds all 8 PSUs certain (A01 by the threshold, the others
+## because their take fills them) and stratum B holds B01 only.
 
 certainty_plan_register <- function() {
   data.frame(
@@ -14,15 +14,15 @@ certainty_plan_register <- function() {
 
 certainty_plan_fixture <- function(psu = certainty_plan_register()) {
   frame <- data.frame(
-    stratum = c("A", "B"), N = c(2000, 1600), n_per_psu = 10,
+    stratum = c("A", "B"), N = c(2000, 1600), take_2 = 10,
     stringsAsFactors = FALSE
   )
   measures <- data.frame(
-    stratum = c("A", "B"), name = "y", p = c(0.5, 0.4), icc_psu = 0.05,
+    stratum = c("A", "B"), name = "y", p = c(0.5, 0.4), icc_1 = 0.05,
     stringsAsFactors = FALSE
   )
   targets <- data.frame(name = "y", cv = 0.10)
-  svyplan::n_alloc(frame, measures = measures, targets = targets, psu = psu)
+  svyplan::n_alloc_joint(frame, measures = measures, targets = targets, psu = psu)
 }
 
 ## The default register with two stratum B sizes changed. Its fitted plan
@@ -74,15 +74,15 @@ certainty_zone_register <- function() {
 certainty_zone_fixture <- function(psu = certainty_zone_register(), m = 2,
                                    cv = 0.12) {
   frame <- data.frame(
-    stratum = c("A", "B"), N = c(3160, 1762), n_per_psu = 8,
+    stratum = c("A", "B"), N = c(3160, 1762), take_2 = 8,
     stringsAsFactors = FALSE
   )
   measures <- data.frame(
-    stratum = c("A", "B"), name = "y", p = c(0.5, 0.4), icc_psu = 0.05,
+    stratum = c("A", "B"), name = "y", p = c(0.5, 0.4), icc_1 = 0.05,
     stringsAsFactors = FALSE
   )
   targets <- data.frame(name = "y", cv = cv)
-  svyplan::n_alloc(
+  svyplan::n_alloc_joint(
     frame, measures = measures, targets = targets, psu = psu,
     n_psu_per_zone = m
   )
@@ -105,13 +105,13 @@ certainty_pair_register <- function() {
 
 certainty_pair_fixture <- function(psu = certainty_pair_register()) {
   frame <- stats::aggregate(N ~ stratum, psu, sum)
-  frame$n_per_psu <- 8
+  frame$take_2 <- 8
   measures <- data.frame(
     stratum = c("A", "B", "C"), name = "y", p = c(0.5, 0.4, 0.3),
-    icc_psu = 0.05, stringsAsFactors = FALSE
+    icc_1 = 0.05, stringsAsFactors = FALSE
   )
   targets <- data.frame(name = "y", cv = 0.15)
-  svyplan::n_alloc(
+  svyplan::n_alloc_joint(
     frame, measures = measures, targets = targets, psu = psu,
     n_psu_per_zone = 1
   )
@@ -123,7 +123,7 @@ certainty_pair_fixture <- function(psu = certainty_pair_register()) {
 certainty_sample_key <- function(s) {
   d <- as.data.frame(s)
   cols <- grep(
-    "^(psu_id|person|\\.weight(_[0-9]+)?|\\.(zone|pair|certainty)_[0-9]+)$",
+    "^(psu_id|person|\\.weight(_[0-9]+)?|\\.(zone|variance_group|certainty)_[0-9]+)$",
     names(d),
     value = TRUE
   )
@@ -164,10 +164,10 @@ certainty_single_zone_fixture <- function() {
     psu_id = sprintf("A%02d", 1:10), stratum = "A",
     N = c(400, 60 + 5 * (1:9)), stringsAsFactors = FALSE
   )
-  frame <- data.frame(stratum = "A", N = sum(psu$N), n_per_psu = 8)
-  measures <- data.frame(stratum = "A", name = "y", p = 0.5, icc_psu = 0.05)
+  frame <- data.frame(stratum = "A", N = sum(psu$N), take_2 = 8)
+  measures <- data.frame(stratum = "A", name = "y", p = 0.5, icc_1 = 0.05)
   targets <- data.frame(name = "y", cv = 0.5)
-  svyplan::n_alloc(
+  svyplan::n_alloc_joint(
     frame, measures = measures, targets = targets, psu = psu,
     n_psu_per_zone = 1
   )

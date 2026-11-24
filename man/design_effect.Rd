@@ -20,8 +20,10 @@ effective_n(x = NULL, ...)
 method.}
 
 \item{...}{Passed to the svyplan method: the planning arguments \code{icc},
-\code{n_per_psu}, \code{n_per_ssu} and \code{var_ratio} are the useful ones here. Every
-argument must be named. svyplan reports any name it does not recognize.}
+\code{take} and \code{var_ratio} are the useful ones here. For a design of more
+than two stages, \code{icc} and \code{take} hold one value per stage below the
+first. Every argument must be named. svyplan reports any name it does
+not recognize.}
 }
 \value{
 \code{design_effect()} returns a numeric \code{svyplan_deff} object. Use
@@ -46,9 +48,13 @@ in the weights. To estimate a design effect that reflects them, fit the
 design and ask the estimator: \code{as_svydesign()} then
 \code{survey::svymean(deff = TRUE)}, which is outcome-specific by necessity.
 To \emph{anticipate} the clustering component before collecting data, name the
-planning arguments in the same call: \code{design_effect(x, icc = , n_per_psu = )} forwards them to \code{\link[svyplan:design_effect]{svyplan::design_effect()}} and returns the weighting
+planning arguments in the same call: \code{design_effect(x, icc = , take = )}
+forwards them to \code{\link[svyplan:design_effect]{svyplan::design_effect()}} and returns the weighting
 loss multiplied by the anticipated clustering component. Positional
-arguments are refused, since these methods take no outcome variable.
+arguments are refused, since these methods take no outcome variable. A
+sample whose reserve is not settled is refused
+(\code{samplyr_error_reserve_unsettled}), since its weights describe the whole
+list.
 }
 \examples{
 set.seed(1207)
@@ -77,7 +83,7 @@ design_effect(prop_samp)
 
 # Anticipating the clustering component: the weighting loss above,
 # multiplied by the clustering component the planning arguments imply
-design_effect(samp, icc = 0.05, n_per_psu = 25)
+design_effect(samp, icc = 0.05, take = 25)
 
 }
 \references{

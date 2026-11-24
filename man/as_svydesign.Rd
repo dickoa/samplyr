@@ -245,10 +245,13 @@ drawn with unequal probabilities without replacement is refused
 (\code{samplyr_error_twophase_phase1_pps}, \code{samplyr_error_occasion_phase1_pps}).
 So are \code{cube}, first-stage \code{pps_poisson} and the spatial methods, which
 are unsupported at either phase. Equal-probability first phases export,
-stratified, clustered, multistage and with-replacement alike. No
-two-phase sample has a replicate export, except the subsample within
-pools above. The weights of a refused sample are exact, so totals and
-means are right. For a variance, the ultimate-cluster approximation
+stratified, clustered, multistage and with-replacement alike. A
+two-phase sample has a replicate export in three shapes, the subsample
+within pools above, a second phase of a phase 1 fixed in one primary unit
+(every stage taken for sure, which can be a census of its elements), and
+random groups of a design executed whole with \code{reps}, a refused one
+included (see \code{\link[=as_svrepdesign]{as_svrepdesign()}}). The weights of a refused sample are
+exact, so totals and means are right. For a variance, the ultimate-cluster approximation
 treats phase 1's units as drawn with replacement and carries everything
 below in them. It leaves out phase 1's correction and overstates the
 variance, and more so when phase 2 was drawn across the phase-1 units:
@@ -507,9 +510,9 @@ survey::svytotal(~population, svy_joint)
 Hansen, M. H., Hurwitz, W. N. and Madow, W. G. (1953). \emph{Sample Survey
 Methods and Theory}. Wiley.
 
-Lavallee, P. (2007). \emph{Indirect Sampling}. Springer.
+\enc{Lavallée}{Lavallee}, P. (2007). \emph{Indirect Sampling}. Springer.
 
-Sarndal, C.-E., Swensson, B. and Wretman, J. (1992). \emph{Model
+\enc{Särndal}{Sarndal}, C.-E., Swensson, B. and Wretman, J. (1992). \emph{Model
 Assisted Survey Sampling}. Springer.
 
 Wolter, K. M. (2007). \emph{Introduction to Variance Estimation}, 2nd ed.
@@ -519,7 +522,7 @@ Springer.
 \code{\link[=execute]{execute()}} for producing tbl_sample objects,
 \code{\link[survey:svydesign]{survey::svydesign()}} for the underlying function,
 \link{as_survey_design.tbl_sample} for converting directly to a srvyr \code{tbl_svy},
-\code{as_svrepdesign()} for replicate-weight export,
+\code{\link[=as_svrepdesign]{as_svrepdesign()}} for replicate-weight export,
 \code{\link[=as_svydesign.frame_stack]{as_svydesign.frame_stack()}} for overlapping frames
 
 Other survey export:

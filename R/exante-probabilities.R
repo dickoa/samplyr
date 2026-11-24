@@ -590,8 +590,9 @@ resolve_exante_overlaps <- function(samples, spec, membership,
         abort_samplyr(
           c(
             "A unit of a frame is missing from that frame's register.",
-            "x" = "{sum(unresolved)} unit{?s} of {.val {nm}} belong{?s/} to
-                   {.val {q}} and {?is/are} not in its register.",
+            "x" = "{sum(unresolved)} unit{?s} of {.val {nm}}
+                   {cli::qty(sum(unresolved))}belong{?s/} to {.val {q}} and
+                   {cli::qty(sum(unresolved))}{?is/are} not in its register.",
             "i" = "The register must enumerate the frame, or the chance in
                    it cannot be resolved."
           ),

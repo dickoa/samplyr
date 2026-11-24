@@ -191,7 +191,7 @@ as.data.frame(panel)[panel$household == "2 21", c("key", ".weight")]
 
 }
 \references{
-Lavallee, P. (2007). \emph{Indirect Sampling}. Springer.
+\enc{Lavallée}{Lavallee}, P. (2007). \emph{Indirect Sampling}. Springer.
 }
 \seealso{
 Other weight sharing:

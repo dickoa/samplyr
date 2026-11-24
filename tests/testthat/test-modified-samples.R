@@ -671,7 +671,7 @@ test_that("the generated names are matched exactly, not by prefix", {
   generated <- c(
     ".weight", ".sample_id", ".stage", ".panel", ".replicate", ".period",
     ".subround", ".visit", ".weight_1", ".weight_10", ".fpc_2", ".draw_1",
-    ".certainty_3", ".zone_1", ".pair_1", ".reserve_2"
+    ".certainty_3", ".zone_1", ".variance_group_1", ".reserve_2"
   )
   lookalike <- c(
     ".weight_adj", ".weight_", ".weights", ".fpc_inf_1", ".fpc_note",
@@ -716,7 +716,7 @@ test_that("every column execution adds is generated and protected", {
     added,
     c(".weight", ".sample_id", ".stage", ".weight_1", ".fpc_1", ".draw_1",
       ".reserve_1", ".replicate", ".certainty_1", ".panel", ".period",
-      ".subround", ".visit", ".weight_2", ".fpc_2", ".zone_1", ".pair_1")
+      ".subround", ".visit", ".weight_2", ".fpc_2", ".zone_1", ".variance_group_1")
   )
   for (x in samples) {
     sample <- x[[1]]

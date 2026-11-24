@@ -7,7 +7,7 @@
 \usage{
 varcomp(x, ...)
 
-\method{varcomp}{tbl_sample}(x, ..., strata = NULL)
+\method{varcomp}{tbl_sample}(x, ..., strata = NULL, estimator = c("expansion", "ratio"))
 }
 \arguments{
 \item{x}{A \code{tbl_sample} with at least one executed clustered stage.}
@@ -25,6 +25,12 @@ such as \code{~region} or \code{~interaction(region, urban_rural)}, to estimate
 per-stratum components by, when the first stage was not stratified. Stage-1 design strata are picked up automatically.
 Combining them with \code{strata} is an error, because per-stratum
 components crossed with design strata are ambiguous.}
+
+\item{estimator}{The estimator the components describe, passed to
+\code{\link[svyplan:varcomp]{svyplan::varcomp()}}: \code{"expansion"} (default) for an estimated total, or
+\code{"ratio"} for a mean or a proportion, an estimated total over an
+estimated number of units. The two differ only when PSU sizes vary and
+PSUs are not drawn proportional to size.}
 }
 \value{
 A \code{svyplan_varcomp} object. Pass it as \code{icc} to
@@ -57,7 +63,9 @@ fold the rest into a design effect. With-replacement (WR/PMR)
 stages treat each draw as an independent unit, keyed by the
 \code{.draw_k} column as in \code{\link[=as_svydesign]{as_svydesign()}}: a cluster hit twice enters
 the decomposition twice, with its share counted per draw. Two-phase samples are refused:
-the nested decomposition does not model phase sampling. Certainty
+the nested decomposition does not model phase sampling. So is a sample
+whose reserve is not settled (\code{samplyr_error_reserve_unsettled}), whose
+weights describe the whole list. Certainty
 PSUs are refused: self-representing PSUs contribute no between-PSU
 variance and belong in their own stratum, so estimate components on
 the probability part of the design.

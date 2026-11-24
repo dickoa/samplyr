@@ -199,11 +199,11 @@ stage 2.
 
 \subsection{One PSU per zone}{
 
-A certainty plan solved with \code{svyplan::n_alloc(n_psu_per_zone = 1)}
+A certainty plan solved with \code{svyplan::n_alloc_joint(n_psu_per_zone = 1)}
 draws one PSU from each zone, so no zone has a variance of its own. The
 export collapses the zones in the variance groups the plan fixed before
-selection, recorded in \code{.pair_1}, which may cross strata (Valliant,
-Dever and Kreuter 2018, sec. 15.5.3). One draw per zone has the
+selection, recorded in \code{.variance_group_1}, which may cross strata
+(Valliant, Dever and Kreuter 2018, sec. 15.5.3). One draw per zone has the
 with-replacement variance, so the remainder PSUs carry no finite
 population correction under linearization, RWYB or the generic replicate
 types, while certainty PSUs keep theirs and contribute their later
@@ -355,9 +355,12 @@ variance, an ultimate-cluster design treating phase-1 units as drawn with
 replacement leaves out phase 1's correction and overstates the variance,
 the more so as phase 1's sampling fraction grows, and more again when
 phase 2 was drawn across the phase-1 units, where little of the outcome's
-variation lies between them. \code{\link[=as_svydesign]{as_svydesign()}} gives the call. No
-two-phase sample has a replicate export, except the subsample within
-pools below.
+variation lies between them. \code{\link[=as_svydesign]{as_svydesign()}} gives the call. A
+two-phase sample has a replicate export in three shapes, the subsample
+within pools below, a second phase of a phase 1 fixed in one primary unit
+(every stage taken for sure, which can be a census of its elements), and
+random groups of a design executed whole with \code{reps}, a refused one
+included (\code{\link[=as_svrepdesign]{as_svrepdesign()}}).
 
 Phase 2 is drawn from the phase-1 sample, so its joint inclusion
 probabilities are computed there. A single-stage phase 2 drawn with
@@ -421,7 +424,7 @@ finite populations. \emph{Annals of Mathematical Statistics}, 14(4), 333-362.
 varying probabilities from a finite population. \emph{Annals of Mathematical
 Statistics}, 35(4), 1491-1523.
 
-Sarndal, C.-E., Swensson, B. and Wretman, J. (1992). \emph{Model Assisted
+\enc{Särndal}{Sarndal}, C.-E., Swensson, B. and Wretman, J. (1992). \emph{Model Assisted
 Survey Sampling}. Springer.
 
 Valliant, R., Dever, J.A. and Kreuter, F. (2018). \emph{Practical Tools for

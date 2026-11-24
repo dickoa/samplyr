@@ -168,8 +168,8 @@ test_that("promotion does not make a pool selection-certain", {
   joint <- joint_expectation(master, period = c(1L, 2L))
   expect_true(all(joint$class == "rotating"))
   expect_true(all(joint$activation == "permanent"))
-  expect_true(all(joint$prob_1 == 1))
-  expect_true(all(joint$prob_2 == 1))
+  expect_true(all(joint$prob_t == 1))
+  expect_true(all(joint$prob_u == 1))
 })
 
 ## Where the policy does and does not apply

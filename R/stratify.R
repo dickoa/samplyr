@@ -66,8 +66,8 @@
 #' clustered stage can allocate its PSUs in proportion to the households they
 #' hold. This gives the same sizes as power allocation with every
 #' \eqn{C_h = 1} and \eqn{q = 1}. A two-stage plan allocated on the ultimate
-#' units, from [svyplan::n_alloc()] with a cluster model, is passed to
-#' [draw()] directly.
+#' units, from [svyplan::n_alloc()] or [svyplan::n_alloc_joint()] with a
+#' cluster model, is passed to [draw()] directly.
 #'
 #' ## Neyman allocation
 #' Minimizes variance for a fixed sample size. Each stratum receives

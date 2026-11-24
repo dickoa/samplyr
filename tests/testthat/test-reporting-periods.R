@@ -623,15 +623,15 @@ test_that("a joint expectation names its two occasions as pairs", {
   master <- period_master(n = 12, seed = 1)
   across <- joint_expectation(master, period = c(1, 2), subround = c(2, 1))
 
-  expect_identical(unique(across$period_1), 1L)
-  expect_identical(unique(across$subround_1), 2L)
-  expect_identical(unique(across$period_2), 2L)
-  expect_identical(unique(across$subround_2), 1L)
+  expect_identical(unique(across$period_t), 1L)
+  expect_identical(unique(across$subround_t), 2L)
+  expect_identical(unique(across$period_u), 2L)
+  expect_identical(unique(across$subround_u), 1L)
   # Each panel keeps its month, so no panel is active at both occasions.
-  expect_identical(unique(across$take_both), 0L)
+  expect_identical(unique(across$shared), 0L)
 
   within <- joint_expectation(master, period = 1, subround = c(2, 2))
-  expect_identical(within$take_1, within$take_both)
+  expect_identical(within$take_t, within$shared)
 
   expect_error(
     joint_expectation(master, period = c(1, 2)),

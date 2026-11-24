@@ -609,13 +609,13 @@ signal_singleton_strata <- function(frame, strata_vars, sample, draw_spec,
   n_certain <- tabulate(sample_pool[certain], length(pool_keys))
   n_drawn <- tabulate(sample_pool[!certain], length(pool_keys))
   single <- n_drawn == 1L & population - n_certain > 1L
-  pair <- if (".pair" %in% names(sample)) sample$.pair
-  if (draws_one_per_zone(draw_spec) && !is_null(pair)) {
+  group <- if (".variance_group" %in% names(sample)) sample$.variance_group
+  if (draws_one_per_zone(draw_spec) && !is_null(group)) {
     # One PSU per zone: the variance groups fixed before selection, which
     # may cross strata, are what needs two selections.
-    drawn <- !certain & !is.na(pair)
-    per_group <- tabulate(pair[drawn], max(c(0L, pair[drawn])))
-    alone <- drawn & per_group[pair] == 1L
+    drawn <- !certain & !is.na(group)
+    per_group <- tabulate(group[drawn], max(c(0L, group[drawn])))
+    alone <- drawn & per_group[group] == 1L
     single <- tabulate(sample_pool[alone], length(pool_keys)) > 0L
   }
   if (!any(single)) {
@@ -1477,7 +1477,7 @@ resolve_stratum_draw_spec <- function(
       stratum_draw_spec$certainty_zones <- list(
         psu_id = reg$psu_id[zoned],
         zone = reg$zone[zoned],
-        pair = reg$pair[zoned]
+        variance_group = reg$variance_group[zoned]
       )
     }
   }
@@ -2112,8 +2112,8 @@ draw_sample_pps_certainty <- function(
   }
   result <- dplyr::bind_rows(certainty_result, prob_result)
   zones <- draw_spec$certainty_zones
-  if (!is_null(zones$pair) && ".zone" %in% names(result)) {
-    result$.pair <- zones$pair[match(result$.zone, zones$zone)]
+  if (!is_null(zones$variance_group) && ".zone" %in% names(result)) {
+    result$.variance_group <- zones$variance_group[match(result$.zone, zones$zone)]
   }
   list(sample = result, trace = trace)
 }

@@ -20,10 +20,90 @@ test_that("a rotating panel plan keeps entrant and in-sample counts distinct", {
   expect_gt(ceiling(plan$n_in_sample), ceiling(plan$n_entrants))
   expect_equal(as.integer(plan), ceiling(plan$n_entrants))
 
-  expect_error(
+  err <- expect_error(
     sampling_design() |> draw(n = plan),
-    "must be numeric or a data frame"
+    "must be numeric or a data frame",
+    class = "samplyr_error_alloc_invalid_input_type"
   )
+  msg <- gsub("\\s+", " ", cli::ansi_strip(conditionMessage(err)))
+  expect_match(msg, "operational_issue", fixed = TRUE)
+  expect_match(msg, "schedule$selections", fixed = TRUE)
+  expect_no_match(msg, "n_cohorts", fixed = TRUE)
+})
+
+test_that("the count the refusal points to is the one the program accepts", {
+  units <- data.frame(id = sprintf("S%04d", 1:2000))
+  program_of <- function(selection, n, schedule) {
+    sample <- execute(sampling_design() |> draw(n = n), units, seed = 31,
+                      panels = schedule)
+    rotation_program(stats::setNames(list(sample), selection),
+                     schedule = schedule, through = 1)
+  }
+  reached <- character(0)
+  # A rotation with a gap issues cohorts out of sample at an immediate
+  # start, and a gradual start opens one cohort only, so neither startup
+  # is the in-sample cohorts times the intake.
+  for (start in c("gradual", "immediate")) {
+    plan <- svyplan::n_panel(
+      svyplan::n_prop(p = 0.5, moe = 0.25),
+      retention = c(0.90, 0.95, 0.95), resp_rate = 0.80,
+      design = "rotating", start = start, rotation = "2-2-2"
+    )
+    schedule <- svyplan::design_schedule(
+      plan, horizon = 6, horizon_policy = "continuing",
+      refreshment = "entrant_register", rounding = "ceiling"
+    )
+    issue <- with(schedule$selections, setNames(operational_issue, selection))
+    expect_false(issue[["startup"]] == plan$n_cohorts * ceiling(plan$n_entrants))
+    expect_s3_class(program_of("startup", issue[["startup"]], schedule),
+                    "rotation_program")
+    expect_error(
+      program_of("startup", plan$n_cohorts * ceiling(plan$n_entrants), schedule),
+      class = "samplyr_error_program_plan_count"
+    )
+    reached <- c(reached, start)
+  }
+  # A later intake takes its own entry, not the startup's.
+  expect_false(issue[["period_2"]] == issue[["startup"]])
+  # A clustered schedule with subrounds counts PSUs, rounded per panel.
+  clustered <- svyplan::design_schedule(
+    svyplan::n_panel(
+      svyplan::n_prop(p = 0.5, moe = 0.1), retention = c(0.9, 0.9, 0.9),
+      resp_rate = 0.8, design = "rotating", start = "immediate",
+      rotation = "2-2-2"
+    ),
+    horizon = 8, horizon_policy = "continuing",
+    refreshment = "entrant_register", rounding = "ceiling", take = 10,
+    subrounds = 2
+  )
+  first <- clustered$selections[1, ]
+  expect_identical(as.integer(first$operational_issue),
+                   as.integer(first$panels * first$panel_issue))
+  reached <- c(reached, "clustered")
+  expect_setequal(reached, c("gradual", "immediate", "clustered"))
+})
+
+test_that("a fixed panel plan is refused with the count to pass instead", {
+  plan <- svyplan::n_panel(
+    svyplan::n_prop(p = 0.5, moe = 0.25),
+    retention = c(0.90, 0.95, 0.95),
+    resp_rate = 0.80
+  )
+  err <- expect_error(
+    sampling_design() |> draw(n = plan),
+    class = "samplyr_error_alloc_invalid_input_type"
+  )
+  expect_match(cli::ansi_strip(conditionMessage(err)),
+               "ceiling(plan$n_issued)", fixed = TRUE)
+  expect_no_error(sampling_design() |> draw(n = ceiling(plan$n_issued)))
+
+  # An assessment sizes nothing, so it gets no count to pass.
+  assessed <- svyplan::prec_panel(plan)
+  err <- expect_error(
+    sampling_design() |> draw(n = assessed),
+    class = "samplyr_error_alloc_invalid_input_type"
+  )
+  expect_no_match(cli::ansi_strip(conditionMessage(err)), "Pass", fixed = TRUE)
 })
 
 test_that("panel planning counts hand off to a program of several selections", {

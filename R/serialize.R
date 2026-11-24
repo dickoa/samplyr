@@ -135,7 +135,7 @@ as.list.sampling_design <- function(x, ...) {
 
 design_format_id <- "samplyr/design"
 # Every file declares the current version. Earlier versions were never released.
-design_format_version <- 3L
+design_format_version <- 4L
 method_vocabulary_id <- "samplyr/common-sampling-method"
 method_vocabulary_version <- 2L
 
@@ -161,7 +161,13 @@ shared_sample_format_version <- 1L
 #' settings, including per-stratum vectors and data frames), never the frame
 #' data itself. A certainty plan from svyplan is the exception: its PSU
 #' register (identifiers, strata, sizes and certainty flags) is part of the
-#' design and is written with it.
+#' design and is written with it. JSON reads numbers back as doubles, which
+#' hold every integer from -2^53 to 2^53 exactly, so a register of 64-bit
+#' integer identifiers (bit64) is written only within that range. Beyond it
+#' an identifier can read back as its neighbor, and the register is refused
+#' (`samplyr_error_serialize_unsupported`). Give such identifiers as
+#' character labels, or keep the design with [saveRDS()], which preserves
+#' their type.
 #'
 #' A file written from an executed sample can also contain its frame digest.
 #' That digest retains selected-unit identifiers and may contain per-unit
@@ -269,7 +275,7 @@ shared_sample_format_version <- 1L
 #' malformed structures and contradictory method descriptors are refused, and
 #' so is a nonempty `required_extensions` array at any level, since no
 #' executable extensions are currently supported. The reader accepts design
-#' format version 3 and version 1 of the frame-stack and shared-sample
+#' format version 4 and version 1 of the frame-stack and shared-sample
 #' formats. An optional `execution.frame_digest` is exempt and keeps its own
 #' version check and warn-and-drop policy. Frame-dependent checks run in
 #' [validate_frame()] and [execute()]. Validation errors name
@@ -2077,19 +2083,47 @@ encode_stage <- function(stage) {
   out
 }
 
-#' Encode a certainty-plan bridge spec (design format 3)
+#' Encode a certainty-plan bridge spec (design format 4)
 #'
 #' Plain data throughout: the register as row objects, the per-stratum
-#' vectors as JSON objects. `n_per_psu` may hold NA (a plan whose recorded
-#' frame lacked the take), which the writer turns into null and the decoder
-#' restores.
+#' vectors as JSON objects. `take_2`, the plan's nominal take below the
+#' PSUs, may hold NA (a plan that records no take), which the writer turns
+#' into null and the decoder restores. JSON reads a number back as a
+#' double, which holds every integer from -2^53 to 2^53 exactly, so a
+#' register of 64-bit integer ids outside that range is refused, since an
+#' id there can read back as its neighbor.
 #' @noRd
 encode_certainty_plan <- function(spec) {
+  ids <- spec$register$psu_id
+  if (inherits(ids, "integer64")) {
+    limit <- vctrs::vec_cast(2^53, ids[0])
+    beyond <- !is.na(ids) & (ids > limit | ids < -limit)
+    if (any(beyond)) {
+      n_beyond <- sum(beyond)
+      abort_samplyr(
+        c(
+          "A design file holds 64-bit integer PSU ids only from -2^53 to
+           2^53.",
+          "x" = "The certainty plan's register holds {n_beyond}
+                 id{?s} outside that range, such as
+                 {.val {shown_values(ids[beyond], 2)}}.",
+          "i" = "JSON reads numbers back as doubles, which hold every integer
+                 within that range exactly. Beyond it an id can read back as
+                 its neighbor.",
+          "i" = "Give the ids as character labels, in the plan's register
+                 and in the frames, or keep the design with
+                 {.fn saveRDS}, which preserves their type."
+        ),
+        class = "samplyr_error_serialize_unsupported",
+        call = NULL
+      )
+    }
+  }
   out <- list(
     role = spec$role,
     register = spec$register,
     n_psu_draw = as.list(spec$n_psu_draw),
-    n_per_psu = as.list(spec$n_per_psu),
+    take_2 = as.list(spec$take_2),
     strata_var = spec$strata_var,
     id_var = spec$id_var,
     svyplan_version = spec$svyplan_version
@@ -3664,7 +3698,7 @@ decode_value <- function(x) {
   unlist(x)
 }
 
-#' Decode a certainty-plan bridge spec (design format 3)
+#' Decode a certainty-plan bridge spec (design format 4)
 #'
 #' Shape checks only: the execute-time gates are the validators for what the
 #' spec means against a frame, and they run for deserialized designs too.
@@ -3701,15 +3735,15 @@ decode_certainty_plan <- function(x, call = caller_env()) {
   }
 
   register <- decode_value(x$register)
-  needed <- c("psu_id", "stratum", "N", "certainty", "n_take")
+  needed <- c("psu_id", "stratum", "N", "certainty", "take_2")
   if (!is.data.frame(register) || !all(needed %in% names(register)) ||
         nrow(register) == 0) {
-    malformed("the register must have psu_id, stratum, N, certainty, n_take")
+    malformed("the register must have psu_id, stratum, N, certainty, take_2")
   }
   zoned <- "zone" %in% names(register)
-  paired <- "pair" %in% names(register)
+  paired <- "variance_group" %in% names(register)
   register <- as.data.frame(
-    register[, c(needed, if (zoned) "zone", if (paired) "pair")],
+    register[, c(needed, if (zoned) "zone", if (paired) "variance_group")],
     stringsAsFactors = FALSE
   )
   register$stratum <- as.character(register$stratum)
@@ -3726,12 +3760,15 @@ decode_certainty_plan <- function(x, call = caller_env()) {
     malformed("register sizes must be positive and finite")
   }
   if (
-    !is.numeric(register$n_take) || anyNA(register$n_take) ||
-      any(!is.finite(register$n_take)) || any(register$n_take < 1) ||
-      any(register$n_take != floor(register$n_take))
+    !is.numeric(register$take_2) || anyNA(register$take_2) ||
+      any(!is.finite(register$take_2)) || any(register$take_2 < 1) ||
+      any(register$take_2 != floor(register$take_2))
   ) {
     malformed("register takes must be positive whole numbers")
   }
+  # Stored as the plan's normalized register stores them, whole or not.
+  register$N <- as.numeric(register$N)
+  register$take_2 <- as.numeric(register$take_2)
 
   decode_named_counts <- function(v, what, allow_na = FALSE) {
     if (!is.list(v) || is_null(names(v)) || !all(nzchar(names(v)))) {
@@ -3753,7 +3790,7 @@ decode_certainty_plan <- function(x, call = caller_env()) {
     out
   }
   n_psu_draw <- decode_named_counts(x$n_psu_draw, "n_psu_draw")
-  n_per_psu <- decode_named_counts(x$n_per_psu, "n_per_psu", allow_na = TRUE)
+  take_2 <- decode_named_counts(x$take_2, "take_2", allow_na = TRUE)
 
   zone_m <- x$n_psu_per_zone
   if (zoned != !is_null(zone_m)) {
@@ -3776,18 +3813,22 @@ decode_certainty_plan <- function(x, call = caller_env()) {
     malformed("variance groups are recorded exactly for a plan drawing one PSU per zone")
   }
   if (paired) {
-    pair <- register$pair
-    if (!is.numeric(pair) || any(!is.na(pair) & (pair < 1 | pair != floor(pair)))) {
+    group <- register$variance_group
+    # A plan whose PSUs are all certain has no zones, so every group is null.
+    if (all(is.na(group))) {
+      group <- as.integer(group)
+    }
+    if (!is.numeric(group) || any(!is.na(group) & (group < 1 | group != floor(group)))) {
       malformed("register variance groups must be positive whole numbers or null")
     }
-    register$pair <- as.integer(pair)
+    register$variance_group <- as.integer(group)
   }
 
   out <- list(
     role = role,
     register = register,
     n_psu_draw = n_psu_draw,
-    n_per_psu = n_per_psu,
+    take_2 = take_2,
     strata_var = strata_var,
     id_var = id_var,
     svyplan_version = decode_chr(x$svyplan_version)

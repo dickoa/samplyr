@@ -66,14 +66,15 @@ no certainty.
 2, ... for the reserve units in the order they are released. The
 stage's \code{.weight_k} is then the inverse of the whole list's chance.
 \item \code{.zone_1}: The zone a PSU was drawn from, when stage 1 fields a
-certainty plan solved with \code{svyplan::n_alloc(n_psu_per_zone = )}.
+certainty plan solved with \code{svyplan::n_alloc_joint(n_psu_per_zone = )}.
 Zones are numbered within each stratum, one or two PSUs are drawn
 from each, and certainty PSUs have \code{NA}. With two per zone the survey
 export uses stratum by zone as the variance strata.
-\item \code{.pair_1}: The variance group of the PSU's zone, when the plan draws
-one PSU per zone. svyplan fixes the groups before selection, two or
-three zones each, numbered across strata, and certainty PSUs have
-\code{NA}. The survey export uses the groups as the variance strata.
+\item \code{.variance_group_1}: The variance group of the PSU's zone, when the
+plan draws one PSU per zone. svyplan fixes the groups before
+selection, two or three zones each, numbered across strata, and
+certainty PSUs have \code{NA}. The survey export uses the groups as the
+variance strata.
 \item \code{.phase1_row}: In a sample drawn from an earlier phase's sample, the
 position of the earlier-phase row each row came from, which
 \code{\link[=as_svydesign]{as_svydesign()}} joins the phases on. A third phase numbers the rows

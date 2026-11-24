@@ -37,11 +37,13 @@ schema_wrappers <- function() {
   )
 }
 
-# Written by format 3 and kept verbatim, so it reads as an old file does.
-frozen_v3_document <- function() {
+# Written by format 3, then moved to format 4 by renaming `n_per_psu` to
+# `take_2`, and kept verbatim otherwise, so it reads as a file the writer
+# did not produce.
+frozen_v4_document <- function() {
   r"---({
   "format": "samplyr/design",
-  "format_version": 3,
+  "format_version": 4,
   "schema": {
     "method_vocabulary": {
       "id": "samplyr/common-sampling-method",
@@ -96,119 +98,119 @@ frozen_v3_document <- function() {
                 "stratum": "A",
                 "N": 600,
                 "certainty": true,
-                "n_take": 26
+                "take_2": 26
               },
               {
                 "psu_id": "A02",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "A03",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "A04",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "A05",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "A06",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "A07",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "A08",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B01",
                 "stratum": "B",
                 "N": 450,
                 "certainty": true,
-                "n_take": 19
+                "take_2": 19
               },
               {
                 "psu_id": "B02",
                 "stratum": "B",
                 "N": 220,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B03",
                 "stratum": "B",
                 "N": 165,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B04",
                 "stratum": "B",
                 "N": 153,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B05",
                 "stratum": "B",
                 "N": 153,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B06",
                 "stratum": "B",
                 "N": 153,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B07",
                 "stratum": "B",
                 "N": 153,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B08",
                 "stratum": "B",
                 "N": 153,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               }
             ],
             "n_psu_draw": {
               "A": 6,
               "B": 5
             },
-            "n_per_psu": {
+            "take_2": {
               "A": 10,
               "B": 10
             },
@@ -249,119 +251,119 @@ frozen_v3_document <- function() {
                 "stratum": "A",
                 "N": 600,
                 "certainty": true,
-                "n_take": 26
+                "take_2": 26
               },
               {
                 "psu_id": "A02",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "A03",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "A04",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "A05",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "A06",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "A07",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "A08",
                 "stratum": "A",
                 "N": 200,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B01",
                 "stratum": "B",
                 "N": 450,
                 "certainty": true,
-                "n_take": 19
+                "take_2": 19
               },
               {
                 "psu_id": "B02",
                 "stratum": "B",
                 "N": 220,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B03",
                 "stratum": "B",
                 "N": 165,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B04",
                 "stratum": "B",
                 "N": 153,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B05",
                 "stratum": "B",
                 "N": 153,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B06",
                 "stratum": "B",
                 "N": 153,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B07",
                 "stratum": "B",
                 "N": 153,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               },
               {
                 "psu_id": "B08",
                 "stratum": "B",
                 "N": 153,
                 "certainty": false,
-                "n_take": 10
+                "take_2": 10
               }
             ],
             "n_psu_draw": {
               "A": 6,
               "B": 5
             },
-            "n_per_psu": {
+            "take_2": {
               "A": 10,
               "B": 10
             },
@@ -397,17 +399,17 @@ frozen_v3_document <- function() {
 )---"
 }
 
-test_that("the frozen version 3 document remains executable", {
-  s <- execute(read_design(frozen_v3_document()), certainty_element_frame(),
+test_that("the frozen version 4 document remains executable", {
+  s <- execute(read_design(frozen_v4_document()), certainty_element_frame(),
                seed = 12)
   # The document carries its own classification, which a plan refitted
   # by a later svyplan need not repeat.
-  stored <- read_design(frozen_v3_document())$stages[[1]]$draw_spec$
+  stored <- read_design(frozen_v4_document())$stages[[1]]$draw_spec$
     certainty_plan$register
   expect_setequal(unique(s$psu_id[s$.certainty_1]),
                   stored$psu_id[stored$certainty])
   # The document predates on_capped, so it keeps the take-all policy.
-  restored <- read_design(frozen_v3_document())
+  restored <- read_design(frozen_v4_document())
   expect_true(all(vapply(
     restored$stages,
     function(stage) identical(stage$draw_spec$on_capped, "warn"),
@@ -416,7 +418,7 @@ test_that("the frozen version 3 document remains executable", {
 })
 
 test_that("unreleased design format versions are refused", {
-  for (version in c(1L, 2L)) {
+  for (version in c(1L, 2L, 3L)) {
     p <- schema_document()
     p$format_version <- version
     expect_error(read_design(schema_json(p)),

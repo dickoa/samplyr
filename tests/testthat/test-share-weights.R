@@ -626,7 +626,7 @@ test_that("a marker may be namespace qualified", {
 
   # Another package's call of the same name is not this marker.
   expect_error(
-    share(quote(otherpkg::complete_links())),
+    share(str2lang("otherpkg::complete_links()")),
     class = "samplyr_error_share_weights_multiplicity"
   )
 })

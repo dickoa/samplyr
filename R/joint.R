@@ -232,21 +232,21 @@
 #' A scheduled master assigned every unit to a panel at its draw and froze
 #' the block-by-panel quotas, so how two occasions of the rotation overlap
 #' is already determined. `joint_expectation(master, period = , subround =
-#' )` for occasions `t` and `s`
-#' reads it from the record, with neither the frame nor a simulation.
+#' )` reads it from the record for two occasions, `t` first and `u` second,
+#' with neither the frame nor a simulation.
 #'
 #' Conditional on the frozen quotas, the panels inside a block of `m`
 #' assignment units are an arrangement of that block's labels. Writing
-#' \eqn{a_t}{a_t} and \eqn{a_s}{a_s} for the units the panels active at each
-#' occasion take from the block, and \eqn{a_\cap}{a_and} for those active at both:
+#' \eqn{a_t}{a_t} and \eqn{a_u}{a_u} for the units the panels active at each
+#' occasion take from the block, and \eqn{a_{tu}}{a_tu} for those active at both:
 #'
 #' \deqn{P(i \in W_t) = a_t / m}{P(i in W_t) = a_t / m}
-#' \deqn{P(i \in W_t, i \in W_s) = a_\cap / m}{P(i in W_t and W_s) = a_and / m}
-#' \deqn{P(i \in W_t, j \in W_s) = \frac{a_t a_s - a_\cap}{m (m - 1)}}{P(i in W_t, j in W_s) = (a_t a_s - a_and) / (m (m - 1))}
+#' \deqn{P(i \in W_t, i \in W_u) = a_{tu} / m}{P(i in W_t and W_u) = a_tu / m}
+#' \deqn{P(i \in W_t, j \in W_u) = \frac{a_t a_u - a_{tu}}{m (m - 1)}}{P(i in W_t, j in W_u) = (a_t a_u - a_tu) / (m (m - 1))}
 #'
 #' for units \eqn{i \neq j}{i != j} of one block, and the product of the
 #' marginals for units of different blocks, whose arrangements are drawn
-#' independently. The within-occasion case is the third expression at `t == s`.
+#' independently. The within-occasion case is the third expression at `t == u`.
 #'
 #' The result has one row per block and stays small at any sample size,
 #' yet every entry of the full matrix is recoverable from it, since within
@@ -256,13 +256,15 @@
 #' the covariance is zero.
 #'
 #' `pool`, `stratum`, `class` and `block` identify the block, and
-#' `period_1`, `subround_1`, `period_2` and `subround_2` the two occasions.
-#' `units` is
-#' \eqn{m}{m}. `take_1`, `take_2` and `take_both` are the three takes.
-#' `prob_1` and `prob_2` are the marginals. `joint_same` and `joint_distinct`
-#' are the two joint expectations. `has_pair` is `FALSE` for a block of one
-#' unit, where no distinct pair exists and `joint_distinct` is `NA` rather
-#' than zero.
+#' `period_t`, `subround_t`, `period_u` and `subround_u` the two occasions,
+#' in the order given. `units` is \eqn{m}{m}. `take_t` and `take_u` are
+#' \eqn{a_t}{a_t} and \eqn{a_u}{a_u}, and `shared` is \eqn{a_{tu}}{a_tu}.
+#' `prob_t` and `prob_u` are the marginals. `joint_same` and `joint_distinct`
+#' are the two joint expectations, the conditional counterparts of what
+#' \enc{Tillé}{Tille} (2020, sec. 8.2.2) calls the longitudinal and the
+#' joint longitudinal inclusion probabilities. `has_pair` is `FALSE` for a
+#' block of one unit, where no distinct pair exists and `joint_distinct` is
+#' `NA` rather than zero.
 #'
 #' Quotas are frequently unequal, because a pool that is not a multiple of
 #' the block size gives one block an extra unit, so they are read from the
@@ -350,6 +352,10 @@
 #' Brewer, K.R.W. (2002). \emph{Combined Survey Sampling Inference: Weighing
 #' Basu's Elephants}. Arnold, ch. 9.
 #'
+#' Occasions of a repeated survey:
+#' \enc{Tillé}{Tille}, Y. (2020). \emph{Sampling and Estimation from Finite
+#' Populations}. Wiley, sec. 8.2.
+#'
 #' The variance estimator these underlie:
 #' Berger, Y.G. (2004). A simple variance estimator for unequal probability
 #' sampling without replacement. \emph{Journal of Applied Statistics},
@@ -360,11 +366,19 @@
 #'
 #' @family diagnostics
 #' @export
-joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
-                              period = NULL, subround = NULL,
-                              nsim = 10000L, seed = 1L) {
+joint_expectation <- function(
+  x,
+  frame = NULL,
+  ...,
+  stages = NULL,
+  period = NULL,
+  subround = NULL,
+  nsim = 10000L,
+  seed = 1L
+) {
   check_keyword_args(
-    enquos(...), c("stages", "period", "subround", "nsim", "seed")
+    enquos(...),
+    c("stages", "period", "subround", "nsim", "seed")
   )
   if (!inherits(x, "tbl_sample")) {
     cli_abort(
@@ -395,7 +409,8 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
       seed_supplied = !missing(seed)
     )
     return(activation_joint_expectation(
-      x, list(period = period, subround = subround)
+      x,
+      list(period = period, subround = subround)
     ))
   }
 
@@ -526,21 +541,28 @@ joint_expectation <- function(x, frame = NULL, ..., stages = NULL,
 
       # `[<-` with list() keeps a NULL result, which `[[<-` would delete.
       stage_rows <- stage_unit_rows(rows, stage_idx)
-      result[stage_idx] <- list(drop_joint_first_moments(if (is_null(frame)) {
-        compute_stage_jip_digest(
-          digest, design, stage_idx, x, nsim, rows = stage_rows
-        )
-      } else {
-        compute_stage_jip(
-          x,
-          frames[[match(stage_idx, stages_executed)]],
-          design,
-          stage_idx,
-          stages_executed,
-          nsim,
-          rows = stage_rows
-        )
-      }))
+      result[stage_idx] <- list(drop_joint_first_moments(
+        if (is_null(frame)) {
+          compute_stage_jip_digest(
+            digest,
+            design,
+            stage_idx,
+            x,
+            nsim,
+            rows = stage_rows
+          )
+        } else {
+          compute_stage_jip(
+            x,
+            frames[[match(stage_idx, stages_executed)]],
+            design,
+            stage_idx,
+            stages_executed,
+            nsim,
+            rows = stage_rows
+          )
+        }
+      ))
     }
     result
   })
@@ -603,7 +625,8 @@ stage_has_joint_matrix <- function(draw_spec) {
 #' know how they use the order.
 #' @noRd
 joint_order_dependent <- function(draw_spec) {
-  draw_spec$method %in% c(systematic_methods, "pps_chromy") ||
+  draw_spec$method %in%
+    c(systematic_methods, "pps_chromy") ||
     !is_null(draw_spec$method_type)
 }
 
@@ -622,8 +645,14 @@ joint_order_dependent <- function(draw_spec) {
 #' neither record can confirm. Without a digest there is nothing to compare
 #' against, which is said and not refused.
 #' @noRd
-check_joint_frame <- function(x, frames, design, stages_executed,
-                              stages_requested, call = caller_env()) {
+check_joint_frame <- function(
+  x,
+  frames,
+  design,
+  stages_executed,
+  stages_requested,
+  call = caller_env()
+) {
   digest <- get_frame_digest(x)
   if (is_null(digest)) {
     cli_warn(
@@ -666,7 +695,11 @@ check_joint_frame <- function(x, frames, design, stages_executed,
         )
     ) {
       problem <- joint_frame_difference(
-        digest, design, frame, ref, stages
+        digest,
+        design,
+        frame,
+        ref,
+        stages
       )
     }
     if (!is_null(problem)) {
@@ -711,9 +744,12 @@ joint_frame_difference <- function(digest, design, frame, ref, stages) {
     ))
   }
   # Only a stage given a matrix depends on the row order here.
-  stages <- Filter(function(i) {
-    stage_has_joint_matrix(design$stages[[i]]$draw_spec)
-  }, stages)
+  stages <- Filter(
+    function(i) {
+      stage_has_joint_matrix(design$stages[[i]]$draw_spec)
+    },
+    stages
+  )
   ordered <- vapply(
     stages,
     function(i) joint_order_dependent(design$stages[[i]]$draw_spec),
@@ -738,8 +774,12 @@ joint_frame_difference <- function(digest, design, frame, ref, stages) {
 #' population an upper stage selected from, and would otherwise produce a
 #' plausible matrix computed from the wrong pool.
 #' @noRd
-normalize_joint_frames <- function(x, frame, stages_executed,
-                                   call = caller_env()) {
+normalize_joint_frames <- function(
+  x,
+  frame,
+  stages_executed,
+  call = caller_env()
+) {
   record <- get_frame_schedule(x)
   n_stages <- length(stages_executed)
 
@@ -849,9 +889,7 @@ compute_stage_jip_digest <- function(
 
   # Rank occurrences by current sample row, ancestry key, or trace order.
   sel$.rank <- seq_len(nrow(sel))
-  if (
-    identical(st$unit_level, "element") && "sample_row" %in% names(sel)
-  ) {
+  if (identical(st$unit_level, "element") && "sample_row" %in% names(sel)) {
     sample_ids <- rows[[".sample_id"]]
     if (!is_null(sample_ids) && length(sample_ids) > 0L && !anyNA(sample_ids)) {
       if ("replicate" %in% names(sel) && ".replicate" %in% names(x)) {
@@ -871,7 +909,9 @@ compute_stage_jip_digest <- function(
     ))
     if (all(key_vars %in% names(sample_df))) {
       sample_keys <- digest_path_keys(
-        sample_df, seq_len(nrow(sample_df)), key_vars
+        sample_df,
+        seq_len(nrow(sample_df)),
+        key_vars
       )
       prior_stage_ids <- if (stage_idx > 1L) {
         seq_len(stage_idx - 1L)
@@ -884,7 +924,8 @@ compute_stage_jip_digest <- function(
         logical(1)
       )]
       prior_draw_cols <- intersect(
-        paste0(".draw_", wr_ancestor_ids), names(sample_df)
+        paste0(".draw_", wr_ancestor_ids),
+        names(sample_df)
       )
       block_vars <- unique(c(ancestor_vars, prior_draw_cols, st$strata))
       sample_groups <- if (length(block_vars) > 0) {
@@ -930,7 +971,8 @@ compute_stage_jip_digest <- function(
           candidates <- candidates[
             as.character(sample_df[[stratum]][
               group_first_rows[candidates]
-            ]) == as.character(pools[[stratum]][[pool_pos]])
+            ]) ==
+              as.character(pools[[stratum]][[pool_pos]])
           ]
         }
         unused <- candidates[available_groups[candidates]]
@@ -978,9 +1020,13 @@ compute_stage_jip_digest <- function(
   units_by_pool <- if (identical(st$storage, "units")) {
     split(seq_len(nrow(st$units)), st$units$pool_id)
   }
-  pool_min_rank <- vapply(sel_pools, function(pid) {
-    min(sel$.rank[sel_by_pool[[as.character(pid)]]])
-  }, numeric(1))
+  pool_min_rank <- vapply(
+    sel_pools,
+    function(pid) {
+      min(sel$.rank[sel_by_pool[[as.character(pid)]]])
+    },
+    numeric(1)
+  )
   block_order <- order(pool_min_rank)
 
   blocks <- lapply(sel_pools[block_order], function(pid) {
@@ -988,8 +1034,11 @@ compute_stage_jip_digest <- function(
     in_pool <- sel[sel_by_pool[[as.character(pid)]], , drop = FALSE]
     in_pool <- in_pool[order(in_pool$.rank), , drop = FALSE]
     if (identical(st$storage, "units")) {
-      u <- st$units[units_by_pool[[as.character(pid)]] %||% integer(0), ,
-                    drop = FALSE]
+      u <- st$units[
+        units_by_pool[[as.character(pid)]] %||% integer(0),
+        ,
+        drop = FALSE
+      ]
       u <- u[order(u$unit_order), , drop = FALSE]
       pik <- u$chance
       certain <- u$is_certainty
@@ -1001,15 +1050,18 @@ compute_stage_jip_digest <- function(
       sampled_idx <- in_pool$unit_id
     }
     # Repeated hits of a unit share one row, at its first hit.
-    with_joint_rank(compute_jip_from_pik(
-      pik = pik,
-      method = draw_spec$method,
-      sampled_idx = sampled_idx,
-      n = if (is.na(p$n_target)) NULL else as.integer(p$n_target),
-      draw_spec = draw_spec,
-      nsim = nsim,
-      certain = certain
-    ), in_pool$.rank[!duplicated(sampled_idx)])
+    with_joint_rank(
+      compute_jip_from_pik(
+        pik = pik,
+        method = draw_spec$method,
+        sampled_idx = sampled_idx,
+        n = if (is.na(p$n_target)) NULL else as.integer(p$n_target),
+        draw_spec = draw_spec,
+        nsim = nsim,
+        certain = certain
+      ),
+      in_pool$.rank[!duplicated(sampled_idx)]
+    )
   })
 
   order_by_joint_rank(assemble_block_diagonal(blocks))
@@ -1044,9 +1096,13 @@ compute_stage_jip <- function(
   # design's columns and samplyr's own are guarded by the integrity checks.
   changed <- sample_changed_columns(x) %||% character(0)
   changed <- changed[!is_samplyr_column(changed)]
-  changed <- setdiff(changed, unlist(lapply(
-    design$stages, function(s) unname(stage_required_vars(s))
-  )))
+  changed <- setdiff(
+    changed,
+    unlist(lapply(
+      design$stages,
+      function(s) unname(stage_required_vars(s))
+    ))
+  )
   sample_df <- sample_df[setdiff(names(sample_df), changed)]
 
   ancestor_vars <- collect_ancestor_cluster_vars(design, stage_idx)
@@ -1070,7 +1126,9 @@ compute_stage_jip <- function(
     cluster_vars <- cluster_spec$vars
     frame_dedup_vars <- unique(c(ancestor_vars, cluster_vars))
     frame_keep <- unique(c(
-      frame_dedup_vars, strata_vars, draw_spec$mos,
+      frame_dedup_vars,
+      strata_vars,
+      draw_spec$mos,
       extract_control_vars(draw_spec$control)
     ))
     effective_frame <- effective_frame |>
@@ -1090,7 +1148,8 @@ compute_stage_jip <- function(
 
   # Later stages condition independently on each parent occurrence.
   ancestor_split <- intersect(
-    ancestor_vars, intersect(names(effective_frame), names(sample_df))
+    ancestor_vars,
+    intersect(names(effective_frame), names(sample_df))
   )
   occurrence_split <- unique(c(ancestor_split, prior_draw_cols))
   if (length(occurrence_split) > 0) {
@@ -1102,7 +1161,8 @@ compute_stage_jip <- function(
     if (length(ancestor_split) > 0) {
       frame_groups <- split_row_indices(effective_frame, ancestor_split)
       occurrence_parent_keys <- make_group_key(
-        sample_df[first_rows, , drop = FALSE], ancestor_split
+        sample_df[first_rows, , drop = FALSE],
+        ancestor_split
       )
       frame_group_pos <- match(occurrence_parent_keys, frame_groups$keys)
       if (anyNA(frame_group_pos)) {
@@ -1117,7 +1177,9 @@ compute_stage_jip <- function(
     blocks <- lapply(seq_along(occurrences$indices), function(i) {
       occurrence_frame <- if (length(ancestor_split) > 0) {
         effective_frame[
-          frame_groups$indices[[frame_group_pos[[i]]]], , drop = FALSE
+          frame_groups$indices[[frame_group_pos[[i]]]],
+          ,
+          drop = FALSE
         ]
       } else {
         effective_frame
@@ -1288,7 +1350,8 @@ resolve_unstratified_n <- function(frame, draw_spec) {
     } else {
       as.integer(draw_spec$n)
     }
-    is_wr <- draw_spec$method %in% pps_wr_methods ||
+    is_wr <- draw_spec$method %in%
+      pps_wr_methods ||
       identical(draw_spec$method_type, "wr")
     return(if (is_wr) n_val else min(n_val, N))
   }
@@ -1300,8 +1363,9 @@ resolve_unstratified_n <- function(frame, draw_spec) {
     }
   }
 
-  cli_abort("Cannot determine target sample size for unstratified stage.",
-            call = NULL,
+  cli_abort(
+    "Cannot determine target sample size for unstratified stage.",
+    call = NULL,
     class = "samplyr_error_internal"
   )
 }
@@ -1333,8 +1397,12 @@ prepare_stage_frame <- function(
   }
 
   link_stage_frame(
-    frame, as.data.frame(x), design, stage_idx,
-    frame_index = pos, call = NULL
+    frame,
+    as.data.frame(x),
+    design,
+    stage_idx,
+    frame_index = pos,
+    call = NULL
   )$frame
 }
 
@@ -1370,13 +1438,16 @@ compute_group_jip <- function(
     return(NULL)
   }
 
-  with_joint_rank(compute_joint_matrix(
-    frame = group_frame,
-    n = n_target,
-    draw_spec = draw_spec,
-    sampled_idx = as.vector(sampled_idx),
-    nsim = nsim
-  ), attr(sampled_idx, "rank"))
+  with_joint_rank(
+    compute_joint_matrix(
+      frame = group_frame,
+      n = n_target,
+      draw_spec = draw_spec,
+      sampled_idx = as.vector(sampled_idx),
+      nsim = nsim
+    ),
+    attr(sampled_idx, "rank")
+  )
 }
 
 #' Compute the sampled joint matrix for one group
@@ -1398,10 +1469,12 @@ compute_joint_matrix <- function(
   if (!is_null(mos_var)) {
     mos_vals <- frame[[mos_var]]
     if (sum(mos_vals) <= 0) {
-      cli_abort(c(
-        "Cannot compute joint expectations: sum of MOS variable {.var {mos_var}} is zero.",
-        "i" = "At least one unit must have a positive measure of size."
-      ), call = NULL,
+      cli_abort(
+        c(
+          "Cannot compute joint expectations: sum of MOS variable {.var {mos_var}} is zero.",
+          "i" = "At least one unit must have a positive measure of size."
+        ),
+        call = NULL,
         class = "samplyr_error_mos_zero_sum"
       )
     }
@@ -1409,11 +1482,11 @@ compute_joint_matrix <- function(
     mos_vals <- NULL
   }
 
-  is_wr <- method %in% pps_wr_methods ||
-    identical(draw_spec$method_type, "wr")
+  is_wr <- method %in% pps_wr_methods || identical(draw_spec$method_type, "wr")
   if (is_wr && has_certainty_rule(draw_spec)) {
     cert <- identify_certainty(
-      mos_vals = mos_vals, n = n,
+      mos_vals = mos_vals,
+      n = n,
       certainty_size = draw_spec$certainty_size,
       certainty_prop = draw_spec$certainty_prop
     )
@@ -1422,11 +1495,17 @@ compute_joint_matrix <- function(
     n_rest <- max(cert$n_remaining, 0)
     if (n_rest > 0 && length(cert$remaining_idx) > 0) {
       pik[cert$remaining_idx] <- sondage::expected_hits(
-        mos_vals[cert$remaining_idx], n_rest
+        mos_vals[cert$remaining_idx],
+        n_rest
       )
     }
     return(assemble_jeh_with_certainty(
-      pik, cert$certainty_idx, n_rest, method, sampled_idx, nsim
+      pik,
+      cert$certainty_idx,
+      n_rest,
+      method,
+      sampled_idx,
+      nsim
     ))
   }
   if (is_wr) {
@@ -1439,7 +1518,13 @@ compute_joint_matrix <- function(
   pool_spec <- draw_spec
   pool_spec$n <- as.double(n)
   pik <- tryCatch(
-    resolve_pool_chance(pool_spec, mos_vals, N, pool$forced_idx, pool$zone)$chance,
+    resolve_pool_chance(
+      pool_spec,
+      mos_vals,
+      N,
+      pool$forced_idx,
+      pool$zone
+    )$chance,
     # Both refusals fire before a sample can exist.
     error = function(e) {
       abort_samplyr(
@@ -1456,7 +1541,11 @@ compute_joint_matrix <- function(
     return(assemble_jip_zoned(pik, pool$zone, method, sampled_idx, draw_spec))
   }
   compute_jip_from_pik(
-    pik, method, sampled_idx, draw_spec = draw_spec, nsim = nsim
+    pik,
+    method,
+    sampled_idx,
+    draw_spec = draw_spec,
+    nsim = nsim
   )
 }
 
@@ -1473,8 +1562,7 @@ compute_jip_from_pik <- function(
 ) {
   sampled_idx <- as.integer(sampled_idx)
 
-  is_wr <- method %in% pps_wr_methods ||
-    identical(draw_spec$method_type, "wr")
+  is_wr <- method %in% pps_wr_methods || identical(draw_spec$method_type, "wr")
   if (is_wr) {
     if (is_null(n)) {
       cli_abort(
@@ -1488,7 +1576,12 @@ compute_jip_from_pik <- function(
     cert_idx <- which(!is.na(certain) & certain)
     if (length(cert_idx) > 0L) {
       return(assemble_jeh_with_certainty(
-        pik, cert_idx, n - length(cert_idx), method, sampled_idx, nsim
+        pik,
+        cert_idx,
+        n - length(cert_idx),
+        method,
+        sampled_idx,
+        nsim
       ))
     }
     return(compute_jeh_by_method(pik, n, method, sampled_idx, nsim))
@@ -1497,10 +1590,21 @@ compute_jip_from_pik <- function(
   cert_idx <- which(is_certainty_probability(pik))
 
   if (length(cert_idx) == 0) {
-    return(compute_jip_by_method(pik, method, sampled_idx, draw_spec = draw_spec))
+    return(compute_jip_by_method(
+      pik,
+      method,
+      sampled_idx,
+      draw_spec = draw_spec
+    ))
   }
 
-  assemble_jip_with_certainty(pik, cert_idx, method, sampled_idx, draw_spec = draw_spec)
+  assemble_jip_with_certainty(
+    pik,
+    cert_idx,
+    method,
+    sampled_idx,
+    draw_spec = draw_spec
+  )
 }
 
 #' Dispatch to sondage::joint_inclusion_prob for WOR methods
@@ -1558,7 +1662,9 @@ compute_jeh_by_method <- function(
   )
   jeh_population_order <- unname(
     sondage::joint_expected_hits(
-      design, sampled_only = TRUE, nsim = nsim
+      design,
+      sampled_only = TRUE,
+      nsim = nsim
     )
   )
   population_order <- sort(sampled_distinct)
@@ -1582,8 +1688,14 @@ compute_jeh_by_method <- function(
 #' give the remaining block. `pik` holds 1 for certainty units and the
 #' remaining units' expected hits, in pool order.
 #' @noRd
-assemble_jeh_with_certainty <- function(pik, cert_idx, n_rest, method,
-                                        sampled_idx, nsim = 10000L) {
+assemble_jeh_with_certainty <- function(
+  pik,
+  cert_idx,
+  n_rest,
+  method,
+  sampled_idx,
+  nsim = 10000L
+) {
   sampled <- unique(as.integer(sampled_idx))
   if (length(sampled) == 0L) {
     return(NULL)
@@ -1596,8 +1708,11 @@ assemble_jeh_with_certainty <- function(pik, cert_idx, n_rest, method,
   rest_pos <- which(!is_cert)
   if (length(rest_pos) > 0L) {
     block <- compute_jeh_by_method(
-      pik[rest_idx], n_rest, method,
-      match(sampled[rest_pos], rest_idx), nsim
+      pik[rest_idx],
+      n_rest,
+      method,
+      match(sampled[rest_pos], rest_idx),
+      nsim
     )
     result[rest_pos, rest_pos] <- block
   }
@@ -1613,7 +1728,13 @@ assemble_jeh_with_certainty <- function(pik, cert_idx, n_rest, method,
 #'   pi_ij = pi_j     if only i is certainty
 #' The stochastic part is computed from the reduced pi vector.
 #' @noRd
-assemble_jip_with_certainty <- function(pik, cert_idx, method, sampled_idx, draw_spec = NULL) {
+assemble_jip_with_certainty <- function(
+  pik,
+  cert_idx,
+  method,
+  sampled_idx,
+  draw_spec = NULL
+) {
   N <- length(pik)
   non_cert_idx <- setdiff(seq_len(N), cert_idx)
   sampled_idx <- as.integer(sampled_idx)
@@ -1669,7 +1790,13 @@ assemble_jip_with_certainty <- function(pik, cert_idx, method, sampled_idx, draw
 #' units of different zones the product of their chances, and a certainty
 #' unit the other unit's chance. `zone` is NA for certainty units.
 #' @noRd
-assemble_jip_zoned <- function(pik, zone, method, sampled_idx, draw_spec = NULL) {
+assemble_jip_zoned <- function(
+  pik,
+  zone,
+  method,
+  sampled_idx,
+  draw_spec = NULL
+) {
   sampled_idx <- as.integer(sampled_idx)
   if (length(sampled_idx) == 0L) {
     return(NULL)
@@ -1713,8 +1840,9 @@ match_sampled_units <- function(
   }
 
   if (length(match_vars) == 0) {
-    cli_abort("No shared columns to match sampled units to frame.",
-              call = NULL,
+    cli_abort(
+      "No shared columns to match sampled units to frame.",
+      call = NULL,
       class = "samplyr_error_joint_frame_key"
     )
   }
@@ -1735,11 +1863,13 @@ match_sampled_units <- function(
     }
     if (anyDuplicated(frame_key) > 0L) {
       n_unique <- dplyr::n_distinct(frame_key)
-      cli_abort(c(
-        "Frame rows are not uniquely identified by columns {.val {match_vars}}.",
-        "i" = "Found {nrow(group_frame)} rows but only {n_unique} unique key combinations.",
-        "i" = "Ensure the frame has a column (or combination) that uniquely identifies each unit."
-      ), call = NULL,
+      cli_abort(
+        c(
+          "Frame rows are not uniquely identified by columns {.val {match_vars}}.",
+          "i" = "Found {nrow(group_frame)} rows but only {n_unique} unique key combinations.",
+          "i" = "Ensure the frame has a column (or combination) that uniquely identifies each unit."
+        ),
+        call = NULL,
         class = "samplyr_error_joint_frame_key"
       )
     }
@@ -1763,11 +1893,13 @@ match_sampled_units <- function(
   )
   n_unique <- vctrs::vec_unique_count(frame_cols)
   if (n_unique != nrow(group_frame)) {
-    cli_abort(c(
-      "Frame rows are not uniquely identified by columns {.val {match_vars}}.",
-      "i" = "Found {nrow(group_frame)} rows but only {n_unique} unique key combinations.",
-      "i" = "Ensure the frame has a column (or combination) that uniquely identifies each unit."
-    ), call = NULL,
+    cli_abort(
+      c(
+        "Frame rows are not uniquely identified by columns {.val {match_vars}}.",
+        "i" = "Found {nrow(group_frame)} rows but only {n_unique} unique key combinations.",
+        "i" = "Ensure the frame has a column (or combination) that uniquely identifies each unit."
+      ),
+      call = NULL,
       class = "samplyr_error_joint_frame_key"
     )
   }
@@ -1777,8 +1909,12 @@ match_sampled_units <- function(
     .subset(group_sample, match_vars),
     n = nrow(group_sample)
   )
-  if (identical(lapply(sample_cols, vctrs::vec_ptype),
-                lapply(frame_cols, vctrs::vec_ptype))) {
+  if (
+    identical(
+      lapply(sample_cols, vctrs::vec_ptype),
+      lapply(frame_cols, vctrs::vec_ptype)
+    )
+  ) {
     first <- vctrs::vec_unique_loc(sample_cols)
     sampled_idx <- vctrs::vec_match(
       vctrs::vec_slice(sample_cols, first),
@@ -1854,7 +1990,9 @@ assemble_block_diagonal <- function(matrices) {
   expected <- lapply(matrices, attr, "expected")
   carried <- !vapply(expected, is.null, logical(1))
   first_moments <- unlist(Map(
-    function(mat, e) e %||% diag(mat), matrices, expected
+    function(mat, e) e %||% diag(mat),
+    matrices,
+    expected
   ))
   result <- outer(first_moments, first_moments)
 
@@ -1954,4 +2092,3 @@ composed_within_pool <- function(x) {
   }
   compose_within_pool_subsample(x)
 }
-

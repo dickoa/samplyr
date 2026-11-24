@@ -107,11 +107,13 @@ exports, multistage samples, shared weights, independent frame stacks
 and settled reserves included. A materialized occasion is replicated by
 ultimate clusters, and a window's replicates are calibrated on the same
 totals as its linearized design. \code{"rwyb"} is refused for an occasion
-(\code{samplyr_error_occasion_replicate_type}). Of the two-phase samples,
-only two shapes are replicated: a second phase drawn within each
-final-stage pool of phase 1, which is phase 1's design with a smaller
-final take, and a second phase of a phase 1 that could select nothing
-else. The others are refused (\code{samplyr_error_svrep_twophase_unsupported}).
+(\code{samplyr_error_occasion_replicate_type}). Of the two-phase samples, two
+shapes are replicated, a second phase drawn within each final-stage pool
+of phase 1, which is phase 1's design with a smaller final take, and a
+second phase of a phase 1 fixed in one primary unit (every stage taken
+for sure, which can be a census of its elements). Random groups, below,
+also replicate a two-phase design executed whole with \code{reps}. The others
+are refused (\code{samplyr_error_svrep_twophase_unsupported}).
 }
 
 \subsection{The first stage under the generic types}{
@@ -228,9 +230,10 @@ continues one realized stage with \code{reps}, or replicates a later phase
 over one realized first phase, is refused
 (\code{samplyr_error_random_groups_shared}), because the shared selection's
 variance would be left out. Replicate that stage or phase too, and
-continue each replicate. A first phase that could select nothing else,
-such as the one unit of a one-unit population, has no variance to leave
-out, and a later phase replicated over it is accepted. The sample must
+continue each replicate. A first phase fixed in one primary unit, every
+stage taken for sure, such as the one unit of a one-unit population, has
+no variance to leave out, and a later phase replicated over it is
+accepted. A census of several primary units is not read as fixed. The sample must
 hold every replicate of its
 execution (\code{samplyr_error_random_groups_input}).
 }

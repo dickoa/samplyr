@@ -799,7 +799,7 @@
               "certainty": {
                 "type": "boolean"
               },
-              "n_take": {
+              "take_2": {
                 "type": "integer",
                 "minimum": 1
               },
@@ -822,7 +822,7 @@
                   }
                 ]
               },
-              "pair": {
+              "variance_group": {
                 "anyOf": [
                   {
                     "type": "integer",
@@ -847,7 +847,7 @@
               "stratum",
               "N",
               "certainty",
-              "n_take"
+              "take_2"
             ],
             "additionalProperties": false
           },
@@ -861,7 +861,7 @@
             "minimum": 0
           }
         },
-        "n_per_psu": {
+        "take_2": {
           "type": "object",
           "minProperties": 1,
           "additionalProperties": {
@@ -922,7 +922,7 @@
         "role",
         "register",
         "n_psu_draw",
-        "n_per_psu",
+        "take_2",
         "strata_var",
         "id_var"
       ],
@@ -3133,7 +3133,7 @@
           "const": "samplyr/design"
         },
         "format_version": {
-          "const": 3
+          "const": 4
         },
         "schema": {
           "type": "object",
@@ -3250,7 +3250,7 @@
           "const": "samplyr/design"
         },
         "format_version": {
-          "const": 3
+          "const": 4
         },
         "schema": {
           "type": "object",

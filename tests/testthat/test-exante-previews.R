@@ -67,11 +67,11 @@ test_that("certainty-plan previews use stored PSU classifications and takes", {
   }
   at <- match(frame$psu_id, psu$psu_id)
   expect_equal(exante_probabilities(first, frame, key = id)$probability, pi1[at])
-  expected <- (pi1 * psu$n_take / psu$N)[at]
+  expected <- (pi1 * psu$take_2 / psu$N)[at]
   expect_equal(exante_probabilities(design, frame, key = id)$probability, expected)
   preview <- frame_summary(design, frame, detail = "pool")
-  expect_equal(sort(preview$n_target[preview$stage == 2]), sort(psu$n_take))
-  expect_equal(sort(preview$n_expected[preview$stage == 2]), sort(psu$n_take))
+  expect_equal(sort(preview$n_target[preview$stage == 2]), sort(psu$take_2))
+  expect_equal(sort(preview$n_expected[preview$stage == 2]), sort(psu$take_2))
   separate <- frame_summary(design, list(certainty_plan_register(), frame),
                              detail = "pool")
   expect_equal(separate$n_expected, preview$n_expected)
@@ -84,7 +84,7 @@ test_that("certainty-plan previews use stored PSU classifications and takes", {
   preview <- frame_summary(stratified, frame, detail = "pool")
   take <- preview[preview$stage == 2, ]
   expect_equal(sort(as.numeric(tapply(take$n_target, take$parent_unit, sum))),
-               sort(psu$n_take))
+               sort(psu$take_2))
   resolved <- exante_probabilities(stratified, frame, key = id)
   sample <- execute(stratified, frame, seed = 11)
   expect_equal(1 / sample$.weight, resolved$probability[sample$id])

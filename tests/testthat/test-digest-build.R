@@ -1058,3 +1058,124 @@ test_that("unreached cluster pools of unequal size resolve each unit's chance", 
   expect_true(all(units$unit_order <= size))
   expect_identical(units$n_descendants, rep(2L, nrow(units)))
 })
+
+## Key text. A round double prints as 1e+05 under the default scipen, while
+## the integer of the same value prints as 100000, so keys built with
+## as.character() depended on the storage and on getOption("scipen").
+
+test_that("key text is plain digits whatever the storage and scipen", {
+  for (scipen in c(0, 100, -9)) {
+    withr::local_options(scipen = scipen)
+    expect_identical(key_value_text(c(100000, 2e5, 1e6, -0, 2^53)),
+                     c("100000", "200000", "1000000", "0", "9007199254740992"),
+                     label = scipen)
+    expect_identical(key_value_text(c(100000L, NA)), c("100000", NA),
+                     label = scipen)
+    expect_identical(key_value_text(c(0.1 + 0.2, 123.456, 2^53 + 2, 1e20)),
+                     c("0.3", "123.456", "9.00719925474099e+15", "1e+20"),
+                     label = scipen)
+    # NaN stays a value apart from NA, and Inf keeps its sign.
+    expect_identical(key_value_text(c(NA, NaN, Inf, -Inf)),
+                     c(NA, "NaN", "Inf", "-Inf"), label = scipen)
+  }
+  skip_if_not_installed("bit64")
+  skip_if_not_installed("haven")
+  expect_identical(key_value_text(bit64::as.integer64("100000")), "100000")
+  expect_identical(key_value_text(haven::labelled(c(1e5, 2.5))),
+                   c("100000", "2.5"))
+  expect_identical(
+    key_value_text(haven::labelled_spss(c(1e5, 2e5), na_values = 1e5)),
+    c(NA, "200000")
+  )
+})
+
+test_that("an integer stage 1 and a double stage 2 record one digest", {
+  frame1 <- data.frame(psu_id = 100000L:100005L,
+                       region = rep(c(100000L, 200000L), 3))
+  frame2 <- data.frame(
+    psu_id = rep(as.double(100000:100005), each = 10L),
+    region = rep(rep(c(1e5, 2e5), 3), each = 10L),
+    unit_id = seq_len(60L)
+  )
+  as_integer <- frame2
+  as_integer$psu_id <- as.integer(frame2$psu_id)
+  as_integer$region <- as.integer(frame2$region)
+  plain <- sampling_design() |>
+    add_stage() |> cluster_by(psu_id) |> draw(n = 3) |>
+    add_stage() |> draw(n = 4)
+  # A stratified stage 1 keys stage 2's pools by two columns.
+  stratified <- sampling_design() |>
+    add_stage() |> stratify_by(region) |> cluster_by(psu_id) |> draw(n = 2) |>
+    add_stage() |> draw(n = 4)
+  withr::local_options(scipen = 0)
+  for (design in list(plain = plain, stratified = stratified)) {
+    expect_no_warning(mixed <- execute(design, list(frame1, frame2), seed = 1))
+    same <- execute(design, list(frame1, as_integer), seed = 1)
+    expect_false(is.null(get_frame_digest(mixed)))
+    expect_identical(mixed$unit_id, same$unit_id)
+    expect_identical(unclass(get_frame_digest(mixed))$stages,
+                     unclass(get_frame_digest(same))$stages)
+  }
+})
+
+test_that("whole doubles up to 2^53 are distinct keys at every digit", {
+  # Sixteen digits, which as.character() would write alike.
+  frame <- data.frame(cl = rep(1e15 + 1:4, each = 5), id = 1:20)
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(cl) |> draw(n = 2) |>
+    add_stage() |> draw(n = 2)
+  s <- execute(design, frame, seed = 1, frame_digest = "full")
+  expect_identical(length(unique(s$cl)), 2L)
+  expect_identical(vctrs::vec_count(s$cl)$count, c(2L, 2L))
+  expect_false(is.null(get_frame_digest(s)))
+  # Beyond 2^53, values equal to 15 digits are still refused.
+  frame$cl <- rep(1e16 + 2 * (1:4), each = 5)
+  expect_error(execute(design, frame, seed = 1),
+               class = "samplyr_error_key_precision")
+})
+
+test_that("an occasion is drawn alike whatever scipen the master had", {
+  psu <- data.frame(psu_id = 1e5 * (1:12), size = rep(c(10, 12, 9), 4),
+                    region = rep(c(1e5, 2e5), 6))
+  el <- data.frame(psu_id = rep(psu$psu_id, psu$size),
+                   unit_id = seq_len(sum(psu$size)))
+  plain <- sampling_design() |>
+    add_stage() |> cluster_by(psu_id) |>
+    draw(n = 3, method = "pps_brewer", mos = size) |>
+    add_stage() |> draw(n = 4)
+  # A stratified master keys its cohorts' pools by the strata too.
+  stratified <- sampling_design() |>
+    add_stage() |> stratify_by(region) |> cluster_by(psu_id) |>
+    draw(n = 2, method = "pps_brewer", mos = size) |>
+    add_stage() |> draw(n = 4)
+  rotation <- data.frame(
+    panel = rep(1:2, times = 2), period = rep(1:2, each = 2),
+    active = c(TRUE, FALSE, FALSE, TRUE)
+  )
+  occasion <- function(design, master_scipen, occasion_scipen) {
+    master <- withr::with_options(
+      list(scipen = master_scipen),
+      suppressWarnings(execute(design, list(psu, el), seed = 1,
+                               panels = rotation, frame_digest = "full"))
+    )
+    withr::with_options(
+      list(scipen = occasion_scipen),
+      list(master = master, occasion = execute(master, period = 1))
+    )
+  }
+  for (kind in c("plain", "stratified")) {
+    design <- list(plain = plain, stratified = stratified)[[kind]]
+    reference <- occasion(design, 0, 0)
+    expect_gt(nrow(reference$occasion), 0)
+    for (pair in list(c(100, 0), c(0, 100))) {
+      label <- paste(kind, paste(pair, collapse = " then "))
+      got <- occasion(design, pair[1], pair[2])
+      expect_identical(got$occasion$.sample_id,
+                       reference$occasion$.sample_id, label = label)
+      expect_equal(got$occasion$.weight, reference$occasion$.weight,
+                   label = label)
+      expect_identical(get_frame_digest(got$master),
+                       get_frame_digest(reference$master), label = label)
+    }
+  }
+})

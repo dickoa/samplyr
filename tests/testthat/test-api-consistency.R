@@ -193,7 +193,7 @@ test_that("genuinely several frames keep the plural schema", {
   )
   expect_named(payload$frame, c("required_variables", "fingerprints"))
   expect_length(payload$frame$fingerprints, 3L)
-  expect_identical(payload$format_version, 3L)
+  expect_identical(payload$format_version, 4L)
   expect_length(payload$tools$samplyr$frame$frames, 3L)
 })
 

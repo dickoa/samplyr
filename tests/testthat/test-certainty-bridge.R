@@ -174,7 +174,7 @@ test_that("the bridge requires one stratum variable and one cluster variable", {
   )
 })
 
-test_that("a plan without psu_id or without n_take is refused", {
+test_that("a plan without psu_id or without take_2 is refused", {
   register <- certainty_plan_register()
   register$psu_id <- NULL
   anonymous <- certainty_plan_fixture(psu = register)
@@ -188,7 +188,7 @@ test_that("a plan without psu_id or without n_take is refused", {
   )
 
   old <- certainty_plan_fixture()
-  old$psu$n_take <- NULL
+  old$psu$take_2 <- NULL
   expect_error(
     sampling_design() |>
       add_stage() |>
@@ -340,20 +340,39 @@ certainty_tampered_file <- function(path, f) {
   out
 }
 
-test_that("bridge and plain designs both write format 3", {
+test_that("bridge and plain designs both write format 4", {
   d <- certainty_bridge_design()
   path <- withr::local_tempfile(fileext = ".json")
   write_design(d, path)
   doc <- jsonlite::fromJSON(path, simplifyVector = FALSE)
-  expect_identical(doc$format_version, 3L)
+  expect_identical(doc$format_version, 4L)
   expect_identical(doc$design$stages[[1]]$draw$certainty_plan$role, "select")
   expect_identical(doc$design$stages[[2]]$draw$certainty_plan$role, "take")
+  # The plan's nominal take below the PSUs, under svyplan's stage name.
+  block <- doc$design$stages[[1]]$draw$certainty_plan
+  expect_identical(block$take_2, list(A = 10L, B = 10L))
+  expect_null(block$n_per_psu)
 
   plain <- withr::local_tempfile(fileext = ".json")
   write_design(sampling_design() |> draw(n = 10), plain)
   expect_identical(
     jsonlite::fromJSON(plain, simplifyVector = FALSE)$format_version,
-    3L
+    4L
+  )
+
+  # A format 3 file named the take `n_per_psu`. Only the current format reads.
+  old <- certainty_tampered_file(path, function(doc) {
+    doc$format_version <- 3L
+    for (k in 1:2) {
+      cp <- doc$design$stages[[k]]$draw$certainty_plan
+      names(cp)[names(cp) == "take_2"] <- "n_per_psu"
+      doc$design$stages[[k]]$draw$certainty_plan <- cp
+    }
+    doc
+  })
+  expect_error(
+    read_design(old),
+    class = "samplyr_error_design_file_unsupported"
   )
 })
 
@@ -402,7 +421,7 @@ test_that("malformed certainty blocks are refused by the reader", {
     doc$design$stages[[1]]$draw$certainty_plan$register <- lapply(
       doc$design$stages[[1]]$draw$certainty_plan$register,
       function(r) {
-        r$n_take <- NULL
+        r$take_2 <- NULL
         r
       }
     )
@@ -414,7 +433,7 @@ test_that("malformed certainty blocks are refused by the reader", {
   )
 
   frac_take <- certainty_tampered_file(path, function(doc) {
-    doc$design$stages[[1]]$draw$certainty_plan$register[[1]]$n_take <- 2.5
+    doc$design$stages[[1]]$draw$certainty_plan$register[[1]]$take_2 <- 2.5
     doc
   })
   expect_error(
@@ -447,7 +466,7 @@ test_that("malformed certainty blocks are refused by the reader", {
   )
 
   future <- certainty_tampered_file(path, function(doc) {
-    doc$format_version <- 4
+    doc$format_version <- 5
     doc
   })
   expect_error(
@@ -515,7 +534,7 @@ test_that("the take stage reproduces the operational design exactly", {
     as.integer(table(s$stratum)[plan$detail$stratum]),
     as.integer(plan$detail$n_int)
   )
-  takes <- stats::setNames(plan$psu$n_take, plan$psu$psu_id)
+  takes <- stats::setNames(plan$psu$take_2, plan$psu$psu_id)
   per_psu <- table(s$psu_id)
   expect_equal(
     as.integer(per_psu),
@@ -543,7 +562,7 @@ test_that("a stratified take stage splits each take with alloc, preserving it", 
 
   # The allocation runs within each pool and must hand back the take whole.
   expect_equal(nrow(s), sum(plan$detail$n_int))
-  takes <- stats::setNames(plan$psu$n_take, plan$psu$psu_id)
+  takes <- stats::setNames(plan$psu$take_2, plan$psu$psu_id)
   per_psu <- table(s$psu_id)
   expect_equal(
     as.integer(per_psu),
@@ -569,7 +588,7 @@ test_that("a continuation applies the takes to the stage-1 result", {
   s1 <- execute(d, frame, stages = 1, seed = 7)
   s2 <- execute(s1, frame, seed = 8)
   expect_equal(nrow(s2), sum(plan$detail$n_int))
-  takes <- stats::setNames(plan$psu$n_take, plan$psu$psu_id)
+  takes <- stats::setNames(plan$psu$take_2, plan$psu$psu_id)
   per_psu <- table(s2$psu_id)
   expect_equal(
     as.integer(per_psu),
@@ -680,7 +699,7 @@ test_that("one segment per PSU takes the plan's take inside it", {
     draw(n = plan) |>
     execute(segment_frame(), seed = 1)
   per_psu <- table(s$psu_id)
-  takes <- stats::setNames(plan$psu$n_take, plan$psu$psu_id)
+  takes <- stats::setNames(plan$psu$take_2, plan$psu$psu_id)
   expect_identical(as.integer(per_psu), as.integer(takes[names(per_psu)]))
   # One segment of each PSU, and its take drawn with equal chances in it.
   expect_true(all(tapply(s$segment, s$psu_id, function(x) {
@@ -702,10 +721,10 @@ test_that("below a stage that keeps more than one unit the refusal names the tak
   expect_match(msg, "stratify_by(psu_id)", fixed = TRUE)
   expect_no_match(msg, "stage 1 with", fixed = TRUE)
 
-  expect_match(msg, "n_take / k", fixed = TRUE)
+  expect_match(msg, "take_2 / k", fixed = TRUE)
 
   # The route it names fields each PSU's take, split over its two segments.
-  takes <- data.frame(psu_id = plan$psu$psu_id, n = ceiling(plan$psu$n_take / 2))
+  takes <- data.frame(psu_id = plan$psu$psu_id, n = ceiling(plan$psu$take_2 / 2))
   s <- segments |>
     stratify_by(psu_id) |>
     draw(n = takes) |>
@@ -746,7 +765,7 @@ test_that("the print shows a certainty plan's classification and takes", {
     "n = <svyplan plan, 9 certainty, 4 drawn, per stratum>", printed,
     fixed = TRUE
   )))
-  takes <- range(plan$psu$n_take)
+  takes <- range(plan$psu$take_2)
   expect_equal(takes, c(9, 26))
   expect_true(any(grepl(
     "n = <svyplan plan, 9 to 26 per psu_id>", printed, fixed = TRUE
@@ -1177,7 +1196,7 @@ test_that("a zoned design writes, reads, executes and replays identically", {
   write_design(d, path, frame = frame)
 
   doc <- jsonlite::fromJSON(path, simplifyVector = FALSE)
-  expect_identical(doc$format_version, 3L)
+  expect_identical(doc$format_version, 4L)
   block <- doc$design$stages[[1]]$draw$certainty_plan
   expect_identical(block$n_psu_per_zone, 2L)
   zones <- vapply(
@@ -1263,7 +1282,7 @@ test_that("a one-per-zone plan draws one PSU from every zone at the planned chan
       s <- execute(certainty_zone_design(plan, method), frame, seed = 5)
     )
     psu <- unique(as.data.frame(s)[
-      , c("psu_id", "stratum", ".weight_1", ".certainty_1", ".zone_1", ".pair_1")
+      , c("psu_id", "stratum", ".weight_1", ".certainty_1", ".zone_1", ".variance_group_1")
     ])
     at <- match(psu$psu_id, plan$psu$psu_id)
 
@@ -1272,7 +1291,7 @@ test_that("a one-per-zone plan draws one PSU from every zone at the planned chan
       plan$psu$psu_id[plan$psu$certainty]
     )
     expect_identical(psu$.zone_1, plan$psu$.zone[at], label = method)
-    expect_identical(psu$.pair_1, plan$psu$.pair[at], label = method)
+    expect_identical(psu$.variance_group_1, plan$psu$.variance_group[at], label = method)
     drawn <- psu[!psu$.certainty_1, ]
     expect_setequal(paste(drawn$stratum, drawn$.zone_1), cells)
     expect_false(anyDuplicated(paste(drawn$stratum, drawn$.zone_1)) > 0)
@@ -1290,10 +1309,10 @@ test_that("a one-per-zone sample is fixed by its seed, whatever the digest mode"
   # At one draw, sondage's systematic, Brewer and Sampford draws read the
   # same uniform the same way, so they select the same PSUs.
   pins <- c(
-    pps_systematic = "2ca07097da34312851d4fd5cc490675d",
-    pps_brewer = "2ca07097da34312851d4fd5cc490675d",
-    pps_cps = "27bf7e2d1d238478f55da0016cc46426",
-    pps_sampford = "2ca07097da34312851d4fd5cc490675d"
+    pps_systematic = "fb0c200636c30b34d588bcd74360a3bf",
+    pps_brewer = "fb0c200636c30b34d588bcd74360a3bf",
+    pps_cps = "972a8ad0b5ef30f7f850fbc5968f0fd1",
+    pps_sampford = "fb0c200636c30b34d588bcd74360a3bf"
   )
   for (method in certainty_bridge_methods) {
     d <- certainty_zone_design(plan, method)
@@ -1355,37 +1374,37 @@ test_that("a plan whose variance groups break the design is refused at draw()", 
   in_zone <- function(p, h, z) p$psu$stratum == h & p$psu$.zone %in% z
 
   p <- plan
-  p$psu$.pair <- NULL
+  p$psu$.variance_group <- NULL
   refused(p, "records no variance groups")
 
   p <- certainty_zone_fixture()
-  p$psu$.pair <- ifelse(is.na(p$psu$.zone), NA_integer_, 1L)
+  p$psu$.variance_group <- ifelse(is.na(p$psu$.zone), NA_integer_, 1L)
   refused(p, "only a plan drawing one PSU per zone")
 
   p <- plan
-  p$psu$.pair[p$psu$psu_id == "A01"] <- 1L
+  p$psu$.variance_group[p$psu$psu_id == "A01"] <- 1L
   refused(p, "a group without a zone")
 
   p <- plan
-  p$psu$.pair[which(in_zone(p, "A", 1))[1]] <- 2L
+  p$psu$.variance_group[which(in_zone(p, "A", 1))[1]] <- 2L
   refused(p, "is split across variance groups")
 
   p <- plan
-  p$psu$.pair[p$psu$.pair %in% 4] <- 5L
+  p$psu$.variance_group[p$psu$.variance_group %in% 4] <- 5L
   refused(p, "numbered from 1 without gaps")
 
   # Zone A2 joins group 2, so group 1 is left with one zone.
   p <- plan
-  p$psu$.pair[in_zone(p, "A", 2)] <- 2L
+  p$psu$.variance_group[in_zone(p, "A", 2)] <- 2L
   refused(p, "group 1 holds 1 zone")
 
   # Groups 3 and 4 merged, A's last two zones with the triple of B and C.
   p <- plan
-  p$psu$.pair[p$psu$.pair %in% 4] <- 3L
+  p$psu$.variance_group[p$psu$.variance_group %in% 4] <- 3L
   refused(p, "group 3 holds 5 zones")
 
   p <- plan
-  p$psu$.pair[in_zone(p, "C", 1)] <- 4.5
+  p$psu$.variance_group[in_zone(p, "C", 1)] <- 4.5
   refused(p, "not positive whole numbers")
 })
 
@@ -1414,17 +1433,17 @@ test_that("the variance-group checks run again at the execute gate, before RNG",
     d
   }
   gate(tamper(d, function(reg) {
-    reg$pair[reg$pair %in% 4] <- 3L
+    reg$variance_group[reg$variance_group %in% 4] <- 3L
     reg
   }))
   gate(tamper(d, function(reg) {
-    reg$pair <- NULL
+    reg$variance_group <- NULL
     reg
   }))
 })
 
 test_that("the variance-group columns are reserved in a frame", {
-  for (col in c(".pair", ".pair_1")) {
+  for (col in c(".variance_group", ".variance_group_1")) {
     frame <- data.frame(id = seq_len(20))
     frame[[col]] <- 1L
     expect_error(
@@ -1436,8 +1455,8 @@ test_that("the variance-group columns are reserved in a frame", {
     )
   }
   expect_identical(
-    samplyr_reserved_names(c(".pair", ".pair_2", ".pairs", ".pair_x")),
-    c(".pair", ".pair_2")
+    samplyr_reserved_names(c(".variance_group", ".variance_group_2", ".variance_groups", ".variance_group_x")),
+    c(".variance_group", ".variance_group_2")
   )
 })
 
@@ -1452,21 +1471,21 @@ test_that("a one-per-zone sample exports its variance groups as strata", {
   s <- pair_sample()
   spec <- export_stage_spec(as.data.frame(s), get_design(s), get_stages_executed(s))
   strata <- spec$stage[["1"]]$strata
-  expect_identical(strata$user, ".pair_1")
+  expect_identical(strata$user, ".variance_group_1")
   units <- unique(data.frame(
-    id = strata$id, psu = s$psu_id, cert = s$.certainty_1, pair = s$.pair_1
+    id = strata$id, psu = s$psu_id, cert = s$.certainty_1, variance_group = s$.variance_group_1
   ))
   drawn <- units[!units$cert, ]
   # One stratum per group, holding its two or three zones' PSUs.
   expect_identical(
-    as.vector(table(drawn$pair)[as.character(1:4)]),
+    as.vector(table(drawn$variance_group)[as.character(1:4)]),
     c(2L, 2L, 2L, 3L)
   )
-  expect_identical(nrow(unique(drawn[c("id", "pair")])), 4L)
+  expect_identical(nrow(unique(drawn[c("id", "variance_group")])), 4L)
   expect_length(unique(drawn$id), 4L)
   expect_length(intersect(units$id[units$cert], drawn$id), 0L)
   # The group of B's third zone and C's only zone crosses strata.
-  expect_setequal(unique(s$stratum[s$.pair_1 %in% 4]), c("B", "C"))
+  expect_setequal(unique(s$stratum[s$.variance_group_1 %in% 4]), c("B", "C"))
 
   expect_no_warning(e <- as_svydesign(s))
   expect_identical(length(unique(e$strata[, 1])), 5L)
@@ -1483,7 +1502,7 @@ test_that("a one-per-zone stage is exported with the with-replacement variance",
   # within each group. Certainty PSUs: their own stage-2 variance.
   rem <- d[!d$.certainty_1, ]
   t_psu <- tapply(rem$y * rem$.weight, rem$psu_id, sum)
-  grp <- tapply(rem$.pair_1, rem$psu_id, unique)
+  grp <- tapply(rem$.variance_group_1, rem$psu_id, unique)
   v_rem <- sum(vapply(split(t_psu, grp), function(t) {
     length(t) / (length(t) - 1) * sum((t - mean(t))^2)
   }, numeric(1)))
@@ -1541,14 +1560,14 @@ test_that("a plan of a single zone refuses replicates before the frame is read",
     psu_id = sprintf("A%02d", 1:6), stratum = "A",
     N = c(400, 60, 70, 80, 90, 100), stringsAsFactors = FALSE
   )
-  plan <- svyplan::n_alloc(
-    data.frame(stratum = "A", N = sum(register$N), n_per_psu = 8),
+  plan <- svyplan::n_alloc_joint(
+    data.frame(stratum = "A", N = sum(register$N), take_2 = 8),
     measures = data.frame(stratum = "A", name = "y", p = 0.5,
-                          icc_psu = 0.05),
+                          icc_1 = 0.05),
     targets = data.frame(name = "y", cv = 0.3),
     psu = register, n_psu_per_zone = 1
   )
-  expect_identical(unique(stats::na.omit(plan$psu$.pair)), 1L)
+  expect_identical(unique(stats::na.omit(plan$psu$.variance_group)), 1L)
   expect_length(unique(stats::na.omit(plan$psu$.zone)), 1L)
   design <- certainty_zone_design(plan)
   frame <- certainty_element_frame(register)
@@ -1588,8 +1607,8 @@ test_that("variance_estimators() refuses half-samples when a group is a triple",
   # At a cv of 0.13 every group of the zone fixture is a pair, so the
   # groups do not refuse.
   plan <- certainty_zone_fixture(m = 1, cv = 0.13)
-  groups <- unique(plan$psu[!is.na(plan$psu$.pair), c("stratum", ".zone", ".pair")])
-  expect_true(all(table(groups$.pair) == 2L))
+  groups <- unique(plan$psu[!is.na(plan$psu$.variance_group), c("stratum", ".zone", ".variance_group")])
+  expect_true(all(table(groups$.variance_group) == 2L))
   frame <- certainty_element_frame(certainty_zone_register())
   v <- variance_estimators(execute(certainty_zone_design(plan), frame, seed = 4))
   expect_false(identical(v$status[v$estimator == "Balanced repeated replication"], "refused"))
@@ -1629,15 +1648,15 @@ test_that("a one-per-zone design writes, reads, executes and replays identically
   expect_identical(block$n_psu_per_zone, 1L)
   pairs <- vapply(
     block$register,
-    function(r) if (is.null(r$pair)) NA_integer_ else as.integer(r$pair),
+    function(r) if (is.null(r$variance_group)) NA_integer_ else as.integer(r$variance_group),
     integer(1)
   )
-  expect_identical(pairs, as.integer(plan$psu$.pair))
+  expect_identical(pairs, as.integer(plan$psu$.variance_group))
 
   rd <- read_design(path)
   spec <- rd$stages[[1]]$draw_spec$certainty_plan
   expect_identical(spec$n_psu_per_zone, 1L)
-  expect_identical(spec$register$pair, as.integer(plan$psu$.pair))
+  expect_identical(spec$register$variance_group, as.integer(plan$psu$.variance_group))
 
   s0 <- execute(d, frame, seed = 7)
   s1 <- execute(rd, frame, seed = 7)
@@ -1680,7 +1699,7 @@ test_that("the reader refuses variance groups recorded apart from one PSU per zo
   }
   drop_pairs <- function(b) {
     b$register <- lapply(b$register, function(r) {
-      r$pair <- NULL
+      r$variance_group <- NULL
       r
     })
     b
@@ -1696,7 +1715,7 @@ test_that("the reader refuses variance groups recorded apart from one PSU per zo
     b
   })
   refused(function(b) {
-    b$register[[2]]$pair <- 0
+    b$register[[2]]$variance_group <- 0
     b
   })
 })
@@ -1715,10 +1734,10 @@ test_that("a frame merged by svyplan::merge_psus() fields its plan", {
   )
   frame <- certainty_element_frame(register)
   plan_for <- function(psu) {
-    svyplan::n_alloc(
-      transform(stats::aggregate(N ~ stratum, psu, sum), n_per_psu = 8),
+    svyplan::n_alloc_joint(
+      transform(stats::aggregate(N ~ stratum, psu, sum), take_2 = 8),
       measures = data.frame(stratum = c("A", "B"), name = "y", p = 0.5,
-                            icc_psu = 0.05),
+                            icc_1 = 0.05),
       targets = data.frame(name = "y", cv = 0.15),
       psu = psu
     )
@@ -1763,4 +1782,880 @@ test_that("a frame merged by svyplan::merge_psus() fields its plan", {
     class = "samplyr_error_certainty_register_mismatch"
   )
   expect_identical(state, .Random.seed)
+})
+
+## Register fits of svyplan 0.26.0
+
+# A take solved by svyplan, between 8 and 30 per PSU. Stratum A holds all
+# its PSUs certain, B holds B01 and draws 3 of the rest.
+certainty_free_take_fixture <- function() {
+  svyplan::n_alloc_joint(
+    data.frame(stratum = c("A", "B"), N = c(2000, 1600), cost_1 = 300,
+               cost_2 = 30),
+    data.frame(stratum = c("A", "B"), name = "y", p = c(0.5, 0.4),
+               icc_1 = 0.05),
+    targets = data.frame(name = "y", cv = 0.10),
+    psu = certainty_plan_register(), take_2_min = 8, take_2_max = 30
+  )
+}
+
+# Each sampled row's stage-1 chance under the register's split, and its
+# stage-2 chance within its PSU.
+certainty_planned_chances <- function(plan, s) {
+  psu <- plan$psu
+  draw <- stats::setNames(plan$detail$n_psu_draw, plan$detail$stratum)
+  rest <- ave(ifelse(psu$certainty, 0, psu$N), psu$stratum, FUN = sum)
+  pik <- ifelse(psu$certainty, 1, draw[psu$stratum] * psu$N / rest)
+  at <- match(s$psu_id, psu$psu_id)
+  list(stage_1 = unname(pik[at]), stage_2 = psu$take_2[at] / psu$N[at])
+}
+
+test_that("a register fit reports two stages and the bridge fields them", {
+  for (plan in list(certainty_plan_fixture(), certainty_free_take_fixture())) {
+    expect_identical(plan$stages, 2L)
+    expect_identical(plan$params$stages, 1L)
+    s <- execute(certainty_bridge_design(plan), certainty_element_frame(),
+                 seed = 41)
+    d <- as.data.frame(s)
+    psus <- unique(d[c("psu_id", "stratum")])
+    certain <- plan$psu$psu_id[plan$psu$certainty]
+    expect_true(all(certain %in% psus$psu_id))
+    expect_identical(
+      c(table(factor(psus$stratum, c("A", "B")))),
+      stats::setNames(
+        as.integer(plan$detail$n_psu_certain + plan$detail$n_psu_draw),
+        plan$detail$stratum
+      )
+    )
+    # Each PSU gets its own take, not the stratum's nominal one.
+    per_psu <- c(table(d$psu_id))
+    expect_identical(
+      unname(per_psu),
+      as.integer(plan$psu$take_2[match(names(per_psu), plan$psu$psu_id)])
+    )
+    chance <- certainty_planned_chances(plan, d)
+    expect_equal(d$.weight_1, 1 / chance$stage_1, tolerance = 1e-12)
+    expect_equal(d$.weight_2, 1 / chance$stage_2, tolerance = 1e-12)
+    expect_equal(d$.weight, d$.weight_1 * d$.weight_2, tolerance = 1e-12)
+  }
+})
+
+test_that("the spec records the nominal take a register fit was given or solved", {
+  fixed <- certainty_bridge_design()$stages[[1]]$draw_spec$certainty_plan
+  expect_identical(fixed$take_2, c(A = 10, B = 10))
+  plan <- certainty_free_take_fixture()
+  solved <- certainty_bridge_design(plan)$stages[[1]]$draw_spec$certainty_plan
+  expect_identical(
+    solved$take_2,
+    stats::setNames(as.numeric(plan$detail$take_2_int), plan$detail$stratum)
+  )
+  # A plan that records no take keeps NA, and the take stage still fields
+  # each PSU's take_2.
+  untaken <- plan
+  untaken$detail$take_2_int <- NULL
+  spec <- certainty_bridge_design(untaken)$stages[[1]]$draw_spec$certainty_plan
+  expect_identical(spec$take_2, c(A = NA_real_, B = NA_real_))
+})
+
+test_that("a free-take register design writes, reads and replays", {
+  plan <- certainty_free_take_fixture()
+  frame <- certainty_element_frame()
+  s <- execute(certainty_bridge_design(plan), frame, seed = 43)
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(s, path, frame = frame)
+  doc <- jsonlite::fromJSON(path, simplifyVector = FALSE)
+  expect_identical(doc$format_version, 4L)
+  restored <- read_design(path)
+  expect_equal(
+    restored$stages[[1]]$draw_spec$certainty_plan,
+    certainty_bridge_design(plan)$stages[[1]]$draw_spec$certainty_plan
+  )
+  # The file alone replays the sample, with no svyplan object.
+  expect_identical(
+    certainty_sample_key(execute(restored, frame, seed = 43)),
+    certainty_sample_key(s)
+  )
+})
+
+test_that("a register fit rebuilt from its assessment fields the same sample", {
+  plan <- certainty_plan_fixture()
+  rebuilt <- svyplan::n_alloc_joint(svyplan::prec_alloc_joint(plan))
+  expect_identical(rebuilt$psu, plan$psu)
+  expect_identical(
+    rebuilt$detail[c("n_psu_certain", "n_psu_draw")],
+    plan$detail[c("n_psu_certain", "n_psu_draw")]
+  )
+  frame <- certainty_element_frame()
+  expect_identical(
+    certainty_sample_key(execute(certainty_bridge_design(rebuilt), frame,
+                                 seed = 47)),
+    certainty_sample_key(execute(certainty_bridge_design(plan), frame,
+                                 seed = 47))
+  )
+})
+
+test_that("a one-per-zone plan with every PSU certain writes, reads and replays", {
+  psus <- data.frame(stratum = "A", psu_id = 1:6, N = 100L, certainty = TRUE)
+  plan <- svyplan::n_alloc_joint(
+    data.frame(stratum = "A", N = sum(psus$N), take_2 = 8),
+    data.frame(stratum = "A", name = "y", p = 0.5, icc_1 = 0.05),
+    targets = data.frame(name = "y", cv = 0.15),
+    psu = psus, n_psu_per_zone = 1
+  )
+  # No remainder is drawn, so the plan has no zones and no variance groups.
+  expect_identical(plan$detail$n_psu_draw, 0)
+  expect_true(all(is.na(plan$psu$.variance_group)))
+  frame <- psus[rep(seq_len(nrow(psus)), times = psus$N), ]
+  frame$id <- seq_len(nrow(frame))
+  design <- sampling_design() |>
+    stratify_by(stratum) |> cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_brewer", mos = N) |>
+    add_stage() |> draw(n = plan)
+  sample <- execute(design, frame, seed = 7)
+
+  rows <- function(s) {
+    d <- as.data.frame(s)
+    d <- d[order(d$id), c("id", "psu_id", ".weight_1", ".weight_2", ".weight")]
+    rownames(d) <- NULL
+    d
+  }
+  d <- rows(sample)
+  take <- plan$psu$take_2[match(d$psu_id, plan$psu$psu_id)]
+  expect_equal(d$.weight_1, rep(1, nrow(d)))
+  expect_equal(d$.weight_2, 100 / take)
+
+  for (x in list(design, sample)) {
+    path <- withr::local_tempfile(fileext = ".json")
+    write_design(x, path, frame = frame)
+    restored <- read_design(path)
+    for (k in 1:2) {
+      spec <- restored$stages[[k]]$draw_spec$certainty_plan
+      expect_identical(spec$n_psu_per_zone, 1L)
+      expect_identical(spec$register$variance_group, rep(NA_integer_, 6L))
+    }
+    expect_identical(rows(execute(restored, frame, seed = 7)), d)
+  }
+})
+
+test_that("an all-null variance group column keeps the populated checks", {
+  plan <- certainty_pair_fixture()
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(certainty_zone_design(plan), path)
+  # A fractional group is refused, while a null one is read.
+  for (bad in list(1.5, 0)) {
+    tampered <- certainty_tampered_file(path, function(doc) {
+      reg <- doc$design$stages[[1]]$draw$certainty_plan$register
+      at <- which(!vapply(reg, function(r) is.null(r$variance_group), TRUE))[1]
+      doc$design$stages[[1]]$draw$certainty_plan$register[[at]]$variance_group <- bad
+      doc
+    })
+    expect_error(read_design(tampered),
+                 class = "samplyr_error_design_file_malformed")
+  }
+})
+
+## Refusals that list PSU ids. cli reads a number beside a plural marker as
+## the marker's quantity and fails on a numeric vector, so a message lists
+## the ids as text and states the quantity.
+
+# A register whose PSU ids are whole numbers from 100000, so a number
+# formatted by default would read 1e+05.
+numeric_id_register <- function() {
+  register <- certainty_plan_register()
+  register$psu_id <- 100000L + seq_len(nrow(register)) - 1L
+  register
+}
+
+flat_message <- function(err) {
+  gsub("\\s+", " ", cli::ansi_strip(conditionMessage(err)))
+}
+
+test_that("register problems list numeric PSU ids with the verb of their count", {
+  base <- data.frame(
+    psu_id = 100000L + 0:5, stratum = "A", N = 10, certainty = FALSE,
+    zone = rep(1:3, each = 2L), variance_group = c(1L, 1L, 1L, 1L, 2L, 2L)
+  )
+  two <- base
+  two$variance_group[3:4] <- NA
+  expect_identical(
+    certainty_pair_problem(two, 1L),
+    "PSU \"100002\" and \"100003\" have a zone without a variance group, or a group without a zone."
+  )
+  one <- base
+  one$variance_group[3] <- NA
+  one$zone[4] <- NA
+  expect_match(certainty_pair_problem(one, 1L), "\"100002\" and \"100003\" have",
+               fixed = TRUE)
+  one$zone[4] <- 2L
+  expect_match(certainty_pair_problem(one, 1L), "PSU \"100002\" has a zone",
+               fixed = TRUE)
+
+  stray <- base[1:4, ]
+  stray$certainty <- c(TRUE, TRUE, FALSE, FALSE)
+  expect_identical(
+    certainty_zone_problem(stray, c(A = 2), 2L),
+    "Certainty PSU \"100000\" and \"100001\" have a zone."
+  )
+  stray$certainty[2] <- FALSE
+  expect_identical(
+    certainty_zone_problem(stray, c(A = 2), 2L),
+    "Certainty PSU \"100000\" has a zone."
+  )
+
+  # Zones of two PSUs, drawing two per zone, are censuses.
+  small <- base[1:4, ]
+  small$zone <- c(1L, 1L, 2L, 2L)
+  expect_match(certainty_zone_problem(small, c(A = 4), 2L),
+               "2 zones (1 and 2) hold 2 or fewer PSUs", fixed = TRUE)
+  small <- base[1:5, ]
+  small$zone <- c(1L, 1L, 1L, 2L, 2L)
+  expect_match(certainty_zone_problem(small, c(A = 4), 2L),
+               "1 zone (2) holds 2 or fewer PSUs", fixed = TRUE)
+})
+
+test_that("the disagreement check lists numeric PSU ids", {
+  register <- data.frame(
+    psu_id = 100000L + 0:5, stratum = "A",
+    N = c(100, 100, 1, 1, 1, 1), certainty = FALSE
+  )
+  err <- tryCatch(
+    check_certainty_plan_disagreement(register, c(A = 3), "pps_brewer"),
+    error = identity
+  )
+  expect_s3_class(err, "samplyr_error_certainty_plan_disagreement")
+  msg <- flat_message(err)
+  expect_match(msg, "PSU \"100000\" and \"100001\" an inclusion", fixed = TRUE)
+  expect_match(msg, "holds them noncertainty", fixed = TRUE)
+  register$N[2] <- 2
+  msg <- flat_message(tryCatch(
+    check_certainty_plan_disagreement(register, c(A = 2), "pps_brewer"),
+    error = identity
+  ))
+  expect_match(msg, "PSU \"100000\" an inclusion", fixed = TRUE)
+  expect_match(msg, "holds it noncertainty", fixed = TRUE)
+})
+
+test_that("a frame that disagrees with a numeric register lists its PSU ids", {
+  register <- numeric_id_register()
+  plan <- certainty_plan_fixture(psu = register)
+  frame <- certainty_element_frame(register)
+  design <- certainty_bridge_design(plan)
+  ids <- register$psu_id
+  refusal <- function(expr) {
+    err <- tryCatch(expr, error = identity)
+    expect_s3_class(err, "samplyr_error_certainty_register_mismatch")
+    flat_message(err)
+  }
+  reached <- character(0)
+
+  # Stage 1, against the whole register.
+  msg <- refusal(execute(design, frame[!frame$psu_id %in% ids[5:6], ], seed = 1))
+  expect_match(msg, "Register PSU \"100004\" and \"100005\" are absent",
+               fixed = TRUE)
+  msg <- refusal(execute(design, frame[frame$psu_id != ids[5], ], seed = 1))
+  expect_match(msg, "Register PSU \"100004\" is absent", fixed = TRUE)
+  reached <- c(reached, "absent")
+
+  extra <- frame[frame$psu_id %in% ids[1:2], ]
+  extra$psu_id <- extra$psu_id + 100000L
+  msg <- refusal(execute(design, rbind(frame, extra), seed = 1))
+  expect_match(msg, "Frame PSU \"200000\" and \"200001\" are not in the register",
+               fixed = TRUE)
+  reached <- c(reached, "extra")
+
+  moved <- frame
+  moved$stratum[moved$psu_id %in% ids[2:3]] <- "B"
+  msg <- refusal(execute(design, moved, seed = 1))
+  expect_match(msg, "PSU \"100001\" and \"100002\" are in a different stratum",
+               fixed = TRUE)
+  reached <- c(reached, "moved")
+
+  doubled <- frame
+  first <- !duplicated(doubled$psu_id) & doubled$psu_id %in% ids[2:3]
+  doubled$N[first] <- doubled$N[first] + 1
+  msg <- refusal(execute(design, doubled, seed = 1))
+  expect_match(msg, "PSU \"100001\" and \"100002\" carry more than one", fixed = TRUE)
+  reached <- c(reached, "doubled")
+
+  # The take stage, against the PSUs of a listing frame.
+  stage1 <- execute(design, frame, stages = 1, seed = 1)
+  msg <- refusal(execute(stage1, rbind(frame, extra), seed = 2))
+  expect_match(msg, "Frame PSU \"200000\" and \"200001\" are not in the register",
+               fixed = TRUE)
+  msg <- refusal(execute(stage1, moved, seed = 2))
+  expect_match(msg, "PSU \"100001\" and \"100002\" are in a different stratum",
+               fixed = TRUE)
+  reached <- c(reached, "take")
+
+  expect_false(grepl("e+05", msg, fixed = TRUE))
+  expect_setequal(reached, c("absent", "extra", "moved", "doubled", "take"))
+})
+
+## A stage-1 design read back from file, then given the live plan at its
+## take stage. The file reads whole numbers back as integers and factors as
+## labels, which must not make the two registers differ.
+
+test_that("a design read back takes the live plan at its take stage", {
+  id_types <- list(
+    character = function(x) x,
+    integer = function(x) 100000L + seq_along(x),
+    double = function(x) as.double(100000L + seq_along(x)),
+    factor = function(x) factor(x)
+  )
+  reached <- character(0)
+  for (zoning in c("none", "one", "two")) {
+    for (type in names(id_types)) {
+      register <- if (zoning == "none") {
+        certainty_plan_register()
+      } else {
+        certainty_zone_register()
+      }
+      register$psu_id <- id_types[[type]](register$psu_id)
+      plan <- switch(zoning,
+        none = certainty_plan_fixture(psu = register),
+        one = certainty_zone_fixture(psu = register, m = 1),
+        two = certainty_zone_fixture(psu = register, m = 2)
+      )
+      frame <- certainty_element_frame(register)
+      stage1 <- sampling_design() |>
+        add_stage() |> stratify_by(stratum) |> cluster_by(psu_id) |>
+        draw(n = plan, method = "pps_brewer", mos = N)
+      path <- withr::local_tempfile(fileext = ".json")
+      write_design(stage1, path)
+      read <- read_design(path)
+      stored <- read$stages[[1]]$draw_spec$certainty_plan$register
+      expect_type(stored$N, "double")
+      expect_type(stored$take_2, "double")
+
+      label <- paste(zoning, type)
+      resumed <- read |> add_stage() |> draw(n = plan)
+      live <- stage1 |> add_stage() |> draw(n = plan)
+      a <- suppressWarnings(execute(resumed, frame, seed = 3))
+      b <- suppressWarnings(execute(live, frame, seed = 3))
+      expect_identical(a$.sample_id, b$.sample_id, label = label)
+      expect_equal(a$.weight, b$.weight, label = label)
+      reached <- c(reached, label)
+    }
+  }
+  expect_setequal(
+    reached,
+    paste(rep(c("none", "one", "two"), each = 4), names(id_types))
+  )
+})
+
+test_that("the register comparison still tells two plans apart", {
+  plan <- certainty_plan_fixture()
+  stage1 <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_brewer", mos = N)
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(stage1, path)
+  other <- plan
+  other$psu$take_2[2] <- other$psu$take_2[2] + 1
+  for (design in list(stage1, read_design(path))) {
+    expect_error(
+      design |> add_stage() |> draw(n = other),
+      "not the plan stage 1 was built from",
+      class = "samplyr_error_svyplan_certainty_plan"
+    )
+  }
+  register <- stage1$stages[[1]]$draw_spec$certainty_plan$register
+  expect_true(same_certainty_register(register, register))
+  # A label never equals a number, and the row order counts.
+  as_text <- register
+  as_text$psu_id <- as.character(seq_len(nrow(register)))
+  as_number <- register
+  as_number$psu_id <- seq_len(nrow(register))
+  expect_false(same_certainty_register(as_text, as_number))
+  expect_false(same_certainty_register(register, register[nrow(register):1, ]))
+  changed <- register
+  changed$stratum[1] <- "B"
+  expect_false(same_certainty_register(register, changed))
+})
+
+test_that("a different plan below a segment stage names the take's stage", {
+  plan <- certainty_plan_fixture()
+  other <- plan
+  other$psu$take_2[2] <- other$psu$take_2[2] + 1
+  err <- expect_error(
+    segment_design(plan) |> draw(n = other),
+    class = "samplyr_error_svyplan_certainty_plan"
+  )
+  expect_match(conditionMessage(err), "The plan at stage 3 is not", fixed = TRUE)
+  stage1 <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_brewer", mos = N)
+  err <- expect_error(
+    stage1 |> add_stage() |> draw(n = other),
+    class = "samplyr_error_svyplan_certainty_plan"
+  )
+  expect_match(conditionMessage(err), "The plan at stage 2 is not", fixed = TRUE)
+  expect_no_error(segment_design(plan) |> draw(n = plan))
+})
+
+## PSU ids are matched to the register by value. Base R compares a number
+## with a label as text, and writes 100000 as "1e+05", so a match used to
+## depend on the size of the ids.
+
+test_that("PSU ids match the register by value at every entry point", {
+  withr::local_options(scipen = 0)
+  ids <- c(100000:100007, 200000:200007)
+  as_type <- list(I = as.integer, D = as.double, C = as.character)
+  setup <- function(types) {
+    register <- certainty_plan_register()
+    register$psu_id <- as_type[[types[1]]](ids)
+    plan <- certainty_plan_fixture(psu = register)
+    psu <- register
+    psu$psu_id <- as_type[[types[2]]](ids)
+    listing <- certainty_element_frame(register)
+    listing$psu_id <- as_type[[types[3]]](listing$psu_id)
+    list(
+      register = register,
+      plan = plan,
+      design = certainty_bridge_design(plan),
+      frames = list(psu, listing)
+    )
+  }
+  reached <- character(0)
+
+  # Numbers against numbers, whatever their storage, as with labels.
+  for (types in list(c("I", "I", "D"), c("D", "D", "I"), c("I", "D", "D"),
+                     c("C", "C", "C"))) {
+    label <- paste(types, collapse = "/")
+    case <- setup(types)
+    reference <- setup(rep(if (types[1] == "C") "C" else "I", 3))
+    s <- suppressWarnings(execute(case$design, case$frames, seed = 1))
+    ref <- suppressWarnings(execute(reference$design, reference$frames, seed = 1))
+    expect_identical(s$.sample_id, ref$.sample_id, label = label)
+    # Each PSU's take is the plan's, read from the plan's own register,
+    # whose rows are in the order of `ids`.
+    position <- match(format(s$psu_id, scientific = FALSE, trim = TRUE),
+                      format(ids, scientific = FALSE, trim = TRUE))
+    expect_false(anyNA(position))
+    expect_equal(
+      as.vector(table(position)),
+      case$plan$psu$take_2[sort(unique(position))],
+      label = label
+    )
+    # Continuing from stage 1.
+    stage1 <- execute(case$design, case$frames[[1]], stages = 1, seed = 1)
+    expect_no_error(suppressWarnings(execute(stage1, case$frames[[2]], seed = 1)))
+    # The frame digest resolves each take pool again.
+    full <- suppressWarnings(
+      execute(case$design, case$frames, seed = 1, frame_digest = "full")
+    )
+    expect_identical(full$.sample_id, s$.sample_id, label = label)
+    reached <- c(reached, label)
+  }
+
+  # Numbers on one side and labels on the other are refused, small or
+  # large, before any draw.
+  for (types in list(c("C", "D", "D"), c("D", "C", "C"), c("C", "C", "D"),
+                     c("I", "C", "C"))) {
+    label <- paste(types, collapse = "/")
+    case <- setup(types)
+    err <- expect_error(
+      suppressWarnings(execute(case$design, case$frames, seed = 1)),
+      class = "samplyr_error_certainty_register_mismatch"
+    )
+    expect_match(conditionMessage(err), "of different types", fixed = TRUE)
+    reached <- c(reached, label)
+  }
+  small <- setup(c("C", "D", "D"))
+  small$frames[[1]]$psu_id <- seq_along(ids)
+  small$frames[[2]]$psu_id <- as.double(match(small$frames[[2]]$psu_id, ids))
+  small$register$psu_id <- as.character(seq_along(ids))
+  expect_error(
+    suppressWarnings(execute(
+      certainty_bridge_design(certainty_plan_fixture(psu = small$register)),
+      small$frames, seed = 1
+    )),
+    class = "samplyr_error_certainty_register_mismatch"
+  )
+  expect_setequal(reached, c("I/I/D", "D/D/I", "I/D/D", "C/C/C",
+                             "C/D/D", "D/C/C", "C/C/D", "I/C/C"))
+})
+
+## 64-bit integer PSU ids (bit64). A double holds every integer only up to
+## 2^53, so narrowing such ids to doubles merges neighbors. The ids are
+## built from decimal strings or by arithmetic on integer64, since a double
+## literal would round the difference away before the code saw it.
+
+i64 <- function(x) bit64::as.integer64(x)
+
+large_id_register <- function(register = certainty_plan_register(),
+                              from = "9007199254740992", step = 1L) {
+  register$psu_id <- i64(from) + step * (seq_len(nrow(register)) - 1L)
+  register
+}
+
+test_that("64-bit PSU ids above 2^53 draw what their text labels draw", {
+  skip_if_not_installed("bit64")
+  register <- large_id_register()
+  expect_lt(length(unique(suppressWarnings(as.numeric(register$psu_id)))),
+            length(unique(register$psu_id)))
+  as_text <- register
+  as_text$psu_id <- as.character(register$psu_id)
+  draws <- function(reg) {
+    plan <- suppressWarnings(certainty_plan_fixture(psu = reg))
+    design <- certainty_bridge_design(plan)
+    frame <- certainty_element_frame(reg)
+    list(
+      one_call = suppressWarnings(execute(design, frame, seed = 7)),
+      staged = suppressWarnings(execute(
+        execute(design, frame, stages = 1, seed = 7), frame, seed = 7
+      )),
+      digest = suppressWarnings(execute(design, frame, seed = 7,
+                                        frame_digest = "full"))
+    )
+  }
+  wide <- draws(register)
+  text <- draws(as_text)
+  for (route in names(wide)) {
+    expect_identical(wide[[route]]$.sample_id, text[[route]]$.sample_id,
+                     label = route)
+    expect_equal(wide[[route]]$.weight, text[[route]]$.weight, label = route)
+    expect_identical(as.character(wide[[route]]$psu_id),
+                     text[[route]]$psu_id, label = route)
+    expect_s3_class(wide[[route]]$psu_id, "integer64")
+  }
+  # Each PSU's take is the plan's, read from the plan's register by its id.
+  plan <- suppressWarnings(certainty_plan_fixture(psu = register))
+  takes <- table(as.character(wide$one_call$psu_id))
+  expect_equal(
+    as.vector(takes),
+    plan$psu$take_2[match(names(takes), as.character(plan$psu$psu_id))]
+  )
+  # A design saved as RDS keeps the type and takes the live plan again.
+  path <- withr::local_tempfile(fileext = ".rds")
+  stage1 <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_systematic", mos = N)
+  saveRDS(stage1, path)
+  expect_no_error(readRDS(path) |> add_stage() |> draw(n = plan))
+})
+
+test_that("zoned 64-bit PSU ids keep their certainty, zone and group", {
+  skip_if_not_installed("bit64")
+  register <- large_id_register(certainty_zone_register())
+  plan <- suppressWarnings(certainty_zone_fixture(psu = register, m = 1))
+  frame <- certainty_element_frame(register)
+  s <- suppressWarnings(execute(certainty_zone_design(plan), frame, seed = 4))
+  units <- as.data.frame(s)[!duplicated(as.character(s$psu_id)), ]
+  at <- match(as.character(units$psu_id), as.character(plan$psu$psu_id))
+  expect_false(anyNA(at))
+  expect_identical(units$.certainty_1, plan$psu$certainty[at])
+  expect_identical(units$.zone_1, as.integer(plan$psu$.zone[at]))
+  expect_identical(units$.variance_group_1,
+                   as.integer(plan$psu$.variance_group[at]))
+})
+
+test_that("a take plan differing in one 64-bit id is refused", {
+  skip_if_not_installed("bit64")
+  # Odd ids from 2^53 + 1, so 2^53 itself is free to be swapped in. As
+  # doubles, 2^53 + 1 and 2^53 are the same number.
+  register <- large_id_register(from = "9007199254740993", step = 2L)
+  plan <- suppressWarnings(certainty_plan_fixture(psu = register))
+  swapped <- register
+  swapped$psu_id[1] <- i64("9007199254740992")
+  other <- suppressWarnings(certainty_plan_fixture(psu = swapped))
+  stage1 <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_brewer", mos = N)
+  expect_error(stage1 |> add_stage() |> draw(n = other),
+               "not the plan stage 1 was built from",
+               class = "samplyr_error_svyplan_certainty_plan")
+  expect_no_error(stage1 |> add_stage() |> draw(n = plan))
+  # The execute gate compares the stored registers the same way.
+  assembled <- stage1 |> add_stage() |> draw(n = plan)
+  assembled$stages[[2]]$draw_spec$certainty_plan$register$psu_id[1] <-
+    i64("9007199254740992")
+  expect_error(
+    suppressWarnings(execute(assembled, certainty_element_frame(register),
+                             seed = 1)),
+    class = "samplyr_error_svyplan_certainty_plan"
+  )
+
+  # The two largest ids read as NaN to a double comparison, so the
+  # comparison is of the stored bits.
+  top <- data.frame(
+    psu_id = i64("9223372036854775807") - 1:0, stratum = "A", N = 1,
+    certainty = FALSE, take_2 = 1
+  )
+  flipped <- top
+  flipped$psu_id <- rev(top$psu_id)
+  expect_true(same_certainty_register(top, top))
+  expect_false(same_certainty_register(top, flipped))
+})
+
+test_that("64-bit ids are matched by value against every numeric type", {
+  skip_if_not_installed("bit64")
+  withr::local_options(scipen = 0)
+  position <- function(ids, table) {
+    register_id_positions(ids, table, "psu_id")
+  }
+  # The two largest and the two smallest valid ids.
+  ends <- c(i64("9223372036854775807") - 1:0, -i64("9223372036854775807") + 0:1)
+  expect_identical(position(ends[c(3, 1, 4, 2)], ends), c(3L, 1L, 4L, 2L))
+
+  # Near 100000, both directions, integer and double.
+  wide <- i64(99998L) + 0:4
+  expect_identical(position(c(100000L, 100002L), wide), c(3L, 5L))
+  expect_identical(position(c(100000, 100002), wide), c(3L, 5L))
+  expect_identical(position(wide[c(5, 1)], 99998:100002), c(5L, 1L))
+  expect_identical(position(wide[c(5, 1)], c(99998, 99999, 1e5, 100001, 100002)),
+                   c(5L, 1L))
+  # Above 2^53, a double equal to an id matches it, and none of its
+  # neighbors, which no double can hold.
+  big <- i64("9007199254740992") + 0:2
+  expect_identical(position(2^53, big), 1L)
+  expect_identical(position(2^53 + 2, big), 3L)
+  expect_identical(position(big, c(2^53, 2^53 + 2)), c(1L, NA, 2L))
+
+  # A double that is no whole number in range matches nothing, and keeps the
+  # positions of the others. 100000.5 must not be truncated onto 100000.
+  invalid <- c(100000, 100000.5, 2.5, Inf, -Inf, NA, NaN, 2^63, -2^63, 100002)
+  expect_identical(position(invalid, wide), c(3L, rep(NA_integer_, 8), 5L))
+  expect_identical(position(wide, c(100000.5, 100000, NA, 100002)),
+                   c(NA, NA, 2L, NA, 4L))
+  expect_identical(position(i64(integer(0)), wide), integer(0))
+
+  # Numbers against labels are refused, as for every numeric type.
+  expect_error(position(wide, as.character(99998:100002)),
+               class = "samplyr_error_certainty_register_mismatch")
+})
+
+test_that("classed numeric ids match a 64-bit register by their values", {
+  skip_if_not_installed("bit64")
+  skip_if_not_installed("haven")
+  register <- large_id_register(from = "100000")
+  plan <- suppressWarnings(certainty_plan_fixture(psu = register))
+  design <- certainty_bridge_design(plan)
+  frame <- certainty_element_frame(register)
+  values <- as.numeric(frame$psu_id)
+  draws <- function(ids) {
+    f <- frame
+    f$psu_id <- ids
+    list(
+      one_call = suppressWarnings(execute(design, f, seed = 7)),
+      staged = suppressWarnings(execute(
+        execute(design, f, stages = 1, seed = 7), f, seed = 7
+      )),
+      digest = suppressWarnings(execute(design, f, seed = 7,
+                                        frame_digest = "full"))
+    )
+  }
+  control <- draws(values)
+  classed <- list(
+    labelled_double = haven::labelled(values, c(first = values[1])),
+    labelled_integer = haven::labelled(as.integer(values))
+  )
+  for (kind in names(classed)) {
+    got <- draws(classed[[kind]])
+    for (route in names(control)) {
+      label <- paste(kind, route)
+      expect_identical(got[[route]]$.sample_id, control[[route]]$.sample_id,
+                       label = label)
+      expect_equal(got[[route]]$.weight, control[[route]]$.weight,
+                   label = label)
+      expect_identical(as.numeric(got[[route]]$psu_id),
+                       as.numeric(control[[route]]$psu_id), label = label)
+    }
+  }
+  takes <- table(as.numeric(control$one_call$psu_id))
+  expect_equal(
+    as.vector(takes),
+    plan$psu$take_2[match(as.numeric(names(takes)),
+                          as.numeric(plan$psu$psu_id))]
+  )
+
+  # The lookup in both directions, and a fraction left unmatched.
+  wide <- i64(99998L) + 0:4
+  position <- function(ids, table) {
+    register_id_positions(ids, table, "psu_id")
+  }
+  expect_identical(position(haven::labelled(c(100000, 100002, 100000.5)),
+                            wide), c(3L, 5L, NA))
+  expect_identical(position(wide[c(5, 1)],
+                            haven::labelled(c(99998, 100002))), c(2L, 1L))
+  # Any class vctrs cannot cast to a 64-bit integer, as units is one.
+  expect_identical(position(structure(c(100002, 99998), class = "psu_code"),
+                            wide), c(5L, 1L))
+  expect_error(position(haven::labelled(c(99998, 99999)),
+                        as.character(99998:99999)),
+               class = "samplyr_error_certainty_register_mismatch")
+
+  # The plan comparison reads the stored values, and compares missing
+  # positions one by one.
+  reg <- function(id) {
+    data.frame(psu_id = id, stratum = "A", N = 1, certainty = FALSE,
+               take_2 = 1)
+  }
+  expect_true(same_certainty_register(reg(haven::labelled(c(99998, 99999))),
+                                      reg(wide[1:2])))
+  expect_false(same_certainty_register(reg(haven::labelled(c(99998, 1))),
+                                       reg(wide[1:2])))
+  expect_false(same_certainty_register(reg(c(NA, 2.5)), reg(i64(c(NA, NA)))))
+  expect_true(same_certainty_register(reg(c(NA, 2)), reg(i64(c(NA, 2L)))))
+})
+
+test_that("a stage 2 listing whose PSU id is declared missing is refused", {
+  skip_if_not_installed("haven")
+  # PSU 100000 is certain, so stage 1 selects it, and the listing declares
+  # its id missing. haven's labelled_spss keeps the value it declares
+  # missing, so a match on stored values alone would draw its rows.
+  ids <- 100000 + 0:15
+  types <- list(
+    double = function(x) x,
+    integer = as.integer,
+    label = function(x) format(x, scientific = FALSE, trim = TRUE)
+  )
+  if (requireNamespace("bit64", quietly = TRUE)) {
+    types$integer64 <- function(x) i64(as.integer(x))
+  }
+  declare <- list(
+    values = function(x) haven::labelled_spss(x, na_values = x[1]),
+    range = function(x) {
+      haven::labelled_spss(x, na_range = c(99999.5, 100000.5))
+    }
+  )
+  reached <- character(0)
+  for (type in names(types)) {
+    register <- certainty_plan_register()
+    register$psu_id <- types[[type]](ids)
+    plan <- suppressWarnings(certainty_plan_fixture(psu = register))
+    expect_true(plan$psu$certainty[1], label = type)
+    design <- certainty_bridge_design(plan)
+    psu <- register
+    psu$psu_id <- if (type == "label") register$psu_id else as.numeric(ids)
+    listing <- certainty_element_frame(register)
+    stored <- if (type == "label") listing$psu_id else
+      as.numeric(as.character(listing$psu_id))
+    routes <- function(l) {
+      list(
+        combined = function() execute(design, list(psu, l), seed = 1),
+        continuation = function() {
+          execute(execute(design, psu, stages = 1, seed = 1), l, seed = 1)
+        }
+      )
+    }
+    # Without a declared code, the labelled listing draws the PSU's rows.
+    control <- listing
+    control$psu_id <- haven::labelled_spss(stored)
+    for (route in routes(control)) {
+      s <- suppressWarnings(route())
+      expect_equal(sum(vctrs::vec_data(s$psu_id) == stored[1]), 26,
+                   label = type)
+    }
+    kinds <- if (type == "label") "values" else names(declare)
+    for (kind in kinds) {
+      lost <- listing
+      lost$psu_id <- declare[[kind]](stored)
+      for (route in names(routes(lost))) {
+        label <- paste(type, kind, route)
+        err <- expect_error(suppressWarnings(routes(lost)[[route]]()),
+                            class = "samplyr_error_certainty_register_mismatch",
+                            label = label)
+        expect_match(cli::ansi_strip(conditionMessage(err)),
+                     "is missing in 600 rows of the frame", fixed = TRUE,
+                     label = label)
+        reached <- c(reached, label)
+      }
+    }
+  }
+  expect_length(reached, 2 * (2 * (length(types) - 1) + 1))
+
+  # The lookup: a declared code names no PSU, on either side.
+  position <- function(ids, table) {
+    register_id_positions(ids, table, "psu_id")
+  }
+  spss <- haven::labelled_spss(c(1, 2, 3), na_values = 2)
+  expect_identical(position(spss, c(3, 2, 1)), c(3L, NA, 1L))
+  expect_identical(position(c(1, 2, 3), spss), c(1L, NA, 3L))
+  expect_identical(position(c(NA, 1), c(NA, 1)), c(NA, 2L))
+
+  # A labelled id the register lacks is named by its value, never as
+  # 1e+06.
+  register <- certainty_plan_register()
+  register$psu_id <- ids
+  plan <- suppressWarnings(certainty_plan_fixture(psu = register))
+  listing <- certainty_element_frame(register)
+  listing$psu_id[1] <- 1e6
+  listing$psu_id <- haven::labelled(listing$psu_id)
+  err <- expect_error(
+    suppressWarnings(execute(certainty_bridge_design(plan),
+                             list(register, listing), seed = 1)),
+    class = "samplyr_error_certainty_register_mismatch"
+  )
+  expect_match(cli::ansi_strip(conditionMessage(err)),
+               "Frame PSU \"1000000\" is not in the register", fixed = TRUE)
+})
+
+test_that("a design file refuses 64-bit ids it could not read back", {
+  skip_if_not_installed("bit64")
+  stage1_of <- function(register) {
+    plan <- suppressWarnings(certainty_plan_fixture(psu = register))
+    list(plan = plan, design = sampling_design() |>
+      add_stage() |> stratify_by(stratum) |> cluster_by(psu_id) |>
+      draw(n = plan, method = "pps_brewer", mos = N))
+  }
+  path <- withr::local_tempfile(fileext = ".json")
+  # Beyond the range on either side, including ids a double holds exactly,
+  # such as 2^53 + 2, the register is refused and no file is written.
+  beyond <- list(
+    rounding = large_id_register(),
+    exact = large_id_register(from = "9007199254740994", step = 2L),
+    negative = large_id_register(from = "-9007199254740993", step = -1L)
+  )
+  for (kind in names(beyond)) {
+    err <- expect_error(write_design(stage1_of(beyond[[kind]])$design, path),
+                        class = "samplyr_error_serialize_unsupported",
+                        label = kind)
+    msg <- cli::ansi_strip(conditionMessage(err))
+    expect_match(msg, "only from -2^53 to 2^53", fixed = TRUE, label = kind)
+    expect_match(msg, "character labels", fixed = TRUE, label = kind)
+    expect_match(msg, "saveRDS()", fixed = TRUE, label = kind)
+    expect_false(file.exists(path), label = kind)
+  }
+  # Both ends of the range are written and read back.
+  ends <- list(
+    top = large_id_register(from = "9007199254740992", step = -1L),
+    bottom = large_id_register(from = "-9007199254740992", step = 1L)
+  )
+  for (kind in names(ends)) {
+    written <- withr::local_tempfile(fileext = ".json")
+    end <- stage1_of(ends[[kind]])
+    write_design(end$design, written)
+    read <- read_design(written)
+    expect_no_error(read |> add_stage() |> draw(n = end$plan),
+                    message = kind)
+  }
+  # The same ids as character labels are written, read and replayed.
+  labels <- large_id_register()
+  labels$psu_id <- as.character(labels$psu_id)
+  text <- stage1_of(labels)
+  write_design(text$design, path)
+  frame <- certainty_element_frame(labels)
+  replayed <- suppressWarnings(execute(
+    read_design(path) |> add_stage() |> draw(n = text$plan), frame, seed = 2
+  ))
+  live <- suppressWarnings(execute(
+    text$design |> add_stage() |> draw(n = text$plan), frame, seed = 2
+  ))
+  expect_identical(replayed$.sample_id, live$.sample_id)
+  expect_identical(replayed$psu_id, live$psu_id)
+  expect_equal(replayed$.weight, live$.weight)
+  unlink(path)
+  # Below 2^53 the ids read back as integers, which the live plan matches.
+  small <- stage1_of(large_id_register(from = "100000"))
+  write_design(small$design, path)
+  read <- read_design(path)
+  expect_no_error(read |> add_stage() |> draw(n = small$plan))
+  frame <- certainty_element_frame(large_id_register(from = "100000"))
+  expect_identical(
+    suppressWarnings(execute(read |> add_stage() |> draw(n = small$plan),
+                             frame, seed = 2))$.sample_id,
+    suppressWarnings(execute(small$design |> add_stage() |>
+                               draw(n = small$plan), frame, seed = 2))$.sample_id
+  )
 })

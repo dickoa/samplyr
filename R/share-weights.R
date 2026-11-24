@@ -96,7 +96,7 @@
 #'   The recorded design still describes selection from the source population.
 #'
 #' @references
-#' Lavallee, P. (2007). *Indirect Sampling*. Springer.
+#' \enc{Lavallée}{Lavallee}, P. (2007). *Indirect Sampling*. Springer.
 #'
 #' @examples
 #' dwellings <- data.frame(dwelling_id = 1:20, region = rep(1:2, each = 10))

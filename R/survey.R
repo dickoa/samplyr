@@ -218,10 +218,13 @@
 #' (`samplyr_error_twophase_phase1_pps`, `samplyr_error_occasion_phase1_pps`).
 #' So are `cube`, first-stage `pps_poisson` and the spatial methods, which
 #' are unsupported at either phase. Equal-probability first phases export,
-#' stratified, clustered, multistage and with-replacement alike. No
-#' two-phase sample has a replicate export, except the subsample within
-#' pools above. The weights of a refused sample are exact, so totals and
-#' means are right. For a variance, the ultimate-cluster approximation
+#' stratified, clustered, multistage and with-replacement alike. A
+#' two-phase sample has a replicate export in three shapes, the subsample
+#' within pools above, a second phase of a phase 1 fixed in one primary unit
+#' (every stage taken for sure, which can be a census of its elements), and
+#' random groups of a design executed whole with `reps`, a refused one
+#' included (see [as_svrepdesign()]). The weights of a refused sample are
+#' exact, so totals and means are right. For a variance, the ultimate-cluster approximation
 #' treats phase 1's units as drawn with replacement and carries everything
 #' below in them. It leaves out phase 1's correction and overstates the
 #' variance, and more so when phase 2 was drawn across the phase-1 units:
@@ -426,9 +429,9 @@
 #' Hansen, M. H., Hurwitz, W. N. and Madow, W. G. (1953). *Sample Survey
 #' Methods and Theory*. Wiley.
 #'
-#' Lavallee, P. (2007). *Indirect Sampling*. Springer.
+#' \enc{Lavallée}{Lavallee}, P. (2007). *Indirect Sampling*. Springer.
 #'
-#' Sarndal, C.-E., Swensson, B. and Wretman, J. (1992). *Model
+#' \enc{Särndal}{Sarndal}, C.-E., Swensson, B. and Wretman, J. (1992). *Model
 #' Assisted Survey Sampling*. Springer.
 #'
 #' Wolter, K. M. (2007). *Introduction to Variance Estimation*, 2nd ed.
@@ -483,7 +486,7 @@
 #' @seealso [execute()] for producing tbl_sample objects,
 #'   [survey::svydesign()] for the underlying function,
 #'   [as_survey_design.tbl_sample] for converting directly to a srvyr `tbl_svy`,
-#'   `as_svrepdesign()` for replicate-weight export,
+#'   [as_svrepdesign()] for replicate-weight export,
 #'   [as_svydesign.frame_stack()] for overlapping frames
 #'
 #' @family survey export
@@ -723,9 +726,10 @@ reserve_primary_vars <- function(design, stage, data) {
 #' all of unknown eligibility shares its estimate among them: as eligible
 #' nonrespondents when the estimate is positive, as ineligible units when it
 #' is zero. `unit_col` names the column that gives each row's recorded unit,
-#' a name free in `df`.
+#' a name free in `df`. `unit_vars` are columns constant within a unit, such
+#' as the first stage's zone, which each row takes from its recorded unit.
 #' @noRd
-reserve_unit_rows <- function(df, record, unit_col) {
+reserve_unit_rows <- function(df, record, unit_col, unit_vars = character(0)) {
   pools <- record$pools
   units <- record$units
   # One row per unit, the first of a unit drawn as a cluster.
@@ -750,6 +754,9 @@ reserve_unit_rows <- function(df, record, unit_col) {
   unit_row <- which(first)
   block <- function(keep, code_value, word) {
     out <- reserve_key_rows(df, record, pool[keep])
+    for (v in intersect(unit_vars, names(units$rows))) {
+      out[[v]] <- vctrs::vec_cast(units$rows[[v]][unit_row[keep]], df[[v]])
+    }
     out$.weight <- weight[keep]
     # The recorded unit, read by a frame stack and dropped from the design.
     out[[unit_col]] <- unit_row[keep]
@@ -802,8 +809,10 @@ reserve_category_value <- function(x, n, code, word) {
 
 #' Export a settled reserve by ultimate clusters
 #'
-#' The first stage's units are the clusters, its stratification variables
-#' the strata, with no finite population correction. Every later stage,
+#' The first stage's units are the clusters, its variance strata the strata
+#' (its stratification, crossed with the zones of a zoned plan or replaced by
+#' the variance groups of a plan drawing one unit per zone), with no finite
+#' population correction. Every later stage,
 #' the settled one included, is carried in the unit totals. A first-stage
 #' reserve adds its ineligible units as rows, so the eligible count it
 #' estimates enters the variance. A unit taken with certainty is a stratum
@@ -827,7 +836,13 @@ build_reserve_svydesign <- function(x, nest, dots, fn_name,
                             call = call)
   # A free name, since a user column may be called `.reserve_unit`.
   unit_col <- free_column_name(df, ".reserve_unit")
-  added <- reserve_unit_rows(df, record, unit_col)
+  # An added row keeps its primary unit's zone, read from the unit itself
+  # since the unit may have no row left in the export.
+  zone_vars <- intersect(
+    paste0(c(".zone_", ".variance_group_"), stages[1]),
+    names(df)
+  )
+  added <- reserve_unit_rows(df, record, unit_col, zone_vars)
   if (nrow(added) > 0L) {
     # At the first stage each added row is a unit of its own.
     fresh <- max(c(entry$unit$id, 0L)) + seq_len(nrow(added))
@@ -845,7 +860,7 @@ build_reserve_svydesign <- function(x, nest, dots, fn_name,
     df <- vctrs::vec_rbind(df, added)
   }
   spec$n_rows <- nrow(df)
-  vars <- design$stages[[stages[1]]]$strata$vars %||% character(0)
+  vars <- entry$strata$user %||% character(0)
   sure <- self_represent(df, entry, vars, design, stages,
                          flag_only_stage = record$stage)
   df <- sure$df
@@ -2986,7 +3001,7 @@ compose_within_pool_subsample <- function(x) {
   # A hit number is constant within its pool, which it names.
   stage_cols <- intersect(
     paste0(
-      c(".weight_", ".fpc_", ".certainty_", ".zone_", ".pair_", ".draw_"),
+      c(".weight_", ".fpc_", ".certainty_", ".zone_", ".variance_group_", ".draw_"),
       rep(stages1, each = 6L)
     ),
     names(df1)
@@ -7140,11 +7155,13 @@ multiframe_overlaps <- function(x, designs = NULL) {
 #' and settled reserves included. A materialized occasion is replicated by
 #' ultimate clusters, and a window's replicates are calibrated on the same
 #' totals as its linearized design. `"rwyb"` is refused for an occasion
-#' (`samplyr_error_occasion_replicate_type`). Of the two-phase samples,
-#' only two shapes are replicated: a second phase drawn within each
-#' final-stage pool of phase 1, which is phase 1's design with a smaller
-#' final take, and a second phase of a phase 1 that could select nothing
-#' else. The others are refused (`samplyr_error_svrep_twophase_unsupported`).
+#' (`samplyr_error_occasion_replicate_type`). Of the two-phase samples, two
+#' shapes are replicated, a second phase drawn within each final-stage pool
+#' of phase 1, which is phase 1's design with a smaller final take, and a
+#' second phase of a phase 1 fixed in one primary unit (every stage taken
+#' for sure, which can be a census of its elements). Random groups, below,
+#' also replicate a two-phase design executed whole with `reps`. The others
+#' are refused (`samplyr_error_svrep_twophase_unsupported`).
 #'
 #' ## The first stage under the generic types
 #'
@@ -7255,9 +7272,10 @@ multiframe_overlaps <- function(x, designs = NULL) {
 #' over one realized first phase, is refused
 #' (`samplyr_error_random_groups_shared`), because the shared selection's
 #' variance would be left out. Replicate that stage or phase too, and
-#' continue each replicate. A first phase that could select nothing else,
-#' such as the one unit of a one-unit population, has no variance to leave
-#' out, and a later phase replicated over it is accepted. The sample must
+#' continue each replicate. A first phase fixed in one primary unit, every
+#' stage taken for sure, such as the one unit of a one-unit population, has
+#' no variance to leave out, and a later phase replicated over it is
+#' accepted. A census of several primary units is not read as fixed. The sample must
 #' hold every replicate of its
 #' execution (`samplyr_error_random_groups_input`).
 #'

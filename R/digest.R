@@ -711,7 +711,7 @@ validate_digest_pools <- function(stage, pos, prev, tol) {
     if (any(over)) {
       abort_digest(
         "Stage {id}: {.field n_realized} exceeds pool size {.field N}
-         for pool{?s} {.val {pools$pool_id[over]}} in a
+         for {cli::qty(sum(over))}pool{?s} {.val {pools$pool_id[over]}} in a
          without-replacement stage.",
         "allocation"
       )
@@ -1114,7 +1114,8 @@ validate_digest_n_expected <- function(stage, pools, units, tol, quantile_tol) {
   if (any(bad)) {
     abort_digest(
       "Stage {id}: {.field n_expected} does not match the sum of
-       retained chances for pool{?s} {.val {pools$pool_id[bad]}}.",
+       retained chances for {cli::qty(sum(bad))}pool{?s}
+       {.val {pools$pool_id[bad]}}.",
       "allocation"
     )
   }
@@ -1254,7 +1255,7 @@ validate_digest_selected <- function(stage, pools, units) {
     if (any(bad)) {
       abort_digest(
         "Stage {id}: {.field n_realized} does not match the selected
-         trace for pool{?s} {.val {pools$pool_id[bad]}}.",
+         trace for {cli::qty(sum(bad))}pool{?s} {.val {pools$pool_id[bad]}}.",
         "allocation"
       )
     }
@@ -2283,8 +2284,8 @@ frame_summary_unit <- function(stages, explicit, exante = FALSE) {
     )
     abort_samplyr(
       c(
-        "Stage{?s} {.val {no_units}} did not retain a unit-level
-         representation.",
+        "{cli::qty(length(no_units))}Stage{?s} {.val {no_units}} did not
+         retain a unit-level representation.",
         "i" = "Their storage is a constant or a chance distribution;
                unit detail is unavailable, not inferred."
       ),

@@ -234,7 +234,7 @@ test_that("control expressions round-trip and order identically", {
   payload <- jsonlite::fromJSON(json, simplifyVector = FALSE)
   control_json <- payload$design$stages[[1]]$draw$control
 
-  expect_equal(payload$format_version, 3)
+  expect_equal(payload$format_version, 4)
   expect_equal(control_json, list(
     list(type = "ascending", variables = list("stratum")),
     list(type = "descending", variables = list("mos")),
@@ -572,7 +572,7 @@ test_that("read_design() validates format and version", {
     "not supported"
   )
   expect_error(
-    read_design('{"format": "samplyr/design", "format_version": 3}'),
+    read_design('{"format": "samplyr/design", "format_version": 4}'),
     "design.stages"
   )
   expect_error(read_design("not json at all {"), "not valid JSON")

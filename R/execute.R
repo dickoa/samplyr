@@ -47,6 +47,18 @@
 #'     nothing went wrong, and simulation loops can silence it with
 #'     `suppressMessages()`.}
 #' }
+#'
+#' The `on_capped = "error"` check covers every pool the stage would draw from
+#' if its parent were selected, so whether a design runs does not depend on the
+#' seed. An allocation total above the population of the stage counts as capped.
+#' A stratum an allocation method fills to its population and whose surplus goes
+#' to other strata does not, because the total is delivered, and neither does a
+#' `min_n` above the population with `frac`, which makes that stratum a census.
+#' [execute()] checks a stage when it receives that stage's frame, so in staged
+#' execution a later stage is checked by the call that lists it.
+#' [validate_frame()] and [exante_probabilities()] refuse the same designs,
+#' while [frame_summary()] still reports their short pools.
+#'
 #' One more is reported the same way, once per stage with a `payload`,
 #' although nothing was capped. `samplyr_message_singleton_pool` names the
 #' strata of a fixed-size design without replacement that draw a single unit
@@ -84,9 +96,22 @@
 #' (`samplyr_error_alloc_unknown_strata`).
 #'
 #' A selected unit that has no rows in the next stage's frame is reported the
-#' same way under that stage's `on_empty = "warn"`:
-#' `samplyr_warning_empty_parent`, with `pool_keys` and `n_empty`. See
-#' `on_empty` in [draw()].
+#' same way under that stage's `on_empty = "warn"` in [draw()]:
+#' `samplyr_warning_empty_parent`, with `pool_keys` and `n_empty`. Under
+#' `"warn"` or `"silent"` the unit stays in the design with nothing selected
+#' under it and contributes zero to every total. It is recorded in the
+#' sample, counted by [summary()], exempt from the incomplete-register checks
+#' of [validate_frame()] and [execute()], and, under `"warn"`, named at export
+#' by [as_svydesign()]. A primary unit left with no row is exported as zero
+#' rows, which keep it in the variance, as [variance_estimation] describes.
+#' Under `"error"` it is refused (`samplyr_error_frame_missing_parent`).
+#'
+#' A replicated execution with empty replicates cannot feed a later
+#' [execute()] call (a new phase or a stage continuation). It raises
+#' `samplyr_error_empty_phase_replicate` rather than skip them and condition
+#' downstream results on nonempty realizations. Handle them explicitly, for
+#' example by executing each nonempty replicate separately and accounting
+#' for the empty ones in the analysis.
 #'
 #' These are not every condition `execute()` raises. Panel assignment has one
 #' of its own, `samplyr_warning_panel_small_pool`, documented with
@@ -316,7 +341,7 @@ NULL
 #'   the design that produced them, and generated columns recording the
 #'   selection. Those are `.sample_id`, `.weight`, the per-stage `.weight_k`,
 #'   `.fpc_k`, `.draw_k` and `.certainty_k`, `.reserve_k` at a stage that
-#'   sets `reserve` in [draw()], `.zone_1` and `.pair_1` for a zoned
+#'   sets `reserve` in [draw()], `.zone_1` and `.variance_group_1` for a zoned
 #'   certainty plan, `.replicate` or `.panel` when `reps` or
 #'   `panels` is used, `.phase1_row` and `.phase1_draw_k` in a phase drawn
 #'   from an earlier phase's sample, `.visit` in an occasion, and `.period`
@@ -2572,8 +2597,8 @@ execute_single_stage_impl <- function(
       if (".zone" %in% names(result)) {
         join_cols <- c(join_cols, ".zone")
       }
-      if (".pair" %in% names(result)) {
-        join_cols <- c(join_cols, ".pair")
+      if (".variance_group" %in% names(result)) {
+        join_cols <- c(join_cols, ".variance_group")
       }
       cluster_data <- result[, join_cols, drop = FALSE]
       result <- dplyr::inner_join(
@@ -2664,9 +2689,9 @@ execute_single_stage_impl <- function(
     result$.zone <- NULL
   }
 
-  if (".pair" %in% names(result)) {
-    result[[paste0(".pair_", stage_num)]] <- result$.pair
-    result$.pair <- NULL
+  if (".variance_group" %in% names(result)) {
+    result[[paste0(".variance_group_", stage_num)]] <- result$.variance_group
+    result$.variance_group <- NULL
   }
 
   if (!is_null(previous_sample) && ".weight" %in% names(previous_sample)) {
@@ -2739,7 +2764,7 @@ find_carry_forward_cols <- function(previous_sample) {
     grep("^\\.certainty_\\d+$", nms, value = TRUE),
     grep("^\\.reserve_\\d+$", nms, value = TRUE),
     grep("^\\.zone_\\d+$", nms, value = TRUE),
-    grep("^\\.pair_\\d+$", nms, value = TRUE),
+    grep("^\\.variance_group_\\d+$", nms, value = TRUE),
     intersect(".panel", nms),
     intersect("._prev_phase_weight", nms)
   )

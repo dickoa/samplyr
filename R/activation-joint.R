@@ -168,14 +168,14 @@ activation_joint_pool <- function(pool, index, occasions, first, second,
     pool_take(pool, panels)
   }
 
-  take_1 <- take(first)
-  take_2 <- take(second)
-  take_both <- take(both)
+  take_t <- take(first)
+  take_u <- take(second)
+  shared <- take(both)
 
   # Distinct-pair expectation is undefined for a block of one.
   pairs <- units > 1L
   joint_distinct <- rep(NA_real_, n_blocks)
-  joint_distinct[pairs] <- (take_1[pairs] * take_2[pairs] - take_both[pairs]) /
+  joint_distinct[pairs] <- (take_t[pairs] * take_u[pairs] - shared[pairs]) /
     (units[pairs] * (units[pairs] - 1))
 
   # Compute columns before `tibble()` can mask local names.
@@ -183,9 +183,9 @@ activation_joint_pool <- function(pool, index, occasions, first, second,
   class <- pool$class
   # Selection class and activation status can differ for small pools.
   activation <- pool$activation
-  prob_1 <- take_1 / units
-  prob_2 <- take_2 / units
-  joint_same <- take_both / units
+  prob_t <- take_t / units
+  prob_u <- take_u / units
+  joint_same <- shared / units
 
   tibble::tibble(
     pool = rep(as.integer(index), n_blocks),
@@ -193,16 +193,16 @@ activation_joint_pool <- function(pool, index, occasions, first, second,
     class = rep(class, n_blocks),
     activation = rep(activation, n_blocks),
     block = seq_len(n_blocks),
-    period_1 = rep(occasions$period[1], n_blocks),
-    subround_1 = rep(occasions$subround[1], n_blocks),
-    period_2 = rep(occasions$period[2], n_blocks),
-    subround_2 = rep(occasions$subround[2], n_blocks),
+    period_t = rep(occasions$period[1], n_blocks),
+    subround_t = rep(occasions$subround[1], n_blocks),
+    period_u = rep(occasions$period[2], n_blocks),
+    subround_u = rep(occasions$subround[2], n_blocks),
     units = units,
-    take_1 = take_1,
-    take_2 = take_2,
-    take_both = take_both,
-    prob_1 = prob_1,
-    prob_2 = prob_2,
+    take_t = take_t,
+    take_u = take_u,
+    shared = shared,
+    prob_t = prob_t,
+    prob_u = prob_u,
     joint_same = joint_same,
     joint_distinct = joint_distinct,
     has_pair = pairs

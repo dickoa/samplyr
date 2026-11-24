@@ -313,9 +313,9 @@ test_that("stratified two-stage n_alloc plan feeds both stages", {
     N = c(2000, 2000),
     sd = c(14, 16),
     mean = c(58, 62),
-    icc_psu = c(0.04, 0.06),
-    cost_psu = c(400, 550),
-    cost_ssu = c(45, 60)
+    icc_1 = c(0.04, 0.06),
+    cost_1 = c(400, 550),
+    cost_2 = c(45, 60)
   )
   plan <- svyplan::n_alloc(fr, cv = 0.02)
   d <- as.data.frame(plan)
@@ -337,12 +337,12 @@ test_that("stratified two-stage n_alloc plan feeds both stages", {
   eas <- unique(res[, c("ea", "region")])
   expect_equal(
     as.integer(table(eas$region)[d$stratum]),
-    d$n_psu_int
+    d$n_1_int
   )
-  take <- as.integer(d$n_per_psu_int)
+  take <- as.integer(d$take_2_int)
   expect_equal(
     as.integer(table(res$region)[d$stratum]),
-    d$n_psu_int * take
+    d$n_1_int * take
   )
 })
 
@@ -373,10 +373,10 @@ test_that("cluster domain plans feed both stages", {
     domain = c("urban", "rural"),
     p = c(0.25, 0.35),
     cv = 0.08,
-    icc_psu = 0.05
+    icc_1 = 0.05
   )
   nm <- svyplan::n_cluster(
-    indicators = tg,
+    tg,
     domains = "domain",
     stage_cost = c(500, 50)
   )
@@ -400,19 +400,19 @@ test_that("cluster domain plans feed both stages", {
 
   # The whole design svyplan rounds within each domain's budget, matched
   # on the domain rather than the row.
-  whole <- nm$domains[2:1, c("domain", "n_psu", "n_per_psu")]
-  whole$n_psu <- floor(whole$n_psu)
-  whole$n_per_psu <- floor(whole$n_per_psu)
+  whole <- nm$domains[2:1, c("domain", "stage_1", "stage_2")]
+  whole$stage_1 <- floor(whole$stage_1)
+  whole$stage_2 <- floor(whole$stage_2)
   nm$operational$domains <- whole
   continuous <- nm$domains[match(c("urban", "rural"), nm$domains$domain), ]
-  expect_true(all(floor(continuous$n_psu) < continuous$n_psu))
+  expect_true(all(floor(continuous$stage_1) < continuous$stage_1))
   expect_equal(
     drawn(nm),
     list(
-      psu = c(urban = floor(continuous$n_psu[1]),
-              rural = floor(continuous$n_psu[2])),
-      take = c(urban = floor(continuous$n_per_psu[1]),
-               rural = floor(continuous$n_per_psu[2]))
+      psu = c(urban = floor(continuous$stage_1[1]),
+              rural = floor(continuous$stage_1[2])),
+      take = c(urban = floor(continuous$stage_2[1]),
+               rural = floor(continuous$stage_2[2]))
     )
   )
 
@@ -421,10 +421,10 @@ test_that("cluster domain plans feed both stages", {
   expect_equal(
     drawn(nm),
     list(
-      psu = c(urban = ceiling(continuous$n_psu[1]),
-              rural = ceiling(continuous$n_psu[2])),
-      take = c(urban = ceiling(continuous$n_per_psu[1]),
-               rural = ceiling(continuous$n_per_psu[2]))
+      psu = c(urban = ceiling(continuous$stage_1[1]),
+              rural = ceiling(continuous$stage_1[2])),
+      take = c(urban = ceiling(continuous$stage_2[1]),
+               rural = ceiling(continuous$stage_2[2]))
     )
   )
 })
@@ -450,8 +450,8 @@ test_that("named n with crossed strata errors at draw time", {
 test_that("cluster-mode alloc plan requires cluster_by at stage 1", {
   fr <- data.frame(
     stratum = c("A", "B"), N = c(2000, 2000), sd = c(14, 16),
-    mean = c(58, 62), icc_psu = c(0.04, 0.06),
-    cost_psu = c(400, 550), cost_ssu = c(45, 60)
+    mean = c(58, 62), icc_1 = c(0.04, 0.06),
+    cost_1 = c(400, 550), cost_2 = c(45, 60)
   )
   plan <- svyplan::n_alloc(fr, cv = 0.02)
   expect_error(
@@ -463,8 +463,8 @@ test_that("cluster-mode alloc plan requires cluster_by at stage 1", {
 test_that("cluster-mode alloc plan draws PSUs from an EA-level frame", {
   fr <- data.frame(
     stratum = c("North", "South"), N = c(2000, 2000), sd = c(14, 16),
-    mean = c(58, 62), icc_psu = c(0.04, 0.06),
-    cost_psu = c(400, 550), cost_ssu = c(45, 60)
+    mean = c(58, 62), icc_1 = c(0.04, 0.06),
+    cost_1 = c(400, 550), cost_2 = c(45, 60)
   )
   plan <- svyplan::n_alloc(fr, cv = 0.02)
   d <- as.data.frame(plan)
@@ -481,7 +481,7 @@ test_that("cluster-mode alloc plan draws PSUs from an EA-level frame", {
     execute(ea_frame, seed = 3)
   expect_equal(
     as.integer(table(res$region)[d$stratum]),
-    d$n_psu_int
+    d$n_1_int
   )
 })
 
@@ -530,7 +530,13 @@ test_that("a certainty-aware alloc plan is refused at stage 2", {
 test_that("a certainty plan stripped of its register is still refused", {
   plan <- certainty_plan_fixture()
   plan$params$psu <- NULL
-  expect_false("n_psu_int" %in% names(as.data.frame(plan)))
+  # A register fit also reports n_1_int, so only the certainty split tells
+  # it from an ordinary two-stage allocation.
+  expect_true("n_1_int" %in% names(as.data.frame(plan)))
+  expect_error(
+    coerce_svyplan_n(plan, stage_index = 1L, clustered = TRUE),
+    class = "samplyr_error_svyplan_certainty_plan"
+  )
   expect_error(
     sampling_design() |> stratify_by(stratum) |> draw(n = plan),
     class = "samplyr_error_svyplan_certainty_plan"
@@ -719,21 +725,21 @@ test_that("the plain size a refusal suggests is taken in every stratum", {
 
 test_that("a joint-target cluster plan fields its fixed take at stage 2", {
   frame <- data.frame(
-    stratum = c("a", "b"), N = c(20000, 8000), N_psu = c(400, 160),
-    n_per_psu = c(12, 8), cost_psu = 400, cost_ssu = 40
+    stratum = c("a", "b"), N = c(20000, 8000), N_1 = c(400, 160),
+    take_2 = c(12, 8), cost_1 = 400, cost_2 = 40
   )
   measures <- data.frame(stratum = c("a", "b"), name = "y", p = 0.3,
-                         icc_psu = 0.05)
-  plan <- svyplan::n_alloc(frame, measures = measures,
-                           targets = data.frame(name = "y", cv = 0.08))
-  expect_false("n_per_psu_int" %in% names(as.data.frame(plan)))
+                         icc_1 = 0.05)
+  plan <- svyplan::n_alloc_joint(frame, measures,
+                                 targets = data.frame(name = "y", cv = 0.08))
+  expect_identical(plan$detail$take_2_int, plan$detail$take_2)
   expect_identical(
     coerce_svyplan_n(plan, stage_index = 2L),
     c(a = 12L, b = 8L)
   )
   expect_identical(
     coerce_svyplan_n(plan, stage_index = 1L, clustered = TRUE),
-    stats::setNames(as.data.frame(plan)$n_psu_int, c("a", "b"))
+    stats::setNames(as.integer(as.data.frame(plan)$n_1_int), c("a", "b"))
   )
 })
 
@@ -795,21 +801,21 @@ test_that("a two-stage plan keys both stages on the strata columns", {
     region = c("North", "North", "South", "South"),
     residence = c("Urban", "Rural", "Urban", "Rural"),
     N = 2000, sd = c(14, 16, 15, 13), mean = c(58, 62, 60, 59),
-    icc_psu = c(0.04, 0.06, 0.05, 0.03),
-    cost_psu = c(400, 550, 450, 500), cost_ssu = c(45, 60, 50, 55)
+    icc_1 = c(0.04, 0.06, 0.05, 0.03),
+    cost_1 = c(400, 550, 450, 500), cost_2 = c(45, 60, 50, 55)
   )
   plan <- svyplan::n_alloc(fr, cv = 0.02)
   d <- as.data.frame(plan)
   expect_identical(
     coerce_svyplan_n(plan, stage_index = 1L, clustered = TRUE,
                      strata_vars = c("region", "residence")),
-    data.frame(region = d$region, residence = d$residence, n = d$n_psu_int)
+    data.frame(region = d$region, residence = d$residence, n = d$n_1_int)
   )
   expect_identical(
     coerce_svyplan_n(plan, stage_index = 2L,
                      strata_vars = c("residence", "region")),
     data.frame(residence = d$residence, region = d$region,
-               n = as.integer(d$n_per_psu_int))
+               n = as.integer(d$take_2_int))
   )
 
   frame <- data.frame(
@@ -833,10 +839,10 @@ test_that("a two-stage plan keys both stages on the strata columns", {
   )
   key <- paste(res$region, res$residence, sep = ".")
   eas <- unique(data.frame(ea = res$ea, key = key))
-  expect_identical(as.integer(table(eas$key)[d$stratum]), d$n_psu_int)
+  expect_identical(as.integer(table(eas$key)[d$stratum]), d$n_1_int)
   expect_identical(
     as.integer(table(key)[d$stratum]),
-    d$n_psu_int * as.integer(d$n_per_psu_int)
+    d$n_1_int * as.integer(d$take_2_int)
   )
 })
 
@@ -868,5 +874,325 @@ test_that("strata columns that do not tell the plan's rows apart are refused", {
     cli::ansi_strip(conditionMessage(err)),
     "do not tell its strata apart",
     fixed = TRUE
+  )
+})
+
+## svyplan 0.26.0 allocations at any number of stages
+
+# Strata A and B hold 60 and 120 EAs of 4 segments of 20 households.
+three_stage_frame <- function() {
+  ea <- data.frame(stratum = rep(c("A", "B"), c(60, 120)))
+  ea$ea <- paste0(ea$stratum, ave(seq_along(ea$stratum), ea$stratum,
+                                  FUN = seq_along))
+  seg <- ea[rep(seq_len(nrow(ea)), each = 4), ]
+  seg$seg <- paste(seg$ea, rep(1:4, nrow(ea)), sep = "-")
+  hh <- seg[rep(seq_len(nrow(seg)), each = 20), ]
+  hh$hh <- seq_len(nrow(hh))
+  rownames(hh) <- NULL
+  hh
+}
+
+three_stage_plan_frame <- function() {
+  data.frame(
+    stratum = c("A", "B"), N = c(4800, 9600), N_1 = c(60, 120),
+    N_2 = c(240, 480), sd = c(10, 12), mean = c(50, 55),
+    icc_1 = 0.05, icc_2 = 0.03, cost_1 = 300, cost_2 = 60, cost_3 = 10
+  )
+}
+
+three_stage_design <- function(n1, n2, n3) {
+  sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(ea) |> draw(n = n1) |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(seg) |> draw(n = n2) |>
+    add_stage() |> stratify_by(stratum) |> draw(n = n3)
+}
+
+# The whole sizes a stage fields, named by stratum, read without samplyr.
+plan_field <- function(plan, col) {
+  d <- as.data.frame(plan)
+  stats::setNames(as.integer(d[[col]]), as.character(d$stratum))
+}
+
+realized_sizes <- function(s) {
+  d <- as.data.frame(s)
+  eas <- unique(d[c("stratum", "ea")])
+  segs <- unique(d[c("stratum", "ea", "seg")])
+  list(
+    n_1 = c(table(eas$stratum)[c("A", "B")]),
+    take_2 = c(tapply(segs$seg, segs$ea, length)),
+    take_3 = c(tapply(d$hh, d$seg, length))
+  )
+}
+
+sample_rows <- function(s) {
+  d <- as.data.frame(s)
+  d <- d[order(d$hh), c("hh", ".weight")]
+  rownames(d) <- NULL
+  d
+}
+
+test_that("allocations of both entry points reach the allocation branch", {
+  classic <- svyplan::n_alloc(
+    data.frame(stratum = c("X", "Y"), N = c(100, 200), sd = c(5, 10)),
+    n = 50
+  )
+  joint <- svyplan::n_alloc_joint(
+    data.frame(stratum = c("X", "Y"), N = c(1000, 1800)),
+    data.frame(stratum = c("X", "Y"), name = "y", p = c(0.5, 0.4)),
+    targets = data.frame(name = "y", cv = 0.1)
+  )
+  for (plan in list(classic, joint)) {
+    expect_false(inherits(plan, "svyplan_n"))
+    expect_true(is_svyplan_size(plan))
+    expect_identical(coerce_svyplan_n(plan), plan_field(plan, "n_int"))
+  }
+  multi <- svyplan::n_multi(
+    data.frame(name = c("a", "b"), p = c(0.3, 0.5), moe = 0.05)
+  )
+  expect_true(inherits(multi, "svyplan_n"))
+  expect_identical(coerce_svyplan_n(multi), as.integer(multi))
+})
+
+test_that("a three-stage n_alloc() fields every stage it plans", {
+  frame <- three_stage_frame()
+  free <- svyplan::n_alloc(three_stage_plan_frame(), cv = 0.015)
+  fixed <- svyplan::n_alloc(
+    transform(three_stage_plan_frame(), take_2 = 3, take_3 = 6),
+    cv = 0.015
+  )
+  for (plan in list(free, fixed)) {
+    expect_identical(plan$stages, 3L)
+    s <- execute(three_stage_design(plan, plan, plan), frame, seed = 7)
+    sizes <- realized_sizes(s)
+    expect_identical(sizes$n_1, plan_field(plan, "n_1_int"))
+    take_2 <- plan_field(plan, "take_2_int")
+    take_3 <- plan_field(plan, "take_3_int")
+    expect_identical(unname(sizes$take_2), unname(take_2[sub("[0-9]+$", "", names(sizes$take_2))]))
+    expect_identical(unname(sizes$take_3), unname(take_3[sub("[0-9]+-[0-9]+$", "", names(sizes$take_3))]))
+    explicit <- execute(
+      three_stage_design(plan_field(plan, "n_1_int"), take_2, take_3),
+      frame, seed = 7
+    )
+    expect_identical(sample_rows(s), sample_rows(explicit))
+  }
+  # A fourth stage is beyond the plan.
+  err <- expect_error(
+    three_stage_design(free, free, free) |>
+      add_stage() |> stratify_by(stratum) |> draw(n = free),
+    class = "samplyr_error_svyplan_stage"
+  )
+  expect_match(conditionMessage(err), "covers 3 stages", fixed = TRUE)
+  expect_error(
+    sampling_design() |> stratify_by(stratum) |> draw(n = free),
+    class = "samplyr_error_svyplan_clustered_plan"
+  )
+})
+
+test_that("a joint fixed take fields its whole take at every stage", {
+  frame <- three_stage_frame()
+  plan_frame <- transform(
+    three_stage_plan_frame()[c("stratum", "N", "N_1", "N_2", "cost_1",
+                               "cost_2", "cost_3")],
+    take_2 = 3, take_3 = c(6, 5)
+  )
+  measures <- data.frame(
+    stratum = c("A", "B"), name = "y", mean = c(50, 55), sd = c(10, 12),
+    icc_1 = 0.05, icc_2 = 0.03
+  )
+  plan <- svyplan::n_alloc_joint(
+    plan_frame, measures, targets = data.frame(name = "y", cv = 0.02)
+  )
+  expect_identical(plan$stages, 3L)
+  expect_identical(plan$detail$take_2_int, plan$detail$take_2)
+  expect_identical(plan$detail$take_3_int, plan$detail$take_3)
+  s <- execute(three_stage_design(plan, plan, plan), frame, seed = 11)
+  sizes <- realized_sizes(s)
+  expect_identical(sizes$n_1, plan_field(plan, "n_1_int"))
+  expect_true(all(sizes$take_2 == 3L))
+  expect_identical(
+    unname(sizes$take_3),
+    c(A = 6L, B = 5L)[sub("[0-9]+-[0-9]+$", "", names(sizes$take_3))] |>
+      unname()
+  )
+  explicit <- execute(
+    three_stage_design(plan_field(plan, "n_1_int"), c(A = 3L, B = 3L),
+                       c(A = 6L, B = 5L)),
+    frame, seed = 11
+  )
+  expect_identical(sample_rows(s), sample_rows(explicit))
+})
+
+test_that("a joint free take fields its rounded take", {
+  frame <- three_stage_frame()
+  plan <- svyplan::n_alloc_joint(
+    three_stage_plan_frame()[c("stratum", "N", "N_1", "cost_1", "cost_2")],
+    data.frame(stratum = c("A", "B"), name = "y", mean = c(50, 55),
+               sd = c(10, 12), icc_1 = 0.05),
+    targets = data.frame(name = "y", cv = 0.02), take_2_min = 2, take_2_max = 30
+  )
+  expect_identical(plan$stages, 2L)
+  take <- plan_field(plan, "take_2_int")
+  expect_false(isTRUE(all.equal(unname(take), plan$detail$take_2)))
+  design <- function(n1, n2) {
+    sampling_design() |>
+      add_stage() |> stratify_by(stratum) |> cluster_by(ea) |>
+      draw(n = n1) |>
+      add_stage() |> stratify_by(stratum) |> draw(n = n2)
+  }
+  s <- execute(design(plan, plan), frame, seed = 5)
+  d <- as.data.frame(s)
+  expect_identical(
+    c(table(unique(d[c("stratum", "ea")])$stratum)[c("A", "B")]),
+    plan_field(plan, "n_1_int")
+  )
+  per_ea <- tapply(d$hh, d$ea, length)
+  expect_identical(
+    unname(c(per_ea)), unname(take[sub("[0-9]+$", "", names(per_ea))])
+  )
+  explicit <- execute(
+    design(plan_field(plan, "n_1_int"), take), frame, seed = 5
+  )
+  expect_identical(sample_rows(s), sample_rows(explicit))
+})
+
+test_that("an element allocation still sizes a single later stage", {
+  plan <- svyplan::n_alloc(
+    data.frame(stratum = c("A", "B"), N = c(4800, 9600), sd = c(10, 12)),
+    n = 60
+  )
+  expect_identical(plan$stages, 1L)
+  design <- function(n2) {
+    sampling_design() |>
+      add_stage() |> stratify_by(stratum) |> cluster_by(ea) |>
+      draw(n = c(A = 2, B = 3)) |>
+      add_stage() |> stratify_by(stratum) |> draw(n = n2)
+  }
+  frame <- three_stage_frame()
+  s <- execute(design(plan), frame, seed = 3)
+  per_ea <- tapply(as.data.frame(s)$hh, as.data.frame(s)$ea, length)
+  n_int <- plan_field(plan, "n_int")
+  expect_identical(
+    unname(c(per_ea)), unname(n_int[sub("[0-9]+$", "", names(per_ea))])
+  )
+  expect_identical(
+    sample_rows(s), sample_rows(execute(design(n_int), frame, seed = 3))
+  )
+})
+
+test_that("assessments and pre-0.26.0 allocations are refused as sizes", {
+  frame <- data.frame(stratum = c("A", "B"), N = c(4000, 3000),
+                      sd = c(10, 15))
+  assessment <- svyplan::prec_alloc(frame, n = c(150, 150))
+  expect_error(
+    sampling_design() |> stratify_by(stratum) |> draw(n = assessment),
+    class = "samplyr_error_svyplan_assessment"
+  )
+  joint <- svyplan::n_alloc_joint(
+    data.frame(stratum = c("A", "B"), N = c(1000, 1800)),
+    data.frame(stratum = c("A", "B"), name = "y", p = c(0.5, 0.4)),
+    targets = data.frame(name = "y", cv = 0.1)
+  )
+  err <- expect_error(
+    sampling_design() |> stratify_by(stratum) |>
+      draw(n = svyplan::prec_alloc_joint(joint, n = joint$detail$n_int)),
+    class = "samplyr_error_svyplan_assessment"
+  )
+  expect_match(conditionMessage(err), "n_alloc_joint(assessment)",
+               fixed = TRUE)
+  expect_error(
+    sampling_design() |> draw(n = svyplan::prec_prop(p = 0.3, n = 300)),
+    class = "samplyr_error_svyplan_assessment"
+  )
+
+  # The shape svyplan 0.25.0 saved: a svyplan_n of type "alloc".
+  legacy <- structure(
+    list(type = "alloc", n = 300,
+         detail = data.frame(stratum = c("A", "B"), n_psu_int = c(10, 12))),
+    class = c("svyplan_n", "list")
+  )
+  expect_error(
+    sampling_design() |> stratify_by(stratum) |> draw(n = legacy),
+    class = "samplyr_error_svyplan_legacy_plan"
+  )
+})
+
+test_that("a missing or unusable stage field is refused by name", {
+  plan <- svyplan::n_alloc(three_stage_plan_frame(), cv = 0.015)
+  # The model take is not a whole field size, so it never stands in.
+  stripped <- plan
+  stripped$detail$take_2_int <- NULL
+  expect_false(is.null(stripped$detail$take_2))
+  err <- expect_error(
+    coerce_svyplan_n(stripped, stage_index = 2L, clustered = TRUE),
+    class = "samplyr_error_svyplan_field"
+  )
+  expect_match(conditionMessage(err), "take_2_int", fixed = TRUE)
+
+  fractional <- plan
+  fractional$detail$n_1_int <- fractional$detail$n_1_int + 0.5
+  expect_error(
+    coerce_svyplan_n(fractional, stage_index = 1L, clustered = TRUE),
+    class = "samplyr_error_svyplan_field"
+  )
+
+  # Beyond R's integer range a narrowing conversion would give NA.
+  huge <- plan
+  huge$detail$n_1_int[1] <- 2^31
+  err <- expect_error(
+    coerce_svyplan_n(huge, stage_index = 1L, clustered = TRUE),
+    class = "samplyr_error_svyplan_field"
+  )
+  expect_match(conditionMessage(err), "2,147,483,648", fixed = TRUE)
+
+  unstaged <- plan
+  unstaged$stages <- NULL
+  err <- expect_error(
+    coerce_svyplan_n(unstaged, stage_index = 1L, clustered = TRUE),
+    class = "samplyr_error_svyplan_field"
+  )
+  # The hint names the function to rebuild with, never a svyplan version
+  # older than the one samplyr requires.
+  expect_match(conditionMessage(err), "svyplan::n_alloc_joint", fixed = TRUE)
+  expect_no_match(conditionMessage(err), "svyplan >=", fixed = TRUE)
+})
+
+test_that("n_cluster() domain plans follow custom stage names and domain keys", {
+  tg <- data.frame(
+    name = "stunting", domain = c("urban", "rural"), p = c(0.25, 0.35),
+    cv = 0.08, icc_1 = 0.05
+  )
+  plan <- svyplan::n_cluster(tg, domains = "domain",
+                             stage_cost = c(ea = 500, hh = 50))
+  expect_identical(names(plan$n), c("ea", "hh"))
+  whole <- plan$operational$domains
+  at <- match(c("urban", "rural"), whole$domain)
+  for (k in 1:2) {
+    out <- coerce_svyplan_n(plan, stage_index = k, clustered = k == 1L)
+    expect_identical(
+      out$n[match(c("urban", "rural"), out$domain)],
+      as.integer(whole[[c("ea", "hh")[k]]][at])
+    )
+  }
+
+  # Reordered whole rows are matched on the domain, not the position.
+  reordered <- plan
+  reordered$operational$domains <- whole[2:1, ]
+  expect_identical(
+    coerce_svyplan_n(reordered, stage_index = 1L, clustered = TRUE),
+    coerce_svyplan_n(plan, stage_index = 1L, clustered = TRUE)
+  )
+
+  # A whole table that names other domains is inconsistent.
+  unmatched <- plan
+  unmatched$operational$domains$domain <- c("north", "south")
+  expect_error(
+    coerce_svyplan_n(unmatched, stage_index = 1L, clustered = TRUE),
+    class = "samplyr_error_svyplan_domains"
+  )
+  missing_col <- plan
+  missing_col$operational$domains$ea <- NULL
+  expect_error(
+    coerce_svyplan_n(missing_col, stage_index = 1L, clustered = TRUE),
+    class = "samplyr_error_svyplan_domains"
   )
 })

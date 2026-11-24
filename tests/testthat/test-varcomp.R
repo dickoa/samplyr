@@ -84,6 +84,38 @@ test_that("an SRS first stage takes the prob = NULL path", {
   expect_equal(vc$icc, manual$icc, tolerance = 1e-12)
 })
 
+test_that("the estimator is passed to svyplan and changes the components", {
+  # Clusters of 4 to 14 rows drawn with equal chances, where the expansion
+  # and ratio components differ.
+  sizes <- rep(c(4, 6, 9, 14), 6)
+  frame <- withr::with_seed(5, data.frame(
+    cl = rep(sprintf("c%02d", seq_along(sizes)), sizes),
+    y = rnorm(sum(sizes)) + rep(rnorm(length(sizes), sd = 0.5), sizes)
+  ))
+  s <- sampling_design() |>
+    add_stage() |> cluster_by(cl) |> draw(n = 10) |>
+    add_stage() |> draw(n = 3) |>
+    execute(frame, seed = 2)
+  expect_gt(length(unique(s$.weight_2)), 1L)
+  manual <- function(estimator) {
+    svyplan::varcomp(s$y, stage_id = list(s$cl), weights = s$.weight_2,
+                     estimator = estimator)
+  }
+  expansion <- varcomp(s, ~y)
+  expect_equal(expansion$varb, manual("expansion")$varb, tolerance = 1e-12)
+  expect_equal(varcomp(s, ~y, estimator = "expansion")$varb, expansion$varb)
+  ratio <- varcomp(s, ~y, estimator = "ratio")
+  expect_equal(ratio$varb, manual("ratio")$varb, tolerance = 1e-12)
+  expect_equal(ratio$icc, manual("ratio")$icc, tolerance = 1e-12)
+  expect_false(isTRUE(all.equal(ratio$varb, expansion$varb)))
+
+  expect_error(varcomp(s, ~y, estimator = "anova"),
+               class = "samplyr_error_varcomp_argument")
+  err <- expect_error(varcomp(s, ~y, estimat = "ratio"),
+                      class = "samplyr_error_unknown_argument")
+  expect_match(conditionMessage(err), "estimator", fixed = TRUE)
+})
+
 test_that("3-stage decomposition uses both cluster keys and stage 2-3 weights", {
   frame <- withr::with_seed(31, {
     data.frame(
@@ -147,7 +179,7 @@ test_that("stage-1 design strata give per-stratum components with per-stratum sh
       weights = s$.weight_2[rows]
     )
     expect_equal(
-      tab$icc_psu[tab$stratum == r], manual$icc,
+      tab$icc_1[tab$stratum == r], manual$icc,
       tolerance = 1e-12
     )
   }
@@ -364,7 +396,7 @@ test_that("a stratified WR first stage qualifies draw keys by stratum", {
       weights = s$.weight_2[rows]
     )
     expect_equal(
-      tab$icc_psu[tab$stratum == r], manual$icc,
+      tab$icc_1[tab$stratum == r], manual$icc,
       tolerance = 1e-12
     )
   }

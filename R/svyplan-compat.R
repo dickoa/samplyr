@@ -17,16 +17,21 @@
 #' design and ask the estimator: `as_svydesign()` then
 #' `survey::svymean(deff = TRUE)`, which is outcome-specific by necessity.
 #' To *anticipate* the clustering component before collecting data, name the
-#' planning arguments in the same call: `design_effect(x, icc = , n_per_psu =
-#' )` forwards them to [svyplan::design_effect()] and returns the weighting
+#' planning arguments in the same call: `design_effect(x, icc = , take = )`
+#' forwards them to [svyplan::design_effect()] and returns the weighting
 #' loss multiplied by the anticipated clustering component. Positional
-#' arguments are refused, since these methods take no outcome variable.
+#' arguments are refused, since these methods take no outcome variable. A
+#' sample whose reserve is not settled is refused
+#' (`samplyr_error_reserve_unsettled`), since its weights describe the whole
+#' list.
 #'
 #' @param x A `tbl_sample`, or a numeric weight vector passed to the svyplan
 #'   method.
 #' @param ... Passed to the svyplan method: the planning arguments `icc`,
-#'   `n_per_psu`, `n_per_ssu` and `var_ratio` are the useful ones here. Every
-#'   argument must be named. svyplan reports any name it does not recognize.
+#'   `take` and `var_ratio` are the useful ones here. For a design of more
+#'   than two stages, `icc` and `take` hold one value per stage below the
+#'   first. Every argument must be named. svyplan reports any name it does
+#'   not recognize.
 #'
 #' @return `design_effect()` returns a numeric `svyplan_deff` object. Use
 #'   [as.double()] for the value. `effective_n()` returns a numeric scalar.
@@ -58,7 +63,7 @@
 #'
 #' # Anticipating the clustering component: the weighting loss above,
 #' # multiplied by the clustering component the planning arguments imply
-#' design_effect(samp, icc = 0.05, n_per_psu = 25)
+#' design_effect(samp, icc = 0.05, take = 25)
 #'
 #' @references
 #' Kish, L. (1965). *Survey Sampling*. Wiley.
@@ -124,7 +129,7 @@ check_weighting_deff_dots <- function(dots, fn, call = rlang::caller_env()) {
              {.fn as_svydesign} and use
              {.code survey::svymean(deff = TRUE)}.",
       "i" = "To add an anticipated clustering component, name the planning
-             arguments: {.code {fn}(x, icc = , n_per_psu = )}."
+             arguments: {.code {fn}(x, icc = , take = )}."
     ),
     class = "samplyr_error_unnamed_argument",
     call = call
@@ -136,6 +141,7 @@ check_weighting_deff_dots <- function(dots, fn, call = rlang::caller_env()) {
 sample_weights <- function(x, fn) {
   check_single_replicate(x, fn)
   check_sample_unmodified(x, fn)
+  check_reserve_settled(x, fn, action = "measure the weighting loss of")
   w <- x[[".weight"]]
   if (is.null(w)) {
     cli_abort(
@@ -158,8 +164,7 @@ is_svyplan_schedule <- function(x) {
 #' are checked instead, and the meaning of each field is pinned by
 #' `test-svyplan-contract.R`.
 #' @noRd
-check_svyplan_schedule <- function(x, arg = "schedule",
-                                   call = caller_env()) {
+check_svyplan_schedule <- function(x, arg = "schedule", call = caller_env()) {
   if (!is_svyplan_schedule(x)) {
     abort_samplyr(
       "{.arg {arg}} must be an {.cls svyplan_schedule}.",
@@ -168,18 +173,36 @@ check_svyplan_schedule <- function(x, arg = "schedule",
     )
   }
   reads <- list(
-    schedule = c("period", "subround", "selection", "cohort", "panel",
-                 "active", "visit"),
-    tail_commitments = c("period", "subround", "selection", "cohort",
-                         "panel", "visit"),
-    selections = c("selection", "entry_period", "panels", "panel_issue",
-                   "operational_issue")
+    schedule = c(
+      "period",
+      "subround",
+      "selection",
+      "cohort",
+      "panel",
+      "active",
+      "visit"
+    ),
+    tail_commitments = c(
+      "period",
+      "subround",
+      "selection",
+      "cohort",
+      "panel",
+      "visit"
+    ),
+    selections = c(
+      "selection",
+      "entry_period",
+      "panels",
+      "panel_issue",
+      "operational_issue"
+    )
   )
   for (table in names(reads)) {
     columns <- if (is.data.frame(x[[table]])) names(x[[table]])
     missing <- setdiff(reads[[table]], columns)
     if (length(missing) > 0L) {
-      abort_svyplan_schedule_field(arg, "${table}", missing, call = call)
+      abort_svyplan_schedule_field(arg, paste0("$", table), missing, call = call)
     }
   }
   missing <- setdiff(
@@ -187,11 +210,17 @@ check_svyplan_schedule <- function(x, arg = "schedule",
     names(x)
   )
   if (length(missing) == 0L) {
-    missing <- setdiff(c("k", "r_min", "block_width"),
-                       names(x$panel_parameters))
+    missing <- setdiff(
+      c("k", "r_min", "block_width"),
+      names(x$panel_parameters)
+    )
     if (length(missing) > 0L) {
-      abort_svyplan_schedule_field(arg, "$panel_parameters", missing,
-                                   call = call)
+      abort_svyplan_schedule_field(
+        arg,
+        "$panel_parameters",
+        missing,
+        call = call
+      )
     }
   } else {
     abort_svyplan_schedule_field(arg, "the schedule", missing, call = call)
@@ -200,15 +229,18 @@ check_svyplan_schedule <- function(x, arg = "schedule",
 }
 
 #' @noRd
-abort_svyplan_schedule_field <- function(arg, where, missing,
-                                         call = caller_env()) {
+abort_svyplan_schedule_field <- function(
+  arg,
+  where,
+  missing,
+  call = caller_env()
+) {
   abort_samplyr(
     c(
       "{.arg {arg}} lacks fields samplyr reads from an
        {.cls svyplan_schedule}.",
       "x" = "{.field {where}} has no {.field {missing}}.",
-      "i" = "Rebuild the schedule with {.fn svyplan::design_schedule} from
-             svyplan 0.21.0 or later."
+      "i" = "Rebuild the schedule with {.fn svyplan::design_schedule}."
     ),
     class = "samplyr_error_svyplan_schedule",
     call = call
@@ -234,17 +266,18 @@ svyplan_draw_occasions <- function(plan, tab) {
 #' the value for that stage (PSU count, then per-cluster take) instead
 #' of a grand total.
 #'
-#' - `n_alloc()` results: named per-stratum vector. For stratified
-#'   two-stage plans (cluster mode), stage 1 gets `n_psu_int` and
-#'   stage 2 gets `n_per_psu_int`, both named by stratum (the jointly
-#'   integerized field design, svyplan >= 0.8.8). A stage stratified by
-#'   several variables gets a data frame keyed on them instead, when the
-#'   plan's table carries them all and they identify its rows (svyplan >=
-#'   0.16.0 carries the frame's label columns). Otherwise the vector is
-#'   returned and `draw()` refuses it.
-#' - Certainty-aware `n_alloc()` results (solved with a `psu` register,
-#'   svyplan >= 0.12.0): never coerced. `draw()` intercepts them before
-#'   this function runs: a clustered, stratified stage 1 fields the plan's
+#' - `n_alloc()` and `n_alloc_joint()` results (class `svyplan_alloc`):
+#'   named per-stratum vector. A plan with `$stages` of 2 or more fields
+#'   PSUs and takes within them: stage 1 gets `n_1_int` and stage k gets
+#'   `take_<k>_int`, solved or fixed, all named by stratum. An element
+#'   allocation
+#'   (`$stages` of 1) gives `n_int` at whatever stage it sizes. A stage
+#'   stratified by several variables gets a data frame keyed on them
+#'   instead, when the plan's table carries them all and they identify its
+#'   rows. Otherwise the vector is returned and `draw()` refuses it.
+#' - Certainty-aware allocations (an `n_alloc_joint()` fit with a `psu`
+#'   register): never coerced. `draw()` intercepts them before this
+#'   function runs: a clustered, stratified stage 1 fields the plan's
 #'   stored classification (`certainty_bridge_spec()`) and stage 2 applies
 #'   its per-PSU takes (`certainty_take_spec()`). Any plan reaching this
 #'   function is in a context the bridge does not serve and is refused,
@@ -252,24 +285,30 @@ svyplan_draw_occasions <- function(plan, tab) {
 #' - `n_multi()` results with domains: data frame keyed on the domain
 #'   columns (requires a matching `stratify_by()`).
 #' - `n_cluster()` results: `as.integer()` returns the integerized
-#'   field design as a stage vector. Stage-aware contexts take the
-#'   value for their stage, a flat single-stage design takes the
-#'   product (operational element total). Per-domain plans take each
-#'   domain's whole stage sizes from `$operational$domains`, which svyplan
-#'   rounds within the domain's budget. A plan without them gives only
+#'   field design as a stage vector named by stage (`names(n$n)`).
+#'   Stage-aware contexts take the value for their stage, a flat
+#'   single-stage design takes the product (operational element total).
+#'   Per-domain plans take each domain's whole stage sizes from
+#'   `$operational$domains`, which svyplan rounds within the domain's
+#'   budget, matched on the domain columns. A plan without them gives only
 #'   continuous sizes, which are rounded up.
 #' - Other svyplan objects: scalar total via `as.integer()`.
 #' @noRd
-coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE,
-                             strata_vars = NULL) {
+coerce_svyplan_n <- function(
+  n,
+  stage_index = 1L,
+  clustered = FALSE,
+  strata_vars = NULL
+) {
   rlang::local_error_call(caller_env())
   stage_aware <- clustered || stage_index > 1L
 
-  if (inherits(n, "svyplan_n") && identical(n$type, "alloc")) {
+  if (is_svyplan_alloc(n)) {
     detail <- as.data.frame(n)
     keyed <- length(strata_vars) > 1L &&
       is_null(svyplan_strata_key_problem(detail, strata_vars))
-    per_stratum <- function(values) {
+    per_stratum <- function(field) {
+      values <- svyplan_counts(detail[[field]], field)
       if (!keyed) {
         return(stats::setNames(values, detail$stratum))
       }
@@ -288,60 +327,65 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE,
                  the stage above keeps in it, stratify this stage by the PSU
                  id and pass the split takes as a table:
                  {.code stratify_by(psu_id) |> draw(n = data.frame(psu_id =
-                 plan$psu$psu_id, n = plan$psu$n_take / k))}."
+                 plan$psu$psu_id, n = plan$psu$take_2 / k))}."
         )
       }
       abort_samplyr(
         c(
           "This svyplan allocation is certainty-aware and cannot be a stage size.",
           "x" = "The plan takes every certainty PSU whole, at its own take, and draws the remaining PSUs by PPS; coercing it to per-stratum totals would field a different design.",
-          deeper %||% c(
-            "i" = "Pass it to {.fn draw} at a clustered, stratified stage 1 with an exact-pik PPS method, and samplyr fields the plan's own classification."
-          )
+          deeper %||%
+            c(
+              "i" = "Pass it to {.fn draw} at a clustered, stratified stage 1 with an exact-pik PPS method, and samplyr fields the plan's own classification."
+            )
         ),
         class = "samplyr_error_svyplan_certainty_plan"
       )
     }
-    if ("n_psu_int" %in% names(detail)) {
-      if (stage_index == 1L && !clustered) {
-        abort_samplyr(
-          c(
-            "This svyplan allocation plans PSUs, then elements within them.",
-            "i" = "Declare the cluster structure with {.fn cluster_by} at stage 1 (on an EA-level frame, cluster by the EA id)."
-          ),
-          class = "samplyr_error_svyplan_clustered_plan"
-        )
-      }
-      if (stage_index == 1L) {
-        return(per_stratum(detail$n_psu_int))
-      }
-      if (stage_index == 2L) {
-        # A joint-target plan fixes a whole take and reports no rounded one.
-        take <- detail$n_per_psu_int %||% detail$n_per_psu
-        return(per_stratum(as.integer(take)))
-      }
+    stages <- svyplan_alloc_stages(n)
+    if (stages == 1L) {
+      return(per_stratum("n_int"))
+    }
+    if (stage_index == 1L && !clustered) {
       abort_samplyr(
         c(
-          "This svyplan allocation covers 2 stages. The design is at stage {stage_index}.",
+          "This svyplan allocation plans PSUs, then elements within them.",
+          "i" = "Declare the cluster structure with {.fn cluster_by} at stage 1 (on an EA-level frame, cluster by the EA id)."
+        ),
+        class = "samplyr_error_svyplan_clustered_plan"
+      )
+    }
+    if (stage_index > stages) {
+      abort_samplyr(
+        c(
+          "This svyplan allocation covers {stages} stages. The design is at stage {stage_index}.",
           "i" = "Pass an explicit {.arg n} for stages beyond the plan."
         ),
         class = "samplyr_error_svyplan_stage"
       )
     }
-    return(per_stratum(detail$n_int))
+    if (stage_index == 1L) {
+      return(per_stratum("n_1_int"))
+    }
+    return(per_stratum(paste0("take_", stage_index, "_int")))
   }
 
-  if (inherits(n, "svyplan_n") && identical(n$type, "multi") &&
-      !is_null(n$domains)) {
+  if (
+    inherits(n, "svyplan_n") &&
+      identical(n$type, "multi") &&
+      !is_null(n$domains)
+  ) {
     tab <- as.data.frame(n)
-    out <- tab[, setdiff(names(tab), grep("^\\.", names(tab), value = TRUE)),
-               drop = FALSE]
+    out <- tab[,
+      setdiff(names(tab), grep("^\\.", names(tab), value = TRUE)),
+      drop = FALSE
+    ]
     out$n <- as.integer(ceiling(tab$.n))
     return(out)
   }
 
   if (inherits(n, "svyplan_cluster")) {
-    stage_cols <- c("n_psu", "n_per_psu", "n_per_ssu")
+    stage_cols <- names(n$n)
     if (!is_null(n$domains)) {
       dom <- as.data.frame(n)
       keep <- setdiff(
@@ -367,15 +411,29 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE,
       out <- dom[, keep, drop = FALSE]
       stage_col <- stage_cols[stage_index]
       whole <- n$operational$domains
-      at <- if (!is_null(whole) && all(c(keep, stage_col) %in% names(whole))) {
+      # Rounding each stage up can exceed the budget the plan was sized to.
+      if (is_null(whole)) {
+        out$n <- as.integer(ceiling(dom[[stage_col]]))
+        return(out)
+      }
+      at <- if (all(c(keep, stage_col) %in% names(whole))) {
         vctrs::vec_match(out[keep], whole[keep])
       }
-      # Rounding each stage up can exceed the budget the plan was sized to.
-      out$n <- if (!is_null(at) && !anyNA(at)) {
-        as.integer(whole[[stage_col]][at])
-      } else {
-        as.integer(ceiling(dom[[stage_col]]))
+      if (is_null(at) || anyNA(at)) {
+        abort_samplyr(
+          c(
+            "This svyplan plan's whole domain sizes do not match its domains.",
+            "x" = if (is_null(at)) {
+              "{.code $operational$domains} lacks {.val {setdiff(c(keep, stage_col), names(whole))}}."
+            } else {
+              "{.code $operational$domains} has no row for {sum(is.na(at))} domain{?s} of {.code $domains}."
+            },
+            "i" = "The plan object is inconsistent. Rebuild it with {.fn svyplan::n_cluster}."
+          ),
+          class = "samplyr_error_svyplan_domains"
+        )
       }
+      out$n <- svyplan_counts(whole[[stage_col]][at], stage_col)
       return(out)
     }
     stages <- as.integer(n)
@@ -396,67 +454,402 @@ coerce_svyplan_n <- function(n, stage_index = 1L, clustered = FALSE,
   }
   n
 }
-
-#' Warn when a plan's take already covers the losses a reserve covers
+#' What to pass instead of an svyplan panel plan
 #'
-#' The one place samplyr reads a plan's `params` for rates. A take of PSUs
-#' or SSUs is inflated by `resp_rate_psu` or `resp_rate_ssu`, and a take of
-#' final-stage units by `eligibility_rate` and `resp_rate`. svyplan leaves a
-#' rate of 1 out of `params`.
+#' A panel plan sizes a whole panel, and a rotating one a schedule of
+#' selections, so `draw()` refuses it and names the count to take instead.
+#' A rotating plan's startup depends on its start and rotation, which only
+#' the schedule resolves, so the hint points to the schedule's count of
+#' each selection. `NULL` for anything else, a `prec_panel()` assessment
+#' included, which sizes nothing.
 #' @noRd
-warn_reserve_plan_rates <- function(plan, reserve, stage_index,
-                                    clustered = FALSE, call = caller_env()) {
+panel_size_hint <- function(n) {
+  if (!inherits(n, "svyplan_panel") || is_null(n$solved)) {
+    return(NULL)
+  }
+  if (!is_null(n$n_cohorts)) {
+    return(paste(
+      "A rotating panel plan is issued selection by selection. Build its",
+      "schedule with {.fn svyplan::design_schedule} and pass each",
+      "selection's {.field operational_issue} from",
+      "{.code schedule$selections} as {.arg n}, the startup and each later",
+      "intake its own. Without a schedule,",
+      "{.code ceiling(plan$n_entrants)} is one intake of elements."
+    ))
+  }
+  "A panel plan sizes the units issued. Pass {.code ceiling(plan$n_issued)}."
+}
+
+#' Is this an svyplan object draw() takes as a size?
+#'
+#' `n_alloc()` and `n_alloc_joint()` return `svyplan_alloc`, which does not
+#' inherit from `svyplan_n`.
+#' @noRd
+is_svyplan_size <- function(x) {
+  inherits(
+    x,
+    c("svyplan_n", "svyplan_power", "svyplan_cluster", "svyplan_alloc")
+  )
+}
+
+#' Is this a classic or joint svyplan allocation?
+#' @noRd
+is_svyplan_alloc <- function(x) {
+  inherits(x, "svyplan_alloc")
+}
+
+#' Refuse svyplan objects that are not sample sizes
+#'
+#' A precision assessment (`svyplan_prec`, from `prec_alloc()`,
+#' `prec_alloc_joint()` or another `prec_*()`) reports the precision of
+#' sizes it was given. An allocation saved by svyplan before 0.26.0 is a
+#' `svyplan_n` of type "alloc", whose fields changed names, and the scalar
+#' fallback would turn it into one grand total.
+#' @noRd
+check_svyplan_size <- function(n, call = caller_env()) {
+  if (inherits(n, "svyplan_prec")) {
+    abort_samplyr(
+      c(
+        "{.arg n} is an svyplan precision assessment, not a sample size.",
+        "i" = "Pass the sizing result it assessed, or turn the assessment
+               back into one with the matching sizing function, for example
+               {.code svyplan::n_alloc_joint(assessment)}.",
+        "i" = "Or pass the stage counts as {.arg n} directly."
+      ),
+      class = "samplyr_error_svyplan_assessment",
+      call = call
+    )
+  }
+  if (inherits(n, "svyplan_n") && identical(n$type, "alloc")) {
+    abort_samplyr(
+      c(
+        "{.arg n} is an allocation from svyplan before 0.26.0.",
+        "i" = "Rebuild it with {.fn svyplan::n_alloc} or
+               {.fn svyplan::n_alloc_joint}, or pass the stage counts as
+               {.arg n} directly."
+      ),
+      class = "samplyr_error_svyplan_legacy_plan",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' The number of stages an allocation fields
+#'
+#' svyplan records it on every allocation: 1 for an element allocation, 2
+#' or more for a plan of PSUs and takes, and 2 for a PSU register fit.
+#' @noRd
+svyplan_alloc_stages <- function(plan, call = caller_env()) {
+  stages <- plan$stages
+  if (
+    !is.numeric(stages) ||
+      length(stages) != 1L ||
+      is.na(stages) ||
+      stages < 1 ||
+      stages != floor(stages)
+  ) {
+    abort_samplyr(
+      c(
+        "This svyplan allocation does not record how many stages it fields.",
+        "i" = "Rebuild it with {.fn svyplan::n_alloc} or
+               {.fn svyplan::n_alloc_joint}, which record {.code $stages}."
+      ),
+      class = "samplyr_error_svyplan_field",
+      call = call
+    )
+  }
+  as.integer(stages)
+}
+
+#' Whole counts from a plan field, or a typed refusal
+#'
+#' svyplan reports field sizes as numbers. A missing field, a value that is
+#' not a whole non-negative count, or one beyond R's integer range would
+#' otherwise reach `draw()` as NULL or NA.
+#' @noRd
+svyplan_counts <- function(values, field, call = caller_env()) {
+  if (is_null(values)) {
+    abort_samplyr(
+      c(
+        "This svyplan plan has no {.field {field}} for this stage.",
+        "i" = "Rebuild the plan with the svyplan function that made it, or
+               pass the stage counts as {.arg n} directly."
+      ),
+      class = "samplyr_error_svyplan_field",
+      call = call
+    )
+  }
+  values <- unname(values)
+  if (!is.numeric(values)) {
+    bad <- rep(TRUE, length(values))
+  } else {
+    bad <- !is.finite(values) | values < 0 | values != floor(values)
+  }
+  if (any(bad)) {
+    abort_samplyr(
+      c(
+        "This svyplan plan's {.field {field}} holds {sum(bad)} value{?s} that
+         {?is/are} not a whole count.",
+        "i" = "Pass the stage counts as {.arg n} directly."
+      ),
+      class = "samplyr_error_svyplan_field",
+      call = call
+    )
+  }
+  limit <- .Machine$integer.max
+  if (any(values > limit)) {
+    largest <- format(max(values), big.mark = ",", scientific = FALSE)
+    abort_samplyr(
+      c(
+        "This svyplan plan's {.field {field}} exceeds the largest count
+         samplyr supports ({limit}).",
+        "x" = "The largest value is {largest}."
+      ),
+      class = "samplyr_error_svyplan_field",
+      call = call
+    )
+  }
+  as.integer(values)
+}
+
+#' Warn when a plan's take can already cover the losses a reserve covers
+#'
+#' The one place samplyr reads a plan's rates. The note appears when a rate
+#' below 1 can have affected the take. A take at a stage above the last
+#' depends on that stage's response rate, and a take of final-stage units on
+#' `eligibility_rate` and `resp_rate`. The rates are the ones the fit used,
+#' as svyplan reports them, so samplyr never restates svyplan's precedence
+#' between arguments, frame columns and measure columns.
+#'
+#' For `n_multi()` the rows that can affect the take are exactly those that
+#' set its size, because the take is the ceiling of the largest requirement
+#' and a row below the maximum cannot change it. For the other plans every
+#' row used is read, since a target with slack can still move the
+#' allocation or a stage bound. A rate of 1 in one place then cannot hide a
+#' lower one elsewhere, and the lowest below 1 is named with where it
+#' applies.
+#' @noRd
+warn_reserve_plan_rates <- function(
+  plan,
+  reserve,
+  stage_index,
+  clustered = FALSE,
+  call = caller_env()
+) {
   if (is_null(reserve)) {
     return(invisible(NULL))
   }
   stage_aware <- clustered || stage_index > 1L
-  plan_stages <- if (inherits(plan, "svyplan_cluster") && stage_aware) {
-    plan$stages
-  } else if (
-    inherits(plan, "svyplan_n") && identical(plan$type, "alloc") &&
-      "n_psu_int" %in% names(as.data.frame(plan))
-  ) {
+  certainty <- is_certainty_alloc_plan(plan)
+  plan_stages <- if (certainty) {
     2L
+  } else if (
+    stage_aware && (inherits(plan, "svyplan_cluster") || is_svyplan_alloc(plan))
+  ) {
+    as.integer(plan$stages %||% 1L)
   } else {
     1L
   }
-  final <- stage_index >= plan_stages
+  # A register's take can sit below stages that keep one unit of each PSU.
+  plan_stage <- if (certainty) min(stage_index, 2L) else stage_index
+  final <- plan_stage >= plan_stages
   names <- if (final) {
     c("eligibility_rate", "resp_rate")
   } else {
-    c("resp_rate_psu", "resp_rate_ssu")[stage_index]
+    paste0("resp_rate_", plan_stage)
   }
-  rates <- vapply(names, function(name) {
-    as.numeric(plan$params[[name]] %||% 1)[1]
-  }, numeric(1))
-  below <- rates[!is.na(rates) & rates < 1]
-  if (length(below) == 0L) {
+  lowest <- lapply(names, function(name) {
+    rates <- plan_rate_values(plan, name, plan_stage, stage_aware)
+    rates <- rates[!is.na(rates$value) & rates$value < 1, , drop = FALSE]
+    if (nrow(rates) == 0L) {
+      return(NULL)
+    }
+    first <- which.min(rates$value)
+    list(
+      name = name,
+      label = rates$label[first],
+      value = rates$value[first],
+      where = rates$where[first],
+      count = nrow(rates)
+    )
+  })
+  lowest <- Filter(Negate(is_null), lowest)
+  if (length(lowest) == 0L) {
     return(invisible(NULL))
   }
-  shown <- paste0("{.code ", names(below), " = ", format(below), "}")
+  shown <- vapply(
+    lowest,
+    function(rate) {
+      where <- if (!is.na(rate$where)) {
+        paste0(" ", gsub("([{}])", "\\1\\1", rate$where))
+      } else {
+        ""
+      }
+      lowest_of <- if (rate$count > 1L) ", its lowest value below 1" else ""
+      paste0(
+        "{.code ",
+        rate$label,
+        " = ",
+        format(rate$value),
+        "}",
+        where,
+        lowest_of
+      )
+    },
+    character(1)
+  )
+  below <- vapply(lowest, function(rate) rate$name, character(1))
+  covers <- c(
+    if ("eligibility_rate" %in% below) "replaces ineligible units",
+    if (any(below != "eligibility_rate")) "covers nonresponse at this stage"
+  )
   cli::cli_warn(
     c(
-      "The plan behind {.arg n} inflates the take for losses that the
-       {.arg reserve} also covers.",
+      paste(
+        "The plan behind {.arg n} sized the take with",
+        if (length(below) == 1L) "a rate" else "rates",
+        "below 1 for losses that the {.arg reserve} also covers."
+      ),
       "x" = paste0(
-        "It sets ", paste(shown, collapse = " and "), ", so each pool is
-         worked until it holds more responding units than the plan
-         needed."
+        "It sets ",
+        paste(shown, collapse = " and "),
+        ". The reserve also ",
+        paste(covers, collapse = " and "),
+        ", so each pool can be worked
+         until it holds more responding units than the plan needed."
       ),
       "i" = paste(
         "Plan the take with",
         if (length(below) == 1L) "this rate" else "these rates",
         "at 1 and let the reserve replace the units lost."
       ),
-      "i" = if (final && "resp_rate" %in% names(below)) {
-        "If {.code resp_rate} holds only the response rate of persons in
-         responding units, the take is right."
+      "i" = if (final && "resp_rate" %in% below) {
+        paste(
+          "Keep {.code resp_rate} if it covers nonresponse within responding
+           units.",
+          if ("eligibility_rate" %in% below) {
+            "The advice still holds for {.code eligibility_rate}."
+          }
+        )
       }
     ),
     class = "samplyr_warning_reserve_plan_rates",
     call = call
   )
   invisible(NULL)
+}
+
+#' Every value a plan used for one rate, with where it applies
+#'
+#' Returns a data frame with the rate's `value`, the `label` to print it
+#' under and `where` it applies (NA for a plan-wide value).
+#'
+#' - `n_alloc()` and `n_alloc_joint()` fits: `$rates`, one row per stratum,
+#'   or per stratum and indicator for a joint fit, with `resp_rate_<k>`,
+#'   `resp_rate` and `eligibility_rate` after svyplan's precedence.
+#' - `n_cluster()` fits: one rate per stage, from the indicator table when
+#'   the fit has one (each row filled from the stage defaults) and from
+#'   `params$resp_rate` otherwise. Eligibility is plan-wide.
+#' - `n_multi()` fits: the indicator table, filled from the arguments, read
+#'   only on the rows whose requirement in `$detail` equals the size the
+#'   plan or its domain fields. A domain raised to `min_n_domain` has no
+#'   such row. svyplan leaves out an `eligibility_rate` column of ones.
+#' - Other plans: the value in `params`.
+#' @noRd
+plan_rate_values <- function(plan, name, stage, stage_aware) {
+  rows <- function(value, label = name, where = NA_character_) {
+    value <- suppressWarnings(as.numeric(value))
+    data.frame(
+      value = value,
+      label = rep_len(label, length(value)),
+      where = rep_len(where, length(value)),
+      stringsAsFactors = FALSE
+    )
+  }
+  params <- plan$params
+  if (inherits(plan, "svyplan_cluster")) {
+    if (identical(name, "eligibility_rate")) {
+      return(rows(params$eligibility_rate))
+    }
+    stages <- as.integer(plan$stages %||% length(params$resp_rate))
+    labels <- c(paste0("resp_rate_", seq_len(stages - 1L)), "resp_rate")
+    # A flat total is inflated by every stage's rate.
+    at <- if (stage_aware) min(stage, stages) else seq_len(stages)
+    tab <- plan$indicators
+    if (is.data.frame(tab) && all(labels[at] %in% names(tab))) {
+      # svyplan labels an unnamed indicator by its row, as in `$detail`.
+      where <- paste(
+        "for indicator",
+        if (is_null(tab$name)) seq_len(nrow(tab)) else tab$name
+      )
+      for (col in intersect(params$domain_cols, names(tab))) {
+        where <- paste0(where, " in ", col, " ", tab[[col]])
+      }
+      return(do.call(
+        rbind,
+        lapply(labels[at], function(col) {
+          rows(tab[[col]], label = col, where = where)
+        })
+      ))
+    }
+    rates <- as.numeric(params$resp_rate %||% rep(1, stages))
+    return(rows(rates[at], label = labels[at]))
+  }
+  if (inherits(plan, "svyplan_multi")) {
+    return(multi_rate_values(plan, name, rows))
+  }
+  if (!is_svyplan_alloc(plan)) {
+    return(rows(params[[name]]))
+  }
+  tab <- plan$rates
+  if (!is.data.frame(tab) || is_null(tab[[name]])) {
+    return(rows(numeric(0)))
+  }
+  where <- paste("in stratum", tab$stratum)
+  if (!is_null(tab$name)) {
+    where <- paste0(where, " for indicator ", tab$name)
+  }
+  rows(tab[[name]], where = where)
+}
+
+#' The rates of an `n_multi()` fit on the indicator rows that set its take
+#'
+#' An unnamed indicator is labelled by its row in `$indicators`, as svyplan
+#' labels it in `$detail`. When the two tables cannot be matched, every row
+#' is read.
+#' @noRd
+multi_rate_values <- function(plan, name, rows) {
+  tab <- plan$indicators
+  if (!is.data.frame(tab) || is_null(tab[[name]])) {
+    return(rows(numeric(0)))
+  }
+  domain_cols <- intersect(plan$params$domain_cols, names(tab))
+  key <- tab[domain_cols]
+  key$name <- if (is_null(tab$name)) seq_len(nrow(tab)) else tab$name
+  where <- paste("for indicator", key$name)
+  for (col in domain_cols) {
+    where <- paste0(where, " in ", col, " ", tab[[col]])
+  }
+  detail <- plan$detail
+  at <- NULL
+  if (is.data.frame(detail) && all(c(names(key), ".n") %in% names(detail))) {
+    size <- if (length(domain_cols) > 0L) {
+      dom <- plan$domains
+      dom$.n[vctrs::vec_match(detail[domain_cols], dom[domain_cols])]
+    } else {
+      rep_len(as.numeric(plan$n), nrow(detail))
+    }
+    sets <- which(abs(detail$.n - size) <= sqrt(.Machine$double.eps) * size)
+    at <- tryCatch(
+      vctrs::vec_match(detail[sets, names(key), drop = FALSE], key),
+      error = function(e) NULL
+    )
+  }
+  if (is_null(at) || anyNA(at)) {
+    at <- seq_len(nrow(tab))
+  }
+  rows(tab[[name]][at], where = where[at])
 }
 
 #' Why an allocation table cannot key a stage's strata, or NULL
@@ -477,14 +870,13 @@ svyplan_strata_key_problem <- function(detail, strata_vars) {
 
 #' Detect a certainty-aware svyplan allocation
 #'
-#' The register in `$params$psu` is svyplan's documented stable mark
-#' (svyplan >= 0.12.0). The column fallback covers a fit whose params were
-#' stripped in transit, and both directions were verified against svyplan's
-#' `.psu_result()`.
+#' An `n_alloc_joint()` fit with a `psu` register. The register in
+#' `$params$psu` is svyplan's documented stable mark. The column fallback
+#' covers a fit whose params were stripped in transit, and both directions
+#' were verified against svyplan's `.psu_result()`.
 #' @noRd
 is_certainty_alloc_plan <- function(n) {
-  inherits(n, "svyplan_n") &&
-    identical(n$type, "alloc") &&
+  is_svyplan_alloc(n) &&
     (!is_null(n$params$psu) || "n_psu_certain" %in% names(n$detail))
 }
 
@@ -495,7 +887,10 @@ is_certainty_alloc_plan <- function(n) {
 #' methods only approximate the probabilities, so both are out.
 #' @noRd
 certainty_bridge_methods <- c(
-  "pps_systematic", "pps_brewer", "pps_cps", "pps_sampford"
+  "pps_systematic",
+  "pps_brewer",
+  "pps_cps",
+  "pps_sampford"
 )
 
 #' Build the bridge spec a certainty plan hands to draw()
@@ -590,7 +985,7 @@ certainty_bridge_spec <- function(
   if (!isTRUE(all.equal(unname(held), unname(n_psu_certain)))) {
     refuse(
       "The plan's register and its {.code $detail} disagree on the certainty split.",
-      "i" = "The plan object is inconsistent. Rebuild it with {.code svyplan::n_alloc()}."
+      "i" = "The plan object is inconsistent. Rebuild it with {.code svyplan::n_alloc_joint()}."
     )
   }
 
@@ -598,7 +993,7 @@ certainty_bridge_spec <- function(
   if (is_null(zone_m) != is_null(register$zone)) {
     refuse(
       "The plan's zones and its {.code n_psu_per_zone} disagree: one is recorded without the other.",
-      "i" = "The plan object is inconsistent. Rebuild it with {.code svyplan::n_alloc()}."
+      "i" = "The plan object is inconsistent. Rebuild it with {.code svyplan::n_alloc_joint()}."
     )
   }
   if (!is_null(zone_m)) {
@@ -609,11 +1004,17 @@ certainty_bridge_spec <- function(
       )
     }
     zone_m <- as.integer(zone_m)
-    if ("n_zone" %in% names(detail) &&
-          !isTRUE(all.equal(as.numeric(detail$n_zone) * zone_m, unname(n_psu_draw)))) {
+    if (
+      "n_zone" %in%
+        names(detail) &&
+        !isTRUE(all.equal(
+          as.numeric(detail$n_zone) * zone_m,
+          unname(n_psu_draw)
+        ))
+    ) {
       refuse(
         "The plan's {.code $detail} disagrees with itself: {.code n_psu_draw} is not {zone_m} PSU{?s} per zone.",
-        "i" = "The plan object is inconsistent. Rebuild it with {.code svyplan::n_alloc()}."
+        "i" = "The plan object is inconsistent. Rebuild it with {.code svyplan::n_alloc_joint()}."
       )
     }
   }
@@ -622,7 +1023,7 @@ certainty_bridge_spec <- function(
     refuse(
       "The plan's zones break the zoned design.",
       "x" = "{problem}",
-      "i" = "The plan object is inconsistent. Rebuild it with {.code svyplan::n_alloc()}."
+      "i" = "The plan object is inconsistent. Rebuild it with {.code svyplan::n_alloc_joint()}."
     )
   }
 
@@ -634,18 +1035,13 @@ certainty_bridge_spec <- function(
     call = call
   )
 
-  n_per_psu <- plan$params$frame$n_per_psu
-  n_per_psu <- if (is_null(n_per_psu)) {
-    rep(NA_real_, length(strata))
-  } else {
-    rep_len(as.numeric(n_per_psu), length(strata))
-  }
+  take_2 <- certainty_nominal_take(plan, strata)
 
   spec <- list(
     role = "select",
     register = register,
     n_psu_draw = n_psu_draw,
-    n_per_psu = stats::setNames(n_per_psu, strata),
+    take_2 = stats::setNames(take_2, strata),
     strata_var = strata_vars,
     id_var = cluster_vars,
     svyplan_version = as.character(utils::packageVersion("svyplan"))
@@ -654,6 +1050,21 @@ certainty_bridge_spec <- function(
     spec$n_psu_per_zone <- zone_m
   }
   list(spec = spec, n_total = n_psu_certain + n_psu_draw)
+}
+
+#' The nominal take below the PSUs a certainty plan was fitted with
+#'
+#' Provenance only: the take fielded in each PSU is the register's
+#' `take_2`, which differs from the nominal take for a certainty PSU. The
+#' nominal take is `$detail$take_2_int` per stratum, for a solved or a
+#' fixed take. NA when the plan records none.
+#' @noRd
+certainty_nominal_take <- function(plan, strata) {
+  detail <- plan$detail
+  if (is_null(detail$take_2_int)) {
+    return(rep(NA_real_, length(strata)))
+  }
+  as.numeric(detail$take_2_int[match(strata, as.character(detail$stratum))])
 }
 
 #' The first way a register breaks its zones or variance groups, or NULL
@@ -674,14 +1085,14 @@ certainty_zoning_problem <- function(register, n_psu_draw, m) {
 #' The first way a register breaks the variance groups, or NULL
 #'
 #' A plan drawing one PSU per zone fixes, before selection, the groups of
-#' zones its variance is collapsed in: `pair` is constant within a zone,
-#' numbered from 1, and each group holds two or three zones. A plan with a
+#' zones its variance is collapsed in. `variance_group` is constant within a
+#' zone, numbered from 1, and each group holds two or three zones. A plan with a
 #' single zone in total has one group of one zone. Other plans carry no
 #' groups.
 #' @noRd
 certainty_pair_problem <- function(register, m) {
-  pair <- register$pair
-  if (is_null(pair)) {
+  group <- register$variance_group
+  if (is_null(group)) {
     if (identical(m, 1L)) {
       return("The plan draws one PSU per zone but records no variance groups.")
     }
@@ -693,17 +1104,17 @@ certainty_pair_problem <- function(register, m) {
     ))
   }
   zone <- register$zone
-  if (!identical(is.na(pair), is.na(zone))) {
-    bad <- register$psu_id[is.na(pair) != is.na(zone)]
+  if (!identical(is.na(group), is.na(zone))) {
+    bad <- register$psu_id[is.na(group) != is.na(zone)]
     return(cli::format_inline(
-      "PSU {.val {head(bad, 5)}} {?has/have} a zone without a variance group, or a group without a zone."
+      "PSU {.val {shown_values(bad)}} {cli::qty(length(bad))}{?has/have} a zone without a variance group, or a group without a zone."
     ))
   }
   zoned <- !is.na(zone)
   cells <- unique(data.frame(
     stratum = register$stratum[zoned],
     zone = zone[zoned],
-    pair = pair[zoned],
+    variance_group = group[zoned],
     stringsAsFactors = FALSE
   ))
   split_zone <- duplicated(cells[c("stratum", "zone")])
@@ -713,7 +1124,7 @@ certainty_pair_problem <- function(register, m) {
       "Zone {.val {cells$zone[at]}} of stratum {.val {cells$stratum[at]}} is split across variance groups."
     ))
   }
-  groups <- sort(unique(cells$pair))
+  groups <- sort(unique(cells$variance_group))
   if (!identical(as.numeric(groups), as.numeric(seq_along(groups)))) {
     return(cli::format_inline(
       "The variance groups must be numbered from 1 without gaps, but they are {.val {groups}}."
@@ -722,7 +1133,7 @@ certainty_pair_problem <- function(register, m) {
   if (nrow(cells) == 1L) {
     return(NULL)
   }
-  size <- tabulate(cells$pair, length(groups))
+  size <- tabulate(cells$variance_group, length(groups))
   bad <- which(size < 2L | size > 3L)
   if (length(bad) > 0) {
     return(cli::format_inline(
@@ -745,7 +1156,7 @@ certainty_zone_problem <- function(register, n_psu_draw, m) {
   stray <- !is.na(zone) & register$certainty
   if (any(stray)) {
     return(cli::format_inline(
-      "Certainty PSU {.val {head(register$psu_id[stray], 5)}} {?has/have} a zone."
+      "Certainty PSU {.val {shown_values(register$psu_id[stray])}} {cli::qty(sum(stray))}{?has/have} a zone."
     ))
   }
   for (h in names(n_psu_draw)) {
@@ -774,7 +1185,7 @@ certainty_zone_problem <- function(register, n_psu_draw, m) {
     small <- which(tabulate(z, n_zone) <= m)
     if (length(small) > 0) {
       return(cli::format_inline(
-        "In stratum {.val {h}}, {length(small)} zone{?s} ({.val {small}}) hold{?s/} {.val {m}} or fewer PSUs, which is a census, not a draw."
+        "In stratum {.val {h}}, {length(small)} zone{?s} ({.val {small}}) {cli::qty(length(small))}hold{?s/} {.val {m}} or fewer PSUs, which is a census, not a draw."
       ))
     }
   }
@@ -791,13 +1202,13 @@ normalize_certainty_register <- function(plan, refuse) {
   if (is_null(register$psu_id)) {
     refuse(
       "This certainty plan has no {.code psu_id}, so its PSUs cannot be matched to a frame.",
-      "i" = "Rebuild the plan with a {.code psu_id} column in the register: {.code svyplan::n_alloc(..., psu = )}."
+      "i" = "Rebuild the plan with a {.code psu_id} column in the register: {.code svyplan::n_alloc_joint(..., psu = )}."
     )
   }
-  if (is_null(register$n_take)) {
+  if (is_null(register$take_2)) {
     refuse(
-      "This certainty plan does not carry the per-PSU takes ({.code n_take}).",
-      "i" = "Rebuild it with svyplan >= 0.12.0, which records the operational takes on {.code $psu}."
+      "This certainty plan does not carry the per-PSU takes ({.code take_2}).",
+      "i" = "Rebuild it with {.code svyplan::n_alloc_joint(..., psu = )}, which records the operational takes on {.code $psu}."
     )
   }
   if (anyDuplicated(register$psu_id)) {
@@ -808,7 +1219,7 @@ normalize_certainty_register <- function(plan, refuse) {
     stratum = as.character(register$stratum),
     N = as.numeric(register$N),
     certainty = as.logical(register$certainty),
-    n_take = as.numeric(register$n_take),
+    take_2 = as.numeric(register$take_2),
     stringsAsFactors = FALSE
   )
   if (!is_null(register$.zone)) {
@@ -818,14 +1229,62 @@ normalize_certainty_register <- function(plan, refuse) {
     }
     out$zone <- as.integer(zone)
   }
-  if (!is_null(register$.pair)) {
-    pair <- register$.pair
-    if (!is.numeric(pair) || any(!is.na(pair) & (pair < 1 | pair != floor(pair)))) {
-      refuse("The plan's register has variance groups that are not positive whole numbers.")
+  if (!is_null(register$.variance_group)) {
+    group <- register$.variance_group
+    if (
+      !is.numeric(group) ||
+        any(!is.na(group) & (group < 1 | group != floor(group)))
+    ) {
+      refuse(
+        "The plan's register has variance groups that are not positive whole numbers."
+      )
     }
-    out$pair <- as.integer(pair)
+    out$variance_group <- as.integer(group)
   }
   out
+}
+
+#' Whether two stored registers are the same plan's
+#'
+#' A design file reads whole numbers back as integers and factors as their
+#' labels, so `psu_id` is compared by value, an integer equal to a double
+#' and a factor equal to its labels, never a number equal to a label. A
+#' 64-bit integer id is compared in its own type. Every other column, and
+#' the row order, must be identical.
+#' @noRd
+same_certainty_register <- function(a, b) {
+  if (!is.data.frame(a) || !is.data.frame(b) ||
+        !identical(names(a), names(b)) || nrow(a) != nrow(b)) {
+    return(FALSE)
+  }
+  id_value <- function(x) {
+    if (is.factor(x)) {
+      return(as.character(x))
+    }
+    if (is.numeric(x)) as.numeric(x) else x
+  }
+  ids_a <- a$psu_id
+  ids_b <- b$psu_id
+  if (inherits(ids_a, "integer64") || inherits(ids_b, "integer64")) {
+    if (!is.numeric(ids_a) || !is.numeric(ids_b)) {
+      return(FALSE)
+    }
+    pair <- wide_integer_ids(ids_a, ids_b)
+    # A 64-bit integer is stored in a double's bits, two of which read as
+    # NaN, so the comparison is of the bits.
+    # Missing positions are compared one by one, so an id the conversion
+    # cannot hold never meets a missing id of the other register.
+    if (!identical(as.vector(is.na(pair$x)), as.vector(is.na(ids_a))) ||
+          !identical(as.vector(is.na(pair$table)), as.vector(is.na(ids_b))) ||
+          !identical(unclass(pair$x), unclass(pair$table), num.eq = FALSE,
+                     single.NA = FALSE)) {
+      return(FALSE)
+    }
+  } else if (!identical(id_value(ids_a), id_value(ids_b))) {
+    return(FALSE)
+  }
+  rest <- setdiff(names(a), "psu_id")
+  identical(as.list(a[rest]), as.list(b[rest]))
 }
 
 #' Build the take spec a certainty plan hands to its take stage's draw()
@@ -851,6 +1310,7 @@ certainty_take_spec <- function(
   has_alloc,
   strata_vars,
   clustered,
+  stage,
   call = rlang::caller_env()
 ) {
   refuse <- function(...) {
@@ -869,9 +1329,9 @@ certainty_take_spec <- function(
     )
   }
   register <- normalize_certainty_register(plan, refuse)
-  if (!identical(register, stage1$register)) {
+  if (!same_certainty_register(register, stage1$register)) {
     refuse(
-      "The plan at stage 2 is not the plan stage 1 was built from.",
+      "The plan at stage {stage} is not the plan stage 1 was built from.",
       "i" = "Pass the same fitted plan at both stages."
     )
   }
@@ -932,12 +1392,19 @@ takes_one_per_parent <- function(design, from, to) {
   if (to < from) {
     return(TRUE)
   }
-  all(vapply(design$stages[from:to], function(stage) {
-    n <- stage$draw_spec$n
-    !is_null(stage$clusters) && is_null(stage$strata) &&
-      is_null(stage$draw_spec$frac) && is.numeric(n) && length(n) == 1L &&
-      isTRUE(n == 1)
-  }, logical(1)))
+  all(vapply(
+    design$stages[from:to],
+    function(stage) {
+      n <- stage$draw_spec$n
+      !is_null(stage$clusters) &&
+        is_null(stage$strata) &&
+        is_null(stage$draw_spec$frac) &&
+        is.numeric(n) &&
+        length(n) == 1L &&
+        isTRUE(n == 1)
+    },
+    logical(1)
+  ))
 }
 
 #' Refuse a plan whose executable selection rule caps a noncertainty PSU
@@ -987,8 +1454,8 @@ check_certainty_plan_disagreement <- function(
       abort_samplyr(
         c(
           "The plan's classification and the executable selection rule disagree.",
-          "x" = "{where} by {.val {method}} gives PSU {.val {ids}} an inclusion probability of at least one, but the plan holds {?it/them} noncertainty.",
-          "i" = "Flag the PSU in the register's {.code certainty} column and refit the plan with {.code svyplan::n_alloc()}."
+          "x" = "{where} by {.val {method}} gives PSU {.val {shown_values(ids, Inf)}} an inclusion probability of at least one, but the plan holds {cli::qty(length(ids))}{?it/them} noncertainty.",
+          "i" = "Flag the PSU in the register's {.code certainty} column and refit the plan with {.code svyplan::n_alloc_joint()}."
         ),
         class = "samplyr_error_certainty_plan_disagreement",
         call = call
@@ -996,6 +1463,76 @@ check_certainty_plan_disagreement <- function(
     }
   }
   invisible(NULL)
+}
+
+#' Positions of PSU ids in a register's ids, matched by value
+#'
+#' Numbers match numbers, an integer and a double alike, and labels match
+#' labels, a factor and its levels alike. Base R would compare a number
+#' with a label as text, which writes 100000 as "1e+05", so whether the ids
+#' matched depended on their size. Ids that are numbers on one side and
+#' labels on the other are refused. A 64-bit integer id (`bit64`) is matched
+#' in its own type, never narrowed to a double, which would merge
+#' neighboring ids above 2^53.
+#' @noRd
+register_id_positions <- function(ids, register_ids, id_var,
+                                  call = caller_env()) {
+  if (is.numeric(ids) != is.numeric(register_ids)) {
+    abort_samplyr(
+      c(
+        "The PSU ids of the frame and of the certainty plan's register are
+         of different types.",
+        "x" = "{.field {id_var}} is {.cls {class(ids)[1]}} in the frame and
+               {.cls {class(register_ids)[1]}} in the register.",
+        "i" = "Convert one of them, so that both hold numbers or both hold
+               labels."
+      ),
+      class = "samplyr_error_certainty_register_mismatch",
+      call = call
+    )
+  }
+  at <- if (!is.numeric(ids)) {
+    match(as.character(ids), as.character(register_ids))
+  } else if (!inherits(ids, "integer64") &&
+               !inherits(register_ids, "integer64")) {
+    match(as.numeric(ids), as.numeric(register_ids))
+  } else {
+    pair <- wide_integer_ids(ids, register_ids)
+    vctrs::vec_match(pair$x, pair$table, na_equal = FALSE)
+  }
+  # A missing id names no PSU, and neither does one its class declares
+  # missing, such as a code of haven's labelled_spss, whose stored value
+  # the conversions above keep.
+  at[is.na(ids)] <- NA_integer_
+  at[at %in% which(is.na(register_ids))] <- NA_integer_
+  at
+}
+
+#' Two numeric id vectors, one of them 64-bit, in the 64-bit type
+#'
+#' A double becomes a 64-bit integer only where it is a whole number inside
+#' the type's range, so no fraction is truncated and no id is narrowed to a
+#' double. Any other position is missing, which matches nothing, and the
+#' vector keeps its length so positions do not shift. A classed number, such
+#' as haven's labelled or units, is read by its stored value, as the other
+#' numeric types are.
+#' @noRd
+wide_integer_ids <- function(x, table) {
+  to <- if (inherits(table, "integer64")) table[0] else x[0]
+  widen <- function(v) {
+    if (inherits(v, "integer64")) {
+      return(vctrs::vec_cast(v, to))
+    }
+    v <- vctrs::vec_data(v)
+    if (is.integer(v)) {
+      return(vctrs::vec_cast(v, to))
+    }
+    ok <- is.finite(v) & v == trunc(v) & v > -2^63 & v < 2^63
+    out <- vctrs::vec_init(to, length(v))
+    out[ok] <- vctrs::vec_cast(v[ok], to)
+    out
+  }
+  list(x = widen(x), table = widen(table))
 }
 
 #' A bridge pool's forced certainty rows and each row's zone
@@ -1009,11 +1546,15 @@ certainty_pool_rows <- function(draw_spec, data) {
   if (is_null(draw_spec$certainty_ids)) {
     return(list(forced_idx = NULL, zone = NULL))
   }
-  ids <- data[[draw_spec$certainty_plan$id_var]]
+  id_var <- draw_spec$certainty_plan$id_var
+  ids <- data[[id_var]]
   zones <- draw_spec$certainty_zones
+  forced <- register_id_positions(ids, draw_spec$certainty_ids, id_var)
   list(
-    forced_idx = which(ids %in% draw_spec$certainty_ids),
-    zone = if (!is_null(zones)) zones$zone[match(ids, zones$psu_id)]
+    forced_idx = which(!is.na(forced)),
+    zone = if (!is_null(zones)) {
+      zones$zone[register_id_positions(ids, zones$psu_id, id_var)]
+    }
   )
 }
 
@@ -1054,17 +1595,20 @@ resolve_parent_draw_spec <- function(draw_spec, data, call = caller_env()) {
     return(cohort_parent_draw_spec(draw_spec, data))
   }
   plan <- draw_spec$certainty_plan
-  if (!identical(plan$role, "take")) return(draw_spec)
-  # Deduplicating before formatting saves a string per frame row.
-  ids <- unique(as.character(unique(data[[plan$id_var]])))
-  at <- match(ids, plan$register$psu_id)
+  if (!identical(plan$role, "take")) {
+    return(draw_spec)
+  }
+  ids <- vctrs::vec_unique(data[[plan$id_var]])
+  at <- register_id_positions(ids, plan$register$psu_id, plan$id_var,
+                              call = call)
   if (length(ids) != 1L || anyNA(at)) {
     abort_samplyr(
       "The take pool must identify exactly one PSU in the certainty plan's register.",
-      class = "samplyr_error_svyplan_certainty_plan", call = call
+      class = "samplyr_error_svyplan_certainty_plan",
+      call = call
     )
   }
-  draw_spec$n <- as.numeric(plan$register$n_take[at])
+  draw_spec$n <- as.numeric(plan$register$take_2[at])
   draw_spec
 }
 
@@ -1077,7 +1621,8 @@ cohort_parent_draw_spec <- function(draw_spec, data) {
   takes <- draw_spec$cohort_takes
   draw_spec$cohort_takes <- NULL
   rows <- takes$table[
-    vctrs::vec_in(takes$table[takes$psu_vars], data[takes$psu_vars]), ,
+    vctrs::vec_in(takes$table[takes$psu_vars], data[takes$psu_vars]),
+    ,
     drop = FALSE
   ]
   if (nrow(rows) == 0L) {
@@ -1113,7 +1658,7 @@ validate_certainty_bridge <- function(design, schedule, call = NULL) {
       if (
         is_null(stage1_spec) ||
           !identical(stage1_spec$role, "select") ||
-          !identical(spec$register, stage1_spec$register)
+          !same_certainty_register(spec$register, stage1_spec$register)
       ) {
         abort_samplyr(
           "The take stage's certainty plan does not match the plan stage 1 selects under.",
@@ -1166,11 +1711,16 @@ validate_certainty_bridge <- function(design, schedule, call = NULL) {
       )
     }
     problem <- certainty_zoning_problem(
-      spec$register, spec$n_psu_draw, spec$n_psu_per_zone
+      spec$register,
+      spec$n_psu_draw,
+      spec$n_psu_per_zone
     )
     if (!is_null(problem)) {
       abort_samplyr(
-        c("The certainty plan's zones break the zoned design.", "x" = "{problem}"),
+        c(
+          "The certainty plan's zones break the zoned design.",
+          "x" = "{problem}"
+        ),
         class = "samplyr_error_svyplan_certainty_plan",
         call = call
       )
@@ -1204,30 +1754,48 @@ reconcile_certainty_take <- function(spec, frame, stage, call = NULL) {
       c(
         "The frame does not match the certainty plan's register at stage {stage}.",
         ...,
-        "i" = "The plan was solved for that register; refit it for this frame with {.code svyplan::n_alloc()}."
+        "i" = "The plan was solved for that register; refit it for this frame with {.code svyplan::n_alloc_joint()}."
       ),
       class = "samplyr_error_certainty_register_mismatch",
       call = call
     )
   }
 
+  # A missing id, NA or a value its class declares missing such as a code
+  # of haven's labelled_spss, names no PSU, and refitting cannot help.
+  n_lost <- sum(is.na(frame[[spec$id_var]]))
+  if (n_lost > 0) {
+    abort_samplyr(
+      c(
+        "The frame does not match the certainty plan's register at stage {stage}.",
+        "x" = "{.field {spec$id_var}} is missing in {n_lost} row{?s} of the frame, as {.code NA} or as a value its class declares missing.",
+        "i" = "A row without a PSU id belongs to no PSU of the register. Give it its PSU's id, or drop it."
+      ),
+      class = "samplyr_error_certainty_register_mismatch",
+      call = call
+    )
+  }
   register <- spec$register
   ids <- vctrs::vec_slice(
-    frame[[spec$id_var]], unique_key_loc(frame, spec$id_var)
+    frame[[spec$id_var]],
+    unique_key_loc(frame, spec$id_var)
   )
-  extra <- setdiff(ids, register$psu_id)
+  extra <- ids[is.na(
+    register_id_positions(ids, register$psu_id, spec$id_var, call = call)
+  )]
   if (length(extra) > 0) {
     refuse(
-      "x" = "Frame PSU {.val {head(extra, 5)}} {?is/are} not in the register."
+      "x" = "Frame PSU {.val {shown_values(extra)}} {cli::qty(length(extra))}{?is/are} not in the register."
     )
   }
   if (spec$strata_var %in% names(frame)) {
     seen <- first_register_rows(frame, spec$id_var, spec$strata_var)
-    at <- match(seen$psu_id, register$psu_id)
+    at <- register_id_positions(seen$psu_id, register$psu_id, spec$id_var,
+                                call = call)
     moved <- seen$stratum != register$stratum[at]
     if (any(moved)) {
       refuse(
-        "x" = "PSU {.val {head(seen$psu_id[moved], 5)}} {?is/are} in a different stratum than the register states."
+        "x" = "PSU {.val {shown_values(seen$psu_id[moved])}} {cli::qty(sum(moved))}{?is/are} in a different stratum than the register states."
       )
     }
   }
@@ -1268,7 +1836,7 @@ reconcile_certainty_register <- function(
       c(
         "The frame does not match the certainty plan's register at stage {stage}.",
         ...,
-        "i" = "The plan was solved for that register; refit it for this frame with {.code svyplan::n_alloc()}."
+        "i" = "The plan was solved for that register; refit it for this frame with {.code svyplan::n_alloc_joint()}."
       ),
       class = "samplyr_error_certainty_register_mismatch",
       call = call
@@ -1280,29 +1848,30 @@ reconcile_certainty_register <- function(
   dup <- unique(seen$psu_id[duplicated(seen$psu_id)])
   if (length(dup) > 0) {
     refuse(
-      "x" = "PSU {.val {head(dup, 5)}} carr{?ies/y} more than one stratum or MOS value in the frame, and the register states exactly one."
+      "x" = "PSU {.val {shown_values(dup)}} {cli::qty(length(dup))}carr{?ies/y} more than one stratum or MOS value in the frame, and the register states exactly one."
     )
   }
 
   register <- spec$register
-  missing_psu <- setdiff(register$psu_id, seen$psu_id)
+  at <- register_id_positions(seen$psu_id, register$psu_id, spec$id_var,
+                              call = call)
+  missing_psu <- register$psu_id[!seq_len(nrow(register)) %in% at]
   if (length(missing_psu) > 0) {
     refuse(
-      "x" = "Register PSU {.val {head(missing_psu, 5)}} {?is/are} absent from the frame."
+      "x" = "Register PSU {.val {shown_values(missing_psu)}} {cli::qty(length(missing_psu))}{?is/are} absent from the frame."
     )
   }
-  extra <- setdiff(seen$psu_id, register$psu_id)
+  extra <- unique(seen$psu_id[is.na(at)])
   if (length(extra) > 0) {
     refuse(
-      "x" = "Frame PSU {.val {head(extra, 5)}} {?is/are} not in the register."
+      "x" = "Frame PSU {.val {shown_values(extra)}} {cli::qty(length(extra))}{?is/are} not in the register."
     )
   }
 
-  at <- match(seen$psu_id, register$psu_id)
   moved <- seen$stratum != register$stratum[at]
   if (any(moved)) {
     refuse(
-      "x" = "PSU {.val {head(seen$psu_id[moved], 5)}} {?is/are} in a different stratum than the register states."
+      "x" = "PSU {.val {shown_values(seen$psu_id[moved])}} {cli::qty(sum(moved))}{?is/are} in a different stratum than the register states."
     )
   }
   off <- seen$N != register$N[at]
@@ -1339,7 +1908,9 @@ reconcile_certainty_register <- function(
 #' stages treat each draw as an independent unit, keyed by the
 #' `.draw_k` column as in [as_svydesign()]: a cluster hit twice enters
 #' the decomposition twice, with its share counted per draw. Two-phase samples are refused:
-#' the nested decomposition does not model phase sampling. Certainty
+#' the nested decomposition does not model phase sampling. So is a sample
+#' whose reserve is not settled (`samplyr_error_reserve_unsettled`), whose
+#' weights describe the whole list. Certainty
 #' PSUs are refused: self-representing PSUs contribute no between-PSU
 #' variance and belong in their own stratum, so estimate components on
 #' the probability part of the design.
@@ -1362,6 +1933,11 @@ reconcile_certainty_register <- function(
 #'   per-stratum components by, when the first stage was not stratified. Stage-1 design strata are picked up automatically.
 #'   Combining them with `strata` is an error, because per-stratum
 #'   components crossed with design strata are ambiguous.
+#' @param estimator The estimator the components describe, passed to
+#'   [svyplan::varcomp()]: `"expansion"` (default) for an estimated total, or
+#'   `"ratio"` for a mean or a proportion, an estimated total over an
+#'   estimated number of units. The two differ only when PSU sizes vary and
+#'   PSUs are not drawn proportional to size.
 #'
 #' @return A `svyplan_varcomp` object. Pass it as `icc` to
 #'   [svyplan::n_cluster()]. Use [as.data.frame()] to export either the
@@ -1450,8 +2026,8 @@ varcomp_formula_values <- function(fml, x, what, call = caller_env()) {
 #' Refuse anything in varcomp()'s dots but the outcome formula
 #'
 #' `varcomp()` inherits its `...` from the generic, where the outcome is
-#' positional, and forwards nothing. Its own `strata` follows the `...` and is
-#' therefore matched exactly, so `strat = ~region` lands in `...`, is ignored,
+#' positional, and forwards nothing. Its own `strata` and `estimator` follow
+#' the `...` and are therefore matched exactly, so `strat = ~region` lands in `...`, is ignored,
 #' and a stratified decomposition comes back unstratified with no sign that
 #' anything was dropped.
 #'
@@ -1463,12 +2039,16 @@ check_varcomp_dots <- function(dots, call = rlang::caller_env()) {
 
   named <- which(nzchar(nms))
   if (length(named) > 0) {
-    suggestion <- suggest_reserved_arg(nms[[named[[1]]]], "strata")
+    suggestion <- suggest_reserved_arg(
+      nms[[named[[1]]]],
+      c("strata", "estimator")
+    )
     advice <- if (!is_null(suggestion)) {
       cli::format_inline("Did you mean {.arg {suggestion}}?")
     } else {
       cli::format_inline(
-        "{.fn varcomp} takes the outcome formula, then {.arg strata} by name."
+        "{.fn varcomp} takes the outcome formula, then {.arg strata} and
+         {.arg estimator} by name."
       )
     }
     abort_samplyr(
@@ -1502,9 +2082,11 @@ check_varcomp_dots <- function(dots, call = rlang::caller_env()) {
 #' @rdname varcomp.tbl_sample
 #' @family diagnostics
 #' @export
-varcomp.tbl_sample <- function(x, ..., strata = NULL) {
+varcomp.tbl_sample <- function(x, ..., strata = NULL,
+                               estimator = c("expansion", "ratio")) {
   check_single_replicate(x, "varcomp")
   check_sample_unmodified(x, "varcomp")
+  check_reserve_settled(x, "varcomp", action = "decompose the variance of")
   check_weight_contract_varcomp(x, "varcomp")
 
   metadata <- attr(x, "metadata") %||% list()
@@ -1522,6 +2104,10 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
 
   quos <- enquos(...)
   check_varcomp_dots(quos)
+  estimator <- with_error_class(
+    rlang::arg_match(estimator),
+    "samplyr_error_varcomp_argument"
+  )
 
   # Force dots here so a positional outcome gets a contract error, not lookup.
   outcome_label <- if (length(quos) >= 1) as_label(quos[[1]]) else ""
@@ -1594,8 +2180,10 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
   stage_key <- function(k) {
     # WR/PMR occurrences are keyed by draw index, qualified by their pool.
     draw_col <- paste0(".draw_", k)
-    if (is_multi_hit_method(design$stages[[k]]$draw_spec) &&
-        draw_col %in% names(x)) {
+    if (
+      is_multi_hit_method(design$stages[[k]]$draw_spec) &&
+        draw_col %in% names(x)
+    ) {
       vars <- c(
         intersect(collect_ancestor_cluster_vars(design, k), names(x)),
         intersect(design$stages[[k]]$strata$vars, names(x)),
@@ -1626,7 +2214,8 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
   }
 
   spec1 <- design$stages[[k1]]$draw_spec
-  equal_prob <- spec1$method %in% equal_prob_methods ||
+  equal_prob <- spec1$method %in%
+    equal_prob_methods ||
     identical(spec1$method_variance, "srs") ||
     (is_balanced_method(spec1) && is_null(spec1$mos))
 
@@ -1712,6 +2301,7 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL) {
     stage_id = stage_ids,
     prob = prob,
     weights = w_within,
-    strata = strata_vec
+    strata = strata_vec,
+    estimator = estimator
   )
 }

@@ -58,14 +58,15 @@
 #'     2, ... for the reserve units in the order they are released. The
 #'     stage's `.weight_k` is then the inverse of the whole list's chance.
 #'   - `.zone_1`: The zone a PSU was drawn from, when stage 1 fields a
-#'     certainty plan solved with `svyplan::n_alloc(n_psu_per_zone = )`.
+#'     certainty plan solved with `svyplan::n_alloc_joint(n_psu_per_zone = )`.
 #'     Zones are numbered within each stratum, one or two PSUs are drawn
 #'     from each, and certainty PSUs have `NA`. With two per zone the survey
 #'     export uses stratum by zone as the variance strata.
-#'   - `.pair_1`: The variance group of the PSU's zone, when the plan draws
-#'     one PSU per zone. svyplan fixes the groups before selection, two or
-#'     three zones each, numbered across strata, and certainty PSUs have
-#'     `NA`. The survey export uses the groups as the variance strata.
+#'   - `.variance_group_1`: The variance group of the PSU's zone, when the
+#'     plan draws one PSU per zone. svyplan fixes the groups before
+#'     selection, two or three zones each, numbered across strata, and
+#'     certainty PSUs have `NA`. The survey export uses the groups as the
+#'     variance strata.
 #'   - `.phase1_row`: In a sample drawn from an earlier phase's sample, the
 #'     position of the earlier-phase row each row came from, which
 #'     [as_svydesign()] joins the phases on. A third phase numbers the rows
@@ -874,10 +875,10 @@ takes_one_replicate <- function(out, data) {
 #'
 #' mutate() and friends funnel through dplyr_col_modify(). Overwriting
 #' or dropping an internal design column (`.weight`, `.weight_k`,
-#' `.fpc_k`, `.draw_k`, `.certainty_k`, `.zone_k`, `.pair_k`, `.reserve_k`,
-#' `.replicate`, `.sample_id`, `.panel`) breaks the link between the data and the
-#' stored design, so the result is marked as modified. Adding or changing
-#' ordinary data columns is unaffected.
+#' `.fpc_k`, `.draw_k`, `.certainty_k`, `.zone_k`, `.variance_group_k`,
+#' `.reserve_k`, `.replicate`, `.sample_id`, `.panel`) breaks the link
+#' between the data and the stored design, so the result is marked as
+#' modified. Adding or changing ordinary data columns is unaffected.
 #'
 #' @param data A `tbl_sample` object.
 #' @param cols Named list of modified columns, as passed by dplyr

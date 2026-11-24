@@ -96,8 +96,8 @@ With \code{importance}, each stratum receives
 clustered stage can allocate its PSUs in proportion to the households they
 hold. This gives the same sizes as power allocation with every
 \eqn{C_h = 1} and \eqn{q = 1}. A two-stage plan allocated on the ultimate
-units, from \code{\link[svyplan:n_alloc]{svyplan::n_alloc()}} with a cluster model, is passed to
-\code{\link[=draw]{draw()}} directly.
+units, from \code{\link[svyplan:n_alloc]{svyplan::n_alloc()}} or \code{\link[svyplan:n_alloc_joint]{svyplan::n_alloc_joint()}} with a
+cluster model, is passed to \code{\link[=draw]{draw()}} directly.
 }
 
 \subsection{Neyman allocation}{

@@ -384,11 +384,11 @@ frame_variance_facts <- function(design, frame, traits, call = caller_env()) {
     if (draws_one_per_zone(trait$draw)) {
       # Exports collapse one-per-zone draws into the plan's variance groups.
       reg <- trait$draw$certainty_plan$register
-      zoned <- !is.na(reg$pair)
+      zoned <- !is.na(reg$variance_group)
       cells <- unique(
-        data.frame(zone = paste(reg$stratum, reg$zone), pair = reg$pair)[zoned, ]
+        data.frame(zone = paste(reg$stratum, reg$zone), variance_group = reg$variance_group)[zoned, ]
       )
-      take <- as.numeric(tabulate(cells$pair))
+      take <- as.numeric(tabulate(cells$variance_group))
       whole_certain <- rep(FALSE, length(take))
       whole_pools <- integer(0)
       n_pools <- length(take)
@@ -1249,10 +1249,10 @@ lone_zone_findings <- function(traits, class, effect, advice,
       next
     }
     reg <- t$draw$certainty_plan$register
-    zoned <- !is.na(reg$pair)
+    zoned <- !is.na(reg$variance_group)
     cells <- unique(data.frame(zone = paste(reg$stratum, reg$zone),
-                               pair = reg$pair)[zoned, ])
-    lone <- sum(tabulate(cells$pair) == 1L)
+                               variance_group = reg$variance_group)[zoned, ])
+    lone <- sum(tabulate(cells$variance_group) == 1L)
     if (lone > 0L) {
       out <- c(out, list(finding(
         effect, class,
@@ -1771,9 +1771,9 @@ brr_findings <- function(traits, facts) {
   if (draws_one_per_zone(draw)) {
     # The plan fixes the variance groups, one sampled PSU per zone.
     reg <- draw$certainty_plan$register
-    zoned <- !is.na(reg$pair)
-    cells <- unique(data.frame(zone = paste(reg$stratum, reg$zone), pair = reg$pair)[zoned, ])
-    if (any(tabulate(cells$pair) %% 2L != 0L)) {
+    zoned <- !is.na(reg$variance_group)
+    cells <- unique(data.frame(zone = paste(reg$stratum, reg$zone), variance_group = reg$variance_group)[zoned, ])
+    if (any(tabulate(cells$variance_group) %% 2L != 0L)) {
       return(list(finding("refused", "samplyr_error_svrep_conversion_failed",
                           note, stage = traits[[1]]$stage)))
     }

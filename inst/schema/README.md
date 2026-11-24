@@ -11,7 +11,7 @@ references. They can be used offline with any compatible validator.
 
 | Schema | Supported format versions |
 |---|---|
-| `design.schema.json` | `samplyr/design` 3 |
+| `design.schema.json` | `samplyr/design` 4 |
 | `frame-stack.schema.json` | `samplyr/frame-stack` 1 |
 | `shared-sample.schema.json` | `samplyr/shared-sample` 1 |
 
@@ -103,8 +103,9 @@ The R dictionary reads it directly, and the schema generator derives method
 constraints from it.
 
 Documents declare vocabulary version 2, and readers refuse any other version.
-Design format versions 1 and 2 and vocabulary version 1 were never released,
-so there is no compatibility path for them.
+The reader requires design format 4. A design written in an earlier format
+must be rebuilt with the current writer. Method vocabulary version 1 is
+also refused.
 
 | Field | Meaning |
 |---|---|
@@ -144,5 +145,5 @@ The parity check compares the native checker with a Draft 7 validator over
 valid documents, field removals, type substitutions and contradictory method
 descriptors. Python is needed only for regeneration and that check, not to
 install, load, test or use samplyr in R. The package tests cover a frozen
-version 3 document, malformed documents, metadata preservation and
+version 4 document, malformed documents, metadata preservation and
 vocabulary consistency.

@@ -179,3 +179,44 @@ test_that("random groups need every replicate and only their own arguments", {
     class = "samplyr_error_survey_argument"
   )
 })
+
+test_that("the two-phase replicate shapes are the ones the help pages name", {
+  skip_if_not_installed("survey")
+  population <- data.frame(
+    psu = rep(1:4, each = 6), hh = 1:24, mos = rep(c(2, 3, 4, 5), each = 6),
+    y = (1:24) %% 7
+  )
+  sub <- sampling_design() |> draw(n = 4)
+
+  # A census of two primary units could select nothing else, but is not one
+  # primary unit, so it keeps the two-phase route and has no replicate
+  # export, by random groups neither.
+  census <- sampling_design() |>
+    cluster_by(psu) |> draw(frac = 1) |> add_stage() |> draw(frac = 1) |>
+    execute(population[population$psu <= 2, ], seed = 1)
+  expect_false(samplyr:::phase1_is_fixed_one_unit(census))
+  expect_warning(
+    twophase <- as_svydesign(execute(sub, census, seed = 2)),
+    class = "samplyr_warning_twophase_across_units"
+  )
+  expect_s3_class(twophase, "twophase2")
+  expect_error(as_svrepdesign(execute(sub, census, seed = 2)),
+               class = "samplyr_error_svrep_twophase_unsupported")
+  expect_error(
+    as_svrepdesign(execute(sub, census, seed = 2, reps = 4),
+                   type = "random_groups"),
+    class = "samplyr_error_random_groups_shared"
+  )
+
+  # A phase 1 drawn with unequal probabilities is refused by the exports,
+  # and replicated by random groups when the design runs whole with reps.
+  pps <- sampling_design() |>
+    cluster_by(psu) |> draw(n = 2, method = "pps_brewer", mos = mos) |>
+    add_stage() |> draw(frac = 1)
+  phase1 <- execute(pps, population, seed = 1)
+  expect_error(as_svydesign(execute(sub, phase1, seed = 2)),
+               class = "samplyr_error_twophase_phase1_pps")
+  stacked <- execute(sub, execute(pps, population, seed = 1, reps = 4), seed = 2)
+  expect_s3_class(as_svrepdesign(stacked, type = "random_groups"),
+                  "svyrep.design")
+})

@@ -174,6 +174,33 @@
 #' `proportional`, `neyman`, `optimal`, `power`), specify total sample size via `n`.
 #' Combining `alloc` with `frac` is not supported.
 #'
+#' ## Registered methods
+#'
+#' A method registered with [sondage::register_method()] is named
+#' `"pps_<name>"` for `type = "wor"` or `type = "wr"`, and
+#' `"balanced_<name>"` for `type = "balanced"`, where `mos` is optional.
+#' `supports_aux = TRUE` permits ordinary balancing variables in `aux`, and
+#' `supports_spread = TRUE` requires coordinates in `spread`. To draw such
+#' a function without coordinates, register it again under another name,
+#' without `supports_spread = TRUE`. A method
+#' declaring both takes `aux` and `spread` together, for a sample that is
+#' balanced and well spread. Under [stratify_by()], a method declaring
+#' `supports_strata = TRUE` draws all strata in one call, as `"cube"` does,
+#' and any other registered method draws each stratum on its own.
+#'
+#' Its weights are `1 / pik`, the inclusion expectation (target inclusion
+#' probabilities, or expected hits for `type = "wr"`) samplyr hands to the
+#' method. The `probabilities` tier declared at registration is `"exact"`
+#' (the design's first-order inclusion probabilities, or expected hits,
+#' equal `pik`), `"approximate"` (to a documented approximation, as in
+#' Pareto sampling), or `"unknown"`, the default. [draw()] refuses
+#' `"unknown"`, because `pik` is then a selection weight only and the
+#' weights would be systematically biased. The classic trap is
+#' `sample(prob = pik)`. With `replace = TRUE` its expected hits equal
+#' `pik`, a valid `type = "wr"` method, but its inclusion probabilities
+#' without replacement do not, so a `type = "wor"` wrapper's tier is
+#' unknown.
+#'
 #'
 #' @references
 #' `srswor`, `srswr`, `systematic`, `bernoulli`, `pps_systematic`,
@@ -283,33 +310,11 @@ NULL
 #'     the selected parents uses only their rows. Entries for parents the
 #'     sample did not select are not checked, so a mistyped identifier that
 #'     matches no selected parent passes unnoticed.
-#'   - A svyplan size or plan object, read through svyplan's documented
-#'     coercions and stage-aware for cluster and stratified two-stage plans.
-#'     A plan giving one size for a stage stratified without `alloc` is
-#'     refused (`samplyr_error_svyplan_total_per_stratum`) rather than taken
-#'     in every stratum. A plan for a stage stratified by several variables
-#'     is matched on those columns of its table, which svyplan carries from
-#'     the frame's character and factor columns. A plan without them is
-#'     refused (`samplyr_error_svyplan_multivariable_strata`).
-#'   - A certainty-aware `svyplan::n_alloc()` plan (solved with a `psu`
-#'     register carrying `psu_id`), at a clustered stage 1 stratified by the
-#'     plan's one stratum column, and again at stage 2 for the per-PSU
-#'     takes. The takes may also come lower, below stages that keep one
-#'     unit of each PSU, such as `draw(n = 1)` of a segment per EA, and are
-#'     then taken inside that unit. Stage 1 takes every certainty
-#'     PSU and draws exactly the plan's remainder per stratum. A plan solved
-#'     with `n_psu_per_zone = 2` draws two PSUs from each of its zones
-#'     instead, records the zone in `.zone_1`, and exports one variance
-#'     stratum per zone. With `n_psu_per_zone = 1` it draws one PSU per zone,
-#'     records the plan's variance group in `.pair_1`, and exports the
-#'     groups as variance strata ([variance_estimation]). Its method
-#'     must be `pps_systematic`, `pps_brewer`, `pps_cps`, or `pps_sampford`,
-#'     with `mos` equal to the register's `N`. The take stage selects by
-#'     `srswor` or `systematic`, and stratifying there requires an `alloc`
-#'     method.
-#'     Arguments the plan owns (`frac`, `certainty_size`, `certainty_prop`,
-#'     `min_n`, `max_n`, and at stage 1 `alloc`) are refused alongside it.
-#'     [svyplan::merge_psus()] merges PSUs smaller than the take.
+#'   - A svyplan size or plan object, a certainty-aware
+#'     [svyplan::n_alloc_joint()] plan with a `psu` register included. Each
+#'     stage takes its own size from the plan, as "Sizes from svyplan" in
+#'     Details describes, and a precision assessment or an
+#'     [svyplan::n_panel()] plan is refused.
 #'
 #'   Fixed-size methods and allocation methods need whole units. For
 #'   random-size methods (`bernoulli`, `pps_poisson`, or a custom method
@@ -359,29 +364,25 @@ NULL
 #'   numbers.
 #' @param reserve Number of reserve units listed after the main take of
 #'   each pool, `NULL` (no reserve) by default, a whole number of at least
-#'   1, or `Inf` to list every unit of the pool. Each pool then draws a
-#'   list of its take plus `reserve` units and puts the list in a random
-#'   order. The first units of that order form the take, and the reserve
-#'   units follow in the order the office releases them, one per failed
-#'   unit. `n` and `frac` keep their meaning, the take to be interviewed,
-#'   and a pool too small for the whole list lists what it has. A svyplan
+#'   1, or `Inf` to list every unit of the pool. Each pool lists its take
+#'   plus `reserve` units in a random order, the take first and the reserve
+#'   in release order. `n` and `frac` keep their meaning, the take to be
+#'   interviewed, and a pool too small for the whole list lists what it has. A svyplan
 #'   plan given as `n` with a rate below 1 for the units the reserve
 #'   replaces warns (`samplyr_warning_reserve_plan_rates`), since its take
-#'   already makes up for them. A reserve needs `method = "srswor"` or
+#'   can already make up for them. A reserve needs `method = "srswor"` or
 #'   `"systematic"` and a take of at least 2 in every pool, which
 #'   [execute()] and [validate_frame()] check for a take given by `frac`,
-#'   an allocation or a plan, before anything is drawn. One stage of a design can carry a reserve, and panels cannot be
-#'   assigned at that stage.
+#'   an allocation or a plan, before anything is drawn. One stage of a
+#'   design can carry a reserve, and panels cannot be assigned at that
+#'   stage.
 #'
-#'   The executed sample holds the whole list. `.reserve_k` is 0 for the
-#'   take and 1, 2, ... for the reserve in release order, and `.weight_k` is
-#'   the inverse of the list's chance, `N / (n + reserve)` in a pool large
-#'   enough for the whole list. That weight describes the list, not the
-#'   units the field ends up interviewing, so [as_svydesign()] and
-#'   [as_svrepdesign()] refuse the sample with
-#'   `samplyr_error_reserve_unsettled` until [execute()] settles it from
+#'   The executed sample holds the whole list, ranked in `.reserve_k` and
+#'   weighted as a list, and is refused by the exports
+#'   (`samplyr_error_reserve_unsettled`) until [execute()] settles it from
 #'   the response status the field recorded. [reserve_lists] describes the
-#'   field protocol, the settlement and how to size the reserve.
+#'   field protocol, the list's weights, the settlement and how to size the
+#'   reserve.
 #' @param method Selection method, `"srswor"` by default.
 #'   [selection_methods] lists the seventeen built-ins with what each one
 #'   requires and the paper behind each.
@@ -394,29 +395,9 @@ NULL
 #'   alias for `"cube"`.
 #'
 #'   A method registered with [sondage::register_method()] is named
-#'   `"pps_<name>"` for `type = "wor"` or `type = "wr"`, and
-#'   `"balanced_<name>"` for `type = "balanced"`, where `mos` is optional.
-#'   `supports_aux = TRUE` permits ordinary balancing variables in `aux`, and
-#'   `supports_spread = TRUE` requires coordinates in `spread`. To draw such
-#'   a function without coordinates, register it again under another name,
-#'   without `supports_spread = TRUE`. A method
-#'   declaring both takes `aux` and `spread` together, for a sample that is
-#'   balanced and well spread. Under [stratify_by()], a method declaring
-#'   `supports_strata = TRUE` draws all strata in one call, as `"cube"` does,
-#'   and any other registered method draws each stratum on its own.
-#'
-#'   Its weights are `1 / pik`, the inclusion expectation (target inclusion
-#'   probabilities, or expected hits for `type = "wr"`) samplyr hands to the
-#'   method. The `probabilities` tier declared at registration is `"exact"`
-#'   (the design's first-order inclusion probabilities, or expected hits,
-#'   equal `pik`), `"approximate"` (to a documented approximation, as in
-#'   Pareto sampling), or `"unknown"`, the default. `draw()` refuses
-#'   `"unknown"`, because `pik` is then a selection weight only and the
-#'   weights would be systematically biased. The classic trap is
-#'   `sample(prob = pik)`. With `replace = TRUE` its expected hits equal
-#'   `pik`, a valid `type = "wr"` method, but its inclusion probabilities
-#'   without replacement do not, so a `type = "wor"` wrapper's tier is
-#'   unknown.
+#'   `"pps_<name>"` or `"balanced_<name>"`. "Registered methods" in
+#'   [selection_methods] gives what its registration declares and why
+#'   `draw()` refuses one whose `probabilities` tier is `"unknown"`.
 #'
 #' @param mos Measure of size, a bare column name. Required for built-in PPS
 #'   methods and registered `pps_` methods. Optional for `cube`, `lpm2`,
@@ -526,21 +507,10 @@ NULL
 #'   `nrow()` before analyzing a single realization.
 #'
 #'   A selected unit with no rows in the next frame is refused under
-#'   `"error"` (`samplyr_error_frame_missing_parent`). Under `"warn"`
-#'   (`samplyr_warning_empty_parent`, once per stage) or `"silent"` it stays
-#'   in the design with nothing selected under it and contributes zero to
-#'   every total. It is recorded in the sample, counted by [summary()],
-#'   exempt from the incomplete-register checks of [validate_frame()] and
-#'   [execute()], and, under `"warn"`, named at export by [as_svydesign()].
-#'   A primary unit left with no row is exported as zero rows, which keep
-#'   it in the variance. [variance_estimation] gives the details.
-#'
-#'   A replicated execution with empty replicates cannot feed a later
-#'   [execute()] call (a new phase or a stage continuation). It raises
-#'   `samplyr_error_empty_phase_replicate` rather than skip them and
-#'   condition downstream results on nonempty realizations. Handle them
-#'   explicitly, for example by executing each nonempty replicate separately
-#'   and accounting for the empty ones in the analysis.
+#'   `"error"` (`samplyr_error_frame_missing_parent`) and kept with nothing
+#'   under it otherwise. [execution_conditions] gives how such a unit is
+#'   carried, and why a replicated execution with empty replicates cannot
+#'   be continued.
 #' @param on_capped What to do when a fixed take `n`, drawn without
 #'   replacement, exceeds the units of a pool, such as a take of 12
 #'   households in an EA that lists 10. One of:
@@ -551,23 +521,68 @@ NULL
 #'   - `"error"`: refuse before anything is drawn
 #'     (`samplyr_error_size_capped`), naming the stage and the short pools.
 #'
-#'   The check covers every pool the stage would draw from if its parent
-#'   were selected, so whether a design runs does not depend on the seed.
-#'   An allocation total above the population of the stage counts as
-#'   capped. A stratum an allocation method fills to its population and
-#'   whose surplus goes to other strata does not, because the total is
-#'   delivered, and neither does a `min_n` above the population with
-#'   `frac`, which the rule above makes a census. [execute()] checks a stage
-#'   when it receives that stage's frame, so in staged execution a later
-#'   stage is checked by the call that lists it. [validate_frame()] and
-#'   [exante_probabilities()] refuse the same designs, while
-#'   [frame_summary()] still reports their short pools. `"error"` is refused
-#'   with a random-size method, a method with replacement, or `frac`, where
-#'   no fixed take can fall short.
+#'   `"error"` is refused with a random-size method, a method with
+#'   replacement, or `frac`, where no fixed take can fall short.
+#'   [execution_conditions] gives which pools the check covers and when it
+#'   runs.
 #'
 #' @return A modified `sampling_design` object with selection parameters specified.
 #'
 #' @details
+#' ## Sizes from svyplan
+#'
+#' A svyplan size or plan object is read through svyplan's documented
+#' coercions, stage by stage for cluster and stratified multistage plans.
+#' An allocation from [svyplan::n_alloc()] or [svyplan::n_alloc_joint()]
+#' that plans PSUs gives stage 1 its whole PSU counts (`n_1_int`) and each
+#' later stage k its whole take per parent unit (`take_k_int`), up to the
+#' plan's `stages`. A plan giving one size for a stage stratified without
+#' `alloc` is refused (`samplyr_error_svyplan_total_per_stratum`) rather
+#' than taken in every stratum. A plan for a stage stratified by several
+#' variables is matched on those columns of its table, which svyplan
+#' carries from the frame's character and factor columns, and a plan
+#' without them is refused (`samplyr_error_svyplan_multivariable_strata`).
+#' A precision assessment from a `prec_*()` function is not a size and is
+#' refused. So is an [svyplan::n_panel()] plan, which sizes a whole panel,
+#' and the refusal names the count to pass instead. A fixed panel issues
+#' `ceiling(plan$n_issued)` units. A rotating panel is issued selection by
+#' selection, and how many units its startup takes depends on its `start`
+#' and `rotation`, which [svyplan::design_schedule()] resolves. Each
+#' selection's `operational_issue` in the schedule's `selections` table is
+#' the count to draw, a count of PSUs when the schedule was built with
+#' `take`, and with subrounds the sum of each panel's rounded issue.
+#' [rotation_program()] checks the count against the schedule.
+#'
+#' ```r
+#' issue <- with(schedule$selections, setNames(operational_issue, selection))
+#' startup <- sampling_design() |> draw(n = issue[["startup"]])
+#' ```
+#'
+#' The planning choices are covered in
+#' `vignette("joint-allocation", package = "svyplan")`.
+#'
+#' A certainty-aware [svyplan::n_alloc_joint()] plan, solved with a `psu`
+#' register carrying `psu_id`, is given at a clustered stage 1 stratified by
+#' the plan's one stratum column, and again at stage 2 for the per-PSU
+#' takes. The takes may also come lower, below stages that keep one unit of
+#' each PSU, such as `draw(n = 1)` of a segment per EA, and are then taken
+#' inside that unit. Stage 1 takes every certainty PSU and draws exactly the
+#' plan's remainder per stratum. A plan solved with `n_psu_per_zone = 2`
+#' draws two PSUs from each of its zones instead, records the zone in
+#' `.zone_1`, and exports one variance stratum per zone. With
+#' `n_psu_per_zone = 1` it draws one PSU per zone, records the plan's
+#' variance group in `.variance_group_1`, and exports the groups as variance
+#' strata ([variance_estimation]). Stage 1's method must be
+#' `pps_systematic`, `pps_brewer`, `pps_cps` or `pps_sampford`, with `mos`
+#' equal to the register's `N`. The frame's PSU ids are matched to `psu_id`
+#' by value, so both must be numbers or both labels, and 64-bit integer ids
+#' (bit64) are matched exactly. A design file holds such ids only from
+#' -2^53 to 2^53 ([write_design()]). The take stage selects
+#' by `srswor` or `systematic`, and stratifying there requires an `alloc`
+#' method. Arguments the plan owns (`frac`, `certainty_size`,
+#' `certainty_prop`, `min_n`, `max_n`, and at stage 1 `alloc`) are refused
+#' alongside it. [svyplan::merge_psus()] merges PSUs smaller than the take.
+#'
 #' ## Certainty selection
 #'
 #' In PPS without-replacement sampling, very large units can have
@@ -777,6 +792,58 @@ NULL
 #'        certainty_size = cert_thresholds) |>
 #'   execute(bfa_eas, seed = 424)
 #'
+#' # A two-stage svyplan allocation gives each stage its whole sizes: EAs
+#' # per stratum at stage 1, households per EA at stage 2. Check that the
+#' # search found a whole design before fieldwork.
+#' sizes <- aggregate(cbind(N = households, N_1 = 1) ~ urban_rural,
+#'                    bfa_eas, sum)
+#' plan_frame <- data.frame(
+#'   stratum = sizes$urban_rural, N = sizes$N, N_1 = sizes$N_1,
+#'   sd = c(0.48, 0.45), mean = c(0.35, 0.28),
+#'   icc_1 = c(0.08, 0.04), cost_1 = c(600, 300), cost_2 = c(60, 40)
+#' )
+#' plan <- svyplan::n_alloc(plan_frame, cv = 0.03)
+#' plan$operational$status
+#' plan$detail[c("stratum", "n_1_int", "take_2_int")]
+#' two_stage <- sampling_design() |>
+#'   add_stage(label = "EA") |>
+#'   stratify_by(urban_rural) |>
+#'   cluster_by(ea_id) |>
+#'   draw(n = plan, method = "pps_brewer", mos = households) |>
+#'   add_stage(label = "Household") |>
+#'   stratify_by(urban_rural) |>
+#'   draw(n = plan)
+#' selected_eas <- execute(two_stage, bfa_eas, stages = 1, seed = 3)
+#' table(selected_eas$urban_rural)
+#'
+#' # A plan fitted on a register of EAs takes the EAs it holds certain, draws
+#' # the rest, and takes each EA's own number of households
+#' eas <- bfa_eas[
+#'   bfa_eas$province == "Oubritenga" & bfa_eas$households >= 12,
+#' ]
+#' register <- data.frame(
+#'   psu_id = eas$ea_id, stratum = as.character(eas$urban_rural),
+#'   N = eas$households
+#' )
+#' register_frame <- aggregate(N ~ stratum, register, sum)
+#' register_frame$take_2 <- 12
+#' fit <- svyplan::n_alloc_joint(
+#'   register_frame,
+#'   data.frame(stratum = register_frame$stratum, name = "coverage",
+#'              p = 0.4, icc_1 = 0.05),
+#'   targets = data.frame(name = "coverage", cv = 0.04),
+#'   psu = register
+#' )
+#' fit$operational[c("n", "all_pass", "status")]
+#' fit$detail[c("stratum", "n_psu_certain", "n_psu_draw")]
+#' sampling_design() |>
+#'   add_stage(label = "EA") |>
+#'   stratify_by(urban_rural) |>
+#'   cluster_by(ea_id) |>
+#'   draw(n = fit, method = "pps_brewer", mos = households) |>
+#'   add_stage(label = "Household") |>
+#'   draw(n = fit)
+#'
 #' @seealso
 #' [sampling_design()] for creating designs,
 #' [stratify_by()] for stratification,
@@ -812,16 +879,33 @@ draw <- function(
   check_keyword_args(
     enquos(...),
     c(
-      "min_n", "max_n", "reserve", "method", "mos", "prn", "aux", "spread",
-      "round", "control", "certainty_size", "certainty_prop",
-      "certainty_overflow", "on_empty", "on_capped"
+      "min_n",
+      "max_n",
+      "reserve",
+      "method",
+      "mos",
+      "prn",
+      "aux",
+      "spread",
+      "round",
+      "control",
+      "certainty_size",
+      "certainty_prop",
+      "certainty_overflow",
+      "on_empty",
+      "on_capped"
     ),
     # An allocation is declared with the strata it splits the take over,
     # and panels with the sample they partition.
     elsewhere = c(
-      alloc = "stratify_by", variance = "stratify_by", cost = "stratify_by",
-      cv = "stratify_by", importance = "stratify_by", power = "stratify_by",
-      panels = "execute", panel_stage = "execute"
+      alloc = "stratify_by",
+      variance = "stratify_by",
+      cost = "stratify_by",
+      cv = "stratify_by",
+      importance = "stratify_by",
+      power = "stratify_by",
+      panels = "execute",
+      panel_stage = "execute"
     )
   )
   if (is.data.frame(.data)) {
@@ -900,6 +984,10 @@ draw <- function(
 
   strata_vars <- current_stage$strata$vars
 
+  # Keep the plan: the certainty bridge replaces `n` with counts or NULL.
+  check_svyplan_size(n)
+  from_plan <- is_svyplan_size(n)
+  plan <- n
   # A certainty plan is fielded from its own classification, never coerced.
   certainty_plan <- NULL
   if (is_certainty_alloc_plan(n)) {
@@ -930,14 +1018,13 @@ draw <- function(
         max_n = max_n,
         has_alloc = has_alloc,
         strata_vars = strata_vars,
-        clustered = !is_null(current_stage$clusters)
+        clustered = !is_null(current_stage$clusters),
+        stage = current
       )
       n <- NULL
     }
   }
 
-  from_plan <- inherits(n, c("svyplan_n", "svyplan_power", "svyplan_cluster"))
-  plan <- n
   n <- coerce_svyplan_n(
     n,
     stage_index = current,
@@ -946,8 +1033,12 @@ draw <- function(
   )
   # Only draw() knows a scalar came from a plan.
   if (
-    from_plan && !is.data.frame(n) && length(n) == 1L && is_null(names(n)) &&
-      !is_null(strata_vars) && !has_alloc
+    from_plan &&
+      !is.data.frame(n) &&
+      length(n) == 1L &&
+      is_null(names(n)) &&
+      !is_null(strata_vars) &&
+      !has_alloc
   ) {
     abort_samplyr(
       c(
@@ -966,7 +1057,9 @@ draw <- function(
   }
   # A plan keys several strata only through the columns its table carries.
   if (
-    from_plan && !is.data.frame(n) && !is_null(names(n)) &&
+    from_plan &&
+      !is.data.frame(n) &&
+      !is_null(names(n)) &&
       length(strata_vars) > 1L
   ) {
     problem <- svyplan_strata_key_problem(as.data.frame(plan), strata_vars)
@@ -1075,7 +1168,8 @@ draw <- function(
   check_one_reserve_stage(.data$stages)
   if (from_plan) {
     warn_reserve_plan_rates(
-      plan, reserve,
+      plan,
+      reserve,
       stage_index = current,
       clustered = !is_null(current_stage$clusters)
     )
@@ -1132,9 +1226,13 @@ parse_draw_variables <- function(quo, arg) {
       class = "samplyr_error_draw_argument"
     )
   }
-  unique(vapply(terms, function(term) {
-    draw_column_name(term, quo_get_env(quo), arg)
-  }, character(1)))
+  unique(vapply(
+    terms,
+    function(term) {
+      draw_column_name(term, quo_get_env(quo), arg)
+    },
+    character(1)
+  ))
 }
 
 #' The column a data-masked draw argument names
@@ -1208,8 +1306,7 @@ parse_balanced_aux <- function(quo) {
       bounds <- c(bounds, draw_column_name(args[[1]], env, "aux"))
       next
     }
-    if (is.symbol(term) || is.character(term) ||
-        is_call(term, c("[[", "$"))) {
+    if (is.symbol(term) || is.character(term) || is_call(term, c("[[", "$"))) {
       aux <- c(aux, draw_column_name(term, env, "aux"))
       next
     }
@@ -1320,10 +1417,18 @@ n_is_expected_size <- function(method, custom_spec, has_alloc) {
 
 #' Refuse a fractional `n` where whole units are required
 #' @noRd
-check_n_integer <- function(n, method, custom_spec, has_alloc,
-                            table = FALSE, call = caller_env()) {
-  if (n_is_expected_size(method, custom_spec, has_alloc) ||
-        is_integerish_numeric(n)) {
+check_n_integer <- function(
+  n,
+  method,
+  custom_spec,
+  has_alloc,
+  table = FALSE,
+  call = caller_env()
+) {
+  if (
+    n_is_expected_size(method, custom_spec, has_alloc) ||
+      is_integerish_numeric(n)
+  ) {
     return(invisible(NULL))
   }
   abort_samplyr(
@@ -1451,8 +1556,14 @@ validate_draw_df <- function(
         call = call
       )
     }
-    check_n_integer(values, method, custom_spec, has_alloc,
-                    table = TRUE, call = call)
+    check_n_integer(
+      values,
+      method,
+      custom_spec,
+      has_alloc,
+      table = TRUE,
+      call = call
+    )
   }
 
   if (value_col == "frac") {
@@ -1650,7 +1761,9 @@ validate_draw_configuration <- function(
   )
   for (name in names(choices)) {
     value <- values[[name]]
-    if (!is.character(value) || length(value) != 1 || !value %in% choices[[name]]) {
+    if (
+      !is.character(value) || length(value) != 1 || !value %in% choices[[name]]
+    ) {
       cli_abort(
         "{.arg {name}} must be one of {.val {choices[[name]]}}",
         call = call,
@@ -1660,7 +1773,9 @@ validate_draw_configuration <- function(
   }
   check_on_capped_applies(on_capped, method, n, custom_spec, call = call)
   validate_reserve(
-    reserve, method, n,
+    reserve,
+    method,
+    n,
     custom_spec = custom_spec,
     provides_take = provides_take,
     call = call
@@ -1675,26 +1790,36 @@ validate_draw_configuration <- function(
 #' leaves 0 / 0. A take that comes from `frac`, an allocation or a plan is
 #' known only at execution.
 #' @noRd
-validate_reserve <- function(reserve, method, n, custom_spec = NULL,
-                             provides_take = FALSE, call = caller_env()) {
+validate_reserve <- function(
+  reserve,
+  method,
+  n,
+  custom_spec = NULL,
+  provides_take = FALSE,
+  call = caller_env()
+) {
   if (is_null(reserve)) {
     return(invisible(NULL))
   }
-  whole_pool <- is.numeric(reserve) && length(reserve) == 1L &&
+  whole_pool <- is.numeric(reserve) &&
+    length(reserve) == 1L &&
     identical(as.double(reserve), Inf)
   if (
-    !whole_pool && (
-      !is.numeric(reserve) || length(reserve) != 1L ||
-        !is_integerish_numeric(reserve) || reserve < 1 ||
-        reserve > .Machine$integer.max
-    )
+    !whole_pool &&
+      (!is.numeric(reserve) ||
+        length(reserve) != 1L ||
+        !is_integerish_numeric(reserve) ||
+        reserve < 1 ||
+        reserve > .Machine$integer.max)
   ) {
     cli_abort(
       c(
         "{.arg reserve} must be a single whole number of at least 1, or
          {.code Inf} to list every unit of the pool.",
         "x" = if (
-          is.numeric(reserve) && length(reserve) == 1L && !is.na(reserve) &&
+          is.numeric(reserve) &&
+            length(reserve) == 1L &&
+            !is.na(reserve) &&
             reserve > .Machine$integer.max
         ) {
           "{.arg reserve} is above the largest integer R stores."
@@ -1741,8 +1866,13 @@ validate_reserve <- function(reserve, method, n, custom_spec = NULL,
 #' take more units than a pool holds, and a rate never exceeds one, so
 #' `on_capped = "error"` would never act there.
 #' @noRd
-check_on_capped_applies <- function(on_capped, method, n, custom_spec,
-                                    call = caller_env()) {
+check_on_capped_applies <- function(
+  on_capped,
+  method,
+  n,
+  custom_spec,
+  call = caller_env()
+) {
   if (!identical(on_capped, "error")) {
     return(invisible(NULL))
   }
@@ -1994,7 +2124,10 @@ validate_draw_args <- function(
   if (!is_null(n) && !n_is_df) {
     if (!is.numeric(n)) {
       abort_samplyr(
-        "{.arg n} must be numeric or a data frame",
+        c(
+          "{.arg n} must be numeric or a data frame",
+          "i" = panel_size_hint(n)
+        ),
         class = "samplyr_error_alloc_invalid_input_type",
         call = call
       )
@@ -2210,7 +2343,8 @@ validate_certainty <- function(
   }
 
   # A unit that can be hit more than once is taken once instead.
-  is_pps <- method %in% c(pps_wor_methods, pps_wr_methods) ||
+  is_pps <- method %in%
+    c(pps_wor_methods, pps_wr_methods) ||
     (!is_null(custom_spec) && custom_spec$type %in% c("wor", "wr"))
   if (!is_pps) {
     cli_abort(

@@ -51,6 +51,18 @@ redistributed past a saturated stratum. A message, not a warning:
 nothing went wrong, and simulation loops can silence it with
 \code{suppressMessages()}.}
 }
+
+The \code{on_capped = "error"} check covers every pool the stage would draw from
+if its parent were selected, so whether a design runs does not depend on the
+seed. An allocation total above the population of the stage counts as capped.
+A stratum an allocation method fills to its population and whose surplus goes
+to other strata does not, because the total is delivered, and neither does a
+\code{min_n} above the population with \code{frac}, which makes that stratum a census.
+\code{\link[=execute]{execute()}} checks a stage when it receives that stage's frame, so in staged
+execution a later stage is checked by the call that lists it.
+\code{\link[=validate_frame]{validate_frame()}} and \code{\link[=exante_probabilities]{exante_probabilities()}} refuse the same designs,
+while \code{\link[=frame_summary]{frame_summary()}} still reports their short pools.
+
 One more is reported the same way, once per stage with a \code{payload},
 although nothing was capped. \code{samplyr_message_singleton_pool} names the
 strata of a fixed-size design without replacement that draw a single unit
@@ -88,9 +100,22 @@ pairs. A stratum missing from the whole stage is refused instead
 (\code{samplyr_error_alloc_unknown_strata}).
 
 A selected unit that has no rows in the next stage's frame is reported the
-same way under that stage's \code{on_empty = "warn"}:
-\code{samplyr_warning_empty_parent}, with \code{pool_keys} and \code{n_empty}. See
-\code{on_empty} in \code{\link[=draw]{draw()}}.
+same way under that stage's \code{on_empty = "warn"} in \code{\link[=draw]{draw()}}:
+\code{samplyr_warning_empty_parent}, with \code{pool_keys} and \code{n_empty}. Under
+\code{"warn"} or \code{"silent"} the unit stays in the design with nothing selected
+under it and contributes zero to every total. It is recorded in the
+sample, counted by \code{\link[=summary]{summary()}}, exempt from the incomplete-register checks
+of \code{\link[=validate_frame]{validate_frame()}} and \code{\link[=execute]{execute()}}, and, under \code{"warn"}, named at export
+by \code{\link[=as_svydesign]{as_svydesign()}}. A primary unit left with no row is exported as zero
+rows, which keep it in the variance, as \link{variance_estimation} describes.
+Under \code{"error"} it is refused (\code{samplyr_error_frame_missing_parent}).
+
+A replicated execution with empty replicates cannot feed a later
+\code{\link[=execute]{execute()}} call (a new phase or a stage continuation). It raises
+\code{samplyr_error_empty_phase_replicate} rather than skip them and condition
+downstream results on nonempty realizations. Handle them explicitly, for
+example by executing each nonempty replicate separately and accounting
+for the empty ones in the analysis.
 
 These are not every condition \code{execute()} raises. Panel assignment has one
 of its own, \code{samplyr_warning_panel_small_pool}, documented with

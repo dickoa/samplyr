@@ -713,10 +713,47 @@ test_that("unit detail reports the anonymous unit registry", {
 
 test_that("unit detail errors for a stage without unit storage", {
   s <- set_frame_digest(fix_srs, digest_fixture_units())
-  expect_error(
+  err <- expect_error(
     frame_summary(s, stages = 2, detail = "unit"),
     class = "samplyr_error_digest_no_units"
   )
+  expect_match(cli::ansi_strip(conditionMessage(err)), "^Stage 2 did not")
+
+  # The stage ids give the plural, not the value of the first one.
+  both <- digest_fixture_units()
+  both$stages[[1]]$storage <- "constant"
+  both$stages[[1]]$units <- NULL
+  both$stages[[1]]$pools$chance <- 1 / 3
+  s <- set_frame_digest(fix_srs, both, validate = FALSE)
+  err <- expect_error(
+    frame_summary(s, stages = 1:2, detail = "unit"),
+    class = "samplyr_error_digest_no_units"
+  )
+  expect_match(cli::ansi_strip(conditionMessage(err)), "^Stages 1 and 2 did not")
+})
+
+test_that("a digest's pool refusals count the pools they list", {
+  message_of <- function(digest) {
+    err <- expect_error(
+      samplyr:::validate_frame_digest(digest),
+      class = "samplyr_error_digest_allocation"
+    )
+    gsub("\\s+", " ", cli::ansi_strip(conditionMessage(err)))
+  }
+  # Stage 1, two pools: the stage number used to give the plural.
+  d <- digest_fixture_units()
+  d$stages[[1]]$pools$n_realized[2:3] <- 7L
+  expect_match(message_of(d), "N for pools 2 and 3 in a", fixed = TRUE)
+  d <- digest_fixture_units()
+  d$stages[[1]]$pools$n_expected[2:3] <- 3
+  expect_match(message_of(d), "chances for pools 2 and 3.", fixed = TRUE)
+  d <- digest_fixture_units()
+  d$stages[[1]]$pools$n_realized[2:3] <- 1L
+  expect_match(message_of(d), "trace for pools 2 and 3.", fixed = TRUE)
+  # Stage 2, one pool.
+  d <- digest_fixture_units()
+  d$stages[[2]]$pools$n_realized[2] <- 4L
+  expect_match(message_of(d), "trace for pool 2.", fixed = TRUE)
 })
 
 test_that("unit detail is empty when no stage retained units", {

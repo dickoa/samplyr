@@ -184,6 +184,34 @@ When an allocation method is set in \code{\link[=stratify_by]{stratify_by()}} (\
 \code{proportional}, \code{neyman}, \code{optimal}, \code{power}), specify total sample size via \code{n}.
 Combining \code{alloc} with \code{frac} is not supported.
 }
+
+\subsection{Registered methods}{
+
+A method registered with \code{\link[sondage:register_method]{sondage::register_method()}} is named
+\code{"pps_<name>"} for \code{type = "wor"} or \code{type = "wr"}, and
+\code{"balanced_<name>"} for \code{type = "balanced"}, where \code{mos} is optional.
+\code{supports_aux = TRUE} permits ordinary balancing variables in \code{aux}, and
+\code{supports_spread = TRUE} requires coordinates in \code{spread}. To draw such
+a function without coordinates, register it again under another name,
+without \code{supports_spread = TRUE}. A method
+declaring both takes \code{aux} and \code{spread} together, for a sample that is
+balanced and well spread. Under \code{\link[=stratify_by]{stratify_by()}}, a method declaring
+\code{supports_strata = TRUE} draws all strata in one call, as \code{"cube"} does,
+and any other registered method draws each stratum on its own.
+
+Its weights are \code{1 / pik}, the inclusion expectation (target inclusion
+probabilities, or expected hits for \code{type = "wr"}) samplyr hands to the
+method. The \code{probabilities} tier declared at registration is \code{"exact"}
+(the design's first-order inclusion probabilities, or expected hits,
+equal \code{pik}), \code{"approximate"} (to a documented approximation, as in
+Pareto sampling), or \code{"unknown"}, the default. \code{\link[=draw]{draw()}} refuses
+\code{"unknown"}, because \code{pik} is then a selection weight only and the
+weights would be systematically biased. The classic trap is
+\code{sample(prob = pik)}. With \code{replace = TRUE} its expected hits equal
+\code{pik}, a valid \code{type = "wr"} method, but its inclusion probabilities
+without replacement do not, so a \code{type = "wor"} wrapper's tier is
+unknown.
+}
 }
 \references{
 \code{srswor}, \code{srswr}, \code{systematic}, \code{bernoulli}, \code{pps_systematic},

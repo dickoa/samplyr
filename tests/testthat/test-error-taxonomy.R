@@ -432,7 +432,7 @@ test_that("a design file that cannot be read is refused by class", {
 
   expect_error(
     read_design(corrupt_design_file(
-      plain, '"format_version": 3', '"format_version": 99'
+      plain, '"format_version": 4', '"format_version": 99'
     )),
     class = "samplyr_error_design_file_unsupported"
   )
@@ -789,11 +789,11 @@ test_that("a per-domain per-stage svyplan plan is refused outside a cluster stag
     region = c("A", "B", "C"),
     p = c(0.3, 0.4, 0.5),
     cv = c(0.1, 0.1, 0.1),
-    icc_psu = c(0.05, 0.05, 0.05),
+    icc_1 = c(0.05, 0.05, 0.05),
     stringsAsFactors = FALSE
   )
   plan <- svyplan::n_cluster(
-    indicators = indicators,
+    indicators,
     domains = "region",
     stage_cost = c(100, 10),
     budget = 50000

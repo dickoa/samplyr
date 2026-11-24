@@ -1050,6 +1050,26 @@ inform_allocation_capped <- function(stage, x) {
   )
 }
 
+#' Values a message lists, at most `n` of them, as text
+#'
+#' cli takes a numeric value as the quantity of the plural marker beside it,
+#' and fails on a numeric vector, so a message lists ids as text and states
+#' the quantity with `cli::qty()`. Numbers are written in full, never as
+#' `1e+05`, a classed number such as haven's labelled by its stored value,
+#' and a 64-bit integer by its own digits.
+#' @noRd
+shown_values <- function(x, n = 5L) {
+  x <- utils::head(x, n)
+  if (inherits(x, "integer64")) {
+    return(as.character(x))
+  }
+  if (is.numeric(x)) {
+    x <- vctrs::vec_data(x)
+    return(vapply(x, format, character(1), scientific = FALSE, trim = TRUE))
+  }
+  as.character(x)
+}
+
 #' @noRd
 abort_samplyr <- function(
   message,
@@ -1257,7 +1277,7 @@ is_samplyr_column <- function(nms) {
     ".subround", ".visit"
   )
   nms %in% exact |
-    grepl("^\\.(weight|fpc|draw|certainty|reserve|zone|pair)_[0-9]+$", nms) |
+    grepl("^\\.(weight|fpc|draw|certainty|reserve|zone|variance_group)_[0-9]+$", nms) |
     grepl("^\\.phase[0-9]+_(row|draw_[0-9]+)$", nms)
 }
 
@@ -1332,7 +1352,7 @@ with_phase_draw_columns <- function(df, x) {
 #' @noRd
 samplyr_reserved_names <- function(nms) {
   working <- c(
-    ".fpc", ".pik", ".draw", ".certainty", ".reserve", ".zone", ".pair",
+    ".fpc", ".pik", ".draw", ".certainty", ".reserve", ".zone", ".variance_group",
     "._prev_phase_weight"
   )
   unique(nms[is_samplyr_column(nms) | nms %in% working])

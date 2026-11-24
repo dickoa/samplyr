@@ -99,6 +99,11 @@
 #'
 #' ## Weights
 #'
+#' Before settlement, `.weight_k` at the reserve stage is the inverse of the
+#' list's chance, `N / (n + reserve)` in a pool large enough for the whole
+#' list. That weight describes the list, not the units the field ends up
+#' interviewing.
+#'
 #' Settlement walks each pool in release order and stops at the unit that
 #' brought the pool to its take. The pool's eligible units are then
 #' estimated from the units worked, and the estimate is shared among the
@@ -146,7 +151,8 @@
 #'
 #' ## Export
 #'
-#' A sample whose reserve is not settled is refused by every export
+#' A sample whose reserve is not settled is refused by every export, and by
+#' [design_effect()], [effective_n()] and [varcomp()]
 #' (`samplyr_error_reserve_unsettled`), since its weights describe the whole
 #' list. Once settled, [as_svydesign()] and [as_svrepdesign()] export it by
 #' ultimate clusters. The settled stage's respondents are a
@@ -272,13 +278,16 @@
 #' ## Planning a reserve
 #'
 #' Plan the take net of the units the reserve replaces. A svyplan plan
-#' whose `eligibility_rate` or `resp_rate` is below 1 inflates the take for
-#' the same losses, so the field works until it has more respondents than
-#' the plan needed, and [draw()] warns when it gets such a plan with a
-#' reserve. For a take of PSUs the rate is `resp_rate_psu`. When the
+#' whose `eligibility_rate` or `resp_rate` is below 1 can inflate the take
+#' for the same losses, so the field works until it has more respondents
+#' than the plan needed, and [draw()] warns when it gets such a plan with a
+#' reserve. The reserve replaces ineligible units as well as
+#' nonrespondents. For a take at a stage above the last the rate is that
+#' stage's response rate, such as `resp_rate_1` for PSUs. When the
 #' indicator is about persons, `resp_rate` can hold the response rate of
 #' persons in responding units, which a reserve of units does not replace.
-#' The take is then right and the warning can be ignored.
+#' That rate can then be kept, while an `eligibility_rate` below 1 is
+#' still set to 1.
 #'
 #' Size the reserve so that a list rarely runs out. With `p` the share of
 #' released units that end as respondents, the product of

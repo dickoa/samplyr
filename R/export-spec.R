@@ -23,8 +23,8 @@
 #'   stratum of the design), the take-all flag when the stage's certainty
 #'   units form a stratum of their own, and the partition of rows they give
 #'   together, numbered in order of first appearance. A stage drawing one
-#'   PSU per zone is stratified by its `.pair_k` variance groups alone,
-#'   since a group may cross the user's strata.
+#'   PSU per zone is stratified by its `.variance_group_k` variance groups
+#'   alone, since a group may cross the user's strata.
 #' - `prob`: the conditional inclusion probability, or for a
 #'   with-replacement stage the reciprocal of the stage weight. `census` is
 #'   TRUE when every row was taken with certainty.
@@ -123,7 +123,7 @@ spec_stage_unit <- function(df, stage_spec, stage_idx) {
 spec_stage_strata <- function(df, stage_spec, stage_idx, kind) {
   user <- stage_spec$strata$vars %||% character(0)
   zone_col <- paste0(".zone_", stage_idx)
-  pair_col <- paste0(".pair_", stage_idx)
+  pair_col <- paste0(".variance_group_", stage_idx)
   if (pair_col %in% names(df)) {
     user <- pair_col
   } else if (zone_col %in% names(df)) {

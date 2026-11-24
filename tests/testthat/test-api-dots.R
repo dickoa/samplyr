@@ -484,7 +484,7 @@ test_that("design_effect() and effective_n() refuse a positional outcome", {
   # Named planning arguments still forward and compute.
   expect_equal(as.double(design_effect(sample)), 1)
   expect_equal(
-    as.double(design_effect(sample, icc = 0.1, n_per_psu = 5)), 1.4
+    as.double(design_effect(sample, icc = 0.1, take = 5)), 1.4
   )
   expect_gt(as.double(effective_n(sample)), 0)
 

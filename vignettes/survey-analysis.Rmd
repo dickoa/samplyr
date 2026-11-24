@@ -339,9 +339,10 @@ estimates. No new sampling verbs are needed.
 A general two-phase sample has no replicate export. Two shapes do, because
 they are one design: a second phase drawn by simple random or systematic
 sampling within phase 1's final-stage pools, which exports as phase 1's
-design with a smaller final take, and a second phase of a phase 1 that could
-select nothing else. Random groups replicate a two-phase design executed
-whole with `reps`. A materialized occasion is replicated by ultimate
+design with a smaller final take, and a second phase of a phase 1 fixed in
+one primary unit (every stage taken for sure, which can be a census of its
+elements). Random groups replicate a two-phase design executed whole with
+`reps`, one whose phase 1 is refused included. A materialized occasion is replicated by ultimate
 clusters, as `as_svydesign()` exports it. Multi-stage
 RWYB export keeps every selected unit. A unit in which a later Poisson stage
 selected nothing is a row of weight 0, from the record execution keeps of

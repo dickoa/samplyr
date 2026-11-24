@@ -49,33 +49,11 @@ cover every parent of the design, and a continuation on a listing of
 the selected parents uses only their rows. Entries for parents the
 sample did not select are not checked, so a mistyped identifier that
 matches no selected parent passes unnoticed.
-\item A svyplan size or plan object, read through svyplan's documented
-coercions and stage-aware for cluster and stratified two-stage plans.
-A plan giving one size for a stage stratified without \code{alloc} is
-refused (\code{samplyr_error_svyplan_total_per_stratum}) rather than taken
-in every stratum. A plan for a stage stratified by several variables
-is matched on those columns of its table, which svyplan carries from
-the frame's character and factor columns. A plan without them is
-refused (\code{samplyr_error_svyplan_multivariable_strata}).
-\item A certainty-aware \code{svyplan::n_alloc()} plan (solved with a \code{psu}
-register carrying \code{psu_id}), at a clustered stage 1 stratified by the
-plan's one stratum column, and again at stage 2 for the per-PSU
-takes. The takes may also come lower, below stages that keep one
-unit of each PSU, such as \code{draw(n = 1)} of a segment per EA, and are
-then taken inside that unit. Stage 1 takes every certainty
-PSU and draws exactly the plan's remainder per stratum. A plan solved
-with \code{n_psu_per_zone = 2} draws two PSUs from each of its zones
-instead, records the zone in \code{.zone_1}, and exports one variance
-stratum per zone. With \code{n_psu_per_zone = 1} it draws one PSU per zone,
-records the plan's variance group in \code{.pair_1}, and exports the
-groups as variance strata (\link{variance_estimation}). Its method
-must be \code{pps_systematic}, \code{pps_brewer}, \code{pps_cps}, or \code{pps_sampford},
-with \code{mos} equal to the register's \code{N}. The take stage selects by
-\code{srswor} or \code{systematic}, and stratifying there requires an \code{alloc}
-method.
-Arguments the plan owns (\code{frac}, \code{certainty_size}, \code{certainty_prop},
-\code{min_n}, \code{max_n}, and at stage 1 \code{alloc}) are refused alongside it.
-\code{\link[svyplan:merge_psus]{svyplan::merge_psus()}} merges PSUs smaller than the take.
+\item A svyplan size or plan object, a certainty-aware
+\code{\link[svyplan:n_alloc_joint]{svyplan::n_alloc_joint()}} plan with a \code{psu} register included. Each
+stage takes its own size from the plan, as "Sizes from svyplan" in
+Details describes, and a precision assessment or an
+\code{\link[svyplan:n_panel]{svyplan::n_panel()}} plan is refused.
 }
 
 Fixed-size methods and allocation methods need whole units. For
@@ -131,29 +109,25 @@ numbers.}
 
 \item{reserve}{Number of reserve units listed after the main take of
 each pool, \code{NULL} (no reserve) by default, a whole number of at least
-1, or \code{Inf} to list every unit of the pool. Each pool then draws a
-list of its take plus \code{reserve} units and puts the list in a random
-order. The first units of that order form the take, and the reserve
-units follow in the order the office releases them, one per failed
-unit. \code{n} and \code{frac} keep their meaning, the take to be interviewed,
-and a pool too small for the whole list lists what it has. A svyplan
+1, or \code{Inf} to list every unit of the pool. Each pool lists its take
+plus \code{reserve} units in a random order, the take first and the reserve
+in release order. \code{n} and \code{frac} keep their meaning, the take to be
+interviewed, and a pool too small for the whole list lists what it has. A svyplan
 plan given as \code{n} with a rate below 1 for the units the reserve
 replaces warns (\code{samplyr_warning_reserve_plan_rates}), since its take
-already makes up for them. A reserve needs \code{method = "srswor"} or
+can already make up for them. A reserve needs \code{method = "srswor"} or
 \code{"systematic"} and a take of at least 2 in every pool, which
 \code{\link[=execute]{execute()}} and \code{\link[=validate_frame]{validate_frame()}} check for a take given by \code{frac},
-an allocation or a plan, before anything is drawn. One stage of a design can carry a reserve, and panels cannot be
-assigned at that stage.
+an allocation or a plan, before anything is drawn. One stage of a
+design can carry a reserve, and panels cannot be assigned at that
+stage.
 
-The executed sample holds the whole list. \code{.reserve_k} is 0 for the
-take and 1, 2, ... for the reserve in release order, and \code{.weight_k} is
-the inverse of the list's chance, \code{N / (n + reserve)} in a pool large
-enough for the whole list. That weight describes the list, not the
-units the field ends up interviewing, so \code{\link[=as_svydesign]{as_svydesign()}} and
-\code{\link[=as_svrepdesign]{as_svrepdesign()}} refuse the sample with
-\code{samplyr_error_reserve_unsettled} until \code{\link[=execute]{execute()}} settles it from
+The executed sample holds the whole list, ranked in \code{.reserve_k} and
+weighted as a list, and is refused by the exports
+(\code{samplyr_error_reserve_unsettled}) until \code{\link[=execute]{execute()}} settles it from
 the response status the field recorded. \link{reserve_lists} describes the
-field protocol, the settlement and how to size the reserve.}
+field protocol, the list's weights, the settlement and how to size the
+reserve.}
 
 \item{method}{Selection method, \code{"srswor"} by default.
 \link{selection_methods} lists the seventeen built-ins with what each one
@@ -167,29 +141,9 @@ stages may use a balanced-family method. \code{"balanced"} is a compatibility
 alias for \code{"cube"}.
 
 A method registered with \code{\link[sondage:register_method]{sondage::register_method()}} is named
-\code{"pps_<name>"} for \code{type = "wor"} or \code{type = "wr"}, and
-\code{"balanced_<name>"} for \code{type = "balanced"}, where \code{mos} is optional.
-\code{supports_aux = TRUE} permits ordinary balancing variables in \code{aux}, and
-\code{supports_spread = TRUE} requires coordinates in \code{spread}. To draw such
-a function without coordinates, register it again under another name,
-without \code{supports_spread = TRUE}. A method
-declaring both takes \code{aux} and \code{spread} together, for a sample that is
-balanced and well spread. Under \code{\link[=stratify_by]{stratify_by()}}, a method declaring
-\code{supports_strata = TRUE} draws all strata in one call, as \code{"cube"} does,
-and any other registered method draws each stratum on its own.
-
-Its weights are \code{1 / pik}, the inclusion expectation (target inclusion
-probabilities, or expected hits for \code{type = "wr"}) samplyr hands to the
-method. The \code{probabilities} tier declared at registration is \code{"exact"}
-(the design's first-order inclusion probabilities, or expected hits,
-equal \code{pik}), \code{"approximate"} (to a documented approximation, as in
-Pareto sampling), or \code{"unknown"}, the default. \code{draw()} refuses
-\code{"unknown"}, because \code{pik} is then a selection weight only and the
-weights would be systematically biased. The classic trap is
-\code{sample(prob = pik)}. With \code{replace = TRUE} its expected hits equal
-\code{pik}, a valid \code{type = "wr"} method, but its inclusion probabilities
-without replacement do not, so a \code{type = "wor"} wrapper's tier is
-unknown.}
+\code{"pps_<name>"} or \code{"balanced_<name>"}. "Registered methods" in
+\link{selection_methods} gives what its registration declares and why
+\code{draw()} refuses one whose \code{probabilities} tier is \code{"unknown"}.}
 
 \item{mos}{Measure of size, a bare column name. Required for built-in PPS
 methods and registered \code{pps_} methods. Optional for \code{cube}, \code{lpm2},
@@ -311,21 +265,10 @@ have nothing to select from, and the sample is empty. \code{"warn"} and
 \code{nrow()} before analyzing a single realization.
 
 A selected unit with no rows in the next frame is refused under
-\code{"error"} (\code{samplyr_error_frame_missing_parent}). Under \code{"warn"}
-(\code{samplyr_warning_empty_parent}, once per stage) or \code{"silent"} it stays
-in the design with nothing selected under it and contributes zero to
-every total. It is recorded in the sample, counted by \code{\link[=summary]{summary()}},
-exempt from the incomplete-register checks of \code{\link[=validate_frame]{validate_frame()}} and
-\code{\link[=execute]{execute()}}, and, under \code{"warn"}, named at export by \code{\link[=as_svydesign]{as_svydesign()}}.
-A primary unit left with no row is exported as zero rows, which keep
-it in the variance. \link{variance_estimation} gives the details.
-
-A replicated execution with empty replicates cannot feed a later
-\code{\link[=execute]{execute()}} call (a new phase or a stage continuation). It raises
-\code{samplyr_error_empty_phase_replicate} rather than skip them and
-condition downstream results on nonempty realizations. Handle them
-explicitly, for example by executing each nonempty replicate separately
-and accounting for the empty ones in the analysis.}
+\code{"error"} (\code{samplyr_error_frame_missing_parent}) and kept with nothing
+under it otherwise. \link{execution_conditions} gives how such a unit is
+carried, and why a replicated execution with empty replicates cannot
+be continued.}
 
 \item{on_capped}{What to do when a fixed take \code{n}, drawn without
 replacement, exceeds the units of a pool, such as a take of 12
@@ -339,19 +282,10 @@ that take-all rule, so the weights stay valid.
 (\code{samplyr_error_size_capped}), naming the stage and the short pools.
 }
 
-The check covers every pool the stage would draw from if its parent
-were selected, so whether a design runs does not depend on the seed.
-An allocation total above the population of the stage counts as
-capped. A stratum an allocation method fills to its population and
-whose surplus goes to other strata does not, because the total is
-delivered, and neither does a \code{min_n} above the population with
-\code{frac}, which the rule above makes a census. \code{\link[=execute]{execute()}} checks a stage
-when it receives that stage's frame, so in staged execution a later
-stage is checked by the call that lists it. \code{\link[=validate_frame]{validate_frame()}} and
-\code{\link[=exante_probabilities]{exante_probabilities()}} refuse the same designs, while
-\code{\link[=frame_summary]{frame_summary()}} still reports their short pools. \code{"error"} is refused
-with a random-size method, a method with replacement, or \code{frac}, where
-no fixed take can fall short.}
+\code{"error"} is refused with a random-size method, a method with
+replacement, or \code{frac}, where no fixed take can fall short.
+\link{execution_conditions} gives which pools the check covers and when it
+runs.}
 }
 \value{
 A modified \code{sampling_design} object with selection parameters specified.
@@ -365,6 +299,60 @@ stage in a sampling design ends with \code{draw()}, which closes it. A second
 \code{\link[=sampling_design]{sampling_design()}} describes the stage grammar.
 }
 \details{
+\subsection{Sizes from svyplan}{
+
+A svyplan size or plan object is read through svyplan's documented
+coercions, stage by stage for cluster and stratified multistage plans.
+An allocation from \code{\link[svyplan:n_alloc]{svyplan::n_alloc()}} or \code{\link[svyplan:n_alloc_joint]{svyplan::n_alloc_joint()}}
+that plans PSUs gives stage 1 its whole PSU counts (\code{n_1_int}) and each
+later stage k its whole take per parent unit (\code{take_k_int}), up to the
+plan's \code{stages}. A plan giving one size for a stage stratified without
+\code{alloc} is refused (\code{samplyr_error_svyplan_total_per_stratum}) rather
+than taken in every stratum. A plan for a stage stratified by several
+variables is matched on those columns of its table, which svyplan
+carries from the frame's character and factor columns, and a plan
+without them is refused (\code{samplyr_error_svyplan_multivariable_strata}).
+A precision assessment from a \verb{prec_*()} function is not a size and is
+refused. So is an \code{\link[svyplan:n_panel]{svyplan::n_panel()}} plan, which sizes a whole panel,
+and the refusal names the count to pass instead. A fixed panel issues
+\code{ceiling(plan$n_issued)} units. A rotating panel is issued selection by
+selection, and how many units its startup takes depends on its \code{start}
+and \code{rotation}, which \code{\link[svyplan:design_schedule]{svyplan::design_schedule()}} resolves. Each
+selection's \code{operational_issue} in the schedule's \code{selections} table is
+the count to draw, a count of PSUs when the schedule was built with
+\code{take}, and with subrounds the sum of each panel's rounded issue.
+\code{\link[=rotation_program]{rotation_program()}} checks the count against the schedule.
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{issue <- with(schedule$selections, setNames(operational_issue, selection))
+startup <- sampling_design() |> draw(n = issue[["startup"]])
+}\if{html}{\out{</div>}}
+
+The planning choices are covered in
+\code{vignette("joint-allocation", package = "svyplan")}.
+
+A certainty-aware \code{\link[svyplan:n_alloc_joint]{svyplan::n_alloc_joint()}} plan, solved with a \code{psu}
+register carrying \code{psu_id}, is given at a clustered stage 1 stratified by
+the plan's one stratum column, and again at stage 2 for the per-PSU
+takes. The takes may also come lower, below stages that keep one unit of
+each PSU, such as \code{draw(n = 1)} of a segment per EA, and are then taken
+inside that unit. Stage 1 takes every certainty PSU and draws exactly the
+plan's remainder per stratum. A plan solved with \code{n_psu_per_zone = 2}
+draws two PSUs from each of its zones instead, records the zone in
+\code{.zone_1}, and exports one variance stratum per zone. With
+\code{n_psu_per_zone = 1} it draws one PSU per zone, records the plan's
+variance group in \code{.variance_group_1}, and exports the groups as variance
+strata (\link{variance_estimation}). Stage 1's method must be
+\code{pps_systematic}, \code{pps_brewer}, \code{pps_cps} or \code{pps_sampford}, with \code{mos}
+equal to the register's \code{N}. The frame's PSU ids are matched to \code{psu_id}
+by value, so both must be numbers or both labels, and 64-bit integer ids
+(bit64) are matched exactly. A design file holds such ids only from
+-2^53 to 2^53 (\code{\link[=write_design]{write_design()}}). The take stage selects
+by \code{srswor} or \code{systematic}, and stratifying there requires an \code{alloc}
+method. Arguments the plan owns (\code{frac}, \code{certainty_size},
+\code{certainty_prop}, \code{min_n}, \code{max_n}, and at stage 1 \code{alloc}) are refused
+alongside it. \code{\link[svyplan:merge_psus]{svyplan::merge_psus()}} merges PSUs smaller than the take.
+}
+
 \subsection{Certainty selection}{
 
 In PPS without-replacement sampling, very large units can have
@@ -575,6 +563,58 @@ sampling_design() |>
   draw(n = 100, method = "pps_brewer", mos = households,
        certainty_size = cert_thresholds) |>
   execute(bfa_eas, seed = 424)
+
+# A two-stage svyplan allocation gives each stage its whole sizes: EAs
+# per stratum at stage 1, households per EA at stage 2. Check that the
+# search found a whole design before fieldwork.
+sizes <- aggregate(cbind(N = households, N_1 = 1) ~ urban_rural,
+                   bfa_eas, sum)
+plan_frame <- data.frame(
+  stratum = sizes$urban_rural, N = sizes$N, N_1 = sizes$N_1,
+  sd = c(0.48, 0.45), mean = c(0.35, 0.28),
+  icc_1 = c(0.08, 0.04), cost_1 = c(600, 300), cost_2 = c(60, 40)
+)
+plan <- svyplan::n_alloc(plan_frame, cv = 0.03)
+plan$operational$status
+plan$detail[c("stratum", "n_1_int", "take_2_int")]
+two_stage <- sampling_design() |>
+  add_stage(label = "EA") |>
+  stratify_by(urban_rural) |>
+  cluster_by(ea_id) |>
+  draw(n = plan, method = "pps_brewer", mos = households) |>
+  add_stage(label = "Household") |>
+  stratify_by(urban_rural) |>
+  draw(n = plan)
+selected_eas <- execute(two_stage, bfa_eas, stages = 1, seed = 3)
+table(selected_eas$urban_rural)
+
+# A plan fitted on a register of EAs takes the EAs it holds certain, draws
+# the rest, and takes each EA's own number of households
+eas <- bfa_eas[
+  bfa_eas$province == "Oubritenga" & bfa_eas$households >= 12,
+]
+register <- data.frame(
+  psu_id = eas$ea_id, stratum = as.character(eas$urban_rural),
+  N = eas$households
+)
+register_frame <- aggregate(N ~ stratum, register, sum)
+register_frame$take_2 <- 12
+fit <- svyplan::n_alloc_joint(
+  register_frame,
+  data.frame(stratum = register_frame$stratum, name = "coverage",
+             p = 0.4, icc_1 = 0.05),
+  targets = data.frame(name = "coverage", cv = 0.04),
+  psu = register
+)
+fit$operational[c("n", "all_pass", "status")]
+fit$detail[c("stratum", "n_psu_certain", "n_psu_draw")]
+sampling_design() |>
+  add_stage(label = "EA") |>
+  stratify_by(urban_rural) |>
+  cluster_by(ea_id) |>
+  draw(n = fit, method = "pps_brewer", mos = households) |>
+  add_stage(label = "Household") |>
+  draw(n = fit)
 
 }
 \seealso{

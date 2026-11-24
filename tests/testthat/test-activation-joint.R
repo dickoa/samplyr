@@ -72,9 +72,9 @@ test_that("every block's joint expectations match enumerated arrangements", {
     first <- schedule$panel[schedule$occasion == pair[1] & schedule$active]
     second <- schedule$panel[schedule$occasion == pair[2] & schedule$active]
 
-    expect_identical(unique(result$period_1), pair[1])
-    expect_identical(unique(result$period_2), pair[2])
-    expect_identical(unique(c(result$subround_1, result$subround_2)), 1L)
+    expect_identical(unique(result$period_t), pair[1])
+    expect_identical(unique(result$period_u), pair[2])
+    expect_identical(unique(c(result$subround_t, result$subround_u)), 1L)
 
     for (i in seq_len(nrow(result))) {
       pool <- record$pools[[result$pool[i]]]
@@ -83,7 +83,7 @@ test_that("every block's joint expectations match enumerated arrangements", {
         first,
         second
       )
-      expect_equal(result$prob_1[i], reference$marginal)
+      expect_equal(result$prob_t[i], reference$marginal)
       expect_equal(result$joint_same[i], reference$same)
       expect_equal(result$joint_distinct[i], reference$distinct)
     }
@@ -95,12 +95,12 @@ test_that("the within-occasion case is the same expression at t equals s", {
   result <- joint_expectation(master, period = c(3L, 3L))
 
   # Both takes coincide, so the pairwise expectation is a(a-1)/{m(m-1)}.
-  expect_identical(result$take_1, result$take_2)
-  expect_identical(result$take_1, result$take_both)
-  expect_equal(result$joint_same, result$take_1 / result$units)
+  expect_identical(result$take_t, result$take_u)
+  expect_identical(result$take_t, result$shared)
+  expect_equal(result$joint_same, result$take_t / result$units)
   expect_equal(
     result$joint_distinct,
-    result$take_1 * (result$take_1 - 1) / (result$units * (result$units - 1))
+    result$take_t * (result$take_t - 1) / (result$units * (result$units - 1))
   )
 })
 
@@ -133,7 +133,7 @@ test_that("published overlap figures are reproduced", {
   # With equal quotas, the take-weighted overlap is the published proportion.
   overlap <- function(master, t, s) {
     result <- joint_expectation(master, period = c(t, s))
-    sum(result$take_both) / sum(result$take_1)
+    sum(result$shared) / sum(result$take_t)
   }
 
   frame <- joint_frame(800)
@@ -197,7 +197,7 @@ test_that("a block of one unit has no distinct pair", {
   expect_true(all(is.na(singles$joint_distinct)))
   # The marginal and the same-unit joint are still exact.
   expect_true(all(singles$joint_same %in% c(0, 1)))
-  expect_true(all(singles$prob_1 %in% c(0, 1)))
+  expect_true(all(singles$prob_t %in% c(0, 1)))
 })
 
 test_that("a permanent pool is certain at every occasion and every pair", {
@@ -210,9 +210,9 @@ test_that("a permanent pool is certain at every occasion and every pair", {
   expect_gt(nrow(permanent), 0L)
 
   # Every take is the whole block, so the pairwise term is (m^2 - m) / {m(m-1)}.
-  expect_identical(permanent$take_1, permanent$units)
-  expect_identical(permanent$take_both, permanent$units)
-  expect_equal(permanent$prob_1, rep(1, nrow(permanent)))
+  expect_identical(permanent$take_t, permanent$units)
+  expect_identical(permanent$shared, permanent$units)
+  expect_equal(permanent$prob_t, rep(1, nrow(permanent)))
   expect_equal(permanent$joint_same, rep(1, nrow(permanent)))
   expect_equal(
     permanent$joint_distinct[permanent$has_pair],
@@ -221,7 +221,7 @@ test_that("a permanent pool is certain at every occasion and every pair", {
 
   # The rotating part of the same master is not certain.
   rotating <- result[result$class == "rotating", ]
-  expect_true(all(rotating$prob_1 < 1))
+  expect_true(all(rotating$prob_t < 1))
 })
 
 test_that("no column pre-judges what is estimable", {
@@ -232,10 +232,10 @@ test_that("no column pre-judges what is estimable", {
   expect_identical(
     names(result),
     c(
-      "pool", "stratum", "class", "activation", "block", "period_1",
-      "subround_1", "period_2", "subround_2",
+      "pool", "stratum", "class", "activation", "block", "period_t",
+      "subround_t", "period_u", "subround_u",
       "units",
-      "take_1", "take_2", "take_both", "prob_1", "prob_2", "joint_same",
+      "take_t", "take_u", "shared", "prob_t", "prob_u", "joint_same",
       "joint_distinct", "has_pair"
     )
   )

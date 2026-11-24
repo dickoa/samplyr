@@ -65,7 +65,13 @@ complete design specification (stages, stratification, clustering, draw
 settings, including per-stratum vectors and data frames), never the frame
 data itself. A certainty plan from svyplan is the exception: its PSU
 register (identifiers, strata, sizes and certainty flags) is part of the
-design and is written with it.
+design and is written with it. JSON reads numbers back as doubles, which
+hold every integer from -2^53 to 2^53 exactly, so a register of 64-bit
+integer identifiers (bit64) is written only within that range. Beyond it
+an identifier can read back as its neighbor, and the register is refused
+(\code{samplyr_error_serialize_unsupported}). Give such identifiers as
+character labels, or keep the design with \code{\link[=saveRDS]{saveRDS()}}, which preserves
+their type.
 
 A file written from an executed sample can also contain its frame digest.
 That digest retains selected-unit identifiers and may contain per-unit
@@ -179,7 +185,7 @@ bundled JSON Schemas. Unknown executable fields, duplicate JSON keys,
 malformed structures and contradictory method descriptors are refused, and
 so is a nonempty \code{required_extensions} array at any level, since no
 executable extensions are currently supported. The reader accepts design
-format version 3 and version 1 of the frame-stack and shared-sample
+format version 4 and version 1 of the frame-stack and shared-sample
 formats. An optional \code{execution.frame_digest} is exempt and keeps its own
 version check and warn-and-drop policy. Frame-dependent checks run in
 \code{\link[=validate_frame]{validate_frame()}} and \code{\link[=execute]{execute()}}. Validation errors name
