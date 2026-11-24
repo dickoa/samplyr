@@ -29,7 +29,7 @@ test_that("a count keeps certainty units in a pool of their own", {
     execute(pps_12(), poura_urban(), seed = 1, panels = 12)
   )
   record <- attr(sample, "metadata")$panel_assignment
-  expect_identical(record$version, 7L)
+  expect_identical(record$version, 8L)
   expect_identical(record$certainty, "permanent")
   expect_identical(
     vapply(record$pools, `[[`, character(1), "class"),
@@ -42,7 +42,7 @@ test_that("a subrounds record assigns certainty with one pool per stratum", {
     execute(pps_12(), poura_urban(), seed = 1, panels = subrounds(12))
   )
   record <- attr(sample, "metadata")$panel_assignment
-  expect_identical(record$version, 7L)
+  expect_identical(record$version, 8L)
   expect_identical(record$certainty, "assigned")
   expect_identical(record$panels, 12L)
   expect_identical(vapply(record$pools, `[[`, character(1), "class"),
@@ -221,7 +221,7 @@ test_that("a subrounds sample round-trips and replays as subrounds", {
   expect_identical(replayed$.panel, sample$.panel)
   expect_identical(replayed$ea_id, sample$ea_id)
   record <- attr(replayed, "metadata")$panel_assignment
-  expect_identical(record$version, 7L)
+  expect_identical(record$version, 8L)
   expect_identical(record$certainty, "assigned")
   expect_identical(tabulate(replayed$.panel, 12), rep(1L, 12))
 })

@@ -846,10 +846,118 @@ is_occasion_window <- function(x) {
 #' One match of the keys against every pool's keys, split by pool. Keys
 #' that are not all character, or a key listed twice, are matched pool by
 #' pool instead, since each pool then reads its own first match.
+#' @param complete `TRUE` when `pools` are all of the record's pools, so
+#'   every row must be found in exactly one. A row found in none means the
+#'   record names this sample's units another way, and reading it would leave
+#'   those units out without a word. A row found in two would be read under
+#'   two pools' blocks and quotas.
+#' @param panel The panel of each row, or `NULL`. With a full record, the
+#'   units found in each block are checked against the block's quotas.
 #' @return One element per pool: `rows`, the sample rows in the pool in
 #'   order, and `at`, each row's position in the pool's keys.
 #' @noRd
-record_pool_rows <- function(keys, pools) {
+record_pool_rows <- function(keys, pools, complete = TRUE, panel = NULL,
+                             call = caller_env()) {
+  located <- locate_pool_rows(keys, pools)
+  if (complete) {
+    # Count by row position, so that a row found in two pools does not stand
+    # in for a row found in none. A record with no pools finds no row.
+    hits <- tabulate(
+      as.integer(unlist(lapply(located, `[[`, "rows"), use.names = FALSE)),
+      nbins = length(keys)
+    )
+    uncovered <- sum(hits == 0L)
+    if (uncovered > 0L) {
+      abort_samplyr(
+        c(
+          "This sample's panel assignment record does not name every unit
+           of the sample.",
+          "x" = "{uncovered} of {length(keys)} row{?s} belong{?s/}
+                 to no pool of the record.",
+          "i" = "Execute the design again to write a current record."
+        ),
+        class = "samplyr_error_panel_record_malformed",
+        call = call
+      )
+    }
+    repeated <- sum(hits > 1L)
+    if (repeated > 0L) {
+      abort_samplyr(
+        c(
+          "This sample's panel assignment record names some units of the
+           sample in more than one pool.",
+          "x" = "{repeated} of {length(keys)} row{?s} belong{?s/} to several
+                 pools of the record.",
+          "i" = "A unit is assigned within one pool, and its blocks and
+                 quotas are read from that pool alone.",
+          "i" = "Execute the design again to write a current record."
+        ),
+        class = "samplyr_error_panel_record_malformed",
+        call = call
+      )
+    }
+    if (!is_null(panel)) {
+      check_pool_panels(located, pools, panel, call = call)
+    }
+  }
+  located
+}
+
+#' Do the units found in each block hold the panels its quotas record?
+#'
+#' The rows of one unit carry its panel, and a block holds no more units of
+#' a panel than its quota. A block whose units are all in the sample holds
+#' exactly its quotas. Units with no rows left are not counted, so a
+#' continuation that drew nothing under some units is read as it is.
+#' @noRd
+check_pool_panels <- function(located, pools, panel, call = caller_env()) {
+  refuse <- function(problem) {
+    abort_samplyr(
+      c(
+        "This sample's panel assignment record does not match the panels of
+         its units.",
+        "x" = problem,
+        "i" = "Execute the design again to write a current record."
+      ),
+      class = "samplyr_error_panel_record_malformed",
+      call = call,
+      envir = parent.frame()
+    )
+  }
+  for (p in seq_along(pools)) {
+    rows <- located[[p]]$rows
+    if (length(rows) == 0L) {
+      next
+    }
+    blocks <- pools[[p]]$blocks
+    quotas <- pools[[p]]$quotas
+    k <- ncol(quotas)
+    units <- vctrs::vec_unique(
+      data.frame(at = located[[p]]$at, panel = panel[rows])
+    )
+    if (anyDuplicated(units$at) > 0L) {
+      refuse("Some units of pool {p} carry two panels across their rows.")
+    }
+    if (anyNA(units$panel) || !all(units$panel %in% seq_len(k))) {
+      refuse("Some units of pool {p} carry a panel outside 1 to {k}.")
+    }
+    block <- rep(seq_along(blocks), blocks)[units$at]
+    n_blocks <- length(blocks)
+    counts <- matrix(
+      tabulate(block + (units$panel - 1L) * n_blocks, n_blocks * k),
+      nrow = n_blocks
+    )
+    whole <- tabulate(block, n_blocks) == blocks
+    if (any(counts > quotas) ||
+          any(counts[whole, , drop = FALSE] != quotas[whole, , drop = FALSE])) {
+      refuse("The panels of pool {p}'s units do not match its block quotas.")
+    }
+  }
+  invisible(NULL)
+}
+
+#' @noRd
+locate_pool_rows <- function(keys, pools) {
   pool_keys <- lapply(pools, function(pool) pool$keys)
   flat <- unlist(pool_keys, use.names = FALSE)
   character_keys <- vapply(
@@ -968,10 +1076,10 @@ abort_inactive_pool <- function(pool, take, record, window, part, at,
 
 #' Which rows an activation keeps, and at what conditional probability
 #'
-#' @param record The cohort's assignment record, or `NULL` for a cohort drawn
-#'   whole. A cohort that was never partitioned has one implicit panel
-#'   comprising all its rows, and activating it is not a subsample, so its
-#'   factor is one.
+#' @param record The cohort's assignment record, as `prepare_panel_record()`
+#'   returns it, or `NULL` for a cohort drawn whole. A cohort that was never
+#'   partitioned has one implicit panel comprising all its rows, and
+#'   activating it is not a subsample, so its factor is one.
 #' @param allow_empty Whether a block with no active unit is kept out
 #'   rather than refused, for an occasion read inside a window.
 #' @param window The occasions of the window being read, or `NULL` for one occasion.
@@ -986,7 +1094,6 @@ abort_inactive_pool <- function(pool, take, record, window, part, at,
 activate_panels <- function(sample, record, active, allow_empty = FALSE,
                             window = NULL, part = window, at = NULL,
                             call = caller_env()) {
-  record <- prepare_panel_record(record, "An activation", call = call)
   if (is_null(record)) {
     n <- nrow(sample)
     live <- length(active) > 0L
@@ -1009,7 +1116,7 @@ activate_panels <- function(sample, record, active, allow_empty = FALSE,
   permanent <- rep(FALSE, nrow(data))
   pool_of <- rep(NA_integer_, nrow(data))
   pools <- vector("list", length(record$pools))
-  located <- record_pool_rows(keys, record$pools)
+  located <- record_pool_rows(keys, record$pools, panel = panel, call = call)
 
   for (p in seq_along(record$pools)) {
     pool <- record$pools[[p]]

@@ -277,7 +277,7 @@ test_that("a complete attached record round-trips through the reader", {
   )$weight_share
 
   expect_identical(attached$algorithm, "generalized_weight_share")
-  expect_identical(attached$version, 1L)
+  expect_identical(attached$version, 2L)
   expect_identical(prepare_weight_share_record(attached, "A test"), attached)
   expect_null(prepare_weight_share_record(NULL, "A test"))
 })
@@ -302,12 +302,15 @@ test_that("a record naming another algorithm or version is refused", {
     class = "samplyr_error_weight_share_record_malformed"
   )
 
-  record <- demo_attached()
-  record$version <- 2L
-  expect_error(
-    prepare_weight_share_record(record, "A test"),
-    class = "samplyr_error_weight_share_record_unsupported"
-  )
+  # Version 1 wrote its row keys by the scipen-dependent rule.
+  for (version in c(1L, 3L)) {
+    record <- demo_attached()
+    record$version <- version
+    expect_error(
+      prepare_weight_share_record(record, "A test"),
+      class = "samplyr_error_weight_share_record_unsupported"
+    )
+  }
 
   # A version below any that existed is as unreadable as one from the future.
   record$version <- 0L
@@ -719,5 +722,42 @@ test_that("only the pair belonging to the mode in use can collide", {
       targets, weight_share_generated_cols$quantitative, "share_weights"
     ),
     class = "samplyr_error_generated_column_collision"
+  )
+})
+
+## Row keys written by an earlier rule
+
+test_that("a record whose row keys use another spelling is refused", {
+  skip_if_not_installed("survey")
+  source <- shared_weight_source()
+  n <- nrow(source)
+  shared <- shared_weight_sample(source)
+  record <- attr(shared, "metadata")$weight_share
+  record$target_row_keys <- NULL
+  record$result_integrity <- NULL
+  targets <- tibble::tibble(
+    person_id = 1e5 * seq_len(n), hh_id = paste0("h", seq_len(n)),
+    .weight = source$.weight, .unit_links = rep(1L, n),
+    .cluster_links = rep(1L, n)
+  )
+  result <- new_tbl_sample(
+    data = targets, design = get_design(source),
+    stages_executed = get_stages_executed(source),
+    seed = attr(source, "seed"), metadata = list()
+  )
+  result <- attach_weight_share_record(result, record)
+  stored <- attr(result, "metadata")$weight_share$target_row_keys
+  expect_identical(stored[1:2], c("100000", "200000"))
+  expect_s3_class(as_svydesign(result), "survey.design2")
+
+  # The version-1 spelling, which the current version no longer writes.
+  meta <- attr(result, "metadata")
+  meta$weight_share$target_row_keys <- withr::with_options(
+    list(scipen = 0), as.character(targets$person_id)
+  )
+  attr(result, "metadata") <- meta
+  expect_error(
+    as_svydesign(result),
+    class = "samplyr_error_weight_share_misaligned"
   )
 })

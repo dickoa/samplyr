@@ -131,6 +131,11 @@ activation_joint_expectation <- function(master, occasions, call = caller_env())
   }
 
   occasions <- check_occasions_pair(occasions, record$schedule, call = call)
+  # The quotas must hold the panels the master's units carry, as an
+  # activation checks before reading them.
+  data <- as.data.frame(master)
+  record_pool_rows(make_group_key(data, record$key_vars), record$pools,
+                   panel = data$.panel, call = call)
   schedule <- record$schedule
   pairs <- grid_pairs(schedule)
   named <- list(period = pairs$period[occasions],

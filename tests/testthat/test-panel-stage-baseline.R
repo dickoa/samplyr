@@ -161,7 +161,7 @@ test_that("the element assignment record is exact", {
   record <- baseline_record(baseline_element())
 
   expect_identical(record$algorithm, "blocked_random_quota")
-  expect_identical(record$version, 7L)
+  expect_identical(record$version, 8L)
   expect_identical(record$panels, 4L)
   expect_identical(record$assignment_stage, 1L)
   expect_identical(record$block_size, 8L)
@@ -211,7 +211,7 @@ test_that("clustered assignment selects and labels a fixed sample", {
 test_that("the clustered assignment record is exact", {
   record <- baseline_record(baseline_clustered())
 
-  expect_identical(record$version, 7L)
+  expect_identical(record$version, 8L)
   expect_identical(record$panels, 4L)
   expect_identical(record$assignment_stage, 1L)
   expect_identical(record$block_size, 4L)
@@ -522,10 +522,10 @@ test_that("the serialized assignment record carries fixed fields", {
     names(encoded),
     c("algorithm", "version", "panels", "assignment_stage", "block_size",
       "r_min", "unit", "key_vars", "pool_vars", "control_ordered",
-      "certainty", "small_pool_policy", "schedule")
+      "certainty", "small_pool_policy", "schedule", "schedule_checksum")
   )
   expect_identical(encoded$algorithm, "blocked_random_quota")
-  expect_identical(encoded$version, 7L)
+  expect_identical(encoded$version, 8L)
   expect_identical(encoded$panels, 4L)
   expect_identical(encoded$assignment_stage, 1L)
   expect_identical(encoded$block_size, 4L)

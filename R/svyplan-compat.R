@@ -1877,7 +1877,7 @@ reconcile_certainty_register <- function(
   off <- seen$N != register$N[at]
   if (any(off)) {
     refuse(
-      "x" = "The MOS of PSU {.val {head(seen$psu_id[off], 5)}} does not equal the register's {.code N}.",
+      "x" = "The MOS of PSU {.val {shown_values(seen$psu_id[off])}} does not equal the register's {.code N}.",
       "i" = "The bridge requires {.arg mos} on the register's own scale, exactly."
     )
   }

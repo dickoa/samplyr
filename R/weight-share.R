@@ -215,8 +215,9 @@ apply_share_operator <- function(op, w, call = caller_env()) {
 #' @noRd
 weight_share_record_algorithm <- "generalized_weight_share"
 
+#' Version 2 writes row keys as key_value_text() does, independent of scipen.
 #' @noRd
-supported_weight_share_record_versions <- 1L
+supported_weight_share_record_versions <- 2L
 
 #' @noRd
 weight_share_within_modes <- c("cluster", "singleton", "extended")
@@ -267,7 +268,7 @@ new_weight_share_record <- function(
 ) {
   record <- list(
     algorithm = weight_share_record_algorithm,
-    version = 1L,
+    version = supported_weight_share_record_versions,
     operator = operator,
     source_sample = source_sample,
     source_integrity = source_integrity,

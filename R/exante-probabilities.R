@@ -206,6 +206,7 @@ resolve_exante_register <- function(design, frame, key_col,
   }
   check_exante_stage_frames(design, frames_by_stage, call = call)
   # A design that refuses to execute on this frame has no probabilities.
+  check_schedule_strata_known(schedule, stage_frames, design, call = call)
   refuse_capped_stages(
     design, seq_along(frames_by_stage), frames_by_stage, call = call
   )

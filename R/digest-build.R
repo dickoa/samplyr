@@ -1299,6 +1299,8 @@ resolve_exante_digest <- function(design, frame, depth = NULL,
     frame_index_by_stage[[stage]] <- schedule$entries[[i]]$frame_index
   }
   check_exante_stage_frames(design, effective_frames_by_stage, call = call)
+  # A size for a stratum no unit can reach is refused, as execute() does.
+  check_schedule_strata_known(schedule, stage_frames, design, call = call)
   # A reserve pool with a take below 2 is refused by name, as execute() does.
   for (stage in seq_along(effective_frames_by_stage)) {
     if (!is_null(design$stages[[stage]]$draw_spec$reserve)) {
@@ -1450,10 +1452,6 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
     parent_ids <- as.integer(names(parent_groups))
   }
 
-  lookup <- if (!is_null(strata_vars)) {
-    prepare_stratum_draw_lookup(draw_spec, strata_vars)
-  }
-
   pools_acc <- list()
   add_pool <- function(
     parent,
@@ -1495,10 +1493,18 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
     )
   }
 
+  read_parent <- if (stage_idx > 1L) {
+    parent_table_reader(draw_spec, strata_spec, frame, ancestor_vars)
+  }
   for (g in seq_along(parent_groups)) {
     rows <- parent_groups[[g]]
+    stage_spec <- list(draw = draw_spec, strata = strata_spec)
+    if (!is_null(read_parent)) {
+      # The rows of the stage's tables that can name this parent.
+      stage_spec <- read_parent(frame[rows, , drop = FALSE])
+    }
     parent_draw <- resolve_parent_draw_spec(
-      draw_spec,
+      stage_spec$draw,
       frame[rows, , drop = FALSE]
     )
     if (is_cluster) {
@@ -1542,8 +1548,12 @@ resolve_exante_pools <- function(design, stage_idx, frame, parent_registry) {
       strata_vars,
       lapply(sgroups, function(ix) unit_rows[ix])
     )
-    info <- calculate_stratum_sizes(info, strata_spec, parent_draw)
+    info <- calculate_stratum_sizes(info, stage_spec$strata, parent_draw)
     info_keys <- make_group_key(info, strata_vars)
+    # A label names a stratum among this parent's, as the draw reads it.
+    lookup <- prepare_stratum_draw_lookup(
+      parent_draw, strata_vars, frame[unit_rows, strata_vars, drop = FALSE]
+    )
     # Attribute a parent's redistribution to its first pool.
     parent_moved <- attr(info, "n_moved")
     if (is_cluster) {

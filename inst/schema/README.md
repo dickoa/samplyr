@@ -46,6 +46,15 @@ Legacy null encodings in optional fields can be `null`, an empty array or an
 empty object. The writer emits `null` or omits absent fields. Nonempty values
 must satisfy the declared type.
 
+A panel assignment with a schedule lists one row for every panel at every
+occasion, and records `schedule_checksum`, the MD5 checksum of these rows. It
+is computed over one line per row, `panel,period,subround,active,visit`, in
+order of period, subround and panel. `active` is written `true` or `false`,
+`visit` is left empty where it is `null`, and each line ends in a line feed.
+`read_design()` refuses a schedule whose rows do not give the recorded
+checksum, and a checksum recorded without its schedule. The checksum detects a schedule edited after the execution it
+records, not one edited together with its checksum.
+
 ## Metadata and extensions
 
 Executable objects reject unknown fields. For example, `draw.minn_n` is an

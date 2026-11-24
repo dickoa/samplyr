@@ -1059,13 +1059,19 @@ inform_allocation_capped <- function(stage, x) {
 #' and a 64-bit integer by its own digits.
 #' @noRd
 shown_values <- function(x, n = 5L) {
-  x <- utils::head(x, n)
-  if (inherits(x, "integer64")) {
-    return(as.character(x))
-  }
-  if (is.numeric(x)) {
-    x <- vctrs::vec_data(x)
-    return(vapply(x, format, character(1), scientific = FALSE, trim = TRUE))
+  value_text(utils::head(x, n))
+}
+
+#' A column's values as text for a message
+#'
+#' A number is written as its key text, so never as `1e+05` whatever
+#' `scipen`, and a classed number by its stored value, so a code haven
+#' declares missing still shows. Anything else is written by
+#' `as.character()`.
+#' @noRd
+value_text <- function(x) {
+  if (is.numeric(x) && !inherits(x, "integer64")) {
+    return(key_value_text(vctrs::vec_data(x)))
   }
   as.character(x)
 }
@@ -2202,7 +2208,7 @@ key_labels <- function(df, vars) {
   }
   do.call(
     paste,
-    c(df[, vars, drop = FALSE], list(sep = "/"))
+    c(lapply(df[, vars, drop = FALSE], value_text), list(sep = "/"))
   )
 }
 

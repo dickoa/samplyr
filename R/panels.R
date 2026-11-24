@@ -565,6 +565,10 @@ schedule_grid_visit <- function(grid, schedule, key, call = caller_env()) {
 
   for (p in unique(grid$panel)) {
     rows <- which(grid$panel == p & grid$active)
+    if (length(rows) == 0L) {
+      # A panel never active has no visit to number.
+      next
+    }
     rows <- rows[order(grid$occasion[rows])]
     v <- visit[rows]
     step <- v[-1L] == v[-length(v)] + 1L | v[-1L] == 1L
@@ -1206,8 +1210,9 @@ assign_panels <- function(result, spec, context, call = caller_env()) {
 
   record <- list(
     algorithm = "blocked_random_quota",
-    # Version 7 indexes the schedule by period and subround.
-    version = 7L,
+    # Version 7 indexes the schedule by period and subround. Version 8 writes
+    # unit keys as key_value_text() does, independent of scipen.
+    version = 8L,
     panels = k,
     assignment_stage = context$stage_num,
     block_size = block,
@@ -1236,7 +1241,7 @@ panel_record_algorithm <- "blocked_random_quota"
 #'
 #' A set, not a ceiling. A version below any that existed is unreadable too.
 #' @noRd
-supported_panel_record_versions <- 7L
+supported_panel_record_versions <- 8L
 
 #' Read an assignment record under the law it names
 #'
@@ -1244,9 +1249,19 @@ supported_panel_record_versions <- 7L
 #' the order matters. `NULL` in is `NULL` out.
 #' @return The normalized record, which every later reader should use.
 #' @noRd
-prepare_panel_record <- function(record, what, call = caller_env()) {
+#' @param receipt `TRUE` for the record of a receipt, whose schedule carries
+#'   no occasion index, since replay numbers the occasions again.
+prepare_panel_record <- function(record, what, receipt = FALSE,
+                                 call = caller_env()) {
   check_panel_record_supported(record, what, call = call)
   check_panel_record_fields(record, what, call = call)
+  check_panel_record_pools(record, what, call = call)
+  checked <- check_panel_record_schedule(record, what, receipt = receipt,
+                                         call = call)
+  if (receipt && !is_null(checked)) {
+    # Replay reads the schedule as checked, not the stored rows again.
+    record[["schedule"]] <- checked
+  }
   if (!is_null(record)) {
     # Coerce assignment stages only after validation.
     record$assignment_stage <- as.integer(record$assignment_stage)
@@ -1301,14 +1316,20 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
   }
 
   if (stated && version >= 1 && version < min(supported_panel_record_versions)) {
+    reason <- if (version == 7) {
+      "The record is version 7, which writes the keys of its units by an
+       earlier rule, so they may name none of this sample's units. This build
+       reads version {supported_panel_record_versions}."
+    } else {
+      "The record is version {version}, which indexes its schedule by
+       occasion. This build reads version {supported_panel_record_versions},
+       indexed by period and subround."
+    }
     abort_samplyr(
       c(
         "{what} is computed from the panel assignment, and this sample's
          assignment record is older than this version of samplyr reads.",
-        "x" = "The record is version {version}, which indexes its schedule
-               by occasion. This build reads version
-               {supported_panel_record_versions}, indexed by period and
-               subround.",
+        "x" = reason,
         "i" = "Execute the design again to write a current record."
       ),
       class = "samplyr_error_panel_record_unsupported",
@@ -1347,6 +1368,358 @@ check_panel_record_supported <- function(record, what, call = caller_env()) {
     class = "samplyr_error_panel_record_unsupported",
     call = call
   )
+}
+
+#' The record a receipt states, without any pools it carries
+#'
+#' Replay draws the pools again from the design, the frames and the seed, and
+#' never reads pools a receipt lists, so they are not judged either.
+#' @noRd
+receipt_panel_record <- function(record) {
+  if (is.list(record) && !is.data.frame(record)) {
+    record$pools <- NULL
+  }
+  record
+}
+
+#' Read a receipt's assignment record, without its pools
+#' @noRd
+prepare_receipt_record <- function(record, what, call = caller_env()) {
+  prepare_panel_record(receipt_panel_record(record), what, receipt = TRUE,
+                       call = call)
+}
+
+#' The schedule of a saved record, as the assignment wrote it
+#'
+#' Activation reads the schedule by panel and occasion, so a value outside
+#' the record's panels, a missing activation flag or a grid with rows left
+#' out would fail inside base R or read the wrong panels. Each value is
+#' checked as stored before any is converted. The schedule is then rebuilt by
+#' the rules `execute()` applies to a `panels` schedule and must come out as
+#' stored: the complete grid of the record's panels by its occasions, with
+#' the `r_min` and block size the record states. A receipt's schedule is read
+#' the same way, without the occasion index, and must give the checksum the
+#' receipt records. A receipt that records a checksum carries its schedule.
+#' @return For a receipt, the schedule as a typed table, which replay reads
+#'   in place of the stored rows. For a saved sample, the schedule unchanged.
+#'   `NULL` without a schedule.
+#' @noRd
+check_panel_record_schedule <- function(record, what, receipt = FALSE,
+                                        call = caller_env()) {
+  # Exact names, since `$` would read `schedule_checksum` for `schedule`.
+  schedule <- record[["schedule"]]
+  checksum <- record[["schedule_checksum"]]
+  refuse <- function(requirement, stated) {
+    abort_panel_record_malformed(requirement, stated, what = what,
+                                 call = call)
+  }
+  # A JSON null, empty array or empty object states no schedule.
+  if (is_null(schedule) || (is.list(schedule) && !is.data.frame(schedule) &&
+                              length(schedule) == 0L)) {
+    if (receipt && length(checksum) > 0L) {
+      refuse(
+        "must carry the schedule its {.field schedule_checksum} was computed
+         from",
+        checksum
+      )
+    }
+    return(invisible(NULL))
+  }
+  # Every reader of a record checks it, so a schedule found valid is kept.
+  seen <- rlang::hash(list(schedule, record[["panels"]], record[["r_min"]],
+                           record[["block_size"]], checksum, receipt))
+  kept <- checked_schedules[[seen]]
+  if (!is_null(kept)) {
+    return(kept)
+  }
+  fields <- c(if (!receipt) "occasion", "panel", "period", "subround",
+              "active", "visit")
+  # A JSON schedule is a list of rows, a saved one a table of columns.
+  if (is.data.frame(schedule) &&
+        all(vapply(schedule, function(col) {
+          is.atomic(col) && !is.factor(col)
+        }, logical(1)))) {
+    n <- nrow(schedule)
+    has <- function(name) name %in% names(schedule)
+    cells <- function(name) as.list(schedule[[name]])
+  } else if (!is.data.frame(schedule) && is.list(schedule) &&
+               all(vapply(schedule, function(row) {
+                 is.list(row) && !is.data.frame(row)
+               }, logical(1)))) {
+    n <- length(schedule)
+    has <- function(name) {
+      all(vapply(schedule, function(row) name %in% names(row), logical(1)))
+    }
+    cells <- function(name) lapply(schedule, function(row) row[[name]])
+  } else {
+    refuse("must carry its schedule as a table of rows", schedule)
+  }
+  missing <- Filter(Negate(has), fields)
+  if (length(missing) > 0L) {
+    refuse(
+      paste0("must carry the {.field ", missing[[1L]], "} field on every ",
+             "row of its schedule"),
+      if (is.data.frame(schedule)) names(schedule) else n
+    )
+  }
+  k <- record[["panels"]]
+  if (!(length(k) == 1L && is_integerish_numeric(k) && k >= 1)) {
+    refuse("must state its {.field panels} count", k)
+  }
+  # One whole number of 1 or more per row, checked before it is converted,
+  # so "1" or 1.5 is refused rather than coerced.
+  numbered <- function(name, top = .Machine$integer.max, nullable = FALSE,
+                       requirement) {
+    values <- cells(name)
+    blank <- function(v) {
+      is_null(v) || (length(v) == 1L && is.atomic(v) && is.na(v))
+    }
+    ok <- vapply(values, function(v) {
+      (nullable && blank(v)) ||
+        (length(v) == 1L && is.numeric(v) && !is.na(v) && is.finite(v) &&
+           v >= 1 && v <= top && v == trunc(v))
+    }, logical(1))
+    bad <- which(!ok)[1L]
+    if (!is.na(bad)) {
+      refuse(paste0(requirement, ", and row ", bad, " does not"),
+             values[[bad]])
+    }
+    vapply(values, function(v) {
+      if (blank(v)) NA_integer_ else as.integer(v)
+    }, integer(1))
+  }
+  index <- list()
+  for (name in c(if (!receipt) "occasion", "period", "subround")) {
+    index[[name]] <- numbered(
+      name,
+      requirement = paste0("must number the {.field ", name, "} of each ",
+                           "schedule row from 1")
+    )
+  }
+  panel <- numbered(
+    "panel", top = k,
+    requirement = paste0("must number the {.field panel} of each schedule ",
+                         "row from 1 to ", k)
+  )
+  flags <- cells("active")
+  ok <- vapply(flags, function(v) {
+    length(v) == 1L && is.logical(v) && !is.na(v)
+  }, logical(1))
+  bad <- which(!ok)[1L]
+  if (!is.na(bad)) {
+    refuse(
+      paste0("must state whether each schedule row is {.field active}, and ",
+             "row ", bad, " (panel ", panel[bad], ", period ",
+             index$period[bad], ") does not"),
+      flags[[bad]]
+    )
+  }
+  active <- vapply(flags, isTRUE, logical(1))
+  visit <- numbered(
+    "visit", nullable = TRUE,
+    requirement = "must number the {.field visit} of each active schedule row
+                   from 1"
+  )
+
+  # The grid the writer builds from these rows.
+  given <- data.frame(
+    panel = panel, period = index$period, subround = index$subround,
+    active = active, visit = visit
+  )
+  rebuilt <- tryCatch(
+    normalize_panel_schedule(given, min_panels = 1L, call = call),
+    samplyr_error = function(cnd) cnd
+  )
+  if (inherits(rebuilt, "samplyr_error")) {
+    abort_samplyr(
+      c(
+        "{what} is computed from the panel assignment, and this sample's
+         assignment record carries a schedule no assignment writes.",
+        "x" = "{cli::ansi_strip(conditionMessage(rebuilt))}",
+        "i" = "Execute the design again to write a current record."
+      ),
+      class = "samplyr_error_panel_record_malformed",
+      call = call
+    )
+  }
+  grid <- rebuilt$schedule
+  stored <- given
+  if (!receipt) {
+    stored$occasion <- index$occasion
+  }
+  by_occasion <- function(df) {
+    df <- df[order(df$period, df$subround, df$panel), names(stored),
+             drop = FALSE]
+    rownames(df) <- NULL
+    df
+  }
+  if (rebuilt$k != k || nrow(grid) != nrow(stored) ||
+        !identical(by_occasion(grid), by_occasion(stored))) {
+    refuse(
+      paste0("must carry the complete grid of its ", k, " panels by its ",
+             "occasions, each occasion numbered in order of period and ",
+             "subround"),
+      paste(nrow(stored), "rows")
+    )
+  }
+  # The assignment's block size follows from the schedule, so a schedule cut
+  # to fewer occasions that changes it would replay another assignment.
+  same <- function(stated, rebuilt) {
+    length(stated) == 1L && is.numeric(stated) && !is.na(stated) &&
+      stated == rebuilt
+  }
+  if (!same(record[["r_min"]], rebuilt$r_min) ||
+        !same(record[["block_size"]], rebuilt$block_size)) {
+    refuse(
+      paste0("must state the {.field r_min} and {.field block_size} its ",
+             "schedule gives, ", rebuilt$r_min, " and ", rebuilt$block_size),
+      c(record[["r_min"]], record[["block_size"]])
+    )
+  }
+  if (receipt) {
+    stated <- checksum
+    if (!(length(stated) == 1L && is.character(stated) &&
+            grepl("^[0-9a-f]{32}$", stated))) {
+      refuse("must state the {.field schedule_checksum} of its schedule",
+             stated)
+    }
+    if (!identical(stated, schedule_checksum(given))) {
+      abort_samplyr(
+        c(
+          "{what} is computed from the panel assignment, and this design
+           file's schedule is not the one its execution recorded.",
+          "x" = "The schedule's MD5 checksum does not match its
+                 {.field schedule_checksum}, so a row was changed, added or
+                 removed after the file was written.",
+          "i" = "Replay the file as written, or execute the design again
+                 with the schedule wanted."
+        ),
+        class = "samplyr_error_panel_record_malformed",
+        call = call
+      )
+    }
+  }
+  if (length(ls(checked_schedules)) >= 64L) {
+    rm(list = ls(checked_schedules), envir = checked_schedules)
+  }
+  checked <- if (receipt) given else schedule
+  checked_schedules[[seen]] <- checked
+  checked
+}
+
+#' The MD5 checksum a design file records of its schedule
+#'
+#' Computed from one line per row, `panel,period,subround,active,visit`, in
+#' order of period, subround and panel, with `active` written `true` or
+#' `false`, `visit` empty where it is missing, and lines ending in a line
+#' feed. Any language can compute it from the rows the file lists. It detects
+#' a schedule edited after the execution it records, not one edited with its
+#' checksum.
+#' @param schedule A table with the five columns.
+#' @noRd
+schedule_checksum <- function(schedule) {
+  rows <- order(schedule$period, schedule$subround, schedule$panel)
+  visit <- as.integer(schedule$visit[rows])
+  lines <- paste(
+    as.integer(schedule$panel[rows]), as.integer(schedule$period[rows]),
+    as.integer(schedule$subround[rows]),
+    ifelse(as.logical(schedule$active[rows]), "true", "false"),
+    ifelse(is.na(visit), "", as.character(visit)),
+    sep = ","
+  )
+  path <- tempfile()
+  on.exit(unlink(path))
+  writeBin(charToRaw(paste0(lines, "\n", collapse = "")), path)
+  unname(tools::md5sum(path))
+}
+
+#' The schedules `check_panel_record_schedule()` found valid, by hash, with
+#' the table it returned for each
+#' @noRd
+checked_schedules <- new.env(parent = emptyenv())
+
+#' The pools of a saved sample's record, as the assignment wrote them
+#'
+#' Readers index blocks and quotas by position, so a pool laid out another way
+#' would be read as a different probability law, or fail inside base R. A
+#' receipt carries no pools, and a record without them is left to the
+#' coverage check of its reader.
+#' @noRd
+check_panel_record_pools <- function(record, what, call = caller_env()) {
+  pools <- record$pools
+  if (is_null(pools)) {
+    return(invisible(NULL))
+  }
+  refuse <- function(problem, env = caller_env()) {
+    abort_samplyr(
+      c(
+        "{what} is computed from the panel assignment, and this sample's
+         assignment record lists its pools in a form no assignment writes.",
+        "x" = problem,
+        "i" = "Execute the design again to write a current record."
+      ),
+      class = "samplyr_error_panel_record_malformed",
+      call = call,
+      envir = env
+    )
+  }
+  if (!is.list(pools) || is.data.frame(pools)) {
+    refuse("The pools are not a list of pools.")
+  }
+  k <- record$panels
+  if (!(length(k) == 1L && is_integerish_numeric(k) && k >= 1)) {
+    refuse("The record states no panel count for its quotas.")
+  }
+  for (p in seq_along(pools)) {
+    pool <- pools[[p]]
+    if (!is.list(pool) || is.data.frame(pool)) {
+      refuse("Pool {p} is not a set of named fields.")
+    }
+    keys <- pool$keys
+    if (!is.character(keys) || anyNA(keys)) {
+      refuse("Pool {p} does not name its units by their key text.")
+    }
+    if (anyDuplicated(keys) > 0L) {
+      repeated <- sum(duplicated(keys))
+      refuse("Pool {p} lists {repeated} unit{?s} twice.")
+    }
+    if (!(length(pool$activation) == 1L &&
+            pool$activation %in% c("rotating", "permanent"))) {
+      shown <- describe_record_value(pool$activation)
+      refuse("Pool {p} states activation {shown}, not {.val rotating} or
+              {.val permanent}.")
+    }
+    blocks <- pool$blocks
+    if (length(blocks) > 0L &&
+          !(is_integerish_numeric(blocks) && all(blocks >= 1))) {
+      refuse("Pool {p} has block sizes that are not positive whole numbers.")
+    }
+    size <- pool$size
+    if (!(length(size) == 1L && is_integerish_numeric(size) &&
+            size == length(keys) && size == sum(blocks))) {
+      shown <- describe_record_value(size)
+      refuse("Pool {p} states a size of {shown}, lists {length(keys)}
+              key{?s} and has blocks of {sum(blocks)} unit{?s}.")
+    }
+    quotas <- pool$quotas
+    if (!(is.matrix(quotas) && is.numeric(quotas) &&
+            nrow(quotas) == length(blocks) && ncol(quotas) == k)) {
+      refuse("Pool {p} has no quota matrix of {length(blocks)} block{?s} by
+              {k} panel{?s}.")
+    }
+    if (anyNA(quotas) || any(quotas < 0) || any(quotas != round(quotas))) {
+      refuse("Pool {p} has quotas that are not counts.")
+    }
+    if (any(rowSums(quotas) != blocks)) {
+      refuse("The quotas of pool {p} do not add up to its block sizes.")
+    }
+  }
+  flat <- unlist(lapply(pools, function(pool) pool$keys), use.names = FALSE)
+  if (anyDuplicated(flat) > 0L) {
+    shared <- length(unique(flat[duplicated(flat)]))
+    refuse("{shared} unit{?s} {?is/are} listed in more than one pool.")
+  }
+  invisible(NULL)
 }
 
 #' What a record has to carry to be one
@@ -1413,41 +1786,7 @@ check_panel_record_fields <- function(record, what, call = caller_env()) {
     )
   }
 
-  if (!is_null(record$schedule) &&
-      !schedule_states_occasions(record$schedule)) {
-    abort_panel_record_malformed(
-      "must carry a schedule naming the {.field period} and
-       {.field subround} of every row",
-      record$schedule$period,
-      what = what,
-      call = call
-    )
-  }
-
   invisible(NULL)
-}
-
-#' Does a recorded schedule name a period and subround on every row?
-#'
-#' A schedule is a data frame in memory and a list of rows as read from
-#' JSON.
-#' @noRd
-schedule_states_occasions <- function(schedule) {
-  complete <- function(name) {
-    values <- if (is.data.frame(schedule)) {
-      schedule[[name]]
-    } else if (is.list(schedule) && length(schedule) > 0L) {
-      lapply(schedule, function(row) if (is.list(row)) row[[name]])
-    }
-    if (is.list(values)) {
-      if (!all(lengths(values) == 1L)) {
-        return(FALSE)
-      }
-      values <- unlist(values, use.names = FALSE)
-    }
-    length(values) > 0L && is.numeric(values) && !anyNA(values)
-  }
-  complete("period") && complete("subround")
 }
 
 #' The units an assignment record names
@@ -1493,11 +1832,11 @@ abort_panel_record_malformed <- function(
     c(
       "{what} is computed from the panel assignment, and this sample's
        assignment record does not carry the version it states.",
-      "x" = paste0("A version-7 panel assignment ", requirement, ". This
-             record states {shown}."),
+      "x" = paste0("A version-{supported_panel_record_versions} panel
+             assignment ", requirement, ". This record states {shown}."),
       "i" = "The version fixes which fields the record carries and what they
-             mean, so a record numbered 7 is read as version 7 rather than
-             repaired into it."
+             mean, so a record numbered {supported_panel_record_versions} is
+             read as that version rather than repaired into it."
     ),
     class = "samplyr_error_panel_record_malformed",
     call = call

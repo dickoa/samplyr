@@ -813,7 +813,7 @@ panel_permanent_rows <- function(data, record) {
     return(permanent)
   }
   keys <- make_group_key(as.data.frame(data), record$key_vars)
-  for (pool in record_pool_rows(keys, pools)) {
+  for (pool in record_pool_rows(keys, pools, complete = FALSE)) {
     permanent[pool$rows] <- TRUE
   }
   permanent

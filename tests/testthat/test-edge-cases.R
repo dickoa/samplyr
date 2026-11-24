@@ -2006,7 +2006,7 @@ test_that("strata whose values print alike are refused, not merged", {
   expect_error(frame_summary(plain, frame),
                class = "samplyr_error_key_precision")
   expect_error(validate_frame(plain, frame),
-               "equal to 15 significant digits")
+               "would have the same grouping key")
   # One component of a compound stratum is enough.
   frame$b <- "x"
   expect_error(
@@ -2025,7 +2025,7 @@ test_that("clusters whose ids print alike are refused, not merged", {
   expect_error(exante_probabilities(design, frame, key = id),
                class = "samplyr_error_key_precision")
   expect_error(validate_frame(design, frame),
-               "equal to 15 significant digits")
+               "would have the same grouping key")
   two_stage <- sampling_design() |>
     add_stage() |> cluster_by(cl) |> draw(n = 1) |>
     add_stage() |> draw(n = 1)
@@ -2044,6 +2044,117 @@ test_that("the refusal names the column and both values", {
   expect_match(msg, "0.30000000000000004", fixed = TRUE)
   expect_match(msg, "0.29999999999999999", fixed = TRUE)
   expect_identical(deparse(conditionCall(err)[[1]]), "execute")
+})
+
+## Dates, difftimes and missing codes in the same check
+
+# A date or a difftime is written as it prints, so two that print alike share
+# one key. The check once skipped them, and a panel record then held four
+# PSUs for five selected.
+
+date_panel <- function(days) {
+  psu <- data.frame(key = as.Date("2020-01-01") + days)
+  el <- data.frame(key = rep(psu$key, each = 5L), id = seq_len(5L * nrow(psu)))
+  design <- sampling_design() |> add_stage("psu") |> cluster_by(key) |>
+    draw(n = 5) |> add_stage("el") |> draw(n = 2)
+  rotation <- data.frame(
+    panel = rep(1:2, 2), period = rep(1:2, each = 2),
+    active = c(TRUE, FALSE, FALSE, TRUE)
+  )
+  execute(design, list(psu = psu, el = el), seed = 1, panels = rotation)
+}
+
+test_that("dates that print alike are refused before panels are assigned", {
+  expect_error(
+    date_panel(c(0.1, 0.2, 1, 2, 3, 4)),
+    class = "samplyr_error_key_precision"
+  )
+  # Whole dates record every PSU the sample holds.
+  s <- date_panel(c(0, 1, 2, 3, 4, 5))
+  record <- attr(s, "metadata")$panel_assignment
+  keys <- unlist(lapply(record$pools, `[[`, "keys"))
+  expect_identical(length(keys), length(unique(s$key)))
+  expect_setequal(keys, as.character(unique(s$key)))
+
+  # One component of a compound key is enough.
+  frame <- data.frame(
+    d = rep(as.Date("2020-01-01") + c(0.1, 0.2), each = 3),
+    b = "x", id = 1:6
+  )
+  expect_error(
+    execute(sampling_design() |> stratify_by(d, b) |> draw(n = 1), frame,
+            seed = 1),
+    class = "samplyr_error_key_precision"
+  )
+})
+
+test_that("difftimes that print alike are refused", {
+  frame <- data.frame(
+    id = 1:6,
+    cl = as.difftime(rep(c(1, 1 + 4e-16), each = 3), units = "secs")
+  )
+  expect_identical(
+    key_precision_clash(frame$cl), c("1", "1.0000000000000004")
+  )
+  expect_error(
+    execute(sampling_design() |> cluster_by(cl) |> draw(n = 1), frame,
+            seed = 1),
+    class = "samplyr_error_key_precision"
+  )
+})
+
+test_that("missing values are not a clash, and never shown as one", {
+  skip_if_not_installed("haven")
+  # Two codes declared missing are two values of the column, both missing.
+  frame <- data.frame(
+    stratum = haven::labelled_spss(
+      c(1, 1, 2, 2, -8, -8, -9, -9), na_values = c(-8, -9)
+    ),
+    id = 1:8
+  )
+  design <- sampling_design() |> stratify_by(stratum) |> draw(n = 1)
+  expect_null(key_precision_clash(frame$stratum))
+  err <- expect_error(execute(design, frame, seed = 1))
+  expect_false(inherits(err, "samplyr_error_key_precision"))
+  expect_match(conditionMessage(err), "contains NA values", fixed = TRUE)
+  err <- expect_error(validate_frame(design, frame))
+  text <- cli::ansi_strip(conditionMessage(err))
+  expect_match(text, "contains NA values", fixed = TRUE)
+  expect_false(grepl("grouping key", text, fixed = TRUE))
+
+  # A missing value before a real clash is not one of the two shown.
+  expect_identical(
+    key_precision_clash(c(NA_real_, 1, 1 + 4e-16)),
+    c("1", "1.0000000000000004")
+  )
+  expect_null(key_precision_clash(c(NA_real_, NaN, 1)))
+})
+
+## Missing values in key text
+
+test_that("key text keeps NaN apart from NA in every key", {
+  df <- data.frame(a = c(1, NA_real_, NaN), b = c("x", "x", "x"))
+  expect_identical(make_group_key(df, "a"), c("1", NA, "NaN"))
+  expect_identical(
+    make_group_key(df, c("a", "b")),
+    c("2|V1:1V1:x", "2|NV1:x", "2|V3:NaNV1:x")
+  )
+  expect_identical(anyDuplicated(split_row_indices(df, c("a", "b"))$keys), 0L)
+})
+
+test_that("a character code declared missing is missing in every key", {
+  skip_if_not_installed("haven")
+  x <- haven::labelled_spss(c("a", "99", "b"), na_values = "99")
+  expect_identical(key_value_text(x), c("a", NA, "b"))
+  df <- data.frame(x = x, y = 1:3)
+  expect_identical(make_group_key(df, "x"), c("a", NA, "b"))
+  expect_identical(make_group_key(df, c("x", "y")),
+                   c("2|V1:aV1:1", "2|NV1:2", "2|V1:bV1:3"))
+  # Classes whose as.character() already writes NA are unchanged.
+  f <- factor(c("a", NA, "b"))
+  expect_identical(key_value_text(f), c("a", NA, "b"))
+  d <- as.Date(c("2020-01-01", NA))
+  expect_identical(key_value_text(d), c("2020-01-01", NA))
 })
 
 test_that("ordinary numeric and date groups are accepted", {

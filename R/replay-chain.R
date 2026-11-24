@@ -405,6 +405,11 @@ flatten_chain_frames <- function(frame, counts, labels = NULL,
 replay_execution_chain <- function(calls, frames, frame_digest = "summary",
                                    fingerprint = "error",
                                    call = caller_env()) {
+  # Every call's record is read before any is replayed, an occasion's too,
+  # though an occasion reads the record of the master it replays.
+  for (cl in calls) {
+    prepare_receipt_record(cl$panel_assignment, "A replay", call = call)
+  }
   counts <- chain_frame_counts(calls)
   offsets <- cumsum(c(0L, counts))
   slot <- 0L
@@ -477,7 +482,7 @@ replay_execution_chain <- function(calls, frames, frame_digest = "summary",
           cli::cli_inform(msg, class = "samplyr_message_replay_frame_mismatch")
         }
       }
-      record <- prepare_panel_record(cl$panel_assignment, "A replay")
+      record <- prepare_receipt_record(cl$panel_assignment, "A replay")
       panels <- decode_panel_argument(cl, record)
       small_pool <- decode_small_pool_argument(record, panels)
       panel_stage <- decode_panel_stage_argument(record)

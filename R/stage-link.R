@@ -7,7 +7,7 @@
 #' @noRd
 format_key_preview <- function(keys) {
   # apply() would pad numbers to a common width.
-  do.call(paste, c(lapply(unname(as.list(keys)), as.character), sep = "/"))
+  do.call(paste, c(lapply(unname(as.list(keys)), value_text), sep = "/"))
 }
 
 #' Require the full declared ancestry on both sides of a transition
@@ -174,12 +174,62 @@ check_parent_key_na <- function(frame, parent_vars, design, stage_idx,
   invisible(NULL)
 }
 
+#' Rows whose key columns are all present under their class's `is.na()`
+#'
+#' `vctrs::vec_match()`, `stats::complete.cases()` and dplyr joins read the
+#' stored value, so they miss a code a class declares missing, such as one of
+#' haven's `labelled_spss`. Returns `NULL` when every row is complete, so the
+#' common case allocates nothing.
+#' @noRd
+complete_key_rows <- function(frame, vars) {
+  keep <- NULL
+  for (v in vars) {
+    col <- frame[[v]]
+    if (anyNA(col)) {
+      ok <- !is.na(col)
+      keep <- if (is_null(keep)) ok else keep & ok
+    }
+  }
+  keep
+}
+
+#' The rows of `frame` with complete keys, or `frame` itself
+#' @noRd
+slice_complete_keys <- function(frame, vars) {
+  keep <- complete_key_rows(frame, vars)
+  if (is_null(keep)) frame else vctrs::vec_slice(frame, keep)
+}
+
+#' For each row of `frame`, the first row of `previous_sample` with its key
+#'
+#' Only complete keys on both sides take part, so a row whose parent id is
+#' missing matches no parent, whatever value it stores.
+#' @noRd
+match_complete_parents <- function(frame, previous_sample, parent_vars) {
+  frame_ok <- complete_key_rows(frame, parent_vars)
+  prev_ok <- complete_key_rows(previous_sample, parent_vars)
+  prev_keys <- previous_sample[, parent_vars, drop = FALSE]
+  if (!is_null(prev_ok)) {
+    prev_keys <- vctrs::vec_slice(prev_keys, prev_ok)
+  }
+  parent_row <- vctrs::vec_match(frame[, parent_vars, drop = FALSE], prev_keys)
+  if (!is_null(prev_ok)) {
+    parent_row <- which(prev_ok)[parent_row]
+  }
+  if (!is_null(frame_ok)) {
+    parent_row[!frame_ok] <- NA_integer_
+  }
+  parent_row
+}
+
 #' @noRd
 distinct_parent_units <- function(frame, parent_vars) {
-  vctrs::vec_slice(
+  units <- vctrs::vec_slice(
     frame[, parent_vars, drop = FALSE],
     unique_key_loc(frame, parent_vars)
   )
+  # A class declares missing by value, so filtering the distinct keys is exact.
+  slice_complete_keys(units, parent_vars)
 }
 
 #' Require every selected parent to have an eligible population
@@ -303,7 +353,10 @@ values_agree <- function(x, y) {
   tryCatch(
     {
       common <- vctrs::vec_cast_common(x, y)
-      vctrs::vec_equal(common[[1]], common[[2]], na_equal = TRUE)
+      eq <- vctrs::vec_equal(common[[1]], common[[2]], na_equal = TRUE)
+      # The cast can drop a class's declared missing codes.
+      eq[xor(is.na(x), is.na(y))] <- FALSE
+      eq
     },
     error = function(e) rep(FALSE, max(length(x), length(y)))
   )
@@ -644,10 +697,7 @@ link_stage_frame <- function(frame, previous_sample, design, stage_idx,
   linked <- if (same_rows) {
     sliced_row_names(frame)
   } else {
-    parent_row <- vctrs::vec_match(
-      frame[, parent_vars, drop = FALSE],
-      previous_sample[, parent_vars, drop = FALSE]
-    )
+    parent_row <- match_complete_parents(frame, previous_sample, parent_vars)
     rows <- which(!is.na(parent_row))
     parent_row <- parent_row[rows]
     vctrs::vec_slice(frame, rows)
@@ -898,7 +948,9 @@ scan_incomplete_registers <- function(schedule, design,
     }
 
     candidates <- unique(reachable[, parent_vars, drop = FALSE])
-    candidates <- candidates[stats::complete.cases(candidates), , drop = FALSE]
+    candidates <- slice_complete_keys(candidates, parent_vars)
+    # A row whose parent id is missing serves no parent.
+    child <- slice_complete_keys(child, parent_vars)
     # A stage that accepts empty parents has no gap to report.
     accepts_empty <- !identical(
       design$stages[[stage_idx]]$draw_spec$on_empty %||% "error", "error"

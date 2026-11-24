@@ -1277,7 +1277,9 @@ compute_stratified_jip <- function(
     stratum_info$.n_h,
     make_strata_group_ids(stratum_info, strata_vars)
   )
-  draw_lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars)
+  draw_lookup <- prepare_stratum_draw_lookup(
+    draw_spec, strata_vars, effective_frame
+  )
 
   frame_groups <- split_row_indices(effective_frame, strata_vars)
   sample_groups <- split_row_indices(sample_df, strata_vars)

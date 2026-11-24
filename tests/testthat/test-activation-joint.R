@@ -279,7 +279,7 @@ test_that("only a version this build reads is accepted", {
     master
   }
 
-  for (bad in list(0L, -5L, 6L, 99L, c(7L, 7L), NULL, "7", NA_integer_, 6.5)) {
+  for (bad in list(0L, -5L, 6L, 7L, 99L, c(8L, 8L), NULL, "8", NA_integer_, 6.5)) {
     expect_error(
       joint_expectation(with_version(bad), period = c(1L, 2L)),
       class = "samplyr_error_panel_record_unsupported"
@@ -288,11 +288,11 @@ test_that("only a version this build reads is accepted", {
 
   # The supported version is accepted whether or not it is typed as integer.
   expect_s3_class(
-    joint_expectation(with_version(7L), period = c(1L, 2L)),
+    joint_expectation(with_version(8L), period = c(1L, 2L)),
     "tbl_df"
   )
   expect_s3_class(
-    joint_expectation(with_version(7), period = c(1L, 2L)),
+    joint_expectation(with_version(8), period = c(1L, 2L)),
     "tbl_df"
   )
 
@@ -414,4 +414,72 @@ test_that("the stage modes are untouched by the new argument", {
     draw(n = 40, method = "pps_poisson", mos = mos) |>
     execute(frame, seed = 8, panels = joint_rotation())
   expect_equal(joint_expectation(scheduled, frame)$stage_1, expected)
+})
+
+## Quotas read against the panels the master's units carry
+
+aj_two_periods <- function() {
+  data.frame(panel = rep(1:2, 2), period = rep(1:2, each = 2),
+             active = c(TRUE, FALSE, FALSE, TRUE))
+}
+
+aj_edit_record <- function(sample, edit) {
+  meta <- attr(sample, "metadata")
+  meta$panel_assignment <- edit(meta$panel_assignment)
+  attr(sample, "metadata") <- meta
+  sample
+}
+
+test_that("quotas that do not hold the units' panels are refused, as activation refuses them", {
+  master <- suppressMessages(execute(
+    sampling_design() |> draw(n = 9), data.frame(id = 1:12), seed = 1,
+    panels = aj_two_periods()
+  ))
+  pool <- attr(master, "metadata")$panel_assignment$pools[[1L]]
+  # Blocks of 5 and 4 units: 3 of 5 and 2 of 4 hold panel 1.
+  expect_identical(as.integer(pool$blocks), c(5L, 4L))
+  expect_identical(unname(pool$quotas[, 1L]), c(3L, 2L))
+  healthy <- joint_expectation(master, period = c(1L, 2L))
+  expect_equal(healthy$prob_t, c(0.6, 0.5))
+  expect_equal(healthy$prob_u, c(0.4, 0.5))
+
+  # Swapping the panels keeps the layout valid, but not the units' panels.
+  swapped <- aj_edit_record(master, function(r) {
+    r$pools[[1L]]$quotas <- r$pools[[1L]]$quotas[, 2:1, drop = FALSE]
+    r
+  })
+  for (period in list(c(1L, 2L), c(1L, 1L), c(2L, 2L))) {
+    err <- expect_error(
+      joint_expectation(swapped, period = period),
+      class = "samplyr_error_panel_record_malformed"
+    )
+    expect_match(cli::ansi_strip(conditionMessage(err)),
+                 "do not match its block quotas")
+  }
+  expect_error(execute(swapped, period = 1),
+               class = "samplyr_error_panel_record_malformed")
+})
+
+test_that("a recorded unit with no rows left still counts in its block", {
+  frame <- data.frame(psu = rep(1:10, each = 5L), id = 1:50)
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(psu) |> draw(n = 6) |>
+    add_stage() |> draw(frac = 0.15, method = "bernoulli", on_empty = "silent")
+  parent <- suppressMessages(execute(design, frame, seed = 1, stages = 1,
+                                     panels = aj_two_periods()))
+  pool <- attr(parent, "metadata")$panel_assignment$pools[[1L]]
+  expect_identical(as.integer(pool$blocks), 6L)
+  expect_identical(unname(pool$quotas[1L, ]), c(3L, 3L))
+  master <- suppressMessages(execute(parent, frame, seed = 1, stages = 2))
+  # One primary unit drew no rows, and another drew two.
+  expect_length(setdiff(pool$keys, as.character(master$psu)), 1L)
+  expect_true(any(duplicated(master$psu)))
+
+  # The recorded block of 6 is read, 3 of them in each panel:
+  # 3 / 6 at each period and 3 * 3 / (6 * 5) for two distinct units.
+  result <- joint_expectation(master, period = c(1L, 2L))
+  expect_identical(result$units, 6L)
+  expect_equal(c(result$prob_t, result$prob_u, result$joint_distinct),
+               c(0.5, 0.5, 0.3))
+  expect_identical(result, joint_expectation(parent, period = c(1L, 2L)))
 })

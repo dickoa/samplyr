@@ -61,7 +61,7 @@ draw_cohorts <- function(master, occasions) {
 test_that("a schedule's visit column states where cohorts open", {
   master <- cohort_master()
   record <- attr(master, "metadata")$panel_assignment
-  expect_identical(record$version, 7L)
+  expect_identical(record$version, 8L)
 
   schedule <- cohort_schedule()
   at <- match(
@@ -73,7 +73,7 @@ test_that("a schedule's visit column states where cohorts open", {
   # Without the column each panel has one cohort.
   one <- cohort_master(schedule[c("panel", "period", "active")])
   record <- attr(one, "metadata")$panel_assignment
-  expect_identical(record$version, 7L)
+  expect_identical(record$version, 8L)
   first <- record$schedule[record$schedule$panel == 1L, ]
   expect_identical(first$visit[first$active], 1:4)
 })
@@ -94,6 +94,25 @@ test_that("a visit column that does not number cohorts is refused", {
       info = case
     )
   }
+})
+
+test_that("a visit column is read when a panel is never active", {
+  # Panel 3 is declared but never active, so it has no visit to number.
+  schedule <- data.frame(
+    panel = rep(1:3, 2), period = rep(1:2, each = 3),
+    active = c(TRUE, TRUE, FALSE, TRUE, TRUE, FALSE)
+  )
+  frame <- data.frame(id = 1:12)
+  plain <- suppressMessages(execute(sampling_design() |> draw(n = 9), frame,
+                                    seed = 1, panels = schedule))
+  schedule$visit <- c(1L, 1L, NA, 2L, 2L, NA)
+  stated <- suppressMessages(execute(sampling_design() |> draw(n = 9), frame,
+                                     seed = 1, panels = schedule))
+  expect_identical(
+    attr(stated, "metadata")$panel_assignment$schedule,
+    attr(plain, "metadata")$panel_assignment$schedule
+  )
+  expect_identical(stated$.panel, plain$.panel)
 })
 
 ## The cohort column

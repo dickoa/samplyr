@@ -1,4 +1,4 @@
-# samplyr 0.9.999
+# samplyr 0.50.0
 
 Initial release. samplyr specifies survey sampling designs as pipelines,
 executes them against sampling frames, and carries the design metadata
@@ -106,6 +106,9 @@ needed for weighting, replay, and export to the survey and srvyr packages.
   diagnostics describe a sample without its frame and `validate_frame()`
   detects a frame that changed. `frame_digest = "none"` turns it off, and
   `?execute` lists the executions that record none.
+* A design file writes a rotation schedule in full, one row per panel and
+  occasion with its activation and visit, and records an MD5 checksum of
+  it, so `read_design()` refuses a schedule edited after the execution.
 
 ## Planning with svyplan
 

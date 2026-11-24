@@ -1375,7 +1375,8 @@ activation_phase2_columns <- function(df1, x, metadata, call = caller_env()) {
   block <- rep(NA_character_, nrow(df1))
   block_n <- rep(NA_real_, nrow(df1))
   prob <- rep(NA_real_, nrow(df1))
-  located <- record_pool_rows(keys, record$pools)
+  located <- record_pool_rows(keys, record$pools, panel = df1$.panel,
+                              call = call)
 
   for (p in seq_along(record$pools)) {
     pool <- record$pools[[p]]

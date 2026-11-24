@@ -124,7 +124,7 @@ test_that("small_pool = 'permanent' promotes the pool and says so", {
   )
   record <- attr(master, "metadata")$panel_assignment
   expect_identical(record$small_pool_policy, "permanent")
-  expect_identical(record$version, 7L)
+  expect_identical(record$version, 8L)
 
   # These pools are permanent without being selection-certain.
   expect_identical(

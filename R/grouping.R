@@ -9,7 +9,12 @@
 #' @noRd
 key_value_text <- function(x) {
   if (!is.numeric(x) || inherits(x, "integer64")) {
-    return(as.character(x))
+    out <- as.character(x)
+    # A class can declare a value missing that as.character() still writes.
+    if (is.object(x)) {
+      out[is.na(x)] <- NA_character_
+    }
+    return(out)
   }
   v <- as.double(vctrs::vec_data(x))
   v[v == 0] <- 0
@@ -18,6 +23,373 @@ key_value_text <- function(x) {
   out[whole] <- sprintf("%.0f", v[whole])
   out[is.na(x) & !is.nan(v)] <- NA_character_
   out
+}
+
+#' The strata each label of a numeric stratum column can name
+#'
+#' A label written for a numeric stratum, by a user or by svyplan, comes from
+#' `as.character()`, which writes 100000 as "1e+05" or "100000" depending on
+#' `scipen`. A label equal to a stratum's key text names that stratum. Any
+#' other label is read as one of the two spellings R can write, and names
+#' every stratum written that way. The scientific form keeps 15 significant
+#' digits, so it can name several strata: 1000000000000001 and
+#' 1000000000000002 are both written "1e+15".
+#'
+#' A label that names one stratum becomes its key text. A label that names
+#' none is returned unchanged, so a misspelled label is still reported as
+#' one, and so is every label of a non-numeric or 64-bit integer column.
+#' @param labels The labels, as character or factor.
+#' @param values The stratum column the labels name.
+#' A key text can also be the spelling R writes for another stratum, as
+#' "9.00719925474099e+15" is both the key of 2^53 + 2 and the scientific form
+#' of 2^53 - 1. It names its own stratum, and `contested` keeps the others,
+#' so a reader that sees only some of the strata, such as one parent's, can
+#' read the label there.
+#' @return A list with `labels`, the labels resolved where they name one
+#'   stratum, `ambiguous`, one element per label holding the key texts of
+#'   the strata it names when they are several, and `NULL` otherwise, and
+#'   `contested`, one element per label resolved to its own key holding
+#'   that key and the other strata it spells, and `NULL` otherwise.
+#' @noRd
+stratum_label_candidates <- function(labels, values) {
+  unresolved <- list(
+    labels = labels,
+    ambiguous = vector("list", length(labels)),
+    contested = vector("list", length(labels))
+  )
+  if (!is.numeric(values) || inherits(values, "integer64") ||
+      !(is.character(labels) || is.factor(labels))) {
+    return(unresolved)
+  }
+  labels <- as.character(labels)
+  unresolved$labels <- labels
+  v <- vctrs::vec_unique(values)
+  v <- vctrs::vec_slice(v, !is.na(v))
+  if (length(v) == 0L) {
+    return(unresolved)
+  }
+  num <- as.double(vctrs::vec_data(v))
+  key <- key_value_text(v)
+  # R takes scipen from -9 to 9999, and the two ends give the two forms.
+  fixed <- withr::with_options(list(scipen = 9999), as.character(num))
+  sci <- withr::with_options(list(scipen = -9), as.character(num))
+
+  # A key text names its own stratum, whatever another stratum is written as.
+  exact <- match(labels, key)
+  resolved <- labels
+  resolved[!is.na(exact)] <- key[exact[!is.na(exact)]]
+  pending <- which(is.na(exact) & !is.na(labels))
+  ambiguous <- vector("list", length(labels))
+  contested <- vector("list", length(labels))
+  # Each spelling with the strata it names, each stratum counted once.
+  spelled <- vctrs::vec_unique(
+    data.frame(text = c(fixed, sci), key = c(key, key))
+  )
+  named <- split(spelled$key, factor(spelled$text, unique(spelled$text)))
+  if (length(pending) > 0L) {
+    candidates <- unname(named[labels[pending]])
+    count <- lengths(candidates)
+    one <- count == 1L
+    resolved[pending[one]] <- unlist(candidates[one], use.names = FALSE)
+    several <- which(count > 1L)
+    ambiguous[pending[several]] <- candidates[several]
+  }
+  own <- which(!is.na(exact))
+  if (length(own) > 0L) {
+    others <- lapply(own, function(i) {
+      setdiff(named[[labels[i]]] %||% character(0), resolved[i])
+    })
+    spells <- which(lengths(others) > 0L)
+    contested[own[spells]] <- Map(c, resolved[own[spells]], others[spells])
+  }
+  list(labels = resolved, ambiguous = ambiguous, contested = contested)
+}
+
+#' A label of a numeric stratum, written as that stratum's key text
+#'
+#' Resolves the labels as `stratum_label_candidates()` does, and refuses a
+#' label that names several strata rather than choosing one.
+#' @param var The stratum column, for the refusal.
+#' @noRd
+resolve_stratum_labels <- function(labels, values, var = NULL,
+                                   call = caller_env()) {
+  resolved <- stratum_label_candidates(labels, values)
+  several <- which(lengths(resolved$ambiguous) > 0L)
+  if (length(several) > 0L) {
+    i <- several[1L]
+    abort_ambiguous_stratum_label(
+      labels[[i]], resolved$ambiguous[[i]], var, call = call
+    )
+  }
+  resolved$labels
+}
+
+#' The stratum columns of a table, resolved against the frame's columns
+#'
+#' Each column is resolved as `resolve_stratum_labels()` does. A label that
+#' names several strata of its column is read with the rest of its row: the
+#' row is kept when exactly one stratum of the frame has those values in
+#' every column, and refused when several have. A row that names no stratum
+#' of the frame is left as written, for the caller's rules on unknown strata
+#' or on rows of a parent the stage did not select.
+#' @param scope The parent of each row of `frame`, or NULL for one scope. A
+#'   later stage draws within each parent, so a row whose strata lie in
+#'   different parents, at most one in each, names one stratum wherever it is
+#'   read. Such a row is left as written, and marked in the `"per_scope"`
+#'   attribute of the result.
+#' @param by_column `TRUE` to keep the column-wise resolution of a row that
+#'   names no stratum of the frame, as the preflight does to tell which
+#'   parent such a row is for. By default the row is left as written, since
+#'   a column resolved alone can make a row of another parent look like a
+#'   row of a stratum here.
+#' @noRd
+resolve_stratum_columns <- function(table, frame, vars, scope = NULL,
+                                    by_column = FALSE, call = caller_env()) {
+  vars <- intersect(vars, intersect(names(table), names(frame)))
+  per_scope <- logical(nrow(table))
+  done <- function() {
+    if (is_null(scope)) table else structure(table, per_scope = per_scope)
+  }
+  if (length(vars) == 0L || nrow(table) == 0L) {
+    return(done())
+  }
+  resolved <- lapply(vars, function(v) {
+    stratum_label_candidates(table[[v]], frame[[v]])
+  })
+  names(resolved) <- vars
+  written <- table
+  for (v in vars) {
+    table[[v]] <- resolved[[v]]$labels
+  }
+  open <- Reduce(`|`, lapply(resolved, function(r) {
+    lengths(r$ambiguous) > 0L | lengths(r$contested) > 0L
+  }))
+  if (length(vars) > 1L && !by_column) {
+    # A row names a stratum only by its whole tuple.
+    keys <- function(df) {
+      make_group_key(as.data.frame(lapply(df[vars], key_value_text)), vars)
+    }
+    alien <- !open & !keys(table) %in% keys(frame)
+    for (v in vars) {
+      if (any(alien) && is.character(table[[v]])) {
+        table[[v]][alien] <- as.character(written[[v]])[alien]
+      }
+    }
+  }
+  if (!any(open)) {
+    return(done())
+  }
+
+  # The strata of the frame, as the key text of each column.
+  texts <- as.data.frame(lapply(frame[vars], key_value_text),
+                         stringsAsFactors = FALSE)
+  strata <- vctrs::vec_unique(texts)
+  # Each parent with the strata its rows hold, once.
+  held <- if (is_null(scope)) {
+    data.frame(scope = 1L, stratum = seq_len(nrow(strata)))
+  } else {
+    vctrs::vec_unique(data.frame(
+      scope = scope, stratum = vctrs::vec_match(texts, strata)
+    ))
+  }
+  for (r in which(open)) {
+    in_row <- rep(TRUE, nrow(strata))
+    for (v in vars) {
+      allowed <- resolved[[v]]$ambiguous[[r]] %||%
+        resolved[[v]]$contested[[r]] %||%
+        key_value_text(table[[v]][r])
+      in_row <- in_row & strata[[v]] %in% allowed
+    }
+    # Within each parent a key text names its own stratum where that
+    # stratum is, and the stratum it spells otherwise. A stratum the row
+    # names exactly in more of its columns wins, whatever the column order.
+    own <- Filter(function(v) length(resolved[[v]]$contested[[r]]) > 0L, vars)
+    prefer <- function(idx) {
+      if (length(own) == 0L || length(idx) < 2L) {
+        return(idx)
+      }
+      exact <- vapply(own, function(v) {
+        strata[[v]][idx] == resolved[[v]]$labels[r]
+      }, logical(length(idx)))
+      exact <- matrix(exact, nrow = length(idx))
+      beaten <- vapply(seq_along(idx), function(i) {
+        any(vapply(seq_along(idx), function(j) {
+          all(exact[j, ] >= exact[i, ]) && any(exact[j, ] > exact[i, ])
+        }, logical(1)))
+      }, logical(1))
+      idx[!beaten]
+    }
+    within <- held[held$stratum %in% which(in_row), , drop = FALSE]
+    picks <- lapply(split(within$stratum, within$scope), prefer)
+    crowded <- Find(function(idx) length(idx) > 1L, picks)
+    if (!is_null(crowded)) {
+      found <- strata[crowded, , drop = FALSE]
+      if (length(vars) > 1L) {
+        abort_ambiguous_stratum_key(
+          paste(vapply(vars, function(v) as.character(written[[v]][r]), ""),
+                collapse = "/"),
+          do.call(paste, c(unname(as.list(found)), sep = "/")),
+          contested = any(vapply(vars, function(v) {
+            length(resolved[[v]]$contested[[r]]) > 0L
+          }, logical(1))),
+          call = call
+        )
+      }
+      shared <- Filter(
+        function(v) length(unique(found[[v]])) > 1L &&
+          (length(resolved[[v]]$ambiguous[[r]]) > 0L ||
+             length(resolved[[v]]$contested[[r]]) > 0L),
+        vars
+      )[1L]
+      abort_ambiguous_stratum_label(
+        as.character(table[[shared]][r]), unique(found[[shared]]), shared,
+        call = call
+      )
+    }
+    chosen <- unique(unlist(picks, use.names = FALSE))
+    if (length(chosen) == 1L) {
+      for (v in vars) {
+        if (length(resolved[[v]]$ambiguous[[r]]) > 0L ||
+              length(resolved[[v]]$contested[[r]]) > 0L) {
+          table[[v]][r] <- strata[[v]][chosen]
+        }
+      }
+    } else if (length(chosen) > 1L) {
+      # Different parents read the row as different strata.
+      per_scope[r] <- TRUE
+    }
+  }
+  done()
+}
+
+#' Does each row of a table name at least one stratum of a frame?
+#'
+#' Read as `resolve_stratum_columns()` reads a row, without refusing a row
+#' that names several.
+#' @noRd
+stratum_rows_named <- function(table, frame, vars) {
+  if (nrow(table) == 0L) {
+    return(logical(0))
+  }
+  resolved <- lapply(vars, function(v) {
+    stratum_label_candidates(table[[v]], frame[[v]])
+  })
+  strata <- vctrs::vec_unique(
+    as.data.frame(lapply(frame[vars], key_value_text), stringsAsFactors = FALSE)
+  )
+  vapply(seq_len(nrow(table)), function(r) {
+    in_row <- rep(TRUE, nrow(strata))
+    for (k in seq_along(vars)) {
+      allowed <- resolved[[k]]$ambiguous[[r]] %||%
+        resolved[[k]]$contested[[r]] %||%
+        key_value_text(resolved[[k]]$labels[r])
+      in_row <- in_row & strata[[vars[k]]] %in% allowed
+    }
+    any(in_row)
+  }, logical(1))
+}
+
+#' The rows of a stage's stratum tables each parent can read
+#'
+#' A later stage reads its size, threshold and allocation tables within each
+#' parent. A table keyed by the parent's identifier holds rows for every
+#' parent, and reading it whole in each one costs the number of parents times
+#' the number of rows. The parent columns are resolved once over the stage's
+#' frame, and a parent then reads the rows that can name it: those whose
+#' parent labels name it, name several parents, or are missing, which the
+#' reader still refuses.
+#' @param ancestors The parent columns of the stage.
+#' @return A function of a parent's rows that returns `draw` and `strata`,
+#'   the specs with their tables narrowed.
+#' @noRd
+parent_table_reader <- function(draw_spec, strata_spec, frame, ancestors) {
+  fields <- list(
+    draw = c("n", "frac", "certainty_size", "certainty_prop", "min_n",
+             "max_n"),
+    strata = c("variance", "cost", "cv", "importance")
+  )
+  plans <- list()
+  for (where in names(fields)) {
+    spec <- if (where == "draw") draw_spec else strata_spec
+    for (field in fields[[where]]) {
+      table <- spec[[field]]
+      if (!is.data.frame(table)) next
+      parent_vars <- intersect(intersect(ancestors, names(table)),
+                               names(frame))
+      if (length(parent_vars) == 0L) next
+      # The key text a row's label names, or NA where it can name several.
+      named <- lapply(parent_vars, function(v) {
+        found <- stratum_label_candidates(table[[v]], frame[[v]])
+        text <- key_value_text(found$labels)
+        text[lengths(found$ambiguous) > 0L |
+               lengths(found$contested) > 0L] <- NA_character_
+        text
+      })
+      plans[[length(plans) + 1L]] <- list(
+        where = where, field = field, vars = parent_vars, named = named
+      )
+    }
+  }
+  function(rows) {
+    out <- list(draw = draw_spec, strata = strata_spec)
+    for (plan in plans) {
+      keep <- rep(TRUE, length(plan$named[[1L]]))
+      for (k in seq_along(plan$vars)) {
+        here <- key_value_text(vctrs::vec_unique(rows[[plan$vars[k]]]))
+        keep <- keep & (is.na(plan$named[[k]]) | plan$named[[k]] %in% here)
+      }
+      table <- out[[plan$where]][[plan$field]]
+      out[[plan$where]][[plan$field]] <- table[keep, , drop = FALSE]
+    }
+    out
+  }
+}
+
+#' Refuse a label that names several strata
+#' @noRd
+abort_ambiguous_stratum_label <- function(label, candidates, var = NULL,
+                                          call = caller_env()) {
+  column <- if (is_null(var)) {
+    "its column"
+  } else {
+    cli::format_inline("{.field {var}}")
+  }
+  abort_samplyr(
+    c(
+      "Stratum label {.val {label}} names more than one stratum of {column}.",
+      "x" = "R writes {format_pool_sample(candidates)} as {.val {label}}.",
+      "i" = "Write each stratum as its value in full, such as
+             {.val {candidates[1]}}."
+    ),
+    class = "samplyr_error_stratum_label_ambiguous",
+    call = call
+  )
+}
+
+#' Refuse a row of several stratum columns that names several strata
+#'
+#' @param label The row's values as written, joined by "/".
+#' @param candidates The whole keys of the strata it names.
+#' @param contested `TRUE` when a value is one stratum's key text and another
+#'   stratum's spelling, which no text can write more fully.
+#' @noRd
+abort_ambiguous_stratum_key <- function(label, candidates, contested,
+                                        call = caller_env()) {
+  abort_samplyr(
+    c(
+      "Stratum key {.val {label}} names more than one stratum.",
+      "x" = "It can name {format_pool_sample(candidates)}.",
+      "i" = if (contested) {
+        "Give the stratum columns as numbers, which name each stratum
+         exactly."
+      } else {
+        "Write each value of the key in full, such as
+         {.val {candidates[1]}}, or give the columns as numbers."
+      }
+    ),
+    class = "samplyr_error_stratum_label_ambiguous",
+    call = call
+  )
 }
 
 #' @noRd
@@ -33,8 +405,9 @@ make_group_key <- function(df, vars, call = caller_env()) {
   }
 
   encode_component <- function(x) {
-    missing <- is.na(x)
     value <- key_value_text(x)
+    # NaN is a value apart from NA, as in a single-column key.
+    missing <- is.na(value)
     # Numbers and logicals print in ASCII. Anything else may not.
     if (!is.numeric(x) && !is.logical(x)) {
       value <- enc2utf8(value)
@@ -211,24 +584,27 @@ first_row_indices_by_group <- function(indices_list) {
   first
 }
 
-#' Two distinct values of a numeric grouping column that print alike
+#' Two distinct values of a grouping column that have the same key text
 #'
 #' Group keys are built with `key_value_text()`, which keeps 15 significant
-#' digits of a fractional or very large double, so two values that differ
-#' only beyond them would merge two strata or clusters. Checked on the distinct values, which is cheap.
+#' digits of a fractional or very large double and writes a date or a
+#' difftime as it prints, so two values that differ beyond that would merge
+#' two strata or clusters. Every double-backed column is checked, on its
+#' distinct values, which is cheap. Missing values are not a clash.
 #' Returns the first two such values as text, or `NULL`.
 #' @noRd
 key_precision_clash <- function(x, loc = NULL) {
-  if (!is.numeric(x) || is.integer(x) || inherits(x, "integer64")) {
+  if (!is.double(x) || inherits(x, "integer64")) {
     return(NULL)
   }
   values <- if (is_null(loc)) vctrs::vec_unique(x) else vctrs::vec_slice(x, loc)
   text <- key_value_text(values)
-  if (!anyDuplicated(text)) {
+  dup <- duplicated(text, incomparables = NA_character_)
+  if (!any(dup)) {
     return(NULL)
   }
-  merged <- values[text == text[duplicated(text)][1]]
-  sprintf("%.17g", unclass(merged)[1:2])
+  merged <- values[which(text == text[dup][1])]
+  sprintf("%.17g", vctrs::vec_data(merged)[1:2])
 }
 
 #' Refuse a numeric grouping column whose distinct values print alike
@@ -240,8 +616,8 @@ check_key_precision <- function(x, var, call = caller_env(), loc = NULL) {
   }
   abort_samplyr(
     c(
-      "{.field {var}} has distinct values that are equal to 15 significant
-       digits.",
+      "{.field {var}} has distinct values that would have the same grouping
+       key.",
       "x" = "{.val {shown[1]}} and {.val {shown[2]}} would be read as one
              group.",
       "i" = "Round {.field {var}}, or store its values as integer or
@@ -275,6 +651,9 @@ local_key_loc_cache <- function(frame = caller_env()) {
 #' What `vctrs::vec_unique_loc(df[vars])` returns, from the cache if it can
 #' @noRd
 unique_key_loc <- function(df, vars) {
+  # A column named twice keys the rows as once, and a cached set of the same
+  # length is then the same set.
+  vars <- unique(vars)
   cols <- .subset(df, vars)
   n <- nrow(df)
   entries <- key_loc_cache$entries

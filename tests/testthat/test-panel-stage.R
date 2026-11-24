@@ -76,7 +76,7 @@ test_that("an occasion of a lower-stage master keeps every parent", {
 test_that("the lower-stage record states its stage, unit and pools", {
   record <- ps_record(ps_master())
 
-  expect_identical(record$version, 7L)
+  expect_identical(record$version, 8L)
   expect_identical(record$assignment_stage, 2L)
   expect_identical(record$unit, "cluster")
   expect_identical(record$key_vars, c("psu", "hh"))
@@ -251,7 +251,7 @@ test_that("the assignment stage survives a receipt round trip", {
     path, simplifyVector = FALSE
   )$execution$panel_assignment
 
-  expect_identical(encoded$version, 7L)
+  expect_identical(encoded$version, 8L)
   expect_identical(encoded$assignment_stage, 2L)
   expect_identical(encoded$unit, "cluster")
   expect_identical(unlist(encoded$key_vars), c("psu", "hh"))
@@ -278,7 +278,7 @@ test_that("replay passes the assignment stage back rather than defaulting", {
 
   expect_identical(
     samplyr:::decode_panel_stage_argument(
-      samplyr:::prepare_panel_record(receipt$panel_assignment, "A replay")
+      samplyr:::prepare_receipt_record(receipt$panel_assignment, "A replay")
     ),
     2L
   )
@@ -300,16 +300,16 @@ test_that("a first-stage receipt replays without the argument", {
   # Stage 1 is what an omitted argument already means.
   expect_null(
     samplyr:::decode_panel_stage_argument(
-      samplyr:::prepare_panel_record(receipt$panel_assignment, "A replay")
+      samplyr:::prepare_receipt_record(receipt$panel_assignment, "A replay")
     )
   )
 })
 
 ## Reading the record versions
 
-test_that("version 7 is supported and no other is", {
-  expect_identical(samplyr:::supported_panel_record_versions, 7L)
-  for (version in c(1L, 6L, 8L)) {
+test_that("version 8 is supported and no other is", {
+  expect_identical(samplyr:::supported_panel_record_versions, 8L)
+  for (version in c(1L, 6L, 7L, 9L)) {
     expect_error(
       samplyr:::check_panel_record_supported(
         list(algorithm = "blocked_random_quota", version = version), "A wave"

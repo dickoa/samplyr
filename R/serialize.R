@@ -147,6 +147,9 @@ frame_stack_format_version <- 1L
 # Shared-weight files store the source and declarative transformation only.
 shared_sample_format_id <- "samplyr/shared-sample"
 shared_sample_format_version <- 1L
+# The file states the call, not the record's row keys, so its version stays
+# apart from the in-memory record's.
+shared_sample_transformation_version <- 1L
 
 #' Write a sampling design to a file
 #'
@@ -839,7 +842,7 @@ replay_design <- function(
   }
   reps <- if (!is_null(receipt$reps)) as.integer(receipt$reps) else NULL
   # Validate the assignment law before decoding replay arguments.
-  record <- prepare_panel_record(receipt$panel_assignment, "A replay")
+  record <- prepare_receipt_record(receipt$panel_assignment, "A replay")
   # Replay scheduled masters from their full schedule.
   panels <- decode_panel_argument(receipt, record)
   # Preserve the scheduled small-pool policy.
@@ -1523,14 +1526,15 @@ check_weight_share_record_writable <- function(record, fn_name,
                                                call = caller_env()) {
   if (
     !identical(record$algorithm, weight_share_record_algorithm) ||
-      !identical(record$version, 1L)
+      !identical(record$version, supported_weight_share_record_versions)
   ) {
     abort_samplyr(
       c(
         "{.fn {fn_name}} cannot write this transformation record.",
         "x" = "It states algorithm {.val {record$algorithm}} at version
                {.val {record$version}}, and this samplyr writes
-               {.val {weight_share_record_algorithm}} at version {.val {1L}}.",
+               {.val {weight_share_record_algorithm}} at version
+               {.val {supported_weight_share_record_versions}}.",
         "i" = "{.fn saveRDS} preserves the object whole."
       ),
       class = "samplyr_error_serialize_unsupported",
@@ -1545,7 +1549,7 @@ encode_weight_share_call <- function(record) {
   spec <- record$call
   list(
     algorithm = record$algorithm,
-    version = record$version,
+    version = shared_sample_transformation_version,
     # JSON objects preserve named join pairs.
     by = as.list(spec$by),
     to = as.list(spec$to),
@@ -2750,14 +2754,18 @@ encode_panel_assignment <- function(record, call = caller_env()) {
     certainty = record$certainty,
     small_pool_policy = record$small_pool_policy %||% "error",
     # Store the schedule needed to reproduce panel blocks.
-    schedule = if (!is_null(record$schedule)) {
+    schedule = if (!is_null(record[["schedule"]])) {
       data.frame(
-        panel = as.integer(record$schedule$panel),
-        period = as.integer(record$schedule$period),
-        subround = as.integer(record$schedule$subround),
-        active = as.logical(record$schedule$active),
-        visit = as.integer(record$schedule$visit)
+        panel = as.integer(record[["schedule"]]$panel),
+        period = as.integer(record[["schedule"]]$period),
+        subround = as.integer(record[["schedule"]]$subround),
+        active = as.logical(record[["schedule"]]$active),
+        visit = as.integer(record[["schedule"]]$visit)
       )
+    },
+    # A schedule edited after the execution is refused when the file is read.
+    schedule_checksum = if (!is_null(record[["schedule"]])) {
+      schedule_checksum(record[["schedule"]])
     }
     # Store the assignment law, not reproducible realized pools.
   )
@@ -2811,6 +2819,8 @@ decode_small_pool_argument <- function(record, panels) {
 #' one, otherwise the panel count. A receipt written before
 #' schedules existed carries only the count, which is what it was executed
 #' with.
+#' @param record The receipt's record, as `prepare_receipt_record()` returns
+#'   it.
 #' @noRd
 decode_panel_argument <- function(receipt, record) {
   if (is_null(receipt$panels)) {
@@ -2821,33 +2831,12 @@ decode_panel_argument <- function(receipt, record) {
   if (identical(record$certainty, "assigned")) {
     return(subrounds(as.integer(receipt$panels)))
   }
-  schedule <- record$schedule
+  schedule <- record[["schedule"]]
   if (is_null(schedule) || length(schedule) == 0) {
     return(as.integer(receipt$panels))
   }
-  if (!is.data.frame(schedule)) {
-    # A row of an inactive occasion writes its visit as null.
-    field <- function(name, missing) {
-      vapply(schedule, function(row) {
-        value <- if (name %in% names(row)) row[[name]]
-        if (length(value) == 0L) missing else value
-      }, missing)
-    }
-    schedule <- data.frame(
-      panel = field("panel", NA_integer_),
-      period = field("period", NA_integer_),
-      subround = field("subround", NA_integer_),
-      active = field("active", NA),
-      visit = field("visit", NA_integer_)
-    )
-  }
-  data.frame(
-    panel = as.integer(schedule$panel),
-    period = as.integer(schedule$period),
-    subround = as.integer(schedule$subround),
-    active = as.logical(schedule$active),
-    visit = as.integer(schedule$visit)
-  )
+  # `prepare_receipt_record()` checked the rows and typed them.
+  schedule[c("panel", "period", "subround", "active", "visit")]
 }
 
 #' The occasion a materialized sample realizes
@@ -3118,7 +3107,7 @@ decode_weight_share_call <- function(transformation, call = caller_env()) {
   if (
     !identical(algorithm, weight_share_record_algorithm) ||
       !is.numeric(version) || length(version) != 1 || is.na(version) ||
-      version != 1
+      version != shared_sample_transformation_version
   ) {
     abort_samplyr(
       c(

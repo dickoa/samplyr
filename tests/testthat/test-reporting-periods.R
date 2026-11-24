@@ -92,7 +92,7 @@ test_that("a schedule whose periods have one subround assigns as none", {
   expect_null(samplyr:::normalize_panel_input(same)$reporting)
   expect_identical(stated$.panel, plain$.panel)
   record <- attr(stated, "metadata")$panel_assignment
-  expect_identical(record$version, 7L)
+  expect_identical(record$version, 8L)
   expect_identical(unique(record$schedule$subround), 1L)
 })
 
@@ -199,7 +199,7 @@ test_that("a pool needs a unit in each period, not at each subround", {
 
   master <- period_master(n = 3)
   record <- attr(master, "metadata")$panel_assignment
-  expect_identical(record$version, 7L)
+  expect_identical(record$version, 8L)
   expect_identical(
     record$schedule$period,
     as.integer(ceiling(record$schedule$occasion / 3))
@@ -724,7 +724,7 @@ test_that("a master with periods replays from its design file", {
   write_design(master, path, frame = period_frame())
 
   receipt <- jsonlite::read_json(path)$execution$panel_assignment
-  expect_identical(receipt$version, 7L)
+  expect_identical(receipt$version, 8L)
   written <- data.frame(
     period = vapply(receipt$schedule, function(row) row$period, integer(1)),
     subround = vapply(receipt$schedule, function(row) row$subround,
@@ -775,7 +775,7 @@ test_that("an svyplan schedule with subrounds checks each period", {
     class = "samplyr_error_panel_small_pool"
   )
   master <- execute(design(5), period_frame(), seed = 2, panels = plan)
-  expect_identical(attr(master, "metadata")$panel_assignment$version, 7L)
+  expect_identical(attr(master, "metadata")$panel_assignment$version, 8L)
 })
 
 test_that("kept primary units are told apart by their visits", {

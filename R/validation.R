@@ -392,6 +392,9 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
   abort_incomplete_registers(
     schedule, design, previous_sample = previous_sample, call = call
   )
+  # A certainty plan holds for the register it was solved on, as execute()
+  # checks.
+  validate_certainty_bridge(design, schedule, call = call)
 
   # Judge each stage on its effective linked frame.
   effective <- effective_register_frames(
@@ -483,11 +486,17 @@ check_stage_targets <- function(design, stage_idx, frame) {
     record
   }
   parents <- if (length(ancestors)) split_row_indices(frame, ancestors)$indices else list(seq_len(nrow(frame)))
+  read_parent <- parent_table_reader(spec$draw_spec, spec$strata, frame,
+                                     ancestors)
   for (rows in parents) {
     units <- frame[rows, , drop = FALSE]
     if (!is_null(spec$clusters)) {
       units <- units[!duplicated(units[spec$clusters$vars]), , drop = FALSE]
     }
+    # The rows of the stage's tables that can name this parent.
+    tables <- read_parent(units)
+    draw <- tables$draw
+    spec$strata <- tables$strata
     strata <- spec$strata$vars
     groups <- if (length(strata)) split_row_indices(units, strata)$indices else list(seq_len(nrow(units)))
     # A cohort sizes its take on the whole listing, as the draw does.
@@ -562,7 +571,9 @@ check_stage_targets <- function(design, stage_idx, frame) {
       !is_null(draw$certainty_prop)
     if (by_size) {
       findings <- rep(NA_character_, length(groups))
-      lookup <- if (has_certainty) prepare_stratum_draw_lookup(draw, strata)
+      lookup <- if (has_certainty) {
+        prepare_stratum_draw_lookup(draw, strata, units)
+      }
       for (j in seq_along(groups)) {
         mos_vals <- units[[draw$mos]][groups[[j]]]
         take <- min(sizes[j], length(mos_vals))
@@ -593,7 +604,7 @@ check_stage_targets <- function(design, stage_idx, frame) {
       next
     }
     if (!has_certainty) next
-    lookup <- prepare_stratum_draw_lookup(draw, strata)
+    lookup <- prepare_stratum_draw_lookup(draw, strata, units)
     for (j in seq_along(groups)) {
       pool <- units[groups[[j]], , drop = FALSE]
       pool_draw <- if (length(strata)) resolve_stratum_draw_spec(
@@ -1355,8 +1366,8 @@ report_validation_issues <- function(issues) {
         "{stage}: cluster variable{?s} {.var {vars}} contain{?s/} NA values"
       ),
       "key_precision" = cli::format_inline(
-        "{stage}: {.var {vars}} ha{?s/ve} distinct values that are equal to
-         15 significant digits"
+        "{stage}: {.var {vars}} ha{?s/ve} distinct values that would have the
+         same grouping key"
       ),
       "mos" = cli::format_inline(
         "{stage}: missing MOS variable: {.var {vars}}"
@@ -1517,7 +1528,11 @@ preflight_later_stages <- function(schedule, design, sample = NULL,
 #' a take table keyed by the parent's identifier may cover every parent of
 #' the first stage. An entry for a parent the sample did not select names a
 #' real stratum no unit can reach, so it is not judged. Entries under the
-#' selected parents still are, at every stage the continuation runs.
+#' selected parents still are, at every stage the continuation runs. Labels
+#' are read among the strata the stage can reach, its linked candidates, so
+#' the rows of a parent the sample did not select cannot make a label name
+#' several strata. A label naming a stratum the supplied register holds
+#' under such a parent is not judged either.
 #' @param selected The sample a continuation extends, or NULL. Its executed
 #'   stages say which ancestors are selected, not the columns it carries.
 #' @noRd
@@ -1526,19 +1541,22 @@ check_schedule_strata_known <- function(schedule, effective, design,
                                         call = caller_env()) {
   for (i in seq_along(schedule$entries)) {
     stage_idx <- schedule$entries[[i]]$stage
-    frame <- if (i == 1L) schedule$entries[[1]]$frame else effective[[i]]
     check_stage_strata_known(
-      design, stage_idx, frame,
+      design, stage_idx, effective[[i]],
       selected = selected,
+      supplied = if (i == 1L) schedule$entries[[1]]$frame,
       call = call
     )
   }
   invisible(NULL)
 }
 
+#' @param frame The units the stage can reach.
+#' @param supplied The register the stage was given, when it holds more
+#'   units than it can reach, or NULL.
 #' @noRd
 check_stage_strata_known <- function(design, stage_idx, frame,
-                                     selected = NULL,
+                                     selected = NULL, supplied = NULL,
                                      call = caller_env()) {
   rlang::local_error_call(call)
   spec <- design$stages[[stage_idx]]
@@ -1577,18 +1595,62 @@ check_stage_strata_known <- function(design, stage_idx, frame,
     }
   }
 
+  if (!is_null(supplied) && !all(strata_vars %in% names(supplied))) {
+    supplied <- NULL
+  }
+  # A later stage draws within each parent, and reads a label there.
+  ancestors <- intersect(
+    collect_ancestor_cluster_vars(design, stage_idx), names(frame)
+  )
+  scoped <- present
+  scope <- NULL
+  if (length(ancestors) > 0L) {
+    scope_vars <- unique(c(ancestors, strata_vars))
+    scoped <- vctrs::vec_slice(
+      frame[, scope_vars, drop = FALSE], unique_key_loc(frame, scope_vars)
+    )
+    scope <- make_group_key(scoped, ancestors)
+  }
+  resolve <- function(table) {
+    resolve_stratum_columns(table, scoped, strata_vars, scope = scope,
+                            by_column = TRUE, call = call)
+  }
+  # A row read in each parent names a stratum of every parent it is in.
+  read_per_parent <- function(table) {
+    attr(table, "per_scope") %||% logical(nrow(table))
+  }
+  # A row no unit can reach may still name a stratum of the register.
+  unreached <- function(table, extra) {
+    if (any(extra) && !is_null(supplied)) {
+      extra[extra] <- !stratum_rows_named(
+        table[extra, , drop = FALSE], supplied, strata_vars
+      )
+    }
+    extra
+  }
+
   for (arg in c("n", "frac")) {
     value <- spec$draw_spec[[arg]]
     if (is.data.frame(value)) {
       if (!all(strata_vars %in% names(value))) next
+      written <- value
+      value <- resolve(value)
       keys <- make_group_key(value, strata_vars)
-      extra <- !keys %in% present_keys & reachable(value)
+      extra <- unreached(
+        written,
+        !keys %in% present_keys & !read_per_parent(value) & reachable(value)
+      )
       labels <- format_key_labels(
         value[extra, strata_vars, drop = FALSE], strata_vars
       )
     } else if (!is_null(names(value)) && length(strata_vars) == 1L) {
-      named <- stats::setNames(data.frame(names(value)), strata_vars)
-      extra <- !names(value) %in% present_keys & reachable(named)
+      written <- stats::setNames(data.frame(names(value)), strata_vars)
+      named <- resolve(written)
+      extra <- unreached(
+        written,
+        !named[[strata_vars]] %in% present_keys & !read_per_parent(named) &
+          reachable(named)
+      )
       labels <- names(value)[extra]
     } else {
       next
@@ -1858,8 +1920,9 @@ digest_frame_drift <- function(digest, design, frame, parts = FALSE) {
 drift_pool_rows <- function(frame, st, scope_keys = NULL,
                             key_of_pool = NULL) {
   strata <- st$strata %||% character(0)
-  frame_labels <- lapply(strata, function(v) as.character(frame[[v]]))
-  pool_labels <- lapply(strata, function(v) as.character(st$pools[[v]]))
+  # Key text, so a stratum reads alike whatever its storage and scipen.
+  frame_labels <- lapply(strata, function(v) key_value_text(frame[[v]]))
+  pool_labels <- lapply(strata, function(v) key_value_text(st$pools[[v]]))
   scoped <- !is_null(scope_keys)
 
   if (any(vapply(c(frame_labels, pool_labels), anyNA, logical(1)))) {

@@ -294,6 +294,8 @@ join_aux_to_strata <- function(
     )
   }
 
+  # Labels of a numeric stratum may use either spelling R writes for it.
+  aux_df <- resolve_stratum_columns(aux_df, stratum_info, key_vars, call = call)
   key_df <- aux_df[, key_vars, drop = FALSE]
   if (anyNA(key_df)) {
     missing_key_cols <- key_vars[vapply(key_df, anyNA, logical(1))]
@@ -645,7 +647,11 @@ allocate_strata <- function(
             "i" = "Use a data frame for multi-variable stratification: {.val {strata_spec$vars}}"
           ), class = "samplyr_error_alloc_invalid_input_type", call = NULL)
         }
-        matched <- n_total[as.character(strata_ids)]
+        names(n_total) <- resolve_stratum_labels(
+          names(n_total), strata_ids, strata_spec$vars, call = NULL
+        )
+        check_allocation_names(n_total, "n", call = NULL)
+        matched <- n_total[key_value_text(strata_ids)]
         if (anyNA(matched)) {
           missing <- strata_ids[is.na(matched)]
           abort_samplyr(c(
@@ -665,7 +671,11 @@ allocate_strata <- function(
             "i" = "Use a data frame for multi-variable stratification: {.val {strata_spec$vars}}"
           ), class = "samplyr_error_alloc_invalid_input_type", call = NULL)
         }
-        frac_matched <- frac[as.character(strata_ids)]
+        names(frac) <- resolve_stratum_labels(
+          names(frac), strata_ids, strata_spec$vars, call = NULL
+        )
+        check_allocation_names(frac, "frac", call = NULL)
+        frac_matched <- frac[key_value_text(strata_ids)]
         if (anyNA(frac_matched)) {
           missing <- strata_ids[is.na(frac_matched)]
           abort_samplyr(c(

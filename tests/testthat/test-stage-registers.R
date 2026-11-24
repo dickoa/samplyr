@@ -2347,3 +2347,266 @@ test_that("an optional field is never shadowed by a longer sibling", {
     c("frame_info:fingerprint", "portable_frame_info:fingerprint")
   )
 })
+
+## A parent id its class declares missing names no parent
+
+# haven's labelled_spss reads NA under is.na() and its code under vctrs and
+# dplyr. Linking used the code, so a listing row under a declared-missing code
+# equal to a selected id was drawn as that parent's row. The oracle of every
+# test is the same listing with those rows removed, under the same seed.
+
+dm_psu <- function() data.frame(psu_id = c(1, 2, 3, 4))
+
+dm_listing <- function(psu_id) {
+  data.frame(psu_id = psu_id, hh_id = seq_along(psu_id))
+}
+
+dm_design <- function(on_empty = "error", n1 = 4, method1 = "srswor") {
+  sampling_design() |>
+    add_stage("psu") |> cluster_by(psu_id) |> draw(n = n1, method = method1) |>
+    add_stage("hh") |> draw(n = 2, on_empty = on_empty)
+}
+
+# Every declared-missing form, with the rows of PSU 1 missing.
+dm_codes <- function() {
+  ids <- rep(c(1, 2, 3, 4), each = 5)
+  list(
+    na_values = haven::labelled_spss(ids, na_values = 1),
+    na_range = haven::labelled_spss(ids, na_range = c(0.5, 1.5)),
+    plain_na = replace(ids, ids == 1, NA)
+  )
+}
+
+dm_run <- function(design, frames, seed = 1) {
+  warnings <- character(0)
+  out <- withCallingHandlers(
+    tryCatch(execute(design, frames, seed = seed, frame_digest = "full"),
+             error = identity),
+    warning = function(w) {
+      warnings <<- c(warnings, cli::ansi_strip(conditionMessage(w)))
+      invokeRestart("muffleWarning")
+    }
+  )
+  list(out = out, warnings = warnings)
+}
+
+dm_rows <- function(s) {
+  data.frame(
+    psu_id = as.double(vctrs::vec_data(s$psu_id)),
+    hh_id = s$hh_id,
+    weight = s$.weight
+  )
+}
+
+test_that("a declared-missing parent code leaves its parent without rows", {
+  skip_if_not_installed("haven")
+  checked <- character(0)
+  for (form in names(dm_codes())) {
+    listing <- dm_listing(dm_codes()[[form]])
+    removed <- listing[!is.na(listing$psu_id), , drop = FALSE]
+
+    err <- dm_run(dm_design("error"), list(dm_psu(), listing))$out
+    expect_s3_class(err, "samplyr_error_frame_missing_parent")
+
+    for (mode in c("warn", "silent")) {
+      got <- dm_run(dm_design(mode), list(dm_psu(), listing))
+      want <- dm_run(dm_design(mode), list(dm_psu(), removed))
+      expect_s3_class(got$out, "tbl_sample")
+      expect_identical(dm_rows(got$out), dm_rows(want$out), info = form)
+      expect_identical(got$warnings, want$warnings, info = form)
+      expect_identical(
+        attr(got$out, "metadata")$empty_parents,
+        attr(want$out, "metadata")$empty_parents,
+        info = form
+      )
+      expect_false(is.null(get_frame_digest(got$out)), info = form)
+      checked <- c(checked, paste(form, mode))
+    }
+    # Written out: PSU 1 contributes nothing, the others 2 of 5 rows each.
+    silent <- dm_run(dm_design("silent"), list(dm_psu(), listing))$out
+    expect_identical(sort(unique(dm_rows(silent)$psu_id)), c(2, 3, 4))
+    expect_equal(silent$.weight, rep(5 / 2, 6))
+  }
+  expect_setequal(checked, c(
+    "na_values warn", "na_values silent", "na_range warn",
+    "na_range silent", "plain_na warn", "plain_na silent"
+  ))
+})
+
+test_that("a character id declared missing is filtered as a numeric one is", {
+  skip_if_not_installed("haven")
+  psu <- data.frame(psu_id = c("P1", "P2", "P3", "P4"))
+  ids <- rep(psu$psu_id, each = 5)
+  listing <- dm_listing(haven::labelled_spss(ids, na_values = "P1"))
+  removed <- listing[!is.na(listing$psu_id), , drop = FALSE]
+
+  err <- dm_run(dm_design("error"), list(psu, listing))$out
+  expect_s3_class(err, "samplyr_error_frame_missing_parent")
+
+  got <- dm_run(dm_design("silent"), list(psu, listing))$out
+  want <- dm_run(dm_design("silent"), list(psu, removed))$out
+  expect_identical(as.character(vctrs::vec_data(got$psu_id)),
+                   as.character(vctrs::vec_data(want$psu_id)))
+  expect_identical(got$hh_id, want$hh_id)
+  expect_false(anyNA(got$psu_id))
+})
+
+test_that("labelled ids with no missing code, or a code no parent uses, link", {
+  skip_if_not_installed("haven")
+  ids <- rep(c(1, 2, 3, 4), each = 5)
+  plain <- dm_run(dm_design(), list(dm_psu(), dm_listing(ids)))
+  labelled <- dm_run(
+    dm_design(), list(dm_psu(), dm_listing(haven::labelled_spss(ids)))
+  )
+  expect_identical(dm_rows(labelled$out), dm_rows(plain$out))
+  expect_identical(nrow(plain$out), 8L)
+
+  # Rows under a declared-missing code that is no parent's id.
+  extra <- dm_listing(haven::labelled_spss(c(ids, 99, 99), na_values = 99))
+  got <- dm_run(dm_design(), list(dm_psu(), extra))
+  expect_identical(got$warnings, character(0))
+  expect_identical(dm_rows(got$out), dm_rows(plain$out))
+  expect_false(is.null(get_frame_digest(got$out)))
+})
+
+test_that("a continuation filters a declared-missing parent code too", {
+  skip_if_not_installed("haven")
+  listing <- dm_listing(dm_codes()$na_values)
+  removed <- listing[!is.na(listing$psu_id), , drop = FALSE]
+  for (mode in c("error", "silent")) {
+    design <- dm_design(mode)
+    first <- execute(design, dm_psu(), stages = 1, seed = 1)
+    got <- tryCatch(execute(first, listing, seed = 2), error = identity)
+    if (identical(mode, "error")) {
+      expect_s3_class(got, "samplyr_error_frame_missing_parent")
+    } else {
+      want <- execute(first, removed, seed = 2)
+      expect_identical(dm_rows(got), dm_rows(want))
+    }
+  }
+})
+
+test_that("a continued scan reaches no unit under a declared-missing code", {
+  skip_if_not_installed("haven")
+  # The households listed under the missing code have no persons, so a scan
+  # that reached them would report a register gap the control does not have.
+  hh <- data.frame(
+    psu_id = haven::labelled_spss(rep(c(1, 2, 3, 4), each = 3), na_values = 1),
+    hh_id = 1:12
+  )
+  person <- data.frame(
+    psu_id = rep(rep(c(2, 3, 4), each = 3), each = 2),
+    hh_id = rep(4:12, each = 2),
+    person_id = 1:18
+  )
+  removed <- hh[!is.na(hh$psu_id), , drop = FALSE]
+  design <- sampling_design() |>
+    add_stage("psu") |> cluster_by(psu_id) |> draw(n = 2) |>
+    add_stage("hh") |> cluster_by(hh_id) |> draw(n = 2, on_empty = "silent") |>
+    add_stage("person") |> draw(n = 1)
+  first <- execute(design, dm_psu(), stages = 1, seed = 3)
+  collect <- function(listing) {
+    warnings <- character(0)
+    withCallingHandlers(
+      execute(first, listing, person, seed = 4),
+      warning = function(w) {
+        warnings <<- c(warnings, cli::ansi_strip(conditionMessage(w)))
+        invokeRestart("muffleWarning")
+      }
+    )
+    warnings
+  }
+  expect_identical(collect(hh), collect(removed))
+})
+
+test_that("a parent drawn twice with replacement keeps its rows apart from a missing code", {
+  skip_if_not_installed("haven")
+  listing <- dm_listing(dm_codes()$na_values)
+  removed <- listing[!is.na(listing$psu_id), , drop = FALSE]
+  design <- dm_design("silent", n1 = 4, method1 = "srswr")
+  twice <- FALSE
+  for (seed in 1:5) {
+    got <- dm_run(design, list(dm_psu(), listing), seed = seed)$out
+    want <- dm_run(design, list(dm_psu(), removed), seed = seed)$out
+    expect_identical(dm_rows(got), dm_rows(want), info = paste("seed", seed))
+    first <- execute(design, dm_psu(), stages = 1, seed = seed)
+    twice <- twice || anyDuplicated(first$psu_id) > 0L
+  }
+  expect_true(twice)
+})
+
+test_that("a compound ancestry with one component declared missing is incomplete", {
+  skip_if_not_installed("haven")
+  hh <- data.frame(psu_id = rep(c(1, 2), each = 3), hh_id = rep(1:3, 2))
+  person <- data.frame(
+    psu_id = rep(hh$psu_id, each = 2),
+    hh_id = haven::labelled_spss(rep(hh$hh_id, each = 2), na_values = 2),
+    person_id = seq_len(12)
+  )
+  removed <- person[!is.na(person$hh_id), , drop = FALSE]
+  three_stages <- function(on_empty) {
+    sampling_design() |>
+      add_stage("psu") |> cluster_by(psu_id) |> draw(n = 2) |>
+      add_stage("hh") |> cluster_by(hh_id) |> draw(n = 3) |>
+      add_stage("person") |> draw(n = 1, on_empty = on_empty)
+  }
+  design <- three_stages("silent")
+  frames <- list(data.frame(psu_id = c(1, 2)), hh)
+  got <- execute(design, c(frames, list(person)), seed = 1)
+  want <- execute(design, c(frames, list(removed)), seed = 1)
+  expect_identical(got$person_id, want$person_id)
+  expect_identical(got$.weight, want$.weight)
+  expect_false(any(as.double(vctrs::vec_data(got$hh_id)) == 2))
+
+  # The scan names the households whose only persons carry the missing code.
+  refused <- dm_run(three_stages("error"), c(frames, list(person)))
+  expect_s3_class(refused$out, "samplyr_error_frame_missing_parent")
+  expect_length(refused$warnings, 1L)
+  expect_match(refused$warnings, "2 candidate units of stage 3", fixed = TRUE)
+  expect_match(refused$warnings, "1/2, 2/2.", fixed = TRUE)
+})
+
+test_that("a register gap under a declared-missing code is reported as one", {
+  skip_if_not_installed("haven")
+  listing <- dm_listing(dm_codes()$na_values)
+  removed <- listing[!is.na(listing$psu_id), , drop = FALSE]
+  # Two of four PSUs, so some seed leaves PSU 1 out and only the scan sees it.
+  design <- dm_design("error", n1 = 2)
+  seen <- FALSE
+  for (seed in 1:6) {
+    got <- dm_run(design, list(dm_psu(), listing), seed = seed)
+    want <- dm_run(design, list(dm_psu(), removed), seed = seed)
+    expect_identical(got$warnings, want$warnings, info = paste("seed", seed))
+    expect_identical(class(got$out), class(want$out), info = paste("seed", seed))
+    seen <- seen || any(grepl("do not cover every candidate", got$warnings))
+  }
+  expect_true(seen)
+  expect_error(
+    validate_frame(design, list(dm_psu(), listing)),
+    class = "samplyr_error_frame_ancestry_na"
+  )
+})
+
+test_that("a carried variable declared missing below disagrees with its parent", {
+  skip_if_not_installed("haven")
+  psu <- data.frame(psu_id = 1:4, region = c(1, 1, 2, 2))
+  design <- sampling_design() |>
+    add_stage("psu") |> stratify_by(region) |> cluster_by(psu_id) |>
+    draw(n = 2) |>
+    add_stage("hh") |> draw(n = 2)
+  region <- rep(psu$region, each = 5)
+  for (form in c("labelled", "plain")) {
+    below <- if (identical(form, "labelled")) {
+      haven::labelled_spss(region, na_values = 1)
+    } else {
+      replace(region, region == 1, NA)
+    }
+    listing <- data.frame(psu_id = rep(1:4, each = 5), hh_id = 1:20,
+                          region = below)
+    expect_error(
+      execute(design, list(psu, listing), seed = 1),
+      class = "samplyr_error_frame_parent_conflict",
+      info = form
+    )
+  }
+})

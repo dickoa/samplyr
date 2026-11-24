@@ -35,8 +35,18 @@ check_document_versions <- function(payload, path = "$", call = caller_env()) {
                     class = "samplyr_error_design_file_malformed", call = call)
     }
     execution <- payload$execution
-    if (is.list(execution) && !is_null(execution$panel_assignment)) {
-      prepare_panel_record(execution$panel_assignment, "A design file", call = call)
+    if (is.list(execution)) {
+      # Every call of a chain states the record it was drawn under.
+      calls <- c(
+        if (is.list(execution[["earlier_calls"]])) execution[["earlier_calls"]],
+        list(execution)
+      )
+      for (cl in calls) {
+        if (is.list(cl) && !is_null(cl$panel_assignment)) {
+          prepare_receipt_record(cl$panel_assignment, "A design file",
+                                 call = call)
+        }
+      }
     }
     schema <- payload$schema
     vocabulary <- if (is.list(schema)) schema$method_vocabulary else NULL

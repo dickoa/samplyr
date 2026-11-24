@@ -37,7 +37,10 @@ draw(
 later stage either reading applies within each selected parent, so a
 total is a total per parent, not one for the whole survey.
 \item A named vector: stratum-specific sizes (for single stratification
-variable). A name, or a data frame row, for a stratum the stage cannot
+variable). A numeric stratum is named by its number as
+\code{as.character()} writes it under any \code{scipen}, as svyplan names its
+sizes, and the same holds for a character column of a data frame.
+A name, or a data frame row, for a stratum the stage cannot
 reach is refused at execution (\code{samplyr_error_alloc_unknown_strata}).
 A named vector or a data frame gives the sizes itself, so it is
 refused alongside \code{alloc} (\code{samplyr_error_alloc_named_n_with_alloc}).

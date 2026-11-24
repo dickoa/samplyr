@@ -277,6 +277,85 @@ test_that("a frame that disagrees with the register is refused before RNG", {
   refused(two_sizes)
 })
 
+test_that("validation refuses a register the plan was not solved on", {
+  plan <- certainty_plan_fixture()
+  frame <- certainty_element_frame()
+  frame$id <- seq_len(nrow(frame))
+  d <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_systematic", mos = N) |>
+    add_stage() |> draw(n = plan)
+  quietly <- function(expr) suppressWarnings(suppressMessages(expr))
+  routes <- list(
+    validate_frame = function(f) validate_frame(d, f),
+    execute = function(f) execute(d, f, seed = 1),
+    exante_digest = function(f) exante_digest(d, f),
+    exante_probabilities = function(f) {
+      exante_probabilities(d, f, key = id)
+    },
+    frame_summary = function(f) frame_summary(d, f)
+  )
+  for (route in names(routes)) {
+    expect_no_error(quietly(routes[[route]](frame)))
+  }
+  edits <- list(
+    "changed size" = transform(frame, N = ifelse(psu_id == "B04", N + 1, N)),
+    "changed stratum" = transform(
+      frame, stratum = ifelse(psu_id == "B04", "A", stratum)
+    ),
+    "dropped PSU" = frame[frame$psu_id != "A05", ]
+  )
+  checked <- character(0)
+  for (edit in names(edits)) {
+    for (route in names(routes)) {
+      info <- paste(edit, route)
+      err <- expect_error(
+        quietly(routes[[route]](edits[[edit]])),
+        class = "samplyr_error_certainty_register_mismatch", info = info
+      )
+      expect_match(cli::ansi_strip(conditionMessage(err)), "at\\s+stage 1",
+                   info = info)
+      checked <- c(checked, info)
+    }
+  }
+  expect_length(unique(checked), 15L)
+  err <- expect_error(
+    validate_frame(d, edits[["changed size"]]),
+    class = "samplyr_error_certainty_register_mismatch"
+  )
+  expect_match(cli::ansi_strip(conditionMessage(err)), "PSU \"B04\"")
+
+  # Separate registers are read the same way.
+  psus <- unique(frame[c("psu_id", "stratum", "N")])
+  expect_true(quietly(validate_frame(d, list(psus, frame))))
+  resized <- transform(psus, N = ifelse(psu_id == "B04", N + 1, N))
+  expect_error(
+    validate_frame(d, list(resized, frame)),
+    class = "samplyr_error_certainty_register_mismatch"
+  )
+
+  # A continued take stage reads the selected PSUs only, and refuses one the
+  # register does not list.
+  s1 <- quietly(execute(d, frame, stages = 1, seed = 7))
+  selected <- frame[frame$psu_id %in% s1$psu_id, ]
+  expect_true(quietly(validate_frame(s1, selected, stages = 2)))
+  unknown <- rbind(
+    selected,
+    transform(selected[selected$psu_id == selected$psu_id[1], ][1:3, ],
+              psu_id = "A99")
+  )
+  for (route in c("validate_frame", "execute")) {
+    expect_error(
+      quietly(if (route == "execute") {
+        execute(s1, unknown, seed = 8)
+      } else {
+        validate_frame(s1, unknown, stages = 2)
+      }),
+      class = "samplyr_error_certainty_register_mismatch", info = route
+    )
+  }
+})
+
 test_that("the register check does not depend on id type or row order", {
   plan <- certainty_plan_fixture()
   frame <- certainty_element_frame()

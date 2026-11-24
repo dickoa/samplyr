@@ -2529,15 +2529,19 @@ execute_single_stage_impl <- function(
         frame, split_vars, cluster_spec$vars, strata_spec$vars, draw_spec
       )
 
+      read_parent <- parent_table_reader(draw_spec, strata_spec, frame,
+                                         split_vars)
       results_list <- lapply(seq_along(indices_list), function(i) {
         data <- frame[indices_list[[i]], , drop = FALSE]
+        # The rows of the stage's tables that can name this parent.
+        spec <- read_parent(data)
         qualify_pool_events(
           sample_clusters(
             data,
-            strata_spec,
+            spec$strata,
             cluster_spec,
             # Execution and previews resolve the same per-parent take.
-            resolve_parent_draw_spec(draw_spec, data),
+            resolve_parent_draw_spec(spec$draw, data),
             trace_mode = trace_mode,
             check_invariants = check_invariants
           ),

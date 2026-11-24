@@ -2377,11 +2377,31 @@
                   "panel",
                   "period",
                   "subround",
-                  "active"
+                  "active",
+                  "visit"
                 ],
                 "additionalProperties": false
               },
               "minItems": 0
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 0
+            },
+            {
+              "type": "object",
+              "maxProperties": 0
+            }
+          ]
+        },
+        "schedule_checksum": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
             },
             {
               "type": "null"

@@ -242,9 +242,6 @@ sample_within_clusters <- function(
   # Report display labels rather than encoded group keys.
   parent_labels <- path_labels(groups$key_df, cluster_vars, levels)
 
-  # Execution and previews resolve the same per-PSU take.
-  pool_spec <- function(data) resolve_parent_draw_spec(draw_spec, data)
-
   scalar_n <- is_null(strata_spec) &&
     !is_null(draw_spec$n) &&
     length(draw_spec$n) == 1 &&
@@ -300,10 +297,16 @@ sample_within_clusters <- function(
 
   cols <- selection_columns(frame, strata_spec$vars, draw_spec)
   row_col <- selection_row_column(names(frame))
+  read_parent <- parent_table_reader(draw_spec, strata_spec, frame,
+                                     cluster_vars)
   results_list <- lapply(seq_along(indices_list), function(i) {
     data <- narrow_rows(frame, indices_list[[i]], cols, row_col)
+    # The rows of the stage's tables that can name this parent.
+    spec <- read_parent(frame[indices_list[[i]], cluster_vars, drop = FALSE])
     qualify_pool_events(
-      sample_units(data, strata_spec, pool_spec(data), trace_mode = trace_mode),
+      sample_units(data, spec$strata,
+                   resolve_parent_draw_spec(spec$draw, data),
+                   trace_mode = trace_mode),
       parent_labels[[i]]
     )
   })
@@ -708,6 +711,7 @@ absent_named_strata <- function(frame, strata_vars, label_vars, n) {
   if (is_null(named) || nrow(named) == 0L) {
     return(character(0))
   }
+  named <- resolve_stratum_columns(named, frame, strata_vars)
   parent_vars <- setdiff(strata_vars, label_vars)
   if (length(parent_vars) > 0L) {
     here <- make_group_key(frame, parent_vars)
@@ -804,7 +808,7 @@ sample_stratified_impl <- function(
     ))
   }
 
-  draw_lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars)
+  draw_lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars, frame)
   cols <- selection_columns(frame, strata_vars, draw_spec)
   row_col <- selection_row_column(names(frame))
   # Replicates keep every stratum's rows. A single run builds one at a time.
@@ -1074,7 +1078,7 @@ stratum_part <- function(frame, idxs, stratum_key, strata_vars, draw_spec,
 
 #' @noRd
 stratum_parts <- function(frame, groups, strata_vars, draw_spec) {
-  lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars)
+  lookup <- prepare_stratum_draw_lookup(draw_spec, strata_vars, frame)
   cols <- selection_columns(frame, strata_vars, draw_spec)
   row_col <- selection_row_column(names(frame))
   lapply(seq_along(groups$indices), function(i) {
@@ -1379,33 +1383,69 @@ stratum_info_from_groups <- function(frame, strata_vars, group_indices) {
   out
 }
 
+#' Per-stratum draw settings, keyed as the frame keys its strata
+#'
+#' A table of `frac`, `certainty_size` or `certainty_prop`, and a named
+#' `frac`, name their strata by label. Each is resolved against the strata of
+#' `frame` before it is keyed, as an allocation is, so a label of a numeric
+#' stratum in either spelling R writes finds that stratum. A stratum with no
+#' row keeps the setting a missing row gives it. Two rows that resolve to the
+#' same stratum are refused, since reading either would be a guess.
+#' @param frame The rows the settings apply to, holding `strata_vars`.
+#'   Without it, labels are keyed as written.
 #' @noRd
-prepare_stratum_draw_lookup <- function(draw_spec, strata_vars) {
+prepare_stratum_draw_lookup <- function(draw_spec, strata_vars, frame = NULL,
+                                        call = caller_env()) {
   lookup <- list(
     frac = NULL,
+    frac_named = NULL,
     certainty_size = NULL,
     certainty_prop = NULL
   )
 
-  if (is.data.frame(draw_spec$frac)) {
-    frac_key <- make_group_key(draw_spec$frac, strata_vars)
-    lookup$frac <- setNames(draw_spec$frac$frac, frac_key)
+  keyed <- function(value_col) {
+    table <- draw_spec[[value_col]]
+    if (!is_null(frame)) {
+      table <- resolve_stratum_columns(table, frame, strata_vars, call = call)
+    }
+    key <- make_group_key(table, strata_vars)
+    if (anyDuplicated(key) > 0L) {
+      repeated <- format_key_labels(
+        table[key %in% key[duplicated(key)], strata_vars, drop = FALSE],
+        strata_vars
+      )
+      message <- c(
+        "Data frame for {.arg {value_col}} has duplicate rows for the same
+         stratum.",
+        "x" = "Rows naming one stratum: {format_pool_sample(repeated)}."
+      )
+      abort_samplyr(
+        message,
+        class = if (value_col == "frac") {
+          "samplyr_error_alloc_duplicate_keys"
+        } else {
+          "samplyr_error_draw_argument"
+        },
+        call = call
+      )
+    }
+    setNames(table[[value_col]], key)
   }
 
-  if (is.data.frame(draw_spec$certainty_size)) {
-    cert_size_key <- make_group_key(draw_spec$certainty_size, strata_vars)
-    lookup$certainty_size <- setNames(
-      draw_spec$certainty_size$certainty_size,
-      cert_size_key
-    )
+  for (value_col in c("frac", "certainty_size", "certainty_prop")) {
+    if (is.data.frame(draw_spec[[value_col]])) {
+      lookup[[value_col]] <- keyed(value_col)
+    }
   }
 
-  if (is.data.frame(draw_spec$certainty_prop)) {
-    cert_prop_key <- make_group_key(draw_spec$certainty_prop, strata_vars)
-    lookup$certainty_prop <- setNames(
-      draw_spec$certainty_prop$certainty_prop,
-      cert_prop_key
+  frac <- draw_spec$frac
+  if (!is.data.frame(frac) && length(frac) > 1L && !is_null(names(frac)) &&
+      length(strata_vars) == 1L && !is_null(frame)) {
+    labels <- resolve_stratum_labels(
+      names(frac), frame[[strata_vars]], strata_vars, call = call
     )
+    check_allocation_names(setNames(frac, labels), "frac", call = call)
+    lookup$frac_named <- setNames(unname(frac), labels)
   }
 
   lookup
@@ -1440,9 +1480,18 @@ resolve_stratum_draw_spec <- function(
       stratum_draw_spec$frac <- unname(frac_val)
     }
   } else if (!is_null(draw_spec$frac) && length(draw_spec$frac) > 1) {
-    stratum_id <- as.character(keys[[1]][1])
-    if (stratum_id %in% names(draw_spec$frac)) {
-      stratum_draw_spec$frac <- draw_spec$frac[[stratum_id]]
+    named <- if (is_null(lookup)) NULL else lookup$frac_named
+    if (!is_null(named)) {
+      # Keyed by the frame's key text, whatever scipen the labels were
+      # written under.
+      stratum_id <- key_value_text(keys[[1]][1])
+      frac <- named
+    } else {
+      stratum_id <- as.character(keys[[1]][1])
+      frac <- draw_spec$frac
+    }
+    if (stratum_id %in% names(frac)) {
+      stratum_draw_spec$frac <- frac[[stratum_id]]
     }
   }
 

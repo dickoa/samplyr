@@ -352,7 +352,7 @@ test_that("the receipt records the frozen blocks and quotas", {
 
   record <- attr(result, "metadata")$panel_assignment
   expect_identical(record$algorithm, "blocked_random_quota")
-  expect_identical(record$version, 7L)
+  expect_identical(record$version, 8L)
   expect_identical(record$panels, 4L)
   expect_identical(record$assignment_stage, 1L)
   expect_identical(record$block_size, 8L)

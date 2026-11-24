@@ -287,10 +287,93 @@ test_that("pool rows are the rows a lookup pool by pool finds", {
     list(keys = character(0)),
     list(keys = c("d", "c", "e"))
   )
-  expect_identical(record_pool_rows(keys, pools), per_pool(keys, pools))
+  expect_identical(
+    record_pool_rows(keys, pools, complete = FALSE), per_pool(keys, pools)
+  )
   # A key two pools list is read by each.
   shared <- list(list(keys = c("a", "b")), list(keys = c("b", "c")))
-  expect_identical(record_pool_rows(keys, shared), per_pool(keys, shared))
+  expect_identical(
+    record_pool_rows(keys, shared, complete = FALSE), per_pool(keys, shared)
+  )
+})
+
+test_that("a row the record's pools do not name is refused, not left out", {
+  pools <- list(list(keys = c("b", "a")), list(keys = c("d", "c", "e")))
+  expect_identical(
+    record_pool_rows(c("a", "e", "c"), pools),
+    record_pool_rows(c("a", "e", "c"), pools, complete = FALSE)
+  )
+  err <- expect_error(
+    record_pool_rows(c("a", "x", NA), pools),
+    class = "samplyr_error_panel_record_malformed"
+  )
+  expect_match(cli::ansi_strip(conditionMessage(err)), "2 of 3 rows")
+})
+
+test_that("a row found twice does not stand in for a row found nowhere", {
+  # Rows 1 and 2 are one unit, rows 3 and 4 another. Unit "b" is listed in
+  # both pools and unit "x" in none, so the row counts agree and the row
+  # positions do not.
+  keys <- c("b", "b", "x", "x")
+  overlap <- list(list(keys = c("a", "b")), list(keys = c("b", "c")))
+  err <- expect_error(
+    record_pool_rows(keys, overlap),
+    class = "samplyr_error_panel_record_malformed"
+  )
+  expect_match(
+    cli::ansi_strip(conditionMessage(err)), "2 of 4 rows belong to no"
+  )
+  # Every row covered, one unit in two pools.
+  err <- expect_error(
+    record_pool_rows(c("a", "b", "b", "c"), overlap),
+    class = "samplyr_error_panel_record_malformed"
+  )
+  expect_match(
+    cli::ansi_strip(conditionMessage(err)), "2 of 4 rows belong to several"
+  )
+  # A partial lookup reads the shared unit in each pool, as before.
+  expect_identical(
+    lengths(lapply(
+      record_pool_rows(keys, overlap, complete = FALSE), `[[`, "rows"
+    )),
+    c(2L, 2L)
+  )
+  # A full record whose pools are disjoint is read as one lookup.
+  disjoint <- list(list(keys = c("a", "b")), list(keys = c("c", "x")))
+  expect_identical(
+    record_pool_rows(keys, disjoint),
+    record_pool_rows(keys, disjoint, complete = FALSE)
+  )
+})
+
+test_that("a record with no pools, or none naming the sample, finds no row", {
+  # An empty sample needs no pool.
+  expect_identical(record_pool_rows(character(0), list()), list())
+  expect_identical(record_pool_rows(character(0), NULL), list())
+  keys <- c("a", "a", "b")
+  for (pools in list(list(), NULL)) {
+    err <- expect_error(
+      record_pool_rows(keys, pools),
+      class = "samplyr_error_panel_record_malformed"
+    )
+    expect_match(cli::ansi_strip(conditionMessage(err)), "3 of 3 rows")
+    expect_identical(record_pool_rows(keys, pools, complete = FALSE), list())
+  }
+  # Valid pools that hold none of the sample's units.
+  elsewhere <- list(list(keys = c("x", "y")), list(keys = "z"))
+  err <- expect_error(
+    record_pool_rows(keys, elsewhere),
+    class = "samplyr_error_panel_record_malformed"
+  )
+  expect_match(cli::ansi_strip(conditionMessage(err)), "3 of 3 rows")
+  expect_identical(
+    lapply(record_pool_rows(keys, elsewhere, complete = FALSE), `[[`, "rows"),
+    list(integer(0), integer(0))
+  )
+  # A unit with several rows, all covered once, keeps every row in order.
+  covered <- record_pool_rows(keys, list(list(keys = "b"), list(keys = "a")))
+  expect_identical(lapply(covered, `[[`, "rows"), list(3L, 1:2))
+  expect_identical(lapply(covered, `[[`, "at"), list(1L, c(1L, 1L)))
 })
 
 ## Guards
@@ -442,7 +525,9 @@ test_that("the schedule survives the design file and replay reproduces it", {
   expect_equal(receipt$panels, 4L)
   expect_equal(receipt$panel_assignment$r_min, 2L)
   expect_equal(
-    decode_panel_argument(receipt, receipt$panel_assignment),
+    decode_panel_argument(
+      receipt, prepare_receipt_record(receipt$panel_assignment, "A replay")
+    ),
     normalize_panel_input(rotation_2_2())$schedule[
       c("panel", "period", "subround", "active", "visit")
     ]

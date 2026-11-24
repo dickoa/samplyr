@@ -830,7 +830,10 @@ test_that("cached key locations equal a direct deduplication", {
   )
   frame$m[5] <- NA
   direct <- function(vars) vctrs::vec_unique_loc(frame[vars])
-  sets <- list("m", "h", c("m", "h"), c("h", "m"), c("m", "h", "r"), "r")
+  # A column named twice is the set without the repeat, and a cached set
+  # of three columns is not it.
+  sets <- list("m", "h", c("m", "h"), c("h", "m"), c("m", "h", "r"), "r",
+               c("h", "m", "h"))
 
   # Inactive, and active with each order of first requests.
   for (vars in sets) {
