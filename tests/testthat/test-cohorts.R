@@ -1155,3 +1155,54 @@ test_that("a cohort that drew no unit is still the latest", {
   occasion5 <- execute(fifth$value, period = 5)
   expect_setequal(occasion5$hh[occasion5$ea == small], max(hh$hh) + 1:2)
 })
+
+test_that("each hit of a unit drawn with replacement leaves out its own units", {
+  schedule <- data.frame(period = c(1, 1, 2, 2), panel = c(1, 2, 1, 2),
+                         active = TRUE, visit = 1L)
+  households <- data.frame(ea = rep(1:3, each = 4), hh = 1:12)
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(ea) |> draw(n = 4, method = "srswr") |>
+    add_stage() |> cluster_by(hh) |> draw(n = 2)
+  master <- execute(design, data.frame(ea = 1:3), stages = 1,
+                    panels = schedule, seed = 1)
+  # EA 1 is hit twice, and its four households cannot give two cohorts of
+  # two to both hits if the hits share one pool.
+  expect_identical(sum(master$ea == 1), 2L)
+  first <- execute(master, households, period = 1, seed = 10)
+  second <- execute(first, households, period = 2, seed = 11)
+  cohort_1 <- as.data.frame(execute(first, period = 1))
+  cohort_2 <- as.data.frame(execute(second, period = 2))
+  for (hit in unique(cohort_1$.draw_1)) {
+    one <- cohort_1$hh[cohort_1$.draw_1 == hit]
+    two <- cohort_2$hh[cohort_2$.draw_1 == hit]
+    expect_length(two, 2L)
+    expect_length(intersect(one, two), 0L)
+  }
+  # Each hit draws 2 of 4 households of its EA in each cohort, so the count
+  # of households is exact (closed form): 12 in each period.
+  expect_equal(sum(cohort_1$.weight), 12)
+  expect_equal(sum(cohort_2$.weight), 12)
+})
+
+test_that("a later cohort sizes its takes on the primary units it draws in", {
+  schedule <- data.frame(period = c(1, 1, 2, 2), panel = c(1, 2, 1, 2),
+                         active = TRUE, visit = 1L)
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(ea) |> draw(n = 4) |>
+    add_stage() |>
+    stratify_by(s, alloc = "neyman",
+                variance = data.frame(s = c("A", "B"), var = c(1, 4))) |>
+    cluster_by(hh) |> draw(n = 4)
+  master <- execute(design, data.frame(ea = 1:6), stages = 1,
+                    panels = schedule, seed = 1)
+  listed <- function(ea) {
+    rbind(data.frame(ea = ea, s = "A", hh = 1:6),
+          data.frame(ea = ea, s = "B", hh = 101:106))
+  }
+  listing <- do.call(rbind, lapply(master$ea, listed))
+  # An EA the master did not select lists a stratum no allocation knows.
+  other <- setdiff(1:6, master$ea)[1]
+  wider <- rbind(listing, data.frame(ea = other, s = "C", hh = 1:5))
+  first <- execute(master, wider, period = 1, seed = 10)
+  expect_no_error(execute(first, wider, period = 2, seed = 11))
+})

@@ -152,7 +152,6 @@ Other design specification:
 \code{\link[=cluster_by]{cluster_by()}},
 \code{\link[=draw]{draw()}},
 \code{\link[=sampling_design]{sampling_design()}},
-\code{\link{selection_methods}},
 \code{\link[=stratify_by]{stratify_by()}}
 }
 \concept{design specification}

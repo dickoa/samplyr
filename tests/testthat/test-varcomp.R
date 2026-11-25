@@ -138,14 +138,35 @@ test_that("3-stage decomposition uses both cluster keys and stage 2-3 weights", 
   first <- !duplicated(s$dist)
   share <- pi1[first] / sum(pi1[first])
   vil_key <- paste(s$dist, s$vil, sep = "/")
+  # svyplan's contract for three stages: the stage-2 and stage-3 weights as
+  # two columns, which its element-stage correction reads apart.
   manual <- svyplan::varcomp(
     s$y,
     stage_id = list(s$dist, vil_key),
     prob = share[match(s$dist, s$dist[first])],
-    weights = s$.weight_2 * s$.weight_3
+    weights = cbind(s$.weight_2, s$.weight_3)
   )
   expect_equal(vc$varb, manual$varb, tolerance = 1e-12)
+  expect_equal(vc$varw, manual$varw, tolerance = 1e-12)
   expect_equal(vc$icc, manual$icc, tolerance = 1e-12)
+
+  # Villages taken whole below them: the element stage has weight one.
+  whole <- sampling_design() |>
+    add_stage() |> cluster_by(dist) |>
+    draw(n = 4, method = "pps_brewer", mos = dsize) |>
+    add_stage() |> cluster_by(vil) |> draw(n = 2) |>
+    execute(frame, seed = 41)
+  vil_key <- paste(whole$dist, whole$vil, sep = "/")
+  pi1 <- 1 / whole$.weight_1
+  first <- !duplicated(whole$dist)
+  share <- pi1[first] / sum(pi1[first])
+  manual <- svyplan::varcomp(
+    whole$y,
+    stage_id = list(whole$dist, vil_key),
+    prob = share[match(whole$dist, whole$dist[first])],
+    weights = cbind(whole$.weight_2, 1)
+  )
+  expect_equal(varcomp(whole, ~y)$varw, manual$varw, tolerance = 1e-12)
 })
 
 test_that("stage-1 design strata give per-stratum components with per-stratum shares", {

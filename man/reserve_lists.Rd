@@ -16,25 +16,6 @@ the respondents follow from the record of what the field did.
 Many national survey programs, the DHS and MICS among them, allow no
 substitution and adjust for nonresponse in the weights. A reserve list
 serves a protocol that substitutes, and is not a reason to adopt one.
-
-Other forms of substitution change the design in a way no weight
-records, and samplyr does not support them. These include substitutes
-matched to the failed unit, substitutes chosen by the interviewer, and
-substitutes drawn at random only when a unit fails, since nothing then
-records the pool or the order.
-
-Reserve batches are another protocol, which a settlement does not fit.
-The sample holds random batches that are activated together in every
-pool when response falls short, and every released unit is worked, as
-the European Social Survey asked from its tenth round. The weight then
-comes from the units released, so \code{response_status} would drop the
-respondents released after a pool reached its take. Draw the main
-sample and the batches as one take, and assign it at that stage to
-panels the size of one batch, so that the main sample spans several
-panels. A schedule whose occasion \code{b + 1} activates the main sample and the
-first \code{b} batches then gives, through \code{execute(master, period = b + 1)},
-each unit the weight of the units released. \link{panel_assignment}
-describes schedules.
 \subsection{Workflow}{
 
 \code{draw(n = 8, reserve = 4)} asks each pool for a take of 8 and a list of
@@ -219,7 +200,13 @@ eligible unit that did not respond, at the same weight as its ineligible
 units, so together they carry the estimated count, coded as an eligible
 non-interview (\code{2}, \code{"noninterview"}, or a factor level of that name).
 When every worked unit is of unknown eligibility, those units share the
-count. The rows' other columns hold \code{NA}, and below the first stage they
+count, and one more row, coded as ineligible, carries the units the pool
+is estimated not to hold eligible, so the pool's weights still add up to
+its size. That row names no unit of the field record, so a
+\code{\link[=stack_frames]{stack_frames()}} collection refuses it
+(\code{samplyr_error_stack_frames_membership}), since its membership in the
+other frames is unknown. The rows' other columns hold \code{NA}, and below the
+first stage they
 sit in the primary unit of their pool. The export warns
 (\code{samplyr_warning_reserve_no_respondent}) and names the pools. Until a
 nonresponse adjustment moves that weight to respondents, estimates leave
@@ -278,6 +265,28 @@ columns must be on the list before it is settled
 A schedule that opens several cohorts per panel takes no reserve at any
 stage (\code{samplyr_error_cohort_stages}), since its master is never
 complete.
+}
+
+\subsection{Other forms of substitution}{
+
+Other forms of substitution change the design in a way no weight
+records, and samplyr does not support them. These include substitutes
+matched to the failed unit, substitutes chosen by the interviewer, and
+substitutes drawn at random only when a unit fails, since nothing then
+records the pool or the order.
+
+Reserve batches are another protocol, which a settlement does not fit.
+The sample holds random batches that are activated together in every
+pool when response falls short, and every released unit is worked, as
+the European Social Survey asked from its tenth round. The weight then
+comes from the units released, so \code{response_status} would drop the
+respondents released after a pool reached its take. Draw the main
+sample and the batches as one take, and assign it at that stage to
+panels the size of one batch, so that the main sample spans several
+panels. A schedule whose occasion \code{b + 1} activates the main sample and the
+first \code{b} batches then gives, through \code{execute(master, period = b + 1)},
+each unit the weight of the units released. \link{panel_assignment}
+describes schedules.
 }
 
 \subsection{Planning a reserve}{
@@ -363,7 +372,7 @@ summary(settled)
 
 if (requireNamespace("survey", quietly = TRUE)) {
   svy <- as_svydesign(settled)
-  survey::svytotal(~members, svy)
+  survey::svytotal(~members, svy, na.rm = TRUE)
 }
 
 }
@@ -381,4 +390,11 @@ Official Statistics}, 15(2), 335-350.
 \seealso{
 \code{\link[=draw]{draw()}} for \code{reserve}, \code{\link[=execute]{execute()}} for \code{response_status},
 \code{\link[=as_svydesign]{as_svydesign()}} for export.
+
+Other reference topics:
+\code{\link{frame_input_grammar}},
+\code{\link{sample_columns}},
+\code{\link{selection_methods}},
+\code{\link{variance_estimation}}
 }
+\concept{reference topics}

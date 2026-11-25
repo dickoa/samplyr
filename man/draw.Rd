@@ -262,7 +262,7 @@ draw or at export.
 
 An empty selection is a valid realization of a random-size design. It
 contributes zero to Horvitz-Thompson totals, so estimates over repeated
-executions remain unbiased. Later stages of a multistage design then
+executions remain unbiased. Later stages of a multi-stage design then
 have nothing to select from, and the sample is empty. \code{"warn"} and
 \code{"silent"} are meant for simulation and replicated runs, so check
 \code{nrow()} before analyzing a single realization.
@@ -367,7 +367,7 @@ for the WOR PPS methods (\code{pps_systematic}, \code{pps_brewer}, \code{pps_cps
 that can take a unit more than once (\code{pps_multinomial}, \code{pps_chromy},
 \code{pps_systematic_mr}), and for methods registered with \code{type = "wor"} or
 \code{"wr"}. A pool censused under
-\code{certainty_overflow = "allow"} has stage weight 1, but in a multistage
+\code{certainty_overflow = "allow"} has stage weight 1, but in a multi-stage
 design the final \code{.weight} can still exceed 1 because it compounds all
 stage weights.
 
@@ -632,7 +632,6 @@ Other design specification:
 \code{\link[=add_stage]{add_stage()}},
 \code{\link[=cluster_by]{cluster_by()}},
 \code{\link[=sampling_design]{sampling_design()}},
-\code{\link{selection_methods}},
 \code{\link[=stratify_by]{stratify_by()}}
 }
 \concept{design specification}

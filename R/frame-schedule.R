@@ -64,7 +64,7 @@ normalize_stage_selector <- function(stages, allowed,
       "x" = "Got {.val {if (length(bad)) bad else stages}}."
     )
   }
-  stages <- as.integer(stages)
+  stages <- as.integer(round(stages))
 
   duplicated_stages <- unique(stages[duplicated(stages)])
   if (length(duplicated_stages) > 0) {

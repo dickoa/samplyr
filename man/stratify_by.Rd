@@ -67,7 +67,8 @@ forms as \code{variance} with an \code{importance} column. It is what
 household total, or the importance measure of power allocation.}
 
 \item{power}{Power exponent \eqn{q} for power allocation.
-Must satisfy \eqn{0 \le q \le 1}. Defaults to \code{0.5}.}
+Must satisfy \eqn{0 \le q \le 1}. With \code{alloc = "power"} and no
+\code{power}, 0.5 is used.}
 }
 \value{
 A modified \code{sampling_design} object with stratification specified.
@@ -264,7 +265,6 @@ Other design specification:
 \code{\link[=add_stage]{add_stage()}},
 \code{\link[=cluster_by]{cluster_by()}},
 \code{\link[=draw]{draw()}},
-\code{\link[=sampling_design]{sampling_design()}},
-\code{\link{selection_methods}}
+\code{\link[=sampling_design]{sampling_design()}}
 }
 \concept{design specification}

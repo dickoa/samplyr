@@ -97,7 +97,6 @@ Other design specification:
 \code{\link[=add_stage]{add_stage()}},
 \code{\link[=cluster_by]{cluster_by()}},
 \code{\link[=draw]{draw()}},
-\code{\link{selection_methods}},
 \code{\link[=stratify_by]{stratify_by()}}
 }
 \concept{design specification}

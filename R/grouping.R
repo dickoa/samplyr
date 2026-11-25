@@ -105,6 +105,18 @@ stratum_label_candidates <- function(labels, values) {
   list(labels = resolved, ambiguous = ambiguous, contested = contested)
 }
 
+#' Whether each label names the stratum of each key
+#'
+#' The labels are read as `stratum_label_candidates()` reads them against
+#' the stratum column `values`, so "1e+05" names the stratum 100000 whatever
+#' `scipen` is now, and compared with `keys`, the key text of the stratum
+#' each label should name.
+#' @noRd
+labels_name_strata <- function(labels, values, keys = key_value_text(values)) {
+  resolved <- stratum_label_candidates(labels, values)$labels
+  vctrs::vec_equal(as.character(resolved), keys, na_equal = TRUE)
+}
+
 #' A label of a numeric stratum, written as that stratum's key text
 #'
 #' Resolves the labels as `stratum_label_candidates()` does, and refuses a

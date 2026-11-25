@@ -191,15 +191,61 @@ control_order <- function(data, control_quos) {
     value <- rlang::eval_tidy(quo, data)
     columns <- if (is.data.frame(value)) as.list(value) else list(value)
     for (column in columns) {
-      column <- utf8_sort_key(vctrs::vec_recycle(column, nrow(data)))
-      keys[[length(keys) + 1L]] <- column
-      decreasing[[length(decreasing) + 1L]] <- descending
+      parts <- sort_keys(vctrs::vec_recycle(column, nrow(data)))
+      keys <- c(keys, parts)
+      decreasing <- c(decreasing, rep(descending, length(parts)))
     }
   }
   do.call(
     order,
     c(unname(keys), list(na.last = TRUE, decreasing = decreasing, method = "radix"))
   )
+}
+
+#' A column as the keys a radix sort orders it by
+#'
+#' A character column is read as UTF-8 (`utf8_sort_key()`). An integer64
+#' column stores its value in the bits of a double, which a sort would read
+#' as a double, putting negative values after positive ones and some among
+#' the missing ones. Its two 32-bit halves are the keys instead, the high
+#' one signed and the low one unsigned, and its missing value is `NA` in
+#' both.
+#' @return A list of key vectors.
+#' @noRd
+sort_keys <- function(x) {
+  if (!inherits(x, "integer64")) {
+    return(list(utf8_sort_key(x)))
+  }
+  words <- readBin(
+    writeBin(as.double(unclass(x)), raw(), endian = "little"),
+    "integer", n = 2L * length(x), size = 4L, endian = "little"
+  )
+  low <- as.double(words[c(TRUE, FALSE)])
+  high <- as.double(words[c(FALSE, TRUE)])
+  # A 32-bit word of 0x80000000 reads back as NA_integer_.
+  missing <- is.na(high) & !is.na(low) & low == 0
+  low[is.na(low)] <- -2^31
+  high[is.na(high)] <- -2^31
+  low[low < 0] <- low[low < 0] + 2^32
+  low[missing] <- NA
+  high[missing] <- NA
+  list(high, low)
+}
+
+#' A column as `rlang::hash()` reads it exactly
+#'
+#' An integer64 column is hashed by the bytes of its values, since the hash
+#' reads them as doubles and some negative values are then equal. A factor
+#' is read by its labels where the caller says so.
+#' @noRd
+hash_ready <- function(x) {
+  if (inherits(x, "integer64")) {
+    return(list(
+      class = "integer64",
+      bytes = writeBin(as.double(unclass(x)), raw(), endian = "little")
+    ))
+  }
+  x
 }
 
 #' Character values as UTF-8, ready for a radix sort

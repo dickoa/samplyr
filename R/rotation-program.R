@@ -145,7 +145,7 @@
 #'
 #' @seealso [execute()] for drawing a master and materializing an occasion,
 #'   [panel_assignment] for partitioning one execution into rotation groups.
-#' @family execution
+#' @family panels, rotation and periods
 #' @export
 rotation_program <- function(selections, entry_period = NULL,
                              schedule = NULL, through = NULL) {
@@ -215,7 +215,15 @@ program_occasions <- function(schedule) {
 plan_through_occasion <- function(plan, through, call = caller_env()) {
   horizon <- plan$horizon
   sub <- plan$subrounds
+  # A named pair is read by its names, in either order.
+  given <- names(through)
+  named <- length(through) == 2L && !is_null(given) &&
+    setequal(given, c("period", "subround"))
+  if (named) {
+    through <- through[c("period", "subround")]
+  }
   ok <- is.numeric(through) && length(through) %in% 1:2 &&
+    (length(through) == 1L || is_null(given) || named) &&
     !anyNA(through) && is_integerish_numeric(through) && all(through >= 1) &&
     through[[1L]] <= horizon && (length(through) == 1L || through[[2L]] <= sub)
   if (!ok) {
@@ -750,11 +758,28 @@ materialize_program_occasion <- function(
         entry_period = unname(program$entry_period[[nm]]),
         period = at_occasion$period[1L],
         subround = at_occasion$subround[1L]
-      )
+      ),
+      visit_schedule = program_visit_schedule(schedule, nm)
     )
   }
 
   new_rotation_occasion(live, occasion = occasion, program = program)
+}
+
+#' The visits of one selection under the program's schedule
+#'
+#' The program, not the selection's own record, decides when each of its
+#' panels is active, so a panel's visit counts its active occasions of the
+#' program up to this one.
+#' @noRd
+program_visit_schedule <- function(schedule, selection) {
+  rows <- schedule[schedule$selection == selection,
+                   c("panel", "occasion", "active"), drop = FALSE]
+  rows <- rows[order(rows$panel, rows$occasion), , drop = FALSE]
+  rows$visit <- stats::ave(as.integer(rows$active %in% TRUE), rows$panel,
+                           FUN = cumsum)
+  rows$visit[!rows$active %in% TRUE] <- NA_integer_
+  rows
 }
 
 #' An occasion of a program is a collection, not a sample
@@ -771,6 +796,7 @@ new_rotation_occasion <- function(selections, occasion, program) {
     selections,
     period = at$period[1L],
     subround = at$subround[1L],
+    n_subrounds = max(program$schedule$subround),
     entry_period = program$entry_period[names(selections)],
     schedule_digest = rlang::hash(program$schedule),
     class = "rotation_occasion"

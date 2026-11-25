@@ -574,6 +574,18 @@ recorded_occasions <- function(sample, occasions) {
   record <- prepare_panel_record(
     attr(sample, "metadata")$panel_assignment, "A replay"
   )
+  if (is_null(record$schedule)) {
+    abort_samplyr(
+      c(
+        "This receipt records an occasion of a sample with no rotation
+         schedule.",
+        "i" = "An occasion of such a sample comes from a rotation program,
+               whose schedule no receipt holds. Replay the selections, and
+               rebuild the program with {.fn rotation_program}."
+      ),
+      class = "samplyr_error_occasion_no_schedule"
+    )
+  }
   pairs <- grid_pairs(record$schedule)
   occasions <- as.integer(occasions)
   list(period = pairs$period[occasions], subround = pairs$subround[occasions])

@@ -87,8 +87,10 @@
 #'     window of several occasions materialized with
 #'     `execute(master, period = , subround = )`
 #'   - `.visit`: The interview number of the row's unit within its cohort, in
-#'     a materialized occasion, from the schedule's `visit`. Permanent units have
-#'     `NA`.
+#'     a materialized occasion, from the schedule's `visit`. In an occasion of
+#'     a [rotation_program()], it counts the program's active occasions of the
+#'     unit's panel, whatever schedule the selection was drawn with. Permanent
+#'     units have `NA`.
 #'   - Stage and stratum identifiers as appropriate
 #'
 #' ## How the weights are computed
@@ -131,7 +133,7 @@
 #' which gives the Horvitz-Thompson estimator for WOR phases.
 #'
 #' @name sample_columns
-#' @family diagnostics
+#' @family reference topics
 #' @seealso [execute()] which produces them, [frame_summary()] for the
 #'   population structure behind them, [as_svydesign()] for how they are
 #'   translated for \pkg{survey}

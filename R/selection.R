@@ -264,7 +264,7 @@ sample_within_clusters <- function(
       sample_srswor_by_group_indices(
         frame,
         indices_list,
-        rep.int(as.integer(draw_spec$n), length(indices_list)),
+        rep.int(as.integer(round(draw_spec$n)), length(indices_list)),
         trace_mode = trace_mode,
         pool_keys = parent_labels
       )
@@ -1487,8 +1487,9 @@ resolve_stratum_draw_spec <- function(
       stratum_id <- key_value_text(keys[[1]][1])
       frac <- named
     } else {
-      stratum_id <- as.character(keys[[1]][1])
       frac <- draw_spec$frac
+      named_here <- which(labels_name_strata(names(frac), keys[[1]][1]))
+      stratum_id <- if (length(named_here)) names(frac)[named_here[1]] else ""
     }
     if (stratum_id %in% names(frac)) {
       stratum_draw_spec$frac <- frac[[stratum_id]]
@@ -1517,9 +1518,8 @@ resolve_stratum_draw_spec <- function(
 
   if (identical(draw_spec$certainty_plan$role, "select")) {
     # Kept even when empty, so the certainty invariants stay engaged.
-    stratum_id <- as.character(keys[[1]][1])
     reg <- draw_spec$certainty_plan$register
-    in_stratum <- reg$stratum == stratum_id
+    in_stratum <- labels_name_strata(reg$stratum, keys[[1]][1])
     stratum_draw_spec$certainty_ids <- reg$psu_id[in_stratum & reg$certainty]
     if (!is_null(draw_spec$certainty_plan$n_psu_per_zone)) {
       zoned <- in_stratum & !is.na(reg$zone)

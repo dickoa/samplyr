@@ -459,3 +459,22 @@ test_that("the summary reports the quantitative mode", {
   expect_match(txt, "clustered on hh")
   expect_match(txt, "not these rows")
 })
+
+test_that("a weighted total below the sampled importances is refused", {
+  source <- sampling_design() |> draw(n = 10) |>
+    execute(data.frame(s = 1:20), seed = 1)
+  # Each target has two links of importance 0.5, so its total is 1.
+  targets <- data.frame(t = 1:10, total = 1, low = 0.3)
+  links <- data.frame(s = 1:20, t = rep(1:10, each = 2), importance = 0.5)
+  shared <- share_weights(source, targets, links, by = c(s = "s"),
+                          to = c(t = "t"), within = NULL,
+                          multiplicity = weighted_links(importance,
+                                                        total = total))
+  expect_equal(sum(shared$.weight), 10)
+  expect_error(
+    share_weights(source, targets, links, by = c(s = "s"), to = c(t = "t"),
+                  within = NULL,
+                  multiplicity = weighted_links(importance, total = low)),
+    class = "samplyr_error_share_weights_multiplicity"
+  )
+})

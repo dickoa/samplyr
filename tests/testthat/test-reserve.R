@@ -1356,11 +1356,22 @@ test_that("a pool of unknowns shares its estimate among its units", {
   }
   # EA 3 worked six households of unknown eligibility, and the north
   # resolved 5 eligible of 6, so it holds 10 * 5 / 6 eligible units, shared
-  # among the six as eligible non-interviews.
+  # among the six as eligible non-interviews, and 10 / 6 ineligible ones,
+  # which one row with no recorded household carries.
   settled <- settled_sample(list(main = c(3, 3, 3), reserve = c(3, 3, 3)))
-  rows <- pool_3(suppressWarnings(as_svydesign(settled)))
-  expect_identical(rows$code, rep(2, 6))
-  expect_equal(rows$.weight, rep(4 / 3 * 10 * 5 / 6 / 6, 6))
+  svy <- suppressWarnings(as_svydesign(settled))
+  rows <- pool_3(svy)
+  expect_identical(rows$code, c(rep(2, 6), 4))
+  expect_equal(rows$.weight,
+               c(rep(4 / 3 * 10 * 5 / 6 / 6, 6), 4 / 3 * 10 / 6))
+  # It names no recorded unit, which the export marks with 0.
+  expect_identical(attr(svy, "samplyr_reserve_units")[
+    which(is.na(svy$variables$.sample_id) & svy$variables$ea_id == 3L)[7]
+  ], 0L)
+  # Every pool's weights sum to its stage-1 weight times its N (closed form).
+  pools <- attr(settled, "metadata")$reserve_settlement$pools
+  sums <- tapply(svy$variables$.weight, svy$variables$ea_id, sum)
+  expect_equal(as.vector(sums), pools$upper_weight * pools$N)
   # With the other north EAs wholly ineligible, the resolved rate is 0 and
   # the six stand for EA 3's 10 households as ineligible units.
   codes <- export_codes(list(main = c(3, 3, 3), reserve = c(3, 3, 3)))
@@ -2779,4 +2790,37 @@ test_that("the reserve note reads the indicators that set an n_multi() take", {
   floored <- svyplan::n_multi(domains, domains = "region", min_n_domain = 2000)
   expect_identical(floored$domains$.binding, rep("(min_n_domain)", 2))
   expect_false(rates_warn(floored, by_region))
+})
+
+test_that("a status factor with an empty level is written and read back", {
+  listed <- listed_sample()
+  codes <- set_codes(listed, settle_codes(3))
+  words <- c("interview", "noninterview", "unknown", "ineligible")
+  # read.csv() gives an empty field its own level.
+  listed$status <- factor(words[floor(codes)], levels = c("", words))
+  settled <- execute(listed, response_status = status)
+  json <- suppressWarnings(design_json(settled))
+  expect_true(grepl("\"levels\":[\"\",", json, fixed = TRUE))
+  expect_s3_class(read_design(json), "sampling_design")
+})
+
+test_that("a stack refuses the ineligible row of a pool of unknowns", {
+  skip_if_not_installed("survey")
+  # EA 3's estimated ineligible households have no record, so their
+  # membership in frame B is unknown.
+  frame <- export_frame()
+  frame$uid <- paste(frame$ea_id, frame$hh_id)
+  frame$in_A <- TRUE
+  frame$in_B <- frame$hh_id %% 2 == 0
+  listed <- export_listed(frame)
+  listed$code <- set_codes(
+    listed, export_codes(list(main = c(3, 3, 3), reserve = c(3, 3, 3)))
+  )
+  settled <- execute(listed, response_status = code)
+  other <- execute(sampling_design() |> draw(n = 10), frame[frame$in_B, ],
+                   seed = 3)
+  stack <- stack_frames(A = settled, B = other, key = uid,
+                        membership = c(A = "in_A", B = "in_B"))
+  expect_error(suppressWarnings(as_svrepdesign(stack, type = "auto")),
+               class = "samplyr_error_stack_frames_membership")
 })

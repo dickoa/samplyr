@@ -2120,3 +2120,53 @@ test_that("replaying phase 2 from the base frame refuses a reordered phase 1", {
     p2_reord$ea_id
   )
 })
+
+test_that("a design with nothing declared yet writes its stage as an object", {
+  for (design in list(sampling_design(),
+                      sampling_design() |> draw(n = 3) |> add_stage())) {
+    json <- design_json(design)
+    restored <- read_design(json)
+    expect_identical(length(restored$stages), length(design$stages))
+    expect_identical(design_json(restored), json)
+  }
+})
+
+test_that("a per-stratum size map refuses a null entry", {
+  json <- design_json(
+    sampling_design() |> stratify_by(region) |>
+      draw(n = c(Centre = 5, Est = 3))
+  )
+  edited <- sub("\"Est\":3", "\"Est\":null", json, fixed = TRUE)
+  expect_true(grepl("\"Est\":null", edited, fixed = TRUE))
+  expect_error(read_design(edited), class = "samplyr_error_design_file_malformed")
+})
+
+test_that("a table's rows are read by their names in any order", {
+  json <- design_json(
+    sampling_design() |> stratify_by(region) |>
+      draw(n = data.frame(region = c("Centre", "Est"), n = c(5, 3)))
+  )
+  swapped <- sub("{\"region\":\"Est\",\"n\":3}", "{\"n\":3,\"region\":\"Est\"}",
+                 json, fixed = TRUE)
+  expect_false(identical(swapped, json))
+  n <- read_design(swapped)$stages[[1]]$draw_spec$n
+  expect_identical(as.character(n$region), c("Centre", "Est"))
+  expect_identical(as.numeric(n$n), c(5, 3))
+})
+
+test_that("a missing path and stray print arguments are refused with a class", {
+  expect_error(write_design(sampling_design() |> draw(n = 2), NA_character_),
+               class = "samplyr_error_serialize_argument")
+  expect_error(print(subrounds(3), extra = 1), class = "rlib_error_dots_nonempty")
+  sample <- sampling_design() |> draw(n = 2) |>
+    execute(data.frame(id = 1:5), seed = 1)
+  expect_error(print(summary(sample), extra = 1),
+               class = "rlib_error_dots_nonempty")
+})
+
+test_that("a supplied multiplicity is named when a shared design prints", {
+  supplied <- shared_sample_fixture(within = hh, multiplicity = population_links)
+  path <- withr::local_tempfile(fileext = ".json")
+  write_design(supplied, path, frame = shared_source_register())
+  expect_output(print(read_design(path)), "supplied per target", fixed = TRUE)
+})

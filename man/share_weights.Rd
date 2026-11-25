@@ -29,7 +29,10 @@ changes both the numerator and the denominator.}
 
 \item{by, to}{Named character vectors matching the source sample and the
 target register to \code{links}, in the same direction as a dplyr join:
-\code{c(local_column = "links_column")}.}
+\code{c(local_column = "links_column")}. Each identifies the rows of its
+side, a unit drawn more than once being told apart by its draw number,
+since every sample row adds its weight to the targets it links to
+(\code{samplyr_error_share_weights_keys}).}
 
 \item{within}{The target cluster, Lavallee's \eqn{i}. Never inferred. Give
 a bare column of \code{targets} for the ordinary clustered method, \code{NULL} to

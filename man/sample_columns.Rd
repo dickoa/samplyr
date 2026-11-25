@@ -95,8 +95,10 @@ in \link{panel_assignment}
 window of several occasions materialized with
 \code{execute(master, period = , subround = )}
 \item \code{.visit}: The interview number of the row's unit within its cohort, in
-a materialized occasion, from the schedule's \code{visit}. Permanent units have
-\code{NA}.
+a materialized occasion, from the schedule's \code{visit}. In an occasion of
+a \code{\link[=rotation_program]{rotation_program()}}, it counts the program's active occasions of the
+unit's panel, whatever schedule the selection was drawn with. Permanent
+units have \code{NA}.
 \item Stage and stratum identifiers as appropriate
 }
 \subsection{How the weights are computed}{
@@ -145,12 +147,10 @@ which gives the Horvitz-Thompson estimator for WOR phases.
 population structure behind them, \code{\link[=as_svydesign]{as_svydesign()}} for how they are
 translated for \pkg{survey}
 
-Other diagnostics:
-\code{\link[=compare_designs]{compare_designs()}},
-\code{\link{design_effect}},
-\code{\link[=frame_summary]{frame_summary()}},
-\code{\link[=joint_expectation]{joint_expectation()}},
-\code{\link[=summary.tbl_sample]{summary.tbl_sample()}},
-\code{\link[=varcomp.tbl_sample]{varcomp.tbl_sample()}}
+Other reference topics:
+\code{\link{frame_input_grammar}},
+\code{\link{reserve_lists}},
+\code{\link{selection_methods}},
+\code{\link{variance_estimation}}
 }
-\concept{diagnostics}
+\concept{reference topics}

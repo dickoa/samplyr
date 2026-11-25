@@ -521,10 +521,12 @@ test_that("each design of the corpus gets the statuses its methods imply", {
     two_per_stratum = "S-RSAASASSS",
     two_stage = "S-RARRAASSS",
     one_per_psu = "A-RARRAASRS",
-    brewer = "AARAAAASSAS",
-    brewer_two_stage = "ARRAAAASSAS",
-    sampford_clusters = "ARRAAAASSAS",
-    pps_systematic = "AARAAAAAAAS",
+    # The rescaled bootstrap reads a PPS first stage with replacement, and
+    # the multistage one has no single fraction to read in its strata.
+    brewer = "AARAAAAARAS",
+    brewer_two_stage = "ARRAAAAARAS",
+    sampford_clusters = "ARRAAAAARAS",
+    pps_systematic = "AARAAAAARAS",
     systematic = "A-ARRRAAAAS",
     # A census adds no variance, and BRR, Fay and the rescaled bootstrap
     # keep its rows at their full weight.
@@ -540,23 +542,23 @@ test_that("each design of the corpus gets the statuses its methods imply", {
     # One random start: no replicate type reproduces it.
     systematic_mr = "A-ARRRAAARS",
     systematic_mr_two_stage = "A-RAAAAAARS",
-    cube = "AARAAAASSRS",
+    cube = "AARAAAAASRS",
     lpm2 = "R-RRRRRAARS",
     singleton_stratum = "A-RRRRSRSRS",
-    sps = "AARAAAASSRS",
-    certainty = "ARRRRRARSRS",
+    sps = "AARAAAAARRS",
+    certainty = "ARRRRRARRRS",
     # A draw of one per pool is refused or approximated as its non-systematic
     # counterpart is, for its lonely strata.
     systematic_one = "A-RRRRSRSRS",
-    pps_systematic_one = "ARRRRRARSRS",
+    pps_systematic_one = "ARRRRRARRRS",
     systematic_mr_one = "A-RRRRARARS",
     systematic_one_per_psu = "A-RARRAASRS",
-    systematic_certain_plus_one = "ARRRRRARSRS",
+    systematic_certain_plus_one = "ARRRRRARRRS",
     # A certainty unit taken once is a take-all stratum of the stage.
     multinomial_certainty = "S-RSRRSSSSS",
     # Its certain PSU's pools are read from the frame, which shows an odd
     # first-stage take that BRR and Fay cannot pair.
-    chromy_certainty_two_stage = "A-RARRAAARS",
+    chromy_certainty_two_stage = "A-RARRAARRS",
     systematic_mr_certainty = "A-RARRAAARS",
     census = "S-SRRRSSSSS",
     # survey's JKn stops on a stratified census.
@@ -571,8 +573,8 @@ test_that("each design of the corpus gets the statuses its methods imply", {
     # Stage 2 inside a certainty PSU is read as drawn with replacement when
     # a stage below samples or stage 2 is PPS.
     census_then_two_stages = "S-RAAAAASSS",
-    census_then_pps = "A-RAAAAASAS",
-    certainty_then_pps = "ARRAAAAASAS"
+    census_then_pps = "A-RAAAAARAS",
+    certainty_then_pps = "ARRAAAAARAS"
   ))
 })
 
@@ -802,7 +804,7 @@ test_that("a certainty PSU keeping one unit below it is refused by the stratifie
   expect_match(report$note[4],
                "4 stage-2 pools under a PSU taken with certainty take a single unit",
                fixed = TRUE)
-  expect_identical(report$status[c(7, 9)], c("approximate", "approximate"))
+  expect_identical(report$status[c(7, 9)], c("approximate", "refused"))
   expect_false(any(variance_estimators(segments(2), full)$status[stratified] ==
                      "refused"))
   partial <- variance_estimators(segments(1), primary)
@@ -1010,10 +1012,12 @@ test_that("the preflight reads the frame below a stage drawn with replacement", 
   expected <- list(
     `1` = c(linearization = "approximate", JK1 = "refused", JKn = "refused",
             bootstrap = "supported", subbootstrap = "refused",
-            mrbbootstrap = "supported", rwyb = "refused"),
+            mrbbootstrap = "refused", rwyb = "refused"),
+    # The certain PSU is alone in its stratum, which the multistage
+    # bootstrap cannot resample.
     `2` = c(linearization = "supported", JK1 = "refused", JKn = "supported",
             bootstrap = "supported", subbootstrap = "supported",
-            mrbbootstrap = "supported", rwyb = "supported")
+            mrbbootstrap = "refused", rwyb = "supported")
   )
   for (take in 1:2) {
     design <- sampling_design() |>
@@ -1298,7 +1302,7 @@ test_that("a pool of one unit taken whole is no singleton in the preflight", {
   }
   agrees(three("census"), areas, "census below",
          c(JKn = "approximate", BRR = "approximate",
-           subbootstrap = "supported", rwyb = "approximate"))
+           subbootstrap = "approximate", rwyb = "approximate"))
   v <- agrees(three("drawn"), areas, "drawn below",
               c(JKn = "refused", BRR = "refused", subbootstrap = "refused",
                 rwyb = "approximate"))
@@ -2001,4 +2005,86 @@ test_that("a single hit with replacement is no certainty for the one-unit refusa
   expect_identical(row$class, "samplyr_error_export_one_unit")
   expect_match(row$note, "taken with certainty", fixed = TRUE)
   expect_error(as_svydesign(phase2), class = "samplyr_error_export_one_unit")
+})
+
+test_that("the joint route of a constrained unequal-probability stage is refused", {
+  frame <- data.frame(
+    id = 1:60, x1 = (1:60 %% 7) / 7, x2 = (1:60 %% 11) / 11,
+    mos = (1:60 %% 9) + 5, region = rep(c("a", "b", "c"), 20)
+  )
+  joint <- function(design) {
+    rows <- variance_estimators(design, frame)
+    rows$status[rows$estimator == "Linearization, joint probabilities"]
+  }
+  constrained <- list(
+    lpm2 = sampling_design() |>
+      draw(n = 10, method = "lpm2", mos = mos, spread = c(x1, x2)),
+    scps = sampling_design() |>
+      draw(n = 10, method = "scps", mos = mos, spread = c(x1, x2)),
+    cube = sampling_design() |>
+      draw(n = 12, method = "cube", mos = mos, aux = c(x1, bound(region)))
+  )
+  for (name in names(constrained)) {
+    expect_identical(joint(constrained[[name]]), "refused", info = name)
+    sample <- execute(constrained[[name]], frame, seed = 1)
+    expect_error(joint_expectation(sample, frame),
+                 class = "samplyr_error_joint_method_unsupported",
+                 info = name)
+  }
+  equal <- sampling_design() |> draw(n = 10, method = "lpm2", spread = c(x1, x2))
+  expect_identical(joint(equal), "not applicable")
+})
+
+test_that("a phase 1 taken whole leaves phase 2's own method to the export", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:60, y = (1:60 * 7) %% 13)
+  phase1 <- execute(
+    sampling_design() |> draw(frac = 1, method = "systematic"), frame,
+    seed = 1
+  )
+  phase2 <- execute(sampling_design() |> draw(n = 20), phase1, seed = 2)
+  expect_no_warning(svy <- as_svydesign(phase2))
+  rows <- variance_estimators(phase2)
+  expect_identical(
+    rows$status[rows$estimator == "Taylor linearization"], "supported"
+  )
+  # Phase 2 is a simple random sample of the population (closed form).
+  expect_equal(
+    as.vector(survey::SE(survey::svytotal(~y, svy))),
+    sqrt(60^2 * (1 - 20 / 60) * stats::var(phase2$y) / 20),
+    tolerance = 1e-12
+  )
+})
+
+test_that("a draw of one above a later stage is a multistage bootstrap risk", {
+  skip_if_not_installed("survey")
+  row <- function(report) {
+    report[report$call == "as_svrepdesign(x, type = \"mrbbootstrap\")", ]
+  }
+  frame <- data.frame(psu = 1L, y = 1:12)
+  one <- sampling_design() |> cluster_by(psu) |> draw(n = 1) |>
+    add_stage() |> draw(n = 5)
+  ex_ante <- row(variance_estimators(one))
+  expect_identical(ex_ante$status, "supported")
+  expect_match(ex_ante$sample_risk,
+               "A unit drawn alone at stage 1 is taken with probability 1",
+               fixed = TRUE)
+  expect_match(ex_ante$sample_risk, "samplyr_error_svrep_conversion_failed",
+               fixed = TRUE)
+  # The frame shows the pool holds that one unit, which the export refuses.
+  settled <- row(variance_estimators(one, frame))
+  expect_identical(settled$status, "refused")
+  expect_identical(settled$class, "samplyr_error_svrep_conversion_failed")
+  sample <- execute(one, frame, seed = 2)
+  expect_error(as_svrepdesign(sample, type = "mrbbootstrap"),
+               class = "samplyr_error_svrep_conversion_failed")
+  # Two units per stratum, or a draw of one at the last stage, risk nothing.
+  pairs <- data.frame(psu = 1:4, g = rep(1:2, each = 2))
+  strat <- sampling_design() |> stratify_by(g) |> cluster_by(psu) |>
+    draw(n = 1) |> add_stage() |> draw(n = 2)
+  expect_identical(row(variance_estimators(strat, pairs))$status,
+                   "supported")
+  last <- sampling_design() |> cluster_by(psu) |> draw(n = 2) |>
+    add_stage() |> draw(n = 1)
+  expect_false(grepl("drawn alone", row(variance_estimators(last))$sample_risk))
 })

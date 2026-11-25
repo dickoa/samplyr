@@ -90,8 +90,9 @@ the file contents and the replay workflow.
 \subsection{Frame information}{
 
 Design files are frame-independent. Every file records the columns each
-stage needs (stratification, clustering, \code{mos}, \code{prn}, \code{aux}, and control
-variables), so a candidate frame can be checked with \code{\link[=validate_frame]{validate_frame()}}
+stage needs (stratification, clustering, \code{mos}, \code{prn}, \code{aux}, \code{bounds},
+\code{spread}, and control variables), so a candidate frame can be checked with
+\code{\link[=validate_frame]{validate_frame()}}
 before execution. When \code{frame} is supplied, the file also records a
 fingerprint: portable dimensions and column types in \code{frame}, plus the R
 source label, native classes, and content hash in \code{tools.samplyr}.
@@ -149,8 +150,9 @@ digest that \code{\link[=frame_summary]{frame_summary()}} and \code{\link[=repla
 
 \code{draw(control = ...)} expressions are stored as declarative JSON terms
 (\code{"ascending"}, \code{"descending"}, or \code{"serpentine"}, with their variables),
-not R code. Only bare column names, \code{dplyr::desc()}, and \code{\link[=serp]{serp()}} can be
-represented, and \code{write_design()} errors on anything else.
+not R code. Only bare column names, \code{desc()} written without its package,
+and \code{\link[=serp]{serp()}} can be represented, and \code{write_design()} errors on anything
+else.
 }
 
 \subsection{Collections and shared weights}{

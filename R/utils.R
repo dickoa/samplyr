@@ -1585,9 +1585,11 @@ protected_sample_cols <- function(data, design, stages_executed) {
 protected_values_hash <- function(data, cols) {
   vals <- lapply(cols, function(col) data[[col]])
   if (nrow(data) > 1L) {
-    ord <- do.call(order, c(vals, list(method = "radix")))
+    keys <- unlist(lapply(vals, sort_keys), recursive = FALSE)
+    ord <- do.call(order, c(unname(keys), list(method = "radix")))
     vals <- lapply(vals, function(v) v[ord])
   }
+  vals <- lapply(vals, hash_ready)
   names(vals) <- cols
   rlang::hash(vals)
 }
@@ -1636,7 +1638,7 @@ sample_value_hashes <- function(data, cols) {
     stats::setNames(cols, cols),
     function(col) {
       v <- vctrs::vec_slice(data[[col]], ord)
-      rlang::hash(if (is.factor(v)) as.character(v) else v)
+      rlang::hash(hash_ready(if (is.factor(v)) as.character(v) else v))
     },
     character(1)
   )
@@ -1673,11 +1675,14 @@ integrity_column_hashes <- function(data, cols) {
     if (is.factor(v)) as.character(v) else v
   })
   if (nrow(data) > 1L) {
-    keys <- lapply(vals, utf8_sort_key)
+    keys <- unlist(lapply(vals, sort_keys), recursive = FALSE)
     ord <- do.call(order, c(unname(keys), list(method = "radix")))
     vals <- lapply(vals, function(v) v[ord])
   }
-  stats::setNames(vapply(vals, rlang::hash, character(1)), cols)
+  stats::setNames(
+    vapply(vals, function(v) rlang::hash(hash_ready(v)), character(1)),
+    cols
+  )
 }
 
 #' The protected columns a sample no longer matches its record on

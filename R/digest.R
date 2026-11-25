@@ -1330,7 +1330,7 @@ get_frame_digest <- function(x) {
 #' Keeps the selected traces of replicate `r`, with their `replicate` column,
 #' which `joint_expectation()` reads to place the rows, and recounts each
 #' pool's `n_realized` from them. A stage without replicate traces, as the
-#' stages a replicated multistage digest leaves out, is kept as recorded.
+#' stages a replicated multi-stage digest leaves out, is kept as recorded.
 #' @noRd
 scope_digest_to_replicate <- function(digest, r) {
   if (is_null(digest) || length(digest$stages) == 0L) {

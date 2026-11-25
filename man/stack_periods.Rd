@@ -164,12 +164,9 @@ stack_periods(execute(master, period = 1), execute(master, period = 2))
 variance, \code{\link[=joint_expectation]{joint_expectation()}} with \code{period} for how far two occasions
 overlap
 
-Other survey export:
-\code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},
-\code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
-\code{\link[=as_svrepdesign]{as_svrepdesign()}},
-\code{\link[=as_svydesign]{as_svydesign()}},
-\code{\link{variance_estimation}},
-\code{\link[=variance_estimators]{variance_estimators()}}
+Other panels, rotation and periods:
+\code{\link{panel_assignment}},
+\code{\link[=rotation_program]{rotation_program()}},
+\code{\link[=subrounds]{subrounds()}}
 }
-\concept{survey export}
+\concept{panels, rotation and periods}

@@ -52,6 +52,66 @@ test_that("continuation is reproducible with the same stage seeds", {
   expect_equal(norm1, norm2)
 })
 
+test_that("a phase continued after its first stage keeps each row's phase-1 weight", {
+  # Phase 1 weights households of group B 2.5 and group A 1 within every EA.
+  frame <- expand.grid(ea = 1:10, hh = 1:10)
+  frame$grp <- ifelse(frame$hh <= 5, "A", "B")
+  frame$id <- seq_len(nrow(frame))
+  phase1 <- sampling_design() |>
+    stratify_by(grp) |>
+    draw(n = c(A = 50, B = 20)) |>
+    execute(frame, seed = 1)
+  design <- sampling_design() |>
+    add_stage("ea") |> cluster_by(ea) |> draw(n = 4) |>
+    add_stage("hh") |> draw(n = 3)
+  # Weights by hand: 10 / 4 EAs, then 3 of the EA's phase-1 households, times
+  # the household's phase-1 weight.
+  by_hand <- function(sample) {
+    listed <- table(phase1$ea)[as.character(sample$ea)]
+    10 / 4 * as.vector(listed) / 3 * ifelse(sample$grp == "B", 2.5, 1)
+  }
+  at_once <- execute(design, phase1, seed = 7)
+  staged <- execute(execute(design, phase1, stages = 1, seed = 7), phase1,
+                    seed = 8)
+  expect_true(any(staged$grp == "B") && any(staged$grp == "A"))
+  expect_equal(at_once$.weight, by_hand(at_once), tolerance = 1e-12)
+  expect_equal(staged$.weight, by_hand(staged), tolerance = 1e-12)
+})
+
+test_that("a separate listing is refused when phase 1 weighted its parent's rows unequally", {
+  frame <- expand.grid(ea = 1:10, hh = 1:10)
+  frame$grp <- ifelse(frame$hh <= 5, "A", "B")
+  phase1 <- sampling_design() |>
+    stratify_by(grp) |>
+    draw(n = c(A = 50, B = 20)) |>
+    execute(frame, seed = 1)
+  design <- sampling_design() |>
+    add_stage("ea") |> cluster_by(ea) |> draw(n = 4) |>
+    add_stage("hh") |> draw(n = 3)
+  # The listing holds households phase 1 did not draw, and an EA's drawn
+  # households weigh 1 or 2.5, so a listed household has no phase weight.
+  expect_error(execute(design, phase1, frame, seed = 7),
+               class = "samplyr_error_phase_key_ambiguous")
+  staged <- execute(design, phase1, stages = 1, seed = 7)
+  expect_error(execute(staged, frame, seed = 8),
+               class = "samplyr_error_phase_key_ambiguous")
+  # Phase 1 drew whole EAs, so every listed household takes its EA's
+  # weight: 10 / 5, then 5 / 2, then 10 / 3.
+  eas <- sampling_design() |> cluster_by(ea) |> draw(n = 5) |>
+    execute(frame, seed = 1)
+  design2 <- sampling_design() |>
+    add_stage("ea") |> cluster_by(ea) |> draw(n = 2) |>
+    add_stage("hh") |> draw(n = 3)
+  for (sample in list(
+    execute(design2, eas, frame, seed = 7),
+    execute(execute(design2, eas, stages = 1, seed = 7), frame, seed = 8)
+  )) {
+    expect_identical(nrow(sample), 6L)
+    expect_equal(sample$.weight, rep(10 / 5 * 5 / 2 * 10 / 3, 6),
+                 tolerance = 1e-12)
+  }
+})
+
 test_that("continuation matches single-run when downstream stage is deterministic", {
   frame <- make_invariant_frame()
 

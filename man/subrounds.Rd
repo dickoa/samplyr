@@ -71,9 +71,9 @@ probabilities also has a two-phase export, the activation as its second
 phase, with \code{as_svydesign(method = "full")}.
 }
 
-\subsection{Subrounds in a multistage design}{
+\subsection{Subrounds in a multi-stage design}{
 
-Subrounds assigned at the first stage of a multistage design give the
+Subrounds assigned at the first stage of a multi-stage design give the
 field teams their work plan. \code{dplyr::filter(sample, .panel == s)} lists
 the primary units of subround \code{s}, which is what the listing teams need.
 That table is a work list, not a sample to continue. Its weights describe
@@ -115,14 +115,9 @@ tabulate(small$.panel, 12)
 
 }
 \seealso{
-Other helpers:
-\code{\link[=as_tbl_sample]{as_tbl_sample()}},
-\code{\link[=bound]{bound()}},
-\code{\link[=get_design]{get_design()}},
-\code{\link[=get_stages_executed]{get_stages_executed()}},
-\code{\link[=is_sampling_design]{is_sampling_design()}},
-\code{\link[=is_tbl_sample]{is_tbl_sample()}},
-\code{\link{print.samplyr}},
-\code{\link[=serp]{serp()}}
+Other panels, rotation and periods:
+\code{\link{panel_assignment}},
+\code{\link[=rotation_program]{rotation_program()}},
+\code{\link[=stack_periods]{stack_periods()}}
 }
-\concept{helpers}
+\concept{panels, rotation and periods}

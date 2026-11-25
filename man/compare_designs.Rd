@@ -186,6 +186,7 @@ compare_designs(
   written, read_design(path), frame,
   key = household, level = "probabilities"
 )
+unlink(path)
 
 }
 \seealso{
@@ -196,7 +197,6 @@ Other diagnostics:
 \code{\link{design_effect}},
 \code{\link[=frame_summary]{frame_summary()}},
 \code{\link[=joint_expectation]{joint_expectation()}},
-\code{\link{sample_columns}},
 \code{\link[=summary.tbl_sample]{summary.tbl_sample()}},
 \code{\link[=varcomp.tbl_sample]{varcomp.tbl_sample()}}
 }

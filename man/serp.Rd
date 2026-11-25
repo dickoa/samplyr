@@ -120,7 +120,6 @@ Other helpers:
 \code{\link[=get_stages_executed]{get_stages_executed()}},
 \code{\link[=is_sampling_design]{is_sampling_design()}},
 \code{\link[=is_tbl_sample]{is_tbl_sample()}},
-\code{\link{print.samplyr}},
-\code{\link[=subrounds]{subrounds()}}
+\code{\link{print.samplyr}}
 }
 \concept{helpers}

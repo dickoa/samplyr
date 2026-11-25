@@ -54,7 +54,12 @@ Davison 1999).
 population correction (Rao, Wu and Yue 1992). It accepts a PPS first
 stage.
 \item \code{"mrbbootstrap"}: Preston's multistage rescaled bootstrap, which reads
-the sampling fraction of every stage (Preston 2009).
+the sampling fraction of every stage (Preston 2009). It reads one
+fraction per stratum, so it refuses a stage drawn with unequal
+probabilities without replacement, and it resamples none of a
+stratum of one, so it refuses a unit taken with probability 1 alone
+in its stratum above a later stage
+(\code{samplyr_error_svrep_conversion_failed}).
 \item \code{"rwyb"}: the Rao-Wu-Yue-Beaumont bootstrap of every stage (Beaumont
 and \enc{Émond}{Emond} 2022). It needs the svrep package and is never chosen by
 \code{"auto"}.
@@ -103,7 +108,7 @@ object and convert it with \code{\link[survey:as.svrepdesign]{survey::as.svrepde
 \subsection{What is replicated}{
 
 A single-phase sample is replicated from the design \code{\link[=as_svydesign]{as_svydesign()}}
-exports, multistage samples, shared weights, independent frame stacks
+exports, multi-stage samples, shared weights, independent frame stacks
 and settled reserves included. A materialized occasion is replicated by
 ultimate clusters, and a window's replicates are calibrated on the same
 totals as its linearized design. \code{"rwyb"} is refused for an occasion
@@ -144,9 +149,8 @@ A first-stage unit taken with probability 1 above a later stage, by a
 certainty rule or because its stratum is taken whole, is a stratum of
 its own whose stage-2 units are resampled (see Statistical details). The
 first stage is then stratified, so \code{"JK1"} is refused and \code{"auto"} takes
-\code{"JKn"}. \code{"mrbbootstrap"} and \code{"rwyb"} read every stage's probabilities
-and need none of these readings, and \code{\link[=as_svydesign]{as_svydesign()}} gives the
-linearization variance.
+\code{"JKn"}. \code{"rwyb"} reads every stage's probabilities and needs none of
+these readings, and \code{\link[=as_svydesign]{as_svydesign()}} gives the linearization variance.
 }
 
 \subsection{Censuses}{
@@ -241,9 +245,10 @@ execution (\code{samplyr_error_random_groups_input}).
 \subsection{Variance by selection method}{
 
 The generic types are refused for Poisson sampling, which needs
-\code{"rwyb"}. Bounded cube, LPM2 and SCPS have only the generic PPS bootstrap
-of \code{"subbootstrap"} and \code{"mrbbootstrap"}, which does not recreate their
-constraints or spatial algorithm. Only \code{"random_groups"} redraws a
+\code{"rwyb"}. Bounded cube, LPM2 and SCPS have only the generic bootstrap of
+\code{"subbootstrap"}, and of \code{"mrbbootstrap"} when they are drawn with equal
+probabilities, which does not recreate their constraints or spatial
+algorithm. Only \code{"random_groups"} redraws a
 systematic start. \link{variance_estimation} compares the estimators by
 selection method.
 }
@@ -294,8 +299,6 @@ Other survey export:
 \code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},
 \code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
 \code{\link[=as_svydesign]{as_svydesign()}},
-\code{\link[=stack_periods]{stack_periods()}},
-\code{\link{variance_estimation}},
 \code{\link[=variance_estimators]{variance_estimators()}}
 }
 \concept{survey export}

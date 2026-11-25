@@ -599,3 +599,22 @@ test_that("a tampered result is refused before anything is built", {
     unname(survey::SE(survey::svytotal(~y, as_svydesign(shared))))
   )
 })
+
+test_that("a source taken whole one unit per stratum exports with no variance", {
+  skip_if_not_installed("survey")
+  # Each dwelling is a stratum of its own, taken whole: the shared total is
+  # exact, as the census of the source is.
+  dwellings <- linearized_dwellings()
+  dwellings$st <- paste0("s", seq_len(nrow(dwellings)))
+  source <- sampling_design() |> stratify_by(st) |> draw(n = 1) |>
+    execute(dwellings, seed = 1)
+  shared <- share_weights(
+    source, targets = linearized_targets(), links = linearized_links(),
+    by = c(dw_id = "dw_id"), to = c(person_id = "person_id"), within = hh,
+    multiplicity = complete_links()
+  )
+  svy <- as_svydesign(shared)
+  total <- survey::svytotal(~y, svy)
+  expect_equal(as.vector(survey::SE(total)), 0)
+  expect_equal(unname(stats::coef(total)), sum(shared$.weight * shared$y))
+})

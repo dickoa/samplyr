@@ -170,7 +170,8 @@ receipt as potentially confidential.}
 \value{
 A \code{tbl_sample}: a data frame subclass carrying the selected rows,
 the design that produced them, and generated columns recording the
-selection. Those are \code{.sample_id}, \code{.weight}, the per-stage \code{.weight_k},
+selection. Those are \code{.sample_id}, \code{.stage}, \code{.weight}, the per-stage
+\code{.weight_k},
 \code{.fpc_k}, \code{.draw_k} and \code{.certainty_k}, \code{.reserve_k} at a stage that
 sets \code{reserve} in \code{\link[=draw]{draw()}}, \code{.zone_1} and \code{.variance_group_1} for a zoned
 certainty plan, \code{.replicate} or \code{.panel} when \code{reps} or
@@ -326,12 +327,9 @@ draws the permanent units, which keep one cohort throughout. An occasion
 that opens no cohort is refused (\code{samplyr_error_occasion_already_drawn})
 with the occasions that drew its units. When a panel has several cohorts,
 the master never closes: its draws accumulate, and
-\code{execute(master, period = p)} reads each panel's current cohort. A new
-cohort takes the full listing: samplyr leaves out the units earlier
-cohorts drew and weights the rest to the whole listing. Such a master
-takes no \code{reserve} at any stage (\code{samplyr_error_cohort_stages}), since
-it is never complete and an occasion exports no reserve.
-\link{panel_assignment} describes cohorts.
+\code{execute(master, period = p)} reads each panel's current cohort. \link{panel_assignment}
+describes how a new cohort is weighted to the whole listing, and which
+stages a master with cohorts can draw.
 }
 }
 
@@ -341,6 +339,14 @@ it is never complete and an occasion exports no reserve.
 earlier sample as the frame of a new design rather than \code{.data} carrying
 unexecuted stages. Weights compound across phases, and \code{\link[=as_svydesign]{as_svydesign()}}
 exports this path through \code{\link[survey:twophase]{survey::twophase()}}.
+
+A later stage of the new phase can be drawn from a separate listing, as
+in \code{execute(new_design, previous_sample, listing)}. A listed row then
+takes the previous-phase weight of the unit it is listed under. When the
+previous phase gave that unit's rows different weights, a listed row has
+no single weight and the call is refused
+(\code{samplyr_error_phase_key_ambiguous}). Draw that stage from the previous
+phase's sample instead.
 }
 
 \subsection{Weights}{
@@ -496,7 +502,6 @@ be realized as written,
 
 Other execution:
 \code{\link{execution_conditions}},
-\code{\link[=rotation_program]{rotation_program()}},
 \code{\link[=validate_frame]{validate_frame()}}
 }
 \concept{execution}

@@ -17,8 +17,9 @@
 #' The reference topics answer narrower questions. [selection_methods]
 #' compares the selection methods, [frame_input_grammar] says how frames
 #' and stage registers are passed, [sample_columns] lists the columns a
-#' sample carries and how its weights are computed, and
-#' [variance_estimation] gives how each method's variance is estimated.
+#' sample carries and how its weights are computed, [reserve_lists] how
+#' units that fail in the field are replaced, and [variance_estimation] how
+#' each method's variance is estimated.
 #'
 #' @examples
 #' # 300 EAs allocated proportionally across the 13 regions

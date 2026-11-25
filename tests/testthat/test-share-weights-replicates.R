@@ -341,3 +341,20 @@ test_that("a shared census exports with zero variance under every type", {
   }
   expect_setequal(checked, c("auto", "JK1", "bootstrap", "rwyb"))
 })
+
+test_that("a shared sample with no rows is refused by the replicate route", {
+  skip_if_not_installed("survey")
+  source <- sampling_design() |> draw(n = 10) |>
+    execute(data.frame(s = 1:20), seed = 1)
+  # The links reach no selected source unit.
+  shared <- share_weights(
+    source, targets = data.frame(t = 1:3),
+    links = data.frame(s = 30:32, t = 1:3),
+    by = c(s = "s"), to = c(t = "t"), within = NULL,
+    multiplicity = complete_links()
+  )
+  expect_identical(nrow(shared), 0L)
+  expect_error(as_svrepdesign(shared, type = "bootstrap", replicates = 10),
+               class = "samplyr_error_svrep_conversion_failed")
+  expect_s3_class(suppressWarnings(as_svydesign(shared)), "survey.design2")
+})

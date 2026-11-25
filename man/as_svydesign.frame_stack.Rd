@@ -83,8 +83,12 @@ So is a frame exported as drawn with replacement, such as a draw by
 \code{srswr}, a PPS draw with replacement or minimum replacement, or a settled
 reserve list (\code{samplyr_error_survey_multiframe_unsupported}).
 \code{multiframe()} computes each frame's variance as for a draw without
-replacement, which understates it there. \code{\link[=as_svrepdesign]{as_svrepdesign()}} keeps each
-frame's own variance.
+replacement, which understates it there. A frame drawn with unequal
+probabilities without replacement, such as \code{pps_brewer} or
+\code{pps_systematic}, is refused with the same class, since \code{multiframe()}
+reads it as drawn with equal probabilities, and its variance can then be
+negative. Poisson sampling keeps its own variance. \code{\link[=as_svrepdesign]{as_svrepdesign()}}
+keeps each frame's own variance.
 }
 
 \subsection{The expected estimator}{

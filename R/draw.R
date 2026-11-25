@@ -111,8 +111,9 @@
 #' - `method = "lpm2"` or `"scps"` with `spread` spreads the sample in space.
 #'
 #' The last two keep exact first-order probabilities, but their joint
-#' probabilities are refused and their variance comes from `subbootstrap` or
-#' `mrbbootstrap` replicates only ([variance_estimation]). No method
+#' probabilities are refused and their variance comes from `subbootstrap`
+#' replicates only, or `mrbbootstrap` ones when no size is given
+#' ([variance_estimation]). No method
 #' dominates the others, and the choice depends on the variance the analysis
 #' needs.
 #'
@@ -248,7 +249,7 @@
 #' *Annals of Mathematical Statistics*, 20(3), 333-354.
 #' \doi{10.1214/aoms/1177729988}
 #'
-#' `balanced`:
+#' `cube`, `balanced`:
 #' Deville, J.-C. and \enc{Tillé}{Tille}, Y. (2004). Efficient balanced
 #' sampling: the cube method. *Biometrika*, 91(4), 893-912.
 #'
@@ -274,7 +275,7 @@
 #'
 #'
 #' @name selection_methods
-#' @family design specification
+#' @family reference topics
 #' @seealso [draw()] to set a method on a stage,
 #'   [variance_estimation] for how each method's variance is estimated,
 #'   [joint_expectation()] for which methods yield exact second-order
@@ -504,7 +505,7 @@ NULL
 #'
 #'   An empty selection is a valid realization of a random-size design. It
 #'   contributes zero to Horvitz-Thompson totals, so estimates over repeated
-#'   executions remain unbiased. Later stages of a multistage design then
+#'   executions remain unbiased. Later stages of a multi-stage design then
 #'   have nothing to select from, and the sample is empty. `"warn"` and
 #'   `"silent"` are meant for simulation and replicated runs, so check
 #'   `nrow()` before analyzing a single realization.
@@ -597,7 +598,7 @@ NULL
 #' that can take a unit more than once (`pps_multinomial`, `pps_chromy`,
 #' `pps_systematic_mr`), and for methods registered with `type = "wor"` or
 #' `"wr"`. A pool censused under
-#' `certainty_overflow = "allow"` has stage weight 1, but in a multistage
+#' `certainty_overflow = "allow"` has stage weight 1, but in a multi-stage
 #' design the final `.weight` can still exceed 1 because it compounds all
 #' stage weights.
 #'
@@ -1132,6 +1133,16 @@ draw <- function(
     certainty_plan = certainty_plan,
     parent_vars = collect_ancestor_cluster_vars(.data, current)
   )
+  # A count that passed as whole, such as (0.3 / 0.1) * 10, is stored whole,
+  # so every method and allocation reads the same number.
+  if (!n_is_expected_size(method, custom_spec, has_alloc)) {
+    n <- round_whole_counts(n)
+  }
+  min_n <- round_whole_counts(min_n)
+  max_n <- round_whole_counts(max_n)
+  if (is.double(reserve) && all(is.finite(reserve))) {
+    reserve <- round(reserve)
+  }
 
   draw_spec <- new_draw_spec(
     n = n,
@@ -1418,6 +1429,21 @@ n_is_expected_size <- function(method, custom_spec, has_alloc) {
     (method %in% rs_poisson_methods || identical(custom_spec$fixed_size, FALSE))
 }
 
+#' Whole counts stored as whole numbers
+#'
+#' A plain numeric vector, or the `n` column of a table, is rounded. Values
+#' reaching here passed the integer check, so rounding moves them by less
+#' than its tolerance. Anything else, such as a svyplan plan, is returned.
+#' @noRd
+round_whole_counts <- function(x) {
+  if (is.data.frame(x) && is.double(x[["n"]])) {
+    x[["n"]] <- round(x[["n"]])
+  } else if (is.double(x) && !is.object(x)) {
+    x[] <- round(x)
+  }
+  x
+}
+
 #' Refuse a fractional `n` where whole units are required
 #' @noRd
 check_n_integer <- function(
@@ -1428,6 +1454,17 @@ check_n_integer <- function(
   table = FALSE,
   call = caller_env()
 ) {
+  top <- .Machine$integer.max
+  if (any(n > top)) {
+    abort_samplyr(
+      c(
+        "{.arg n} must be at most {top}, the largest integer R stores.",
+        "x" = "Got {.val {max(n)}}."
+      ),
+      class = "samplyr_error_alloc_n_bounds",
+      call = call
+    )
+  }
   if (
     n_is_expected_size(method, custom_spec, has_alloc) ||
       is_integerish_numeric(n)
@@ -1774,7 +1811,8 @@ validate_draw_configuration <- function(
       )
     }
   }
-  check_on_capped_applies(on_capped, method, n, custom_spec, call = call)
+  check_on_capped_applies(on_capped, method, n, custom_spec,
+                          plan_take = provides_take, call = call)
   validate_reserve(
     reserve,
     method,
@@ -1874,6 +1912,7 @@ check_on_capped_applies <- function(
   method,
   n,
   custom_spec,
+  plan_take = FALSE,
   call = caller_env()
 ) {
   if (!identical(on_capped, "error")) {
@@ -1890,6 +1929,9 @@ check_on_capped_applies <- function(
   } else if (is_multi_hit_method(kind)) {
     "{.val {method}} draws with replacement, so a take can exceed the
      units a pool holds."
+  } else if (plan_take) {
+    "{.arg n} is a certainty plan, which sets each PSU's take itself, so
+     the stage has no take of its own to check."
   } else if (is_null(n)) {
     "{.arg frac} gives a rate, which never exceeds a pool."
   }
@@ -2264,7 +2306,8 @@ validate_bounds <- function(
         class = "samplyr_error_draw_argument"
       )
     }
-    if (min_n < 1 || !is_integerish_numeric(min_n)) {
+    if (min_n < 1 || !is_integerish_numeric(min_n) ||
+          min_n > .Machine$integer.max) {
       cli_abort(
         "{.arg min_n} must be a positive integer",
         call = call,
@@ -2287,7 +2330,8 @@ validate_bounds <- function(
         class = "samplyr_error_draw_argument"
       )
     }
-    if (max_n < 1 || !is_integerish_numeric(max_n)) {
+    if (max_n < 1 || !is_integerish_numeric(max_n) ||
+          max_n > .Machine$integer.max) {
       cli_abort(
         "{.arg max_n} must be a positive integer",
         call = call,

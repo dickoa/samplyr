@@ -72,7 +72,10 @@
 #'   changes both the numerator and the denominator.
 #' @param by,to Named character vectors matching the source sample and the
 #'   target register to `links`, in the same direction as a dplyr join:
-#'   `c(local_column = "links_column")`.
+#'   `c(local_column = "links_column")`. Each identifies the rows of its
+#'   side, a unit drawn more than once being told apart by its draw number,
+#'   since every sample row adds its weight to the targets it links to
+#'   (`samplyr_error_share_weights_keys`).
 #' @param within The target cluster, Lavallee's \eqn{i}. Never inferred. Give
 #'   a bare column of `targets` for the ordinary clustered method, `NULL` to
 #'   make every target unit its own cluster, or [extend_links()] to eliminate
@@ -743,6 +746,26 @@ validate_share_inputs <- function(x, targets, links, by, to, within, mult,
     )
   }
 
+  # A unit drawn more than once has a row per hit, told apart by its draw,
+  # of this phase or, carried by a later one, of an earlier phase.
+  draws <- grep("^\\.(phase[0-9]+_)?draw_[0-9]+$", names(x), value = TRUE)
+  src_keys <- make_group_key(as.data.frame(x), c(names(by), draws))
+  if (anyDuplicated(src_keys) > 0L) {
+    abort_samplyr(
+      c(
+        "{.arg by} must identify the rows of the sample.",
+        "x" = "{sum(duplicated(src_keys))} row{?s} repeat{?s/} a key.",
+        "i" = "Each sample row adds its weight to the targets it links to,
+               so rows that share a key add that weight once per row while
+               the link counts once.",
+        "i" = "Give the links at the level of the sample's rows, or reduce
+               the sample to the linked unit first."
+      ),
+      class = "samplyr_error_share_weights_keys",
+      call = call
+    )
+  }
+
   tgt_keys <- make_group_key(as.data.frame(targets), names(to))
   if (anyDuplicated(tgt_keys) > 0L) {
     abort_samplyr(
@@ -785,14 +808,15 @@ validate_share_inputs <- function(x, targets, links, by, to, within, mult,
     )
   }
   if (identical(mult$scale, "quantitative")) {
-    check_weighted_links(targets, links, within, mult, call = call)
+    check_weighted_links(targets, links, within, mult, x = x, by = by,
+                         to = to, call = call)
   }
 
   invisible(NULL)
 }
 
 #' @noRd
-check_weighted_links <- function(targets, links, within, mult,
+check_weighted_links <- function(targets, links, within, mult, x, by, to,
                                  call = caller_env()) {
   # No accepted normalization exists for this extended weighted case.
   if (identical(within$mode, "extended")) {
@@ -847,6 +871,34 @@ check_weighted_links <- function(targets, links, within, mult,
           "{.field {mult$total_col}} must be finite non-negative numbers with
            no missing values.",
           "i" = "It is the population total of the link importances."
+        ),
+        class = "samplyr_error_share_weights_multiplicity",
+        call = call
+      )
+    }
+    # The population total covers at least the links the sample shows, as a
+    # supplied count of links does.
+    src_key_sample <- make_group_key(as.data.frame(x), names(by))
+    src_key_links <- make_group_key(as.data.frame(links), unname(by))
+    link_tgt <- match(
+      make_group_key(as.data.frame(links), unname(to)),
+      make_group_key(as.data.frame(targets), names(to))
+    )
+    usable <- (src_key_links %in% src_key_sample) & !is.na(link_tgt)
+    sampled <- vapply(split(value[usable], link_tgt[usable]), sum, numeric(1))
+    at <- as.integer(names(sampled))
+    too_low <- sampled > total[at] * (1 + sqrt(.Machine$double.eps))
+    if (any(too_low)) {
+      abort_samplyr(
+        c(
+          "{.field {mult$total_col}} is smaller than the importance of the
+           sampled links.",
+          "x" = "{sum(too_low)} target row{?s} {?has/have} sampled links
+                 whose importances sum to more than {.field {mult$total_col}}
+                 declares.",
+          "i" = "{.field {mult$total_col}} totals the importances of every
+                 link in the source population, so it is at least the total
+                 of the links observed in the sample."
         ),
         class = "samplyr_error_share_weights_multiplicity",
         call = call

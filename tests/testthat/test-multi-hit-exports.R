@@ -324,7 +324,7 @@ test_that("a refused export gives no approximation warning first", {
 
 ## Every replicate type reads minimum replacement as with replacement
 
-test_that("the probability-based bootstraps flag a PMR first stage too", {
+test_that("the rescaled bootstraps flag a first stage read with replacement", {
   skip_if_not_installed("survey")
   skip_if_not_installed("svrep")
   frame <- data.frame(
@@ -345,15 +345,24 @@ test_that("the probability-based bootstraps flag a PMR first stage too", {
     s <- suppressMessages(execute(design, frame, seed = 1))
     pmr <- method %in% c("pps_chromy", "pps_systematic_mr")
     for (type in names(types)) {
-      flagged <- "samplyr_warning_replicate_wr_first_stage" %in%
-        estimator_classes(rows, types[[type]])
       out <- warning_classes(
         as_svrepdesign(s, type = type, systematic_variance = "approximate")
       )
+      status <- rows$status[rows$estimator == types[[type]]]
+      # mrbbootstrap reads one fraction per stratum, which PPS without
+      # replacement does not have.
+      if (method == "pps_brewer" && type == "mrbbootstrap") {
+        expect_identical(out$error, "samplyr_error_svrep_conversion_failed")
+        expect_identical(status, "refused")
+        next
+      }
+      read_wr <- pmr || method == "pps_brewer"
+      flagged <- "samplyr_warning_replicate_wr_first_stage" %in%
+        estimator_classes(rows, types[[type]])
       expect_null(out$error)
-      expect_identical(flagged, pmr, info = paste(method, type))
+      expect_identical(flagged, read_wr, info = paste(method, type))
       expect_identical(
-        "samplyr_warning_replicate_wr_first_stage" %in% out$warnings, pmr,
+        "samplyr_warning_replicate_wr_first_stage" %in% out$warnings, read_wr,
         info = paste(method, type)
       )
     }
@@ -461,4 +470,111 @@ test_that("a subsample within each village, across its hits, stays two-phase", {
   # A village hit twice spans two units, so the advice names the hit.
   expect_match(raised$samplyr_warning_twophase_across_units,
                "stratify_by(village, .phase1_draw_1)", fixed = TRUE)
+})
+
+## A phase 1 drawn with replacement, then subsampled
+#
+# A subsample of independent draws is itself a sample of independent draws,
+# so phase 2's rows form a with-replacement sample of phase 2's size and its
+# textbook variance estimator is the exact target (closed form).
+
+test_that("a with-replacement phase 1 keeps its variance in a two-phase export", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:30, y = (1:30 * 7) %% 19 + 1)
+  phase1 <- sampling_design() |>
+    draw(n = 30, method = "srswr") |>
+    execute(frame, seed = 1)
+  phase2 <- sampling_design() |>
+    draw(n = 15) |>
+    execute(phase1, seed = 2)
+  svy <- as_svydesign(phase2)
+  v <- stats::vcov(survey::svytotal(~y, svy))[1, 1]
+  expect_equal(v, 30^2 * stats::var(phase2$y) / 15, tolerance = 1e-10)
+})
+
+test_that("a PPS phase 1 with hits gives the Hansen-Hurwitz variance", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = 1:25,
+    y = (1:25 * 7) %% 19 + 1,
+    size = c(40, 40, 40, (4:25 * 3) %% 10 + 1)
+  )
+  # Expected hits above one, where reading them as a probability failed.
+  expect_gt(max(12 * frame$size / sum(frame$size)), 1)
+  phase1 <- sampling_design() |>
+    draw(n = 12, method = "pps_multinomial", mos = size) |>
+    execute(frame, seed = 3)
+  expect_gt(anyDuplicated(phase1$id), 0)
+  phase2 <- sampling_design() |>
+    draw(n = 6) |>
+    execute(phase1, seed = 4)
+  svy <- as_svydesign(phase2)
+  check <- as.matrix(svy$dcheck$phase1)
+  expect_equal(check, t(check), tolerance = 0)
+  z <- phase2$y / (frame$size[phase2$id] / sum(frame$size))
+  v <- stats::vcov(survey::svytotal(~y, svy))[1, 1]
+  expect_equal(v, sum((z - mean(z))^2) / (6 * 5), tolerance = 1e-10)
+})
+
+test_that("a stratified with-replacement phase 1 exports in two phases", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(
+    id = 1:40,
+    y = (1:40 * 7) %% 19 + 1,
+    region = rep(c("a", "b"), 20)
+  )
+  phase1 <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 10, method = "srswr") |>
+    execute(frame, seed = 1)
+  expect_true(anyDuplicated(phase1$.draw_1) > 0)
+  phase2 <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 5) |>
+    execute(phase1, seed = 2)
+  for (method in c("full", "approx", "simple")) {
+    seen <- warning_classes(as_svydesign(phase2, method = method))
+    expect_null(seen$error)
+    expect_false("samplyr_warning_twophase_across_units" %in% seen$warnings)
+  }
+  v <- stats::vcov(survey::svytotal(~y, as_svydesign(phase2)))[1, 1]
+  closed <- sum(tapply(phase2$y, phase2$region, function(y) {
+    20^2 * stats::var(y) / 5
+  }))
+  expect_equal(v, closed, tolerance = 1e-10)
+
+  across <- sampling_design() |>
+    draw(n = 10) |>
+    execute(phase1, seed = 2)
+  seen <- warning_classes(as_svydesign(across))
+  expect_null(seen$error)
+  expect_identical(seen$warnings, character(0))
+  rows <- variance_estimators(across)
+  expect_identical(
+    rows$status[rows$estimator == "Taylor linearization"], "supported"
+  )
+})
+
+test_that("an occasion of a with-replacement master pairs its hits by stratum", {
+  skip_if_not_installed("survey")
+  rotation <- expand.grid(panel = 1:2, period = 1:3)
+  rotation$active <- ((rotation$period - rotation$panel) %% 2) == 0
+  frame <- data.frame(
+    id = 1:40,
+    y = (1:40 * 7) %% 19 + 1,
+    region = rep(c("a", "b"), 20)
+  )
+  master <- sampling_design() |>
+    stratify_by(region) |>
+    draw(n = 20, method = "srswr") |>
+    execute(frame, seed = 11, panels = rotation)
+  occasion <- execute(master, period = 2)
+  svy <- as_svydesign(occasion, method = "full")
+  # The check matrix of independent draws in each stratum (closed form).
+  region <- svy$phase1$sample$variables$region
+  expected <- outer(region, region, "==") * (-1 / (20 - 1))
+  diag(expected) <- 1
+  expect_equal(
+    unname(as.matrix(svy$dcheck$phase1)), expected, tolerance = 1e-12
+  )
 })

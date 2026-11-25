@@ -59,9 +59,9 @@
 #' probabilities also has a two-phase export, the activation as its second
 #' phase, with `as_svydesign(method = "full")`.
 #'
-#' ## Subrounds in a multistage design
+#' ## Subrounds in a multi-stage design
 #'
-#' Subrounds assigned at the first stage of a multistage design give the
+#' Subrounds assigned at the first stage of a multi-stage design give the
 #' field teams their work plan. `dplyr::filter(sample, .panel == s)` lists
 #' the primary units of subround `s`, which is what the listing teams need.
 #' That table is a work list, not a sample to continue. Its weights describe
@@ -100,7 +100,7 @@
 #'   execute(poura, seed = 1, panels = subrounds(12))
 #' tabulate(small$.panel, 12)
 #'
-#' @family helpers
+#' @family panels, rotation and periods
 #' @export
 subrounds <- function(k) {
   if (
@@ -116,7 +116,7 @@ subrounds <- function(k) {
       call = current_env()
     )
   }
-  structure(list(k = as.integer(k)), class = "samplyr_subrounds")
+  structure(list(k = as.integer(round(k))), class = "samplyr_subrounds")
 }
 
 #' @export
@@ -126,6 +126,7 @@ format.samplyr_subrounds <- function(x, ...) {
 
 #' @export
 print.samplyr_subrounds <- function(x, ...) {
+  rlang::check_dots_empty()
   cat(format(x), "\n", sep = "")
   invisible(x)
 }

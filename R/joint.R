@@ -71,7 +71,7 @@
 #'   which analytic methods ignore. The session's random stream is restored
 #'   afterwards, so the result is an exact function of the sample, `nsim`
 #'   and `seed`, and calling this never moves a later [execute()]. At the
-#'   default `nsim` a chromy matrix carries simulation error of a few
+#'   default `nsim` a `pps_chromy` matrix carries simulation error of a few
 #'   percent, so two seeds give slightly different answers, neither more
 #'   correct than the other.
 #'
@@ -209,7 +209,7 @@
 #' |---------------------|-----------------------------------------------|
 #' | `pps_multinomial`   | **Exact**, analytic                           |
 #' | `pps_systematic_mr` | **Exact**, analytic, zero pairs possible      |
-#' | `pps_chromy`        | **Approximate**, Monte Carlo, 10 000 draws    |
+#' | `pps_chromy`        | **Approximate**, Monte Carlo, 10,000 draws    |
 #' | registered          | From the method's `joint_fn`                  |
 #'
 #' For `pps_multinomial`,
@@ -425,7 +425,7 @@ joint_expectation <- function(
       class = "samplyr_error_joint_argument"
     )
   }
-  nsim <- as.integer(nsim)
+  nsim <- as.integer(round(nsim))
 
   if (
     length(seed) != 1L ||
@@ -438,7 +438,7 @@ joint_expectation <- function(
       class = "samplyr_error_joint_argument"
     )
   }
-  seed <- as.integer(seed)
+  seed <- as.integer(round(seed))
 
   digest <- NULL
   if (is_null(frame)) {

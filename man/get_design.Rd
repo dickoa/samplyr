@@ -49,7 +49,6 @@ Other helpers:
 \code{\link[=is_sampling_design]{is_sampling_design()}},
 \code{\link[=is_tbl_sample]{is_tbl_sample()}},
 \code{\link{print.samplyr}},
-\code{\link[=serp]{serp()}},
-\code{\link[=subrounds]{subrounds()}}
+\code{\link[=serp]{serp()}}
 }
 \concept{helpers}

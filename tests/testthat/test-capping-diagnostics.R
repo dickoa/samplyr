@@ -1984,3 +1984,26 @@ test_that("a category missing within the parent is still reported", {
                        "samplyr_message_absent_strata")
   expect_setequal(found$payload$pool_keys, expected)
 })
+
+test_that("the allocation report names only the strata held at their size", {
+  # Stratum a has 3 units and takes them all. Stratum b gets one unit less
+  # than without a bound only through rounding, which no bound caused.
+  N <- c(3, 109, 154, 82)
+  factors <- c(30.96, 9.4, 59.57, 87.64)
+  frame <- data.frame(h = rep(letters[1:4], N), id = seq_len(sum(N)))
+  variance <- data.frame(h = letters[1:4], var = (factors / N)^2)
+  design <- sampling_design() |>
+    stratify_by(h, alloc = "neyman", variance = variance) |>
+    draw(n = 26)
+  report <- NULL
+  sample <- withCallingHandlers(
+    execute(design, frame, seed = 1),
+    samplyr_message_allocation_capped = function(m) {
+      report <<- m
+      invokeRestart("muffleMessage")
+    }
+  )
+  expect_identical(as.vector(table(sample$h)), c(3L, 1L, 9L, 13L))
+  expect_identical(report$payload$n_capped, 1L)
+  expect_identical(report$payload$pool_keys, "a")
+})

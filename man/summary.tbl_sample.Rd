@@ -122,7 +122,6 @@ Other diagnostics:
 \code{\link{design_effect}},
 \code{\link[=frame_summary]{frame_summary()}},
 \code{\link[=joint_expectation]{joint_expectation()}},
-\code{\link{sample_columns}},
 \code{\link[=varcomp.tbl_sample]{varcomp.tbl_sample()}}
 }
 \concept{diagnostics}

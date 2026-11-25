@@ -242,3 +242,28 @@ test_that("serp is fast for large datasets", {
 
   expect_lt(time["elapsed"], 1)
 })
+
+test_that("a control column named like a function is still a column", {
+  # all.vars() skips the functions a control calls, so desc(c) reads c.
+  frame <- data.frame(id = 1:20, ea = rep(1:10, each = 2), zz = 1)
+  for (column in c("c", "desc", "serp")) {
+    design <- sampling_design() |>
+      draw(n = 5, method = "systematic", control = !!rlang::sym(column))
+    expect_error(validate_frame(design, frame),
+                 class = "samplyr_error_frame_missing_vars", info = column)
+    expect_error(execute(design, frame, seed = 1),
+                 class = "samplyr_error_frame_missing_vars", info = column)
+    # A control that varies inside a cluster is refused under that name too.
+    varying <- frame
+    varying[[column]] <- seq_len(nrow(varying))
+    clustered <- sampling_design() |> cluster_by(ea) |>
+      draw(n = 3, method = "systematic", control = !!rlang::sym(column))
+    expect_error(execute(clustered, varying, seed = 1),
+                 class = "samplyr_error_frame_cluster_invariant", info = column)
+  }
+  frame$c <- 20:1
+  ordered <- sampling_design() |>
+    draw(n = 5, method = "systematic", control = desc(c)) |>
+    execute(frame, seed = 1)
+  expect_identical(nrow(ordered), 5L)
+})

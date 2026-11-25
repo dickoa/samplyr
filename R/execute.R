@@ -59,7 +59,7 @@
 #' [validate_frame()] and [exante_probabilities()] refuse the same designs,
 #' while [frame_summary()] still reports their short pools.
 #'
-#' One more is reported the same way, once per stage with a `payload`,
+#' Five more are reported the same way, once per stage with a `payload`,
 #' although nothing was capped. `samplyr_message_singleton_pool` names the
 #' strata of a fixed-size design without replacement that draw a single unit
 #' outside certainty. Such a stratum gives no variance estimate of its own:
@@ -339,7 +339,8 @@ NULL
 #'
 #' @return A `tbl_sample`: a data frame subclass carrying the selected rows,
 #'   the design that produced them, and generated columns recording the
-#'   selection. Those are `.sample_id`, `.weight`, the per-stage `.weight_k`,
+#'   selection. Those are `.sample_id`, `.stage`, `.weight`, the per-stage
+#'   `.weight_k`,
 #'   `.fpc_k`, `.draw_k` and `.certainty_k`, `.reserve_k` at a stage that
 #'   sets `reserve` in [draw()], `.zone_1` and `.variance_group_1` for a zoned
 #'   certainty plan, `.replicate` or `.panel` when `reps` or
@@ -482,18 +483,23 @@ NULL
 #'   that opens no cohort is refused (`samplyr_error_occasion_already_drawn`)
 #'   with the occasions that drew its units. When a panel has several cohorts,
 #'   the master never closes: its draws accumulate, and
-#'   `execute(master, period = p)` reads each panel's current cohort. A new
-#'   cohort takes the full listing: samplyr leaves out the units earlier
-#'   cohorts drew and weights the rest to the whole listing. Such a master
-#'   takes no `reserve` at any stage (`samplyr_error_cohort_stages`), since
-#'   it is never complete and an occasion exports no reserve.
-#'   [panel_assignment] describes cohorts.
+#'   `execute(master, period = p)` reads each panel's current cohort. [panel_assignment]
+#'   describes how a new cohort is weighted to the whole listing, and which
+#'   stages a master with cohorts can draw.
 #'
 #' ## Multi-phase sampling
 #' `execute(new_design, previous_sample)` starts a new phase, with the
 #' earlier sample as the frame of a new design rather than `.data` carrying
 #' unexecuted stages. Weights compound across phases, and [as_svydesign()]
 #' exports this path through [survey::twophase()].
+#'
+#' A later stage of the new phase can be drawn from a separate listing, as
+#' in `execute(new_design, previous_sample, listing)`. A listed row then
+#' takes the previous-phase weight of the unit it is listed under. When the
+#' previous phase gave that unit's rows different weights, a listed row has
+#' no single weight and the call is refused
+#' (`samplyr_error_phase_key_ambiguous`). Draw that stage from the previous
+#' phase's sample instead.
 #'
 #' ## Weights
 #'
@@ -796,7 +802,7 @@ execute <- function(
         class = "samplyr_error_seed_range"
       )
     }
-    seed <- as.integer(seed)
+    seed <- as.integer(round(seed))
   }
 
   panels <- normalize_panel_input(
@@ -817,7 +823,7 @@ execute <- function(
         class = "samplyr_error_execute_argument"
       )
     }
-    reps <- as.integer(reps)
+    reps <- as.integer(round(reps))
   }
 
   if (!is_null(reps) && !is_null(panels)) {
@@ -1704,6 +1710,17 @@ execute_continuation <- function(
       call = call
     )
   }
+  # A partial execution folded each row's previous-phase weight into
+  # `.weight`. It is taken out again, so later stages compound each row's
+  # own, as one call does.
+  phase1 <- parent_meta$prev_phase$sample
+  phase_row <- if (is_tbl_sample(phase1)) phase_row_column(phase1)
+  unfold <- !is_null(phase_row) && phase_row %in% names(current_sample)
+  if (unfold) {
+    phase_weight <- phase1$.weight[current_sample[[phase_row]]]
+    current_sample$.weight <- current_sample$.weight / phase_weight
+    current_sample$._prev_phase_weight <- phase_weight
+  }
   last_executed_stage <- max(executed)
   previous_stage_idx <- last_executed_stage
   all_prior_cluster_vars <- collect_ancestor_cluster_vars(design, stages[1])
@@ -1742,6 +1759,9 @@ execute_continuation <- function(
     )
     if (length(internal) > 0L) {
       frame <- frame[, setdiff(names(frame), internal), drop = FALSE]
+    }
+    if (unfold && phase_row %in% names(frame)) {
+      frame$._prev_phase_weight <- phase1$.weight[frame[[phase_row]]]
     }
     if (collect_trace) {
       input_frames_used[[i]] <- frame
@@ -1802,22 +1822,45 @@ execute_continuation <- function(
   }
 
   panel_assignment <- parent_meta$panel_assignment
+  inherited_empty <- parent_meta$empty_parents
   if (!is_null(panels) && nrow(current_sample) > 0) {
     assignment_stage <- panels$stage %||% c(executed, stages)[1]
     check_cohort_stages(
       panels, design, assignment_stage, c(executed, stages),
       call = call
     )
-    assigned <- assign_panels(
-      current_sample,
-      panels,
-      panel_assignment_context(
-        design, assignment_stage, current_sample, call = call
-      ),
-      call = call
+    context <- panel_assignment_context(
+      design, assignment_stage, current_sample, call = call
     )
-    current_sample <- assigned$sample
+    # See `execute_design()`: a unit whose later stages found nothing is
+    # still a unit of its panel.
+    gone <- vanished_assignment_units(
+      c(inherited_empty, empty_parents), current_sample, context
+    )
+    units <- if (nrow(gone) > 0L) {
+      vctrs::vec_rbind(current_sample, gone)
+    } else {
+      current_sample
+    }
+    assigned <- assign_panels(units, panels, context, call = call)
+    current_sample <- if (nrow(gone) > 0L) {
+      vctrs::vec_slice(assigned$sample, seq_len(nrow(current_sample)))
+    } else {
+      assigned$sample
+    }
+    inherited_empty <- panel_empty_parents(
+      inherited_empty, assigned$sample, context$key_vars
+    )
+    empty_parents <- panel_empty_parents(
+      empty_parents, assigned$sample, context$key_vars
+    )
     panel_assignment <- assigned$record
+  }
+
+  if ("._prev_phase_weight" %in% names(current_sample)) {
+    current_sample$.weight <- current_sample$.weight *
+      current_sample$._prev_phase_weight
+    current_sample$._prev_phase_weight <- NULL
   }
 
   digest <- NULL
@@ -1865,7 +1908,7 @@ execute_continuation <- function(
         sample_integrity_record(current_sample, design, c(executed, stages))
       },
       frame_schedule = schedule_record(schedule),
-      empty_parents = c(parent_meta$empty_parents, empty_parents),
+      empty_parents = c(inherited_empty, empty_parents),
       # A parent without the record leaves it unknown.
       empty_pools = if (!is_null(parent_meta$empty_pools)) {
         c(parent_meta$empty_pools, empty_pools)
@@ -2582,6 +2625,11 @@ execute_single_stage_impl <- function(
     stage_totals <- stage_pool_totals(
       frame, split_vars, strata_spec$vars, cluster_spec$vars, nrow(result)
     )
+    if (!is_final_stage) {
+      result <- unit_phase_weight(result, frame, unique(c(
+        intersect(all_prior_cluster_vars, names(frame)), cluster_spec$vars
+      )))
+    }
     if (is_final_stage) {
       cluster_vars <- cluster_spec$vars
       draw_k_cols <- grep("^\\.draw_\\d+$", names(result), value = TRUE)
@@ -2702,7 +2750,8 @@ execute_single_stage_impl <- function(
     result <- compound_stage_weights(
       result,
       previous_sample,
-      parent_vars = all_prior_cluster_vars
+      parent_vars = all_prior_cluster_vars,
+      call = rlang::current_env()
     )
   }
 
@@ -2776,8 +2825,12 @@ find_carry_forward_cols <- function(previous_sample) {
 
 #' Compound weights by joining on shared variables
 #' @noRd
-compound_by_join <- function(result, previous_sample, join_vars, carry_cols) {
+compound_by_join <- function(result, previous_sample, join_vars, carry_cols,
+                             call = caller_env()) {
   carry_cols_to_select <- setdiff(carry_cols, join_vars)
+  if ("._prev_phase_weight" %in% carry_cols_to_select) {
+    check_phase_weight_per_parent(previous_sample, join_vars, call = call)
+  }
 
   # Do not collide with a user `.prev_weight` column.
   prev_weight <- free_column_name(result, ".prev_weight")
@@ -2813,7 +2866,11 @@ compound_by_join <- function(result, previous_sample, join_vars, carry_cols) {
 
 #' Compound weights by broadcasting first-row values
 #' @noRd
-compound_broadcast <- function(result, previous_sample, carry_cols) {
+compound_broadcast <- function(result, previous_sample, carry_cols,
+                               call = caller_env()) {
+  if ("._prev_phase_weight" %in% carry_cols) {
+    check_phase_weight_per_parent(previous_sample, character(0), call = call)
+  }
   for (col in carry_cols) {
     result[[col]] <- previous_sample[[col]][1]
   }
@@ -2826,7 +2883,8 @@ compound_broadcast <- function(result, previous_sample, carry_cols) {
 compound_stage_weights <- function(
   result,
   previous_sample,
-  parent_vars = character(0)
+  parent_vars = character(0),
+  call = caller_env()
 ) {
   carry_cols <- find_carry_forward_cols(previous_sample)
   # Avoid duplicate transient ancestry columns.
@@ -2846,10 +2904,72 @@ compound_stage_weights <- function(
   }
 
   if (length(join_vars) > 0) {
-    compound_by_join(result, previous_sample, join_vars, carry_cols)
+    compound_by_join(result, previous_sample, join_vars, carry_cols,
+                     call = call)
   } else {
-    compound_broadcast(result, previous_sample, carry_cols)
+    compound_broadcast(result, previous_sample, carry_cols, call = call)
   }
+}
+
+#' A sampled unit's previous-phase weight, or NA when its rows differ
+#'
+#' A stage that is not the last keeps one row per sampled unit. A next
+#' stage drawn from the previous phase's rows reads each row's own weight
+#' again. One drawn from a separate listing has only this value to go on.
+#' @noRd
+unit_phase_weight <- function(result, frame, unit_vars) {
+  if (!all(c("._prev_phase_weight", unit_vars) %in% names(result)) ||
+        !"._prev_phase_weight" %in% names(frame)) {
+    return(result)
+  }
+  rows <- unique(as.data.frame(frame)[c(unit_vars, "._prev_phase_weight")])
+  mixed <- unique(rows[duplicated(rows[unit_vars]), unit_vars, drop = FALSE])
+  if (nrow(mixed) > 0L) {
+    hit <- vctrs::vec_in(result[unit_vars], mixed)
+    result$._prev_phase_weight[hit] <- NA_real_
+  }
+  result
+}
+
+#' Refuse a stage frame that cannot give its rows their phase weight
+#'
+#' A stage drawn from the previous phase's sample gives each row the weight
+#' of its own phase-1 row. A separate listing has no such link, so its rows
+#' take the weight of the parent unit they were listed under. That is one
+#' value only when the previous phase gave every row of the parent the same
+#' weight.
+#' @noRd
+check_phase_weight_per_parent <- function(previous_sample, join_vars,
+                                          call = caller_env()) {
+  keys <- unique(as.data.frame(previous_sample)[
+    c(join_vars, "._prev_phase_weight")
+  ])
+  single <- !anyNA(keys$._prev_phase_weight) && if (length(join_vars) > 0L) {
+    !anyDuplicated(keys[join_vars])
+  } else {
+    nrow(keys) <= 1L
+  }
+  if (single) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "This stage's frame does not say which previous-phase row each of
+       its rows comes from.",
+      "x" = if (length(join_vars) > 0L) {
+        "The previous phase gave rows of the same {.field {join_vars}}
+         different weights, so a listed row has no single phase weight."
+      } else {
+        "The previous phase gave its rows different weights, so a listed
+         row has no single phase weight."
+      },
+      "i" = "Draw the stage from the previous phase's sample, whose rows
+             carry their own weight, or from a listing of units the previous
+             phase weighted alike."
+    ),
+    class = "samplyr_error_phase_key_ambiguous",
+    call = call
+  )
 }
 
 #' @noRd
@@ -3289,11 +3409,10 @@ extract_control_vars <- function(control_quos) {
     return(character(0))
   }
 
-  known_fns <- c("c", "desc", "serp")
+  # all.vars() leaves out the functions called, such as desc() and serp(),
+  # so a column named like one of them is still read.
   vars <- unique(unlist(lapply(control_quos, function(q) {
-    expr <- rlang::quo_get_expr(q)
-    names <- all.vars(expr)
-    setdiff(names, known_fns)
+    all.vars(rlang::quo_get_expr(q))
   })))
 
   vars[vars != "."]

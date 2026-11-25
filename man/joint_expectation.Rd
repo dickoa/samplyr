@@ -68,7 +68,7 @@ linear in \code{nsim}.}
 which analytic methods ignore. The session's random stream is restored
 afterwards, so the result is an exact function of the sample, \code{nsim}
 and \code{seed}, and calling this never moves a later \code{\link[=execute]{execute()}}. At the
-default \code{nsim} a chromy matrix carries simulation error of a few
+default \code{nsim} a \code{pps_chromy} matrix carries simulation error of a few
 percent, so two seeds give slightly different answers, neither more
 correct than the other.}
 }
@@ -234,7 +234,7 @@ The matrices come from \code{sondage::joint_expected_hits()}.\tabular{ll}{
    Method \tab Quality \cr
    \code{pps_multinomial} \tab \strong{Exact}, analytic \cr
    \code{pps_systematic_mr} \tab \strong{Exact}, analytic, zero pairs possible \cr
-   \code{pps_chromy} \tab \strong{Approximate}, Monte Carlo, 10 000 draws \cr
+   \code{pps_chromy} \tab \strong{Approximate}, Monte Carlo, 10,000 draws \cr
    registered \tab From the method's \code{joint_fn} \cr
 }
 
@@ -398,7 +398,6 @@ Other diagnostics:
 \code{\link[=compare_designs]{compare_designs()}},
 \code{\link{design_effect}},
 \code{\link[=frame_summary]{frame_summary()}},
-\code{\link{sample_columns}},
 \code{\link[=summary.tbl_sample]{summary.tbl_sample()}},
 \code{\link[=varcomp.tbl_sample]{varcomp.tbl_sample()}}
 }

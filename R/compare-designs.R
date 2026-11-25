@@ -157,6 +157,7 @@
 #'   written, read_design(path), frame,
 #'   key = household, level = "probabilities"
 #' )
+#' unlink(path)
 #'
 #' @seealso [exante_probabilities()] for the probabilities of one design,
 #'   [frame_summary()] for the pools of one design

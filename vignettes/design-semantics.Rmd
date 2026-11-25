@@ -371,8 +371,9 @@ nested in it contribute nothing beyond the between-draw variability, which the
 Hansen-Hurwitz estimator already captures.
 
 Bounded cube, LPM2, and SCPS do not currently have supported linearization
-estimators. Their variance needs `as_svrepdesign(type = "subbootstrap")` or
-`"mrbbootstrap"`, which `?variance_estimation` describes.
+estimators. Their variance needs `as_svrepdesign(type = "subbootstrap")`, or
+`"mrbbootstrap"` when no size is given, which `?variance_estimation`
+describes.
 
 ## Weights for a population other than the one sampled
 

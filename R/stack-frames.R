@@ -24,18 +24,6 @@ frame_stack_columns <- c(".frame", ".domain")
 #' combined until here.
 #'
 #' @details
-#' ## What it does not do
-#'
-#' It does not composite the weights. Which compositing factor to use, and
-#' whether it should follow Hartley, the multiplicity estimator or
-#' pseudo-maximum-likelihood, depends on the estimand and on the design
-#' effects, so it is an estimation-time choice rather than a property of the
-#' stack. The components keep their own design weights, unchanged.
-#'
-#' It does not assert that the frames together cover the target population.
-#' That is an assumption about the registers, not something this call can
-#' establish, which is why the verb is not named after the union.
-#'
 #' ## Membership is declared, and it is logical
 #'
 #' `membership` maps each frame's name to the column saying whether a unit
@@ -56,6 +44,18 @@ frame_stack_columns <- c(".frame", ".domain")
 #' mistake and nothing more. A component executed with `seed = NULL` records
 #' no seed and never warns, so a deterministic take-all component is exempt
 #' unless it was given a seed it did not use.
+#'
+#' ## What it does not do
+#'
+#' It does not composite the weights. Which compositing factor to use, and
+#' whether it should follow Hartley, the multiplicity estimator or
+#' pseudo-maximum-likelihood, depends on the estimand and on the design
+#' effects, so it is an estimation-time choice rather than a property of the
+#' stack. The components keep their own design weights, unchanged.
+#'
+#' It does not assert that the frames together cover the target population.
+#' That is an assumption about the registers, not something this call can
+#' establish, which is why the verb is not named after the union.
 #'
 #' @param ... Two or more named samples, one per frame, each an executed
 #'   `tbl_sample`. The names are the frame names and they appear in the
@@ -677,7 +677,7 @@ validate_frame_stack <- function(samples, membership, key, overlaps = NULL,
   check_membership_complete(samples, membership, call = call)
   check_frame_key_columns(samples, key, call = call)
   check_membership_consistent(samples, membership, key, call = call)
-  check_frame_overlaps(samples, membership, overlaps, call = call)
+  check_frame_overlaps(samples, membership, overlaps, key = key, call = call)
   invisible(NULL)
 }
 
@@ -690,7 +690,7 @@ validate_frame_stack <- function(samples, membership, key, overlaps = NULL,
 #' supplied own-frame value that disagrees with it is caught here rather than
 #' becoming a variance nobody can trace.
 #' @noRd
-check_frame_overlaps <- function(samples, membership, overlaps,
+check_frame_overlaps <- function(samples, membership, overlaps, key,
                                  call = caller_env()) {
   if (is_null(overlaps)) {
     return(NULL)
@@ -754,6 +754,48 @@ check_frame_overlaps <- function(samples, membership, overlaps,
     }
     check_overlap_diagonal(component, cols[[nm]], overlaps$scale, nm,
                            call = call)
+  }
+  check_overlap_agreement(samples, cols, key, call = call)
+  invisible(NULL)
+}
+
+#' Refuse a unit sampled in two frames whose declared chances disagree
+#'
+#' A unit selected in frames F and Q states its chance in Q on its row of
+#' F, and its row of Q holds the chance Q's design gave it, which
+#' `check_overlap_diagonal()` has checked. The two must be the same value.
+#' @noRd
+check_overlap_agreement <- function(samples, cols, key, call = caller_env()) {
+  for (nm in names(samples)) {
+    for (q in setdiff(names(samples), nm)) {
+      at <- vctrs::vec_match(as.data.frame(samples[[nm]])[key],
+                             as.data.frame(samples[[q]])[key])
+      both <- !is.na(at)
+      if (!any(both)) {
+        next
+      }
+      gap <- own_frame_disagreement(
+        samples[[nm]][[cols[[q]]]][both], samples[[q]][[cols[[q]]]][at[both]]
+      )
+      if (is_null(gap)) {
+        next
+      }
+      abort_samplyr(
+        c(
+          "A unit selected in two frames must state the same chance in each.",
+          "x" = "{.field {cols[[q]]}} on {gap$n} row{?s} of {.val {nm}}
+                 disagrees with the value frame {.val {q}} gave the same
+                 unit{?s}.",
+          "i" = "Worst: {.val {signif(gap$supplied, 6)}} stated in
+                 {.val {nm}} against {.val {signif(gap$realized, 6)}} in
+                 {.val {q}}.",
+          "i" = "Frame {.val {q}}'s own value is the selection that
+                 happened, so the other frames take it for their row."
+        ),
+        class = "samplyr_error_stack_frames_overlaps",
+        call = call
+      )
+    }
   }
   invisible(NULL)
 }

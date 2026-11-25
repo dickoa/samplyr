@@ -1,6 +1,6 @@
 #' Supply sampling frames and stage registers
 #'
-#' A frame is a data frame or a non-empty ordered list of data frames.
+#' A frame is a data frame or a nonempty ordered list of data frames.
 #' A data frame and a one-element list containing it have the same meaning.
 #' [execute()] also accepts one data frame per stage as separate arguments
 #' in `...`.
@@ -69,6 +69,7 @@
 #'
 #' @seealso [execute()], [validate_frame()], [frame_summary()],
 #'   [write_design()], `vignette("introduction")`
+#' @family reference topics
 #' @name frame_input_grammar
 NULL
 

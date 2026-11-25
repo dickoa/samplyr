@@ -46,9 +46,12 @@ conventions that are easy to get wrong by hand:
 }
 \details{
 \itemize{
-\item The components are weighted by the product of the per-stage weights
-below stage 1 (\code{.weight_2}, or \code{.weight_2 * .weight_3}), never the compound \code{.weight}, whose
-stage-1 factor would overstate every cluster size.
+\item The components are weighted by the per-stage weights below stage 1,
+never the compound \code{.weight}, whose stage-1 factor would overstate
+every cluster size. Under one clustered stage that is their product.
+Under two, svyplan takes the second clustered stage's weight and the
+element stage's (one when the elements are taken whole) as two
+columns, which its element-stage correction reads apart.
 \item For an unequal-probability first stage, per-PSU shares are derived
 from the stage-1 weights and normalized to sum to 1 over the sampled PSUs (per stratum when
 the first stage is stratified). For an equal-probability first
@@ -107,7 +110,6 @@ Other diagnostics:
 \code{\link{design_effect}},
 \code{\link[=frame_summary]{frame_summary()}},
 \code{\link[=joint_expectation]{joint_expectation()}},
-\code{\link{sample_columns}},
 \code{\link[=summary.tbl_sample]{summary.tbl_sample()}}
 }
 \concept{diagnostics}

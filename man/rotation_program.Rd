@@ -168,9 +168,9 @@ execute(program, period = 2)
 \code{\link[=execute]{execute()}} for drawing a master and materializing an occasion,
 \link{panel_assignment} for partitioning one execution into rotation groups.
 
-Other execution:
-\code{\link[=execute]{execute()}},
-\code{\link{execution_conditions}},
-\code{\link[=validate_frame]{validate_frame()}}
+Other panels, rotation and periods:
+\code{\link{panel_assignment}},
+\code{\link[=stack_periods]{stack_periods()}},
+\code{\link[=subrounds]{subrounds()}}
 }
-\concept{execution}
+\concept{panels, rotation and periods}

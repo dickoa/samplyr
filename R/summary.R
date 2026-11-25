@@ -147,6 +147,7 @@ summary.tbl_sample <- function(object, ...) {
 #' @param x A `summary_tbl_sample` object.
 #' @export
 print.summary_tbl_sample <- function(x, ...) {
+  rlang::check_dots_empty()
   render_sample_summary(x$sample)
   invisible(x)
 }
@@ -1178,6 +1179,7 @@ summary.frame_stack <- function(object, ...) {
 #' @param x A `summary_frame_stack` object.
 #' @export
 print.summary_frame_stack <- function(x, ...) {
+  rlang::check_dots_empty()
   cli::cat_rule("Frame Stack Summary")
   cat("\n")
   cli::cat_bullet(

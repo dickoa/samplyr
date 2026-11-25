@@ -152,7 +152,7 @@
 #'   variance, [joint_expectation()] with `period` for how far two occasions
 #'   overlap
 #'
-#' @family survey export
+#' @family panels, rotation and periods
 #' @export
 stack_periods <- function(...) {
   occasions <- list(...)
@@ -459,7 +459,11 @@ stack_level <- function(occasion) {
   }
   whole <- identical(which(pairs$period == period), sort(occasions))
   active <- schedule$panel[schedule$active & schedule$occasion %in% occasions]
-  if (whole && (length(occasions) == 1L || !anyDuplicated(active))) {
+  # A unit kept in every occasion, as a certainty unit, is read once per
+  # occasion, so its rows repeat.
+  once <- length(occasions) == 1L ||
+    (!anyDuplicated(active) && !anyDuplicated(occasion[[".sample_id"]]))
+  if (whole && once) {
     return("period")
   }
   if (length(occasions) == 1L) "occasion"

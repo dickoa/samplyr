@@ -340,14 +340,13 @@ test_that("resolving a stack gives what stating the same numbers gives", {
     frame_component_overlaps(exante_stack(population), "a"),
     frame_component_overlaps(by_column, "a")
   )
-  expect_equal(
-    coef(survey::svytotal(
-      ~y, as_svydesign(exante_stack(population), estimator = "expected")
-    )),
-    coef(survey::svytotal(
-      ~y, as_svydesign(by_column, estimator = "expected")
-    ))
-  )
+  # Frame a is drawn with pps_brewer, which the linearized stack refuses.
+  replicated <- function(frames) {
+    coef(survey::svytotal(~y, suppressWarnings(as_svrepdesign(
+      frames, estimator = "expected", type = "subbootstrap", replicates = 10
+    ))))
+  }
+  expect_equal(replicated(exante_stack(population)), replicated(by_column))
 })
 
 test_that("the resolved chances are stored, and read by both routes", {
@@ -367,16 +366,21 @@ test_that("the resolved chances are stored, and read by both routes", {
   # A unit's own-frame chance is what its design weight says it was.
   expect_equal(matrix[, "a"], 1 / frames[["a"]]$.weight)
 
-  # A PPS frame moves the whole stack onto a type its own design supports.
+  # A PPS frame moves the whole stack onto a type its own design supports,
+  # and the linearized stack refuses it.
+  expect_error(as_svydesign(frames, estimator = "expected"),
+               class = "samplyr_error_survey_multiframe_unsupported")
+  shares <- frame_component_overlaps(frames, "a")
   expect_equal(
-    coef(survey::svytotal(~y, as_svydesign(frames, estimator = "expected"))),
-    coef(survey::svytotal(
+    unname(coef(survey::svytotal(
       ~y,
       suppressWarnings(as_svrepdesign(
         frames, estimator = "expected", type = "subbootstrap",
         replicates = 40
       ))
-    ))
+    ))),
+    sum(frames[["a"]]$y / rowSums(shares)) +
+      sum(frames[["b"]]$y / rowSums(frame_component_overlaps(frames, "b")))
   )
 })
 

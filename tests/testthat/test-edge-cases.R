@@ -2174,3 +2174,58 @@ test_that("ordinary numeric and date groups are accepted", {
     execute(sampling_design() |> stratify_by(d) |> draw(n = 1), frame, seed = 1)
   )
 })
+
+test_that("a count computed as a near-whole double is read as the whole number", {
+  thirty <- (0.3 / 0.1) * 10
+  expect_lt(thirty, 30)
+  frame <- data.frame(id = 1:100, ea = rep(1:50, each = 2),
+                      st = rep(c("a", "b"), 50), size = rep(1:10, 10))
+  for (method in c("srswor", "systematic", "srswr")) {
+    s <- execute(sampling_design() |> draw(n = thirty, method = method),
+                 frame, seed = 1)
+    expect_identical(nrow(s), 30L, info = method)
+  }
+  clusters <- execute(sampling_design() |> cluster_by(ea) |> draw(n = thirty),
+                      frame, seed = 1)
+  expect_identical(length(unique(clusters$ea)), 30L)
+  allocated <- execute(
+    sampling_design() |> stratify_by(st, alloc = "proportional") |>
+      draw(n = 2 * thirty),
+    frame, seed = 1
+  )
+  expect_identical(nrow(allocated), 60L)
+  expect_identical(
+    execute(sampling_design() |> draw(n = 10), frame, seed = thirty)$id,
+    execute(sampling_design() |> draw(n = 10), frame, seed = 30)$id
+  )
+  expect_identical(
+    subrounds((0.3 / 0.1) * 1)$k,
+    3L
+  )
+  master <- execute(sampling_design() |> draw(n = 30), frame, seed = 1,
+                    panels = (0.3 / 0.1) * 1)
+  expect_identical(attr(master, "metadata")$panel_assignment$panels, 3L)
+  # Two stages read as the second stage alone, not truncated to the first.
+  two <- sampling_design() |> add_stage() |> cluster_by(ea) |> draw(n = 5) |>
+    add_stage() |> draw(n = 1)
+  expect_error(execute(two, frame, stages = (0.2 / 0.1) * 1 - 1e-15, seed = 1),
+               class = "samplyr_error_stage_selector")
+})
+
+test_that("a size beyond the largest integer is refused at draw()", {
+  expect_error(draw(sampling_design(), n = 3e9),
+               class = "samplyr_error_alloc_n_bounds")
+  expect_error(draw(sampling_design(), n = 3e9, method = "srswr"),
+               class = "samplyr_error_alloc_n_bounds")
+  expect_error(
+    sampling_design() |> stratify_by(st) |>
+      draw(n = data.frame(st = c("a", "b"), n = c(2, 3e9))),
+    class = "samplyr_error_alloc_n_bounds"
+  )
+  proportional <- sampling_design() |> stratify_by(st, alloc = "proportional")
+  expect_error(draw(proportional, n = 4, min_n = 3e9),
+               class = "samplyr_error_draw_argument")
+  expect_error(draw(proportional, n = 4, max_n = 3e9),
+               class = "samplyr_error_draw_argument")
+  expect_no_error(draw(sampling_design(), n = .Machine$integer.max))
+})

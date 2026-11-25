@@ -353,26 +353,48 @@ test_that("a systematic component still reports its approximation", {
   )
 })
 
-test_that("a PPS component composites through the export", {
+test_that("a frame drawn with unequal probabilities without replacement is refused", {
   skip_if_not_installed("survey")
-  population <- multiframe_population()
-  population$size <- rep(c(2, 5, 3, 8), length.out = 60)
-
-  pps <- sampling_design() |>
-    draw(n = 10, method = "pps_brewer", mos = size) |>
-    execute(population[population$in_a, , drop = FALSE], seed = 8)
-
-  frames <- stack_frames(
-    a = pps,
-    b = multiframe_component("in_b", 20, 2, population),
-    membership = c(a = "in_a", b = "in_b"),
-    key = id
-  )
-
-  expect_equal(
-    coef(survey::svytotal(~y, as_svydesign(frames))),
-    coef(survey::svytotal(~y, hand_built_multiframe(frames, theta = 0.5)))
-  )
+  # Frame a lists every unit, so with theta = 1 the stack is frame a's own
+  # design and its variance must be frame a's export (another route, but a
+  # stack read as equal-probability sampling gave a negative variance).
+  population <- data.frame(id = 1:40, size = (1:40 * 7) %% 19 + 1,
+                           in_a = TRUE, in_b = rep(c(TRUE, FALSE), 20))
+  population$y <- population$size * 5 + (1:40 %% 3)
+  b <- sampling_design() |> draw(n = 8) |>
+    execute(population[population$in_b, ], seed = 104)
+  methods <- c("srswor", "systematic", "pps_poisson", "pps_brewer",
+               "pps_systematic", "pps_sampford", "pps_cps")
+  refused <- character(0)
+  for (method in methods) {
+    design <- if (method %in% c("srswor", "systematic")) {
+      sampling_design() |> draw(n = 10, method = method)
+    } else {
+      sampling_design() |> draw(n = 10, method = method, mos = size)
+    }
+    a <- execute(design, population, seed = 4)
+    frames <- stack_frames(a = a, b = b, membership = c(a = "in_a", b = "in_b"),
+                           key = id)
+    stacked <- tryCatch(
+      suppressWarnings(as_svydesign(frames, theta = 1)),
+      samplyr_error_survey_multiframe_unsupported = function(e) NULL
+    )
+    if (is.null(stacked)) {
+      refused <- c(refused, method)
+      expect_s3_class(
+        suppressWarnings(as_svrepdesign(frames, replicates = 10)),
+        "svyrep.design"
+      )
+      next
+    }
+    expect_equal(
+      stats::vcov(survey::svytotal(~y, stacked))[1],
+      stats::vcov(survey::svytotal(~y, suppressWarnings(as_svydesign(a))))[1],
+      tolerance = 1e-8, info = method
+    )
+  }
+  expect_setequal(refused,
+                  c("pps_brewer", "pps_systematic", "pps_sampford", "pps_cps"))
 })
 
 test_that("two censuses of consistent registers estimate the total exactly", {

@@ -119,8 +119,9 @@ each province to an integer adjacent to its expected count.
 }
 
 The last two keep exact first-order probabilities, but their joint
-probabilities are refused and their variance comes from \code{subbootstrap} or
-\code{mrbbootstrap} replicates only (\link{variance_estimation}). No method
+probabilities are refused and their variance comes from \code{subbootstrap}
+replicates only, or \code{mrbbootstrap} ones when no size is given
+(\link{variance_estimation}). No method
 dominates the others, and the choice depends on the variance the analysis
 needs.
 }
@@ -259,7 +260,7 @@ Madow, W.G. (1949). On the theory of systematic sampling, II.
 \emph{Annals of Mathematical Statistics}, 20(3), 333-354.
 \doi{10.1214/aoms/1177729988}
 
-\code{balanced}:
+\code{cube}, \code{balanced}:
 Deville, J.-C. and \enc{Tillé}{Tille}, Y. (2004). Efficient balanced
 sampling: the cube method. \emph{Biometrika}, 91(4), 893-912.
 
@@ -289,11 +290,10 @@ Methodology}, 49(2), 363-384.
 \code{\link[=joint_expectation]{joint_expectation()}} for which methods yield exact second-order
 quantities
 
-Other design specification:
-\code{\link[=add_stage]{add_stage()}},
-\code{\link[=cluster_by]{cluster_by()}},
-\code{\link[=draw]{draw()}},
-\code{\link[=sampling_design]{sampling_design()}},
-\code{\link[=stratify_by]{stratify_by()}}
+Other reference topics:
+\code{\link{frame_input_grammar}},
+\code{\link{reserve_lists}},
+\code{\link{sample_columns}},
+\code{\link{variance_estimation}}
 }
-\concept{design specification}
+\concept{reference topics}

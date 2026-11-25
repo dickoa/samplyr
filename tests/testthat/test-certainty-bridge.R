@@ -380,7 +380,8 @@ test_that("the register check does not depend on id type or row order", {
 })
 
 test_that("the register rows deduplicate the values the register compares", {
-  # Two stratum codes that differ as numbers but print alike.
+  # Two stratum codes that differ as numbers but print alike, in the key
+  # text that getOption("scipen") does not change.
   frame <- data.frame(
     psu_id = c("A01", "A01", "A02", "A02"),
     stratum = c(0.3, 0.1 + 0.2, 0.3, 0.3),
@@ -1612,13 +1613,17 @@ test_that("replicate routes treat a one-per-zone remainder as drawn with replace
   )
   # With 2000 replicates a bootstrap variance is within a few percent of its
   # expectation. A correction kept on the remainder lowers it by a fifth.
-  for (type in c("mrbbootstrap", "rwyb")) {
-    set.seed(3)
-    r <- suppressWarnings(as_svrepdesign(s, type = type, replicates = 2000))
-    ratio <- stats::vcov(survey::svytotal(~y, r))[1] / v_lin
-    expect_gt(ratio, 0.9, label = type)
-    expect_lt(ratio, 1.1, label = type)
-  }
+  set.seed(3)
+  r <- suppressWarnings(as_svrepdesign(s, type = "rwyb", replicates = 2000))
+  ratio <- stats::vcov(survey::svytotal(~y, r))[1] / v_lin
+  expect_gt(ratio, 0.9)
+  expect_lt(ratio, 1.1)
+  # PSU A01 is certain and alone in its stratum, and survey's multistage
+  # bootstrap gave its households no variance.
+  expect_error(
+    as_svrepdesign(s, type = "mrbbootstrap", replicates = 20),
+    class = "samplyr_error_svrep_conversion_failed"
+  )
   # RWYB resamples the zones as drawn with replacement, says so, and does
   # not warn of an approximation it does not make.
   expect_no_warning(r <- as_svrepdesign(s, type = "rwyb", replicates = 20))
@@ -2737,4 +2742,39 @@ test_that("a design file refuses 64-bit ids it could not read back", {
     suppressWarnings(execute(small$design |> add_stage() |>
                                draw(n = small$plan), frame, seed = 2))$.sample_id
   )
+})
+
+test_that("a numeric stratum matches the register under any scipen", {
+  # svyplan writes the register's numeric strata as text under the session's
+  # scipen, so a design written under one setting reads "1e+05" where the
+  # frame holds 100000.
+  register <- certainty_plan_register()
+  register$stratum <- ifelse(register$stratum == "A", 1e5, 2e5)
+  plan <- withr::with_options(list(scipen = 0), svyplan::n_alloc_joint(
+    data.frame(stratum = c(1e5, 2e5), N = c(2000, 1600), take_2 = 10),
+    measures = data.frame(stratum = c(1e5, 2e5), name = "y",
+                          p = c(0.5, 0.4), icc_1 = 0.05),
+    targets = data.frame(name = "y", cv = 0.10), psu = register
+  ))
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(stratum) |> cluster_by(psu_id) |>
+    draw(n = plan, method = "pps_systematic", mos = N) |>
+    add_stage() |> draw(n = plan)
+  stored <- design$stages[[1]]$draw_spec$certainty_plan$register$stratum
+  expect_true(all(grepl("e+05", stored, fixed = TRUE)))
+  path <- withr::local_tempfile(fileext = ".json")
+  withr::with_options(list(scipen = 0), write_design(design, path))
+  elements <- certainty_element_frame(register)
+  drawn <- lapply(c(0, 100), function(scipen) {
+    withr::with_options(list(scipen = scipen), suppressWarnings(
+      execute(read_design(path), list(register, elements), seed = 1)
+    ))
+  })
+  expect_identical(drawn[[2]]$psu_id, drawn[[1]]$psu_id)
+  planned <- design$stages[[1]]$draw_spec$certainty_plan$register
+  certain <- planned$psu_id[planned$certainty]
+  expect_gt(length(certain), 0)
+  for (s in drawn) {
+    expect_setequal(unique(s$psu_id[s$.certainty_1]), certain)
+  }
 })

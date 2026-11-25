@@ -544,6 +544,11 @@ panel_header_line <- function(x) {
 #' @noRd
 occasion_label <- function(occasion, schedule) {
   period <- occasion$period
+  # A rotation program's part keeps the program's schedule, not its own.
+  if (is_null(schedule)) {
+    return(paste(if (length(unique(period)) == 1L) "period" else "periods",
+                 occasion_span(unique(period))))
+  }
   pairs <- grid_pairs(schedule)
   if (identical(which(pairs$period %in% period), sort(occasion$occasion))) {
     unique_period <- unique(period)
@@ -602,9 +607,12 @@ print.rotation_program <- function(x, ...) {
 print.rotation_occasion <- function(x, ...) {
   rlang::check_dots_empty()
   sub <- attr(x, "subround")
+  # A program with subrounds names subround 1 too.
   cli::cat_rule(paste0(
     "Rotation Occasion: period ", attr(x, "period"),
-    if (!is_null(sub) && sub > 1L) paste0(", subround ", sub)
+    if (!is_null(sub) && (sub > 1L || isTRUE(attr(x, "n_subrounds") > 1L))) {
+      paste0(", subround ", sub)
+    }
   ))
   cat("\n")
 
@@ -718,7 +726,8 @@ print.shared_sample_design <- function(x, ...) {
       complete_weighted_links = paste0(
         "Denominator {.field {spec$multiplicity$col}}, ",
         "summed over the supplied links"
-      )
+      ),
+      supplied = "Denominator {.field {spec$multiplicity$col}} supplied per target"
     )),
     bullet = "bullet"
   )
@@ -845,6 +854,7 @@ format_cluster_vars <- function(spec) {
 #' @rdname print.samplyr
 #' @export
 print.samplyr_design_comparison <- function(x, ...) {
+  rlang::check_dots_empty()
   cli::cat_rule("Design comparison")
   approximate <- identical(x$probability_quality, "approximate")
   what <- if (identical(x$level, "allocation")) {

@@ -428,6 +428,7 @@ validate_frame_registers <- function(design, frames, stages, fingerprint,
     targets <- check_stage_targets(design, stage_idx, effective[[i]])
     refuse_reserve_take(stage_idx, targets$thin_reserve, call = call)
     refuse_mos_pools(stage_idx, targets, call = call)
+    refuse_certainty_overflow(stage_idx, targets$overflow, call = call)
     refuse_capped_stage(design, stage_idx, targets$capped, call = call)
     inform_allocation(stage_idx, targets$allocation)
     inform_capped_pools(stage_idx, targets$capped)
@@ -457,15 +458,17 @@ check_stage_targets <- function(design, stage_idx, frame) {
   zero_mos <- list(pool_keys = character(0), n_pools = 0L, n_found = 0L)
   short_mos <- zero_mos
   thin_reserve <- zero_mos
+  overflow <- zero_mos
   spec <- design$stages[[stage_idx]]
   draw <- spec$draw_spec
+  strict_certainty <- identical(draw$certainty_overflow, "error")
   allocation <- list(
     alloc = spec$strata$alloc, n = draw$n, n_parents = 0L, n_tied = 0L,
     pool_keys = character(0), sizes = numeric(0)
   )
   out <- function() {
     list(capped = short, zero_mos = zero_mos, short_mos = short_mos,
-         thin_reserve = thin_reserve, absent = absent,
+         thin_reserve = thin_reserve, overflow = overflow, absent = absent,
          allocation = allocation)
   }
   if (is_null(draw) || nrow(frame) == 0L) return(out())
@@ -569,6 +572,9 @@ check_stage_targets <- function(design, stage_idx, frame) {
     }
     has_certainty <- !is_null(draw$certainty_size) ||
       !is_null(draw$certainty_prop)
+    if (has_certainty) {
+      overflow$n_pools <- overflow$n_pools + length(groups)
+    }
     if (by_size) {
       findings <- rep(NA_character_, length(groups))
       lookup <- if (has_certainty) {
@@ -585,6 +591,9 @@ check_stage_targets <- function(design, stage_idx, frame) {
           ) else draw
           cert <- identify_certainty(mos_vals, sizes[j],
             pool_draw$certainty_size, pool_draw$certainty_prop)
+          if (strict_certainty && cert$n_remaining < 0) {
+            overflow <- pool_record(overflow, units, groups, j, strata)
+          }
           mos_vals <- mos_vals[cert$remaining_idx]
           take <- min(max(cert$n_remaining, 0), length(mos_vals))
         }
@@ -611,8 +620,11 @@ check_stage_targets <- function(design, stage_idx, frame) {
         draw, pool[1, strata, drop = FALSE], strata,
         make_group_key(pool[1, strata, drop = FALSE], strata), lookup
       ) else draw
-      identify_certainty(pool[[draw$mos]], sizes[j],
+      cert <- identify_certainty(pool[[draw$mos]], sizes[j],
         pool_draw$certainty_size, pool_draw$certainty_prop)
+      if (strict_certainty && cert$n_remaining < 0) {
+        overflow <- pool_record(overflow, units, groups, j, strata)
+      }
     }
   }
   out()
@@ -712,6 +724,33 @@ refuse_capped_stage <- function(design, stage_idx, capped,
     stage = stage_idx,
     operation = "population_cap",
     payload = capped
+  )
+}
+
+#' Refuse a stage whose certainty units exceed a candidate pool's take
+#'
+#' `overflow` is what `check_stage_targets()` found under
+#' `certainty_overflow = "error"`, which `execute()` refuses with the same
+#' class when it reaches the pool.
+#' @noRd
+refuse_certainty_overflow <- function(stage_idx, overflow,
+                                      call = caller_env()) {
+  if (overflow$n_found == 0L) {
+    return(invisible(NULL))
+  }
+  abort_samplyr(
+    c(
+      "Stage {stage_idx}: the units taken with certainty exceed the take in
+       {overflow$n_found} of {overflow$n_pools} candidate pool{?s}.",
+      pool_lines(overflow, "Pools"),
+      "i" = "Increase {.arg n}, raise the certainty threshold, or use
+             {.code certainty_overflow = \"allow\"} to take such a pool
+             whole above its target."
+    ),
+    class = "samplyr_error_certainty_overflow",
+    call = call,
+    stage = stage_idx,
+    payload = overflow
   )
 }
 
@@ -836,7 +875,7 @@ inform_capped_pools <- function(stage_idx, x) {
 #' strata of the stage. Ids numbered within each stratum (town 1 in every
 #' county) contradict that, and so does a cluster coded into two strata. The
 #' generic invariant check reports either as a stratum column that varies,
-#' and a multistage execution reports it first as a carry conflict at stage
+#' and a multi-stage execution reports it first as a carry conflict at stage
 #' 2. This check runs before both and names the cause. Under `nest = TRUE`
 #' the stage was resolved within its strata and never reaches the refusal.
 #'
@@ -1503,12 +1542,24 @@ preflight_later_stages <- function(schedule, design, sample = NULL,
   check_schedule_strata_known(
     schedule, effective, design, selected = sample, call = call
   )
-  refuse_capped_stages(
-    design,
-    vapply(schedule$entries, function(e) e$stage, integer(1)),
-    effective,
-    call = call
-  )
+  # A later stage's pools a draw cannot take from are refused before any
+  # draw, as validate_frame() refuses them, whichever parents are selected.
+  # The first stage reaches all of its pools, and refuses them as it draws.
+  for (i in seq_along(schedule$entries)) {
+    stage_idx <- schedule$entries[[i]]$stage
+    draw <- design$stages[[stage_idx]]$draw_spec
+    strict <- identical(draw$on_capped, "error") || !is_null(draw$reserve)
+    if (i == 1L && !strict) {
+      next
+    }
+    targets <- check_stage_targets(design, stage_idx, effective[[i]])
+    refuse_reserve_take(stage_idx, targets$thin_reserve, call = call)
+    if (i > 1L) {
+      refuse_mos_pools(stage_idx, targets, call = call)
+      refuse_certainty_overflow(stage_idx, targets$overflow, call = call)
+    }
+    refuse_capped_stage(design, stage_idx, targets$capped, call = call)
+  }
   invisible(NULL)
 }
 

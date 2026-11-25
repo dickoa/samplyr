@@ -392,3 +392,36 @@ test_that("a complete assignment still continues", {
     ".panel" %in% names(execute(plain, ps_frame(), stages = 2:3, seed = 4))
   )
 })
+
+test_that("a window of a lower-stage master gives a constant outcome no variance", {
+  skip_if_not_installed("survey")
+  # Every EA has eight households of y = 10, so the window total is the
+  # same in every sample (closed form: variance 0). Three households per EA
+  # fill four panels unevenly.
+  frame <- expand.grid(hh = 1:8, ea = 1:40)
+  frame$y <- 10
+  frame$mos <- 10
+  schedule <- data.frame(
+    panel = rep(1:4, times = 3), period = rep(1:3, each = 4),
+    active = c(TRUE, TRUE, FALSE, FALSE, FALSE, TRUE, TRUE, FALSE,
+               FALSE, FALSE, TRUE, TRUE)
+  )
+  for (method in c("srswor", "pps_brewer")) {
+    first <- sampling_design() |> add_stage() |> cluster_by(ea)
+    first <- if (method == "srswor") {
+      draw(first, n = 10)
+    } else {
+      draw(first, n = 10, method = method, mos = mos)
+    }
+    master <- suppressMessages(
+      first |> add_stage() |> cluster_by(hh) |> draw(n = 3) |>
+        execute(frame, seed = 1, panels = schedule, panel_stage = 2)
+    )
+    for (period in list(1, 1:2)) {
+      window <- suppressMessages(execute(master, period = period))
+      expect_equal(sum(window$.weight * window$y), 3200, tolerance = 1e-12)
+      se <- survey::SE(survey::svytotal(~y, as_svydesign(window)))
+      expect_lt(as.vector(se), 1e-6)
+    }
+  }
+})

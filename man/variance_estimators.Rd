@@ -88,7 +88,7 @@ does not describe them.
 The report reads the same rules the exports apply, and a test compares it
 with the conditions the exports actually raise on executed samples. It
 does not certify an estimator's accuracy beyond that, and
-\code{?variance_estimation} describes each approximation.
+\link{variance_estimation} describes each approximation.
 }
 \examples{
 design <- sampling_design() |>
@@ -118,7 +118,7 @@ variance_estimators(phase2, phase1)[c("estimator", "status", "note")]
 
 }
 \seealso{
-\code{?variance_estimation} for how each selection method's variance
+\link{variance_estimation} for how each selection method's variance
 is estimated, \code{\link[=frame_summary]{frame_summary()}} and \code{\link[=validate_frame]{validate_frame()}} for the checks
 before execution.
 
@@ -126,8 +126,6 @@ Other survey export:
 \code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},
 \code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
 \code{\link[=as_svrepdesign]{as_svrepdesign()}},
-\code{\link[=as_svydesign]{as_svydesign()}},
-\code{\link[=stack_periods]{stack_periods()}},
-\code{\link{variance_estimation}}
+\code{\link[=as_svydesign]{as_svydesign()}}
 }
 \concept{survey export}

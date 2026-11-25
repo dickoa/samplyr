@@ -63,7 +63,7 @@ execution a later stage is checked by the call that lists it.
 \code{\link[=validate_frame]{validate_frame()}} and \code{\link[=exante_probabilities]{exante_probabilities()}} refuse the same designs,
 while \code{\link[=frame_summary]{frame_summary()}} still reports their short pools.
 
-One more is reported the same way, once per stage with a \code{payload},
+Five more are reported the same way, once per stage with a \code{payload},
 although nothing was capped. \code{samplyr_message_singleton_pool} names the
 strata of a fixed-size design without replacement that draw a single unit
 outside certainty. Such a stratum gives no variance estimate of its own:
@@ -197,7 +197,6 @@ frame problems before executing
 
 Other execution:
 \code{\link[=execute]{execute()}},
-\code{\link[=rotation_program]{rotation_program()}},
 \code{\link[=validate_frame]{validate_frame()}}
 }
 \concept{execution}

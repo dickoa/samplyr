@@ -2,7 +2,7 @@
 #'
 #' Which variance estimator each selection method reaches at export, and how
 #' exact it is. Selection support and variance support are separate
-#' contracts. Every method in `?selection_methods` draws a sample, but not
+#' contracts. Every method in [selection_methods] draws a sample, but not
 #' every one has an exact variance estimator in the survey framework.
 #'
 #' A sample reaches `survey` in three ways. [as_svydesign()] linearizes,
@@ -38,7 +38,7 @@
 #'   \item{`bernoulli`, `pps_poisson`}{Exact independent probabilities, and an
 #'     exact Poisson joint matrix for PPS. The variance is the analytic
 #'     Poisson variance of a single stage, or RWYB for the supported clustered
-#'     and multistage designs.}
+#'     and multi-stage designs.}
 #'   \item{`pps_brewer`, `pps_cps`, `pps_sampford`}{Exact inclusion
 #'     probabilities. Pair probabilities are approximate for Brewer and exact
 #'     for CPS and Sampford. The variance uses Brewer's approximation by
@@ -61,8 +61,8 @@
 #'     replicates, with no built-in RWYB mapping.}
 #'   \item{Bounded `cube`, `lpm2`, `scps`}{Exact inclusion probabilities under
 #'     the method contract. Pair probabilities are refused, and so is
-#'     linearization. The variance uses the generic `subbootstrap` or
-#'     `mrbbootstrap` only.}
+#'     linearization. The variance uses the generic `subbootstrap` only, or
+#'     `mrbbootstrap` when no size is given.}
 #'   \item{Custom methods}{First-order quality as declared, exact or
 #'     approximate, and joint support as registered. The variance depends on
 #'     the variance-family declaration and the adapter checks.}
@@ -70,7 +70,7 @@
 #'
 #' Joint information means [joint_expectation()], which exposes PPS and
 #' balanced-family quantities. A stage's joint matrix does not cover the
-#' final units of a multistage design. Exact first-order probabilities do not
+#' final units of a multi-stage design. Exact first-order probabilities do not
 #' imply exact variance or confidence-interval coverage, since finite-sample
 #' PPS total estimators can be skewed. `vignette("survey-analysis")` shows a
 #' log-scale interval for strictly positive domain totals.
@@ -99,7 +99,7 @@
 #' probabilities without replacement, [as_svydesign()] defaults to
 #' `variance = "YG"` unless `variance` is supplied, because the
 #' Horvitz-Thompson quadratic form can be negative even with an exact
-#' matrix. A multistage sample is exported at stage 1 with a warning, and one
+#' matrix. A multi-stage sample is exported at stage 1 with a warning, and one
 #' with several rows per stage-1 unit is refused
 #' (`samplyr_error_pps_rows_per_psu`). Systematic PPS matrices often hold
 #' zero pair probabilities, which rule out a design-unbiased variance
@@ -110,7 +110,9 @@
 #'
 #' The generic types resample first-stage units within first-stage strata
 #' and read the later stages through them. `"mrbbootstrap"` reads the
-#' sampling fraction of every stage, and RWYB the probabilities of every
+#' sampling fraction of every stage drawn with equal probabilities, and
+#' refuses a stage drawn with unequal probabilities without replacement.
+#' RWYB reads the probabilities of every
 #' stage for SRS, draws with replacement, Poisson selection and PPS without
 #' replacement, the last with approximate joint probabilities.
 #' [as_svrepdesign()] documents each type, the designs it suits, and the
@@ -180,7 +182,7 @@
 #' A certainty PSU that keeps one unit at stage 2 is such a stratum.
 #' `"JKn"`, `"BRR"`, `"Fay"` and `"subbootstrap"` then refuse the sample
 #' (`samplyr_error_svrep_conversion_failed`), and so does RWYB.
-#' `"bootstrap"` and `"mrbbootstrap"` accept it, and
+#' `"bootstrap"` accepts it, and
 #' `options(survey.lonely.psu = "adjust")` lets `"JKn"` through. Drawing at
 #' least two stage-2 units in every PSU that can be taken with certainty
 #' avoids the refusal under every type. `frame_summary(design, frame,
@@ -271,7 +273,7 @@
 #' size is random and Brewer's approximation would understate the variance. A
 #' single-stage design, or one with one row per sampled cluster, is exported
 #' with `survey::poisson_sampling()`, the Horvitz-Thompson Poisson variance
-#' (Sarndal et al. 1992, sec. 2.8). A multistage design with a Poisson stage,
+#' (Sarndal et al. 1992, sec. 2.8). A multi-stage design with a Poisson stage,
 #' or a clustered one with several rows per cluster, needs `type = "rwyb"`.
 #' Linearization and the generic replicate types refuse it, since they can
 #' lose the variance of the random size.
@@ -315,8 +317,9 @@
 #' unrelated to them.
 #' Bounded `cube`, `lpm2` and `scps` change pairwise selection beyond that
 #' approximation, so linearization and [joint_expectation()] refuse them, and
-#' `type = "subbootstrap"` or `"mrbbootstrap"` gives a generic PPS bootstrap
-#' that does not recreate the constraints or the spatial algorithm.
+#' `type = "subbootstrap"` gives a generic bootstrap, as does
+#' `"mrbbootstrap"` when no size is given, and neither recreates the
+#' constraints or the spatial algorithm.
 #'
 #' A method registered with `sondage::register_method()` can declare a
 #' `variance_family`: `"srs"` receives the equal-probability treatment,
@@ -360,7 +363,7 @@
 #' \eqn{\pi_i \pi_j \ge \pi_{ij}}{pi_i pi_j >= pi_ij} for every pair.
 #' Systematic PPS stays refused, since its pair probabilities can
 #' be zero, which biases the variance estimator under any matrix, and the
-#' sampled matrix cannot show whether they are. So are a multistage phase 2
+#' sampled matrix cannot show whether they are. So are a multi-stage phase 2
 #' with an unequal-probability stage and `method = "approx"` or `"simple"`,
 #' which drop the matrix (`samplyr_error_twophase_phase2_pps`).
 #'
@@ -372,7 +375,7 @@
 #'
 #' A second phase drawn by equal probability within each final-stage pool of
 #' phase 1, whose final stage draws elements by equal probability, is
-#' exported as phase 1's multistage design with the smaller final take
+#' exported as phase 1's multi-stage design with the smaller final take
 #' ([as_svydesign()] states the shape). That is its exact design, so the
 #' linearized variance keeps phase 1's corrections, where the
 #' ultimate-cluster call would leave them out.
@@ -420,8 +423,8 @@
 #' Springer.
 #'
 #' @seealso [as_svydesign()], [as_svrepdesign()], [joint_expectation()],
-#'   `?selection_methods`
+#'   [selection_methods]
 #'
-#' @family survey export
+#' @family reference topics
 #' @name variance_estimation
 NULL

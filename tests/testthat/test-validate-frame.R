@@ -848,3 +848,63 @@ test_that("a named size that misses a stratum has the table form's class", {
     class = "samplyr_error_alloc_missing_coverage"
   )
 })
+
+test_that("validate_frame() and execute() refuse the same pools before drawing", {
+  # Certainty units beyond the take, at one stage, by stratum and at stage 2.
+  overflow <- list(
+    one = list(
+      sampling_design() |>
+        draw(n = 2, method = "pps_brewer", mos = size, certainty_size = 50),
+      data.frame(id = 1:3, size = c(100, 90, 80))
+    ),
+    strata = list(
+      sampling_design() |> stratify_by(st) |>
+        draw(n = 2, method = "pps_brewer", mos = size, certainty_size = 50),
+      data.frame(st = rep(c("a", "b"), each = 3), id = 1:6,
+                 size = c(100, 90, 80, 1, 2, 3))
+    ),
+    stage_2 = list(
+      sampling_design() |> cluster_by(ea) |> draw(n = 4) |> add_stage() |>
+        draw(n = 2, method = "pps_brewer", mos = size, certainty_size = 50),
+      data.frame(ea = rep(1:4, each = 3), hh = 1:12,
+                 size = c(100, 90, 80, rep(1:3, 3)))
+    )
+  )
+  for (name in names(overflow)) {
+    case <- overflow[[name]]
+    expect_error(validate_frame(case[[1]], case[[2]]),
+                 class = "samplyr_error_certainty_overflow", info = name)
+    expect_error(execute(case[[1]], case[[2]], seed = 1),
+                 class = "samplyr_error_certainty_overflow", info = name)
+  }
+
+  # One EA whose households all have size 0, drawn on some seeds only: the
+  # refusal no longer depends on the seed.
+  frame <- data.frame(ea = rep(1:10, each = 5), hh = 1:50,
+                      size = c(rep(0, 5), (6:50 %% 4) + 1))
+  design <- sampling_design() |> cluster_by(ea) |> draw(n = 4) |>
+    add_stage() |> draw(n = 2, method = "pps_brewer", mos = size)
+  expect_error(validate_frame(design, frame),
+               class = "samplyr_error_mos_zero_sum")
+  drawn_ea_1 <- logical(0)
+  for (seed in 1:6) {
+    first <- execute(design, frame, stages = 1, seed = seed)
+    drawn_ea_1 <- c(drawn_ea_1, 1 %in% first$ea)
+    expect_error(execute(design, frame, seed = seed),
+                 class = "samplyr_error_mos_zero_sum", info = seed)
+  }
+  expect_true(any(drawn_ea_1) && !all(drawn_ea_1))
+})
+
+test_that("on_capped = 'error' on a certainty plan's take stage names the plan", {
+  plan <- certainty_plan_fixture()
+  err <- expect_error(
+    sampling_design() |>
+      add_stage() |> stratify_by(stratum) |> cluster_by(psu_id) |>
+      draw(n = plan, method = "pps_systematic", mos = N) |>
+      add_stage() |> draw(n = plan, on_capped = "error"),
+    class = "samplyr_error_draw_argument"
+  )
+  expect_match(conditionMessage(err), "certainty plan", fixed = TRUE)
+  expect_no_match(conditionMessage(err), "frac", fixed = TRUE)
+})

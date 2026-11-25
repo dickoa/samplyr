@@ -32,7 +32,7 @@ naming columns that already hold the chance each unit had in every frame,
 it names the registers, and samplyr resolves the chances from each
 component's own design with \code{\link[=exante_probabilities]{exante_probabilities()}}.
 
-This is the capability the expected multiframe estimator needs and that a
+This is the capability the expected multiple-frame estimator needs and that a
 sample alone cannot supply: the probability a unit would have had in a
 frame it was not selected from. Exact inclusion probabilities are required
 by default. With \code{allow_approximate = TRUE}, approximate targets may be

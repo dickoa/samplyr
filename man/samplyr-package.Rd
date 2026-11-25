@@ -25,8 +25,9 @@ estimates from it.
 The reference topics answer narrower questions. \link{selection_methods}
 compares the selection methods, \link{frame_input_grammar} says how frames
 and stage registers are passed, \link{sample_columns} lists the columns a
-sample carries and how its weights are computed, and
-\link{variance_estimation} gives how each method's variance is estimated.
+sample carries and how its weights are computed, \link{reserve_lists} how
+units that fail in the field are replaced, and \link{variance_estimation} how
+each method's variance is estimated.
 }
 
 \examples{

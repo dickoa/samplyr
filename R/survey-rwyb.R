@@ -7,7 +7,7 @@
 #' bring their lower stages in.
 #'
 #' Generate independent conditional stage factors with svrep, then combine
-#' them using Beaumont and Emond (2022), section 7, as in svrep's multistage
+#' them using Beaumont and Emond (2022), section 7, as in svrep's multi-stage
 #' implementation. Generating stages separately lets certainty units have
 #' exactly factor one: svrep 0.9.1 evaluates Gamma(Inf, 0) as zero for Poisson
 #' certainties. It also lets us refuse noncertainty singletons rather than
@@ -113,13 +113,10 @@ build_rwyb_svrepdesign <- function(x, systematic_variance,
     wr <- method %in% c("SRSWR", "PPSWR")
     # Declared certainties keep probability one, the draws none. An expected
     # hit count of one is an ordinary draw.
+    # One draw per zone is read as with replacement (PPSWR) too.
     if (wr) {
       certain <- df[[paste0(".certainty_", i)]]
       prob[] <- if (is_null(certain)) 0 else as.numeric(certain %in% TRUE)
-    }
-    if (draws_one_per_zone(design$stages[[i]]$draw_spec)) {
-      # Certainty PSUs keep probability one.
-      prob[!is_certainty_probability(prob)] <- 0
     }
     if (length(prob) != nrow(df) || any(!is.finite(prob)) ||
         any(prob < 0 | prob > 1) || (!wr && any(prob == 0))) {

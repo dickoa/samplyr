@@ -350,3 +350,66 @@ test_that("periods of a first stage list their units before the next stage", {
   complete <- execute(selected, listing(selected), seed = 2)
   expect_setequal(execute(complete, period = 1, subround = 3)$ea_id, month$ea_id)
 })
+
+test_that("an occasion exports a certainty unit of its subround as a draw", {
+  skip_if_not_installed("survey")
+  # Every unit is certain, and each subround visits three of the twelve.
+  frame <- data.frame(id = 1:12, y = seq(10, 120, 10), m = 10)
+  master <- suppressMessages(execute(
+    sampling_design() |>
+      draw(n = 12, method = "pps_brewer", mos = m, certainty_size = 5),
+    frame, seed = 1, panels = subrounds(4)
+  ))
+  expect_true(all(master$.certainty_1))
+  occasion <- execute(master, period = 1, subround = 1)
+  expect_identical(nrow(occasion), 3L)
+  # The master varies not at all, and the subround draws 3 of the 12
+  # without replacement (closed form).
+  expected <- 12^2 * (1 - 3 / 12) * stats::var(occasion$y) / 3
+  svy <- as_svydesign(occasion)
+  expect_null(svy$variables$.census)
+  expect_equal(as.numeric(vcov(survey::svytotal(~y, svy))), expected,
+               tolerance = 1e-12)
+  for (type in c("auto", "JK1")) {
+    rep <- as_svrepdesign(occasion, type = type)
+    expect_equal(as.numeric(vcov(survey::svytotal(~y, rep))), expected,
+                 tolerance = 1e-12, info = type)
+  }
+
+  # A stratified census: each stratum's units fill one quota block, which
+  # its subround draws from without replacement.
+  frame <- data.frame(id = 1:20, g = rep(1:2, c(8, 12)), y = (1:20)^2)
+  master <- sampling_design() |> stratify_by(g) |> draw(frac = 1) |>
+    execute(frame, seed = 3, panels = subrounds(4))
+  occasion <- execute(master, period = 1, subround = 1)
+  y <- split(occasion$y, occasion$g)
+  n <- lengths(y)
+  N <- c(8, 12)
+  expect_identical(unname(n), c(2L, 3L))
+  expect_equal(
+    as.numeric(vcov(survey::svytotal(~y, as_svydesign(occasion)))),
+    sum(N^2 * (1 - n / N) * vapply(y, stats::var, numeric(1)) / n),
+    tolerance = 1e-12
+  )
+
+  # Beside units drawn at random, a certainty unit stays in its pool, so no
+  # drawn unit is left alone in a stratum.
+  mixed <- data.frame(id = 1:40, m = c(rep(60, 4), rep(1, 36)))
+  mixed$y <- c(200, 80, 150, 20, (1:36 * 7) %% 19)
+  withr::local_options(survey.lonely.psu = "fail")
+  drawn_alone <- logical(0)
+  # Seeds 8 and 14 leave one drawn unit beside two certainty units.
+  for (seed in c(1, 3, 8, 14)) {
+    master <- suppressMessages(execute(
+      sampling_design() |> draw(n = 12, method = "pps_brewer", mos = m),
+      mixed, seed = seed, panels = subrounds(4)
+    ))
+    occasion <- execute(master, period = 1, subround = 1)
+    drawn_alone <- c(drawn_alone, sum(!occasion$.certainty_1) == 1L)
+    se <- survey::SE(survey::svytotal(~y, suppressWarnings(
+      as_svydesign(occasion)
+    )))
+    expect_gt(as.vector(se), 0)
+  }
+  expect_identical(drawn_alone, c(FALSE, FALSE, TRUE, TRUE))
+})

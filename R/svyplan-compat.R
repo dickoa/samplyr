@@ -1792,7 +1792,8 @@ reconcile_certainty_take <- function(spec, frame, stage, call = NULL) {
     seen <- first_register_rows(frame, spec$id_var, spec$strata_var)
     at <- register_id_positions(seen$psu_id, register$psu_id, spec$id_var,
                                 call = call)
-    moved <- seen$stratum != register$stratum[at]
+    moved <- !labels_name_strata(register$stratum[at], frame[[spec$strata_var]],
+                                 keys = seen$stratum)
     if (any(moved)) {
       refuse(
         "x" = "PSU {.val {shown_values(seen$psu_id[moved])}} {cli::qty(sum(moved))}{?is/are} in a different stratum than the register states."
@@ -1814,7 +1815,8 @@ first_register_rows <- function(frame, id_var, strata_var, mos_var = NULL) {
   loc <- unique_key_loc(frame, unique(c(id_var, strata_var, mos_var)))
   seen <- data.frame(
     psu_id = vctrs::vec_slice(frame[[id_var]], loc),
-    stratum = as.character(vctrs::vec_slice(frame[[strata_var]], loc)),
+    # Key text, which as.character() would write under getOption("scipen").
+    stratum = key_value_text(vctrs::vec_slice(frame[[strata_var]], loc)),
     stringsAsFactors = FALSE
   )
   if (!is_null(mos_var)) {
@@ -1868,7 +1870,8 @@ reconcile_certainty_register <- function(
     )
   }
 
-  moved <- seen$stratum != register$stratum[at]
+  moved <- !labels_name_strata(register$stratum[at], frame[[spec$strata_var]],
+                               keys = seen$stratum)
   if (any(moved)) {
     refuse(
       "x" = "PSU {.val {shown_values(seen$psu_id[moved])}} {cli::qty(sum(moved))}{?is/are} in a different stratum than the register states."
@@ -1892,9 +1895,12 @@ reconcile_certainty_register <- function(
 #' estimation needs from the sample's design columns, applying two
 #' conventions that are easy to get wrong by hand:
 #'
-#' - The components are weighted by the product of the per-stage weights
-#'   below stage 1 (`.weight_2`, or `.weight_2 * .weight_3`), never the compound `.weight`, whose
-#'   stage-1 factor would overstate every cluster size.
+#' - The components are weighted by the per-stage weights below stage 1,
+#'   never the compound `.weight`, whose stage-1 factor would overstate
+#'   every cluster size. Under one clustered stage that is their product.
+#'   Under two, svyplan takes the second clustered stage's weight and the
+#'   element stage's (one when the elements are taken whole) as two
+#'   columns, which its element-stage correction reads apart.
 #' - For an unequal-probability first stage, per-PSU shares are derived
 #'   from the stage-1 weights and normalized to sum to 1 over the sampled PSUs (per stratum when
 #'   the first stage is stratified). For an equal-probability first
@@ -2235,12 +2241,20 @@ varcomp.tbl_sample <- function(x, ..., strata = NULL,
     )
   }
 
-  # Within-PSU weights multiply stages below stage 1.
+  # Within-PSU weights multiply stages below stage 1. Under two clustered
+  # stages, svyplan takes the second's and the element stage's apart.
   later <- stages_executed[-1]
-  w_within <- if (length(later) == 0) {
-    rep(1, nrow(x))
+  weight_of <- function(stages) {
+    if (length(stages) == 0L) {
+      return(rep(1, nrow(x)))
+    }
+    Reduce(`*`, lapply(stages, function(k) x[[paste0(".weight_", k)]]))
+  }
+  w_within <- if (length(clustered) == 2L) {
+    cbind(weight_of(later[later <= clustered[2]]),
+          weight_of(later[later > clustered[2]]))
   } else {
-    Reduce(`*`, lapply(later, function(k) x[[paste0(".weight_", k)]]))
+    weight_of(later)
   }
 
   # Stage-1 strata (design) or the user's stratification, not both.

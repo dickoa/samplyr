@@ -373,5 +373,5 @@ Use `vignette("design-semantics")` for the detailed design contract and
 `?rotation_program` for the persistence rules of each selection.
 
 ```{r, include = FALSE}
-unlink(path)
+unlink(c(path, shared_path))
 ```

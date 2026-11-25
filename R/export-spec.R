@@ -41,6 +41,7 @@ export_stage_spec <- function(df, design, stages, phase = NULL) {
     stage_spec <- design$stages[[stage_idx]]
     draw_spec <- stage_spec$draw_spec
     kind <- survey_stage_kind(draw_spec)
+    strata <- spec_stage_strata(df, stage_spec, stage_idx, kind)
     list(
       stage = stage_idx,
       name = stage_token(design, stage_idx),
@@ -52,11 +53,13 @@ export_stage_spec <- function(df, design, stages, phase = NULL) {
       } else {
         NA_character_
       },
-      unit = spec_stage_unit(df, stage_spec, stage_idx),
+      unit = spec_unit_within_strata(
+        spec_stage_unit(df, stage_spec, stage_idx), strata$id
+      ),
       midstage_element = is_null(stage_spec$clusters) &&
         !spec_has_draw_ids(df, stage_spec, stage_idx) &&
         pos < n_stages,
-      strata = spec_stage_strata(df, stage_spec, stage_idx, kind),
+      strata = strata,
       certainty = df[[paste0(".certainty_", stage_idx)]],
       prob = spec_stage_prob(df, stage_idx),
       # Expected hits of 1 are no census.
@@ -115,6 +118,20 @@ spec_stage_unit <- function(df, stage_spec, stage_idx) {
     return(list(kind = "cluster", source = vars, id = group_ids(df, vars)))
   }
   list(kind = "element", source = character(0), id = seq_len(nrow(df)))
+}
+
+#' A draw identifier restarts in each stratum, so a hit is identified
+#' within its stratum.
+#' @noRd
+spec_unit_within_strata <- function(unit, strata_id) {
+  if (!identical(unit$kind, "draw") || is_null(strata_id)) {
+    return(unit)
+  }
+  unit$id <- group_ids(
+    data.frame(stratum = strata_id, draw = unit$id),
+    c("stratum", "draw")
+  )
+  unit
 }
 
 #' Certainty units are a take-all stratum of the stage when its variance

@@ -540,3 +540,82 @@ test_that("a selection drawn whole leaves the occasion when its panel is idle", 
   live <- as.data.frame(execute(program, period = 1)[["solo"]])
   expect_equal(live$.weight, as.data.frame(solo)$.weight[match(live$id, solo$id)])
 })
+
+test_that("a part of an occasion drawn with a count of panels prints and refuses writing", {
+  frame <- data.frame(id = 1:200, value = (1:200) %% 7)
+  startup <- sampling_design() |> draw(n = 40) |>
+    execute(frame, seed = 1, panels = 2)
+  entrants <- sampling_design() |> draw(n = 12) |>
+    execute(data.frame(id = 201:260, value = 1), seed = 2)
+  schedule <- rbind(
+    data.frame(selection = "startup", panel = rep(1:2, times = 3),
+               period = rep(1:3, each = 2),
+               active = c(TRUE, TRUE, TRUE, FALSE, FALSE, TRUE)),
+    data.frame(selection = "entrants", panel = 1, period = 1:3,
+               active = c(FALSE, TRUE, TRUE))
+  )
+  program <- rotation_program(
+    selections = list(startup = startup, entrants = entrants),
+    entry_period = c(startup = 1, entrants = 2), schedule = schedule
+  )
+  part <- execute(program, period = 2)[["startup"]]
+  expect_null(attr(part, "metadata")$panel_assignment$schedule)
+  expect_output(print(part), "period 2", fixed = TRUE)
+  expect_no_error(utils::capture.output(summary(part)))
+  expect_error(design_json(part), class = "samplyr_error_serialize_unsupported")
+})
+
+test_that("a named through is read by its names", {
+  plan <- list(horizon = 6L, subrounds = 3L)
+  # Period 2, subround 3 is the sixth occasion of three subrounds a period.
+  expect_identical(plan_through_occasion(plan, c(period = 2, subround = 3)), 6L)
+  expect_identical(plan_through_occasion(plan, c(subround = 3, period = 2)), 6L)
+  expect_identical(plan_through_occasion(plan, c(2, 3)), 6L)
+  expect_error(plan_through_occasion(plan, c(per = 2, sub = 3)),
+               class = "samplyr_error_program_through")
+})
+
+test_that("an occasion of a program with subrounds names its subround", {
+  sample <- sampling_design() |> draw(n = 20) |>
+    execute(data.frame(id = 1:100), seed = 1, panels = 2)
+  schedule <- data.frame(
+    selection = "s", panel = rep(1:2, 4), period = rep(1:2, each = 4),
+    subround = rep(rep(1:2, each = 2), 2),
+    active = rep(c(TRUE, FALSE, FALSE, TRUE), 2)
+  )
+  program <- rotation_program(selections = list(s = sample),
+                              entry_period = c(s = 1), schedule = schedule)
+  expect_output(print(execute(program, period = 1, subround = 1)),
+                "period 1, subround 1", fixed = TRUE)
+  expect_error(print(execute(program, period = 1, subround = 1), extra = 1),
+               class = "rlib_error_dots_nonempty")
+})
+
+test_that("a program occasion numbers each visit by the program's schedule", {
+  frame <- data.frame(id = 1:40)
+  # Panel 1 is active at periods 1 and 2, panel 2 at periods 1 and 3.
+  program_schedule <- data.frame(
+    panel = rep(1:2, times = 3), period = rep(1:3, each = 2),
+    active = c(TRUE, TRUE, TRUE, FALSE, FALSE, TRUE)
+  )
+  by_hand <- list(c(`1` = 1L, `2` = 1L), c(`1` = 2L), c(`2` = 2L))
+  counted <- sampling_design() |> draw(n = 20) |>
+    execute(frame, seed = 2, panels = 2)
+  # A selection drawn with a schedule of its own, which the program overrides.
+  own <- data.frame(
+    panel = rep(1:2, times = 3), period = rep(1:3, each = 2),
+    active = c(FALSE, TRUE, TRUE, TRUE, TRUE, TRUE)
+  )
+  scheduled <- sampling_design() |> draw(n = 20) |>
+    execute(frame, seed = 2, panels = own)
+  for (selection in list(counted, scheduled)) {
+    program <- rotation_program(list(a = selection), c(a = 1),
+                                program_schedule)
+    for (p in 1:3) {
+      part <- as.data.frame(execute(program, period = p)$a)
+      visits <- c(tapply(part$.visit, part$.panel, unique))
+      expect_identical(visits[names(by_hand[[p]])], by_hand[[p]],
+                       info = paste("period", p))
+    }
+  }
+})

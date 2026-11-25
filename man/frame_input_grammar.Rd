@@ -4,7 +4,7 @@
 \alias{frame_input_grammar}
 \title{Supply sampling frames and stage registers}
 \description{
-A frame is a data frame or a non-empty ordered list of data frames.
+A frame is a data frame or a nonempty ordered list of data frames.
 A data frame and a one-element list containing it have the same meaning.
 \code{\link[=execute]{execute()}} also accepts one data frame per stage as separate arguments
 in \code{...}.
@@ -78,4 +78,11 @@ so.
 \seealso{
 \code{\link[=execute]{execute()}}, \code{\link[=validate_frame]{validate_frame()}}, \code{\link[=frame_summary]{frame_summary()}},
 \code{\link[=write_design]{write_design()}}, \code{vignette("introduction")}
+
+Other reference topics:
+\code{\link{reserve_lists}},
+\code{\link{sample_columns}},
+\code{\link{selection_methods}},
+\code{\link{variance_estimation}}
 }
+\concept{reference topics}

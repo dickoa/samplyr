@@ -93,13 +93,15 @@ build_occasion_sample <- function(
   execution_environment,
   extra = list(),
   digest = readable_digest(occasion_master_digest(source)),
-  draws = occasion_draws(source)
+  draws = occasion_draws(source),
+  visit_schedule = record$schedule
 ) {
   data <- as.data.frame(source)[activation$keep, , drop = FALSE]
   data$.weight <- data$.weight * activation$factor[activation$keep]
   if (!is_null(record)) {
     data$.visit <- occasion_row_visits(
-      record, data$.panel, occasion, activation$permanent[activation$keep]
+      visit_schedule, data$.panel, occasion,
+      activation$permanent[activation$keep]
     )
   }
   rownames(data) <- NULL
@@ -198,7 +200,7 @@ build_window_sample <- function(
       part$.period <- rep(pairs$period[occasions[j]], nrow(part))
       part$.subround <- rep(pairs$subround[occasions[j]], nrow(part))
       part$.visit <- occasion_row_visits(
-        record, part$.panel, occasions[j], activation$permanent[rows]
+        record$schedule, part$.panel, occasions[j], activation$permanent[rows]
       )
       parts[[length(parts) + 1L]] <- part
     }
@@ -216,10 +218,12 @@ build_window_sample <- function(
   source <- sources[[1L]]
   if (length(remaining) > 0L) {
     vars <- get_design(source)$stages[[1L]]$clusters$vars
+    # The sources share the records of the draws before them.
+    records <- unlist(lapply(sources, function(s) {
+      attr(s, "metadata")$empty_parents
+    }), recursive = FALSE)
     attr(source, "metadata")$empty_parents <- keep_empty_parents(
-      unlist(lapply(sources, function(s) {
-        attr(s, "metadata")$empty_parents
-      }), recursive = FALSE),
+      records[!duplicated(records)],
       vars,
       data[vars],
       inside = FALSE
@@ -829,6 +833,12 @@ occasion_phrase <- function(occasions, schedule, upper = FALSE) {
 #' The occasions of a materialized sample, named for a message
 #' @noRd
 sample_occasion_phrase <- function(metadata) {
+  # A rotation program's part keeps the program's schedule, not its own.
+  if (is_null(metadata$panel_assignment$schedule)) {
+    period <- unique(metadata$occasion$period)
+    return(paste(if (length(period) == 1L) "period" else "periods",
+                 occasion_span(period)))
+  }
   occasion_phrase(
     metadata$occasion$occasion,
     metadata$panel_assignment$schedule
@@ -1171,13 +1181,13 @@ activate_panels <- function(sample, record, active, allow_empty = FALSE,
 #'
 #' Read from the schedule by panel. A permanent unit is active at every occasion
 #' outside the rotation, so it has no visit number.
+#' @param schedule A schedule with `panel`, `occasion` and `visit`.
 #' @noRd
-occasion_row_visits <- function(record, panel, occasion, permanent) {
+occasion_row_visits <- function(schedule, panel, occasion, permanent) {
   # paste() would recycle no panels to one key.
   if (length(panel) == 0L) {
     return(integer(0))
   }
-  schedule <- record$schedule
   at <- match(
     paste(panel, occasion, sep = "|"),
     paste(schedule$panel, schedule$occasion, sep = "|")

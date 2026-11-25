@@ -380,5 +380,6 @@
 #' @seealso [execute()], [rotation_program()] for programs of several
 #'   selections, [stack_periods()] for stacking materialized periods.
 #'
+#' @family panels, rotation and periods
 #' @name panel_assignment
 NULL

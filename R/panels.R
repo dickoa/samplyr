@@ -66,7 +66,7 @@ normalize_panel_input <- function(panels, panel_stage = NULL,
       call = call
     )
   }
-  k <- as.integer(panels)
+  k <- as.integer(round(panels))
   check_small_pool_applicable(small_pool, has_schedule = FALSE,
                               has_panels = TRUE, call = call)
   list(
@@ -197,7 +197,7 @@ normalize_panel_stage <- function(panel_stage, call = caller_env()) {
       call = call
     )
   }
-  as.integer(panel_stage)
+  as.integer(round(panel_stage))
 }
 
 #' @noRd

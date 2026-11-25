@@ -147,12 +147,12 @@ test_that("approximate overlap quality survives stacking and survey exports", {
   quality <- c(a = "approximate", b = "exact")
   expect_identical(attr(result, "overlaps")$probability_quality, quality)
   expect_output(print(result), "approximate probabilities accepted")
-  linear <- as_svydesign(result, estimator = "expected")
-  expect_identical(attr(linear, "samplyr_overlap_probability_quality"), quality)
+  # pps_pareto is refused by the linearized stack, so the replicates carry it.
+  expect_error(as_svydesign(result, estimator = "expected"),
+               class = "samplyr_error_survey_multiframe_unsupported")
   reps <- suppressWarnings(as_svrepdesign(result, estimator = "expected",
                                           type = "subbootstrap", replicates = 20))
   expect_identical(attr(reps, "samplyr_overlap_probability_quality"), quality)
-  expect_equal(coef(survey::svytotal(~y, linear)), coef(survey::svytotal(~y, reps)))
 })
 
 test_that("custom ex-ante quality uses the registered probability contract", {

@@ -278,6 +278,21 @@ cohort_exclusion <- function(master, record, draws, frames, view,
   stage <- min(remaining_stages(master))
   spec <- design$stages[[stage]]
   listing <- as.data.frame(frames[[1L]])
+  # Each hit of a unit drawn with replacement is a pool of its own, so a
+  # listing without hit numbers is given one row per hit, as the draw reads
+  # it, and units are left out of the hit that drew them only.
+  hit_cols <- setdiff(
+    intersect(grep("^\\.draw_[0-9]+$", record$key_vars, value = TRUE),
+              names(master)),
+    names(listing)
+  )
+  hit_by <- intersect(setdiff(record$key_vars, hit_cols), names(listing))
+  if (length(hit_cols) > 0L && length(hit_by) > 0L) {
+    hits <- vctrs::vec_unique(as.data.frame(master)[c(hit_by, hit_cols)])
+    listing <- dplyr::left_join(listing, hits, by = hit_by,
+                                relationship = "many-to-many")
+    frames[[1L]] <- listing
+  }
   # The listing keys its rows to the master's units as the draw does, by
   # the unit variables it carries, so strata may be left out of it. The
   # draw then carries them down from the master, and so does this count.
@@ -367,8 +382,10 @@ cohort_exclusion <- function(master, record, draws, frames, view,
   excluded_key <- cohort_pool_key(psu_listed, listing[strata_vars])
   list(
     frames = frames,
+    # Only the primary units this occasion draws in are sized.
     takes = cohort_listing_takes(
-      listing[units, , drop = FALSE], spec, stage, psu_vars, strata_vars
+      listing[units & psu_listed %in% psu_now, , drop = FALSE], spec, stage,
+      psu_vars, strata_vars
     ),
     pools = list(
       vars = pool_vars,

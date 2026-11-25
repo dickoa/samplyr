@@ -76,7 +76,8 @@ with shared weights takes none (\code{samplyr_error_survey_argument}).}
 \value{
 A \code{survey.design2} object for single-phase and multi-stage samples
 and for materialized occasions, or a \code{twophase}/\code{twophase2} object for
-two-phase samples and for occasions exported with \code{method}.
+two-phase samples and for occasions exported with \code{method}. The \code{survey}
+package is required but not imported, so it must be installed.
 }
 \description{
 Creates a \code{\link[survey:svydesign]{survey::svydesign()}} object from a \code{tbl_sample}, using
@@ -178,6 +179,13 @@ with replacement is refused (\code{samplyr_error_twophase_phase2_wr}). So is a
 phase 1, or a phase 2, whose rows hold a single primary unit outside a
 stratum (\code{samplyr_error_export_one_unit}).
 
+A phase-1 stratum holding a single unit not taken with certainty has no
+variance estimate. The default \code{"full"} method would read the unit's
+squared total as one and does not follow \code{survey.lonely.psu}, so it is
+refused (\code{samplyr_error_lonely_psu}). \code{"approx"} and \code{"simple"} estimate
+phase 1's part with survey's one-phase code, which follows that option,
+and warn under its default \code{"fail"} (\code{samplyr_warning_lonely_psu}).
+
 The three values of \code{method} read the phase-1 part of the variance
 differently. \code{"full"} reads the probabilities stage by stage, from phase
 1's finite population corrections. \code{"approx"} and \code{"simple"} estimate it
@@ -220,7 +228,7 @@ elements by \code{srswor} or \code{systematic}, and phase 2 draws the same way,
 without clusters, with one stratum per final-stage pool of phase 1, as in
 \code{stratify_by(ea_id)} when the final stage draws households within EAs. A
 simple random subsample of a simple random sample is a simple random
-sample, so the two phases are phase 1's multistage design with a smaller
+sample, so the two phases are phase 1's multi-stage design with a smaller
 final take. \code{as_svydesign()} and \code{as_svrepdesign()} export it that way,
 with phase 1's strata, clusters and finite population corrections and
 phase 2's weights, whatever phase 1's earlier stages drew. Half of each
@@ -245,7 +253,7 @@ drawn with unequal probabilities without replacement is refused
 (\code{samplyr_error_twophase_phase1_pps}, \code{samplyr_error_occasion_phase1_pps}).
 So are \code{cube}, first-stage \code{pps_poisson} and the spatial methods, which
 are unsupported at either phase. Equal-probability first phases export,
-stratified, clustered, multistage and with-replacement alike. A
+stratified, clustered, multi-stage and with-replacement alike. A
 two-phase sample has a replicate export in three shapes, the subsample
 within pools above, a second phase of a phase 1 fixed in one primary unit
 (every stage taken for sure, which can be a census of its elements), and
@@ -284,6 +292,12 @@ sample. It is a stratum of its own taken as a census, the one stratum
 with a finite population correction, so it adds no variance. Leaving out
 the correction elsewhere overstates the variance where a stratum's
 sampling fraction is large.
+
+A one-stage master that took every unit, rotated by its panels, varies
+only by which units an occasion holds. Within each quota block the
+occasion draws its units without replacement, so the blocks are the
+strata and the block sizes the correction, which gives the occasion's
+variance exactly.
 
 A window of several occasions, \code{execute(master, period = 1:3)}, is exported
 the same way. A unit's rows over the window are one cluster, and the
@@ -453,9 +467,6 @@ because its variance comes from a structure indexed by the source
 sample's rows, which the contribution rows no longer are. Use
 \code{as_svrepdesign()}, which replicates the source design and applies the
 sharing inside every replicate.
-
-The \code{survey} package is required but not imported. It must be
-installed to use this function.
 }
 }
 \examples{
@@ -529,8 +540,6 @@ Other survey export:
 \code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},
 \code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
 \code{\link[=as_svrepdesign]{as_svrepdesign()}},
-\code{\link[=stack_periods]{stack_periods()}},
-\code{\link{variance_estimation}},
 \code{\link[=variance_estimators]{variance_estimators()}}
 }
 \concept{survey export}

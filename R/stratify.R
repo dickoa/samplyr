@@ -47,7 +47,8 @@
 #'   `"proportional"` allocates in proportion to, such as each stratum's
 #'   household total, or the importance measure of power allocation.
 #' @param power Power exponent \eqn{q} for power allocation.
-#'   Must satisfy \eqn{0 \le q \le 1}. Defaults to `0.5`.
+#'   Must satisfy \eqn{0 \le q \le 1}. With `alloc = "power"` and no
+#'   `power`, 0.5 is used.
 #'
 #' @return A modified `sampling_design` object with stratification specified.
 #'

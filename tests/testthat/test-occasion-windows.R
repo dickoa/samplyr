@@ -550,3 +550,30 @@ test_that("a census rotated by panels at stage 1 is no census of an occasion", {
     survey::SE(survey::svytotal(~y, reference))
   )
 })
+
+test_that("a provisional window keeps one zero row per occasion of an empty unit", {
+  skip_if_not_installed("survey")
+  schedule <- data.frame(
+    panel = rep(1:3, times = 3), period = rep(1:3, each = 3),
+    active = c(TRUE, FALSE, FALSE, TRUE, TRUE, FALSE, FALSE, TRUE, TRUE)
+  )
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(ea) |> draw(n = 9) |>
+    add_stage() |> cluster_by(hh) |> draw(n = 2, on_empty = "silent")
+  master <- execute(design, data.frame(ea = 1:20), stages = 1, seed = 1,
+                    panels = schedule)
+  # One EA of panel 1, active at periods 1 and 2, lists nobody.
+  empty <- master$ea[master$.panel == 1][1]
+  listing <- data.frame(ea = rep(setdiff(master$ea, empty), each = 5))
+  listing$hh <- seq_len(nrow(listing))
+  listing$y <- 1
+  first <- execute(master, listing, period = 1, seed = 11)
+  second <- execute(first, listing, period = 2, seed = 12)
+  window <- execute(second, period = 1:2)
+  expect_true(isTRUE(attr(window, "metadata")$occasion$provisional))
+  svy <- suppressWarnings(as_svydesign(window))
+  zero <- svy$variables[svy$variables$ea == empty, ]
+  expect_identical(nrow(zero), 2L)
+  expect_setequal(zero$.period, 1:2)
+  expect_true(all(zero$.weight == 0))
+})

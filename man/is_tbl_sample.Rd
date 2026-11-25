@@ -28,7 +28,6 @@ Other helpers:
 \code{\link[=get_stages_executed]{get_stages_executed()}},
 \code{\link[=is_sampling_design]{is_sampling_design()}},
 \code{\link{print.samplyr}},
-\code{\link[=serp]{serp()}},
-\code{\link[=subrounds]{subrounds()}}
+\code{\link[=serp]{serp()}}
 }
 \concept{helpers}

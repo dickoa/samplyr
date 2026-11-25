@@ -65,7 +65,7 @@
 #' The report reads the same rules the exports apply, and a test compares it
 #' with the conditions the exports actually raise on executed samples. It
 #' does not certify an estimator's accuracy beyond that, and
-#' `?variance_estimation` describes each approximation.
+#' [variance_estimation] describes each approximation.
 #'
 #' @param x A `sampling_design`, or a `tbl_sample` standing for its design.
 #' @param frame Optional. The frame the design will be executed on, as
@@ -105,7 +105,7 @@
 #'                                      mos = households)
 #' variance_estimators(phase2, phase1)[c("estimator", "status", "note")]
 #'
-#' @seealso `?variance_estimation` for how each selection method's variance
+#' @seealso [variance_estimation] for how each selection method's variance
 #'   is estimated, [frame_summary()] and [validate_frame()] for the checks
 #'   before execution.
 #' @family survey export
@@ -151,7 +151,10 @@ variance_estimators <- function(x, frame = NULL) {
                                    call = current_env())
     design1 <- composed_design(
       get_design(phase1), design,
-      census = stage_fact(facts2, 1L)$census
+      census = stage_fact(facts2, 1L)$census,
+      census1 = spec_stage_census(
+        as.data.frame(phase1), max(get_stages_executed(phase1))
+      )
     )
     traits1 <- stage_variance_traits(design1, seq_along(design1$stages))
     # Phase 1 is realized, so its own draw says whether stage 1 holds one
@@ -421,6 +424,12 @@ frame_variance_facts <- function(design, frame, traits, call = caller_env()) {
       singleton = if (fixed) take == 1 & !pool_census else rep(FALSE, n_pools),
       takes = take,
       pool_census = pool_census,
+      pool_sizes = if (draws_one_per_zone(trait$draw)) take else pools$N,
+      pool_certain = if (draws_one_per_zone(trait$draw)) {
+        rep(0, n_pools)
+      } else {
+        n_cert
+      },
       # A take of N or more is a census only without replacement. With
       # replacement it counts draws, and the stage still adds variance.
       census = !identical(trait$kind, "wr") && fixed && nrow(pools) > 0 &&
@@ -1272,7 +1281,8 @@ lone_zone_findings <- function(traits, class, effect, advice,
 joint_estimator_row <- function(entry, traits, facts, common) {
   first <- traits[[1]]
   pps_first <- identical(first$kind, "pps_wor") ||
-    (identical(first$kind, "rs_poisson") && !is_null(first$draw$mos))
+    (first$kind %in% c("rs_poisson", "unsupported") &&
+       !is_null(first$draw$mos))
   if (identical(first$kind, "wr") && !is_null(first$draw$mos)) {
     return(estimator_row(entry, list(), not_applicable = paste0(
       "Stage 1 is drawn with replacement or minimum replacement.",
@@ -1421,7 +1431,8 @@ generic_replicate_findings <- function(type, traits, facts, common) {
   # whole holds no unit to resample.
   all_whole <- census || (length(whole) > 0L && all(whole))
   if ((stage_replicated_as_wr(first$draw, first$kind) && !all_whole &&
-         (!pps_safe || first$method %in% pmr_methods)) ||
+         (!identical(type, "mrbbootstrap") ||
+            first$method %in% pmr_methods)) ||
       fpc_dropped) {
     out <- c(out, list(finding(
       "approximate", "samplyr_warning_replicate_wr_first_stage",
@@ -1449,6 +1460,9 @@ generic_replicate_findings <- function(type, traits, facts, common) {
     out <- c(out, certainty_stage_wr_findings(traits, facts))
   }
   out <- c(out, common$systematic, common$refusals, common$one_unit)
+  if (identical(type, "mrbbootstrap")) {
+    out <- c(out, mrbbootstrap_findings(traits, facts))
+  }
   unsupported <- Filter(function(t) identical(t$kind, "unsupported"), traits)
   if (length(unsupported) > 0) {
     out <- c(out, list(if (pps_safe) {
@@ -1529,6 +1543,67 @@ generic_replicate_findings <- function(type, traits, facts, common) {
     out <- c(out, brr_findings(traits, facts))
   }
   c(out, common$risks)
+}
+
+#' What the multistage rescaled bootstrap refuses
+#'
+#' As `check_mrbbootstrap_supported()` does: a stage drawn with unequal
+#' probabilities without replacement, and a unit taken with probability 1
+#' alone in its pool above a later stage. The frame settles the second.
+#' Without it, a certainty rule is a risk, and so is a draw of one without
+#' replacement, which takes its unit whole in a pool of one.
+#' @noRd
+mrbbootstrap_findings <- function(traits, facts) {
+  unequal <- Filter(function(t) {
+    stage_unequal_wor(t$draw, t$kind) && !isTRUE(t$census) &&
+      !isTRUE(stage_fact(facts, t$stage)$census)
+  }, traits)
+  if (length(unequal) > 0L) {
+    return(list(finding(
+      "refused", "samplyr_error_svrep_conversion_failed",
+      paste0(unequal[[1]]$name, " is drawn with ", unequal[[1]]$method,
+             ", which has no single sampling fraction per stratum for the",
+             " multistage rescaled bootstrap"),
+      stage = unequal[[1]]$stage
+    )))
+  }
+  for (t in traits[-length(traits)]) {
+    fact <- stage_fact(facts, t$stage)
+    if (is_null(fact)) {
+      if (has_certainty_rule(t$draw)) {
+        return(list(finding(
+          "risk", "samplyr_error_svrep_conversion_failed",
+          paste0("A unit ", t$name, " takes with certainty alone in its",
+                 " pool cannot be resampled by the multistage rescaled",
+                 " bootstrap")
+        )))
+      }
+      # A draw of one takes the unit whole when its pool holds no other.
+      n <- t$draw$n
+      if (is.numeric(n) && any(n == 1) && is_null(t$draw$frac) &&
+          !identical(t$kind, "wr")) {
+        return(list(finding(
+          "risk", "samplyr_error_svrep_conversion_failed",
+          paste0("A unit drawn alone at ", t$name, " is taken with",
+                 " probability 1 when its pool holds no other, and the",
+                 " multistage rescaled bootstrap cannot resample it")
+        )))
+      }
+      next
+    }
+    whole <- fact$pool_census | fact$whole_certain
+    single <- (whole & fact$pool_sizes == 1) | fact$pool_certain == 1
+    if (any(single)) {
+      return(list(finding(
+        "refused", "samplyr_error_svrep_conversion_failed",
+        paste0(t$name, " takes a unit with probability 1 alone in its pool,",
+               " and the multistage rescaled bootstrap resamples none of a",
+               " stratum of one, so the variance drawn inside it is lost"),
+        stage = t$stage, decided_by = "frame"
+      )))
+    }
+  }
+  list()
 }
 
 #' Stage 2 read as drawn with replacement inside a PSU taken with certainty
@@ -1930,6 +2005,26 @@ phase1_one_unit_findings <- function(design1, stages1, df1, twophase = TRUE) {
   ))
 }
 
+#' A phase-1 stratum of one unit, which the full two-phase export refuses
+#'
+#' The report's rows are the default export, survey's full two-phase
+#' variance, which cannot read a stratum of one unit not taken with
+#' certainty. The approximate export warns instead.
+#' @noRd
+phase1_lonely_findings <- function(phase1, design1, stages1) {
+  lonely <- phase1_lonely_strata(phase1, design1, stages1)
+  if (!any(lonely > 0L)) {
+    return(list())
+  }
+  stage_idx <- as.integer(names(lonely)[lonely > 0L][1L])
+  list(finding(
+    "refused", "samplyr_error_lonely_psu",
+    "A phase-1 stratum holds a single sampled unit not taken with
+     certainty, which survey's full two-phase variance cannot read",
+    stage = stage_idx, phase = 1L, decided_by = "frame"
+  ))
+}
+
 #' A phase 2 that survey's two-phase design cannot build
 #'
 #' survey builds the phase-2 design, and phase 1's design on phase 2's
@@ -2005,11 +2100,13 @@ twophase_estimator_rows <- function(design, traits, phase1, sample2 = NULL) {
       linearization = estimator_row(entry, c(twophase_linearization_findings(
         design, traits, phase1, design1, stages1, df1, sample2 = sample2
       ), phase1_one_unit_findings(design1, stages1, df1),
+      phase1_lonely_findings(phase1, design1, stages1),
       phase2_one_unit_findings(design, design1, stages1, df1, sample2))),
       joint = estimator_row(entry, c(twophase_linearization_findings(
         design, traits, phase1, design1, stages1, df1, user_pps = TRUE,
         sample2 = sample2
       ), phase1_one_unit_findings(design1, stages1, df1),
+      phase1_lonely_findings(phase1, design1, stages1),
       phase2_one_unit_findings(design, design1, stages1, df1, sample2))),
       random_groups = estimator_row(entry, random_groups_phase1_findings(
         phase1

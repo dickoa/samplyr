@@ -855,3 +855,30 @@ test_that("a materialized occasion may be a component, and is refused at export"
   )
   expect_s3_class(as_svydesign(from_master), "multiframe")
 })
+
+test_that("a unit sampled in two frames states one chance in each", {
+  population <- data.frame(
+    id = 1:60, y = 1:60,
+    in_a = rep(c(TRUE, FALSE), c(40, 20)), in_b = rep(c(FALSE, TRUE), c(20, 40))
+  )
+  population$pi_a <- ifelse(population$in_a, 10 / 40, 0)
+  population$pi_b <- ifelse(population$in_b, 10 / 40, 0)
+  a <- sampling_design() |> draw(n = 10) |>
+    execute(population[population$in_a, ], seed = 1)
+  b <- sampling_design() |> draw(n = 10) |>
+    execute(population[population$in_b, ], seed = 2)
+  both <- intersect(a$id, b$id)
+  expect_gt(length(both), 0)
+  overlaps <- declared_overlaps(a = "pi_a", b = "pi_b",
+                                scale = "probabilities")
+  expect_no_error(stack_frames(a = a, b = b,
+                               membership = c(a = "in_a", b = "in_b"),
+                               key = id, overlaps = overlaps))
+  # Frame b drew those units with chance 1/4, which frame a's row restates.
+  a$pi_b[a$id %in% both] <- 0.9
+  expect_error(
+    stack_frames(a = a, b = b, membership = c(a = "in_a", b = "in_b"),
+                 key = id, overlaps = overlaps),
+    class = "samplyr_error_stack_frames_overlaps"
+  )
+})

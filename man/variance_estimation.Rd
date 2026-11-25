@@ -6,7 +6,7 @@
 \description{
 Which variance estimator each selection method reaches at export, and how
 exact it is. Selection support and variance support are separate
-contracts. Every method in \code{?selection_methods} draws a sample, but not
+contracts. Every method in \link{selection_methods} draws a sample, but not
 every one has an exact variance estimator in the survey framework.
 }
 \details{
@@ -42,7 +42,7 @@ joint matrix, or generic replicates.}
 \item{\code{bernoulli}, \code{pps_poisson}}{Exact independent probabilities, and an
 exact Poisson joint matrix for PPS. The variance is the analytic
 Poisson variance of a single stage, or RWYB for the supported clustered
-and multistage designs.}
+and multi-stage designs.}
 \item{\code{pps_brewer}, \code{pps_cps}, \code{pps_sampford}}{Exact inclusion
 probabilities. Pair probabilities are approximate for Brewer and exact
 for CPS and Sampford. The variance uses Brewer's approximation by
@@ -65,8 +65,8 @@ approximation. The variance uses approximate linearization or generic
 replicates, with no built-in RWYB mapping.}
 \item{Bounded \code{cube}, \code{lpm2}, \code{scps}}{Exact inclusion probabilities under
 the method contract. Pair probabilities are refused, and so is
-linearization. The variance uses the generic \code{subbootstrap} or
-\code{mrbbootstrap} only.}
+linearization. The variance uses the generic \code{subbootstrap} only, or
+\code{mrbbootstrap} when no size is given.}
 \item{Custom methods}{First-order quality as declared, exact or
 approximate, and joint support as registered. The variance depends on
 the variance-family declaration and the adapter checks.}
@@ -74,7 +74,7 @@ the variance-family declaration and the adapter checks.}
 
 Joint information means \code{\link[=joint_expectation]{joint_expectation()}}, which exposes PPS and
 balanced-family quantities. A stage's joint matrix does not cover the
-final units of a multistage design. Exact first-order probabilities do not
+final units of a multi-stage design. Exact first-order probabilities do not
 imply exact variance or confidence-interval coverage, since finite-sample
 PPS total estimators can be skewed. \code{vignette("survey-analysis")} shows a
 log-scale interval for strictly positive domain totals.
@@ -105,7 +105,7 @@ needs one row per stage-1 unit. On a fixed-size stage drawn with unequal
 probabilities without replacement, \code{\link[=as_svydesign]{as_svydesign()}} defaults to
 \code{variance = "YG"} unless \code{variance} is supplied, because the
 Horvitz-Thompson quadratic form can be negative even with an exact
-matrix. A multistage sample is exported at stage 1 with a warning, and one
+matrix. A multi-stage sample is exported at stage 1 with a warning, and one
 with several rows per stage-1 unit is refused
 (\code{samplyr_error_pps_rows_per_psu}). Systematic PPS matrices often hold
 zero pair probabilities, which rule out a design-unbiased variance
@@ -117,7 +117,9 @@ positive, so supplying one for systematic PPS warns.
 
 The generic types resample first-stage units within first-stage strata
 and read the later stages through them. \code{"mrbbootstrap"} reads the
-sampling fraction of every stage, and RWYB the probabilities of every
+sampling fraction of every stage drawn with equal probabilities, and
+refuses a stage drawn with unequal probabilities without replacement.
+RWYB reads the probabilities of every
 stage for SRS, draws with replacement, Poisson selection and PPS without
 replacement, the last with approximate joint probabilities.
 \code{\link[=as_svrepdesign]{as_svrepdesign()}} documents each type, the designs it suits, and the
@@ -189,7 +191,7 @@ stratum (\code{samplyr_error_rwyb_singleton}) unless the stage is Poisson or
 A certainty PSU that keeps one unit at stage 2 is such a stratum.
 \code{"JKn"}, \code{"BRR"}, \code{"Fay"} and \code{"subbootstrap"} then refuse the sample
 (\code{samplyr_error_svrep_conversion_failed}), and so does RWYB.
-\code{"bootstrap"} and \code{"mrbbootstrap"} accept it, and
+\code{"bootstrap"} accepts it, and
 \code{options(survey.lonely.psu = "adjust")} lets \code{"JKn"} through. Drawing at
 least two stage-2 units in every PSU that can be taken with certainty
 avoids the refusal under every type. \code{frame_summary(design, frame, stages = 1)} shows those PSUs before selection, in \code{n_certainty}, and
@@ -281,7 +283,7 @@ one rebuilt from another, is refused
 size is random and Brewer's approximation would understate the variance. A
 single-stage design, or one with one row per sampled cluster, is exported
 with \code{survey::poisson_sampling()}, the Horvitz-Thompson Poisson variance
-(Sarndal et al. 1992, sec. 2.8). A multistage design with a Poisson stage,
+(Sarndal et al. 1992, sec. 2.8). A multi-stage design with a Poisson stage,
 or a clustered one with several rows per cluster, needs \code{type = "rwyb"}.
 Linearization and the generic replicate types refuse it, since they can
 lose the variance of the random size.
@@ -327,8 +329,9 @@ the more so as the outcome follows them, and is close for an outcome
 unrelated to them.
 Bounded \code{cube}, \code{lpm2} and \code{scps} change pairwise selection beyond that
 approximation, so linearization and \code{\link[=joint_expectation]{joint_expectation()}} refuse them, and
-\code{type = "subbootstrap"} or \code{"mrbbootstrap"} gives a generic PPS bootstrap
-that does not recreate the constraints or the spatial algorithm.
+\code{type = "subbootstrap"} gives a generic bootstrap, as does
+\code{"mrbbootstrap"} when no size is given, and neither recreates the
+constraints or the spatial algorithm.
 
 A method registered with \code{sondage::register_method()} can declare a
 \code{variance_family}: \code{"srs"} receives the equal-probability treatment,
@@ -373,7 +376,7 @@ Sen-Yates-Grundy form for the phase-2 term, which is non-negative when
 \eqn{\pi_i \pi_j \ge \pi_{ij}}{pi_i pi_j >= pi_ij} for every pair.
 Systematic PPS stays refused, since its pair probabilities can
 be zero, which biases the variance estimator under any matrix, and the
-sampled matrix cannot show whether they are. So are a multistage phase 2
+sampled matrix cannot show whether they are. So are a multi-stage phase 2
 with an unequal-probability stage and \code{method = "approx"} or \code{"simple"},
 which drop the matrix (\code{samplyr_error_twophase_phase2_pps}).
 
@@ -385,7 +388,7 @@ samples but unstable in one, and can be negative, and the export warns
 
 A second phase drawn by equal probability within each final-stage pool of
 phase 1, whose final stage draws elements by equal probability, is
-exported as phase 1's multistage design with the smaller final take
+exported as phase 1's multi-stage design with the smaller final take
 (\code{\link[=as_svydesign]{as_svydesign()}} states the shape). That is its exact design, so the
 linearized variance keeps phase 1's corrections, where the
 ultimate-cluster call would leave them out.
@@ -435,14 +438,12 @@ Springer.
 }
 \seealso{
 \code{\link[=as_svydesign]{as_svydesign()}}, \code{\link[=as_svrepdesign]{as_svrepdesign()}}, \code{\link[=joint_expectation]{joint_expectation()}},
-\code{?selection_methods}
+\link{selection_methods}
 
-Other survey export:
-\code{\link[=as_survey_design.tbl_sample]{as_survey_design.tbl_sample()}},
-\code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
-\code{\link[=as_svrepdesign]{as_svrepdesign()}},
-\code{\link[=as_svydesign]{as_svydesign()}},
-\code{\link[=stack_periods]{stack_periods()}},
-\code{\link[=variance_estimators]{variance_estimators()}}
+Other reference topics:
+\code{\link{frame_input_grammar}},
+\code{\link{reserve_lists}},
+\code{\link{sample_columns}},
+\code{\link{selection_methods}}
 }
-\concept{survey export}
+\concept{reference topics}

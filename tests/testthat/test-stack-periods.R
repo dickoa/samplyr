@@ -379,3 +379,25 @@ test_that("a field that is not a scalar is reported, not raised on", {
     check_stack_periods_agreement(list(record(c("a", "b"), 1), record(c("a", "b"), 2)))
   )
 })
+
+test_that("a period that reads a certainty unit at each subround stacks by occasion", {
+  frame <- data.frame(id = 1:30, m = c(rep(50, 2), rep(1, 28)))
+  schedule <- data.frame(
+    panel = rep(1:2, times = 4), period = rep(1:2, each = 4),
+    subround = rep(rep(1:2, each = 2), 2),
+    active = c(TRUE, FALSE, FALSE, TRUE, TRUE, FALSE, FALSE, TRUE)
+  )
+  master <- suppressMessages(execute(
+    sampling_design() |> draw(n = 8, method = "pps_brewer", mos = m),
+    frame, seed = 1, panels = schedule
+  ))
+  expect_identical(sum(master$.certainty_1), 2L)
+  # Each certainty unit is read at both subrounds of the period.
+  whole <- execute(master, period = 1)
+  expect_gt(anyDuplicated(whole$.sample_id), 0)
+  expect_error(stack_periods(whole, execute(master, period = 2)),
+               class = "samplyr_error_stack_periods_input")
+  occasions <- lapply(1:2, function(s) execute(master, period = 1, subround = s))
+  stacked <- stack_periods(occasions[[1]], occasions[[2]])
+  expect_false(anyDuplicated(stacked[c("period", "subround", "master_id")]) > 0)
+})

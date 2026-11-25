@@ -667,3 +667,42 @@ test_that("a census component composites with no replicate column", {
   expect_setequal(checked, c("FALSE auto", "FALSE JK1", "TRUE auto",
                              "TRUE JK1"))
 })
+
+test_that("a reordered shared component stacks as its recorded order does", {
+  skip_if_not_installed("survey")
+  dwellings <- data.frame(dwelling_id = 1:40, region = rep(1:2, each = 20))
+  source <- sampling_design() |> stratify_by(region) |>
+    draw(n = c(`1` = 6, `2` = 10)) |> execute(dwellings, seed = 11)
+  people <- data.frame(
+    person_id = 1:40, dwelling_id = 1:40, y = as.numeric((1:40)^1.5),
+    in_reached = TRUE, in_list = rep(c(TRUE, FALSE), 20)
+  )
+  shared <- share_weights(
+    source, targets = people,
+    links = data.frame(dwelling_id = 1:40, person_id = 1:40),
+    by = c(dwelling_id = "dwelling_id"), to = c(person_id = "person_id"),
+    within = NULL, multiplicity = complete_links()
+  )
+  listed <- sampling_design() |> draw(n = 8) |>
+    execute(people[people$in_list, ], seed = 12)
+  stacked <- function(component) {
+    frames <- stack_frames(
+      reached = component, list = listed,
+      membership = c(reached = "in_reached", list = "in_list"),
+      key = person_id
+    )
+    set.seed(5)
+    survey::svytotal(~y, suppressWarnings(
+      as_svrepdesign(frames, type = "bootstrap", replicates = 50)
+    ))
+  }
+  recorded <- stacked(shared)
+  reversed <- stacked(shared[rev(seq_len(nrow(shared))), ])
+  # Hartley's estimator with theta = 0.5, by hand.
+  by_hand <- sum(shared$.weight * shared$y * ifelse(shared$in_list, 0.5, 1)) +
+    sum(listed$.weight * listed$y * 0.5)
+  expect_equal(unname(stats::coef(recorded)), by_hand, tolerance = 1e-10)
+  expect_equal(unname(stats::coef(reversed)), by_hand, tolerance = 1e-10)
+  expect_equal(unname(survey::SE(reversed)), unname(survey::SE(recorded)),
+               tolerance = 1e-10)
+})

@@ -220,7 +220,6 @@ unlink(path)
 \seealso{
 Other execution:
 \code{\link[=execute]{execute()}},
-\code{\link{execution_conditions}},
-\code{\link[=rotation_program]{rotation_program()}}
+\code{\link{execution_conditions}}
 }
 \concept{execution}

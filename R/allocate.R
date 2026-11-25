@@ -88,6 +88,23 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
   shortfall <- n - sum(a)
   tied <- rep(FALSE, length(x))
 
+  # Remainders within rounding noise of each other are equal, so the
+  # larger target decides between them, as documented.
+  level_groups <- function(scores) {
+    group <- integer(length(scores))
+    head <- Inf
+    current <- 0L
+    for (i in order(scores, decreasing = TRUE, method = "radix")) {
+      if (head - scores[[i]] >
+            sqrt(.Machine$double.eps) * max(1, abs(scores[[i]]))) {
+        current <- current + 1L
+        head <- scores[[i]]
+      }
+      group[[i]] <- current
+    }
+    -group
+  }
+
   # Strata level with the last one served, when one of them was left out.
   split_tie <- function(eligible, scores, ord, k) {
     if (length(ord) <= k) {
@@ -107,7 +124,8 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
     if (length(eligible) == 0L) break
     scores <- (x - a)[eligible]
     k <- min(shortfall, length(eligible))
-    ord <- order(scores, a[eligible], decreasing = TRUE, method = "radix")
+    ord <- order(level_groups(scores), a[eligible], decreasing = TRUE,
+                 method = "radix")
     tied <- split_tie(eligible, scores, ord, k)
     top <- eligible[ord[seq_len(k)]]
     a[top] <- a[top] + 1L
@@ -119,7 +137,8 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
     if (length(eligible) == 0L) break
     scores <- (a - x)[eligible]
     k <- min(-shortfall, length(eligible))
-    ord <- order(scores, a[eligible], decreasing = TRUE, method = "radix")
+    ord <- order(level_groups(scores), a[eligible], decreasing = TRUE,
+                 method = "radix")
     tied <- split_tie(eligible, scores, ord, k)
     top <- eligible[ord[seq_len(k)]]
     a[top] <- a[top] - 1L
@@ -538,7 +557,9 @@ allocate_strata <- function(
         pmin(rep(max_n, H), n_total)
       }
       unbounded <- allocate_bounded(factors, n_total, lower, relaxed_upper)
-      capped <- unbounded > n_h
+      # Only a stratum at its bound was capped. Rounding can move a unit off
+      # another stratum, which the bound did not cause.
+      capped <- unbounded > n_h & n_h >= upper
       n_moved <<- sum(unbounded[capped] - n_h[capped])
       if (signal && any(capped)) {
         moved <- n_moved
@@ -604,7 +625,7 @@ allocate_strata <- function(
           class = "samplyr_error_alloc_n_integer"
         )
       }
-      as.integer(n_values)
+      as.integer(round(n_values))
     }
   } else if (frac_is_df) {
     stratum_info <- join_aux_to_strata(

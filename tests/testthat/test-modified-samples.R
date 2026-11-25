@@ -767,3 +767,43 @@ test_that("a column added to a sample carries into its next phase", {
   )
   expect_equal(unique(phase2$.weight_nr), 12.5)
 })
+
+## Negative integer64 values
+
+test_that("negative integer64 values are sorted and fingerprinted by value", {
+  skip_if_not_installed("bit64")
+  skip_if_not_installed("survey")
+  # bit64 stores each value in the bits of a double, and negative values are
+  # NaN payloads that a sort or a hash of doubles cannot tell apart.
+  ids <- bit64::as.integer64(c(-5, 3, -100, 7, 0, -2147483648))
+  frame <- data.frame(id = 1:6, k = ids, ea = rep(1:3, 2))
+  expect_identical(control_order(frame, list(rlang::quo(k))),
+                   c(6L, 3L, 1L, 5L, 2L, 4L))
+
+  # An edited negative cluster id or stratum no longer passes as intact.
+  frame <- data.frame(
+    ea = bit64::as.integer64(rep(c(-100, -200, 300, -400, 500, -600), each = 2)),
+    st = bit64::as.integer64(rep(c(-1, -2), 6)),
+    hh = 1:12
+  )
+  sample <- sampling_design() |> cluster_by(ea) |> draw(n = 4) |>
+    execute(frame, seed = 1)
+  edited <- sample
+  edited$ea[edited$ea == edited$ea[1]] <- bit64::as.integer64(-999999)
+  integrity <- attr(sample, "metadata")$integrity
+  expect_identical(verify_sample_integrity(edited, integrity), "values")
+  expect_error(as_svydesign(edited), class = "samplyr_error_modified_sample")
+  stratified <- sampling_design() |> stratify_by(st) |> draw(n = 2) |>
+    execute(frame, seed = 1)
+  edited <- stratified
+  edited$st[1] <- bit64::as.integer64(-7)
+  expect_identical(
+    verify_sample_integrity(edited, attr(stratified, "metadata")$integrity),
+    "values"
+  )
+
+  # A frame whose negative id was edited is another frame.
+  changed <- frame
+  changed$ea[1] <- bit64::as.integer64(-999999)
+  expect_false(identical(frame_content_hash(frame), frame_content_hash(changed)))
+})

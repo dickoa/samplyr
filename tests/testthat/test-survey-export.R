@@ -293,22 +293,66 @@ test_that("as_svrepdesign rejects two-phase samples", {
   )
 })
 
-test_that("as_svrepdesign works for PPS with subbootstrap type", {
+test_that("subbootstrap reads a PPS first stage as drawn with replacement", {
   skip_if_not_installed("survey")
 
-  expect_no_warning(
-    rep_svy <- as_svrepdesign(fix_pps_brewer, type = "subbootstrap")
+  warning <- expect_warning(
+    rep_svy <- as_svrepdesign(fix_pps_brewer, type = "subbootstrap"),
+    class = "samplyr_warning_replicate_wr_first_stage"
   )
   expect_s3_class(rep_svy, "svyrep.design")
+  # mrbbootstrap refuses this design, so the advice does not name it.
+  expect_no_match(conditionMessage(warning), "mrbbootstrap", fixed = TRUE)
 })
 
-test_that("as_svrepdesign works for PPS with mrbbootstrap type", {
+test_that("mrbbootstrap refuses a stage drawn with unequal probabilities", {
   skip_if_not_installed("survey")
-
-  expect_no_warning(
-    rep_svy <- as_svrepdesign(fix_pps_brewer, type = "mrbbootstrap")
+  # survey reads one fraction per stratum from its first row, so the
+  # variance would follow the row order.
+  expect_error(
+    as_svrepdesign(fix_pps_brewer, type = "mrbbootstrap"),
+    class = "samplyr_error_svrep_conversion_failed"
   )
-  expect_s3_class(rep_svy, "svyrep.design")
+  rows <- variance_estimators(fix_pps_brewer)
+  expect_identical(
+    rows$status[rows$estimator == "Multistage rescaled bootstrap"], "refused"
+  )
+})
+
+test_that("mrbbootstrap refuses a unit taken whole alone in its stratum", {
+  skip_if_not_installed("survey")
+  # Stratum A holds one EA, taken whole, whose households are drawn.
+  # survey's multistage bootstrap resamples none of a stratum of one and
+  # drops the stage below it, which gave that EA a standard error of 0.
+  eas <- data.frame(ea = 1:21, st = c("A", rep("B", 20)),
+                    size = c(40, rep(10, 20)))
+  frame <- eas[rep(1:21, eas$size), ]
+  frame$hh <- seq_len(nrow(frame))
+  frame$y <- frame$hh %% 7
+  design <- sampling_design() |>
+    add_stage() |> stratify_by(st) |> cluster_by(ea) |>
+    draw(n = c(A = 1, B = 5)) |>
+    add_stage() |> draw(n = 5)
+  sample <- execute(design, frame, seed = 3)
+  expect_error(
+    as_svrepdesign(sample, type = "mrbbootstrap", replicates = 20),
+    class = "samplyr_error_svrep_conversion_failed"
+  )
+  rows <- variance_estimators(design, frame)
+  expect_identical(
+    rows$status[rows$estimator == "Multistage rescaled bootstrap"], "refused"
+  )
+  # Two EAs in every stratum are resampled as before.
+  design2 <- sampling_design() |>
+    add_stage() |> stratify_by(st) |> cluster_by(ea) |>
+    draw(n = 2) |>
+    add_stage() |> draw(n = 5)
+  frame2 <- rbind(frame, transform(frame[frame$ea == 1, ], ea = 22,
+                                   hh = hh + 1000))
+  sample2 <- execute(design2, frame2, seed = 3)
+  expect_no_error(
+    as_svrepdesign(sample2, type = "mrbbootstrap", replicates = 20)
+  )
 })
 
 test_that("as_svrepdesign says a PPS first stage is taken as with replacement", {
@@ -2846,6 +2890,77 @@ test_that("stages = 1 moves units taken with probability 1 down a stage", {
   expect_match(conditionMessage(err), "taken with probability 1", fixed = TRUE)
 })
 
+test_that("a unit moved down a stage keeps its variance beside a census unit", {
+  skip_if_not_installed("survey")
+  # EAs 1 and 2 are taken with certainty. EA 1's three households are all
+  # taken at stage 2, EA 2 draws four of its twenty.
+  sizes <- c(3, 20, rep(8, 10))
+  frame <- do.call(rbind, lapply(1:12, function(e) {
+    data.frame(ea = e, hh = seq_len(sizes[e]),
+               mos = c(400, 400, rep(20, 10))[e])
+  }))
+  frame$y <- (seq_len(nrow(frame)) * 7) %% 11 + frame$ea
+  sample <- suppressWarnings(execute(
+    sampling_design() |>
+      add_stage() |> cluster_by(ea) |>
+      draw(n = 5, method = "pps_brewer", mos = mos, certainty_size = 300) |>
+      add_stage() |> draw(n = 4),
+    frame, seed = 1
+  ))
+  data <- as.data.frame(sample)
+  expect_true(all(data$.certainty_1[data$ea %in% 1:2]))
+  expect_identical(sum(data$ea == 1), 3L)
+  svy <- as_svydesign(sample, stages = 1)
+  # The design written by hand: EA 1 adds nothing, EA 2 is a stratum of its
+  # households and the other EAs are its clusters, all read with
+  # replacement.
+  data <- data[data$ea != 1, ]
+  data$unit <- ifelse(data$ea == 2, paste("hh", data$hh), paste("ea", data$ea))
+  data$stratum <- ifelse(data$ea == 2, "ea 2", "drawn")
+  expected <- survey::svydesign(ids = ~unit, strata = ~stratum,
+                                weights = ~.weight, data = data)
+  expect_equal(as.vector(survey::SE(survey::svytotal(~y, svy))),
+               as.vector(survey::SE(survey::svytotal(~y, expected))),
+               tolerance = 1e-12)
+})
+
+test_that("stages = 1:2 reads a unit moved down from stage 2 with replacement", {
+  skip_if_not_installed("survey")
+  frame <- do.call(rbind, lapply(1:8, function(e) {
+    do.call(rbind, lapply(1:6, function(h) {
+      data.frame(ea = e, hh = h, hsize = if (h == 1) 100 else 5,
+                 person = 1:6)
+    }))
+  }))
+  frame$y <- (seq_len(nrow(frame)) * 7) %% 13
+  sample <- suppressWarnings(execute(
+    sampling_design() |>
+      add_stage() |> cluster_by(ea) |> draw(n = 4) |>
+      add_stage() |> cluster_by(hh) |>
+      draw(n = 3, method = "pps_brewer", mos = hsize, certainty_size = 50) |>
+      add_stage() |> draw(n = 2),
+    frame, seed = 2
+  ))
+  data <- as.data.frame(sample)
+  expect_identical(data$.certainty_2, data$hh == 1)
+  svy <- suppressMessages(as_svydesign(sample, stages = 1:2))
+  # By hand: 4 of 8 EAs without replacement, then in each EA household 1 as a
+  # stratum of its persons and the others as clusters, with replacement.
+  data$one <- 1
+  data$ea_count <- 8
+  data$no_correction <- Inf
+  data$unit <- ifelse(data$hh == 1, paste("p", data$person),
+                      paste("hh", data$hh))
+  data$stratum <- ifelse(data$hh == 1, "certain", "drawn")
+  expected <- survey::svydesign(ids = ~ea + unit, strata = ~one + stratum,
+                                fpc = ~ea_count + no_correction,
+                                weights = ~.weight,
+                                data = data, nest = TRUE)
+  expect_equal(as.vector(survey::SE(survey::svytotal(~y, svy))),
+               as.vector(survey::SE(survey::svytotal(~y, expected))),
+               tolerance = 1e-12)
+})
+
 test_that("stages = 1 keeps empty units and makes census units a stratum", {
   skip_if_not_installed("survey")
   # PSU 1 lists nobody.
@@ -4722,4 +4837,32 @@ test_that("the default replicate type exports a stage drawn with replacement", {
     checked <- c(checked, method)
   }
   expect_setequal(checked, names(designs))
+})
+
+test_that("a phase-1 stratum of one drawn unit is refused by the full export", {
+  skip_if_not_installed("survey")
+  frame <- data.frame(id = 1:20, g = rep(1:2, each = 10), y = (1:20)^2)
+  for (method in c("srswr", "srswor")) {
+    phase1 <- sampling_design() |> stratify_by(g) |>
+      draw(n = c(`1` = 1, `2` = 4), method = method) |>
+      execute(frame, seed = 2)
+    phase2 <- sampling_design() |> draw(frac = 1) |> execute(phase1, seed = 3)
+    expect_error(as_svydesign(phase2), class = "samplyr_error_lonely_psu",
+                 info = method)
+    row <- variance_estimators(phase2)[1L, ]
+    expect_identical(row$status, "refused", info = method)
+    expect_identical(row$class, "samplyr_error_lonely_psu", info = method)
+    # The approximate export follows survey.lonely.psu, so it warns.
+    expect_warning(as_svydesign(phase2, method = "approx"),
+                   class = "samplyr_warning_lonely_psu")
+    # With the lone stratum removed, phase 2 takes all of phase 1, and the
+    # variance is stratum 2's alone.
+    z <- with(as.data.frame(phase1), (.weight * y)[g == 2])
+    f <- if (method == "srswr") 0 else 4 / 10
+    withr::with_options(list(survey.lonely.psu = "remove"), {
+      svy <- expect_no_warning(as_svydesign(phase2, method = "approx"))
+      expect_equal(as.numeric(vcov(survey::svytotal(~y, svy))),
+                   (1 - f) * length(z) * var(z), info = method)
+    })
+  }
 })

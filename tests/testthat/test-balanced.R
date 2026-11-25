@@ -318,7 +318,7 @@ test_that("as_svydesign works with balanced", {
   expect_s3_class(svy, "survey.design2")
 })
 
-test_that("as_svrepdesign with balanced: subbootstrap works, bootstrap warns", {
+test_that("as_svrepdesign with balanced: subbootstrap reads stage 1 with replacement", {
   skip_if_not_installed("survey")
   set.seed(18)
   frame <- data.frame(
@@ -331,7 +331,10 @@ test_that("as_svrepdesign with balanced: subbootstrap works, bootstrap warns", {
     stratify_by(stratum, alloc = "proportional") |>
     draw(n = 30, method = "balanced", mos = size, aux = x1) |>
     execute(frame, seed = 42)
-  rep_design <- as_svrepdesign(result, type = "subbootstrap")
+  expect_warning(
+    rep_design <- as_svrepdesign(result, type = "subbootstrap"),
+    class = "samplyr_warning_replicate_wr_first_stage"
+  )
   expect_s3_class(rep_design, "svyrep.design")
 })
 

@@ -50,8 +50,6 @@ Other survey export:
 \code{\link[=as_survey_rep.tbl_sample]{as_survey_rep.tbl_sample()}},
 \code{\link[=as_svrepdesign]{as_svrepdesign()}},
 \code{\link[=as_svydesign]{as_svydesign()}},
-\code{\link[=stack_periods]{stack_periods()}},
-\code{\link{variance_estimation}},
 \code{\link[=variance_estimators]{variance_estimators()}}
 }
 \concept{survey export}

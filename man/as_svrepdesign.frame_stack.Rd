@@ -72,8 +72,9 @@ wrong one. It is refused rather than recycled.
 
 \subsection{Replicate methods may differ between frames}{
 
-\code{type = "auto"} picks a method per component, so a PPS frame can take
-\code{"subbootstrap"} beside a stratified frame taking \code{"JKn"}. Each block keeps
+\code{type = "auto"} picks a method per component, \code{"JKn"} for a stratified or
+PPS first stage and \code{"JK1"} otherwise, so the frames can take different
+jackknives. Each block keeps
 its own component's \code{scale} and \code{rscales}, folded together so the combined
 design carries \code{scale = 1}, and mixing methods costs nothing: the blocks do
 not interact.

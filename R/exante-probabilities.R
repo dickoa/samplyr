@@ -15,7 +15,7 @@
 #' in the result.
 #'
 #' The intended use is a survey covering one population through several
-#' registers, where the expected multiframe estimator needs a unit's chance in
+#' registers, where the expected multiple-frame estimator needs a unit's chance in
 #' the frames it was *not* selected from. See [exante_overlaps()], which
 #' resolves those chances for a whole [stack_frames()] collection.
 #'
@@ -423,7 +423,7 @@ exante_parent_registry <- function(resolved) {
 #' it names the registers, and samplyr resolves the chances from each
 #' component's own design with [exante_probabilities()].
 #'
-#' This is the capability the expected multiframe estimator needs and that a
+#' This is the capability the expected multiple-frame estimator needs and that a
 #' sample alone cannot supply: the probability a unit would have had in a
 #' frame it was not selected from. Exact inclusion probabilities are required
 #' by default. With `allow_approximate = TRUE`, approximate targets may be

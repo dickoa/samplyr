@@ -329,3 +329,33 @@ test_that("a unit its later stages found empty keeps a panel", {
     c(2L, 2L)
   )
 })
+
+test_that("a continuation assigning panels counts a parent left empty", {
+  skip_if_not_installed("survey")
+  eas <- data.frame(ea = 1:6)
+  households <- data.frame(ea = rep(1:5, each = 4), hh = 1:20)
+  households$y <- households$hh %% 5 + 1
+  design <- sampling_design() |>
+    add_stage() |> cluster_by(ea) |> draw(n = 4) |>
+    add_stage() |> cluster_by(hh) |> draw(n = 2, on_empty = "silent")
+  schedule <- data.frame(panel = c(1, 2, 1, 2), period = c(1, 1, 2, 2),
+                         active = c(TRUE, FALSE, FALSE, TRUE))
+  stage1 <- execute(design, eas, stages = 1, seed = 1)
+  # EA 6 lists no household.
+  expect_true(6 %in% stage1$ea)
+  master <- execute(stage1, households, seed = 1, panels = schedule)
+  record <- attr(master, "metadata")$panel_assignment
+  expect_identical(record$pools[[1]]$size, 4L)
+  empty <- attr(master, "metadata")$empty_parents[[1]]$rows
+  expect_identical(empty$ea, 6L)
+  expect_false(anyNA(empty$.panel))
+  for (period in 1:2) {
+    occasion <- execute(master, period = period)
+    # 6 / 4 EAs, 2 of 4 households, and one of two panels active.
+    expect_equal(occasion$.weight, rep(6, nrow(occasion)))
+    svy <- as_svydesign(occasion)
+    active <- empty$.panel == schedule$panel[schedule$period == period &
+                                               schedule$active]
+    expect_identical(6L %in% svy$variables$ea, active)
+  }
+})

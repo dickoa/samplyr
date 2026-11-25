@@ -699,3 +699,57 @@ test_that("every declarative marker refuses the same way", {
     expect_error(call(), class = "samplyr_error")
   }
 })
+
+test_that("by must identify the sample's rows", {
+  # Twenty EAs of five households, one target of y = 10 per EA: the true
+  # total is 200.
+  frame <- data.frame(ea = rep(1:20, each = 5), hh = 1:100)
+  households <- sampling_design() |> cluster_by(ea) |> draw(n = 10) |>
+    execute(frame, seed = 1)
+  targets <- data.frame(t = 1:20, y = 10, L = 1)
+  ea_links <- data.frame(ea = 1:20, t = 1:20)
+  # Each household would add its EA's weight once per row (a total of 1000).
+  expect_error(
+    share_weights(households, targets = targets, links = ea_links,
+                  by = c(ea = "ea"), to = c(t = "t"), within = NULL,
+                  multiplicity = complete_links()),
+    class = "samplyr_error_share_weights_keys"
+  )
+  expect_error(
+    share_weights(households, targets = targets, links = ea_links,
+                  by = c(ea = "ea"), to = c(t = "t"), within = NULL,
+                  multiplicity = L),
+    class = "samplyr_error_share_weights_keys"
+  )
+  # The GWSM by hand: links at the households' level, or EAs as the units,
+  # or one row per hit of a draw with replacement, all estimate 200.
+  hh_links <- data.frame(hh = 1:100, t = rep(1:20, each = 5))
+  shared <- share_weights(households, targets = targets, links = hh_links,
+                          by = c(hh = "hh"), to = c(t = "t"), within = NULL,
+                          multiplicity = complete_links())
+  expect_equal(sum(shared$.weight * shared$y), 200)
+  eas <- sampling_design() |> draw(n = 10) |>
+    execute(data.frame(ea = 1:20), seed = 1)
+  shared <- share_weights(eas, targets = targets, links = ea_links,
+                          by = c(ea = "ea"), to = c(t = "t"), within = NULL,
+                          multiplicity = complete_links())
+  expect_equal(sum(shared$.weight * shared$y), 200)
+  hits <- sampling_design() |> draw(n = 15, method = "srswr") |>
+    execute(data.frame(ea = 1:20), seed = 3)
+  expect_gt(anyDuplicated(hits$ea), 0)
+  expect_no_error(
+    share_weights(hits, targets = targets, links = ea_links,
+                  by = c(ea = "ea"), to = c(t = "t"), within = NULL,
+                  multiplicity = complete_links())
+  )
+  # A later phase carries the hits it reached under their phase-1 draw.
+  phase2 <- sampling_design() |> draw(n = 12) |> execute(hits, seed = 4)
+  expect_gt(anyDuplicated(phase2$ea), 0)
+  shared <- share_weights(phase2, targets = targets, links = ea_links,
+                          by = c(ea = "ea"), to = c(t = "t"), within = NULL,
+                          multiplicity = complete_links())
+  # One link per EA: a target takes the summed weight of its EA's rows.
+  by_hand <- tapply(phase2$.weight, phase2$ea, sum)
+  expect_equal(shared$.weight[match(names(by_hand), shared$t)],
+               as.vector(by_hand))
+})

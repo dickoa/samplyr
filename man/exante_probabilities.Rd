@@ -36,7 +36,7 @@ Approximate targets require \code{allow_approximate = TRUE} and are labeled
 in the result.
 
 The intended use is a survey covering one population through several
-registers, where the expected multiframe estimator needs a unit's chance in
+registers, where the expected multiple-frame estimator needs a unit's chance in
 the frames it was \emph{not} selected from. See \code{\link[=exante_overlaps]{exante_overlaps()}}, which
 resolves those chances for a whole \code{\link[=stack_frames]{stack_frames()}} collection.
 }

@@ -57,19 +57,6 @@ two calls to \code{\link[=execute]{execute()}}. Nothing about selection is share
 combined until here.
 }
 \details{
-\subsection{What it does not do}{
-
-It does not composite the weights. Which compositing factor to use, and
-whether it should follow Hartley, the multiplicity estimator or
-pseudo-maximum-likelihood, depends on the estimand and on the design
-effects, so it is an estimation-time choice rather than a property of the
-stack. The components keep their own design weights, unchanged.
-
-It does not assert that the frames together cover the target population.
-That is an assumption about the registers, not something this call can
-establish, which is why the verb is not named after the union.
-}
-
 \subsection{Membership is declared, and it is logical}{
 
 \code{membership} maps each frame's name to the column saying whether a unit
@@ -91,6 +78,19 @@ independence, and the warning detects one recorded common-random-number
 mistake and nothing more. A component executed with \code{seed = NULL} records
 no seed and never warns, so a deterministic take-all component is exempt
 unless it was given a seed it did not use.
+}
+
+\subsection{What it does not do}{
+
+It does not composite the weights. Which compositing factor to use, and
+whether it should follow Hartley, the multiplicity estimator or
+pseudo-maximum-likelihood, depends on the estimand and on the design
+effects, so it is an estimation-time choice rather than a property of the
+stack. The components keep their own design weights, unchanged.
+
+It does not assert that the frames together cover the target population.
+That is an assumption about the registers, not something this call can
+establish, which is why the verb is not named after the union.
 }
 }
 \examples{

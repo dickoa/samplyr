@@ -188,8 +188,9 @@ shared_sample_transformation_version <- 1L
 #' ## Frame information
 #'
 #' Design files are frame-independent. Every file records the columns each
-#' stage needs (stratification, clustering, `mos`, `prn`, `aux`, and control
-#' variables), so a candidate frame can be checked with [validate_frame()]
+#' stage needs (stratification, clustering, `mos`, `prn`, `aux`, `bounds`,
+#' `spread`, and control variables), so a candidate frame can be checked with
+#' [validate_frame()]
 #' before execution. When `frame` is supplied, the file also records a
 #' fingerprint: portable dimensions and column types in `frame`, plus the R
 #' source label, native classes, and content hash in `tools.samplyr`.
@@ -244,8 +245,9 @@ shared_sample_transformation_version <- 1L
 #'
 #' `draw(control = ...)` expressions are stored as declarative JSON terms
 #' (`"ascending"`, `"descending"`, or `"serpentine"`, with their variables),
-#' not R code. Only bare column names, `dplyr::desc()`, and [serp()] can be
-#' represented, and `write_design()` errors on anything else.
+#' not R code. Only bare column names, `desc()` written without its package,
+#' and [serp()] can be represented, and `write_design()` errors on anything
+#' else.
 #'
 #' ## Collections and shared weights
 #'
@@ -362,7 +364,7 @@ shared_sample_transformation_version <- 1L
 #' @export
 write_design <- function(x, path, frame = NULL, ..., pretty = TRUE) {
   check_keyword_args(enquos(...), "pretty")
-  if (!is_character(path) || length(path) != 1) {
+  if (!is_character(path) || length(path) != 1 || is.na(path)) {
     cli_abort(
       "{.arg path} must be a single file path",
       class = "samplyr_error_serialize_argument"
@@ -1256,6 +1258,24 @@ build_design_json <- function(
   fn_name,
   call = caller_env()
 ) {
+  # A selection drawn with a count of panels takes its rotation from the
+  # program, which no receipt holds.
+  if (is_tbl_sample(x) &&
+        !is_null(attr(x, "metadata")$occasion$selection) &&
+        is_null(attr(x, "metadata")$panel_assignment$schedule)) {
+    abort_samplyr(
+      c(
+        "{.fn {fn_name}} cannot write a selection's part of a rotation
+         program's occasion.",
+        "x" = "The program's schedule activated it, and no receipt holds
+               the program.",
+        "i" = "Write each selection, and rebuild the program with
+               {.fn rotation_program} from the replayed selections."
+      ),
+      class = "samplyr_error_serialize_unsupported",
+      call = call
+    )
+  }
   payload <- if (is_shared_sample_design(x) || is_frame_stack_design(x)) {
     restored_document_payload(x, frame, frame_label, fn_name, call)
   } else if (is_shared_weight_sample(x)) {
@@ -2084,6 +2104,10 @@ encode_stage <- function(stage) {
     out$draw <- draw
   }
 
+  # A stage with nothing declared yet is an empty object, not an array.
+  if (length(out) == 0L) {
+    out <- stats::setNames(list(), character(0))
+  }
   out
 }
 
@@ -2537,7 +2561,7 @@ frame_content_hash <- function(frame, columns = NULL) {
     nms <- intersect(nms, columns)
   }
   ord <- nms[order(nms, method = "radix")]
-  cols <- lapply(ord, function(nm) frame[[nm]])
+  cols <- lapply(ord, function(nm) hash_ready(frame[[nm]]))
   names(cols) <- ord
   rlang::hash(cols)
 }
@@ -3833,9 +3857,13 @@ decode_certainty_plan <- function(x, call = caller_env()) {
 decode_rows <- function(rows) {
   rlang::local_error_call(caller_env())
   cols <- names(rows[[1]])
+  # JSON objects are unordered, so each row is read by its names.
   consistent <- vapply(
     rows,
-    function(row) identical(names(row), cols),
+    function(row) {
+      length(row) == length(cols) && !anyDuplicated(names(row)) &&
+        setequal(names(row), cols)
+    },
     logical(1)
   )
   if (is_null(cols) || !all(consistent)) {

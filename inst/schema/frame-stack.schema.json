@@ -942,22 +942,7 @@
                   "type": "object",
                   "minProperties": 1,
                   "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      },
-                      {
-                        "type": "array",
-                        "maxItems": 0
-                      },
-                      {
-                        "type": "object",
-                        "maxProperties": 0
-                      }
-                    ]
+                    "type": "number"
                   }
                 },
                 {
@@ -1008,22 +993,7 @@
                   "type": "object",
                   "minProperties": 1,
                   "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      },
-                      {
-                        "type": "array",
-                        "maxItems": 0
-                      },
-                      {
-                        "type": "object",
-                        "maxProperties": 0
-                      }
-                    ]
+                    "type": "number"
                   }
                 },
                 {
@@ -1074,22 +1044,7 @@
                   "type": "object",
                   "minProperties": 1,
                   "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      },
-                      {
-                        "type": "array",
-                        "maxItems": 0
-                      },
-                      {
-                        "type": "object",
-                        "maxProperties": 0
-                      }
-                    ]
+                    "type": "number"
                   }
                 },
                 {
@@ -1140,22 +1095,7 @@
                   "type": "object",
                   "minProperties": 1,
                   "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      },
-                      {
-                        "type": "array",
-                        "maxItems": 0
-                      },
-                      {
-                        "type": "object",
-                        "maxProperties": 0
-                      }
-                    ]
+                    "type": "number"
                   }
                 },
                 {
@@ -1206,22 +1146,7 @@
                   "type": "object",
                   "minProperties": 1,
                   "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      },
-                      {
-                        "type": "array",
-                        "maxItems": 0
-                      },
-                      {
-                        "type": "object",
-                        "maxProperties": 0
-                      }
-                    ]
+                    "type": "number"
                   }
                 },
                 {
@@ -1272,22 +1197,7 @@
                   "type": "object",
                   "minProperties": 1,
                   "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      },
-                      {
-                        "type": "array",
-                        "maxItems": 0
-                      },
-                      {
-                        "type": "object",
-                        "maxProperties": 0
-                      }
-                    ]
+                    "type": "number"
                   }
                 },
                 {
@@ -1653,22 +1563,7 @@
                               "type": "object",
                               "minProperties": 1,
                               "additionalProperties": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "null"
-                                  },
-                                  {
-                                    "type": "array",
-                                    "maxItems": 0
-                                  },
-                                  {
-                                    "type": "object",
-                                    "maxProperties": 0
-                                  }
-                                ]
+                                "type": "number"
                               }
                             },
                             {
@@ -1727,22 +1622,7 @@
                               "type": "object",
                               "minProperties": 1,
                               "additionalProperties": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "null"
-                                  },
-                                  {
-                                    "type": "array",
-                                    "maxItems": 0
-                                  },
-                                  {
-                                    "type": "object",
-                                    "maxProperties": 0
-                                  }
-                                ]
+                                "type": "number"
                               }
                             },
                             {
@@ -1801,22 +1681,7 @@
                               "type": "object",
                               "minProperties": 1,
                               "additionalProperties": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "null"
-                                  },
-                                  {
-                                    "type": "array",
-                                    "maxItems": 0
-                                  },
-                                  {
-                                    "type": "object",
-                                    "maxProperties": 0
-                                  }
-                                ]
+                                "type": "number"
                               }
                             },
                             {
@@ -1875,22 +1740,7 @@
                               "type": "object",
                               "minProperties": 1,
                               "additionalProperties": {
-                                "anyOf": [
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "null"
-                                  },
-                                  {
-                                    "type": "array",
-                                    "maxItems": 0
-                                  },
-                                  {
-                                    "type": "object",
-                                    "maxProperties": 0
-                                  }
-                                ]
+                                "type": "number"
                               }
                             },
                             {
@@ -2694,8 +2544,7 @@
             "levels": {
               "type": "array",
               "items": {
-                "type": "string",
-                "minLength": 1
+                "type": "string"
               },
               "minItems": 0
             },
