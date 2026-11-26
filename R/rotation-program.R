@@ -70,6 +70,10 @@
 #' row-bound and its weights are not combined. A program materializes one
 #' occasion at a time.
 #'
+#' Each component's receipt records the program's part of its occasion, so
+#' [write_design()] saves a component on its own and [replay_design()]
+#' rebuilds it from its selection's frame, without the program.
+#'
 #' ## Overlap between selections is unknown, not assumed absent
 #'
 #' A program records when its selections are live. It does not record how
@@ -145,7 +149,7 @@
 #'
 #' @seealso [execute()] for drawing a master and materializing an occasion,
 #'   [panel_assignment] for partitioning one execution into rotation groups.
-#' @family panels, rotation and periods
+#' @family panels and rotation
 #' @export
 rotation_program <- function(selections, entry_period = NULL,
                              schedule = NULL, through = NULL) {
@@ -746,6 +750,7 @@ materialize_program_occasion <- function(
     }
     sample <- program$selections[[nm]]
     record <- selection_assignment(sample, "An activation", call = call)
+    visit_schedule <- program_visit_schedule(schedule, nm)
     live[[nm]] <- build_occasion_sample(
       source = sample,
       record = record,
@@ -753,13 +758,20 @@ materialize_program_occasion <- function(
       activation = activate_panels(sample, record, active, call = call),
       schedule_digest = digest,
       execution_environment = execution_environment,
+      # A receipt holds no program, so it records the program's part of the
+      # occasion, and replay rebuilds the component from it.
       extra = list(
         selection = nm,
-        entry_period = unname(program$entry_period[[nm]]),
+        entry_period = as.integer(program$entry_period[[nm]]),
         period = at_occasion$period[1L],
-        subround = at_occasion$subround[1L]
+        subround = at_occasion$subround[1L],
+        n_subrounds = max(schedule$subround),
+        visits = visit_schedule$visit[match(
+          paste(active, occasion), paste(visit_schedule$panel,
+                                         visit_schedule$occasion)
+        )]
       ),
-      visit_schedule = program_visit_schedule(schedule, nm)
+      visit_schedule = visit_schedule
     )
   }
 

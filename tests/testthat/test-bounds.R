@@ -634,6 +634,15 @@ test_that("zero-factor strata split what saturation leaves behind", {
   expect_equal(as.vector(table(result$h)), c(5L, 20L, 20L))
 })
 
+test_that("zero-factor strata level up from their own minimums", {
+  # Oracle (closed form): A fills at 10, and B and C rise together from 0
+  # and 10 until they hold the other 30, which is 15 each.
+  expect_identical(
+    samplyr:::allocate_bounded(c(1, 0, 0), 40, c(0, 0, 10), c(10, 100, 100)),
+    c(10L, 15L, 15L)
+  )
+})
+
 test_that("bounded allocation holds its invariants under random inputs", {
   withr::with_seed(415, {
     for (i in seq_len(200)) {
@@ -729,6 +738,60 @@ test_that("a factor far below its bound takes the share its ratio implies", {
     samplyr:::allocate_bounded(c(2, 1e-320), 10, c(0, 0), c(10, 10)),
     c(10L, 0L)
   )
+})
+
+test_that("several factors far below the others keep their ratios", {
+  # Oracle (closed form): A fills at 10, and B, C and D split the other 30
+  # as 1:3:6.
+  expect_identical(
+    samplyr:::allocate_bounded(
+      c(1, 1e-320, 3e-320, 6e-320), 40, rep(0, 4), c(10, 100, 100, 100)
+    ),
+    c(10L, 3L, 9L, 18L)
+  )
+
+  # Oracle (closed form): C sits at its minimum of 1, and A and B split 29
+  # as 2:1, which is 19.33 and 9.67.
+  for (e in c(10, 59, 60, 61, 65, 300)) {
+    expect_identical(
+      samplyr:::allocate_bounded(c(1, 0.5, 10^-e), 30, rep(1, 3), rep(100, 3)),
+      c(19L, 10L, 1L),
+      info = e
+    )
+  }
+
+  # Oracle (closed form): at lambda = 5, C and B fill at 10 and A takes 5.
+  # Logs keep the breakpoints of tiny factors finite, and factors near the
+  # largest double keep their sum finite.
+  for (scale in c(1e-320, 1, 1e300)) {
+    expect_identical(
+      samplyr:::allocate_bounded(c(1, 2, 4) * scale, 25, rep(0, 3),
+                                 rep(10, 3)),
+      c(5L, 10L, 10L),
+      info = scale
+    )
+  }
+  expect_identical(
+    samplyr:::allocate_bounded(c(1, 1.5) * 1e308, 10, c(0, 0), c(10, 10)),
+    c(4L, 6L)
+  )
+
+  # The same through `importance` and through Neyman's variances.
+  frame <- alloc_frame(c(10, 100, 100, 100))
+  sizes <- sampling_design() |>
+    stratify_by(h, alloc = "proportional",
+                importance = c(A = 1, B = 1e-320, C = 3e-320, D = 6e-320)) |>
+    draw(n = 40) |>
+    alloc_exec(frame, seed = 1)
+  expect_equal(as.vector(table(sizes$h)), c(10L, 3L, 9L, 18L))
+
+  frame <- alloc_frame(c(100, 100, 100))
+  variance <- data.frame(h = c("A", "B", "C"), var = c(1, 0.25, 1e-130))
+  sizes <- sampling_design() |>
+    stratify_by(h, variance = variance, alloc = "neyman") |>
+    draw(n = 30, min_n = 1) |>
+    alloc_exec(frame, seed = 1)
+  expect_equal(as.vector(table(sizes$h)), c(19L, 10L, 1L))
 })
 
 test_that("min_n and N_h binding together still deliver the total", {

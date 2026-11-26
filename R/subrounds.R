@@ -100,7 +100,7 @@
 #'   execute(poura, seed = 1, panels = subrounds(12))
 #' tabulate(small$.panel, 12)
 #'
-#' @family panels, rotation and periods
+#' @family panels and rotation
 #' @export
 subrounds <- function(k) {
   if (

@@ -1629,7 +1629,7 @@ test_that("registers round trip through a design file and replay", {
 
   payload <- jsonlite::fromJSON(path, simplifyVector = FALSE)
   # A reader that does not know these fields would replay against one frame.
-  expect_identical(payload$format_version, 4L)
+  expect_identical(payload$format_version, 5L)
   expect_identical(payload$execution$frames$mode, "separate_frames")
   expect_identical(payload$execution$frames$count, 3L)
   expect_length(payload$frame$fingerprints, 3L)
@@ -1644,7 +1644,7 @@ test_that("registers round trip through a design file and replay", {
   bare <- withr::local_tempfile(fileext = ".json")
   expect_warning(write_design(sample, bare), "without a frame fingerprint")
   expect_identical(
-    jsonlite::fromJSON(bare, simplifyVector = FALSE)$format_version, 4L
+    jsonlite::fromJSON(bare, simplifyVector = FALSE)$format_version, 5L
   )
 
   replayed <- replay_design(restored, list(schools, classes, students))
@@ -1712,7 +1712,7 @@ test_that("a receipt without frame-mode fields is read as one frame", {
   write_design(sample, path, frame = mf_schools())
 
   payload <- jsonlite::fromJSON(path, simplifyVector = FALSE)
-  expect_identical(payload$format_version, 4L)
+  expect_identical(payload$format_version, 5L)
   payload$execution$frames <- NULL
   writeLines(jsonlite::toJSON(payload, auto_unbox = TRUE, digits = NA,
                               null = "null"), path)

@@ -492,6 +492,10 @@ tbl_format_footer.tbl_sample <- function(x, setup, ...) {
 panel_header_line <- function(x) {
   metadata <- attr(x, "metadata")
   record <- metadata$panel_assignment
+  # A whole selection of a program has no panels, but still an occasion.
+  if (is_null(record) && !is_null(metadata[["occasion"]]$selection)) {
+    return(c(Occasion = occasion_label(metadata[["occasion"]], NULL)))
+  }
   if (is_null(record)) {
     return(NULL)
   }
@@ -544,10 +548,13 @@ panel_header_line <- function(x) {
 #' @noRd
 occasion_label <- function(occasion, schedule) {
   period <- occasion$period
-  # A rotation program's part keeps the program's schedule, not its own.
-  if (is_null(schedule)) {
-    return(paste(if (length(unique(period)) == 1L) "period" else "periods",
-                 occasion_span(unique(period))))
+  # A rotation program's part is numbered by the program, not by its own
+  # schedule, and records the program's period and subround.
+  if (!is_null(occasion$selection)) {
+    if (isTRUE(occasion$n_subrounds > 1L)) {
+      return(paste0("period.subround ", period, ".", occasion$subround))
+    }
+    return(paste("period", period))
   }
   pairs <- grid_pairs(schedule)
   if (identical(which(pairs$period %in% period), sort(occasion$occasion))) {

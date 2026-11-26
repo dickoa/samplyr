@@ -1465,15 +1465,22 @@ test_that("a schedule edited after its execution is refused when read", {
     # Panel 3's activity at period 2 moves to panel 2, so each occasion
     # keeps its count of active panels.
     "active flag moved" = function(r) {
+      # The rows are found before any edit, because R before 4.6.0 can
+      # evaluate an index that reads `r` while a nested assignment to `r`
+      # is half done.
       at <- function(p) {
         which(vapply(r$schedule, function(row) {
           row$panel == p && row$period == 2L && row$subround == 1L
         }, logical(1)))
       }
-      r$schedule[[at(3L)]]$active <- FALSE
-      r$schedule[[at(3L)]]["visit"] <- list(NULL)
-      r$schedule[[at(2L)]]$active <- TRUE
-      r$schedule[[at(2L)]]$visit <- 2L
+      from <- at(3L)
+      to <- at(2L)
+      expect_length(from, 1L)
+      expect_length(to, 1L)
+      r$schedule[[from]]$active <- FALSE
+      r$schedule[[from]]["visit"] <- list(NULL)
+      r$schedule[[to]]$active <- TRUE
+      r$schedule[[to]]$visit <- 2L
       r
     },
     "checksum changed" = function(r) {

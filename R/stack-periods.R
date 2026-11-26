@@ -152,7 +152,7 @@
 #'   variance, [joint_expectation()] with `period` for how far two occasions
 #'   overlap
 #'
-#' @family panels, rotation and periods
+#' @family panels and rotation
 #' @export
 stack_periods <- function(...) {
   occasions <- list(...)

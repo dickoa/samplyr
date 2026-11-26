@@ -31,9 +31,11 @@
 #'   `pps_systematic` first stage exported with a caller-supplied `pps`
 #'   object. A stage that drew one unit in each pool is exempt too, since a
 #'   single random start takes each unit with its chance whatever the frame
-#'   order. A `pps_systematic_mr` stage is never exempt as a census, since a
+#'   order. A `pps_systematic_mr` stage is not exempt as a census, since a
 #'   take of \eqn{N}{N} or more counts draws, and the with-replacement export
-#'   gives it a variance even when every unit's hits are fixed. The choice, the
+#'   gives it a variance even when every unit's hits are fixed. It is exempt
+#'   when every unit it holds was taken with certainty, which the export
+#'   gives no variance. The choice, the
 #'   affected stages and each stage's approximation are recorded in the
 #'   `"samplyr_systematic_variance"` attribute of the result.
 #'   [as_svrepdesign()] takes the same argument for its own approximation of
@@ -1075,9 +1077,18 @@ phase1_pps_methods <- function(prev_phase, kinds = "pps_wor") {
 #' excluded, since a stage that took everything within reach contributes no
 #' variance for the approximation to get wrong. So is a stage whose every
 #' pool drew one unit, since that draw does not depend on the frame order.
+#' A stage drawn with replacement is a census only when every unit it holds
+#' was recorded as taken with certainty, which `sample` shows, since a take of
+#' every unit counts draws there.
+#' @param sample The sample `df` comes from, or `NULL` when there is none.
 #' @noRd
 systematic_approximated_stages <- function(design, stages_executed, df,
-                                           phase = NULL) {
+                                           phase = NULL, sample = NULL) {
+  certain <- if (is_tbl_sample(sample)) {
+    phase_wr_stages_certain(sample, design, stages_executed)
+  } else {
+    integer(0)
+  }
   affected <- vapply(stages_executed, function(stage_idx) {
     method <- design$stages[[stage_idx]]$draw_spec$method
     if (!method %in% systematic_methods) {
@@ -1088,9 +1099,13 @@ systematic_approximated_stages <- function(design, stages_executed, df,
       return(FALSE)
     }
     # A census has no variance to approximate. Minimum replacement can take
-    # a unit more than once, so a probability of 1 or more is no census.
+    # a unit more than once, so a probability of 1 or more is no census, but
+    # a stage of certainty units only is one.
     if (!is_multi_hit_method(design$stages[[stage_idx]]$draw_spec) &&
         spec_stage_census(df, stage_idx)) {
+      return(FALSE)
+    }
+    if (stage_idx %in% certain) {
       return(FALSE)
     }
     !systematic_takes_one_per_pool(design, stage_idx, df)
@@ -1546,10 +1561,18 @@ spec_fpc_states_probabilities <- function(spec, id_stage_indices, scale,
 #' stage below. So every unit the phase selected is read, from its
 #' execution record when it has no row, and a record that keeps no row
 #' proves nothing. A sample changed after execution proves nothing either,
-#' since its rows need not be every unit the phase selected.
+#' since its rows need not be every unit the phase selected. The record of
+#' every executed stage is read whatever `stages` names, since a unit that
+#' lost its rows is known only from the stage below it. A sample composed
+#' from a second phase carries the evidence its intact phase 1 gave.
 #' @param x The phase's sample.
+#' @param stages The stages to report on.
 #' @noRd
 phase_wr_stages_certain <- function(x, design, stages) {
+  carried <- attr(x, "metadata")$composed_certain_wr
+  if (!is_null(carried)) {
+    return(as.integer(intersect(carried, stages)))
+  }
   if (!sample_realization_status(x)$ok) {
     return(integer(0))
   }
@@ -1565,7 +1588,7 @@ phase_wr_stages_certain <- function(x, design, stages) {
   if (length(wr) == 0L) {
     return(integer(0))
   }
-  every <- sample_every_unit_rows(x, design, stages)
+  every <- sample_every_unit_rows(x, design, get_stages_executed(x))
   if (is_null(every)) {
     return(integer(0))
   }
@@ -2412,7 +2435,7 @@ build_activation_ultimate_svrep <- function(
   design <- prev_phase$design %||% get_design(prev_phase$sample)
   stages <- prev_phase$stages %||% get_stages_executed(prev_phase$sample)
   systematic_stages <- systematic_approximated_stages(
-    design, stages, as.data.frame(x)
+    design, stages, as.data.frame(x), sample = prev_phase$sample
   )
   check_systematic_variance(
     systematic_stages,
@@ -2443,7 +2466,7 @@ build_activation_ultimate_svrep <- function(
             needs_first_stage_rebuild(built$spec, type)) {
         warn_certainty_lower_wr(
           svrep_from_first_stage(svy, built$spec, type, ...), type,
-          every_stage_hint(design)
+          "{.fn as_svydesign} gives the linearization variance."
         )
       } else {
         survey::as.svrepdesign(design = svy, type = type, ...)
@@ -3149,8 +3172,23 @@ compose_within_pool_subsample <- function(x) {
     ),
     stages1,
     seed = attr(phase1, "seed"),
-    metadata = attr(phase1, "metadata")
+    metadata = c(
+      attr(phase1, "metadata"),
+      list(composed_certain_wr = composed_certain_wr(phase1))
+    )
   )
+}
+
+#' The stages drawn with replacement a composed sample takes as certain
+#'
+#' Phase 1 is intact, so its record shows which stages took only certainty
+#' units. The composed rows do not, since they are a subset. Phase 2 changes
+#' only the final stage's take, which draws elements without replacement, so
+#' every stage the record names keeps its draw.
+#' @noRd
+composed_certain_wr <- function(phase1) {
+  phase_wr_stages_certain(phase1, get_design(phase1),
+                          get_stages_executed(phase1))
 }
 
 #' Give the phase-2 strata terms a value on every phase-1 row.
@@ -4752,7 +4790,7 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
       )
     }
     systematic_stages <- systematic_approximated_stages(
-      get_design(x), get_stages_executed(x)[1], as.data.frame(x)
+      get_design(x), get_stages_executed(x)[1], as.data.frame(x), sample = x
     )
     check_systematic_variance(
       systematic_stages,
@@ -4936,7 +4974,7 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
   # Inspect every contributing phase for systematic approximation.
   systematic_stages <- systematic_approximated_stages(
     design, stages_executed, df,
-    phase = if (is_twophase) 2L else NULL
+    phase = if (is_twophase) 2L else NULL, sample = x
   )
   # Single-stage pps specifications drop stages below stage 1, and a matrix or
   # HR object also replaces Brewer's approximation at stage 1.
@@ -4955,7 +4993,7 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
     systematic_stages <- systematic_approximated_stages(
       prev_phase$design %||% get_design(prev_phase$sample),
       (prev_phase$stages %||% get_stages_executed(prev_phase$sample))[1],
-      df
+      df, sample = prev_phase$sample
     )
   } else if (is_twophase) {
     previous <- prev_phase$sample
@@ -4964,7 +5002,7 @@ as_svydesign.tbl_sample <- function(x, ..., nest = TRUE, method = NULL,
         prev_phase$design %||% get_design(previous),
         prev_phase$stages %||% get_stages_executed(previous),
         as.data.frame(previous),
-        phase = 1L
+        phase = 1L, sample = previous
       ),
       # An occasion's stages are its master's, and activation is not systematic.
       if (!is_activation) systematic_stages
@@ -6362,12 +6400,13 @@ check_stage_export_support <- function(design, executed, stages, units,
 #' @noRd
 stage_export_systematic_stages <- function(x, design, executed, stages) {
   df <- export_rows(x, design, executed, notify = FALSE)
-  out <- systematic_approximated_stages(design, stages, df)
+  out <- systematic_approximated_stages(design, stages, df, sample = x)
   if (length(stages) < length(executed)) {
     units <- stage_export_units(df, design, executed, stages, notify = FALSE)
     if (length(units$promoted_stage) > 0L && any(units$split)) {
       out <- c(out, systematic_approximated_stages(
-        design, units$promoted_stage, units$df[units$split, , drop = FALSE]
+        design, units$promoted_stage, units$df[units$split, , drop = FALSE],
+        sample = x
       ))
     }
   }
@@ -7421,7 +7460,8 @@ multiframe_overlaps <- function(x, designs = NULL) {
 #' exports, multi-stage samples, shared weights, independent frame stacks
 #' and settled reserves included. A materialized occasion is replicated by
 #' ultimate clusters, and a window's replicates are calibrated on the same
-#' totals as its linearized design. `"rwyb"` is refused for an occasion
+#' totals as its linearized design. `"rwyb"` is refused for an occasion, and
+#' `"mrbbootstrap"` for one replicated by ultimate clusters
 #' (`samplyr_error_occasion_replicate_type`). Of the two-phase samples, two
 #' shapes are replicated, a second phase drawn within each final-stage pool
 #' of phase 1, which is phase 1's design with a smaller final take, and a
@@ -7677,7 +7717,7 @@ as_svrepdesign.tbl_sample <- function(
       )
     }
     systematic_stages <- systematic_approximated_stages(
-      get_design(x), get_stages_executed(x)[1], as.data.frame(x)
+      get_design(x), get_stages_executed(x)[1], as.data.frame(x), sample = x
     )
     check_systematic_variance(
       systematic_stages,
@@ -7741,6 +7781,21 @@ as_svrepdesign.tbl_sample <- function(
       class = "samplyr_error_occasion_replicate_type"
     )
   }
+  if (identical(occasion_route, "ultimate_cluster") &&
+        type == "mrbbootstrap") {
+    abort_samplyr(
+      c(
+        "{.fn as_svrepdesign} cannot build {.val mrbbootstrap} replicates
+         for an occasion.",
+        "i" = "{.val mrbbootstrap} resamples every stage, and an occasion is
+               replicated by its primary units alone, so it would read the
+               first stage only.",
+        "i" = "The other generic types replicate the occasion's primary
+               units."
+      ),
+      class = "samplyr_error_occasion_replicate_type"
+    )
+  }
   if (identical(occasion_route, "ultimate_cluster")) {
     check_stages_ultimate_only(stages, "an occasion")
     return(build_activation_ultimate_svrep(
@@ -7780,7 +7835,7 @@ as_svrepdesign.tbl_sample <- function(
   # stops here. The approximation advice waits until the conversion has
   # succeeded, so a refused export carries none.
   systematic_stages <- systematic_approximated_stages(
-    design, get_stages_executed(x), as.data.frame(x)
+    design, get_stages_executed(x), as.data.frame(x), sample = x
   )
   check_systematic <- function() {
     check_systematic_variance(
@@ -7830,7 +7885,7 @@ as_svrepdesign.tbl_sample <- function(
         "i" = "The variance leaves out the first stage's finite population
                correction, so it errs toward too large when first-stage
                sampling fractions are large.",
-        "i" = every_stage_hint(design)
+        "i" = every_stage_hint(design, spec)
       )
     }
     cli_warn(
@@ -7866,7 +7921,7 @@ as_svrepdesign.tbl_sample <- function(
         "i" = "That part shrinks with the first-stage sampling fraction, so
                the variance errs toward too small when the fraction is
                large.",
-        "i" = every_stage_hint(design)
+        "i" = every_stage_hint(design, spec)
       ),
       class = "samplyr_warning_replicate_first_stage_fpc"
     )
@@ -7949,7 +8004,9 @@ as_svrepdesign.tbl_sample <- function(
   }
   if (!is_null(warn_wr_first_stage)) warn_wr_first_stage()
   if (!is_null(warn_fpc_scales)) warn_fpc_scales()
-  result <- warn_certainty_lower_wr(result, type, every_stage_hint(design))
+  result <- warn_certainty_lower_wr(
+    result, type, every_stage_hint(design, spec)
+  )
 
   result <- hold_self_representing(result, whole_rows)
   record_systematic_variance(
@@ -8161,8 +8218,13 @@ build_stage1_svrepdesign <- function(x, stages, type, systematic_variance,
   result <- tryCatch(
     if (any(units$census)) {
       spec$stage[[1]]$certainty <- units$census
-      warn_certainty_lower_wr(svrep_from_first_stage(svy, spec, type, ...),
-                              type, every_stage_hint(design))
+      # The advice is for the export of every stage.
+      warn_certainty_lower_wr(
+        svrep_from_first_stage(svy, spec, type, ...), type,
+        every_stage_hint(design, flag_probability_one(export_stage_spec(
+          export_rows(x, design, executed, notify = FALSE), design, executed
+        )))
+      )
     } else {
       survey::as.svrepdesign(design = svy, type = type, ...)
     },
@@ -8220,13 +8282,21 @@ stage_unequal_wor <- function(draw_spec, kind = survey_stage_kind(draw_spec)) {
 
 #' The replicate types that use every stage, as advice for a design
 #'
-#' `"mrbbootstrap"` is named only when no stage refuses it.
+#' `"mrbbootstrap"` is named only when it would replicate the export. Given
+#' the export's `spec`, that is the test `as_svrepdesign()` applies.
+#' Without it, only the design's stages are read.
 #' @noRd
-every_stage_hint <- function(design) {
-  unequal <- !is_null(design) && any(vapply(design$stages, function(stage) {
-    stage_unequal_wor(stage$draw_spec)
-  }, logical(1)))
-  if (is_null(design) || unequal) {
+every_stage_hint <- function(design, spec = NULL) {
+  refused <- if (is_null(design)) {
+    TRUE
+  } else if (!is_null(spec)) {
+    !is_null(mrbbootstrap_refusal(spec, design))
+  } else {
+    any(vapply(design$stages, function(stage) {
+      stage_unequal_wor(stage$draw_spec)
+    }, logical(1)))
+  }
+  if (refused) {
     "{.val rwyb} uses every stage's probabilities, and {.fn as_svydesign}
      gives the linearization variance."
   } else {
@@ -8248,13 +8318,12 @@ every_stage_hint <- function(design) {
 check_mrbbootstrap_supported <- function(spec, design,
                                          call = caller_env()) {
   rlang::local_error_call(call)
-  # A stage taken whole has the fraction 1 everywhere.
-  unequal <- Filter(function(e) {
-    stage_unequal_wor(design$stages[[e$stage]]$draw_spec, e$kind) &&
-      !(length(e$prob) > 0L && all(is_certainty_probability(e$prob)))
-  }, spec$stage)
-  if (length(unequal) > 0L) {
-    entry <- unequal[[1]]
+  refusal <- mrbbootstrap_refusal(spec, design)
+  if (is_null(refusal)) {
+    return(invisible(NULL))
+  }
+  entry <- refusal$entry
+  if (identical(refusal$reason, "unequal")) {
     abort_samplyr(
       c(
         "{.code type = \"mrbbootstrap\"} cannot replicate {entry$name},
@@ -8271,8 +8340,40 @@ check_mrbbootstrap_supported <- function(spec, design,
       class = "samplyr_error_svrep_conversion_failed"
     )
   }
-  n_stages <- length(spec$stage)
-  for (k in seq_len(n_stages - 1L)) {
+  abort_samplyr(
+    c(
+      "{.code type = \"mrbbootstrap\"} cannot replicate a unit {entry$name}
+       takes with probability 1 alone in its stratum.",
+      "x" = "survey's multistage rescaled bootstrap resamples half the
+             units of a stratum, none of a stratum of one, and then
+             leaves out the stages below it, so the variance drawn
+             inside that unit would be lost.",
+      "i" = "{.val bootstrap}, {.val JKn} and {.val subbootstrap}
+             resample the next-stage units of a unit taken with
+             certainty, {.val rwyb} uses every stage's probabilities,
+             and {.fn as_svydesign} gives the linearization variance."
+    ),
+    class = "samplyr_error_svrep_conversion_failed"
+  )
+}
+
+#' Why survey's multistage rescaled bootstrap cannot replicate an export
+#'
+#' The two cases `check_mrbbootstrap_supported()` refuses, read from the
+#' export's `spec`.
+#' @return `NULL` when the export can be replicated, otherwise a list with
+#'   the `reason`, `"unequal"` or `"certainty_alone"`, and the stage `entry`.
+#' @noRd
+mrbbootstrap_refusal <- function(spec, design) {
+  # A stage taken whole has the fraction 1 everywhere.
+  unequal <- Filter(function(e) {
+    stage_unequal_wor(design$stages[[e$stage]]$draw_spec, e$kind) &&
+      !(length(e$prob) > 0L && all(is_certainty_probability(e$prob)))
+  }, spec$stage)
+  if (length(unequal) > 0L) {
+    return(list(reason = "unequal", entry = unequal[[1]]))
+  }
+  for (k in seq_len(length(spec$stage) - 1L)) {
     entry <- spec$stage[[k]]
     sure <- (entry$certainty %||% rep(FALSE, spec$n_rows)) %in% TRUE
     if (!identical(entry$kind, "wr") && !is_null(entry$prob)) {
@@ -8288,24 +8389,10 @@ check_mrbbootstrap_supported <- function(spec, design,
       rep(length(unique(u)), length(u))
     })
     if (any(sure & units == 1L)) {
-      abort_samplyr(
-        c(
-          "{.code type = \"mrbbootstrap\"} cannot replicate a unit {entry$name}
-           takes with probability 1 alone in its stratum.",
-          "x" = "survey's multistage rescaled bootstrap resamples half the
-                 units of a stratum, none of a stratum of one, and then
-                 leaves out the stages below it, so the variance drawn
-                 inside that unit would be lost.",
-          "i" = "{.val bootstrap}, {.val JKn} and {.val subbootstrap}
-                 resample the next-stage units of a unit taken with
-                 certainty, {.val rwyb} uses every stage's probabilities,
-                 and {.fn as_svydesign} gives the linearization variance."
-        ),
-        class = "samplyr_error_svrep_conversion_failed"
-      )
+      return(list(reason = "certainty_alone", entry = entry))
     }
   }
-  invisible(NULL)
+  NULL
 }
 
 #' Does the first stage need its own conversion?
@@ -8450,7 +8537,10 @@ svrep_from_first_stage <- function(svydesign_obj, spec, type, ...) {
 #' PPS stage two, which has no single factor, and a cell whose fraction is
 #' not one value keep the with-replacement reading and are returned as
 #' `uncorrected`. A stage two drawn with replacement has no correction to
-#' restore.
+#' restore, except in a cell of certainty units, which its strata set apart
+#' from the random hits. Such a cell is a census. The split already leaves it out when
+#' every stage below took all of its units, so a cell that remains is
+#' `uncorrected`.
 #' @return A list of the row `factor`s (1 where nothing changes), the
 #'   `uncorrected` rows, and `below`, TRUE when a later stage sampling inside
 #'   them is the reason.
@@ -8458,18 +8548,31 @@ svrep_from_first_stage <- function(svydesign_obj, spec, type, ...) {
 certainty_lower_correction <- function(sub, lower_entries, n) {
   out <- list(factor = rep(1, n), uncorrected = rep(FALSE, n), below = FALSE)
   split <- sub$split
-  if (!any(split) || identical(lower_entries[[1]]$kind, "wr")) {
+  if (!any(split)) {
     return(out)
   }
   next_entry <- lower_entries[[1]]
+  cell <- as.character(sub$cell_id)
+  wr_census <- NULL
+  if (identical(next_entry$kind, "wr")) {
+    certain <- (next_entry$certainty %||% rep(FALSE, n)) %in% TRUE
+    wr_census <- split & as.vector(tapply(certain, cell, all)[cell])
+    if (!any(wr_census)) {
+      return(out)
+    }
+  }
   whole_below <- rep(TRUE, n)
   for (e in lower_entries[-1]) {
     certain <- (e$certainty %||% rep(FALSE, n)) %in% TRUE
     whole_below <- whole_below & (if (identical(e$kind, "wr")) certain else
       certain | is_certainty_probability(e$prob %||% rep(0, n)))
   }
-  cell <- as.character(sub$cell_id)
   whole_below <- as.vector(tapply(whole_below, cell, all)[cell])
+  if (!is_null(wr_census)) {
+    out$uncorrected <- wr_census & !whole_below
+    out$below <- any(out$uncorrected)
+    return(out)
+  }
   prob <- next_entry$prob %||% rep(NA_real_, n)
   one_fraction <- as.vector(tapply(prob, cell, function(p) {
     all(is.finite(p)) && max(p) - min(p) <= 1e-12 * max(1, abs(p))
@@ -9446,7 +9549,8 @@ share_contribution_frame <- function(source_sample, systematic_variance,
   stages <- get_stages_executed(source_sample)
   df <- export_rows(source_sample, design, stages, call = call)
 
-  systematic_stages <- systematic_approximated_stages(design, stages, df)
+  systematic_stages <- systematic_approximated_stages(design, stages, df,
+                                                      sample = source_sample)
   check_systematic_variance(
     systematic_stages, systematic_variance,
     approximation = "srswor"

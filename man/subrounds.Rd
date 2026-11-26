@@ -115,9 +115,9 @@ tabulate(small$.panel, 12)
 
 }
 \seealso{
-Other panels, rotation and periods:
+Other panels and rotation:
 \code{\link{panel_assignment}},
 \code{\link[=rotation_program]{rotation_program()}},
 \code{\link[=stack_periods]{stack_periods()}}
 }
-\concept{panels, rotation and periods}
+\concept{panels and rotation}

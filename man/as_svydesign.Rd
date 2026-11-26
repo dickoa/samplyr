@@ -53,9 +53,11 @@ took everything within reach contributes no variance, and so is a
 \code{pps_systematic} first stage exported with a caller-supplied \code{pps}
 object. A stage that drew one unit in each pool is exempt too, since a
 single random start takes each unit with its chance whatever the frame
-order. A \code{pps_systematic_mr} stage is never exempt as a census, since a
+order. A \code{pps_systematic_mr} stage is not exempt as a census, since a
 take of \eqn{N}{N} or more counts draws, and the with-replacement export
-gives it a variance even when every unit's hits are fixed. The choice, the
+gives it a variance even when every unit's hits are fixed. It is exempt
+when every unit it holds was taken with certainty, which the export
+gives no variance. The choice, the
 affected stages and each stage's approximation are recorded in the
 \code{"samplyr_systematic_variance"} attribute of the result.
 \code{\link[=as_svrepdesign]{as_svrepdesign()}} takes the same argument for its own approximation of

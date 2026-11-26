@@ -151,9 +151,15 @@ round_preserve_total_bounded <- function(x, n, min_vals, max_vals) {
 
 #' Bounded allocation that preserves the method's own factors
 #'
-#' Solves `n_h = clamp(lambda * factor_h, lower_h, upper_h)` by bisection, then
-#' integerizes while preserving the total. With `report_tie`, the result
-#' keeps the `tied` attribute of the rounding.
+#' Solves `n_h = clamp(lambda * factor_h, lower_h, upper_h)` for the scale
+#' that reaches the total, then integerizes while preserving the total. With
+#' `report_tie`, the result keeps the `tied` attribute of the rounding.
+#'
+#' The clamped total is piecewise linear in `lambda`, with a breakpoint where
+#' each stratum leaves its lower bound and where it reaches its upper bound.
+#' The breakpoints are found in logs, so a ratio of factors beyond the range
+#' of a double still orders them. A binary search over them finds the
+#' segment holding the total, which is solved in closed form.
 #'
 #' @noRd
 allocate_bounded <- function(factors, total, lower, upper,
@@ -161,70 +167,52 @@ allocate_bounded <- function(factors, total, lower, upper,
   f <- factors
   f[!is.finite(f) | f < 0] <- 0
 
-  # Scale factors to avoid overflow while preserving ratios.
-  f_max <- max(f)
-  if (f_max > 0) {
-    f <- f / f_max
-  }
-
-  at_scale <- function(lambda, f, lo, hi) pmin(pmax(lambda * f, lo), hi)
-
-  # Monotone bisection finds the scale reaching the total.
-  solve_scale <- function(f, total, lo, hi) {
-    if (sum(at_scale(0, f, lo, hi)) >= total) {
-      return(0)
-    }
+  solve_clamped <- function(f, total, lo, hi) {
     positive <- f > 0
-    if (!any(positive)) {
-      return(NA_real_)
+    if (sum(lo) >= total || !any(positive)) {
+      return(lo)
     }
-    # Bracket with saturation scales or repeated doubling.
-    reach <- hi[positive] / f[positive]
-    reach <- reach[is.finite(reach)]
-    top <- if (length(reach) > 0) {
-      max(reach)
-    } else {
-      grow <- total / sum(f[positive])
-      if (!is.finite(grow) || grow <= 0) {
-        grow <- 1
-      }
-      while (is.finite(grow * 2) && sum(at_scale(grow, f, lo, hi)) < total) {
-        grow <- grow * 2
-      }
-      grow
-    }
-    if (sum(at_scale(top, f, lo, hi)) <= total) {
-      return(top)
-    }
-    span <- c(0, top)
-    for (step in seq_len(200L)) {
-      mid <- sum(span) / 2
-      before <- span
-      if (sum(at_scale(mid, f, lo, hi)) < total) {
-        span[1] <- mid
+    log_f <- rep(-Inf, length(f))
+    log_f[positive] <- log(f[positive])
+    # A stratum rises from its lower bound at `rise` and stops at `stop`.
+    rise <- ifelse(positive, log(lo) - log_f, Inf)
+    stop <- ifelse(positive, log(hi) - log_f, Inf)
+    at_point <- function(t) pmin(pmax(exp(t + log_f), lo), hi)
+
+    points <- sort(unique(c(rise, stop)))
+    points <- points[is.finite(points)]
+    # The total never decreases along the points, so the points it does not
+    # exceed form a prefix, and `t` is the last of them.
+    left <- 0L
+    right <- length(points) + 1L
+    while (right - left > 1L) {
+      mid <- left + (right - left) %/% 2L
+      if (sum(at_point(points[[mid]])) <= total) {
+        left <- mid
       } else {
-        span[2] <- mid
-      }
-      # An unchanged bracket repeats itself, so the result is final.
-      if (identical(span, before)) {
-        break
+        right <- mid
       }
     }
-    sum(span) / 2
+    t <- if (left > 0L) points[[left]] else -Inf
+
+    # Strata between their breakpoints share what the others leave.
+    free <- rise <= t & stop > t
+    alloc <- ifelse(stop <= t, hi, lo)
+    if (any(free)) {
+      rest <- total - sum(alloc[!free])
+      share <- exp(log_f[free] - max(log_f[free]))
+      alloc[free] <- rest * share / sum(share)
+    }
+    pmin(pmax(alloc, lo), hi)
   }
 
-  lambda <- solve_scale(f, total, lower, upper)
-  alloc <- if (is.na(lambda)) lower else at_scale(lambda, f, lower, upper)
+  alloc <- solve_clamped(f, total, lower, upper)
 
-  # Level remaining strata when positive factors saturate.
+  # Level the zero-factor strata once the positive factors saturate.
   if (total - sum(alloc) > sqrt(.Machine$double.eps)) {
     has_room <- upper > alloc
     if (any(has_room)) {
-      equal <- as.numeric(has_room)
-      level <- solve_scale(equal, total, alloc, upper)
-      if (!is.na(level)) {
-        alloc <- at_scale(level, equal, alloc, upper)
-      }
+      alloc <- solve_clamped(as.numeric(has_room), total, alloc, upper)
     }
   }
 

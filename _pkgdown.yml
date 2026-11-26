@@ -46,7 +46,7 @@ reference:
       - validate_frame
       - execution_conditions
 
-  - title: "Panels, rotation and periods"
+  - title: "Panels and rotation"
     desc: >
       Split an executed master into panels, materialize each occasion, named
       by its period and subround, for the panels scheduled there, and stack

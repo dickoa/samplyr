@@ -138,8 +138,15 @@ variance_estimators <- function(x, frame = NULL) {
   traits <- stage_variance_traits(design, stages)
   facts <- frame_variance_facts(design, frame, traits, call = current_env())
 
+  # A realized sample shows which stages took every unit with certainty.
+  # A frame, when given, decides instead, as for every other fact.
+  certain <- if (is_tbl_sample(x) && is_null(phase1) && is_null(frame)) {
+    phase_wr_stages_certain(x, design, get_stages_executed(x))
+  } else {
+    integer(0)
+  }
   rows <- if (is_null(phase1)) {
-    singlephase_estimator_rows(design, traits, facts)
+    singlephase_estimator_rows(design, traits, facts, certain = certain)
   } else if (!sample_realization_status(phase1)$ok) {
     modified_phase1_estimator_rows(phase1)
   } else if (!is_null(within_pool_subsample_vars(design, stages, phase1))) {
@@ -162,6 +169,7 @@ variance_estimators <- function(x, frame = NULL) {
     rows <- singlephase_estimator_rows(
       design1, traits1,
       composed_variance_facts(phase1, design1, facts2),
+      certain = composed_certain_wr(phase1),
       one_unit = phase1_one_unit_findings(
         get_design(phase1), get_stages_executed(phase1),
         as.data.frame(phase1), twophase = FALSE
@@ -203,9 +211,10 @@ variance_estimators <- function(x, frame = NULL) {
 
 #' Refuse a sample whose export the report does not describe
 #'
-#' An occasion exports by ultimate clusters and refuses `"rwyb"`, and a
-#' shared-weight sample exports by replicating its source design. The
-#' report reads the design's rules, which neither follows.
+#' An occasion exports by ultimate clusters, which refuse `"mrbbootstrap"`,
+#' and it refuses `"rwyb"`. A shared-weight sample exports by replicating
+#' its source design. The report reads the design's rules, which neither
+#' follows.
 #' @noRd
 refuse_unassessed_sample <- function(s, call = caller_env()) {
   if (!is_null(attr(s, "metadata")[["occasion"]])) {
@@ -213,7 +222,8 @@ refuse_unassessed_sample <- function(s, call = caller_env()) {
       c(
         "{.fn variance_estimators} does not assess a materialized occasion.",
         "i" = "An occasion's export follows rules of its own: ultimate clusters
-               by default, and no {.val rwyb} replicates.",
+               by default, which {.val mrbbootstrap} refuses, and no
+               {.val rwyb} replicates.",
         "i" = "Call {.fn as_svydesign} or {.fn as_svrepdesign} on the occasion
                to see whether an estimator is supported."
       ),
@@ -434,6 +444,13 @@ frame_variance_facts <- function(design, frame, traits, call = caller_env()) {
       # replacement it counts draws, and the stage still adds variance.
       census = !identical(trait$kind, "wr") && fixed && nrow(pools) > 0 &&
         all(pools$n_target >= pools$N),
+      # A stage drawn with replacement that took every unit with certainty
+      # and left no pool a random draw, as phase_wr_stages_certain() reads a
+      # realized one. Forced certainties can exceed the take, which leaves a
+      # negative quota.
+      all_certain = identical(trait$kind, "wr") &&
+        !draws_one_per_zone(trait$draw) && nrow(pools) > 0 &&
+        sum(n_cert) > 0 && all(take <= 0),
       parents = unique(pools$parent_unit),
       rows_per_unit = units$n_descendants
     )
@@ -454,6 +471,7 @@ frame_variance_facts <- function(design, frame, traits, call = caller_env()) {
     under <- pools$parent_unit %in% certain
     facts[[pos]]$certain_parent_takes <- facts[[pos]]$takes[under]
     facts[[pos]]$certain_parent_census <- facts[[pos]]$pool_census[under]
+    facts[[pos]]$certain_parent_certain <- facts[[pos]]$pool_certain[under]
     # Whether a later stage samples inside the selected units of each of
     # those pools, NA when the frame or the sample decides it.
     facts[[pos]]$certain_parent_below <- pool_samples_below(
@@ -573,6 +591,7 @@ wr_certain_child_pools <- function(design, frame, digest, traits,
       N = pools$N[under],
       n_target = pools$n_target[under],
       take = take[under],
+      certain = n_cert[under],
       census = census[under],
       below = pool_samples_below(view, traits, from = 2L,
                                  pool_ids = pools$pool_id[under],
@@ -588,7 +607,8 @@ wr_certain_child_pools <- function(design, frame, digest, traits,
 #' whose children the resolution leaves uncounted, from the pools
 #' `wr_certain_child_pools()` resolves for its certain PSUs.
 #' @return `NULL` when neither is there. Otherwise a list of the pools'
-#'   `takes` outside certainty, `census`, `below` (whether a later stage
+#'   `takes` outside certainty, their count of `certain` units, `census`,
+#'   `below` (whether a later stage
 #'   samples inside their units), `one` (a single selected unit that is no
 #'   singleton), `unknown` (a pool of one whose descendants are unsettled)
 #'   and `fixed`.
@@ -602,6 +622,7 @@ certain_parent_pools <- function(traits, facts) {
     n <- length(second$certain_parent_takes)
     return(list(
       takes = second$certain_parent_takes,
+      certain = second$certain_parent_certain %||% rep(0, n),
       census = second$certain_parent_census %||% rep(FALSE, n),
       below = second$certain_parent_below %||% rep(NA, n),
       one = second$certain_parent_one %||% rep(FALSE, n),
@@ -617,6 +638,7 @@ certain_parent_pools <- function(traits, facts) {
   singleton <- child$take == 1 & !child$census
   list(
     takes = child$take,
+    certain = child$certain,
     census = child$census,
     below = child$below,
     one = selected == 1 & !singleton,
@@ -819,8 +841,8 @@ estimator_row <- function(entry, findings, not_applicable = NULL) {
 
 #' @noRd
 singlephase_estimator_rows <- function(design, traits, facts,
-                                       one_unit = NULL) {
-  common <- common_stage_findings(traits, facts)
+                                       one_unit = NULL, certain = integer(0)) {
+  common <- common_stage_findings(traits, facts, certain)
   if (!is_null(one_unit)) {
     common$one_unit <- one_unit
   }
@@ -831,7 +853,8 @@ singlephase_estimator_rows <- function(design, traits, facts,
         entry,
         c(common$refusals, common$one_unit,
           linearization_findings(traits, facts),
-          common$systematic, brewer_findings(traits, facts), common$risks,
+          common$systematic, brewer_findings(traits, facts, common$certain),
+          common$risks,
           lonely_findings(traits, facts))
       ),
       joint = joint_estimator_row(entry, traits, facts, common),
@@ -860,7 +883,13 @@ singlephase_estimator_rows <- function(design, traits, facts,
 
 #' Findings every single-phase estimator shares
 #' @noRd
-common_stage_findings <- function(traits, facts) {
+common_stage_findings <- function(traits, facts, certain = integer(0)) {
+  # Stages whose every unit was taken with certainty, from the realized sample
+  # or from the frame, add no variance for an approximation to get wrong.
+  certain <- union(as.integer(certain), as.integer(unlist(lapply(
+    Filter(function(f) isTRUE(f$all_certain), facts %||% list()),
+    function(f) f$stage
+  ))))
   refusals <- list()
   midstage <- Filter(function(t) t$midstage_element, traits)
   if (length(midstage) > 0) {
@@ -876,7 +905,7 @@ common_stage_findings <- function(traits, facts) {
     fact <- stage_fact(facts, t$stage)
     multi_hit <- is_multi_hit_method(t$draw)
     if ((!multi_hit && report_takes_every_unit(t, facts)) ||
-        fact_takes_one_per_pool(fact)) {
+        fact_takes_one_per_pool(fact) || t$stage %in% certain) {
       next
     }
     systematic <- c(systematic, list(finding(
@@ -901,7 +930,8 @@ common_stage_findings <- function(traits, facts) {
     # stratum of one unit itself, first.
     one_unit = one_unit_findings(traits, facts),
     systematic = systematic,
-    risks = empty_unit_findings(traits, facts)
+    risks = empty_unit_findings(traits, facts),
+    certain = certain
   )
 }
 
@@ -1126,9 +1156,10 @@ poisson_cluster_findings <- function(first, facts) {
 
 #' The approximations linearization makes without a warning
 #' @noRd
-brewer_findings <- function(traits, facts = NULL) {
+brewer_findings <- function(traits, facts = NULL, certain = integer(0)) {
   out <- list()
-  for (t in traits) {
+  # A stage of certainty units only is exported with no variance.
+  for (t in Filter(function(t) !t$stage %in% certain, traits)) {
     # A systematic draw of one per pool is a draw of one proportional to size.
     one <- t$systematic && fact_takes_one_per_pool(stage_fact(facts, t$stage))
     note <- if (identical(t$method, "cube")) {
@@ -1429,7 +1460,8 @@ generic_replicate_findings <- function(type, traits, facts, common) {
   # Minimum replacement has no correction for the probability-based types
   # to keep, so they read it as with replacement too. A first stage taken
   # whole holds no unit to resample.
-  all_whole <- census || (length(whole) > 0L && all(whole))
+  all_whole <- census || (length(whole) > 0L && all(whole)) ||
+    first$stage %in% common$certain
   if ((stage_replicated_as_wr(first$draw, first$kind) && !all_whole &&
          (!identical(type, "mrbbootstrap") ||
             first$method %in% pmr_methods)) ||
@@ -1457,7 +1489,7 @@ generic_replicate_findings <- function(type, traits, facts, common) {
     )))
   }
   if (type %in% c("JK1", "JKn", "BRR", "Fay", "bootstrap", "subbootstrap")) {
-    out <- c(out, certainty_stage_wr_findings(traits, facts))
+    out <- c(out, certainty_stage_wr_findings(traits, facts, common$certain))
   }
   out <- c(out, common$systematic, common$refusals, common$one_unit)
   if (identical(type, "mrbbootstrap")) {
@@ -1616,15 +1648,18 @@ mrbbootstrap_findings <- function(traits, facts) {
 #' (`samplyr_warning_replicate_certainty_stage_wr`). The frame settles it
 #' through the stage-2 pools under the certain PSUs. Without them, a design
 #' census of stage 1 is read from the design, and a first stage that may
-#' take a PSU with certainty is a risk.
+#' take a PSU with certainty is a risk. A stage 2 drawn with replacement
+#' is read by `wr_certainty_stage_findings()`.
+#' @param certain The stages known to hold only certainty units.
 #' @noRd
-certainty_stage_wr_findings <- function(traits, facts) {
+certainty_stage_wr_findings <- function(traits, facts, certain = integer(0)) {
   if (length(traits) < 2L) {
     return(list())
   }
   second <- traits[[2]]
   pps <- identical(second$kind, "pps_wor")
-  if (!pps && !identical(second$kind, "equal_wor")) {
+  wr <- identical(second$kind, "wr")
+  if (!pps && !wr && !identical(second$kind, "equal_wor")) {
     return(list())
   }
   first <- traits[[1]]
@@ -1638,6 +1673,10 @@ certainty_stage_wr_findings <- function(traits, facts) {
   risk <- function(why) {
     list(finding("risk", "samplyr_warning_replicate_certainty_stage_wr",
                  paste0(note, ". ", why)))
+  }
+  if (wr) {
+    return(wr_certainty_stage_findings(traits, facts, certain, approximate,
+                                       risk))
   }
   pools <- certain_parent_pools(traits, facts)
   if (!is_null(pools)) {
@@ -1673,6 +1712,47 @@ certainty_stage_wr_findings <- function(traits, facts) {
       !is_null(first$draw$certainty_plan)) {
     return(risk(paste0("Pass `frame` to see whether stage ", first$stage,
                        " takes a PSU with certainty")))
+  }
+  list()
+}
+
+#' A stage 2 drawn with replacement inside a PSU taken with certainty
+#'
+#' Such a stage has no correction to lose, except for its certainty units,
+#' which the export sets apart from the random hits as a census. The export
+#' reads it as drawn with replacement when a stage below samples inside it,
+#' and leaves it out otherwise. The frame counts the certainty units of each
+#' pool. Without the frame, a stage known to hold only certainty units has
+#' one in every certain PSU, and a certainty rule at stage 2 may give one.
+#' @param approximate,risk The finding builders of
+#'   `certainty_stage_wr_findings()`.
+#' @noRd
+wr_certainty_stage_findings <- function(traits, facts, certain, approximate,
+                                        risk) {
+  if (!later_stage_may_sample(traits[-1], facts)) {
+    return(list())
+  }
+  first <- traits[[1]]
+  second <- traits[[2]]
+  pools <- certain_parent_pools(traits, facts)
+  if (!is_null(pools)) {
+    return(if (any(pools$certain > 0)) approximate("frame") else list())
+  }
+  fact <- stage_fact(facts, first$stage)
+  first_certain <- isTRUE(first$census) || first$stage %in% certain ||
+    isTRUE(fact$n_certainty > 0) || any(fact$whole_certain)
+  if (first_certain && second$stage %in% certain) {
+    return(approximate(if (isTRUE(first$census)) "design" else "frame"))
+  }
+  second_may <- has_certainty_rule(second$draw) ||
+    !is_null(second$draw$certainty_plan)
+  first_may <- first_certain || (is_null(fact) &&
+    (identical(first$kind, "pps_wor") || has_certainty_rule(first$draw) ||
+       !is_null(first$draw$certainty_plan)))
+  if (second_may && first_may) {
+    return(risk(paste0("Whether stage ", second$stage, " takes a unit",
+                       " with certainty inside such a PSU depends on the",
+                       " frame")))
   }
   list()
 }
@@ -2164,7 +2244,7 @@ twophase_linearization_findings <- function(design, traits, phase1, design1,
   traits1 <- stage_variance_traits(design1, stages1)
   out <- list()
   systematic1 <- systematic_approximated_stages(design1, stages1, df1,
-                                                phase = 1L)
+                                                phase = 1L, sample = phase1)
   for (s in systematic1) {
     out <- c(out, list(finding(
       "approximate", "samplyr_warning_systematic_variance",
@@ -2172,6 +2252,16 @@ twophase_linearization_findings <- function(design, traits, phase1, design1,
              " approximated"),
       stage = s$stage, phase = 1L, decided_by = "frame"
     )))
+  }
+  # A phase 1 of minimum replacement is read with replacement, as one phase
+  # alone is, and the export warns of it no more than one phase's does.
+  # Other phase-1 methods with such a note are refused below.
+  pmr1 <- Filter(function(t) t$method %in% pmr_methods, traits1)
+  for (f in brewer_findings(
+    pmr1, certain = phase_wr_stages_certain(phase1, design1, stages1)
+  )) {
+    f$phase <- 1L
+    out <- c(out, list(f))
   }
   facts2 <- twophase_phase2_facts(design, traits, phase1)
   for (t in Filter(function(t) t$systematic, traits)) {

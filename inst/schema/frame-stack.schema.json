@@ -2345,13 +2345,55 @@
             "$ref": "#/definitions/occasion_pool"
           },
           "minItems": 0
+        },
+        "selection": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entry_period": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "period": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "subround": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "n_subrounds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "visits": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 0
         }
       },
       "required": [
         "occasion",
         "active_panels"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "if": {
+        "required": [
+          "selection"
+        ]
+      },
+      "then": {
+        "required": [
+          "entry_period",
+          "period",
+          "subround",
+          "n_subrounds",
+          "visits"
+        ]
+      }
     },
     "chain_call": {
       "type": "object",
@@ -3002,7 +3044,7 @@
           "const": "samplyr/design"
         },
         "format_version": {
-          "const": 4
+          "const": 5
         },
         "schema": {
           "type": "object",
@@ -3119,7 +3161,7 @@
           "const": "samplyr/design"
         },
         "format_version": {
-          "const": 4
+          "const": 5
         },
         "schema": {
           "type": "object",

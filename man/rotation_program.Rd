@@ -102,6 +102,10 @@ samples with separate receipts, one per live selection, each carrying its
 own exact activation factor, of class \code{rotation_occasion}. It is not
 row-bound and its weights are not combined. A program materializes one
 occasion at a time.
+
+Each component's receipt records the program's part of its occasion, so
+\code{\link[=write_design]{write_design()}} saves a component on its own and \code{\link[=replay_design]{replay_design()}}
+rebuilds it from its selection's frame, without the program.
 }
 
 \subsection{Overlap between selections is unknown, not assumed absent}{
@@ -168,9 +172,9 @@ execute(program, period = 2)
 \code{\link[=execute]{execute()}} for drawing a master and materializing an occasion,
 \link{panel_assignment} for partitioning one execution into rotation groups.
 
-Other panels, rotation and periods:
+Other panels and rotation:
 \code{\link{panel_assignment}},
 \code{\link[=stack_periods]{stack_periods()}},
 \code{\link[=subrounds]{subrounds()}}
 }
-\concept{panels, rotation and periods}
+\concept{panels and rotation}

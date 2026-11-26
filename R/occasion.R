@@ -833,11 +833,18 @@ occasion_phrase <- function(occasions, schedule, upper = FALSE) {
 #' The occasions of a materialized sample, named for a message
 #' @noRd
 sample_occasion_phrase <- function(metadata) {
-  # A rotation program's part keeps the program's schedule, not its own.
-  if (is_null(metadata$panel_assignment$schedule)) {
-    period <- unique(metadata$occasion$period)
-    return(paste(if (length(period) == 1L) "period" else "periods",
-                 occasion_span(period)))
+  # A rotation program's part is numbered by the program, not by its own
+  # schedule, so it is named from the program's period and subround.
+  occasion <- metadata$occasion
+  if (!is_null(occasion$selection)) {
+    n_subrounds <- max(1L, as.integer(occasion$n_subrounds))
+    pairs <- data.frame(
+      period = rep(seq_len(occasion$period), each = n_subrounds),
+      subround = rep(seq_len(n_subrounds), times = occasion$period)
+    )
+    return(pair_phrase(
+      pairs, (occasion$period - 1L) * n_subrounds + occasion$subround
+    ))
   }
   occasion_phrase(
     metadata$occasion$occasion,

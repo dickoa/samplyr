@@ -117,6 +117,13 @@ flagged as \code{chained}. Its receipt records every earlier call in
 arguments, RNG kind, how it used the call before it, and, for a call
 followed by a new phase, its own design.
 
+A component of a \code{\link[=rotation_program]{rotation_program()}} occasion is activated by the
+program's schedule, which no receipt holds. Its \code{occasion} therefore
+records the program's part of it: the selection, its entry period, the
+program's period and subround, the program's subrounds per period, and
+the visit of each active panel. The component and any phase drawn from it
+replay from the selection's frame alone.
+
 One replicate kept from a stack with \code{filter(.replicate == r)} is
 recorded as \code{replicate}, with the stack's \code{reps}, on the call whose result
 was filtered. \code{\link[=replay_design]{replay_design()}} replays the stack and keeps that
@@ -187,7 +194,7 @@ bundled JSON Schemas. Unknown executable fields, duplicate JSON keys,
 malformed structures and contradictory method descriptors are refused, and
 so is a nonempty \code{required_extensions} array at any level, since no
 executable extensions are currently supported. The reader accepts design
-format version 4 and version 1 of the frame-stack and shared-sample
+format version 5 and version 1 of the frame-stack and shared-sample
 formats. An optional \code{execution.frame_digest} is exempt and keeps its own
 version check and warn-and-drop policy. Frame-dependent checks run in
 \code{\link[=validate_frame]{validate_frame()}} and \code{\link[=execute]{execute()}}. Validation errors name

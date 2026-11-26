@@ -111,7 +111,8 @@ A single-phase sample is replicated from the design \code{\link[=as_svydesign]{a
 exports, multi-stage samples, shared weights, independent frame stacks
 and settled reserves included. A materialized occasion is replicated by
 ultimate clusters, and a window's replicates are calibrated on the same
-totals as its linearized design. \code{"rwyb"} is refused for an occasion
+totals as its linearized design. \code{"rwyb"} is refused for an occasion, and
+\code{"mrbbootstrap"} for one replicated by ultimate clusters
 (\code{samplyr_error_occasion_replicate_type}). Of the two-phase samples, two
 shapes are replicated, a second phase drawn within each final-stage pool
 of phase 1, which is phase 1's design with a smaller final take, and a

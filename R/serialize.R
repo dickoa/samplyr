@@ -135,7 +135,7 @@ as.list.sampling_design <- function(x, ...) {
 
 design_format_id <- "samplyr/design"
 # Every file declares the current version. Earlier versions were never released.
-design_format_version <- 4L
+design_format_version <- 5L
 method_vocabulary_id <- "samplyr/common-sampling-method"
 method_vocabulary_version <- 2L
 
@@ -214,6 +214,13 @@ shared_sample_transformation_version <- 1L
 #' arguments, RNG kind, how it used the call before it, and, for a call
 #' followed by a new phase, its own design.
 #'
+#' A component of a [rotation_program()] occasion is activated by the
+#' program's schedule, which no receipt holds. Its `occasion` therefore
+#' records the program's part of it: the selection, its entry period, the
+#' program's period and subround, the program's subrounds per period, and
+#' the visit of each active panel. The component and any phase drawn from it
+#' replay from the selection's frame alone.
+#'
 #' One replicate kept from a stack with `filter(.replicate == r)` is
 #' recorded as `replicate`, with the stack's `reps`, on the call whose result
 #' was filtered. [replay_design()] replays the stack and keeps that
@@ -280,7 +287,7 @@ shared_sample_transformation_version <- 1L
 #' malformed structures and contradictory method descriptors are refused, and
 #' so is a nonempty `required_extensions` array at any level, since no
 #' executable extensions are currently supported. The reader accepts design
-#' format version 4 and version 1 of the frame-stack and shared-sample
+#' format version 5 and version 1 of the frame-stack and shared-sample
 #' formats. An optional `execution.frame_digest` is exempt and keeps its own
 #' version check and warn-and-drop policy. Frame-dependent checks run in
 #' [validate_frame()] and [execute()]. Validation errors name
@@ -506,6 +513,11 @@ read_design <- function(file) {
 #' call by call, each under its own seed, stages and RNG kind. The first
 #' call and each continuation read the frames given here, a new phase reads
 #' the phase replayed before it, and an occasion reads its replayed master.
+#' An occasion of a [rotation_program()] is rebuilt from the panels, visits
+#' and activation pools its receipt records, not from the selection's own
+#' schedule. A record whose panels and pools contradict each other, or an
+#' occasion recorded under a schedule other than its master's, is
+#' `samplyr_error_replay_occasion`.
 #' Inherited panels and replicates are carried rather than declared again.
 #' A call recorded with `replicate` keeps that replicate of its replayed
 #' stack before its settlement or the next call, and a replicate the call
@@ -1258,24 +1270,6 @@ build_design_json <- function(
   fn_name,
   call = caller_env()
 ) {
-  # A selection drawn with a count of panels takes its rotation from the
-  # program, which no receipt holds.
-  if (is_tbl_sample(x) &&
-        !is_null(attr(x, "metadata")$occasion$selection) &&
-        is_null(attr(x, "metadata")$panel_assignment$schedule)) {
-    abort_samplyr(
-      c(
-        "{.fn {fn_name}} cannot write a selection's part of a rotation
-         program's occasion.",
-        "x" = "The program's schedule activated it, and no receipt holds
-               the program.",
-        "i" = "Write each selection, and rebuild the program with
-               {.fn rotation_program} from the replayed selections."
-      ),
-      class = "samplyr_error_serialize_unsupported",
-      call = call
-    )
-  }
   payload <- if (is_shared_sample_design(x) || is_frame_stack_design(x)) {
     restored_document_payload(x, frame, frame_label, fn_name, call)
   } else if (is_shared_weight_sample(x)) {
@@ -2111,7 +2105,7 @@ encode_stage <- function(stage) {
   out
 }
 
-#' Encode a certainty-plan bridge spec (design format 4)
+#' Encode a certainty-plan bridge spec (since design format 4)
 #'
 #' Plain data throughout: the register as row objects, the per-stratum
 #' vectors as JSON objects. `take_2`, the plan's nominal take below the
@@ -2871,7 +2865,7 @@ decode_panel_argument <- function(receipt, record) {
 #' @noRd
 encode_occasion <- function(record) {
   # Occasion pools preserve activation facts that replay cannot rebuild.
-  list(
+  out <- list(
     occasion = as.integer(record$occasion),
     active_panels = I(as.integer(record$active_panels)),
     schedule_digest = record$schedule_digest,
@@ -2892,6 +2886,17 @@ encode_occasion <- function(record) {
       out
     })
   )
+  # A program's schedule activated the occasion, and no receipt holds the
+  # program, so its part of the occasion is recorded here.
+  if (!is_null(record$selection)) {
+    out$selection <- as.character(record$selection)
+    out$entry_period <- as.integer(record$entry_period)
+    out$period <- as.integer(record$period)
+    out$subround <- as.integer(record$subround)
+    out$n_subrounds <- as.integer(record$n_subrounds)
+    out$visits <- I(as.integer(record$visits))
+  }
+  out
 }
 
 #' How the recorded call mapped frames to stages
@@ -3711,7 +3716,7 @@ decode_value <- function(x) {
   unlist(x)
 }
 
-#' Decode a certainty-plan bridge spec (design format 4)
+#' Decode a certainty-plan bridge spec (since design format 4)
 #'
 #' Shape checks only: the execute-time gates are the validators for what the
 #' spec means against a frame, and they run for deserialized designs too.

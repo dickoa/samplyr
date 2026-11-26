@@ -420,12 +420,12 @@ certainty_tampered_file <- function(path, f) {
   out
 }
 
-test_that("bridge and plain designs both write format 4", {
+test_that("bridge and plain designs both write format 5", {
   d <- certainty_bridge_design()
   path <- withr::local_tempfile(fileext = ".json")
   write_design(d, path)
   doc <- jsonlite::fromJSON(path, simplifyVector = FALSE)
-  expect_identical(doc$format_version, 4L)
+  expect_identical(doc$format_version, 5L)
   expect_identical(doc$design$stages[[1]]$draw$certainty_plan$role, "select")
   expect_identical(doc$design$stages[[2]]$draw$certainty_plan$role, "take")
   # The plan's nominal take below the PSUs, under svyplan's stage name.
@@ -437,7 +437,7 @@ test_that("bridge and plain designs both write format 4", {
   write_design(sampling_design() |> draw(n = 10), plain)
   expect_identical(
     jsonlite::fromJSON(plain, simplifyVector = FALSE)$format_version,
-    4L
+    5L
   )
 
   # A format 3 file named the take `n_per_psu`. Only the current format reads.
@@ -546,7 +546,7 @@ test_that("malformed certainty blocks are refused by the reader", {
   )
 
   future <- certainty_tampered_file(path, function(doc) {
-    doc$format_version <- 5
+    doc$format_version <- 6
     doc
   })
   expect_error(
@@ -1276,7 +1276,7 @@ test_that("a zoned design writes, reads, executes and replays identically", {
   write_design(d, path, frame = frame)
 
   doc <- jsonlite::fromJSON(path, simplifyVector = FALSE)
-  expect_identical(doc$format_version, 4L)
+  expect_identical(doc$format_version, 5L)
   block <- doc$design$stages[[1]]$draw$certainty_plan
   expect_identical(block$n_psu_per_zone, 2L)
   zones <- vapply(
@@ -1948,7 +1948,7 @@ test_that("a free-take register design writes, reads and replays", {
   path <- withr::local_tempfile(fileext = ".json")
   write_design(s, path, frame = frame)
   doc <- jsonlite::fromJSON(path, simplifyVector = FALSE)
-  expect_identical(doc$format_version, 4L)
+  expect_identical(doc$format_version, 5L)
   restored <- read_design(path)
   expect_equal(
     restored$stages[[1]]$draw_spec$certainty_plan,

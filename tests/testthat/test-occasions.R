@@ -695,6 +695,14 @@ test_that("an occasion's replicate weights resample its primary units", {
     as_svrepdesign(occasion, type = "rwyb"),
     class = "samplyr_error_occasion_replicate_type"
   )
+  # The primary units alone leave mrbbootstrap only the first stage, which
+  # survey reported in a warning of its own.
+  for (x in list(occasion, execute(master_2_2(), period = 1:2))) {
+    expect_error(
+      as_svrepdesign(x, type = "mrbbootstrap", replicates = 20),
+      class = "samplyr_error_occasion_replicate_type"
+    )
+  }
 
   # An activation of every panel is the master's own design.
   schedule <- data.frame(
@@ -714,6 +722,14 @@ test_that("an occasion's replicate weights resample its primary units", {
     unname(survey::SE(survey::svytotal(
       ~value, as_svrepdesign(master, type = "JKn")
     )))
+  )
+  expect_equal(
+    unname(survey::SE(survey::svytotal(~value, withr::with_seed(
+      3, as_svrepdesign(every, type = "mrbbootstrap", replicates = 20)
+    )))),
+    unname(survey::SE(survey::svytotal(~value, withr::with_seed(
+      3, as_svrepdesign(master, type = "mrbbootstrap", replicates = 20)
+    ))))
   )
 })
 

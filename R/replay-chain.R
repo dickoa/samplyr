@@ -422,10 +422,17 @@ replay_execution_chain <- function(calls, frames, frame_digest = "summary",
       slot <- slot + 1L
       own_frames <- frames[offsets[slot] + seq_len(counts[[slot]])]
     }
-    if (identical(cl$transition, "occasion")) {
+    if (identical(cl$transition, "occasion") &&
+          !is_null(cl$occasion$selection)) {
+      result <- replay_program_occasion(result, cl$occasion, call = call)
+    } else if (identical(cl$transition, "occasion")) {
+      check_recorded_occasion_schedule(result, cl$occasion, call = call)
       at <- recorded_occasions(result, cl$occasion$occasion)
       result <- execute(result, period = at$period, subround = at$subround)
+      check_recorded_occasion_panels(result, cl$occasion, call = call)
     } else if (identical(cl$transition, "occasion_draw")) {
+      # A draw at an occasion records no schedule digest, and is never one of
+      # a program's, since a program takes only complete selections.
       at <- recorded_occasions(result, cl$occasion$occasion)
       result <- with_replay_rng(cl$rng, execute(
         result,
@@ -567,25 +574,156 @@ encoded_chain_calls <- function(execution) {
   })
 }
 
+#' Rebuild a rotation program's component from the occasion it records
+#'
+#' The program's schedule chose the active panels and numbered the visits, and
+#' no receipt holds the program, so both are read from the record instead of
+#' from the selection's own schedule. The pools the activation rebuilds must be
+#' the recorded ones, so a record whose panels and pools contradict each other
+#' is refused rather than replayed.
+#' @param source The replayed selection.
+#' @param occasion The recorded occasion, as written or as read from a file.
+#' @noRd
+replay_program_occasion <- function(source, occasion, call = caller_env()) {
+  occ <- decode_program_occasion(occasion)
+  record <- selection_assignment(source, "A replay", call = call)
+  panels <- if (is_null(record)) 1L else as.integer(record$panels)
+  active <- occ$active_panels
+  if (length(active) == 0L || anyDuplicated(active) > 0L ||
+        !all(active %in% seq_len(panels)) ||
+        length(occ$visits) != length(active)) {
+    abort_replay_occasion(
+      occ$selection,
+      "Its active panels are not panels of selection {.val {selection}}, or
+       do not each have one visit.",
+      call = call
+    )
+  }
+  activation <- activate_panels(source, record, active, call = call)
+  if (!identical(occasion_pool_key(activation$pools),
+                 occasion_pool_key(occasion$pools))) {
+    abort_replay_occasion(
+      occ$selection,
+      "Activating its panels in selection {.val {selection}} does not give
+       the activation pools it records.",
+      call = call
+    )
+  }
+  build_occasion_sample(
+    source = source,
+    record = record,
+    occasion = occ$occasion,
+    activation = activation,
+    schedule_digest = occ$schedule_digest,
+    execution_environment = capture_execution_environment(),
+    extra = occ[c("selection", "entry_period", "period", "subround",
+                  "n_subrounds", "visits")],
+    visit_schedule = data.frame(panel = active, occasion = occ$occasion,
+                                visit = occ$visits)
+  )
+}
+
+#' A program occasion's record with its fields as vectors
+#'
+#' A record read from a file holds lists where the writer held vectors.
+#' @noRd
+decode_program_occasion <- function(occasion) {
+  int <- function(x) as.integer(unlist(x))
+  list(
+    occasion = int(occasion$occasion),
+    active_panels = int(occasion$active_panels),
+    schedule_digest = decode_chr(occasion$schedule_digest),
+    selection = decode_chr(occasion$selection),
+    entry_period = int(occasion$entry_period),
+    period = int(occasion$period),
+    subround = int(occasion$subround),
+    n_subrounds = int(occasion$n_subrounds),
+    visits = int(occasion$visits)
+  )
+}
+
+#' Activation pools in one form, written or read from a file
+#'
+#' Probabilities are compared to the digits a file keeps of them.
+#' @noRd
+occasion_pool_key <- function(pools) {
+  lapply(pools, function(pool) {
+    list(
+      stratum = vapply(pool$stratum %||% list(), function(v) {
+        as.character(unlist(v))[1]
+      }, character(1)),
+      class = decode_chr(pool$class),
+      activation = decode_chr(pool$activation),
+      blocks = as.integer(unlist(pool$blocks)),
+      take = as.integer(unlist(pool$take)),
+      probability = signif(as.numeric(unlist(pool$probability)), 12)
+    )
+  })
+}
+
+#' An occasion replayed from its master's schedule was activated by it
+#'
+#' Every occasion of a master records the digest of the master's schedule.
+#' Another digest, or a master without a schedule, means another schedule
+#' activated it, such as a rotation program's, so replaying it from the
+#' master's own would give other units. A program's occasion takes its own
+#' route and never reaches this check.
+#' @param master The replayed master.
+#' @noRd
+check_recorded_occasion_schedule <- function(master, occasion,
+                                             call = caller_env()) {
+  schedule <- attr(master, "metadata")$panel_assignment$schedule
+  recorded <- decode_chr(occasion$schedule_digest)
+  if (is_null(schedule) || !identical(recorded, rlang::hash(schedule))) {
+    abort_replay_occasion(
+      NULL,
+      "It was activated by a schedule other than the replayed master's
+       own, and records no rotation program it came from.",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' The replayed occasion must activate the panels recorded for it
+#' @noRd
+check_recorded_occasion_panels <- function(replayed, occasion,
+                                           call = caller_env()) {
+  again <- sort(as.integer(attr(replayed, "metadata")$occasion$active_panels))
+  if (!identical(again, sort(as.integer(unlist(occasion$active_panels))))) {
+    abort_replay_occasion(
+      NULL,
+      "Replaying it from the master's schedule activates other panels than
+       the ones it records.",
+      call = call
+    )
+  }
+  invisible(NULL)
+}
+
+#' Refuse a recorded occasion that replay cannot rebuild as recorded
+#' @noRd
+abort_replay_occasion <- function(selection, problem, call = caller_env()) {
+  abort_samplyr(
+    c(
+      "The occasion this receipt records cannot be rebuilt as recorded.",
+      "x" = problem,
+      "i" = "The file was edited, or belongs to another selection. Materialize
+             the occasion again from the program or the master it came from."
+    ),
+    class = "samplyr_error_replay_occasion",
+    call = call
+  )
+}
+
 #' The period and subround of occasions a receipt numbers
 #' @param sample The replayed master, whose record holds the schedule.
 #' @noRd
 recorded_occasions <- function(sample, occasions) {
+  # check_recorded_occasion_schedule() has seen the schedule.
   record <- prepare_panel_record(
     attr(sample, "metadata")$panel_assignment, "A replay"
   )
-  if (is_null(record$schedule)) {
-    abort_samplyr(
-      c(
-        "This receipt records an occasion of a sample with no rotation
-         schedule.",
-        "i" = "An occasion of such a sample comes from a rotation program,
-               whose schedule no receipt holds. Replay the selections, and
-               rebuild the program with {.fn rotation_program}."
-      ),
-      class = "samplyr_error_occasion_no_schedule"
-    )
-  }
   pairs <- grid_pairs(record$schedule)
   occasions <- as.integer(occasions)
   list(period = pairs$period[occasions], subround = pairs$subround[occasions])

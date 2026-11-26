@@ -164,9 +164,9 @@ stack_periods(execute(master, period = 1), execute(master, period = 2))
 variance, \code{\link[=joint_expectation]{joint_expectation()}} with \code{period} for how far two occasions
 overlap
 
-Other panels, rotation and periods:
+Other panels and rotation:
 \code{\link{panel_assignment}},
 \code{\link[=rotation_program]{rotation_program()}},
 \code{\link[=subrounds]{subrounds()}}
 }
-\concept{panels, rotation and periods}
+\concept{panels and rotation}

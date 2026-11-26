@@ -163,9 +163,11 @@ the other way. Units of sizes 2, 1 and 1 with a take of 4 always get 2, 1
 and 1 hits, so the estimated total has no variance, yet for
 \eqn{y = (1, 3, 7)}{y = (1, 3, 7)} the exported variance is 37.7. A frame
 sorted by a variable related to the outcome also pushes the variance up.
-A \code{pps_systematic_mr} stage is never exempt as a census. A take of
-\eqn{N}{N} or more, or expected hits of one or more, count draws, not
-units taken with certainty.
+A take of \eqn{N}{N} or more, or expected hits of one or more, count
+draws, not units taken with certainty, so they do not make a
+\code{pps_systematic_mr} stage a census. A stage whose every unit was taken with
+certainty, by a certainty rule, is one: the export gives it no variance and
+raises no warning.
 }
 
 \subsection{Certainty units}{

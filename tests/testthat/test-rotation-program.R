@@ -541,7 +541,7 @@ test_that("a selection drawn whole leaves the occasion when its panel is idle", 
   expect_equal(live$.weight, as.data.frame(solo)$.weight[match(live$id, solo$id)])
 })
 
-test_that("a part of an occasion drawn with a count of panels prints and refuses writing", {
+test_that("a part of an occasion drawn with a count of panels prints and replays from its receipt", {
   frame <- data.frame(id = 1:200, value = (1:200) %% 7)
   startup <- sampling_design() |> draw(n = 40) |>
     execute(frame, seed = 1, panels = 2)
@@ -562,7 +562,11 @@ test_that("a part of an occasion drawn with a count of panels prints and refuses
   expect_null(attr(part, "metadata")$panel_assignment$schedule)
   expect_output(print(part), "period 2", fixed = TRUE)
   expect_no_error(utils::capture.output(summary(part)))
-  expect_error(design_json(part), class = "samplyr_error_serialize_unsupported")
+  replayed <- suppressMessages(
+    replay_design(read_design(design_json(part, frame = frame)), frame)
+  )
+  expect_identical(as.data.frame(replayed)$id, as.data.frame(part)$id)
+  expect_equal(as.data.frame(replayed)$.weight, as.data.frame(part)$.weight)
 })
 
 test_that("a named through is read by its names", {

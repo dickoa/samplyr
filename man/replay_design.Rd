@@ -75,6 +75,11 @@ A \code{chained} sample, produced by several \code{\link[=execute]{execute()}} c
 call by call, each under its own seed, stages and RNG kind. The first
 call and each continuation read the frames given here, a new phase reads
 the phase replayed before it, and an occasion reads its replayed master.
+An occasion of a \code{\link[=rotation_program]{rotation_program()}} is rebuilt from the panels, visits
+and activation pools its receipt records, not from the selection's own
+schedule. A record whose panels and pools contradict each other, or an
+occasion recorded under a schedule other than its master's, is
+\code{samplyr_error_replay_occasion}.
 Inherited panels and replicates are carried rather than declared again.
 A call recorded with \code{replicate} keeps that replicate of its replayed
 stack before its settlement or the next call, and a replicate the call

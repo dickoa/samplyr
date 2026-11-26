@@ -432,7 +432,7 @@ test_that("a design file that cannot be read is refused by class", {
 
   expect_error(
     read_design(corrupt_design_file(
-      plain, '"format_version": 4', '"format_version": 99'
+      plain, '"format_version": 5', '"format_version": 99'
     )),
     class = "samplyr_error_design_file_unsupported"
   )

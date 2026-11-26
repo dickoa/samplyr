@@ -393,9 +393,9 @@ section 2.5. Springer.
 \code{\link[=execute]{execute()}}, \code{\link[=rotation_program]{rotation_program()}} for programs of several
 selections, \code{\link[=stack_periods]{stack_periods()}} for stacking materialized periods.
 
-Other panels, rotation and periods:
+Other panels and rotation:
 \code{\link[=rotation_program]{rotation_program()}},
 \code{\link[=stack_periods]{stack_periods()}},
 \code{\link[=subrounds]{subrounds()}}
 }
-\concept{panels, rotation and periods}
+\concept{panels and rotation}

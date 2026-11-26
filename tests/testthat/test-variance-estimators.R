@@ -735,6 +735,440 @@ test_that("a two-phase systematic draw of one per pool is not reported as system
   expect_setequal(checked, c("n = 1", "n = 2"))
 })
 
+test_that("a phase 1 of minimum replacement is reported as read with replacement", {
+  skip_if_not_installed("survey")
+  # Hits of one unit are dependent, so reading them as independent draws
+  # approximates the variance however many phases follow. The export raises
+  # no warning, so the report alone tells it, as it does for one phase.
+  frame <- data.frame(id = 1:30, mos = c(1:29, 60), y = (1:30)^2)
+  checked <- character(0)
+  for (method in pmr_methods) {
+    phase1 <- suppressMessages(execute(
+      sampling_design() |> draw(n = 12, method = method, mos = mos),
+      frame, seed = 1
+    ))
+    phase2 <- suppressMessages(execute(
+      sampling_design() |> draw(n = 6), phase1, seed = 2
+    ))
+    alone <- variance_estimators(phase1)
+    both <- variance_estimators(phase2)
+    expect_identical(alone$status[1], "approximate", info = method)
+    expect_identical(both$status[1], "approximate", info = method)
+    # The finding names the phase-1 stage, as the single-phase one names it.
+    expect_match(both$note[1], "treated as drawn with replacement",
+                 fixed = TRUE, info = method)
+    expect_match(alone$note[1], "treated as drawn with replacement",
+                 fixed = TRUE, info = method)
+    # An approximation, not a refusal: the export still builds.
+    expect_s3_class(suppressWarnings(as_svydesign(phase2)), "twophase2")
+    checked <- c(checked, method)
+  }
+  expect_setequal(checked, c("pps_chromy", "pps_systematic_mr"))
+})
+
+## A stage of certainty units only
+
+ve_certain_frame <- function() {
+  data.frame(id = 1:30, mos = rep(1, 30), y = (1:30)^2)
+}
+
+# Every unit at or above `certainty_size` is taken with certainty, so a size
+# of 1 takes all 30. With n = 12 the forced certainties overflow the take.
+ve_certain_design <- function(method, n = 30) {
+  sampling_design() |>
+    draw(n = n, method = method, mos = mos, certainty_size = 1,
+         certainty_overflow = if (n < 30) "allow" else "error")
+}
+
+ve_export <- function(expr) {
+  warned <- character(0)
+  value <- withCallingHandlers(
+    suppressMessages(expr),
+    warning = function(w) {
+      warned <<- c(warned, class(w)[1])
+      invokeRestart("muffleWarning")
+    }
+  )
+  list(value = value, warned = warned)
+}
+
+test_that("a stage of certainty units only adds no variance and no approximation", {
+  skip_if_not_installed("survey")
+  frame <- ve_certain_frame()
+  checked <- character(0)
+  for (method in pmr_methods) {
+    for (n in c(30, 12)) {
+      label <- paste(method, "n =", n)
+      design <- ve_certain_design(method, n)
+      phase1 <- suppressMessages(execute(design, frame, seed = 1))
+      # The premise: every unit was recorded as taken with certainty.
+      expect_true(all(phase1$.certainty_1), label = label)
+      expect_identical(nrow(phase1), 30L, label = label)
+
+      # One phase: the stage adds nothing (rung 1, closed form).
+      alone <- ve_export(as_svydesign(phase1))
+      expect_lt(abs(as.numeric(vcov(survey::svytotal(~y, alone$value)))),
+                1e-6, label = label)
+      expect_false("samplyr_warning_systematic_variance" %in% alone$warned,
+                   label = label)
+      expect_identical(variance_estimators(phase1)$status[1], "supported",
+                       label = label)
+      expect_identical(variance_estimators(design, frame)$status[1],
+                       "supported", label = label)
+
+      # Two phases: the variance is phase 2's SRSWOR of 6 from 30 (rung 1).
+      phase2 <- suppressMessages(execute(
+        sampling_design() |> draw(n = 6), phase1, seed = 2
+      ))
+      both <- ve_export(as_svydesign(phase2))
+      closed <- 30^2 * (1 - 6 / 30) * stats::var(phase2$y) / 6
+      expect_equal(as.numeric(vcov(survey::svytotal(~y, both$value))), closed,
+                   tolerance = 1e-10, label = label)
+      expect_false("samplyr_warning_systematic_variance" %in% both$warned,
+                   label = label)
+      expect_identical(variance_estimators(phase2)$status[1], "supported",
+                       label = label)
+
+      # No approximation to refuse.
+      expect_no_error(suppressMessages(
+        as_svydesign(phase1, systematic_variance = "error")
+      ))
+      expect_no_error(suppressMessages(
+        as_svydesign(phase2, systematic_variance = "error")
+      ))
+      checked <- c(checked, label)
+    }
+  }
+  expect_setequal(checked, c("pps_chromy n = 30", "pps_chromy n = 12",
+                             "pps_systematic_mr n = 30",
+                             "pps_systematic_mr n = 12"))
+})
+
+test_that("hits not recorded as certain stay read with replacement", {
+  skip_if_not_installed("survey")
+  # A take of every unit without a certainty rule counts draws, and a mix of
+  # certainty units and random hits has random hits, so both stay
+  # approximated, alone and as phase 1.
+  frames <- list(
+    census = ve_certain_frame(),
+    mixed = data.frame(id = 1:30, mos = c(rep(1, 25), rep(50, 5)),
+                       y = (1:30)^2)
+  )
+  checked <- character(0)
+  for (method in pmr_methods) {
+    for (case in names(frames)) {
+      label <- paste(method, case)
+      design <- if (identical(case, "census")) {
+        sampling_design() |> draw(n = 30, method = method, mos = mos)
+      } else {
+        sampling_design() |>
+          draw(n = 12, method = method, mos = mos, certainty_size = 50)
+      }
+      phase1 <- suppressMessages(execute(design, frames[[case]], seed = 1))
+      expect_false(all(phase1$.certainty_1), label = label)
+      phase2 <- suppressMessages(execute(
+        sampling_design() |> draw(n = 6), phase1, seed = 2
+      ))
+      expect_identical(variance_estimators(phase1)$status[1], "approximate",
+                       label = label)
+      expect_identical(variance_estimators(design, frames[[case]])$status[1],
+                       "approximate", label = label)
+      expect_identical(variance_estimators(phase2)$status[1], "approximate",
+                       label = label)
+      checked <- c(checked, label)
+    }
+  }
+  expect_length(checked, 4L)
+})
+
+test_that("each replicate type of a stage of certainty units does what the report says", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("svrep")
+  frame <- ve_certain_frame()
+  types <- c("JK1", "JKn", "BRR", "Fay", "bootstrap", "subbootstrap",
+             "mrbbootstrap")
+  checked <- character(0)
+  for (method in pmr_methods) {
+    design <- ve_certain_design(method)
+    sample <- suppressMessages(execute(design, frame, seed = 1))
+    report <- variance_estimators(design, frame)
+    for (type in types) {
+      label <- paste(method, type)
+      row <- report[report$call == paste0("as_svrepdesign(x, type = \"",
+                                          type, "\")"), ]
+      expect_identical(nrow(row), 1L, label = label)
+      raised <- tryCatch(
+        ve_export(as_svrepdesign(sample, type = type, replicates = 20)),
+        samplyr_error = function(e) e
+      )
+      if (inherits(raised, "error")) {
+        expect_identical(row$status, "refused", label = label)
+        expect_true(grepl(class(raised)[1], row$class, fixed = TRUE),
+                    label = label)
+      } else {
+        expect_identical(row$status, "supported", label = label)
+        expect_length(setdiff(raised$warned, "samplyr_warning_systematic_variance"),
+                      0L)
+        expect_false("samplyr_warning_systematic_variance" %in% raised$warned,
+                     label = label)
+        expect_lt(abs(as.numeric(vcov(survey::svytotal(~y, raised$value)))),
+                  1e-6, label = label)
+      }
+      checked <- c(checked, label)
+    }
+  }
+  expect_length(checked, 2L * length(types))
+})
+
+test_that("a phase 2 within the pools of an all-certain phase 1 keeps its evidence", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("svrep")
+  frames <- list(
+    certain = data.frame(psu = rep(1:2, each = 6), hh = rep(1:6, 2), m = 9,
+                         y = c(1, 2, 4, 8, 16, 32, 3, 6, 9, 12, 18, 36)),
+    mixed = data.frame(psu = rep(1:6, each = 6), hh = rep(1:6, 6),
+                       m = rep(c(9, 9, 1, 2, 1, 2), each = 6),
+                       y = (1:36)^1.5)
+  )
+  checked <- character(0)
+  for (method in pmr_methods) {
+    for (case in names(frames)) {
+      label <- paste(method, case)
+      n <- if (identical(case, "certain")) 2 else 4
+      phase1 <- suppressMessages(execute(
+        sampling_design() |> cluster_by(psu) |>
+          draw(n = n, method = method, mos = m, certainty_size = 9) |>
+          add_stage() |> draw(n = 4),
+        frames[[case]], seed = 1
+      ))
+      phase2 <- execute(
+        sampling_design() |> stratify_by(psu) |> draw(n = 2), phase1,
+        seed = 1
+      )
+      # The premise: phase 2 is composed with phase 1's design.
+      expect_false(is.null(composed_subsample(phase2)), label = label)
+      report <- variance_estimators(phase2)
+      if (identical(case, "certain")) {
+        expect_true(all(phase1$.certainty_1), label = label)
+        # Each certain PSU is a stratum of 2 drawn from 6 (rung 1).
+        closed <- sum(vapply(split(phase2$y, phase2$psu), function(y) {
+          6^2 * (1 - 2 / 6) * stats::var(y) / 2
+        }, numeric(1)))
+        for (policy in c("warn", "error")) {
+          lin <- ve_export(as_svydesign(phase2, systematic_variance = policy))
+          expect_equal(as.numeric(vcov(survey::svytotal(~y, lin$value))),
+                       closed, tolerance = 1e-10, label = label)
+          expect_length(lin$warned, 0L)
+          jkn <- ve_export(as_svrepdesign(phase2, type = "JKn",
+                                          systematic_variance = policy))
+          expect_false("samplyr_warning_systematic_variance" %in% jkn$warned,
+                       label = label)
+          expect_equal(as.numeric(vcov(survey::svytotal(~y, jkn$value))),
+                       closed, tolerance = 1e-10, label = label)
+        }
+        expect_identical(report$status[1], "supported", label = label)
+        expect_identical(
+          report$status[report$call == "as_svrepdesign(x, type = \"JKn\")"],
+          "supported", label = label
+        )
+      } else {
+        # Random hits at stage 1 keep the with-replacement reading.
+        expect_false(all(phase1$.certainty_1), label = label)
+        expect_identical(report$status[1], "approximate", label = label)
+        if (identical(method, "pps_systematic_mr")) {
+          expect_error(
+            suppressMessages(as_svydesign(phase2, systematic_variance = "error")),
+            class = "samplyr_error_systematic_variance"
+          )
+        }
+      }
+      checked <- c(checked, label)
+    }
+  }
+  expect_length(checked, 4L)
+})
+
+test_that("a frame given to the report decides over a sample's certainty", {
+  frame_a <- data.frame(id = 1:30, m = 1, y = (1:30)^2)
+  frame_b <- frame_a
+  frame_b$m[1:15] <- 0.5
+  checked <- character(0)
+  for (method in pmr_methods) {
+    design <- sampling_design() |>
+      draw(n = 30, method = method, mos = m, certainty_size = 1)
+    sample_a <- suppressMessages(execute(design, frame_a, seed = 1))
+    expect_true(all(sample_a$.certainty_1), label = method)
+    status <- function(x, frame = NULL) {
+      variance_estimators(x, frame)$status[1]
+    }
+    expect_identical(status(sample_a), "supported", label = method)
+    expect_identical(status(sample_a, frame_a), "supported", label = method)
+    # Frame B leaves 15 units to a random draw, as the design reads it.
+    expect_identical(status(design, frame_b), "approximate", label = method)
+    expect_identical(status(sample_a, frame_b), status(design, frame_b),
+                     label = method)
+    checked <- c(checked, method)
+  }
+  expect_setequal(checked, pmr_methods)
+})
+
+test_that("a stage-truncated export reads certainty from every executed stage", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("svrep")
+  # Random PSUs 3 and 5 lose every row to stage 2, so the rows show only
+  # certain PSUs while the record shows the random hits.
+  psus <- data.frame(psu = 1:6, size = c(100, 100, 1, 1, 1, 1))
+  hh <- expand.grid(psu = c(1L, 2L, 6L), id = 1:6)
+  hh$y <- hh$psu * hh$id
+  design <- sampling_design() |> cluster_by(psu) |>
+    draw(n = 4, method = "pps_systematic_mr", mos = size,
+         certainty_size = 50) |>
+    add_stage() |> draw(n = 4, on_empty = "silent")
+  sample <- suppressMessages(execute(design, psus, hh, seed = 1))
+  expect_true(all(sample$.certainty_1))
+  empty <- do.call(rbind, lapply(sample_empty_parents(sample), `[[`, "rows"))
+  expect_identical(sort(empty$psu), c(3L, 5L))
+  expect_false(any(empty$.certainty_1))
+  for (stages in list(NULL, 1L)) {
+    label <- paste("stages", format(stages %||% "all"))
+    lin <- ve_export(as_svydesign(sample, stages = stages))
+    expect_true("samplyr_warning_systematic_variance" %in% lin$warned,
+                label = label)
+    expect_error(
+      suppressMessages(as_svydesign(sample, stages = stages,
+                                    systematic_variance = "error")),
+      class = "samplyr_error_systematic_variance"
+    )
+    expect_error(
+      suppressMessages(as_svrepdesign(sample, stages = stages, type = "JKn",
+                                      systematic_variance = "error")),
+      class = "samplyr_error_systematic_variance"
+    )
+  }
+  expect_identical(variance_estimators(sample)$status[1], "approximate")
+
+  # A stage-1 census promotes stage 2, whose units are all certain, so the
+  # truncated export approximates no systematic stage.
+  frame <- expand.grid(psu = 1:2, ssu = 1:4, hh = 1:6)
+  frame$m <- 1
+  frame$y <- with(frame, (3 * psu + 5 * ssu + hh)^2)
+  promoted <- sampling_design() |> cluster_by(psu) |> draw(frac = 1) |>
+    add_stage() |> cluster_by(ssu) |>
+    draw(n = 4, method = "pps_systematic_mr", mos = m, certainty_size = 1) |>
+    add_stage() |> draw(n = 3)
+  x <- execute(promoted, frame, seed = 1)
+  expect_true(all(x$.certainty_2))
+  units <- stage_export_units(as.data.frame(x), promoted, 1:3, 1L,
+                              notify = FALSE)
+  expect_identical(units$promoted_stage, 2L)
+  for (stages in list(NULL, 1L)) {
+    label <- paste("promoted, stages", format(stages %||% "all"))
+    lin <- ve_export(as_svydesign(x, stages = stages,
+                                  systematic_variance = "error"))
+    expect_false("samplyr_warning_systematic_variance" %in% lin$warned,
+                 label = label)
+    jkn <- ve_export(as_svrepdesign(x, stages = stages, type = "JKn",
+                                    systematic_variance = "error"))
+    expect_false("samplyr_warning_systematic_variance" %in% jkn$warned,
+                 label = label)
+  }
+})
+
+test_that("a certainty unit of a stage 2 drawn with replacement in a certainty PSU is a census", {
+  skip_if_not_installed("survey")
+  skip_if_not_installed("svrep")
+  frame <- expand.grid(psu = 1:3, ssu = 1:6, hh = 1:4)
+  frame$g <- ifelse(frame$ssu <= 2, 1, 2)
+  frame$y <- with(frame, (psu * 7 + ssu * 3 + hh)^2)
+  # Stage 1 takes every PSU. Stage 2 takes every SSU with certainty
+  # ("certain"), those of stratum 1 as a stratum ("stratum") or beside random
+  # hits in one pool ("pool"), or none ("random"). "census" takes every SSU
+  # without replacement, the shape stage 2 stands for when its units are all
+  # certain.
+  stage2 <- function(d, method, case) {
+    if (identical(case, "census")) {
+      return(draw(d, frac = 1))
+    }
+    d <- if (identical(case, "stratum")) stratify_by(d, g) else d
+    n <- switch(case, certain = 6, stratum = c(`1` = 2, `2` = 3), pool = 4,
+                random = 3)
+    draw(d, n = n, method = method, mos = m, certainty_size = 10)
+  }
+  mos <- list(certain = 10, stratum = ifelse(frame$g == 1, 10, 1),
+              pool = ifelse(frame$g == 1, 10, 1), random = 1, census = 1)
+  types <- c("JK1", "JKn", "BRR", "Fay", "bootstrap", "subbootstrap")
+  key <- "samplyr_warning_replicate_certainty_stage_wr"
+  has_key <- function(class) !is.na(class) && grepl(key, class, fixed = TRUE)
+  checked <- character(0)
+  for (method in pmr_methods) {
+    for (case in names(mos)) {
+      for (below in c(TRUE, FALSE)) {
+        label <- paste(method, case, if (below) "sampled below" else "no stage 3")
+        f <- frame
+        f$m <- mos[[case]]
+        design <- sampling_design() |> cluster_by(psu) |> draw(frac = 1) |>
+          add_stage() |> cluster_by(ssu)
+        design <- stage2(design, method, case)
+        if (below) {
+          design <- design |> add_stage() |> draw(n = 2)
+        } else {
+          f <- f[f$hh == 1, ]
+        }
+        x <- suppressMessages(execute(design, f, seed = 1))
+        flag <- if (".certainty_2" %in% names(x)) x[[".certainty_2"]] else
+          rep(FALSE, nrow(x))
+        certain <- as.vector(tapply(flag %in% TRUE, x$g, all))
+        expect_identical(
+          certain,
+          switch(case, certain = c(TRUE, TRUE), stratum = , pool = c(TRUE, FALSE),
+                 c(FALSE, FALSE)),
+          label = label
+        )
+        # The export warns exactly when a stage below samples inside a
+        # pool of certainty units.
+        expected <- below && !identical(case, "random")
+        on_frame <- variance_estimators(design, f)
+        on_sample <- variance_estimators(x)
+        for (type in types) {
+          call <- paste0("as_svrepdesign(x, type = \"", type, "\")")
+          tl <- paste(label, type)
+          args <- list(x, type = type)
+          if (type %in% c("bootstrap", "subbootstrap")) {
+            args$replicates <- 20
+          }
+          out <- tryCatch(
+            ve_export(do.call(as_svrepdesign, args)),
+            samplyr_error = function(e) e
+          )
+          row <- on_frame[on_frame$call == call, ]
+          if (inherits(out, "error")) {
+            expect_identical(row$status, "refused", label = tl)
+            next
+          }
+          expect_identical(key %in% out$warned, expected, label = tl)
+          expect_identical(has_key(row$class), expected, label = tl)
+          # The sample shows a stage of certainty units only, and leaves
+          # certainty units beside random hits to the frame.
+          mixed <- case %in% c("stratum", "pool")
+          sample_row <- on_sample[on_sample$call == call, ]
+          expect_identical(has_key(sample_row$class), expected && !mixed,
+                           label = tl)
+          if (expected && mixed) {
+            expect_match(sample_row$sample_risk, key, fixed = TRUE,
+                         label = tl)
+          }
+          if (!below && case %in% c("certain", "census")) {
+            expect_lt(abs(as.numeric(vcov(survey::svytotal(~y, out$value)))),
+                      1e-6, label = tl)
+          }
+        }
+        checked <- c(checked, label)
+      }
+    }
+  }
+  expect_length(checked, 2L * 5L * 2L)
+})
+
 test_that("a frame of primary units settles the first stage only", {
   skip_if_not_installed("survey")
   skip_if_not_installed("svrep")

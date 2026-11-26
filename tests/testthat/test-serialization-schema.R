@@ -37,13 +37,14 @@ schema_wrappers <- function() {
   )
 }
 
-# Written by format 3, then moved to format 4 by renaming `n_per_psu` to
-# `take_2`, and kept verbatim otherwise, so it reads as a file the writer
-# did not produce.
-frozen_v4_document <- function() {
+# Written by format 3, moved to format 4 by renaming `n_per_psu` to
+# `take_2`, then to format 5 by its number alone, since format 5 only adds
+# fields to an occasion. Kept verbatim otherwise, so it reads as a file the
+# writer did not produce.
+frozen_v5_document <- function() {
   r"---({
   "format": "samplyr/design",
-  "format_version": 4,
+  "format_version": 5,
   "schema": {
     "method_vocabulary": {
       "id": "samplyr/common-sampling-method",
@@ -399,17 +400,17 @@ frozen_v4_document <- function() {
 )---"
 }
 
-test_that("the frozen version 4 document remains executable", {
-  s <- execute(read_design(frozen_v4_document()), certainty_element_frame(),
+test_that("the frozen version 5 document remains executable", {
+  s <- execute(read_design(frozen_v5_document()), certainty_element_frame(),
                seed = 12)
   # The document carries its own classification, which a plan refitted
   # by a later svyplan need not repeat.
-  stored <- read_design(frozen_v4_document())$stages[[1]]$draw_spec$
+  stored <- read_design(frozen_v5_document())$stages[[1]]$draw_spec$
     certainty_plan$register
   expect_setequal(unique(s$psu_id[s$.certainty_1]),
                   stored$psu_id[stored$certainty])
   # The document predates on_capped, so it keeps the take-all policy.
-  restored <- read_design(frozen_v4_document())
+  restored <- read_design(frozen_v5_document())
   expect_true(all(vapply(
     restored$stages,
     function(stage) identical(stage$draw_spec$on_capped, "warn"),
